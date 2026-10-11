@@ -126,6 +126,10 @@ function Module.init(context: Runtime): any
             movementTask = nil :: any,
             hitboxTask = nil :: any,
             autosaveTask = nil :: any,
+            -- Persistence hooks are kept apart from `connections`, which is
+            -- cleared on every disable, so they keep working across a
+            -- disable/enable cycle.
+            persistenceConnections = {} :: {any},
         }
         local controller: any
         local saveSnapshot: (reason: string) -> boolean
@@ -825,6 +829,47 @@ function Module.init(context: Runtime): any
             end
         end
 
+        -- An autosave covers most exits, but a teleport and a shutdown are
+        -- both sudden enough to beat a 15 second timer, so they get their own
+        -- flush.
+        local hooksInstalled: boolean = false
+        local function installPersistenceHooks(): ()
+            if hooksInstalled then
+                return
+            end
+            hooksInstalled = true
+            local keep: {any} = runtime.persistenceConnections
+            pcall(function(): ()
+                table.insert(
+                    keep,
+                    LocalPlayer.OnTeleport:Connect(function(): ()
+                        saveSnapshot("teleport", true)
+                    end)
+                )
+            end)
+            pcall(function(): ()
+                table.insert(
+                    keep,
+                    ScreenGui.AncestryChanged:Connect(function(
+                        _child: Instance,
+                        parent: Instance?
+                    ): ()
+                        if parent == nil then
+                            saveSnapshot("shutdown", true)
+                        end
+                    end)
+                )
+            end)
+            pcall(function(): ()
+                local environmentClose: any = executorEnvironment.close
+                if type(environmentClose) == "function" then
+                    environmentClose(function(): ()
+                        saveSnapshot("shutdown", true)
+                    end)
+                end
+            end)
+        end
+
         saveSnapshot = function(reason: string?, silent: boolean?): boolean
             if type(executorEnvironment.writefile) ~= "function" then
                 return false
@@ -983,6 +1028,7 @@ function Module.init(context: Runtime): any
             end
             runtime.enabled = true
             loadStoredLogs()
+            installPersistenceHooks()
             startMovementProbe()
             startHitboxProbe()
             if not runtime.autosaveTask then

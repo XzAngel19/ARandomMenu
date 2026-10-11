@@ -1,5 +1,5 @@
 return {
-    stamp = "v5-20261011-1700",
+    stamp = "v6-20261011-2030",
     files = {
         ["src/games/BedFight/Combat/AutoSwing.lua"] = [[
 local Module = {Name = "BedFight Auto Swing", Initialized = false, Connection = nil}
@@ -2616,9 +2616,9 @@ end
 return Module
 
 ]],
-        ["src/games/MM2/Blatant/KnifeAura.lua"] = [[
+        ["src/games/MM2/Blatant/Knife.lua"] = [=[
 local Module = {
-    Name = "MM2 Knife Aura",
+    Name = "MM2 Knife",
     PlaceId = 142823291,
     Events = {} :: {[string]: any},
     Initialized = false,
@@ -2627,37 +2627,231 @@ local Module = {
 
 local activeCleanup: () -> () = function(): () end
 
+--[[
+    MM2 Knife - one card for everything the murderer's blade does.
+
+    Knife Aura and Knife Throw used to be two separate cards that duplicated
+    the same "who can I legally hit" logic and disagreed about it. They are one
+    module now: the blade is one weapon, and the two ways of using it are two
+    toggles on it.
+
+    AURA  stabs the nearest valid target in range through the game's own
+          HandleTouched remote - the same path a real swing takes, so nothing
+          about the packet is unusual.
+
+    THROW fires KnifeThrown with an authored origin/aim pair:
+
+        KnifeThrown:FireServer(CFrame.new(origin), CFrame.new(aim))
+
+          Normal  throws from the hand and leads the target by the blade's
+                  flight time - the target has to be roughly in the open.
+          Silent  authors the origin a few studs beside the target so the
+                  server spawns the blade already touching them, at any
+                  distance and through walls.
+
+    THE LEAD (this is the part that used to be wrong)
+
+        lead = spawn delay + distance / throw speed
+
+    The blade does not exist the instant the packet is sent: the calibration
+    measures how long the server takes to spawn it (the shipped files put it at
+    ~211 ms, and the 200 ms everyone quotes is that delay, not a tolerance the
+    server grants us). Leading by the flight time alone therefore threw ~3
+    studs behind every moving target at walking pace. The spawn delay is
+    measured, stored with the rest of the calibration history and folded in
+    here, and the distance/lead pair is relaxed over three passes because
+    moving the aim point changes the distance it is measured from.
+]]
 function Module.init(runtime: any): any
     if Module.Initialized then
         return Module
     end
     local core: any = state.mm2Core
-    assert(type(core) == "table", "MM2 Knife Aura requires the MM2 core module")
+    assert(type(core) == "table", "MM2 Knife requires the MM2 core module")
     Module.Runtime = runtime
+    local findMurderer: any = core.findMurderer
     local getPlayerRole: any = core.getPlayerRole
     local getPlayerWeapon: any = core.getPlayerWeapon
     local isPlayerAlive: any = core.isPlayerAlive
     local isProtectedTarget: any = core.isProtectedTarget
+    local getFilteredVelocity: any = core.getFilteredVelocity
     local trajectoryCalibration: any = core.trajectoryCalibration
 
-    type KnifeRuntimeState = {
-        lastAuraSwing: number,
+    local DEFAULT_KNIFE_SPEED: number = 96
+    local DEFAULT_SPAWN_DELAY: number = 0.2
+    local BODY_PART_NAMES: {string} = {
+        "UpperTorso",
+        "LowerTorso",
+        "Torso",
+        "Head",
+        "HumanoidRootPart",
     }
 
-    local knifeSettings: any = {
+    local knifeSettings = {
         aura = false,
+        throw = false,
         auraRange = 14,
         autoRange = false,
+        throwMode = "Normal",
+        fireDelay = 1,
+        throwRange = 120,
+        spawnOffset = 5,
+        useMeasuredDelay = true,
+        manualSpawnDelay = 200,
+        leadBias = 0,
     }
+
     state.mm2KnifeRuntime = {
         lastAuraSwing = -math.huge,
-    } :: KnifeRuntimeState
+    } :: {lastAuraSwing: number}
 
+    local lastThrow: number = -math.huge
+
+    local function knifeRuntime(): any
+        if type(state.mm2KnifeRuntime) ~= "table" then
+            state.mm2KnifeRuntime = {lastAuraSwing = -math.huge}
+        end
+        return state.mm2KnifeRuntime
+    end
+
+    -- Measured throw speed and spawn delay, both from the same calibration the
+    -- rest of MM2 reads. Anything that is not measured falls back to the
+    -- documented defaults instead of quietly disabling the lead.
+    local function calibrationEstimates(): any?
+        if not trajectoryCalibration
+            or type(trajectoryCalibration.getEstimates) ~= "function" then
+            return nil
+        end
+        local ok: boolean, estimates: any = pcall(function(): any
+            return trajectoryCalibration:getEstimates()
+        end)
+        if not ok or type(estimates) ~= "table" then
+            return nil
+        end
+        return estimates
+    end
+
+    local function getKnifeSpeed(): number
+        local estimates: any? = calibrationEstimates()
+        local speed: number? = estimates and estimates.knifeSpeed
+        if type(speed) == "number" and speed > 1 then
+            return speed :: number
+        end
+        return DEFAULT_KNIFE_SPEED
+    end
+
+    local function getSpawnDelaySeconds(): number
+        if not knifeSettings.useMeasuredDelay then
+            return math.max(0, knifeSettings.manualSpawnDelay / 1000)
+        end
+        local estimates: any? = calibrationEstimates()
+        local delay: number? = estimates and estimates.knifeSpawnDelayMs
+        if type(delay) == "number" and delay > 0 then
+            return math.clamp((delay :: number) / 1000, 0, 0.75)
+        end
+        return DEFAULT_SPAWN_DELAY
+    end
+
+    local function isValidTarget(player: Player): boolean
+        if player == LocalPlayer
+            or isProtectedTarget(player)
+            or not isPlayerAlive(player)
+            or getPlayerRole(player) == "Murderer" then
+            return false
+        end
+        return player.Character ~= nil
+            and player.Character:FindFirstChild("HumanoidRootPart") ~= nil
+    end
+
+    local function findNearestTarget(
+        origin: Vector3,
+        maxDistance: number
+    ): Player?
+        local closest: Player? = nil
+        local closestDistance: number = maxDistance
+        for _, player: Player in ipairs(Players:GetPlayers()) do
+            if isValidTarget(player) then
+                local targetRoot: BasePart? = player.Character
+                    and player.Character:FindFirstChild("HumanoidRootPart")
+                    :: BasePart?
+                if targetRoot then
+                    local distance: number =
+                        (targetRoot.Position - origin).Magnitude
+                    if distance <= closestDistance then
+                        closest = player
+                        closestDistance = distance
+                    end
+                end
+            end
+        end
+        return closest
+    end
+
+    -- Vertical centre of the rig. A blade that lands centre-mass has the whole
+    -- body above and below it as tolerance, which matters more for a thrown
+    -- projectile than for a hitscan.
+    local function bodyCentre(character: Model, root: BasePart): Vector3
+        local top: number = -math.huge
+        local bottom: number = math.huge
+        local found: boolean = false
+        for _, partName: string in ipairs(BODY_PART_NAMES) do
+            local part: BasePart? =
+                character:FindFirstChild(partName) :: BasePart?
+            if part and part:IsA("BasePart") then
+                found = true
+                top = math.max(top, part.Position.Y + part.Size.Y * 0.5)
+                bottom = math.min(bottom, part.Position.Y - part.Size.Y * 0.5)
+            end
+        end
+        if not found or top <= bottom then
+            return root.Position
+        end
+        return Vector3.new(root.Position.X, (top + bottom) * 0.5, root.Position.Z)
+    end
+
+    -- Solve lead = spawnDelay + distance / speed.
+    --
+    -- The distance is measured to the aim point, which is placed using the
+    -- lead, so the two are relaxed together. Three passes converge to well
+    -- under a tenth of a stud at any range the blade reaches.
+    local function predictThrowAim(
+        target: Player,
+        originPos: Vector3
+    ): Vector3
+        local character: Model = target.Character :: Model
+        local root: BasePart =
+            character:FindFirstChild("HumanoidRootPart") :: BasePart
+        local centre: Vector3 = bodyCentre(character, root)
+        local velocity: Vector3 = getFilteredVelocity(target, root)
+        local speed: number = getKnifeSpeed()
+        local spawnDelay: number = getSpawnDelaySeconds()
+        local bias: number = knifeSettings.leadBias
+
+        local aim: Vector3 = centre
+        for _ = 1, 3 do
+            local distance: number = (aim - originPos).Magnitude
+            local lead: number = math.max(
+                0,
+                spawnDelay + distance / speed + bias
+            )
+            aim = centre + velocity * lead
+        end
+        return aim
+    end
+
+    local function silentThrow(): boolean
+        return knifeSettings.throwMode == "Silent"
+    end
+
+    -- -----------------------------------------------------------------------
+    -- Aura
+    -- -----------------------------------------------------------------------
     local function getEffectiveRange(): number
-        if knifeSettings.autoRange and trajectoryCalibration and type(trajectoryCalibration.getEstimates) == "function" then
-            local okEst, est = pcall(function() return trajectoryCalibration:getEstimates() end)
-            if okEst and type(est) == "table" and est.maxStabDistance and est.maxStabDistance >= 8 then
-                return math.clamp(math.floor(est.maxStabDistance), 8, 28)
+        if knifeSettings.autoRange then
+            local estimates: any? = calibrationEstimates()
+            local maxStab: number? = estimates and estimates.maxStabDistance
+            if type(maxStab) == "number" and (maxStab :: number) >= 8 then
+                return math.clamp(math.floor(maxStab :: number), 8, 28)
             end
         end
         return knifeSettings.auraRange or 14
@@ -2688,41 +2882,6 @@ function Module.init(runtime: any): any
         return knife, root
     end
 
-    local function isValidKnifeTarget(player: Player): boolean
-        if player == LocalPlayer
-            or isProtectedTarget(player)
-            or not isPlayerAlive(player)
-            or getPlayerRole(player) == "Murderer" then
-            return false
-        end
-        return player.Character ~= nil
-            and player.Character:FindFirstChild("HumanoidRootPart") ~= nil
-    end
-
-    local function findKnifeAuraTarget(
-        localRoot: BasePart,
-        maxDistance: number
-    ): Player?
-        local closest: Player? = nil
-        local closestDistance: number = maxDistance
-        for _, player: Player in ipairs(Players:GetPlayers()) do
-            if isValidKnifeTarget(player) then
-                local targetRoot: BasePart? = player.Character
-                    and player.Character:FindFirstChild("HumanoidRootPart")
-                    :: BasePart?
-                if targetRoot then
-                    local distance: number =
-                        (targetRoot.Position - localRoot.Position).Magnitude
-                    if distance <= closestDistance then
-                        closest = player
-                        closestDistance = distance
-                    end
-                end
-            end
-        end
-        return closest
-    end
-
     local function processKnifeAura(): ()
         local knife: Tool?, localRoot: BasePart? = canUseEquippedKnife()
         if not knife or not localRoot then
@@ -2730,8 +2889,10 @@ function Module.init(runtime: any): any
         end
 
         local currentRange: number = getEffectiveRange()
-        local target: Player? =
-            findKnifeAuraTarget(localRoot, currentRange)
+        local target: Player? = findNearestTarget(
+            (localRoot :: BasePart).Position,
+            currentRange
+        )
         local targetCharacter: Model? = target and target.Character
         local targetRoot: BasePart? = targetCharacter
             and targetCharacter:FindFirstChild("HumanoidRootPart")
@@ -2739,9 +2900,9 @@ function Module.init(runtime: any): any
         if not target
             or not targetCharacter
             or not targetRoot
-            or (targetRoot.Position - localRoot.Position).Magnitude
-                > currentRange
-            or os.clock() - state.mm2KnifeRuntime.lastAuraSwing < 0.86 then
+            or ((targetRoot :: BasePart).Position
+                - (localRoot :: BasePart).Position).Magnitude > currentRange
+            or os.clock() - knifeRuntime().lastAuraSwing < 0.86 then
             return
         end
 
@@ -2750,7 +2911,7 @@ function Module.init(runtime: any): any
             return
         end
 
-        state.mm2KnifeRuntime.lastAuraSwing = os.clock()
+        knifeRuntime().lastAuraSwing = os.clock()
         local events: Instance? = knife:FindFirstChild("Events")
         local handleTouched: Instance? = events
             and events:FindFirstChild("HandleTouched")
@@ -2763,7 +2924,7 @@ function Module.init(runtime: any): any
                 and currentCharacter:FindFirstChild("HumanoidRootPart")
                 :: BasePart?
             local currentHandle: BasePart? =
-                knife:FindFirstChild("Handle") :: BasePart?
+                (knife :: Tool):FindFirstChild("Handle") :: BasePart?
             if not knifeSettings.aura
                 or currentKnife ~= knife
                 or not currentLocalRoot
@@ -2771,8 +2932,9 @@ function Module.init(runtime: any): any
                 or not currentRoot
                 or not currentHandle
                 or not currentHandle:IsA("BasePart")
-                or (currentRoot.Position - currentLocalRoot.Position).Magnitude
-                    > knifeSettings.auraRange then
+                or ((currentRoot :: BasePart).Position
+                    - (currentLocalRoot :: BasePart).Position).Magnitude
+                    > currentRange then
                 return
             end
 
@@ -2785,177 +2947,16 @@ function Module.init(runtime: any): any
             pcall(trajectoryCalibration.noteAuthoredShot, trajectoryCalibration, {
                 kind = "stab",
                 toolName = "Knife",
-                originPos = currentLocalRoot.Position,
-                aimPos = currentRoot.Position,
+                originPos = (currentLocalRoot :: BasePart).Position,
+                aimPos = (currentRoot :: BasePart).Position,
                 target = target,
             })
         end)
     end
 
-    local function refreshKnifeController(): ()
-        disconnectFeatureConnection("MM2KnifeVirtualHitbox")
-        disconnectFeatureConnection("MM2KnifeAura")
-        disconnectFeatureConnection("MM2KnifeController")
-        if not knifeSettings.aura then
-            return
-        end
-
-        local elapsed: number = 0
-        featureConnections.MM2KnifeController =
-            TaskManager:Connect(function(deltaTime: number): ()
-                elapsed += deltaTime
-                if elapsed < 0.05 then
-                    return
-                end
-                elapsed %= 0.05
-                processKnifeAura()
-            end)
-    end
-
-    local function toggleKnifeAura(enabled: boolean): ()
-        knifeSettings.aura = enabled
-        state.mm2KnifeRuntime.lastAuraSwing = -math.huge
-        refreshKnifeController()
-    end
-
-    local KnifeFeature = createUniversalFeature(
-        "Knife Aura",
-        "Stabs the nearest valid target in range through the game's own HandleTouched",
-        6,
-        toggleKnifeAura,
-        {
-            categoryName = "Blatant",
-            parent = MM2Scroll,
-            registry = mm2Features,
-        }
-    )
-    addNumberOption(KnifeFeature, "Range", 14, 7, 30, function(
-        value: number
-    ): ()
-        knifeSettings.auraRange = value
-    end)
-    addToggleOption(
-        KnifeFeature,
-        "Auto Range",
-        knifeSettings.autoRange,
-        function(value: boolean): ()
-            knifeSettings.autoRange = value
-        end,
-        "Automatically adjusts stab reach to the maximum distance verified by calibration telemetry."
-    )
-
-    activeCleanup = function(): ()
-        toggleKnifeAura(false)
-    end
-    Module.Events = featureConnections
-    Module.Initialized = true
-    return Module
-end
-
-function Module.destroy(): ()
-    if not Module.Initialized then
-        return
-    end
-    Module.Initialized = false
-    pcall(activeCleanup)
-    activeCleanup = function(): () end
-    Module.Events = {}
-    Module.Runtime = nil
-end
-
-return Module
-
-]],
-        ["src/games/MM2/Blatant/KnifeThrow.lua"] = [=[
-local Module = {
-    Name = "MM2 Knife Throw",
-    PlaceId = 142823291,
-    Events = {} :: {[string]: any},
-    Initialized = false,
-    Runtime = nil :: any,
-}
-
-local activeCleanup: () -> () = function(): () end
-
---[[
-    MM2 Knife Throw
-
-    Automatically throws the knife at the nearest valid target — the murderer's
-    counterpart to the gun's Auto Shoot.
-
-    Normal throws from the murderer's hand and leads the target by the blade's
-    flight time (distance / throw speed), so the target has to be roughly in the
-    open. Silent authors the throw so the blade spawns right beside the target
-    (origin placed next to them, aim at them): the server spawns the projectile
-    at that origin, so it connects at any distance or through walls — the same
-    trick the gun's silent shot uses, and reliable because the knife's hitbox is
-    long.
-
-    Remote (confirmed against YARHM's "knife throw to closest"):
-      KnifeThrown:FireServer(CFrame.new(origin), CFrame.new(aim))
-]]
-function Module.init(runtime: any): any
-    if Module.Initialized then
-        return Module
-    end
-    local core: any = state.mm2Core
-    assert(type(core) == "table", "MM2 Knife Throw requires the MM2 core module")
-    Module.Runtime = runtime
-    local findMurderer: any = core.findMurderer
-    local getPlayerRole: any = core.getPlayerRole
-    local getPlayerWeapon: any = core.getPlayerWeapon
-    local isPlayerAlive: any = core.isPlayerAlive
-    local isProtectedTarget: any = core.isProtectedTarget
-    local getFilteredVelocity: any = core.getFilteredVelocity
-    local trajectoryCalibration: any = core.trajectoryCalibration
-
-    local knifeThrowSettings = {
-        enabled = false,
-        mode = "Normal",
-        fireDelay = 1,
-        range = 120,
-        spawnOffset = 5,
-    }
-    local lastThrow = -math.huge
-
-    local function isValidTarget(player: Player): boolean
-        if player == LocalPlayer
-            or isProtectedTarget(player)
-            or not isPlayerAlive(player)
-            or getPlayerRole(player) == "Murderer" then
-            return false
-        end
-        return player.Character ~= nil
-            and player.Character:FindFirstChild("HumanoidRootPart") ~= nil
-    end
-
-    local function findNearestTarget(maxDistance: number): Player?
-        local localRoot: BasePart? = LocalPlayer.Character
-            and LocalPlayer.Character:FindFirstChild("HumanoidRootPart") :: BasePart?
-        if not localRoot then
-            return nil
-        end
-        local closest: Player? = nil
-        local closestDistance: number = maxDistance
-        for _, player: Player in ipairs(Players:GetPlayers()) do
-            if isValidTarget(player) then
-                local targetRoot: BasePart? = player.Character
-                    and player.Character:FindFirstChild("HumanoidRootPart") :: BasePart?
-                if targetRoot then
-                    local distance: number =
-                        (targetRoot.Position - localRoot.Position).Magnitude
-                    if distance <= closestDistance then
-                        closest = player
-                        closestDistance = distance
-                    end
-                end
-            end
-        end
-        return closest
-    end
-
-    -- The murderer role is required, and the knife must be equipped and off its
-    -- post-throw cooldown (the tool flags itself Disabled while it respawns).
+    -- -----------------------------------------------------------------------
+    -- Throw
+    -- -----------------------------------------------------------------------
     local function getReadyKnife(): Tool?
         if findMurderer() ~= LocalPlayer then
             return nil
@@ -2964,8 +2965,8 @@ function Module.init(runtime: any): any
         if not character then
             return nil
         end
-        -- Search backpack too: an unequipped knife must be equipped before the
-        -- next tick, exactly like Shoot does with the gun.
+        -- The backpack is searched too: an unequipped knife has to be equipped
+        -- before the next tick, exactly like the gun in Shoot.
         local knife: Tool? = getPlayerWeapon(LocalPlayer, "Knife")
         if not knife or knife:GetAttribute("Disabled") == true then
             return nil
@@ -2981,34 +2982,16 @@ function Module.init(runtime: any): any
         return knife
     end
 
-    -- Lead the target by the blade's flight time so a moving target is still
-    -- where the knife arrives. Uses the calibrated throw speed when available.
-    local function predictAim(target: Player, originPos: Vector3): Vector3
-        local root: BasePart =
-            target.Character:FindFirstChild("HumanoidRootPart") :: BasePart
-        local knifeSpeed: number = 96
-        local estimates: any = trajectoryCalibration
-            and trajectoryCalibration.getEstimates
-            and trajectoryCalibration.getEstimates()
-        if estimates and estimates.knifeSpeed and estimates.knifeSpeed > 1 then
-            knifeSpeed = estimates.knifeSpeed
-        end
-        local flightTime: number =
-            (root.Position - originPos).Magnitude / knifeSpeed
-        local velocity: Vector3 = getFilteredVelocity(target, root)
-        return root.Position + velocity * flightTime
-    end
-
     local function throwKnife(): ()
-        if os.clock() - lastThrow < knifeThrowSettings.fireDelay then
+        if os.clock() - lastThrow < knifeSettings.fireDelay then
             return
         end
-        local silent: boolean = knifeThrowSettings.mode == "Silent"
+        local silent: boolean = silentThrow()
         local knife: Tool? = getReadyKnife()
         if not knife then
             return
         end
-        local events: Instance? = knife:FindFirstChild("Events")
+        local events: Instance? = (knife :: Tool):FindFirstChild("Events")
         local remote: Instance? = events and events:FindFirstChild("KnifeThrown")
         if not remote or not remote:IsA("RemoteEvent") then
             return
@@ -3022,36 +3005,42 @@ function Module.init(runtime: any): any
         end
 
         -- Silent ignores range: the whole point is to reach a target anywhere.
-        local target: Player? =
-            findNearestTarget(silent and 100000 or knifeThrowSettings.range)
+        local target: Player? = findNearestTarget(
+            (throwerPart :: BasePart).Position,
+            silent and 100000 or knifeSettings.throwRange
+        )
         if not target then
             return
         end
         local targetRoot: BasePart =
-            target.Character:FindFirstChild("HumanoidRootPart") :: BasePart
+            (target :: Player).Character:FindFirstChild("HumanoidRootPart")
+                :: BasePart
 
         local originPos: Vector3
         if silent then
             -- Spawn the blade just beside the target, on the thrower's side, so
             -- it travels a few studs into them and connects regardless of walls.
-            local toThrower: Vector3 = throwerPart.Position - targetRoot.Position
+            local toThrower: Vector3 =
+                (throwerPart :: BasePart).Position - targetRoot.Position
             if toThrower.Magnitude > 0.1 then
                 toThrower = toThrower.Unit
             else
                 toThrower = Vector3.new(0, 0, 1)
             end
-            originPos = targetRoot.Position + toThrower * knifeThrowSettings.spawnOffset
+            originPos =
+                targetRoot.Position + toThrower * knifeSettings.spawnOffset
         else
-            originPos = throwerPart.Position
+            originPos = (throwerPart :: BasePart).Position
         end
 
-        local aimPos: Vector3 = predictAim(target, originPos)
+        local aimPos: Vector3 =
+            predictThrowAim(target :: Player, originPos)
         remote:FireServer(CFrame.new(originPos), CFrame.new(aimPos))
         lastThrow = os.clock()
         pcall(trajectoryCalibration.noteAuthoredShot, trajectoryCalibration, {
             kind = "knife",
             tool = knife,
-            toolName = knife.Name,
+            toolName = (knife :: Tool).Name,
             originPos = originPos,
             aimPos = aimPos,
             target = target,
@@ -3059,85 +3048,224 @@ function Module.init(runtime: any): any
         })
     end
 
-    local function toggleKnifeThrow(enabled: boolean): ()
-        knifeThrowSettings.enabled = enabled
+    -- -----------------------------------------------------------------------
+    -- Shared controller: one heartbeat drives whichever half is enabled.
+    -- -----------------------------------------------------------------------
+    local function refreshKnifeController(): ()
+        disconnectFeatureConnection("MM2KnifeController")
+        disconnectFeatureConnection("MM2KnifeAura")
         disconnectFeatureConnection("MM2KnifeThrow")
-        if not enabled then
+        if not knifeSettings.aura and not knifeSettings.throw then
             return
         end
-        lastThrow = -math.huge
-        local elapsed: number = 0
-        featureConnections.MM2KnifeThrow =
+
+        local auraElapsed: number = 0
+        local throwElapsed: number = 0
+        featureConnections.MM2KnifeController =
             TaskManager:Connect(function(deltaTime: number): ()
-                elapsed += deltaTime
-                if elapsed < 1 / 30 then
-                    return
+                if knifeSettings.aura then
+                    auraElapsed += deltaTime
+                    if auraElapsed >= 0.05 then
+                        auraElapsed %= 0.05
+                        processKnifeAura()
+                    end
                 end
-                elapsed = 0
-                throwKnife()
+                if knifeSettings.throw then
+                    throwElapsed += deltaTime
+                    if throwElapsed >= 1 / 30 then
+                        throwElapsed = 0
+                        throwKnife()
+                    end
+                end
             end)
     end
 
-    local KnifeThrowFeature = createUniversalFeature(
-        "Knife Throw",
-        "Auto-throws the knife at the nearest target. Silent spawns the blade"
-            .. " beside the target so it connects at any distance or through walls.",
-        7,
-        toggleKnifeThrow,
+    local KnifeFeature = createUniversalFeature(
+        "Knife",
+        "The murderer's blade: aura stabs in range, throw leads by the measured "
+            .. "spawn delay plus flight time, silent throws spawn beside the target",
+        6,
+        function(enabled: boolean): ()
+            -- The card's own switch is the master: enabling the module arms
+            -- whichever half is toggled on, and the two inner toggles stay
+            -- independent so "aura only", "throw only" and "both" all work.
+            if not enabled then
+                knifeSettings.aura = false
+                knifeSettings.throw = false
+            end
+            refreshKnifeController()
+        end,
         {
             categoryName = "Blatant",
             parent = MM2Scroll,
             registry = mm2Features,
         }
     )
+
+    addSectionOption(KnifeFeature, "Aura")
+    addToggleOption(
+        KnifeFeature,
+        "Aura",
+        false,
+        function(value: boolean): ()
+            knifeSettings.aura = value
+            refreshKnifeController()
+        end,
+        "Stabs the nearest valid target in range through the game's own "
+            .. "HandleTouched remote."
+    )
+    addNumberOption(
+        KnifeFeature,
+        "Range",
+        knifeSettings.auraRange,
+        7,
+        30,
+        function(value: number): ()
+            knifeSettings.auraRange = value
+        end,
+        "Maximum stab distance.",
+        1
+    )
+    addToggleOption(
+        KnifeFeature,
+        "Auto Range",
+        knifeSettings.autoRange,
+        function(value: boolean): ()
+            knifeSettings.autoRange = value
+        end,
+        "Uses the longest stab the calibration has actually confirmed instead "
+            .. "of the manual range."
+    )
+
+    addSectionOption(KnifeFeature, "Throw")
+    addToggleOption(
+        KnifeFeature,
+        "Throw",
+        false,
+        function(value: boolean): ()
+            knifeSettings.throw = value
+            refreshKnifeController()
+        end,
+        "Auto-throws the knife at the nearest target."
+    )
     addCycleOption(
-        KnifeThrowFeature,
-        "Mode",
+        KnifeFeature,
+        "Throw mode",
         {"Normal", "Silent"},
         1,
         function(value: string): ()
-            knifeThrowSettings.mode = value
-        end
+            knifeSettings.throwMode = value
+        end,
+        "Normal throws from the hand and respects range. Silent authors the "
+            .. "blade beside the target, so it connects at any distance and "
+            .. "through walls."
     )
     addNumberOption(
-        KnifeThrowFeature,
+        KnifeFeature,
         "Fire delay",
-        knifeThrowSettings.fireDelay,
+        knifeSettings.fireDelay,
         0.2,
         3,
         function(value: number): ()
-            knifeThrowSettings.fireDelay = value
+            knifeSettings.fireDelay = value
         end,
         "Seconds between automatic throws.",
         0.1
     )
     addNumberOption(
-        KnifeThrowFeature,
-        "Range",
-        knifeThrowSettings.range,
+        KnifeFeature,
+        "Throw range",
+        knifeSettings.throwRange,
         10,
         400,
         function(value: number): ()
-            knifeThrowSettings.range = value
+            knifeSettings.throwRange = value
         end,
         "Maximum target distance for normal throws. Silent ignores this.",
         5
     )
     addNumberOption(
-        KnifeThrowFeature,
+        KnifeFeature,
         "Spawn offset",
-        knifeThrowSettings.spawnOffset,
+        knifeSettings.spawnOffset,
         1,
         15,
         function(value: number): ()
-            knifeThrowSettings.spawnOffset = value
+            knifeSettings.spawnOffset = value
         end,
         "Silent only: how far beside the target the blade spawns.",
         1
     )
+    addToggleOption(
+        KnifeFeature,
+        "Measured delay",
+        knifeSettings.useMeasuredDelay,
+        function(value: boolean): ()
+            knifeSettings.useMeasuredDelay = value
+        end,
+        "Leads by the spawn delay the calibration measured (about 200 ms) "
+            .. "instead of the manual value below."
+    )
+    addNumberOption(
+        KnifeFeature,
+        "Manual delay",
+        knifeSettings.manualSpawnDelay,
+        0,
+        500,
+        function(value: number): ()
+            knifeSettings.manualSpawnDelay = math.clamp(value, 0, 500)
+        end,
+        "Spawn delay in milliseconds, used when Measured delay is off.",
+        5
+    )
+    addNumberOption(
+        KnifeFeature,
+        "Lead bias",
+        knifeSettings.leadBias,
+        -0.15,
+        0.15,
+        function(value: number): ()
+            knifeSettings.leadBias = math.clamp(value, -0.15, 0.15)
+        end,
+        "Extra lead in seconds. Positive throws further ahead of the target.",
+        0.005
+    )
+    addActionOption(KnifeFeature, "Throw status", function(): ()
+        -- Say where each number came from. A throw that misses is usually a
+        -- lead built on defaults, and the only way to see that is to show how
+        -- many samples back the measured value really is.
+        local estimates: any? = calibrationEstimates()
+        local delaySource: string = knifeSettings.useMeasuredDelay
+            and "measured"
+            or "manual"
+        if knifeSettings.useMeasuredDelay and estimates then
+            local samples: number = tonumber(estimates.confirmedDelays) or 0
+            delaySource = string.format("measured, %d samples", samples)
+        end
+        local speedSource: string = ""
+        if estimates then
+            local throws: number = tonumber(estimates.confirmedThrows) or 0
+            if throws > 0 then
+                speedSource = string.format(" (%d throws)", throws)
+            end
+        end
+        notify(string.format(
+            "Knife · speed %.1f studs/s%s · spawn delay %.0f ms (%s)"
+                .. " · aura %s · throw %s (%s)",
+            getKnifeSpeed(),
+            speedSource,
+            getSpawnDelaySeconds() * 1000,
+            delaySource,
+            knifeSettings.aura and "on" or "off",
+            knifeSettings.throw and "on" or "off",
+            knifeSettings.throwMode
+        ))
+    end)
 
     activeCleanup = function(): ()
-        toggleKnifeThrow(false)
+        knifeSettings.aura = false
+        knifeSettings.throw = false
+        refreshKnifeController()
     end
     Module.Events = featureConnections
     Module.Initialized = true
@@ -3182,6 +3310,7 @@ function Module.init(runtime: any): any
     local findMurderer: any = core.findMurderer
     local getFilteredVelocity: any = core.getFilteredVelocity
     local getGunHorizonSeconds: any = core.getGunHorizonSeconds
+    local getGunLatencySeconds: any = core.getGunLatencySeconds
     local getGunTurnDiscount: any = core.getGunTurnDiscount
     local getGunTurnRate: any = core.getGunTurnRate
     local getGunLeadSensitivity: any = core.getGunLeadSensitivity
@@ -3223,18 +3352,53 @@ function Module.init(runtime: any): any
         ignoreVisibility: boolean?,
     }
 
-    -- Half width of the capsule the server will score the ray against. Used to
-    -- turn the prediction error into a yes/no answer instead of a guess.
+    -- -----------------------------------------------------------------------
+    -- The hitbox the server scores the ray against.
+    --
+    -- The server does not test a capsule of our choosing: it raycasts the
+    -- segment we hand it against the target's real parts. That makes the usable
+    -- window the *union* of the rig - roughly two studs across and five tall -
+    -- not the 1 stud circle this module used to assume. Measuring it per
+    -- character, per frame, is free and it is the biggest lever the solver
+    -- has: a shot that is 1.5 studs low still lands in the legs.
+    --
+    -- `BODY_HALF_WIDTH` is kept as the *unit* of the error budget so the
+    -- "Max error" slider keeps its meaning: an errorRadius of 1.0 always means
+    -- "one torso half-width away from the centre".
+    -- -----------------------------------------------------------------------
     local BODY_HALF_WIDTH: number = 1.0
     -- Floor for the error budget: even a perfect model does not know where a
     -- strafing player will be, so never claim better than this.
     local MINIMUM_ERROR_RADIUS: number = 0.35
+    -- Vertical tolerance is capped: past this the ray is leaving the rig even
+    -- if the bounding box says otherwise (the legs are much narrower than the
+    -- chest, and the head is a single part).
+    local MAX_VERTICAL_TOLERANCE: number = 2.2
+    -- A sprint (Haste, Sprint, any speed perk) is a committed straight line.
+    -- When the heading is stable the target is not going to pivot mid-burst, so
+    -- the assumed turn rate is capped instead of letting the generic
+    -- instability model price a 24 studs/s runner out of every shot.
+    local SPRINT_TURN_RATE: number = 1.2
 
     local AIM_PARTS: {string} = {
         "UpperTorso",
         "Torso",
         "HumanoidRootPart",
         "Head",
+    }
+    local BODY_PART_NAMES: {string} = {
+        "UpperTorso",
+        "LowerTorso",
+        "Torso",
+        "Head",
+        "HumanoidRootPart",
+    }
+
+    type BodyBox = {
+        centre: Vector3,
+        halfWidth: number,
+        halfUp: number,
+        halfDown: number,
     }
 
     local function findAimPart(character: Model): BasePart?
@@ -3247,9 +3411,100 @@ function Module.init(runtime: any): any
         return nil
     end
 
+    -- Vertical centre of the whole rig, so the ray has as much room above as
+    -- below it, and the widest real body part across.
+    local function measureBodyBox(
+        character: Model,
+        preferred: BasePart?
+    ): BodyBox
+        local parts: {BasePart} = {}
+        for _, partName: string in ipairs(BODY_PART_NAMES) do
+            local part: BasePart? = character:FindFirstChild(partName) :: BasePart?
+            if part and part:IsA("BasePart") then
+                table.insert(parts, part)
+            end
+        end
+        if #parts == 0 then
+            local fallback: Vector3 = preferred and preferred.Position
+                or Vector3.zero
+            return {
+                centre = fallback,
+                halfWidth = 0.7,
+                halfUp = 0.7,
+                halfDown = 0.7,
+            }
+        end
+        local top: number = -math.huge
+        local bottom: number = math.huge
+        local halfWidth: number = 0.7
+        local reference: BasePart = preferred or parts[1]
+        for _, part: BasePart in ipairs(parts) do
+            local size: Vector3 = part.Size
+            top = math.max(top, part.Position.Y + size.Y * 0.5)
+            bottom = math.min(bottom, part.Position.Y - size.Y * 0.5)
+            -- The root part is a collision slug, not a hit surface: using it
+            -- would claim a body wider than the one the ray can touch.
+            if part.Name ~= "HumanoidRootPart" then
+                halfWidth = math.max(
+                    halfWidth,
+                    math.min(math.max(size.X, size.Z) * 0.5, 1.6)
+                )
+            end
+        end
+        if top <= bottom then
+            return {
+                centre = reference.Position,
+                halfWidth = halfWidth,
+                halfUp = 0.7,
+                halfDown = 0.7,
+            }
+        end
+        local centreY: number = (top + bottom) * 0.5
+        return {
+            centre = Vector3.new(reference.Position.X, centreY, reference.Position.Z),
+            halfWidth = halfWidth,
+            halfUp = math.max(
+                0.5,
+                math.min(top - centreY, MAX_VERTICAL_TOLERANCE)
+            ),
+            halfDown = math.max(
+                0.5,
+                math.min(centreY - bottom, MAX_VERTICAL_TOLERANCE)
+            ),
+        }
+    end
+
+    -- Only the sideways part of an acceleration is unpredictable. A murderer
+    -- popping Sprint/Haste accelerates *along* the direction they are already
+    -- running: the constant-velocity term already carries that, and charging
+    -- it again as jitter is what used to make boosted targets unshootable.
+    local function lateralAcceleration(
+        acceleration: Vector3,
+        velocity: Vector3
+    ): Vector3
+        if acceleration.Magnitude < 0.001 or velocity.Magnitude < 1 then
+            return acceleration
+        end
+        local direction: Vector3 = velocity.Unit
+        local along: number = acceleration:Dot(direction)
+        return acceleration - direction * along
+    end
+
+    -- Opt-out kept: the sprint cap is a judgement about player behaviour, not
+    -- physics, so it can be turned off without touching the solver.
+    local trustSprints: boolean = true
+
+    -- Last solved body box and error split, published through the "Hitbox"
+    -- action so the geometry can be checked against real shots instead of
+    -- guessed at.
+    local lastBodyBox: BodyBox? = nil
+    local lastHorizontalError: number = 0
+    local lastVerticalError: number = 0
+    local lastBoosted: boolean = false
+
     -- Where the target will be when the server scores the shot, plus how much
-    -- that answer is worth. Returns nil when there is nothing to shoot at or the
-    -- prediction is worse than the body is wide.
+    -- that answer is worth. Returns nil when there is nothing to shoot at, or
+    -- when the prediction is further off than the body is wide.
     local function computeGunAim(
         target: Player,
         origin: CFrame,
@@ -3281,9 +3536,22 @@ function Module.init(runtime: any): any
         -- How well the target's heading from one sample ago predicts this one.
         -- Straight running scores ~1, a hard turn scores ~0. Without a reading
         -- (first frame after a teleport, dead sampler) we assume a brisk turn.
-        local turnRate: number = getGunTurnRate(
+        local measuredStability: number? =
             sample and sample.character == character and sample.stability or nil
-        )
+        local turnRate: number = getGunTurnRate(measuredStability)
+
+        -- Speed perks (Haste is a flat ~10%, Sprint is +50% for three seconds)
+        -- show up as a horizontal speed above the humanoid's own WalkSpeed. The
+        -- target is mid-burst and committed to a heading, so the generic
+        -- instability model - which prices every runner as if they were about
+        -- to pivot - is replaced by the sprint cap while the heading holds.
+        local horizontalSpeed: number =
+            Vector3.new(velocity.X, 0, velocity.Z).Magnitude
+        local boosted: boolean = horizontalSpeed
+            > humanoid.WalkSpeed + 1.5
+        if trustSprints and boosted and (measuredStability or 0) >= 0.8 then
+            turnRate = math.min(turnRate, SPRINT_TURN_RATE)
+        end
 
         -- A player who has not moved for a frame is standing still: use the
         -- Humanoid's intent so the first shot after a stop is not led at all,
@@ -3331,7 +3599,12 @@ function Module.init(runtime: any): any
             )
         end
 
-        local predicted: Vector3 = part.Position + displacement
+        -- Aim at the vertical centre of the whole rig: the ray then has as much
+        -- body above the point as below it, which is the most forgiving place
+        -- to put a prediction that is mostly wrong vertically.
+        local box: BodyBox = measureBodyBox(character :: Model, part)
+        local aimBase: Vector3 = box.centre
+        local predicted: Vector3 = aimBase + displacement
         local delta: Vector3 = predicted - origin.Position
         if delta.Magnitude <= 0.05 then
             return nil, nil, "too close"
@@ -3354,22 +3627,54 @@ function Module.init(runtime: any): any
             end
         end
 
-        -- Error budget: the sideways distance a turn of the measured rate puts
-        -- between the target and the point we solved for, plus the sampler's own
-        -- uncertainty, floored so a straight-line runner is never treated as a
-        -- guaranteed hit. This is the number that decides the shot, and it is
-        -- reported verbatim so a miss can be read back off the telemetry.
+        -- Error budget, split horizontally and vertically because the body is
+        -- not a sphere: it is two studs wide and five tall. `turnError` is the
+        -- sideways distance a turn of the measured rate puts between the target
+        -- and the point we solved for; the jitter is the sampler's own noise,
+        -- and only the *lateral* component of the measured acceleration counts
+        -- as noise (speeding up in a straight line is already in the lead).
         local turnError: number = displacement.Magnitude
             * math.sin(math.min(horizon * turnRate * 0.5, math.pi * 0.5))
-        local jitter: number = math.min(acceleration.Magnitude / 240, 0.45)
+        local lateral: Vector3 = lateralAcceleration(acceleration, velocity)
+        local horizontalJitter: number = math.min(
+            Vector3.new(lateral.X, 0, lateral.Z).Magnitude / 240,
+            0.45
+        )
+        local horizontalError: number = turnError + horizontalJitter
+        local verticalError: number = math.min(math.abs(lateral.Y) / 240, 0.45)
+        if not grounded then
+            -- Airborne vertical error is dominated by the noise in the sampled
+            -- climb/fall rate, not by gravity (gravity is integrated exactly).
+            verticalError = math.min(
+                verticalError + math.abs(velocity.Y) * lead * 0.25,
+                1.2
+            )
+        end
+
+        -- Normalised against the real hitbox: 1.0 means "exactly at the edge of
+        -- the body", so the error radius stays in torso half-widths and the
+        -- Max error slider keeps the scale it always had.
+        local widthBudget: number = box.halfWidth
+        local heightBudget: number = math.min(box.halfUp, box.halfDown)
+        local normalizedError: number = math.max(
+            horizontalError / math.max(widthBudget, 0.35),
+            verticalError / math.max(heightBudget, 0.35)
+        )
         local errorRadius: number = math.max(
             MINIMUM_ERROR_RADIUS,
-            turnError + jitter
+            normalizedError * BODY_HALF_WIDTH
         )
-        local allowedErrorBudget: number = ignoreVisibility and (BODY_HALF_WIDTH * 1.75) or BODY_HALF_WIDTH
-        if errorRadius > allowedErrorBudget then
+        -- Silent aim may reach a little past the body: the shot is authored at
+        -- the target and never travels the segment, so a near miss is still a
+        -- hit for the server while it would be a wasted bullet for a real one.
+        if normalizedError > (ignoreVisibility and 1.75 or 1.0) then
             return nil, nil, "turning too hard"
         end
+
+        lastBodyBox = box
+        lastHorizontalError = horizontalError
+        lastVerticalError = verticalError
+        lastBoosted = boosted
 
         local direction: Vector3 = delta.Unit
         return CFrame.lookAt(predicted, predicted + direction), {
@@ -3467,7 +3772,8 @@ function Module.init(runtime: any): any
         target: Player,
         prediction: GunPrediction,
         muzzleOrigin: CFrame?,
-        variant: string
+        variant: string,
+        box: BodyBox?
     ): (CFrame, CFrame, number)
         local predicted: Vector3 = prediction.targetPosition
         local velocity: Vector3 = prediction.velocity
@@ -3505,12 +3811,20 @@ function Module.init(runtime: any): any
             end
         end
 
+        -- The server scores the segment we author, so it has to cross the body
+        -- and not stop inside it: the far end sits a full body depth past the
+        -- centre, measured from the rig we are actually aiming at.
+        local pierce: number = SILENT_PIERCE_STUDS
+        if box then
+            pierce = (box :: BodyBox).halfWidth * 2 + SILENT_PIERCE_STUDS
+        end
+
         local startPoint: Vector3
         local endPoint: Vector3
         if variant == "Through" and approach then
             -- Front to far side: the segment crosses the full body.
             startPoint = predicted - approach * approachOffset + sweepStart
-            endPoint = predicted + approach * SILENT_PIERCE_STUDS + sweepEnd
+            endPoint = predicted + approach * pierce + sweepEnd
         elseif variant == "Top" then
             startPoint = predicted + Vector3.new(0, SILENT_LIFT_STUDS, 0)
                 + sweepStart
@@ -3659,7 +3973,7 @@ function Module.init(runtime: any): any
             -- expect the GunFired origin there, not at the muzzle.
             local variant: string = mm2Settings.silentSpawn
             local shotOrigin: CFrame, shotEnd: CFrame, offset: number =
-                buildSilentShot(target, resolved, origin, variant)
+                buildSilentShot(target, resolved, origin, variant, lastBodyBox)
             state.mm2ShotFeedback.queue(target, gun, shotOrigin, aim, resolved)
             if state.mm2ShotFeedback.pending then
                 state.mm2ShotFeedback.pending.silentSpawn = variant
@@ -3976,6 +4290,84 @@ function Module.init(runtime: any): any
     end)
     addToggleOption(
         ShootFeature,
+        "Trust sprints",
+        trustSprints,
+        function(value: boolean): ()
+            trustSprints = value
+        end,
+        "Treats a target moving faster than its own WalkSpeed (Haste, Sprint) "
+            .. "as committed to a straight line, so a burst of speed stops "
+            .. "pricing the shot out of the accuracy budget."
+    )
+    addActionOption(ShootFeature, "Hitbox", function(): ()
+        local box: BodyBox? = lastBodyBox
+        if not box then
+            notify("Hitbox: no shot solved yet.")
+            return
+        end
+        local latency: number, pingSeconds: number?, measured: number? =
+            getGunLatencySeconds()
+        notify(string.format(
+            "Hitbox %.2f wide · +%.2f/-%.2f tall | error H %.2f V %.2f"
+                .. " | horizon %.3fs (ping %s, measured %s, floor %dms, rewind %dms)"
+                .. " | %s",
+            (box :: BodyBox).halfWidth,
+            (box :: BodyBox).halfUp,
+            (box :: BodyBox).halfDown,
+            lastHorizontalError,
+            lastVerticalError,
+            getGunHorizonSeconds(),
+            pingSeconds and string.format("%.0fms", (pingSeconds :: number) * 1000) or "?",
+            measured and string.format("%.0fms", (measured :: number) * 1000) or "?",
+            math.floor(tonumber(mm2Settings.gunLatencyFloorMs) or 0),
+            math.floor(tonumber(mm2Settings.gunServerRewindMs) or 0),
+            lastBoosted and "target boosted" or "target at base speed"
+        ))
+    end)
+    addCycleOption(
+        ShootFeature,
+        "Latency source",
+        {"Measured", "Ping", "Lower", "Higher"},
+        1,
+        function(value: string): ()
+            mm2Settings.gunLatencySource = value
+        end,
+        "Which reading feeds the lead: the calibration average (Measured, "
+            .. "the historical behaviour), the live Data Ping, or the "
+            .. "lower/higher of the two for A/B testing."
+    )
+    addNumberOption(
+        ShootFeature,
+        "Latency floor",
+        tonumber(mm2Settings.gunLatencyFloorMs) or 200,
+        0,
+        300,
+        function(value: number): ()
+            mm2Settings.gunLatencyFloorMs = math.clamp(value, 0, 300)
+        end,
+        "Milliseconds the latency term can never go below. 200 is the "
+            .. "calibration's own average across every confirmed shot ever "
+            .. "recorded; lower it on a fast connection and compare the Spawn "
+            .. "A/B counters before trusting the change.",
+        5
+    )
+    addNumberOption(
+        ShootFeature,
+        "Server rewind",
+        tonumber(mm2Settings.gunServerRewindMs) or 0,
+        0,
+        250,
+        function(value: number): ()
+            mm2Settings.gunServerRewindMs = math.clamp(value, 0, 250)
+        end,
+        "Assumed server-side lag compensation, subtracted from the lead. "
+            .. "Leave it at 0 while the server scores shots where the target "
+            .. "is when the packet lands; raise it only if you have confirmed "
+            .. "the server rewinds hitboxes.",
+        5
+    )
+    addToggleOption(
+        ShootFeature,
         "Auto tune lead",
         mm2Settings.autoTuneLead,
         function(value: boolean): ()
@@ -4010,13 +4402,19 @@ function Module.init(runtime: any): any
             ))
             return
         end
+        local latency: number, pingSeconds: number?, measured: number? =
+            getGunLatencySeconds()
         notify(string.format(
-            "Manual %+.3fs | adaptive %+.3fs (%s; stored %+.3fs) | horizon %.3fs",
+            "Manual %+.3fs | adaptive %+.3fs (%s; stored %+.3fs) | horizon %.3fs"
+                .. " | latency %.3fs (ping %s, measured %s)",
             status.manualBias or 0,
             status.autoCorrection or 0,
             status.autoTuneEnabled and "on" or "off",
             status.storedAutoCorrection or 0,
-            status.horizon or getGunHorizonSeconds()
+            status.horizon or getGunHorizonSeconds(),
+            latency,
+            pingSeconds and string.format("%.0fms", (pingSeconds :: number) * 1000) or "?",
+            measured and string.format("%.0fms", (measured :: number) * 1000) or "?"
         ))
     end)
     addActionOption(ShootFeature, "Reset auto lead correction", function(): ()
@@ -5085,6 +5483,24 @@ local mm2Settings = {
     predictionRtt = 0.08,
     gunLeadBias = 0,
     autoTuneLead = false,
+    -- How the prediction horizon picks its latency term.
+    --   Measured  the calibration's own activation->confirmation reading,
+    --             floored by `gunLatencyFloorMs` (the historical behaviour).
+    --   Ping      the live Data Ping, which follows the network you are on
+    --             right now instead of the average of every session so far.
+    --   Lower/Highest of the two, for A/B testing the 200 ms question.
+    gunLatencySource = "Measured",
+    gunLatencyFloorMs = 200,
+    -- Assumed server-side lag compensation (hitbox rewind). 0 means "the
+    -- server scores the shot where the target is when the packet lands",
+    -- which is what MM2 has always behaved like. If the server rewinds the
+    -- target to the shooter's view, this is that window in milliseconds and
+    -- the horizon shrinks by it.
+    gunServerRewindMs = 0,
+    -- Throws lead by the server's spawn delay plus the flight time. Left nil
+    -- the measured calibration value is used.
+    knifeSpawnDelayMs = nil :: number?,
+    knifeLeadBias = 0,
     silentSweep = 0.5,
     -- Where the silent bullet is authored: "Front" (shooter's side of the
     -- torso), "Through" (pierces the torso), "Top" (old, 1.6 above), "Behind"
@@ -6543,7 +6959,19 @@ local function resetAutoLeadCorrection(): ()
     autoLeadCorrection = 0
 end
 
-local function getGunHorizonSeconds(): number
+-- The single number every gun decision is derived from, plus the two knobs the
+-- 200 ms question is really about.
+--
+-- `measuredAcceptance` is the calibration's own activation->confirmation
+-- reading: the average of every confirmed shot of every session so far (the
+-- shipped files put it at ~200 ms). It is an *average*, not this server's
+-- number, so it is offered next to the live ping instead of over it: which of
+-- the two the solver follows is `mm2Settings.gunLatencySource`, and the floor
+-- is `mm2Settings.gunLatencyFloorMs`. `mm2Settings.gunServerRewindMs` is then
+-- subtracted, because a server that rewinds hitboxes already cancels that much
+-- of the latency for us.
+local function getGunLatencySeconds(): (number, number?, number?)
+    local pingSeconds: number = math.max(getEstimatedLatency(), 0)
     local measuredAcceptance: number? = nil
     if trajectoryCalibration and type(trajectoryCalibration.getEstimates) == "function" then
         local okEst, est = pcall(function()
@@ -6553,8 +6981,37 @@ local function getGunHorizonSeconds(): number
             measuredAcceptance = (est.gunAcceptanceMs :: number) / 1000
         end
     end
-    -- Use empirically measured server rewind/acceptance latency from calibration when available (defaults to confirmed 200ms baseline)
-    local latencyTime: number = measuredAcceptance or math.max(getEstimatedLatency(), 0.200)
+    local floorSeconds: number = math.max(0, (tonumber(mm2Settings.gunLatencyFloorMs) or 0) / 1000)
+    local source: string = tostring(mm2Settings.gunLatencySource or "Measured")
+    local latencyTime: number
+    if source == "Ping" then
+        latencyTime = pingSeconds
+    elseif source == "Lower" then
+        latencyTime = math.min(
+            measuredAcceptance or pingSeconds,
+            pingSeconds
+        )
+    elseif source == "Higher" then
+        latencyTime = math.max(measuredAcceptance or pingSeconds, pingSeconds)
+    elseif measuredAcceptance and pingSeconds > 0 then
+        -- Measured: trust the calibration reading, but never let a number
+        -- averaged over other sessions drift further than a quarter of a
+        -- second away from the network we are on right now.
+        latencyTime = math.clamp(
+            measuredAcceptance,
+            pingSeconds,
+            pingSeconds + 0.25
+        )
+    else
+        latencyTime = measuredAcceptance or pingSeconds
+    end
+    latencyTime = math.max(latencyTime, floorSeconds)
+    return latencyTime, pingSeconds, measuredAcceptance
+end
+
+local function getGunHorizonSeconds(): number
+    local latencyTime: number = select(1, getGunLatencySeconds())
+    local rewind: number = math.max(0, (tonumber(mm2Settings.gunServerRewindMs) or 0) / 1000)
     local staleness: number = 1 / (2 * GUN_LEAD.replicationRate)
     local manualBias: number = math.clamp(
         mm2Settings.gunLeadBias,
@@ -6566,7 +7023,7 @@ local function getGunHorizonSeconds(): number
         -GUN_LEAD.maximumAutoCorrection,
         GUN_LEAD.maximumAutoCorrection
     )
-    local horizon: number = latencyTime
+    local horizon: number = math.max(0, latencyTime - rewind)
         + staleness
         + GUN_LEAD.serverFrame * 0.5
         + manualBias
@@ -6802,6 +7259,13 @@ local function createTrajectoryCalibration(): any
         knifeSpawnDelayDelta = nil :: RunningStats?,
         motionBuckets = {} :: {[string]: any},
         trajectorySampler = nil :: any,
+        -- Lifetime counters are what the file holds; the session counters are
+        -- always "since this join". Keeping them apart is what stops every save
+        -- from re-adding the stored totals to themselves.
+        lifetimeGunAttempts = 0,
+        lifetimeGunConfirmed = 0,
+        lifetimeKnifeAttempts = 0,
+        lifetimeKnifeConfirmed = 0,
     }
     local controller: Controller
     local saveSnapshot: (reason: string) -> boolean
@@ -6875,6 +7339,116 @@ local function createTrajectoryCalibration(): any
         }
     end
 
+    -- -----------------------------------------------------------------------
+    -- Motion buckets: SUMS in memory, MEANS on disk.
+    --
+    -- `analyzeTargetTrajectory` accumulates running sums (durationSum,
+    -- residualXSum, ...) and `motionModelPayload` divides them by `count` on the
+    -- way out. Loading a saved file straight into `runtime.motionBuckets` used
+    -- to put a *mean* table where the sampler expected a *sum* table, so the
+    -- very next sample did `bucket.durationSum += duration` on a nil field and
+    -- threw. History therefore both crashed the sampler and, when it did not,
+    -- was merged by adding means together. `bucketFromPayload` converts the
+    -- file representation back into the accumulator representation once, which
+    -- fixes both.
+    -- -----------------------------------------------------------------------
+    local function emptyMotionBucket(): {[string]: number}
+        return {
+            count = 0,
+            horizontalLeadSum = 0,
+            horizontalLeadCount = 0,
+            verticalLeadSum = 0,
+            verticalLeadCount = 0,
+            residualXSum = 0,
+            residualYSum = 0,
+            residualZSum = 0,
+            durationSum = 0,
+            constantVelocityErrorSum = 0,
+            observedAccelerationErrorSum = 0,
+            airborneBallisticErrorSum = 0,
+        }
+    end
+
+    local function numberFrom(value: any): number
+        local resolved: number? = tonumber(value)
+        if resolved == nil or resolved ~= resolved then
+            return 0
+        end
+        return resolved :: number
+    end
+
+    local function bucketFromPayload(payloadBucket: any): {[string]: number}
+        local bucket: {[string]: number} = emptyMotionBucket()
+        if type(payloadBucket) ~= "table" then
+            return bucket
+        end
+        local count: number = math.max(0, numberFrom(payloadBucket.count))
+        bucket.count = count
+        local horizontalLeadCount: number = numberFrom(
+            payloadBucket.horizontalLeadCount
+        )
+        if horizontalLeadCount <= 0 then
+            horizontalLeadCount = count
+        end
+        local verticalLeadCount: number = numberFrom(
+            payloadBucket.verticalLeadCount
+        )
+        if verticalLeadCount <= 0 then
+            verticalLeadCount = count
+        end
+        bucket.horizontalLeadCount = horizontalLeadCount
+        bucket.verticalLeadCount = verticalLeadCount
+
+        if payloadBucket.durationSum ~= nil then
+            -- Legacy file written with the accumulator shape: take it verbatim.
+            bucket.durationSum = numberFrom(payloadBucket.durationSum)
+            bucket.residualXSum = numberFrom(payloadBucket.residualXSum)
+            bucket.residualYSum = numberFrom(payloadBucket.residualYSum)
+            bucket.residualZSum = numberFrom(payloadBucket.residualZSum)
+            bucket.constantVelocityErrorSum = numberFrom(
+                payloadBucket.constantVelocityErrorSum
+            )
+            bucket.observedAccelerationErrorSum = numberFrom(
+                payloadBucket.observedAccelerationErrorSum
+            )
+            bucket.airborneBallisticErrorSum = numberFrom(
+                payloadBucket.airborneBallisticErrorSum
+            )
+            bucket.horizontalLeadSum = numberFrom(payloadBucket.horizontalLeadSum)
+            bucket.verticalLeadSum = numberFrom(payloadBucket.verticalLeadSum)
+            return bucket
+        end
+
+        bucket.durationSum =
+            numberFrom(payloadBucket.meanDurationSeconds) * count
+        local residual: any = payloadBucket.meanConstantVelocityResidual
+        if type(residual) == "table" then
+            bucket.residualXSum = numberFrom(residual[1]) * count
+            bucket.residualYSum = numberFrom(residual[2]) * count
+            bucket.residualZSum = numberFrom(residual[3]) * count
+        end
+        local modelError: any = payloadBucket.meanModelError
+        if type(modelError) == "table" then
+            bucket.constantVelocityErrorSum =
+                numberFrom(modelError.constantVelocity) * count
+            bucket.observedAccelerationErrorSum =
+                numberFrom(modelError.observedAcceleration) * count
+            bucket.airborneBallisticErrorSum =
+                numberFrom(modelError.airborneBallistic) * count
+        end
+        if payloadBucket.meanHorizontalLeadSeconds ~= nil then
+            bucket.horizontalLeadSum = numberFrom(
+                payloadBucket.meanHorizontalLeadSeconds
+            ) * horizontalLeadCount
+        end
+        if payloadBucket.meanVerticalLeadSeconds ~= nil then
+            bucket.verticalLeadSum = numberFrom(
+                payloadBucket.meanVerticalLeadSeconds
+            ) * verticalLeadCount
+        end
+        return bucket
+    end
+
     local function applyStatsPayload(
         stats: RunningStats,
         payload: {[string]: number}
@@ -6920,15 +7494,15 @@ local function createTrajectoryCalibration(): any
         if type(decoded.analytics) == "table" and type(decoded.analytics.motionModel) == "table" then
             for key: string, bucket: any in pairs(decoded.analytics.motionModel) do
                 if type(bucket) == "table" then
-                    runtime.motionBuckets[key] = table.clone(bucket)
+                    runtime.motionBuckets[key] = bucketFromPayload(bucket)
                 end
             end
         end
         if type(decoded.session) == "table" then
-            runtime.sessionGunAttempts = tonumber(decoded.session.gunAttempts) or 0
-            runtime.sessionGunConfirmed = tonumber(decoded.session.gunConfirmed) or 0
-            runtime.sessionKnifeAttempts = tonumber(decoded.session.knifeAttempts) or 0
-            runtime.sessionKnifeConfirmed = tonumber(decoded.session.knifeConfirmed) or 0
+            runtime.lifetimeGunAttempts = tonumber(decoded.session.gunAttempts) or 0
+            runtime.lifetimeGunConfirmed = tonumber(decoded.session.gunConfirmed) or 0
+            runtime.lifetimeKnifeAttempts = tonumber(decoded.session.knifeAttempts) or 0
+            runtime.lifetimeKnifeConfirmed = tonumber(decoded.session.knifeConfirmed) or 0
             if type(decoded.session.events) == "table" then
                 runtime.events = {}
                 for _, ev: any in ipairs(decoded.session.events) do
@@ -7439,11 +8013,18 @@ local function createTrajectoryCalibration(): any
                 end
             end
         end
+        local delayStats: RunningStats = runtime.knifeSpawnDelay
         return {
             gunAcceptanceMs = gunStats.count > 0 and gunStats.mean or nil,
             knifeSpeed = speedStats.count > 0 and speedStats.mean or nil,
+            -- How long the server takes to actually spawn the blade after the
+            -- KnifeThrown packet. A throw has to lead by this delay *plus* the
+            -- flight time, which is why it is published here and not only kept
+            -- in the aggregate dump.
+            knifeSpawnDelayMs = delayStats.count > 0 and delayStats.mean or nil,
             confirmedShots = gunStats.count,
             confirmedThrows = speedStats.count,
+            confirmedDelays = delayStats.count,
             maxStabDistance = maxStab,
         }
     end
@@ -7491,19 +8072,26 @@ local function createTrajectoryCalibration(): any
             and stored.analytics
             and stored.analytics.motionModel
             or {}
+        -- Both sides are converted to the accumulator shape before they touch
+        -- each other, so a saved mean is never added to a live mean (which used
+        -- to inflate every average by the number of previous sessions).
         local mergedBuckets: {[string]: any} = {}
         for key: string, bucket: any in pairs(runtime.motionBuckets) do
-            mergedBuckets[key] = table.clone(bucket)
+            mergedBuckets[key] = bucketFromPayload(bucket)
         end
         if type(storedBuckets) == "table" then
             for key: string, storedBucket: any in pairs(storedBuckets) do
+                local restored: {[string]: number} =
+                    bucketFromPayload(storedBucket)
                 local target: any = mergedBuckets[key]
                 if not target or type(target) ~= "table" then
-                    mergedBuckets[key] = table.clone(storedBucket)
+                    mergedBuckets[key] = restored
                 else
-                    for field: string, value: any in pairs(storedBucket) do
-                        if type(value) == "number" and type(target[field]) == "number" then
+                    for field: string, value: number in pairs(restored) do
+                        if type(target[field]) == "number" then
                             target[field] = target[field] + value
+                        else
+                            target[field] = value
                         end
                     end
                 end
@@ -7523,8 +8111,6 @@ local function createTrajectoryCalibration(): any
         while #mergedEvents > 2400 do
             table.remove(mergedEvents, 1)
         end
-        local storedSession: any =
-            type(stored) == "table" and stored.session or {}
         local payload: {[string]: any} = {
             schema = 2,
             kind = "mm2-trajectory-analytics",
@@ -7554,13 +8140,13 @@ local function createTrajectoryCalibration(): any
             },
             session = {
                 elapsedSeconds = os.clock() - runtime.startedAt,
-                gunAttempts = (tonumber(storedSession.gunAttempts) or 0)
+                gunAttempts = runtime.lifetimeGunAttempts
                     + runtime.sessionGunAttempts,
-                gunConfirmed = (tonumber(storedSession.gunConfirmed) or 0)
+                gunConfirmed = runtime.lifetimeGunConfirmed
                     + runtime.sessionGunConfirmed,
-                knifeAttempts = (tonumber(storedSession.knifeAttempts) or 0)
+                knifeAttempts = runtime.lifetimeKnifeAttempts
                     + runtime.sessionKnifeAttempts,
-                knifeConfirmed = (tonumber(storedSession.knifeConfirmed) or 0)
+                knifeConfirmed = runtime.lifetimeKnifeConfirmed
                     + runtime.sessionKnifeConfirmed,
                 events = mergedEvents,
             },
@@ -7598,10 +8184,13 @@ local function createTrajectoryCalibration(): any
         runtime.knifeSpeedDelta = newStats()
         runtime.knifeSpawnDelayDelta = newStats()
         runtime.eventsNew = {}
-        runtime.sessionGunAttempts = payload.session.gunAttempts
-        runtime.sessionGunConfirmed = payload.session.gunConfirmed
-        runtime.sessionKnifeAttempts = payload.session.knifeAttempts
-        runtime.sessionKnifeConfirmed = payload.session.knifeConfirmed
+        -- Only the lifetime totals adopt the merged values: the session
+        -- counters keep counting from this join, so a second save cannot count
+        -- the same shots twice.
+        runtime.lifetimeGunAttempts = payload.session.gunAttempts
+        runtime.lifetimeGunConfirmed = payload.session.gunConfirmed
+        runtime.lifetimeKnifeAttempts = payload.session.knifeAttempts
+        runtime.lifetimeKnifeConfirmed = payload.session.knifeConfirmed
         runtime.dirty = false
         print(
             trajectoryLogPrefix .. " Saved "
@@ -8075,6 +8664,94 @@ local function createTrajectoryCalibration(): any
         end)
     end
 
+    -- -----------------------------------------------------------------------
+    -- Leaving the game must not lose the history.
+    --
+    -- Roblox never fires BindToClose on the client, so "the player is gone" is
+    -- reconstructed from the signals an executor can actually observe: the
+    -- teleport trip, the menu GUI losing its parent (which is what a shutdown
+    -- or a script teardown looks like from inside) and, as the safety net that
+    -- covers every other exit, a slow periodic autosave. Every hook is
+    -- idempotent - the worst case is writing the same merged file twice.
+    -- -----------------------------------------------------------------------
+    local AUTOSAVE_SECONDS: number = 20
+    local persistenceHooksInstalled: boolean = false
+    local lastAutosaveAt: number = 0
+
+    local function installPersistenceHooks(): ()
+        if persistenceHooksInstalled then
+            return
+        end
+        persistenceHooksInstalled = true
+        lastAutosaveAt = os.clock()
+
+        pcall(function(): ()
+            trackConnection(LocalPlayer.OnTeleport:Connect(function(): ()
+                saveSnapshot("teleport")
+            end))
+        end)
+        pcall(function(): ()
+            local teleportService: any = game:GetService("TeleportService")
+            trackConnection(teleportService.TeleportInitFailed:Connect(function(): ()
+                saveSnapshot("teleport")
+            end))
+        end)
+        -- The menu ScreenGui is reparented to nil the moment the player leaves
+        -- or the script is torn down, which is the closest thing a client has
+        -- to a shutdown signal.
+        pcall(function(): ()
+            if typeof(ScreenGui) ~= "Instance" then
+                return
+            end
+            trackConnection(ScreenGui.AncestryChanged:Connect(function(
+                _child: Instance,
+                parent: Instance?
+            ): ()
+                if parent == nil then
+                    saveSnapshot("shutdown")
+                end
+            end))
+            trackConnection(ScreenGui.Destroying:Connect(function(): ()
+                saveSnapshot("shutdown")
+            end))
+        end)
+        -- Most executors expose a genuine close callback; bind it when present.
+        pcall(function(): ()
+            local environmentClose: any = environment.close
+            if type(environmentClose) == "function" then
+                environmentClose(function(): ()
+                    saveSnapshot("shutdown")
+                end)
+                return
+            end
+            local gameClose: any = (game :: any).Close
+            if typeof(gameClose) == "RBXScriptSignal" then
+                trackConnection(gameClose:Connect(function(): ()
+                    saveSnapshot("shutdown")
+                end))
+            end
+        end)
+
+        local elapsed: number = 0
+        trackConnection(RunService.Heartbeat:Connect(function(
+            deltaTime: number
+        ): ()
+            elapsed += deltaTime
+            if elapsed < 1 then
+                return
+            end
+            elapsed = 0
+            if not runtime.active or not runtime.dirty then
+                return
+            end
+            if os.clock() - lastAutosaveAt < AUTOSAVE_SECONDS then
+                return
+            end
+            lastAutosaveAt = os.clock()
+            saveSnapshot("autosave")
+        end))
+    end
+
     controller = {} :: Controller
 
     function controller:start(): ()
@@ -8102,6 +8779,7 @@ local function createTrajectoryCalibration(): any
             )
         )
         installGunConfirmation()
+        installPersistenceHooks()
         print(trajectoryLogPrefix .. " Passive calibration started in the background.")
     end
 
@@ -8122,6 +8800,10 @@ local function createTrajectoryCalibration(): any
         runtime.sessionGunConfirmed = 0
         runtime.sessionKnifeAttempts = 0
         runtime.sessionKnifeConfirmed = 0
+        runtime.lifetimeGunAttempts = 0
+        runtime.lifetimeGunConfirmed = 0
+        runtime.lifetimeKnifeAttempts = 0
+        runtime.lifetimeKnifeConfirmed = 0
     end
 
     function controller:save(reason: string?): boolean
@@ -8245,16 +8927,23 @@ local function createTrajectoryCalibration(): any
         local knifeText: string = current.knifeSpeed
                 and string.format("%.2f studs/s", current.knifeSpeed)
             or "learning"
+        local delayText: string = current.knifeSpawnDelayMs
+                and string.format("%.0f ms", current.knifeSpawnDelayMs)
+            or "learning"
         local bucketCount: number = 0
         for _key: string in pairs(runtime.motionBuckets) do
             bucketCount += 1
         end
         return string.format(
-            "MM2 analytics · shots %d · throws %d · motion buckets %d · knife %s",
+            "MM2 analytics · shots %d · throws %d · knife %s · spawn delay %s · gun ack %s · buckets %d",
             current.confirmedShots,
             current.confirmedThrows,
-            bucketCount,
-            knifeText
+            knifeText,
+            delayText,
+            current.gunAcceptanceMs
+                and string.format("%.0f ms", current.gunAcceptanceMs)
+                or "learning",
+            bucketCount
         )
     end
 
@@ -8977,6 +9666,7 @@ state.mm2Core = {
     getFilteredVelocity = getFilteredVelocity,
     getEstimatedLatency = getEstimatedLatency,
     getGunHorizonSeconds = getGunHorizonSeconds,
+    getGunLatencySeconds = getGunLatencySeconds,
     getGunTurnDiscount = getGunTurnDiscount,
     getGunTurnRate = getGunTurnRate,
     getGunLeadSensitivity = getGunLeadSensitivity,
@@ -22278,6 +22968,10 @@ function Module.init(context: Runtime): any
             movementTask = nil :: any,
             hitboxTask = nil :: any,
             autosaveTask = nil :: any,
+            -- Persistence hooks are kept apart from `connections`, which is
+            -- cleared on every disable, so they keep working across a
+            -- disable/enable cycle.
+            persistenceConnections = {} :: {any},
         }
         local controller: any
         local saveSnapshot: (reason: string) -> boolean
@@ -22977,6 +23671,47 @@ function Module.init(context: Runtime): any
             end
         end
 
+        -- An autosave covers most exits, but a teleport and a shutdown are
+        -- both sudden enough to beat a 15 second timer, so they get their own
+        -- flush.
+        local hooksInstalled: boolean = false
+        local function installPersistenceHooks(): ()
+            if hooksInstalled then
+                return
+            end
+            hooksInstalled = true
+            local keep: {any} = runtime.persistenceConnections
+            pcall(function(): ()
+                table.insert(
+                    keep,
+                    LocalPlayer.OnTeleport:Connect(function(): ()
+                        saveSnapshot("teleport", true)
+                    end)
+                )
+            end)
+            pcall(function(): ()
+                table.insert(
+                    keep,
+                    ScreenGui.AncestryChanged:Connect(function(
+                        _child: Instance,
+                        parent: Instance?
+                    ): ()
+                        if parent == nil then
+                            saveSnapshot("shutdown", true)
+                        end
+                    end)
+                )
+            end)
+            pcall(function(): ()
+                local environmentClose: any = executorEnvironment.close
+                if type(environmentClose) == "function" then
+                    environmentClose(function(): ()
+                        saveSnapshot("shutdown", true)
+                    end)
+                end
+            end)
+        end
+
         saveSnapshot = function(reason: string?, silent: boolean?): boolean
             if type(executorEnvironment.writefile) ~= "function" then
                 return false
@@ -23135,6 +23870,7 @@ function Module.init(context: Runtime): any
             end
             runtime.enabled = true
             loadStoredLogs()
+            installPersistenceHooks()
             startMovementProbe()
             startHitboxProbe()
             if not runtime.autosaveTask then
@@ -24535,11 +25271,20 @@ local Module = {
 
 local activeCard: any = nil
 
+-- White is the default: an arrow is a direction cue, not a threat rating, so it
+-- stays neutral until the game actually tells us something about the player it
+-- points at.
+local DEFAULT_COLOUR: Color3 = Color3.fromRGB(255, 255, 255)
+local PREVIOUS_DEFAULT_COLOUR: Color3 = Color3.fromRGB(0, 204, 255)
+local FRIENDLY_COLOUR: Color3 = Color3.fromRGB(255, 255, 255)
+
 function Module.init(context: Runtime): any
     local framework: any = context.framework
     local entity: any = context.entity
     local render: any = context.render
+    local host: any = context.host
     local protectedTargets: any = context.services.protectedTargets
+    local gameBridge: any = context.services.gameBridge
     local currentWorkspace: Workspace = context.host.workspace or workspace
     local layer: Frame = render:Layer("ArrowsLayer")
     local shown: {[Player]: boolean} = {}
@@ -24549,6 +25294,40 @@ function Module.init(context: Runtime): any
         render:ReleaseAll(layer)
         table.clear(shown)
         layer.Visible = false
+    end
+
+    -- The colour of one arrow.
+    --
+    -- TeamCheck is the single switch for "paint players by what they are". When
+    -- it is on and the running game publishes roles (MM2, MVSD, VD...), every
+    -- arrow takes the colour of that player's role, so a Murderer reads red and
+    -- a Sheriff reads blue without any per-game code in here. When the game has
+    -- no role provider the same switch degrades to the only thing that is still
+    -- known - teammate or not - and everything else keeps the configured
+    -- colour.
+    local function resolveColour(player: Player, isFriendly: boolean): Color3
+        local base: Color3 = card.Options["Colour"].Value
+        if card.Options["TeamCheck"].Value ~= true then
+            return base
+        end
+        local roleColour: Color3? = nil
+        if type(gameBridge) == "table"
+            and type(gameBridge.playerRoleColor) == "function" then
+            local ok: boolean, resolved: any = pcall(
+                gameBridge.playerRoleColor,
+                player
+            )
+            if ok and typeof(resolved) == "Color3" then
+                roleColour = resolved :: Color3
+            end
+        end
+        if roleColour then
+            return roleColour :: Color3
+        end
+        if isFriendly then
+            return FRIENDLY_COLOUR
+        end
+        return base
     end
 
     card = framework.Categories.Visuals:CreateModule({
@@ -24576,6 +25355,7 @@ function Module.init(context: Runtime): any
                 local radius: number = math.max(40, math.min(viewport.X, viewport.Y) * 0.4)
                 local seen: {[Player]: boolean} = {}
                 local count: number = 0
+                local teamCheck: boolean = card.Options["TeamCheck"].Value == true
                 for _, target: any in ipairs(entity:Refresh()) do
                     local player: Player = target.Player
                     if (not card.Options["Teammates"].Value and target.IsFriendly)
@@ -24605,7 +25385,7 @@ function Module.init(context: Runtime): any
                     local perpendicular: Vector2 = Vector2.new(-direction.Y, direction.X)
                     local tip: Vector2 = centre + direction * radius
                     local back: Vector2 = tip - direction * 16
-                    local colour: Color3 = card.Options["Colour"].Value
+                    local colour: Color3 = resolveColour(player, target.IsFriendly == true)
                     drawing:Line("Arrow", 1, tip, back + perpendicular * 8, 2, colour)
                     drawing:Line("Arrow", 2, tip, back - perpendicular * 8, 2, colour)
                     drawing:HideLines("Arrow", 3, 8)
@@ -24638,10 +25418,83 @@ function Module.init(context: Runtime): any
         end,
     })
 
-    card:CreateColor({Name = "Colour", Default = Color3.fromRGB(0, 204, 255)})
+    -- One-time migration: the previous hard-coded default was cyan. A stored
+    -- value that is still exactly that old default has never been touched by
+    -- the user, so it becomes the new white default instead of pinning them to
+    -- a colour the menu no longer ships with.
+    do
+        local store: any = host and host.configData
+        if store and store.values then
+            local migrationKey: string = "Universal.Arrows.ColourSchema"
+            if store.values[migrationKey] ~= 2 then
+                local stored: any = store.values["Universal.Arrows.Colour"]
+                local migrated: boolean = false
+                -- Colours are persisted as {r, g, b} channels (see
+                -- colorToConfig), so the migration speaks the same shape.
+                if stored == nil then
+                    store.values["Universal.Arrows.Colour"] = {
+                        math.round(DEFAULT_COLOUR.R * 255),
+                        math.round(DEFAULT_COLOUR.G * 255),
+                        math.round(DEFAULT_COLOUR.B * 255),
+                    }
+                    migrated = true
+                elseif type(stored) == "table" then
+                    local r: number = tonumber(stored[1]) or 0
+                    local g: number = tonumber(stored[2]) or 0
+                    local b: number = tonumber(stored[3]) or 0
+                    if math.abs(r - PREVIOUS_DEFAULT_COLOUR.R * 255) <= 1
+                        and math.abs(g - PREVIOUS_DEFAULT_COLOUR.G * 255) <= 1
+                        and math.abs(b - PREVIOUS_DEFAULT_COLOUR.B * 255) <= 1 then
+                        store.values["Universal.Arrows.Colour"] = {
+                            math.round(DEFAULT_COLOUR.R * 255),
+                            math.round(DEFAULT_COLOUR.G * 255),
+                            math.round(DEFAULT_COLOUR.B * 255),
+                        }
+                        migrated = true
+                    end
+                end
+                store.values[migrationKey] = 2
+                if migrated and type(host.queueConfigSave) == "function" then
+                    host.queueConfigSave()
+                end
+            end
+        end
+    end
+
+    card:CreateColor({Name = "Colour", Default = DEFAULT_COLOUR})
+    card:CreateToggle({
+        Name = "TeamCheck",
+        Default = true,
+        Tooltip = "Paints every arrow with that player's role when the game "
+            .. "publishes roles (MM2, MVSD...). Without roles it falls back to "
+            .. "white teammates and the configured colour for everyone else.",
+    })
     card:CreateToggle({Name = "Distance", Default = true})
     card:CreateSlider({Name = "Max distance", Min = 25, Max = 2000, Step = 25, Default = 500})
     card:CreateToggle({Name = "Teammates", Default = false})
+
+    -- Arrows ship enabled. Only a config that has never stored a state for this
+    -- module gets the default, so turning them off once is remembered.
+    do
+        local store: any = host and host.configData
+        if store and store.states and store.states["Universal.Arrows"] == nil then
+            store.states["Universal.Arrows"] = true
+            if type(host.queueConfigSave) == "function" then
+                host.queueConfigSave()
+            end
+            task.defer(function(): ()
+                if not Module.Initialized or not activeCard then
+                    return
+                end
+                if activeCard.Enabled then
+                    return
+                end
+                pcall(function(): ()
+                    activeCard:Toggle(true)
+                end)
+            end)
+        end
+    end
 
     activeCard = card
     Module.Initialized = true
@@ -26977,6 +27830,14 @@ function Module.init(context: Runtime): any
             totalActivations = 0,
             totalProjectiles = 0,
             rejectedCandidates = 0,
+            -- `seeded` records that the stored history has been folded into
+            -- this session; `lastSaveAt` paces the autosave.
+            seeded = false,
+            lastSaveAt = 0,
+            -- The persistence hooks live outside `connections`: that table is
+            -- wiped every time the module is switched off, and these have to
+            -- survive a disable/enable cycle to keep protecting the history.
+            persistenceConnections = {} :: {RBXScriptConnection},
         }
         local controller: Controller
         local saveSnapshot: (reason: string) -> boolean
@@ -27081,9 +27942,78 @@ function Module.init(context: Runtime): any
             runtime.dirty = true
         end
 
+        -- Leaving the game is not an event Roblox hands a client, so the
+        -- history is protected the only three ways it can be: a periodic
+        -- autosave, the teleport signal, and the menu GUI losing its parent
+        -- (which is what a shutdown looks like from in here).
+        local AUTOSAVE_SECONDS: number = 20
+        local hooksInstalled: boolean = false
+
+        local function installPersistenceHooks(): ()
+            if hooksInstalled then
+                return
+            end
+            hooksInstalled = true
+            local keep: {RBXScriptConnection} = runtime.persistenceConnections
+            pcall(function(): ()
+                table.insert(
+                    keep,
+                    LocalPlayer.OnTeleport:Connect(function(): ()
+                        saveSnapshot("teleport")
+                    end)
+                )
+            end)
+            pcall(function(): ()
+                table.insert(keep, (ScreenGui :: Instance)
+                    .AncestryChanged:Connect(function(
+                        _child: Instance,
+                        parent: Instance?
+                    ): ()
+                        if parent == nil then
+                            saveSnapshot("shutdown")
+                        end
+                    end))
+            end)
+            pcall(function(): ()
+                local environmentClose: any = executorEnvironment.close
+                if type(environmentClose) == "function" then
+                    environmentClose(function(): ()
+                        saveSnapshot("shutdown")
+                    end)
+                end
+            end)
+            local elapsed: number = 0
+            table.insert(keep, RunService.Heartbeat:Connect(function(
+                deltaTime: number
+            ): ()
+                elapsed += deltaTime
+                if elapsed < 1 then
+                    return
+                end
+                elapsed = 0
+                if not runtime.enabled or not runtime.dirty then
+                    return
+                end
+                if os.clock() - runtime.lastSaveAt < AUTOSAVE_SECONDS then
+                    return
+                end
+                runtime.lastSaveAt = os.clock()
+                saveSnapshot("autosave")
+            end))
+        end
+
         saveSnapshot = function(reason: string): boolean
             if type(executorEnvironment.writefile) ~= "function" then
                 return false
+            end
+            -- The file is the only copy of every earlier session. If this
+            -- session never seeded from it (the module was off, or the save
+            -- button was pressed before it finished starting), fold the stored
+            -- history in first - otherwise a manual save silently replaces
+            -- months of samples with the five events of this session.
+            if not runtime.seeded then
+                loadSavedAnalytics()
+                runtime.seeded = true
             end
             local payload: {[string]: any} = {
                 schema = 1,
@@ -27130,6 +28060,7 @@ function Module.init(context: Runtime): any
                 return false
             end
             runtime.dirty = false
+            runtime.lastSaveAt = os.clock()
             return true
         end
 
@@ -27499,6 +28430,11 @@ function Module.init(context: Runtime): any
                 return
             end
             if not enabled then
+                -- Turning the module off used to drop everything collected
+                -- since the last manual save.
+                if runtime.dirty then
+                    saveSnapshot("disable")
+                end
                 runtime.enabled = false
                 disconnectAll()
                 return
@@ -27506,6 +28442,8 @@ function Module.init(context: Runtime): any
             runtime.enabled = true
             runtime.startedAt = os.clock()
             loadSavedAnalytics()
+            runtime.seeded = true
+            installPersistenceHooks()
             observeContainer(LocalPlayer:FindFirstChildOfClass("Backpack"))
             observeContainer(LocalPlayer.Character)
             table.insert(runtime.connections, LocalPlayer.CharacterAdded:Connect(function(
@@ -27555,6 +28493,9 @@ function Module.init(context: Runtime): any
         end
 
         function controller:destroy(): ()
+            if runtime.enabled and runtime.dirty then
+                saveSnapshot("module-destroy")
+            end
             self:setEnabled(false)
         end
 

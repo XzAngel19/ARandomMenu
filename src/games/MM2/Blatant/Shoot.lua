@@ -21,6 +21,7 @@ function Module.init(runtime: any): any
     local findMurderer: any = core.findMurderer
     local getFilteredVelocity: any = core.getFilteredVelocity
     local getGunHorizonSeconds: any = core.getGunHorizonSeconds
+    local getGunLatencySeconds: any = core.getGunLatencySeconds
     local getGunTurnDiscount: any = core.getGunTurnDiscount
     local getGunTurnRate: any = core.getGunTurnRate
     local getGunLeadSensitivity: any = core.getGunLeadSensitivity
@@ -62,18 +63,53 @@ function Module.init(runtime: any): any
         ignoreVisibility: boolean?,
     }
 
-    -- Half width of the capsule the server will score the ray against. Used to
-    -- turn the prediction error into a yes/no answer instead of a guess.
+    -- -----------------------------------------------------------------------
+    -- The hitbox the server scores the ray against.
+    --
+    -- The server does not test a capsule of our choosing: it raycasts the
+    -- segment we hand it against the target's real parts. That makes the usable
+    -- window the *union* of the rig - roughly two studs across and five tall -
+    -- not the 1 stud circle this module used to assume. Measuring it per
+    -- character, per frame, is free and it is the biggest lever the solver
+    -- has: a shot that is 1.5 studs low still lands in the legs.
+    --
+    -- `BODY_HALF_WIDTH` is kept as the *unit* of the error budget so the
+    -- "Max error" slider keeps its meaning: an errorRadius of 1.0 always means
+    -- "one torso half-width away from the centre".
+    -- -----------------------------------------------------------------------
     local BODY_HALF_WIDTH: number = 1.0
     -- Floor for the error budget: even a perfect model does not know where a
     -- strafing player will be, so never claim better than this.
     local MINIMUM_ERROR_RADIUS: number = 0.35
+    -- Vertical tolerance is capped: past this the ray is leaving the rig even
+    -- if the bounding box says otherwise (the legs are much narrower than the
+    -- chest, and the head is a single part).
+    local MAX_VERTICAL_TOLERANCE: number = 2.2
+    -- A sprint (Haste, Sprint, any speed perk) is a committed straight line.
+    -- When the heading is stable the target is not going to pivot mid-burst, so
+    -- the assumed turn rate is capped instead of letting the generic
+    -- instability model price a 24 studs/s runner out of every shot.
+    local SPRINT_TURN_RATE: number = 1.2
 
     local AIM_PARTS: {string} = {
         "UpperTorso",
         "Torso",
         "HumanoidRootPart",
         "Head",
+    }
+    local BODY_PART_NAMES: {string} = {
+        "UpperTorso",
+        "LowerTorso",
+        "Torso",
+        "Head",
+        "HumanoidRootPart",
+    }
+
+    type BodyBox = {
+        centre: Vector3,
+        halfWidth: number,
+        halfUp: number,
+        halfDown: number,
     }
 
     local function findAimPart(character: Model): BasePart?
@@ -86,9 +122,100 @@ function Module.init(runtime: any): any
         return nil
     end
 
+    -- Vertical centre of the whole rig, so the ray has as much room above as
+    -- below it, and the widest real body part across.
+    local function measureBodyBox(
+        character: Model,
+        preferred: BasePart?
+    ): BodyBox
+        local parts: {BasePart} = {}
+        for _, partName: string in ipairs(BODY_PART_NAMES) do
+            local part: BasePart? = character:FindFirstChild(partName) :: BasePart?
+            if part and part:IsA("BasePart") then
+                table.insert(parts, part)
+            end
+        end
+        if #parts == 0 then
+            local fallback: Vector3 = preferred and preferred.Position
+                or Vector3.zero
+            return {
+                centre = fallback,
+                halfWidth = 0.7,
+                halfUp = 0.7,
+                halfDown = 0.7,
+            }
+        end
+        local top: number = -math.huge
+        local bottom: number = math.huge
+        local halfWidth: number = 0.7
+        local reference: BasePart = preferred or parts[1]
+        for _, part: BasePart in ipairs(parts) do
+            local size: Vector3 = part.Size
+            top = math.max(top, part.Position.Y + size.Y * 0.5)
+            bottom = math.min(bottom, part.Position.Y - size.Y * 0.5)
+            -- The root part is a collision slug, not a hit surface: using it
+            -- would claim a body wider than the one the ray can touch.
+            if part.Name ~= "HumanoidRootPart" then
+                halfWidth = math.max(
+                    halfWidth,
+                    math.min(math.max(size.X, size.Z) * 0.5, 1.6)
+                )
+            end
+        end
+        if top <= bottom then
+            return {
+                centre = reference.Position,
+                halfWidth = halfWidth,
+                halfUp = 0.7,
+                halfDown = 0.7,
+            }
+        end
+        local centreY: number = (top + bottom) * 0.5
+        return {
+            centre = Vector3.new(reference.Position.X, centreY, reference.Position.Z),
+            halfWidth = halfWidth,
+            halfUp = math.max(
+                0.5,
+                math.min(top - centreY, MAX_VERTICAL_TOLERANCE)
+            ),
+            halfDown = math.max(
+                0.5,
+                math.min(centreY - bottom, MAX_VERTICAL_TOLERANCE)
+            ),
+        }
+    end
+
+    -- Only the sideways part of an acceleration is unpredictable. A murderer
+    -- popping Sprint/Haste accelerates *along* the direction they are already
+    -- running: the constant-velocity term already carries that, and charging
+    -- it again as jitter is what used to make boosted targets unshootable.
+    local function lateralAcceleration(
+        acceleration: Vector3,
+        velocity: Vector3
+    ): Vector3
+        if acceleration.Magnitude < 0.001 or velocity.Magnitude < 1 then
+            return acceleration
+        end
+        local direction: Vector3 = velocity.Unit
+        local along: number = acceleration:Dot(direction)
+        return acceleration - direction * along
+    end
+
+    -- Opt-out kept: the sprint cap is a judgement about player behaviour, not
+    -- physics, so it can be turned off without touching the solver.
+    local trustSprints: boolean = true
+
+    -- Last solved body box and error split, published through the "Hitbox"
+    -- action so the geometry can be checked against real shots instead of
+    -- guessed at.
+    local lastBodyBox: BodyBox? = nil
+    local lastHorizontalError: number = 0
+    local lastVerticalError: number = 0
+    local lastBoosted: boolean = false
+
     -- Where the target will be when the server scores the shot, plus how much
-    -- that answer is worth. Returns nil when there is nothing to shoot at or the
-    -- prediction is worse than the body is wide.
+    -- that answer is worth. Returns nil when there is nothing to shoot at, or
+    -- when the prediction is further off than the body is wide.
     local function computeGunAim(
         target: Player,
         origin: CFrame,
@@ -120,9 +247,22 @@ function Module.init(runtime: any): any
         -- How well the target's heading from one sample ago predicts this one.
         -- Straight running scores ~1, a hard turn scores ~0. Without a reading
         -- (first frame after a teleport, dead sampler) we assume a brisk turn.
-        local turnRate: number = getGunTurnRate(
+        local measuredStability: number? =
             sample and sample.character == character and sample.stability or nil
-        )
+        local turnRate: number = getGunTurnRate(measuredStability)
+
+        -- Speed perks (Haste is a flat ~10%, Sprint is +50% for three seconds)
+        -- show up as a horizontal speed above the humanoid's own WalkSpeed. The
+        -- target is mid-burst and committed to a heading, so the generic
+        -- instability model - which prices every runner as if they were about
+        -- to pivot - is replaced by the sprint cap while the heading holds.
+        local horizontalSpeed: number =
+            Vector3.new(velocity.X, 0, velocity.Z).Magnitude
+        local boosted: boolean = horizontalSpeed
+            > humanoid.WalkSpeed + 1.5
+        if trustSprints and boosted and (measuredStability or 0) >= 0.8 then
+            turnRate = math.min(turnRate, SPRINT_TURN_RATE)
+        end
 
         -- A player who has not moved for a frame is standing still: use the
         -- Humanoid's intent so the first shot after a stop is not led at all,
@@ -170,7 +310,12 @@ function Module.init(runtime: any): any
             )
         end
 
-        local predicted: Vector3 = part.Position + displacement
+        -- Aim at the vertical centre of the whole rig: the ray then has as much
+        -- body above the point as below it, which is the most forgiving place
+        -- to put a prediction that is mostly wrong vertically.
+        local box: BodyBox = measureBodyBox(character :: Model, part)
+        local aimBase: Vector3 = box.centre
+        local predicted: Vector3 = aimBase + displacement
         local delta: Vector3 = predicted - origin.Position
         if delta.Magnitude <= 0.05 then
             return nil, nil, "too close"
@@ -193,22 +338,54 @@ function Module.init(runtime: any): any
             end
         end
 
-        -- Error budget: the sideways distance a turn of the measured rate puts
-        -- between the target and the point we solved for, plus the sampler's own
-        -- uncertainty, floored so a straight-line runner is never treated as a
-        -- guaranteed hit. This is the number that decides the shot, and it is
-        -- reported verbatim so a miss can be read back off the telemetry.
+        -- Error budget, split horizontally and vertically because the body is
+        -- not a sphere: it is two studs wide and five tall. `turnError` is the
+        -- sideways distance a turn of the measured rate puts between the target
+        -- and the point we solved for; the jitter is the sampler's own noise,
+        -- and only the *lateral* component of the measured acceleration counts
+        -- as noise (speeding up in a straight line is already in the lead).
         local turnError: number = displacement.Magnitude
             * math.sin(math.min(horizon * turnRate * 0.5, math.pi * 0.5))
-        local jitter: number = math.min(acceleration.Magnitude / 240, 0.45)
+        local lateral: Vector3 = lateralAcceleration(acceleration, velocity)
+        local horizontalJitter: number = math.min(
+            Vector3.new(lateral.X, 0, lateral.Z).Magnitude / 240,
+            0.45
+        )
+        local horizontalError: number = turnError + horizontalJitter
+        local verticalError: number = math.min(math.abs(lateral.Y) / 240, 0.45)
+        if not grounded then
+            -- Airborne vertical error is dominated by the noise in the sampled
+            -- climb/fall rate, not by gravity (gravity is integrated exactly).
+            verticalError = math.min(
+                verticalError + math.abs(velocity.Y) * lead * 0.25,
+                1.2
+            )
+        end
+
+        -- Normalised against the real hitbox: 1.0 means "exactly at the edge of
+        -- the body", so the error radius stays in torso half-widths and the
+        -- Max error slider keeps the scale it always had.
+        local widthBudget: number = box.halfWidth
+        local heightBudget: number = math.min(box.halfUp, box.halfDown)
+        local normalizedError: number = math.max(
+            horizontalError / math.max(widthBudget, 0.35),
+            verticalError / math.max(heightBudget, 0.35)
+        )
         local errorRadius: number = math.max(
             MINIMUM_ERROR_RADIUS,
-            turnError + jitter
+            normalizedError * BODY_HALF_WIDTH
         )
-        local allowedErrorBudget: number = ignoreVisibility and (BODY_HALF_WIDTH * 1.75) or BODY_HALF_WIDTH
-        if errorRadius > allowedErrorBudget then
+        -- Silent aim may reach a little past the body: the shot is authored at
+        -- the target and never travels the segment, so a near miss is still a
+        -- hit for the server while it would be a wasted bullet for a real one.
+        if normalizedError > (ignoreVisibility and 1.75 or 1.0) then
             return nil, nil, "turning too hard"
         end
+
+        lastBodyBox = box
+        lastHorizontalError = horizontalError
+        lastVerticalError = verticalError
+        lastBoosted = boosted
 
         local direction: Vector3 = delta.Unit
         return CFrame.lookAt(predicted, predicted + direction), {
@@ -306,7 +483,8 @@ function Module.init(runtime: any): any
         target: Player,
         prediction: GunPrediction,
         muzzleOrigin: CFrame?,
-        variant: string
+        variant: string,
+        box: BodyBox?
     ): (CFrame, CFrame, number)
         local predicted: Vector3 = prediction.targetPosition
         local velocity: Vector3 = prediction.velocity
@@ -344,12 +522,20 @@ function Module.init(runtime: any): any
             end
         end
 
+        -- The server scores the segment we author, so it has to cross the body
+        -- and not stop inside it: the far end sits a full body depth past the
+        -- centre, measured from the rig we are actually aiming at.
+        local pierce: number = SILENT_PIERCE_STUDS
+        if box then
+            pierce = (box :: BodyBox).halfWidth * 2 + SILENT_PIERCE_STUDS
+        end
+
         local startPoint: Vector3
         local endPoint: Vector3
         if variant == "Through" and approach then
             -- Front to far side: the segment crosses the full body.
             startPoint = predicted - approach * approachOffset + sweepStart
-            endPoint = predicted + approach * SILENT_PIERCE_STUDS + sweepEnd
+            endPoint = predicted + approach * pierce + sweepEnd
         elseif variant == "Top" then
             startPoint = predicted + Vector3.new(0, SILENT_LIFT_STUDS, 0)
                 + sweepStart
@@ -498,7 +684,7 @@ function Module.init(runtime: any): any
             -- expect the GunFired origin there, not at the muzzle.
             local variant: string = mm2Settings.silentSpawn
             local shotOrigin: CFrame, shotEnd: CFrame, offset: number =
-                buildSilentShot(target, resolved, origin, variant)
+                buildSilentShot(target, resolved, origin, variant, lastBodyBox)
             state.mm2ShotFeedback.queue(target, gun, shotOrigin, aim, resolved)
             if state.mm2ShotFeedback.pending then
                 state.mm2ShotFeedback.pending.silentSpawn = variant
@@ -815,6 +1001,84 @@ function Module.init(runtime: any): any
     end)
     addToggleOption(
         ShootFeature,
+        "Trust sprints",
+        trustSprints,
+        function(value: boolean): ()
+            trustSprints = value
+        end,
+        "Treats a target moving faster than its own WalkSpeed (Haste, Sprint) "
+            .. "as committed to a straight line, so a burst of speed stops "
+            .. "pricing the shot out of the accuracy budget."
+    )
+    addActionOption(ShootFeature, "Hitbox", function(): ()
+        local box: BodyBox? = lastBodyBox
+        if not box then
+            notify("Hitbox: no shot solved yet.")
+            return
+        end
+        local latency: number, pingSeconds: number?, measured: number? =
+            getGunLatencySeconds()
+        notify(string.format(
+            "Hitbox %.2f wide · +%.2f/-%.2f tall | error H %.2f V %.2f"
+                .. " | horizon %.3fs (ping %s, measured %s, floor %dms, rewind %dms)"
+                .. " | %s",
+            (box :: BodyBox).halfWidth,
+            (box :: BodyBox).halfUp,
+            (box :: BodyBox).halfDown,
+            lastHorizontalError,
+            lastVerticalError,
+            getGunHorizonSeconds(),
+            pingSeconds and string.format("%.0fms", (pingSeconds :: number) * 1000) or "?",
+            measured and string.format("%.0fms", (measured :: number) * 1000) or "?",
+            math.floor(tonumber(mm2Settings.gunLatencyFloorMs) or 0),
+            math.floor(tonumber(mm2Settings.gunServerRewindMs) or 0),
+            lastBoosted and "target boosted" or "target at base speed"
+        ))
+    end)
+    addCycleOption(
+        ShootFeature,
+        "Latency source",
+        {"Measured", "Ping", "Lower", "Higher"},
+        1,
+        function(value: string): ()
+            mm2Settings.gunLatencySource = value
+        end,
+        "Which reading feeds the lead: the calibration average (Measured, "
+            .. "the historical behaviour), the live Data Ping, or the "
+            .. "lower/higher of the two for A/B testing."
+    )
+    addNumberOption(
+        ShootFeature,
+        "Latency floor",
+        tonumber(mm2Settings.gunLatencyFloorMs) or 200,
+        0,
+        300,
+        function(value: number): ()
+            mm2Settings.gunLatencyFloorMs = math.clamp(value, 0, 300)
+        end,
+        "Milliseconds the latency term can never go below. 200 is the "
+            .. "calibration's own average across every confirmed shot ever "
+            .. "recorded; lower it on a fast connection and compare the Spawn "
+            .. "A/B counters before trusting the change.",
+        5
+    )
+    addNumberOption(
+        ShootFeature,
+        "Server rewind",
+        tonumber(mm2Settings.gunServerRewindMs) or 0,
+        0,
+        250,
+        function(value: number): ()
+            mm2Settings.gunServerRewindMs = math.clamp(value, 0, 250)
+        end,
+        "Assumed server-side lag compensation, subtracted from the lead. "
+            .. "Leave it at 0 while the server scores shots where the target "
+            .. "is when the packet lands; raise it only if you have confirmed "
+            .. "the server rewinds hitboxes.",
+        5
+    )
+    addToggleOption(
+        ShootFeature,
         "Auto tune lead",
         mm2Settings.autoTuneLead,
         function(value: boolean): ()
@@ -849,13 +1113,19 @@ function Module.init(runtime: any): any
             ))
             return
         end
+        local latency: number, pingSeconds: number?, measured: number? =
+            getGunLatencySeconds()
         notify(string.format(
-            "Manual %+.3fs | adaptive %+.3fs (%s; stored %+.3fs) | horizon %.3fs",
+            "Manual %+.3fs | adaptive %+.3fs (%s; stored %+.3fs) | horizon %.3fs"
+                .. " | latency %.3fs (ping %s, measured %s)",
             status.manualBias or 0,
             status.autoCorrection or 0,
             status.autoTuneEnabled and "on" or "off",
             status.storedAutoCorrection or 0,
-            status.horizon or getGunHorizonSeconds()
+            status.horizon or getGunHorizonSeconds(),
+            latency,
+            pingSeconds and string.format("%.0fms", (pingSeconds :: number) * 1000) or "?",
+            measured and string.format("%.0fms", (measured :: number) * 1000) or "?"
         ))
     end)
     addActionOption(ShootFeature, "Reset auto lead correction", function(): ()

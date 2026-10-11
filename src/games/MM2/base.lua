@@ -70,6 +70,24 @@ local mm2Settings = {
     predictionRtt = 0.08,
     gunLeadBias = 0,
     autoTuneLead = false,
+    -- How the prediction horizon picks its latency term.
+    --   Measured  the calibration's own activation->confirmation reading,
+    --             floored by `gunLatencyFloorMs` (the historical behaviour).
+    --   Ping      the live Data Ping, which follows the network you are on
+    --             right now instead of the average of every session so far.
+    --   Lower/Highest of the two, for A/B testing the 200 ms question.
+    gunLatencySource = "Measured",
+    gunLatencyFloorMs = 200,
+    -- Assumed server-side lag compensation (hitbox rewind). 0 means "the
+    -- server scores the shot where the target is when the packet lands",
+    -- which is what MM2 has always behaved like. If the server rewinds the
+    -- target to the shooter's view, this is that window in milliseconds and
+    -- the horizon shrinks by it.
+    gunServerRewindMs = 0,
+    -- Throws lead by the server's spawn delay plus the flight time. Left nil
+    -- the measured calibration value is used.
+    knifeSpawnDelayMs = nil :: number?,
+    knifeLeadBias = 0,
     silentSweep = 0.5,
     -- Where the silent bullet is authored: "Front" (shooter's side of the
     -- torso), "Through" (pierces the torso), "Top" (old, 1.6 above), "Behind"
@@ -1528,7 +1546,19 @@ local function resetAutoLeadCorrection(): ()
     autoLeadCorrection = 0
 end
 
-local function getGunHorizonSeconds(): number
+-- The single number every gun decision is derived from, plus the two knobs the
+-- 200 ms question is really about.
+--
+-- `measuredAcceptance` is the calibration's own activation->confirmation
+-- reading: the average of every confirmed shot of every session so far (the
+-- shipped files put it at ~200 ms). It is an *average*, not this server's
+-- number, so it is offered next to the live ping instead of over it: which of
+-- the two the solver follows is `mm2Settings.gunLatencySource`, and the floor
+-- is `mm2Settings.gunLatencyFloorMs`. `mm2Settings.gunServerRewindMs` is then
+-- subtracted, because a server that rewinds hitboxes already cancels that much
+-- of the latency for us.
+local function getGunLatencySeconds(): (number, number?, number?)
+    local pingSeconds: number = math.max(getEstimatedLatency(), 0)
     local measuredAcceptance: number? = nil
     if trajectoryCalibration and type(trajectoryCalibration.getEstimates) == "function" then
         local okEst, est = pcall(function()
@@ -1538,8 +1568,37 @@ local function getGunHorizonSeconds(): number
             measuredAcceptance = (est.gunAcceptanceMs :: number) / 1000
         end
     end
-    -- Use empirically measured server rewind/acceptance latency from calibration when available (defaults to confirmed 200ms baseline)
-    local latencyTime: number = measuredAcceptance or math.max(getEstimatedLatency(), 0.200)
+    local floorSeconds: number = math.max(0, (tonumber(mm2Settings.gunLatencyFloorMs) or 0) / 1000)
+    local source: string = tostring(mm2Settings.gunLatencySource or "Measured")
+    local latencyTime: number
+    if source == "Ping" then
+        latencyTime = pingSeconds
+    elseif source == "Lower" then
+        latencyTime = math.min(
+            measuredAcceptance or pingSeconds,
+            pingSeconds
+        )
+    elseif source == "Higher" then
+        latencyTime = math.max(measuredAcceptance or pingSeconds, pingSeconds)
+    elseif measuredAcceptance and pingSeconds > 0 then
+        -- Measured: trust the calibration reading, but never let a number
+        -- averaged over other sessions drift further than a quarter of a
+        -- second away from the network we are on right now.
+        latencyTime = math.clamp(
+            measuredAcceptance,
+            pingSeconds,
+            pingSeconds + 0.25
+        )
+    else
+        latencyTime = measuredAcceptance or pingSeconds
+    end
+    latencyTime = math.max(latencyTime, floorSeconds)
+    return latencyTime, pingSeconds, measuredAcceptance
+end
+
+local function getGunHorizonSeconds(): number
+    local latencyTime: number = select(1, getGunLatencySeconds())
+    local rewind: number = math.max(0, (tonumber(mm2Settings.gunServerRewindMs) or 0) / 1000)
     local staleness: number = 1 / (2 * GUN_LEAD.replicationRate)
     local manualBias: number = math.clamp(
         mm2Settings.gunLeadBias,
@@ -1551,7 +1610,7 @@ local function getGunHorizonSeconds(): number
         -GUN_LEAD.maximumAutoCorrection,
         GUN_LEAD.maximumAutoCorrection
     )
-    local horizon: number = latencyTime
+    local horizon: number = math.max(0, latencyTime - rewind)
         + staleness
         + GUN_LEAD.serverFrame * 0.5
         + manualBias
@@ -1787,6 +1846,13 @@ local function createTrajectoryCalibration(): any
         knifeSpawnDelayDelta = nil :: RunningStats?,
         motionBuckets = {} :: {[string]: any},
         trajectorySampler = nil :: any,
+        -- Lifetime counters are what the file holds; the session counters are
+        -- always "since this join". Keeping them apart is what stops every save
+        -- from re-adding the stored totals to themselves.
+        lifetimeGunAttempts = 0,
+        lifetimeGunConfirmed = 0,
+        lifetimeKnifeAttempts = 0,
+        lifetimeKnifeConfirmed = 0,
     }
     local controller: Controller
     local saveSnapshot: (reason: string) -> boolean
@@ -1860,6 +1926,116 @@ local function createTrajectoryCalibration(): any
         }
     end
 
+    -- -----------------------------------------------------------------------
+    -- Motion buckets: SUMS in memory, MEANS on disk.
+    --
+    -- `analyzeTargetTrajectory` accumulates running sums (durationSum,
+    -- residualXSum, ...) and `motionModelPayload` divides them by `count` on the
+    -- way out. Loading a saved file straight into `runtime.motionBuckets` used
+    -- to put a *mean* table where the sampler expected a *sum* table, so the
+    -- very next sample did `bucket.durationSum += duration` on a nil field and
+    -- threw. History therefore both crashed the sampler and, when it did not,
+    -- was merged by adding means together. `bucketFromPayload` converts the
+    -- file representation back into the accumulator representation once, which
+    -- fixes both.
+    -- -----------------------------------------------------------------------
+    local function emptyMotionBucket(): {[string]: number}
+        return {
+            count = 0,
+            horizontalLeadSum = 0,
+            horizontalLeadCount = 0,
+            verticalLeadSum = 0,
+            verticalLeadCount = 0,
+            residualXSum = 0,
+            residualYSum = 0,
+            residualZSum = 0,
+            durationSum = 0,
+            constantVelocityErrorSum = 0,
+            observedAccelerationErrorSum = 0,
+            airborneBallisticErrorSum = 0,
+        }
+    end
+
+    local function numberFrom(value: any): number
+        local resolved: number? = tonumber(value)
+        if resolved == nil or resolved ~= resolved then
+            return 0
+        end
+        return resolved :: number
+    end
+
+    local function bucketFromPayload(payloadBucket: any): {[string]: number}
+        local bucket: {[string]: number} = emptyMotionBucket()
+        if type(payloadBucket) ~= "table" then
+            return bucket
+        end
+        local count: number = math.max(0, numberFrom(payloadBucket.count))
+        bucket.count = count
+        local horizontalLeadCount: number = numberFrom(
+            payloadBucket.horizontalLeadCount
+        )
+        if horizontalLeadCount <= 0 then
+            horizontalLeadCount = count
+        end
+        local verticalLeadCount: number = numberFrom(
+            payloadBucket.verticalLeadCount
+        )
+        if verticalLeadCount <= 0 then
+            verticalLeadCount = count
+        end
+        bucket.horizontalLeadCount = horizontalLeadCount
+        bucket.verticalLeadCount = verticalLeadCount
+
+        if payloadBucket.durationSum ~= nil then
+            -- Legacy file written with the accumulator shape: take it verbatim.
+            bucket.durationSum = numberFrom(payloadBucket.durationSum)
+            bucket.residualXSum = numberFrom(payloadBucket.residualXSum)
+            bucket.residualYSum = numberFrom(payloadBucket.residualYSum)
+            bucket.residualZSum = numberFrom(payloadBucket.residualZSum)
+            bucket.constantVelocityErrorSum = numberFrom(
+                payloadBucket.constantVelocityErrorSum
+            )
+            bucket.observedAccelerationErrorSum = numberFrom(
+                payloadBucket.observedAccelerationErrorSum
+            )
+            bucket.airborneBallisticErrorSum = numberFrom(
+                payloadBucket.airborneBallisticErrorSum
+            )
+            bucket.horizontalLeadSum = numberFrom(payloadBucket.horizontalLeadSum)
+            bucket.verticalLeadSum = numberFrom(payloadBucket.verticalLeadSum)
+            return bucket
+        end
+
+        bucket.durationSum =
+            numberFrom(payloadBucket.meanDurationSeconds) * count
+        local residual: any = payloadBucket.meanConstantVelocityResidual
+        if type(residual) == "table" then
+            bucket.residualXSum = numberFrom(residual[1]) * count
+            bucket.residualYSum = numberFrom(residual[2]) * count
+            bucket.residualZSum = numberFrom(residual[3]) * count
+        end
+        local modelError: any = payloadBucket.meanModelError
+        if type(modelError) == "table" then
+            bucket.constantVelocityErrorSum =
+                numberFrom(modelError.constantVelocity) * count
+            bucket.observedAccelerationErrorSum =
+                numberFrom(modelError.observedAcceleration) * count
+            bucket.airborneBallisticErrorSum =
+                numberFrom(modelError.airborneBallistic) * count
+        end
+        if payloadBucket.meanHorizontalLeadSeconds ~= nil then
+            bucket.horizontalLeadSum = numberFrom(
+                payloadBucket.meanHorizontalLeadSeconds
+            ) * horizontalLeadCount
+        end
+        if payloadBucket.meanVerticalLeadSeconds ~= nil then
+            bucket.verticalLeadSum = numberFrom(
+                payloadBucket.meanVerticalLeadSeconds
+            ) * verticalLeadCount
+        end
+        return bucket
+    end
+
     local function applyStatsPayload(
         stats: RunningStats,
         payload: {[string]: number}
@@ -1905,15 +2081,15 @@ local function createTrajectoryCalibration(): any
         if type(decoded.analytics) == "table" and type(decoded.analytics.motionModel) == "table" then
             for key: string, bucket: any in pairs(decoded.analytics.motionModel) do
                 if type(bucket) == "table" then
-                    runtime.motionBuckets[key] = table.clone(bucket)
+                    runtime.motionBuckets[key] = bucketFromPayload(bucket)
                 end
             end
         end
         if type(decoded.session) == "table" then
-            runtime.sessionGunAttempts = tonumber(decoded.session.gunAttempts) or 0
-            runtime.sessionGunConfirmed = tonumber(decoded.session.gunConfirmed) or 0
-            runtime.sessionKnifeAttempts = tonumber(decoded.session.knifeAttempts) or 0
-            runtime.sessionKnifeConfirmed = tonumber(decoded.session.knifeConfirmed) or 0
+            runtime.lifetimeGunAttempts = tonumber(decoded.session.gunAttempts) or 0
+            runtime.lifetimeGunConfirmed = tonumber(decoded.session.gunConfirmed) or 0
+            runtime.lifetimeKnifeAttempts = tonumber(decoded.session.knifeAttempts) or 0
+            runtime.lifetimeKnifeConfirmed = tonumber(decoded.session.knifeConfirmed) or 0
             if type(decoded.session.events) == "table" then
                 runtime.events = {}
                 for _, ev: any in ipairs(decoded.session.events) do
@@ -2424,11 +2600,18 @@ local function createTrajectoryCalibration(): any
                 end
             end
         end
+        local delayStats: RunningStats = runtime.knifeSpawnDelay
         return {
             gunAcceptanceMs = gunStats.count > 0 and gunStats.mean or nil,
             knifeSpeed = speedStats.count > 0 and speedStats.mean or nil,
+            -- How long the server takes to actually spawn the blade after the
+            -- KnifeThrown packet. A throw has to lead by this delay *plus* the
+            -- flight time, which is why it is published here and not only kept
+            -- in the aggregate dump.
+            knifeSpawnDelayMs = delayStats.count > 0 and delayStats.mean or nil,
             confirmedShots = gunStats.count,
             confirmedThrows = speedStats.count,
+            confirmedDelays = delayStats.count,
             maxStabDistance = maxStab,
         }
     end
@@ -2476,19 +2659,26 @@ local function createTrajectoryCalibration(): any
             and stored.analytics
             and stored.analytics.motionModel
             or {}
+        -- Both sides are converted to the accumulator shape before they touch
+        -- each other, so a saved mean is never added to a live mean (which used
+        -- to inflate every average by the number of previous sessions).
         local mergedBuckets: {[string]: any} = {}
         for key: string, bucket: any in pairs(runtime.motionBuckets) do
-            mergedBuckets[key] = table.clone(bucket)
+            mergedBuckets[key] = bucketFromPayload(bucket)
         end
         if type(storedBuckets) == "table" then
             for key: string, storedBucket: any in pairs(storedBuckets) do
+                local restored: {[string]: number} =
+                    bucketFromPayload(storedBucket)
                 local target: any = mergedBuckets[key]
                 if not target or type(target) ~= "table" then
-                    mergedBuckets[key] = table.clone(storedBucket)
+                    mergedBuckets[key] = restored
                 else
-                    for field: string, value: any in pairs(storedBucket) do
-                        if type(value) == "number" and type(target[field]) == "number" then
+                    for field: string, value: number in pairs(restored) do
+                        if type(target[field]) == "number" then
                             target[field] = target[field] + value
+                        else
+                            target[field] = value
                         end
                     end
                 end
@@ -2508,8 +2698,6 @@ local function createTrajectoryCalibration(): any
         while #mergedEvents > 2400 do
             table.remove(mergedEvents, 1)
         end
-        local storedSession: any =
-            type(stored) == "table" and stored.session or {}
         local payload: {[string]: any} = {
             schema = 2,
             kind = "mm2-trajectory-analytics",
@@ -2539,13 +2727,13 @@ local function createTrajectoryCalibration(): any
             },
             session = {
                 elapsedSeconds = os.clock() - runtime.startedAt,
-                gunAttempts = (tonumber(storedSession.gunAttempts) or 0)
+                gunAttempts = runtime.lifetimeGunAttempts
                     + runtime.sessionGunAttempts,
-                gunConfirmed = (tonumber(storedSession.gunConfirmed) or 0)
+                gunConfirmed = runtime.lifetimeGunConfirmed
                     + runtime.sessionGunConfirmed,
-                knifeAttempts = (tonumber(storedSession.knifeAttempts) or 0)
+                knifeAttempts = runtime.lifetimeKnifeAttempts
                     + runtime.sessionKnifeAttempts,
-                knifeConfirmed = (tonumber(storedSession.knifeConfirmed) or 0)
+                knifeConfirmed = runtime.lifetimeKnifeConfirmed
                     + runtime.sessionKnifeConfirmed,
                 events = mergedEvents,
             },
@@ -2583,10 +2771,13 @@ local function createTrajectoryCalibration(): any
         runtime.knifeSpeedDelta = newStats()
         runtime.knifeSpawnDelayDelta = newStats()
         runtime.eventsNew = {}
-        runtime.sessionGunAttempts = payload.session.gunAttempts
-        runtime.sessionGunConfirmed = payload.session.gunConfirmed
-        runtime.sessionKnifeAttempts = payload.session.knifeAttempts
-        runtime.sessionKnifeConfirmed = payload.session.knifeConfirmed
+        -- Only the lifetime totals adopt the merged values: the session
+        -- counters keep counting from this join, so a second save cannot count
+        -- the same shots twice.
+        runtime.lifetimeGunAttempts = payload.session.gunAttempts
+        runtime.lifetimeGunConfirmed = payload.session.gunConfirmed
+        runtime.lifetimeKnifeAttempts = payload.session.knifeAttempts
+        runtime.lifetimeKnifeConfirmed = payload.session.knifeConfirmed
         runtime.dirty = false
         print(
             trajectoryLogPrefix .. " Saved "
@@ -3060,6 +3251,94 @@ local function createTrajectoryCalibration(): any
         end)
     end
 
+    -- -----------------------------------------------------------------------
+    -- Leaving the game must not lose the history.
+    --
+    -- Roblox never fires BindToClose on the client, so "the player is gone" is
+    -- reconstructed from the signals an executor can actually observe: the
+    -- teleport trip, the menu GUI losing its parent (which is what a shutdown
+    -- or a script teardown looks like from inside) and, as the safety net that
+    -- covers every other exit, a slow periodic autosave. Every hook is
+    -- idempotent - the worst case is writing the same merged file twice.
+    -- -----------------------------------------------------------------------
+    local AUTOSAVE_SECONDS: number = 20
+    local persistenceHooksInstalled: boolean = false
+    local lastAutosaveAt: number = 0
+
+    local function installPersistenceHooks(): ()
+        if persistenceHooksInstalled then
+            return
+        end
+        persistenceHooksInstalled = true
+        lastAutosaveAt = os.clock()
+
+        pcall(function(): ()
+            trackConnection(LocalPlayer.OnTeleport:Connect(function(): ()
+                saveSnapshot("teleport")
+            end))
+        end)
+        pcall(function(): ()
+            local teleportService: any = game:GetService("TeleportService")
+            trackConnection(teleportService.TeleportInitFailed:Connect(function(): ()
+                saveSnapshot("teleport")
+            end))
+        end)
+        -- The menu ScreenGui is reparented to nil the moment the player leaves
+        -- or the script is torn down, which is the closest thing a client has
+        -- to a shutdown signal.
+        pcall(function(): ()
+            if typeof(ScreenGui) ~= "Instance" then
+                return
+            end
+            trackConnection(ScreenGui.AncestryChanged:Connect(function(
+                _child: Instance,
+                parent: Instance?
+            ): ()
+                if parent == nil then
+                    saveSnapshot("shutdown")
+                end
+            end))
+            trackConnection(ScreenGui.Destroying:Connect(function(): ()
+                saveSnapshot("shutdown")
+            end))
+        end)
+        -- Most executors expose a genuine close callback; bind it when present.
+        pcall(function(): ()
+            local environmentClose: any = environment.close
+            if type(environmentClose) == "function" then
+                environmentClose(function(): ()
+                    saveSnapshot("shutdown")
+                end)
+                return
+            end
+            local gameClose: any = (game :: any).Close
+            if typeof(gameClose) == "RBXScriptSignal" then
+                trackConnection(gameClose:Connect(function(): ()
+                    saveSnapshot("shutdown")
+                end))
+            end
+        end)
+
+        local elapsed: number = 0
+        trackConnection(RunService.Heartbeat:Connect(function(
+            deltaTime: number
+        ): ()
+            elapsed += deltaTime
+            if elapsed < 1 then
+                return
+            end
+            elapsed = 0
+            if not runtime.active or not runtime.dirty then
+                return
+            end
+            if os.clock() - lastAutosaveAt < AUTOSAVE_SECONDS then
+                return
+            end
+            lastAutosaveAt = os.clock()
+            saveSnapshot("autosave")
+        end))
+    end
+
     controller = {} :: Controller
 
     function controller:start(): ()
@@ -3087,6 +3366,7 @@ local function createTrajectoryCalibration(): any
             )
         )
         installGunConfirmation()
+        installPersistenceHooks()
         print(trajectoryLogPrefix .. " Passive calibration started in the background.")
     end
 
@@ -3107,6 +3387,10 @@ local function createTrajectoryCalibration(): any
         runtime.sessionGunConfirmed = 0
         runtime.sessionKnifeAttempts = 0
         runtime.sessionKnifeConfirmed = 0
+        runtime.lifetimeGunAttempts = 0
+        runtime.lifetimeGunConfirmed = 0
+        runtime.lifetimeKnifeAttempts = 0
+        runtime.lifetimeKnifeConfirmed = 0
     end
 
     function controller:save(reason: string?): boolean
@@ -3230,16 +3514,23 @@ local function createTrajectoryCalibration(): any
         local knifeText: string = current.knifeSpeed
                 and string.format("%.2f studs/s", current.knifeSpeed)
             or "learning"
+        local delayText: string = current.knifeSpawnDelayMs
+                and string.format("%.0f ms", current.knifeSpawnDelayMs)
+            or "learning"
         local bucketCount: number = 0
         for _key: string in pairs(runtime.motionBuckets) do
             bucketCount += 1
         end
         return string.format(
-            "MM2 analytics · shots %d · throws %d · motion buckets %d · knife %s",
+            "MM2 analytics · shots %d · throws %d · knife %s · spawn delay %s · gun ack %s · buckets %d",
             current.confirmedShots,
             current.confirmedThrows,
-            bucketCount,
-            knifeText
+            knifeText,
+            delayText,
+            current.gunAcceptanceMs
+                and string.format("%.0f ms", current.gunAcceptanceMs)
+                or "learning",
+            bucketCount
         )
     end
 
@@ -3962,6 +4253,7 @@ state.mm2Core = {
     getFilteredVelocity = getFilteredVelocity,
     getEstimatedLatency = getEstimatedLatency,
     getGunHorizonSeconds = getGunHorizonSeconds,
+    getGunLatencySeconds = getGunLatencySeconds,
     getGunTurnDiscount = getGunTurnDiscount,
     getGunTurnRate = getGunTurnRate,
     getGunLeadSensitivity = getGunLeadSensitivity,

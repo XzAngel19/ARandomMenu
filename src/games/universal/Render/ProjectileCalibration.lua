@@ -110,6 +110,14 @@ function Module.init(context: Runtime): any
             totalActivations = 0,
             totalProjectiles = 0,
             rejectedCandidates = 0,
+            -- `seeded` records that the stored history has been folded into
+            -- this session; `lastSaveAt` paces the autosave.
+            seeded = false,
+            lastSaveAt = 0,
+            -- The persistence hooks live outside `connections`: that table is
+            -- wiped every time the module is switched off, and these have to
+            -- survive a disable/enable cycle to keep protecting the history.
+            persistenceConnections = {} :: {RBXScriptConnection},
         }
         local controller: Controller
         local saveSnapshot: (reason: string) -> boolean
@@ -214,9 +222,78 @@ function Module.init(context: Runtime): any
             runtime.dirty = true
         end
 
+        -- Leaving the game is not an event Roblox hands a client, so the
+        -- history is protected the only three ways it can be: a periodic
+        -- autosave, the teleport signal, and the menu GUI losing its parent
+        -- (which is what a shutdown looks like from in here).
+        local AUTOSAVE_SECONDS: number = 20
+        local hooksInstalled: boolean = false
+
+        local function installPersistenceHooks(): ()
+            if hooksInstalled then
+                return
+            end
+            hooksInstalled = true
+            local keep: {RBXScriptConnection} = runtime.persistenceConnections
+            pcall(function(): ()
+                table.insert(
+                    keep,
+                    LocalPlayer.OnTeleport:Connect(function(): ()
+                        saveSnapshot("teleport")
+                    end)
+                )
+            end)
+            pcall(function(): ()
+                table.insert(keep, (ScreenGui :: Instance)
+                    .AncestryChanged:Connect(function(
+                        _child: Instance,
+                        parent: Instance?
+                    ): ()
+                        if parent == nil then
+                            saveSnapshot("shutdown")
+                        end
+                    end))
+            end)
+            pcall(function(): ()
+                local environmentClose: any = executorEnvironment.close
+                if type(environmentClose) == "function" then
+                    environmentClose(function(): ()
+                        saveSnapshot("shutdown")
+                    end)
+                end
+            end)
+            local elapsed: number = 0
+            table.insert(keep, RunService.Heartbeat:Connect(function(
+                deltaTime: number
+            ): ()
+                elapsed += deltaTime
+                if elapsed < 1 then
+                    return
+                end
+                elapsed = 0
+                if not runtime.enabled or not runtime.dirty then
+                    return
+                end
+                if os.clock() - runtime.lastSaveAt < AUTOSAVE_SECONDS then
+                    return
+                end
+                runtime.lastSaveAt = os.clock()
+                saveSnapshot("autosave")
+            end))
+        end
+
         saveSnapshot = function(reason: string): boolean
             if type(executorEnvironment.writefile) ~= "function" then
                 return false
+            end
+            -- The file is the only copy of every earlier session. If this
+            -- session never seeded from it (the module was off, or the save
+            -- button was pressed before it finished starting), fold the stored
+            -- history in first - otherwise a manual save silently replaces
+            -- months of samples with the five events of this session.
+            if not runtime.seeded then
+                loadSavedAnalytics()
+                runtime.seeded = true
             end
             local payload: {[string]: any} = {
                 schema = 1,
@@ -263,6 +340,7 @@ function Module.init(context: Runtime): any
                 return false
             end
             runtime.dirty = false
+            runtime.lastSaveAt = os.clock()
             return true
         end
 
@@ -632,6 +710,11 @@ function Module.init(context: Runtime): any
                 return
             end
             if not enabled then
+                -- Turning the module off used to drop everything collected
+                -- since the last manual save.
+                if runtime.dirty then
+                    saveSnapshot("disable")
+                end
                 runtime.enabled = false
                 disconnectAll()
                 return
@@ -639,6 +722,8 @@ function Module.init(context: Runtime): any
             runtime.enabled = true
             runtime.startedAt = os.clock()
             loadSavedAnalytics()
+            runtime.seeded = true
+            installPersistenceHooks()
             observeContainer(LocalPlayer:FindFirstChildOfClass("Backpack"))
             observeContainer(LocalPlayer.Character)
             table.insert(runtime.connections, LocalPlayer.CharacterAdded:Connect(function(
@@ -688,6 +773,9 @@ function Module.init(context: Runtime): any
         end
 
         function controller:destroy(): ()
+            if runtime.enabled and runtime.dirty then
+                saveSnapshot("module-destroy")
+            end
             self:setEnabled(false)
         end
 
