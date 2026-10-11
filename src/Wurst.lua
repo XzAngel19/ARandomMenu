@@ -41,8 +41,12 @@ local FEATURE_CATEGORIES: {[string]: string} = {
     ["Speed"] = "Movement",
     ["Spider"] = "Movement",
     ["Walk Speed"] = "Movement",
-    ["Hitboxes"] = "Blatant",
     ["Invisible"] = "Blatant",
+
+    ["AutoWin"] = "Blatant",
+    ["Knife"] = "Blatant",
+    ["SilentAim"] = "Blatant",
+    ["MVSD Shoot"] = "Other",
 
     ["Click Teleport"] = "Movement",
     ["Freeze Movements"] = "Movement",
@@ -221,7 +225,7 @@ local RUNTIME_RAW_BASE: string =
         .. RUNTIME_BRANCH
         .. "/"
 
-local SOURCE_STAMP: string = "audit-20261009-13"
+local SOURCE_STAMP: string = "v3-20261011-1530"
 
 local BOOT_STARTED_AT: number = os.clock()
 local BOOT_FINGERPRINT_SECONDS: number = 0
@@ -5138,6 +5142,9 @@ state.readCachedSource = function(path: string): string?
 end
 
 state.writeCachedSource = function(path: string, source: string): ()
+    if path == "src/libraries/bundle.lua" then
+        return
+    end
     local environment: any = getfenv()
     local writeFile: any = environment.writefile
     if type(writeFile) ~= "function" then
@@ -5219,7 +5226,9 @@ state.fetchRepositorySource = function(path: string): (string?, string?)
     local readFile: any = environment.readfile
     local isFile: any = environment.isfile
     local localPath: string = "Wurst/" .. path
-    if type(readFile) == "function"
+    local stampOk: boolean, stampBody: any = pcall(readFile, "Wurst/.stamp")
+    if stampOk and stampBody == SOURCE_STAMP
+        and type(readFile) == "function"
         and (type(isFile) ~= "function" or isFile(localPath)) then
         local readOk: boolean, localSource: any = pcall(readFile, localPath)
         if readOk and state.sourceLooksValid(localSource, 32) then
@@ -5553,8 +5562,6 @@ local fallbackManifest: any = {
         {path = "src/games/universal/Other/RemoteLogger.lua", name = "Remote Logger", category = "Other"},
         {path = "src/games/universal/Other/Learning.lua", name = "Learning", category = "Other"},
         {path = "src/games/universal/Movement/ClickTeleport.lua", name = "Click Teleport", category = "Movement"},
-        {path = "src/games/universal/Combat/AutoClicker.lua", name = "Auto Clicker", category = "Combat"},
-        {path = "src/games/universal/Combat/TriggerBot.lua", name = "TriggerBot", category = "Combat"},
         {path = "src/games/universal/Combat/AimAssist.lua", name = "Aim Assist", category = "Combat"},
         {path = "src/games/universal/Render/XRay.lua", name = "X-Ray", category = "Render"},
         {path = "src/games/universal/Movement/Jump.lua", name = "Jump", category = "Movement"},
@@ -5581,7 +5588,6 @@ local fallbackManifest: any = {
         {path = "src/games/universal/Other/Disguise.lua", name = "Disguise", category = "Other"},
         {path = "src/games/universal/Movement/FreezeMovements.lua", name = "Freeze Movements", category = "Movement"},
         {path = "src/games/universal/Movement/Speed.lua", name = "Speed", category = "Movement"},
-        {path = "src/games/universal/Blatant/Hitboxes.lua", name = "Hitboxes", category = "Blatant"},
         {path = "src/games/universal/Render/ProjectileCalibration.lua", name = "Projectile Calibration", category = "Other"},
         {path = "src/games/universal/Other/GameLearning.lua", name = "Game Learning", category = "Other"},
         {path = "src/games/universal/Fun/SpinBot.lua", name = "SpinBot", category = "Fun"},

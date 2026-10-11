@@ -1,5 +1,5 @@
 return {
-    stamp = "audit-20261011-094512",
+    stamp = "v3-20261011-1530",
     files = {
         ["src/libraries/Manifest.lua"] = [=[
 export type ModuleEntry = {
@@ -249,6 +249,7 @@ local Manifest: Manifest = {
 }
 
 return Manifest
+
 ]=],
         ["src/guis/Wurst/Code/Widgets.lua"] = [=[
 export type OptionDefinition = {
@@ -2575,6 +2576,7 @@ function Module.destroy(): ()
 end
 
 return Module
+
 ]=],
         ["src/libraries/Framework.lua"] = [=[
 export type CleanupItem = any
@@ -3437,6 +3439,7 @@ function Module.destroy(): ()
 end
 
 return Module
+
 ]=],
         ["src/libraries/Entity.lua"] = [=[
 export type Entity = {
@@ -4121,6 +4124,7 @@ function Module.destroy(): ()
 end
 
 return Module
+
 ]=],
         ["src/libraries/Targeting.lua"] = [=[
 export type Query = {
@@ -4388,6 +4392,7 @@ function Module.destroy(): ()
 end
 
 return Module
+
 ]=],
         ["src/libraries/Weapons.lua"] = [=[
 export type Candidate = {
@@ -4950,6 +4955,7 @@ function Module.destroy(): ()
 end
 
 return Module
+
 ]=],
         ["src/libraries/Render.lua"] = [=[
 export type Rect = {
@@ -5547,6 +5553,7 @@ function Module.destroy(): ()
 end
 
 return Module
+
 ]=],
         ["src/guis/Wurst/Code/Cards.lua"] = [=[
 local Module = {
@@ -6424,6 +6431,7 @@ function Module.destroy(): ()
 end
 
 return Module
+
 ]=],
         ["src/guis/Wurst/Code/WindowManager.lua"] = [=[
 export type WindowDefinition = {
@@ -7559,6 +7567,7 @@ function Module.destroy(): ()
 end
 
 return Module
+
 ]=],
         ["src/guis/Wurst/Code/ClickGui.lua"] = [=[
 export type CategoryWindow = {
@@ -7941,6 +7950,7 @@ function Module.destroy(): ()
 end
 
 return Module
+
 ]=],
         ["src/guis/Wurst/Code/FloatingWindows.lua"] = [=[
 export type FloatingWindowRecord = {
@@ -9466,6 +9476,7 @@ function Module.destroy(): ()
 end
 
 return Module
+
 ]=],
         ["src/guis/Wurst/Code/SettingsPage.lua"] = [=[
 local Module = {
@@ -11160,6 +11171,7 @@ function Module.destroy(): ()
 end
 
 return Module
+
 ]=],
         ["src/guis/Wurst/Code/MobileActions.lua"] = [=[
 export type MobileHoldCallbacks = {
@@ -11874,6 +11886,7 @@ function Module.destroy(): ()
 end
 
 return Module
+
 ]=],
         ["src/guis/Wurst/Code/Furniture.lua"] = [=[
 local Module = {
@@ -13436,6 +13449,7 @@ function Module.destroy(): ()
 end
 
 return Module
+
 ]=],
         ["src/games/universal/Render/ItemRender.lua"] = [=[
 export type Runtime = {
@@ -13962,6 +13976,7 @@ function Module.destroy(): ()
 end
 
 return Module
+
 ]=],
         ["src/games/universal/Render/PlayerESP.lua"] = [=[
 export type Runtime = {
@@ -14501,6 +14516,7 @@ function Module.destroy(): ()
 end
 
 return Module
+
 ]=],
         ["src/games/universal/Render/Chams.lua"] = [=[
 export type Runtime = {
@@ -14958,6 +14974,7 @@ function Module.destroy(): ()
 end
 
 return Module
+
 ]=],
         ["src/games/universal/Render/Arrows.lua"] = [=[
 export type Runtime = {
@@ -15099,6 +15116,7 @@ function Module.destroy(): ()
 end
 
 return Module
+
 ]=],
         ["src/games/universal/Render/NPCESP.lua"] = [=[
 export type Runtime = {
@@ -15590,6 +15608,7 @@ function Module.destroy(): ()
 end
 
 return Module
+
 ]=],
         ["src/games/universal/Render/FieldOfView.lua"] = [=[
 export type Runtime = {
@@ -15666,6 +15685,7 @@ function Module.destroy(): ()
 end
 
 return Module
+
 ]=],
         ["src/games/universal/Render/Fullbright.lua"] = [=[
 export type Runtime = {
@@ -15776,6 +15796,7 @@ function Module.destroy(): ()
 end
 
 return Module
+
 ]=],
         ["src/games/universal/Render/TimeChanger.lua"] = [=[
 --!strict
@@ -15869,6 +15890,7 @@ function Module.destroy(): ()
 end
 
 return Module
+
 ]=],
         ["src/games/universal/Render/XRay.lua"] = [=[
 export type Runtime = {
@@ -15976,6 +15998,7 @@ function Module.destroy(): ()
 end
 
 return Module
+
 ]=],
         ["src/games/universal/Render/ZoomUnlocker.lua"] = [=[
 export type Runtime = {
@@ -16121,6 +16144,7 @@ function Module.destroy(): ()
 end
 
 return Module
+
 ]=],
         ["src/games/universal/Combat/KillAura.lua"] = [=[
 export type Runtime = {
@@ -16720,6 +16744,7 @@ function Module.destroy(): ()
 end
 
 return Module
+
 ]=],
         ["src/games/universal/Combat/AimAssist.lua"] = [=[
 export type Runtime = {
@@ -16991,6 +17016,7 @@ function Module.destroy(): ()
 end
 
 return Module
+
 ]=],
         ["src/games/universal/Blatant/Invisible.lua"] = [=[
 export type Runtime = {
@@ -17326,6 +17352,7 @@ function Module.destroy(): ()
 end
 
 return Module
+
 ]=],
         ["src/games/universal/Movement/Speed.lua"] = [=[
 export type Runtime = {
@@ -17819,6 +17846,7 @@ function Module.destroy(): ()
 end
 
 return Module
+
 ]=],
         ["src/games/universal/Movement/Jump.lua"] = [=[
 export type Runtime = {
@@ -18107,6 +18135,7 @@ function Module.destroy(): ()
 end
 
 return Module
+
 ]=],
         ["src/games/universal/Movement/ClickTeleport.lua"] = [=[
 export type Runtime = {
@@ -18549,6 +18578,7 @@ function Module.destroy(): ()
 end
 
 return Module
+
 ]=],
         ["src/games/universal/Blatant/Spider.lua"] = [=[
 export type Runtime = {
@@ -18872,6 +18902,7 @@ function Module.destroy(): ()
 end
 
 return Module
+
 ]=],
         ["src/games/universal/Blatant/WallHop.lua"] = [=[
 export type Runtime = {
@@ -19144,6 +19175,7 @@ function Module.destroy(): ()
 end
 
 return Module
+
 ]=],
         ["src/games/universal/Movement/HookPart.lua"] = [=[
 --!strict
@@ -19977,6 +20009,7 @@ function Module.destroy(): ()
 end
 
 return Module
+
 ]=],
         ["src/games/universal/Blatant/Fly.lua"] = [=[
 export type Runtime = {
@@ -20615,6 +20648,7 @@ function Module.destroy(): ()
 end
 
 return Module
+
 ]=],
         ["src/games/universal/Blatant/Noclip.lua"] = [=[
 export type Runtime = {
@@ -20706,6 +20740,7 @@ function Module.destroy(): ()
 end
 
 return Module
+
 ]=],
         ["src/games/universal/Movement/AntiVoid.lua"] = [=[
 export type Runtime = {
@@ -20844,6 +20879,7 @@ function Module.destroy(): ()
 end
 
 return Module
+
 ]=],
         ["src/games/universal/Movement/AntiFling.lua"] = [=[
 export type Runtime = {
@@ -20960,6 +20996,7 @@ function Module.destroy(): ()
 end
 
 return Module
+
 ]=],
         ["src/games/universal/Movement/FreezeMovements.lua"] = [=[
 export type Runtime = {
@@ -21088,6 +21125,7 @@ function Module.destroy(): ()
 end
 
 return Module
+
 ]=],
         ["src/games/universal/Movement/Gravity.lua"] = [=[
 export type Runtime = {
@@ -21167,6 +21205,7 @@ function Module.destroy(): ()
 end
 
 return Module
+
 ]=],
         ["src/games/universal/Movement/SafeWalk.lua"] = [=[
 export type Runtime = {
@@ -21378,6 +21417,7 @@ function Module.destroy(): ()
 end
 
 return Module
+
 ]=],
         ["src/games/universal/Fun/SpinBot.lua"] = [=[
 export type Runtime = {
@@ -21528,6 +21568,7 @@ function Module.destroy(): ()
 end
 
 return Module
+
 ]=],
         ["src/games/universal/Other/Disguise.lua"] = [=[
 --!strict
@@ -23115,6 +23156,7 @@ function Module.destroy(): ()
 end
 
 return Module
+
 ]=],
         ["src/games/universal/Other/AntiAfk.lua"] = [=[
 export type Runtime = {
@@ -23188,6 +23230,7 @@ function Module.destroy(): ()
 end
 
 return Module
+
 ]=],
         ["src/games/universal/Other/InteractExtender.lua"] = [=[
 export type Runtime = {
@@ -23413,6 +23456,7 @@ function Module.destroy(): ()
 end
 
 return Module
+
 ]=],
         ["src/games/universal/Other/RejoinServer.lua"] = [=[
 export type Runtime = {
@@ -23530,6 +23574,7 @@ function Module.destroy(): ()
 end
 
 return Module
+
 ]=],
         ["src/games/universal/Other/LagSwitch.lua"] = [=[
 export type Runtime = {
@@ -23628,6 +23673,7 @@ function Module.destroy(): ()
 end
 
 return Module
+
 ]=],
         ["src/games/universal/Other/ImproveFps.lua"] = [=[
 export type Runtime = {
@@ -23806,6 +23852,7 @@ function Module.destroy(): ()
 end
 
 return Module
+
 ]=],
         ["src/games/universal/Blatant/Fling.lua"] = [=[
 export type Runtime = {
@@ -24092,6 +24139,7 @@ function Module.destroy(): ()
 end
 
 return Module
+
 ]=],
         ["src/games/universal/Other/RemoteLogger.lua"] = [=[
 export type Runtime = {
@@ -24527,6 +24575,7 @@ function Module.destroy(): ()
 end
 
 return Module
+
 ]=],
         ["src/games/universal/Other/Learning.lua"] = [=[
 export type Runtime = {
@@ -24660,6 +24709,7 @@ function Module.destroy(): ()
 end
 
 return Module
+
 ]=],
         ["src/games/universal/Other/GameLearning.lua"] = [=[
 export type Runtime = {
@@ -25835,6 +25885,7 @@ function Module.destroy(): ()
 end
 
 return Module
+
 ]=],
         ["src/games/universal/Render/ProjectileCalibration.lua"] = [=[
 export type Runtime = {
@@ -26651,6 +26702,7 @@ function Module.destroy(): ()
 end
 
 return Module
+
 ]=],
         ["src/games/MM2/base.lua"] = [=[
 local Module = {
@@ -30707,6 +30759,7 @@ function Module.destroy(): ()
 end
 
 return Module
+
 ]=],
         ["src/games/MM2/Blatant/Shoot.lua"] = [=[
 local Module = {
@@ -31653,6 +31706,7 @@ function Module.destroy(): ()
 end
 
 return Module
+
 ]=],
         ["src/games/MM2/Blatant/KnifeAura.lua"] = [=[
 local Module = {
@@ -31902,6 +31956,7 @@ function Module.destroy(): ()
 end
 
 return Module
+
 ]=],
         ["src/games/MM2/Blatant/KnifeThrow.lua"] = [=[
 local Module = {
@@ -32193,6 +32248,7 @@ function Module.destroy(): ()
 end
 
 return Module
+
 ]=],
         ["src/games/MM2/Render/RoundEsp.lua"] = [=[
 local Module = {
@@ -32312,6 +32368,7 @@ function Module.destroy(): ()
 end
 
 return Module
+
 ]=],
         ["src/games/MM2/Movement/Sprint.lua"] = [=[
 local Module = {
@@ -32488,6 +32545,7 @@ function Module.destroy(): ()
 end
 
 return Module
+
 ]=],
         ["src/games/MM2/Movement/Teleport.lua"] = [=[
 local Module = {
@@ -32672,6 +32730,7 @@ function Module.destroy(): ()
 end
 
 return Module
+
 ]=],
         ["src/games/MM2/Fun/InstantRoleNotify.lua"] = [=[
 local Module = {
@@ -32770,6 +32829,7 @@ function Module.destroy(): ()
 end
 
 return Module
+
 ]=],
         ["src/games/MM2/Fun/BlurtRoles.lua"] = [=[
 local Module = {
@@ -33022,6 +33082,7 @@ function Module.destroy(): ()
 end
 
 return Module
+
 ]=],
         ["src/games/MM2/Other/TrajectoryCalibration.lua"] = [=[
 local Module = {
@@ -33094,6 +33155,7 @@ function Module.destroy(): ()
 end
 
 return Module
+
 ]=],
         ["src/games/MVSD/Blatant/SilentAim.lua"] = [=[
 local Module = {
@@ -33492,6 +33554,7 @@ function Module.destroy(): ()
 end
 
 return Module
+
 ]=],
         ["src/games/MVSD/Other/Shoot.lua"] = [=[
 local Module = {
@@ -33746,6 +33809,7 @@ function Module.destroy(): ()
 end
 
 return Module
+
 ]=],
         ["src/games/MVSD/Blatant/Knife.lua"] = [=[
 local Module = {
@@ -34048,6 +34112,7 @@ function Module.destroy(): ()
 end
 
 return Module
+
 ]=],
         ["src/games/MVSD/Blatant/AutoWin.lua"] = [=[
 local Module = {
@@ -34366,6 +34431,6454 @@ function Module.destroy(): ()
 end
 
 return Module
+
+]=],
+        ["src/games/BedFight/base.lua"] = [=[
+local Module = {
+    Name = "BedFight",
+    PlaceId = 71480482338212,
+    Events = {} :: {[string]: any},
+    Initialized = false,
+}
+
+local runtimeState: any = {
+    connections = {} :: {[string]: any},
+    bedMarks = {} :: {[Instance]: any},
+    generatorMarks = {} :: {[Instance]: any},
+    infoPanel = nil :: any,
+    voidPanel = nil :: any,
+    lastSafe = nil :: Vector3?,
+}
+
+local mapCache: any = {beds = {}, generators = {}, at = -1}
+
+local function clearMarks(store: {[Instance]: any}): ()
+    for instance: Instance, mark: any in pairs(store) do
+        pcall(function(): ()
+            mark:Destroy()
+        end)
+        store[instance] = nil
+    end
+end
+
+local remoteCache: any = {}
+
+local function remote(path: string): Instance?
+    local cached: any = remoteCache[path]
+    if cached and cached.Parent then
+        return cached
+    end
+    local replicated: Instance? = game:GetService("ReplicatedStorage")
+    local current: Instance? = replicated and replicated:FindFirstChild("Remotes")
+    if not current then
+        return nil
+    end
+    for segment: string in string.gmatch(path, "[^%.]+") do
+        current = current and current:FindFirstChild(segment)
+        if not current then
+            return nil
+        end
+    end
+    remoteCache[path] = current
+    return current
+end
+
+local function fireRemote(path: string, ...: any): boolean
+    local target: Instance? = remote(path)
+    if not target then
+        return false
+    end
+    local arguments: {any} = table.pack(...)
+    return pcall(function(): ()
+        (target :: any):FireServer(table.unpack(arguments, 1, arguments.n))
+    end)
+end
+
+local function gameInfo(): Instance?
+    local replicated: Instance? = game:GetService("ReplicatedStorage")
+    return replicated and replicated:FindFirstChild("GameInfo") or nil
+end
+
+local function readValue(name: string): any
+    local info: Instance? = gameInfo()
+    if not info then
+        return nil
+    end
+    local value: Instance? = info:FindFirstChild(name)
+    if value and (value:IsA("StringValue") or value:IsA("BoolValue") or value:IsA("NumberValue")) then
+        return (value :: any).Value
+    end
+    return nil
+end
+
+local function scanBeds(): {Model}
+    local beds: {Model} = {}
+    local container: Instance? = workspace:FindFirstChild("BedsContainer")
+    if container then
+        for _, child: Instance in ipairs(container:GetChildren()) do
+            if child:IsA("Model") then
+                table.insert(beds, child :: Model)
+            end
+        end
+    end
+    for _, descendant: Instance in ipairs(workspace:GetChildren()) do
+        local folder: Instance? = descendant:FindFirstChild("Beds")
+        if folder then
+            for _, child: Instance in ipairs(folder:GetChildren()) do
+                if child:IsA("Model") then
+                    table.insert(beds, child :: Model)
+                end
+            end
+        end
+    end
+    return beds
+end
+
+local function scanGenerators(): {BasePart}
+    local generators: {BasePart} = {}
+    for _, mapChild: Instance in ipairs(workspace:GetChildren()) do
+        local folder: Instance? = mapChild:FindFirstChild("Generators")
+        if not folder then
+            continue
+        end
+        for _, kind: Instance in ipairs(folder:GetChildren()) do
+            for _, part: Instance in ipairs(kind:GetChildren()) do
+                if part:IsA("BasePart") then
+                    table.insert(generators, part :: BasePart)
+                end
+            end
+        end
+    end
+    return generators
+end
+
+local function refreshMap(): ()
+    local now: number = os.clock()
+    if now - mapCache.at < 2 then
+        return
+    end
+    mapCache.at = now
+    mapCache.beds = scanBeds()
+    mapCache.generators = scanGenerators()
+end
+
+local function collectBeds(): {Model}
+    refreshMap()
+    return mapCache.beds
+end
+
+local function collectGenerators(): {BasePart}
+    refreshMap()
+    return mapCache.generators
+end
+
+local function anchorOf(model: Model): BasePart?
+    local hitbox: Instance? = model:FindFirstChild("BedHitbox")
+    if hitbox and hitbox:IsA("BasePart") then
+        return hitbox :: BasePart
+    end
+    local mattress: Instance? = model:FindFirstChild("Mattress")
+    if mattress and mattress:IsA("BasePart") then
+        return mattress :: BasePart
+    end
+    return model.PrimaryPart or model:FindFirstChildWhichIsA("BasePart")
+end
+
+function Module.init(runtime: any): any
+    local environment: any = getfenv()
+    local host: any = environment
+    local createUniversalFeature: any = host.createUniversalFeature
+    local addToggleOption: any = host.addToggleOption
+    local addNumberOption: any = host.addNumberOption
+
+    local registerEspExtra: any = host.registerEspExtra
+    local addTextOption: any = host.addTextOption
+    local addInformationOption: any = host.addInformationOption
+    local create: any = host.create
+    local makeTextLabel: any = host.makeTextLabel
+    local TaskManager: any = host.TaskManager
+    local state: any = host.state
+    local LocalPlayer: Player = host.LocalPlayer
+
+    local scroll: any = state.bedFightScroll
+    local registry: any = state.bedFightFeatures
+
+    local auraSettings: any = {
+
+        range = 20,
+        rate = 8,
+        weapon = "",
+        teamCheck = false,
+        maxTargets = 3,
+    }
+    local placeSettings: any = {
+        block = "",
+        variant = 3,
+        grid = 3,
+        rate = 8,
+        ahead = 1,
+    }
+
+    local function equippedWeaponName(): string
+        if auraSettings.weapon ~= "" then
+            return auraSettings.weapon
+        end
+        local camera: Camera? = workspace.CurrentCamera
+        local viewModel: Instance? = camera and camera:FindFirstChild("ViewModel")
+        if viewModel then
+            for _, child: Instance in ipairs(viewModel:GetChildren()) do
+                if child:IsA("Model") or child:IsA("BasePart") then
+                    return child.Name
+                end
+            end
+        end
+        return "Wooden Sword"
+    end
+
+    local function characterOf(player: Player): Model?
+        local container: Instance? = workspace:FindFirstChild("PlayersContainer")
+        local named: Instance? = container and container:FindFirstChild(player.Name)
+        if named and named:IsA("Model") then
+            return named :: Model
+        end
+        return player.Character
+    end
+
+    local settings: any = {
+        bedColour = Color3.fromRGB(236, 236, 240),
+        generatorColour = Color3.fromRGB(150, 220, 255),
+        showDistance = true,
+        showTimers = true,
+        maxDistance = 2000,
+    }
+
+    local function clearBeds(): ()
+        clearMarks(runtimeState.bedMarks)
+    end
+
+    local function renderLibrary(): any
+        return state.renderLibrary
+    end
+
+    local function worldLayer(name: string): Frame?
+        local library: any = renderLibrary()
+        if not library then
+            return nil
+        end
+        return library:Layer(name)
+    end
+
+    local function renderBeds(): ()
+        local library: any = renderLibrary()
+        local layer: Frame? = worldLayer("BedFightEspLayer")
+        local camera: Camera? = workspace.CurrentCamera
+        if not library or not layer or not camera then
+            return
+        end
+        local resolvedLayer: Frame = layer :: Frame
+        resolvedLayer.Visible = true
+        local root: BasePart? = LocalPlayer.Character
+            and LocalPlayer.Character:FindFirstChild("HumanoidRootPart") :: BasePart?
+        local origin: Vector3 = root and (root :: BasePart).Position or Vector3.zero
+        local seen: {[Instance]: boolean} = {}
+
+        for _, bed: Model in ipairs(collectBeds()) do
+            local anchor: BasePart? = anchorOf(bed)
+            if not anchor then
+                continue
+            end
+            local resolved: BasePart = anchor :: BasePart
+            local distance: number = (resolved.Position - origin).Magnitude
+            if distance > settings.maxDistance then
+                continue
+            end
+            local projected: Vector2? = library:Project(camera :: Camera, resolved.Position)
+            if not projected then
+                continue
+            end
+            seen[bed] = true
+            runtimeState.bedMarks[bed] = true
+            local drawings: any = library:Set(resolvedLayer, bed)
+            drawings:Show(true)
+            drawings:Label(
+                "NameTag",
+                settings.showDistance
+                        and ("Bed  " .. tostring(math.round(distance)) .. "m")
+                    or "Bed",
+                projected :: Vector2,
+                0.5,
+                12,
+                settings.bedColour,
+                true
+            )
+        end
+
+        for bed: Instance in pairs(runtimeState.bedMarks) do
+            if not seen[bed] or not bed.Parent then
+                library:Release(resolvedLayer, bed)
+                runtimeState.bedMarks[bed] = nil
+            end
+        end
+    end
+
+    local function setBedEsp(enabled: boolean): ()
+        host.disconnectFeatureConnection("BedFightBeds")
+        clearBeds()
+        local library: any = renderLibrary()
+        local layer: Frame? = worldLayer("BedFightEspLayer")
+        if library and layer and not enabled then
+            library:ReleaseAll(layer)
+            layer.Visible = false
+        end
+        if not enabled then
+            return
+        end
+        host.featureConnections.BedFightBeds =
+            TaskManager:Connect(function(): ()
+                renderBeds()
+            end)
+    end
+
+    registerEspExtra({
+        Name = "Beds",
+        Default = false,
+        Color = settings.bedColour,
+        Tooltip = "Every bed on the map, through walls.",
+        Toggle = setBedEsp,
+        SetColor = function(value: Color3): ()
+            settings.bedColour = value
+        end,
+        Options = {
+            {
+                Kind = "toggle",
+                Name = "distance",
+                Default = true,
+                Set = function(value: boolean): ()
+                    settings.showDistance = value
+                end,
+            },
+            {
+                Kind = "number",
+                Name = "max distance",
+                Default = settings.maxDistance,
+                Min = 100,
+                Max = 5000,
+                Set = function(value: number): ()
+                    settings.maxDistance = value
+                end,
+            },
+        },
+    })
+
+    local function setGeneratorEsp(enabled: boolean): ()
+        host.disconnectFeatureConnection("BedFightGenerators")
+        local library: any = renderLibrary()
+        local layer: Frame? = worldLayer("BedFightEspLayer")
+        if library and layer then
+            for generator: Instance in pairs(runtimeState.generatorMarks) do
+                library:Release(layer, generator)
+            end
+        end
+        clearMarks(runtimeState.generatorMarks)
+        if not enabled then
+            return
+        end
+        host.featureConnections.BedFightGenerators =
+            TaskManager:Connect(function(): ()
+                local root: BasePart? = LocalPlayer.Character
+                    and LocalPlayer.Character:FindFirstChild("HumanoidRootPart") :: BasePart?
+                local origin: Vector3 = root and (root :: BasePart).Position or Vector3.zero
+                local seen: {[Instance]: boolean} = {}
+
+                for _, generator: BasePart in ipairs(collectGenerators()) do
+                    local distance: number = (generator.Position - origin).Magnitude
+                    if distance > settings.maxDistance then
+                        continue
+                    end
+                    seen[generator] = true
+                    local mark: any = runtimeState.generatorMarks[generator]
+                    if not mark or not mark.Parent then
+                        local billboard: BillboardGui = create("BillboardGui", {
+                            Parent = generator,
+                            Name = "Wurst_GeneratorMark",
+                            AlwaysOnTop = true,
+                            LightInfluence = 0,
+                            Size = UDim2.fromOffset(150, 20),
+                            StudsOffset = Vector3.new(0, 3, 0),
+                        }) :: BillboardGui
+                        local label: TextLabel = makeTextLabel(billboard, "", 11)
+                        label.Name = "Label"
+                        label.Size = UDim2.fromScale(1, 1)
+                        label.TextXAlignment = Enum.TextXAlignment.Center
+                        runtimeState.generatorMarks[generator] = billboard
+                        mark = billboard
+                    end
+                    local label: TextLabel? = mark:FindFirstChild("Label") :: TextLabel?
+                    if not label then
+                        continue
+                    end
+
+                    local kind: string = generator.Parent
+                        and generator.Parent.Name:gsub("Generators", "")
+                        or "Generator"
+                    local timer: string = ""
+                    if settings.showTimers then
+                        local progress: Instance? = generator:FindFirstChild("ProgressGui")
+                        local timerLabel: Instance? = progress
+                            and progress:FindFirstChild("TimerLabel")
+                        if timerLabel and timerLabel:IsA("TextLabel") then
+                            timer = "  " .. (timerLabel :: TextLabel).Text
+                        end
+                    end
+                    label.TextColor3 = settings.generatorColour
+                    label.Text = kind
+                        .. (settings.showDistance
+                            and ("  " .. tostring(math.round(distance)) .. "m")
+                            or "")
+                        .. timer
+                end
+
+                for generator: Instance, mark: any in pairs(runtimeState.generatorMarks) do
+                    if not seen[generator] or not generator.Parent then
+                        pcall(function(): ()
+                            mark:Destroy()
+                        end)
+                        runtimeState.generatorMarks[generator] = nil
+                    end
+                end
+            end)
+    end
+
+    registerEspExtra({
+        Name = "Generators",
+        Default = false,
+        Color = settings.generatorColour,
+        Tooltip = "Diamond and emerald generators, with the game's own "
+            .. "countdown.",
+        Toggle = setGeneratorEsp,
+        SetColor = function(value: Color3): ()
+            settings.generatorColour = value
+        end,
+        Options = {
+            {
+                Kind = "toggle",
+                Name = "timers",
+                Default = true,
+                Set = function(value: boolean): ()
+                    settings.showTimers = value
+                end,
+            },
+        },
+    })
+
+
+    local nukerSettings: any = {
+        range = 18,
+        rate = 8,
+        serverHit = false,
+        mine = false,
+    }
+    local NukerFeature: any = createUniversalFeature(
+        "Bed Nuker",
+        "Hits the nearest bed in range as fast as the game allows",
+        5,
+        function(enabled: boolean): ()
+            host.disconnectFeatureConnection("BedFightNuker")
+            if not enabled then
+                return
+            end
+            local nextAt: number = 0
+            host.featureConnections.BedFightNuker =
+                TaskManager:Connect(function(): ()
+                    local character: Model? = LocalPlayer.Character
+                    local root: BasePart? = character
+                        and character:FindFirstChild("HumanoidRootPart") :: BasePart?
+                    if not root then
+                        return
+                    end
+                    local resolvedRoot: BasePart = root :: BasePart
+
+                    local target: BasePart? = nil
+                    local best: number = nukerSettings.range
+                    for _, bed: Model in ipairs(collectBeds()) do
+                        local anchor: BasePart? = anchorOf(bed)
+                        if not anchor then
+                            continue
+                        end
+                        local distance: number =
+                            ((anchor :: BasePart).Position - resolvedRoot.Position).Magnitude
+                        if distance < best then
+                            target = anchor
+                            best = distance
+                        end
+                    end
+                    if not target then
+                        return
+                    end
+
+                    local now: number = os.clock()
+                    if now < nextAt then
+                        return
+                    end
+                    nextAt = now + 1 / math.max(nukerSettings.rate, 0.5)
+
+                    local weapons: any = state.weaponLibrary
+                    if weapons then
+                        weapons:Swing()
+                    end
+
+                    if nukerSettings.serverHit then
+                        local owner: Instance? = (target :: BasePart)
+                            :FindFirstAncestorOfClass("Model")
+                        if owner then
+                            fireRemote(
+                                "ItemsRemotes.SwordHit",
+                                owner,
+                                equippedWeaponName()
+                            )
+                        end
+                    end
+                    if nukerSettings.mine then
+
+                        local origin: BasePart? = character
+                            and character:FindFirstChild("HumanoidRootPart") :: BasePart?
+                        if origin then
+                            local from: Vector3 = (origin :: BasePart).Position
+                            local to: Vector3 = (target :: BasePart).Position
+                            local heading: Vector3 = to - from
+                            heading = heading.Magnitude > 0.001
+                                and heading.Unit
+                                or Vector3.new(0, -1, 0)
+                            fireRemote(
+                                "ItemsRemotes.MineBlock",
+                                "Wooden Pickaxe",
+                                target,
+                                Vector3.new(
+                                    math.round(to.X),
+                                    math.round(to.Y),
+                                    math.round(to.Z)
+                                ),
+                                from,
+                                heading
+                            )
+                        end
+                    end
+
+                    local fire: any = environment.firetouchinterest
+                    if type(fire) ~= "function" then
+                        return
+                    end
+                    for _, part: Instance in ipairs(character:GetDescendants()) do
+                        if not part:IsA("BasePart") then
+                            continue
+                        end
+                        pcall(fire, part, target, 1)
+                        pcall(fire, part, target, 0)
+                    end
+                end)
+        end,
+        {parent = scroll, registry = registry, categoryName = "Combat"}
+    )
+    addNumberOption(
+        NukerFeature,
+        "Range",
+        nukerSettings.range,
+        6,
+        80,
+        function(value: number): ()
+            nukerSettings.range = value
+        end
+    )
+    addNumberOption(
+        NukerFeature,
+        "Hits per second",
+        nukerSettings.rate,
+        1,
+        20,
+        function(value: number): ()
+            nukerSettings.rate = value
+        end
+    )
+    addToggleOption(NukerFeature, "Server hit", false, function(value: boolean): ()
+        nukerSettings.serverHit = value
+    end)
+    addToggleOption(NukerFeature, "Mine remote", false, function(value: boolean): ()
+        nukerSettings.mine = value
+    end)
+    addInformationOption(
+        NukerFeature,
+        "Safe band: 18 studs and under ten hits a second. This presses the "
+            .. "game's own controls, so whatever is in your hand is what "
+            .. "swings; the two remote paths are opt-in and the server may or "
+            .. "may not accept either for a bed."
+    )
+
+    local scaffoldSettings: any = {rate = 6, reach = 6, variant = 3}
+
+    local guiCache: any = {at = -1, block = nil}
+
+    local function blockSlot(): GuiButton?
+        if os.clock() - guiCache.at < 1 then
+            return guiCache.block
+        end
+        local playerGui: Instance? = LocalPlayer:FindFirstChild("PlayerGui")
+        if not playerGui then
+            return nil
+        end
+
+        local blockWords: {string} = {"wool", "plank", "stone", "wood", "brick", "block"}
+        for _, descendant: Instance in ipairs(playerGui:GetDescendants()) do
+            if not descendant:IsA("GuiButton") then
+                continue
+            end
+            local lowered: string = string.lower(descendant.Name)
+            for _, word: string in ipairs(blockWords) do
+                if string.find(lowered, word, 1, true) then
+                    guiCache.block = descendant :: GuiButton
+                    guiCache.at = os.clock()
+                    return guiCache.block
+                end
+            end
+        end
+        guiCache.block = nil
+        guiCache.at = os.clock()
+        return nil
+    end
+
+    local function scaffoldBlockName(): string
+        local camera: Camera? = workspace.CurrentCamera
+        local viewModel: Instance? = camera and camera:FindFirstChild("ViewModel")
+        if viewModel then
+            for _, child: Instance in ipairs(viewModel:GetChildren()) do
+                local name: string = string.lower(child.Name)
+                if string.find(name, "wool", 1, true)
+                    or string.find(name, "plank", 1, true)
+                    or string.find(name, "block", 1, true) then
+                    return child.Name
+                end
+            end
+        end
+        local slot: GuiButton? = blockSlot()
+        if slot then
+            return slot.Name
+        end
+        return "Wool"
+    end
+
+    local ScaffoldFeature: any = createUniversalFeature(
+        "Scaffold",
+        "Places the game's own blocks under you while you walk over nothing",
+        6,
+        function(enabled: boolean): ()
+            host.disconnectFeatureConnection("BedFightScaffold")
+            if not enabled then
+                return
+            end
+            local nextAt: number = 0
+            host.featureConnections.BedFightScaffold =
+                TaskManager:Connect(function(): ()
+                    local character: Model? = LocalPlayer.Character
+                    local root: BasePart? = character
+                        and character:FindFirstChild("HumanoidRootPart") :: BasePart?
+                    local humanoid: Humanoid? = character
+                        and character:FindFirstChildOfClass("Humanoid") :: Humanoid?
+                    if not root or not humanoid then
+                        return
+                    end
+                    local resolvedRoot: BasePart = root :: BasePart
+                    local resolvedHumanoid: Humanoid = humanoid :: Humanoid
+
+                    local parameters: RaycastParams = RaycastParams.new()
+                    parameters.FilterType = Enum.RaycastFilterType.Exclude
+                    parameters.IgnoreWater = true
+                    parameters.FilterDescendantsInstances = {character :: any}
+                    local below: RaycastResult? = workspace:Raycast(
+                        resolvedRoot.Position,
+                        Vector3.new(0, -(resolvedHumanoid.HipHeight + scaffoldSettings.reach), 0),
+                        parameters
+                    )
+                    if below then
+                        return
+                    end
+
+                    local now: number = os.clock()
+                    if now < nextAt then
+                        return
+                    end
+                    nextAt = now + 1 / math.max(scaffoldSettings.rate, 0.5)
+
+                    local slot: GuiButton? = blockSlot()
+                    local weapons: any = state.weaponLibrary
+                    if slot and weapons then
+
+                        weapons:PressButton(slot :: GuiButton)
+                    end
+
+                    local grid: number = 3
+                    local base: Vector3 = resolvedRoot.Position
+                        - Vector3.new(0, resolvedHumanoid.HipHeight + 1, 0)
+                    fireRemote(
+                        "ItemsRemotes.PlaceBlock",
+                        scaffoldBlockName(),
+                        scaffoldSettings.variant,
+                        Vector3.new(
+                            math.floor(base.X / grid + 0.5) * grid,
+                            math.floor(base.Y / grid + 0.5) * grid,
+                            math.floor(base.Z / grid + 0.5) * grid
+                        )
+                    )
+                end)
+        end,
+        {parent = scroll, registry = registry, categoryName = "Movement"}
+    )
+    addNumberOption(
+        ScaffoldFeature,
+        "Blocks per second",
+        scaffoldSettings.rate,
+        1,
+        20,
+        function(value: number): ()
+            scaffoldSettings.rate = value
+        end
+    )
+    addNumberOption(
+        ScaffoldFeature,
+        "Gap depth",
+        scaffoldSettings.reach,
+        2,
+        30,
+        function(value: number): ()
+            scaffoldSettings.reach = value
+        end
+    )
+    addNumberOption(
+        ScaffoldFeature,
+        "Variant",
+        scaffoldSettings.variant,
+        0,
+        12,
+        function(value: number): ()
+            scaffoldSettings.variant = value
+        end
+    )
+    addInformationOption(
+        ScaffoldFeature,
+        "Fires PlaceBlock as captured: block name, hotbar slot (3 and 5 in the "
+            .. "logs), world position. Variant is that slot. Server Scaffold is "
+            .. "the same remote with tiles ahead and a typed block name."
+    )
+
+    local voidSettings: any = {margin = 25, rescue = true}
+    local VoidFeature: any = createUniversalFeature(
+        "Anti Void",
+        "Catches you before the map's own kill plane does",
+        7,
+        function(enabled: boolean): ()
+            host.disconnectFeatureConnection("BedFightVoid")
+            if runtimeState.voidPanel then
+                pcall(function(): ()
+                    runtimeState.voidPanel:Destroy()
+                end)
+                runtimeState.voidPanel = nil
+            end
+            if not enabled then
+                return
+            end
+            local warning: Frame = create("Frame", {
+                Parent = host.ScreenGui,
+                Name = "BedFightVoidWarning",
+                AnchorPoint = Vector2.new(0.5, 0),
+                BackgroundColor3 = Color3.fromRGB(18, 14, 14),
+                BackgroundTransparency = 0.1,
+                BorderSizePixel = 0,
+                Position = UDim2.new(0.5, 0, 0, 74),
+                Size = UDim2.fromOffset(210, 26),
+                Visible = false,
+                ZIndex = 62,
+            }) :: Frame
+            create("UICorner", {Parent = warning, CornerRadius = UDim.new(0, 4)})
+            local label: TextLabel = makeTextLabel(warning, "", 12)
+            label.Size = UDim2.fromScale(1, 1)
+            label.TextXAlignment = Enum.TextXAlignment.Center
+            label.TextColor3 = Color3.fromRGB(232, 160, 160)
+            label.ZIndex = 63
+            runtimeState.voidPanel = warning
+
+            host.featureConnections.BedFightVoid =
+                TaskManager:Connect(function(): ()
+                    local info: Instance? = gameInfo()
+                    local barrier: Instance? = info
+                        and info:FindFirstChild("DeathBarrierInfo")
+                    local heightValue: Instance? = barrier
+                        and barrier:FindFirstChild("MaxHeight")
+                    local root: BasePart? = LocalPlayer.Character
+                        and LocalPlayer.Character:FindFirstChild("HumanoidRootPart") :: BasePart?
+                    if not root or not heightValue or not heightValue:IsA("NumberValue") then
+                        warning.Visible = false
+                        return
+                    end
+                    local resolvedRoot: BasePart = root :: BasePart
+                    local floor: number = (heightValue :: NumberValue).Value
+                    local drop: number = resolvedRoot.Position.Y - floor
+
+                    local parameters: RaycastParams = RaycastParams.new()
+                    parameters.FilterType = Enum.RaycastFilterType.Exclude
+                    parameters.IgnoreWater = true
+                    parameters.FilterDescendantsInstances = {LocalPlayer.Character :: any}
+                    local ground: RaycastResult? = workspace:Raycast(
+                        resolvedRoot.Position,
+                        Vector3.new(0, -12, 0),
+                        parameters
+                    )
+                    if ground then
+                        runtimeState.lastSafe = resolvedRoot.Position
+                    end
+
+                    warning.Visible = drop < voidSettings.margin * 2
+                    if warning.Visible then
+                        label.Text = "Void in " .. tostring(math.round(drop)) .. " studs"
+                    end
+
+                    if not voidSettings.rescue or drop > voidSettings.margin then
+                        return
+                    end
+
+                    resolvedRoot.AssemblyLinearVelocity = Vector3.zero
+                    if runtimeState.lastSafe then
+                        resolvedRoot.CFrame =
+                            CFrame.new(runtimeState.lastSafe + Vector3.new(0, 4, 0))
+                    end
+                end)
+        end,
+        {parent = scroll, registry = registry, categoryName = "Movement"}
+    )
+    addNumberOption(
+        VoidFeature,
+        "Rescue margin",
+        voidSettings.margin,
+        5,
+        120,
+        function(value: number): ()
+            voidSettings.margin = value
+        end
+    )
+    addToggleOption(VoidFeature, "Rescue", true, function(value: boolean): ()
+        voidSettings.rescue = value
+    end)
+    addInformationOption(
+        VoidFeature,
+        "The kill height comes from GameInfo.DeathBarrierInfo, so the margin is "
+            .. "measured against the game's own plane."
+    )
+
+    local ServerAuraFeature: any = createUniversalFeature(
+        "Server Aura",
+        "Reports hits straight to the server, no swing needed",
+        8,
+        function(enabled: boolean): ()
+            host.disconnectFeatureConnection("BedFightServerAura")
+            if not enabled then
+                return
+            end
+            local nextAt: number = 0
+            host.featureConnections.BedFightServerAura =
+                TaskManager:Connect(function(): ()
+                    local now: number = os.clock()
+                    if now < nextAt then
+                        return
+                    end
+                    nextAt = now + 1 / math.max(auraSettings.rate, 0.5)
+
+                    local root: BasePart? = LocalPlayer.Character
+                        and LocalPlayer.Character:FindFirstChild("HumanoidRootPart") :: BasePart?
+                    if not root then
+                        return
+                    end
+                    local origin: Vector3 = (root :: BasePart).Position
+                    local weapon: string = equippedWeaponName()
+                    local sent: number = 0
+
+                    for _, player: Player in ipairs(host.Players:GetPlayers()) do
+                        if player == LocalPlayer then
+                            continue
+                        end
+                        if sent >= math.round(auraSettings.maxTargets) then
+                            break
+                        end
+                        if auraSettings.teamCheck
+                            and player.Team ~= nil
+                            and player.Team == LocalPlayer.Team then
+                            continue
+                        end
+                        local targets: any = runtime.Services.protectedTargets
+                        if targets.isProtected(player) then
+                            continue
+                        end
+                        local character: Model? = characterOf(player)
+                        local victimRoot: Instance? = character
+                            and character:FindFirstChild("HumanoidRootPart")
+                        local humanoid: Instance? = character
+                            and character:FindFirstChildOfClass("Humanoid")
+                        if not character or not victimRoot or not humanoid then
+                            continue
+                        end
+                        if (humanoid :: Humanoid).Health <= 0 then
+                            continue
+                        end
+                        if ((victimRoot :: BasePart).Position - origin).Magnitude
+                            > auraSettings.range then
+                            continue
+                        end
+                        fireRemote("ItemsRemotes.SwordHit", character, weapon)
+                        sent += 1
+                    end
+                end)
+        end,
+        {parent = scroll, registry = registry, categoryName = "Combat"}
+    )
+    addNumberOption(ServerAuraFeature, "Range", auraSettings.range, 5, 40, function(value: number): ()
+        auraSettings.range = value
+    end)
+    addNumberOption(ServerAuraFeature, "Hits per second", auraSettings.rate, 1, 20, function(value: number): ()
+        auraSettings.rate = value
+    end)
+    addNumberOption(ServerAuraFeature, "Max targets", auraSettings.maxTargets, 1, 12, function(value: number): ()
+        auraSettings.maxTargets = value
+    end)
+    addToggleOption(ServerAuraFeature, "Team check", false, function(value: boolean): ()
+        auraSettings.teamCheck = value
+    end)
+    addTextOption(ServerAuraFeature, "Weapon name", "", function(value: string): ()
+        auraSettings.weapon = value
+    end)
+    addInformationOption(
+        ServerAuraFeature,
+        "Safe band: 20-28 studs of range and single-digit hits per second. "
+            .. "Past 28 studs no legitimate swing could have reached, and that "
+            .. "is what gets accounts collected in a ban wave. Leave the weapon "
+            .. "empty and it reads whichever view model you hold; the Friend "
+            .. "List is respected."
+    )
+
+    local function equippedBlockName(): string
+        if placeSettings.block ~= "" then
+            return placeSettings.block
+        end
+
+        local camera: Camera? = workspace.CurrentCamera
+        local viewModel: Instance? = camera and camera:FindFirstChild("ViewModel")
+        if viewModel then
+            for _, child: Instance in ipairs(viewModel:GetChildren()) do
+                local name: string = string.lower(child.Name)
+                if string.find(name, "wool", 1, true)
+                    or string.find(name, "plank", 1, true)
+                    or string.find(name, "block", 1, true) then
+                    return child.Name
+                end
+            end
+        end
+        return "Wool"
+    end
+
+    local function snap(value: number, grid: number): number
+        return math.floor(value / grid + 0.5) * grid
+    end
+
+    local ServerScaffoldFeature: any = createUniversalFeature(
+        "Server Scaffold",
+        "Places real blocks under and ahead of you through the game's remote",
+        9,
+        function(enabled: boolean): ()
+            host.disconnectFeatureConnection("BedFightServerScaffold")
+            if not enabled then
+                return
+            end
+            local nextAt: number = 0
+            host.featureConnections.BedFightServerScaffold =
+                TaskManager:Connect(function(): ()
+                    local character: Model? = LocalPlayer.Character
+                    local root: BasePart? = character
+                        and character:FindFirstChild("HumanoidRootPart") :: BasePart?
+                    local humanoid: Humanoid? = character
+                        and character:FindFirstChildOfClass("Humanoid") :: Humanoid?
+                    if not root or not humanoid then
+                        return
+                    end
+                    local resolvedRoot: BasePart = root :: BasePart
+                    local resolvedHumanoid: Humanoid = humanoid :: Humanoid
+
+                    local now: number = os.clock()
+                    if now < nextAt then
+                        return
+                    end
+
+                    local parameters: RaycastParams = RaycastParams.new()
+                    parameters.FilterType = Enum.RaycastFilterType.Exclude
+                    parameters.IgnoreWater = true
+                    parameters.FilterDescendantsInstances = {character :: any}
+                    local drop: number = resolvedHumanoid.HipHeight + placeSettings.grid + 1
+                    local below: RaycastResult? = workspace:Raycast(
+                        resolvedRoot.Position,
+                        Vector3.new(0, -drop, 0),
+                        parameters
+                    )
+                    if below then
+                        return
+                    end
+                    nextAt = now + 1 / math.max(placeSettings.rate, 0.5)
+
+                    local grid: number = placeSettings.grid
+                    local block: string = equippedBlockName()
+                    local base: Vector3 = resolvedRoot.Position
+                        - Vector3.new(0, resolvedHumanoid.HipHeight + 1, 0)
+
+                    local heading: Vector3 = resolvedHumanoid.MoveDirection
+                    if heading.Magnitude < 0.05 then
+                        heading = resolvedRoot.CFrame.LookVector
+                    end
+                    heading = Vector3.new(heading.X, 0, heading.Z)
+                    if heading.Magnitude > 0.05 then
+                        heading = heading.Unit
+                    else
+                        heading = Vector3.zero
+                    end
+
+                    for step: number = 0, math.round(placeSettings.ahead) do
+                        local spot: Vector3 = base + heading * (grid * step)
+                        fireRemote(
+                            "ItemsRemotes.PlaceBlock",
+                            block,
+                            placeSettings.variant,
+                            Vector3.new(
+                                snap(spot.X, grid),
+                                snap(spot.Y, grid),
+                                snap(spot.Z, grid)
+                            )
+                        )
+                    end
+                end)
+        end,
+        {parent = scroll, registry = registry, categoryName = "Movement"}
+    )
+    addNumberOption(ServerScaffoldFeature, "Blocks per second", placeSettings.rate, 1, 20, function(value: number): ()
+        placeSettings.rate = value
+    end)
+    addNumberOption(ServerScaffoldFeature, "Tiles ahead", placeSettings.ahead, 0, 5, function(value: number): ()
+        placeSettings.ahead = value
+    end)
+    addNumberOption(ServerScaffoldFeature, "Grid size", placeSettings.grid, 1, 6, function(value: number): ()
+        placeSettings.grid = value
+    end)
+    addNumberOption(ServerScaffoldFeature, "Variant", placeSettings.variant, 0, 12, function(value: number): ()
+        placeSettings.variant = value
+    end)
+    addTextOption(ServerScaffoldFeature, "Block name", "", function(value: string): ()
+        placeSettings.block = value
+    end)
+    addInformationOption(
+        ServerScaffoldFeature,
+        "Variant is the second argument, which the client sent as 5 once and 3 "
+            .. "another time — most likely the hotbar slot. Leave the block "
+            .. "empty to use whatever you are holding, or type one and hold "
+            .. "nothing at all."
+    )
+
+    local minerSettings: any = {
+        tool = "Wooden Pickaxe",
+
+        range = 24,
+        rate = 8,
+        perTick = 2,
+        filter = "",
+    }
+
+    local function minableBlocks(origin: Vector3, range: number, filter: string): {BasePart}
+        local found: {BasePart} = {}
+        local container: Instance? = workspace:FindFirstChild("PlayersBlocksContainer")
+        if not container then
+            return found
+        end
+        local wanted: string = string.lower(filter)
+        for _, group: Instance in ipairs(container:GetChildren()) do
+            for _, block: Instance in ipairs(group:GetChildren()) do
+                if not block:IsA("BasePart") then
+                    continue
+                end
+                if wanted ~= ""
+                    and not string.find(string.lower(block.Name), wanted, 1, true) then
+                    continue
+                end
+                if ((block :: BasePart).Position - origin).Magnitude > range then
+                    continue
+                end
+                table.insert(found, block :: BasePart)
+            end
+        end
+        table.sort(found, function(first: BasePart, second: BasePart): boolean
+            return (first.Position - origin).Magnitude
+                < (second.Position - origin).Magnitude
+        end)
+        return found
+    end
+
+    local function mineBlock(block: BasePart, origin: Vector3): ()
+        local target: Vector3 = block.Position
+        local direction: Vector3 = target - origin
+        if direction.Magnitude > 0.001 then
+            direction = direction.Unit
+        else
+            direction = Vector3.new(0, -1, 0)
+        end
+
+        fireRemote(
+            "ItemsRemotes.MineBlock",
+            minerSettings.tool,
+            block,
+            Vector3.new(
+                math.round(target.X),
+                math.round(target.Y),
+                math.round(target.Z)
+            ),
+            origin,
+            direction
+        )
+    end
+
+    local MinerFeature: any = createUniversalFeature(
+        "Server Miner",
+        "Mines the blocks around you without holding a pickaxe",
+        10,
+        function(enabled: boolean): ()
+            host.disconnectFeatureConnection("BedFightMiner")
+            if not enabled then
+                return
+            end
+            local nextAt: number = 0
+            host.featureConnections.BedFightMiner =
+                TaskManager:Connect(function(): ()
+                    local now: number = os.clock()
+                    if now < nextAt then
+                        return
+                    end
+                    nextAt = now + 1 / math.max(minerSettings.rate, 0.5)
+
+                    local root: BasePart? = LocalPlayer.Character
+                        and LocalPlayer.Character:FindFirstChild("HumanoidRootPart") :: BasePart?
+                    if not root then
+                        return
+                    end
+                    local origin: Vector3 = (root :: BasePart).Position
+                    local blocks: {BasePart} =
+                        minableBlocks(origin, minerSettings.range, minerSettings.filter)
+                    for index: number = 1, math.min(#blocks, math.round(minerSettings.perTick)) do
+                        mineBlock(blocks[index], origin)
+                    end
+                end)
+        end,
+        {parent = scroll, registry = registry, categoryName = "Combat"}
+    )
+    addTextOption(MinerFeature, "Pickaxe", minerSettings.tool, function(value: string): ()
+        minerSettings.tool = value
+    end)
+    addTextOption(MinerFeature, "Only blocks named", "", function(value: string): ()
+        minerSettings.filter = value
+    end)
+    addNumberOption(MinerFeature, "Range", minerSettings.range, 5, 48, function(value: number): ()
+        minerSettings.range = value
+    end)
+    addNumberOption(MinerFeature, "Mines per second", minerSettings.rate, 1, 20, function(value: number): ()
+        minerSettings.rate = value
+    end)
+    addNumberOption(MinerFeature, "Blocks per tick", minerSettings.perTick, 1, 12, function(value: number): ()
+        minerSettings.perTick = value
+    end)
+    addInformationOption(
+        MinerFeature,
+        "Safe band: about 24 studs and under ten mines a second. The pickaxe "
+            .. "is a name, not an object, so nothing has to be equipped — but a "
+            .. "player mining thirty blocks a second from across the map is the "
+            .. "easiest thing in the game to spot."
+    )
+
+    local buySettings: any = {category = "Blocks", item = "Wool", rate = 2, nearest = true}
+
+    local function shopPrompt(): BasePart?
+        local root: BasePart? = LocalPlayer.Character
+            and LocalPlayer.Character:FindFirstChild("HumanoidRootPart") :: BasePart?
+        local origin: Vector3 = root and (root :: BasePart).Position or Vector3.zero
+        local best: BasePart? = nil
+        local bestDistance: number = math.huge
+        for _, mapChild: Instance in ipairs(workspace:GetChildren()) do
+            local prompts: Instance? = mapChild:FindFirstChild("ItemShopPrompts")
+            if not prompts then
+                continue
+            end
+            for _, prompt: Instance in ipairs(prompts:GetChildren()) do
+                if not prompt:IsA("BasePart") then
+                    continue
+                end
+                local distance: number = ((prompt :: BasePart).Position - origin).Magnitude
+                if distance < bestDistance then
+                    best = prompt :: BasePart
+                    bestDistance = distance
+                end
+            end
+        end
+        return best
+    end
+
+    local BuyFeature: any = createUniversalFeature(
+        "Auto Buy",
+        "Buys a shop item on a timer through the game's own purchase remote",
+        10,
+        function(enabled: boolean): ()
+            host.disconnectFeatureConnection("BedFightBuy")
+            if not enabled then
+                return
+            end
+            local nextAt: number = 0
+            host.featureConnections.BedFightBuy =
+                TaskManager:Connect(function(): ()
+                    local now: number = os.clock()
+                    if now < nextAt then
+                        return
+                    end
+                    nextAt = now + 1 / math.max(buySettings.rate, 0.2)
+                    local prompt: BasePart? = shopPrompt()
+                    if not prompt then
+                        return
+                    end
+                    fireRemote(
+                        "PurchaseItemShopItem",
+                        prompt,
+                        buySettings.category,
+                        buySettings.item
+                    )
+                end)
+        end,
+        {parent = scroll, registry = registry, categoryName = "Other"}
+    )
+    addTextOption(BuyFeature, "Category", buySettings.category, function(value: string): ()
+        buySettings.category = value
+    end)
+    addTextOption(BuyFeature, "Item", buySettings.item, function(value: string): ()
+        buySettings.item = value
+    end)
+    addNumberOption(BuyFeature, "Purchases per second", buySettings.rate, 1, 10, function(value: number): ()
+        buySettings.rate = value
+    end)
+    addInformationOption(
+        BuyFeature,
+        "Observed categories: Blocks, Swords, Pickaxes, Armor. The nearest "
+            .. "shop prompt on the map is the one passed to the server. Two a "
+            .. "second looks like a person holding the button; twenty does not."
+    )
+
+    local QuickFeature: any = createUniversalFeature(
+        "Quick Actions",
+        "One-shot calls with the arguments the game itself uses",
+        11,
+        function(): () end,
+        {
+            parent = scroll,
+            registry = registry,
+            categoryName = "Other",
+            category = true,
+        }
+    )
+    local quickSettings: any = {
+        tool = "Wooden Sword",
+        armor = "",
+        slot = "Pants",
+        drop = "Blue Wool",
+    }
+    addTextOption(QuickFeature, "Tool", quickSettings.tool, function(value: string): ()
+        quickSettings.tool = value
+    end)
+    host.addActionOption(QuickFeature, "Equip tool", function(): ()
+        fireRemote("ItemsRemotes.EquipTool", quickSettings.tool)
+    end)
+    addTextOption(QuickFeature, "Armor", quickSettings.armor, function(value: string): ()
+        quickSettings.armor = value
+    end)
+    addTextOption(QuickFeature, "Armor slot", quickSettings.slot, function(value: string): ()
+        quickSettings.slot = value
+    end)
+    host.addActionOption(QuickFeature, "Wear armor", function(): ()
+        fireRemote("WearArmor", quickSettings.armor, quickSettings.slot)
+    end)
+    addTextOption(QuickFeature, "Drop item", quickSettings.drop, function(value: string): ()
+        quickSettings.drop = value
+    end)
+    host.addActionOption(QuickFeature, "Drop all of it", function(): ()
+
+        fireRemote("ItemsRemotes.DropItem", quickSettings.drop, "All")
+    end)
+    addInformationOption(
+        QuickFeature,
+        "EquipTool takes the item's name; WearArmor takes the armor and the "
+            .. "slot, which the client sent as (\"\", \"Pants\")."
+    )
+
+    Module.Initialized = true
+    return Module
+end
+
+function Module.destroy(): ()
+    local environment: any = getfenv()
+    local host: any = environment
+    for _, name: string in
+        ipairs({
+            "BedFightBeds",
+            "BedFightGenerators",
+            "BedFightInfo",
+            "BedFightSwing",
+            "BedFightNuker",
+            "BedFightVoid",
+            "BedFightScaffold",
+            "BedFightServerAura",
+            "BedFightServerScaffold",
+            "BedFightBuy",
+            "BedFightMiner",
+        })
+    do
+        if host.disconnectFeatureConnection then
+            pcall(host.disconnectFeatureConnection, name)
+        end
+    end
+    clearMarks(runtimeState.bedMarks)
+    clearMarks(runtimeState.generatorMarks)
+    if runtimeState.infoPanel then
+        pcall(function(): ()
+            runtimeState.infoPanel.root:Destroy()
+        end)
+        runtimeState.infoPanel = nil
+    end
+    if runtimeState.voidPanel then
+        pcall(function(): ()
+            runtimeState.voidPanel:Destroy()
+        end)
+        runtimeState.voidPanel = nil
+    end
+    Module.Initialized = false
+end
+
+return Module
+
+]=],
+        ["src/games/BedFight/Combat/AutoSwing.lua"] = [=[
+local Module = {Name = "BedFight Auto Swing", Initialized = false, Connection = nil}
+
+function Module.init(runtime: any): any
+    if Module.Initialized then return Module end
+    local env: any = getfenv()
+    local enabled: boolean = false
+    local rate: number = 9
+    local nextAt: number = 0
+    local function update(): ()
+        if not enabled or os.clock() < nextAt then return end
+        nextAt = os.clock() + 1 / math.max(rate, 0.5)
+        local weapons: any = env.state.weaponLibrary
+        if weapons then weapons:Swing() end
+    end
+    local feature: any = env.createUniversalFeature("Auto Swing", "Presses the game's own sword button on a timer", 4, function(value: boolean): () enabled = value end, {parent = env.state.bedFightScroll, registry = env.state.bedFightFeatures, categoryName = "Combat"})
+    env.addNumberOption(feature, "Swings per second", rate, 1, 20, function(value: number): () rate = value end)
+    Module.Connection = game:GetService("RunService").Heartbeat:Connect(update)
+    Module.Initialized = true
+    return Module
+end
+
+function Module.destroy(): ()
+    if Module.Connection then Module.Connection:Disconnect() Module.Connection = nil end
+    Module.Initialized = false
+end
+
+return Module
+
+]=],
+        ["src/games/BedFight/Render/RoundInfo.lua"] = [=[
+local Module = {Name = "BedFight Round Info", Initialized = false, Connection = nil, Panel = nil}
+
+local function value(name: string): any
+    local replicated: ReplicatedStorage = game:GetService("ReplicatedStorage")
+    local info: Instance? = replicated:FindFirstChild("GameInfo")
+    local item: Instance? = info and info:FindFirstChild(name)
+    if item and item:IsA("ValueBase") then return item.Value end
+    return item and item:GetAttribute("Value") or nil
+end
+
+function Module.init(runtime: any): any
+    if Module.Initialized then return Module end
+    local env: any = getfenv()
+    local enabled: boolean = false
+    local status: TextLabel? = nil
+    local mode: TextLabel? = nil
+    local beds: TextLabel? = nil
+    local function clear(): ()
+        if Module.Panel then Module.Panel:Destroy() Module.Panel = nil end
+        status = nil mode = nil beds = nil
+    end
+    local function toggle(active: boolean): ()
+        enabled = active
+        clear()
+        if not active then return end
+        local root: Frame = env.create("Frame", {Parent = env.ScreenGui, Name = "BedFightInfo", AnchorPoint = Vector2.new(1, 0), BackgroundColor3 = Color3.fromRGB(14, 14, 16), BackgroundTransparency = 0.15, BorderSizePixel = 0, Position = UDim2.new(1, -18, 0, 90), Size = UDim2.fromOffset(196, 64), ZIndex = 60})
+        env.create("UICorner", {Parent = root, CornerRadius = UDim.new(0, 4)})
+        status = env.makeTextLabel(root, "", 12)
+        mode = env.makeTextLabel(root, "", 10)
+        beds = env.makeTextLabel(root, "", 10)
+        status.Position = UDim2.fromOffset(10, 5) status.Size = UDim2.new(1, -20, 0, 21)
+        mode.Position = UDim2.fromOffset(10, 25) mode.Size = UDim2.new(1, -20, 0, 18)
+        beds.Position = UDim2.fromOffset(10, 42) beds.Size = UDim2.new(1, -20, 0, 18)
+        Module.Panel = root
+    end
+    env.createUniversalFeature("Round Info", "Status, mode and bed state", 3, toggle, {parent = env.state.bedFightScroll, registry = env.state.bedFightFeatures, categoryName = "Render"})
+    Module.Connection = game:GetService("RunService").Heartbeat:Connect(function(): ()
+        if not enabled or not status or not mode or not beds then return end
+        status.Text = tostring(value("Status") or "—")
+        mode.Text = "Mode: " .. tostring(value("GameMode") or "—")
+        beds.Text = "Beds: " .. (value("AllBedsBroken") == true and "all broken" or "standing")
+    end)
+    Module.Initialized = true
+    return Module
+end
+
+function Module.destroy(): ()
+    if Module.Connection then Module.Connection:Disconnect() Module.Connection = nil end
+    if Module.Panel then Module.Panel:Destroy() Module.Panel = nil end
+    Module.Initialized = false
+end
+
+return Module
+
+]=],
+        ["src/games/TRS/base.lua"] = [=[
+local Module = {
+    Name = "TRS",
+    PlaceId = 14315258385,
+    Events = {} :: {[string]: any},
+    Initialized = false,
+    Menu = nil :: any,
+    Runtime = nil :: any,
+}
+
+local moduleCleanup: () -> () = function(): () end
+
+local function buildTRSFeatures()
+    local settings = {
+        tackleRange = 8,
+        tackleLead = 0.12,
+        tackleAimlock = true,
+        tackleBox = true,
+        opponentsOnly = true,
+        dribbleRange = 10,
+        dribblePrediction = 0.18,
+        dribblePreempt = true,
+        dribbleStyle = "Normal",
+        power = false,
+        powerValue = 1,
+        shootKey = Enum.KeyCode.G,
+        powerShotKey = Enum.KeyCode.T,
+        longShotKey = Enum.KeyCode.R,
+        shootGoalRange = 120,
+        powerShotRange = 120,
+        shootTargetHeight = 4,
+        goalVisualRange = 100,
+        goalVisualSize = 2.5,
+        goalVisualCurve = 5,
+        goalVisualLine = true,
+        pickupMode = "Automatic",
+        pickupKey = Enum.KeyCode.H,
+        pickupReach = 18,
+        pickupMaxHeight = 12,
+        pickupReportedDistance = 2.8,
+        pickupDelay = 0.1,
+        pickupDeke = true,
+        passMode = "Manual",
+        passKey = Enum.KeyCode.V,
+        passRange = 150,
+        passPressureRange = 9,
+        passForwardOnly = true,
+        trajectoryTime = 2.4,
+        goalkeeperRange = 32,
+        goalkeeperMinSpeed = 8,
+        goalkeeperHighBall = 5,
+        headerRange = 7,
+        headerGoalRange = 50,
+    }
+    local tackleBox = nil
+    local dribbleBox = nil
+    local lastTackle = 0
+    local lastDribble = 0
+    local lastPass = 0
+    local lastPickup = 0
+    local lastShot = 0
+    local nativeShotContext = nil
+    local nativeHeaderContext = nil
+    local shotHookInstalled = false
+    local originalNamecall = nil
+    local shotHookWrapper = nil
+    local pickupRemote = nil
+    local trajectoryParts = {}
+    local landingMarker = nil
+    local lastGoalkeeperAction = 0
+    local lastHeaderAction = 0
+    local autoTackleEnabled = false
+    local autoPickupEnabled = false
+    local goalVisualObjects = {}
+
+    local function getWorldBools()
+        return workspace:FindFirstChild("Bools")
+    end
+
+    local function boolEnabled(folder, name)
+        local value = folder and folder:FindFirstChild(name)
+        return value and value.Value == true
+    end
+
+    local function isLocalGoalkeeper(worldBools)
+        local apg = worldBools and worldBools:FindFirstChild("APG")
+        local hpg = worldBools and worldBools:FindFirstChild("HPG")
+        return (apg and apg.Value == LocalPlayer)
+            or (hpg and hpg.Value == LocalPlayer)
+    end
+
+    local function getOpponentGoal()
+        if LocalPlayer.TeamColor == BrickColor.new(23) then
+            return workspace:FindFirstChild("HomeGoalDetector")
+        end
+        if LocalPlayer.TeamColor == BrickColor.new(141) then
+            return workspace:FindFirstChild("AwayGoalDetector")
+        end
+        return nil
+    end
+
+    local function getOwnGoal()
+        if LocalPlayer.TeamColor == BrickColor.new(23) then
+            return workspace:FindFirstChild("AwayGoalDetector")
+        end
+        if LocalPlayer.TeamColor == BrickColor.new(141) then
+            return workspace:FindFirstChild("HomeGoalDetector")
+        end
+        return nil
+    end
+
+    local function localActionBlocked(character, checkDribble)
+        local localBools = character and character:FindFirstChild("Bools")
+        local worldBools = getWorldBools()
+        if not localBools
+            or boolEnabled(localBools, "Tackled")
+            or boolEnabled(localBools, "Tackling")
+            or boolEnabled(localBools, "Debounce")
+            or boolEnabled(localBools, "iframe")
+            or boolEnabled(worldBools, "Penalty")
+            or boolEnabled(worldBools, "Kickoff")
+            or boolEnabled(worldBools, "FreeKick") then
+            return true
+        end
+        if checkDribble
+            and (boolEnabled(localBools, "dribbleDebounce")
+                or boolEnabled(localBools, "dribbleDelay")) then
+            return true
+        end
+        return false
+    end
+
+    local function getBall()
+        local ball = workspace:FindFirstChild("ball")
+        if ball and ball:IsA("BasePart") then
+            return ball
+        end
+        return nil
+    end
+
+    local function getBallOwner()
+        local ball = getBall()
+        local creator = ball and ball:FindFirstChild("creator")
+        if ball
+            and ball:FindFirstChild("playerWeld")
+            and creator
+            and creator:IsA("ObjectValue")
+            and creator.Value
+            and creator.Value:IsA("Player") then
+            return creator.Value, ball
+        end
+        return nil, ball
+    end
+
+    local function clearTackleBox()
+        if tackleBox then
+            tackleBox:Destroy()
+            tackleBox = nil
+        end
+    end
+
+    local function showTackleTarget(player)
+        if not settings.tackleBox then
+            clearTackleBox()
+            return
+        end
+        local root = player
+            and player.Character
+            and player.Character:FindFirstChild("HumanoidRootPart")
+        if not root then
+            clearTackleBox()
+            return
+        end
+        if not tackleBox then
+            tackleBox = Instance.new("BoxHandleAdornment")
+            tackleBox.Name = "Wurst_TRS_BallCarrier"
+            tackleBox.AlwaysOnTop = true
+            tackleBox.ZIndex = 20
+            tackleBox.Size = Vector3.new(4.5, 6, 2.5)
+            tackleBox.Color3 = Color3.fromRGB(35, 150, 125)
+            tackleBox.Transparency = 0.45
+            tackleBox.Parent = ScreenGui
+        end
+        tackleBox.Adornee = root
+    end
+
+    local function clearDribbleBox()
+        if dribbleBox then
+            dribbleBox:Destroy()
+            dribbleBox = nil
+        end
+    end
+
+    local function showDribbleThreat(player)
+        local root = player
+            and player.Character
+            and player.Character:FindFirstChild("HumanoidRootPart")
+        if not root then
+            clearDribbleBox()
+            return
+        end
+        if not dribbleBox then
+            dribbleBox = Instance.new("BoxHandleAdornment")
+            dribbleBox.Name = "Wurst_TRS_DribbleThreat"
+            dribbleBox.AlwaysOnTop = true
+            dribbleBox.ZIndex = 21
+            dribbleBox.Size = Vector3.new(4.5, 6, 2.5)
+            dribbleBox.Color3 = Color3.fromRGB(215, 125, 35)
+            dribbleBox.Transparency = 0.35
+            dribbleBox.Parent = ScreenGui
+        end
+        dribbleBox.Adornee = root
+    end
+
+    local function validCarrier(owner)
+        if not owner
+            or owner == LocalPlayer
+            or Module.Runtime.Services.protectedTargets.isProtected(owner)
+            or not owner.Character then
+            return false
+        end
+        if settings.opponentsOnly and owner.TeamColor == LocalPlayer.TeamColor then
+            return false
+        end
+        local humanoid = owner.Character:FindFirstChildOfClass("Humanoid")
+        return humanoid ~= nil and humanoid.Health > 0
+    end
+
+    local function findDribbleThreat(root, rangeOverride, predictionOverride)
+        local triggerRange = rangeOverride or settings.dribbleRange
+        local usePrediction = predictionOverride
+        if usePrediction == nil then
+            usePrediction = settings.dribblePreempt
+        end
+        local bestPlayer = nil
+        local bestDistance = math.huge
+        for _, player in ipairs(Players:GetPlayers()) do
+            local character = player.Character
+            local targetRoot = character
+                and character:FindFirstChild("HumanoidRootPart")
+            local targetHumanoid = character
+                and character:FindFirstChildOfClass("Humanoid")
+            if player ~= LocalPlayer
+                and player.TeamColor ~= LocalPlayer.TeamColor
+                and targetRoot
+                and targetHumanoid
+                and targetHumanoid.Health > 0 then
+                local offset = root.Position - targetRoot.Position
+                local distance = offset.Magnitude
+                if distance <= triggerRange + 4 and distance > 0.05 then
+                    local targetBools = character:FindFirstChild("Bools")
+                    local tackling = boolEnabled(targetBools, "Tackling")
+                        or boolEnabled(targetBools, "TackleDebounce")
+                    local relativeVelocity = targetRoot.AssemblyLinearVelocity
+                        - root.AssemblyLinearVelocity
+                    local closingSpeed = -offset.Unit:Dot(relativeVelocity)
+                    local futureOffset = offset
+                        - relativeVelocity * settings.dribblePrediction
+                    local predictedDistance = futureOffset.Magnitude
+                    local facing = targetRoot.CFrame.LookVector:Dot(offset.Unit) > 0.05
+                    local imminent = usePrediction
+                        and facing
+                        and closingSpeed > 2
+                        and predictedDistance <= triggerRange
+                    if (tackling or imminent)
+                        and distance < bestDistance then
+                        bestPlayer = player
+                        bestDistance = distance
+                    end
+                end
+            end
+        end
+        return bestPlayer, bestDistance
+    end
+
+    local function pointToSegmentDistance(point, startPoint, endPoint)
+        local segment = endPoint - startPoint
+        local lengthSquared = segment:Dot(segment)
+        if lengthSquared <= 0.001 then
+            return (point - startPoint).Magnitude
+        end
+        local alpha = math.clamp(
+            (point - startPoint):Dot(segment) / lengthSquared,
+            0,
+            1
+        )
+        return (point - (startPoint + segment * alpha)).Magnitude
+    end
+
+    local function getBestPassTarget(root)
+        local opponentGoal = getOpponentGoal()
+        local worldBools = getWorldBools()
+        local apg = worldBools and worldBools:FindFirstChild("APG")
+        local hpg = worldBools and worldBools:FindFirstChild("HPG")
+        local currentGoalDistance = opponentGoal
+            and (root.Position - opponentGoal.Position).Magnitude
+            or 0
+        local bestPlayer = nil
+        local bestScore = -math.huge
+
+        for _, player in ipairs(Players:GetPlayers()) do
+            local character = player.Character
+            local targetRoot = character
+                and character:FindFirstChild("HumanoidRootPart")
+            local targetHumanoid = character
+                and character:FindFirstChildOfClass("Humanoid")
+            if player ~= LocalPlayer
+                and player.TeamColor == LocalPlayer.TeamColor
+                and (not apg or apg.Value ~= player)
+                and (not hpg or hpg.Value ~= player)
+                and targetRoot
+                and targetHumanoid
+                and targetHumanoid.Health > 0 then
+                local distance = (targetRoot.Position - root.Position).Magnitude
+                local targetGoalDistance = opponentGoal
+                    and (targetRoot.Position - opponentGoal.Position).Magnitude
+                    or currentGoalDistance
+                local progress = currentGoalDistance - targetGoalDistance
+                if distance <= settings.passRange
+                    and (not settings.passForwardOnly or progress > 1) then
+                    local blockers = 0
+                    for _, opponent in ipairs(Players:GetPlayers()) do
+                        local opponentRoot = opponent.Character
+                            and opponent.Character:FindFirstChild("HumanoidRootPart")
+                        if opponent.TeamColor ~= LocalPlayer.TeamColor
+                            and opponentRoot
+                            and pointToSegmentDistance(
+                                opponentRoot.Position,
+                                root.Position,
+                                targetRoot.Position
+                            ) < 4.5 then
+                            blockers = blockers + 1
+                        end
+                    end
+                    local score = progress - distance * 0.08 - blockers * 18
+                    if score > bestScore then
+                        bestScore = score
+                        bestPlayer = player
+                    end
+                end
+            end
+        end
+        return bestPlayer
+    end
+
+    local function getGoalCandidates(goal, targetHeight)
+        if not goal or not goal:IsA("BasePart") then
+            return {}
+        end
+
+        local modelName = goal.Name == "HomeGoalDetector"
+            and "HomeGoal"
+            or "AwayGoal"
+        local goalModel = workspace:FindFirstChild(modelName)
+        local targets = goalModel and goalModel:FindFirstChild("Targets")
+        local positions = {}
+        if targets then
+            for _, target in ipairs(targets:GetChildren()) do
+                if target:IsA("BasePart") then
+                    table.insert(positions, target.Position)
+                end
+            end
+        end
+
+        local center = goal.Position + Vector3.new(0, targetHeight, 0)
+        if #positions < 3 then
+            positions = {
+                center - goal.CFrame.RightVector * 5,
+                center,
+                center + goal.CFrame.RightVector * 5,
+            }
+        else
+            table.sort(positions, function(a, b)
+                return (a - goal.Position):Dot(goal.CFrame.RightVector)
+                    < (b - goal.Position):Dot(goal.CFrame.RightVector)
+            end)
+            positions = {
+                positions[1],
+                positions[math.ceil(#positions / 2)],
+                positions[#positions],
+            }
+        end
+        return positions
+    end
+
+    local function goalPathBlocked(startPosition, targetPosition, character, goal)
+        local rayParams = RaycastParams.new()
+        rayParams.FilterType = Enum.RaycastFilterType.Exclude
+        local excluded = {}
+        if character then
+            table.insert(excluded, character)
+        end
+        local ball = getBall()
+        if ball then
+            table.insert(excluded, ball)
+        end
+        local goalModel = workspace:FindFirstChild(
+            goal.Name == "HomeGoalDetector" and "HomeGoal" or "AwayGoal"
+        )
+        if goalModel then
+            table.insert(excluded, goalModel)
+        end
+        rayParams.FilterDescendantsInstances = excluded
+        rayParams.IgnoreWater = true
+        local result = workspace:Raycast(
+            startPosition,
+            targetPosition - startPosition,
+            rayParams
+        )
+        return result ~= nil
+            and (result.Position - targetPosition).Magnitude > 4
+    end
+
+    local function selectGoalTarget(goal, startPosition, targetHeight, character)
+        local candidates = getGoalCandidates(goal, targetHeight)
+        if #candidates == 0 then
+            return nil, candidates, {}
+        end
+
+        local modelName = goal.Name == "HomeGoalDetector"
+            and "HomeGoal"
+            or "AwayGoal"
+        local worldBools = getWorldBools()
+        local goalkeeperValue = worldBools
+            and worldBools:FindFirstChild(
+                modelName == "HomeGoal" and "HPG" or "APG"
+            )
+        local goalkeeper = goalkeeperValue and goalkeeperValue.Value
+        local goalkeeperRoot = goalkeeper
+            and goalkeeper.Character
+            and goalkeeper.Character:FindFirstChild("HumanoidRootPart")
+        local blocked = {}
+        local bestPosition = candidates[2] or candidates[1]
+        local bestScore = -math.huge
+        for index, position in ipairs(candidates) do
+            blocked[index] = goalPathBlocked(
+                startPosition,
+                position,
+                character,
+                goal
+            )
+            local separation = goalkeeperRoot
+                and (position - goalkeeperRoot.Position).Magnitude
+                or 8
+            local score = separation - (blocked[index] and 1000 or 0)
+            if index == 2 then
+                score = score + 0.25
+            end
+            if score > bestScore then
+                bestScore = score
+                bestPosition = position
+            end
+        end
+        return bestPosition, candidates, blocked
+    end
+
+    local function toggleAutoTackle(enabled)
+        autoTackleEnabled = enabled
+        disconnectFeatureConnection("TRSAutoTackle")
+        clearTackleBox()
+        if not enabled then
+            return
+        end
+
+        local remotes = game:GetService("ReplicatedStorage"):FindFirstChild("Remotes")
+        local action = remotes and remotes:FindFirstChild("Action")
+        local disarm = remotes and remotes:FindFirstChild("SoftDisPlayer")
+        featureConnections.TRSAutoTackle = TaskManager:Connect(function()
+            local owner, ball = getBallOwner()
+            local character, humanoid, root = getCharacterParts()
+            local targetRoot = validCarrier(owner)
+                and owner.Character:FindFirstChild("HumanoidRootPart")
+            if not ball
+                or not character
+                or not humanoid
+                or not root
+                or not targetRoot then
+                clearTackleBox()
+                return
+            end
+
+            local predictedTarget = targetRoot.Position
+                + targetRoot.AssemblyLinearVelocity * settings.tackleLead
+            local offset = predictedTarget - root.Position
+            local distance = offset.Magnitude
+            if distance > settings.tackleRange then
+                clearTackleBox()
+                return
+            end
+            showTackleTarget(owner)
+
+            if settings.tackleAimlock and distance > 0.1 then
+                root.CFrame = CFrame.lookAt(
+                    root.Position,
+                    Vector3.new(predictedTarget.X, root.Position.Y, predictedTarget.Z)
+                )
+            end
+            if os.clock() - lastTackle < 0.85 then
+                return
+            end
+
+            local bools = character:FindFirstChild("Bools")
+            if localActionBlocked(character, false)
+                or boolEnabled(bools, "TackleDebounce")
+                or not action
+                or not action:IsA("RemoteEvent") then
+                return
+            end
+
+            lastTackle = os.clock()
+            action:FireServer("TackIe")
+            local velocity = Instance.new("BodyVelocity")
+            velocity.Name = "Wurst_TRS_TackleVelocity"
+            velocity.MaxForce = Vector3.new(50000000, 0, 50000000)
+            velocity.Velocity = (
+                distance > 0.1 and offset.Unit or root.CFrame.LookVector
+            ) * 42
+            velocity.Parent = root
+            game:GetService("Debris"):AddItem(velocity, 0.32)
+
+            if disarm and disarm:IsA("RemoteEvent") then
+                for _, delayTime in ipairs({0.06, 0.16}) do
+                    task.delay(delayTime, function()
+                        if not autoTackleEnabled then
+                            return
+                        end
+                        local currentOwner, currentBall = getBallOwner()
+                        if currentOwner == owner
+                            and currentBall
+                            and (targetRoot.Position - root.Position).Magnitude
+                                <= settings.tackleRange + 2 then
+                            disarm:FireServer(
+                                owner,
+                                (root.Position - currentBall.Position).Magnitude,
+                                false,
+                                currentBall.Size
+                            )
+                        end
+                    end)
+                end
+            end
+        end)
+    end
+
+    local function toggleAutoDribble(enabled)
+        disconnectFeatureConnection("TRSAutoDribble")
+        clearDribbleBox()
+        if not enabled then
+            return
+        end
+
+        local remotes = game:GetService("ReplicatedStorage"):FindFirstChild("Remotes")
+        local action = remotes and remotes:FindFirstChild("Action")
+        local passRemote = remotes and remotes:FindFirstChild("Pass")
+        featureConnections.TRSAutoDribble = TaskManager:Connect(function()
+            local owner, ball = getBallOwner()
+            local character, humanoid, root = getCharacterParts()
+            if owner ~= LocalPlayer
+                or not character
+                or not humanoid
+                or not root
+                or not action
+                or not action:IsA("RemoteEvent")
+                or os.clock() - lastDribble < 0.52
+                or localActionBlocked(character, true)
+                or isLocalGoalkeeper(getWorldBools()) then
+                clearDribbleBox()
+                return
+            end
+
+            local threat = findDribbleThreat(root)
+            if not threat then
+                clearDribbleBox()
+                return
+            end
+            showDribbleThreat(threat)
+            lastDribble = os.clock()
+            if settings.dribbleStyle == "Assist" then
+                local teammate = getBestPassTarget(root)
+                if teammate and passRemote and passRemote:IsA("RemoteEvent") then
+                    passRemote:FireServer(teammate, ball.CFrame)
+                end
+            else
+                action:FireServer("Deke")
+            end
+        end)
+    end
+
+    local uninstallShotHook: () -> () = function(): () end
+
+    local function installShotHook()
+        if shotHookInstalled then
+            return true
+        end
+        if type(hookmetamethod) ~= "function"
+            or type(getnamecallmethod) ~= "function" then
+            return false
+        end
+
+        local remotes = game:GetService("ReplicatedStorage"):FindFirstChild("Remotes")
+        local shoot = remotes
+            and (remotes:FindFirstChild("ShootTheBaII")
+                or remotes:FindFirstChild("ShootTheBall"))
+        if not shoot then
+            return false
+        end
+        local predecessor = nil
+        local callback = function(self, ...)
+            local method = getnamecallmethod()
+            if self == shoot and method == "FireServer" then
+                local arguments = {...}
+                local context = nativeShotContext or nativeHeaderContext
+                local ball = getBall()
+                if context and ball and context.target then
+                    local offset = context.target - ball.Position
+                    if offset.Magnitude > 0.1 then
+                        local direction = offset.Unit
+                        local magnitude = typeof(arguments[4]) == "Vector3"
+                            and arguments[4].Magnitude
+                            or 1
+                        arguments[1] = direction
+                        arguments[4] = direction * math.max(magnitude, 1)
+                        arguments[7] = context.curve
+                        arguments[10] = context.side
+                        if context.kind == "Power" or context.kind == "Long" then
+                            arguments[3] = math.max(
+                                tonumber(arguments[3]) or 0,
+                                1
+                            )
+                            arguments[9] = true
+                        end
+                    end
+                    if context == nativeShotContext then
+                        nativeShotContext = nil
+                    else
+                        nativeHeaderContext = nil
+                    end
+                elseif settings.power and getBallOwner() == LocalPlayer then
+                    arguments[3] = settings.powerValue
+                end
+                return predecessor(self, unpack(arguments))
+            end
+            return predecessor(self, ...)
+        end
+        if type(newcclosure) == "function" then
+            callback = newcclosure(callback)
+        end
+        shotHookWrapper = callback
+        predecessor = hookmetamethod(game, "__namecall", callback)
+        originalNamecall = predecessor
+        shotHookInstalled = originalNamecall ~= nil
+        return shotHookInstalled
+    end
+
+    uninstallShotHook = function(): ()
+        local restored: boolean = not shotHookInstalled
+        if shotHookInstalled
+            and originalNamecall
+            and type(hookmetamethod) == "function" then
+            local hookSucceeded, displaced = pcall(
+                hookmetamethod,
+                game,
+                "__namecall",
+                originalNamecall
+            )
+            restored = hookSucceeded and displaced == shotHookWrapper
+            if hookSucceeded and not restored and type(displaced) == "function" then
+                pcall(hookmetamethod, game, "__namecall", displaced)
+            end
+        end
+        if restored then
+            shotHookInstalled = false
+            originalNamecall = nil
+            shotHookWrapper = nil
+        end
+    end
+
+    local function releaseShotHookIfIdle(): ()
+        if not settings.power
+            and nativeShotContext == nil
+            and nativeHeaderContext == nil then
+            uninstallShotHook()
+        end
+    end
+
+    local function toggleMaxPower(enabled)
+        settings.power = enabled
+        if enabled and not installShotHook() then
+            settings.power = false
+            error("This executor does not support the local ShootTheBall hook.")
+        elseif not enabled then
+            releaseShotHookIfIdle()
+        end
+    end
+
+    local function getMobileButton(name)
+        local playerGui = LocalPlayer:FindFirstChildOfClass("PlayerGui")
+        local mobile = playerGui and playerGui:FindFirstChild("MobileCTRL")
+        local frame = mobile and mobile:FindFirstChild("TouchControlFrame")
+        local jumpButton = frame and frame:FindFirstChild("JumpButton")
+        if name == "JumpButton" then
+            return jumpButton
+        end
+        return jumpButton and jumpButton:FindFirstChild(name)
+    end
+
+    local function fireNativeSignal(signal)
+        if not signal then
+            return false
+        end
+        if type(firesignal) == "function" then
+            firesignal(signal)
+            return true
+        end
+        if type(getconnections) == "function" then
+            local fired = false
+            for _, connection in ipairs(getconnections(signal)) do
+                if connection.Fire then
+                    connection:Fire()
+                    fired = true
+                elseif connection.Function then
+                    task.spawn(connection.Function)
+                    fired = true
+                end
+            end
+            return fired
+        end
+        return false
+    end
+
+    local function fireGoalShot(kind, showFailure)
+        local owner, ball = getBallOwner()
+        local character, humanoid, root = getCharacterParts()
+        local goal = getOpponentGoal()
+        if owner ~= LocalPlayer
+            or not ball
+            or not character
+            or not humanoid
+            or not root
+            or not goal
+            or localActionBlocked(character, false)
+            or isLocalGoalkeeper(getWorldBools())
+            or os.clock() - lastShot < 0.18 then
+            return false
+        end
+
+        local goalDistance = (root.Position - goal.Position).Magnitude
+        local maximumRange = kind == "Normal"
+            and settings.shootGoalRange
+            or kind == "Power" and settings.powerShotRange
+            or math.huge
+        if goalDistance > maximumRange then
+            if showFailure then
+                notify(
+                    kind == "Normal"
+                        and "Shoot Assist: move closer to the opponent goal."
+                        or "Power Shot: move closer to the opponent goal."
+                )
+            end
+            return false
+        end
+        local powerDebounce = LocalPlayer:FindFirstChild("PowerShootDebounce")
+        if kind ~= "Normal" and powerDebounce and powerDebounce.Value then
+            if showFailure then
+                notify(kind .. " Shot: power shot is still on cooldown.")
+            end
+            return false
+        end
+
+        local grabTick = character:FindFirstChild("GrabTick")
+        if grabTick
+            and tonumber(grabTick.Value)
+            and tick() - grabTick.Value <= 0.35 then
+            return false
+        end
+
+        local targetPosition = selectGoalTarget(
+            goal,
+            ball.Position,
+            settings.shootTargetHeight,
+            character
+        )
+        local direction = targetPosition and (targetPosition - ball.Position)
+        if not direction or direction.Magnitude <= 0.1 then
+            return false
+        end
+
+        local localTarget = goal.CFrame:PointToObjectSpace(targetPosition)
+        local side = localTarget.X >= 0 and "Right" or "Left"
+        local curve = side
+        local bools = character:FindFirstChild("Bools")
+        local curveValue = bools and bools:FindFirstChild("Curve")
+        if curveValue then
+            curveValue.Value = curve
+        end
+
+        if not installShotHook() then
+            if showFailure then
+                notify("Native shot redirect requires hookmetamethod.")
+            end
+            return false
+        end
+        local button = kind == "Normal"
+            and getMobileButton("JumpButton")
+            or getMobileButton("PowerShoot")
+        if not button then
+            if showFailure then
+                notify("TRS MobileCTRL shot button was not found.")
+            end
+            return false
+        end
+
+        nativeHeaderContext = nil
+        nativeShotContext = {
+            target = targetPosition,
+            curve = curve,
+            side = side,
+            kind = kind,
+        }
+        lastShot = os.clock()
+        local fired = false
+        if kind == "Normal" then
+            fired = fireNativeSignal(button.MouseButton1Down)
+            if fired then
+                task.delay(0.62, function()
+                    if button.Parent then
+                        fireNativeSignal(button.MouseButton1Up)
+                    end
+                end)
+            end
+        else
+            fired = fireNativeSignal(button.MouseButton1Click)
+        end
+        if not fired then
+            nativeShotContext = nil
+            if showFailure then
+                notify("The executor cannot fire native GUI signals.")
+            end
+            return false
+        end
+        local context = nativeShotContext
+        task.delay(2, function()
+            if nativeShotContext == context then
+                nativeShotContext = nil
+            end
+        end)
+        return true
+    end
+
+    local function connectShotKey(connectionName, keySetting, kind)
+        disconnectFeatureConnection(connectionName)
+        featureConnections[connectionName] = UserInputService.InputBegan:Connect(
+            function(input, processed)
+                if processed
+                    or state.keyCaptureCallback
+                    or state.waitingForKey
+                    or UserInputService:GetFocusedTextBox() then
+                    return
+                end
+                if input.UserInputType == Enum.UserInputType.Keyboard
+                    and input.KeyCode == settings[keySetting] then
+                    fireGoalShot(kind, true)
+                end
+            end
+        )
+    end
+
+    local function toggleShootAssist(enabled)
+        disconnectFeatureConnection("TRSShootKey")
+        if enabled then
+            connectShotKey("TRSShootKey", "shootKey", "Normal")
+        else
+            nativeShotContext = nil
+            releaseShotHookIfIdle()
+        end
+    end
+
+    local function togglePowerShot(enabled)
+        disconnectFeatureConnection("TRSPowerShotKey")
+        if enabled then
+            connectShotKey("TRSPowerShotKey", "powerShotKey", "Power")
+        else
+            nativeShotContext = nil
+            releaseShotHookIfIdle()
+        end
+    end
+
+    local function toggleLongShot(enabled)
+        disconnectFeatureConnection("TRSLongShotKey")
+        if enabled then
+            connectShotKey("TRSLongShotKey", "longShotKey", "Long")
+        else
+            nativeShotContext = nil
+            releaseShotHookIfIdle()
+        end
+    end
+
+    local function clearGoalVisual()
+        if goalVisualObjects.folder then
+            goalVisualObjects.folder:Destroy()
+        end
+        goalVisualObjects = {}
+    end
+
+    local function createGoalVisual()
+        if goalVisualObjects.folder and goalVisualObjects.folder.Parent then
+            return
+        end
+
+        local folder = Instance.new("Folder")
+        folder.Name = "Wurst_TRS_GoalVisual"
+        folder.Parent = workspace
+        local origin = Instance.new("Part")
+        origin.Name = "Wurst_TRS_GoalVisualOrigin"
+        origin.Anchored = true
+        origin.CanCollide = false
+        origin.CanQuery = false
+        origin.CanTouch = false
+        origin.Transparency = 1
+        origin.Size = Vector3.one * 0.1
+        origin.Parent = folder
+
+        local originAttachment = Instance.new("Attachment")
+        originAttachment.Parent = origin
+        local markers = {}
+        local attachments = {}
+        local billboards = {}
+        local labels = {}
+        for index = 1, 3 do
+            local marker = Instance.new("Part")
+            marker.Name = "Wurst_TRS_GoalEntry" .. index
+            marker.Anchored = true
+            marker.CanCollide = false
+            marker.CanQuery = false
+            marker.CanTouch = false
+            marker.CastShadow = false
+            marker.Shape = Enum.PartType.Ball
+            marker.Material = Enum.Material.Neon
+            marker.Transparency = 1
+            marker.Parent = folder
+            local attachment = Instance.new("Attachment")
+            attachment.Parent = marker
+            local billboard = Instance.new("BillboardGui")
+            billboard.Adornee = marker
+            billboard.AlwaysOnTop = true
+            billboard.Enabled = false
+            billboard.Size = UDim2.fromOffset(100, 28)
+            billboard.StudsOffset = Vector3.new(0, 2.1, 0)
+            billboard.Parent = marker
+            local label = Instance.new("TextLabel")
+            label.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
+            label.BackgroundTransparency = 0.2
+            label.BorderSizePixel = 0
+            label.Font = Enum.Font.GothamBold
+            label.Size = UDim2.fromScale(1, 1)
+            label.TextColor3 = Color3.new(1, 1, 1)
+            label.TextSize = 11
+            label.Parent = billboard
+            markers[index] = marker
+            attachments[index] = attachment
+            billboards[index] = billboard
+            labels[index] = label
+        end
+
+        local beam = Instance.new("Beam")
+        beam.Name = "Wurst_TRS_GoalAimLine"
+        beam.Attachment0 = originAttachment
+        beam.Attachment1 = attachments[2]
+        beam.FaceCamera = true
+        beam.Segments = 24
+        beam.Width0 = 0.09
+        beam.Width1 = 0.05
+        beam.Transparency = NumberSequence.new(0.16)
+        beam.Parent = origin
+
+        goalVisualObjects.folder = folder
+        goalVisualObjects.origin = origin
+        goalVisualObjects.markers = markers
+        goalVisualObjects.attachments = attachments
+        goalVisualObjects.billboards = billboards
+        goalVisualObjects.labels = labels
+        goalVisualObjects.beam = beam
+    end
+
+    local function hideGoalVisual()
+        for _, marker in ipairs(goalVisualObjects.markers or {}) do
+            marker.Transparency = 1
+        end
+        if goalVisualObjects.beam then
+            goalVisualObjects.beam.Enabled = false
+        end
+        for _, billboard in ipairs(goalVisualObjects.billboards or {}) do
+            billboard.Enabled = false
+        end
+    end
+
+    local function toggleGoalTargetVisual(enabled)
+        disconnectFeatureConnection("TRSGoalTargetVisual")
+        clearGoalVisual()
+        if not enabled then
+            return
+        end
+
+        createGoalVisual()
+        local elapsed = 1
+        featureConnections.TRSGoalTargetVisual = TaskManager:Connect(
+            function(deltaTime)
+                elapsed = elapsed + deltaTime
+                if elapsed < 0.06 then
+                    return
+                end
+                elapsed = 0
+
+                local owner, ball = getBallOwner()
+                local character, _, root = getCharacterParts()
+                local goal = getOpponentGoal()
+                if owner ~= LocalPlayer
+                    or not ball
+                    or not root
+                    or not goal
+                    or (root.Position - goal.Position).Magnitude
+                        > settings.goalVisualRange then
+                    hideGoalVisual()
+                    return
+                end
+
+                local targetPosition, candidates, blocked = selectGoalTarget(
+                    goal,
+                    ball.Position,
+                    settings.shootTargetHeight,
+                    character
+                )
+                if not targetPosition then
+                    hideGoalVisual()
+                    return
+                end
+
+                local goalDistance = (root.Position - goal.Position).Magnitude
+
+                goalVisualObjects.origin.Position = ball.Position
+                local bestIndex = 1
+                for index, position in ipairs(candidates) do
+                    local isBest = (position - targetPosition).Magnitude < 0.1
+                    if isBest then
+                        bestIndex = index
+                    end
+                    local marker = goalVisualObjects.markers[index]
+                    local billboard = goalVisualObjects.billboards[index]
+                    local label = goalVisualObjects.labels[index]
+                    local color = blocked[index]
+                        and Color3.fromRGB(190, 55, 55)
+                        or isBest and Color3.fromRGB(45, 190, 95)
+                        or Color3.fromRGB(225, 175, 35)
+                    marker.Position = position
+                    marker.Size = Vector3.one * settings.goalVisualSize
+                    marker.Color = color
+                    marker.Transparency = isBest and 0.15 or 0.42
+                    billboard.Enabled = true
+                    label.Text = blocked[index] and "BLOCKED"
+                        or isBest and "BEST"
+                        or index == 1 and "LEFT"
+                        or index == 2 and "CENTER"
+                        or "RIGHT"
+                    label.TextColor3 = color
+                end
+                goalVisualObjects.beam.Attachment1 =
+                    goalVisualObjects.attachments[bestIndex]
+                goalVisualObjects.beam.Enabled = settings.goalVisualLine
+                goalVisualObjects.beam.Color = ColorSequence.new(
+                    goalDistance <= settings.shootGoalRange
+                        and Color3.fromRGB(45, 190, 95)
+                        or Color3.fromRGB(225, 175, 35)
+                )
+                goalVisualObjects.beam.CurveSize0 = settings.goalVisualCurve
+                goalVisualObjects.beam.CurveSize1 = -settings.goalVisualCurve
+            end
+        )
+    end
+
+    local function performAssistedPass(showFailure)
+        local owner, ball = getBallOwner()
+        local character, humanoid, root = getCharacterParts()
+        local remotes = game:GetService("ReplicatedStorage"):FindFirstChild("Remotes")
+        local passRemote = remotes and remotes:FindFirstChild("Pass")
+        if owner ~= LocalPlayer
+            or not ball
+            or not character
+            or not humanoid
+            or not root
+            or localActionBlocked(character, false)
+            or isLocalGoalkeeper(getWorldBools())
+            or not passRemote
+            or not passRemote:IsA("RemoteEvent")
+            or os.clock() - lastPass < 0.7 then
+            return false
+        end
+
+        local grabTick = character:FindFirstChild("GrabTick")
+        if grabTick
+            and tonumber(grabTick.Value)
+            and tick() - grabTick.Value <= 0.35 then
+            return false
+        end
+
+        local target = getBestPassTarget(root)
+        if not target then
+            if showFailure then
+                notify("Pass Assist: no safe teammate was found.")
+            end
+            return false
+        end
+
+        lastPass = os.clock()
+        passRemote:FireServer(target, ball.CFrame)
+        return true
+    end
+
+    local function togglePassAssist(enabled)
+        disconnectFeatureConnection("TRSPassKey")
+        disconnectFeatureConnection("TRSPassPressure")
+        if not enabled then
+            return
+        end
+
+        featureConnections.TRSPassKey = UserInputService.InputBegan:Connect(
+            function(input, processed)
+                if processed
+                    or state.keyCaptureCallback
+                    or state.waitingForKey
+                    or UserInputService:GetFocusedTextBox() then
+                    return
+                end
+                if input.UserInputType == Enum.UserInputType.Keyboard
+                    and input.KeyCode == settings.passKey then
+                    performAssistedPass(true)
+                end
+            end
+        )
+
+        local elapsed = 1
+        featureConnections.TRSPassPressure = TaskManager:Connect(
+            function(deltaTime)
+                if settings.passMode ~= "Under pressure" then
+                    return
+                end
+                elapsed = elapsed + deltaTime
+                if elapsed < 0.08 then
+                    return
+                end
+                elapsed = 0
+
+                local owner = getBallOwner()
+                local _, _, root = getCharacterParts()
+                if owner ~= LocalPlayer or not root then
+                    return
+                end
+                local threat, distance = findDribbleThreat(
+                    root,
+                    settings.passPressureRange,
+                    true
+                )
+                if threat and distance <= settings.passPressureRange then
+                    performAssistedPass(false)
+                end
+            end
+        )
+    end
+
+    local function getPickupRemote()
+        if pickupRemote and pickupRemote.Parent then
+            return pickupRemote
+        end
+        local remotes = game:GetService("ReplicatedStorage"):FindFirstChild("Remotes")
+        if not remotes then
+            return nil
+        end
+        for _, remote in ipairs(remotes:GetChildren()) do
+            if remote:IsA("RemoteEvent")
+                and remote:GetAttribute("Attribute") ~= nil then
+                pickupRemote = remote
+            end
+        end
+        return pickupRemote
+    end
+
+    local function performAutoPickup(showFailure)
+        local ball = getBall()
+        local character, humanoid, root = getCharacterParts()
+        local worldBools = getWorldBools()
+        local remote = getPickupRemote()
+        if not ball
+            or ball:FindFirstChild("playerWeld")
+            or not character
+            or not humanoid
+            or humanoid.Health <= 0
+            or not root
+            or isLocalGoalkeeper(worldBools)
+            or boolEnabled(worldBools, "cantGrab")
+            or boolEnabled(worldBools, "Penalty")
+            or localActionBlocked(character, false)
+            or not remote
+            or os.clock() - lastPickup < settings.pickupDelay then
+            return false
+        end
+
+        local offset = ball.Position - root.Position
+        local distance = offset.Magnitude
+        if distance > settings.pickupReach
+            or offset.Y > settings.pickupMaxHeight then
+            if showFailure then
+                notify("Auto Pickup: the ball is outside the configured reach or height.")
+            end
+            return false
+        end
+
+        lastPickup = os.clock()
+        local grabTick = character:FindFirstChild("GrabTick")
+        if grabTick and grabTick:IsA("NumberValue") then
+            grabTick.Value = tick()
+        end
+        remote:FireServer(
+            math.min(distance, settings.pickupReportedDistance)
+        )
+
+        if settings.pickupDeke then
+            task.delay(0.06, function()
+                if not autoPickupEnabled then
+                    return
+                end
+                local owner = getBallOwner()
+                local currentCharacter = LocalPlayer.Character
+                local localBools = currentCharacter
+                    and currentCharacter:FindFirstChild("Bools")
+                local remotes = game:GetService("ReplicatedStorage")
+                    :FindFirstChild("Remotes")
+                local action = remotes and remotes:FindFirstChild("Action")
+                if owner == LocalPlayer
+                    and not boolEnabled(localBools, "dribbleDebounce")
+                    and action
+                    and action:IsA("RemoteEvent") then
+                    action:FireServer("Deke")
+                end
+            end)
+        end
+        return true
+    end
+
+    local function toggleAutoPickup(enabled)
+        autoPickupEnabled = enabled
+        disconnectFeatureConnection("TRSPickupKey")
+        disconnectFeatureConnection("TRSPickupLoop")
+        if not enabled then
+            return
+        end
+
+        featureConnections.TRSPickupKey = UserInputService.InputBegan:Connect(
+            function(input, processed)
+                if processed
+                    or state.keyCaptureCallback
+                    or state.waitingForKey
+                    or UserInputService:GetFocusedTextBox() then
+                    return
+                end
+                if input.UserInputType == Enum.UserInputType.Keyboard
+                    and input.KeyCode == settings.pickupKey then
+                    performAutoPickup(true)
+                end
+            end
+        )
+
+        local elapsed = 1
+        featureConnections.TRSPickupLoop = TaskManager:Connect(
+            function(deltaTime)
+                if settings.pickupMode ~= "Automatic" then
+                    return
+                end
+                elapsed = elapsed + deltaTime
+                if elapsed >= 0.05 then
+                    elapsed = 0
+                    performAutoPickup(false)
+                end
+            end
+        )
+    end
+
+    local function clearTrajectory()
+        for _, part in ipairs(trajectoryParts) do
+            if part then
+                part:Destroy()
+            end
+        end
+        trajectoryParts = {}
+        if landingMarker then
+            landingMarker:Destroy()
+            landingMarker = nil
+        end
+    end
+
+    local function getTrajectoryPart(index)
+        if trajectoryParts[index] then
+            return trajectoryParts[index]
+        end
+        local part = Instance.new("Part")
+        part.Name = "Wurst_TRS_Trajectory"
+        part.Anchored = true
+        part.CanCollide = false
+        part.CanQuery = false
+        part.CanTouch = false
+        part.CastShadow = false
+        part.Material = Enum.Material.Neon
+        part.Color = Color3.fromRGB(35, 190, 155)
+        part.Transparency = 0.2
+        part.Size = Vector3.new(0.08, 0.08, 1)
+        part.Parent = workspace
+        trajectoryParts[index] = part
+        return part
+    end
+
+    local function toggleTrajectory(enabled)
+        disconnectFeatureConnection("TRSTrajectory")
+        clearTrajectory()
+        if not enabled then
+            return
+        end
+
+        local elapsed = 1
+        featureConnections.TRSTrajectory = TaskManager:Connect(
+            function(deltaTime)
+                elapsed = elapsed + deltaTime
+                if elapsed < 0.08 then
+                    return
+                end
+                elapsed = 0
+
+                local ball = getBall()
+                if not ball then
+                    for _, part in ipairs(trajectoryParts) do
+                        part.Transparency = 1
+                    end
+                    if landingMarker then
+                        landingMarker.Transparency = 1
+                    end
+                    return
+                end
+
+                local velocity = ball.AssemblyLinearVelocity
+                local position = ball.Position
+                local gravity = Vector3.new(0, -workspace.Gravity, 0)
+                local rayParams = RaycastParams.new()
+                rayParams.FilterType = Enum.RaycastFilterType.Exclude
+                local excluded = {ball}
+                if LocalPlayer.Character then
+                    table.insert(excluded, LocalPlayer.Character)
+                end
+                rayParams.FilterDescendantsInstances = excluded
+                rayParams.IgnoreWater = true
+
+                local steps = 20
+                local stepTime = settings.trajectoryTime / steps
+                local hitPosition = nil
+                local used = 0
+                for index = 1, steps do
+                    local timeValue = index * stepTime
+                    local nextPosition = ball.Position
+                        + velocity * timeValue
+                        + gravity * (0.5 * timeValue * timeValue)
+                    local result = workspace:Raycast(
+                        position,
+                        nextPosition - position,
+                        rayParams
+                    )
+                    if result then
+                        nextPosition = result.Position
+                        hitPosition = result.Position
+                    end
+
+                    local segment = getTrajectoryPart(index)
+                    local distance = (nextPosition - position).Magnitude
+                    segment.Transparency = 0.2
+                    segment.Size = Vector3.new(0.08, 0.08, math.max(distance, 0.05))
+                    segment.CFrame = CFrame.lookAt(
+                        (position + nextPosition) / 2,
+                        nextPosition
+                    )
+                    used = index
+                    position = nextPosition
+                    if result then
+                        break
+                    end
+                end
+                for index = used + 1, #trajectoryParts do
+                    trajectoryParts[index].Transparency = 1
+                end
+
+                if not landingMarker then
+                    landingMarker = Instance.new("Part")
+                    landingMarker.Name = "Wurst_TRS_LandingPoint"
+                    landingMarker.Anchored = true
+                    landingMarker.CanCollide = false
+                    landingMarker.CanQuery = false
+                    landingMarker.CanTouch = false
+                    landingMarker.CastShadow = false
+                    landingMarker.Shape = Enum.PartType.Cylinder
+                    landingMarker.Material = Enum.Material.Neon
+                    landingMarker.Color = Color3.fromRGB(235, 185, 40)
+                    landingMarker.Size = Vector3.new(0.12, 3, 3)
+                    landingMarker.Parent = workspace
+                end
+                landingMarker.Transparency = hitPosition and 0.35 or 1
+                if hitPosition then
+                    landingMarker.CFrame = CFrame.new(hitPosition + Vector3.new(0, 0.08, 0))
+                        * CFrame.Angles(0, 0, math.rad(90))
+                end
+            end
+        )
+    end
+
+    local function toggleGoalkeeperAssist(enabled)
+        disconnectFeatureConnection("TRSGoalkeeper")
+        if not enabled then
+            return
+        end
+
+        local remotes = game:GetService("ReplicatedStorage"):FindFirstChild("Remotes")
+        local action = remotes and remotes:FindFirstChild("Action")
+        featureConnections.TRSGoalkeeper = TaskManager:Connect(function()
+            local ball = getBall()
+            local character, humanoid, root = getCharacterParts()
+            local worldBools = getWorldBools()
+            local ownGoal = getOwnGoal()
+            if not isLocalGoalkeeper(worldBools)
+                or not ball
+                or not character
+                or not humanoid
+                or not root
+                or not ownGoal
+                or not action
+                or not action:IsA("RemoteEvent")
+                or getBallOwner() == LocalPlayer
+                or os.clock() - lastGoalkeeperAction < 1.1 then
+                return
+            end
+
+            local distance = (ball.Position - root.Position).Magnitude
+            local velocity = ball.AssemblyLinearVelocity
+            local speed = velocity.Magnitude
+            if distance > settings.goalkeeperRange
+                or speed < settings.goalkeeperMinSpeed
+                or (root.Position - ball.Position):Dot(velocity) <= 0
+                or (ownGoal.Position - ball.Position):Dot(velocity) <= 0 then
+                return
+            end
+
+            local travelTime = math.clamp(distance / speed, 0.05, 0.65)
+            local predicted = ball.Position
+                + velocity * travelTime
+                + Vector3.new(
+                    0,
+                    -0.5 * workspace.Gravity * travelTime * travelTime,
+                    0
+                )
+            local localPoint = root.CFrame:PointToObjectSpace(predicted)
+            if math.abs(localPoint.X) > 13
+                or localPoint.Y < -2
+                or localPoint.Y > 11 then
+                return
+            end
+            lastGoalkeeperAction = os.clock()
+            if localPoint.Y >= settings.goalkeeperHighBall
+                and math.abs(localPoint.X) < 4 then
+                action:FireServer("GKJump")
+            elseif localPoint.X > 2 then
+                action:FireServer("RightDive", root.CFrame)
+            elseif localPoint.X < -2 then
+                action:FireServer("LeftDive", root.CFrame)
+            else
+                action:FireServer("FrontDive")
+            end
+        end)
+    end
+
+    local function toggleAutoHeader(enabled)
+        disconnectFeatureConnection("TRSAutoHeader")
+        if not enabled then
+            nativeHeaderContext = nil
+            releaseShotHookIfIdle()
+            return
+        end
+
+        featureConnections.TRSAutoHeader = TaskManager:Connect(function()
+            local owner, ball = getBallOwner()
+            local character, humanoid, root = getCharacterParts()
+            local worldBools = getWorldBools()
+            local opponentGoal = getOpponentGoal()
+            local ownGoal = getOwnGoal()
+            if not ball
+                or owner == LocalPlayer
+                or not character
+                or not humanoid
+                or not root
+                or not opponentGoal
+                or not ownGoal
+                or isLocalGoalkeeper(worldBools)
+                or os.clock() - lastHeaderAction < 1.1
+                or localActionBlocked(character, false) then
+                return
+            end
+
+            local distance = (ball.Position - root.Position).Magnitude
+            local relativeHeight = ball.Position.Y - root.Position.Y
+            local attacking = (root.Position - opponentGoal.Position).Magnitude
+                <= settings.headerGoalRange
+            local defending = (root.Position - ownGoal.Position).Magnitude
+                <= settings.headerGoalRange
+            if distance > settings.headerRange
+                or relativeHeight < 1.2
+                or relativeHeight > 9
+                or (not attacking and not defending) then
+                return
+            end
+
+            local targetPosition = nil
+            if defending then
+                local teammate = getBestPassTarget(root)
+                local teammateRoot = teammate
+                    and teammate.Character
+                    and teammate.Character:FindFirstChild("HumanoidRootPart")
+                if teammateRoot then
+                    targetPosition = teammateRoot.Position
+                        + teammateRoot.AssemblyLinearVelocity * 0.15
+                end
+            else
+                targetPosition = selectGoalTarget(
+                    opponentGoal,
+                    ball.Position,
+                    settings.shootTargetHeight,
+                    character
+                )
+            end
+            if not targetPosition or not installShotHook() then
+                return
+            end
+
+            local localPoint = root.CFrame:PointToObjectSpace(targetPosition)
+            local side = localPoint.X >= 0 and "Right" or "Left"
+            nativeShotContext = nil
+            nativeHeaderContext = {
+                target = targetPosition,
+                curve = side,
+                side = side,
+                kind = "Header",
+            }
+            local button = getMobileButton("Header")
+            if not button or not fireNativeSignal(button.MouseButton1Click) then
+                nativeHeaderContext = nil
+                return
+            end
+            lastHeaderAction = os.clock()
+            local context = nativeHeaderContext
+            task.delay(2, function()
+                if nativeHeaderContext == context then
+                    nativeHeaderContext = nil
+                end
+            end)
+        end)
+    end
+
+    local TackleFeature = createUniversalFeature(
+        "Auto Tackle",
+        "Track only the ball carrier, face them, tackle, and retry the steal",
+        1,
+        toggleAutoTackle,
+        {
+            parent = state.trsScroll,
+            registry = state.trsFeatures,
+        }
+    )
+    addNumberOption(TackleFeature, "Reach", 8, 3, 16, function(value)
+        settings.tackleRange = value
+    end)
+    addNumberOption(TackleFeature, "Movement prediction", 0.12, 0, 0.3, function(value)
+        settings.tackleLead = value
+    end)
+    addToggleOption(TackleFeature, "Aimlock", true, function(value)
+        settings.tackleAimlock = value
+    end)
+    addToggleOption(TackleFeature, "Show carrier", true, function(value)
+        settings.tackleBox = value
+        if not value then
+            clearTackleBox()
+        end
+    end)
+    addToggleOption(TackleFeature, "Opponents only", true, function(value)
+        settings.opponentsOnly = value
+    end)
+
+    local DribbleFeature = createUniversalFeature(
+        "Auto Dribble",
+        "React to real tackles and predict fast incoming tackle attempts",
+        2,
+        toggleAutoDribble,
+        {
+            parent = state.trsScroll,
+            registry = state.trsFeatures,
+        }
+    )
+    addNumberOption(DribbleFeature, "Reaction reach", 10, 4, 16, function(value)
+        settings.dribbleRange = value
+    end)
+    addNumberOption(DribbleFeature, "Prediction time", 0.18, 0, 0.35, function(value)
+        settings.dribblePrediction = value
+    end)
+    addToggleOption(DribbleFeature, "Predict incoming tackles", true, function(value)
+        settings.dribblePreempt = value
+    end)
+    addCycleOption(
+        DribbleFeature,
+        "Style",
+        {"Normal", "Assist"},
+        1,
+        function(value)
+            settings.dribbleStyle = value
+        end
+    )
+    addInformationOption(
+        DribbleFeature,
+        "Normal uses the original Deke. Assist passes to a safe teammate. Orange box = incoming tackle."
+    )
+
+    local PickupFeature = createUniversalFeature(
+        "Auto Pickup",
+        "Grab nearby loose balls through the game's own pickup remote",
+        3,
+        toggleAutoPickup,
+        {
+            parent = state.trsScroll,
+            registry = state.trsFeatures,
+        }
+    )
+    addCycleOption(
+        PickupFeature,
+        "Mode",
+        {"Automatic", "Manual"},
+        1,
+        function(value)
+            settings.pickupMode = value
+        end
+    )
+    addKeyOption(PickupFeature, "Pickup key", settings.pickupKey, function(value)
+        settings.pickupKey = value
+    end)
+    addNumberOption(PickupFeature, "Pickup reach", 18, 3, 180, function(value)
+        settings.pickupReach = value
+    end)
+    addNumberOption(PickupFeature, "Maximum ball height", 12, 2, 50, function(value)
+        settings.pickupMaxHeight = value
+    end)
+    addNumberOption(PickupFeature, "Reported distance", 2.8, 0.5, 10, function(value)
+        settings.pickupReportedDistance = value
+    end)
+    addNumberOption(PickupFeature, "Fire delay", 0.1, 0.05, 0.5, function(value)
+        settings.pickupDelay = value
+    end)
+    addToggleOption(PickupFeature, "Deke after pickup", true, function(value)
+        settings.pickupDeke = value
+    end)
+    addInformationOption(
+        PickupFeature,
+        "The pickup remote is found by its instance attribute, not by name — no "
+            .. "capture ever named it. If a match does nothing, that identification "
+            .. "is the first thing to check."
+    )
+
+    local PassFeature = createUniversalFeature(
+        "Pass Assist",
+        "Choose a safe forward teammate manually or when a tackle is incoming",
+        4,
+        togglePassAssist,
+        {
+            parent = state.trsScroll,
+            registry = state.trsFeatures,
+        }
+    )
+    addCycleOption(
+        PassFeature,
+        "Mode",
+        {"Manual", "Under pressure"},
+        1,
+        function(value)
+            settings.passMode = value
+        end
+    )
+    addKeyOption(PassFeature, "Pass key", settings.passKey, function(value)
+        settings.passKey = value
+    end)
+    addNumberOption(PassFeature, "Maximum pass range", 150, 30, 190, function(value)
+        settings.passRange = value
+    end)
+    addNumberOption(PassFeature, "Pressure reach", 9, 4, 15, function(value)
+        settings.passPressureRange = value
+    end)
+    addToggleOption(PassFeature, "Forward teammates only", true, function(value)
+        settings.passForwardOnly = value
+    end)
+    addToggleOption(PassFeature, "Maximum power", false, toggleMaxPower)
+    addNumberOption(PassFeature, "Maximum power value", 1, 0.85, 1, function(value)
+        settings.powerValue = value
+    end)
+    addInformationOption(
+        PassFeature,
+        "Pass range: 30-190. Pressure: 4-15. Maximum power affects your normal shots."
+    )
+
+    local ShootFeature = createUniversalFeature(
+        "Shoot Assist",
+        "Use TRS's native mobile shot and redirect only its target and curve",
+        5,
+        toggleShootAssist,
+        {
+            parent = state.trsScroll,
+            registry = state.trsFeatures,
+        }
+    )
+    addKeyOption(ShootFeature, "Shot key", settings.shootKey, function(value)
+        settings.shootKey = value
+    end)
+    addNumberOption(ShootFeature, "Goal range", 120, 60, 180, function(value)
+        settings.shootGoalRange = value
+    end)
+    addInformationOption(
+        ShootFeature,
+        "Range: 60-180 studs. Key: G. Native charge/release; only aim and curve are changed."
+    )
+
+    local PowerShotFeature = createUniversalFeature(
+        "Power Shot",
+        "Full-power curved shot from a practical attacking distance",
+        6,
+        togglePowerShot,
+        {
+            parent = state.trsScroll,
+            registry = state.trsFeatures,
+        }
+    )
+    addKeyOption(PowerShotFeature, "Power shot key", settings.powerShotKey, function(value)
+        settings.powerShotKey = value
+    end)
+    addNumberOption(PowerShotFeature, "Goal range", 120, 50, 180, function(value)
+        settings.powerShotRange = value
+    end)
+    addInformationOption(
+        PowerShotFeature,
+        "Range: 50-180 studs. Key: T. Activates TRS's native mobile PowerShoot button."
+    )
+
+    local LongShotFeature = createUniversalFeature(
+        "Large Shoot",
+        "Activate the native mobile PowerShoot and redirect it from any distance",
+        7,
+        toggleLongShot,
+        {
+            parent = state.trsScroll,
+            registry = state.trsFeatures,
+        }
+    )
+    addKeyOption(LongShotFeature, "Long shot key", settings.longShotKey, function(value)
+        settings.longShotKey = value
+    end)
+    addInformationOption(
+        LongShotFeature,
+        "Key: R. No artificial bar check; the native PowerShoot callback controls the shot."
+    )
+
+    local GoalVisualFeature = createUniversalFeature(
+        "Best Goal Visual",
+        "Show left, center, and right entries; prefer the clearest side away from the keeper",
+        8,
+        toggleGoalTargetVisual,
+        {
+            parent = state.trsScroll,
+            registry = state.trsFeatures,
+        }
+    )
+    addNumberOption(GoalVisualFeature, "Display range", 100, 25, 180, function(value)
+        settings.goalVisualRange = value
+    end)
+    addNumberOption(GoalVisualFeature, "Target margin size", 2.5, 0.5, 6, function(value)
+        settings.goalVisualSize = value
+    end)
+    addNumberOption(GoalVisualFeature, "Visual curve", 5, -20, 20, function(value)
+        settings.goalVisualCurve = value
+    end)
+    addToggleOption(GoalVisualFeature, "Show aim line", true, function(value)
+        settings.goalVisualLine = value
+    end)
+    addInformationOption(
+        GoalVisualFeature,
+        "Green means the keeper cannot reach that entry; red means blocked."
+    )
+
+    local TrajectoryFeature = createUniversalFeature(
+        "Ball Trajectory",
+        "Show the predicted flight path and first landing point",
+        9,
+        toggleTrajectory,
+        {
+            parent = state.trsScroll,
+            registry = state.trsFeatures,
+        }
+    )
+    addNumberOption(TrajectoryFeature, "Prediction time", 2.4, 0.8, 4, function(value)
+        settings.trajectoryTime = value
+    end)
+
+    local GoalkeeperFeature = createUniversalFeature(
+        "Goalkeeper Assist",
+        "Predict shots toward your own goal and choose Dive, FrontDive, or GKJump",
+        10,
+        toggleGoalkeeperAssist,
+        {
+            parent = state.trsScroll,
+            registry = state.trsFeatures,
+        }
+    )
+    addNumberOption(GoalkeeperFeature, "Assist range", 32, 12, 45, function(value)
+        settings.goalkeeperRange = value
+    end)
+    addNumberOption(GoalkeeperFeature, "Minimum ball speed", 8, 4, 30, function(value)
+        settings.goalkeeperMinSpeed = value
+    end)
+    addNumberOption(GoalkeeperFeature, "High ball height", 5, 3, 9, function(value)
+        settings.goalkeeperHighBall = value
+    end)
+
+    local HeaderFeature = createUniversalFeature(
+        "Auto Header",
+        "Use the native mobile Header; near your own goal redirect it to a teammate",
+        11,
+        toggleAutoHeader,
+        {
+            parent = state.trsScroll,
+            registry = state.trsFeatures,
+        }
+    )
+    addNumberOption(HeaderFeature, "Ball reach", 7, 3, 10, function(value)
+        settings.headerRange = value
+    end)
+    addNumberOption(HeaderFeature, "Goal activation range", 50, 25, 60, function(value)
+        settings.headerGoalRange = value
+    end)
+    addInformationOption(
+        HeaderFeature,
+        "Ball reach: 3-10. Goal zone: 25-60. PassBV remains controlled by the native button."
+    )
+
+    state.cleanupTRSRuntime = function()
+        settings.power = false
+        autoTackleEnabled = false
+        autoPickupEnabled = false
+        nativeShotContext = nil
+        nativeHeaderContext = nil
+        uninstallShotHook()
+        disconnectFeatureConnection("TRSAutoTackle")
+        disconnectFeatureConnection("TRSAutoDribble")
+        disconnectFeatureConnection("TRSPickupKey")
+        disconnectFeatureConnection("TRSPickupLoop")
+        disconnectFeatureConnection("TRSPassKey")
+        disconnectFeatureConnection("TRSPassPressure")
+        disconnectFeatureConnection("TRSShootKey")
+        disconnectFeatureConnection("TRSPowerShotKey")
+        disconnectFeatureConnection("TRSLongShotKey")
+        disconnectFeatureConnection("TRSTrajectory")
+        disconnectFeatureConnection("TRSGoalTargetVisual")
+        disconnectFeatureConnection("TRSGoalkeeper")
+        disconnectFeatureConnection("TRSAutoHeader")
+        clearTackleBox()
+        clearDribbleBox()
+        clearTrajectory()
+        clearGoalVisual()
+    end
+end
+
+function Module.init(runtime: any): any
+    assert(type(runtime) == "table", "TRS requires a Runtime table")
+    assert(type(runtime.Menu) == "table", "TRS requires Runtime.Menu")
+    assert(runtime.TaskManager ~= nil, "TRS requires Runtime.TaskManager")
+    if Module.Initialized then
+        return Module
+    end
+
+    Module.Menu = runtime.Menu
+    Module.Runtime = runtime
+    buildTRSFeatures()
+    if type(state.cleanupTRSRuntime) == "function" then
+        moduleCleanup = state.cleanupTRSRuntime
+    end
+    Module.Events = featureConnections
+    Module.Initialized = true
+    return Module
+end
+
+function Module.destroy(): ()
+    if not Module.Initialized then
+        return
+    end
+    Module.Initialized = false
+    moduleCleanup()
+    Module.Events = {}
+    Module.Menu = nil
+    Module.Runtime = nil
+end
+
+return Module
+
+]=],
+        ["src/games/VD/base.lua"] = [=[
+local Module = {
+    Name = "VD",
+    PlaceId = 93978595733734,
+    Events = {} :: {[string]: any},
+    Initialized = false,
+    Menu = nil :: any,
+    Runtime = nil :: any,
+}
+
+type MarkerRecord = {
+    highlight: Highlight,
+    billboard: BillboardGui?,
+    label: TextLabel?,
+}
+
+type SoundState = {
+    volume: number,
+}
+
+type CollisionState = {
+    canCollide: boolean,
+}
+
+local moduleCleanup: () -> () = function(): () end
+
+local function buildVDFeatures(): ()
+
+    local VD_KILLER_COLOR: Color3 = Color3.fromRGB(166, 110, 255)
+    local VD_ALERT_COLOR: Color3 = Color3.fromRGB(255, 190, 88)
+
+    local settings: any = {
+        generatorDistance = 1800,
+        generatorTransparency = 0.82,
+        proximityRange = 150,
+        autoGeneratorRange = 18,
+        autoGeneratorInterval = 0.12,
+        autoGeneratorAnimation = true,
+        autoGeneratorGetOff = "Manual",
+        autoGeneratorMode = "Legit",
+        autoParryRange = 18,
+        hitAuraRange = 12,
+        hitAuraInterval = 0.72,
+        hitAuraMode = "Legit",
+        hitAuraRun = false,
+        hitAuraBlatantReach = 34,
+        vaultRange = 7,
+        vaultSpeed = 5,
+        actionSpeed = 4,
+        damageBoost = 5,
+        damageBoostDuration = 1,
+        walkSpeed = 16,
+        lockerRange = 45,
+    }
+    local runtime: any = {
+        generatorMarkers = {} :: {[Model]: any},
+        lockerMarkers = {} :: {[Player]: MarkerRecord},
+        generatorStates = {} :: {[Model]: string},
+        lockerAlerts = {} :: {[Player]: number},
+        proximityGui = nil :: ScreenGui?,
+        cooldownGui = nil :: ScreenGui?,
+        visualFolder = nil :: Folder?,
+        currentRepairPoint = nil :: BasePart?,
+        manualGeneratorBlocked = false,
+        manualGeneratorLeft = false,
+        manualGeneratorOrigin = nil :: Vector3?,
+        repairAnimation = nil :: AnimationTrack?,
+        repairAnimationObject = nil :: Animation?,
+        lastRepairFire = 0,
+        boundKillerAnimator = nil :: Animator?,
+        lastParry = 0,
+        lastHit = 0,
+        lastVaultInput = 0,
+        lastVaultPoint = nil :: BasePart?,
+        killerBaseWalkSpeed = nil :: number?,
+        walkSpeedBase = nil :: number?,
+        damageBoostToken = 0,
+        damageBoostUntil = 0,
+        damageOriginalSpeed = nil :: number?,
+        trackedHumanoid = nil :: Humanoid?,
+        actionAnimator = nil :: Animator?,
+        selectiveCollisions = {} :: {[BasePart]: CollisionState},
+        effectStates = {} :: {[Instance]: any},
+        soundStates = {} :: {[Sound]: SoundState},
+        soundConnections = {} :: {[Sound]: RBXScriptConnection},
+        silentStepsEnabled = false,
+        cooldownModifierEnabled = false,
+        damageBoostEnabled = false,
+        walkSpeedEnabled = false,
+    }
+
+    local ReplicatedStorageService: ReplicatedStorage =
+        game:GetService("ReplicatedStorage")
+
+    local function lower(value: any): string
+        return string.lower(tostring(value))
+    end
+
+    local function contains(value: any, token: string): boolean
+        return string.find(lower(value), token, 1, true) ~= nil
+    end
+
+    local function getRoot(model: Model?): BasePart?
+        if not model then
+            return nil
+        end
+        return model:FindFirstChild("HumanoidRootPart") :: BasePart?
+            or model.PrimaryPart
+            or model:FindFirstChildWhichIsA("BasePart", true)
+    end
+
+    local function isPlayerInRound(player: Player): boolean
+        local team: Team? = player.Team
+        if not team then
+            return false
+        end
+        local teamName: string = lower(team.Name)
+        return teamName == "survivors" or teamName == "killer"
+    end
+
+    local function isLocalKiller(): boolean
+        local team: Team? = LocalPlayer.Team
+        return team ~= nil and lower(team.Name) == "killer"
+    end
+
+    local function isRoundActive(): boolean
+        return isPlayerInRound(LocalPlayer)
+            and workspace:FindFirstChild("Map") ~= nil
+    end
+
+    local function getMap(): Instance?
+        if not isRoundActive() then
+            return nil
+        end
+        return workspace:FindFirstChild("Map")
+    end
+
+    local function isGenerator(instance: Instance): boolean
+        return instance:IsA("Model")
+            and lower(instance.Name) == "generator"
+            and instance:FindFirstChild("GeneratorBody", true) ~= nil
+    end
+
+    local function isKillerCharacter(character: Model?): boolean
+        if not character then
+            return false
+        end
+        local player: Player? = Players:GetPlayerFromCharacter(character)
+        if player and player.Team and lower(player.Team.Name) == "killer" then
+            return true
+        end
+        local role: any = character:GetAttribute("Role")
+        if player and role == nil then
+            role = player:GetAttribute("Role")
+        end
+        if type(role) == "string" and lower(role) == "killer" then
+            return true
+        end
+        if character:GetAttribute("IsKiller") == true then
+            return true
+        end
+        local root: BasePart? = getRoot(character)
+        return root ~= nil and root.CollisionGroup == "Killer"
+    end
+
+    local function getKiller(): (Player?, Model?)
+        for _, player: Player in ipairs(Players:GetPlayers()) do
+            if isKillerCharacter(player.Character) then
+                return player, player.Character
+            end
+        end
+        return nil, nil
+    end
+
+    local function getVisualFolder(): Folder
+        if runtime.visualFolder and runtime.visualFolder.Parent then
+            return runtime.visualFolder
+        end
+        local folder: Folder = Instance.new("Folder")
+        folder.Name = "Wurst_VD_Visuals"
+        folder.Parent = ScreenGui
+        runtime.visualFolder = folder
+        return folder
+    end
+
+    local function destroyMarker(record: MarkerRecord?): ()
+        if not record then
+            return
+        end
+        record.highlight:Destroy()
+        if record.billboard then
+            record.billboard:Destroy()
+        end
+    end
+
+    local function createMarker(
+        adornee: Instance,
+        root: BasePart,
+        color: Color3,
+        text: string?,
+        maxDistance: number
+    ): MarkerRecord
+        local highlight: Highlight = Instance.new("Highlight")
+        highlight.Name = "Wurst_VD_Highlight"
+        highlight.Adornee = adornee
+        highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+        highlight.FillColor = color
+        highlight.FillTransparency = settings.generatorTransparency
+        highlight.OutlineColor = color
+        highlight.OutlineTransparency = 0.08
+        highlight.Parent = getVisualFolder()
+        local record: MarkerRecord = {
+            highlight = highlight,
+            billboard = nil,
+            label = nil,
+        }
+        if text then
+            local billboard: BillboardGui = Instance.new("BillboardGui")
+            billboard.Name = "Wurst_VD_Label"
+            billboard.Adornee = root
+            billboard.AlwaysOnTop = true
+            billboard.MaxDistance = maxDistance
+            billboard.Size = UDim2.fromOffset(205, 48)
+            billboard.StudsOffsetWorldSpace = Vector3.new(0, 4.2, 0)
+            billboard.Parent = getVisualFolder()
+            local label: TextLabel = Instance.new("TextLabel")
+            label.BackgroundColor3 = Color3.fromRGB(10, 13, 21)
+            label.BackgroundTransparency = 0.16
+            label.BorderSizePixel = 0
+            label.Font = Enum.Font.GothamSemibold
+            label.Size = UDim2.fromScale(1, 1)
+            label.Text = text
+            label.TextColor3 = color
+            label.TextSize = 13
+            label.TextWrapped = true
+            label.Parent = billboard
+            local corner: UICorner = Instance.new("UICorner")
+            corner.CornerRadius = UDim.new(0, 9)
+            corner.Parent = label
+            record.billboard = billboard
+            record.label = label
+        end
+        return record
+    end
+
+    local function readNumberAttribute(instance: Instance, names: {string}): number?
+        for _, name: string in ipairs(names) do
+            local value: any = instance:GetAttribute(name)
+            if type(value) == "number" then
+                return value
+            end
+            local child: Instance? = instance:FindFirstChild(name, true)
+            if child and (child:IsA("NumberValue") or child:IsA("IntValue")) then
+                return child.Value
+            end
+        end
+        return nil
+    end
+
+    local function generatorState(generator: Model): (number, string, Color3)
+        local progress: number = readNumberAttribute(
+            generator,
+            {"Progress", "RepairProgress", "CurrentProgress"}
+        ) or 0
+        if progress <= 1 then
+            progress *= 100
+        end
+        progress = math.clamp(progress, 0, 100)
+        local repairers: number = readNumberAttribute(
+            generator,
+            {"PlayersRepairingCount", "RepairingPlayers"}
+        ) or 0
+        local regression: Sound? = generator:FindFirstChild("Regression", true) :: Sound?
+        local regressing: boolean = generator:GetAttribute("Regressing") == true
+            or (regression ~= nil and regression.Playing)
+        if progress >= 99.95 then
+            return progress, "COMPLETE", Theme.positive
+        elseif regressing then
+            return progress, "REGRESSING", VD_ALERT_COLOR
+        elseif repairers > 0 then
+            return progress, "REPAIRING x" .. tostring(repairers), Theme.accent
+        end
+        return progress, "IDLE", Color3.fromRGB(244, 190, 88)
+    end
+
+    local function toggleGeneratorESP(enabled: boolean): ()
+        disconnectFeatureConnection("VDGeneratorESP")
+        local library: any = state.renderLibrary
+        local layer: Frame? = library and library:Layer("VDEspLayer") or nil
+        if not enabled then
+            if library and layer then
+                library:ReleaseAll(layer)
+                layer.Visible = false
+            else
+                for generator: Model, record: MarkerRecord in pairs(runtime.generatorMarkers) do
+                    destroyMarker(record)
+                    runtime.generatorMarkers[generator] = nil
+                end
+            end
+            table.clear(runtime.generatorMarkers)
+            table.clear(runtime.generatorStates)
+            return
+        end
+        if layer then
+            layer.Visible = true
+        end
+        local elapsed: number = 1
+        featureConnections.VDGeneratorESP = TaskManager:Connect(function(deltaTime: number): ()
+            elapsed += deltaTime
+            if elapsed < 0.2 then
+                return
+            end
+            elapsed = 0
+            local map: Instance? = getMap()
+            local camera: Camera? = workspace.CurrentCamera
+            if not map then
+                if library and layer then
+                    library:ReleaseAll(layer)
+                else
+                    for generator: Model, record: MarkerRecord in pairs(runtime.generatorMarkers) do
+                        destroyMarker(record)
+                        runtime.generatorMarkers[generator] = nil
+                        runtime.generatorStates[generator] = nil
+                    end
+                end
+                table.clear(runtime.generatorMarkers)
+                return
+            end
+            local localRoot: BasePart? = getRoot(LocalPlayer.Character)
+            local seen: {[Model]: boolean} = {}
+            for _, descendant: Instance in ipairs(map:GetDescendants()) do
+                if isGenerator(descendant) then
+                    local generator: Model = descendant :: Model
+                    local root: BasePart? = getRoot(generator)
+                    if not root then
+                        continue
+                    end
+                    local progress: number, status: string, color: Color3 = generatorState(generator)
+                    local distance: number = if localRoot
+                        then (root.Position - localRoot.Position).Magnitude
+                        else 0
+                    if library and layer and camera then
+                        local projected: Vector2? = library:Project(camera, root.Position)
+                        if projected then
+                            seen[generator] = true
+                            runtime.generatorMarkers[generator] = true :: any
+                            local drawings: any = library:Set(layer, generator)
+                            drawings:Show(true)
+                            drawings:Label(
+                                "NameTag",
+                                string.format(
+                                    "GENERATOR · %.1f%%  %s · %.0f STUDS",
+                                    progress,
+                                    status,
+                                    distance
+                                ),
+                                projected :: Vector2,
+                                0.5,
+                                13,
+                                color,
+                                true
+                            )
+                            drawings:Highlight(
+                                generator,
+                                color,
+                                settings.generatorTransparency,
+                                "Overlay"
+                            )
+                        end
+                    elseif not runtime.generatorMarkers[generator] then
+                        runtime.generatorMarkers[generator] = createMarker(
+                            generator,
+                            root,
+                            Theme.accent,
+                            "GENERATOR",
+                            settings.generatorDistance
+                        )
+                    end
+                    local previous: string? = runtime.generatorStates[generator]
+                    if previous == "REGRESSING" and status:find("REPAIRING", 1, true) then
+                        notify("A survivor touched a regressing generator.")
+                    end
+                    runtime.generatorStates[generator] = status
+                end
+            end
+            if library and layer then
+                for generator: Model in pairs(runtime.generatorMarkers) do
+                    if not seen[generator] then
+                        library:Release(layer, generator)
+                        runtime.generatorMarkers[generator] = nil
+                    end
+                end
+            else
+                for generator: Model, record: MarkerRecord in pairs(runtime.generatorMarkers) do
+                    if not generator:IsDescendantOf(map) then
+                        destroyMarker(record)
+                        runtime.generatorMarkers[generator] = nil
+                        runtime.generatorStates[generator] = nil
+                    else
+                        local progress: number, status: string, color: Color3 = generatorState(generator)
+                        record.highlight.FillColor = color
+                        record.highlight.OutlineColor = color
+                        record.highlight.FillTransparency = settings.generatorTransparency
+                        if record.label then
+                            local root: BasePart? = getRoot(generator)
+                            local distance: number = if root and localRoot
+                                then (root.Position - localRoot.Position).Magnitude
+                                else 0
+                            record.label.Text = string.format(
+                                "GENERATOR · %.1f%%\n%s · %.0f STUDS",
+                                progress,
+                                status,
+                                distance
+                            )
+                            record.label.TextColor3 = color
+                        end
+                    end
+                end
+            end
+        end)
+    end
+
+    local function createProximityGui(): ScreenGui
+        local gui: ScreenGui = Instance.new("ScreenGui")
+        gui.Name = "Wurst_VD_Proximity"
+        gui.IgnoreGuiInset = true
+        gui.ResetOnSpawn = false
+        gui.Parent = PlayerGui
+        local panel: Frame = Instance.new("Frame")
+        panel.Name = "Panel"
+        panel.AnchorPoint = Vector2.new(0.5, 1)
+        panel.BackgroundColor3 = Color3.fromRGB(10, 13, 21)
+        panel.BackgroundTransparency = 0.12
+        panel.BorderSizePixel = 0
+        panel.Position = UDim2.new(0.5, 0, 1, -28)
+        panel.Size = UDim2.fromOffset(320, 55)
+        panel.Parent = gui
+        local corner: UICorner = Instance.new("UICorner")
+        corner.CornerRadius = UDim.new(0, 12)
+        corner.Parent = panel
+        local label: TextLabel = Instance.new("TextLabel")
+        label.Name = "Distance"
+        label.BackgroundTransparency = 1
+        label.Font = Enum.Font.GothamSemibold
+        label.Position = UDim2.fromOffset(12, 4)
+        label.Size = UDim2.new(1, -24, 0, 25)
+        label.Text = "NEAREST SURVIVOR: NO SIGNAL"
+        label.TextColor3 = Theme.textMuted
+        label.TextSize = 14
+        label.TextXAlignment = Enum.TextXAlignment.Left
+        label.Parent = panel
+        local track: Frame = Instance.new("Frame")
+        track.Name = "Track"
+        track.BackgroundColor3 = Theme.surfaceRaised
+        track.BorderSizePixel = 0
+        track.Position = UDim2.fromOffset(12, 36)
+        track.Size = UDim2.new(1, -24, 0, 8)
+        track.Parent = panel
+        local trackCorner: UICorner = Instance.new("UICorner")
+        trackCorner.CornerRadius = UDim.new(1, 0)
+        trackCorner.Parent = track
+        local bar: Frame = Instance.new("Frame")
+        bar.Name = "Bar"
+        bar.BorderSizePixel = 0
+        bar.Size = UDim2.fromScale(0, 1)
+        bar.Parent = track
+        local barCorner: UICorner = Instance.new("UICorner")
+        barCorner.CornerRadius = UDim.new(1, 0)
+        barCorner.Parent = bar
+        return gui
+    end
+
+    local function toggleProximity(enabled: boolean): ()
+        disconnectFeatureConnection("VDKillerProximity")
+        if runtime.proximityGui then
+            runtime.proximityGui:Destroy()
+            runtime.proximityGui = nil
+        end
+        if not enabled then
+            return
+        end
+        local gui: ScreenGui = createProximityGui()
+        runtime.proximityGui = gui
+        local panel: Frame = gui:WaitForChild("Panel") :: Frame
+        local label: TextLabel = panel:WaitForChild("Distance") :: TextLabel
+        local bar: Frame = (panel:WaitForChild("Track") :: Frame):WaitForChild("Bar") :: Frame
+        featureConnections.VDKillerProximity = TaskManager:Connect(function(): ()
+            if not isRoundActive() or not isLocalKiller() then
+                gui.Enabled = false
+                label.Text = "NEAREST SURVIVOR: NO SIGNAL"
+                label.TextColor3 = Theme.textMuted
+                bar.Size = UDim2.fromScale(0, 1)
+                return
+            end
+            gui.Enabled = true
+            local localRoot: BasePart? = getRoot(LocalPlayer.Character)
+            local nearestDistance: number? = nil
+            if localRoot then
+                for _, player: Player in ipairs(Players:GetPlayers()) do
+                    local team: Team? = player.Team
+                    local targetRoot: BasePart? = getRoot(player.Character)
+                    if player ~= LocalPlayer
+                        and team ~= nil
+                        and lower(team.Name) == "survivors"
+                        and targetRoot ~= nil then
+                        local distance: number = (targetRoot.Position - localRoot.Position).Magnitude
+                        if nearestDistance == nil or distance < nearestDistance then
+                            nearestDistance = distance
+                        end
+                    end
+                end
+            end
+            if not nearestDistance then
+                label.Text = "NEAREST SURVIVOR: NO SIGNAL"
+                label.TextColor3 = Theme.textMuted
+                bar.Size = UDim2.fromScale(0, 1)
+                return
+            end
+            local distance: number = nearestDistance
+            local color: Color3 = if distance <= 25
+                then VD_KILLER_COLOR
+                elseif distance <= 60 then Color3.fromRGB(244, 190, 88)
+                else Theme.positive
+            label.Text = string.format("NEAREST SURVIVOR: %.1f STUDS", distance)
+            label.TextColor3 = color
+            bar.BackgroundColor3 = color
+            bar.Size = UDim2.fromScale(1 - math.clamp(distance / settings.proximityRange, 0, 1), 1)
+        end)
+    end
+
+    local function survivorStatus(player: Player, character: Model): (string, Color3)
+        local humanoid: Humanoid? = character:FindFirstChildOfClass("Humanoid")
+        if not humanoid then
+            return "UNKNOWN", Theme.textMuted
+        end
+        local hooked: boolean = character:GetAttribute("Hooked") == true
+            or character:GetAttribute("IsHooked") == true
+            or player:GetAttribute("Hooked") == true
+        local downed: boolean = character:GetAttribute("Knocked") == true
+            or character:GetAttribute("Downed") == true
+            or humanoid.Health <= math.max(1, humanoid.MaxHealth * 0.05)
+        local recovery: number? = readNumberAttribute(
+            character,
+            {"Recovery", "RecoverProgress", "RecoveryProgress"}
+        )
+        if recovery and recovery <= 1 then
+            recovery *= 100
+        end
+        if hooked then
+            return "HOOKED", VD_KILLER_COLOR
+        elseif downed then
+            return "DOWNED · REC " .. string.format("%.0f%%", recovery or 0), VD_KILLER_COLOR
+        elseif humanoid.Health < humanoid.MaxHealth * 0.75 then
+            return "INJURED · " .. string.format("%.0f%%", humanoid.Health / humanoid.MaxHealth * 100), Color3.fromRGB(244, 190, 88)
+        end
+        return "HEALTHY", Theme.positive
+    end
+
+    local function findRemoteEvent(folderName: string, eventName: string): RemoteEvent?
+        local remotes: Instance? = ReplicatedStorageService:FindFirstChild("Remotes")
+        local folder: Instance? = if remotes then remotes:FindFirstChild(folderName) else nil
+        local remote: Instance? = if folder then folder:FindFirstChild(eventName) else nil
+        return if remote and remote:IsA("RemoteEvent") then remote else nil
+    end
+
+    local function getGeneratorForPoint(point: BasePart): Model?
+        local parent: Instance? = point.Parent
+        return if parent and parent:IsA("Model") and isGenerator(parent)
+            then parent
+            else nil
+    end
+
+    local function nearestGeneratorPoint(root: BasePart): BasePart?
+        local map: Instance? = getMap()
+        if not map then
+            return nil
+        end
+        local bestPoint: BasePart? = nil
+        local bestDistance: number = settings.autoGeneratorRange
+        for _, descendant: Instance in ipairs(map:GetDescendants()) do
+            if descendant:IsA("BasePart")
+                and string.sub(lower(descendant.Name), 1, 14) == "generatorpoint" then
+                local generator: Model? = getGeneratorForPoint(descendant)
+                if generator then
+                    local progress: number = generatorState(generator)
+                    local distance: number = (descendant.Position - root.Position).Magnitude
+                    if progress < 99.95 and distance <= bestDistance then
+                        bestPoint = descendant
+                        bestDistance = distance
+                    end
+                end
+            end
+        end
+        return bestPoint
+    end
+
+    local function stopCurrentRepair(repairRemote: RemoteEvent?): ()
+        local point: BasePart? = runtime.currentRepairPoint
+        runtime.currentRepairPoint = nil
+        local animationTrack: AnimationTrack? = runtime.repairAnimation
+        if animationTrack then
+            animationTrack:Stop(0.12)
+            runtime.repairAnimation = nil
+        end
+        if runtime.repairAnimationObject then
+            runtime.repairAnimationObject:Destroy()
+            runtime.repairAnimationObject = nil
+        end
+        if repairRemote and point and point.Parent then
+            repairRemote:FireServer(point, false)
+        end
+    end
+
+    local function maintainRepairAnimation(): ()
+        if not settings.autoGeneratorAnimation then
+            local current: AnimationTrack? = runtime.repairAnimation
+            if current then
+                current:Stop(0.12)
+                runtime.repairAnimation = nil
+            end
+            return
+        end
+        local track: AnimationTrack? = runtime.repairAnimation
+        if track and track.IsPlaying then
+            return
+        end
+        local character: Model? = LocalPlayer.Character
+        local humanoid: Humanoid? = if character
+            then character:FindFirstChildOfClass("Humanoid")
+            else nil
+        local animator: Animator? = if humanoid
+            then humanoid:FindFirstChildOfClass("Animator")
+            else nil
+        if not animator then
+            return
+        end
+        local animation: Animation = Instance.new("Animation")
+        animation.Name = "Wurst_VD_RepairCrouch"
+        animation.AnimationId = "rbxassetid://73650663675588"
+        local ok: boolean, loaded: any = pcall(function(): AnimationTrack
+            return animator:LoadAnimation(animation)
+        end)
+        if not ok or not loaded then
+            animation:Destroy()
+            return
+        end
+        track = loaded :: AnimationTrack
+        track.Looped = true
+        track.Priority = Enum.AnimationPriority.Action
+        track:Play(0.12, 1, 1)
+        runtime.repairAnimationObject = animation
+        runtime.repairAnimation = track
+    end
+
+    local function killerInsideCriticalRange(root: BasePart): boolean
+        local _, killer: Model? = getKiller()
+        local killerRoot: BasePart? = getRoot(killer)
+        return killerRoot ~= nil
+            and (killerRoot.Position - root.Position).Magnitude < 4
+    end
+
+    local function toggleAutoGeneratorAura(enabled: boolean): ()
+        disconnectFeatureConnection("VDAutoGeneratorAura")
+        disconnectFeatureConnection("VDAutoGeneratorCancel")
+        local repairRemote: RemoteEvent? = findRemoteEvent("Generator", "RepairEvent")
+        stopCurrentRepair(repairRemote)
+        runtime.manualGeneratorBlocked = false
+        runtime.manualGeneratorLeft = false
+        runtime.manualGeneratorOrigin = nil
+        if not enabled then
+            return
+        end
+        assert(repairRemote, "VD Remotes.Generator.RepairEvent is unavailable")
+        featureConnections.VDAutoGeneratorCancel = UserInputService.InputBegan:Connect(function(
+            input: InputObject,
+            _gameProcessed: boolean
+        ): ()
+            if not state.keyCaptureCallback
+                and not state.waitingForKey
+                and input.KeyCode == Enum.KeyCode.Space
+                and settings.autoGeneratorGetOff == "Manual" then
+                local currentPoint: BasePart? = runtime.currentRepairPoint
+                local root: BasePart? = getRoot(LocalPlayer.Character)
+                runtime.manualGeneratorBlocked = true
+                runtime.manualGeneratorLeft = false
+                runtime.manualGeneratorOrigin = if currentPoint
+                    then currentPoint.Position
+                    elseif root then root.Position
+                    else nil
+                stopCurrentRepair(repairRemote)
+                notify("Auto Generator paused; move 5 studs away and return.")
+            end
+        end)
+        featureConnections.VDAutoGeneratorAura = TaskManager:Connect(function(): ()
+            local team: Team? = LocalPlayer.Team
+            local root: BasePart? = getRoot(LocalPlayer.Character)
+            if not isRoundActive()
+                or not team
+                or lower(team.Name) ~= "survivors"
+                or not root then
+                stopCurrentRepair(repairRemote)
+                return
+            end
+            if settings.autoGeneratorGetOff == "Smart"
+                and killerInsideCriticalRange(root) then
+                stopCurrentRepair(repairRemote)
+                return
+            end
+            if settings.autoGeneratorGetOff == "Manual"
+                and runtime.manualGeneratorBlocked then
+                local origin: Vector3? = runtime.manualGeneratorOrigin
+                local originDistance: number = if origin
+                    then (root.Position - origin).Magnitude
+                    else 0
+                if not runtime.manualGeneratorLeft and originDistance >= 5 then
+                    runtime.manualGeneratorLeft = true
+                elseif runtime.manualGeneratorLeft
+                    and originDistance <= settings.autoGeneratorRange then
+                    runtime.manualGeneratorBlocked = false
+                    runtime.manualGeneratorLeft = false
+                    runtime.manualGeneratorOrigin = nil
+                else
+                    stopCurrentRepair(repairRemote)
+                    return
+                end
+            end
+            local point: BasePart? = nearestGeneratorPoint(root)
+            if point ~= runtime.currentRepairPoint then
+                stopCurrentRepair(repairRemote)
+                runtime.currentRepairPoint = point
+            end
+            if not point then
+                stopCurrentRepair(repairRemote)
+                return
+            end
+            maintainRepairAnimation()
+            if settings.autoGeneratorMode == "Blatant" then
+
+                if os.clock() - runtime.lastRepairFire >= 0.03 then
+                    runtime.lastRepairFire = os.clock()
+                    repairRemote:FireServer(point, true)
+                end
+            elseif os.clock() - runtime.lastRepairFire >= settings.autoGeneratorInterval then
+                runtime.lastRepairFire = os.clock()
+                repairRemote:FireServer(point, true)
+            end
+        end)
+    end
+
+    local function isAttackTrack(track: AnimationTrack): boolean
+        local animation: Animation? = track.Animation
+        local descriptor: string = lower(track.Name)
+            .. " "
+            .. lower(if animation then animation.AnimationId else "")
+        for _, excluded: string in ipairs({
+            "idle", "walk", "run", "vault", "stun", "carry", "mori", "break",
+        }) do
+            if contains(descriptor, excluded) then
+                return false
+            end
+        end
+        for _, keyword: string in ipairs({
+            "attack", "swing", "slash", "stab", "strike", "lunge", "basic", "m1",
+        }) do
+            if contains(descriptor, keyword) then
+                return true
+            end
+        end
+        return track.Priority == Enum.AnimationPriority.Action
+            or track.Priority == Enum.AnimationPriority.Action2
+            or track.Priority == Enum.AnimationPriority.Action3
+            or track.Priority == Enum.AnimationPriority.Action4
+    end
+
+    local function bindAutoParryAnimator(
+        animator: Animator?,
+        parryRemote: RemoteEvent
+    ): ()
+        if runtime.boundKillerAnimator == animator then
+            return
+        end
+        disconnectFeatureConnection("VDAutoParryAnimation")
+        runtime.boundKillerAnimator = animator
+        if not animator then
+            return
+        end
+        featureConnections.VDAutoParryAnimation = animator.AnimationPlayed:Connect(function(
+            track: AnimationTrack
+        ): ()
+            if not isAttackTrack(track) or not isRoundActive() then
+                return
+            end
+            local team: Team? = LocalPlayer.Team
+            local localRoot: BasePart? = getRoot(LocalPlayer.Character)
+            local killer: Model? = animator:FindFirstAncestorOfClass("Model")
+            local killerRoot: BasePart? = getRoot(killer)
+            if not team
+                or lower(team.Name) ~= "survivors"
+                or not localRoot
+                or not killerRoot
+                or (killerRoot.Position - localRoot.Position).Magnitude > settings.autoParryRange
+                or os.clock() - runtime.lastParry < 0.22 then
+                return
+            end
+            runtime.lastParry = os.clock()
+            parryRemote:FireServer()
+        end)
+    end
+
+    local function toggleAutoParry(enabled: boolean): ()
+        disconnectFeatureConnection("VDAutoParryScan")
+        disconnectFeatureConnection("VDAutoParryAnimation")
+        runtime.boundKillerAnimator = nil
+        if not enabled then
+            return
+        end
+        local parryRemote: RemoteEvent? = nil
+        local remotes: Instance? = ReplicatedStorageService:FindFirstChild("Remotes")
+        local items: Instance? = if remotes then remotes:FindFirstChild("Items") else nil
+        local dagger: Instance? = if items then items:FindFirstChild("Parrying Dagger") else nil
+        local candidate: Instance? = if dagger then dagger:FindFirstChild("parry") else nil
+        if candidate and candidate:IsA("RemoteEvent") then
+            parryRemote = candidate
+        end
+        assert(parryRemote, "VD Remotes.Items.Parrying Dagger.parry is unavailable")
+        local elapsed: number = 1
+        featureConnections.VDAutoParryScan = TaskManager:Connect(function(deltaTime: number): ()
+            elapsed += deltaTime
+            if elapsed < 0.1 then
+                return
+            end
+            elapsed = 0
+            local _, killer: Model? = getKiller()
+            local humanoid: Humanoid? = if killer then killer:FindFirstChildOfClass("Humanoid") else nil
+            local animator: Animator? = if humanoid then humanoid:FindFirstChildOfClass("Animator") else nil
+            bindAutoParryAnimator(if getMap() then animator else nil, parryRemote :: RemoteEvent)
+        end)
+    end
+
+    local function nearestSurvivor(root: BasePart, maximumRange: number): BasePart?
+        local best: BasePart? = nil
+        local bestDistance: number = maximumRange
+        for _, player: Player in ipairs(Players:GetPlayers()) do
+            local character: Model? = player.Character
+            local humanoid: Humanoid? = if character then character:FindFirstChildOfClass("Humanoid") else nil
+            local targetRoot: BasePart? = getRoot(character)
+            if player ~= LocalPlayer
+                and player.Team ~= nil
+                and lower((player.Team :: Team).Name) == "survivors"
+                and humanoid
+                and humanoid.Health > 0
+                and targetRoot then
+                local distance: number = (targetRoot.Position - root.Position).Magnitude
+                if distance <= bestDistance then
+                    best = targetRoot
+                    bestDistance = distance
+                end
+            end
+        end
+        return best
+    end
+
+    local function toggleKillerHitAura(enabled: boolean): ()
+        disconnectFeatureConnection("VDKillerHitAura")
+        if not enabled then
+            local character: Model? = LocalPlayer.Character
+            local humanoid: Humanoid? = if character
+                then character:FindFirstChildOfClass("Humanoid")
+                else nil
+            if humanoid and runtime.killerBaseWalkSpeed and not runtime.walkSpeedEnabled then
+                humanoid.WalkSpeed = runtime.killerBaseWalkSpeed
+            end
+            runtime.killerBaseWalkSpeed = nil
+            return
+        end
+        local attackRemote: RemoteEvent? = findRemoteEvent("Attacks", "BasicAttack")
+        assert(attackRemote, "VD Remotes.Attacks.BasicAttack is unavailable")
+        featureConnections.VDKillerHitAura = TaskManager:Connect(function(): ()
+            local team: Team? = LocalPlayer.Team
+            local character: Model? = LocalPlayer.Character
+            local localRoot: BasePart? = getRoot(LocalPlayer.Character)
+            local humanoid: Humanoid? = if character
+                then character:FindFirstChildOfClass("Humanoid")
+                else nil
+            if not isRoundActive()
+                or not team
+                or lower(team.Name) ~= "killer"
+                or not localRoot
+                or not humanoid then
+                return
+            end
+            if runtime.killerBaseWalkSpeed == nil then
+                runtime.killerBaseWalkSpeed = humanoid.WalkSpeed
+            end
+            local preventSlowdown: boolean = settings.hitAuraMode == "Blatant"
+                or settings.hitAuraRun == true
+            if preventSlowdown then
+                humanoid.WalkSpeed = math.max(
+                    humanoid.WalkSpeed,
+                    runtime.killerBaseWalkSpeed :: number
+                )
+            end
+            local attackRange: number = if settings.hitAuraMode == "Blatant"
+                then settings.hitAuraBlatantReach
+                else settings.hitAuraRange
+            local target: BasePart? = nearestSurvivor(localRoot, attackRange)
+            if not target then
+                return
+            end
+            if settings.hitAuraMode == "Blatant" then
+
+                if os.clock() - runtime.lastHit >= 0.12 then
+                    runtime.lastHit = os.clock()
+                    attackRemote:FireServer()
+                end
+            elseif os.clock() - runtime.lastHit >= settings.hitAuraInterval then
+                runtime.lastHit = os.clock()
+                attackRemote:FireServer()
+            end
+        end)
+    end
+
+    local function isFootstepSound(sound: Sound): boolean
+        local name: string = lower(sound.Name)
+        return contains(name, "foot")
+            or contains(name, "step")
+            or contains(name, "running")
+            or contains(name, "walking")
+            or contains(name, "sprint")
+    end
+
+    local function silenceSound(sound: Sound): ()
+        if not isFootstepSound(sound) or runtime.soundStates[sound] then
+            return
+        end
+        runtime.soundStates[sound] = {volume = sound.Volume}
+        sound.Volume = 0
+        sound:Stop()
+        runtime.soundConnections[sound] = sound.Played:Connect(function(): ()
+            if runtime.silentStepsEnabled then
+                sound.Volume = 0
+                sound:Stop()
+            end
+        end)
+    end
+
+    local function restoreSilentSounds(): ()
+        for sound: Sound, connection: RBXScriptConnection in pairs(runtime.soundConnections) do
+            connection:Disconnect()
+            runtime.soundConnections[sound] = nil
+        end
+        for sound: Sound, original: SoundState in pairs(runtime.soundStates) do
+            if sound.Parent then
+                sound.Volume = original.volume
+            end
+            runtime.soundStates[sound] = nil
+        end
+    end
+
+    local function bindSilentCharacter(character: Model): ()
+        disconnectFeatureConnection("VDSilentDescendant")
+        for _, descendant: Instance in ipairs(character:GetDescendants()) do
+            if descendant:IsA("Sound") then
+                silenceSound(descendant)
+            end
+        end
+        featureConnections.VDSilentDescendant = character.DescendantAdded:Connect(function(
+            descendant: Instance
+        ): ()
+            if descendant:IsA("Sound") then
+                silenceSound(descendant)
+            end
+        end)
+    end
+
+    local function toggleSilentSteps(enabled: boolean): ()
+        disconnectFeatureConnection("VDSilentCharacter")
+        disconnectFeatureConnection("VDSilentDescendant")
+        runtime.silentStepsEnabled = enabled
+        restoreSilentSounds()
+        if not enabled then
+            return
+        end
+        if LocalPlayer.Character then
+            bindSilentCharacter(LocalPlayer.Character)
+        end
+        featureConnections.VDSilentCharacter = LocalPlayer.CharacterAdded:Connect(function(
+            character: Model
+        ): ()
+            if runtime.silentStepsEnabled then
+                bindSilentCharacter(character)
+            end
+        end)
+    end
+
+    local function nearestVault(root: BasePart): BasePart?
+        local map: Instance? = getMap()
+        local best: BasePart? = nil
+        local bestDistance: number = settings.vaultRange
+        if not map then
+            return nil
+        end
+        for _, descendant: Instance in ipairs(map:GetDescendants()) do
+            if descendant:IsA("BasePart") and lower(descendant.Name) == "vaulttrigger" then
+                local distance: number = (descendant.Position - root.Position).Magnitude
+                if distance < bestDistance then
+                    best = descendant
+                    bestDistance = distance
+                end
+            end
+        end
+        return best
+    end
+
+    local function toggleFastVault(enabled: boolean): ()
+        disconnectFeatureConnection("VDFastVault")
+        if not enabled then
+            return
+        end
+        local vaultRemote: RemoteEvent? = findRemoteEvent("Window", "VaultEvent")
+        local fastVaultRemote: RemoteEvent? = findRemoteEvent("Window", "fastvault")
+        local completePartRemote: RemoteEvent? = findRemoteEvent(
+            "Window",
+            "VaultCompleteEventpart1"
+        )
+        local completeRemote: RemoteEvent? = findRemoteEvent("Window", "VaultCompleteEvent")
+        assert(vaultRemote, "VD Remotes.Window.VaultEvent is unavailable")
+        local verifiedVaultRemote: RemoteEvent = vaultRemote :: RemoteEvent
+        featureConnections.VDFastVault = TaskManager:Connect(function(): ()
+            local character: Model? = LocalPlayer.Character
+            local root: BasePart? = getRoot(character)
+            local humanoid: Humanoid? = if character then character:FindFirstChildOfClass("Humanoid") else nil
+            if not root or not humanoid or humanoid.MoveDirection.Magnitude < 0.2 then
+                return
+            end
+            local trigger: BasePart? = nearestVault(root)
+            if not trigger then
+                return
+            end
+            local repeatDelay: number = math.max(0.08, 0.55 / settings.vaultSpeed)
+            if trigger ~= runtime.lastVaultPoint
+                or os.clock() - runtime.lastVaultInput > repeatDelay then
+                runtime.lastVaultInput = os.clock()
+                runtime.lastVaultPoint = trigger
+                local destination: CFrame = trigger.CFrame * CFrame.new(0, 2, -1)
+                root.CFrame = root.CFrame:Lerp(
+                    destination,
+                    math.clamp(settings.vaultSpeed / 10, 0.25, 1)
+                )
+                verifiedVaultRemote:FireServer(trigger, true)
+                if fastVaultRemote then
+                    fastVaultRemote:FireServer(LocalPlayer)
+                end
+                if completePartRemote then
+                    completePartRemote:FireServer()
+                end
+                if completeRemote then
+                    completeRemote:FireServer(trigger, false)
+                end
+            end
+        end)
+    end
+
+    local facingParts: {[Player]: Part} = {}
+    local function clearFacing(): ()
+        for player: Player, part: Part in pairs(facingParts) do
+            part:Destroy()
+            facingParts[player] = nil
+        end
+    end
+
+    local function toggleFacingESP(enabled: boolean): ()
+        disconnectFeatureConnection("VDFacingESP")
+        clearFacing()
+        if not enabled then
+            return
+        end
+        featureConnections.VDFacingESP = TaskManager:Connect(function(): ()
+            if not getMap() then
+                clearFacing()
+                return
+            end
+            for _, player: Player in ipairs(Players:GetPlayers()) do
+                if player ~= LocalPlayer
+                    and isPlayerInRound(player)
+                    and player.Character then
+                    local head: BasePart? = player.Character:FindFirstChild("Head") :: BasePart?
+                    if head then
+                        local line: Part? = facingParts[player]
+                        if not line then
+                            line = Instance.new("Part")
+                            line.Name = "Wurst_VD_Facing"
+                            line.Anchored = true
+                            line.CanCollide = false
+                            line.CanQuery = false
+                            line.CanTouch = false
+                            line.CastShadow = false
+                            line.Material = Enum.Material.Neon
+                            line.Transparency = 0.28
+                            line.Parent = getVisualFolder()
+                            facingParts[player] = line
+                        end
+                        local length: number = 16
+                        local origin: Vector3 = head.Position
+                        local direction: Vector3 = head.CFrame.LookVector
+                        line.Color = if isKillerCharacter(player.Character)
+                            then VD_KILLER_COLOR else Theme.accent
+                        line.Size = Vector3.new(0.08, 0.08, length)
+                        line.CFrame = CFrame.lookAt(
+                            origin + direction * (length / 2),
+                            origin + direction * length
+                        )
+                    end
+                end
+            end
+            for player: Player, part: Part in pairs(facingParts) do
+                if not player.Parent or not player.Character then
+                    part:Destroy()
+                    facingParts[player] = nil
+                end
+            end
+        end)
+    end
+
+    local function isHiding(player: Player, character: Model): boolean
+        for _, name: string in ipairs({"Hiding", "InLocker", "IsHiding", "Hidden"}) do
+            if player:GetAttribute(name) == true or character:GetAttribute(name) == true then
+                return true
+            end
+        end
+        local lockerValue: Instance? = character:FindFirstChild("Locker", true)
+            or character:FindFirstChild("CurrentLocker", true)
+        return lockerValue ~= nil
+    end
+
+    local function clearLockerMarkers(): ()
+        for player: Player, record: MarkerRecord in pairs(runtime.lockerMarkers) do
+            destroyMarker(record)
+            runtime.lockerMarkers[player] = nil
+        end
+    end
+
+    local function toggleLockerDetector(enabled: boolean): ()
+        disconnectFeatureConnection("VDLockerDetector")
+        table.clear(runtime.lockerAlerts)
+        clearLockerMarkers()
+        if not enabled then
+            return
+        end
+        local elapsed: number = 1
+        featureConnections.VDLockerDetector = TaskManager:Connect(function(deltaTime: number): ()
+            elapsed += deltaTime
+            if elapsed < 0.25 then
+                return
+            end
+            elapsed = 0
+            local localRoot: BasePart? = getRoot(LocalPlayer.Character)
+            if not getMap() or not localRoot then
+                clearLockerMarkers()
+                return
+            end
+            for _, player: Player in ipairs(Players:GetPlayers()) do
+                local character: Model? = player.Character
+                local root: BasePart? = getRoot(character)
+                local record: MarkerRecord? = runtime.lockerMarkers[player]
+                local hidingInRange: boolean = player ~= LocalPlayer and character ~= nil and root ~= nil
+                    and not isKillerCharacter(character)
+                    and isHiding(player, character)
+                    and (root.Position - localRoot.Position).Magnitude <= settings.lockerRange
+                if hidingInRange and character and root then
+                    local distance: number = (root.Position - localRoot.Position).Magnitude
+                    local text: string = string.format(
+                        "HIDDEN PLAYER\n%s · %.0f STUDS",
+                        player.DisplayName,
+                        distance
+                    )
+                    if not record or record.highlight.Adornee ~= character then
+                        destroyMarker(record)
+                        record = createMarker(character, root, Theme.accent, text, 600)
+                        record.highlight.FillTransparency = 0.3
+                        record.highlight.OutlineTransparency = 0
+                        runtime.lockerMarkers[player] = record
+                    elseif record.label then
+                        record.label.Text = text
+                    end
+                    local lastAlert: number = runtime.lockerAlerts[player] or 0
+                    if os.clock() - lastAlert > 8 then
+                        runtime.lockerAlerts[player] = os.clock()
+                        notify(player.DisplayName .. " entered a nearby locker/hideout.")
+                    end
+                elseif record then
+                    destroyMarker(record)
+                    runtime.lockerMarkers[player] = nil
+                end
+            end
+            for player: Player, record: MarkerRecord in pairs(runtime.lockerMarkers) do
+                if not player.Parent then
+                    destroyMarker(record)
+                    runtime.lockerMarkers[player] = nil
+                end
+            end
+        end)
+    end
+
+    local function isAcceleratedAction(track: AnimationTrack): boolean
+        local animation: Animation? = track.Animation
+        local descriptor: string = lower(track.Name)
+            .. " "
+            .. lower(if animation then animation.AnimationId else "")
+        for _, keyword: string in ipairs({
+            "vault", "pallet", "break", "hook", "unhook", "rescue",
+            "repair", "heal", "interact", "open", "lever", "pickup",
+        }) do
+            if contains(descriptor, keyword) then
+                return true
+            end
+        end
+        return track.Priority == Enum.AnimationPriority.Action
+            or track.Priority == Enum.AnimationPriority.Action2
+            or track.Priority == Enum.AnimationPriority.Action3
+            or track.Priority == Enum.AnimationPriority.Action4
+    end
+
+    local function bindActionAnimator(animator: Animator?): ()
+        if runtime.actionAnimator == animator then
+            return
+        end
+        disconnectFeatureConnection("VDCooldownAnimation")
+        runtime.actionAnimator = animator
+        if not animator then
+            return
+        end
+        featureConnections.VDCooldownAnimation = animator.AnimationPlayed:Connect(function(
+            track: AnimationTrack
+        ): ()
+            if runtime.cooldownModifierEnabled and isAcceleratedAction(track) then
+                track:AdjustSpeed(settings.actionSpeed)
+            end
+        end)
+        for _, track: AnimationTrack in ipairs(animator:GetPlayingAnimationTracks()) do
+            if isAcceleratedAction(track) then
+                track:AdjustSpeed(settings.actionSpeed)
+            end
+        end
+    end
+
+    local function toggleCooldownModifier(enabled: boolean): ()
+        disconnectFeatureConnection("VDCooldownModifier")
+        disconnectFeatureConnection("VDCooldownAnimation")
+        runtime.cooldownModifierEnabled = enabled
+        runtime.actionAnimator = nil
+        if not enabled then
+            local character: Model? = LocalPlayer.Character
+            local humanoid: Humanoid? = if character
+                then character:FindFirstChildOfClass("Humanoid")
+                else nil
+            local animator: Animator? = if humanoid
+                then humanoid:FindFirstChildOfClass("Animator")
+                else nil
+            if animator then
+                for _, track: AnimationTrack in ipairs(animator:GetPlayingAnimationTracks()) do
+                    if isAcceleratedAction(track) then
+                        track:AdjustSpeed(1)
+                    end
+                end
+            end
+            return
+        end
+        featureConnections.VDCooldownModifier = TaskManager:Connect(function(): ()
+            local character: Model? = LocalPlayer.Character
+            local humanoid: Humanoid? = if character
+                then character:FindFirstChildOfClass("Humanoid")
+                else nil
+            local animator: Animator? = if humanoid
+                then humanoid:FindFirstChildOfClass("Animator")
+                else nil
+            bindActionAnimator(animator)
+        end)
+    end
+
+    local function bindDamageHumanoid(humanoid: Humanoid?): ()
+        if runtime.trackedHumanoid == humanoid then
+            return
+        end
+        disconnectFeatureConnection("VDDamageHealth")
+        runtime.trackedHumanoid = humanoid
+        if not humanoid then
+            return
+        end
+        local previousHealth: number = humanoid.Health
+        featureConnections.VDDamageHealth = humanoid.HealthChanged:Connect(function(
+            health: number
+        ): ()
+            if runtime.damageBoostEnabled and health < previousHealth and health > 0 then
+                runtime.damageBoostToken += 1
+                local boostToken: number = runtime.damageBoostToken
+                local originalSpeed: number = humanoid.WalkSpeed
+                runtime.damageOriginalSpeed = originalSpeed
+                runtime.damageBoostUntil = os.clock() + settings.damageBoostDuration
+                humanoid.WalkSpeed = math.max(
+                    humanoid.WalkSpeed,
+                    originalSpeed + settings.damageBoost
+                )
+                task.delay(settings.damageBoostDuration, function(): ()
+                    if runtime.damageBoostEnabled
+                        and runtime.damageBoostToken == boostToken
+                        and humanoid.Parent
+                        and not runtime.walkSpeedEnabled then
+                        humanoid.WalkSpeed = originalSpeed
+                        runtime.damageOriginalSpeed = nil
+                    end
+                end)
+            end
+            previousHealth = health
+        end)
+    end
+
+    local function toggleDamageBoost(enabled: boolean): ()
+        disconnectFeatureConnection("VDDamageBoost")
+        disconnectFeatureConnection("VDDamageHealth")
+        runtime.damageBoostEnabled = enabled
+        runtime.trackedHumanoid = nil
+        runtime.damageBoostToken += 1
+        runtime.damageBoostUntil = 0
+        if not enabled then
+            local character: Model? = LocalPlayer.Character
+            local humanoid: Humanoid? = if character
+                then character:FindFirstChildOfClass("Humanoid")
+                else nil
+            if humanoid and runtime.damageOriginalSpeed and not runtime.walkSpeedEnabled then
+                humanoid.WalkSpeed = runtime.damageOriginalSpeed
+            end
+            runtime.damageOriginalSpeed = nil
+            return
+        end
+        featureConnections.VDDamageBoost = TaskManager:Connect(function(): ()
+            local character: Model? = LocalPlayer.Character
+            local humanoid: Humanoid? = if character
+                then character:FindFirstChildOfClass("Humanoid")
+                else nil
+            bindDamageHumanoid(humanoid)
+        end)
+    end
+
+    local function isSelectiveNoclipPart(part: BasePart): boolean
+        local cursor: Instance? = part
+        for _depth: number = 1, 4 do
+            if not cursor then
+                break
+            end
+            local name: string = lower(cursor.Name)
+            if contains(name, "pallet")
+                or contains(name, "vault")
+                or contains(name, "window") then
+                return true
+            end
+            if cursor:IsA("Model")
+                and cursor:FindFirstChild("VaultTrigger") ~= nil then
+                return true
+            end
+            cursor = cursor.Parent
+        end
+        return false
+    end
+
+    local function restoreSelectiveCollisions(): ()
+        for part: BasePart, original: CollisionState in pairs(runtime.selectiveCollisions) do
+            if part.Parent then
+                part.CanCollide = original.canCollide
+            end
+            runtime.selectiveCollisions[part] = nil
+        end
+    end
+
+    local function toggleSelectiveNoclip(enabled: boolean): ()
+        disconnectFeatureConnection("VDSelectiveNoclip")
+        restoreSelectiveCollisions()
+        if not enabled then
+            return
+        end
+        local elapsed: number = 1
+        featureConnections.VDSelectiveNoclip = TaskManager:Connect(function(
+            deltaTime: number
+        ): ()
+            elapsed += deltaTime
+            if elapsed < 0.35 then
+                return
+            end
+            elapsed = 0
+            local map: Instance? = getMap()
+            if not map then
+                restoreSelectiveCollisions()
+                return
+            end
+            for _, descendant: Instance in ipairs(map:GetDescendants()) do
+                if descendant:IsA("BasePart")
+                    and descendant.CanCollide
+                    and isSelectiveNoclipPart(descendant) then
+                    if not runtime.selectiveCollisions[descendant] then
+                        runtime.selectiveCollisions[descendant] = {
+                            canCollide = descendant.CanCollide,
+                        }
+                    end
+                    descendant.CanCollide = false
+                end
+            end
+            for part: BasePart, original: CollisionState in pairs(runtime.selectiveCollisions) do
+                if not part:IsDescendantOf(map) then
+                    if part.Parent then
+                        part.CanCollide = original.canCollide
+                    end
+                    runtime.selectiveCollisions[part] = nil
+                end
+            end
+        end)
+    end
+
+    local function toggleWalkSpeed(enabled: boolean): ()
+        disconnectFeatureConnection("VDWalkSpeed")
+        runtime.walkSpeedEnabled = enabled
+        local character: Model? = LocalPlayer.Character
+        local humanoid: Humanoid? = if character
+            then character:FindFirstChildOfClass("Humanoid")
+            else nil
+        if not enabled then
+            if humanoid and runtime.walkSpeedBase then
+                humanoid.WalkSpeed = runtime.walkSpeedBase
+            end
+            runtime.walkSpeedBase = nil
+            return
+        end
+        runtime.walkSpeedBase = if humanoid then humanoid.WalkSpeed else settings.walkSpeed
+        featureConnections.VDWalkSpeed = TaskManager:Connect(function(): ()
+            local currentCharacter: Model? = LocalPlayer.Character
+            local currentHumanoid: Humanoid? = if currentCharacter
+                then currentCharacter:FindFirstChildOfClass("Humanoid")
+                else nil
+            if currentHumanoid and isRoundActive() then
+                local activeBoost: number = if os.clock() < runtime.damageBoostUntil
+                    then settings.damageBoost
+                    else 0
+                currentHumanoid.WalkSpeed = settings.walkSpeed + activeBoost
+            end
+        end)
+    end
+
+    local function createCooldownGui(): ScreenGui
+        local gui: ScreenGui = Instance.new("ScreenGui")
+        gui.Name = "Wurst_VD_Cooldowns"
+        gui.IgnoreGuiInset = true
+        gui.ResetOnSpawn = false
+        gui.Parent = PlayerGui
+        local label: TextLabel = Instance.new("TextLabel")
+        label.Name = "Cooldowns"
+        label.AnchorPoint = Vector2.new(1, 0.5)
+        label.BackgroundColor3 = Color3.fromRGB(10, 13, 21)
+        label.BackgroundTransparency = 0.12
+        label.BorderSizePixel = 0
+        label.Font = Enum.Font.GothamMedium
+        label.Position = UDim2.new(1, -22, 0.5, 0)
+        label.Size = UDim2.fromOffset(260, 100)
+        label.Text = "KILLER POWER\nNO DATA"
+        label.TextColor3 = Theme.text
+        label.TextSize = 13
+        label.TextWrapped = true
+        label.Parent = gui
+        local corner: UICorner = Instance.new("UICorner")
+        corner.CornerRadius = UDim.new(0, 11)
+        corner.Parent = label
+        return gui
+    end
+
+    local function cooldownText(): string
+        local killerPlayer: Player?, killer: Model? = getKiller()
+        if not killer then
+            return "KILLER POWER\nNO SIGNAL"
+        end
+        local lines: {string} = {"KILLER POWER"}
+        local function appendAttributes(instance: Instance): ()
+            for name: string, value: any in pairs(instance:GetAttributes()) do
+                local key: string = lower(name)
+                if (contains(key, "cooldown") or contains(key, "charge") or contains(key, "power"))
+                    and (type(value) == "number" or type(value) == "boolean") then
+                    table.insert(lines, name .. ": " .. tostring(value))
+                    if #lines >= 6 then
+                        return
+                    end
+                end
+            end
+        end
+        appendAttributes(killer)
+        if killerPlayer and #lines < 6 then
+            appendAttributes(killerPlayer)
+        end
+        if #lines == 1 then
+            table.insert(lines, "READY / NO REPLICATED TIMER")
+        end
+        return table.concat(lines, "\n")
+    end
+
+    local function toggleCooldownTracker(enabled: boolean): ()
+        disconnectFeatureConnection("VDCooldownTracker")
+        if runtime.cooldownGui then
+            runtime.cooldownGui:Destroy()
+            runtime.cooldownGui = nil
+        end
+        if not enabled then
+            return
+        end
+        local gui: ScreenGui = createCooldownGui()
+        runtime.cooldownGui = gui
+        local label: TextLabel = gui:WaitForChild("Cooldowns") :: TextLabel
+        local elapsed: number = 1
+        featureConnections.VDCooldownTracker = TaskManager:Connect(function(deltaTime: number): ()
+            elapsed += deltaTime
+            if elapsed >= 0.15 then
+                elapsed = 0
+                label.Text = cooldownText()
+            end
+        end)
+    end
+
+    local function suppressBlindEffect(effect: Instance): ()
+        local name: string = lower(effect.Name)
+        if not contains(name, "blind")
+            and not contains(name, "flash")
+            and not contains(name, "whiteout") then
+            return
+        end
+        if effect:IsA("PostEffect") then
+            if runtime.effectStates[effect] == nil then
+                runtime.effectStates[effect] = effect.Enabled
+            end
+            effect.Enabled = false
+        elseif effect:IsA("GuiObject") and effect ~= ScreenGui then
+            if runtime.effectStates[effect] == nil then
+                runtime.effectStates[effect] = effect.Visible
+            end
+            effect.Visible = false
+        end
+    end
+
+    local function toggleNoBlind(enabled: boolean): ()
+        disconnectFeatureConnection("VDNoBlindLighting")
+        disconnectFeatureConnection("VDNoBlindGui")
+        disconnectFeatureConnection("VDNoBlindGuard")
+        if not enabled then
+            for effect: Instance, original: any in pairs(runtime.effectStates) do
+                if effect.Parent then
+                    if effect:IsA("PostEffect") then
+                        effect.Enabled = original
+                    elseif effect:IsA("GuiObject") then
+                        effect.Visible = original
+                    end
+                end
+                runtime.effectStates[effect] = nil
+            end
+            return
+        end
+        for _, root: Instance in ipairs({Lighting, PlayerGui}) do
+            for _, descendant: Instance in ipairs(root:GetDescendants()) do
+                suppressBlindEffect(descendant)
+            end
+        end
+        featureConnections.VDNoBlindLighting = Lighting.DescendantAdded:Connect(function(
+            descendant: Instance
+        ): ()
+            suppressBlindEffect(descendant)
+        end)
+        featureConnections.VDNoBlindGui = PlayerGui.DescendantAdded:Connect(function(
+            descendant: Instance
+        ): ()
+            suppressBlindEffect(descendant)
+        end)
+        featureConnections.VDNoBlindGuard = TaskManager:Connect(function(): ()
+            for effect: Instance, _original: any in pairs(runtime.effectStates) do
+                if not effect.Parent then
+                    runtime.effectStates[effect] = nil
+                elseif effect:IsA("PostEffect") then
+                    effect.Enabled = false
+                elseif effect:IsA("GuiObject") then
+                    effect.Visible = false
+                end
+            end
+        end)
+    end
+
+    registerRoleProvider({
+        Name = "VD",
+        Roles = {"Killer", "Survivor"},
+        Colors = {
+            Killer = Color3.fromRGB(226, 72, 72),
+            Survivor = Color3.fromRGB(120, 190, 255),
+        },
+        Get = function(player: Player): string?
+            local character: Model? = player.Character
+            if not character then
+                return nil
+            end
+            return isKillerCharacter(character) and "Killer" or "Survivor"
+        end,
+    })
+
+    registerEspExtra({
+        Name = "Generators",
+        Default = false,
+        Tooltip = "Match generators with their exact progress, state and "
+            .. "distance. workspace.Map only; Lobby and Spectator objects are "
+            .. "ignored.",
+        Toggle = toggleGeneratorESP,
+        Options = {
+            {
+                Kind = "number",
+                Name = "max distance",
+                Default = 1800,
+                Min = 200,
+                Max = 3000,
+                Set = function(value: number): ()
+                    settings.generatorDistance = value
+                end,
+            },
+            {
+                Kind = "number",
+                Name = "fill",
+                Default = 0.82,
+                Min = 0,
+                Max = 1,
+                Set = function(value: number): ()
+                    settings.generatorTransparency = math.clamp(value, 0, 1)
+                end,
+            },
+        },
+    })
+
+    local GeneratorAuraFeature: any = createUniversalFeature(
+        "Auto Generator",
+        "Automatically maintains the native RepairEvent on a nearby generator point",
+        3,
+        toggleAutoGeneratorAura,
+        {parent = state.vdScroll, registry = state.vdFeatures}
+    )
+    addToggleOption(GeneratorAuraFeature, "Animation", true, function(value: boolean): ()
+        settings.autoGeneratorAnimation = value
+    end)
+    addCycleOption(GeneratorAuraFeature, "Get Off", {"Manual", "Smart"}, 1, function(value: string): ()
+        settings.autoGeneratorGetOff = value
+        runtime.manualGeneratorBlocked = false
+        runtime.manualGeneratorLeft = false
+        runtime.manualGeneratorOrigin = nil
+    end)
+    addNumberOption(GeneratorAuraFeature, "Interaction range", 18, 5, 30, function(value: number): ()
+        settings.autoGeneratorRange = math.max(1, value)
+    end)
+    local GeneratorIntervalOption: Frame = addNumberOption(
+        GeneratorAuraFeature,
+        "Legit interval",
+        0.12,
+        0.03,
+        0.5,
+        function(value: number): ()
+            settings.autoGeneratorInterval = math.max(0.01, value)
+        end
+    )
+    addCycleOption(GeneratorAuraFeature, "Mode", {"Legit", "Blatant"}, 1, function(value: string): ()
+        settings.autoGeneratorMode = value
+        setOptionVisible(GeneratorAuraFeature, GeneratorIntervalOption, value == "Legit")
+    end)
+
+    local AutoParryFeature: any = createUniversalFeature(
+        "Auto Parry / Auto Block",
+        "Fire the dagger parry remote when an in-range Killer attack starts",
+        4,
+        toggleAutoParry,
+        {parent = state.vdScroll, registry = state.vdFeatures}
+    )
+    addNumberOption(AutoParryFeature, "Parry range", 18, 4, 35, function(value: number): ()
+        settings.autoParryRange = math.max(1, value)
+    end)
+
+    local HitAuraFeature: any = createUniversalFeature(
+        "Killer Hit Aura",
+        "Trigger the native BasicAttack without forcing camera or character rotation",
+        5,
+        toggleKillerHitAura,
+        {parent = state.vdScroll, registry = state.vdFeatures}
+    )
+    local HitRunButton: TextButton = addToggleOption(
+        HitAuraFeature,
+        "Run",
+        false,
+        function(value: boolean): ()
+            settings.hitAuraRun = value
+        end
+    )
+    local HitRangeOption: Frame = addNumberOption(
+        HitAuraFeature,
+        "Legit range",
+        12,
+        3,
+        18,
+        function(value: number): ()
+            settings.hitAuraRange = math.max(1, value)
+        end
+    )
+    local HitIntervalOption: Frame = addNumberOption(
+        HitAuraFeature,
+        "Legit cooldown",
+        0.72,
+        0.2,
+        1.5,
+        function(value: number): ()
+            settings.hitAuraInterval = math.max(0.05, value)
+        end
+    )
+    local BlatantReachOption: Frame = addNumberOption(
+        HitAuraFeature,
+        "Blatant reach",
+        34,
+        12,
+        60,
+        function(value: number): ()
+            settings.hitAuraBlatantReach = math.max(1, value)
+        end
+    )
+    addCycleOption(HitAuraFeature, "Mode", {"Legit", "Blatant"}, 1, function(value: string): ()
+        settings.hitAuraMode = value
+        local legit: boolean = value == "Legit"
+        setOptionVisible(HitAuraFeature, HitRunButton.Parent :: GuiObject, legit)
+        setOptionVisible(HitAuraFeature, HitRangeOption, legit)
+        setOptionVisible(HitAuraFeature, HitIntervalOption, legit)
+        setOptionVisible(HitAuraFeature, BlatantReachOption, not legit)
+    end)
+
+    local VaultFeature: any = createUniversalFeature(
+        "Fast Vault Optimizer",
+        "Use VD's verified vault sequence and accelerate local alignment",
+        6,
+        toggleFastVault,
+        {parent = state.vdScroll, registry = state.vdFeatures}
+    )
+    addNumberOption(VaultFeature, "Activation range", 7, 3, 12, function(value: number): ()
+        settings.vaultRange = value
+    end)
+    addNumberOption(VaultFeature, "Vault speed", 5, 1, 10, function(value: number): ()
+        settings.vaultSpeed = math.clamp(value, 1, 10)
+    end)
+
+    local ActionFeature: any = createUniversalFeature(
+        "Cooldown Modifier",
+        "Accelerate vault, pallet, break, rescue and interaction action tracks",
+        7,
+        toggleCooldownModifier,
+        {parent = state.vdScroll, registry = state.vdFeatures}
+    )
+    addNumberOption(ActionFeature, "Action speed", 4, 1, 10, function(value: number): ()
+        settings.actionSpeed = math.clamp(value, 1, 10)
+    end)
+
+    local DamageFeature: any = createUniversalFeature(
+        "Damage Boost",
+        "Apply an immediate configurable WalkSpeed burst after losing health",
+        8,
+        toggleDamageBoost,
+        {parent = state.vdScroll, registry = state.vdFeatures}
+    )
+    addNumberOption(DamageFeature, "Speed boost", 5, 1, 20, function(value: number): ()
+        settings.damageBoost = math.max(0, value)
+    end)
+    addNumberOption(DamageFeature, "Boost duration", 1, 0.1, 4, function(value: number): ()
+        settings.damageBoostDuration = math.max(0.05, value)
+    end)
+
+    createUniversalFeature(
+        "Noclip (Vaults & Pallets)",
+        "Disable collision only on vault/window and pallet descendants, never floors or walls",
+        9,
+        toggleSelectiveNoclip,
+        {parent = state.vdScroll, registry = state.vdFeatures}
+    )
+
+    local currentCharacter: Model? = LocalPlayer.Character
+    local currentHumanoid: Humanoid? = if currentCharacter
+        then currentCharacter:FindFirstChildOfClass("Humanoid")
+        else nil
+    local defaultWalkSpeed: number = if currentHumanoid then currentHumanoid.WalkSpeed else 16
+    settings.walkSpeed = defaultWalkSpeed
+    local WalkSpeedFeature: any = createUniversalFeature(
+        "WalkSpeed Hack",
+        "Maintain a configurable movement speed from the game's current base up to 50",
+        10,
+        toggleWalkSpeed,
+        {parent = state.vdScroll, registry = state.vdFeatures}
+    )
+    addNumberOption(WalkSpeedFeature, "WalkSpeed", defaultWalkSpeed, 1, 50, function(value: number): ()
+        settings.walkSpeed = math.clamp(value, 1, 50)
+    end)
+
+    createUniversalFeature(
+        "Silent Steps / Anti-Sound",
+        "Stop and mute local running, walking, sprint and footstep sounds as they appear",
+        11,
+        toggleSilentSteps,
+        {parent = state.vdScroll, registry = state.vdFeatures}
+    )
+
+    local ProximityFeature: any = createUniversalFeature(
+        "Killer Proximity Visualizer",
+        "Killer-only widget showing the nearest active Survivor distance",
+        12,
+        toggleProximity,
+        {parent = state.vdScroll, registry = state.vdFeatures}
+    )
+    addNumberOption(ProximityFeature, "Safe range", 150, 50, 400, function(value: number): ()
+        settings.proximityRange = value
+    end)
+    local function updateProximityFeatureVisibility(): ()
+        ProximityFeature.row.Visible = isLocalKiller()
+    end
+    updateProximityFeatureVisibility()
+    featureConnections.VDProximityVisibility = LocalPlayer:GetPropertyChangedSignal("Team"):Connect(
+        updateProximityFeatureVisibility
+    )
+
+    createUniversalFeature(
+        "Line of Sight ESP",
+        "Draw a lightweight facing vector from every active-round character",
+        13,
+        toggleFacingESP,
+        {parent = state.vdScroll, registry = state.vdFeatures}
+    )
+
+    local LockerFeature: any = createUniversalFeature(
+        "Locker & Hideout Detector",
+        "Show a bright through-wall marker and Toast for nearby hidden Survivors",
+        14,
+        toggleLockerDetector,
+        {parent = state.vdScroll, registry = state.vdFeatures}
+    )
+    addNumberOption(LockerFeature, "Alert range", 45, 10, 150, function(value: number): ()
+        settings.lockerRange = value
+    end)
+
+    createUniversalFeature(
+        "Killer Power Cooldowns",
+        "Show replicated Killer power, charge and cooldown attributes",
+        15,
+        toggleCooldownTracker,
+        {parent = state.vdScroll, registry = state.vdFeatures}
+    )
+
+    createUniversalFeature(
+        "Optimize Blind / Flash Protection",
+        "Disable local flashlight, blind and whiteout overlays as soon as they appear",
+        17,
+        toggleNoBlind,
+        {parent = state.vdScroll, registry = state.vdFeatures}
+    )
+
+    state.cleanupVDRuntime = function(): ()
+        disconnectFeatureConnection("VDProximityVisibility")
+        toggleGeneratorESP(false)
+        toggleAutoGeneratorAura(false)
+        toggleAutoParry(false)
+        toggleKillerHitAura(false)
+        toggleFastVault(false)
+        toggleCooldownModifier(false)
+        toggleDamageBoost(false)
+        toggleSelectiveNoclip(false)
+        toggleWalkSpeed(false)
+        toggleSilentSteps(false)
+        toggleProximity(false)
+        toggleFacingESP(false)
+        toggleLockerDetector(false)
+        toggleCooldownTracker(false)
+        toggleNoBlind(false)
+        clearFacing()
+        clearLockerMarkers()
+        restoreSelectiveCollisions()
+        if runtime.visualFolder then
+            runtime.visualFolder:Destroy()
+            runtime.visualFolder = nil
+        end
+    end
+end
+
+function Module.init(runtime: any): any
+    assert(type(runtime) == "table", "VD requires a Runtime table")
+    assert(type(runtime.Menu) == "table", "VD requires Runtime.Menu")
+    assert(runtime.TaskManager ~= nil, "VD requires Runtime.TaskManager")
+    if Module.Initialized then
+        return Module
+    end
+    Module.Menu = runtime.Menu
+    Module.Runtime = runtime
+    buildVDFeatures()
+    if type(state.cleanupVDRuntime) == "function" then
+        moduleCleanup = state.cleanupVDRuntime
+    end
+    Module.Events = featureConnections
+    Module.Initialized = true
+    return Module
+end
+
+function Module.destroy(): ()
+    if not Module.Initialized then
+        return
+    end
+    Module.Initialized = false
+    moduleCleanup()
+    Module.Events = {}
+    Module.Menu = nil
+    Module.Runtime = nil
+end
+
+return Module
+
+]=],
+        ["src/games/BedWars/6872274481 - game/base.lua"] = [=[
+export type Runtime = {
+    Services: any,
+    State: any,
+}
+
+local Module = {
+    Name = "BedWars",
+    PlaceId = 8444591321,
+    Events = {} :: {[string]: any},
+    Initialized = false,
+}
+
+local runtimeState: any = {
+    connections = {} :: {[string]: any},
+    remoteCache = {} :: {[string]: Instance?},
+}
+
+local function remote(name: string): Instance?
+    local cached: Instance? = runtimeState.remoteCache[name]
+    if cached and cached.Parent then
+        return cached
+    end
+    local replicated: Instance? = game:GetService("ReplicatedStorage")
+    if not replicated then
+        return nil
+    end
+    local found: Instance? = nil
+    for _, child: Instance in ipairs(replicated:GetDescendants()) do
+        if child.Name == name
+            and (child:IsA("RemoteEvent") or child:IsA("RemoteFunction")) then
+
+            found = child
+            break
+        end
+    end
+    if found == nil then
+        return nil
+    end
+    runtimeState.remoteCache[name] = found
+    return found :: Instance
+end
+
+local function fire(name: string, ...: any): boolean
+    local target: Instance? = remote(name)
+    if not target then
+        return false
+    end
+    local resolved: Instance = target :: Instance
+
+    local args: any = table.pack(...)
+    if resolved:IsA("RemoteFunction") then
+        return pcall(function(): ()
+            (resolved :: any):InvokeServer(table.unpack(args, 1, args.n))
+        end)
+    end
+    return pcall(function(): ()
+        (resolved :: any):FireServer(table.unpack(args, 1, args.n))
+    end)
+end
+
+function Module.init(runtime: any): any
+    local environment: any = getfenv()
+    local host: any = environment
+    local createUniversalFeature: any = host.createUniversalFeature
+    local addToggleOption: any = host.addToggleOption
+    local addNumberOption: any = host.addNumberOption
+    local addTextOption: any = host.addTextOption
+    local create: any = host.create
+    local makeTextLabel: any = host.makeTextLabel
+    local TaskManager: any = host.TaskManager
+    local Players: any = host.Players
+    local LocalPlayer: Player = host.LocalPlayer
+    local _services: any = runtime.Services or (host.services or {})
+
+    local registry: any = state.bedWarsFeatures
+
+    local function characterParts(): (Model?, Humanoid?, BasePart?)
+        local own: Model? = LocalPlayer.Character
+        if not own then
+            return nil, nil, nil
+        end
+        return own,
+            own:FindFirstChildOfClass("Humanoid") :: Humanoid?,
+            own:FindFirstChild("HumanoidRootPart") :: BasePart?
+    end
+
+    local function camera(): Camera?
+        return workspace.CurrentCamera
+    end
+
+    local function equippedWeapon(): Instance?
+        local own: Model? = LocalPlayer.Character
+        if not own then
+            return nil
+        end
+        for _, child: Instance in ipairs(own:GetChildren()) do
+            if child:IsA("Accessory") then
+                return child
+            end
+        end
+        return nil
+    end
+
+    local function sameTeam(player: Player): boolean
+        return LocalPlayer.Team ~= nil and player.Team == LocalPlayer.Team
+    end
+
+    local ownedConnections: {string} = {
+        "BedWarsAura", "BedWarsClicker", "BedWarsPlace", "BedWarsNuke",
+        "BedWarsEspAdded", "BedWarsEspRemoved", "BedWarsChest", "BedWarsAutoTool",
+        "BedWarsInventory", "BedWarsAimbot", "BedWarsDrop", "BedWarsTracer",
+        "BedWarsShop",
+    }
+    runtimeState.disconnectAll = function(): ()
+        for _, key: string in ipairs(ownedConnections) do
+            host.disconnectFeatureConnection(key)
+        end
+
+        if type(runtimeState.cleanupPanels) == "function" then
+            pcall(runtimeState.cleanupPanels)
+        end
+        if type(runtimeState.cleanupTracer) == "function" then
+            pcall(runtimeState.cleanupTracer)
+        end
+    end
+
+    local InventoryFeature: any = nil
+    local ShopFeature: any = nil
+    local AimbotFeature: any = nil
+    local DropFeature: any = nil
+    local TracerFeature: any = nil
+    local PlaceFeature: any = nil
+    local NukeFeature: any = nil
+    local EspFeature: any = nil
+    local ChestFeature: any = nil
+    local AutoToolFeature: any = nil
+
+    local function swordHitPayload(targetRoot: BasePart): {[string]: any}?
+        local _own: Model?, _humanoid: Humanoid?, root: BasePart? = characterParts()
+        local view: Camera? = camera()
+        if not root or not view then
+            return nil
+        end
+        local weapon: Instance? = equippedWeapon()
+        if not weapon then
+            return nil
+        end
+        local origin: Vector3 = (view :: Camera).CFrame.Position
+        local target: Vector3 = targetRoot.Position
+        local direction: Vector3 = target - origin
+        return {
+            entityInstance = targetRoot.Parent,
+            chargedAttack = {chargeRatio = 0},
+            validate = {
+                targetPosition = {value = target},
+                selfPosition = {value = (root :: BasePart).Position},
+                raycast = {
+                    cameraPosition = {value = origin},
+                    cursorDirection = {
+                        value = direction.Magnitude > 0.001
+                            and direction.Unit
+                            or (view :: Camera).CFrame.LookVector,
+                    },
+                },
+            },
+            weapon = weapon,
+        }
+    end
+
+    local placeSettings: any = {block = "wool_white", rate = 8}
+
+    local function placeAt(position: Vector3): boolean
+        return fire("PlaceBlock", {
+            mouseBlockInfo = {placementPosition = position},
+            blockType = placeSettings.block,
+            blockData = 0,
+            position = position,
+        })
+    end
+
+    local espSettings: any = {beds = true, pots = true}
+    local espMarks: {[Instance]: any} = {}
+
+    local function clearEspMarks(): ()
+        for instance: Instance, mark: any in pairs(espMarks) do
+            pcall(function(): ()
+                mark:Destroy()
+            end)
+            espMarks[instance] = nil
+        end
+    end
+
+    local function markBlock(instance: Instance, label: string): ()
+        if espMarks[instance] or not instance:IsA("BasePart") then
+            return
+        end
+        local billboard: any = create("BillboardGui", {
+            Name = "Wurst_BedWars_" .. label,
+            Size = UDim2.fromOffset(72, 20),
+            StudsOffsetWorldSpace = Vector3.new(0, 3, 0),
+            AlwaysOnTop = true,
+            Adornee = instance,
+            Parent = instance,
+        })
+        makeTextLabel(billboard, label, 14)
+        espMarks[instance] = billboard
+    end
+
+    EspFeature = createUniversalFeature(
+        "Objective ESP",
+        "Marks tagged beds and desert pots through walls",
+        4,
+        function(enabled: boolean): ()
+            host.disconnectFeatureConnection("BedWarsEspAdded")
+            host.disconnectFeatureConnection("BedWarsEspRemoved")
+            clearEspMarks()
+            if not enabled then
+                if EspFeature then
+                    EspFeature:SetStatus(nil)
+                end
+                return
+            end
+            local collectionService: any = game:GetService("CollectionService")
+
+            local function add(instance: Instance): ()
+                if espSettings.beds and collectionService:HasTag(instance, "bed") then
+                    markBlock(instance, "Bed")
+                elseif espSettings.pots and instance.Name == "desert_pot" then
+                    markBlock(instance, "Pot")
+                end
+            end
+            local function remove(instance: Instance): ()
+                local mark: any = espMarks[instance]
+                if mark then
+                    pcall(function(): ()
+                        mark:Destroy()
+                    end)
+                    espMarks[instance] = nil
+                end
+            end
+
+            for _, instance: Instance in ipairs(collectionService:GetTagged("bed")) do
+                add(instance)
+            end
+            for _, instance: Instance in ipairs(collectionService:GetTagged("block")) do
+                add(instance)
+            end
+            host.featureConnections.BedWarsEspAdded =
+                collectionService:GetInstanceAddedSignal("block"):Connect(add)
+            host.featureConnections.BedWarsEspRemoved =
+                collectionService:GetInstanceRemovedSignal("block"):Connect(remove)
+            EspFeature:SetStatus("on")
+        end,
+        {categoryName = "Render", registry = registry}
+    )
+    addToggleOption(EspFeature, "Beds", espSettings.beds, function(value: boolean): ()
+        espSettings.beds = value
+    end)
+    addToggleOption(EspFeature, "Desert pots", espSettings.pots, function(value: boolean): ()
+        espSettings.pots = value
+    end)
+
+
+    local inventorySettings: any = {range = 60, maxRows = 12}
+    local inventoryRuntime: any = {panel = nil, signature = ""}
+
+    local function destroyInventoryPanel(): ()
+        if inventoryRuntime.panel then
+            pcall(function(): ()
+                inventoryRuntime.panel:Destroy()
+            end)
+            inventoryRuntime.panel = nil
+        end
+        inventoryRuntime.signature = ""
+    end
+
+    local function aimedPlayer(): Player?
+        local view: Camera? = camera()
+        if not view then
+            return nil
+        end
+        local origin: Vector3 = (view :: Camera).CFrame.Position
+        local direction: Vector3 = (view :: Camera).CFrame.LookVector
+        local best: Player? = nil
+        local bestScore: number = inventorySettings.range
+        for _, player: Player in ipairs(Players:GetPlayers()) do
+            if player == LocalPlayer then
+                continue
+            end
+            local character: Model? = player.Character
+            local humanoid: Humanoid? = character
+                and character:FindFirstChildOfClass("Humanoid") :: Humanoid?
+            local part: BasePart? = character
+                and character:FindFirstChild("HumanoidRootPart") :: BasePart?
+            if not humanoid or not part or (humanoid :: Humanoid).Health <= 0 then
+                continue
+            end
+            local offset: Vector3 = (part :: BasePart).Position - origin
+            local distance: number = offset.Magnitude
+            if distance > inventorySettings.range then
+                continue
+            end
+
+            if distance > 0.001 and offset.Unit:Dot(direction) < 0.86 then
+                continue
+            end
+            if distance < bestScore then
+                best = player
+                bestScore = distance
+            end
+        end
+        return best
+    end
+
+    local function inventoryOf(player: Player): Instance?
+        local replicated: Instance? = game:GetService("ReplicatedStorage")
+        local inventories: Instance? = replicated
+            and replicated:FindFirstChild("Inventories") :: Instance?
+        return inventories
+            and inventories:FindFirstChild(player.Name) :: Instance?
+    end
+
+    local function renderInventory(player: Player, folder: Instance): ()
+        local names: {string} = {}
+        for _, item: Instance in ipairs(folder:GetChildren()) do
+            table.insert(names, item.Name)
+        end
+        table.sort(names)
+        local signature: string = player.Name .. "|" .. table.concat(names, ",")
+        if signature == inventoryRuntime.signature and inventoryRuntime.panel then
+            return
+        end
+        inventoryRuntime.signature = signature
+        destroyInventoryPanel()
+
+        local rows: number = math.min(#names, inventorySettings.maxRows)
+        local root: Frame = create("Frame", {
+            Parent = host.ScreenGui,
+            Name = "Wurst_BedWarsInventory",
+            AnchorPoint = Vector2.new(1, 0),
+            BackgroundColor3 = Color3.fromRGB(14, 14, 16),
+            BackgroundTransparency = 0.15,
+            BorderSizePixel = 0,
+            Position = UDim2.new(1, -18, 0, 90),
+            Size = UDim2.fromOffset(196, 34 + rows * 18),
+            ZIndex = 60,
+        }) :: Frame
+        create("UICorner", {Parent = root, CornerRadius = UDim.new(0, 4)})
+        makeTextLabel(root, player.Name, 14)
+        for index: number = 1, rows do
+            makeTextLabel(root, names[index], 14)
+        end
+        if #names > rows then
+            makeTextLabel(root, "+" .. tostring(#names - rows) .. " more", 14)
+        end
+        inventoryRuntime.panel = root
+    end
+
+    InventoryFeature = createUniversalFeature(
+        "Inventory ESP",
+        "Reads the inventory of the player you are looking at",
+        8,
+        function(enabled: boolean): ()
+            host.disconnectFeatureConnection("BedWarsInventory")
+            destroyInventoryPanel()
+            if not enabled then
+                if InventoryFeature then
+                    InventoryFeature:SetStatus(nil)
+                end
+                return
+            end
+            InventoryFeature:SetStatus("searching")
+            local nextAt: number = 0
+            host.featureConnections.BedWarsInventory =
+                TaskManager:Connect(function(): ()
+                    local now: number = os.clock()
+                    if now < nextAt then
+                        return
+                    end
+                    nextAt = now + 0.25
+                    local player: Player? = aimedPlayer()
+                    if not player then
+                        destroyInventoryPanel()
+                        InventoryFeature:SetStatus("searching")
+                        return
+                    end
+                    local folder: Instance? = inventoryOf(player :: Player)
+                    if not folder then
+                        destroyInventoryPanel()
+                        InventoryFeature:SetStatus("no data")
+                        return
+                    end
+                    renderInventory(player :: Player, folder :: Instance)
+                    InventoryFeature:SetStatus((player :: Player).Name)
+                end)
+        end,
+        {categoryName = "Render", registry = registry}
+    )
+    addNumberOption(InventoryFeature, "Range", inventorySettings.range, 10, 200,
+        function(value: number): ()
+            inventorySettings.range = value
+        end)
+
+    local projectileSettings: any = {
+        range = 120,
+        delay = 0.5,
+        wallCheck = true,
+        teamCheck = true,
+
+        speed = 100,
+    }
+    local projectileRuntime: any = {nextAt = 0}
+
+    local PROJECTILE_WORDS: {string} = {"bow", "arrow", "pearl", "snowball", "egg", "potion"}
+
+    local function projectileWeapon(): Instance?
+        local own: Model? = LocalPlayer.Character
+        if not own then
+            return nil
+        end
+        for _, child: Instance in ipairs((own :: Model):GetChildren()) do
+            if not child:IsA("Accessory") then
+                continue
+            end
+            for _, word: string in ipairs(PROJECTILE_WORDS) do
+                if child.Name:find(word) then
+                    return child
+                end
+            end
+        end
+        return nil
+    end
+
+    local function solveTrajectory(
+        origin: Vector3,
+        targetPosition: Vector3,
+        targetVelocity: Vector3,
+        speed: number,
+        gravity: number
+    ): (Vector3?, number?)
+        if speed <= 0 then
+            return nil, nil
+        end
+
+        local function demand(flight: number): Vector3
+            local aim: Vector3 = targetPosition + targetVelocity * flight
+            local drop: Vector3 = Vector3.new(0, 0.5 * gravity * flight * flight, 0)
+            return ((aim - origin) + drop) / flight
+        end
+
+        local SCAN_STEP: number = 0.02
+        local low: number = SCAN_STEP
+        local high: number? = nil
+        local flight: number = low
+        for _ = 1, 300 do
+            flight += SCAN_STEP
+            if demand(flight).Magnitude <= speed then
+                high = flight
+                break
+            end
+            low = flight
+        end
+        if not high then
+            return nil, nil
+        end
+        for _ = 1, 24 do
+            local mid: number = (low + (high :: number)) / 2
+            if demand(mid).Magnitude > speed then
+                low = mid
+            else
+                high = mid
+            end
+        end
+        local solved: number = high :: number
+        return demand(solved), solved
+    end
+    Module.solveTrajectory = solveTrajectory
+
+    local function randomId(length: number): string
+        local alphabet: string =
+            "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"
+        local out: {string} = {}
+        for _ = 1, length do
+            local index: number = math.random(1, #alphabet)
+            table.insert(out, alphabet:sub(index, index))
+        end
+        return table.concat(out)
+    end
+
+    AimbotFeature = createUniversalFeature(
+        "Projectile Aimbot",
+        "Solves the shot and fires the game's own projectile remote",
+        9,
+        function(enabled: boolean): ()
+            host.disconnectFeatureConnection("BedWarsAimbot")
+            projectileRuntime.nextAt = 0
+            if not enabled then
+                if AimbotFeature then
+                    AimbotFeature:SetStatus(nil)
+                end
+                return
+            end
+            AimbotFeature:SetStatus("no projectile")
+            host.featureConnections.BedWarsAimbot =
+                TaskManager:Connect(function(): ()
+                    local now: number = os.clock()
+                    if now < projectileRuntime.nextAt then
+                        return
+                    end
+                    local weapon: Instance? = projectileWeapon()
+                    if not weapon then
+                        AimbotFeature:SetStatus("no projectile")
+                        return
+                    end
+                    local own: Model?, humanoid: Humanoid?, root: BasePart? =
+                        characterParts()
+                    local view: Camera? = camera()
+                    if not own or not humanoid or not root or not view
+                        or (humanoid :: Humanoid).Health <= 0 then
+                        return
+                    end
+
+                    local origin: Vector3 = (view :: Camera).CFrame.Position
+                    local best: Player? = nil
+                    local bestPart: BasePart? = nil
+                    local bestDistance: number = projectileSettings.range
+                    for _, player: Player in ipairs(Players:GetPlayers()) do
+                        if player == LocalPlayer then
+                            continue
+                        end
+                        if projectileSettings.teamCheck and sameTeam(player) then
+                            continue
+                        end
+                        local character: Model? = player.Character
+                        local otherHumanoid: Humanoid? = character
+                            and character:FindFirstChildOfClass("Humanoid") :: Humanoid?
+                        local part: BasePart? = character
+                            and character:FindFirstChild("HumanoidRootPart") :: BasePart?
+                        if not otherHumanoid or not part
+                            or (otherHumanoid :: Humanoid).Health <= 0 then
+                            continue
+                        end
+                        local distance: number =
+                            ((part :: BasePart).Position - origin).Magnitude
+                        if distance > bestDistance then
+                            continue
+                        end
+                        if projectileSettings.wallCheck then
+                            local parameters: RaycastParams = RaycastParams.new()
+                            parameters.FilterType = Enum.RaycastFilterType.Exclude
+                            parameters.FilterDescendantsInstances = {
+                                own :: Model,
+                                character :: Model,
+                            }
+                            local blocked: RaycastResult? = workspace:Raycast(
+                                origin,
+                                (part :: BasePart).Position - origin,
+                                parameters
+                            )
+                            if blocked then
+                                continue
+                            end
+                        end
+                        best = player
+                        bestPart = part :: BasePart
+                        bestDistance = distance
+                    end
+
+                    if not best or not bestPart then
+                        AimbotFeature:SetStatus("searching")
+                        return
+                    end
+
+                    local speed: number = projectileSettings.speed
+                    local gravity: number = workspace.Gravity
+                    local target: BasePart = bestPart :: BasePart
+                    local velocity: Vector3?, flight: number? = solveTrajectory(
+                        origin,
+                        target.Position,
+                        target.AssemblyLinearVelocity,
+                        speed,
+                        gravity
+                    )
+                    if not velocity then
+                        AimbotFeature:SetStatus("out of range")
+                        return
+                    end
+                    projectileRuntime.nextAt = now + projectileSettings.delay
+                    local itemType: string = (weapon :: Instance).Name
+                    fire("ProjectileFire",
+                        weapon,
+                        itemType,
+                        itemType,
+                        origin,
+                        origin - Vector3.new(0, 2, 0),
+                        velocity :: Vector3,
+                        randomId(8),
+                        {drawDurationSec = 0.15, shotId = randomId(8)},
+                        os.time()
+                    )
+                    AimbotFeature:SetStatus(string.format(
+                        "%s · %.2fs",
+                        (best :: Player).Name,
+                        flight :: number
+                    ))
+                end)
+        end,
+        {categoryName = "Combat", registry = registry}
+    )
+    addNumberOption(AimbotFeature, "Range", projectileSettings.range, 10, 300,
+        function(value: number): ()
+            projectileSettings.range = value
+        end)
+    addNumberOption(AimbotFeature, "Seconds between shots", projectileSettings.delay,
+        0.1, 2,
+        function(value: number): ()
+            projectileSettings.delay = value
+        end)
+    addToggleOption(AimbotFeature, "Wall check", projectileSettings.wallCheck,
+        function(value: boolean): ()
+            projectileSettings.wallCheck = value
+        end)
+    addToggleOption(AimbotFeature, "Team check", projectileSettings.teamCheck,
+        function(value: boolean): ()
+            projectileSettings.teamCheck = value
+        end)
+
+    local dropSettings: any = {rate = 8}
+    local dropRuntime: any = {controller = nil, missing = false}
+
+    local function dropController(): any
+        if dropRuntime.controller then
+            return dropRuntime.controller
+        end
+        if dropRuntime.missing then
+            return nil
+        end
+        local replicated: Instance? = game:GetService("ReplicatedStorage")
+        if not replicated then
+            return nil
+        end
+        for _, descendant: Instance in ipairs(replicated:GetDescendants()) do
+            if descendant.Name == "ItemDropController" and descendant:IsA("ModuleScript") then
+                local ok: boolean, loaded: any = pcall(require, descendant)
+                if ok and type(loaded) == "table"
+                    and type(loaded.dropItemInHand) == "function" then
+                    dropRuntime.controller = loaded
+                    return loaded
+                end
+
+                dropRuntime.missing = true
+                return nil
+            end
+        end
+        dropRuntime.missing = true
+        return nil
+    end
+
+    DropFeature = createUniversalFeature(
+        "Fast Drop",
+        "Drops what is in hand through the game's own controller",
+        10,
+        function(enabled: boolean): ()
+            host.disconnectFeatureConnection("BedWarsDrop")
+            if not enabled then
+                if DropFeature then
+                    DropFeature:SetStatus(nil)
+                end
+                return
+            end
+            DropFeature:SetStatus("idle")
+            local nextAt: number = 0
+            host.featureConnections.BedWarsDrop =
+                TaskManager:Connect(function(): ()
+                    local now: number = os.clock()
+                    if now < nextAt then
+                        return
+                    end
+                    local controller: any = dropController()
+                    if not controller then
+                        DropFeature:SetStatus("no controller")
+                        return
+                    end
+                    nextAt = now + 1 / math.max(dropSettings.rate, 0.5)
+                    local ok: boolean = pcall(function(): ()
+                        controller.dropItemInHand()
+                    end)
+                    DropFeature:SetStatus(ok and "dropping" or "refused")
+                end)
+        end,
+        {categoryName = "Other", registry = registry}
+    )
+    addNumberOption(DropFeature, "Drops per second", dropSettings.rate, 1, 20,
+        function(value: number): ()
+            dropSettings.rate = value
+        end)
+
+    local tracerRuntime: any = {folder = nil, points = {} :: {any}}
+    local TRACER_SAMPLES: number = 12
+
+    local function clearTracer(): ()
+        if tracerRuntime.folder then
+            pcall(function(): ()
+                tracerRuntime.folder:Destroy()
+            end)
+            tracerRuntime.folder = nil
+        end
+        tracerRuntime.points = {}
+    end
+
+    TracerFeature = createUniversalFeature(
+        "Projectile Tracers",
+        "Draws the arc the shot in hand would take",
+        11,
+        function(enabled: boolean): ()
+            host.disconnectFeatureConnection("BedWarsTracer")
+            clearTracer()
+            if not enabled then
+                if TracerFeature then
+                    TracerFeature:SetStatus(nil)
+                end
+                return
+            end
+            TracerFeature:SetStatus("no projectile")
+            local nextAt: number = 0
+            host.featureConnections.BedWarsTracer =
+                TaskManager:Connect(function(): ()
+                    local now: number = os.clock()
+                    if now < nextAt then
+                        return
+                    end
+                    nextAt = now + 0.1
+                    local weapon: Instance? = projectileWeapon()
+                    local view: Camera? = camera()
+                    if not weapon or not view then
+                        clearTracer()
+                        TracerFeature:SetStatus("no projectile")
+                        return
+                    end
+                    local own: Model?, humanoid: Humanoid?, root: BasePart? =
+                        characterParts()
+                    if not own or not humanoid or not root
+                        or (humanoid :: Humanoid).Health <= 0 then
+                        return
+                    end
+
+                    local origin: Vector3 = (view :: Camera).CFrame.Position
+                    local forward: Vector3 = (view :: Camera).CFrame.LookVector
+                    local gravity: number = workspace.Gravity
+                    local speed: number = projectileSettings.speed
+
+                    local maxRange: number = speed * speed / math.max(gravity, 1)
+                    local aimPoint: Vector3 = origin + forward * maxRange * 0.9
+                    local velocity: Vector3?, flight: number? = solveTrajectory(
+                        origin, aimPoint, Vector3.new(0, 0, 0), speed, gravity
+                    )
+                    if not velocity then
+                        clearTracer()
+                        TracerFeature:SetStatus("no arc")
+                        return
+                    end
+
+                    local launch: Vector3 = velocity :: Vector3
+                    local total: number = flight :: number
+                    if not tracerRuntime.folder then
+                        tracerRuntime.folder = create("Folder", {
+                            Name = "Wurst_BedWarsTracer",
+                            Parent = workspace,
+                        })
+                    end
+                    local folder: any = tracerRuntime.folder
+                    for index: number = 1, TRACER_SAMPLES do
+                        local at: number = total * index / TRACER_SAMPLES
+                        local position: Vector3 = origin + launch * at
+                            - Vector3.new(0, 0.5 * gravity * at * at, 0)
+                        local point: any = tracerRuntime.points[index]
+                        if not point or not point.Parent then
+                            point = create("Part", {
+                                Name = "T" .. tostring(index),
+                                Parent = folder,
+                                Size = Vector3.new(0.3, 0.3, 0.3),
+                                Anchored = true,
+                                CanCollide = false,
+                                CanQuery = false,
+                                CanTouch = false,
+                                Material = Enum.Material.Neon,
+                                Color = Color3.fromRGB(120, 200, 255),
+                                Transparency = 0.25,
+                            })
+                            tracerRuntime.points[index] = point
+                        end
+                        point.CFrame = CFrame.new(position)
+                    end
+                    TracerFeature:SetStatus(string.format("%.2fs", total))
+                end)
+        end,
+        {categoryName = "Render", registry = registry}
+    )
+
+    local function pressableKind(name: string): string?
+        if name:find("sword") then
+            return "Sword"
+        end
+        if name:find("wool") then
+            return "Wool"
+        end
+        if name:find("pickaxe") then
+            return "Pickaxe"
+        end
+        return nil
+    end
+
+    local function gamePressables(): {{any}}
+        local own: Model? = LocalPlayer.Character
+        if not own then
+            return {}
+        end
+        local inventory: Instance? = game:GetService("ReplicatedStorage")
+        inventory = inventory and inventory:FindFirstChild("Inventories") :: Instance?
+        inventory = inventory and inventory:FindFirstChild(LocalPlayer.Name) :: Instance?
+        local pool: {Instance} = {}
+        for _, child: Instance in ipairs((own :: Model):GetChildren()) do
+            if child:IsA("Accessory") then
+                table.insert(pool, child)
+            end
+        end
+        if inventory then
+            for _, child: Instance in ipairs((inventory :: Instance):GetChildren()) do
+                table.insert(pool, child)
+            end
+        end
+        local out: {{any}} = {}
+        local seen: {[string]: boolean} = {}
+        for _, item: Instance in ipairs(pool) do
+            local kind: string? = pressableKind(item.Name)
+            if kind and not seen[kind :: string] then
+                seen[kind :: string] = true
+                table.insert(out, {kind :: string, item})
+            end
+        end
+        return out
+    end
+
+    local function aimedSurface(): Vector3?
+        local own: Model? = LocalPlayer.Character
+        local view: Camera? = camera()
+        if not own or not view then
+            return nil
+        end
+        local parameters: RaycastParams = RaycastParams.new()
+        parameters.FilterType = Enum.RaycastFilterType.Exclude
+        parameters.FilterDescendantsInstances = {own :: Model}
+        local hit: RaycastResult? = workspace:Raycast(
+            (view :: Camera).CFrame.Position,
+            (view :: Camera).CFrame.LookVector * 20,
+            parameters
+        )
+        return hit and (hit :: RaycastResult).Position or nil
+    end
+
+    local function gamePress(label: string, target: any?): boolean
+        if label == "Sword" then
+
+            local targetRoot: BasePart? = target and target.RootPart
+            if targetRoot then
+                local view: Camera? = camera()
+                if not view then
+                    return false
+                end
+                local payload: {[string]: any}? = swordHitPayload(targetRoot :: BasePart)
+                if not payload then
+                    return false
+                end
+                return fire("SwordHit", payload :: any)
+            end
+
+            return fire("SwordSwingMiss", {
+                chargeRatio = 0,
+                weapon = equippedWeapon(),
+            })
+        end
+        local position: Vector3? = aimedSurface()
+        if not position then
+            return false
+        end
+        if label == "Wool" then
+            return placeAt(position :: Vector3)
+        end
+        if label == "Pickaxe" then
+            return fire("DamageBlock", {
+                blockRef = {blockPosition = position :: Vector3},
+                hitPosition = position :: Vector3,
+                hitNormal = Vector3.new(0, 1, 0),
+            })
+        end
+        return false
+    end
+
+    local weaponLibrary: any = state.weaponLibrary
+    if weaponLibrary and type(weaponLibrary.RegisterGameSource) == "function" then
+        weaponLibrary:RegisterGameSource({scan = gamePressables, press = gamePress})
+        runtimeState.unregisterWeapons = function(): ()
+            weaponLibrary:RegisterGameSource(nil)
+        end
+    end
+
+    local shopSettings: any = {
+        item = "wool_white",
+        amount = 16,
+        price = 8,
+        rate = 4,
+        shopId = "3_item_shop_2",
+    }
+
+    ShopFeature = createUniversalFeature(
+        "Shop Clicker",
+        "Buys the same item over and over from the shop you are standing at",
+        12,
+        function(enabled: boolean): ()
+            host.disconnectFeatureConnection("BedWarsShop")
+            if not enabled then
+                if ShopFeature then
+                    ShopFeature:SetStatus(nil)
+                end
+                return
+            end
+            ShopFeature:SetStatus(shopSettings.item)
+            local nextAt: number = 0
+            host.featureConnections.BedWarsShop =
+                TaskManager:Connect(function(): ()
+                    local now: number = os.clock()
+                    if now < nextAt then
+                        return
+                    end
+                    nextAt = now + 1 / math.max(shopSettings.rate, 0.5)
+                    fire("BedwarsPurchaseItem", {
+                        shopItem = {
+                            currency = "iron",
+                            itemType = shopSettings.item,
+                            amount = shopSettings.amount,
+                            price = shopSettings.price,
+                            category = "Blocks",
+                        },
+                        shopId = shopSettings.shopId,
+                    })
+                end)
+        end,
+        {categoryName = "Other", registry = registry}
+    )
+    addTextOption(ShopFeature, "Item type", shopSettings.item, function(value: string): ()
+        shopSettings.item = value
+        if ShopFeature then
+            ShopFeature:SetStatus(value)
+        end
+    end)
+    addNumberOption(ShopFeature, "Amount", shopSettings.amount, 1, 64,
+        function(value: number): ()
+            shopSettings.amount = math.round(value)
+        end)
+    addNumberOption(ShopFeature, "Price", shopSettings.price, 1, 9999,
+        function(value: number): ()
+            shopSettings.price = math.round(value)
+        end)
+    addNumberOption(ShopFeature, "Buys per second", shopSettings.rate, 1, 20,
+        function(value: number): ()
+            shopSettings.rate = value
+        end)
+
+    runtimeState.cleanupPanels = function(): ()
+        destroyInventoryPanel()
+    end
+    runtimeState.cleanupTracer = function(): ()
+        clearTracer()
+    end
+
+    Module.Initialized = true
+    return {
+        place = PlaceFeature,
+        nuke = NukeFeature,
+        esp = EspFeature,
+        chest = ChestFeature,
+        autoTool = AutoToolFeature,
+        inventory = InventoryFeature,
+        aimbot = AimbotFeature,
+        drop = DropFeature,
+        tracer = TracerFeature,
+        shop = ShopFeature,
+    }
+end
+
+function Module.destroy(): ()
+    Module.solveTrajectory = nil
+    if type(runtimeState.unregisterWeapons) == "function" then
+        pcall(runtimeState.unregisterWeapons)
+    end
+    runtimeState.unregisterWeapons = nil
+    if type(runtimeState.disconnectAll) == "function" then
+        pcall(runtimeState.disconnectAll)
+    end
+    runtimeState.disconnectAll = nil
+    runtimeState.remoteCache = {}
+    Module.Initialized = false
+end
+
+return Module
+
+]=],
+        ["src/games/BedWars/6872274481 - game/World/FastPlace.lua"] = [=[
+local Module = {Name = 'BedWars Fast Place', Initialized = false, Connection = nil}
+
+local function fire(name: string, payload: any): boolean
+    local replicated: ReplicatedStorage = game:GetService("ReplicatedStorage")
+    for _, remote: Instance in replicated:GetDescendants() do
+        if remote.Name == name then
+            if remote:IsA("RemoteEvent") then remote:FireServer(payload) return true end
+            if remote:IsA("RemoteFunction") then remote:InvokeServer(payload) return true end
+        end
+    end
+    return false
+end
+
+function Module.init(runtime: any): any
+    if Module.Initialized then return Module end
+    local env: any = getfenv()
+    local block: string = "wool_white"
+    local rate: number = 8
+    local enabled: boolean = false
+    local nextAt: number = 0
+    local function update(): ()
+        if not enabled or os.clock() < nextAt then return end
+        local player: Player = game:GetService("Players").LocalPlayer
+        local character: Model? = player.Character
+        local humanoid: Humanoid? = character and character:FindFirstChildOfClass("Humanoid")
+        local camera: Camera? = workspace.CurrentCamera
+        if not character or not humanoid or humanoid.Health <= 0 or not camera then return end
+        local params: RaycastParams = RaycastParams.new()
+        params.FilterType = Enum.RaycastFilterType.Exclude
+        params.FilterDescendantsInstances = {character}
+        local hit: RaycastResult? = workspace:Raycast(camera.CFrame.Position, camera.CFrame.LookVector * 20, params)
+        if not hit then return end
+        nextAt = os.clock() + 1 / math.max(rate, 0.5)
+        fire("PlaceBlock", {mouseBlockInfo = {placementPosition = hit.Position}, blockType = block, blockData = 0, position = hit.Position})
+    end
+    local feature: any = env.createUniversalFeature("Fast Place", "Places the selected block at the aimed position", 2, function(value: boolean): () enabled = value end, {categoryName = "Blocks", registry = env.state.bedWarsFeatures})
+    env.addNumberOption(feature, "Blocks per second", rate, 1, 20, function(value: number): () rate = value end)
+    Module.Connection = game:GetService("RunService").Heartbeat:Connect(update)
+    Module.Initialized = true
+    return Module
+end
+
+function Module.destroy(): ()
+    if Module.Connection then Module.Connection:Disconnect() Module.Connection = nil end
+    Module.Initialized = false
+end
+
+return Module
+
+]=],
+        ["src/games/BedWars/6872274481 - game/Blatant/Nuker.lua"] = [=[
+local Module = {Name = 'BedWars Nuker', Initialized = false, Connection = nil}
+
+local function fire(name: string, payload: any): boolean
+    local replicated: ReplicatedStorage = game:GetService("ReplicatedStorage")
+    for _, remote: Instance in replicated:GetDescendants() do
+        if remote.Name == name then
+            if remote:IsA("RemoteEvent") then remote:FireServer(payload) return true end
+            if remote:IsA("RemoteFunction") then remote:InvokeServer(payload) return true end
+        end
+    end
+    return false
+end
+
+function Module.init(runtime: any): any
+    if Module.Initialized then return Module end
+    local env: any = getfenv()
+    local range: number = 20
+    local rate: number = 6
+    local enabled: boolean = false
+    local nextAt: number = 0
+    local function update(): ()
+        if not enabled or os.clock() < nextAt then return end
+        local character: Model? = game:GetService("Players").LocalPlayer.Character
+        local humanoid: Humanoid? = character and character:FindFirstChildOfClass("Humanoid")
+        local root: BasePart? = character and character:FindFirstChild("HumanoidRootPart") :: BasePart?
+        if not root or not humanoid or humanoid.Health <= 0 then return end
+        local nearest: BasePart? = nil
+        local distance: number = range
+        for _, tagged: Instance in game:GetService("CollectionService"):GetTagged("bed") do
+            if tagged:IsA("BasePart") then
+                local current: number = (tagged.Position - root.Position).Magnitude
+                if current < distance then nearest = tagged distance = current end
+            end
+        end
+        if not nearest then return end
+        nextAt = os.clock() + 1 / math.max(rate, 0.5)
+        local position: Vector3 = nearest.Position
+        fire("DamageBlock", {blockRef = {blockPosition = position}, hitPosition = position, hitNormal = (root.Position - position).Unit})
+    end
+    local feature: any = env.createUniversalFeature("Nuker", "Breaks tagged beds inside range", 3, function(value: boolean): () enabled = value end, {categoryName = "Blocks", registry = env.state.bedWarsFeatures})
+    env.addNumberOption(feature, "Range", range, 5, 60, function(value: number): () range = value end)
+    env.addNumberOption(feature, "Breaks per second", rate, 1, 20, function(value: number): () rate = value end)
+    Module.Connection = game:GetService("RunService").Heartbeat:Connect(update)
+    Module.Initialized = true
+    return Module
+end
+
+function Module.destroy(): ()
+    if Module.Connection then Module.Connection:Disconnect() Module.Connection = nil end
+    Module.Initialized = false
+end
+
+return Module
+
+]=],
+        ["src/games/BedWars/6872274481 - game/World/ChestSteal.lua"] = [=[
+local Module = {Name = "BedWars Chest Steal", Initialized = false, Connection = nil}
+
+local function fire(name: string): boolean
+    for _, remote: Instance in game:GetService("ReplicatedStorage"):GetDescendants() do
+        if remote.Name == name then
+            if remote:IsA("RemoteEvent") then remote:FireServer() return true end
+            if remote:IsA("RemoteFunction") then remote:InvokeServer() return true end
+        end
+    end
+    return false
+end
+
+function Module.init(runtime: any): any
+    if Module.Initialized then return Module end
+    local env: any = getfenv()
+    local enabled: boolean = false
+    local nextAt: number = 0
+    local function update(): ()
+        if not enabled or os.clock() < nextAt then return end
+        nextAt = os.clock() + 0.5
+        fire("Inventory/SetObservedChest")
+    end
+    env.createUniversalFeature("Chest Steal", "Opens nearby chests without walking to them", 5, function(value: boolean): () enabled = value end, {categoryName = "Other", registry = env.state.bedWarsFeatures})
+    Module.Connection = game:GetService("RunService").Heartbeat:Connect(update)
+    Module.Initialized = true
+    return Module
+end
+
+function Module.destroy(): ()
+    if Module.Connection then Module.Connection:Disconnect() Module.Connection = nil end
+    Module.Initialized = false
+end
+
+return Module
+
+]=],
+        ["src/games/BedWars/6872274481 - game/World/AutoTool.lua"] = [=[
+local Module = {Name = "BedWars Auto Tool", Initialized = false, Connection = nil}
+
+local function fire(name: string, payload: any): boolean
+    for _, remote: Instance in game:GetService("ReplicatedStorage"):GetDescendants() do
+        if remote.Name == name then
+            if remote:IsA("RemoteEvent") then remote:FireServer(payload) return true end
+            if remote:IsA("RemoteFunction") then remote:InvokeServer(payload) return true end
+        end
+    end
+    return false
+end
+
+function Module.init(runtime: any): any
+    if Module.Initialized then return Module end
+    local env: any = getfenv()
+    local enabled: boolean = false
+    local player: Player = game:GetService("Players").LocalPlayer
+    local function update(): ()
+        if not enabled then return end
+        local inventories: Instance? = game:GetService("ReplicatedStorage"):FindFirstChild("Inventories")
+        local inventory: Instance? = inventories and inventories:FindFirstChild(player.Name)
+        if not inventory then return end
+        for _, item: Instance in inventory:GetChildren() do
+            if item.Name:find("pickaxe") or item.Name:find("axe") then
+                fire("SetInvItem", {hand = item})
+                return
+            end
+        end
+    end
+    env.createUniversalFeature("Auto Tool", "Puts the matching item in hand before you need it", 6, function(value: boolean): () enabled = value end, {categoryName = "Other", registry = env.state.bedWarsFeatures})
+    Module.Connection = game:GetService("RunService").Heartbeat:Connect(update)
+    Module.Initialized = true
+    return Module
+end
+
+function Module.destroy(): ()
+    if Module.Connection then Module.Connection:Disconnect() Module.Connection = nil end
+    Module.Initialized = false
+end
+
+return Module
+
 ]=],
     },
 }
