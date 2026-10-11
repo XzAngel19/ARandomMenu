@@ -99,27 +99,12 @@ local Manifest: Manifest = {
             category = "Combat",
         },
         {
-            path = "src/games/universal/Combat/AutoClicker.lua",
-            name = "Auto Clicker",
-            category = "Combat",
-        },
-        {
-            path = "src/games/universal/Combat/TriggerBot.lua",
-            name = "TriggerBot",
-            category = "Combat",
-        },
-        {
             path = "src/games/universal/Combat/AimAssist.lua",
             name = "Aim Assist",
             category = "Combat",
         },
 
         -- Blatant
-        {
-            path = "src/games/universal/Blatant/Hitboxes.lua",
-            name = "Hitboxes",
-            category = "Blatant",
-        },
         {
             path = "src/games/universal/Blatant/Invisible.lua",
             name = "Invisible",

@@ -15,6 +15,23 @@ local Module = {
 local activeCard: any = nil
 local activeBridgeCleanup: (() -> ())? = nil
 
+local PERK_ICONS: {[string]: string} = {
+    ["Footsteps"] = "rbxassetid://336404773",
+    ["Sleight"] = "rbxassetid://340309581",
+    ["Ninja"] = "rbxassetid://416832054",
+    ["Haste"] = "rbxassetid://416942717",
+    ["FakeGun"] = "rbxassetid://17899774181",
+    ["Fake Gun"] = "rbxassetid://17899774181",
+    ["Ghost"] = "rbxassetid://335206856",
+    ["Xray"] = "rbxassetid://340313896",
+    ["X-Ray"] = "rbxassetid://340313896",
+    ["Trap"] = "rbxassetid://4966828196",
+    ["Sprint"] = "rbxassetid://4970219155",
+    ["VampireBat"] = "rbxassetid://129078122681639",
+    ["Bat Form"] = "rbxassetid://129078122681639",
+    ["Decoy"] = "rbxassetid://113722008817201",
+}
+
 function Module.init(context: Runtime): any
     local framework: any = context.framework
     local entity: any = context.entity
@@ -23,6 +40,7 @@ function Module.init(context: Runtime): any
     local currentWorkspace: Workspace = host.workspace or workspace
     local highlights: {[Player]: Highlight} = {}
     local murderTag: BillboardGui? = nil
+    local murderPerk: BillboardGui? = nil
     local roleTags: {[Player]: BillboardGui} = {}
     local lastUpdate: number = -math.huge
 
@@ -33,12 +51,20 @@ function Module.init(context: Runtime): any
         end
     end
 
+    local function destroyMurderPerk(): ()
+        if murderPerk then
+            pcall(murderPerk.Destroy, murderPerk)
+            murderPerk = nil
+        end
+    end
+
     local function clearRoleTags(): ()
         for player: Player, tag: BillboardGui in pairs(roleTags) do
             roleTags[player] = nil
             pcall(tag.Destroy, tag)
         end
     end
+
     local gameBridge: any = context.services.gameBridge
     if activeBridgeCleanup then
         pcall(activeBridgeCleanup)
@@ -47,8 +73,6 @@ function Module.init(context: Runtime): any
     if type(gameBridge.onEvent) == "function" then
         activeBridgeCleanup = gameBridge.onEvent(function(kind: string): ()
             if kind == "roleUpdate" then
-                -- Role assignment bypasses the regular 0.2 s work throttle;
-                -- the next rendered frame recolours every existing highlight.
                 lastUpdate = -math.huge
             end
         end)
@@ -71,13 +95,27 @@ function Module.init(context: Runtime): any
     end
 
     local card: any
+
+    local function syncMM2Extras(enabled: boolean): ()
+        if state and state.mm2Core then
+            if type(state.mm2Core.toggleGunEsp) == "function" then
+                pcall(state.mm2Core.toggleGunEsp, enabled and card.Options["Gun ESP"] and card.Options["Gun ESP"].Value == true)
+            end
+            if type(state.mm2Core.toggleTrapEsp) == "function" then
+                pcall(state.mm2Core.toggleTrapEsp, enabled and card.Options["Trap ESP"] and card.Options["Trap ESP"].Value == true)
+            end
+        end
+    end
+
     local function clear(): ()
         for player: Player, highlight: Highlight in pairs(highlights) do
             highlights[player] = nil
             highlight:Destroy()
         end
         destroyMurderTag()
+        destroyMurderPerk()
         clearRoleTags()
+        syncMM2Extras(false)
     end
 
     card = framework.Categories.Visuals:CreateModule({
@@ -93,6 +131,8 @@ function Module.init(context: Runtime): any
                 return
             end
             card:SetStatus("0")
+            syncMM2Extras(true)
+
             card:Render(function(): ()
                 local now: number = os.clock()
                 if now - lastUpdate < 0.2 then return end
@@ -122,22 +162,15 @@ function Module.init(context: Runtime): any
                         if type(gameBridge.playerRoleColor) == "function" then
                             roleColour = gameBridge.playerRoleColor(player)
                         end
-                        -- Without a role the chams used to fall straight back
-                        -- to white, which is exactly what made an undetected
-                        -- MM2 innocent look like "no cham at all". Team colour
-                        -- is a far better guess than white.
                         local teamColour: Color3? = nil
                         local teamOption: any = card.Options["Team colours"]
                         if not roleColour
                             and teamOption ~= nil
-                            and teamOption.Value == true
-                            and target.Team then
-                            local ok: boolean, resolved: any = pcall(function(): any
-                                return target.Team.TeamColor.Color
-                            end)
-                            if ok and typeof(resolved) == "Color3" then
-                                teamColour = resolved
-                            end
+                            and teamOption.Value == true then
+                            local isTeammate: boolean = target.IsFriendly
+                                or (LocalPlayer and target.Team and LocalPlayer.Team and target.Team == LocalPlayer.Team)
+                                or (LocalPlayer and player:GetAttribute("Team") ~= nil and player:GetAttribute("Team") == LocalPlayer:GetAttribute("Team"))
+                            teamColour = isTeammate and Color3.fromRGB(255, 255, 255) or Color3.fromRGB(255, 0, 0)
                         end
                         local fillColour: Color3 = roleColour
                             or teamColour
@@ -164,9 +197,8 @@ function Module.init(context: Runtime): any
                         highlight:Destroy()
                     end
                 end
-                -- Murder tag: the old standalone MM2 card is now an option
-                -- here. The role lookup goes through the game bridge, so the
-                -- tag only appears where the game exposes roles.
+
+                -- Murder tag lookup
                 local tagTarget: Player? = nil
                 if card.Options["Murder tag"].Value == true
                     and type(gameBridge.playerRole) == "function" then
@@ -185,11 +217,13 @@ function Module.init(context: Runtime): any
                         end
                     end
                 end
+
+                local tagHead: BasePart? = nil
                 if not tagTarget then
                     destroyMurderTag()
                 else
                     local tagCharacter: Model? = tagTarget.Character
-                    local tagHead: BasePart? = tagCharacter
+                    tagHead = tagCharacter
                         and (tagCharacter:FindFirstChild("Head")
                             or tagCharacter:FindFirstChild("HumanoidRootPart"))
                         :: BasePart?
@@ -205,8 +239,6 @@ function Module.init(context: Runtime): any
                             billboard.AlwaysOnTop = true
                             billboard.LightInfluence = 0
                             billboard.Size = UDim2.fromOffset(150, 22)
-                            -- Sits above the head where the standalone card
-                            -- used to place it.
                             billboard.StudsOffset = Vector3.new(0, 3.5, 0)
                             billboard.MaxDistance = 1500
                             billboard.Adornee = tagHead
@@ -240,7 +272,71 @@ function Module.init(context: Runtime): any
                     end
                 end
 
-                -- Role tags: floating role labels over all known player heads
+                -- Show Perk sticker above Murderer
+                if card.Options["Show Perk"] and card.Options["Show Perk"].Value == true and tagTarget and tagHead then
+                    local targetPerk: string? = nil
+                    if type(gameBridge.playerPerk) == "function" then
+                        targetPerk = gameBridge.playerPerk(tagTarget)
+                    end
+                    if not targetPerk and state and state.mm2Core and type(state.mm2Core.getPlayerPerk) == "function" then
+                        targetPerk = state.mm2Core.getPlayerPerk(tagTarget)
+                    end
+
+                    local perkIconId: string? = targetPerk and (PERK_ICONS[targetPerk] or PERK_ICONS[string.gsub(targetPerk, "%s+", "")]) or nil
+                    if perkIconId then
+                        if not murderPerk or not murderPerk.Parent or murderPerk.Adornee ~= tagHead then
+                            destroyMurderPerk()
+                            local billboard: BillboardGui = Instance.new("BillboardGui")
+                            billboard.Name = "Wurst_MurderPerk"
+                            billboard.AlwaysOnTop = true
+                            billboard.LightInfluence = 0
+                            billboard.Size = UDim2.fromOffset(36, 36)
+                            billboard.StudsOffset = Vector3.new(0, 5.2, 0)
+                            billboard.MaxDistance = 1500
+                            billboard.Adornee = tagHead
+                            billboard.Parent = tagHead
+
+                            local bg: Frame = Instance.new("Frame")
+                            bg.Name = "StickerBackground"
+                            bg.BackgroundColor3 = Color3.fromRGB(20, 20, 24)
+                            bg.BackgroundTransparency = 0.15
+                            bg.Size = UDim2.fromScale(1, 1)
+                            bg.Parent = billboard
+
+                            local corner: UICorner = Instance.new("UICorner")
+                            corner.CornerRadius = UDim.new(0, 8)
+                            corner.Parent = bg
+
+                            local stroke: UIStroke = Instance.new("UIStroke")
+                            stroke.Color = Color3.fromRGB(230, 55, 55)
+                            stroke.Thickness = 1.8
+                            stroke.Parent = bg
+
+                            local img: ImageLabel = Instance.new("ImageLabel")
+                            img.Name = "PerkIcon"
+                            img.BackgroundTransparency = 1
+                            img.Size = UDim2.fromScale(0.85, 0.85)
+                            img.Position = UDim2.fromScale(0.5, 0.5)
+                            img.AnchorPoint = Vector2.new(0.5, 0.5)
+                            img.Image = perkIconId
+                            img.Parent = bg
+
+                            murderPerk = billboard
+                        else
+                            local bg: any = murderPerk:FindFirstChild("StickerBackground")
+                            local img: any = bg and bg:FindFirstChild("PerkIcon")
+                            if img and img.Image ~= perkIconId then
+                                img.Image = perkIconId
+                            end
+                        end
+                    else
+                        destroyMurderPerk()
+                    end
+                else
+                    destroyMurderPerk()
+                end
+
+                -- Role tags: floating role labels over player heads
                 local roleTagsOption: any = card.Options["Role tags"]
                 if roleTagsOption and roleTagsOption.Value == true
                     and type(gameBridge.playerRole) == "function" then
@@ -254,6 +350,11 @@ function Module.init(context: Runtime): any
                             and not protectedTargets.isProtected(player) then
                             local okRole: boolean, role: any = pcall(gameBridge.playerRole, player)
                             if okRole and type(role) == "string" and role ~= "Dead" then
+                                -- FIX: Do not double-tag the murderer if Murder tag is active!
+                                if card.Options["Murder tag"].Value == true and (role == "Murderer" or player == tagTarget) then
+                                    continue
+                                end
+
                                 local head: BasePart? = target.Character:FindFirstChild("Head")
                                     or target.Character:FindFirstChild("HumanoidRootPart")
                                 if head then
@@ -314,6 +415,7 @@ function Module.init(context: Runtime): any
                     clearRoleTags()
                 end
 
+                syncMM2Extras(true)
                 card:SetStatus(tostring(count))
             end)
             card:Clean(clear)
@@ -329,6 +431,9 @@ function Module.init(context: Runtime): any
     card:CreateToggle({Name = "Team colours", Default = true})
     card:CreateToggle({Name = "Murder tag", Default = true})
     card:CreateToggle({Name = "Role tags", Default = true})
+    card:CreateToggle({Name = "Show Perk", Default = true})
+    card:CreateToggle({Name = "Gun ESP", Default = true})
+    card:CreateToggle({Name = "Trap ESP", Default = true})
 
     activeCard = card
     Module.Initialized = true

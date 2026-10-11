@@ -373,13 +373,14 @@ function Module.render(
             colour = roleOption.Value
         end
 
-        if not useRoleColour and options["Team colours"].Value and entity.Team then
-
-            local teamOk: boolean, teamColour: any = pcall(function(): Color3
-                return (entity.Team :: any).TeamColor.Color
-            end)
-            if teamOk and typeof(teamColour) == "Color3" then
-                colour = teamColour
+        if not useRoleColour and options["Team colours"].Value then
+            local isTeammate: boolean = entity.IsFriendly
+                or (LocalPlayer and player.Team and LocalPlayer.Team and player.Team == LocalPlayer.Team)
+                or (LocalPlayer and player:GetAttribute("Team") ~= nil and player:GetAttribute("Team") == LocalPlayer:GetAttribute("Team"))
+            if isTeammate then
+                colour = Color3.fromRGB(255, 255, 255)
+            else
+                colour = Color3.fromRGB(255, 0, 0)
             end
         end
 

@@ -116,7 +116,7 @@ function Module.init(context: Runtime): any
                 return
             end
 
-            jump:SetStatus(tostring(math.round(jump.Options["Jump power"].Value)))
+            jump:SetStatus("active")
             jump:Clean(restoreJumpPower)
 
             -- Connect infinite jump request if movementInput service is present
@@ -143,16 +143,20 @@ function Module.init(context: Runtime): any
                     return
                 end
 
-                -- 1. Apply Jump Power
-                local wantedPower: number = opts["Jump power"] and opts["Jump power"].Value or 80
-                if originalJumpPower[humanoid] == nil then
-                    originalJumpPower[humanoid] = {
-                        jumpPower = humanoid.JumpPower,
-                        useJumpPower = humanoid.UseJumpPower,
-                    }
+                -- 1. Apply Custom Jump Power only if option is enabled
+                if opts["Custom jump power"] and opts["Custom jump power"].Value then
+                    local wantedPower: number = opts["Jump power"] and opts["Jump power"].Value or 80
+                    if originalJumpPower[humanoid] == nil then
+                        originalJumpPower[humanoid] = {
+                            jumpPower = humanoid.JumpPower,
+                            useJumpPower = humanoid.UseJumpPower,
+                        }
+                    end
+                    humanoid.UseJumpPower = true
+                    humanoid.JumpPower = wantedPower
+                else
+                    restoreJumpPower()
                 end
-                humanoid.UseJumpPower = true
-                humanoid.JumpPower = wantedPower
 
                 -- 2. Auto Jump
                 if opts["Auto jump"] and opts["Auto jump"].Value then
@@ -176,19 +180,28 @@ function Module.init(context: Runtime): any
         end,
     })
 
+    -- Section: Jump Power
+    jump:CreateToggle({
+        Name = "Custom jump power",
+        Default = false,
+        Tooltip = "Enables custom jump height/power for ground jumps. Turn off if you only want Infinite Jump or High Jump.",
+    })
+
     jump:CreateSlider({
         Name = "Jump power",
+        Show = {Option = "Custom jump power", Values = {true}},
         Min = 0,
         Max = 500,
         Default = 80,
         Function = function(value: number): ()
-            if jump.Enabled then
+            if jump.Enabled and jump.Options["Custom jump power"].Value then
                 jump:SetStatus(tostring(math.round(value)))
             end
         end,
         Tooltip = "Character jump power (default Roblox jump is 50).",
     })
 
+    -- Section: High Jump
     jump:CreateButton({
         Name = "High jump",
         Function = function(): ()
@@ -203,9 +216,10 @@ function Module.init(context: Runtime): any
         Min = 25,
         Max = 250,
         Default = 72,
-        Tooltip = "Vertical velocity applied when High Jump is activated.",
+        Tooltip = "Vertical velocity applied when High Jump button is pressed.",
     })
 
+    -- Section: Infinite Jump
     jump:CreateToggle({
         Name = "Infinite jump",
         Default = false,
@@ -247,6 +261,7 @@ function Module.init(context: Runtime): any
         Tooltip = "Minimum delay in seconds between mid-air jumps.",
     })
 
+    -- Section: Auto Jump
     jump:CreateToggle({
         Name = "Auto jump",
         Default = false,

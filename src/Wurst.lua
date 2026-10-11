@@ -117,7 +117,6 @@ local FEATURE_CATEGORIES: {[string]: string} = {
 
     ["Silent Aim"] = "Combat",
     ["Auto Shoot"] = "Combat",
-    ["Trigger Opportunity"] = "Render",
 
     ["Round Info"] = "Render",
     ["Auto Swing"] = "Combat",
@@ -315,6 +314,7 @@ local GAME_MODULES: {[number]: string} = {
     [142823291] = "MM2",
     [14315258385] = "TRS",
     [93978595733734] = "VD",
+    [92876937625630] = "MVSD",
     [135856908115931] = "MVSD",
 }
 
@@ -4366,6 +4366,18 @@ state.playerRoleColor = function(player: Player): Color3?
     return resolved
 end
 
+state.playerPerk = function(player: Player): string?
+    local provider: any = state.gameBridge.roleProvider
+    if not provider or type(provider.GetPerk) ~= "function" then
+        return nil
+    end
+    local ok: boolean, perk: any = pcall(provider.GetPerk, player)
+    if ok and type(perk) == "string" and perk ~= "" then
+        return perk
+    end
+    return nil
+end
+
 -- Dropped whenever a module registers/changes a provider so a game switch or a
 -- colour change is never served from the memo.
 local function clearRoleMemo(): ()
@@ -4758,8 +4770,9 @@ local function loadGameModule(
         or tostring(placeId)
     local paths: {string} = if moduleName == "MVSD" then {
         "src/games/MVSD/Blatant/SilentAim.lua",
-        "src/games/MVSD/Combat/AutoShoot.lua",
-        "src/games/MVSD/Combat/TriggerOpportunity.lua",
+        "src/games/MVSD/Other/Shoot.lua",
+        "src/games/MVSD/Blatant/Knife.lua",
+        "src/games/MVSD/Blatant/AutoWin.lua",
     } elseif moduleName == "MM2" then {
         -- base.lua is the shared core (round data, roles, prediction, weapon
         -- service). It has to come first: every feature below reads
@@ -5498,6 +5511,7 @@ local moduleServices: ModuleServices = {
         onEvent = state.onGameBridge,
         playerRole = state.playerRole,
         playerRoleColor = state.playerRoleColor,
+        playerPerk = state.playerPerk,
         -- Games expose their last authored-shot geometry (variant, offset) so
         -- passive loggers can tag each shot without game-specific coupling.
         silentShot = function(): any

@@ -425,12 +425,12 @@ function Module.init(context: any): RenderLibrary
     end
 
     function library:Project(camera: Camera, position: Vector3): Vector2?
-        -- The host ScreenGui ignores the GUI inset, so drawings live in raw
-        -- screen space and WorldToScreenPoint is the matching projection.
+        -- The host ScreenGui has IgnoreGuiInset = true, so drawings live in raw
+        -- viewport pixel space and WorldToViewportPoint is the matching projection.
         -- Points merely outside the viewport still project so skeleton lines
         -- keep their bearings at the screen edge; only points behind the
         -- camera are rejected.
-        local point: Vector3 = camera:WorldToScreenPoint(position)
+        local point: Vector3 = camera:WorldToViewportPoint(position)
         if point.Z <= 0 then
             return nil
         end
@@ -452,7 +452,7 @@ function Module.init(context: any): RenderLibrary
         local maximumX: number, maximumY: number = -math.huge, -math.huge
         local inFront: number = 0
         for _, position: Vector3 in ipairs(points) do
-            local point: Vector3 = camera:WorldToScreenPoint(position)
+            local point: Vector3 = camera:WorldToViewportPoint(position)
             if point.Z > 0 then
                 inFront += 1
                 if point.X < minimumX then minimumX = point.X end
@@ -508,18 +508,25 @@ function Module.init(context: any): RenderLibrary
         local root: BasePart? = model:FindFirstChild("HumanoidRootPart") :: BasePart?
             or model.PrimaryPart
         if humanoid and root then
-            -- Character rig: measure a handful of body landmarks instead of
-            -- walking every part. The head and feet anchor the height, the
-            -- four torso landmarks anchor the width at any rotation, and any
-            -- landmark that falls behind the camera is simply dropped so the
-            -- box degrades gracefully instead of flipping or vanishing.
+            -- Character rig: anchor directly to top of head and bottom of feet
+            -- so the box perfectly wraps the visible avatar without floating above it.
             local head: BasePart? = model:FindFirstChild("Head") :: BasePart?
             local rootPosition: Vector3 = root.Position
             local topPosition: Vector3 = head
-                and (head.Position + Vector3.new(0, head.Size.Y * 0.5 + 0.35, 0))
-                or (rootPosition + Vector3.new(0, 3, 0))
-            local bottomPosition: Vector3 = rootPosition
-                - Vector3.new(0, math.max(humanoid.HipHeight + root.Size.Y * 0.5, 2.5), 0)
+                and (head.Position + Vector3.new(0, head.Size.Y * 0.5 + 0.1, 0))
+                or (rootPosition + Vector3.new(0, 2.3, 0))
+
+            local leftFoot = model:FindFirstChild("LeftFoot") or model:FindFirstChild("Left Leg")
+            local rightFoot = model:FindFirstChild("RightFoot") or model:FindFirstChild("Right Leg")
+            local lowestY: number = rootPosition.Y - math.max(humanoid.HipHeight + root.Size.Y * 0.5, 2.9)
+            if leftFoot and leftFoot:IsA("BasePart") then
+                lowestY = math.min(lowestY, leftFoot.Position.Y - leftFoot.Size.Y * 0.5)
+            end
+            if rightFoot and rightFoot:IsA("BasePart") then
+                lowestY = math.min(lowestY, rightFoot.Position.Y - rightFoot.Size.Y * 0.5)
+            end
+            local bottomPosition: Vector3 = Vector3.new(rootPosition.X, lowestY, rootPosition.Z)
+
             local rootCFrame: CFrame = root.CFrame
             return rectFromPoints(camera, viewport, {
                 topPosition,

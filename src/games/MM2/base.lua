@@ -942,6 +942,33 @@ local function createMM2Cham(folder, adornee, color, transparency)
     reference.Parent = folder
 end
 
+local function getPlayerPerk(player: Player): string?
+    local char: Model? = player.Character
+    if char then
+        local perkAttr: any = char:GetAttribute("Perk") or player:GetAttribute("Perk")
+        if type(perkAttr) == "string" and perkAttr ~= "" then
+            return perkAttr
+        end
+    end
+    for key: any, data: any in pairs(mm2RoundData) do
+        if playerFromRoundKey(key, data) == player and type(data) == "table" then
+            local perk: any = data.Perk or data.EquippedPerk or data.perk
+            if type(perk) == "string" and perk ~= "" then
+                return perk
+            end
+        end
+    end
+    if char then
+        if char:FindFirstChild("Trap") or (player:FindFirstChild("Backpack") and player.Backpack:FindFirstChild("Trap")) then
+            return "Trap"
+        end
+        if char:FindFirstChild("FakeGun") or (player:FindFirstChild("Backpack") and player.Backpack:FindFirstChild("FakeGun")) then
+            return "FakeGun"
+        end
+    end
+    return nil
+end
+
 local function registerMM2Roles(): ()
     registerRoleProvider({
         Name = "MM2",
@@ -955,6 +982,9 @@ local function registerMM2Roles(): ()
         },
         Get = function(player: Player): string?
             return getPlayerRole(player)
+        end,
+        GetPerk = function(player: Player): string?
+            return getPlayerPerk(player)
         end,
         GetColor = function(roleName: string): Color3?
             if roleName == "Murderer" then return mm2Settings.murdererColor end
@@ -3917,6 +3947,7 @@ state.mm2Core = {
     playerFromRoundKey = playerFromRoundKey,
     getRoundRole = getRoundRole,
     getPlayerRole = getPlayerRole,
+    getPlayerPerk = getPlayerPerk,
     invalidateRoleCaches = invalidateRoleCaches,
     roundRolesKnown = roundRolesKnown,
     hasActiveRoundRoles = hasActiveRoundRoles,

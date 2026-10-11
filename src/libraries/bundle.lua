@@ -1,5 +1,5 @@
 return {
-    stamp = "audit-20261011-01",
+    stamp = "audit-20261011-094512",
     files = {
         ["src/libraries/Manifest.lua"] = [=[
 export type ModuleEntry = {
@@ -103,27 +103,12 @@ local Manifest: Manifest = {
             category = "Combat",
         },
         {
-            path = "src/games/universal/Combat/AutoClicker.lua",
-            name = "Auto Clicker",
-            category = "Combat",
-        },
-        {
-            path = "src/games/universal/Combat/TriggerBot.lua",
-            name = "TriggerBot",
-            category = "Combat",
-        },
-        {
             path = "src/games/universal/Combat/AimAssist.lua",
             name = "Aim Assist",
             category = "Combat",
         },
 
         -- Blatant
-        {
-            path = "src/games/universal/Blatant/Hitboxes.lua",
-            name = "Hitboxes",
-            category = "Blatant",
-        },
         {
             path = "src/games/universal/Blatant/Invisible.lua",
             name = "Invisible",
@@ -264,7 +249,6 @@ local Manifest: Manifest = {
 }
 
 return Manifest
-
 ]=],
         ["src/guis/Wurst/Code/Widgets.lua"] = [=[
 export type OptionDefinition = {
@@ -2591,7 +2575,6 @@ function Module.destroy(): ()
 end
 
 return Module
-
 ]=],
         ["src/libraries/Framework.lua"] = [=[
 export type CleanupItem = any
@@ -3454,7 +3437,6 @@ function Module.destroy(): ()
 end
 
 return Module
-
 ]=],
         ["src/libraries/Entity.lua"] = [=[
 export type Entity = {
@@ -4139,7 +4121,6 @@ function Module.destroy(): ()
 end
 
 return Module
-
 ]=],
         ["src/libraries/Targeting.lua"] = [=[
 export type Query = {
@@ -4407,7 +4388,6 @@ function Module.destroy(): ()
 end
 
 return Module
-
 ]=],
         ["src/libraries/Weapons.lua"] = [=[
 export type Candidate = {
@@ -4970,7 +4950,6 @@ function Module.destroy(): ()
 end
 
 return Module
-
 ]=],
         ["src/libraries/Render.lua"] = [=[
 export type Rect = {
@@ -5400,12 +5379,12 @@ function Module.init(context: any): RenderLibrary
     end
 
     function library:Project(camera: Camera, position: Vector3): Vector2?
-        -- The host ScreenGui ignores the GUI inset, so drawings live in raw
-        -- screen space and WorldToScreenPoint is the matching projection.
+        -- The host ScreenGui has IgnoreGuiInset = true, so drawings live in raw
+        -- viewport pixel space and WorldToViewportPoint is the matching projection.
         -- Points merely outside the viewport still project so skeleton lines
         -- keep their bearings at the screen edge; only points behind the
         -- camera are rejected.
-        local point: Vector3 = camera:WorldToScreenPoint(position)
+        local point: Vector3 = camera:WorldToViewportPoint(position)
         if point.Z <= 0 then
             return nil
         end
@@ -5427,7 +5406,7 @@ function Module.init(context: any): RenderLibrary
         local maximumX: number, maximumY: number = -math.huge, -math.huge
         local inFront: number = 0
         for _, position: Vector3 in ipairs(points) do
-            local point: Vector3 = camera:WorldToScreenPoint(position)
+            local point: Vector3 = camera:WorldToViewportPoint(position)
             if point.Z > 0 then
                 inFront += 1
                 if point.X < minimumX then minimumX = point.X end
@@ -5483,18 +5462,25 @@ function Module.init(context: any): RenderLibrary
         local root: BasePart? = model:FindFirstChild("HumanoidRootPart") :: BasePart?
             or model.PrimaryPart
         if humanoid and root then
-            -- Character rig: measure a handful of body landmarks instead of
-            -- walking every part. The head and feet anchor the height, the
-            -- four torso landmarks anchor the width at any rotation, and any
-            -- landmark that falls behind the camera is simply dropped so the
-            -- box degrades gracefully instead of flipping or vanishing.
+            -- Character rig: anchor directly to top of head and bottom of feet
+            -- so the box perfectly wraps the visible avatar without floating above it.
             local head: BasePart? = model:FindFirstChild("Head") :: BasePart?
             local rootPosition: Vector3 = root.Position
             local topPosition: Vector3 = head
-                and (head.Position + Vector3.new(0, head.Size.Y * 0.5 + 0.35, 0))
-                or (rootPosition + Vector3.new(0, 3, 0))
-            local bottomPosition: Vector3 = rootPosition
-                - Vector3.new(0, math.max(humanoid.HipHeight + root.Size.Y * 0.5, 2.5), 0)
+                and (head.Position + Vector3.new(0, head.Size.Y * 0.5 + 0.1, 0))
+                or (rootPosition + Vector3.new(0, 2.3, 0))
+
+            local leftFoot = model:FindFirstChild("LeftFoot") or model:FindFirstChild("Left Leg")
+            local rightFoot = model:FindFirstChild("RightFoot") or model:FindFirstChild("Right Leg")
+            local lowestY: number = rootPosition.Y - math.max(humanoid.HipHeight + root.Size.Y * 0.5, 2.9)
+            if leftFoot and leftFoot:IsA("BasePart") then
+                lowestY = math.min(lowestY, leftFoot.Position.Y - leftFoot.Size.Y * 0.5)
+            end
+            if rightFoot and rightFoot:IsA("BasePart") then
+                lowestY = math.min(lowestY, rightFoot.Position.Y - rightFoot.Size.Y * 0.5)
+            end
+            local bottomPosition: Vector3 = Vector3.new(rootPosition.X, lowestY, rootPosition.Z)
+
             local rootCFrame: CFrame = root.CFrame
             return rectFromPoints(camera, viewport, {
                 topPosition,
@@ -5561,7 +5547,6 @@ function Module.destroy(): ()
 end
 
 return Module
-
 ]=],
         ["src/guis/Wurst/Code/Cards.lua"] = [=[
 local Module = {
@@ -6439,7 +6424,6 @@ function Module.destroy(): ()
 end
 
 return Module
-
 ]=],
         ["src/guis/Wurst/Code/WindowManager.lua"] = [=[
 export type WindowDefinition = {
@@ -7575,7 +7559,6 @@ function Module.destroy(): ()
 end
 
 return Module
-
 ]=],
         ["src/guis/Wurst/Code/ClickGui.lua"] = [=[
 export type CategoryWindow = {
@@ -7958,7 +7941,6 @@ function Module.destroy(): ()
 end
 
 return Module
-
 ]=],
         ["src/guis/Wurst/Code/FloatingWindows.lua"] = [=[
 export type FloatingWindowRecord = {
@@ -9484,7 +9466,6 @@ function Module.destroy(): ()
 end
 
 return Module
-
 ]=],
         ["src/guis/Wurst/Code/SettingsPage.lua"] = [=[
 local Module = {
@@ -11179,7 +11160,6 @@ function Module.destroy(): ()
 end
 
 return Module
-
 ]=],
         ["src/guis/Wurst/Code/MobileActions.lua"] = [=[
 export type MobileHoldCallbacks = {
@@ -11894,7 +11874,6 @@ function Module.destroy(): ()
 end
 
 return Module
-
 ]=],
         ["src/guis/Wurst/Code/Furniture.lua"] = [=[
 local Module = {
@@ -13457,7 +13436,6 @@ function Module.destroy(): ()
 end
 
 return Module
-
 ]=],
         ["src/games/universal/Render/ItemRender.lua"] = [=[
 export type Runtime = {
@@ -13984,7 +13962,6 @@ function Module.destroy(): ()
 end
 
 return Module
-
 ]=],
         ["src/games/universal/Render/PlayerESP.lua"] = [=[
 export type Runtime = {
@@ -14362,13 +14339,14 @@ function Module.render(
             colour = roleOption.Value
         end
 
-        if not useRoleColour and options["Team colours"].Value and entity.Team then
-
-            local teamOk: boolean, teamColour: any = pcall(function(): Color3
-                return (entity.Team :: any).TeamColor.Color
-            end)
-            if teamOk and typeof(teamColour) == "Color3" then
-                colour = teamColour
+        if not useRoleColour and options["Team colours"].Value then
+            local isTeammate: boolean = entity.IsFriendly
+                or (LocalPlayer and player.Team and LocalPlayer.Team and player.Team == LocalPlayer.Team)
+                or (LocalPlayer and player:GetAttribute("Team") ~= nil and player:GetAttribute("Team") == LocalPlayer:GetAttribute("Team"))
+            if isTeammate then
+                colour = Color3.fromRGB(255, 255, 255)
+            else
+                colour = Color3.fromRGB(255, 0, 0)
             end
         end
 
@@ -14523,7 +14501,6 @@ function Module.destroy(): ()
 end
 
 return Module
-
 ]=],
         ["src/games/universal/Render/Chams.lua"] = [=[
 export type Runtime = {
@@ -14543,6 +14520,23 @@ local Module = {
 local activeCard: any = nil
 local activeBridgeCleanup: (() -> ())? = nil
 
+local PERK_ICONS: {[string]: string} = {
+    ["Footsteps"] = "rbxassetid://336404773",
+    ["Sleight"] = "rbxassetid://340309581",
+    ["Ninja"] = "rbxassetid://416832054",
+    ["Haste"] = "rbxassetid://416942717",
+    ["FakeGun"] = "rbxassetid://17899774181",
+    ["Fake Gun"] = "rbxassetid://17899774181",
+    ["Ghost"] = "rbxassetid://335206856",
+    ["Xray"] = "rbxassetid://340313896",
+    ["X-Ray"] = "rbxassetid://340313896",
+    ["Trap"] = "rbxassetid://4966828196",
+    ["Sprint"] = "rbxassetid://4970219155",
+    ["VampireBat"] = "rbxassetid://129078122681639",
+    ["Bat Form"] = "rbxassetid://129078122681639",
+    ["Decoy"] = "rbxassetid://113722008817201",
+}
+
 function Module.init(context: Runtime): any
     local framework: any = context.framework
     local entity: any = context.entity
@@ -14551,6 +14545,7 @@ function Module.init(context: Runtime): any
     local currentWorkspace: Workspace = host.workspace or workspace
     local highlights: {[Player]: Highlight} = {}
     local murderTag: BillboardGui? = nil
+    local murderPerk: BillboardGui? = nil
     local roleTags: {[Player]: BillboardGui} = {}
     local lastUpdate: number = -math.huge
 
@@ -14561,12 +14556,20 @@ function Module.init(context: Runtime): any
         end
     end
 
+    local function destroyMurderPerk(): ()
+        if murderPerk then
+            pcall(murderPerk.Destroy, murderPerk)
+            murderPerk = nil
+        end
+    end
+
     local function clearRoleTags(): ()
         for player: Player, tag: BillboardGui in pairs(roleTags) do
             roleTags[player] = nil
             pcall(tag.Destroy, tag)
         end
     end
+
     local gameBridge: any = context.services.gameBridge
     if activeBridgeCleanup then
         pcall(activeBridgeCleanup)
@@ -14575,8 +14578,6 @@ function Module.init(context: Runtime): any
     if type(gameBridge.onEvent) == "function" then
         activeBridgeCleanup = gameBridge.onEvent(function(kind: string): ()
             if kind == "roleUpdate" then
-                -- Role assignment bypasses the regular 0.2 s work throttle;
-                -- the next rendered frame recolours every existing highlight.
                 lastUpdate = -math.huge
             end
         end)
@@ -14599,13 +14600,27 @@ function Module.init(context: Runtime): any
     end
 
     local card: any
+
+    local function syncMM2Extras(enabled: boolean): ()
+        if state and state.mm2Core then
+            if type(state.mm2Core.toggleGunEsp) == "function" then
+                pcall(state.mm2Core.toggleGunEsp, enabled and card.Options["Gun ESP"] and card.Options["Gun ESP"].Value == true)
+            end
+            if type(state.mm2Core.toggleTrapEsp) == "function" then
+                pcall(state.mm2Core.toggleTrapEsp, enabled and card.Options["Trap ESP"] and card.Options["Trap ESP"].Value == true)
+            end
+        end
+    end
+
     local function clear(): ()
         for player: Player, highlight: Highlight in pairs(highlights) do
             highlights[player] = nil
             highlight:Destroy()
         end
         destroyMurderTag()
+        destroyMurderPerk()
         clearRoleTags()
+        syncMM2Extras(false)
     end
 
     card = framework.Categories.Visuals:CreateModule({
@@ -14621,6 +14636,8 @@ function Module.init(context: Runtime): any
                 return
             end
             card:SetStatus("0")
+            syncMM2Extras(true)
+
             card:Render(function(): ()
                 local now: number = os.clock()
                 if now - lastUpdate < 0.2 then return end
@@ -14650,22 +14667,15 @@ function Module.init(context: Runtime): any
                         if type(gameBridge.playerRoleColor) == "function" then
                             roleColour = gameBridge.playerRoleColor(player)
                         end
-                        -- Without a role the chams used to fall straight back
-                        -- to white, which is exactly what made an undetected
-                        -- MM2 innocent look like "no cham at all". Team colour
-                        -- is a far better guess than white.
                         local teamColour: Color3? = nil
                         local teamOption: any = card.Options["Team colours"]
                         if not roleColour
                             and teamOption ~= nil
-                            and teamOption.Value == true
-                            and target.Team then
-                            local ok: boolean, resolved: any = pcall(function(): any
-                                return target.Team.TeamColor.Color
-                            end)
-                            if ok and typeof(resolved) == "Color3" then
-                                teamColour = resolved
-                            end
+                            and teamOption.Value == true then
+                            local isTeammate: boolean = target.IsFriendly
+                                or (LocalPlayer and target.Team and LocalPlayer.Team and target.Team == LocalPlayer.Team)
+                                or (LocalPlayer and player:GetAttribute("Team") ~= nil and player:GetAttribute("Team") == LocalPlayer:GetAttribute("Team"))
+                            teamColour = isTeammate and Color3.fromRGB(255, 255, 255) or Color3.fromRGB(255, 0, 0)
                         end
                         local fillColour: Color3 = roleColour
                             or teamColour
@@ -14692,9 +14702,8 @@ function Module.init(context: Runtime): any
                         highlight:Destroy()
                     end
                 end
-                -- Murder tag: the old standalone MM2 card is now an option
-                -- here. The role lookup goes through the game bridge, so the
-                -- tag only appears where the game exposes roles.
+
+                -- Murder tag lookup
                 local tagTarget: Player? = nil
                 if card.Options["Murder tag"].Value == true
                     and type(gameBridge.playerRole) == "function" then
@@ -14713,11 +14722,13 @@ function Module.init(context: Runtime): any
                         end
                     end
                 end
+
+                local tagHead: BasePart? = nil
                 if not tagTarget then
                     destroyMurderTag()
                 else
                     local tagCharacter: Model? = tagTarget.Character
-                    local tagHead: BasePart? = tagCharacter
+                    tagHead = tagCharacter
                         and (tagCharacter:FindFirstChild("Head")
                             or tagCharacter:FindFirstChild("HumanoidRootPart"))
                         :: BasePart?
@@ -14733,8 +14744,6 @@ function Module.init(context: Runtime): any
                             billboard.AlwaysOnTop = true
                             billboard.LightInfluence = 0
                             billboard.Size = UDim2.fromOffset(150, 22)
-                            -- Sits above the head where the standalone card
-                            -- used to place it.
                             billboard.StudsOffset = Vector3.new(0, 3.5, 0)
                             billboard.MaxDistance = 1500
                             billboard.Adornee = tagHead
@@ -14768,7 +14777,71 @@ function Module.init(context: Runtime): any
                     end
                 end
 
-                -- Role tags: floating role labels over all known player heads
+                -- Show Perk sticker above Murderer
+                if card.Options["Show Perk"] and card.Options["Show Perk"].Value == true and tagTarget and tagHead then
+                    local targetPerk: string? = nil
+                    if type(gameBridge.playerPerk) == "function" then
+                        targetPerk = gameBridge.playerPerk(tagTarget)
+                    end
+                    if not targetPerk and state and state.mm2Core and type(state.mm2Core.getPlayerPerk) == "function" then
+                        targetPerk = state.mm2Core.getPlayerPerk(tagTarget)
+                    end
+
+                    local perkIconId: string? = targetPerk and (PERK_ICONS[targetPerk] or PERK_ICONS[string.gsub(targetPerk, "%s+", "")]) or nil
+                    if perkIconId then
+                        if not murderPerk or not murderPerk.Parent or murderPerk.Adornee ~= tagHead then
+                            destroyMurderPerk()
+                            local billboard: BillboardGui = Instance.new("BillboardGui")
+                            billboard.Name = "Wurst_MurderPerk"
+                            billboard.AlwaysOnTop = true
+                            billboard.LightInfluence = 0
+                            billboard.Size = UDim2.fromOffset(36, 36)
+                            billboard.StudsOffset = Vector3.new(0, 5.2, 0)
+                            billboard.MaxDistance = 1500
+                            billboard.Adornee = tagHead
+                            billboard.Parent = tagHead
+
+                            local bg: Frame = Instance.new("Frame")
+                            bg.Name = "StickerBackground"
+                            bg.BackgroundColor3 = Color3.fromRGB(20, 20, 24)
+                            bg.BackgroundTransparency = 0.15
+                            bg.Size = UDim2.fromScale(1, 1)
+                            bg.Parent = billboard
+
+                            local corner: UICorner = Instance.new("UICorner")
+                            corner.CornerRadius = UDim.new(0, 8)
+                            corner.Parent = bg
+
+                            local stroke: UIStroke = Instance.new("UIStroke")
+                            stroke.Color = Color3.fromRGB(230, 55, 55)
+                            stroke.Thickness = 1.8
+                            stroke.Parent = bg
+
+                            local img: ImageLabel = Instance.new("ImageLabel")
+                            img.Name = "PerkIcon"
+                            img.BackgroundTransparency = 1
+                            img.Size = UDim2.fromScale(0.85, 0.85)
+                            img.Position = UDim2.fromScale(0.5, 0.5)
+                            img.AnchorPoint = Vector2.new(0.5, 0.5)
+                            img.Image = perkIconId
+                            img.Parent = bg
+
+                            murderPerk = billboard
+                        else
+                            local bg: any = murderPerk:FindFirstChild("StickerBackground")
+                            local img: any = bg and bg:FindFirstChild("PerkIcon")
+                            if img and img.Image ~= perkIconId then
+                                img.Image = perkIconId
+                            end
+                        end
+                    else
+                        destroyMurderPerk()
+                    end
+                else
+                    destroyMurderPerk()
+                end
+
+                -- Role tags: floating role labels over player heads
                 local roleTagsOption: any = card.Options["Role tags"]
                 if roleTagsOption and roleTagsOption.Value == true
                     and type(gameBridge.playerRole) == "function" then
@@ -14782,6 +14855,11 @@ function Module.init(context: Runtime): any
                             and not protectedTargets.isProtected(player) then
                             local okRole: boolean, role: any = pcall(gameBridge.playerRole, player)
                             if okRole and type(role) == "string" and role ~= "Dead" then
+                                -- FIX: Do not double-tag the murderer if Murder tag is active!
+                                if card.Options["Murder tag"].Value == true and (role == "Murderer" or player == tagTarget) then
+                                    continue
+                                end
+
                                 local head: BasePart? = target.Character:FindFirstChild("Head")
                                     or target.Character:FindFirstChild("HumanoidRootPart")
                                 if head then
@@ -14842,6 +14920,7 @@ function Module.init(context: Runtime): any
                     clearRoleTags()
                 end
 
+                syncMM2Extras(true)
                 card:SetStatus(tostring(count))
             end)
             card:Clean(clear)
@@ -14857,6 +14936,9 @@ function Module.init(context: Runtime): any
     card:CreateToggle({Name = "Team colours", Default = true})
     card:CreateToggle({Name = "Murder tag", Default = true})
     card:CreateToggle({Name = "Role tags", Default = true})
+    card:CreateToggle({Name = "Show Perk", Default = true})
+    card:CreateToggle({Name = "Gun ESP", Default = true})
+    card:CreateToggle({Name = "Trap ESP", Default = true})
 
     activeCard = card
     Module.Initialized = true
@@ -14876,7 +14958,6 @@ function Module.destroy(): ()
 end
 
 return Module
-
 ]=],
         ["src/games/universal/Render/Arrows.lua"] = [=[
 export type Runtime = {
@@ -15018,7 +15099,6 @@ function Module.destroy(): ()
 end
 
 return Module
-
 ]=],
         ["src/games/universal/Render/NPCESP.lua"] = [=[
 export type Runtime = {
@@ -15510,7 +15590,6 @@ function Module.destroy(): ()
 end
 
 return Module
-
 ]=],
         ["src/games/universal/Render/FieldOfView.lua"] = [=[
 export type Runtime = {
@@ -15587,7 +15666,6 @@ function Module.destroy(): ()
 end
 
 return Module
-
 ]=],
         ["src/games/universal/Render/Fullbright.lua"] = [=[
 export type Runtime = {
@@ -15698,7 +15776,6 @@ function Module.destroy(): ()
 end
 
 return Module
-
 ]=],
         ["src/games/universal/Render/TimeChanger.lua"] = [=[
 --!strict
@@ -15792,7 +15869,6 @@ function Module.destroy(): ()
 end
 
 return Module
-
 ]=],
         ["src/games/universal/Render/XRay.lua"] = [=[
 export type Runtime = {
@@ -15900,7 +15976,6 @@ function Module.destroy(): ()
 end
 
 return Module
-
 ]=],
         ["src/games/universal/Render/ZoomUnlocker.lua"] = [=[
 export type Runtime = {
@@ -16046,7 +16121,6 @@ function Module.destroy(): ()
 end
 
 return Module
-
 ]=],
         ["src/games/universal/Combat/KillAura.lua"] = [=[
 export type Runtime = {
@@ -16646,644 +16720,6 @@ function Module.destroy(): ()
 end
 
 return Module
-
-]=],
-        ["src/games/universal/Combat/AutoClicker.lua"] = [=[
-export type Runtime = {
-    framework: any,
-    entity: any,
-    host: any,
-    weapons: any?,
-}
-
-local Module = {
-    Name = "AutoClicker",
-    PlaceId = 0,
-    Events = {} :: {[string]: any},
-    Initialized = false,
-}
-
-local activeCleanup: (() -> ())? = nil
-
-local function pressGuiButton(button: GuiButton): boolean
-    local environment: any = getfenv()
-    local connectionsOf: any = environment.getconnections
-    local fireSignal: any = environment.firesignal
-    local pressed: boolean = false
-
-    if type(connectionsOf) == "function" then
-        for _, signal: any in
-            ipairs({
-                button.MouseButton1Down,
-                button.MouseButton1Click,
-                (button :: any).Activated,
-                button.MouseButton1Up,
-            })
-        do
-            local ok: boolean, connections: any = pcall(connectionsOf, signal)
-            if not ok or type(connections) ~= "table" then
-                continue
-            end
-            for _, connection: any in ipairs(connections) do
-                local fired: boolean = pcall(function(): ()
-                    connection:Fire()
-                end)
-                pressed = pressed or fired
-            end
-        end
-    end
-
-    if not pressed and type(fireSignal) == "function" then
-        pressed = pcall(fireSignal, (button :: any).Activated) == true
-    end
-    return pressed
-end
-
-local function isGameButton(
-    instance: Instance,
-    isMenuOwned: (Instance) -> boolean
-): boolean
-    if not instance:IsA("GuiButton") then
-        return false
-    end
-
-    if isMenuOwned(instance) then
-        return false
-    end
-    return true
-end
-
-function Module.init(context: Runtime): any
-    local host: any = context.host
-    local framework: any = context.framework
-    local localPlayer: Player = host.LocalPlayer
-    local userInput: UserInputService = host.UserInputService
-    local isMenuOwned: (Instance) -> boolean = host.isMenuOwned
-    local weapons: any = context.weapons
-
-    local runtime: any = {
-        nextClickAt = 0,
-        learning = false,
-        target = nil :: GuiButton?,
-        touches = 0,
-    }
-
-    local function equippedTool(): Tool?
-        local character: Model? = localPlayer.Character
-        if not character then
-            return nil
-        end
-        return character:FindFirstChildOfClass("Tool") :: Tool?
-    end
-
-    local function findButtonByName(name: string): GuiButton?
-        if name == "" then
-            return nil
-        end
-        local playerGui: Instance? = localPlayer:FindFirstChild("PlayerGui")
-        if not playerGui then
-            return nil
-        end
-        local wanted: string = string.lower(name)
-        for _, descendant: Instance in ipairs(playerGui:GetDescendants()) do
-            if not isGameButton(descendant, isMenuOwned) then
-                continue
-            end
-            if string.find(string.lower(descendant.Name), wanted, 1, true) then
-                return descendant :: GuiButton
-            end
-        end
-        return nil
-    end
-
-    local function resolveTarget(): GuiButton?
-        local current: GuiButton? = runtime.target
-        if current and (current :: GuiButton).Parent then
-            return current
-        end
-        runtime.target = nil
-        return nil
-    end
-
-    local clicker: any
-    clicker = framework.Categories.Combat:CreateModule({
-        Name = "Auto Clicker",
-        Category = "Combat",
-        Order = 2,
-        Tooltip = "Clicks for you while you hold the attack down.",
-        Function = function(enabled: boolean): ()
-            runtime.nextClickAt = 0
-            runtime.touches = 0
-            if not enabled then
-                clicker:SetStatus(nil)
-                return
-            end
-            local cps: any = clicker.Options["CPS"].Value
-            clicker:SetStatus(
-                tostring(math.round(cps.Min))
-                    .. "-"
-                    .. tostring(math.round(cps.Max))
-                    .. " CPS"
-            )
-
-            clicker:Event(userInput.InputBegan, function(input: InputObject): ()
-                if input.UserInputType == Enum.UserInputType.Touch then
-                    runtime.touches += 1
-                end
-            end)
-            clicker:Event(userInput.InputEnded, function(input: InputObject): ()
-                if input.UserInputType == Enum.UserInputType.Touch then
-                    runtime.touches = math.max(0, runtime.touches - 1)
-                end
-            end)
-
-            clicker:Loop(function(): ()
-                local options: any = clicker.Options
-                local holdingAttack: boolean = false
-                if options["Activation"].Value == "Hold key" then
-                    local key: Enum.KeyCode = options["Hold key"].Value
-                    holdingAttack = key ~= Enum.KeyCode.Unknown
-                        and userInput:IsKeyDown(key)
-                else
-                    holdingAttack = userInput:IsMouseButtonPressed(
-                        Enum.UserInputType.MouseButton1
-                    ) or runtime.touches > 0
-                end
-                if not holdingAttack then
-
-                    runtime.nextClickAt = 0
-                    return
-                end
-
-                local mode: string = options["Click"].Value
-
-                if context.services.menu.isVisible()
-                    and (mode == "Left click" or mode == "Right click") then
-                    return
-                end
-
-                local now: number = os.clock()
-                if now < runtime.nextClickAt then
-                    return
-                end
-                local rate: number = options["CPS"]:GetRandomValue()
-                runtime.nextClickAt = now + 1 / math.max(rate, 0.5)
-
-                if mode == "Tool" then
-                    local tool: Tool? = equippedTool()
-                    if tool then
-                        pcall(function(): ()
-                            (tool :: Tool):Activate()
-                        end)
-                        return
-                    end
-
-                    if weapons then
-                        local candidate: any = weapons:Best({All = true})
-                        if candidate then
-                            weapons:Activate(candidate)
-                        end
-                    end
-                    return
-                end
-
-                if mode == "Screen button" then
-                    local button: GuiButton? = resolveTarget()
-                        or findButtonByName(tostring(options["Button name"].Value or ""))
-                    if button then
-                        runtime.target = button
-                        pressGuiButton(button :: GuiButton)
-                    end
-                    return
-                end
-
-                local environment: any = getfenv()
-                local click: any = mode == "Right click"
-                    and environment.mouse2click
-                    or environment.mouse1click
-                if type(click) == "function" then
-                    pcall(click)
-                end
-            end)
-        end,
-    })
-
-    clicker:CreateTwoSlider({
-        Name = "CPS",
-        Min = 1,
-        Max = 28,
-        DefaultMin = 8,
-        DefaultMax = 12,
-        Function = function(value: any): ()
-            if clicker.Enabled then
-                clicker:SetStatus(
-                    tostring(math.round(value.Min))
-                        .. "-"
-                        .. tostring(math.round(value.Max))
-                        .. " CPS"
-                )
-            end
-        end,
-        Tooltip = "Clicks per second. Every gap is drawn between the two ends, "
-            .. "so no two clicks are the same distance apart. A fast hand peaks "
-            .. "around 12; past 20 nothing human explains the rate and servers "
-            .. "that log click intervals will say so.",
-    })
-
-    clicker:CreateDropdown({
-        Name = "Activation",
-        List = {"Hold click", "Hold key"},
-        Index = 1,
-        Tooltip = "Hold click follows the real attack button; Hold key runs "
-            .. "while your own key is down.",
-    })
-    clicker:CreateBind({
-        Name = "Hold key",
-        Show = {Option = "Activation", Values = {"Hold key"}},
-        Default = Enum.KeyCode.Unknown,
-        Tooltip = "Click the slot, then press the key. On touch, tap it to "
-            .. "place a button and hold that instead.",
-    })
-
-    clicker:CreateDropdown({
-        Name = "Click",
-        List = {"Tool", "Left click", "Right click", "Screen button"},
-        Index = 1,
-        Tooltip = "What one click means: activate the equipped tool, a real "
-            .. "left or right click through the executor, or the game's own "
-            .. "on-screen attack button.",
-    })
-    clicker:CreateTextBox({
-        Name = "Button name",
-        Show = {Option = "Click", Values = {"Screen button"}},
-        Default = "",
-        Tooltip = "Part of the name of the game's attack button. Filled in "
-            .. "for you by Learn button.",
-    })
-    clicker:CreateButton({
-        Name = "Learn button",
-        Show = {Option = "Click", Values = {"Screen button"}},
-        Tooltip = "Press this, then tap the game's own attack button once.",
-        Function = function(): ()
-            if runtime.learning then
-                runtime.learning = false
-                clicker:Notify("cancelled")
-                return
-            end
-            runtime.learning = true
-            clicker:Notify("tap the game's button now")
-        end,
-    })
-
-    local learnConnection: RBXScriptConnection = userInput.InputBegan:Connect(
-        function(input: InputObject): ()
-            if not runtime.learning then
-                return
-            end
-            if input.UserInputType ~= Enum.UserInputType.Touch
-                and input.UserInputType ~= Enum.UserInputType.MouseButton1 then
-                return
-            end
-            local playerGui: Instance? = localPlayer:FindFirstChild("PlayerGui")
-            if not playerGui then
-                return
-            end
-            local located: {Instance} = (playerGui :: any):GetGuiObjectsAtPosition(
-                input.Position.X,
-                input.Position.Y
-            )
-            for _, candidate: Instance in ipairs(located) do
-                if isGameButton(candidate, isMenuOwned) then
-                    runtime.learning = false
-                    runtime.target = candidate :: GuiButton
-                    clicker.Options["Button name"]:Set(candidate.Name)
-                    clicker:Notify("bound to " .. candidate.Name)
-                    return
-                end
-            end
-        end
-    )
-
-    activeCleanup = function(): ()
-        runtime.learning = false
-        runtime.target = nil
-        runtime.touches = 0
-        pcall(function(): ()
-            learnConnection:Disconnect()
-        end)
-    end
-    Module.Initialized = true
-    return clicker
-end
-
-function Module.destroy(): ()
-    if activeCleanup then
-        pcall(activeCleanup)
-    end
-    activeCleanup = nil
-    Module.Initialized = false
-end
-
-return Module
-
-]=],
-        ["src/games/universal/Combat/TriggerBot.lua"] = [=[
-export type Runtime = {
-    framework: any,
-    entity: any,
-    host: any,
-    services: any,
-}
-
-local Module = {
-    Name = "TriggerBot",
-    PlaceId = 0,
-    Events = {} :: {[string]: any},
-    Initialized = false,
-}
-
-local activeCleanup: (() -> ())? = nil
-
-local function findTool(character: Model?): Tool?
-    if not character then
-        return nil
-    end
-    return character:FindFirstChildOfClass("Tool")
-end
-
-function Module.init(context: Runtime): any
-    local host: any = context.host
-    local framework: any = context.framework
-    local localPlayer: Player = host.LocalPlayer
-    local userInput: UserInputService = host.UserInputService
-
-    local armedTarget: any = nil
-    local armedAt: number = 0
-    local nextShotAt: number = 0
-
-    local trigger: any
-    trigger = framework.Categories.Combat:CreateModule({
-        Name = "TriggerBot",
-        Category = "Combat",
-        Order = 1,
-        Tooltip = "Fires the equipped tool when a valid target is under the "
-            .. "crosshair.",
-        Function = function(enabled: boolean): ()
-            armedTarget = nil
-            armedAt = 0
-            nextShotAt = 0
-            if not enabled then
-                return
-            end
-
-            trigger:Loop(function(): ()
-                local options: any = trigger.Options
-                if options["Activation"].Value == "Hold key"
-                    and not userInput:IsKeyDown(options["Hold key"].Value) then
-                    armedTarget = nil
-                    return
-                end
-
-                local character: Model? = localPlayer.Character
-                local humanoid: Humanoid? = character
-                    and character:FindFirstChildOfClass("Humanoid") :: Humanoid?
-                if not character or not humanoid or humanoid.Health <= 0 then
-                    armedTarget = nil
-                    return
-                end
-
-                local tool: Tool? = findTool(character)
-
-                local target: any, distance: number =
-                    Module.resolveTarget(context, trigger)
-                if not target then
-                    armedTarget = nil
-                    return
-                end
-                if distance > options["Max distance"].Value then
-                    armedTarget = nil
-                    return
-                end
-
-                local now: number = os.clock()
-                if armedTarget ~= target then
-                    armedTarget = target
-
-                    local reaction: number = options["Reaction"].Value
-                    armedAt = now + reaction + math.random() * reaction * 0.34
-                    return
-                end
-                if now < armedAt or now < nextShotAt then
-                    return
-                end
-
-                Module.fire(tool)
-                if options["Fire mode"].Value == "Single" then
-
-                    armedTarget = nil
-                    nextShotAt = now + math.max(options["Shot delay"].Value, 0.05)
-                else
-                    nextShotAt = now + math.max(options["Shot delay"].Value, 0.05)
-                end
-            end)
-        end,
-    })
-
-    trigger:CreateDropdown({
-        Name = "Activation",
-        List = {"Always", "Hold key"},
-        Index = 1,
-        Tooltip = "Always runs while the module is on; Hold key only while "
-            .. "the bind is down.",
-    })
-    trigger:CreateBind({
-        Name = "Hold key",
-        Show = {Option = "Activation", Values = {"Hold key"}},
-        Default = Enum.KeyCode.Unknown,
-        Tooltip = "Click the slot, then press the key.",
-    })
-    trigger:CreateDropdown({
-        Name = "Fire mode",
-        List = {"Single", "Automatic"},
-        Index = 1,
-        Tooltip = "Single fires once per acquisition, Automatic keeps firing.",
-    })
-    trigger:CreateSlider({
-        Name = "Reaction",
-        Min = 0,
-        Max = 1,
-        Default = 0.08,
-        Tooltip = "Seconds between a target entering the crosshair and the "
-            .. "shot. A random third of this is added on every acquisition, so "
-            .. "two shots never share the same reaction time.",
-    })
-    trigger:CreateSlider({
-        Name = "Shot delay",
-        Min = 0.05,
-        Max = 2,
-        Default = 0.15,
-        Tooltip = "Minimum seconds between two shots.",
-    })
-
-    trigger:CreateDropdown({
-        Name = "Target part",
-        List = {"Any", "Head", "Torso"},
-        Index = 1,
-        Tooltip = "Which part has to be under the crosshair.",
-    })
-    trigger:CreateSlider({
-        Name = "Aim tolerance",
-        Min = 0,
-        Max = 120,
-        Default = 0,
-        Tooltip = "Pixels of slack around the crosshair. 0 requires an exact "
-            .. "hit on the target, which is what a raycast alone gives you.",
-    })
-    trigger:CreateSlider({
-        Name = "Max distance",
-        Min = 10,
-        Max = 2000,
-        Default = 600,
-    })
-    trigger:CreateToggle({
-        Name = "Team check",
-        Default = true,
-        Tooltip = "Never fire at players on your own team.",
-    })
-    trigger:CreateToggle({
-        Name = "Wall check",
-        Default = true,
-        Tooltip = "Never fire at a target with geometry in the way.",
-    })
-    trigger:CreateToggle({
-        Name = "Target NPCs",
-        Default = false,
-        Tooltip = "Also recognize non-player humanoid models under the crosshair.",
-    })
-
-    activeCleanup = function(): ()
-        armedTarget = nil
-    end
-    Module.Initialized = true
-    return trigger
-end
-
-function Module.resolveTarget(context: Runtime, trigger: any): (any, number)
-    local host: any = context.host
-    local entityLibrary: any = context.entity
-    local players: Players = host.Players
-    local localPlayer: Player = host.LocalPlayer
-    local currentWorkspace: Workspace = host.workspace or workspace
-    local options: any = trigger.Options
-
-    local ray: Ray? = context.services.aim.getRay()
-    if not ray then
-        return nil, 0
-    end
-    local resolvedRay: Ray = ray :: Ray
-    entityLibrary:Refresh()
-
-    local partFilter: string = options["Target part"].Value
-    local radius: number = options["Aim tolerance"].Value
-
-    if radius <= 0 then
-        local parameters: RaycastParams = RaycastParams.new()
-        parameters.FilterType = Enum.RaycastFilterType.Exclude
-        parameters.IgnoreWater = true
-        parameters.FilterDescendantsInstances = {
-            localPlayer.Character :: any,
-            currentWorkspace.CurrentCamera :: any,
-        }
-        local result: RaycastResult? = currentWorkspace:Raycast(
-            resolvedRay.Origin,
-            resolvedRay.Direction.Unit * options["Max distance"].Value,
-            parameters
-        )
-        if not result then
-            return nil, 0
-        end
-        local hit: BasePart = result.Instance
-        local character: Model? = hit:FindFirstAncestorOfClass("Model")
-        if not character then
-            return nil, 0
-        end
-        local player: Player? = players:GetPlayerFromCharacter(character)
-        local entity: any = player
-            and entityLibrary:Get(player)
-            or (options["Target NPCs"].Value
-                and entityLibrary.GetNpc
-                and entityLibrary:GetNpc(character))
-        if not entity then
-            return nil, 0
-        end
-        if options["Team check"].Value and entity.IsFriendly then
-            return nil, 0
-        end
-        if partFilter == "Head" and hit.Name ~= "Head" then
-            return nil, 0
-        end
-        if partFilter == "Torso"
-            and hit.Name ~= "UpperTorso"
-            and hit.Name ~= "LowerTorso"
-            and hit.Name ~= "Torso"
-            and hit.Name ~= "HumanoidRootPart" then
-            return nil, 0
-        end
-        return player or character, entity.Distance
-    end
-
-    entityLibrary:Refresh()
-    local entity: any = entityLibrary:ClosestToRay(
-        resolvedRay.Origin,
-        resolvedRay.Direction,
-        {
-
-            Radius = radius * 0.05,
-            MaxDistance = options["Max distance"].Value,
-            IgnoreTeam = not options["Team check"].Value,
-            IgnoreWalls = not options["Wall check"].Value,
-            IncludeNPCs = options["Target NPCs"].Value,
-            Part = partFilter == "Head" and "Head" or nil,
-        }
-    )
-    if not entity then
-        return nil, 0
-    end
-    return entity.Player or entity.Character, entity.Distance
-end
-
-function Module.fire(tool: Tool?): ()
-    if tool then
-        pcall(function(): ()
-            tool:Activate()
-        end)
-    end
-    local environment: any = getfenv()
-    local press: any = environment.mouse1press
-    local release: any = environment.mouse1release
-    if type(press) == "function" and type(release) == "function" then
-        pcall(press)
-        task.delay(0.02, function(): ()
-            pcall(release)
-        end)
-        return
-    end
-    local click: any = environment.mouse1click
-    if type(click) == "function" then
-        pcall(click)
-    end
-end
-
-function Module.destroy(): ()
-    if activeCleanup then
-        pcall(activeCleanup)
-    end
-    activeCleanup = nil
-    Module.Initialized = false
-end
-
-return Module
-
 ]=],
         ["src/games/universal/Combat/AimAssist.lua"] = [=[
 export type Runtime = {
@@ -17555,334 +16991,6 @@ function Module.destroy(): ()
 end
 
 return Module
-
-]=],
-        ["src/games/universal/Blatant/Hitboxes.lua"] = [=[
-export type Runtime = {
-    framework: any,
-    entity: any,
-    host: any,
-}
-
-local Module = {
-    Name = "Hitboxes",
-    PlaceId = 0,
-    Events = {} :: {[string]: any},
-    Initialized = false,
-}
-
-local activeCleanup: (() -> ())? = nil
-
-function Module.init(context: Runtime): any
-    local host: any = context.host
-    local framework: any = context.framework
-    local entityLibrary: any = context.entity
-    local Players: any = host.Players
-    local LocalPlayer: any = host.LocalPlayer
-
-    type HitboxSettings = {
-        part: string,
-        expand: number,
-        reveal: boolean,
-        transparency: number,
-        teamCheck: boolean,
-        includeNpcs: boolean,
-        noCollision: boolean,
-    }
-
-    type HitboxWritten = {
-        size: Vector3,
-        transparency: number,
-        canCollide: boolean,
-        massless: boolean,
-    }
-
-    type OriginalHitboxState = {
-        size: Vector3,
-        transparency: number,
-        canCollide: boolean,
-        massless: boolean,
-
-        written: HitboxWritten,
-    }
-
-    local hitboxSettings: HitboxSettings = {
-        part = "Root",
-        expand = 6,
-        reveal = false,
-        transparency = 60,
-        teamCheck = true,
-        includeNpcs = false,
-        noCollision = true,
-    }
-    local originalHitboxes: {[BasePart]: OriginalHitboxState} =
-        setmetatable({}, {__mode = "k"}) :: any
-
-    local function restoreHitboxPart(part: BasePart): ()
-        local original: OriginalHitboxState? = originalHitboxes[part]
-        if not original then
-            return
-        end
-        if part.Parent then
-            part.Size = (original :: OriginalHitboxState).size
-            part.Transparency = (original :: OriginalHitboxState).transparency
-            part.CanCollide = (original :: OriginalHitboxState).canCollide
-            part.Massless = (original :: OriginalHitboxState).massless
-        end
-        originalHitboxes[part] = nil
-    end
-
-    local function restoreHitboxes(): ()
-        for part: BasePart in pairs(originalHitboxes) do
-            restoreHitboxPart(part)
-        end
-        originalHitboxes = setmetatable({}, {__mode = "k"}) :: any
-    end
-
-    local function applyHitboxToPart(part: BasePart): ()
-        local original: OriginalHitboxState? = originalHitboxes[part]
-        if not original then
-            original = {
-                size = part.Size,
-                transparency = part.Transparency,
-                canCollide = part.CanCollide,
-                massless = part.Massless,
-                written = {
-                    size = part.Size,
-                    transparency = part.Transparency,
-                    canCollide = part.CanCollide,
-                    massless = part.Massless,
-                },
-            }
-            originalHitboxes[part] = original
-        end
-        local resolved: OriginalHitboxState = original :: OriginalHitboxState
-        local last: HitboxWritten = resolved.written
-
-        if part.Size ~= last.size then
-            resolved.size = part.Size
-        end
-        if part.Transparency ~= last.transparency then
-            resolved.transparency = part.Transparency
-        end
-        if part.CanCollide ~= last.canCollide then
-            resolved.canCollide = part.CanCollide
-        end
-        if part.Massless ~= last.massless then
-            resolved.massless = part.Massless
-        end
-
-        local expand: number = hitboxSettings.expand
-        local nextSize: Vector3 = resolved.size + Vector3.new(expand, expand, expand)
-        local nextTransparency: number = hitboxSettings.reveal
-            and math.clamp(hitboxSettings.transparency / 100, 0, 1)
-            or resolved.transparency
-        local nextCanCollide: boolean = not hitboxSettings.noCollision and resolved.canCollide
-
-        if part.Size ~= nextSize then
-            part.Size = nextSize
-        end
-        if part.Transparency ~= nextTransparency then
-            part.Transparency = nextTransparency
-        end
-        if part.CanCollide ~= nextCanCollide then
-            part.CanCollide = nextCanCollide
-        end
-        if not part.Massless then
-            part.Massless = true
-        end
-        last.size = nextSize
-        last.transparency = nextTransparency
-        last.canCollide = nextCanCollide
-        last.massless = true
-    end
-
-    local function applyHitboxCharacter(character: Model): ()
-        local wanted: {string} = hitboxSettings.part == "Head"
-            and {"Head"}
-            or (hitboxSettings.part == "Both" and {"HumanoidRootPart", "Head"})
-            or {"HumanoidRootPart"}
-        for _, child: Instance in ipairs(character:GetChildren()) do
-            if not child:IsA("BasePart") then
-                continue
-            end
-            local part: BasePart = child :: BasePart
-            if table.find(wanted, part.Name) then
-                applyHitboxToPart(part)
-            else
-                restoreHitboxPart(part)
-            end
-        end
-    end
-
-    local function hitboxTargets(): {Model}
-        local targets: {Model} = {}
-        entityLibrary:Refresh()
-        for _, player: Player in ipairs(Players:GetPlayers()) do
-            if player == LocalPlayer then
-                continue
-            end
-            if hitboxSettings.teamCheck and entityLibrary:IsFriendly(player) then
-                continue
-            end
-            if entityLibrary:IsProtected(player) then
-                continue
-            end
-            local character: Model? = player.Character
-            local humanoid: Humanoid? = character
-                and character:FindFirstChildOfClass("Humanoid") :: Humanoid?
-            if character and humanoid and humanoid.Health > 0 then
-                table.insert(targets, character :: Model)
-            end
-        end
-        if hitboxSettings.includeNpcs then
-            for _, npc: any in ipairs(entityLibrary.NPCList or {}) do
-                if (not hitboxSettings.teamCheck or not npc.IsFriendly)
-                    and npc.Character
-                    and npc.Humanoid
-                    and npc.Humanoid.Health > 0 then
-                    table.insert(targets, npc.Character)
-                end
-            end
-        end
-        return targets
-    end
-
-    local function sweepHitboxes(): ()
-        local alive: {[BasePart]: boolean} = {}
-        for _, character: Model in ipairs(hitboxTargets()) do
-            applyHitboxCharacter(character)
-            for _, child: Instance in ipairs(character:GetChildren()) do
-                if child:IsA("BasePart") and originalHitboxes[child :: BasePart] then
-                    alive[child :: BasePart] = true
-                end
-            end
-        end
-
-        for part: BasePart in pairs(originalHitboxes) do
-            if not alive[part] then
-                restoreHitboxPart(part)
-            end
-        end
-    end
-
-    local hitboxes: any
-    hitboxes = framework.Categories.Blatant:CreateModule({
-        Name = "Hitboxes",
-        Category = "Blatant",
-        Order = 3,
-        Tooltip = "Expand the part enemies are hit on, in studs. Teammates and "
-            .. "friends are left alone, and every part is restored exactly when "
-            .. "it stops being a target.",
-        Function = function(enabled: boolean): ()
-            restoreHitboxes()
-            if not enabled then
-                hitboxes:SetStatus(nil)
-                return
-            end
-            hitboxes:SetStatus(
-                hitboxSettings.part .. " +" .. tostring(math.round(hitboxSettings.expand))
-            )
-            hitboxes:Clean(restoreHitboxes)
-
-            hitboxes:Loop(function(): ()
-                sweepHitboxes()
-            end)
-        end,
-    })
-    hitboxes:CreateDropdown({
-        Name = "Part",
-        List = {"Root", "Head", "Both"},
-        Index = 1,
-        Function = function(value: string): ()
-            hitboxSettings.part = value
-            if hitboxes.Enabled then
-                hitboxes:SetStatus(
-                    value .. " +" .. tostring(math.round(hitboxSettings.expand))
-                )
-            end
-        end,
-        Tooltip = "Which part of the character is expanded. Parts the new "
-            .. "mode no longer owns are restored on the next sweep.",
-    })
-    hitboxes:CreateSlider({
-        Name = "Expand",
-        Min = 0,
-        Max = 30,
-        Default = hitboxSettings.expand,
-        Function = function(value: number): ()
-            hitboxSettings.expand = value
-            if hitboxes.Enabled then
-                hitboxes:SetStatus(
-                    hitboxSettings.part .. " +" .. tostring(math.round(value))
-                )
-            end
-        end,
-        Tooltip = "Studs added to the target part. Past roughly 10 the box is "
-            .. "wider than the character is tall and anyone watching can see "
-            .. "hits landing on nothing.",
-    })
-    hitboxes:CreateToggle({
-        Name = "Team check",
-        Default = hitboxSettings.teamCheck,
-        Function = function(value: boolean): ()
-            hitboxSettings.teamCheck = value
-        end,
-        Tooltip = "Leave teammates at their real size.",
-    })
-    hitboxes:CreateToggle({
-        Name = "Include NPCs",
-        Default = hitboxSettings.includeNpcs,
-        Function = function(value: boolean): ()
-            hitboxSettings.includeNpcs = value
-        end,
-    })
-    hitboxes:CreateToggle({
-        Name = "Show hitbox",
-        Default = hitboxSettings.reveal,
-        Function = function(value: boolean): ()
-            hitboxSettings.reveal = value
-        end,
-        Tooltip = "Draw the expanded part so you can see what you are actually "
-            .. "aiming at.",
-    })
-    hitboxes:CreateSlider({
-        Name = "Show transparency %",
-        Show = {Option = "Show hitbox"},
-        Min = 0,
-        Max = 95,
-        Default = hitboxSettings.transparency,
-        Function = function(value: number): ()
-            hitboxSettings.transparency = value
-        end,
-    })
-    hitboxes:CreateToggle({
-        Name = "No collision",
-        Default = hitboxSettings.noCollision,
-        Function = function(value: boolean): ()
-            hitboxSettings.noCollision = value
-        end,
-        Tooltip = "An expanded part that still collides pushes its owner "
-            .. "around the map, which everyone in the server can see.",
-    })
-
-    activeCleanup = function(): ()
-        restoreHitboxes()
-    end
-    Module.Initialized = true
-    return hitboxes
-end
-
-function Module.destroy(): ()
-    if activeCleanup then
-        pcall(activeCleanup)
-    end
-    activeCleanup = nil
-    Module.Initialized = false
-end
-
-return Module
-
 ]=],
         ["src/games/universal/Blatant/Invisible.lua"] = [=[
 export type Runtime = {
@@ -18218,7 +17326,6 @@ function Module.destroy(): ()
 end
 
 return Module
-
 ]=],
         ["src/games/universal/Movement/Speed.lua"] = [=[
 export type Runtime = {
@@ -18712,7 +17819,6 @@ function Module.destroy(): ()
 end
 
 return Module
-
 ]=],
         ["src/games/universal/Movement/Jump.lua"] = [=[
 export type Runtime = {
@@ -18833,7 +17939,7 @@ function Module.init(context: Runtime): any
                 return
             end
 
-            jump:SetStatus(tostring(math.round(jump.Options["Jump power"].Value)))
+            jump:SetStatus("active")
             jump:Clean(restoreJumpPower)
 
             -- Connect infinite jump request if movementInput service is present
@@ -18860,16 +17966,20 @@ function Module.init(context: Runtime): any
                     return
                 end
 
-                -- 1. Apply Jump Power
-                local wantedPower: number = opts["Jump power"] and opts["Jump power"].Value or 80
-                if originalJumpPower[humanoid] == nil then
-                    originalJumpPower[humanoid] = {
-                        jumpPower = humanoid.JumpPower,
-                        useJumpPower = humanoid.UseJumpPower,
-                    }
+                -- 1. Apply Custom Jump Power only if option is enabled
+                if opts["Custom jump power"] and opts["Custom jump power"].Value then
+                    local wantedPower: number = opts["Jump power"] and opts["Jump power"].Value or 80
+                    if originalJumpPower[humanoid] == nil then
+                        originalJumpPower[humanoid] = {
+                            jumpPower = humanoid.JumpPower,
+                            useJumpPower = humanoid.UseJumpPower,
+                        }
+                    end
+                    humanoid.UseJumpPower = true
+                    humanoid.JumpPower = wantedPower
+                else
+                    restoreJumpPower()
                 end
-                humanoid.UseJumpPower = true
-                humanoid.JumpPower = wantedPower
 
                 -- 2. Auto Jump
                 if opts["Auto jump"] and opts["Auto jump"].Value then
@@ -18893,19 +18003,28 @@ function Module.init(context: Runtime): any
         end,
     })
 
+    -- Section: Jump Power
+    jump:CreateToggle({
+        Name = "Custom jump power",
+        Default = false,
+        Tooltip = "Enables custom jump height/power for ground jumps. Turn off if you only want Infinite Jump or High Jump.",
+    })
+
     jump:CreateSlider({
         Name = "Jump power",
+        Show = {Option = "Custom jump power", Values = {true}},
         Min = 0,
         Max = 500,
         Default = 80,
         Function = function(value: number): ()
-            if jump.Enabled then
+            if jump.Enabled and jump.Options["Custom jump power"].Value then
                 jump:SetStatus(tostring(math.round(value)))
             end
         end,
         Tooltip = "Character jump power (default Roblox jump is 50).",
     })
 
+    -- Section: High Jump
     jump:CreateButton({
         Name = "High jump",
         Function = function(): ()
@@ -18920,9 +18039,10 @@ function Module.init(context: Runtime): any
         Min = 25,
         Max = 250,
         Default = 72,
-        Tooltip = "Vertical velocity applied when High Jump is activated.",
+        Tooltip = "Vertical velocity applied when High Jump button is pressed.",
     })
 
+    -- Section: Infinite Jump
     jump:CreateToggle({
         Name = "Infinite jump",
         Default = false,
@@ -18964,6 +18084,7 @@ function Module.init(context: Runtime): any
         Tooltip = "Minimum delay in seconds between mid-air jumps.",
     })
 
+    -- Section: Auto Jump
     jump:CreateToggle({
         Name = "Auto jump",
         Default = false,
@@ -18986,7 +18107,6 @@ function Module.destroy(): ()
 end
 
 return Module
-
 ]=],
         ["src/games/universal/Movement/ClickTeleport.lua"] = [=[
 export type Runtime = {
@@ -19429,7 +18549,6 @@ function Module.destroy(): ()
 end
 
 return Module
-
 ]=],
         ["src/games/universal/Blatant/Spider.lua"] = [=[
 export type Runtime = {
@@ -19753,7 +18872,6 @@ function Module.destroy(): ()
 end
 
 return Module
-
 ]=],
         ["src/games/universal/Blatant/WallHop.lua"] = [=[
 export type Runtime = {
@@ -20026,7 +19144,6 @@ function Module.destroy(): ()
 end
 
 return Module
-
 ]=],
         ["src/games/universal/Movement/HookPart.lua"] = [=[
 --!strict
@@ -20860,7 +19977,6 @@ function Module.destroy(): ()
 end
 
 return Module
-
 ]=],
         ["src/games/universal/Blatant/Fly.lua"] = [=[
 export type Runtime = {
@@ -21499,7 +20615,6 @@ function Module.destroy(): ()
 end
 
 return Module
-
 ]=],
         ["src/games/universal/Blatant/Noclip.lua"] = [=[
 export type Runtime = {
@@ -21591,7 +20706,6 @@ function Module.destroy(): ()
 end
 
 return Module
-
 ]=],
         ["src/games/universal/Movement/AntiVoid.lua"] = [=[
 export type Runtime = {
@@ -21730,7 +20844,6 @@ function Module.destroy(): ()
 end
 
 return Module
-
 ]=],
         ["src/games/universal/Movement/AntiFling.lua"] = [=[
 export type Runtime = {
@@ -21847,7 +20960,6 @@ function Module.destroy(): ()
 end
 
 return Module
-
 ]=],
         ["src/games/universal/Movement/FreezeMovements.lua"] = [=[
 export type Runtime = {
@@ -21976,7 +21088,6 @@ function Module.destroy(): ()
 end
 
 return Module
-
 ]=],
         ["src/games/universal/Movement/Gravity.lua"] = [=[
 export type Runtime = {
@@ -22056,7 +21167,6 @@ function Module.destroy(): ()
 end
 
 return Module
-
 ]=],
         ["src/games/universal/Movement/SafeWalk.lua"] = [=[
 export type Runtime = {
@@ -22268,7 +21378,6 @@ function Module.destroy(): ()
 end
 
 return Module
-
 ]=],
         ["src/games/universal/Fun/SpinBot.lua"] = [=[
 export type Runtime = {
@@ -22419,7 +21528,6 @@ function Module.destroy(): ()
 end
 
 return Module
-
 ]=],
         ["src/games/universal/Other/Disguise.lua"] = [=[
 --!strict
@@ -24007,7 +23115,6 @@ function Module.destroy(): ()
 end
 
 return Module
-
 ]=],
         ["src/games/universal/Other/AntiAfk.lua"] = [=[
 export type Runtime = {
@@ -24081,7 +23188,6 @@ function Module.destroy(): ()
 end
 
 return Module
-
 ]=],
         ["src/games/universal/Other/InteractExtender.lua"] = [=[
 export type Runtime = {
@@ -24307,7 +23413,6 @@ function Module.destroy(): ()
 end
 
 return Module
-
 ]=],
         ["src/games/universal/Other/RejoinServer.lua"] = [=[
 export type Runtime = {
@@ -24425,7 +23530,6 @@ function Module.destroy(): ()
 end
 
 return Module
-
 ]=],
         ["src/games/universal/Other/LagSwitch.lua"] = [=[
 export type Runtime = {
@@ -24524,7 +23628,6 @@ function Module.destroy(): ()
 end
 
 return Module
-
 ]=],
         ["src/games/universal/Other/ImproveFps.lua"] = [=[
 export type Runtime = {
@@ -24703,7 +23806,6 @@ function Module.destroy(): ()
 end
 
 return Module
-
 ]=],
         ["src/games/universal/Blatant/Fling.lua"] = [=[
 export type Runtime = {
@@ -24990,7 +24092,6 @@ function Module.destroy(): ()
 end
 
 return Module
-
 ]=],
         ["src/games/universal/Other/RemoteLogger.lua"] = [=[
 export type Runtime = {
@@ -25426,7 +24527,6 @@ function Module.destroy(): ()
 end
 
 return Module
-
 ]=],
         ["src/games/universal/Other/Learning.lua"] = [=[
 export type Runtime = {
@@ -25560,7 +24660,6 @@ function Module.destroy(): ()
 end
 
 return Module
-
 ]=],
         ["src/games/universal/Other/GameLearning.lua"] = [=[
 export type Runtime = {
@@ -26736,7 +25835,6 @@ function Module.destroy(): ()
 end
 
 return Module
-
 ]=],
         ["src/games/universal/Render/ProjectileCalibration.lua"] = [=[
 export type Runtime = {
@@ -27553,7 +26651,6 @@ function Module.destroy(): ()
 end
 
 return Module
-
 ]=],
         ["src/games/MM2/base.lua"] = [=[
 local Module = {
@@ -28500,6 +27597,33 @@ local function createMM2Cham(folder, adornee, color, transparency)
     reference.Parent = folder
 end
 
+local function getPlayerPerk(player: Player): string?
+    local char: Model? = player.Character
+    if char then
+        local perkAttr: any = char:GetAttribute("Perk") or player:GetAttribute("Perk")
+        if type(perkAttr) == "string" and perkAttr ~= "" then
+            return perkAttr
+        end
+    end
+    for key: any, data: any in pairs(mm2RoundData) do
+        if playerFromRoundKey(key, data) == player and type(data) == "table" then
+            local perk: any = data.Perk or data.EquippedPerk or data.perk
+            if type(perk) == "string" and perk ~= "" then
+                return perk
+            end
+        end
+    end
+    if char then
+        if char:FindFirstChild("Trap") or (player:FindFirstChild("Backpack") and player.Backpack:FindFirstChild("Trap")) then
+            return "Trap"
+        end
+        if char:FindFirstChild("FakeGun") or (player:FindFirstChild("Backpack") and player.Backpack:FindFirstChild("FakeGun")) then
+            return "FakeGun"
+        end
+    end
+    return nil
+end
+
 local function registerMM2Roles(): ()
     registerRoleProvider({
         Name = "MM2",
@@ -28513,6 +27637,9 @@ local function registerMM2Roles(): ()
         },
         Get = function(player: Player): string?
             return getPlayerRole(player)
+        end,
+        GetPerk = function(player: Player): string?
+            return getPlayerPerk(player)
         end,
         GetColor = function(roleName: string): Color3?
             if roleName == "Murderer" then return mm2Settings.murdererColor end
@@ -31475,6 +30602,7 @@ state.mm2Core = {
     playerFromRoundKey = playerFromRoundKey,
     getRoundRole = getRoundRole,
     getPlayerRole = getPlayerRole,
+    getPlayerPerk = getPlayerPerk,
     invalidateRoleCaches = invalidateRoleCaches,
     roundRolesKnown = roundRolesKnown,
     hasActiveRoundRoles = hasActiveRoundRoles,
@@ -31579,7 +30707,6 @@ function Module.destroy(): ()
 end
 
 return Module
-
 ]=],
         ["src/games/MM2/Blatant/Shoot.lua"] = [=[
 local Module = {
@@ -32526,7 +31653,6 @@ function Module.destroy(): ()
 end
 
 return Module
-
 ]=],
         ["src/games/MM2/Blatant/KnifeAura.lua"] = [=[
 local Module = {
@@ -32776,7 +31902,6 @@ function Module.destroy(): ()
 end
 
 return Module
-
 ]=],
         ["src/games/MM2/Blatant/KnifeThrow.lua"] = [=[
 local Module = {
@@ -33068,7 +32193,6 @@ function Module.destroy(): ()
 end
 
 return Module
-
 ]=],
         ["src/games/MM2/Render/RoundEsp.lua"] = [=[
 local Module = {
@@ -33088,7 +32212,6 @@ function Module.init(runtime: any): any
     local core: any = state.mm2Core
     assert(type(core) == "table", "MM2 Round ESP requires the MM2 core module")
     Module.Runtime = runtime
-    local CoinEffects: any = core.CoinEffects
     local GunEffects: any = core.GunEffects
     local TrapEffects: any = core.TrapEffects
     local clearEffects: any = core.clearEffects
@@ -33096,10 +32219,9 @@ function Module.init(runtime: any): any
     local createMM2Marker: any = core.createMM2Marker
     local findDroppedGun: any = core.findDroppedGun
     local findMM2Map: any = core.findMM2Map
-    local mm2GameplayRemotes: any = core.mm2GameplayRemotes
     local mm2Settings: any = core.mm2Settings
 
-    local function toggleGunEsp(enabled)
+    local function toggleGunEsp(enabled: boolean): ()
         disconnectFeatureConnection("MM2GunESP")
         clearEffects(GunEffects)
 
@@ -33108,8 +32230,6 @@ function Module.init(runtime: any): any
         end
 
         local elapsed: number = 1
-        -- Rebuilding the billboard twice a second churned instances (and made
-        -- the marker visibly blink). Only touch it when the gun changes.
         local markedGun: Instance? = nil
         featureConnections.MM2GunESP = TaskManager:Connect(function(deltaTime: number): ()
             elapsed += deltaTime
@@ -33135,7 +32255,7 @@ function Module.init(runtime: any): any
         end)
     end
 
-    local function toggleTrapEsp(enabled)
+    local function toggleTrapEsp(enabled: boolean): ()
         disconnectFeatureConnection("MM2TrapAdded")
         clearEffects(TrapEffects)
 
@@ -33144,7 +32264,7 @@ function Module.init(runtime: any): any
         end
 
         local marked = setmetatable({}, {__mode = "k"})
-        local function addTrap(object)
+        local function addTrap(object: Instance): ()
             if marked[object] then
                 return
             end
@@ -33167,354 +32287,14 @@ function Module.init(runtime: any): any
         featureConnections.MM2TrapAdded = workspace.DescendantAdded:Connect(addTrap)
     end
 
-    local coinChamsEnabled: boolean = false
-
-    type CoinChamRecord = {
-        highlight: Highlight,
-        billboard: BillboardGui,
-        connections: {RBXScriptConnection},
-    }
-
-    local coinBoxes: {[BasePart]: CoinChamRecord} =
-        setmetatable({}, {__mode = "k"}) :: any
-
-    local function normalizedCoinName(object: Instance): string
-        return string.gsub(string.lower(object.Name), "[^%w]", "")
-    end
-
-    local function hasCoinName(object: Instance): boolean
-        return string.find(normalizedCoinName(object), "coin", 1, true) ~= nil
-    end
-
-    local function isCoinServerName(object: Instance): boolean
-        return string.find(
-            normalizedCoinName(object),
-            "coinserver",
-            1,
-            true
-        ) ~= nil
-    end
-
-    local function isLiveCoin(coin: BasePart): boolean
-        return coin:IsDescendantOf(workspace)
-            and coin:GetAttribute("Delete") ~= true
-            and coin:GetAttribute("Collected") ~= true
-    end
-
-    local function findCoinPartInContainer(container: Instance): BasePart?
-        for _, descendant: Instance in ipairs(container:GetDescendants()) do
-            if descendant:IsA("BasePart") and isCoinServerName(descendant) then
-                return descendant
-            end
-        end
-
-        if container:IsA("Model") and container.PrimaryPart then
-            return container.PrimaryPart
-        end
-        for _, preferredName: string in ipairs({
-            "CoinVisual",
-            "MainCoin",
-            "Coin",
-        }) do
-            local preferred: Instance? =
-                container:FindFirstChild(preferredName, true)
-            if preferred and preferred:IsA("BasePart") then
-                return preferred
-            end
-        end
-        return container:FindFirstChildWhichIsA("BasePart", true)
-    end
-
-    local function getCoinServer(object: Instance?): BasePart?
-        if not object or object:GetAttribute("Delete") == true then
-            return nil
-        end
-
-        local coinContainer: Instance? = nil
-        local cursor: Instance? = object
-        for _index: number = 1, 10 do
-            if not cursor or cursor == workspace then
-                break
-            end
-            if cursor:IsA("BasePart") and isCoinServerName(cursor) then
-                return isLiveCoin(cursor) and cursor or nil
-            end
-            if (cursor:IsA("Model") or cursor:IsA("Folder"))
-                and hasCoinName(cursor) then
-                coinContainer = cursor
-            end
-            cursor = cursor.Parent
-        end
-
-        if coinContainer then
-            local containerPart: BasePart? =
-                findCoinPartInContainer(coinContainer)
-            if containerPart and isLiveCoin(containerPart) then
-                return containerPart
-            end
-        end
-
-        if object:IsA("BasePart") and hasCoinName(object) then
-            return isLiveCoin(object) and object or nil
-        end
-
-        if object:IsA("TouchTransmitter") or object.Name == "TouchInterest" then
-            local parent: Instance? = object.Parent
-            if parent and parent:IsA("BasePart") then
-                local ancestor: Instance? = parent
-                while ancestor and ancestor ~= workspace do
-                    if hasCoinName(ancestor) then
-                        return isLiveCoin(parent) and parent or nil
-                    end
-                    ancestor = ancestor.Parent
-                end
-            end
-        end
-        return nil
-    end
-
-    local function getCoinVisual(coin: BasePart): BasePart
-        local mainCoin: Instance? = coin:FindFirstChild("MainCoin", true)
-        if mainCoin and mainCoin:IsA("BasePart") then
-            return mainCoin
-        end
-        local coinVisual: Instance? = coin:FindFirstChild("CoinVisual", true)
-        if coinVisual and coinVisual:IsA("BasePart") then
-            return coinVisual
-        end
-        return coin
-    end
-
-    local function removeCoinBox(coin: BasePart): ()
-        local record: CoinChamRecord? = coinBoxes[coin]
-        if not record then
-            return
-        end
-        coinBoxes[coin] = nil
-        for _, connection: RBXScriptConnection in ipairs(record.connections) do
-            connection:Disconnect()
-        end
-        record.highlight:Destroy()
-        record.billboard:Destroy()
-    end
-
-    local function clearCoinBoxes(): ()
-        for coin: BasePart in pairs(coinBoxes) do
-            removeCoinBox(coin)
-        end
-        clearEffects(CoinEffects)
-        coinBoxes = setmetatable({}, {__mode = "k"}) :: any
-    end
-
-    local function createCoinBillboard(adornee: BasePart): BillboardGui
-        local billboard: BillboardGui = Instance.new("BillboardGui")
-        billboard.Name = "Wurst_CoinMarker"
-        billboard.Adornee = adornee
-        billboard.AlwaysOnTop = true
-        billboard.LightInfluence = 0
-        billboard.Size = UDim2.fromOffset(36, 36)
-        billboard.StudsOffsetWorldSpace = Vector3.new(0, 0.25, 0)
-        billboard.Parent = CoinEffects
-
-        local marker: Frame = Instance.new("Frame")
-        marker.Name = "Marker"
-        marker.AnchorPoint = Vector2.new(0.5, 0.5)
-        marker.BackgroundColor3 = mm2Settings.coinColor
-        marker.BackgroundTransparency = 0.18
-        marker.BorderSizePixel = 0
-        marker.Position = UDim2.fromScale(0.5, 0.5)
-        marker.Rotation = 45
-        marker.Size = UDim2.fromOffset(20, 20)
-        marker.Parent = billboard
-
-        local corner: UICorner = Instance.new("UICorner")
-        corner.CornerRadius = UDim.new(0, 2)
-        corner.Parent = marker
-
-        local stroke: UIStroke = Instance.new("UIStroke")
-        stroke.Color = Color3.fromRGB(255, 248, 170)
-        stroke.Thickness = 2
-        stroke.Transparency = 0.08
-        stroke.Parent = marker
-        return billboard
-    end
-
-    local function addCoinBox(object: Instance): ()
-        local coin: BasePart? = getCoinServer(object)
-        if not coin then
-            return
-        end
-
-        local visual: BasePart = getCoinVisual(coin)
-        local existing: CoinChamRecord? = coinBoxes[coin]
-        if existing then
-            existing.highlight.Adornee = visual
-            existing.billboard.Adornee = visual
-            return
-        end
-
-        local highlight: Highlight = Instance.new("Highlight")
-        highlight.Name = "Wurst_CoinHighlight"
-        highlight.Adornee = visual
-        highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
-        highlight.FillColor = mm2Settings.coinColor
-        highlight.FillTransparency = math.clamp(
-            mm2Settings.coinTransparency * 0.65,
-            0.15,
-            0.62
-        )
-        highlight.OutlineColor = Color3.fromRGB(255, 246, 135)
-        highlight.OutlineTransparency = 0.04
-        highlight.Parent = coin
-
-        local record: CoinChamRecord = {
-            highlight = highlight,
-            billboard = createCoinBillboard(visual),
-            connections = {},
-        }
-        coinBoxes[coin] = record
-        table.insert(record.connections, coin.AncestryChanged:Connect(function(): ()
-            if not isLiveCoin(coin) then
-                removeCoinBox(coin)
-            end
-        end))
-        for _, attributeName: string in ipairs({"Collected", "Delete"}) do
-            table.insert(
-                record.connections,
-                coin:GetAttributeChangedSignal(attributeName):Connect(function(): ()
-                    if not isLiveCoin(coin) then
-                        removeCoinBox(coin)
-                    end
-                end)
-            )
-        end
-    end
-
-    local function isPotentialCoinObject(object: Instance): boolean
-        return hasCoinName(object)
-            or object:IsA("TouchTransmitter")
-            or object.Name == "TouchInterest"
-            or CollectionService:HasTag(object, "CoinVisual")
-    end
-
-    local function scanCoins(container: Instance): ()
-        if isPotentialCoinObject(container) then
-            addCoinBox(container)
-        end
-        for _, object: Instance in ipairs(container:GetDescendants()) do
-            if isPotentialCoinObject(object) then
-                addCoinBox(object)
-            end
-        end
-    end
-
-    local function toggleCoinChams(enabled: boolean): ()
-        coinChamsEnabled = enabled
-        disconnectFeatureConnection("MM2CoinAdded")
-        disconnectFeatureConnection("MM2CoinTagged")
-        disconnectFeatureConnection("MM2CoinCollected")
-        disconnectFeatureConnection("MM2CoinMapAdded")
-        clearCoinBoxes()
-
-        if not enabled then
-            return
-        end
-
-        scanCoins(workspace)
-        for _, object: Instance in ipairs(
-            CollectionService:GetTagged("CoinVisual")
-        ) do
-            addCoinBox(object)
-        end
-
-        featureConnections.MM2CoinTagged = CollectionService
-            :GetInstanceAddedSignal("CoinVisual")
-            :Connect(addCoinBox)
-        featureConnections.MM2CoinAdded = workspace.DescendantAdded:Connect(function(
-            object: Instance
-        ): ()
-            if isPotentialCoinObject(object) then
-                addCoinBox(object)
-            end
-        end)
-        featureConnections.MM2CoinMapAdded = workspace.ChildAdded:Connect(function(
-            object: Instance
-        ): ()
-            task.defer(function(): ()
-                if coinChamsEnabled then
-                    scanCoins(object)
-                end
-            end)
-        end)
-
-        for _, rescanDelay: number in ipairs({0.5, 1.5, 3}) do
-            task.delay(rescanDelay, function(): ()
-                if coinChamsEnabled then
-                    scanCoins(workspace)
-                end
-            end)
-        end
-
-        local coinCollected: Instance? = mm2GameplayRemotes
-            and mm2GameplayRemotes:FindFirstChild("CoinCollected")
-        if coinCollected and coinCollected:IsA("RemoteEvent") then
-            featureConnections.MM2CoinCollected = coinCollected.OnClientEvent:Connect(
-                function(coinId: any): ()
-                    for coin: BasePart in pairs(coinBoxes) do
-                        if coin:GetAttribute("CoinID") == coinId then
-                            removeCoinBox(coin)
-                        end
-                    end
-                end
-            )
-        end
-    end
-
-    registerEspExtra({
-        Name = "Coins",
-        Default = false,
-        Color = mm2Settings.coinColor,
-        Tooltip = "Every coin on the map, through walls.",
-        Toggle = function(enabled: boolean): ()
-            toggleCoinChams(enabled)
-        end,
-        SetColor = function(colour: Color3): ()
-            mm2Settings.coinColor = colour
-            if coinChamsEnabled then
-                toggleCoinChams(true)
-            end
-        end,
-    })
-    registerEspExtra({
-        Name = "Traps",
-        Default = false,
-        Color = mm2Settings.trapColor,
-        Tooltip = "The murderer's placed traps.",
-        Toggle = function(enabled: boolean): ()
-            toggleTrapEsp(enabled)
-        end,
-        SetColor = function(colour: Color3): ()
-            mm2Settings.trapColor = colour
-        end,
-    })
-    registerEspExtra({
-        Name = "Sheriff gun",
-        Default = false,
-        Color = mm2Settings.gunColor,
-        Tooltip = "The gun on the floor after the sheriff dies.",
-        Toggle = function(enabled: boolean): ()
-            toggleGunEsp(enabled)
-        end,
-        SetColor = function(colour: Color3): ()
-            mm2Settings.gunColor = colour
-        end,
-    })
+    core.toggleGunEsp = toggleGunEsp
+    core.toggleTrapEsp = toggleTrapEsp
 
     activeCleanup = function(): ()
         toggleGunEsp(false)
-                toggleTrapEsp(false)
-                toggleCoinChams(false)
+        toggleTrapEsp(false)
     end
+
     Module.Events = featureConnections
     Module.Initialized = true
     return Module
@@ -33532,7 +32312,6 @@ function Module.destroy(): ()
 end
 
 return Module
-
 ]=],
         ["src/games/MM2/Movement/Sprint.lua"] = [=[
 local Module = {
@@ -33709,7 +32488,6 @@ function Module.destroy(): ()
 end
 
 return Module
-
 ]=],
         ["src/games/MM2/Movement/Teleport.lua"] = [=[
 local Module = {
@@ -33894,7 +32672,6 @@ function Module.destroy(): ()
 end
 
 return Module
-
 ]=],
         ["src/games/MM2/Fun/InstantRoleNotify.lua"] = [=[
 local Module = {
@@ -33993,7 +32770,6 @@ function Module.destroy(): ()
 end
 
 return Module
-
 ]=],
         ["src/games/MM2/Fun/BlurtRoles.lua"] = [=[
 local Module = {
@@ -34246,7 +33022,6 @@ function Module.destroy(): ()
 end
 
 return Module
-
 ]=],
         ["src/games/MM2/Other/TrajectoryCalibration.lua"] = [=[
 local Module = {
@@ -34319,7 +33094,1278 @@ function Module.destroy(): ()
 end
 
 return Module
+]=],
+        ["src/games/MVSD/Blatant/SilentAim.lua"] = [=[
+local Module = {
+    Name = "MVSD Silent Aim",
+    PlaceId = 135856908115931,
+    Events = {} :: {[string]: any},
+    Initialized = false,
+    Menu = nil :: any,
+    Runtime = nil :: any,
+}
 
+local moduleCleanup: () -> () = function(): () end
+
+function Module.init(runtime: any): any
+    if Module.Initialized then
+        return Module
+    end
+    Module.Runtime = runtime
+    Module.Menu = runtime and runtime.Menu
+
+    local players: Players = game:GetService("Players")
+    local runService: RunService = game:GetService("RunService")
+    local userInput: UserInputService = game:GetService("UserInputService")
+    local replicatedStorage: ReplicatedStorage = game:GetService("ReplicatedStorage")
+    local localPlayer: Player = players.LocalPlayer
+    local camera: Camera = workspace.CurrentCamera or (workspace:WaitForChild("Camera") :: Camera)
+
+    local featureConnections: {[string]: any} = {}
+    local TaskManager: any = runtime and runtime.TaskManager
+        or {
+            Connect = function(_self: any, signal: any, fn: any): any
+                return signal:Connect(fn)
+            end,
+        }
+
+    local settings = {
+        enabled = false,
+        wallCheck = false,
+        shootRate = 0.1,
+        noReload = true,
+        fovRadius = 250,
+        showFov = true,
+    }
+
+    local fovCircle: DrawingCircle? = nil
+    pcall(function(): ()
+        if typeof(Drawing) == "table" and type(Drawing.new) == "function" then
+            local circle: DrawingCircle = Drawing.new("Circle") :: any
+            circle.Thickness = 1.5
+            circle.NumSides = 32
+            circle.Radius = settings.fovRadius
+            circle.Filled = false
+            circle.Color = Color3.fromRGB(255, 60, 60)
+            circle.Transparency = 0.8
+            circle.Visible = false
+            fovCircle = circle
+        end
+    end)
+
+    local function isSameTeam(a: Player, b: Player): boolean
+        local aAttr: any = a:GetAttribute("Team")
+        local bAttr: any = b:GetAttribute("Team")
+        if aAttr ~= nil and bAttr ~= nil then
+            return aAttr == bAttr
+        end
+        if a.Team ~= nil and b.Team ~= nil then
+            return a.Team == b.Team
+        end
+        return false
+    end
+
+    local function isInMatch(player: Player): boolean
+        local localGame: any = localPlayer:GetAttribute("Game")
+        local playerGame: any = player:GetAttribute("Game")
+        if localGame ~= nil and playerGame ~= nil then
+            return localGame == playerGame
+        end
+        return true
+    end
+
+    local function getActiveEnemies(): {Player}
+        local enemies: {Player} = {}
+        for _, player: Player in ipairs(players:GetPlayers()) do
+            if player ~= localPlayer
+                and player:GetAttribute("Died") ~= true
+                and isInMatch(player)
+                and not isSameTeam(localPlayer, player) then
+                local character: Model? = player.Character
+                local humanoid: Humanoid? = character and character:FindFirstChildOfClass("Humanoid")
+                local root: BasePart? = character and (character:FindFirstChild("HumanoidRootPart") :: BasePart? or character:FindFirstChild("Head") :: BasePart?)
+                if character and humanoid and humanoid.Health > 0 and root then
+                    table.insert(enemies, player)
+                end
+            end
+        end
+        return enemies
+    end
+
+    local function checkLineOfSight(origin: Vector3, targetPos: Vector3, ignoreModel: Model?): boolean
+        local rayParams = RaycastParams.new()
+        rayParams.FilterType = Enum.RaycastFilterType.Exclude
+        local filterList: {Instance} = {camera}
+        if localPlayer.Character then
+            table.insert(filterList, localPlayer.Character)
+        end
+        if ignoreModel then
+            table.insert(filterList, ignoreModel)
+        end
+        rayParams.FilterDescendantsInstances = filterList
+        rayParams.IgnoreWater = true
+
+        local direction: Vector3 = targetPos - origin
+        local result: RaycastResult? = workspace:Raycast(origin, direction, rayParams)
+        return result == nil
+    end
+
+    local function pickTarget(): (Player?, BasePart?)
+        local enemies: {Player} = getActiveEnemies()
+        if #enemies == 0 then
+            return nil, nil
+        end
+
+        local mousePos: Vector2 = userInput:GetMouseLocation()
+        local camPos: Vector3 = camera.CFrame.Position
+        local eligible: {{player: Player, part: BasePart, dist2d: number}} = {}
+
+        for _, enemy: Player in ipairs(enemies) do
+            local character: Model = enemy.Character :: Model
+            local targetPart: BasePart = (character:FindFirstChild("Head") :: BasePart?)
+                or (character:FindFirstChild("HumanoidRootPart") :: BasePart?)
+                or (character.PrimaryPart :: BasePart)
+            if targetPart then
+                local screenPos: Vector3, onScreen: boolean = camera:WorldToViewportPoint(targetPart.Position)
+                if screenPos.Z > 0 then
+                    local dist2d: number = (Vector2.new(screenPos.X, screenPos.Y) - mousePos).Magnitude
+                    if dist2d <= settings.fovRadius then
+                        if not settings.wallCheck or checkLineOfSight(camPos, targetPart.Position, character) then
+                            table.insert(eligible, {player = enemy, part = targetPart, dist2d = dist2d})
+                        end
+                    end
+                end
+            end
+        end
+
+        if #eligible == 0 then
+            return nil, nil
+        end
+
+        -- Pick a random enemy among the eligible ones (user requested: le de a un enemigo Random)
+        local chosen = eligible[math.random(1, #eligible)]
+        return chosen.player, chosen.part
+    end
+
+    -- Find Net RE remote for damage confirmation
+    local function getNetHitRemote(): RemoteEvent?
+        local packages: Instance? = replicatedStorage:FindFirstChild("Packages")
+        local net: Instance? = packages and packages:FindFirstChild("Net")
+        if net then
+            local hitRemote: Instance? = net:FindFirstChild("RE/90e51178756085355b8b52b11bf99988da480bb4072b33bcbc7ec931a7da2d68")
+            if hitRemote and hitRemote:IsA("RemoteEvent") then
+                return hitRemote
+            end
+            for _, child: Instance in ipairs(net:GetChildren()) do
+                if child:IsA("RemoteEvent") and string.find(child.Name, "90e51178") then
+                    return child
+                end
+            end
+        end
+        return nil
+    end
+
+    -- Hook Raycast so wall shots hit enemy
+    local originalRaycast: any = nil
+    local originalNamecall: any = nil
+
+    local function installRaycastHook(): ()
+        if originalRaycast ~= nil then return end
+        local genv: any = getgenv and getgenv() or getfenv()
+        local hookfn: any = genv.hookfunction or genv.replaceclosure or hookfunc
+        if type(hookfn) ~= "function" then
+            return
+        end
+
+        originalRaycast = hookfn(workspace.Raycast, function(self: any, origin: Vector3, direction: Vector3, params: RaycastParams?): any
+            if settings.enabled then
+                local _, targetPart = pickTarget()
+                if targetPart then
+                    local fakeDist: number = (targetPart.Position - origin).Magnitude
+                    return {
+                        Instance = targetPart,
+                        Position = targetPart.Position,
+                        Normal = Vector3.new(0, 1, 0),
+                        Material = Enum.Material.Plastic,
+                        Distance = fakeDist,
+                    }
+                end
+            end
+            return originalRaycast(self, origin, direction, params)
+        end)
+    end
+
+    local function uninstallRaycastHook(): ()
+        if originalRaycast ~= nil then
+            local genv: any = getgenv and getgenv() or getfenv()
+            local hookfn: any = genv.hookfunction or genv.replaceclosure or hookfunc
+            if type(hookfn) == "function" then
+                pcall(hookfn, workspace.Raycast, originalRaycast)
+            end
+            originalRaycast = nil
+        end
+    end
+
+    local lastShotTime: number = 0
+
+    local function handleWeaponActivation(tool: Tool): ()
+        if not settings.enabled then return end
+        local now: number = os.clock()
+        if now - lastShotTime < settings.shootRate then return end
+        lastShotTime = now
+
+        local targetPlayer, targetPart = pickTarget()
+        if not targetPlayer or not targetPart then return end
+
+        local handle: BasePart? = tool:FindFirstChild("Handle") :: BasePart?
+        local origin: Vector3 = handle and handle.Position or camera.CFrame.Position
+        local targetPos: Vector3 = targetPart.Position
+
+        -- Gun fire and showBeam remotes
+        local fireRemote: Instance? = tool:FindFirstChild("fire")
+        if fireRemote and fireRemote:IsA("RemoteEvent") then
+            pcall(function(): ()
+                fireRemote:FireServer()
+            end)
+        end
+
+        local showBeamRemote: Instance? = tool:FindFirstChild("showBeam")
+        if showBeamRemote and showBeamRemote:IsA("RemoteEvent") and handle then
+            pcall(function(): ()
+                showBeamRemote:FireServer(origin, targetPos, handle)
+            end)
+        end
+
+        -- Direct Net Hit Remote
+        local netHit: RemoteEvent? = getNetHitRemote()
+        if netHit then
+            local actionId: string = "silent_" .. tostring(math.random(100000, 999999))
+            local direction: Vector3 = (targetPos - origin).Unit
+            pcall(function(): ()
+                netHit:FireServer(actionId, targetPlayer, direction, origin, targetPos)
+            end)
+        end
+
+        -- No reload bypass & cooldown bypass
+        if settings.noReload then
+            pcall(function(): ()
+                tool:SetAttribute("Ammo", tool:GetAttribute("MaxAmmo") or 6)
+                tool:SetAttribute("Reloading", false)
+            end)
+        end
+        pcall(function(): ()
+            tool:SetAttribute("CanShoot", true)
+            tool:SetAttribute("Cooldown", 0)
+        end)
+    end
+
+    -- Hook tool activation & continuous loop
+    local function onHeartbeat(): ()
+        if fovCircle then
+            local mousePos: Vector2 = userInput:GetMouseLocation()
+            fovCircle.Position = mousePos
+            fovCircle.Radius = settings.fovRadius
+            fovCircle.Visible = settings.enabled and settings.showFov
+        end
+
+        if not settings.enabled then return end
+
+        local character: Model? = localPlayer.Character
+        local tool: Tool? = character and character:FindFirstChildOfClass("Tool")
+        if tool then
+            if settings.noReload then
+                if tool:GetAttribute("Reloading") == true then
+                    tool:SetAttribute("Reloading", false)
+                end
+                local maxAmmo: any = tool:GetAttribute("MaxAmmo")
+                if maxAmmo and tool:GetAttribute("Ammo") ~= maxAmmo then
+                    tool:SetAttribute("Ammo", maxAmmo)
+                end
+            end
+            tool:SetAttribute("CanShoot", true)
+        end
+    end
+
+    -- Hook input / click to intercept shots
+    local function onInputBegan(input: InputObject, gameProcessed: boolean): ()
+        if not settings.enabled or gameProcessed then return end
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+            local character: Model? = localPlayer.Character
+            local tool: Tool? = character and character:FindFirstChildOfClass("Tool")
+            if tool and (tool:FindFirstChild("fire") or tool:FindFirstChild("showBeam")) then
+                handleWeaponActivation(tool)
+            end
+        end
+    end
+
+    installRaycastHook()
+
+    local env: any = getfenv()
+    local createUniversalFeature: any = env.createUniversalFeature
+    local addToggleOption: any = env.addToggleOption
+    local addNumberOption: any = env.addNumberOption
+
+    local parentScroll: any = state and state.mvsdScroll
+    local featuresRegistry: any = state and state.mvsdFeatures
+
+    local SilentAimFeature: any = createUniversalFeature(
+        "Silent Aim",
+        "Redirects gun raycasts to hit random enemies even through walls",
+        1,
+        function(enabled: boolean): ()
+            settings.enabled = enabled
+            if fovCircle then
+                fovCircle.Visible = enabled and settings.showFov
+            end
+            if enabled then
+                installRaycastHook()
+            end
+        end,
+        {
+            parent = parentScroll,
+            registry = featuresRegistry,
+            categoryName = "Blatant",
+        }
+    )
+
+    addToggleOption(SilentAimFeature, "WallCheck", false, function(value: boolean): ()
+        settings.wallCheck = value
+    end, "Only target enemies with clear line of sight")
+
+    addNumberOption(SilentAimFeature, "Shoot Rate", 0.1, 0.01, 1, function(value: number): ()
+        settings.shootRate = value
+    end, "Cooldown bypass rate in seconds", 0.01)
+
+    addToggleOption(SilentAimFeature, "No Reload", true, function(value: boolean): ()
+        settings.noReload = value
+    end, "Keeps ammo maxed and bypasses reload animation")
+
+    addNumberOption(SilentAimFeature, "FOV", 250, 50, 600, function(value: number): ()
+        settings.fovRadius = value
+        if fovCircle then
+            fovCircle.Radius = value
+        end
+    end, "Silent Aim target selection radius in pixels", 10)
+
+    addToggleOption(SilentAimFeature, "Show FOV", true, function(value: boolean): ()
+        settings.showFov = value
+        if fovCircle then
+            fovCircle.Visible = settings.enabled and value
+        end
+    end, "Renders visual FOV circle on screen")
+
+    featureConnections.Heartbeat = runService.Heartbeat:Connect(onHeartbeat)
+    featureConnections.InputBegan = userInput.InputBegan:Connect(onInputBegan)
+
+    moduleCleanup = function(): ()
+        uninstallRaycastHook()
+        for _, conn: any in pairs(featureConnections) do
+            if typeof(conn) == "RBXScriptConnection" then
+                conn:Disconnect()
+            end
+        end
+        table.clear(featureConnections)
+        if fovCircle then
+            pcall(function(): ()
+                fovCircle.Visible = false
+                fovCircle:Remove()
+            end)
+            fovCircle = nil
+        end
+    end
+
+    Module.Events = featureConnections
+    Module.Initialized = true
+    return Module
+end
+
+function Module.destroy(): ()
+    if not Module.Initialized then
+        return
+    end
+    Module.Initialized = false
+    pcall(moduleCleanup)
+    moduleCleanup = function(): () end
+    Module.Events = {}
+    Module.Runtime = nil
+    Module.Menu = nil
+end
+
+return Module
+]=],
+        ["src/games/MVSD/Other/Shoot.lua"] = [=[
+local Module = {
+    Name = "MVSD Shoot",
+    PlaceId = 135856908115931,
+    Events = {} :: {[string]: any},
+    Initialized = false,
+    Menu = nil :: any,
+    Runtime = nil :: any,
+}
+
+local moduleCleanup: () -> () = function(): () end
+
+function Module.init(runtime: any): any
+    if Module.Initialized then
+        return Module
+    end
+    Module.Runtime = runtime
+    Module.Menu = runtime and runtime.Menu
+
+    local players: Players = game:GetService("Players")
+    local userInput: UserInputService = game:GetService("UserInputService")
+    local localPlayer: Player = players.LocalPlayer
+    local camera: Camera = workspace.CurrentCamera or (workspace:WaitForChild("Camera") :: Camera)
+
+    local featureConnections: {[string]: any} = {}
+
+    local settings = {
+        enabled = false,
+        wallCheck = true,
+        macro = true,
+    }
+
+    local function isSameTeam(a: Player, b: Player): boolean
+        local aAttr: any = a:GetAttribute("Team")
+        local bAttr: any = b:GetAttribute("Team")
+        if aAttr ~= nil and bAttr ~= nil then
+            return aAttr == bAttr
+        end
+        if a.Team ~= nil and b.Team ~= nil then
+            return a.Team == b.Team
+        end
+        return false
+    end
+
+    local function isInMatch(player: Player): boolean
+        local localGame: any = localPlayer:GetAttribute("Game")
+        local playerGame: any = player:GetAttribute("Game")
+        if localGame ~= nil and playerGame ~= nil then
+            return localGame == playerGame
+        end
+        return true
+    end
+
+    local function checkLineOfSight(origin: Vector3, targetPos: Vector3, ignoreModel: Model?): boolean
+        local rayParams = RaycastParams.new()
+        rayParams.FilterType = Enum.RaycastFilterType.Exclude
+        local filterList: {Instance} = {camera}
+        if localPlayer.Character then
+            table.insert(filterList, localPlayer.Character)
+        end
+        if ignoreModel then
+            table.insert(filterList, ignoreModel)
+        end
+        rayParams.FilterDescendantsInstances = filterList
+        rayParams.IgnoreWater = true
+
+        local direction: Vector3 = targetPos - origin
+        local result: RaycastResult? = workspace:Raycast(origin, direction, rayParams)
+        return result == nil
+    end
+
+    local function getClosestVisibleEnemy(): (Player?, BasePart?)
+        local myChar: Model? = localPlayer.Character
+        local myRoot: BasePart? = myChar and (myChar:FindFirstChild("HumanoidRootPart") :: BasePart? or myChar.PrimaryPart :: BasePart?)
+        if not myRoot then
+            return nil, nil
+        end
+
+        local bestEnemy: Player? = nil
+        local bestPart: BasePart? = nil
+        local closestDist: number = math.huge
+
+        for _, player: Player in ipairs(players:GetPlayers()) do
+            if player ~= localPlayer
+                and player:GetAttribute("Died") ~= true
+                and isInMatch(player)
+                and not isSameTeam(localPlayer, player) then
+                local character: Model? = player.Character
+                local humanoid: Humanoid? = character and character:FindFirstChildOfClass("Humanoid")
+                local root: BasePart? = character and (character:FindFirstChild("HumanoidRootPart") :: BasePart? or character:FindFirstChild("Head") :: BasePart?)
+                if character and humanoid and humanoid.Health > 0 and root then
+                    local targetPos: Vector3 = root.Position
+                    local dist: number = (targetPos - myRoot.Position).Magnitude
+                    if dist < closestDist then
+                        if not settings.wallCheck or checkLineOfSight(camera.CFrame.Position, targetPos, character) then
+                            closestDist = dist
+                            bestEnemy = player
+                            bestPart = root
+                        end
+                    end
+                end
+            end
+        end
+
+        return bestEnemy, bestPart
+    end
+
+    local isFiring: boolean = false
+
+    local function executeLegalShot(): ()
+        if isFiring or not settings.enabled then return end
+        local character: Model? = localPlayer.Character
+        local humanoid: Humanoid? = character and character:FindFirstChildOfClass("Humanoid")
+        if not character or not humanoid or humanoid.Health <= 0 then return end
+
+        local tool: Tool? = character:FindFirstChildOfClass("Tool")
+        if not tool then
+            -- Check backpack for gun
+            local backpack: Backpack? = localPlayer:FindFirstChildOfClass("Backpack")
+            if backpack then
+                for _, item: Instance in ipairs(backpack:GetChildren()) do
+                    if item:IsA("Tool") and (item:FindFirstChild("fire") or item:FindFirstChild("showBeam") or string.find(item.Name:lower(), "gun")) then
+                        tool = item
+                        humanoid:EquipTool(tool)
+                        task.wait(0.05)
+                        break
+                    end
+                end
+            end
+        end
+
+        if not tool then return end
+
+        local _, targetPart = getClosestVisibleEnemy()
+        if not targetPart then return end
+
+        isFiring = true
+
+        -- Aim camera at target
+        local handle: BasePart? = tool:FindFirstChild("Handle") :: BasePart?
+        local origin: Vector3 = handle and handle.Position or camera.CFrame.Position
+        local targetPos: Vector3 = targetPart.Position
+
+        -- Fire tool legal events
+        local fireRemote: Instance? = tool:FindFirstChild("fire")
+        if fireRemote and fireRemote:IsA("RemoteEvent") then
+            pcall(function(): ()
+                fireRemote:FireServer()
+            end)
+        end
+
+        local showBeamRemote: Instance? = tool:FindFirstChild("showBeam")
+        if showBeamRemote and showBeamRemote:IsA("RemoteEvent") and handle then
+            pcall(function(): ()
+                showBeamRemote:FireServer(origin, targetPos, handle)
+            end)
+        end
+
+        pcall(function(): ()
+            tool:Activate()
+        end)
+
+        -- Macro: automatically unequips the gun 0.01 seconds after firing
+        if settings.macro then
+            task.delay(0.01, function(): ()
+                if humanoid and humanoid.Parent then
+                    pcall(function(): ()
+                        humanoid:UnequipTools()
+                    end)
+                end
+                isFiring = false
+            end)
+        else
+            task.delay(0.1, function(): ()
+                isFiring = false
+            end)
+        end
+    end
+
+    local function onInputBegan(input: InputObject, gameProcessed: boolean): ()
+        if not settings.enabled or gameProcessed then return end
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.KeyCode == Enum.KeyCode.E then
+            local character: Model? = localPlayer.Character
+            local tool: Tool? = character and character:FindFirstChildOfClass("Tool")
+            if tool and (tool:FindFirstChild("fire") or tool:FindFirstChild("showBeam") or string.find(tool.Name:lower(), "gun")) then
+                executeLegalShot()
+            end
+        end
+    end
+
+    local env: any = getfenv()
+    local createUniversalFeature: any = env.createUniversalFeature
+    local addToggleOption: any = env.addToggleOption
+    local addButtonOption: any = env.addButtonOption
+
+    local parentScroll: any = state and state.mvsdScroll
+    local featuresRegistry: any = state and state.mvsdFeatures
+
+    local ShootFeature: any = createUniversalFeature(
+        "Shoot",
+        "Fires legal shots at enemy with line-of-sight check and 0.01s auto-unequip macro",
+        2,
+        function(enabled: boolean): ()
+            settings.enabled = enabled
+        end,
+        {
+            parent = parentScroll,
+            registry = featuresRegistry,
+            categoryName = "Other",
+        }
+    )
+
+    addToggleOption(ShootFeature, "WallCheck", true, function(value: boolean): ()
+        settings.wallCheck = value
+    end, "Only fire when target is visible")
+
+    addToggleOption(ShootFeature, "Macro", true, function(value: boolean): ()
+        settings.macro = value
+    end, "Automatically unequips gun 0.01 seconds after firing")
+
+    addButtonOption(ShootFeature, "Fire Shot", function(): ()
+        executeLegalShot()
+    end, "Triggers a single legal shot now")
+
+    featureConnections.InputBegan = userInput.InputBegan:Connect(onInputBegan)
+
+    moduleCleanup = function(): ()
+        for _, conn: any in pairs(featureConnections) do
+            if typeof(conn) == "RBXScriptConnection" then
+                conn:Disconnect()
+            end
+        end
+        table.clear(featureConnections)
+    end
+
+    Module.Events = featureConnections
+    Module.Initialized = true
+    return Module
+end
+
+function Module.destroy(): ()
+    if not Module.Initialized then
+        return
+    end
+    Module.Initialized = false
+    pcall(moduleCleanup)
+    moduleCleanup = function(): () end
+    Module.Events = {}
+    Module.Runtime = nil
+    Module.Menu = nil
+end
+
+return Module
+]=],
+        ["src/games/MVSD/Blatant/Knife.lua"] = [=[
+local Module = {
+    Name = "MVSD Knife",
+    PlaceId = 135856908115931,
+    Events = {} :: {[string]: any},
+    Initialized = false,
+    Menu = nil :: any,
+    Runtime = nil :: any,
+}
+
+local moduleCleanup: () -> () = function(): () end
+
+function Module.init(runtime: any): any
+    if Module.Initialized then
+        return Module
+    end
+    Module.Runtime = runtime
+    Module.Menu = runtime and runtime.Menu
+
+    local players: Players = game:GetService("Players")
+    local runService: RunService = game:GetService("RunService")
+    local replicatedStorage: ReplicatedStorage = game:GetService("ReplicatedStorage")
+    local localPlayer: Player = players.LocalPlayer
+    local camera: Camera = workspace.CurrentCamera or (workspace:WaitForChild("Camera") :: Camera)
+
+    local featureConnections: {[string]: any} = {}
+
+    local settings = {
+        enabled = false,
+        hitboxIncrease = true,
+        hitboxSize = 20,
+        silentAim = true,
+        knifeRate = 0.1,
+    }
+
+    local originalHitboxes: {[BasePart]: Vector3} = {}
+
+    local function isSameTeam(a: Player, b: Player): boolean
+        local aAttr: any = a:GetAttribute("Team")
+        local bAttr: any = b:GetAttribute("Team")
+        if aAttr ~= nil and bAttr ~= nil then
+            return aAttr == bAttr
+        end
+        if a.Team ~= nil and b.Team ~= nil then
+            return a.Team == b.Team
+        end
+        return false
+    end
+
+    local function isInMatch(player: Player): boolean
+        local localGame: any = localPlayer:GetAttribute("Game")
+        local playerGame: any = player:GetAttribute("Game")
+        if localGame ~= nil and playerGame ~= nil then
+            return localGame == playerGame
+        end
+        return true
+    end
+
+    local function getActiveEnemies(): {Player}
+        local enemies: {Player} = {}
+        for _, player: Player in ipairs(players:GetPlayers()) do
+            if player ~= localPlayer
+                and player:GetAttribute("Died") ~= true
+                and isInMatch(player)
+                and not isSameTeam(localPlayer, player) then
+                local character: Model? = player.Character
+                local humanoid: Humanoid? = character and character:FindFirstChildOfClass("Humanoid")
+                local root: BasePart? = character and (character:FindFirstChild("HumanoidRootPart") :: BasePart? or character:FindFirstChild("Head") :: BasePart?)
+                if character and humanoid and humanoid.Health > 0 and root then
+                    table.insert(enemies, player)
+                end
+            end
+        end
+        return enemies
+    end
+
+    local function restoreAllHitboxes(): ()
+        for part: BasePart, origSize: Vector3 in pairs(originalHitboxes) do
+            if part and part.Parent then
+                pcall(function(): ()
+                    part.Size = origSize
+                    part.Transparency = 1
+                    part.CanCollide = false
+                end)
+            end
+        end
+        table.clear(originalHitboxes)
+    end
+
+    local function updateHitboxes(): ()
+        if not settings.enabled or not settings.hitboxIncrease then
+            restoreAllHitboxes()
+            return
+        end
+
+        local enemies: {Player} = getActiveEnemies()
+        local activeSet: {[BasePart]: boolean} = {}
+
+        for _, enemy: Player in ipairs(enemies) do
+            local character: Model = enemy.Character :: Model
+            local root: BasePart? = character:FindFirstChild("HumanoidRootPart") :: BasePart?
+            if root then
+                activeSet[root] = true
+                if not originalHitboxes[root] then
+                    originalHitboxes[root] = root.Size
+                end
+                pcall(function(): ()
+                    root.Size = Vector3.new(settings.hitboxSize, settings.hitboxSize, settings.hitboxSize)
+                    root.Transparency = 0.7
+                    root.CanCollide = false
+                end)
+            end
+        end
+
+        -- Clean up players no longer in match
+        for part: BasePart, origSize: Vector3 in pairs(originalHitboxes) do
+            if not activeSet[part] then
+                if part and part.Parent then
+                    pcall(function(): ()
+                        part.Size = origSize
+                        part.Transparency = 1
+                        part.CanCollide = false
+                    end)
+                end
+                originalHitboxes[part] = nil
+            end
+        end
+    end
+
+    -- Knife Throw remotes
+    local function getKnifeThrowRemotes(): (RemoteEvent?, RemoteEvent?, RemoteEvent?)
+        local packages: Instance? = replicatedStorage:FindFirstChild("Packages")
+        local net: Instance? = packages and packages:FindFirstChild("Net")
+        if not net then return nil, nil, nil end
+
+        local prepRemote: RemoteEvent? = nil
+        local throwRemote: RemoteEvent? = nil
+        local hitRemote: RemoteEvent? = nil
+
+        for _, child: Instance in ipairs(net:GetChildren()) do
+            if child:IsA("RemoteEvent") then
+                if string.find(child.Name, "78a946aa") then
+                    prepRemote = child
+                elseif string.find(child.Name, "bfabffda") then
+                    throwRemote = child
+                elseif string.find(child.Name, "90e51178") then
+                    hitRemote = child
+                end
+            end
+        end
+
+        return prepRemote, throwRemote, hitRemote
+    end
+
+    local lastKnifeThrowTime: number = 0
+
+    local function executeKnifeSilentAim(): ()
+        if not settings.enabled or not settings.silentAim then return end
+        local now: number = os.clock()
+        if now - lastKnifeThrowTime < settings.knifeRate then return end
+        lastKnifeThrowTime = now
+
+        local enemies: {Player} = getActiveEnemies()
+        if #enemies == 0 then return end
+        local targetEnemy: Player = enemies[math.random(1, #enemies)]
+        local character: Model = targetEnemy.Character :: Model
+        local targetRoot: BasePart? = character:FindFirstChild("HumanoidRootPart") :: BasePart?
+            or character:FindFirstChild("Head") :: BasePart?
+        if not targetRoot then return end
+
+        local myChar: Model? = localPlayer.Character
+        local myRoot: BasePart? = myChar and (myChar:FindFirstChild("HumanoidRootPart") :: BasePart? or myChar.PrimaryPart :: BasePart?)
+        local origin: Vector3 = myRoot and myRoot.Position or camera.CFrame.Position
+        local targetPos: Vector3 = targetRoot.Position
+
+        local prepRemote, throwRemote, hitRemote = getKnifeThrowRemotes()
+        local actionId: string = "knife_" .. tostring(math.random(100000, 999999))
+
+        if prepRemote then
+            pcall(function(): ()
+                prepRemote:FireServer(actionId)
+            end)
+        end
+
+        if throwRemote then
+            pcall(function(): ()
+                local knifeCFrame: CFrame = CFrame.new(origin, targetPos)
+                throwRemote:FireServer(actionId, knifeCFrame, targetPos)
+            end)
+        end
+
+        if hitRemote then
+            pcall(function(): ()
+                local dir: Vector3 = (targetPos - origin).Unit
+                hitRemote:FireServer(actionId, targetEnemy, dir, origin, targetPos)
+            end)
+        end
+    end
+
+    local function onHeartbeat(): ()
+        if not settings.enabled then return end
+        updateHitboxes()
+
+        -- Cooldown bypass for equipped knife
+        local character: Model? = localPlayer.Character
+        local tool: Tool? = character and character:FindFirstChildOfClass("Tool")
+        if tool and string.find(tool.Name:lower(), "knife") then
+            tool:SetAttribute("CanSlash", true)
+            tool:SetAttribute("CanThrow", true)
+            tool:SetAttribute("Cooldown", 0)
+        end
+    end
+
+    -- Hook knife activation
+    local userInput: UserInputService = game:GetService("UserInputService")
+    local function onInputBegan(input: InputObject, gameProcessed: boolean): ()
+        if not settings.enabled or gameProcessed then return end
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.MouseButton2 then
+            local character: Model? = localPlayer.Character
+            local tool: Tool? = character and character:FindFirstChildOfClass("Tool")
+            if tool and string.find(tool.Name:lower(), "knife") then
+                executeKnifeSilentAim()
+            end
+        end
+    end
+
+    local env: any = getfenv()
+    local createUniversalFeature: any = env.createUniversalFeature
+    local addToggleOption: any = env.addToggleOption
+    local addNumberOption: any = env.addNumberOption
+
+    local parentScroll: any = state and state.mvsdScroll
+    local featuresRegistry: any = state and state.mvsdFeatures
+
+    local KnifeFeature: any = createUniversalFeature(
+        "Knife",
+        "Hitbox increase and remote silent aim knife teleportation",
+        3,
+        function(enabled: boolean): ()
+            settings.enabled = enabled
+            if not enabled then
+                restoreAllHitboxes()
+            end
+        end,
+        {
+            parent = parentScroll,
+            registry = featuresRegistry,
+            categoryName = "Blatant",
+        }
+    )
+
+    addToggleOption(KnifeFeature, "Hitbox Increase", true, function(value: boolean): ()
+        settings.hitboxIncrease = value
+        if not value then
+            restoreAllHitboxes()
+        end
+    end, "Expands enemy humanoid hitbox for massive slash range")
+
+    addNumberOption(KnifeFeature, "Hitbox Size", 20, 5, 45, function(value: number): ()
+        settings.hitboxSize = value
+    end, "Hitbox size in studs", 1)
+
+    addToggleOption(KnifeFeature, "SilentAIM", true, function(value: boolean): ()
+        settings.silentAim = value
+    end, "Teleports knives directly to enemies via remote")
+
+    addNumberOption(KnifeFeature, "Knife Rate", 0.1, 0.02, 1, function(value: number): ()
+        settings.knifeRate = value
+    end, "Knife attack cooldown rate in seconds", 0.02)
+
+    featureConnections.Heartbeat = runService.Heartbeat:Connect(onHeartbeat)
+    featureConnections.InputBegan = userInput.InputBegan:Connect(onInputBegan)
+
+    moduleCleanup = function(): ()
+        restoreAllHitboxes()
+        for _, conn: any in pairs(featureConnections) do
+            if typeof(conn) == "RBXScriptConnection" then
+                conn:Disconnect()
+            end
+        end
+        table.clear(featureConnections)
+    end
+
+    Module.Events = featureConnections
+    Module.Initialized = true
+    return Module
+end
+
+function Module.destroy(): ()
+    if not Module.Initialized then
+        return
+    end
+    Module.Initialized = false
+    pcall(moduleCleanup)
+    moduleCleanup = function(): () end
+    Module.Events = {}
+    Module.Runtime = nil
+    Module.Menu = nil
+end
+
+return Module
+]=],
+        ["src/games/MVSD/Blatant/AutoWin.lua"] = [=[
+local Module = {
+    Name = "MVSD AutoWin",
+    PlaceId = 135856908115931,
+    Events = {} :: {[string]: any},
+    Initialized = false,
+    Menu = nil :: any,
+    Runtime = nil :: any,
+}
+
+local moduleCleanup: () -> () = function(): () end
+
+function Module.init(runtime: any): any
+    if Module.Initialized then
+        return Module
+    end
+    Module.Runtime = runtime
+    Module.Menu = runtime and runtime.Menu
+
+    local players: Players = game:GetService("Players")
+    local replicatedStorage: ReplicatedStorage = game:GetService("ReplicatedStorage")
+    local localPlayer: Player = players.LocalPlayer
+    local featureConnections: {[string]: any} = {}
+
+    local settings = {
+        enabled = false,
+        autoQueue = true,
+        teleport = true,
+        spamDelay = 0.05,
+    }
+
+    local function isSameTeam(a: Player, b: Player): boolean
+        local aAttr: any = a:GetAttribute("Team")
+        local bAttr: any = b:GetAttribute("Team")
+        if aAttr ~= nil and bAttr ~= nil then
+            return aAttr == bAttr
+        end
+        if a.Team ~= nil and b.Team ~= nil then
+            return a.Team == b.Team
+        end
+        return false
+    end
+
+    local function isInMatch(player: Player): boolean
+        local localGame: any = localPlayer:GetAttribute("Game")
+        local playerGame: any = player:GetAttribute("Game")
+        if localGame ~= nil and playerGame ~= nil then
+            return localGame == playerGame
+        end
+        return true
+    end
+
+    local function getActiveEnemies(): {Player}
+        local enemies: {Player} = {}
+        for _, player: Player in ipairs(players:GetPlayers()) do
+            if player ~= localPlayer
+                and player:GetAttribute("Died") ~= true
+                and isInMatch(player)
+                and not isSameTeam(localPlayer, player) then
+                local character: Model? = player.Character
+                local humanoid: Humanoid? = character and character:FindFirstChildOfClass("Humanoid")
+                local root: BasePart? = character and (character:FindFirstChild("HumanoidRootPart") :: BasePart? or character:FindFirstChild("Head") :: BasePart?)
+                if character and humanoid and humanoid.Health > 0 and root then
+                    table.insert(enemies, player)
+                end
+            end
+        end
+        return enemies
+    end
+
+    local function findConfirmMapRemote(): RemoteEvent?
+        local packages: Instance? = replicatedStorage:FindFirstChild("Packages")
+        local networking: Instance? = packages and packages:FindFirstChild("Networking")
+        if networking then
+            local re: Instance? = networking:FindFirstChild("RE")
+            local match: Instance? = re and re:FindFirstChild("Match")
+            local confirm: Instance? = match and match:FindFirstChild("ConfirmMatchMap")
+            if confirm and confirm:IsA("RemoteEvent") then
+                return confirm
+            end
+        end
+        return nil
+    end
+
+    local function getNetHitRemote(): RemoteEvent?
+        local packages: Instance? = replicatedStorage:FindFirstChild("Packages")
+        local net: Instance? = packages and packages:FindFirstChild("Net")
+        if net then
+            for _, child: Instance in ipairs(net:GetChildren()) do
+                if child:IsA("RemoteEvent") and string.find(child.Name, "90e51178") then
+                    return child
+                end
+            end
+        end
+        return nil
+    end
+
+    local function click1v1Queue(): ()
+        local confirmRemote: RemoteEvent? = findConfirmMapRemote()
+        if confirmRemote then
+            pcall(function(): ()
+                confirmRemote:FireServer("2a4fb88fa6810854")
+            end)
+        end
+
+        local pgui: PlayerGui? = localPlayer:FindFirstChildOfClass("PlayerGui")
+        if pgui then
+            for _, desc: Instance in ipairs(pgui:GetDescendants()) do
+                if desc:IsA("TextButton") or desc:IsA("ImageButton") then
+                    local nameLow: string = desc.Name:lower()
+                    local textLow: string = desc:IsA("TextButton") and desc.Text:lower() or ""
+                    if string.find(nameLow, "1v1")
+                        or string.find(textLow, "1v1")
+                        or string.find(nameLow, "duel")
+                        or string.find(textLow, "duel")
+                        or string.find(nameLow, "queue")
+                        or string.find(textLow, "queue") then
+                        pcall(function(): ()
+                            for _, conn: any in ipairs(getconnections(desc.Activated)) do
+                                conn:Fire()
+                            end
+                            for _, conn: any in ipairs(getconnections(desc.MouseButton1Click)) do
+                                conn:Fire()
+                            end
+                        end)
+                    end
+                end
+            end
+        end
+    end
+
+    local isSpamming: boolean = false
+
+    local function autoWinStep(): ()
+        if not settings.enabled or isSpamming then return end
+
+        local enemies: {Player} = getActiveEnemies()
+        if #enemies == 0 then
+            -- If not in match or no enemy alive, try queueing
+            if settings.autoQueue then
+                click1v1Queue()
+            end
+            return
+        end
+
+        local targetEnemy: Player = enemies[1]
+        local enemyChar: Model = targetEnemy.Character :: Model
+        local enemyRoot: BasePart? = enemyChar:FindFirstChild("HumanoidRootPart") :: BasePart?
+            or enemyChar.PrimaryPart :: BasePart?
+        if not enemyRoot then return end
+
+        local myChar: Model? = localPlayer.Character
+        local myHumanoid: Humanoid? = myChar and myChar:FindFirstChildOfClass("Humanoid")
+        local myRoot: BasePart? = myChar and (myChar:FindFirstChild("HumanoidRootPart") :: BasePart? or myChar.PrimaryPart :: BasePart?)
+        if not myChar or not myHumanoid or not myRoot or myHumanoid.Health <= 0 then return end
+
+        isSpamming = true
+
+        -- Teleport directly behind enemy
+        if settings.teleport then
+            pcall(function(): ()
+                myRoot.CFrame = enemyRoot.CFrame * CFrame.new(0, 0, 3) * CFrame.Angles(0, math.pi, 0)
+                myRoot.AssemblyLinearVelocity = Vector3.zero
+            end)
+        end
+
+        -- Equip weapon
+        local tool: Tool? = myChar:FindFirstChildOfClass("Tool")
+        if not tool then
+            local backpack: Backpack? = localPlayer:FindFirstChildOfClass("Backpack")
+            if backpack then
+                for _, item: Instance in ipairs(backpack:GetChildren()) do
+                    if item:IsA("Tool") then
+                        myHumanoid:EquipTool(item)
+                        tool = item
+                        task.wait(0.02)
+                        break
+                    end
+                end
+            end
+        end
+
+        local origin: Vector3 = myRoot.Position
+        local targetPos: Vector3 = enemyRoot.Position
+        local dir: Vector3 = (targetPos - origin).Unit
+
+        -- Spam gun remotes
+        if tool then
+            local fireRemote: Instance? = tool:FindFirstChild("fire")
+            if fireRemote and fireRemote:IsA("RemoteEvent") then
+                pcall(function(): ()
+                    fireRemote:FireServer()
+                end)
+            end
+
+            local showBeam: Instance? = tool:FindFirstChild("showBeam")
+            local handle: BasePart? = tool:FindFirstChild("Handle") :: BasePart?
+            if showBeam and showBeam:IsA("RemoteEvent") and handle then
+                pcall(function(): ()
+                    showBeam:FireServer(origin, targetPos, handle)
+                end)
+            end
+
+            pcall(function(): ()
+                tool:Activate()
+            end)
+        end
+
+        -- Spam damage confirmation remote
+        local netHit: RemoteEvent? = getNetHitRemote()
+        if netHit then
+            for _ = 1, 3 do
+                local actionId: string = "autowin_" .. tostring(math.random(100000, 999999))
+                pcall(function(): ()
+                    netHit:FireServer(actionId, targetEnemy, dir, origin, targetPos)
+                end)
+            end
+        end
+
+        task.delay(settings.spamDelay, function(): ()
+            isSpamming = false
+        end)
+    end
+
+    local loopThread: thread? = nil
+
+    local function startLoop(): ()
+        if loopThread then return end
+        loopThread = task.spawn(function(): ()
+            while settings.enabled do
+                autoWinStep()
+                task.wait(settings.spamDelay)
+            end
+            loopThread = nil
+        end)
+    end
+
+    local function stopLoop(): ()
+        if loopThread then
+            task.cancel(loopThread)
+            loopThread = nil
+        end
+        isSpamming = false
+    end
+
+    local env: any = getfenv()
+    local createUniversalFeature: any = env.createUniversalFeature
+    local addToggleOption: any = env.addToggleOption
+    local addNumberOption: any = env.addNumberOption
+    local addButtonOption: any = env.addButtonOption
+
+    local parentScroll: any = state and state.mvsdScroll
+    local featuresRegistry: any = state and state.mvsdFeatures
+
+    local AutoWinFeature: any = createUniversalFeature(
+        "AutoWin",
+        "Automatically queues 1v1, teleports to enemy, and spams silent aim to win in seconds",
+        4,
+        function(enabled: boolean): ()
+            settings.enabled = enabled
+            if enabled then
+                startLoop()
+            else
+                stopLoop()
+            end
+        end,
+        {
+            parent = parentScroll,
+            registry = featuresRegistry,
+            categoryName = "Blatant",
+        }
+    )
+
+    addToggleOption(AutoWinFeature, "Auto 1v1 Queue", true, function(value: boolean): ()
+        settings.autoQueue = value
+    end, "Automatically clicks/confirms 1v1 queue prompts")
+
+    addToggleOption(AutoWinFeature, "Teleport to Enemy", true, function(value: boolean): ()
+        settings.teleport = value
+    end, "Teleports behind the opponent on match start")
+
+    addNumberOption(AutoWinFeature, "Spam Rate", 0.05, 0.01, 0.5, function(value: number): ()
+        settings.spamDelay = value
+    end, "Remote spam interval in seconds", 0.01)
+
+    addButtonOption(AutoWinFeature, "Trigger Win Now", function(): ()
+        autoWinStep()
+    end, "Executes one instant teleport & hit spam sequence")
+
+    moduleCleanup = function(): ()
+        stopLoop()
+        for _, conn: any in pairs(featureConnections) do
+            if typeof(conn) == "RBXScriptConnection" then
+                conn:Disconnect()
+            end
+        end
+        table.clear(featureConnections)
+    end
+
+    Module.Events = featureConnections
+    Module.Initialized = true
+    return Module
+end
+
+function Module.destroy(): ()
+    if not Module.Initialized then
+        return
+    end
+    Module.Initialized = false
+    pcall(moduleCleanup)
+    moduleCleanup = function(): () end
+    Module.Events = {}
+    Module.Runtime = nil
+    Module.Menu = nil
+end
+
+return Module
 ]=],
     },
 }
