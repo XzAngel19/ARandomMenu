@@ -334,6 +334,28 @@ check("F enabling starts diagnostics", heartbeatConnections, 1)
 createdFeatures[1].onToggle(false)
 check("F disabling stops diagnostics", heartbeatConnections, 0)
 
+-- Scenario G: weapon tool detection and auto-equip (pistol/knife).
+local backpack = makeInstance("Backpack", "Backpack")
+me.children.Backpack = backpack
+
+local gun = makeInstance("Tool", "DefaultGun")
+gun.children.fire = makeInstance("RemoteEvent", "fire")
+gun.children.showBeam = makeInstance("RemoteEvent", "showBeam")
+gun.Parent = backpack
+backpack.children.DefaultGun = gun
+
+local knife = makeInstance("Tool", "DefaultKnife")
+knife.children.Handle = makeInstance("Part", "Handle")
+knife.Parent = backpack
+backpack.children.DefaultKnife = knife
+
+check("G detects pistol", state.mvsdCore.findGun(), gun)
+check("G pistol is gun", state.mvsdCore.isGunTool(gun), true)
+check("G knife not gun", state.mvsdCore.isGunTool(knife), false)
+check("G detects knife", state.mvsdCore.findKnife(), knife)
+check("G auto-equip pistol", state.mvsdCore.equip(gun), true)
+check("G pistol equipped", state.mvsdCore.isEquipped(gun), true)
+
 Module.destroy()
 check("destroy clears core", state.mvsdCore, nil)
 check("destroy clears provider", state.gameBridge.teamProvider, nil)

@@ -387,6 +387,115 @@ function Module.init(runtime: any): any
             .. " · source=" .. tostring(lastSource or "none")
     end
 
+    -- The Duels weapon tools are Tools whose names and remotes differ by mode
+    -- (DefaultGun in the 2v2 queue, Gun/Knife elsewhere). The structural check
+    -- (a gun owns fire/showBeam remotes) is the reliable tell; names back it up.
+    local GUN_WORDS: {string} = {"gun", "revolver", "pistol", "shotgun", "rifle", "defaultgun"}
+    local KNIFE_WORDS: {string} = {"knife", "blade", "dagger", "sword", "katana", "machete"}
+
+    local function nameMatches(lowered: string, words: {string}): boolean
+        for _, word: string in ipairs(words) do
+            if string.find(lowered, word, 1, true) then
+                return true
+            end
+        end
+        return false
+    end
+
+    local function isGunTool(tool: Instance): boolean
+        if tool:FindFirstChild("fire") or tool:FindFirstChild("showBeam") then
+            return true
+        end
+        return nameMatches(string.lower(tool.Name), GUN_WORDS)
+    end
+
+    local function isKnifeTool(tool: Instance): boolean
+        if nameMatches(string.lower(tool.Name), KNIFE_WORDS) then
+            return true
+        end
+        -- A weapon tool that is not a gun is the knife.
+        return (tool:IsA("Tool") or tool:FindFirstChild("Handle") ~= nil)
+            and not isGunTool(tool)
+    end
+
+    local function candidateTools(): {Instance}
+        local list: {Instance} = {}
+        local character: Model? = localPlayer.Character
+        local backpack: Instance? = localPlayer:FindFirstChildOfClass("Backpack")
+        for _, container: Instance? in ipairs({character, backpack}) do
+            if not container then
+                continue
+            end
+            for _, child: Instance in ipairs(container:GetChildren()) do
+                if child:IsA("Tool") or child:FindFirstChild("Handle") then
+                    table.insert(list, child)
+                end
+            end
+        end
+        return list
+    end
+
+    local function findGun(): Instance?
+        for _, tool: Instance in ipairs(candidateTools()) do
+            if isGunTool(tool) then
+                return tool
+            end
+        end
+        return nil
+    end
+
+    local function findKnife(): Instance?
+        for _, tool: Instance in ipairs(candidateTools()) do
+            if isKnifeTool(tool) and not isGunTool(tool) then
+                return tool
+            end
+        end
+        return nil
+    end
+
+    local function isEquipped(tool: Instance): boolean
+        return tool.Parent == localPlayer.Character
+    end
+
+    local function equip(tool: Instance?): boolean
+        if not tool then
+            return false
+        end
+        if isEquipped(tool) then
+            return true
+        end
+        local character: Model? = localPlayer.Character
+        local humanoid: Humanoid? = character
+            and character:FindFirstChildOfClass("Humanoid")
+        if not humanoid then
+            return false
+        end
+        local ok: boolean = pcall(function(): ()
+            (humanoid :: any):EquipTool(tool)
+        end)
+        if ok and isEquipped(tool) then
+            return true
+        end
+        -- Some executors refuse EquipTool on tools still in the Backpack.
+        pcall(function(): ()
+            tool.Parent = character
+        end)
+        return isEquipped(tool)
+    end
+
+    local function equippedTool(): Instance?
+        local character: Model? = localPlayer.Character
+        if not character then
+            return nil
+        end
+        for _, child: Instance in ipairs(character:GetChildren()) do
+            if child:IsA("Tool") or child:FindFirstChild("Handle") then
+                return child
+            end
+        end
+        return nil
+    end
+
     state.mvsdCore = {
         roleOf = function(player: Player): string?
             local role: string? = resolve(player)
@@ -400,9 +509,18 @@ function Module.init(runtime: any): any
         isEnemy = isEnemy,
         isAlive = isAlive,
         inSameMatch = inSameMatch,
+        matchIdOf = matchIdOf,
         enemies = enemies,
         describe = describe,
         clearCache = clearCache,
+        isGunTool = isGunTool,
+        isKnifeTool = isKnifeTool,
+        findGun = findGun,
+        findKnife = findKnife,
+        equip = equip,
+        isEquipped = isEquipped,
+        equippedTool = equippedTool,
+        candidateTools = candidateTools,
     }
 
     local teamProvider: any = {

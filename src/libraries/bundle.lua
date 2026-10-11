@@ -1,5 +1,5 @@
 return {
-    stamp = "v4-20261011-1600",
+    stamp = "v5-20261011-1700",
     files = {
         ["src/games/BedFight/Combat/AutoSwing.lua"] = [[
 local Module = {Name = "BedFight Auto Swing", Initialized = false, Connection = nil}
@@ -9090,8 +9090,16 @@ function Module.init(runtime: any): any
 
     local players: Players = game:GetService("Players")
     local replicatedStorage: ReplicatedStorage = game:GetService("ReplicatedStorage")
+    local httpService: HttpService = game:GetService("HttpService")
     local localPlayer: Player = players.LocalPlayer
-    local featureConnections: {[string]: any} = {}
+
+    local env: any = getfenv()
+    local state: any = env.state
+    local core: any = state and state.mvsdCore
+    local createUniversalFeature: any = env.createUniversalFeature
+    local addToggleOption: any = env.addToggleOption
+    local addNumberOption: any = env.addNumberOption
+    local addActionOption: any = env.addActionOption
 
     local settings = {
         enabled = false,
@@ -9100,87 +9108,93 @@ function Module.init(runtime: any): any
         spamDelay = 0.05,
     }
 
-    local function isSameTeam(a: Player, b: Player): boolean
-        -- base.lua resolves the side from every source Duels exposes; the
-        -- attribute-only check below is only the fallback when it is missing.
-        local core: any = state and state.mvsdCore
-        if core and type(core.isTeammate) == "function" then
-            local other: Player? = nil
-            if a == localPlayer then
-                other = b
-            elseif b == localPlayer then
-                other = a
-            end
-            if other ~= nil then
-                return core.isTeammate(other) == true
-            end
+    local AutoWinFeature: any = nil
+
+    local function setStatus(text: string?): ()
+        if AutoWinFeature and type(AutoWinFeature.SetStatus) == "function" then
+            AutoWinFeature:SetStatus(text)
         end
-        local aAttr: any = a:GetAttribute("Team")
-        local bAttr: any = b:GetAttribute("Team")
-        if aAttr ~= nil and bAttr ~= nil then
-            return aAttr == bAttr
-        end
-        if a.Team ~= nil and b.Team ~= nil then
-            return a.Team == b.Team
-        end
-        return false
     end
 
-    local function isInMatch(player: Player): boolean
-        local localGame: any = localPlayer:GetAttribute("Game")
-        local playerGame: any = player:GetAttribute("Game")
-        if localGame ~= nil and playerGame ~= nil then
-            return localGame == playerGame
+    -- Only run the win-spam while a match is actually live; otherwise we would
+    -- chase lobby players instead of queueing (the previous "teleports to
+    -- someone" bug).
+    local function inActiveMatch(): boolean
+        if core and type(core.matchIdOf) == "function" then
+            return core.matchIdOf(localPlayer) ~= nil
         end
-        return true
-    end
-
-    local function getActiveEnemies(): {Player}
-        local enemies: {Player} = {}
-        for _, player: Player in ipairs(players:GetPlayers()) do
-            if player ~= localPlayer
-                and player:GetAttribute("Died") ~= true
-                and isInMatch(player)
-                and not isSameTeam(localPlayer, player) then
-                local character: Model? = player.Character
-                local humanoid: Humanoid? = character and character:FindFirstChildOfClass("Humanoid")
-                local root: BasePart? = character and (character:FindFirstChild("HumanoidRootPart") :: BasePart? or character:FindFirstChild("Head") :: BasePart?)
-                if character and humanoid and humanoid.Health > 0 and root then
-                    table.insert(enemies, player)
-                end
-            end
-        end
-        return enemies
+        return localPlayer:GetAttribute("Died") ~= nil
     end
 
     local function findConfirmMapRemote(): RemoteEvent?
         local packages: Instance? = replicatedStorage:FindFirstChild("Packages")
         local networking: Instance? = packages and packages:FindFirstChild("Networking")
-        if networking then
-            local re: Instance? = networking:FindFirstChild("RE")
-            local match: Instance? = re and re:FindFirstChild("Match")
-            local confirm: Instance? = match and match:FindFirstChild("ConfirmMatchMap")
-            if confirm and confirm:IsA("RemoteEvent") then
-                return confirm
-            end
+        if not networking then
+            return nil
         end
-        return nil
+        local re: Instance? = networking:FindFirstChild("RE")
+        local match: Instance? = re and re:FindFirstChild("Match")
+        local confirm: Instance? = match and match:FindFirstChild("ConfirmMatchMap")
+        return confirm and confirm:IsA("RemoteEvent") and confirm or nil
     end
 
     local function getNetHitRemote(): RemoteEvent?
         local packages: Instance? = replicatedStorage:FindFirstChild("Packages")
         local net: Instance? = packages and packages:FindFirstChild("Net")
-        if net then
-            for _, child: Instance in ipairs(net:GetChildren()) do
-                if child:IsA("RemoteEvent") and string.find(child.Name, "90e51178") then
-                    return child
-                end
+        if not net then
+            return nil
+        end
+        local re: Instance? = net:FindFirstChild("RE")
+        local container: Instance = re or net
+        for _, child: Instance in ipairs(container:GetChildren()) do
+            if child:IsA("RemoteEvent") and string.find(child.Name, "90e51178", 1, true) then
+                return child
             end
         end
         return nil
     end
 
-    local function click1v1Queue(): ()
+    local function fireButtonClick(button: Instance): boolean
+        local g: any = getfenv()
+        -- Preferred executor path: fire the signal the UI listens to.
+        if type(g.firesignal) == "function" then
+            local ok: boolean = pcall(function(): ()
+                g.firesignal(button.MouseButton1Click)
+            end)
+            if ok then
+                return true
+            end
+        end
+        if type(g.getconnections) == "function" then
+            local ok: boolean, conns: any = pcall(g.getconnections, button.MouseButton1Click)
+            if ok and type(conns) == "table" then
+                local fired: boolean = false
+                for _, conn: any in ipairs(conns) do
+                    if type(conn) == "table" and type(conn.Function) == "function" then
+                        pcall(conn.Function)
+                        fired = true
+                    elseif type(conn) == "table" and type(conn.Fire) == "function" then
+                        pcall(conn.Fire, conn)
+                        fired = true
+                    end
+                end
+                if fired then
+                    return true
+                end
+            end
+        end
+        -- Last resort for engines that let a signal be fired directly.
+        local okDirect: boolean = pcall(function(): ()
+            (button :: any).MouseButton1Click:Fire()
+        end)
+        return okDirect
+    end
+
+    local QUEUE_WORDS: {string} = {"1v1", "1vs1", "duel", "queue", "play", "start"}
+
+    local function click1v1Queue(): boolean
+        local clicked: boolean = false
+
         local confirmRemote: RemoteEvent? = findConfirmMapRemote()
         if confirmRemote then
             pcall(function(): ()
@@ -9188,60 +9202,89 @@ function Module.init(runtime: any): any
             end)
         end
 
-        local pgui: PlayerGui? = localPlayer:FindFirstChildOfClass("PlayerGui")
-        if pgui then
+        local pgui: Instance? = localPlayer:FindFirstChildOfClass("PlayerGui")
+        if not pgui then
+            return clicked
+        end
+
+        -- Pass 1: an exact 1v1 button. Pass 2: any queue/duel/play button.
+        for pass: number = 1, 2 do
             for _, desc: Instance in ipairs(pgui:GetDescendants()) do
-                if desc:IsA("TextButton") or desc:IsA("ImageButton") then
-                    local nameLow: string = desc.Name:lower()
-                    local textLow: string = desc:IsA("TextButton") and desc.Text:lower() or ""
-                    if string.find(nameLow, "1v1")
-                        or string.find(textLow, "1v1")
-                        or string.find(nameLow, "duel")
-                        or string.find(textLow, "duel")
-                        or string.find(nameLow, "queue")
-                        or string.find(textLow, "queue") then
-                        pcall(function(): ()
-                            for _, conn: any in ipairs(getconnections(desc.Activated)) do
-                                conn:Fire()
-                            end
-                            for _, conn: any in ipairs(getconnections(desc.MouseButton1Click)) do
-                                conn:Fire()
-                            end
-                        end)
+                if not (desc:IsA("TextButton") or desc:IsA("ImageButton")) then
+                    continue
+                end
+                local nameLow: string = desc.Name:lower()
+                local textLow: string = ""
+                if desc:IsA("TextButton") then
+                    local okText: boolean, text: any = pcall(function(): any
+                        return (desc :: TextButton).Text
+                    end)
+                    if okText and type(text) == "string" then
+                        textLow = text:lower()
+                    end
+                end
+                local isExact: boolean = string.find(nameLow, "1v1", 1, true) ~= nil
+                    or string.find(textLow, "1v1", 1, true) ~= nil
+                    or string.find(textLow, "1vs1", 1, true) ~= nil
+                local isQueue: boolean = false
+                for _, word: string in ipairs(QUEUE_WORDS) do
+                    if string.find(nameLow, word, 1, true) or string.find(textLow, word, 1, true) then
+                        isQueue = true
+                        break
+                    end
+                end
+                if (pass == 1 and isExact) or (pass == 2 and isQueue) then
+                    if fireButtonClick(desc) then
+                        clicked = true
                     end
                 end
             end
+            if clicked then
+                break
+            end
         end
+        return clicked
     end
 
     local isSpamming: boolean = false
 
     local function autoWinStep(): ()
-        if not settings.enabled or isSpamming then return end
+        if not settings.enabled or isSpamming then
+            return
+        end
 
-        local enemies: {Player} = getActiveEnemies()
-        if #enemies == 0 then
-            -- If not in match or no enemy alive, try queueing
+        if not inActiveMatch() then
             if settings.autoQueue then
-                click1v1Queue()
+                local clicked: boolean = click1v1Queue()
+                setStatus(clicked and "Queued 1v1" or "Looking for 1v1 button")
             end
             return
         end
 
+        local enemies: {Player} = core and core.enemies() or {}
+        if #enemies == 0 then
+            setStatus("Waiting for opponent")
+            return
+        end
+
         local targetEnemy: Player = enemies[1]
-        local enemyChar: Model = targetEnemy.Character :: Model
-        local enemyRoot: BasePart? = enemyChar:FindFirstChild("HumanoidRootPart") :: BasePart?
-            or enemyChar.PrimaryPart :: BasePart?
-        if not enemyRoot then return end
+        local enemyChar: Model? = targetEnemy.Character
+        local enemyRoot: BasePart? = enemyChar and (enemyChar:FindFirstChild("HumanoidRootPart") :: BasePart?
+            or enemyChar.PrimaryPart :: BasePart?)
+        if not enemyRoot then
+            return
+        end
 
         local myChar: Model? = localPlayer.Character
         local myHumanoid: Humanoid? = myChar and myChar:FindFirstChildOfClass("Humanoid")
         local myRoot: BasePart? = myChar and (myChar:FindFirstChild("HumanoidRootPart") :: BasePart? or myChar.PrimaryPart :: BasePart?)
-        if not myChar or not myHumanoid or not myRoot or myHumanoid.Health <= 0 then return end
+        if not myChar or not myHumanoid or not myRoot or myHumanoid.Health <= 0 then
+            return
+        end
 
         isSpamming = true
+        setStatus("Winning vs " .. targetEnemy.Name)
 
-        -- Teleport directly behind enemy
         if settings.teleport then
             pcall(function(): ()
                 myRoot.CFrame = enemyRoot.CFrame * CFrame.new(0, 0, 3) * CFrame.Angles(0, math.pi, 0)
@@ -9249,55 +9292,40 @@ function Module.init(runtime: any): any
             end)
         end
 
-        -- Equip weapon
-        local tool: Tool? = myChar:FindFirstChildOfClass("Tool")
-        if not tool then
-            local backpack: Backpack? = localPlayer:FindFirstChildOfClass("Backpack")
-            if backpack then
-                for _, item: Instance in ipairs(backpack:GetChildren()) do
-                    if item:IsA("Tool") then
-                        myHumanoid:EquipTool(item)
-                        tool = item
-                        task.wait(0.02)
-                        break
-                    end
-                end
-            end
+        local gun: Instance? = core and core.findGun() or nil
+        if gun and not core.isEquipped(gun) then
+            core.equip(gun)
+        end
+        if not gun then
+            gun = core and core.equippedTool() or nil
         end
 
         local origin: Vector3 = myRoot.Position
         local targetPos: Vector3 = enemyRoot.Position
-        local dir: Vector3 = (targetPos - origin).Unit
+        local direction: Vector3 = (targetPos - origin).Unit
 
-        -- Spam gun remotes
-        if tool then
-            local fireRemote: Instance? = tool:FindFirstChild("fire")
+        if gun then
+            local fireRemote: Instance? = gun:FindFirstChild("fire")
             if fireRemote and fireRemote:IsA("RemoteEvent") then
                 pcall(function(): ()
                     fireRemote:FireServer()
                 end)
             end
-
-            local showBeam: Instance? = tool:FindFirstChild("showBeam")
-            local handle: BasePart? = tool:FindFirstChild("Handle") :: BasePart?
+            local showBeam: Instance? = gun:FindFirstChild("showBeam")
+            local handle: BasePart? = gun:FindFirstChild("Handle") :: BasePart?
             if showBeam and showBeam:IsA("RemoteEvent") and handle then
                 pcall(function(): ()
                     showBeam:FireServer(origin, targetPos, handle)
                 end)
             end
-
-            pcall(function(): ()
-                tool:Activate()
-            end)
         end
 
-        -- Spam damage confirmation remote
         local netHit: RemoteEvent? = getNetHitRemote()
         if netHit then
             for _ = 1, 3 do
-                local actionId: string = "autowin_" .. tostring(math.random(100000, 999999))
+                local guid: string = httpService:GenerateGUID(false)
                 pcall(function(): ()
-                    netHit:FireServer(actionId, targetEnemy, dir, origin, targetPos)
+                    netHit:FireServer(guid, targetEnemy, direction, origin, targetPos)
                 end)
             end
         end
@@ -9310,10 +9338,12 @@ function Module.init(runtime: any): any
     local loopThread: thread? = nil
 
     local function startLoop(): ()
-        if loopThread then return end
+        if loopThread then
+            return
+        end
         loopThread = task.spawn(function(): ()
             while settings.enabled do
-                autoWinStep()
+                pcall(autoWinStep)
                 task.wait(settings.spamDelay)
             end
             loopThread = nil
@@ -9322,24 +9352,20 @@ function Module.init(runtime: any): any
 
     local function stopLoop(): ()
         if loopThread then
-            task.cancel(loopThread)
+            pcall(function(): ()
+                task.cancel(loopThread)
+            end)
             loopThread = nil
         end
         isSpamming = false
     end
 
-    local env: any = getfenv()
-    local createUniversalFeature: any = env.createUniversalFeature
-    local addToggleOption: any = env.addToggleOption
-    local addNumberOption: any = env.addNumberOption
-    local addActionOption: any = env.addActionOption
-
     local parentScroll: any = state and state.mvsdScroll
     local featuresRegistry: any = state and state.mvsdFeatures
 
-    local AutoWinFeature: any = createUniversalFeature(
+    AutoWinFeature = createUniversalFeature(
         "AutoWin",
-        "Automatically queues 1v1, teleports to enemy, and spams silent aim to win in seconds",
+        "Clicks the 1v1 queue, teleports to the opponent and spams hits to win",
         4,
         function(enabled: boolean): ()
             settings.enabled = enabled
@@ -9347,6 +9373,7 @@ function Module.init(runtime: any): any
                 startLoop()
             else
                 stopLoop()
+                setStatus(nil)
             end
         end,
         {
@@ -9358,7 +9385,7 @@ function Module.init(runtime: any): any
 
     addToggleOption(AutoWinFeature, "Auto 1v1 Queue", true, function(value: boolean): ()
         settings.autoQueue = value
-    end, "Automatically clicks/confirms 1v1 queue prompts")
+    end, "Clicks the 1v1 queue button while you are in the lobby")
 
     addToggleOption(AutoWinFeature, "Teleport to Enemy", true, function(value: boolean): ()
         settings.teleport = value
@@ -9368,21 +9395,21 @@ function Module.init(runtime: any): any
         settings.spamDelay = value
     end, "Remote spam interval in seconds", 0.01)
 
+    addActionOption(AutoWinFeature, "Join 1v1", function(): ()
+        local clicked: boolean = click1v1Queue()
+        setStatus(clicked and "Queued 1v1" or "No 1v1 button found")
+    end, "Clicks the 1v1 queue button once")
+
     addActionOption(AutoWinFeature, "Trigger Win Now", function(): ()
         autoWinStep()
-    end, "Executes one instant teleport & hit spam sequence")
+    end, "Runs one teleport + hit spam sequence")
 
     moduleCleanup = function(): ()
         stopLoop()
-        for _, conn: any in pairs(featureConnections) do
-            if typeof(conn) == "RBXScriptConnection" then
-                conn:Disconnect()
-            end
-        end
-        table.clear(featureConnections)
+        setStatus(nil)
     end
 
-    Module.Events = featureConnections
+    Module.Events = {}
     Module.Initialized = true
     return Module
 end
@@ -9395,8 +9422,8 @@ function Module.destroy(): ()
     pcall(moduleCleanup)
     moduleCleanup = function(): () end
     Module.Events = {}
-    Module.Runtime = nil
     Module.Menu = nil
+    Module.Runtime = nil
 end
 
 return Module
@@ -9424,8 +9451,16 @@ function Module.init(runtime: any): any
     local players: Players = game:GetService("Players")
     local runService: RunService = game:GetService("RunService")
     local replicatedStorage: ReplicatedStorage = game:GetService("ReplicatedStorage")
+    local httpService: HttpService = game:GetService("HttpService")
     local localPlayer: Player = players.LocalPlayer
     local camera: Camera = workspace.CurrentCamera or (workspace:WaitForChild("Camera") :: Camera)
+
+    local env: any = getfenv()
+    local state: any = env.state
+    local core: any = state and state.mvsdCore
+    local createUniversalFeature: any = env.createUniversalFeature
+    local addToggleOption: any = env.addToggleOption
+    local addNumberOption: any = env.addNumberOption
 
     local featureConnections: {[string]: any} = {}
 
@@ -9434,62 +9469,17 @@ function Module.init(runtime: any): any
         hitboxIncrease = true,
         hitboxSize = 20,
         silentAim = true,
+        autoEquip = true,
         knifeRate = 0.1,
     }
 
+    local KnifeFeature: any = nil
     local originalHitboxes: {[BasePart]: Vector3} = {}
 
-    local function isSameTeam(a: Player, b: Player): boolean
-        -- base.lua resolves the side from every source Duels exposes; the
-        -- attribute-only check below is only the fallback when it is missing.
-        local core: any = state and state.mvsdCore
-        if core and type(core.isTeammate) == "function" then
-            local other: Player? = nil
-            if a == localPlayer then
-                other = b
-            elseif b == localPlayer then
-                other = a
-            end
-            if other ~= nil then
-                return core.isTeammate(other) == true
-            end
+    local function setStatus(text: string?): ()
+        if KnifeFeature and type(KnifeFeature.SetStatus) == "function" then
+            KnifeFeature:SetStatus(text)
         end
-        local aAttr: any = a:GetAttribute("Team")
-        local bAttr: any = b:GetAttribute("Team")
-        if aAttr ~= nil and bAttr ~= nil then
-            return aAttr == bAttr
-        end
-        if a.Team ~= nil and b.Team ~= nil then
-            return a.Team == b.Team
-        end
-        return false
-    end
-
-    local function isInMatch(player: Player): boolean
-        local localGame: any = localPlayer:GetAttribute("Game")
-        local playerGame: any = player:GetAttribute("Game")
-        if localGame ~= nil and playerGame ~= nil then
-            return localGame == playerGame
-        end
-        return true
-    end
-
-    local function getActiveEnemies(): {Player}
-        local enemies: {Player} = {}
-        for _, player: Player in ipairs(players:GetPlayers()) do
-            if player ~= localPlayer
-                and player:GetAttribute("Died") ~= true
-                and isInMatch(player)
-                and not isSameTeam(localPlayer, player) then
-                local character: Model? = player.Character
-                local humanoid: Humanoid? = character and character:FindFirstChildOfClass("Humanoid")
-                local root: BasePart? = character and (character:FindFirstChild("HumanoidRootPart") :: BasePart? or character:FindFirstChild("Head") :: BasePart?)
-                if character and humanoid and humanoid.Health > 0 and root then
-                    table.insert(enemies, player)
-                end
-            end
-        end
-        return enemies
     end
 
     local function restoreAllHitboxes(): ()
@@ -9510,13 +9500,11 @@ function Module.init(runtime: any): any
             restoreAllHitboxes()
             return
         end
-
-        local enemies: {Player} = getActiveEnemies()
+        local enemies: {Player} = core and core.enemies() or {}
         local activeSet: {[BasePart]: boolean} = {}
-
         for _, enemy: Player in ipairs(enemies) do
-            local character: Model = enemy.Character :: Model
-            local root: BasePart? = character:FindFirstChild("HumanoidRootPart") :: BasePart?
+            local character: Model? = enemy.Character
+            local root: BasePart? = character and character:FindFirstChild("HumanoidRootPart") :: BasePart?
             if root then
                 activeSet[root] = true
                 if not originalHitboxes[root] then
@@ -9529,13 +9517,11 @@ function Module.init(runtime: any): any
                 end)
             end
         end
-
-        -- Clean up players no longer in match
-        for part: BasePart, origSize: Vector3 in pairs(originalHitboxes) do
+        for part: BasePart, _origSize: Vector3 in pairs(originalHitboxes) do
             if not activeSet[part] then
                 if part and part.Parent then
                     pcall(function(): ()
-                        part.Size = origSize
+                        part.Size = originalHitboxes[part]
                         part.Transparency = 1
                         part.CanCollide = false
                     end)
@@ -9545,119 +9531,122 @@ function Module.init(runtime: any): any
         end
     end
 
-    -- Knife Throw remotes
-    local function getKnifeThrowRemotes(): (RemoteEvent?, RemoteEvent?, RemoteEvent?)
+    local function getKnifeRemotes(): (RemoteEvent?, RemoteEvent?, RemoteEvent?)
         local packages: Instance? = replicatedStorage:FindFirstChild("Packages")
         local net: Instance? = packages and packages:FindFirstChild("Net")
-        if not net then return nil, nil, nil end
-
+        if not net then
+            return nil, nil, nil
+        end
+        local re: Instance? = net:FindFirstChild("RE")
+        local container: Instance = re or net
         local prepRemote: RemoteEvent? = nil
         local throwRemote: RemoteEvent? = nil
         local hitRemote: RemoteEvent? = nil
-
-        for _, child: Instance in ipairs(net:GetChildren()) do
+        for _, child: Instance in ipairs(container:GetChildren()) do
             if child:IsA("RemoteEvent") then
-                if string.find(child.Name, "78a946aa") then
+                if string.find(child.Name, "78a946aa", 1, true) then
                     prepRemote = child
-                elseif string.find(child.Name, "bfabffda") then
+                elseif string.find(child.Name, "bfabffda", 1, true) then
                     throwRemote = child
-                elseif string.find(child.Name, "90e51178") then
+                elseif string.find(child.Name, "90e51178", 1, true) then
                     hitRemote = child
                 end
             end
         end
-
         return prepRemote, throwRemote, hitRemote
     end
 
-    local lastKnifeThrowTime: number = 0
+    local lastKnife: number = 0
 
     local function executeKnifeSilentAim(): ()
-        if not settings.enabled or not settings.silentAim then return end
-        local now: number = os.clock()
-        if now - lastKnifeThrowTime < settings.knifeRate then return end
-        lastKnifeThrowTime = now
+        if not settings.silentAim then
+            return
+        end
+        local knife: Instance? = core and core.findKnife() or nil
+        if not knife then
+            setStatus("No knife found")
+            return
+        end
+        if settings.autoEquip and not core.isEquipped(knife) then
+            core.equip(knife)
+        end
 
-        local enemies: {Player} = getActiveEnemies()
-        if #enemies == 0 then return end
+        local enemies: {Player} = core and core.enemies() or {}
+        if #enemies == 0 then
+            setStatus("No target")
+            return
+        end
         local targetEnemy: Player = enemies[math.random(1, #enemies)]
-        local character: Model = targetEnemy.Character :: Model
-        local targetRoot: BasePart? = character:FindFirstChild("HumanoidRootPart") :: BasePart?
-            or character:FindFirstChild("Head") :: BasePart?
-        if not targetRoot then return end
+        local character: Model? = targetEnemy.Character
+        local targetRoot: BasePart? = character and (character:FindFirstChild("HumanoidRootPart") :: BasePart?
+            or character:FindFirstChild("Head") :: BasePart?)
+        if not targetRoot then
+            return
+        end
 
+        setStatus(nil)
         local myChar: Model? = localPlayer.Character
         local myRoot: BasePart? = myChar and (myChar:FindFirstChild("HumanoidRootPart") :: BasePart? or myChar.PrimaryPart :: BasePart?)
         local origin: Vector3 = myRoot and myRoot.Position or camera.CFrame.Position
         local targetPos: Vector3 = targetRoot.Position
 
-        local prepRemote, throwRemote, hitRemote = getKnifeThrowRemotes()
-        local actionId: string = "knife_" .. tostring(math.random(100000, 999999))
+        local prepRemote, throwRemote, hitRemote = getKnifeRemotes()
+        local guid: string = httpService:GenerateGUID(false)
 
         if prepRemote then
             pcall(function(): ()
-                prepRemote:FireServer(actionId)
+                prepRemote:FireServer(guid)
             end)
         end
-
         if throwRemote then
             pcall(function(): ()
                 local knifeCFrame: CFrame = CFrame.new(origin, targetPos)
-                throwRemote:FireServer(actionId, knifeCFrame, targetPos)
+                throwRemote:FireServer(guid, knifeCFrame, (targetPos - origin).Unit)
             end)
         end
-
         if hitRemote then
             pcall(function(): ()
-                local dir: Vector3 = (targetPos - origin).Unit
-                hitRemote:FireServer(actionId, targetEnemy, dir, origin, targetPos)
+                local direction: Vector3 = (targetPos - origin).Unit
+                hitRemote:FireServer(guid, targetEnemy, direction, origin, targetPos)
             end)
         end
     end
 
     local function onHeartbeat(): ()
-        if not settings.enabled then return end
+        if not settings.enabled then
+            return
+        end
         updateHitboxes()
 
-        -- Cooldown bypass for equipped knife
-        local character: Model? = localPlayer.Character
-        local tool: Tool? = character and character:FindFirstChildOfClass("Tool")
-        if tool and string.find(tool.Name:lower(), "knife") then
-            tool:SetAttribute("CanSlash", true)
-            tool:SetAttribute("CanThrow", true)
-            tool:SetAttribute("Cooldown", 0)
+        local now: number = os.clock()
+        if now - lastKnife < settings.knifeRate then
+            return
+        end
+        lastKnife = now
+        executeKnifeSilentAim()
+
+        local knife: Instance? = core and core.findKnife() or nil
+        if knife then
+            pcall(function(): ()
+                knife:SetAttribute("CanSlash", true)
+                knife:SetAttribute("CanThrow", true)
+                knife:SetAttribute("Cooldown", 0)
+            end)
         end
     end
-
-    -- Hook knife activation
-    local userInput: UserInputService = game:GetService("UserInputService")
-    local function onInputBegan(input: InputObject, gameProcessed: boolean): ()
-        if not settings.enabled or gameProcessed then return end
-        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.MouseButton2 then
-            local character: Model? = localPlayer.Character
-            local tool: Tool? = character and character:FindFirstChildOfClass("Tool")
-            if tool and string.find(tool.Name:lower(), "knife") then
-                executeKnifeSilentAim()
-            end
-        end
-    end
-
-    local env: any = getfenv()
-    local createUniversalFeature: any = env.createUniversalFeature
-    local addToggleOption: any = env.addToggleOption
-    local addNumberOption: any = env.addNumberOption
 
     local parentScroll: any = state and state.mvsdScroll
     local featuresRegistry: any = state and state.mvsdFeatures
 
-    local KnifeFeature: any = createUniversalFeature(
+    KnifeFeature = createUniversalFeature(
         "Knife",
-        "Hitbox increase and remote silent aim knife teleportation",
+        "Expands enemy hitboxes and teleports knife hits onto them",
         3,
         function(enabled: boolean): ()
             settings.enabled = enabled
             if not enabled then
                 restoreAllHitboxes()
+                setStatus(nil)
             end
         end,
         {
@@ -9672,7 +9661,7 @@ function Module.init(runtime: any): any
         if not value then
             restoreAllHitboxes()
         end
-    end, "Expands enemy humanoid hitbox for massive slash range")
+    end, "Grows enemy root parts for a massive slash range")
 
     addNumberOption(KnifeFeature, "Hitbox Size", 20, 5, 45, function(value: number): ()
         settings.hitboxSize = value
@@ -9680,17 +9669,21 @@ function Module.init(runtime: any): any
 
     addToggleOption(KnifeFeature, "SilentAIM", true, function(value: boolean): ()
         settings.silentAim = value
-    end, "Teleports knives directly to enemies via remote")
+    end, "Teleports knife hits to enemies via remote")
+
+    addToggleOption(KnifeFeature, "Auto Equip", true, function(value: boolean): ()
+        settings.autoEquip = value
+    end, "Equips the knife automatically")
 
     addNumberOption(KnifeFeature, "Knife Rate", 0.1, 0.02, 1, function(value: number): ()
         settings.knifeRate = value
-    end, "Knife attack cooldown rate in seconds", 0.02)
+    end, "Seconds between knife attacks", 0.02)
 
     featureConnections.Heartbeat = runService.Heartbeat:Connect(onHeartbeat)
-    featureConnections.InputBegan = userInput.InputBegan:Connect(onInputBegan)
 
     moduleCleanup = function(): ()
         restoreAllHitboxes()
+        setStatus(nil)
         for _, conn: any in pairs(featureConnections) do
             if typeof(conn) == "RBXScriptConnection" then
                 conn:Disconnect()
@@ -9712,8 +9705,8 @@ function Module.destroy(): ()
     pcall(moduleCleanup)
     moduleCleanup = function(): () end
     Module.Events = {}
-    Module.Runtime = nil
     Module.Menu = nil
+    Module.Runtime = nil
 end
 
 return Module
@@ -9742,30 +9735,35 @@ function Module.init(runtime: any): any
     local runService: RunService = game:GetService("RunService")
     local userInput: UserInputService = game:GetService("UserInputService")
     local replicatedStorage: ReplicatedStorage = game:GetService("ReplicatedStorage")
+    local httpService: HttpService = game:GetService("HttpService")
     local localPlayer: Player = players.LocalPlayer
     local camera: Camera = workspace.CurrentCamera or (workspace:WaitForChild("Camera") :: Camera)
 
+    local env: any = getfenv()
+    local state: any = env.state
+    local core: any = state and state.mvsdCore
+    local createUniversalFeature: any = env.createUniversalFeature
+    local addToggleOption: any = env.addToggleOption
+    local addNumberOption: any = env.addNumberOption
+
     local featureConnections: {[string]: any} = {}
-    local TaskManager: any = runtime and runtime.TaskManager
-        or {
-            Connect = function(_self: any, signal: any, fn: any): any
-                return signal:Connect(fn)
-            end,
-        }
 
     local settings = {
         enabled = false,
         wallCheck = false,
         shootRate = 0.1,
         noReload = true,
+        autoEquip = true,
         fovRadius = 250,
         showFov = true,
     }
 
-    local fovCircle: DrawingCircle? = nil
+    local fovCircle: any = nil
     pcall(function(): ()
-        if typeof(Drawing) == "table" and type(Drawing.new) == "function" then
-            local circle: DrawingCircle = Drawing.new("Circle") :: any
+        local g: any = getfenv()
+        local DrawingLib: any = g.Drawing
+        if type(DrawingLib) == "table" or type(DrawingLib) == "userdata" then
+            local circle: any = DrawingLib.new("Circle")
             circle.Thickness = 1.5
             circle.NumSides = 32
             circle.Radius = settings.fovRadius
@@ -9777,57 +9775,20 @@ function Module.init(runtime: any): any
         end
     end)
 
-    local function isSameTeam(a: Player, b: Player): boolean
-        -- base.lua resolves the side from every source Duels exposes; the
-        -- attribute-only check below is only the fallback when it is missing.
-        local core: any = state and state.mvsdCore
-        if core and type(core.isTeammate) == "function" then
-            local other: Player? = nil
-            if a == localPlayer then
-                other = b
-            elseif b == localPlayer then
-                other = a
-            end
-            if other ~= nil then
-                return core.isTeammate(other) == true
+    local function getHitRemote(): RemoteEvent?
+        local packages: Instance? = replicatedStorage:FindFirstChild("Packages")
+        local net: Instance? = packages and packages:FindFirstChild("Net")
+        if not net then
+            return nil
+        end
+        local re: Instance? = net:FindFirstChild("RE")
+        local container: Instance = re or net
+        for _, child: Instance in ipairs(container:GetChildren()) do
+            if child:IsA("RemoteEvent") and string.find(child.Name, "90e51178", 1, true) then
+                return child
             end
         end
-        local aAttr: any = a:GetAttribute("Team")
-        local bAttr: any = b:GetAttribute("Team")
-        if aAttr ~= nil and bAttr ~= nil then
-            return aAttr == bAttr
-        end
-        if a.Team ~= nil and b.Team ~= nil then
-            return a.Team == b.Team
-        end
-        return false
-    end
-
-    local function isInMatch(player: Player): boolean
-        local localGame: any = localPlayer:GetAttribute("Game")
-        local playerGame: any = player:GetAttribute("Game")
-        if localGame ~= nil and playerGame ~= nil then
-            return localGame == playerGame
-        end
-        return true
-    end
-
-    local function getActiveEnemies(): {Player}
-        local enemies: {Player} = {}
-        for _, player: Player in ipairs(players:GetPlayers()) do
-            if player ~= localPlayer
-                and player:GetAttribute("Died") ~= true
-                and isInMatch(player)
-                and not isSameTeam(localPlayer, player) then
-                local character: Model? = player.Character
-                local humanoid: Humanoid? = character and character:FindFirstChildOfClass("Humanoid")
-                local root: BasePart? = character and (character:FindFirstChild("HumanoidRootPart") :: BasePart? or character:FindFirstChild("Head") :: BasePart?)
-                if character and humanoid and humanoid.Health > 0 and root then
-                    table.insert(enemies, player)
-                end
-            end
-        end
-        return enemies
+        return nil
     end
 
     local function checkLineOfSight(origin: Vector3, targetPos: Vector3, ignoreModel: Model?): boolean
@@ -9842,162 +9803,81 @@ function Module.init(runtime: any): any
         end
         rayParams.FilterDescendantsInstances = filterList
         rayParams.IgnoreWater = true
-
         local direction: Vector3 = targetPos - origin
         local result: RaycastResult? = workspace:Raycast(origin, direction, rayParams)
         return result == nil
     end
 
+    -- Targets inside the FOV circle; nearest to the cursor wins.
     local function pickTarget(): (Player?, BasePart?)
-        local enemies: {Player} = getActiveEnemies()
+        local enemies: {Player} = core and core.enemies() or {}
         if #enemies == 0 then
             return nil, nil
         end
-
         local mousePos: Vector2 = userInput:GetMouseLocation()
         local camPos: Vector3 = camera.CFrame.Position
         local eligible: {{player: Player, part: BasePart, dist2d: number}} = {}
-
         for _, enemy: Player in ipairs(enemies) do
-            local character: Model = enemy.Character :: Model
-            local targetPart: BasePart = (character:FindFirstChild("Head") :: BasePart?)
-                or (character:FindFirstChild("HumanoidRootPart") :: BasePart?)
-                or (character.PrimaryPart :: BasePart)
-            if targetPart then
-                local screenPos: Vector3, onScreen: boolean = camera:WorldToViewportPoint(targetPart.Position)
+            local character: Model? = enemy.Character
+            local part: BasePart? = character and (character:FindFirstChild("Head") :: BasePart?
+                or character:FindFirstChild("HumanoidRootPart") :: BasePart?)
+            if part then
+                local screenPos: Vector3 = camera:WorldToViewportPoint(part.Position)
                 if screenPos.Z > 0 then
-                    local dist2d: number = (Vector2.new(screenPos.X, screenPos.Y) - mousePos).Magnitude
+                    local viewport: Vector2 = camera.ViewportSize
+                    local screen2d: Vector2 = Vector2.new(
+                        screenPos.X * viewport.X,
+                        screenPos.Y * viewport.Y
+                    )
+                    local dist2d: number = (screen2d - mousePos).Magnitude
                     if dist2d <= settings.fovRadius then
-                        if not settings.wallCheck or checkLineOfSight(camPos, targetPart.Position, character) then
-                            table.insert(eligible, {player = enemy, part = targetPart, dist2d = dist2d})
+                        if not settings.wallCheck or checkLineOfSight(camPos, part.Position, character) then
+                            table.insert(eligible, {player = enemy, part = part, dist2d = dist2d})
                         end
                     end
                 end
             end
         end
-
         if #eligible == 0 then
             return nil, nil
         end
-
-        -- Pick a random enemy among the eligible ones (user requested: le de a un enemigo Random)
-        local chosen = eligible[math.random(1, #eligible)]
-        return chosen.player, chosen.part
-    end
-
-    -- Find Net RE remote for damage confirmation
-    local function getNetHitRemote(): RemoteEvent?
-        local packages: Instance? = replicatedStorage:FindFirstChild("Packages")
-        local net: Instance? = packages and packages:FindFirstChild("Net")
-        if net then
-            local hitRemote: Instance? = net:FindFirstChild("RE/90e51178756085355b8b52b11bf99988da480bb4072b33bcbc7ec931a7da2d68")
-            if hitRemote and hitRemote:IsA("RemoteEvent") then
-                return hitRemote
-            end
-            for _, child: Instance in ipairs(net:GetChildren()) do
-                if child:IsA("RemoteEvent") and string.find(child.Name, "90e51178") then
-                    return child
-                end
-            end
-        end
-        return nil
-    end
-
-    -- Hook Raycast so wall shots hit enemy
-    local originalRaycast: any = nil
-    local originalNamecall: any = nil
-
-    local function installRaycastHook(): ()
-        if originalRaycast ~= nil then return end
-        local genv: any = getgenv and getgenv() or getfenv()
-        local hookfn: any = genv.hookfunction or genv.replaceclosure or hookfunc
-        if type(hookfn) ~= "function" then
-            return
-        end
-
-        originalRaycast = hookfn(workspace.Raycast, function(self: any, origin: Vector3, direction: Vector3, params: RaycastParams?): any
-            if settings.enabled then
-                local _, targetPart = pickTarget()
-                if targetPart then
-                    local fakeDist: number = (targetPart.Position - origin).Magnitude
-                    return {
-                        Instance = targetPart,
-                        Position = targetPart.Position,
-                        Normal = Vector3.new(0, 1, 0),
-                        Material = Enum.Material.Plastic,
-                        Distance = fakeDist,
-                    }
-                end
-            end
-            return originalRaycast(self, origin, direction, params)
+        table.sort(eligible, function(a: any, b: any): boolean
+            return a.dist2d < b.dist2d
         end)
+        return eligible[1].player, eligible[1].part
     end
 
-    local function uninstallRaycastHook(): ()
-        if originalRaycast ~= nil then
-            local genv: any = getgenv and getgenv() or getfenv()
-            local hookfn: any = genv.hookfunction or genv.replaceclosure or hookfunc
-            if type(hookfn) == "function" then
-                pcall(hookfn, workspace.Raycast, originalRaycast)
-            end
-            originalRaycast = nil
-        end
-    end
-
-    local lastShotTime: number = 0
-
-    local function handleWeaponActivation(tool: Tool): ()
-        if not settings.enabled then return end
-        local now: number = os.clock()
-        if now - lastShotTime < settings.shootRate then return end
-        lastShotTime = now
-
-        local targetPlayer, targetPart = pickTarget()
-        if not targetPlayer or not targetPart then return end
-
-        local handle: BasePart? = tool:FindFirstChild("Handle") :: BasePart?
+    local function fireAt(targetPlayer: Player, targetPart: BasePart, tool: Instance?): ()
+        local handle: BasePart? = tool and (tool:FindFirstChild("Handle") :: BasePart?) or nil
         local origin: Vector3 = handle and handle.Position or camera.CFrame.Position
         local targetPos: Vector3 = targetPart.Position
 
-        -- Gun fire and showBeam remotes
-        local fireRemote: Instance? = tool:FindFirstChild("fire")
+        local fireRemote: Instance? = tool and tool:FindFirstChild("fire")
         if fireRemote and fireRemote:IsA("RemoteEvent") then
             pcall(function(): ()
                 fireRemote:FireServer()
             end)
         end
 
-        local showBeamRemote: Instance? = tool:FindFirstChild("showBeam")
-        if showBeamRemote and showBeamRemote:IsA("RemoteEvent") and handle then
+        local showBeamRemote: Instance? = tool and tool:FindFirstChild("showBeam")
+        if showBeamRemote and showBeamRemote:IsA("RemoteEvent") then
             pcall(function(): ()
                 showBeamRemote:FireServer(origin, targetPos, handle)
             end)
         end
 
-        -- Direct Net Hit Remote
-        local netHit: RemoteEvent? = getNetHitRemote()
-        if netHit then
-            local actionId: string = "silent_" .. tostring(math.random(100000, 999999))
+        local hitRemote: RemoteEvent? = getHitRemote()
+        if hitRemote then
+            local guid: string = httpService:GenerateGUID(false)
             local direction: Vector3 = (targetPos - origin).Unit
             pcall(function(): ()
-                netHit:FireServer(actionId, targetPlayer, direction, origin, targetPos)
+                hitRemote:FireServer(guid, targetPlayer, direction, origin, targetPos)
             end)
         end
-
-        -- No reload bypass & cooldown bypass
-        if settings.noReload then
-            pcall(function(): ()
-                tool:SetAttribute("Ammo", tool:GetAttribute("MaxAmmo") or 6)
-                tool:SetAttribute("Reloading", false)
-            end)
-        end
-        pcall(function(): ()
-            tool:SetAttribute("CanShoot", true)
-            tool:SetAttribute("Cooldown", 0)
-        end)
     end
 
-    -- Hook tool activation & continuous loop
+    local lastShot: number = 0
+
     local function onHeartbeat(): ()
         if fovCircle then
             local mousePos: Vector2 = userInput:GetMouseLocation()
@@ -10006,57 +9886,51 @@ function Module.init(runtime: any): any
             fovCircle.Visible = settings.enabled and settings.showFov
         end
 
-        if not settings.enabled then return end
-
-        local character: Model? = localPlayer.Character
-        local tool: Tool? = character and character:FindFirstChildOfClass("Tool")
-        if tool then
-            if settings.noReload then
-                if tool:GetAttribute("Reloading") == true then
-                    tool:SetAttribute("Reloading", false)
-                end
-                local maxAmmo: any = tool:GetAttribute("MaxAmmo")
-                if maxAmmo and tool:GetAttribute("Ammo") ~= maxAmmo then
-                    tool:SetAttribute("Ammo", maxAmmo)
-                end
-            end
-            tool:SetAttribute("CanShoot", true)
+        if not settings.enabled then
+            return
         end
-    end
-
-    -- Hook input / click to intercept shots
-    local function onInputBegan(input: InputObject, gameProcessed: boolean): ()
-        if not settings.enabled or gameProcessed then return end
-        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-            local character: Model? = localPlayer.Character
-            local tool: Tool? = character and character:FindFirstChildOfClass("Tool")
-            if tool and (tool:FindFirstChild("fire") or tool:FindFirstChild("showBeam")) then
-                handleWeaponActivation(tool)
-            end
+        local now: number = os.clock()
+        if now - lastShot < settings.shootRate then
+            return
         end
+        lastShot = now
+
+        local gun: Instance? = core and core.findGun() or nil
+        if gun and settings.autoEquip and not core.isEquipped(gun) then
+            core.equip(gun)
+        end
+
+        local targetPlayer: Player?, targetPart: BasePart? = pickTarget()
+        if not targetPlayer or not targetPart then
+            return
+        end
+
+        if gun and settings.noReload then
+            pcall(function(): ()
+                local maxAmmo: any = gun:GetAttribute("MaxAmmo")
+                if maxAmmo ~= nil then
+                    gun:SetAttribute("Ammo", maxAmmo)
+                end
+                gun:SetAttribute("Reloading", false)
+                gun:SetAttribute("CanShoot", true)
+                gun:SetAttribute("Cooldown", 0)
+            end)
+        end
+
+        fireAt(targetPlayer, targetPart, gun)
     end
-
-    installRaycastHook()
-
-    local env: any = getfenv()
-    local createUniversalFeature: any = env.createUniversalFeature
-    local addToggleOption: any = env.addToggleOption
-    local addNumberOption: any = env.addNumberOption
 
     local parentScroll: any = state and state.mvsdScroll
     local featuresRegistry: any = state and state.mvsdFeatures
 
     local SilentAimFeature: any = createUniversalFeature(
         "Silent Aim",
-        "Redirects gun raycasts to hit random enemies even through walls",
+        "Automatically equips the pistol and lands hits on enemies inside the FOV",
         1,
         function(enabled: boolean): ()
             settings.enabled = enabled
             if fovCircle then
                 fovCircle.Visible = enabled and settings.showFov
-            end
-            if enabled then
-                installRaycastHook()
             end
         end,
         {
@@ -10070,33 +9944,35 @@ function Module.init(runtime: any): any
         settings.wallCheck = value
     end, "Only target enemies with clear line of sight")
 
+    addToggleOption(SilentAimFeature, "Auto Equip", true, function(value: boolean): ()
+        settings.autoEquip = value
+    end, "Equips the pistol automatically so shots actually fire")
+
     addNumberOption(SilentAimFeature, "Shoot Rate", 0.1, 0.01, 1, function(value: number): ()
         settings.shootRate = value
-    end, "Cooldown bypass rate in seconds", 0.01)
+    end, "Seconds between shots", 0.01)
 
     addToggleOption(SilentAimFeature, "No Reload", true, function(value: boolean): ()
         settings.noReload = value
-    end, "Keeps ammo maxed and bypasses reload animation")
+    end, "Keeps ammo maxed and skips reload")
 
     addNumberOption(SilentAimFeature, "FOV", 250, 50, 600, function(value: number): ()
         settings.fovRadius = value
         if fovCircle then
             fovCircle.Radius = value
         end
-    end, "Silent Aim target selection radius in pixels", 10)
+    end, "Target selection radius in pixels", 10)
 
     addToggleOption(SilentAimFeature, "Show FOV", true, function(value: boolean): ()
         settings.showFov = value
         if fovCircle then
             fovCircle.Visible = settings.enabled and value
         end
-    end, "Renders visual FOV circle on screen")
+    end, "Renders the FOV circle")
 
     featureConnections.Heartbeat = runService.Heartbeat:Connect(onHeartbeat)
-    featureConnections.InputBegan = userInput.InputBegan:Connect(onInputBegan)
 
     moduleCleanup = function(): ()
-        uninstallRaycastHook()
         for _, conn: any in pairs(featureConnections) do
             if typeof(conn) == "RBXScriptConnection" then
                 conn:Disconnect()
@@ -10125,8 +10001,8 @@ function Module.destroy(): ()
     pcall(moduleCleanup)
     moduleCleanup = function(): () end
     Module.Events = {}
-    Module.Runtime = nil
     Module.Menu = nil
+    Module.Runtime = nil
 end
 
 return Module
@@ -10152,9 +10028,21 @@ function Module.init(runtime: any): any
     Module.Menu = runtime and runtime.Menu
 
     local players: Players = game:GetService("Players")
+    local runService: RunService = game:GetService("RunService")
     local userInput: UserInputService = game:GetService("UserInputService")
+    local replicatedStorage: ReplicatedStorage = game:GetService("ReplicatedStorage")
+    local httpService: HttpService = game:GetService("HttpService")
     local localPlayer: Player = players.LocalPlayer
     local camera: Camera = workspace.CurrentCamera or (workspace:WaitForChild("Camera") :: Camera)
+
+    local env: any = getfenv()
+    local state: any = env.state
+    local core: any = state and state.mvsdCore
+    local createUniversalFeature: any = env.createUniversalFeature
+    local addToggleOption: any = env.addToggleOption
+    local addActionOption: any = env.addActionOption
+    local addNumberOption: any = env.addNumberOption
+    local notify: any = env.notify or function(_text: string) end
 
     local featureConnections: {[string]: any} = {}
 
@@ -10162,41 +10050,32 @@ function Module.init(runtime: any): any
         enabled = false,
         wallCheck = true,
         macro = true,
+        autoEquip = true,
+        fireRate = 0.15,
     }
 
-    local function isSameTeam(a: Player, b: Player): boolean
-        -- base.lua resolves the side from every source Duels exposes; the
-        -- attribute-only check below is only the fallback when it is missing.
-        local core: any = state and state.mvsdCore
-        if core and type(core.isTeammate) == "function" then
-            local other: Player? = nil
-            if a == localPlayer then
-                other = b
-            elseif b == localPlayer then
-                other = a
-            end
-            if other ~= nil then
-                return core.isTeammate(other) == true
-            end
+    local ShootFeature: any = nil
+
+    local function setStatus(text: string?): ()
+        if ShootFeature and type(ShootFeature.SetStatus) == "function" then
+            ShootFeature:SetStatus(text)
         end
-        local aAttr: any = a:GetAttribute("Team")
-        local bAttr: any = b:GetAttribute("Team")
-        if aAttr ~= nil and bAttr ~= nil then
-            return aAttr == bAttr
-        end
-        if a.Team ~= nil and b.Team ~= nil then
-            return a.Team == b.Team
-        end
-        return false
     end
 
-    local function isInMatch(player: Player): boolean
-        local localGame: any = localPlayer:GetAttribute("Game")
-        local playerGame: any = player:GetAttribute("Game")
-        if localGame ~= nil and playerGame ~= nil then
-            return localGame == playerGame
+    local function getHitRemote(): RemoteEvent?
+        local packages: Instance? = replicatedStorage:FindFirstChild("Packages")
+        local net: Instance? = packages and packages:FindFirstChild("Net")
+        if not net then
+            return nil
         end
-        return true
+        local re: Instance? = net:FindFirstChild("RE")
+        local container: Instance = re or net
+        for _, child: Instance in ipairs(container:GetChildren()) do
+            if child:IsA("RemoteEvent") and string.find(child.Name, "90e51178", 1, true) then
+                return child
+            end
+        end
+        return nil
     end
 
     local function checkLineOfSight(origin: Vector3, targetPos: Vector3, ignoreModel: Model?): boolean
@@ -10211,145 +10090,148 @@ function Module.init(runtime: any): any
         end
         rayParams.FilterDescendantsInstances = filterList
         rayParams.IgnoreWater = true
-
         local direction: Vector3 = targetPos - origin
         local result: RaycastResult? = workspace:Raycast(origin, direction, rayParams)
         return result == nil
     end
 
-    local function getClosestVisibleEnemy(): (Player?, BasePart?)
-        local myChar: Model? = localPlayer.Character
-        local myRoot: BasePart? = myChar and (myChar:FindFirstChild("HumanoidRootPart") :: BasePart? or myChar.PrimaryPart :: BasePart?)
-        if not myRoot then
-            return nil, nil
+    local function pickTarget(respectWall: boolean): (Player?, BasePart?, boolean)
+        local enemies: {Player} = core and core.enemies() or {}
+        if #enemies == 0 then
+            return nil, nil, false
         end
-
-        local bestEnemy: Player? = nil
+        local camPos: Vector3 = camera.CFrame.Position
+        local bestPlayer: Player? = nil
         local bestPart: BasePart? = nil
-        local closestDist: number = math.huge
-
-        for _, player: Player in ipairs(players:GetPlayers()) do
-            if player ~= localPlayer
-                and player:GetAttribute("Died") ~= true
-                and isInMatch(player)
-                and not isSameTeam(localPlayer, player) then
-                local character: Model? = player.Character
-                local humanoid: Humanoid? = character and character:FindFirstChildOfClass("Humanoid")
-                local root: BasePart? = character and (character:FindFirstChild("HumanoidRootPart") :: BasePart? or character:FindFirstChild("Head") :: BasePart?)
-                if character and humanoid and humanoid.Health > 0 and root then
-                    local targetPos: Vector3 = root.Position
-                    local dist: number = (targetPos - myRoot.Position).Magnitude
-                    if dist < closestDist then
-                        if not settings.wallCheck or checkLineOfSight(camera.CFrame.Position, targetPos, character) then
-                            closestDist = dist
-                            bestEnemy = player
-                            bestPart = root
-                        end
+        local bestDist: number = math.huge
+        local anyOccluded: boolean = false
+        for _, enemy: Player in ipairs(enemies) do
+            local character: Model? = enemy.Character
+            local part: BasePart? = character and (character:FindFirstChild("Head") :: BasePart?
+                or character:FindFirstChild("HumanoidRootPart") :: BasePart?)
+            if part then
+                local clear: boolean = checkLineOfSight(camPos, part.Position, character)
+                if not clear then
+                    anyOccluded = true
+                end
+                if not respectWall or clear then
+                    local dist: number = (part.Position - camPos).Magnitude
+                    if dist < bestDist then
+                        bestDist = dist
+                        bestPlayer = enemy
+                        bestPart = part
                     end
                 end
             end
         end
-
-        return bestEnemy, bestPart
+        return bestPlayer, bestPart, anyOccluded
     end
 
-    local isFiring: boolean = false
-
-    local function executeLegalShot(): ()
-        if isFiring or not settings.enabled then return end
-        local character: Model? = localPlayer.Character
-        local humanoid: Humanoid? = character and character:FindFirstChildOfClass("Humanoid")
-        if not character or not humanoid or humanoid.Health <= 0 then return end
-
-        local tool: Tool? = character:FindFirstChildOfClass("Tool")
-        if not tool then
-            -- Check backpack for gun
-            local backpack: Backpack? = localPlayer:FindFirstChildOfClass("Backpack")
-            if backpack then
-                for _, item: Instance in ipairs(backpack:GetChildren()) do
-                    if item:IsA("Tool") and (item:FindFirstChild("fire") or item:FindFirstChild("showBeam") or string.find(item.Name:lower(), "gun")) then
-                        tool = item
-                        humanoid:EquipTool(tool)
-                        task.wait(0.05)
-                        break
-                    end
-                end
-            end
-        end
-
-        if not tool then return end
-
-        local _, targetPart = getClosestVisibleEnemy()
-        if not targetPart then return end
-
-        isFiring = true
-
-        -- Aim camera at target
-        local handle: BasePart? = tool:FindFirstChild("Handle") :: BasePart?
+    local function fireAt(targetPlayer: Player, targetPart: BasePart, tool: Instance?): ()
+        local handle: BasePart? = tool and (tool:FindFirstChild("Handle") :: BasePart?) or nil
         local origin: Vector3 = handle and handle.Position or camera.CFrame.Position
         local targetPos: Vector3 = targetPart.Position
 
-        -- Fire tool legal events
-        local fireRemote: Instance? = tool:FindFirstChild("fire")
+        local fireRemote: Instance? = tool and tool:FindFirstChild("fire")
         if fireRemote and fireRemote:IsA("RemoteEvent") then
             pcall(function(): ()
                 fireRemote:FireServer()
             end)
         end
 
-        local showBeamRemote: Instance? = tool:FindFirstChild("showBeam")
-        if showBeamRemote and showBeamRemote:IsA("RemoteEvent") and handle then
+        local showBeamRemote: Instance? = tool and tool:FindFirstChild("showBeam")
+        if showBeamRemote and showBeamRemote:IsA("RemoteEvent") then
             pcall(function(): ()
                 showBeamRemote:FireServer(origin, targetPos, handle)
             end)
         end
 
-        pcall(function(): ()
-            tool:Activate()
-        end)
-
-        -- Macro: automatically unequips the gun 0.01 seconds after firing
-        if settings.macro then
-            task.delay(0.01, function(): ()
-                if humanoid and humanoid.Parent then
-                    pcall(function(): ()
-                        humanoid:UnequipTools()
-                    end)
-                end
-                isFiring = false
-            end)
-        else
-            task.delay(0.1, function(): ()
-                isFiring = false
+        local hitRemote: RemoteEvent? = getHitRemote()
+        if hitRemote then
+            local guid: string = httpService:GenerateGUID(false)
+            local direction: Vector3 = (targetPos - origin).Unit
+            pcall(function(): ()
+                hitRemote:FireServer(guid, targetPlayer, direction, origin, targetPos)
             end)
         end
+    end
+
+    local lastShot: number = 0
+
+    local function executeLegalShot(): ()
+        local gun: Instance? = core and core.findGun() or nil
+        if not gun then
+            setStatus("No pistol found")
+            return
+        end
+        if settings.autoEquip and not core.isEquipped(gun) then
+            core.equip(gun)
+        end
+
+        local targetPlayer: Player?, targetPart: BasePart?, anyOccluded: boolean =
+            pickTarget(settings.wallCheck)
+
+        if not targetPlayer or not targetPart then
+            if settings.wallCheck and anyOccluded then
+                setStatus("A wall is blocking the target")
+            else
+                setStatus("No target")
+            end
+            return
+        end
+
+        setStatus(nil)
+        fireAt(targetPlayer, targetPart, gun)
+
+        if settings.macro then
+            task.delay(0.01, function(): ()
+                pcall(function(): ()
+                    local character: Model? = localPlayer.Character
+                    if character and gun.Parent == character then
+                        local backpack: Instance? = localPlayer:FindFirstChildOfClass("Backpack")
+                        if backpack then
+                            gun.Parent = backpack
+                        end
+                    end
+                end)
+            end)
+        end
+    end
+
+    local function onHeartbeat(): ()
+        if not settings.enabled then
+            return
+        end
+        local now: number = os.clock()
+        if now - lastShot < settings.fireRate then
+            return
+        end
+        lastShot = now
+        executeLegalShot()
     end
 
     local function onInputBegan(input: InputObject, gameProcessed: boolean): ()
-        if not settings.enabled or gameProcessed then return end
-        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.KeyCode == Enum.KeyCode.E then
-            local character: Model? = localPlayer.Character
-            local tool: Tool? = character and character:FindFirstChildOfClass("Tool")
-            if tool and (tool:FindFirstChild("fire") or tool:FindFirstChild("showBeam") or string.find(tool.Name:lower(), "gun")) then
-                executeLegalShot()
-            end
+        if not settings.enabled or gameProcessed then
+            return
+        end
+        if input.UserInputType == Enum.UserInputType.MouseButton1
+            or input.UserInputType == Enum.UserInputType.Touch then
+            executeLegalShot()
         end
     end
-
-    local env: any = getfenv()
-    local createUniversalFeature: any = env.createUniversalFeature
-    local addToggleOption: any = env.addToggleOption
-    local addActionOption: any = env.addActionOption
 
     local parentScroll: any = state and state.mvsdScroll
     local featuresRegistry: any = state and state.mvsdFeatures
 
-    local ShootFeature: any = createUniversalFeature(
+    ShootFeature = createUniversalFeature(
         "Shoot",
-        "Fires legal shots at enemy with line-of-sight check and 0.01s auto-unequip macro",
+        "Legal Duels shots: equips the pistol, respects walls and unequips right after",
         2,
         function(enabled: boolean): ()
             settings.enabled = enabled
+            if not enabled then
+                setStatus(nil)
+            end
         end,
         {
             parent = parentScroll,
@@ -10360,19 +10242,32 @@ function Module.init(runtime: any): any
 
     addToggleOption(ShootFeature, "WallCheck", true, function(value: boolean): ()
         settings.wallCheck = value
-    end, "Only fire when target is visible")
+        if not value then
+            setStatus(nil)
+        end
+    end, "Refuse to fire when a wall blocks the target and show it on the card")
+
+    addToggleOption(ShootFeature, "Auto Equip", true, function(value: boolean): ()
+        settings.autoEquip = value
+    end, "Equips the pistol automatically if it is in your backpack")
 
     addToggleOption(ShootFeature, "Macro", true, function(value: boolean): ()
         settings.macro = value
-    end, "Automatically unequips gun 0.01 seconds after firing")
+    end, "Unequips the gun 0.01 seconds after firing")
+
+    addNumberOption(ShootFeature, "Fire Rate", 0.15, 0.05, 1, function(value: number): ()
+        settings.fireRate = value
+    end, "Seconds between automatic shots", 0.05)
 
     addActionOption(ShootFeature, "Fire Shot", function(): ()
         executeLegalShot()
-    end, "Triggers a single legal shot now")
+    end, "Fires one legal shot now")
 
+    featureConnections.Heartbeat = runService.Heartbeat:Connect(onHeartbeat)
     featureConnections.InputBegan = userInput.InputBegan:Connect(onInputBegan)
 
     moduleCleanup = function(): ()
+        setStatus(nil)
         for _, conn: any in pairs(featureConnections) do
             if typeof(conn) == "RBXScriptConnection" then
                 conn:Disconnect()
@@ -10394,8 +10289,8 @@ function Module.destroy(): ()
     pcall(moduleCleanup)
     moduleCleanup = function(): () end
     Module.Events = {}
-    Module.Runtime = nil
     Module.Menu = nil
+    Module.Runtime = nil
 end
 
 return Module
@@ -10791,6 +10686,115 @@ function Module.init(runtime: any): any
             .. " · source=" .. tostring(lastSource or "none")
     end
 
+    -- The Duels weapon tools are Tools whose names and remotes differ by mode
+    -- (DefaultGun in the 2v2 queue, Gun/Knife elsewhere). The structural check
+    -- (a gun owns fire/showBeam remotes) is the reliable tell; names back it up.
+    local GUN_WORDS: {string} = {"gun", "revolver", "pistol", "shotgun", "rifle", "defaultgun"}
+    local KNIFE_WORDS: {string} = {"knife", "blade", "dagger", "sword", "katana", "machete"}
+
+    local function nameMatches(lowered: string, words: {string}): boolean
+        for _, word: string in ipairs(words) do
+            if string.find(lowered, word, 1, true) then
+                return true
+            end
+        end
+        return false
+    end
+
+    local function isGunTool(tool: Instance): boolean
+        if tool:FindFirstChild("fire") or tool:FindFirstChild("showBeam") then
+            return true
+        end
+        return nameMatches(string.lower(tool.Name), GUN_WORDS)
+    end
+
+    local function isKnifeTool(tool: Instance): boolean
+        if nameMatches(string.lower(tool.Name), KNIFE_WORDS) then
+            return true
+        end
+        -- A weapon tool that is not a gun is the knife.
+        return (tool:IsA("Tool") or tool:FindFirstChild("Handle") ~= nil)
+            and not isGunTool(tool)
+    end
+
+    local function candidateTools(): {Instance}
+        local list: {Instance} = {}
+        local character: Model? = localPlayer.Character
+        local backpack: Instance? = localPlayer:FindFirstChildOfClass("Backpack")
+        for _, container: Instance? in ipairs({character, backpack}) do
+            if not container then
+                continue
+            end
+            for _, child: Instance in ipairs(container:GetChildren()) do
+                if child:IsA("Tool") or child:FindFirstChild("Handle") then
+                    table.insert(list, child)
+                end
+            end
+        end
+        return list
+    end
+
+    local function findGun(): Instance?
+        for _, tool: Instance in ipairs(candidateTools()) do
+            if isGunTool(tool) then
+                return tool
+            end
+        end
+        return nil
+    end
+
+    local function findKnife(): Instance?
+        for _, tool: Instance in ipairs(candidateTools()) do
+            if isKnifeTool(tool) and not isGunTool(tool) then
+                return tool
+            end
+        end
+        return nil
+    end
+
+    local function isEquipped(tool: Instance): boolean
+        return tool.Parent == localPlayer.Character
+    end
+
+    local function equip(tool: Instance?): boolean
+        if not tool then
+            return false
+        end
+        if isEquipped(tool) then
+            return true
+        end
+        local character: Model? = localPlayer.Character
+        local humanoid: Humanoid? = character
+            and character:FindFirstChildOfClass("Humanoid")
+        if not humanoid then
+            return false
+        end
+        local ok: boolean = pcall(function(): ()
+            (humanoid :: any):EquipTool(tool)
+        end)
+        if ok and isEquipped(tool) then
+            return true
+        end
+        -- Some executors refuse EquipTool on tools still in the Backpack.
+        pcall(function(): ()
+            tool.Parent = character
+        end)
+        return isEquipped(tool)
+    end
+
+    local function equippedTool(): Instance?
+        local character: Model? = localPlayer.Character
+        if not character then
+            return nil
+        end
+        for _, child: Instance in ipairs(character:GetChildren()) do
+            if child:IsA("Tool") or child:FindFirstChild("Handle") then
+                return child
+            end
+        end
+        return nil
+    end
+
     state.mvsdCore = {
         roleOf = function(player: Player): string?
             local role: string? = resolve(player)
@@ -10804,9 +10808,18 @@ function Module.init(runtime: any): any
         isEnemy = isEnemy,
         isAlive = isAlive,
         inSameMatch = inSameMatch,
+        matchIdOf = matchIdOf,
         enemies = enemies,
         describe = describe,
         clearCache = clearCache,
+        isGunTool = isGunTool,
+        isKnifeTool = isKnifeTool,
+        findGun = findGun,
+        findKnife = findKnife,
+        equip = equip,
+        isEquipped = isEquipped,
+        equippedTool = equippedTool,
+        candidateTools = candidateTools,
     }
 
     local teamProvider: any = {

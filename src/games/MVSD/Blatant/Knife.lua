@@ -19,8 +19,16 @@ function Module.init(runtime: any): any
     local players: Players = game:GetService("Players")
     local runService: RunService = game:GetService("RunService")
     local replicatedStorage: ReplicatedStorage = game:GetService("ReplicatedStorage")
+    local httpService: HttpService = game:GetService("HttpService")
     local localPlayer: Player = players.LocalPlayer
     local camera: Camera = workspace.CurrentCamera or (workspace:WaitForChild("Camera") :: Camera)
+
+    local env: any = getfenv()
+    local state: any = env.state
+    local core: any = state and state.mvsdCore
+    local createUniversalFeature: any = env.createUniversalFeature
+    local addToggleOption: any = env.addToggleOption
+    local addNumberOption: any = env.addNumberOption
 
     local featureConnections: {[string]: any} = {}
 
@@ -29,62 +37,17 @@ function Module.init(runtime: any): any
         hitboxIncrease = true,
         hitboxSize = 20,
         silentAim = true,
+        autoEquip = true,
         knifeRate = 0.1,
     }
 
+    local KnifeFeature: any = nil
     local originalHitboxes: {[BasePart]: Vector3} = {}
 
-    local function isSameTeam(a: Player, b: Player): boolean
-        -- base.lua resolves the side from every source Duels exposes; the
-        -- attribute-only check below is only the fallback when it is missing.
-        local core: any = state and state.mvsdCore
-        if core and type(core.isTeammate) == "function" then
-            local other: Player? = nil
-            if a == localPlayer then
-                other = b
-            elseif b == localPlayer then
-                other = a
-            end
-            if other ~= nil then
-                return core.isTeammate(other) == true
-            end
+    local function setStatus(text: string?): ()
+        if KnifeFeature and type(KnifeFeature.SetStatus) == "function" then
+            KnifeFeature:SetStatus(text)
         end
-        local aAttr: any = a:GetAttribute("Team")
-        local bAttr: any = b:GetAttribute("Team")
-        if aAttr ~= nil and bAttr ~= nil then
-            return aAttr == bAttr
-        end
-        if a.Team ~= nil and b.Team ~= nil then
-            return a.Team == b.Team
-        end
-        return false
-    end
-
-    local function isInMatch(player: Player): boolean
-        local localGame: any = localPlayer:GetAttribute("Game")
-        local playerGame: any = player:GetAttribute("Game")
-        if localGame ~= nil and playerGame ~= nil then
-            return localGame == playerGame
-        end
-        return true
-    end
-
-    local function getActiveEnemies(): {Player}
-        local enemies: {Player} = {}
-        for _, player: Player in ipairs(players:GetPlayers()) do
-            if player ~= localPlayer
-                and player:GetAttribute("Died") ~= true
-                and isInMatch(player)
-                and not isSameTeam(localPlayer, player) then
-                local character: Model? = player.Character
-                local humanoid: Humanoid? = character and character:FindFirstChildOfClass("Humanoid")
-                local root: BasePart? = character and (character:FindFirstChild("HumanoidRootPart") :: BasePart? or character:FindFirstChild("Head") :: BasePart?)
-                if character and humanoid and humanoid.Health > 0 and root then
-                    table.insert(enemies, player)
-                end
-            end
-        end
-        return enemies
     end
 
     local function restoreAllHitboxes(): ()
@@ -105,13 +68,11 @@ function Module.init(runtime: any): any
             restoreAllHitboxes()
             return
         end
-
-        local enemies: {Player} = getActiveEnemies()
+        local enemies: {Player} = core and core.enemies() or {}
         local activeSet: {[BasePart]: boolean} = {}
-
         for _, enemy: Player in ipairs(enemies) do
-            local character: Model = enemy.Character :: Model
-            local root: BasePart? = character:FindFirstChild("HumanoidRootPart") :: BasePart?
+            local character: Model? = enemy.Character
+            local root: BasePart? = character and character:FindFirstChild("HumanoidRootPart") :: BasePart?
             if root then
                 activeSet[root] = true
                 if not originalHitboxes[root] then
@@ -124,13 +85,11 @@ function Module.init(runtime: any): any
                 end)
             end
         end
-
-        -- Clean up players no longer in match
-        for part: BasePart, origSize: Vector3 in pairs(originalHitboxes) do
+        for part: BasePart, _origSize: Vector3 in pairs(originalHitboxes) do
             if not activeSet[part] then
                 if part and part.Parent then
                     pcall(function(): ()
-                        part.Size = origSize
+                        part.Size = originalHitboxes[part]
                         part.Transparency = 1
                         part.CanCollide = false
                     end)
@@ -140,119 +99,122 @@ function Module.init(runtime: any): any
         end
     end
 
-    -- Knife Throw remotes
-    local function getKnifeThrowRemotes(): (RemoteEvent?, RemoteEvent?, RemoteEvent?)
+    local function getKnifeRemotes(): (RemoteEvent?, RemoteEvent?, RemoteEvent?)
         local packages: Instance? = replicatedStorage:FindFirstChild("Packages")
         local net: Instance? = packages and packages:FindFirstChild("Net")
-        if not net then return nil, nil, nil end
-
+        if not net then
+            return nil, nil, nil
+        end
+        local re: Instance? = net:FindFirstChild("RE")
+        local container: Instance = re or net
         local prepRemote: RemoteEvent? = nil
         local throwRemote: RemoteEvent? = nil
         local hitRemote: RemoteEvent? = nil
-
-        for _, child: Instance in ipairs(net:GetChildren()) do
+        for _, child: Instance in ipairs(container:GetChildren()) do
             if child:IsA("RemoteEvent") then
-                if string.find(child.Name, "78a946aa") then
+                if string.find(child.Name, "78a946aa", 1, true) then
                     prepRemote = child
-                elseif string.find(child.Name, "bfabffda") then
+                elseif string.find(child.Name, "bfabffda", 1, true) then
                     throwRemote = child
-                elseif string.find(child.Name, "90e51178") then
+                elseif string.find(child.Name, "90e51178", 1, true) then
                     hitRemote = child
                 end
             end
         end
-
         return prepRemote, throwRemote, hitRemote
     end
 
-    local lastKnifeThrowTime: number = 0
+    local lastKnife: number = 0
 
     local function executeKnifeSilentAim(): ()
-        if not settings.enabled or not settings.silentAim then return end
-        local now: number = os.clock()
-        if now - lastKnifeThrowTime < settings.knifeRate then return end
-        lastKnifeThrowTime = now
+        if not settings.silentAim then
+            return
+        end
+        local knife: Instance? = core and core.findKnife() or nil
+        if not knife then
+            setStatus("No knife found")
+            return
+        end
+        if settings.autoEquip and not core.isEquipped(knife) then
+            core.equip(knife)
+        end
 
-        local enemies: {Player} = getActiveEnemies()
-        if #enemies == 0 then return end
+        local enemies: {Player} = core and core.enemies() or {}
+        if #enemies == 0 then
+            setStatus("No target")
+            return
+        end
         local targetEnemy: Player = enemies[math.random(1, #enemies)]
-        local character: Model = targetEnemy.Character :: Model
-        local targetRoot: BasePart? = character:FindFirstChild("HumanoidRootPart") :: BasePart?
-            or character:FindFirstChild("Head") :: BasePart?
-        if not targetRoot then return end
+        local character: Model? = targetEnemy.Character
+        local targetRoot: BasePart? = character and (character:FindFirstChild("HumanoidRootPart") :: BasePart?
+            or character:FindFirstChild("Head") :: BasePart?)
+        if not targetRoot then
+            return
+        end
 
+        setStatus(nil)
         local myChar: Model? = localPlayer.Character
         local myRoot: BasePart? = myChar and (myChar:FindFirstChild("HumanoidRootPart") :: BasePart? or myChar.PrimaryPart :: BasePart?)
         local origin: Vector3 = myRoot and myRoot.Position or camera.CFrame.Position
         local targetPos: Vector3 = targetRoot.Position
 
-        local prepRemote, throwRemote, hitRemote = getKnifeThrowRemotes()
-        local actionId: string = "knife_" .. tostring(math.random(100000, 999999))
+        local prepRemote, throwRemote, hitRemote = getKnifeRemotes()
+        local guid: string = httpService:GenerateGUID(false)
 
         if prepRemote then
             pcall(function(): ()
-                prepRemote:FireServer(actionId)
+                prepRemote:FireServer(guid)
             end)
         end
-
         if throwRemote then
             pcall(function(): ()
                 local knifeCFrame: CFrame = CFrame.new(origin, targetPos)
-                throwRemote:FireServer(actionId, knifeCFrame, targetPos)
+                throwRemote:FireServer(guid, knifeCFrame, (targetPos - origin).Unit)
             end)
         end
-
         if hitRemote then
             pcall(function(): ()
-                local dir: Vector3 = (targetPos - origin).Unit
-                hitRemote:FireServer(actionId, targetEnemy, dir, origin, targetPos)
+                local direction: Vector3 = (targetPos - origin).Unit
+                hitRemote:FireServer(guid, targetEnemy, direction, origin, targetPos)
             end)
         end
     end
 
     local function onHeartbeat(): ()
-        if not settings.enabled then return end
+        if not settings.enabled then
+            return
+        end
         updateHitboxes()
 
-        -- Cooldown bypass for equipped knife
-        local character: Model? = localPlayer.Character
-        local tool: Tool? = character and character:FindFirstChildOfClass("Tool")
-        if tool and string.find(tool.Name:lower(), "knife") then
-            tool:SetAttribute("CanSlash", true)
-            tool:SetAttribute("CanThrow", true)
-            tool:SetAttribute("Cooldown", 0)
+        local now: number = os.clock()
+        if now - lastKnife < settings.knifeRate then
+            return
+        end
+        lastKnife = now
+        executeKnifeSilentAim()
+
+        local knife: Instance? = core and core.findKnife() or nil
+        if knife then
+            pcall(function(): ()
+                knife:SetAttribute("CanSlash", true)
+                knife:SetAttribute("CanThrow", true)
+                knife:SetAttribute("Cooldown", 0)
+            end)
         end
     end
-
-    -- Hook knife activation
-    local userInput: UserInputService = game:GetService("UserInputService")
-    local function onInputBegan(input: InputObject, gameProcessed: boolean): ()
-        if not settings.enabled or gameProcessed then return end
-        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.MouseButton2 then
-            local character: Model? = localPlayer.Character
-            local tool: Tool? = character and character:FindFirstChildOfClass("Tool")
-            if tool and string.find(tool.Name:lower(), "knife") then
-                executeKnifeSilentAim()
-            end
-        end
-    end
-
-    local env: any = getfenv()
-    local createUniversalFeature: any = env.createUniversalFeature
-    local addToggleOption: any = env.addToggleOption
-    local addNumberOption: any = env.addNumberOption
 
     local parentScroll: any = state and state.mvsdScroll
     local featuresRegistry: any = state and state.mvsdFeatures
 
-    local KnifeFeature: any = createUniversalFeature(
+    KnifeFeature = createUniversalFeature(
         "Knife",
-        "Hitbox increase and remote silent aim knife teleportation",
+        "Expands enemy hitboxes and teleports knife hits onto them",
         3,
         function(enabled: boolean): ()
             settings.enabled = enabled
             if not enabled then
                 restoreAllHitboxes()
+                setStatus(nil)
             end
         end,
         {
@@ -267,7 +229,7 @@ function Module.init(runtime: any): any
         if not value then
             restoreAllHitboxes()
         end
-    end, "Expands enemy humanoid hitbox for massive slash range")
+    end, "Grows enemy root parts for a massive slash range")
 
     addNumberOption(KnifeFeature, "Hitbox Size", 20, 5, 45, function(value: number): ()
         settings.hitboxSize = value
@@ -275,17 +237,21 @@ function Module.init(runtime: any): any
 
     addToggleOption(KnifeFeature, "SilentAIM", true, function(value: boolean): ()
         settings.silentAim = value
-    end, "Teleports knives directly to enemies via remote")
+    end, "Teleports knife hits to enemies via remote")
+
+    addToggleOption(KnifeFeature, "Auto Equip", true, function(value: boolean): ()
+        settings.autoEquip = value
+    end, "Equips the knife automatically")
 
     addNumberOption(KnifeFeature, "Knife Rate", 0.1, 0.02, 1, function(value: number): ()
         settings.knifeRate = value
-    end, "Knife attack cooldown rate in seconds", 0.02)
+    end, "Seconds between knife attacks", 0.02)
 
     featureConnections.Heartbeat = runService.Heartbeat:Connect(onHeartbeat)
-    featureConnections.InputBegan = userInput.InputBegan:Connect(onInputBegan)
 
     moduleCleanup = function(): ()
         restoreAllHitboxes()
+        setStatus(nil)
         for _, conn: any in pairs(featureConnections) do
             if typeof(conn) == "RBXScriptConnection" then
                 conn:Disconnect()
@@ -307,8 +273,8 @@ function Module.destroy(): ()
     pcall(moduleCleanup)
     moduleCleanup = function(): () end
     Module.Events = {}
-    Module.Runtime = nil
     Module.Menu = nil
+    Module.Runtime = nil
 end
 
 return Module
