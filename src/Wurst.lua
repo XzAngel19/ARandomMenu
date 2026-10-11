@@ -45,8 +45,7 @@ local FEATURE_CATEGORIES: {[string]: string} = {
 
     ["AutoWin"] = "Blatant",
     ["Knife"] = "Blatant",
-    ["SilentAim"] = "Blatant",
-    ["MVSD Shoot"] = "Other",
+    ["Team Detection"] = "Render",
 
     ["Click Teleport"] = "Movement",
     ["Freeze Movements"] = "Movement",
@@ -225,7 +224,7 @@ local RUNTIME_RAW_BASE: string =
         .. RUNTIME_BRANCH
         .. "/"
 
-local SOURCE_STAMP: string = "v3-20261011-1530"
+local SOURCE_STAMP: string = "v4-20261011-1600"
 
 local BOOT_STARTED_AT: number = os.clock()
 local BOOT_FINGERPRINT_SECONDS: number = 0
@@ -318,8 +317,13 @@ local GAME_MODULES: {[number]: string} = {
     [142823291] = "MM2",
     [14315258385] = "TRS",
     [93978595733734] = "VD",
+    -- Murderers VS Sheriffs Duels. Every queue mode is its own place on top of
+    -- the lobby, and new ones keep appearing, so this list is only a fast path:
+    -- GAME_FINGERPRINTS below catches any place that is not listed here.
     [92876937625630] = "MVSD",
     [135856908115931] = "MVSD",
+    [12355337193] = "MVSD",
+    [86549877824547] = "MVSD",
 }
 
 type GameFingerprint = {
@@ -395,6 +399,96 @@ local GAME_FINGERPRINTS: {GameFingerprint} = {
                         and (object:FindFirstChild("CoinContainer")
                             or object:FindFirstChild("CoinAreas")) then
                         return true
+                    end
+                end
+                return false
+            end,
+        },
+    },
+
+    -- Murderers VS Sheriffs Duels (RED21 Games). Each queue mode lives in its
+    -- own place, so matching the PlaceId alone kept missing new queues; these
+    -- markers come from a recorded remote dump of the game itself.
+    {
+        module = "MVSD",
+        required = 2,
+        markers = {
+
+            function(replicated: ReplicatedStorage): boolean
+                local packages: Instance? = replicated:FindFirstChild("Packages")
+                local networking: Instance? = packages
+                    and packages:FindFirstChild("Networking")
+                local remoteEvents: Instance? = networking
+                    and networking:FindFirstChild("RE")
+                local confirmMap: Instance? = remoteEvents
+                    and remoteEvents:FindFirstChild("Match")
+                confirmMap = confirmMap and confirmMap:FindFirstChild("ConfirmMatchMap")
+                return confirmMap ~= nil
+            end,
+
+            function(replicated: ReplicatedStorage): boolean
+                local packages: Instance? = replicated:FindFirstChild("Packages")
+                local networking: Instance? = packages
+                    and packages:FindFirstChild("Networking")
+                local remoteEvents: Instance? = networking
+                    and networking:FindFirstChild("RE")
+                for _, folderName: string in ipairs({"Combat", "Events"}) do
+                    local folder: Instance? = remoteEvents
+                        and remoteEvents:FindFirstChild(folderName)
+                    if folder and folder:FindFirstChildOfClass("RemoteEvent") then
+                        return true
+                    end
+                end
+                return false
+            end,
+
+            function(replicated: ReplicatedStorage): boolean
+                local packages: Instance? = replicated:FindFirstChild("Packages")
+                local net: Instance? = packages and packages:FindFirstChild("Net")
+                local remoteEvents: Instance? = net and net:FindFirstChild("RE")
+                if not remoteEvents then
+                    return false
+                end
+                for _, child: Instance in ipairs(remoteEvents:GetChildren()) do
+                    -- The hashed remote names Net generates are 64 hex chars.
+                    if child:IsA("RemoteEvent") and #child.Name == 64 then
+                        return true
+                    end
+                end
+                return false
+            end,
+
+            function(replicated: ReplicatedStorage): boolean
+                local generated: Instance? =
+                    replicated:FindFirstChild("UserGenerated")
+                local analytics: Instance? = generated
+                    and generated:FindFirstChild("Analytics")
+                local clientKit: Instance? = analytics
+                    and analytics:FindFirstChild("ClientKit")
+                return clientKit ~= nil
+                    and clientKit:FindFirstChild("Ping") ~= nil
+                    and clientKit:FindFirstChild("Fps") ~= nil
+            end,
+
+            function(_replicated: ReplicatedStorage): boolean
+                -- Matched characters carry a DefaultGun with fire/showBeam.
+                for _, object: Instance in ipairs(workspace:GetChildren()) do
+                    if not object:IsA("Model") then
+                        continue
+                    end
+                    for _, child: Instance in ipairs(object:GetChildren()) do
+                        if child:IsA("Tool")
+                            or child:IsA("Model")
+                            or child:IsA("Folder") then
+                            local gun: Instance? = child.Name:lower():find("gun")
+                                and child
+                                or child:FindFirstChild("DefaultGun")
+                            if gun
+                                and gun:FindFirstChild("fire")
+                                and gun:FindFirstChild("showBeam") then
+                                return true
+                            end
+                        end
                     end
                 end
                 return false
@@ -4266,6 +4360,10 @@ end
 
 state.gameBridge = {
     roleProvider = nil :: any,
+    -- A game that keeps every player Neutral (Murderers VS Sheriffs Duels does
+    -- this) cannot be answered by the Entity library's Teams-service lookup, so
+    -- the game module publishes its own friendly/enemy resolver here.
+    teamProvider = nil :: any,
     extras = {} :: {any},
     listeners = {} :: {(string, any) -> ()},
 }
@@ -4276,6 +4374,9 @@ state.onGameBridge = function(listener: (string, any) -> ()): () -> ()
     if state.gameBridge.roleProvider then
         pcall(listener, "roles", state.gameBridge.roleProvider)
     end
+    if state.gameBridge.teamProvider then
+        pcall(listener, "team", state.gameBridge.teamProvider)
+    end
     for _, extra: any in ipairs(state.gameBridge.extras) do
         pcall(listener, "extra", extra)
     end
@@ -4285,6 +4386,22 @@ state.onGameBridge = function(listener: (string, any) -> ()): () -> ()
         if index then
             table.remove(state.gameBridge.listeners, index)
         end
+    end
+end
+
+-- The Entity library asks this before its own Teams/attribute heuristics. It is
+-- what lets "Team colours" paint Murderers VS Sheriffs teammates white instead
+-- of painting the whole server red.
+state.registerTeamProvider = function(provider: any): ()
+    if type(provider) ~= "table"
+        or (type(provider.IsFriendly) ~= "function"
+            and type(provider.Get) ~= "function") then
+        return
+    end
+    state.gameBridge.teamProvider = provider
+    state.teamProvider = provider
+    for _, listener: (string, any) -> () in ipairs(state.gameBridge.listeners) do
+        pcall(listener, "team", provider)
     end
 end
 
@@ -4733,6 +4850,7 @@ local function createGameModuleEnvironment(
         colorToConfig = colorToConfig,
 
         registerRoleProvider = state.registerRoleProvider,
+        registerTeamProvider = state.registerTeamProvider,
         registerEspExtra = state.registerEspExtra,
         onGameBridge = state.onGameBridge,
         playerRole = state.playerRole,
@@ -4773,6 +4891,9 @@ local function loadGameModule(
         or ACTIVE_GAME_MODULE
         or tostring(placeId)
     local paths: {string} = if moduleName == "MVSD" then {
+        -- base.lua has to come first: it publishes state.mvsdCore (team/role
+        -- resolution) and the team provider the ESP colours players with.
+        "src/games/MVSD/base.lua",
         "src/games/MVSD/Blatant/SilentAim.lua",
         "src/games/MVSD/Other/Shoot.lua",
         "src/games/MVSD/Blatant/Knife.lua",
@@ -4806,6 +4927,7 @@ local function loadGameModule(
     } elseif moduleName == "BedWars" then {} else {"src/games/" .. moduleName .. "/base.lua"}
     local moduleEnvironment: any = createGameModuleEnvironment(diagnostics)
     local loadedModules: {GameModule} = {}
+    local skipped: {string} = {}
     for _, path: string in paths do
         local source: any = nil
         local failure: any = nil
@@ -4824,31 +4946,54 @@ local function loadGameModule(
             local ok: boolean = false
             if type(readFile) == "function" then ok, source = pcall(readFile, localPath) end
             if not ok or type(source) ~= "string" then
-                return nil, nil, diagnostics, "Could not load " .. path .. ": " .. tostring(failure)
+                table.insert(skipped, path .. " -> " .. tostring(failure))
+                continue
             end
         end
         local chunk: any, compileError: any = executorEnvironment.loadstring(source, "@" .. path)
         if type(chunk) ~= "function" then
-            return nil, nil, diagnostics, "Compilation error in " .. path .. ": " .. tostring(compileError)
+            table.insert(skipped, path .. " -> " .. tostring(compileError))
+            continue
         end
         executorEnvironment.setfenv(chunk, moduleEnvironment)
         local ok: boolean, loaded: any = pcall(chunk)
         if not ok or type(loaded) ~= "table" or type(loaded.init) ~= "function" or type(loaded.destroy) ~= "function" then
-            return nil, nil, diagnostics, "Invalid module " .. path .. ": " .. tostring(loaded)
+            table.insert(skipped, path .. " -> " .. tostring(loaded))
+            continue
         end
         table.insert(loadedModules, loaded)
     end
+    -- A single unreadable file must not hide the whole game section: the rest
+    -- of the cards still work, so load them and report what was dropped.
+    if #loadedModules == 0 then
+        return nil, nil, diagnostics,
+            "No " .. moduleName .. " file loaded (" .. table.concat(skipped, " | ") .. ")"
+    end
+    for _, reason: string in ipairs(skipped) do
+        state.logBootstrapError("Skipped " .. moduleName .. " file " .. reason)
+    end
     local composite: any = {Name = moduleName, Initialized = false}
     function composite.init(runtime: any): any
+        local initializedCount: number = 0
+        local failures: {string} = {}
         for _, loaded: GameModule in loadedModules do
             local ok: boolean, failure: any = pcall(loaded.init, runtime)
-            if not ok then
-                for _, started: GameModule in loadedModules do
-                    if started == loaded then break end
-                    pcall(started.destroy)
-                end
-                error(failure)
+            if ok then
+                initializedCount += 1
+            else
+                -- Keep the cards that did initialize: a single module raising
+                -- used to roll the whole section back, so one bad file meant
+                -- no MVSD cards at all.
+                pcall(loaded.destroy)
+                table.insert(failures, tostring(loaded.Name) .. ": " .. tostring(failure))
+                state.logBootstrapError(
+                    moduleName .. " module " .. tostring(loaded.Name)
+                        .. " failed: " .. tostring(failure)
+                )
             end
+        end
+        if initializedCount == 0 then
+            error(table.concat(failures, " | "))
         end
         composite.Initialized = true
         return composite

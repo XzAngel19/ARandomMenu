@@ -35,6 +35,20 @@ function Module.init(runtime: any): any
     local originalHitboxes: {[BasePart]: Vector3} = {}
 
     local function isSameTeam(a: Player, b: Player): boolean
+        -- base.lua resolves the side from every source Duels exposes; the
+        -- attribute-only check below is only the fallback when it is missing.
+        local core: any = state and state.mvsdCore
+        if core and type(core.isTeammate) == "function" then
+            local other: Player? = nil
+            if a == localPlayer then
+                other = b
+            elseif b == localPlayer then
+                other = a
+            end
+            if other ~= nil then
+                return core.isTeammate(other) == true
+            end
+        end
         local aAttr: any = a:GetAttribute("Team")
         local bAttr: any = b:GetAttribute("Team")
         if aAttr ~= nil and bAttr ~= nil then

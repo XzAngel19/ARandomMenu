@@ -29,6 +29,20 @@ function Module.init(runtime: any): any
     }
 
     local function isSameTeam(a: Player, b: Player): boolean
+        -- base.lua resolves the side from every source Duels exposes; the
+        -- attribute-only check below is only the fallback when it is missing.
+        local core: any = state and state.mvsdCore
+        if core and type(core.isTeammate) == "function" then
+            local other: Player? = nil
+            if a == localPlayer then
+                other = b
+            elseif b == localPlayer then
+                other = a
+            end
+            if other ~= nil then
+                return core.isTeammate(other) == true
+            end
+        end
         local aAttr: any = a:GetAttribute("Team")
         local bAttr: any = b:GetAttribute("Team")
         if aAttr ~= nil and bAttr ~= nil then
@@ -246,7 +260,7 @@ function Module.init(runtime: any): any
     local createUniversalFeature: any = env.createUniversalFeature
     local addToggleOption: any = env.addToggleOption
     local addNumberOption: any = env.addNumberOption
-    local addButtonOption: any = env.addButtonOption
+    local addActionOption: any = env.addActionOption
 
     local parentScroll: any = state and state.mvsdScroll
     local featuresRegistry: any = state and state.mvsdFeatures
@@ -282,7 +296,7 @@ function Module.init(runtime: any): any
         settings.spamDelay = value
     end, "Remote spam interval in seconds", 0.01)
 
-    addButtonOption(AutoWinFeature, "Trigger Win Now", function(): ()
+    addActionOption(AutoWinFeature, "Trigger Win Now", function(): ()
         autoWinStep()
     end, "Executes one instant teleport & hit spam sequence")
 

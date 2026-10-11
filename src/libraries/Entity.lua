@@ -237,12 +237,57 @@ function Module.init(context: any): EntityLibrary
         return teamToken(localPlayer)
     end
 
+    -- A game module may publish a resolver that knows how that game splits
+    -- players into sides. Murderers VS Sheriffs Duels leaves every Player
+    -- Neutral and keeps the side in match data, so the Teams-service lookup
+    -- below answers "nobody is a teammate" there and the ESP painted the whole
+    -- server as an enemy. The provider always wins when it has an answer.
+    local function teamResolver(): any
+        local hostState: any = host.state
+        if hostState and hostState.gameBridge then
+            return hostState.gameBridge.teamProvider
+        end
+        return nil
+    end
+
+    local function providerTeamToken(instance: Instance): string?
+        local provider: any = teamResolver()
+        if not provider or type(provider.Get) ~= "function" then
+            return nil
+        end
+        local ok: boolean, token: any = pcall(provider.Get, instance)
+        if ok and type(token) == "string" and token ~= "" then
+            return token
+        end
+        return nil
+    end
+
     function library:IsFriendly(player: Player?): boolean
         if not player or player == localPlayer then
             return false
         end
 
-        if player.Neutral == true or localPlayer.Neutral == true then
+        local provider: any = teamResolver()
+        if provider and type(provider.IsFriendly) == "function" then
+            local ok: boolean, friendly: any = pcall(provider.IsFriendly, player)
+            if ok and type(friendly) == "boolean" then
+                return friendly
+            end
+        end
+
+        local providerToken: string? = providerTeamToken(player)
+        if providerToken ~= nil then
+            local localProviderToken: string? = providerTeamToken(localPlayer)
+            if localProviderToken ~= nil then
+                return localProviderToken == providerToken
+            end
+        end
+
+        -- Without a game-specific resolver the Neutral guard stays: a game that
+        -- uses Teams for something else (or not at all) must not report every
+        -- player as a teammate just because two tokens happen to match.
+        if provider == nil
+            and (player.Neutral == true or localPlayer.Neutral == true) then
             return false
         end
         local localToken: string? = localTeamToken()
@@ -253,6 +298,13 @@ function Module.init(context: any): EntityLibrary
     function library:IsFriendlyModel(model: Model): boolean
         if model == localPlayer.Character then
             return false
+        end
+        local providerToken: string? = providerTeamToken(model)
+        if providerToken ~= nil then
+            local localProviderToken: string? = providerTeamToken(localPlayer)
+            if localProviderToken ~= nil then
+                return localProviderToken == providerToken
+            end
         end
         local localToken: string? = localTeamToken()
         local targetToken: string? = teamToken(model)

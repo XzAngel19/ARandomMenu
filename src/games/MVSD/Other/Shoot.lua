@@ -30,6 +30,20 @@ function Module.init(runtime: any): any
     }
 
     local function isSameTeam(a: Player, b: Player): boolean
+        -- base.lua resolves the side from every source Duels exposes; the
+        -- attribute-only check below is only the fallback when it is missing.
+        local core: any = state and state.mvsdCore
+        if core and type(core.isTeammate) == "function" then
+            local other: Player? = nil
+            if a == localPlayer then
+                other = b
+            elseif b == localPlayer then
+                other = a
+            end
+            if other ~= nil then
+                return core.isTeammate(other) == true
+            end
+        end
         local aAttr: any = a:GetAttribute("Team")
         local bAttr: any = b:GetAttribute("Team")
         if aAttr ~= nil and bAttr ~= nil then
@@ -190,7 +204,7 @@ function Module.init(runtime: any): any
     local env: any = getfenv()
     local createUniversalFeature: any = env.createUniversalFeature
     local addToggleOption: any = env.addToggleOption
-    local addButtonOption: any = env.addButtonOption
+    local addActionOption: any = env.addActionOption
 
     local parentScroll: any = state and state.mvsdScroll
     local featuresRegistry: any = state and state.mvsdFeatures
@@ -217,7 +231,7 @@ function Module.init(runtime: any): any
         settings.macro = value
     end, "Automatically unequips gun 0.01 seconds after firing")
 
-    addButtonOption(ShootFeature, "Fire Shot", function(): ()
+    addActionOption(ShootFeature, "Fire Shot", function(): ()
         executeLegalShot()
     end, "Triggers a single legal shot now")
 
