@@ -1,5 +1,5 @@
 return {
-    stamp = "audit-20261011-00",
+    stamp = "audit-20261011-01",
     files = {
         ["src/libraries/Manifest.lua"] = [=[
 export type ModuleEntry = {
@@ -44,8 +44,8 @@ local Manifest: Manifest = {
         "src/guis/Wurst/Code/Furniture.lua",
     },
     modules = {
-
-                {
+        -- Render
+        {
             path = "src/games/universal/Render/ItemRender.lua",
             name = "ItemESP",
             category = "Render",
@@ -71,24 +71,36 @@ local Manifest: Manifest = {
             category = "Render",
         },
         {
+            path = "src/games/universal/Render/FieldOfView.lua",
+            name = "FOV",
+            category = "Render",
+        },
+        {
+            path = "src/games/universal/Render/Fullbright.lua",
+            name = "Fullbright",
+            category = "Render",
+        },
+        {
+            path = "src/games/universal/Render/TimeChanger.lua",
+            name = "Time Changer",
+            category = "Render",
+        },
+        {
+            path = "src/games/universal/Render/XRay.lua",
+            name = "X-Ray",
+            category = "Render",
+        },
+        {
+            path = "src/games/universal/Render/ZoomUnlocker.lua",
+            name = "Zoom",
+            category = "Render",
+        },
+
+        -- Combat
+        {
             path = "src/games/universal/Combat/KillAura.lua",
             name = "Killaura",
             category = "Combat",
-        },
-        {
-            path = "src/games/universal/Utility/RemoteLogger.lua",
-            name = "Remote Logger",
-            category = "Other",
-        },
-        {
-            path = "src/games/universal/Utility/Learning.lua",
-            name = "Learning",
-            category = "Other",
-        },
-        {
-            path = "src/games/universal/Movement/ClickTeleport.lua",
-            name = "Click Teleport",
-            category = "Movement",
         },
         {
             path = "src/games/universal/Combat/AutoClicker.lua",
@@ -106,14 +118,32 @@ local Manifest: Manifest = {
             category = "Combat",
         },
 
+        -- Blatant
         {
-            path = "src/games/universal/Render/XRay.lua",
-            name = "X-Ray",
-            category = "Render",
+            path = "src/games/universal/Blatant/Hitboxes.lua",
+            name = "Hitboxes",
+            category = "Blatant",
         },
         {
-            path = "src/games/universal/Blatant/HighJump.lua",
-            name = "HighJump",
+            path = "src/games/universal/Blatant/Invisible.lua",
+            name = "Invisible",
+            category = "Blatant",
+        },
+
+        -- Movement
+        {
+            path = "src/games/universal/Movement/Speed.lua",
+            name = "Speed",
+            category = "Movement",
+        },
+        {
+            path = "src/games/universal/Movement/Jump.lua",
+            name = "Jump",
+            category = "Movement",
+        },
+        {
+            path = "src/games/universal/Movement/ClickTeleport.lua",
+            name = "Click Teleport",
             category = "Movement",
         },
         {
@@ -132,38 +162,13 @@ local Manifest: Manifest = {
             category = "Movement",
         },
         {
-            path = "src/games/universal/Blatant/Invisible.lua",
-            name = "Invisible",
-            category = "Blatant",
-        },
-        {
-            path = "src/games/universal/World/SafeWalk.lua",
-            name = "SafeWalk",
-            category = "Movement",
-        },
-        {
-            path = "src/games/universal/World/RejoinServer.lua",
-            name = "Rejoin Server",
-            category = "Other",
-        },
-        {
-            path = "src/games/universal/Render/ZoomUnlocker.lua",
-            name = "Zoom",
-            category = "Render",
-        },
-        {
-            path = "src/games/universal/World/InteractExtender.lua",
-            name = "Interact Extender",
-            category = "Other",
-        },
-                        {
             path = "src/games/universal/Blatant/Fly.lua",
             name = "Flight",
             category = "Movement",
         },
         {
-            path = "src/games/universal/Blatant/VehicleSpeed.lua",
-            name = "Vehicle Speed",
+            path = "src/games/universal/Blatant/Noclip.lua",
+            name = "Noclip",
             category = "Movement",
         },
         {
@@ -172,43 +177,62 @@ local Manifest: Manifest = {
             category = "Movement",
         },
         {
-            path = "src/games/universal/World/Gravity.lua",
-            name = "Gravity",
-            category = "Movement",
-        },
-        {
-            path = "src/games/universal/Blatant/JumpPower.lua",
-            name = "Jump Power",
-            category = "Movement",
-        },
-        {
-            path = "src/games/universal/Blatant/InfiniteJump.lua",
-            name = "Infinite Jump",
-            category = "Movement",
-        },
-        {
-            path = "src/games/universal/Render/FieldOfView.lua",
-            name = "FOV",
-            category = "Render",
-        },
-        {
-            path = "src/games/universal/Blatant/Noclip.lua",
-            name = "Noclip",
-            category = "Movement",
-        },
-        {
-            path = "src/games/universal/World/AntiAfk.lua",
-            name = "AntiAFK",
-            category = "Other",
-        },
-        {
             path = "src/games/universal/Movement/AntiFling.lua",
             name = "Anti-Fling",
             category = "Movement",
         },
         {
-            path = "src/games/universal/Utility/LagSwitch.lua",
+            path = "src/games/universal/Movement/FreezeMovements.lua",
+            name = "Freeze Movements",
+            category = "Movement",
+        },
+        {
+            path = "src/games/universal/Movement/Gravity.lua",
+            name = "Gravity",
+            category = "Movement",
+        },
+        {
+            path = "src/games/universal/Movement/SafeWalk.lua",
+            name = "SafeWalk",
+            category = "Movement",
+        },
+
+        -- Fun
+        {
+            path = "src/games/universal/Fun/SpinBot.lua",
+            name = "SpinBot",
+            category = "Fun",
+        },
+
+        -- Other
+        {
+            path = "src/games/universal/Other/Disguise.lua",
+            name = "Disguise",
+            category = "Other",
+        },
+        {
+            path = "src/games/universal/Other/AntiAfk.lua",
+            name = "AntiAFK",
+            category = "Other",
+        },
+        {
+            path = "src/games/universal/Other/InteractExtender.lua",
+            name = "Interact Extender",
+            category = "Other",
+        },
+        {
+            path = "src/games/universal/Other/RejoinServer.lua",
+            name = "Rejoin Server",
+            category = "Other",
+        },
+        {
+            path = "src/games/universal/Other/LagSwitch.lua",
             name = "Lag Switch",
+            category = "Other",
+        },
+        {
+            path = "src/games/universal/Other/ImproveFps.lua",
+            name = "Improve FPS",
             category = "Other",
         },
         {
@@ -217,56 +241,26 @@ local Manifest: Manifest = {
             category = "Other",
         },
         {
-            path = "src/games/universal/Utility/ImproveFps.lua",
-            name = "Improve FPS",
+            path = "src/games/universal/Other/RemoteLogger.lua",
+            name = "Remote Logger",
             category = "Other",
         },
         {
-            path = "src/games/universal/Render/Fullbright.lua",
-            name = "Fullbright",
-            category = "Render",
+            path = "src/games/universal/Other/Learning.lua",
+            name = "Learning",
+            category = "Other",
         },
         {
-            path = "src/games/universal/Render/TimeChanger.lua",
-            name = "Time Changer",
-            category = "Render",
-        },
-        {
-            path = "src/games/universal/World/Disguise.lua",
-            name = "Disguise",
-            category = "World",
-        },
-        {
-            path = "src/games/universal/Movement/FreezeMovements.lua",
-            name = "Freeze Movements",
-            category = "Movement",
-        },
-        {
-            path = "src/games/universal/Blatant/Speed.lua",
-            name = "SpeedHack",
-            category = "Movement",
-        },
-        {
-            path = "src/games/universal/Blatant/Hitboxes.lua",
-            name = "Hitboxes",
-            category = "Blatant",
+            path = "src/games/universal/Other/GameLearning.lua",
+            name = "Game Learning",
+            category = "Other",
         },
         {
             path = "src/games/universal/Render/ProjectileCalibration.lua",
             name = "Projectile Calibration",
             category = "Other",
         },
-        {
-            path = "src/games/universal/Utility/GameLearning.lua",
-            name = "Game Learning",
-            category = "Other",
-        },
-        {
-            path = "src/games/universal/Utility/SpinBot.lua",
-            name = "SpinBot",
-            category = "Fun",
-        },
-                            },
+    },
 }
 
 return Manifest
@@ -15518,6 +15512,542 @@ end
 return Module
 
 ]=],
+        ["src/games/universal/Render/FieldOfView.lua"] = [=[
+export type Runtime = {
+    framework: any,
+    entity: any,
+    host: any,
+    services: any,
+}
+
+local Module = {
+    Name = "FieldOfView",
+    PlaceId = 0,
+    Events = {} :: {[string]: any},
+    Initialized = false,
+}
+
+local activeCleanup: (() -> ())? = nil
+
+function Module.init(context: Runtime): any
+    local host: any = context.host
+    local TaskManager: any = host.TaskManager
+    local featureConnections: any = host.featureConnections
+    local disconnectFeatureConnection: any = host.disconnectFeatureConnection
+    local fovOwnership: any = context.services.fovOwnership
+    local createUniversalFeature: any = host.createUniversalFeature
+    local addNumberOption: any = host.addNumberOption
+    local workspace: any = host.workspace
+    local fovSettings = {value = 90}
+    local FovFeature: any = nil
+
+    local function toggleFov(enabled)
+        disconnectFeatureConnection("FOV")
+        fovOwnership.set("Universal", enabled and fovSettings.value or nil)
+        if not enabled then
+            if FovFeature then FovFeature:SetStatus(nil) end
+            return
+        end
+
+        FovFeature:SetStatus(tostring(math.round(fovSettings.value)))
+        featureConnections.FOV = TaskManager:Connect(function()
+            fovOwnership.set("Universal", fovSettings.value)
+            fovOwnership.apply(workspace.CurrentCamera)
+        end)
+    end
+
+    FovFeature = createUniversalFeature(
+        "FOV",
+        "Keep the camera field of view fixed",
+        10,
+        toggleFov,
+        {categoryName = "Render"}
+    )
+    addNumberOption(FovFeature, "Field of view", fovSettings.value, 20, 120, function(value)
+        fovSettings.value = value
+        if FovFeature.enabled then
+            FovFeature:SetStatus(tostring(math.round(value)))
+        end
+    end)
+
+    activeCleanup = function(): ()
+        disconnectFeatureConnection("FOV")
+        fovOwnership.set("Universal", nil)
+    end
+    Module.Initialized = true
+    return FovFeature
+end
+
+function Module.destroy(): ()
+    if activeCleanup then
+        pcall(activeCleanup)
+    end
+    activeCleanup = nil
+    Module.Initialized = false
+end
+
+return Module
+
+]=],
+        ["src/games/universal/Render/Fullbright.lua"] = [=[
+export type Runtime = {
+    framework: any,
+    entity: any,
+    host: any,
+}
+
+local Module = {
+    Name = "Fullbright",
+    PlaceId = 0,
+    Events = {} :: {[string]: any},
+    Initialized = false,
+}
+
+local activeCleanup: (() -> ())? = nil
+
+function Module.init(context: Runtime): any
+    local host: any = context.host
+    local createUniversalFeature: any = host.createUniversalFeature
+    local addNumberOption: any = host.addNumberOption
+    local Lighting: any = host.Lighting
+    local disconnectFeatureConnection: any = host.disconnectFeatureConnection
+    local featureConnections: any = host.featureConnections
+    local TaskManager: any = host.TaskManager
+
+    local fullbrightSettings = {
+        brightness = 3,
+        clockTime = 14,
+    }
+    local originalLighting: any = nil
+
+    local function toggleFullbright(enabled: boolean): ()
+        disconnectFeatureConnection("Fullbright")
+
+        if not enabled then
+            if originalLighting then
+                Lighting.Brightness = originalLighting.brightness
+                Lighting.ClockTime = originalLighting.clockTime
+                Lighting.GlobalShadows = originalLighting.globalShadows
+                Lighting.FogEnd = originalLighting.fogEnd
+                Lighting.Ambient = originalLighting.ambient
+                Lighting.OutdoorAmbient = originalLighting.outdoorAmbient
+            end
+            return
+        end
+
+        originalLighting = {
+            brightness = Lighting.Brightness,
+            clockTime = Lighting.ClockTime,
+            globalShadows = Lighting.GlobalShadows,
+            fogEnd = Lighting.FogEnd,
+            ambient = Lighting.Ambient,
+            outdoorAmbient = Lighting.OutdoorAmbient,
+        }
+
+        featureConnections.Fullbright = TaskManager:Connect(function()
+            Lighting.Brightness = fullbrightSettings.brightness
+            Lighting.ClockTime = fullbrightSettings.clockTime
+            Lighting.GlobalShadows = false
+            Lighting.FogEnd = 100000
+            Lighting.Ambient = Color3.fromRGB(178, 178, 178)
+            Lighting.OutdoorAmbient = Color3.fromRGB(178, 178, 178)
+        end)
+    end
+
+    local FullbrightFeature = createUniversalFeature(
+        "Fullbright",
+        "Keep the scene bright and remove global shadows",
+        15,
+        toggleFullbright,
+        {categoryName = "Render"}
+    )
+    addNumberOption(
+        FullbrightFeature,
+        "Brightness",
+        fullbrightSettings.brightness,
+        0,
+        10,
+        function(value)
+            fullbrightSettings.brightness = value
+        end
+    )
+    addNumberOption(
+        FullbrightFeature,
+        "Clock time",
+        fullbrightSettings.clockTime,
+        0,
+        24,
+        function(value)
+            fullbrightSettings.clockTime = value
+        end
+    )
+
+    activeCleanup = function(): ()
+        toggleFullbright(false)
+    end
+    Module.Initialized = true
+    return FullbrightFeature
+end
+
+function Module.destroy(): ()
+    if activeCleanup then
+        pcall(activeCleanup)
+    end
+    activeCleanup = nil
+    Module.Initialized = false
+end
+
+return Module
+
+]=],
+        ["src/games/universal/Render/TimeChanger.lua"] = [=[
+--!strict
+export type Runtime = {
+    framework: any,
+    host: any,
+    services: any,
+}
+
+local Module = {
+    Name = "TimeChanger",
+    PlaceId = 0,
+    Events = {} :: {[string]: any},
+    Initialized = false,
+}
+
+local activeCard: any = nil
+
+function Module.init(context: Runtime): any
+    local framework: any = context.framework
+    local host: any = context.host
+    local Lighting: Lighting = host.Lighting or (game :: any):GetService("Lighting")
+
+    local originalTime: string? = nil
+    local customTime: number = 14
+
+    local function applyTime(hour: number): ()
+        local timeString: string = string.format("%02d:00:00", math.floor(hour))
+        pcall(function()
+            Lighting.TimeOfDay = timeString
+        end)
+    end
+
+    local card: any
+    card = framework.Categories.Render:CreateModule({
+        Name = "Time Changer",
+        Category = "Render",
+        ConfigKey = "Universal.TimeChanger",
+        Order = 25,
+        Tooltip = "Changes the client time of day in the current world.",
+        Function = function(enabled: boolean): ()
+            if enabled then
+                originalTime = Lighting.TimeOfDay
+                applyTime(customTime)
+                card:SetStatus(string.format("%02d:00", customTime))
+
+                card:Loop(function(): ()
+                    if originalTime then
+                        applyTime(customTime)
+                    end
+                end)
+            else
+                if originalTime then
+                    pcall(function()
+                        Lighting.TimeOfDay = originalTime
+                    end)
+                    originalTime = nil
+                end
+                card:SetStatus(nil)
+            end
+        end,
+    })
+
+    card:CreateSlider({
+        Name = "Time",
+        Min = 0,
+        Max = 24,
+        Default = 14,
+        Step = 1,
+        Function = function(value: number): ()
+            customTime = value
+            if card.Enabled then
+                applyTime(value)
+                card:SetStatus(string.format("%02d:00", value))
+            end
+        end,
+        Tooltip = "Hour of day (0 = midnight, 12 = noon, 18 = sunset).",
+    })
+
+    activeCard = card
+    Module.Initialized = true
+    return card
+end
+
+function Module.destroy(): ()
+    if activeCard and activeCard.Enabled then
+        pcall(activeCard.Toggle, false)
+    end
+    activeCard = nil
+    Module.Initialized = false
+end
+
+return Module
+
+]=],
+        ["src/games/universal/Render/XRay.lua"] = [=[
+export type Runtime = {
+    framework: any,
+    entity: any,
+    host: any,
+}
+
+local Module = {
+    Name = "XRay",
+    PlaceId = 0,
+    Events = {} :: {[string]: any},
+    Initialized = false,
+}
+
+local activeCleanup: (() -> ())? = nil
+
+function Module.init(context: Runtime): any
+    local host: any = context.host
+    local LocalPlayer: any = host.LocalPlayer
+    local featureConnections: any = host.featureConnections
+    local disconnectFeatureConnection: any = host.disconnectFeatureConnection
+    local createUniversalFeature: any = host.createUniversalFeature
+    local originalXrayTransparency: {[BasePart]: number} =
+        setmetatable({}, {__mode = "k"}) :: any
+    local xrayEnabled: boolean = false
+    local feature: any = nil
+
+    local function restoreXray(): ()
+        for part: BasePart, transparency: number in pairs(originalXrayTransparency) do
+            if part.Parent then
+                part.LocalTransparencyModifier = transparency
+            end
+        end
+        originalXrayTransparency = setmetatable({}, {__mode = "k"}) :: any
+    end
+
+    local function toggleXray(enabled: boolean): ()
+        disconnectFeatureConnection("Xray")
+        xrayEnabled = false
+        restoreXray()
+        if not enabled then
+            if feature then feature:SetStatus(nil) end
+            return
+        end
+
+        feature:SetStatus("72%")
+        xrayEnabled = true
+        local function applyToInstance(descendant: Instance): ()
+            if not xrayEnabled or not descendant:IsA("BasePart") then
+                return
+            end
+            local localCharacter: Model? = LocalPlayer.Character
+            local ancestorModel: Model? = descendant:FindFirstAncestorOfClass("Model")
+            if (localCharacter and descendant:IsDescendantOf(localCharacter))
+                or descendant:FindFirstAncestorOfClass("Tool")
+                or (ancestorModel and ancestorModel:FindFirstChildOfClass("Humanoid")) then
+                return
+            end
+            if originalXrayTransparency[descendant] == nil then
+                originalXrayTransparency[descendant] = descendant.LocalTransparencyModifier
+            end
+            descendant.LocalTransparencyModifier = math.max(
+                descendant.LocalTransparencyModifier,
+                0.72
+            )
+        end
+
+        featureConnections.Xray = workspace.DescendantAdded:Connect(applyToInstance)
+        task.spawn(function(): ()
+            for index: number, descendant: Instance in ipairs(workspace:GetDescendants()) do
+                if not xrayEnabled then
+                    return
+                end
+                applyToInstance(descendant)
+                if index % 240 == 0 then
+                    task.wait()
+                end
+            end
+        end)
+    end
+
+    feature = createUniversalFeature(
+        "X-Ray",
+        "Fade map geometry locally while keeping your character clear",
+        18,
+        toggleXray,
+        {noOptions = true, categoryName = "Render"}
+    )
+
+    activeCleanup = function(): ()
+        disconnectFeatureConnection("Xray")
+        restoreXray()
+    end
+    Module.Initialized = true
+    return feature
+end
+
+function Module.destroy(): ()
+    if activeCleanup then
+        pcall(activeCleanup)
+    end
+    activeCleanup = nil
+    Module.Initialized = false
+end
+
+return Module
+
+]=],
+        ["src/games/universal/Render/ZoomUnlocker.lua"] = [=[
+export type Runtime = {
+    framework: any,
+    entity: any,
+    host: any,
+}
+
+local Module = {
+    Name = "ZoomUnlocker",
+    PlaceId = 0,
+    Events = {} :: {[string]: any},
+    Initialized = false,
+}
+
+local activeCleanup: (() -> ())? = nil
+
+function Module.init(context: Runtime): any
+    local host: any = context.host
+    local LocalPlayer: any = host.LocalPlayer
+    local TaskManager: any = host.TaskManager
+    local featureConnections: any = host.featureConnections
+    local disconnectFeatureConnection: any = host.disconnectFeatureConnection
+    local createUniversalFeature: any = host.createUniversalFeature
+    local addToggleOption: any = host.addToggleOption
+    local addNumberOption: any = host.addNumberOption
+    type ZoomSettings = {
+        minDistance: number,
+        maxDistance: number,
+        unlockFirstPerson: boolean,
+    }
+    type ZoomState = {
+        minDistance: number,
+        maxDistance: number,
+        cameraMode: Enum.CameraMode,
+    }
+    local zoomSettings: ZoomSettings = {
+        minDistance = 0.5,
+        maxDistance = 400,
+        unlockFirstPerson = true,
+    }
+    local originalZoomState: ZoomState? = nil
+    local ZoomFeature: any = nil
+
+    local function toggleZoomUnlocker(enabled: boolean): ()
+        disconnectFeatureConnection("ZoomUnlocker")
+        if originalZoomState then
+            LocalPlayer.CameraMinZoomDistance = originalZoomState.minDistance
+            LocalPlayer.CameraMaxZoomDistance = originalZoomState.maxDistance
+            LocalPlayer.CameraMode = originalZoomState.cameraMode
+            originalZoomState = nil
+        end
+        if not enabled then
+            if ZoomFeature then ZoomFeature:SetStatus(nil) end
+            return
+        end
+        ZoomFeature:SetStatus(tostring(math.round(zoomSettings.maxDistance)) .. " studs")
+        originalZoomState = {
+            minDistance = LocalPlayer.CameraMinZoomDistance,
+            maxDistance = LocalPlayer.CameraMaxZoomDistance,
+            cameraMode = LocalPlayer.CameraMode,
+        }
+        featureConnections.ZoomUnlocker = TaskManager:Connect(function(): ()
+            LocalPlayer.CameraMinZoomDistance = math.min(
+                zoomSettings.minDistance,
+                zoomSettings.maxDistance
+            )
+            LocalPlayer.CameraMaxZoomDistance = math.max(
+                zoomSettings.minDistance,
+                zoomSettings.maxDistance
+            )
+            if zoomSettings.unlockFirstPerson then
+                LocalPlayer.CameraMode = Enum.CameraMode.Classic
+            elseif originalZoomState then
+                LocalPlayer.CameraMode = originalZoomState.cameraMode
+            end
+        end)
+    end
+
+    ZoomFeature = createUniversalFeature(
+        "Zoom",
+        "Extend camera zoom and optionally leave forced first person",
+        23,
+        toggleZoomUnlocker,
+        {
+            configKey = "Universal.ZoomUnlocker",
+            categoryName = "Render",
+        }
+    )
+    addNumberOption(
+        ZoomFeature,
+        "Maximum distance",
+        zoomSettings.maxDistance,
+        25,
+        2000,
+        function(value: number): ()
+            zoomSettings.maxDistance = value
+            if ZoomFeature.enabled then
+                ZoomFeature:SetStatus(tostring(math.round(value)) .. " studs")
+            end
+        end
+    )
+    addNumberOption(
+        ZoomFeature,
+        "Minimum distance",
+        zoomSettings.minDistance,
+        0.5,
+        50,
+        function(value: number): ()
+            zoomSettings.minDistance = value
+        end
+    )
+    addToggleOption(
+        ZoomFeature,
+        "Unlock forced first person",
+        zoomSettings.unlockFirstPerson,
+        function(value: boolean): ()
+            zoomSettings.unlockFirstPerson = value
+        end
+    )
+
+    activeCleanup = function(): ()
+        disconnectFeatureConnection("ZoomUnlocker")
+        if originalZoomState then
+            pcall(function(): ()
+                LocalPlayer.CameraMinZoomDistance = originalZoomState.minDistance
+                LocalPlayer.CameraMaxZoomDistance = originalZoomState.maxDistance
+                LocalPlayer.CameraMode = originalZoomState.cameraMode
+            end)
+            originalZoomState = nil
+        end
+    end
+    Module.Initialized = true
+    return ZoomFeature
+end
+
+function Module.destroy(): ()
+    if activeCleanup then
+        pcall(activeCleanup)
+    end
+    activeCleanup = nil
+    Module.Initialized = false
+end
+
+return Module
+
+]=],
         ["src/games/universal/Combat/KillAura.lua"] = [=[
 export type Runtime = {
     framework: any,
@@ -16105,1019 +16635,6 @@ function Module.init(context: Runtime): any
     end
     Module.Initialized = true
     return aura
-end
-
-function Module.destroy(): ()
-    if activeCleanup then
-        pcall(activeCleanup)
-    end
-    activeCleanup = nil
-    Module.Initialized = false
-end
-
-return Module
-
-]=],
-        ["src/games/universal/Utility/RemoteLogger.lua"] = [=[
-export type Runtime = {
-    framework: any,
-    entity: any,
-    host: any,
-}
-
-local Module = {
-    Name = "RemoteLogger",
-    PlaceId = 0,
-    Events = {} :: {[string]: any},
-    Initialized = false,
-}
-
-local activeCleanup: (() -> ())? = nil
-
-local function fullName(instance: Instance): string
-    local ok: boolean, name: any = pcall(function(): string
-        return instance:GetFullName()
-    end)
-    return ok and tostring(name) or instance.Name
-end
-
-local function describe(value: any, depth: number): string
-    local kind: string = typeof(value)
-    if kind == "string" then
-        return string.format("%q", (value :: string):sub(1, 200))
-    end
-    if kind == "number" or kind == "boolean" or kind == "nil" then
-        return tostring(value)
-    end
-    if kind == "Instance" then
-        return "«" .. (value :: Instance).ClassName .. " " .. fullName(value :: Instance) .. "»"
-    end
-    if kind == "Vector3" or kind == "Vector2" or kind == "CFrame"
-        or kind == "Color3" or kind == "UDim2" or kind == "EnumItem" then
-        return kind .. "(" .. tostring(value) .. ")"
-    end
-    if kind == "table" then
-        if depth <= 0 then
-            return "{...}"
-        end
-        local parts: {string} = {}
-        local count: number = 0
-        for key: any, entry: any in pairs(value :: any) do
-            count += 1
-            if count > 12 then
-                table.insert(parts, "...")
-                break
-            end
-            table.insert(
-                parts,
-                "[" .. describe(key, depth - 1) .. "] = " .. describe(entry, depth - 1)
-            )
-        end
-        return "{" .. table.concat(parts, ", ") .. "}"
-    end
-    return kind
-end
-
-local function snippetFor(entry: any): string
-    local parts: {string} = {}
-    for _, argument: string in ipairs(entry.arguments) do
-        table.insert(parts, argument)
-    end
-    return "game:GetService(\"ReplicatedStorage\")"
-        .. " -- "
-        .. entry.path
-        .. "\n-- :"
-        .. entry.method
-        .. "("
-        .. table.concat(parts, ", ")
-        .. ")"
-end
-
-function Module.init(context: Runtime): any
-    local host: any = context.host
-    local framework: any = context.framework
-    local httpService: HttpService = host.HttpService
-    local product: any = host.PRODUCT
-    local remoteLogFolder: string = product.storageFolder .. "/RemoteLogs"
-
-    local log: {[string]: any} = {}
-    local order: {string} = {}
-    local pathCache: any = setmetatable({}, {__mode = "k"})
-    local hooked: boolean = false
-    local restore: (() -> ())? = nil
-    local capturing: boolean = false
-
-    local logger: any
-
-    local function record(remote: Instance, method: string, ...: any): ()
-        if not capturing then
-            return
-        end
-        local options: any = logger.Options
-
-        local path: string = pathCache[remote]
-        if not path then
-            path = fullName(remote)
-            pathCache[remote] = path
-        end
-        local filter: string = tostring(options["Only containing"].Value or "")
-        if filter ~= ""
-            and not string.find(string.lower(path), string.lower(filter), 1, true) then
-            return
-        end
-
-        local key: string = path .. "::" .. method
-        local entry: any = log[key]
-        if not entry then
-            if #order >= math.round(options["Max remotes"].Value) then
-                return
-            end
-            entry = {
-                path = path,
-                class = remote.ClassName,
-                method = method,
-                calls = 0,
-                samples = 0,
-                firstSeen = os.clock(),
-                arguments = {},
-            }
-            log[key] = entry
-            table.insert(order, key)
-            if options["Announce new"].Value then
-                logger:Notify(remote.Name .. " · " .. method)
-            end
-        end
-        entry.calls += 1
-        entry.lastSeen = os.clock()
-
-        if entry.samples >= 3 and not options["Resample always"].Value then
-            return
-        end
-        entry.samples += 1
-        local described: {string} = {}
-        local packed: {any} = table.pack(...)
-        for index: number = 1, math.min(packed.n, 10) do
-            table.insert(described, describe(packed[index], 3))
-        end
-        if packed.n > 10 then
-            table.insert(described, "...")
-        end
-        entry.arguments = described
-    end
-
-    local queue: {any} = {}
-    local queued: number = 0
-    local inHook: boolean = false
-
-    local function installHook(): boolean
-        if hooked then
-            return true
-        end
-        local environment: any = getfenv()
-        local hookMetamethod: any = environment.hookmetamethod
-        local getNamecall: any = environment.getnamecallmethod
-        local checkCaller: any = environment.checkcaller
-        if type(hookMetamethod) ~= "function" or type(getNamecall) ~= "function" then
-            logger:Notify("executor lacks hookmetamethod")
-            return false
-        end
-
-        local previous: any
-        local ok: boolean = pcall(function(): ()
-            previous = hookMetamethod(game, "__namecall", function(self: any, ...: any): any
-
-                if not capturing or inHook then
-                    return previous(self, ...)
-                end
-                local method: string = getNamecall()
-                if method ~= "FireServer" and method ~= "InvokeServer" then
-                    return previous(self, ...)
-                end
-                if type(checkCaller) == "function" and checkCaller() then
-                    return previous(self, ...)
-                end
-                if queued < 256 then
-                    inHook = true
-                    queued += 1
-                    queue[queued] = {
-                        remote = self,
-                        method = method,
-                        count = select("#", ...),
-                        arguments = table.pack(...),
-                        at = os.clock(),
-                    }
-                    inHook = false
-                end
-                return previous(self, ...)
-            end)
-        end)
-        if not ok then
-            logger:Notify("could not install the hook")
-            return false
-        end
-        hooked = true
-        restore = function(): ()
-
-            local removed: boolean = pcall(hookMetamethod, game, "__namecall", previous)
-            if removed then
-                hooked = false
-                return
-            end
-
-            logger:Notify("hook stays until rejoin")
-        end
-        return true
-    end
-
-    local function drainQueue(): ()
-        if queued == 0 then
-            return
-        end
-        local pending: {any} = queue
-        queue = {}
-        local count: number = queued
-        queued = 0
-        for index: number = 1, count do
-            local item: any = pending[index]
-            if item then
-                pcall(function(): ()
-                    record(
-                        item.remote,
-                        item.method,
-                        table.unpack(item.arguments, 1, item.count)
-                    )
-                end)
-            end
-        end
-        logger:SetStatus(tostring(#order))
-    end
-
-    local function buildReport(): string
-        local lines: {string} = {
-            "-- " .. tostring(product.name) .. " remote log",
-            "-- place " .. tostring(game.PlaceId),
-            "-- " .. tostring(#order) .. " remotes",
-            "",
-        }
-        for _, key: string in ipairs(order) do
-            local entry: any = log[key]
-            table.insert(lines, string.rep("-", 70))
-            table.insert(lines, entry.path)
-            table.insert(
-                lines,
-                "  class "
-                    .. entry.class
-                    .. "  ·  "
-                    .. entry.method
-                    .. "  ·  "
-                    .. tostring(entry.calls)
-                    .. " calls"
-            )
-            table.insert(lines, "  args  " .. table.concat(entry.arguments, ", "))
-            table.insert(lines, snippetFor(entry))
-        end
-        return table.concat(lines, "\n")
-    end
-
-    local function saveReport(): ()
-        local environment: any = getfenv()
-        local writeFile: any = environment.writefile
-        local makeFolder: any = environment.makefolder
-        local isFolder: any = environment.isfolder
-        if type(writeFile) ~= "function" then
-            logger:Notify("executor has no writefile")
-            return
-        end
-        if type(makeFolder) == "function" and type(isFolder) == "function" then
-            if not isFolder(product.storageFolder) then
-                pcall(makeFolder, product.storageFolder)
-            end
-            if not isFolder(remoteLogFolder) then
-                pcall(makeFolder, remoteLogFolder)
-            end
-        end
-
-        local stamp: string = tostring(math.round(os.time()))
-        local base: string = remoteLogFolder
-            .. "/"
-            .. tostring(game.PlaceId)
-            .. "-"
-            .. stamp
-
-        local wrote: boolean = pcall(writeFile, base .. ".txt", buildReport())
-
-        local payload: {any} = {}
-        for _, key: string in ipairs(order) do
-            local entry: any = log[key]
-            table.insert(payload, {
-                path = entry.path,
-                class = entry.class,
-                method = entry.method,
-                calls = entry.calls,
-                arguments = entry.arguments,
-            })
-        end
-        local encoded: boolean, json: any = pcall(function(): string
-            return httpService:JSONEncode(payload)
-        end)
-        if encoded then
-            pcall(writeFile, base .. ".json", json)
-        end
-        if wrote then
-            logger:Notify("saved " .. tostring(#order) .. " remotes")
-        else
-            logger:Notify("could not write the log")
-        end
-    end
-
-    logger = framework.Categories.Utility:CreateModule({
-        Name = "Remote Logger",
-        Category = "Other",
-        Order = 2,
-        Tooltip = "Records the arguments the game sends to its own remotes and "
-            .. "writes them to disk.",
-        Function = function(enabled: boolean): ()
-            capturing = enabled
-            if not enabled then
-                logger:SetStatus(nil)
-                return
-            end
-            logger:SetStatus(tostring(#order))
-            if not installHook() then
-                capturing = false
-                return
-            end
-            logger:Loop(drainQueue)
-            logger:Clean(function(): ()
-                capturing = false
-                queue = {}
-                queued = 0
-                if restore then
-                    (restore :: () -> ())()
-                    restore = nil
-                end
-            end)
-        end,
-    })
-
-    logger:CreateTextBox({
-        Name = "Only containing",
-        Default = "",
-        Tooltip = "Record only remotes whose path contains this. Leave empty "
-            .. "for everything.",
-    })
-    logger:CreateSlider({
-        Name = "Max remotes",
-        Min = 10,
-        Max = 400,
-        Default = 120,
-        Tooltip = "Stops the log growing without bound in a chatty game.",
-    })
-    logger:CreateToggle({
-        Name = "Announce new",
-        Default = false,
-        Tooltip = "Toast the first time each remote is seen.",
-    })
-    logger:CreateToggle({
-        Name = "Resample always",
-        Default = false,
-        Tooltip = "Describe the arguments of every call instead of the first "
-            .. "few. Useful for a remote whose shape changes; heavier.",
-    })
-
-    logger:CreateButton({
-        Name = "Save to file",
-        Tooltip = "Writes " .. remoteLogFolder .. "/<place>-<time>.txt and .json",
-        Function = saveReport,
-    })
-    logger:CreateButton({
-        Name = "Copy to clipboard",
-        Function = function(): ()
-            local environment: any = getfenv()
-            local copy: any = environment.setclipboard or environment.toclipboard
-            if type(copy) ~= "function" then
-                logger:Notify("executor has no clipboard")
-                return
-            end
-            pcall(copy, buildReport())
-            logger:Notify("copied")
-        end,
-    })
-    logger:CreateButton({
-        Name = "Clear log",
-        Function = function(): ()
-            log = {}
-            order = {}
-            if logger.Enabled then
-                logger:SetStatus("0")
-            end
-            logger:Notify("cleared")
-        end,
-    })
-    logger:CreateNote(
-        "Turn it on, do the thing you want a module to do — buy, mine, place, "
-            .. "hit — then save. The log records what only a live game can "
-            .. "tell you: the arguments, in order, as the game really sent "
-            .. "them. It watches; it never blocks, delays or alters a call."
-    )
-
-    Module.entries = function(): {any}
-        local list: {any} = {}
-        for _, key: string in ipairs(order) do
-            table.insert(list, log[key])
-        end
-        return list
-    end
-    Module.report = buildReport
-
-    activeCleanup = function(): ()
-        capturing = false
-        if restore then
-            (restore :: () -> ())()
-            restore = nil
-        end
-        Module.entries = nil
-        Module.report = nil
-    end
-    Module.Initialized = true
-    return logger
-end
-
-function Module.destroy(): ()
-    if activeCleanup then
-        pcall(activeCleanup)
-    end
-    activeCleanup = nil
-    Module.Initialized = false
-end
-
-return Module
-
-]=],
-        ["src/games/universal/Utility/Learning.lua"] = [=[
-export type Runtime = {
-    framework: any,
-    host: any,
-    services: any,
-}
-
-local Module = {
-    Name = "Learning",
-    PlaceId = 0,
-    Events = {} :: {[string]: any},
-    Initialized = false,
-}
-
-local activeCard: any = nil
-
-function Module.init(context: Runtime): any
-    local framework: any = context.framework
-    local host: any = context.host
-    local services: any = context.services
-    local captureService: any = services and services.screenCapture
-    local product: any = host.PRODUCT or {}
-    local httpService: any = host.HttpService
-    local currentWorkspace: Workspace = host.workspace or workspace
-    local sampleNumber: number = 0
-    local card: any
-
-    local function writeMetadata(path: string, payload: any): boolean
-        if not captureService or type(captureService.writeText) ~= "function" then
-            return false
-        end
-        local ok: boolean, encoded: any = pcall(function(): string
-            return httpService:JSONEncode(payload)
-        end)
-        if not ok or type(encoded) ~= "string" then
-            return false
-        end
-        return captureService.writeText(path, encoded) == true
-    end
-
-    local function captureSample(): ()
-        if not captureService or type(captureService.isAvailable) ~= "function"
-            or not captureService.isAvailable() then
-            card:Notify("screenshot API unavailable")
-            card:SetStatus("unavailable")
-            return
-        end
-        if type(captureService.capture) ~= "function"
-            or type(captureService.writeText) ~= "function" then
-            card:Notify("screen capture service incomplete")
-            card:SetStatus("unavailable")
-            return
-        end
-
-        sampleNumber += 1
-        local folder: string = tostring(product.storageFolder or "Wurst")
-            .. "/Learning"
-        local stamp: string = tostring(os.time())
-        local base: string = folder
-            .. "/"
-            .. tostring(game.PlaceId)
-            .. "-"
-            .. stamp
-            .. "-"
-            .. tostring(sampleNumber)
-        local imagePath: string = base .. ".png"
-        local metadataPath: string = base .. ".json"
-        local captured: boolean, reason: any = captureService.capture(imagePath)
-        if not captured then
-            card:Notify(tostring(reason or "screen capture failed"))
-            card:SetStatus("failed")
-            return
-        end
-
-        local camera: Camera? = currentWorkspace.CurrentCamera
-        local viewport: Vector2 = camera
-            and camera.ViewportSize
-            or Vector2.new(0, 0)
-        local payload: {[string]: any} = {
-            schema = 1,
-            kind = "learning-screen-sample",
-            image = imagePath,
-            capturedAt = os.time(),
-            placeId = game.PlaceId,
-            viewport = {width = viewport.X, height = viewport.Y},
-            source = "manual Capture now action",
-            menuVisible = services.menu.isVisible(),
-        }
-        local wrote: boolean = writeMetadata(metadataPath, payload)
-        if not wrote then
-            card:Notify("image saved; metadata could not be written")
-            card:SetStatus("image saved")
-            return
-        end
-        card:SetStatus("saved " .. tostring(sampleNumber))
-        card:Notify("saved learning sample " .. tostring(sampleNumber))
-    end
-
-    card = framework.Categories.Other:CreateModule({
-        Name = "Learning",
-        Category = "Other",
-        ConfigKey = "Universal.Learning",
-        Kind = "group",
-        Order = 26,
-        Tooltip = "Save a manual local screenshot and a small metadata sidecar.",
-        Function = function(_enabled: boolean): ()
-
-        end,
-    })
-    card:CreateButton({
-        Name = "Capture now",
-        Tooltip = "Save one screenshot locally; no upload or background capture.",
-        Function = captureSample,
-    })
-    card:CreateNote(
-        "Manual and local only. Standard Roblox Luau has no screenshot API."
-    )
-
-    activeCard = card
-    Module.Initialized = true
-    return card
-end
-
-function Module.destroy(): ()
-    if activeCard and activeCard.Enabled then
-        activeCard:Toggle(false)
-    end
-    activeCard = nil
-    Module.Initialized = false
-end
-
-return Module
-
-]=],
-        ["src/games/universal/Movement/ClickTeleport.lua"] = [=[
-export type Runtime = {
-    framework: any,
-    entity: any,
-    host: any,
-    services: any,
-}
-
-local Module = {
-    Name = "ClickTeleport",
-    PlaceId = 0,
-    Events = {} :: {[string]: any},
-    Initialized = false,
-}
-
-local activeCleanup: (() -> ())? = nil
-
-local function characterRoot(localPlayer: Player): (BasePart?, Humanoid?)
-    local character: Model? = localPlayer.Character
-    if not character then
-        return nil, nil
-    end
-    return character:FindFirstChild("HumanoidRootPart") :: BasePart?,
-        character:FindFirstChildOfClass("Humanoid") :: Humanoid?
-end
-
-function Module.init(context: Runtime): any
-    local host: any = context.host
-    local framework: any = context.framework
-    local localPlayer: Player = host.LocalPlayer
-    local userInput: UserInputService = host.UserInputService
-    local menu: any = context.services.menu
-
-    local runtime: any = {
-        armedUntil = 0,
-        waypoint = nil :: Vector3?,
-        lastOrigin = nil :: Vector3?,
-    }
-
-    local teleport: any
-    teleport = framework.Categories.Movement:CreateModule({
-        Name = "Click Teleport",
-        Category = "Movement",
-        Order = 1,
-
-        Kind = "action",
-        Silent = true,
-        Tooltip = "Press to travel to the destination selected below.",
-        Function = function(): ()
-            Module.run(context, teleport, runtime)
-        end,
-    })
-
-    teleport:CreateDropdown({
-        Name = "Destination",
-        List = {
-            "Tap point",
-            "Nearest player",
-            "Named player",
-            "Item",
-            "Waypoint",
-            "Last position",
-        },
-        Index = 1,
-        Tooltip = "What the button travels to.",
-    })
-    teleport:CreateTextBox({
-        Name = "Player",
-        Show = {Option = "Destination", Values = {"Named player"}},
-        Default = "",
-        Tooltip = "Part of a name or display name, for Named player.",
-    })
-    teleport:CreateTextBox({
-        Name = "Item",
-        Show = {Option = "Destination", Values = {"Item"}},
-        Default = "",
-        Tooltip = "Part or model name to look for, for Item. Partial names "
-            .. "match, so \"chest\" finds \"GoldChest\".",
-    })
-    teleport:CreateButton({
-        Name = "Save waypoint",
-        Show = {Option = "Destination", Values = {"Waypoint"}},
-        Tooltip = "Stores where you are standing right now.",
-        Function = function(): ()
-            local root: BasePart? = characterRoot(localPlayer)
-            if not root then
-                return
-            end
-            runtime.waypoint = (root :: BasePart).Position
-            teleport:Notify("waypoint saved")
-        end,
-    })
-    teleport:CreateButton({
-        Name = "Go back",
-        Show = {Option = "Destination", Values = {"Last position"}},
-        Tooltip = "Returns to where the last teleport started.",
-        Function = function(): ()
-            if not runtime.lastOrigin then
-                teleport:Notify("nowhere to go back to")
-                return
-            end
-            Module.travel(context, teleport, runtime, runtime.lastOrigin, false)
-        end,
-    })
-
-    teleport:CreateSlider({
-        Name = "Arm window",
-        Show = {Option = "Destination", Values = {"Tap point"}},
-        Min = 1,
-        Max = 15,
-        Default = 6,
-        Tooltip = "Seconds Tap point stays armed after the button is pressed.",
-    })
-    teleport:CreateSlider({
-        Name = "Search range",
-        Show = {Option = "Destination", Values = {"Nearest player", "Named player", "Item"}},
-        Min = 50,
-        Max = 5000,
-        Default = 1500,
-        Tooltip = "How far to look for items and players.",
-    })
-    teleport:CreateSlider({
-        Name = "Player offset",
-        Show = {Option = "Destination", Values = {"Nearest player", "Named player"}},
-        Min = 0,
-        Max = 20,
-        Default = 4,
-        Tooltip = "Studs to stop short of a player, so you do not land inside "
-            .. "them.",
-    })
-    teleport:CreateToggle({
-        Name = "Skip friends",
-        Show = {Option = "Destination", Values = {"Nearest player"}},
-        Default = false,
-        Tooltip = "Nearest player ignores anyone on the Friend List.",
-    })
-    teleport:CreateDropdown({
-        Name = "Movement",
-        List = {"Instant", "Glide"},
-        Index = 1,
-        Tooltip = "Glide steps the character across, which some games accept "
-            .. "when a single jump is rejected.",
-    })
-    teleport:CreateSlider({
-        Name = "Glide step",
-        Show = {Option = "Movement", Values = {"Glide"}},
-        Min = 4,
-        Max = 60,
-        Default = 18,
-    })
-    teleport:CreateSlider({
-        Name = "Height offset",
-        Min = 0,
-        Max = 12,
-        Default = 3,
-        Tooltip = "Studs above whatever you land on.",
-    })
-    teleport:CreateToggle({
-        Name = "Keep momentum",
-        Default = false,
-        Tooltip = "Leave your velocity alone on arrival instead of zeroing it.",
-    })
-
-    local tapConnection: RBXScriptConnection = userInput.InputBegan:Connect(
-        function(input: InputObject, processed: boolean): ()
-            if processed or os.clock() >= runtime.armedUntil then
-                return
-            end
-            if menu.isCapturingInput() then
-                return
-            end
-            local touched: boolean = input.UserInputType == Enum.UserInputType.Touch
-            local clicked: boolean =
-                input.UserInputType == Enum.UserInputType.MouseButton1
-            if not touched and not clicked then
-                return
-            end
-            runtime.armedUntil = 0
-            Module.travel(
-                context,
-                teleport,
-                runtime,
-                Module.pointUnder(context, input.Position),
-                true
-            )
-        end
-    )
-
-    activeCleanup = function(): ()
-        pcall(function(): ()
-            tapConnection:Disconnect()
-        end)
-        runtime.armedUntil = 0
-    end
-    Module.Initialized = true
-    return teleport
-end
-
-function Module.pointUnder(context: Runtime, screenPosition: Vector3): Vector3?
-    local host: any = context.host
-    local currentWorkspace: Workspace = host.workspace or workspace
-    local camera: Camera? = currentWorkspace.CurrentCamera
-    if not camera then
-        return nil
-    end
-    local resolvedCamera: Camera = camera :: Camera
-    local ray: Ray = resolvedCamera:ScreenPointToRay(
-        screenPosition.X,
-        screenPosition.Y
-    )
-    local parameters: RaycastParams = RaycastParams.new()
-    parameters.FilterType = Enum.RaycastFilterType.Exclude
-    parameters.IgnoreWater = true
-    parameters.FilterDescendantsInstances = {
-        host.LocalPlayer.Character :: any,
-        resolvedCamera,
-    }
-    local result: RaycastResult? = currentWorkspace:Raycast(
-        ray.Origin,
-        ray.Direction.Unit * 4096,
-        parameters
-    )
-    return result and result.Position or nil
-end
-
-local function matchesName(candidate: string, query: string): boolean
-    return string.find(string.lower(candidate), string.lower(query), 1, true) ~= nil
-end
-
-function Module.findItem(
-    context: Runtime,
-    query: string,
-    origin: Vector3,
-    range: number
-): Vector3?
-    local host: any = context.host
-    local currentWorkspace: Workspace = host.workspace or workspace
-    local best: Vector3? = nil
-    local bestDistance: number = range
-    local character: Model? = host.LocalPlayer.Character
-
-    for _, descendant: Instance in ipairs(currentWorkspace:GetDescendants()) do
-        if character and descendant:IsDescendantOf(character) then
-            continue
-        end
-        if not matchesName(descendant.Name, query) then
-            continue
-        end
-        local position: Vector3? = nil
-        if descendant:IsA("BasePart") then
-            position = (descendant :: BasePart).Position
-        elseif descendant:IsA("Model") then
-            local pivotOk: boolean, pivot: any = pcall(function(): CFrame
-                return (descendant :: Model):GetPivot()
-            end)
-            if pivotOk then
-                position = (pivot :: CFrame).Position
-            end
-        end
-        if not position then
-            continue
-        end
-        local distance: number = ((position :: Vector3) - origin).Magnitude
-        if distance < bestDistance then
-            best = position
-            bestDistance = distance
-        end
-    end
-    return best
-end
-
-function Module.run(context: Runtime, teleport: any, runtime: any): ()
-    local host: any = context.host
-    local entityLibrary: any = context.entity
-    local localPlayer: Player = host.LocalPlayer
-    local options: any = teleport.Options
-    local destination: string = options["Destination"].Value
-
-    local root: BasePart? = characterRoot(localPlayer)
-    if not root then
-        teleport:Notify("no character")
-        return
-    end
-    local origin: Vector3 = (root :: BasePart).Position
-    local range: number = options["Search range"].Value
-
-    if destination == "Tap point" then
-        runtime.armedUntil = os.clock() + options["Arm window"].Value
-        teleport:Notify("tap where you want to go")
-        return
-    end
-
-    if destination == "Waypoint" then
-        if not runtime.waypoint then
-            teleport:Notify("no waypoint saved")
-            return
-        end
-        Module.travel(context, teleport, runtime, runtime.waypoint, false)
-        return
-    end
-
-    if destination == "Last position" then
-        if not runtime.lastOrigin then
-            teleport:Notify("nowhere to go back to")
-            return
-        end
-        Module.travel(context, teleport, runtime, runtime.lastOrigin, false)
-        return
-    end
-
-    if destination == "Item" then
-        local query: string = tostring(options["Item"].Value or "")
-        if query == "" then
-            teleport:Notify("type an item name first")
-            return
-        end
-        local found: Vector3? = Module.findItem(context, query, origin, range)
-        if not found then
-            teleport:Notify("no \"" .. query .. "\" within range")
-            return
-        end
-        Module.travel(context, teleport, runtime, found, true)
-        return
-    end
-
-    entityLibrary:Refresh()
-    local target: any = nil
-    if destination == "Nearest player" then
-        local bestDistance: number = range
-        for _, entity: any in ipairs(entityLibrary.List) do
-            if options["Skip friends"].Value
-                and entityLibrary:IsProtected(entity.Player) then
-                continue
-            end
-            if entity.Distance < bestDistance then
-                target = entity
-                bestDistance = entity.Distance
-            end
-        end
-    else
-        local query: string = tostring(options["Player"].Value or "")
-        if query == "" then
-            teleport:Notify("type a player name first")
-            return
-        end
-        for _, entity: any in ipairs(entityLibrary.List) do
-            if matchesName(entity.Player.Name, query)
-                or matchesName(entity.Player.DisplayName, query) then
-                target = entity
-                break
-            end
-        end
-    end
-
-    if not target then
-        teleport:Notify("no matching player")
-        return
-    end
-
-    local targetPosition: Vector3 = target.RootPart.Position
-    local offset: number = options["Player offset"].Value
-    local approach: Vector3 = targetPosition - origin
-    if offset > 0 and approach.Magnitude > offset then
-        targetPosition = targetPosition - approach.Unit * offset
-    end
-    Module.travel(context, teleport, runtime, targetPosition, false)
-end
-
-function Module.travel(
-    context: Runtime,
-    teleport: any,
-    runtime: any,
-    destination: Vector3?,
-    liftToSurface: boolean
-): ()
-    local host: any = context.host
-    local localPlayer: Player = host.LocalPlayer
-    if not destination then
-        teleport:Notify("nothing there")
-        return
-    end
-
-    local root: BasePart?, humanoid: Humanoid? = characterRoot(localPlayer)
-    if not root then
-        return
-    end
-    local resolvedRoot: BasePart = root :: BasePart
-    local options: any = teleport.Options
-
-    runtime.lastOrigin = resolvedRoot.Position
-
-    local target: Vector3 = destination :: Vector3
-    if liftToSurface then
-
-        local hipHeight: number = humanoid and (humanoid :: Humanoid).HipHeight or 2
-        target = target
-            + Vector3.new(0, hipHeight + options["Height offset"].Value, 0)
-    end
-
-    local keepMomentum: boolean = options["Keep momentum"].Value
-    if options["Movement"].Value == "Instant" then
-        resolvedRoot.CFrame = CFrame.new(target)
-        if not keepMomentum then
-            resolvedRoot.AssemblyLinearVelocity = Vector3.zero
-        end
-        return
-    end
-
-    local step: number = options["Glide step"].Value
-    task.spawn(function(): ()
-        for _ = 1, 360 do
-            if not resolvedRoot.Parent then
-                return
-            end
-            local offset: Vector3 = target - resolvedRoot.Position
-            if offset.Magnitude < 3 then
-                resolvedRoot.CFrame = CFrame.new(target)
-                if not keepMomentum then
-                    resolvedRoot.AssemblyLinearVelocity = Vector3.zero
-                end
-                return
-            end
-            resolvedRoot.CFrame = resolvedRoot.CFrame
-                + offset.Unit * math.min(offset.Magnitude, step)
-            if not keepMomentum then
-                resolvedRoot.AssemblyLinearVelocity = Vector3.zero
-            end
-            task.wait()
-        end
-    end)
 end
 
 function Module.destroy(): ()
@@ -18040,7 +17557,7 @@ end
 return Module
 
 ]=],
-        ["src/games/universal/Render/XRay.lua"] = [=[
+        ["src/games/universal/Blatant/Hitboxes.lua"] = [=[
 export type Runtime = {
     framework: any,
     entity: any,
@@ -18048,7 +17565,7 @@ export type Runtime = {
 }
 
 local Module = {
-    Name = "XRay",
+    Name = "Hitboxes",
     PlaceId = 0,
     Events = {} :: {[string]: any},
     Initialized = false,
@@ -18058,83 +17575,302 @@ local activeCleanup: (() -> ())? = nil
 
 function Module.init(context: Runtime): any
     local host: any = context.host
+    local framework: any = context.framework
+    local entityLibrary: any = context.entity
+    local Players: any = host.Players
     local LocalPlayer: any = host.LocalPlayer
-    local featureConnections: any = host.featureConnections
-    local disconnectFeatureConnection: any = host.disconnectFeatureConnection
-    local createUniversalFeature: any = host.createUniversalFeature
-    local originalXrayTransparency: {[BasePart]: number} =
+
+    type HitboxSettings = {
+        part: string,
+        expand: number,
+        reveal: boolean,
+        transparency: number,
+        teamCheck: boolean,
+        includeNpcs: boolean,
+        noCollision: boolean,
+    }
+
+    type HitboxWritten = {
+        size: Vector3,
+        transparency: number,
+        canCollide: boolean,
+        massless: boolean,
+    }
+
+    type OriginalHitboxState = {
+        size: Vector3,
+        transparency: number,
+        canCollide: boolean,
+        massless: boolean,
+
+        written: HitboxWritten,
+    }
+
+    local hitboxSettings: HitboxSettings = {
+        part = "Root",
+        expand = 6,
+        reveal = false,
+        transparency = 60,
+        teamCheck = true,
+        includeNpcs = false,
+        noCollision = true,
+    }
+    local originalHitboxes: {[BasePart]: OriginalHitboxState} =
         setmetatable({}, {__mode = "k"}) :: any
-    local xrayEnabled: boolean = false
-    local feature: any = nil
 
-    local function restoreXray(): ()
-        for part: BasePart, transparency: number in pairs(originalXrayTransparency) do
-            if part.Parent then
-                part.LocalTransparencyModifier = transparency
-            end
-        end
-        originalXrayTransparency = setmetatable({}, {__mode = "k"}) :: any
-    end
-
-    local function toggleXray(enabled: boolean): ()
-        disconnectFeatureConnection("Xray")
-        xrayEnabled = false
-        restoreXray()
-        if not enabled then
-            if feature then feature:SetStatus(nil) end
+    local function restoreHitboxPart(part: BasePart): ()
+        local original: OriginalHitboxState? = originalHitboxes[part]
+        if not original then
             return
         end
+        if part.Parent then
+            part.Size = (original :: OriginalHitboxState).size
+            part.Transparency = (original :: OriginalHitboxState).transparency
+            part.CanCollide = (original :: OriginalHitboxState).canCollide
+            part.Massless = (original :: OriginalHitboxState).massless
+        end
+        originalHitboxes[part] = nil
+    end
 
-        feature:SetStatus("72%")
-        xrayEnabled = true
-        local function applyToInstance(descendant: Instance): ()
-            if not xrayEnabled or not descendant:IsA("BasePart") then
-                return
-            end
-            local localCharacter: Model? = LocalPlayer.Character
-            local ancestorModel: Model? = descendant:FindFirstAncestorOfClass("Model")
-            if (localCharacter and descendant:IsDescendantOf(localCharacter))
-                or descendant:FindFirstAncestorOfClass("Tool")
-                or (ancestorModel and ancestorModel:FindFirstChildOfClass("Humanoid")) then
-                return
-            end
-            if originalXrayTransparency[descendant] == nil then
-                originalXrayTransparency[descendant] = descendant.LocalTransparencyModifier
-            end
-            descendant.LocalTransparencyModifier = math.max(
-                descendant.LocalTransparencyModifier,
-                0.72
-            )
+    local function restoreHitboxes(): ()
+        for part: BasePart in pairs(originalHitboxes) do
+            restoreHitboxPart(part)
+        end
+        originalHitboxes = setmetatable({}, {__mode = "k"}) :: any
+    end
+
+    local function applyHitboxToPart(part: BasePart): ()
+        local original: OriginalHitboxState? = originalHitboxes[part]
+        if not original then
+            original = {
+                size = part.Size,
+                transparency = part.Transparency,
+                canCollide = part.CanCollide,
+                massless = part.Massless,
+                written = {
+                    size = part.Size,
+                    transparency = part.Transparency,
+                    canCollide = part.CanCollide,
+                    massless = part.Massless,
+                },
+            }
+            originalHitboxes[part] = original
+        end
+        local resolved: OriginalHitboxState = original :: OriginalHitboxState
+        local last: HitboxWritten = resolved.written
+
+        if part.Size ~= last.size then
+            resolved.size = part.Size
+        end
+        if part.Transparency ~= last.transparency then
+            resolved.transparency = part.Transparency
+        end
+        if part.CanCollide ~= last.canCollide then
+            resolved.canCollide = part.CanCollide
+        end
+        if part.Massless ~= last.massless then
+            resolved.massless = part.Massless
         end
 
-        featureConnections.Xray = workspace.DescendantAdded:Connect(applyToInstance)
-        task.spawn(function(): ()
-            for index: number, descendant: Instance in ipairs(workspace:GetDescendants()) do
-                if not xrayEnabled then
-                    return
-                end
-                applyToInstance(descendant)
-                if index % 240 == 0 then
-                    task.wait()
+        local expand: number = hitboxSettings.expand
+        local nextSize: Vector3 = resolved.size + Vector3.new(expand, expand, expand)
+        local nextTransparency: number = hitboxSettings.reveal
+            and math.clamp(hitboxSettings.transparency / 100, 0, 1)
+            or resolved.transparency
+        local nextCanCollide: boolean = not hitboxSettings.noCollision and resolved.canCollide
+
+        if part.Size ~= nextSize then
+            part.Size = nextSize
+        end
+        if part.Transparency ~= nextTransparency then
+            part.Transparency = nextTransparency
+        end
+        if part.CanCollide ~= nextCanCollide then
+            part.CanCollide = nextCanCollide
+        end
+        if not part.Massless then
+            part.Massless = true
+        end
+        last.size = nextSize
+        last.transparency = nextTransparency
+        last.canCollide = nextCanCollide
+        last.massless = true
+    end
+
+    local function applyHitboxCharacter(character: Model): ()
+        local wanted: {string} = hitboxSettings.part == "Head"
+            and {"Head"}
+            or (hitboxSettings.part == "Both" and {"HumanoidRootPart", "Head"})
+            or {"HumanoidRootPart"}
+        for _, child: Instance in ipairs(character:GetChildren()) do
+            if not child:IsA("BasePart") then
+                continue
+            end
+            local part: BasePart = child :: BasePart
+            if table.find(wanted, part.Name) then
+                applyHitboxToPart(part)
+            else
+                restoreHitboxPart(part)
+            end
+        end
+    end
+
+    local function hitboxTargets(): {Model}
+        local targets: {Model} = {}
+        entityLibrary:Refresh()
+        for _, player: Player in ipairs(Players:GetPlayers()) do
+            if player == LocalPlayer then
+                continue
+            end
+            if hitboxSettings.teamCheck and entityLibrary:IsFriendly(player) then
+                continue
+            end
+            if entityLibrary:IsProtected(player) then
+                continue
+            end
+            local character: Model? = player.Character
+            local humanoid: Humanoid? = character
+                and character:FindFirstChildOfClass("Humanoid") :: Humanoid?
+            if character and humanoid and humanoid.Health > 0 then
+                table.insert(targets, character :: Model)
+            end
+        end
+        if hitboxSettings.includeNpcs then
+            for _, npc: any in ipairs(entityLibrary.NPCList or {}) do
+                if (not hitboxSettings.teamCheck or not npc.IsFriendly)
+                    and npc.Character
+                    and npc.Humanoid
+                    and npc.Humanoid.Health > 0 then
+                    table.insert(targets, npc.Character)
                 end
             end
-        end)
+        end
+        return targets
     end
 
-    feature = createUniversalFeature(
-        "X-Ray",
-        "Fade map geometry locally while keeping your character clear",
-        18,
-        toggleXray,
-        {noOptions = true, categoryName = "Render"}
-    )
+    local function sweepHitboxes(): ()
+        local alive: {[BasePart]: boolean} = {}
+        for _, character: Model in ipairs(hitboxTargets()) do
+            applyHitboxCharacter(character)
+            for _, child: Instance in ipairs(character:GetChildren()) do
+                if child:IsA("BasePart") and originalHitboxes[child :: BasePart] then
+                    alive[child :: BasePart] = true
+                end
+            end
+        end
+
+        for part: BasePart in pairs(originalHitboxes) do
+            if not alive[part] then
+                restoreHitboxPart(part)
+            end
+        end
+    end
+
+    local hitboxes: any
+    hitboxes = framework.Categories.Blatant:CreateModule({
+        Name = "Hitboxes",
+        Category = "Blatant",
+        Order = 3,
+        Tooltip = "Expand the part enemies are hit on, in studs. Teammates and "
+            .. "friends are left alone, and every part is restored exactly when "
+            .. "it stops being a target.",
+        Function = function(enabled: boolean): ()
+            restoreHitboxes()
+            if not enabled then
+                hitboxes:SetStatus(nil)
+                return
+            end
+            hitboxes:SetStatus(
+                hitboxSettings.part .. " +" .. tostring(math.round(hitboxSettings.expand))
+            )
+            hitboxes:Clean(restoreHitboxes)
+
+            hitboxes:Loop(function(): ()
+                sweepHitboxes()
+            end)
+        end,
+    })
+    hitboxes:CreateDropdown({
+        Name = "Part",
+        List = {"Root", "Head", "Both"},
+        Index = 1,
+        Function = function(value: string): ()
+            hitboxSettings.part = value
+            if hitboxes.Enabled then
+                hitboxes:SetStatus(
+                    value .. " +" .. tostring(math.round(hitboxSettings.expand))
+                )
+            end
+        end,
+        Tooltip = "Which part of the character is expanded. Parts the new "
+            .. "mode no longer owns are restored on the next sweep.",
+    })
+    hitboxes:CreateSlider({
+        Name = "Expand",
+        Min = 0,
+        Max = 30,
+        Default = hitboxSettings.expand,
+        Function = function(value: number): ()
+            hitboxSettings.expand = value
+            if hitboxes.Enabled then
+                hitboxes:SetStatus(
+                    hitboxSettings.part .. " +" .. tostring(math.round(value))
+                )
+            end
+        end,
+        Tooltip = "Studs added to the target part. Past roughly 10 the box is "
+            .. "wider than the character is tall and anyone watching can see "
+            .. "hits landing on nothing.",
+    })
+    hitboxes:CreateToggle({
+        Name = "Team check",
+        Default = hitboxSettings.teamCheck,
+        Function = function(value: boolean): ()
+            hitboxSettings.teamCheck = value
+        end,
+        Tooltip = "Leave teammates at their real size.",
+    })
+    hitboxes:CreateToggle({
+        Name = "Include NPCs",
+        Default = hitboxSettings.includeNpcs,
+        Function = function(value: boolean): ()
+            hitboxSettings.includeNpcs = value
+        end,
+    })
+    hitboxes:CreateToggle({
+        Name = "Show hitbox",
+        Default = hitboxSettings.reveal,
+        Function = function(value: boolean): ()
+            hitboxSettings.reveal = value
+        end,
+        Tooltip = "Draw the expanded part so you can see what you are actually "
+            .. "aiming at.",
+    })
+    hitboxes:CreateSlider({
+        Name = "Show transparency %",
+        Show = {Option = "Show hitbox"},
+        Min = 0,
+        Max = 95,
+        Default = hitboxSettings.transparency,
+        Function = function(value: number): ()
+            hitboxSettings.transparency = value
+        end,
+    })
+    hitboxes:CreateToggle({
+        Name = "No collision",
+        Default = hitboxSettings.noCollision,
+        Function = function(value: boolean): ()
+            hitboxSettings.noCollision = value
+        end,
+        Tooltip = "An expanded part that still collides pushes its owner "
+            .. "around the map, which everyone in the server can see.",
+    })
 
     activeCleanup = function(): ()
-        disconnectFeatureConnection("Xray")
-        restoreXray()
+        restoreHitboxes()
     end
     Module.Initialized = true
-    return feature
+    return hitboxes
 end
 
 function Module.destroy(): ()
@@ -18148,15 +17884,16 @@ end
 return Module
 
 ]=],
-        ["src/games/universal/Blatant/HighJump.lua"] = [=[
+        ["src/games/universal/Blatant/Invisible.lua"] = [=[
 export type Runtime = {
     framework: any,
     entity: any,
     host: any,
+    services: any,
 }
 
 local Module = {
-    Name = "HighJump",
+    Name = "Invisible",
     PlaceId = 0,
     Events = {} :: {[string]: any},
     Initialized = false,
@@ -18166,56 +17903,1521 @@ local activeCleanup: (() -> ())? = nil
 
 function Module.init(context: Runtime): any
     local host: any = context.host
-    local getCharacterParts: any = host.getCharacterParts
-    local createUniversalFeature: any = host.createUniversalFeature
-    local addNumberOption: any = host.addNumberOption
-    local highJumpSettings: {velocity: number} = {velocity = 72}
+    local framework: any = context.framework
+    local LocalPlayer: any = host.LocalPlayer
+    local UserInputService: any = host.UserInputService or (game :: any):GetService("UserInputService")
+    local RunService: RunService = host.RunService or (game :: any):GetService("RunService")
+    local currentWorkspace: Workspace = host.workspace or workspace
 
-    local function performHighJump(): ()
-        local _, humanoid: Humanoid?, root: BasePart? = getCharacterParts()
+    type InvisibleSettings = {
+        voidDepth: number,
+        ghostTransparency: number,
+        fly: boolean,
+        flySpeed: number,
+    }
+
+    local invisibleSettings: InvisibleSettings = {
+        voidDepth = 120,
+        ghostTransparency = 0.5,
+        fly = true,
+        flySpeed = 55,
+    }
+
+    local invisibleRuntime = {
+        active = false,
+        ghostModel = nil :: Model?,
+        surfacePosition = nil :: CFrame?,
+        connections = {} :: {RBXScriptConnection},
+    }
+
+    local function destroyGhost(): ()
+        if invisibleRuntime.ghostModel then
+            pcall(function()
+                invisibleRuntime.ghostModel:Destroy()
+            end)
+            invisibleRuntime.ghostModel = nil
+        end
+    end
+
+    local function createGhost(character: Model): Model?
+        character.Archivable = true
+        local clone: Instance? = character:Clone()
+        character.Archivable = false
+        if not clone or not clone:IsA("Model") then
+            return nil
+        end
+        local ghost: Model = clone :: Model
+        ghost.Name = "Wurst_Ghost"
+
+        local ghostHumanoid: Humanoid? = ghost:FindFirstChildOfClass("Humanoid")
+        if ghostHumanoid then
+            ghostHumanoid.DisplayDistanceType = Enum.HumanoidDisplayDistanceType.None
+            ghostHumanoid.NameDisplayDistance = 0
+            ghostHumanoid.HealthDisplayDistance = 0
+        end
+
+        for _, desc: Instance in ipairs(ghost:GetDescendants()) do
+            if desc:IsA("Script") or desc:IsA("LocalScript") then
+                desc:Destroy()
+            elseif desc:IsA("BasePart") then
+                desc.CanCollide = false
+                desc.CanTouch = false
+                desc.CanQuery = false
+                desc.Anchored = true
+                desc.Transparency = math.clamp(invisibleSettings.ghostTransparency, 0.1, 0.9)
+                desc.CastShadow = false
+            end
+        end
+
+        local highlight: Highlight = Instance.new("Highlight")
+        highlight.Name = "GhostHighlight"
+        highlight.FillColor = Color3.fromRGB(120, 210, 255)
+        highlight.OutlineColor = Color3.fromRGB(220, 245, 255)
+        highlight.FillTransparency = 0.6
+        highlight.OutlineTransparency = 0.15
+        highlight.Adornee = ghost
+        highlight.Parent = ghost
+
+        ghost.Parent = currentWorkspace
+        return ghost
+    end
+
+    local function toggleInvisible(enabled: boolean): ()
+        for _, c: RBXScriptConnection in ipairs(invisibleRuntime.connections) do
+            pcall(function()
+                c:Disconnect()
+            end)
+        end
+        table.clear(invisibleRuntime.connections)
+
+        local character: Model? = LocalPlayer.Character
+        local root: BasePart? = character and character:FindFirstChild("HumanoidRootPart") :: BasePart?
+        local humanoid: Humanoid? = character and character:FindFirstChildOfClass("Humanoid") :: Humanoid?
+        local camera: Camera? = currentWorkspace.CurrentCamera
+
+        if not enabled then
+            if invisibleRuntime.active and root and invisibleRuntime.surfacePosition then
+                -- Teleport real character to the exact position of the ghost on the map
+                root.CFrame = invisibleRuntime.surfacePosition
+                root.AssemblyLinearVelocity = Vector3.zero
+            end
+            if camera and humanoid then
+                pcall(function()
+                    camera.CameraSubject = humanoid
+                end)
+            end
+            destroyGhost()
+            invisibleRuntime.active = false
+            invisibleRuntime.surfacePosition = nil
+            return
+        end
+
+        if not character or not root or not humanoid or humanoid.Health <= 0 then
+            destroyGhost()
+            return
+        end
+
+        invisibleRuntime.active = true
+        invisibleRuntime.surfacePosition = root.CFrame
+
+        local ghost: Model? = createGhost(character)
+        invisibleRuntime.ghostModel = ghost
+
+        local ghostRoot: BasePart? = ghost and ghost:FindFirstChild("HumanoidRootPart") :: BasePart?
+        local ghostHumanoid: Humanoid? = ghost and ghost:FindFirstChildOfClass("Humanoid") :: Humanoid?
+        if ghostRoot and invisibleRuntime.surfacePosition then
+            ghostRoot.CFrame = invisibleRuntime.surfacePosition
+        end
+
+        -- Focus the camera onto the ghost so the user stays on the map!
+        if camera and ghostHumanoid then
+            pcall(function()
+                camera.CameraSubject = ghostHumanoid
+            end)
+        end
+
+        -- RenderStepped loop: controls the ghost on the surface while keeping the real character in the void
+        table.insert(
+            invisibleRuntime.connections,
+            RunService.RenderStepped:Connect(function(deltaTime: number): ()
+                if not invisibleRuntime.active then
+                    return
+                end
+                local currentCharacter: Model? = LocalPlayer.Character
+                local currentRoot: BasePart? = currentCharacter and currentCharacter:FindFirstChild("HumanoidRootPart") :: BasePart?
+                local currentHumanoid: Humanoid? = currentCharacter and currentCharacter:FindFirstChildOfClass("Humanoid") :: Humanoid?
+                if not currentCharacter or not currentRoot or not currentHumanoid or currentHumanoid.Health <= 0 then
+                    return
+                end
+
+                local activeGhost: Model? = invisibleRuntime.ghostModel
+                if not activeGhost or not activeGhost.Parent then
+                    activeGhost = createGhost(currentCharacter)
+                    invisibleRuntime.ghostModel = activeGhost
+                    if camera and activeGhost then
+                        local newGhostHumanoid: Humanoid? = activeGhost:FindFirstChildOfClass("Humanoid")
+                        if newGhostHumanoid then
+                            camera.CameraSubject = newGhostHumanoid
+                        end
+                    end
+                end
+                local activeGhostRoot: BasePart? = activeGhost and activeGhost:FindFirstChild("HumanoidRootPart") :: BasePart?
+                local activeCam: Camera? = currentWorkspace.CurrentCamera
+
+                local surfaceCF: CFrame = invisibleRuntime.surfacePosition or currentRoot.CFrame
+
+                if invisibleSettings.fly and activeCam then
+                    -- Fly mode: Move freely in 3D through the air with camera look
+                    local flyVelocity: Vector3 = Vector3.zero
+                    local camCF: CFrame = activeCam.CFrame
+                    local look: Vector3 = camCF.LookVector
+                    local right: Vector3 = camCF.RightVector
+
+                    if UserInputService:IsKeyDown(Enum.KeyCode.W) then
+                        flyVelocity += look
+                    end
+                    if UserInputService:IsKeyDown(Enum.KeyCode.S) then
+                        flyVelocity -= look
+                    end
+                    if UserInputService:IsKeyDown(Enum.KeyCode.D) then
+                        flyVelocity += right
+                    end
+                    if UserInputService:IsKeyDown(Enum.KeyCode.A) then
+                        flyVelocity -= right
+                    end
+                    if UserInputService:IsKeyDown(Enum.KeyCode.Space) then
+                        flyVelocity += Vector3.new(0, 1, 0)
+                    end
+                    if UserInputService:IsKeyDown(Enum.KeyCode.LeftShift) or UserInputService:IsKeyDown(Enum.KeyCode.LeftControl) then
+                        flyVelocity -= Vector3.new(0, 1, 0)
+                    end
+
+                    if flyVelocity.Magnitude > 0.05 then
+                        local nextPos: Vector3 = surfaceCF.Position + (flyVelocity.Unit * (invisibleSettings.flySpeed * deltaTime))
+                        local flatLook: Vector3 = Vector3.new(look.X, 0, look.Z)
+                        if flatLook.Magnitude > 0.01 then
+                            surfaceCF = CFrame.lookAt(nextPos, nextPos + flatLook.Unit)
+                        else
+                            surfaceCF = CFrame.new(nextPos) * surfaceCF.Rotation
+                        end
+                        invisibleRuntime.surfacePosition = surfaceCF
+                    end
+                else
+                    -- Walk mode: move on ground using humanoid MoveDirection
+                    local moveDir: Vector3 = currentHumanoid.MoveDirection
+                    local walkSpeed: number = currentHumanoid.WalkSpeed
+                    if moveDir.Magnitude > 0.05 then
+                        local newPos: Vector3 = surfaceCF.Position + (moveDir.Unit * (walkSpeed * deltaTime))
+                        local rayDown: RaycastResult? = currentWorkspace:Raycast(
+                            newPos + Vector3.new(0, 3, 0),
+                            Vector3.new(0, -12, 0)
+                        )
+                        if rayDown then
+                            newPos = Vector3.new(newPos.X, rayDown.Position.Y + (currentHumanoid.HipHeight or 2), newPos.Z)
+                        end
+                        surfaceCF = CFrame.lookAt(newPos, newPos + moveDir)
+                        invisibleRuntime.surfacePosition = surfaceCF
+                    end
+                end
+
+                -- Position ghost root
+                if activeGhostRoot and surfaceCF then
+                    activeGhostRoot.CFrame = surfaceCF
+                    -- Sync limbs relative to root
+                    for _, child: Instance in ipairs(currentCharacter:GetChildren()) do
+                        if child:IsA("BasePart") and child.Name ~= "HumanoidRootPart" then
+                            local ghostPart: Instance? = activeGhost:FindFirstChild(child.Name)
+                            if ghostPart and ghostPart:IsA("BasePart") then
+                                local relCF: CFrame = currentRoot.CFrame:ToObjectSpace(child.CFrame)
+                                local ghostBasePart: BasePart = ghostPart :: BasePart
+                                ghostBasePart.CFrame = surfaceCF:ToWorldSpace(relCF)
+                            end
+                        end
+                    end
+                end
+
+                -- Keep real character safely hidden in the void below the ghost position
+                local voidPos: Vector3 = surfaceCF.Position - Vector3.new(0, invisibleSettings.voidDepth, 0)
+                currentRoot.CFrame = CFrame.new(voidPos)
+                currentRoot.AssemblyLinearVelocity = Vector3.zero
+            end)
+        )
+    end
+
+    local invisibleCard: any = framework.Categories.Blatant:CreateModule({
+        Name = "Invisible",
+        Category = "Blatant",
+        Order = 8,
+        Tooltip = "Shows your ghost on the map while your real character is hidden in the void. Turning it off teleports your real character to the ghost.",
+        Function = toggleInvisible,
+    })
+
+    invisibleCard:CreateToggle({
+        Name = "Ghost Fly",
+        Default = invisibleSettings.fly,
+        Function = function(value: boolean): ()
+            invisibleSettings.fly = value
+        end,
+        Tooltip = "Fly freely across the map as a ghost using WASD, Space and Shift/Ctrl.",
+    })
+
+    invisibleCard:CreateSlider({
+        Name = "Fly speed",
+        Min = 16,
+        Max = 200,
+        Default = invisibleSettings.flySpeed,
+        Function = function(value: number): ()
+            invisibleSettings.flySpeed = value
+        end,
+        Tooltip = "Speed of the ghost while flying.",
+    })
+
+    invisibleCard:CreateSlider({
+        Name = "Void depth",
+        Min = 50,
+        Max = 350,
+        Default = invisibleSettings.voidDepth,
+        Function = function(value: number): ()
+            invisibleSettings.voidDepth = value
+        end,
+        Tooltip = "Studs below the ground your real character sits.",
+    })
+
+    invisibleCard:CreateSlider({
+        Name = "Ghost transparency",
+        Min = 0.1,
+        Max = 0.9,
+        Step = 0.05,
+        Default = invisibleSettings.ghostTransparency,
+        Function = function(value: number): ()
+            invisibleSettings.ghostTransparency = value
+            if invisibleRuntime.ghostModel then
+                for _, desc: Instance in ipairs(invisibleRuntime.ghostModel:GetDescendants()) do
+                    if desc:IsA("BasePart") then
+                        desc.Transparency = value
+                    end
+                end
+            end
+        end,
+        Tooltip = "Transparency of your local ghost representation.",
+    })
+
+    activeCleanup = function(): ()
+        toggleInvisible(false)
+    end
+    Module.Initialized = true
+    return invisibleCard
+end
+
+function Module.destroy(): ()
+    if activeCleanup then
+        pcall(activeCleanup)
+    end
+    activeCleanup = nil
+    Module.Initialized = false
+end
+
+return Module
+
+]=],
+        ["src/games/universal/Movement/Speed.lua"] = [=[
+export type Runtime = {
+    framework: any,
+    entity: any,
+    host: any,
+    services: any,
+}
+
+local Module = {
+    Name = "Speed",
+    PlaceId = 0,
+    Events = {} :: {[string]: any},
+    Initialized = false,
+}
+
+local activeCleanup: (() -> ())? = nil
+
+function Module.init(context: Runtime): any
+    local host: any = context.host
+    local movementInput: any = context.services.movementInput
+    local framework: any = context.framework
+    local LocalPlayer: Player = host.LocalPlayer
+    local currentWorkspace: Workspace = host.workspace or workspace
+
+    type VehicleSeatState = {
+        maxSpeed: number,
+        torque: number,
+        turnSpeed: number,
+    }
+    type HingeState = {
+        angularVelocity: number,
+        motorMaxTorque: number,
+    }
+
+    local runtime: any = {
+        originalWalkSpeed = setmetatable({}, {__mode = "k"}) :: any,
+        nextTeleportAt = 0,
+        originalVehicleSeats = setmetatable({}, {__mode = "k"}) :: {[VehicleSeat]: VehicleSeatState},
+        originalMotorHinges = setmetatable({}, {__mode = "k"}) :: {[HingeConstraint]: HingeState},
+        velocityExcess = setmetatable({}, {__mode = "k"}) :: {[BasePart]: number},
+        motorExcess = setmetatable({}, {__mode = "k"}) :: {[HingeConstraint]: number},
+    }
+
+    local function characterParts(): (Model?, Humanoid?, BasePart?)
+        local character: Model? = LocalPlayer.Character
+        if not character then
+            return nil, nil, nil
+        end
+        local humanoid: Humanoid? =
+            character:FindFirstChildOfClass("Humanoid") :: Humanoid?
+        local root: BasePart? =
+            character:FindFirstChild("HumanoidRootPart") :: BasePart?
+        return character, humanoid, root
+    end
+
+    local function restoreWalkSpeed(): ()
+        for humanoid: Humanoid, value: number in pairs(runtime.originalWalkSpeed) do
+            if humanoid and humanoid.Parent then
+                humanoid.WalkSpeed = value
+            end
+        end
+        runtime.originalWalkSpeed = setmetatable({}, {__mode = "k"}) :: any
+    end
+
+    local function clearVehicleBoostHistory(): ()
+        runtime.velocityExcess = setmetatable({}, {__mode = "k"}) :: any
+        runtime.motorExcess = setmetatable({}, {__mode = "k"}) :: any
+    end
+
+    local function restoreVehicle(): ()
+        for seat: VehicleSeat, original: VehicleSeatState in pairs(runtime.originalVehicleSeats) do
+            if seat.Parent then
+                seat.MaxSpeed = original.maxSpeed
+                seat.Torque = original.torque
+                seat.TurnSpeed = original.turnSpeed
+            end
+        end
+        runtime.originalVehicleSeats = setmetatable({}, {__mode = "k"}) :: any
+        for hinge: HingeConstraint, original: HingeState in pairs(runtime.originalMotorHinges) do
+            if hinge.Parent then
+                hinge.AngularVelocity = original.angularVelocity
+                hinge.MotorMaxTorque = original.motorMaxTorque
+            end
+        end
+        runtime.originalMotorHinges = setmetatable({}, {__mode = "k"}) :: any
+        clearVehicleBoostHistory()
+    end
+
+    local function resolveVehicle(): (BasePart?, Model?, VehicleSeat?)
+        local character: Model?, humanoid: Humanoid?, root: BasePart? =
+            characterParts()
+        if not character or not humanoid or not root then
+            return nil, nil, nil
+        end
+        local seatPart: BasePart? = humanoid.SeatPart
+        local assembly: BasePart? = nil
+        if seatPart then
+            assembly = seatPart.AssemblyRootPart or seatPart
+        else
+            assembly = root.AssemblyRootPart
+            if not assembly or assembly:IsDescendantOf(character) then
+                return nil, nil, nil
+            end
+        end
+        local resolvedAssembly: BasePart = assembly :: BasePart
+        local model: Model? = (seatPart or resolvedAssembly):FindFirstAncestorOfClass("Model")
+        local vehicleSeat: VehicleSeat? = seatPart
+                and seatPart:IsA("VehicleSeat")
+                and seatPart :: VehicleSeat
+            or nil
+        return resolvedAssembly, model, vehicleSeat
+    end
+
+    local function rememberVehicleParts(model: Model?): ()
+        if not model then
+            return
+        end
+        for _, descendant: Instance in ipairs(model:GetDescendants()) do
+            if descendant:IsA("VehicleSeat")
+                and runtime.originalVehicleSeats[descendant] == nil then
+                runtime.originalVehicleSeats[descendant] = {
+                    maxSpeed = descendant.MaxSpeed,
+                    torque = descendant.Torque,
+                    turnSpeed = descendant.TurnSpeed,
+                }
+            elseif descendant:IsA("HingeConstraint")
+                and descendant.ActuatorType == Enum.ActuatorType.Motor
+                and runtime.originalMotorHinges[descendant] == nil then
+                runtime.originalMotorHinges[descendant] = {
+                    angularVelocity = descendant.AngularVelocity,
+                    motorMaxTorque = descendant.MotorMaxTorque,
+                }
+            end
+        end
+    end
+
+    local function boostedVehicleBase(current: number, previousExcess: number, multiplier: number): number
+        local base: number = math.max(current - previousExcess, 0)
+        if base < 0.01 and current > 0.01 then
+            base = current / math.max(multiplier, 1)
+        end
+        return base
+    end
+
+    local function boostVehicleVelocity(assembly: BasePart, forcedDirection: Vector3?, multiplier: number): ()
+        local current: Vector3 = assembly.AssemblyLinearVelocity
+        local horizontal: Vector3 = Vector3.new(current.X, 0, current.Z)
+        local curSpeed: number = horizontal.Magnitude
+        if curSpeed < 0.01 then
+            runtime.velocityExcess[assembly] = 0
+            return
+        end
+        local base: number = boostedVehicleBase(curSpeed, runtime.velocityExcess[assembly] or 0, multiplier)
+        local target: number = base * multiplier
+        local direction: Vector3 = forcedDirection or horizontal.Unit
+        direction = Vector3.new(direction.X, 0, direction.Z)
+        if direction.Magnitude < 0.01 then
+            return
+        end
+        direction = direction.Unit
+        assembly.AssemblyLinearVelocity = direction * target + Vector3.new(0, current.Y, 0)
+        runtime.velocityExcess[assembly] = math.max(target - base, 0)
+    end
+
+    local function boostVehicleMotors(model: Model?, multiplier: number, motorTorque: number): ()
+        rememberVehicleParts(model)
+        for hinge: HingeConstraint, original: HingeState in pairs(runtime.originalMotorHinges) do
+            if not hinge.Parent or (model and not hinge:IsDescendantOf(model)) then
+                continue
+            end
+            local current: number = hinge.AngularVelocity
+            local sign: number = current < 0 and -1 or 1
+            local magnitude: number = math.abs(current)
+            local base: number = boostedVehicleBase(magnitude, runtime.motorExcess[hinge] or 0, multiplier)
+            local target: number = base * multiplier
+            hinge.AngularVelocity = sign * target
+            hinge.MotorMaxTorque = math.max(
+                original.motorMaxTorque * multiplier,
+                motorTorque
+            )
+            runtime.motorExcess[hinge] = math.max(target - base, 0)
+        end
+    end
+
+    local function boostVehicleSeatProperties(model: Model?, seat: VehicleSeat?, multiplier: number): ()
+        rememberVehicleParts(model)
+        if seat and runtime.originalVehicleSeats[seat] == nil then
+            runtime.originalVehicleSeats[seat] = {
+                maxSpeed = seat.MaxSpeed,
+                torque = seat.Torque,
+                turnSpeed = seat.TurnSpeed,
+            }
+        end
+        for candidate: VehicleSeat, original: VehicleSeatState in pairs(runtime.originalVehicleSeats) do
+            if not candidate.Parent or (model and not candidate:IsDescendantOf(model)) then
+                continue
+            end
+            candidate.MaxSpeed = original.maxSpeed * multiplier
+            candidate.Torque = original.torque * multiplier
+            candidate.TurnSpeed = original.turnSpeed * multiplier
+        end
+    end
+
+    local function moveDirection(): Vector3
+        local camera: Camera? = currentWorkspace.CurrentCamera
+        local forward: number, right: number = 0, 0
+        if movementInput.getVector then
+            forward, right = movementInput.getVector()
+        end
+        if forward == 0 and right == 0 then
+            local _, humanoid: Humanoid? = characterParts()
+            local move: Vector3 = humanoid and humanoid.MoveDirection or Vector3.zero
+            return move.Magnitude > 0.05 and move.Unit or Vector3.zero
+        end
+        if not camera then
+            return Vector3.zero
+        end
+        local look: Vector3 = (camera :: Camera).CFrame.LookVector
+        local side: Vector3 = (camera :: Camera).CFrame.RightVector
+        local flatLook: Vector3 = Vector3.new(look.X, 0, look.Z)
+        local flatSide: Vector3 = Vector3.new(side.X, 0, side.Z)
+        if flatLook.Magnitude < 0.001 then
+            return Vector3.zero
+        end
+        local direction: Vector3 =
+            flatLook.Unit * forward + flatSide.Unit * right
+        return direction.Magnitude > 0.05 and direction.Unit or Vector3.zero
+    end
+
+    local function blocked(root: BasePart, step: Vector3): Vector3
+        local parameters: RaycastParams = RaycastParams.new()
+        parameters.FilterType = Enum.RaycastFilterType.Exclude
+        parameters.RespectCanCollide = true
+        local ignore: {Instance} = {LocalPlayer.Character :: Instance}
+        for _, player: Player in ipairs(host.Players:GetPlayers()) do
+            if player ~= LocalPlayer and player.Character then
+                table.insert(ignore, player.Character :: Instance)
+            end
+        end
+        parameters.FilterDescendantsInstances = ignore
+        local hit: RaycastResult? =
+            currentWorkspace:Raycast(root.Position, step, parameters)
+        if not hit then
+            return step
+        end
+        return ((hit :: RaycastResult).Position + (hit :: RaycastResult).Normal)
+            - root.Position
+    end
+
+    local speed: any
+    speed = framework.Categories.Movement:CreateModule({
+        Name = "Speed",
+        Category = "Movement",
+        ConfigKey = "Universal.Speed",
+        Order = 1,
+        Tooltip = "Move faster on foot or in vehicles, by whichever method works best.",
+        Function = function(enabled: boolean): ()
+            runtime.nextTeleportAt = 0
+            restoreWalkSpeed()
+            restoreVehicle()
+            if not enabled then
+                speed:SetStatus(nil)
+                return
+            end
+            speed:SetStatus(
+                tostring(speed.Options["Mode"].Value)
+                    .. " "
+                    .. tostring(math.round(speed.Options["Speed"].Value))
+            )
+            speed:Clean(function(): ()
+                restoreWalkSpeed()
+                restoreVehicle()
+            end)
+            speed:Loop(function(deltaTime: number): ()
+                local options: any = speed.Options
+                local _, humanoid: Humanoid?, root: BasePart? = characterParts()
+                if not humanoid or not root then
+                    return
+                end
+                local resolvedHumanoid: Humanoid = humanoid :: Humanoid
+                local resolvedRoot: BasePart = root :: BasePart
+                if resolvedHumanoid.Health <= 0 then
+                    return
+                end
+
+                -- Vehicle Speed handler
+                if options["Vehicle speed"] and options["Vehicle speed"].Value then
+                    local assembly: BasePart?, model: Model?, seat: VehicleSeat? =
+                        resolveVehicle()
+                    if assembly then
+                        local vehMode: string = options["Vehicle mode"] and options["Vehicle mode"].Value or "Multiplier"
+                        local vehMultiplier: number = options["Vehicle multiplier"] and options["Vehicle multiplier"].Value or 2
+                        local motorTorque: number = options["Motor torque"] and options["Motor torque"].Value or 50000
+                        if vehMode == "Multiplier" then
+                            boostVehicleVelocity(assembly :: BasePart, nil, vehMultiplier)
+                        elseif vehMode == "Motors" then
+                            boostVehicleMotors(model, vehMultiplier, motorTorque)
+                        elseif vehMode == "Velocity" then
+                            local direction: Vector3? = seat
+                                and (seat :: VehicleSeat).CFrame.LookVector
+                                    * (seat :: VehicleSeat).ThrottleFloat
+                                or nil
+                            boostVehicleVelocity(assembly :: BasePart, direction, vehMultiplier)
+                        else
+                            boostVehicleSeatProperties(model, seat, vehMultiplier)
+                        end
+                        return
+                    end
+                end
+
+                -- On-foot character speed handler
+                local mode: string = options["Mode"].Value
+                local target: number = options["Speed"].Value
+
+                if mode == "WalkSpeed" then
+                    if runtime.originalWalkSpeed[resolvedHumanoid] == nil then
+                        runtime.originalWalkSpeed[resolvedHumanoid] =
+                            resolvedHumanoid.WalkSpeed
+                    end
+                    resolvedHumanoid.WalkSpeed = target
+                    return
+                end
+                restoreWalkSpeed()
+
+                local direction: Vector3 = moveDirection()
+                if direction.Magnitude < 0.05 then
+                    return
+                end
+
+                if options["Auto jump"].Value
+                    and resolvedHumanoid.FloorMaterial ~= Enum.Material.Air then
+                    resolvedHumanoid:ChangeState(Enum.HumanoidStateType.Jumping)
+                end
+
+                local velocity: Vector3 = resolvedRoot.AssemblyLinearVelocity
+                if mode == "Velocity" then
+                    resolvedRoot.AssemblyLinearVelocity = Vector3.new(
+                        direction.X * target,
+                        velocity.Y,
+                        direction.Z * target
+                    )
+                    return
+                end
+                if mode == "Impulse" then
+                    local wanted: Vector3 = direction * target
+                    local difference: Vector3 = Vector3.new(
+                        wanted.X - velocity.X,
+                        0,
+                        wanted.Z - velocity.Z
+                    )
+                    if difference.Magnitude > 2 then
+                        resolvedRoot:ApplyImpulse(
+                            difference * resolvedRoot.AssemblyMass
+                        )
+                    end
+                    return
+                end
+
+                local extra: number =
+                    math.max(target - resolvedHumanoid.WalkSpeed, 0)
+                if mode == "Teleport" then
+                    local now: number = os.clock()
+                    if now < runtime.nextTeleportAt then
+                        return
+                    end
+                    runtime.nextTeleportAt = now + options["Burst delay"].Value
+                    local step: Vector3 = direction * extra
+                        * options["Burst delay"].Value
+                    if options["Wall check"].Value then
+                        step = blocked(resolvedRoot, step)
+                    end
+                    resolvedRoot.CFrame = resolvedRoot.CFrame + step
+                    return
+                end
+
+                local step: Vector3 = direction * extra * deltaTime
+                if options["Wall check"].Value then
+                    step = blocked(resolvedRoot, step)
+                end
+                resolvedRoot.CFrame = resolvedRoot.CFrame + step
+            end)
+        end,
+    })
+
+    speed:CreateDropdown({
+        Name = "Mode",
+        List = {"WalkSpeed", "Velocity", "Impulse", "CFrame", "Teleport"},
+        Index = 1,
+        Function = function(value: string): ()
+            if speed.Enabled then
+                speed:SetStatus(
+                    value .. " " .. tostring(math.round(speed.Options["Speed"].Value))
+                )
+            end
+        end,
+        Tooltip = "WalkSpeed is the quietest; Velocity and Impulse are smooth physics; CFrame and Teleport step directly.",
+    })
+    speed:CreateSlider({
+        Name = "Speed",
+        Min = 16,
+        Max = 200,
+        Default = 32,
+        Function = function(value: number): ()
+            if speed.Enabled then
+                speed:SetStatus(
+                    tostring(speed.Options["Mode"].Value)
+                        .. " "
+                        .. tostring(math.round(value))
+                )
+            end
+        end,
+        Tooltip = "Studs per second for on-foot movement.",
+    })
+    speed:CreateToggle({
+        Name = "Wall check",
+        Show = {Option = "Mode", Values = {"CFrame", "Teleport"}},
+        Default = true,
+        Tooltip = "Stop at geometry instead of stepping through it.",
+    })
+    speed:CreateSlider({
+        Name = "Burst delay",
+        Show = {Option = "Mode", Values = {"Teleport"}},
+        Min = 0.05,
+        Max = 1,
+        Default = 0.2,
+        Tooltip = "Seconds between teleport steps.",
+    })
+    speed:CreateToggle({
+        Name = "Auto jump",
+        Show = {Option = "Mode", Values = {"Velocity", "Impulse", "CFrame", "Teleport"}},
+        Default = false,
+        Tooltip = "Hop continuously while moving.",
+    })
+
+    -- Vehicle Speed section integrated into Speed
+    speed:CreateToggle({
+        Name = "Vehicle speed",
+        Default = false,
+        Function = function(enabled: boolean): ()
+            if not enabled then
+                restoreVehicle()
+            end
+        end,
+        Tooltip = "Boosts any vehicle or mount you are currently driving.",
+    })
+    speed:CreateDropdown({
+        Name = "Vehicle mode",
+        Show = {Option = "Vehicle speed", Values = {true}},
+        List = {"Multiplier", "Motors", "Velocity", "Seat"},
+        Index = 1,
+        Function = function(): ()
+            restoreVehicle()
+        end,
+        Tooltip = "Multiplier preserves vehicle steering; Motors powers wheel constraints; Velocity pushes the chassis; Seat boosts VehicleSeat properties.",
+    })
+    speed:CreateSlider({
+        Name = "Vehicle multiplier",
+        Show = {Option = "Vehicle speed", Values = {true}},
+        Min = 1,
+        Max = 10,
+        Default = 2,
+        Function = function(): ()
+            clearVehicleBoostHistory()
+        end,
+        Tooltip = "Speed multiplier applied to vehicle driving speed.",
+    })
+    speed:CreateSlider({
+        Name = "Motor torque",
+        Show = {Option = "Vehicle speed", Values = {true}},
+        Min = 1000,
+        Max = 250000,
+        Default = 50000,
+        Tooltip = "Torque limit for motor hinges.",
+    })
+
+    activeCleanup = function(): ()
+        restoreWalkSpeed()
+        restoreVehicle()
+    end
+    Module.Initialized = true
+    return speed
+end
+
+function Module.destroy(): ()
+    if activeCleanup then
+        pcall(activeCleanup)
+    end
+    activeCleanup = nil
+    Module.Initialized = false
+end
+
+return Module
+
+]=],
+        ["src/games/universal/Movement/Jump.lua"] = [=[
+export type Runtime = {
+    framework: any,
+    entity: any,
+    host: any,
+    services: any,
+}
+
+local Module = {
+    Name = "Jump",
+    PlaceId = 0,
+    Events = {} :: {[string]: any},
+    Initialized = false,
+}
+
+local activeCleanup: (() -> ())? = nil
+
+function Module.init(context: Runtime): any
+    local host: any = context.host
+    local framework: any = context.framework
+    local movementInput: any = context.services and context.services.movementInput
+    local UserInputService: any = host.UserInputService or game:GetService("UserInputService")
+    local LocalPlayer: Player = host.LocalPlayer or game:GetService("Players").LocalPlayer
+
+    local originalJumpPower = setmetatable({}, {__mode = "k"}) :: {[Humanoid]: {jumpPower: number, useJumpPower: boolean}}
+    local lastInfiniteJumpAt: number = -math.huge
+
+    local function characterParts(): (Model?, Humanoid?, BasePart?)
+        local character: Model? = LocalPlayer.Character
+        if not character then
+            return nil, nil, nil
+        end
+        local humanoid: Humanoid? = character:FindFirstChildOfClass("Humanoid")
+        local root: BasePart? = character:FindFirstChild("HumanoidRootPart") :: BasePart?
+        return character, humanoid, root
+    end
+
+    local function restoreJumpPower(): ()
+        for humanoid: Humanoid, original in pairs(originalJumpPower) do
+            if humanoid and humanoid.Parent then
+                humanoid.JumpPower = original.jumpPower
+                humanoid.UseJumpPower = original.useJumpPower
+            end
+        end
+        originalJumpPower = setmetatable({}, {__mode = "k"}) :: any
+    end
+
+    local function performHighJump(velocityOverride: number?): ()
+        local _, humanoid: Humanoid?, root: BasePart? = characterParts()
         if not humanoid or not root or humanoid.Health <= 0 then
             return
         end
-        local current: Vector3 = root.AssemblyLinearVelocity
-        root.AssemblyLinearVelocity = Vector3.new(
+        local velocityVal: number = velocityOverride or 72
+        local current: Vector3 = (root :: BasePart).AssemblyLinearVelocity
+        ;(root :: BasePart).AssemblyLinearVelocity = Vector3.new(
             current.X,
-            highJumpSettings.velocity,
+            velocityVal,
             current.Z
         )
-
         if humanoid.FloorMaterial ~= Enum.Material.Air then
             humanoid:ChangeState(Enum.HumanoidStateType.Freefall)
         end
     end
 
-    local HighJumpFeature = createUniversalFeature(
-        "HighJump",
-        "Press the key slot to launch a single high jump",
-        19,
-        performHighJump,
-        {
-            action = true,
-            silentAction = true,
-            configKey = "Universal.HighJump",
-            categoryName = "Blatant",
-        }
-    )
-    addNumberOption(
-        HighJumpFeature,
-        "Jump velocity",
-        highJumpSettings.velocity,
-        25,
-        220,
-        function(value: number): ()
-            highJumpSettings.velocity = value
+    local function performInfiniteJump(mode: string, strength: number, interval: number, stackCeiling: number): ()
+        local _, humanoid: Humanoid?, root: BasePart? = characterParts()
+        if not humanoid or not root or humanoid.Health <= 0 then
+            return
+        end
+
+        local spacing: number = interval
+        if UserInputService.TouchEnabled and not UserInputService.KeyboardEnabled then
+            spacing = math.max(spacing, 0.25)
+        end
+
+        local now: number = os.clock()
+        if now - lastInfiniteJumpAt < spacing then
+            return
+        end
+        lastInfiniteJumpAt = now
+
+        local velocity: Vector3 = (root :: BasePart).AssemblyLinearVelocity
+        local vertical: number
+        if mode == "Stack" then
+            vertical = math.min(velocity.Y + strength, stackCeiling)
+        elseif mode == "Impulse" then
+            humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
+            ;(root :: BasePart):ApplyImpulse(
+                Vector3.new(0, strength - velocity.Y, 0) * (root :: BasePart).AssemblyMass
+            )
+            return
+        elseif mode == "Fall" then
+            if velocity.Y >= 0 then
+                return
+            end
+            vertical = 0
+        else
+            vertical = strength
+        end
+
+        humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
+        ;(root :: BasePart).AssemblyLinearVelocity = Vector3.new(velocity.X, vertical, velocity.Z)
+    end
+
+    local jump: any
+    jump = framework.Categories.Movement:CreateModule({
+        Name = "Jump",
+        Category = "Movement",
+        ConfigKey = "Universal.Jump",
+        Order = 6,
+        Tooltip = "Consolidated jump controls: adjust Jump Power, execute High Jump, enable Infinite Jump and Auto Jump.",
+        Function = function(enabled: boolean): ()
+            restoreJumpPower()
+            lastInfiniteJumpAt = -math.huge
+            if not enabled then
+                jump:SetStatus(nil)
+                return
+            end
+
+            jump:SetStatus(tostring(math.round(jump.Options["Jump power"].Value)))
+            jump:Clean(restoreJumpPower)
+
+            -- Connect infinite jump request if movementInput service is present
+            if movementInput and type(movementInput.onJumpRequest) == "function" then
+                jump:Clean(movementInput.onJumpRequest(function(): ()
+                    local opts = jump.Options
+                    if not opts["Infinite jump"] or not opts["Infinite jump"].Value then
+                        return
+                    end
+                    local mode: string = opts["Infinite jump mode"] and opts["Infinite jump mode"].Value or "Normal"
+                    if mode == "Rise" then
+                        return
+                    end
+                    local strength: number = opts["Infinite jump power"] and opts["Infinite jump power"].Value or 50
+                    local interval: number = opts["Jump interval"] and opts["Jump interval"].Value or 0.18
+                    performInfiniteJump(mode, strength, interval, 160)
+                end))
+            end
+
+            jump:Loop(function(): ()
+                local opts = jump.Options
+                local _, humanoid: Humanoid?, root: BasePart? = characterParts()
+                if not humanoid or not root or humanoid.Health <= 0 then
+                    return
+                end
+
+                -- 1. Apply Jump Power
+                local wantedPower: number = opts["Jump power"] and opts["Jump power"].Value or 80
+                if originalJumpPower[humanoid] == nil then
+                    originalJumpPower[humanoid] = {
+                        jumpPower = humanoid.JumpPower,
+                        useJumpPower = humanoid.UseJumpPower,
+                    }
+                end
+                humanoid.UseJumpPower = true
+                humanoid.JumpPower = wantedPower
+
+                -- 2. Auto Jump
+                if opts["Auto jump"] and opts["Auto jump"].Value then
+                    local moveDir: Vector3 = humanoid.MoveDirection
+                    if moveDir.Magnitude > 0.05 and humanoid.FloorMaterial ~= Enum.Material.Air then
+                        humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
+                    end
+                end
+
+                -- 3. Infinite Jump "Rise" mode (hold to rise)
+                if opts["Infinite jump"] and opts["Infinite jump"].Value then
+                    local mode: string = opts["Infinite jump mode"] and opts["Infinite jump mode"].Value or "Normal"
+                    if mode == "Rise" and movementInput and type(movementInput.isJumpHeld) == "function" and movementInput.isJumpHeld() then
+                        humanoid:ChangeState(Enum.HumanoidStateType.Freefall)
+                        local curVel: Vector3 = (root :: BasePart).AssemblyLinearVelocity
+                        local riseSpd: number = opts["Rise speed"] and opts["Rise speed"].Value or 75
+                        ;(root :: BasePart).AssemblyLinearVelocity = Vector3.new(curVel.X, riseSpd, curVel.Z)
+                    end
+                end
+            end)
+        end,
+    })
+
+    jump:CreateSlider({
+        Name = "Jump power",
+        Min = 0,
+        Max = 500,
+        Default = 80,
+        Function = function(value: number): ()
+            if jump.Enabled then
+                jump:SetStatus(tostring(math.round(value)))
+            end
+        end,
+        Tooltip = "Character jump power (default Roblox jump is 50).",
+    })
+
+    jump:CreateButton({
+        Name = "High jump",
+        Function = function(): ()
+            local velocityVal: number = jump.Options["High jump velocity"] and jump.Options["High jump velocity"].Value or 72
+            performHighJump(velocityVal)
+        end,
+        Tooltip = "Launches your character into a single massive vertical jump.",
+    })
+
+    jump:CreateSlider({
+        Name = "High jump velocity",
+        Min = 25,
+        Max = 250,
+        Default = 72,
+        Tooltip = "Vertical velocity applied when High Jump is activated.",
+    })
+
+    jump:CreateToggle({
+        Name = "Infinite jump",
+        Default = false,
+        Tooltip = "Allows jumping repeatedly in mid-air.",
+    })
+
+    jump:CreateDropdown({
+        Name = "Infinite jump mode",
+        Show = {Option = "Infinite jump", Values = {true}},
+        List = {"Normal", "Impulse", "Stack", "Rise", "Fall"},
+        Index = 1,
+        Tooltip = "Normal = fixed mid-air jump; Impulse = physical thrust; Stack = accumulative upward velocity; Rise = hold to float up; Fall = cancels downward fall speed.",
+    })
+
+    jump:CreateSlider({
+        Name = "Infinite jump power",
+        Show = {Option = "Infinite jump", Values = {true}},
+        Min = 10,
+        Max = 250,
+        Default = 50,
+        Tooltip = "Vertical impulse applied during mid-air jumps.",
+    })
+
+    jump:CreateSlider({
+        Name = "Rise speed",
+        Show = {Option = "Infinite jump", Values = {true}},
+        Min = 10,
+        Max = 350,
+        Default = 75,
+        Tooltip = "Vertical speed while holding jump in Rise mode.",
+    })
+
+    jump:CreateSlider({
+        Name = "Jump interval",
+        Show = {Option = "Infinite jump", Values = {true}},
+        Min = 0.05,
+        Max = 0.6,
+        Default = 0.18,
+        Tooltip = "Minimum delay in seconds between mid-air jumps.",
+    })
+
+    jump:CreateToggle({
+        Name = "Auto jump",
+        Default = false,
+        Tooltip = "Continuously jumps while walking on the ground.",
+    })
+
+    activeCleanup = function(): ()
+        restoreJumpPower()
+    end
+    Module.Initialized = true
+    return jump
+end
+
+function Module.destroy(): ()
+    if activeCleanup then
+        pcall(activeCleanup)
+    end
+    activeCleanup = nil
+    Module.Initialized = false
+end
+
+return Module
+
+]=],
+        ["src/games/universal/Movement/ClickTeleport.lua"] = [=[
+export type Runtime = {
+    framework: any,
+    entity: any,
+    host: any,
+    services: any,
+}
+
+local Module = {
+    Name = "ClickTeleport",
+    PlaceId = 0,
+    Events = {} :: {[string]: any},
+    Initialized = false,
+}
+
+local activeCleanup: (() -> ())? = nil
+
+local function characterRoot(localPlayer: Player): (BasePart?, Humanoid?)
+    local character: Model? = localPlayer.Character
+    if not character then
+        return nil, nil
+    end
+    return character:FindFirstChild("HumanoidRootPart") :: BasePart?,
+        character:FindFirstChildOfClass("Humanoid") :: Humanoid?
+end
+
+function Module.init(context: Runtime): any
+    local host: any = context.host
+    local framework: any = context.framework
+    local localPlayer: Player = host.LocalPlayer
+    local userInput: UserInputService = host.UserInputService
+    local menu: any = context.services.menu
+
+    local runtime: any = {
+        armedUntil = 0,
+        waypoint = nil :: Vector3?,
+        lastOrigin = nil :: Vector3?,
+    }
+
+    local teleport: any
+    teleport = framework.Categories.Movement:CreateModule({
+        Name = "Click Teleport",
+        Category = "Movement",
+        Order = 1,
+
+        Kind = "action",
+        Silent = true,
+        Tooltip = "Press to travel to the destination selected below.",
+        Function = function(): ()
+            Module.run(context, teleport, runtime)
+        end,
+    })
+
+    teleport:CreateDropdown({
+        Name = "Destination",
+        List = {
+            "Tap point",
+            "Nearest player",
+            "Named player",
+            "Item",
+            "Waypoint",
+            "Last position",
+        },
+        Index = 1,
+        Tooltip = "What the button travels to.",
+    })
+    teleport:CreateTextBox({
+        Name = "Player",
+        Show = {Option = "Destination", Values = {"Named player"}},
+        Default = "",
+        Tooltip = "Part of a name or display name, for Named player.",
+    })
+    teleport:CreateTextBox({
+        Name = "Item",
+        Show = {Option = "Destination", Values = {"Item"}},
+        Default = "",
+        Tooltip = "Part or model name to look for, for Item. Partial names "
+            .. "match, so \"chest\" finds \"GoldChest\".",
+    })
+    teleport:CreateButton({
+        Name = "Save waypoint",
+        Show = {Option = "Destination", Values = {"Waypoint"}},
+        Tooltip = "Stores where you are standing right now.",
+        Function = function(): ()
+            local root: BasePart? = characterRoot(localPlayer)
+            if not root then
+                return
+            end
+            runtime.waypoint = (root :: BasePart).Position
+            teleport:Notify("waypoint saved")
+        end,
+    })
+    teleport:CreateButton({
+        Name = "Go back",
+        Show = {Option = "Destination", Values = {"Last position"}},
+        Tooltip = "Returns to where the last teleport started.",
+        Function = function(): ()
+            if not runtime.lastOrigin then
+                teleport:Notify("nowhere to go back to")
+                return
+            end
+            Module.travel(context, teleport, runtime, runtime.lastOrigin, false)
+        end,
+    })
+
+    teleport:CreateSlider({
+        Name = "Arm window",
+        Show = {Option = "Destination", Values = {"Tap point"}},
+        Min = 1,
+        Max = 15,
+        Default = 6,
+        Tooltip = "Seconds Tap point stays armed after the button is pressed.",
+    })
+    teleport:CreateSlider({
+        Name = "Search range",
+        Show = {Option = "Destination", Values = {"Nearest player", "Named player", "Item"}},
+        Min = 50,
+        Max = 5000,
+        Default = 1500,
+        Tooltip = "How far to look for items and players.",
+    })
+    teleport:CreateSlider({
+        Name = "Player offset",
+        Show = {Option = "Destination", Values = {"Nearest player", "Named player"}},
+        Min = 0,
+        Max = 20,
+        Default = 4,
+        Tooltip = "Studs to stop short of a player, so you do not land inside "
+            .. "them.",
+    })
+    teleport:CreateToggle({
+        Name = "Skip friends",
+        Show = {Option = "Destination", Values = {"Nearest player"}},
+        Default = false,
+        Tooltip = "Nearest player ignores anyone on the Friend List.",
+    })
+    teleport:CreateDropdown({
+        Name = "Movement",
+        List = {"Instant", "Glide"},
+        Index = 1,
+        Tooltip = "Glide steps the character across, which some games accept "
+            .. "when a single jump is rejected.",
+    })
+    teleport:CreateSlider({
+        Name = "Glide step",
+        Show = {Option = "Movement", Values = {"Glide"}},
+        Min = 4,
+        Max = 60,
+        Default = 18,
+    })
+    teleport:CreateSlider({
+        Name = "Height offset",
+        Min = 0,
+        Max = 12,
+        Default = 3,
+        Tooltip = "Studs above whatever you land on.",
+    })
+    teleport:CreateToggle({
+        Name = "Keep momentum",
+        Default = false,
+        Tooltip = "Leave your velocity alone on arrival instead of zeroing it.",
+    })
+
+    local tapConnection: RBXScriptConnection = userInput.InputBegan:Connect(
+        function(input: InputObject, processed: boolean): ()
+            if processed or os.clock() >= runtime.armedUntil then
+                return
+            end
+            if menu.isCapturingInput() then
+                return
+            end
+            local touched: boolean = input.UserInputType == Enum.UserInputType.Touch
+            local clicked: boolean =
+                input.UserInputType == Enum.UserInputType.MouseButton1
+            if not touched and not clicked then
+                return
+            end
+            runtime.armedUntil = 0
+            Module.travel(
+                context,
+                teleport,
+                runtime,
+                Module.pointUnder(context, input.Position),
+                true
+            )
         end
     )
 
     activeCleanup = function(): ()
-
+        pcall(function(): ()
+            tapConnection:Disconnect()
+        end)
+        runtime.armedUntil = 0
     end
     Module.Initialized = true
-    return HighJumpFeature
+    return teleport
+end
+
+function Module.pointUnder(context: Runtime, screenPosition: Vector3): Vector3?
+    local host: any = context.host
+    local currentWorkspace: Workspace = host.workspace or workspace
+    local camera: Camera? = currentWorkspace.CurrentCamera
+    if not camera then
+        return nil
+    end
+    local resolvedCamera: Camera = camera :: Camera
+    local ray: Ray = resolvedCamera:ScreenPointToRay(
+        screenPosition.X,
+        screenPosition.Y
+    )
+    local parameters: RaycastParams = RaycastParams.new()
+    parameters.FilterType = Enum.RaycastFilterType.Exclude
+    parameters.IgnoreWater = true
+    parameters.FilterDescendantsInstances = {
+        host.LocalPlayer.Character :: any,
+        resolvedCamera,
+    }
+    local result: RaycastResult? = currentWorkspace:Raycast(
+        ray.Origin,
+        ray.Direction.Unit * 4096,
+        parameters
+    )
+    return result and result.Position or nil
+end
+
+local function matchesName(candidate: string, query: string): boolean
+    return string.find(string.lower(candidate), string.lower(query), 1, true) ~= nil
+end
+
+function Module.findItem(
+    context: Runtime,
+    query: string,
+    origin: Vector3,
+    range: number
+): Vector3?
+    local host: any = context.host
+    local currentWorkspace: Workspace = host.workspace or workspace
+    local best: Vector3? = nil
+    local bestDistance: number = range
+    local character: Model? = host.LocalPlayer.Character
+
+    for _, descendant: Instance in ipairs(currentWorkspace:GetDescendants()) do
+        if character and descendant:IsDescendantOf(character) then
+            continue
+        end
+        if not matchesName(descendant.Name, query) then
+            continue
+        end
+        local position: Vector3? = nil
+        if descendant:IsA("BasePart") then
+            position = (descendant :: BasePart).Position
+        elseif descendant:IsA("Model") then
+            local pivotOk: boolean, pivot: any = pcall(function(): CFrame
+                return (descendant :: Model):GetPivot()
+            end)
+            if pivotOk then
+                position = (pivot :: CFrame).Position
+            end
+        end
+        if not position then
+            continue
+        end
+        local distance: number = ((position :: Vector3) - origin).Magnitude
+        if distance < bestDistance then
+            best = position
+            bestDistance = distance
+        end
+    end
+    return best
+end
+
+function Module.run(context: Runtime, teleport: any, runtime: any): ()
+    local host: any = context.host
+    local entityLibrary: any = context.entity
+    local localPlayer: Player = host.LocalPlayer
+    local options: any = teleport.Options
+    local destination: string = options["Destination"].Value
+
+    local root: BasePart? = characterRoot(localPlayer)
+    if not root then
+        teleport:Notify("no character")
+        return
+    end
+    local origin: Vector3 = (root :: BasePart).Position
+    local range: number = options["Search range"].Value
+
+    if destination == "Tap point" then
+        runtime.armedUntil = os.clock() + options["Arm window"].Value
+        teleport:Notify("tap where you want to go")
+        return
+    end
+
+    if destination == "Waypoint" then
+        if not runtime.waypoint then
+            teleport:Notify("no waypoint saved")
+            return
+        end
+        Module.travel(context, teleport, runtime, runtime.waypoint, false)
+        return
+    end
+
+    if destination == "Last position" then
+        if not runtime.lastOrigin then
+            teleport:Notify("nowhere to go back to")
+            return
+        end
+        Module.travel(context, teleport, runtime, runtime.lastOrigin, false)
+        return
+    end
+
+    if destination == "Item" then
+        local query: string = tostring(options["Item"].Value or "")
+        if query == "" then
+            teleport:Notify("type an item name first")
+            return
+        end
+        local found: Vector3? = Module.findItem(context, query, origin, range)
+        if not found then
+            teleport:Notify("no \"" .. query .. "\" within range")
+            return
+        end
+        Module.travel(context, teleport, runtime, found, true)
+        return
+    end
+
+    entityLibrary:Refresh()
+    local target: any = nil
+    if destination == "Nearest player" then
+        local bestDistance: number = range
+        for _, entity: any in ipairs(entityLibrary.List) do
+            if options["Skip friends"].Value
+                and entityLibrary:IsProtected(entity.Player) then
+                continue
+            end
+            if entity.Distance < bestDistance then
+                target = entity
+                bestDistance = entity.Distance
+            end
+        end
+    else
+        local query: string = tostring(options["Player"].Value or "")
+        if query == "" then
+            teleport:Notify("type a player name first")
+            return
+        end
+        for _, entity: any in ipairs(entityLibrary.List) do
+            if matchesName(entity.Player.Name, query)
+                or matchesName(entity.Player.DisplayName, query) then
+                target = entity
+                break
+            end
+        end
+    end
+
+    if not target then
+        teleport:Notify("no matching player")
+        return
+    end
+
+    local targetPosition: Vector3 = target.RootPart.Position
+    local offset: number = options["Player offset"].Value
+    local approach: Vector3 = targetPosition - origin
+    if offset > 0 and approach.Magnitude > offset then
+        targetPosition = targetPosition - approach.Unit * offset
+    end
+    Module.travel(context, teleport, runtime, targetPosition, false)
+end
+
+function Module.travel(
+    context: Runtime,
+    teleport: any,
+    runtime: any,
+    destination: Vector3?,
+    liftToSurface: boolean
+): ()
+    local host: any = context.host
+    local localPlayer: Player = host.LocalPlayer
+    if not destination then
+        teleport:Notify("nothing there")
+        return
+    end
+
+    local root: BasePart?, humanoid: Humanoid? = characterRoot(localPlayer)
+    if not root then
+        return
+    end
+    local resolvedRoot: BasePart = root :: BasePart
+    local options: any = teleport.Options
+
+    runtime.lastOrigin = resolvedRoot.Position
+
+    local target: Vector3 = destination :: Vector3
+    if liftToSurface then
+
+        local hipHeight: number = humanoid and (humanoid :: Humanoid).HipHeight or 2
+        target = target
+            + Vector3.new(0, hipHeight + options["Height offset"].Value, 0)
+    end
+
+    local keepMomentum: boolean = options["Keep momentum"].Value
+    if options["Movement"].Value == "Instant" then
+        resolvedRoot.CFrame = CFrame.new(target)
+        if not keepMomentum then
+            resolvedRoot.AssemblyLinearVelocity = Vector3.zero
+        end
+        return
+    end
+
+    local step: number = options["Glide step"].Value
+    task.spawn(function(): ()
+        for _ = 1, 360 do
+            if not resolvedRoot.Parent then
+                return
+            end
+            local offset: Vector3 = target - resolvedRoot.Position
+            if offset.Magnitude < 3 then
+                resolvedRoot.CFrame = CFrame.new(target)
+                if not keepMomentum then
+                    resolvedRoot.AssemblyLinearVelocity = Vector3.zero
+                end
+                return
+            end
+            resolvedRoot.CFrame = resolvedRoot.CFrame
+                + offset.Unit * math.min(offset.Magnitude, step)
+            if not keepMomentum then
+                resolvedRoot.AssemblyLinearVelocity = Vector3.zero
+            end
+            task.wait()
+        end
+    end)
 end
 
 function Module.destroy(): ()
@@ -18826,702 +20028,834 @@ end
 return Module
 
 ]=],
-        ["src/games/universal/World/SafeWalk.lua"] = [=[
+        ["src/games/universal/Movement/HookPart.lua"] = [=[
+--!strict
 export type Runtime = {
     framework: any,
-    entity: any,
-    host: any,
-}
-
-local Module = {
-    Name = "SafeWalk",
-    PlaceId = 0,
-    Events = {} :: {[string]: any},
-    Initialized = false,
-}
-
-local activeCleanup: (() -> ())? = nil
-
-function Module.init(context: Runtime): any
-    local host: any = context.host
-    local TaskManager: any = host.TaskManager
-    local featureConnections: any = host.featureConnections
-    local disconnectFeatureConnection: any = host.disconnectFeatureConnection
-    local getCharacterParts: any = host.getCharacterParts
-    local createUniversalFeature: any = host.createUniversalFeature
-    local addNumberOption: any = host.addNumberOption
-    local currentWorkspace: Workspace = host.workspace or workspace
-
-    local safeWalkSettings: {
-        lookAhead: number,
-        barrierHeight: number,
-    } = {
-        lookAhead = 2.8,
-        barrierHeight = 4.5,
-    }
-
-    local barrierFolder: Folder? = nil
-    local barrier: BasePart? = nil
-    local SafeWalkFeature: any = nil
-
-    local function ensureBarrier(): BasePart
-        local existing: BasePart? = barrier
-        if existing and existing.Parent then
-            return existing
-        end
-        if not barrierFolder or not barrierFolder.Parent then
-            barrierFolder = Instance.new("Folder")
-            barrierFolder.Name = "WurstSafeWalk"
-            barrierFolder.Parent = currentWorkspace
-        end
-        local part: BasePart = Instance.new("Part")
-        part.Name = "SafeWalkBarrier"
-        part.Anchored = true
-        part.CanCollide = true
-        part.CanQuery = false
-        part.CanTouch = false
-        part.Massless = true
-        part.CastShadow = false
-        part.Transparency = 1
-        part.Material = Enum.Material.SmoothPlastic
-        part.Size = Vector3.new(7, safeWalkSettings.barrierHeight, 0.35)
-        part:SetAttribute("WurstSafeWalk", true)
-        part.Parent = barrierFolder
-        barrier = part
-        return part
-    end
-
-    local function hideBarrier(): ()
-        if barrierFolder then
-            barrierFolder:Destroy()
-        end
-        barrierFolder = nil
-        barrier = nil
-    end
-
-    local function toggleSafeWalk(enabled: boolean): ()
-        disconnectFeatureConnection("SafeWalk")
-        hideBarrier()
-        if not enabled then
-            if SafeWalkFeature then
-                SafeWalkFeature:SetStatus(nil)
-            end
-            return
-        end
-
-        featureConnections.SafeWalk = TaskManager:Connect(function(): ()
-            local character: Model?, humanoid: Humanoid?, root: BasePart? = getCharacterParts()
-            if not character or not humanoid or not root
-                or humanoid.Health <= 0 then
-                hideBarrier()
-                return
-            end
-            -- While airborne or standing still the last barrier stays in place
-            -- so momentum cannot carry you over an edge mid-jump.
-            if humanoid.MoveDirection.Magnitude < 0.05 then
-                return
-            end
-            if humanoid.FloorMaterial == Enum.Material.Air then
-                return
-            end
-
-            local moveDirection: Vector3 = humanoid.MoveDirection.Unit
-            local parameters: RaycastParams = RaycastParams.new()
-            parameters.FilterType = Enum.RaycastFilterType.Exclude
-            parameters.FilterDescendantsInstances = {character}
-            parameters.IgnoreWater = true
-
-            -- Sample the ground along the movement direction to find where the
-            -- floor ends. The barrier is placed just before that edge.
-            local stepCount: number = 7
-            local reach: number = 1.0 + safeWalkSettings.lookAhead + 0.8
-            local step: number = (reach - 1.0) / (stepCount - 1)
-            local lastGrounded: number? = nil
-            local firstGap: number? = nil
-            for index: number = 1, stepCount do
-                local distance: number = 1.0 + step * (index - 1)
-                local probeOrigin: Vector3 = root.Position + moveDirection * distance
-                local ground: RaycastResult? = currentWorkspace:Raycast(
-                    probeOrigin,
-                    Vector3.new(0, -6, 0),
-                    parameters
-                )
-                if ground then
-                    lastGrounded = distance
-                elseif lastGrounded ~= nil then
-                    firstGap = distance
-                    break
-                end
-            end
-
-            if lastGrounded == nil then
-                -- The edge is already under the feet: block right ahead.
-                lastGrounded = 0.4
-                firstGap = 1.0
-            end
-            if firstGap == nil then
-                -- Solid floor ahead: nothing to block.
-                hideBarrier()
-                if SafeWalkFeature then
-                    SafeWalkFeature:SetStatus(nil)
-                end
-                return
-            end
-
-            local edgeDistance: number = (lastGrounded + firstGap) * 0.5
-            local feetHeight: number = root.Size.Y * 0.5 + humanoid.HipHeight
-            local barrierHeight: number = math.max(safeWalkSettings.barrierHeight, 3)
-            local part: BasePart = ensureBarrier()
-            part.Size = Vector3.new(7, barrierHeight, 0.35)
-            local feetY: number = root.Position.Y - feetHeight
-            local position: Vector3 = root.Position + moveDirection * edgeDistance
-            -- Thin axis (Z) points along the movement direction, so the wide
-            -- face of the part faces the player like a wall.
-            part.CFrame = CFrame.lookAt(
-                Vector3.new(position.X, feetY + barrierHeight * 0.5, position.Z),
-                Vector3.new(position.X, feetY + barrierHeight * 0.5, position.Z)
-                    + moveDirection
-            )
-            if SafeWalkFeature then
-                SafeWalkFeature:SetStatus("edge")
-            end
-        end)
-    end
-
-    SafeWalkFeature = createUniversalFeature(
-        "SafeWalk",
-        "Place an invisible barrier at edges so you cannot walk off ledges",
-        21,
-        toggleSafeWalk,
-        {
-            configKey = "Universal.SafeWalk",
-            categoryName = "Movement",
-        }
-    )
-    addNumberOption(
-        SafeWalkFeature,
-        "Edge look-ahead",
-        safeWalkSettings.lookAhead,
-        1.5,
-        6,
-        function(value: number): ()
-            safeWalkSettings.lookAhead = value
-        end
-    )
-    addNumberOption(
-        SafeWalkFeature,
-        "Barrier height",
-        safeWalkSettings.barrierHeight,
-        3,
-        10,
-        function(value: number): ()
-            safeWalkSettings.barrierHeight = value
-        end
-    )
-
-    activeCleanup = function(): ()
-        disconnectFeatureConnection("SafeWalk")
-        hideBarrier()
-    end
-    Module.Initialized = true
-    return SafeWalkFeature
-end
-
-function Module.destroy(): ()
-    if activeCleanup then
-        pcall(activeCleanup)
-    end
-    activeCleanup = nil
-    Module.Initialized = false
-end
-
-return Module
-
-]=],
-        ["src/games/universal/World/RejoinServer.lua"] = [=[
-export type Runtime = {
-    framework: any,
-    entity: any,
     host: any,
     services: any,
 }
 
+type HookKind = "Ladder" | "Obstacle" | "Wall"
+
+type HookSighting = {
+    kind: HookKind,
+    part: BasePart,
+    normal: Vector3,
+    direction: Vector3,
+    distance: number,
+    name: string,
+    isWedge: boolean,
+}
+
 local Module = {
-    Name = "RejoinServer",
+    Name = "HookPart",
     PlaceId = 0,
     Events = {} :: {[string]: any},
     Initialized = false,
 }
 
-local activeCleanup: (() -> ())? = nil
+local activeCard: any = nil
+
+local SCAN_DIRECTIONS: number = 16
+local SCAN_HEIGHTS: {number} = {-1.8, -0.6, 0.5, 1.5}
 
 function Module.init(context: Runtime): any
+    local framework: any = context.framework
     local host: any = context.host
-    local LocalPlayer: any = host.LocalPlayer
-    local createUniversalFeature: any = host.createUniversalFeature
-    local cloneReference: any = host.cloneReference
-    local notify: (string) -> () = host.notify
-    local function rejoinCurrentServer(): ()
-        local teleportService: TeleportService = cloneReference(
-            game:GetService("TeleportService")
-        )
-        local placeId: number = game.PlaceId
-        local jobId: string = tostring(game.JobId or "")
+    local services: any = context.services
+    local movementInput: any = services.movementInput
+    local getCharacterParts: any = host.getCharacterParts
+    local UserInputService: any = host.UserInputService or (game :: any):GetService("UserInputService")
+    local RunService: RunService = host.RunService or (game :: any):GetService("RunService")
+    local currentWorkspace: Workspace = host.workspace or workspace
 
-        local rejoined: boolean = false
-        if jobId ~= "" then
-            rejoined = pcall(function(): ()
-                teleportService:TeleportToPlaceInstance(placeId, jobId, LocalPlayer)
+    local lastHookJumpAt: number = -math.huge
+    local lastScanAt: number = -math.huge
+    local lastClimbAt: number = -math.huge
+    local lastObstacleTouchAt: number = -math.huge
+    local currentSighting: HookSighting? = nil
+    local highlight: Highlight? = nil
+
+    local settings = {
+        ladderBoost = true,
+        ladderJumpLength = 70,
+        ladderJumpHeight = 65,
+        obstacleBoost = true,
+        obstaclePower = 90,
+        selfFling = false,
+        flingMultiplier = 1100,
+        wallhopAssist = true,
+        wallhopPower = 38,
+        airborneWallhopOnly = true,
+        requireStuckIntent = true,
+        allowDownwardBoost = true,
+        sliderAssist = true,
+        directionMode = "Camera",
+        detectionRange = 2.4,
+        checkAllParts = true,
+        highlightObject = true,
+    }
+
+    local function destroyHighlight(): ()
+        if highlight then
+            pcall(function()
+                highlight:Destroy()
             end)
-        end
-        if not rejoined then
-            local ok: boolean, teleportError: any = pcall(function(): ()
-                teleportService:Teleport(placeId, LocalPlayer)
-            end)
-            if not ok then
-                notify("Rejoin failed: " .. tostring(teleportError))
-            end
+            highlight = nil
         end
     end
-    local actionId: string = "RejoinServer"
-    local registries: any = context.services.registries
-    local wurstOptions: any = registries.wurstOptions()
-    if wurstOptions and type(wurstOptions.RegisterAction) == "function" then
-        local registered: boolean, registration: any = pcall(
-            wurstOptions.RegisterAction,
-            actionId,
-            "Rejoin Server",
-            rejoinCurrentServer,
-            {
-                description = "Reconnect to the current server instance",
-                configKey = "Universal.RejoinServer",
+
+    local function isLadderStructure(part: Instance): boolean
+        if part:IsA("TrussPart") then
+            return true
+        end
+        local current: Instance? = part
+        for _ = 1, 3 do
+            if not current then break end
+            local lowerName: string = string.lower(current.Name)
+            if string.find(lowerName, "ladder") ~= nil
+                or string.find(lowerName, "truss") ~= nil
+                or string.find(lowerName, "escalera") ~= nil
+                or string.find(lowerName, "climb") ~= nil then
+                return true
+            end
+            current = current.Parent
+        end
+        return false
+    end
+
+    local function isSmallDecoration(part: BasePart): boolean
+        -- Filter out tiny fence posts, thin railings, or miniature props that shouldn't hijack ground jumps
+        local sz: Vector3 = part.Size
+        if (sz.X <= 0.9 and sz.Z <= 0.9) or (sz.X <= 0.5 and sz.Y <= 0.5) then
+            return true
+        end
+        return false
+    end
+
+    local function scanSurroundings(
+        character: Model,
+        humanoid: Humanoid,
+        root: BasePart
+    ): HookSighting?
+        local now: number = os.clock()
+        local state: Enum.HumanoidStateType = humanoid:GetState()
+        local isCurrentlyClimbing: boolean = state == Enum.HumanoidStateType.Climbing
+        if isCurrentlyClimbing then
+            lastClimbAt = now
+        end
+
+        local isGrounded: boolean = humanoid.FloorMaterial ~= Enum.Material.Air
+        local moveDir: Vector3 = humanoid.MoveDirection
+        local horizVelocity: number = Vector3.new(root.AssemblyLinearVelocity.X, 0, root.AssemblyLinearVelocity.Z).Magnitude
+
+        local filter: {Instance} = {character}
+        local ghost: Instance? = currentWorkspace:FindFirstChild("Wurst_Ghost")
+        if ghost then
+            table.insert(filter, ghost)
+        end
+
+        local parameters: RaycastParams = RaycastParams.new()
+        parameters.FilterType = Enum.RaycastFilterType.Exclude
+        parameters.FilterDescendantsInstances = filter
+        parameters.IgnoreWater = true
+        parameters.RespectCanCollide = true
+
+        -- Priority 1: Ladder detection (Roblox climbing state or 200ms grace window)
+        local climbingGrace: boolean = (now - lastClimbAt) <= 0.22
+        if isCurrentlyClimbing or climbingGrace then
+            -- Raycast forward to find the ladder part or normal
+            local forwardRay: RaycastResult? = currentWorkspace:Raycast(
+                root.Position,
+                root.CFrame.LookVector * 3.0,
+                parameters
+            )
+            local ladderPart: BasePart = (forwardRay and forwardRay.Instance:IsA("BasePart") and forwardRay.Instance) or root
+            local ladderNorm: Vector3 = (forwardRay and forwardRay.Normal) or -root.CFrame.LookVector
+
+            return {
+                kind = "Ladder",
+                part = ladderPart,
+                normal = ladderNorm,
+                direction = root.CFrame.LookVector,
+                distance = forwardRay and forwardRay.Distance or 1.2,
+                name = ladderPart.Name ~= root.Name and ladderPart.Name or "Ladder",
+                isWedge = false,
             }
-        )
-        if not registered then
-            error("Wurst Options refused Rejoin Server: " .. tostring(registration))
         end
-        local search: any = registries.moduleSearch()
-        local searchFeature: any = {
-            name = "Rejoin Server",
-            configKey = "Universal.RejoinServer",
-            kind = "action",
-            searchable = false,
-            enabled = false,
-            activate = rejoinCurrentServer,
-        }
-        if search and type(search.Register) == "function" then
-            search.Register(searchFeature)
-        end
-        activeCleanup = function(): ()
-            if search and type(search.Unregister) == "function" then
-                search.Unregister(searchFeature)
-            end
-            if type(registration) == "table"
-                and type(registration.Unregister) == "function" then
-                registration.Unregister()
-            elseif type(wurstOptions.UnregisterAction) == "function" then
-                pcall(wurstOptions.UnregisterAction, actionId)
-            end
-        end
-        Module.Initialized = true
-        return registration
-    end
 
-    local feature: any = createUniversalFeature(
-        "Rejoin Server",
-        "Reconnect to the current server instance",
-        22,
-        rejoinCurrentServer,
-        {
-            action = true,
-            noOptions = true,
-            categoryName = "Other",
-            searchable = false,
-        }
-    )
+        local bestSighting: HookSighting? = nil
+        local bestDistance: number = settings.detectionRange + 1
 
-    activeCleanup = function(): () end
-    Module.Initialized = true
-    return feature
-end
+        -- Priority 2: Check box in front of player for ladders / trusses (to not miss rung gaps)
+        local overlapLadder: OverlapParams = OverlapParams.new()
+        overlapLadder.FilterType = Enum.RaycastFilterType.Exclude
+        overlapLadder.FilterDescendantsInstances = filter
+        overlapLadder.MaxParts = 6
 
-function Module.destroy(): ()
-    if activeCleanup then
-        pcall(activeCleanup)
-    end
-    activeCleanup = nil
-    Module.Initialized = false
-end
-
-return Module
-
-]=],
-        ["src/games/universal/Render/ZoomUnlocker.lua"] = [=[
-export type Runtime = {
-    framework: any,
-    entity: any,
-    host: any,
-}
-
-local Module = {
-    Name = "ZoomUnlocker",
-    PlaceId = 0,
-    Events = {} :: {[string]: any},
-    Initialized = false,
-}
-
-local activeCleanup: (() -> ())? = nil
-
-function Module.init(context: Runtime): any
-    local host: any = context.host
-    local LocalPlayer: any = host.LocalPlayer
-    local TaskManager: any = host.TaskManager
-    local featureConnections: any = host.featureConnections
-    local disconnectFeatureConnection: any = host.disconnectFeatureConnection
-    local createUniversalFeature: any = host.createUniversalFeature
-    local addToggleOption: any = host.addToggleOption
-    local addNumberOption: any = host.addNumberOption
-    type ZoomSettings = {
-        minDistance: number,
-        maxDistance: number,
-        unlockFirstPerson: boolean,
-    }
-    type ZoomState = {
-        minDistance: number,
-        maxDistance: number,
-        cameraMode: Enum.CameraMode,
-    }
-    local zoomSettings: ZoomSettings = {
-        minDistance = 0.5,
-        maxDistance = 400,
-        unlockFirstPerson = true,
-    }
-    local originalZoomState: ZoomState? = nil
-    local ZoomFeature: any = nil
-
-    local function toggleZoomUnlocker(enabled: boolean): ()
-        disconnectFeatureConnection("ZoomUnlocker")
-        if originalZoomState then
-            LocalPlayer.CameraMinZoomDistance = originalZoomState.minDistance
-            LocalPlayer.CameraMaxZoomDistance = originalZoomState.maxDistance
-            LocalPlayer.CameraMode = originalZoomState.cameraMode
-            originalZoomState = nil
-        end
-        if not enabled then
-            if ZoomFeature then ZoomFeature:SetStatus(nil) end
-            return
-        end
-        ZoomFeature:SetStatus(tostring(math.round(zoomSettings.maxDistance)) .. " studs")
-        originalZoomState = {
-            minDistance = LocalPlayer.CameraMinZoomDistance,
-            maxDistance = LocalPlayer.CameraMaxZoomDistance,
-            cameraMode = LocalPlayer.CameraMode,
-        }
-        featureConnections.ZoomUnlocker = TaskManager:Connect(function(): ()
-            LocalPlayer.CameraMinZoomDistance = math.min(
-                zoomSettings.minDistance,
-                zoomSettings.maxDistance
-            )
-            LocalPlayer.CameraMaxZoomDistance = math.max(
-                zoomSettings.minDistance,
-                zoomSettings.maxDistance
-            )
-            if zoomSettings.unlockFirstPerson then
-                LocalPlayer.CameraMode = Enum.CameraMode.Classic
-            elseif originalZoomState then
-                LocalPlayer.CameraMode = originalZoomState.cameraMode
-            end
+        local frontBoxCF: CFrame = root.CFrame * CFrame.new(0, 0, -1.3)
+        local nearbyTrusses: {BasePart} = {}
+        pcall(function()
+            nearbyTrusses = currentWorkspace:GetPartBoundsInBox(frontBoxCF, Vector3.new(2.4, 4.0, 2.0), overlapLadder)
         end)
-    end
-
-    ZoomFeature = createUniversalFeature(
-        "Zoom",
-        "Extend camera zoom and optionally leave forced first person",
-        23,
-        toggleZoomUnlocker,
-        {
-            configKey = "Universal.ZoomUnlocker",
-            categoryName = "Render",
-        }
-    )
-    addNumberOption(
-        ZoomFeature,
-        "Maximum distance",
-        zoomSettings.maxDistance,
-        25,
-        2000,
-        function(value: number): ()
-            zoomSettings.maxDistance = value
-            if ZoomFeature.enabled then
-                ZoomFeature:SetStatus(tostring(math.round(value)) .. " studs")
-            end
-        end
-    )
-    addNumberOption(
-        ZoomFeature,
-        "Minimum distance",
-        zoomSettings.minDistance,
-        0.5,
-        50,
-        function(value: number): ()
-            zoomSettings.minDistance = value
-        end
-    )
-    addToggleOption(
-        ZoomFeature,
-        "Unlock forced first person",
-        zoomSettings.unlockFirstPerson,
-        function(value: boolean): ()
-            zoomSettings.unlockFirstPerson = value
-        end
-    )
-
-    activeCleanup = function(): ()
-        disconnectFeatureConnection("ZoomUnlocker")
-        if originalZoomState then
-            pcall(function(): ()
-                LocalPlayer.CameraMinZoomDistance = originalZoomState.minDistance
-                LocalPlayer.CameraMaxZoomDistance = originalZoomState.maxDistance
-                LocalPlayer.CameraMode = originalZoomState.cameraMode
-            end)
-            originalZoomState = nil
-        end
-    end
-    Module.Initialized = true
-    return ZoomFeature
-end
-
-function Module.destroy(): ()
-    if activeCleanup then
-        pcall(activeCleanup)
-    end
-    activeCleanup = nil
-    Module.Initialized = false
-end
-
-return Module
-
-]=],
-        ["src/games/universal/World/InteractExtender.lua"] = [=[
-export type Runtime = {
-    framework: any,
-    entity: any,
-    host: any,
-}
-
-local Module = {
-    Name = "InteractExtender",
-    PlaceId = 0,
-    Events = {} :: {[string]: any},
-    Initialized = false,
-}
-
-local activeCleanup: (() -> ())? = nil
-
-function Module.init(context: Runtime): any
-    local host: any = context.host
-    local TaskManager: any = host.TaskManager
-    local featureConnections: any = host.featureConnections
-    local disconnectFeatureConnection: any = host.disconnectFeatureConnection
-    local createUniversalFeature: any = host.createUniversalFeature
-    local addToggleOption: any = host.addToggleOption
-    local addNumberOption: any = host.addNumberOption
-    type InteractionSettings = {
-        distance: number,
-        instantPrompts: boolean,
-        proximityPrompts: boolean,
-        clickDetectors: boolean,
-    }
-    type PromptState = {distance: number, holdDuration: number}
-    local interactionSettings: InteractionSettings = {
-        distance = 32,
-        instantPrompts = false,
-        proximityPrompts = true,
-        clickDetectors = true,
-    }
-    local originalPrompts: {[ProximityPrompt]: PromptState} =
-        setmetatable({}, {__mode = "k"}) :: any
-    local originalClickDetectors: {[ClickDetector]: number} =
-        setmetatable({}, {__mode = "k"}) :: any
-    local interactionExtenderEnabled: boolean = false
-    local InteractFeature: any = nil
-    local interactionRefreshClock: number = 0
-
-    local function refreshInteractionExtender(): ()
-        for prompt: ProximityPrompt, original: PromptState in pairs(originalPrompts) do
-            if not prompt.Parent then
-                continue
-            end
-            local wantedDistance: number = interactionExtenderEnabled
-                    and interactionSettings.proximityPrompts
-                    and interactionSettings.distance
-                or original.distance
-            local wantedHold: number = interactionExtenderEnabled
-                    and interactionSettings.proximityPrompts
-                    and interactionSettings.instantPrompts
-                    and 0
-                or original.holdDuration
-
-            if prompt.MaxActivationDistance ~= wantedDistance then
-                prompt.MaxActivationDistance = wantedDistance
-            end
-            if prompt.HoldDuration ~= wantedHold then
-                prompt.HoldDuration = wantedHold
-            end
-        end
-        for detector: ClickDetector, originalDistance: number in pairs(originalClickDetectors) do
-            if not detector.Parent then
-                continue
-            end
-            local wantedDistance: number = interactionExtenderEnabled
-                    and interactionSettings.clickDetectors
-                    and interactionSettings.distance
-                or originalDistance
-            if detector.MaxActivationDistance ~= wantedDistance then
-                detector.MaxActivationDistance = wantedDistance
-            end
-        end
-    end
-
-    local function applyInteractionExtension(instance: Instance): ()
-        if not interactionExtenderEnabled then
-            return
-        end
-        if instance:IsA("ProximityPrompt") then
-            if originalPrompts[instance] == nil then
-                originalPrompts[instance] = {
-                    distance = instance.MaxActivationDistance,
-                    holdDuration = instance.HoldDuration,
+        for _, part: BasePart in ipairs(nearbyTrusses) do
+            if part.CanCollide and isLadderStructure(part) then
+                return {
+                    kind = "Ladder",
+                    part = part,
+                    normal = -root.CFrame.LookVector,
+                    direction = root.CFrame.LookVector,
+                    distance = (part.Position - root.Position).Magnitude,
+                    name = part.Name,
+                    isWedge = false,
                 }
             end
-            local original: PromptState = originalPrompts[instance]
-            instance.MaxActivationDistance = interactionSettings.proximityPrompts
-                    and interactionSettings.distance
-                or original.distance
-            instance.HoldDuration = interactionSettings.proximityPrompts
-                    and interactionSettings.instantPrompts
-                    and 0
-                or original.holdDuration
-        elseif instance:IsA("ClickDetector") then
-            if originalClickDetectors[instance] == nil then
-                originalClickDetectors[instance] = instance.MaxActivationDistance
-            end
-            instance.MaxActivationDistance = interactionSettings.clickDetectors
-                    and interactionSettings.distance
-                or originalClickDetectors[instance]
         end
+
+        -- Priority 3: Scan surroundings for Obstacles (Tank, Crates, Props) and Walls
+        for i: number = 0, SCAN_DIRECTIONS - 1 do
+            local angle: number = (i / SCAN_DIRECTIONS) * math.pi * 2
+            local direction: Vector3 = Vector3.new(math.sin(angle), 0, math.cos(angle))
+
+            for _, heightOffset: number in ipairs(SCAN_HEIGHTS) do
+                local origin: Vector3 = root.Position + Vector3.new(0, heightOffset, 0)
+                local hit: RaycastResult? = currentWorkspace:Raycast(
+                    origin,
+                    direction * settings.detectionRange,
+                    parameters
+                )
+
+                if hit and hit.Instance and hit.Instance:IsA("BasePart") then
+                    local part: BasePart = hit.Instance
+                    if part.CanCollide then
+                        local dist: number = hit.Distance
+                        local norm: Vector3 = hit.Normal
+                        local isLadder: boolean = isLadderStructure(part)
+
+                        if isLadder then
+                            return {
+                                kind = "Ladder",
+                                part = part,
+                                normal = norm,
+                                direction = direction,
+                                distance = dist,
+                                name = part.Name,
+                                isWedge = false,
+                            }
+                        end
+
+                        local partNameLower: string = string.lower(part.Name)
+                        local isKnownObstacle: boolean = string.find(partNameLower, "tank") ~= nil
+                            or string.find(partNameLower, "crate") ~= nil
+                            or string.find(partNameLower, "box") ~= nil
+                            or string.find(partNameLower, "prop") ~= nil
+                            or string.find(partNameLower, "vehicle") ~= nil
+                            or string.find(partNameLower, "barrel") ~= nil
+                            or string.find(partNameLower, "wheel") ~= nil
+                            or math.abs(norm.Y) > 0.40
+
+                        local isSmall: boolean = isSmallDecoration(part)
+
+                        -- Ground bypass: On the ground, ignore tiny fence posts or random decorative walls
+                        -- unless player is deliberately pushing into an obstacle/tank!
+                        if isGrounded then
+                            if isSmall and not isKnownObstacle then
+                                -- Skip small fence posts while grounded (solves Image 2!)
+                                continue
+                            end
+
+                            if settings.requireStuckIntent then
+                                -- Check if player is pressing into the obstacle
+                                local pushingIntoPart: boolean = moveDir.Magnitude > 0.1 and moveDir:Dot(direction) > 0.30
+                                local isStuckMoving: boolean = moveDir.Magnitude > 0.1 and horizVelocity < 3.0
+                                if not (pushingIntoPart or isStuckMoving or isKnownObstacle) then
+                                    continue
+                                end
+                            end
+                        else
+                            -- Airborne: Allow wallhop or obstacle vaulting
+                            if settings.airborneWallhopOnly and not isKnownObstacle and isSmall then
+                                continue
+                            end
+                        end
+
+                        local kind: HookKind = isKnownObstacle and "Obstacle" or "Wall"
+
+                        if dist < bestDistance then
+                            bestDistance = dist
+                            bestSighting = {
+                                kind = kind,
+                                part = part,
+                                normal = norm,
+                                direction = direction,
+                                distance = dist,
+                                name = part.Name,
+                                isWedge = isKnownObstacle,
+                            }
+                        end
+                    end
+                end
+            end
+        end
+
+        -- Priority 4: Spatial Query for wedged/hooked character parts (e.g. inside MM2 tank collision)
+        if settings.checkAllParts and (not bestSighting or bestDistance > 1.8) then
+            local overlap: OverlapParams = OverlapParams.new()
+            overlap.FilterType = Enum.RaycastFilterType.Exclude
+            overlap.FilterDescendantsInstances = filter
+            overlap.MaxParts = 6
+            overlap.RespectCanCollide = true
+
+            local nearbyParts: {BasePart} = {}
+            pcall(function()
+                nearbyParts = currentWorkspace:GetPartBoundsInBox(root.CFrame, Vector3.new(3.2, 4.5, 3.2), overlap)
+            end)
+
+            for _, part: BasePart in ipairs(nearbyParts) do
+                if part.CanCollide and part ~= root then
+                    local isLadder: boolean = isLadderStructure(part)
+                    if isLadder then
+                        return {
+                            kind = "Ladder",
+                            part = part,
+                            normal = -root.CFrame.LookVector,
+                            direction = root.CFrame.LookVector,
+                            distance = 1.0,
+                            name = part.Name,
+                            isWedge = false,
+                        }
+                    end
+
+                    if not isSmallDecoration(part) then
+                        local offset: Vector3 = part.Position - root.Position
+                        local dist: number = offset.Magnitude
+                        local normVec: Vector3 = offset.Magnitude > 0.01 and -offset.Unit or -root.CFrame.LookVector
+
+                        if dist < bestDistance then
+                            bestDistance = dist
+                            bestSighting = {
+                                kind = "Obstacle",
+                                part = part,
+                                normal = normVec,
+                                direction = offset.Magnitude > 0.01 and offset.Unit or root.CFrame.LookVector,
+                                distance = dist,
+                                name = part.Name,
+                                isWedge = true,
+                            }
+                        end
+                    end
+                end
+            end
+        end
+
+        return bestSighting
     end
 
-    local function restoreInteractionExtender(): ()
-        interactionExtenderEnabled = false
-        refreshInteractionExtender()
-        originalPrompts = setmetatable({}, {__mode = "k"}) :: any
-        originalClickDetectors = setmetatable({}, {__mode = "k"}) :: any
+    local function getLaunchDirection(root: BasePart, humanoid: Humanoid, sighting: HookSighting): Vector3
+        local cam: Camera? = currentWorkspace.CurrentCamera
+        local mode: string = settings.directionMode
+
+        if sighting.kind == "Ladder" then
+            -- On a ladder, launch outward from the wall and upward in the camera view
+            if cam then
+                local camLook: Vector3 = cam.CFrame.LookVector
+                return Vector3.new(camLook.X, math.max(camLook.Y, 0.4), camLook.Z).Unit
+            end
+            local outward: Vector3 = sighting.normal
+            if outward.Magnitude > 0.1 then
+                return Vector3.new(outward.X, 0.5, outward.Z).Unit
+            end
+            return Vector3.new(0, 1, 0)
+        end
+
+        if mode == "Camera" and cam then
+            return cam.CFrame.LookVector
+        elseif mode == "Movement" then
+            local moveDir: Vector3 = humanoid.MoveDirection
+            if moveDir.Magnitude > 0.1 then
+                return moveDir.Unit
+            end
+            if cam then
+                return cam.CFrame.LookVector
+            end
+            return root.CFrame.LookVector
+        elseif mode == "Normal" then
+            local norm: Vector3 = sighting.normal
+            if norm.Magnitude > 0.1 then
+                return norm.Unit
+            end
+        elseif mode == "Upward" then
+            return Vector3.new(0, 1, 0)
+        end
+
+        if cam then
+            return cam.CFrame.LookVector
+        end
+        return root.CFrame.LookVector
     end
 
-    local function toggleInteractionExtender(enabled: boolean): ()
-        disconnectFeatureConnection("InteractExtender")
-        disconnectFeatureConnection("InteractExtenderRefresh")
-        restoreInteractionExtender()
-        interactionRefreshClock = 0
-        if not enabled then
-            if InteractFeature then InteractFeature:SetStatus(nil) end
-            return
-        end
-        InteractFeature:SetStatus(tostring(math.round(interactionSettings.distance)) .. " studs")
-        interactionExtenderEnabled = true
-        featureConnections.InteractExtender = workspace.DescendantAdded:Connect(
-            applyInteractionExtension
-        )
-        featureConnections.InteractExtenderRefresh = TaskManager:Connect(
-            function(deltaTime: number): ()
-                interactionRefreshClock += deltaTime
-                if interactionRefreshClock >= 0.5 then
-                    interactionRefreshClock = 0
-                    refreshInteractionExtender()
+    local function applySustainedImpulse(root: BasePart, targetVel: Vector3, durationSeconds: number): ()
+        -- Apply over multiple frames (within the 200ms server rewind window) so Roblox internal friction/ladder code
+        -- doesn't cancel or override the velocity immediately!
+        local startTime: number = os.clock()
+        local connection: RBXScriptConnection? = nil
+        connection = RunService.Heartbeat:Connect(function(): ()
+            if not root or not root.Parent or (os.clock() - startTime) >= durationSeconds then
+                if connection then
+                    connection:Disconnect()
+                    connection = nil
                 end
+                return
             end
-        )
-        task.spawn(function(): ()
-            for index: number, instance: Instance in ipairs(workspace:GetDescendants()) do
-                if not interactionExtenderEnabled then
-                    return
-                end
-                applyInteractionExtension(instance)
-                if index % 240 == 0 then
-                    task.wait()
-                end
-            end
+            root.AssemblyLinearVelocity = targetVel
         end)
     end
 
-    InteractFeature = createUniversalFeature(
-        "Interact Extender",
-        "Extend prompt and click interaction range without auto-firing",
-        24,
-        toggleInteractionExtender,
-        {categoryName = "Other"}
-    )
-    addNumberOption(
-        InteractFeature,
-        "Interaction distance",
-        interactionSettings.distance,
-        8,
-        250,
-        function(value: number): ()
-            interactionSettings.distance = value
-            if InteractFeature.enabled then
-                InteractFeature:SetStatus(tostring(math.round(value)) .. " studs")
-            end
-            refreshInteractionExtender()
+    local function executeHookJump(): ()
+        local now: number = os.clock()
+        if now - lastHookJumpAt < 0.20 then
+            return
         end
-    )
-    addToggleOption(
-        InteractFeature,
-        "Instant prompts",
-        interactionSettings.instantPrompts,
-        function(value: boolean): ()
-            interactionSettings.instantPrompts = value
-            refreshInteractionExtender()
-        end
-    )
-    addToggleOption(
-        InteractFeature,
-        "Proximity prompts",
-        interactionSettings.proximityPrompts,
-        function(value: boolean): ()
-            interactionSettings.proximityPrompts = value
-            refreshInteractionExtender()
-        end
-    )
-    addToggleOption(
-        InteractFeature,
-        "Click detectors",
-        interactionSettings.clickDetectors,
-        function(value: boolean): ()
-            interactionSettings.clickDetectors = value
-            refreshInteractionExtender()
-        end
-    )
 
-    activeCleanup = function(): ()
-        disconnectFeatureConnection("InteractExtender")
-        disconnectFeatureConnection("InteractExtenderRefresh")
-        restoreInteractionExtender()
-        interactionRefreshClock = 0
-        if InteractFeature then
-            InteractFeature:SetStatus(nil)
+        local character: Model?, humanoid: Humanoid?, root: BasePart? = getCharacterParts()
+        if not character or not humanoid or not root or humanoid.Health <= 0 then
+            return
+        end
+
+        local sighting: HookSighting? = currentSighting or scanSurroundings(character, humanoid, root)
+        if not sighting then
+            return
+        end
+
+        local isGrounded: boolean = humanoid.FloorMaterial ~= Enum.Material.Air
+
+        -- Bypass check: If grounded on flat grass/floor and the sighting is just a casual Wall (not ladder or obstacle),
+        -- allow a normal clean Roblox jump without hijacking or deviating!
+        if isGrounded and sighting.kind == "Wall" and settings.airborneWallhopOnly then
+            return
+        end
+
+        lastHookJumpAt = now
+        local launchDir: Vector3 = getLaunchDirection(root, humanoid, sighting)
+        local flatLaunchDir: Vector3 = Vector3.new(launchDir.X, 0, launchDir.Z)
+        if flatLaunchDir.Magnitude > 0.01 then
+            flatLaunchDir = flatLaunchDir.Unit
+        else
+            flatLaunchDir = Vector3.new(root.CFrame.LookVector.X, 0, root.CFrame.LookVector.Z).Unit
+        end
+
+        local currentVel: Vector3 = root.AssemblyLinearVelocity
+
+        if sighting.kind == "Ladder" then
+            if not settings.ladderBoost then
+                return
+            end
+
+            -- Clean detach from ladder: switch to Jumping
+            humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
+
+            local horizSpeed: number = settings.ladderJumpLength
+            local vertSpeed: number = settings.ladderJumpHeight
+            local ladderVel: Vector3 = Vector3.new(
+                flatLaunchDir.X * horizSpeed,
+                vertSpeed,
+                flatLaunchDir.Z * horizSpeed
+            )
+
+            root.AssemblyLinearVelocity = ladderVel
+            -- Reinforce over 0.08s (5 frames) to defeat Roblox's ladder detach clamp
+            applySustainedImpulse(root, ladderVel, 0.08)
+
+            if activeCard then
+                activeCard:SetStatus("Ladder Leap!")
+            end
+
+        elseif sighting.kind == "Obstacle" then
+            if not settings.obstacleBoost then
+                return
+            end
+
+            humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
+
+            local outwardNorm: Vector3 = sighting.normal
+            local isSlopeOrStairs: boolean = outwardNorm.Y > 0.15 and outwardNorm.Y < 0.92
+
+            local vertVel: number
+            if settings.allowDownwardBoost and launchDir.Y < -0.10 then
+                -- Downward slide / boost on stairs and sliders
+                vertVel = launchDir.Y * (settings.obstaclePower * 1.1)
+            elseif launchDir.Y > 0.10 then
+                vertVel = math.max(launchDir.Y * settings.obstaclePower, settings.obstaclePower * 0.60)
+            else
+                vertVel = math.max(currentVel.Y + 16, settings.obstaclePower * 0.55)
+            end
+
+            if settings.selfFling then
+                local flingSpeed: number = settings.flingMultiplier
+                local vertFling: number = (settings.allowDownwardBoost and launchDir.Y < -0.10)
+                    and (launchDir.Y * flingSpeed * 0.55)
+                    or (flingSpeed * 0.40)
+
+                local flingVec: Vector3 = Vector3.new(
+                    flatLaunchDir.X * flingSpeed,
+                    vertFling,
+                    flatLaunchDir.Z * flingSpeed
+                )
+                root.AssemblyLinearVelocity = flingVec
+                applySustainedImpulse(root, flingVec, 0.09)
+                if activeCard then
+                    activeCard:SetStatus("SELF FLING!")
+                end
+            else
+                local boostPower: number = settings.obstaclePower
+                local combinedDir: Vector3
+                if isSlopeOrStairs and settings.sliderAssist then
+                    -- Follow camera/move direction cleanly along the slope/stairs
+                    combinedDir = flatLaunchDir
+                else
+                    combinedDir = (flatLaunchDir * 0.75 + Vector3.new(outwardNorm.X, 0, outwardNorm.Z) * 0.25)
+                end
+
+                if combinedDir.Magnitude > 0.01 then
+                    combinedDir = combinedDir.Unit
+                else
+                    combinedDir = flatLaunchDir
+                end
+
+                local obstacleVel: Vector3 = Vector3.new(
+                    combinedDir.X * boostPower,
+                    vertVel,
+                    combinedDir.Z * boostPower
+                )
+                root.AssemblyLinearVelocity = obstacleVel
+                applySustainedImpulse(root, obstacleVel, 0.06)
+                if activeCard then
+                    activeCard:SetStatus(vertVel < -5 and "Slope Slide!" or "Obstacle Boost!")
+                end
+            end
+
+        elseif sighting.kind == "Wall" then
+            if not settings.wallhopAssist then
+                return
+            end
+
+            humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
+
+            local kick: number = settings.wallhopPower
+            local norm: Vector3 = sighting.normal
+            local kickHoriz: Vector3 = Vector3.new(norm.X, 0, norm.Z)
+            if kickHoriz.Magnitude > 0.01 then
+                kickHoriz = kickHoriz.Unit
+            else
+                kickHoriz = -flatLaunchDir
+            end
+
+            local wallVel: Vector3 = Vector3.new(
+                currentVel.X * 0.25 + kickHoriz.X * kick + flatLaunchDir.X * (kick * 0.45),
+                math.max(currentVel.Y, 54),
+                currentVel.Z * 0.25 + kickHoriz.Z * kick + flatLaunchDir.Z * (kick * 0.45)
+            )
+            root.AssemblyLinearVelocity = wallVel
+            if activeCard then
+                activeCard:SetStatus("Wallhop!")
+            end
         end
     end
+
+    local card: any
+    card = framework.Categories.Movement:CreateModule({
+        Name = "HookPart",
+        Category = "Movement",
+        ConfigKey = "Universal.HookPart",
+        Order = 32,
+        Tooltip = "Amplify jumps off ladders, get unstuck from obstacles (like MM2 tanks & crates) with custom boost or self-fling, and wallhop off any part.",
+        Function = function(enabled: boolean): ()
+            destroyHighlight()
+            currentSighting = nil
+            lastHookJumpAt = -math.huge
+            lastClimbAt = -math.huge
+
+            if not enabled then
+                card:SetStatus(nil)
+                return
+            end
+            card:SetStatus("Active")
+
+            -- Connect jump hooks
+            if movementInput and type(movementInput.onJumpRequest) == "function" then
+                card:Clean(movementInput.onJumpRequest(function(): ()
+                    executeHookJump()
+                end))
+            end
+
+            if UserInputService and UserInputService.JumpRequest then
+                card:Clean(UserInputService.JumpRequest:Connect(function(): ()
+                    executeHookJump()
+                end))
+            end
+
+            -- Track humanoid state changes (especially Climbing for the 200ms grace window)
+            local character: Model?, humanoid: Humanoid?, root: BasePart? = getCharacterParts()
+            if humanoid then
+                card:Clean(humanoid.StateChanged:Connect(function(oldState: Enum.HumanoidStateType, newState: Enum.HumanoidStateType): ()
+                    if newState == Enum.HumanoidStateType.Climbing or oldState == Enum.HumanoidStateType.Climbing then
+                        lastClimbAt = os.clock()
+                    end
+                end))
+            end
+
+            -- Continuous detection loop
+            card:Loop(function(): ()
+                local now: number = os.clock()
+                if now - lastScanAt < 0.05 then
+                    return
+                end
+                lastScanAt = now
+
+                local curChar: Model?, curHum: Humanoid?, curRoot: BasePart? = getCharacterParts()
+                if not curChar or not curHum or not curRoot or curHum.Health <= 0 then
+                    destroyHighlight()
+                    currentSighting = nil
+                    return
+                end
+
+                if curHum:GetState() == Enum.HumanoidStateType.Climbing then
+                    lastClimbAt = now
+                end
+
+                local sighting: HookSighting? = scanSurroundings(curChar, curHum, curRoot)
+                currentSighting = sighting
+
+                if not sighting then
+                    destroyHighlight()
+                    card:SetStatus("Ready")
+                    return
+                end
+
+                local statusText: string = sighting.kind .. ": " .. sighting.name
+                if settings.selfFling and sighting.kind == "Obstacle" then
+                    statusText = "Fling Ready: " .. sighting.name
+                end
+                card:SetStatus(statusText)
+
+                -- Visual highlight of hooked object
+                if not settings.highlightObject or sighting.part == curRoot then
+                    destroyHighlight()
+                    return
+                end
+
+                if not highlight or not highlight.Parent then
+                    highlight = Instance.new("Highlight")
+                    highlight.Name = "Wurst_HookPart_Highlight"
+                    highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+                    highlight.Parent = currentWorkspace
+                end
+
+                if sighting.kind == "Ladder" then
+                    highlight.FillColor = Color3.fromRGB(80, 220, 255)
+                    highlight.OutlineColor = Color3.fromRGB(150, 240, 255)
+                elseif sighting.kind == "Obstacle" then
+                    if settings.selfFling then
+                        highlight.FillColor = Color3.fromRGB(255, 60, 60)
+                        highlight.OutlineColor = Color3.fromRGB(255, 120, 120)
+                    else
+                        highlight.FillColor = Color3.fromRGB(255, 180, 50)
+                        highlight.OutlineColor = Color3.fromRGB(255, 220, 100)
+                    end
+                else
+                    highlight.FillColor = Color3.fromRGB(60, 255, 140)
+                    highlight.OutlineColor = Color3.fromRGB(120, 255, 180)
+                end
+                highlight.FillTransparency = 0.70
+                highlight.OutlineTransparency = 0.15
+                highlight.Adornee = sighting.part
+            end)
+        end,
+    })
+
+    card:CreateToggle({
+        Name = "Ladder Boost",
+        Default = settings.ladderBoost,
+        Function = function(value: boolean): ()
+            settings.ladderBoost = value
+        end,
+        Tooltip = "Makes jumps off ladders and trusses significantly longer and higher.",
+    })
+
+    card:CreateSlider({
+        Name = "Ladder Jump Length",
+        Min = 20,
+        Max = 200,
+        Default = settings.ladderJumpLength,
+        Step = 5,
+        Function = function(value: number): ()
+            settings.ladderJumpLength = value
+        end,
+        Tooltip = "Forward velocity impulse when jumping off a ladder.",
+    })
+
+    card:CreateSlider({
+        Name = "Ladder Jump Height",
+        Min = 20,
+        Max = 150,
+        Default = settings.ladderJumpHeight,
+        Step = 5,
+        Function = function(value: number): ()
+            settings.ladderJumpHeight = value
+        end,
+        Tooltip = "Upward vertical impulse when leaping from a ladder.",
+    })
+
+    card:CreateToggle({
+        Name = "Obstacle Boost",
+        Default = settings.obstacleBoost,
+        Function = function(value: boolean): ()
+            settings.obstacleBoost = value
+        end,
+        Tooltip = "Gives a strong impulse when wedged or jumping against obstacles, tanks, and crates.",
+    })
+
+    card:CreateSlider({
+        Name = "Obstacle Power",
+        Min = 25,
+        Max = 300,
+        Default = settings.obstaclePower,
+        Step = 5,
+        Function = function(value: number): ()
+            settings.obstaclePower = value
+        end,
+        Tooltip = "Power of the jump boost when hooked on an obstacle or tank.",
+    })
+
+    card:CreateToggle({
+        Name = "Self Fling",
+        Default = settings.selfFling,
+        Function = function(value: boolean): ()
+            settings.selfFling = value
+        end,
+        Tooltip = "Turns obstacle jump into a massive self-fling to launch yourself across the map.",
+    })
+
+    card:CreateSlider({
+        Name = "Fling Multiplier",
+        Min = 200,
+        Max = 3500,
+        Default = settings.flingMultiplier,
+        Step = 50,
+        Function = function(value: number): ()
+            settings.flingMultiplier = value
+        end,
+        Tooltip = "Velocity magnitude applied when triggering a self-fling.",
+    })
+
+    card:CreateToggle({
+        Name = "Wallhop Assist",
+        Default = settings.wallhopAssist,
+        Function = function(value: boolean): ()
+            settings.wallhopAssist = value
+        end,
+        Tooltip = "Allows resetting jump and leaping off any wall surface.",
+    })
+
+    card:CreateSlider({
+        Name = "Wallhop Power",
+        Min = 15,
+        Max = 100,
+        Default = settings.wallhopPower,
+        Step = 5,
+        Function = function(value: number): ()
+            settings.wallhopPower = value
+        end,
+        Tooltip = "Impulse applied when performing a wallhop.",
+    })
+
+    card:CreateToggle({
+        Name = "Airborne Wallhop Only",
+        Default = settings.airborneWallhopOnly,
+        Function = function(value: boolean): ()
+            settings.airborneWallhopOnly = value
+        end,
+        Tooltip = "Only triggers wallhop when already in mid-air, preventing strange jumps on the ground next to fences.",
+    })
+
+    card:CreateToggle({
+        Name = "Allow Downward Boost",
+        Default = settings.allowDownwardBoost,
+        Function = function(value: boolean): ()
+            settings.allowDownwardBoost = value
+        end,
+        Tooltip = "Looking downward launches or slides you down stairs, slopes, and ramps instead of forcing an upward jump.",
+    })
+
+    card:CreateToggle({
+        Name = "Slider Assist",
+        Default = settings.sliderAssist,
+        Function = function(value: boolean): ()
+            settings.sliderAssist = value
+        end,
+        Tooltip = "Follows the slope of stairs and ramps smoothly in your camera/movement direction.",
+    })
+
+    card:CreateToggle({
+        Name = "Require Stuck Intent",
+        Default = settings.requireStuckIntent,
+        Function = function(value: boolean): ()
+            settings.requireStuckIntent = value
+        end,
+        Tooltip = "Only activates obstacle boost when moving towards the object or wedged against it.",
+    })
+
+    card:CreateDropdown({
+        Name = "Direction Mode",
+        List = {"Camera", "Movement", "Normal", "Upward"},
+        Index = 1,
+        Function = function(value: string): ()
+            settings.directionMode = value
+        end,
+        Tooltip = "Determines the direction in which boost / fling impulse is applied.",
+    })
+
+    card:CreateSlider({
+        Name = "Detection Range",
+        Min = 1.5,
+        Max = 5.0,
+        Default = settings.detectionRange,
+        Step = 0.1,
+        Function = function(value: number): ()
+            settings.detectionRange = value
+        end,
+        Tooltip = "Distance around the player to scan for hooked parts, ladders, and walls.",
+    })
+
+    card:CreateToggle({
+        Name = "Check All Parts",
+        Default = settings.checkAllParts,
+        Function = function(value: boolean): ()
+            settings.checkAllParts = value
+        end,
+        Tooltip = "Deep spatial collision check (raycasts + box overlap) for tanks, crates, and geometry.",
+    })
+
+    card:CreateToggle({
+        Name = "Highlight Object",
+        Default = settings.highlightObject,
+        Function = function(value: boolean): ()
+            settings.highlightObject = value
+        end,
+        Tooltip = "Outlines the part, ladder, or obstacle you are hooked to.",
+    })
+
+    activeCard = card
     Module.Initialized = true
-    return InteractFeature
+    return card
 end
 
 function Module.destroy(): ()
-    if activeCleanup then
-        pcall(activeCleanup)
+    if activeCard and activeCard.Enabled then
+        pcall(activeCard.Toggle, false)
     end
-    activeCleanup = nil
+    activeCard = nil
     Module.Initialized = false
 end
 
@@ -20167,7 +21501,7 @@ end
 return Module
 
 ]=],
-        ["src/games/universal/Blatant/VehicleSpeed.lua"] = [=[
+        ["src/games/universal/Blatant/Noclip.lua"] = [=[
 export type Runtime = {
     framework: any,
     entity: any,
@@ -20175,7 +21509,7 @@ export type Runtime = {
 }
 
 local Module = {
-    Name = "VehicleSpeed",
+    Name = "Noclip",
     PlaceId = 0,
     Events = {} :: {[string]: any},
     Initialized = false,
@@ -20184,258 +21518,68 @@ local Module = {
 local activeCleanup: (() -> ())? = nil
 
 function Module.init(context: Runtime): any
-    local framework: any = context.framework
-    local getCharacterParts: any = context.host.getCharacterParts
+    local host: any = context.host
+    local LocalPlayer: any = host.LocalPlayer
+    local TaskManager: any = host.TaskManager
+    local featureConnections: any = host.featureConnections
+    local disconnectFeatureConnection: any = host.disconnectFeatureConnection
+    local createUniversalFeature: any = host.createUniversalFeature
+    local addFeatureTooltip: any = host.addFeatureTooltip
+    local toggleNoclip: (boolean) -> ()
+    do
+    local originalCollision = setmetatable({}, {__mode = "k"})
 
-    type VehicleSeatState = {
-        maxSpeed: number,
-        torque: number,
-        turnSpeed: number,
-    }
-    type HingeState = {
-        angularVelocity: number,
-        motorMaxTorque: number,
-    }
-
-    local settings = {
-        mode = "Multiplier",
-        multiplier = 2,
-        motorTorque = 50000,
-    }
-    local originalVehicleSeats: {[VehicleSeat]: VehicleSeatState} =
-        setmetatable({}, {__mode = "k"}) :: any
-    local originalMotorHinges: {[HingeConstraint]: HingeState} =
-        setmetatable({}, {__mode = "k"}) :: any
-
-    local velocityExcess: {[BasePart]: number} =
-        setmetatable({}, {__mode = "k"}) :: any
-    local motorExcess: {[HingeConstraint]: number} =
-        setmetatable({}, {__mode = "k"}) :: any
-
-    local function clearBoostHistory(): ()
-        velocityExcess = setmetatable({}, {__mode = "k"}) :: any
-        motorExcess = setmetatable({}, {__mode = "k"}) :: any
-    end
-
-    local function restoreVehicle(): ()
-        for seat: VehicleSeat, original: VehicleSeatState in pairs(originalVehicleSeats) do
-            if seat.Parent then
-                seat.MaxSpeed = original.maxSpeed
-                seat.Torque = original.torque
-                seat.TurnSpeed = original.turnSpeed
+    local function restoreCollision()
+        for part, canCollide in pairs(originalCollision) do
+            if part and part.Parent then
+                part.CanCollide = canCollide
             end
         end
-        originalVehicleSeats = setmetatable({}, {__mode = "k"}) :: any
-        for hinge: HingeConstraint, original: HingeState in pairs(originalMotorHinges) do
-            if hinge.Parent then
-                hinge.AngularVelocity = original.angularVelocity
-                hinge.MotorMaxTorque = original.motorMaxTorque
-            end
-        end
-        originalMotorHinges = setmetatable({}, {__mode = "k"}) :: any
-        clearBoostHistory()
+        originalCollision = setmetatable({}, {__mode = "k"})
     end
 
-    local function resolveVehicle(): (BasePart?, Model?, VehicleSeat?)
-        local character: Model?, humanoid: Humanoid?, root: BasePart? =
-            getCharacterParts()
-        if not character or not humanoid or not root then
-            return nil, nil, nil
-        end
-        local seatPart: BasePart? = humanoid.SeatPart
-        local assembly: BasePart? = nil
-        if seatPart then
-            assembly = seatPart.AssemblyRootPart or seatPart
-        else
+    function toggleNoclip(enabled: boolean): ()
+        disconnectFeatureConnection("Noclip")
+        restoreCollision()
 
-            assembly = root.AssemblyRootPart
-            if not assembly or assembly:IsDescendantOf(character) then
-                return nil, nil, nil
-            end
-        end
-        local resolvedAssembly: BasePart = assembly :: BasePart
-        local model: Model? = (seatPart or resolvedAssembly):FindFirstAncestorOfClass("Model")
-        local vehicleSeat: VehicleSeat? = seatPart
-                and seatPart:IsA("VehicleSeat")
-                and seatPart :: VehicleSeat
-            or nil
-        return resolvedAssembly, model, vehicleSeat
-    end
-
-    local function rememberParts(model: Model?): ()
-        if not model then
+        if not enabled then
             return
         end
-        for _, descendant: Instance in ipairs(model:GetDescendants()) do
-            if descendant:IsA("VehicleSeat")
-                and originalVehicleSeats[descendant] == nil then
-                originalVehicleSeats[descendant] = {
-                    maxSpeed = descendant.MaxSpeed,
-                    torque = descendant.Torque,
-                    turnSpeed = descendant.TurnSpeed,
-                }
-            elseif descendant:IsA("HingeConstraint")
-                and descendant.ActuatorType == Enum.ActuatorType.Motor
-                and originalMotorHinges[descendant] == nil then
-                originalMotorHinges[descendant] = {
-                    angularVelocity = descendant.AngularVelocity,
-                    motorMaxTorque = descendant.MotorMaxTorque,
-                }
-            end
-        end
-    end
 
-    local function boostedBase(current: number, previousExcess: number): number
-        local base: number = math.max(current - previousExcess, 0)
-        if base < 0.01 and current > 0.01 then
-            base = current / math.max(settings.multiplier, 1)
-        end
-        return base
-    end
-
-    local function boostVelocity(assembly: BasePart, forcedDirection: Vector3?): ()
-        local current: Vector3 = assembly.AssemblyLinearVelocity
-        local horizontal: Vector3 = Vector3.new(current.X, 0, current.Z)
-        local speed: number = horizontal.Magnitude
-        if speed < 0.01 then
-            velocityExcess[assembly] = 0
-            return
-        end
-        local base: number = boostedBase(speed, velocityExcess[assembly] or 0)
-        local target: number = base * settings.multiplier
-        local direction: Vector3 = forcedDirection or horizontal.Unit
-        direction = Vector3.new(direction.X, 0, direction.Z)
-        if direction.Magnitude < 0.01 then
-            return
-        end
-        direction = direction.Unit
-        assembly.AssemblyLinearVelocity = direction * target
-            + Vector3.new(0, current.Y, 0)
-        velocityExcess[assembly] = math.max(target - base, 0)
-    end
-
-    local function boostMotors(model: Model?): ()
-        rememberParts(model)
-        for hinge: HingeConstraint, original: HingeState in pairs(originalMotorHinges) do
-            if not hinge.Parent or (model and not hinge:IsDescendantOf(model)) then
-                continue
-            end
-            local current: number = hinge.AngularVelocity
-            local sign: number = current < 0 and -1 or 1
-            local magnitude: number = math.abs(current)
-            local base: number = boostedBase(magnitude, motorExcess[hinge] or 0)
-            local target: number = base * settings.multiplier
-            hinge.AngularVelocity = sign * target
-            hinge.MotorMaxTorque = math.max(
-                original.motorMaxTorque * settings.multiplier,
-                settings.motorTorque
-            )
-            motorExcess[hinge] = math.max(target - base, 0)
-        end
-    end
-
-    local function boostSeatProperties(model: Model?, seat: VehicleSeat?): ()
-        rememberParts(model)
-        if seat and originalVehicleSeats[seat] == nil then
-            originalVehicleSeats[seat] = {
-                maxSpeed = seat.MaxSpeed,
-                torque = seat.Torque,
-                turnSpeed = seat.TurnSpeed,
-            }
-        end
-        for candidate: VehicleSeat, original: VehicleSeatState in pairs(originalVehicleSeats) do
-            if not candidate.Parent
-                or (model and not candidate:IsDescendantOf(model)) then
-                continue
-            end
-            candidate.MaxSpeed = original.maxSpeed * settings.multiplier
-            candidate.Torque = original.torque * settings.multiplier
-            candidate.TurnSpeed = original.turnSpeed * settings.multiplier
-        end
-    end
-
-    local vehicleSpeed: any
-    vehicleSpeed = framework.Categories.Blatant:CreateModule({
-        Name = "Vehicle Speed",
-        Category = "Blatant",
-        Tooltip = "Multiplies the speed of the vehicle you are driving. Try "
-            .. "Multiplier first, then Motors, Velocity and Seat.",
-        Function = function(enabled: boolean): ()
-            restoreVehicle()
-            if not enabled then
-                vehicleSpeed:SetStatus(nil)
+        featureConnections.Noclip = TaskManager:Connect(function()
+            local character = LocalPlayer.Character
+            if not character then
                 return
             end
-            vehicleSpeed:SetStatus(string.lower(settings.mode))
-            vehicleSpeed:Loop(function(): ()
-                local assembly: BasePart?, model: Model?, seat: VehicleSeat? =
-                    resolveVehicle()
-                if not assembly then
-                    return
-                end
-                if settings.mode == "Multiplier" then
-                    boostVelocity(assembly :: BasePart, nil)
-                elseif settings.mode == "Motors" then
-                    boostMotors(model)
-                elseif settings.mode == "Velocity" then
-                    local direction: Vector3? = seat
-                        and (seat :: VehicleSeat).CFrame.LookVector
-                            * (seat :: VehicleSeat).ThrottleFloat
-                        or nil
-                    boostVelocity(assembly :: BasePart, direction)
-                else
-                    boostSeatProperties(model, seat)
-                end
-            end)
-            vehicleSpeed:Clean(restoreVehicle)
-        end,
-    })
 
-    vehicleSpeed:CreateDropdown({
-        Name = "Mode",
-        List = {"Multiplier", "Motors", "Velocity", "Seat"},
-        Index = 1,
-        Function = function(value: string): ()
-            restoreVehicle()
-            settings.mode = value
-            if vehicleSpeed.Enabled then
-                vehicleSpeed:SetStatus(string.lower(value))
+            for _, descendant in ipairs(character:GetDescendants()) do
+                if descendant:IsA("BasePart") then
+                    if originalCollision[descendant] == nil then
+                        originalCollision[descendant] = descendant.CanCollide
+                    end
+                    descendant.CanCollide = false
+                end
             end
-        end,
-        Tooltip = "Multiplier preserves the vehicle's current steering; Motors "
-            .. "drives wheel constraints; Velocity rewrites the chassis; Seat "
-            .. "changes classic VehicleSeat properties.",
-    })
-    vehicleSpeed:CreateSlider({
-        Name = "Multiplier",
-        Min = 1,
-        Max = 10,
-        Default = settings.multiplier,
-        Function = function(value: number): ()
-            clearBoostHistory()
-            settings.multiplier = value
-        end,
-        Tooltip = "A driver asks for 2x, not an absolute walking speed. The "
-            .. "vehicle still supplies its own direction and base speed.",
-    })
-    vehicleSpeed:CreateSlider({
-        Name = "Motor torque",
-        Show = {Option = "Mode", Values = {"Motors"}},
-        Min = 1000,
-        Max = 250000,
-        Default = settings.motorTorque,
-        Function = function(value: number): ()
-            settings.motorTorque = value
-        end,
-    })
-    vehicleSpeed:CreateNote(
-        "If one route is clamped, try the next. Every seat and motor property "
-            .. "returns to the value this vehicle had before the module touched it."
-    )
+        end)
+    end
+    end
 
-    activeCleanup = restoreVehicle
+    local NoclipFeature = createUniversalFeature(
+        "Noclip",
+        "Disable character collisions",
+        11,
+        toggleNoclip,
+        {noOptions = true, categoryName = "Blatant"}
+    )
+    addFeatureTooltip(NoclipFeature, "Disables collisions for every local character part. "
+        .. "Original collision states are restored when turned off.")
+
+    activeCleanup = function(): ()
+
+        toggleNoclip(false)
+    end
     Module.Initialized = true
-    return vehicleSpeed
+    return NoclipFeature
 end
 
 function Module.destroy(): ()
@@ -20588,628 +21732,6 @@ end
 return Module
 
 ]=],
-        ["src/games/universal/World/Gravity.lua"] = [=[
-export type Runtime = {
-    framework: any,
-    entity: any,
-    host: any,
-}
-
-local Module = {
-    Name = "Gravity",
-    PlaceId = 0,
-    Events = {} :: {[string]: any},
-    Initialized = false,
-}
-
-local activeCleanup: (() -> ())? = nil
-
-function Module.init(context: Runtime): any
-    local host: any = context.host
-    local TaskManager: any = host.TaskManager
-    local featureConnections: any = host.featureConnections
-    local disconnectFeatureConnection: any = host.disconnectFeatureConnection
-    local createUniversalFeature: any = host.createUniversalFeature
-    local addNumberOption: any = host.addNumberOption
-    local workspace: any = host.workspace
-    local gravitySettings = {value = 196.2}
-    local GravityFeature: any = nil
-    local originalGravity = workspace.Gravity
-
-    local function toggleGravity(enabled)
-        disconnectFeatureConnection("Gravity")
-
-        if not enabled then
-            if GravityFeature then
-                GravityFeature:SetStatus(nil)
-            end
-            workspace.Gravity = originalGravity
-            return
-        end
-
-        GravityFeature:SetStatus(tostring(math.round(gravitySettings.value)))
-        originalGravity = workspace.Gravity
-        featureConnections.Gravity = TaskManager:Connect(function()
-            workspace.Gravity = gravitySettings.value
-        end)
-    end
-
-    GravityFeature = createUniversalFeature(
-        "Gravity",
-        "Keep workspace gravity at a custom value",
-        5,
-        toggleGravity,
-        {categoryName = "Movement"}
-    )
-    addNumberOption(GravityFeature, "Gravity value", gravitySettings.value, 0, 500, function(value)
-        gravitySettings.value = value
-        if GravityFeature.enabled then
-            GravityFeature:SetStatus(tostring(math.round(value)))
-        end
-    end)
-
-    activeCleanup = function(): ()
-        disconnectFeatureConnection("Gravity")
-
-        workspace.Gravity = originalGravity
-    end
-    Module.Initialized = true
-    return GravityFeature
-end
-
-function Module.destroy(): ()
-    if activeCleanup then
-        pcall(activeCleanup)
-    end
-    activeCleanup = nil
-    Module.Initialized = false
-end
-
-return Module
-
-]=],
-        ["src/games/universal/Blatant/JumpPower.lua"] = [=[
-export type Runtime = {
-    framework: any,
-    entity: any,
-    host: any,
-}
-
-local Module = {
-    Name = "JumpPower",
-    PlaceId = 0,
-    Events = {} :: {[string]: any},
-    Initialized = false,
-}
-
-local activeCleanup: (() -> ())? = nil
-
-function Module.init(context: Runtime): any
-    local host: any = context.host
-    local TaskManager: any = host.TaskManager
-    local featureConnections: any = host.featureConnections
-    local disconnectFeatureConnection: any = host.disconnectFeatureConnection
-    local getCharacterParts: any = host.getCharacterParts
-    local createUniversalFeature: any = host.createUniversalFeature
-    local addNumberOption: any = host.addNumberOption
-    local jumpPowerSettings = {value = 80}
-    local JumpPowerFeature: any = nil
-    local originalJumpPower = setmetatable({}, {__mode = "k"})
-
-    local function restoreJumpPower()
-        for humanoid, original in pairs(originalJumpPower) do
-            if humanoid and humanoid.Parent then
-                humanoid.JumpPower = original.jumpPower
-                humanoid.UseJumpPower = original.useJumpPower
-            end
-        end
-        originalJumpPower = setmetatable({}, {__mode = "k"})
-    end
-
-    local function toggleJumpPower(enabled)
-        disconnectFeatureConnection("JumpPower")
-        restoreJumpPower()
-
-        if not enabled then
-            if JumpPowerFeature then
-                JumpPowerFeature:SetStatus(nil)
-            end
-            return
-        end
-
-        JumpPowerFeature:SetStatus(tostring(math.round(jumpPowerSettings.value)))
-        featureConnections.JumpPower = TaskManager:Connect(function()
-            local _, humanoid = getCharacterParts()
-            if not humanoid then
-                return
-            end
-
-            if not originalJumpPower[humanoid] then
-                originalJumpPower[humanoid] = {
-                    jumpPower = humanoid.JumpPower,
-                    useJumpPower = humanoid.UseJumpPower,
-                }
-            end
-
-            humanoid.UseJumpPower = true
-            humanoid.JumpPower = jumpPowerSettings.value
-        end)
-    end
-
-    JumpPowerFeature = createUniversalFeature(
-        "Jump Power",
-        "Keep character jump power at a custom value",
-        6,
-        toggleJumpPower,
-        {categoryName = "Blatant"}
-    )
-    addNumberOption(JumpPowerFeature, "Power", jumpPowerSettings.value, 0, 500, function(value)
-        jumpPowerSettings.value = value
-        if JumpPowerFeature.enabled then
-            JumpPowerFeature:SetStatus(tostring(math.round(value)))
-        end
-    end)
-
-    activeCleanup = function(): ()
-        disconnectFeatureConnection("JumpPower")
-        restoreJumpPower()
-    end
-    Module.Initialized = true
-    return JumpPowerFeature
-end
-
-function Module.destroy(): ()
-    if activeCleanup then
-        pcall(activeCleanup)
-    end
-    activeCleanup = nil
-    Module.Initialized = false
-end
-
-return Module
-
-]=],
-        ["src/games/universal/Blatant/InfiniteJump.lua"] = [=[
-export type Runtime = {
-    framework: any,
-    entity: any,
-    host: any,
-    services: any,
-}
-
-local Module = {
-    Name = "InfiniteJump",
-    PlaceId = 0,
-    Events = {} :: {[string]: any},
-    Initialized = false,
-}
-
-local activeCleanup: (() -> ())? = nil
-
-function Module.init(context: Runtime): any
-    local host: any = context.host
-    local framework: any = context.framework
-    local getCharacterParts: any = host.getCharacterParts
-    local movementInput: any = context.services.movementInput
-    local UserInputService: any = host.UserInputService
-    local infiniteJumpSettings = {
-        mode = "Normal",
-        strength = 50,
-        riseSpeed = 75,
-
-        interval = 0.18,
-        stackCeiling = 160,
-    }
-
-    local enabledNow: boolean = false
-    local lastJumpAt: number = -math.huge
-
-    local function performInfiniteJump(): ()
-
-        if not enabledNow then
-            return
-        end
-
-        local _, humanoid, root = getCharacterParts()
-        if not humanoid or not root or humanoid.Health <= 0 then
-            return
-        end
-
-        local spacing: number = infiniteJumpSettings.interval
-        if UserInputService.TouchEnabled and not UserInputService.KeyboardEnabled then
-            spacing = math.max(spacing, 0.25)
-        end
-
-        local now: number = os.clock()
-        if now - lastJumpAt < spacing then
-            return
-        end
-        lastJumpAt = now
-
-        local velocity: Vector3 = root.AssemblyLinearVelocity
-        local vertical: number
-        if infiniteJumpSettings.mode == "Stack" then
-            vertical = math.min(
-                velocity.Y + infiniteJumpSettings.strength,
-                infiniteJumpSettings.stackCeiling
-            )
-        elseif infiniteJumpSettings.mode == "Impulse" then
-
-            humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
-            root:ApplyImpulse(
-                Vector3.new(0, infiniteJumpSettings.strength - velocity.Y, 0)
-                    * root.AssemblyMass
-            )
-            return
-        elseif infiniteJumpSettings.mode == "Fall" then
-
-            if velocity.Y >= 0 then
-                return
-            end
-            vertical = 0
-        else
-            vertical = infiniteJumpSettings.strength
-        end
-
-        humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
-        root.AssemblyLinearVelocity = Vector3.new(velocity.X, vertical, velocity.Z)
-    end
-
-    local jump: any
-    jump = framework.Categories.Blatant:CreateModule({
-        Name = "Infinite Jump",
-        Category = "Blatant",
-        Tooltip = "Jump again in mid-air, as a fixed height, a force, a "
-            .. "climbing stack, a hold that rises, or a fall cancel.",
-        Function = function(enabled: boolean): ()
-            enabledNow = false
-            lastJumpAt = -math.huge
-            if not enabled then
-                jump:SetStatus(nil)
-                return
-            end
-            enabledNow = true
-            jump:SetStatus(infiniteJumpSettings.mode)
-
-            jump:Clean(movementInput.onJumpRequest(function(): ()
-                if infiniteJumpSettings.mode == "Rise" then
-                    return
-                end
-                performInfiniteJump()
-            end))
-
-            jump:Loop(function(): ()
-                if not enabledNow
-                    or infiniteJumpSettings.mode ~= "Rise"
-                    or not movementInput.isJumpHeld() then
-                    return
-                end
-
-                local _, humanoid, root = getCharacterParts()
-                if not humanoid or not root or humanoid.Health <= 0 then
-                    return
-                end
-
-                humanoid:ChangeState(Enum.HumanoidStateType.Freefall)
-                local velocity = root.AssemblyLinearVelocity
-                root.AssemblyLinearVelocity = Vector3.new(
-                    velocity.X,
-                    infiniteJumpSettings.riseSpeed,
-                    velocity.Z
-                )
-            end)
-        end,
-    })
-    jump:CreateDropdown({
-        Name = "Mode",
-        List = {"Normal", "Impulse", "Stack", "Rise", "Fall"},
-        Index = 1,
-        Function = function(value: string): ()
-            infiniteJumpSettings.mode = value
-            if jump.Enabled then
-                jump:SetStatus(value)
-            end
-        end,
-    })
-    jump:CreateSlider({
-        Name = "Jump power",
-        Show = {Option = "Mode", Values = {"Normal", "Impulse", "Stack"}},
-        Min = 10,
-        Max = 250,
-        Default = infiniteJumpSettings.strength,
-        Function = function(value: number): ()
-            infiniteJumpSettings.strength = value
-        end,
-        Tooltip = "Vertical velocity of one jump. Rise and Fall do not launch "
-            .. "you, so they have no power to set.",
-    })
-    jump:CreateSlider({
-        Name = "Rise speed",
-        Show = {Option = "Mode", Values = {"Rise"}},
-        Min = 10,
-        Max = 350,
-        Default = infiniteJumpSettings.riseSpeed,
-        Function = function(value: number): ()
-            infiniteJumpSettings.riseSpeed = value
-        end,
-    })
-    jump:CreateSlider({
-        Name = "Jump interval (s)",
-        Show = {Option = "Mode", Values = {"Normal", "Impulse", "Stack", "Fall"}},
-        Min = 0.05,
-        Max = 0.6,
-        Default = infiniteJumpSettings.interval,
-        Function = function(value: number): ()
-            infiniteJumpSettings.interval = value
-        end,
-        Tooltip = "Minimum spacing between jumps. Rise ignores it: it is a "
-            .. "hold, not a repeat.",
-    })
-
-    jump:RefreshVisibility()
-
-    activeCleanup = function(): ()
-        enabledNow = false
-        lastJumpAt = -math.huge
-    end
-    Module.Initialized = true
-    return jump
-end
-
-function Module.destroy(): ()
-    if activeCleanup then
-        pcall(activeCleanup)
-    end
-    activeCleanup = nil
-    Module.Initialized = false
-end
-
-return Module
-
-]=],
-        ["src/games/universal/Render/FieldOfView.lua"] = [=[
-export type Runtime = {
-    framework: any,
-    entity: any,
-    host: any,
-    services: any,
-}
-
-local Module = {
-    Name = "FieldOfView",
-    PlaceId = 0,
-    Events = {} :: {[string]: any},
-    Initialized = false,
-}
-
-local activeCleanup: (() -> ())? = nil
-
-function Module.init(context: Runtime): any
-    local host: any = context.host
-    local TaskManager: any = host.TaskManager
-    local featureConnections: any = host.featureConnections
-    local disconnectFeatureConnection: any = host.disconnectFeatureConnection
-    local fovOwnership: any = context.services.fovOwnership
-    local createUniversalFeature: any = host.createUniversalFeature
-    local addNumberOption: any = host.addNumberOption
-    local workspace: any = host.workspace
-    local fovSettings = {value = 90}
-    local FovFeature: any = nil
-
-    local function toggleFov(enabled)
-        disconnectFeatureConnection("FOV")
-        fovOwnership.set("Universal", enabled and fovSettings.value or nil)
-        if not enabled then
-            if FovFeature then FovFeature:SetStatus(nil) end
-            return
-        end
-
-        FovFeature:SetStatus(tostring(math.round(fovSettings.value)))
-        featureConnections.FOV = TaskManager:Connect(function()
-            fovOwnership.set("Universal", fovSettings.value)
-            fovOwnership.apply(workspace.CurrentCamera)
-        end)
-    end
-
-    FovFeature = createUniversalFeature(
-        "FOV",
-        "Keep the camera field of view fixed",
-        10,
-        toggleFov,
-        {categoryName = "Render"}
-    )
-    addNumberOption(FovFeature, "Field of view", fovSettings.value, 20, 120, function(value)
-        fovSettings.value = value
-        if FovFeature.enabled then
-            FovFeature:SetStatus(tostring(math.round(value)))
-        end
-    end)
-
-    activeCleanup = function(): ()
-        disconnectFeatureConnection("FOV")
-        fovOwnership.set("Universal", nil)
-    end
-    Module.Initialized = true
-    return FovFeature
-end
-
-function Module.destroy(): ()
-    if activeCleanup then
-        pcall(activeCleanup)
-    end
-    activeCleanup = nil
-    Module.Initialized = false
-end
-
-return Module
-
-]=],
-        ["src/games/universal/Blatant/Noclip.lua"] = [=[
-export type Runtime = {
-    framework: any,
-    entity: any,
-    host: any,
-}
-
-local Module = {
-    Name = "Noclip",
-    PlaceId = 0,
-    Events = {} :: {[string]: any},
-    Initialized = false,
-}
-
-local activeCleanup: (() -> ())? = nil
-
-function Module.init(context: Runtime): any
-    local host: any = context.host
-    local LocalPlayer: any = host.LocalPlayer
-    local TaskManager: any = host.TaskManager
-    local featureConnections: any = host.featureConnections
-    local disconnectFeatureConnection: any = host.disconnectFeatureConnection
-    local createUniversalFeature: any = host.createUniversalFeature
-    local addFeatureTooltip: any = host.addFeatureTooltip
-    local toggleNoclip: (boolean) -> ()
-    do
-    local originalCollision = setmetatable({}, {__mode = "k"})
-
-    local function restoreCollision()
-        for part, canCollide in pairs(originalCollision) do
-            if part and part.Parent then
-                part.CanCollide = canCollide
-            end
-        end
-        originalCollision = setmetatable({}, {__mode = "k"})
-    end
-
-    function toggleNoclip(enabled: boolean): ()
-        disconnectFeatureConnection("Noclip")
-        restoreCollision()
-
-        if not enabled then
-            return
-        end
-
-        featureConnections.Noclip = TaskManager:Connect(function()
-            local character = LocalPlayer.Character
-            if not character then
-                return
-            end
-
-            for _, descendant in ipairs(character:GetDescendants()) do
-                if descendant:IsA("BasePart") then
-                    if originalCollision[descendant] == nil then
-                        originalCollision[descendant] = descendant.CanCollide
-                    end
-                    descendant.CanCollide = false
-                end
-            end
-        end)
-    end
-    end
-
-    local NoclipFeature = createUniversalFeature(
-        "Noclip",
-        "Disable character collisions",
-        11,
-        toggleNoclip,
-        {noOptions = true, categoryName = "Blatant"}
-    )
-    addFeatureTooltip(NoclipFeature, "Disables collisions for every local character part. "
-        .. "Original collision states are restored when turned off.")
-
-    activeCleanup = function(): ()
-
-        toggleNoclip(false)
-    end
-    Module.Initialized = true
-    return NoclipFeature
-end
-
-function Module.destroy(): ()
-    if activeCleanup then
-        pcall(activeCleanup)
-    end
-    activeCleanup = nil
-    Module.Initialized = false
-end
-
-return Module
-
-]=],
-        ["src/games/universal/World/AntiAfk.lua"] = [=[
-export type Runtime = {
-    framework: any,
-    entity: any,
-    host: any,
-}
-
-local Module = {
-    Name = "AntiAfk",
-    PlaceId = 0,
-    Events = {} :: {[string]: any},
-    Initialized = false,
-}
-
-local activeCleanup: (() -> ())? = nil
-
-function Module.init(context: Runtime): any
-    local host: any = context.host
-    local LocalPlayer: any = host.LocalPlayer
-    local featureConnections: any = host.featureConnections
-    local disconnectFeatureConnection: any = host.disconnectFeatureConnection
-    local createUniversalFeature: any = host.createUniversalFeature
-    local addFeatureTooltip: any = host.addFeatureTooltip
-    local function toggleAntiAfk(enabled)
-        disconnectFeatureConnection("AntiAFK")
-
-        if not enabled then
-            return
-        end
-
-        featureConnections.AntiAFK = LocalPlayer.Idled:Connect(function()
-            local virtualUserOk, virtualUser = pcall(function()
-                return game:GetService("VirtualUser")
-            end)
-            if virtualUserOk and virtualUser then
-                virtualUser:CaptureController()
-                virtualUser:ClickButton2(Vector2.new(0, 0))
-            end
-        end)
-    end
-
-    local AntiAfkFeature = createUniversalFeature(
-        "AntiAFK",
-        "Prevent the local idle event from disconnecting",
-        13,
-        toggleAntiAfk,
-        {
-            noOptions = true,
-            configKey = "Universal.AntiAFK",
-            categoryName = "Other",
-        }
-    )
-    addFeatureTooltip(AntiAfkFeature, "Responds only to Roblox's local idle event and "
-        .. "disconnects immediately when disabled.")
-
-    activeCleanup = function(): ()
-
-        disconnectFeatureConnection("AntiAFK")
-    end
-    Module.Initialized = true
-    return AntiAfkFeature
-end
-
-function Module.destroy(): ()
-    if activeCleanup then
-        pcall(activeCleanup)
-    end
-    activeCleanup = nil
-    Module.Initialized = false
-end
-
-return Module
-
-]=],
         ["src/games/universal/Movement/AntiFling.lua"] = [=[
 export type Runtime = {
     framework: any,
@@ -21327,7 +21849,2585 @@ end
 return Module
 
 ]=],
-        ["src/games/universal/Utility/LagSwitch.lua"] = [=[
+        ["src/games/universal/Movement/FreezeMovements.lua"] = [=[
+export type Runtime = {
+    framework: any,
+    entity: any,
+    host: any,
+}
+
+local Module = {
+    Name = "FreezeMovements",
+    PlaceId = 0,
+    Events = {} :: {[string]: any},
+    Initialized = false,
+}
+
+local activeCleanup: (() -> ())? = nil
+
+function Module.init(context: Runtime): any
+    local host: any = context.host
+    local TaskManager: any = host.TaskManager
+    local featureConnections: any = host.featureConnections
+    local disconnectFeatureConnection: any = host.disconnectFeatureConnection
+    local getCharacterParts: any = host.getCharacterParts
+    local createUniversalFeature: any = host.createUniversalFeature
+    local addCycleOption: any = host.addCycleOption
+    local addInformationOption: any = host.addInformationOption
+    local freezeSettings = {mode = "Anchor"}
+    local FreezeFeature: any = nil
+    local originalFreezeState = setmetatable({}, {__mode = "k"})
+
+    local function restoreFreezeMovements()
+        for humanoid, original in pairs(originalFreezeState) do
+            if humanoid and humanoid.Parent then
+                humanoid.WalkSpeed = original.walkSpeed
+                humanoid.JumpPower = original.jumpPower
+                humanoid.AutoRotate = original.autoRotate
+                if original.root and original.root.Parent then
+                    original.root.Anchored = original.rootAnchored
+                end
+            end
+        end
+        originalFreezeState = setmetatable({}, {__mode = "k"})
+    end
+
+    local function toggleFreezeMovements(enabled)
+        disconnectFeatureConnection("FreezeMovements")
+        restoreFreezeMovements()
+
+        if not enabled then
+            if FreezeFeature then
+                FreezeFeature:SetStatus(nil)
+            end
+            return
+        end
+
+        FreezeFeature:SetStatus(freezeSettings.mode)
+        featureConnections.FreezeMovements = TaskManager:Connect(function()
+            local _, humanoid, root = getCharacterParts()
+            if not humanoid or not root then
+                return
+            end
+
+            if not originalFreezeState[humanoid] then
+                originalFreezeState[humanoid] = {
+                    walkSpeed = humanoid.WalkSpeed,
+                    jumpPower = humanoid.JumpPower,
+                    autoRotate = humanoid.AutoRotate,
+                    root = root,
+                    rootAnchored = root.Anchored,
+                }
+            end
+
+            local original = originalFreezeState[humanoid]
+            humanoid.WalkSpeed = 0
+            humanoid.JumpPower = 0
+            humanoid.AutoRotate = false
+            root.AssemblyLinearVelocity = Vector3.zero
+            root.AssemblyAngularVelocity = Vector3.zero
+            root.Anchored = freezeSettings.mode == "Anchor"
+                and true
+                or original.rootAnchored
+        end)
+    end
+
+    FreezeFeature = createUniversalFeature(
+        "Freeze Movements",
+        "Prevent the local character from moving",
+        1,
+        toggleFreezeMovements,
+        {
+            categoryName = "Movement",
+            configKey = "Movement.FreezeMovements",
+        }
+    )
+    addCycleOption(
+        FreezeFeature,
+        "Freeze mode",
+        {"Anchor", "Humanoid"},
+        1,
+        function(value)
+            freezeSettings.mode = value
+            if FreezeFeature.enabled then
+                FreezeFeature:SetStatus(value)
+            end
+        end
+    )
+    addInformationOption(
+        FreezeFeature,
+        "Anchor stops all physics; Humanoid only blocks character controls."
+    )
+
+    activeCleanup = function(): ()
+        disconnectFeatureConnection("FreezeMovements")
+        restoreFreezeMovements()
+    end
+    Module.Initialized = true
+    return FreezeFeature
+end
+
+function Module.destroy(): ()
+    if activeCleanup then
+        pcall(activeCleanup)
+    end
+    activeCleanup = nil
+    Module.Initialized = false
+end
+
+return Module
+
+]=],
+        ["src/games/universal/Movement/Gravity.lua"] = [=[
+export type Runtime = {
+    framework: any,
+    entity: any,
+    host: any,
+}
+
+local Module = {
+    Name = "Gravity",
+    PlaceId = 0,
+    Events = {} :: {[string]: any},
+    Initialized = false,
+}
+
+local activeCleanup: (() -> ())? = nil
+
+function Module.init(context: Runtime): any
+    local host: any = context.host
+    local TaskManager: any = host.TaskManager
+    local featureConnections: any = host.featureConnections
+    local disconnectFeatureConnection: any = host.disconnectFeatureConnection
+    local createUniversalFeature: any = host.createUniversalFeature
+    local addNumberOption: any = host.addNumberOption
+    local workspace: any = host.workspace
+    local gravitySettings = {value = 196.2}
+    local GravityFeature: any = nil
+    local originalGravity = workspace.Gravity
+
+    local function toggleGravity(enabled)
+        disconnectFeatureConnection("Gravity")
+
+        if not enabled then
+            if GravityFeature then
+                GravityFeature:SetStatus(nil)
+            end
+            workspace.Gravity = originalGravity
+            return
+        end
+
+        GravityFeature:SetStatus(tostring(math.round(gravitySettings.value)))
+        originalGravity = workspace.Gravity
+        featureConnections.Gravity = TaskManager:Connect(function()
+            workspace.Gravity = gravitySettings.value
+        end)
+    end
+
+    GravityFeature = createUniversalFeature(
+        "Gravity",
+        "Keep workspace gravity at a custom value",
+        5,
+        toggleGravity,
+        {categoryName = "Movement"}
+    )
+    addNumberOption(GravityFeature, "Gravity value", gravitySettings.value, 0, 500, function(value)
+        gravitySettings.value = value
+        if GravityFeature.enabled then
+            GravityFeature:SetStatus(tostring(math.round(value)))
+        end
+    end)
+
+    activeCleanup = function(): ()
+        disconnectFeatureConnection("Gravity")
+
+        workspace.Gravity = originalGravity
+    end
+    Module.Initialized = true
+    return GravityFeature
+end
+
+function Module.destroy(): ()
+    if activeCleanup then
+        pcall(activeCleanup)
+    end
+    activeCleanup = nil
+    Module.Initialized = false
+end
+
+return Module
+
+]=],
+        ["src/games/universal/Movement/SafeWalk.lua"] = [=[
+export type Runtime = {
+    framework: any,
+    entity: any,
+    host: any,
+}
+
+local Module = {
+    Name = "SafeWalk",
+    PlaceId = 0,
+    Events = {} :: {[string]: any},
+    Initialized = false,
+}
+
+local activeCleanup: (() -> ())? = nil
+
+function Module.init(context: Runtime): any
+    local host: any = context.host
+    local TaskManager: any = host.TaskManager
+    local featureConnections: any = host.featureConnections
+    local disconnectFeatureConnection: any = host.disconnectFeatureConnection
+    local getCharacterParts: any = host.getCharacterParts
+    local createUniversalFeature: any = host.createUniversalFeature
+    local addNumberOption: any = host.addNumberOption
+    local currentWorkspace: Workspace = host.workspace or workspace
+
+    local safeWalkSettings: {
+        lookAhead: number,
+        barrierHeight: number,
+    } = {
+        lookAhead = 2.8,
+        barrierHeight = 4.5,
+    }
+
+    local barrierFolder: Folder? = nil
+    local barrier: BasePart? = nil
+    local SafeWalkFeature: any = nil
+
+    local function ensureBarrier(): BasePart
+        local existing: BasePart? = barrier
+        if existing and existing.Parent then
+            return existing
+        end
+        if not barrierFolder or not barrierFolder.Parent then
+            barrierFolder = Instance.new("Folder")
+            barrierFolder.Name = "WurstSafeWalk"
+            barrierFolder.Parent = currentWorkspace
+        end
+        local part: BasePart = Instance.new("Part")
+        part.Name = "SafeWalkBarrier"
+        part.Anchored = true
+        part.CanCollide = true
+        part.CanQuery = false
+        part.CanTouch = false
+        part.Massless = true
+        part.CastShadow = false
+        part.Transparency = 1
+        part.Material = Enum.Material.SmoothPlastic
+        part.Size = Vector3.new(7, safeWalkSettings.barrierHeight, 0.35)
+        part:SetAttribute("WurstSafeWalk", true)
+        part.Parent = barrierFolder
+        barrier = part
+        return part
+    end
+
+    local function hideBarrier(): ()
+        if barrierFolder then
+            barrierFolder:Destroy()
+        end
+        barrierFolder = nil
+        barrier = nil
+    end
+
+    local function toggleSafeWalk(enabled: boolean): ()
+        disconnectFeatureConnection("SafeWalk")
+        hideBarrier()
+        if not enabled then
+            if SafeWalkFeature then
+                SafeWalkFeature:SetStatus(nil)
+            end
+            return
+        end
+
+        featureConnections.SafeWalk = TaskManager:Connect(function(): ()
+            local character: Model?, humanoid: Humanoid?, root: BasePart? = getCharacterParts()
+            if not character or not humanoid or not root
+                or humanoid.Health <= 0 then
+                hideBarrier()
+                return
+            end
+            -- While airborne or standing still the last barrier stays in place
+            -- so momentum cannot carry you over an edge mid-jump.
+            if humanoid.MoveDirection.Magnitude < 0.05 then
+                return
+            end
+            if humanoid.FloorMaterial == Enum.Material.Air then
+                return
+            end
+
+            local moveDirection: Vector3 = humanoid.MoveDirection.Unit
+            local parameters: RaycastParams = RaycastParams.new()
+            parameters.FilterType = Enum.RaycastFilterType.Exclude
+            parameters.FilterDescendantsInstances = {character}
+            parameters.IgnoreWater = true
+
+            -- Sample the ground along the movement direction to find where the
+            -- floor ends. The barrier is placed just before that edge.
+            local stepCount: number = 7
+            local reach: number = 1.0 + safeWalkSettings.lookAhead + 0.8
+            local step: number = (reach - 1.0) / (stepCount - 1)
+            local lastGrounded: number? = nil
+            local firstGap: number? = nil
+            for index: number = 1, stepCount do
+                local distance: number = 1.0 + step * (index - 1)
+                local probeOrigin: Vector3 = root.Position + moveDirection * distance
+                local ground: RaycastResult? = currentWorkspace:Raycast(
+                    probeOrigin,
+                    Vector3.new(0, -6, 0),
+                    parameters
+                )
+                if ground then
+                    lastGrounded = distance
+                elseif lastGrounded ~= nil then
+                    firstGap = distance
+                    break
+                end
+            end
+
+            if lastGrounded == nil then
+                -- The edge is already under the feet: block right ahead.
+                lastGrounded = 0.4
+                firstGap = 1.0
+            end
+            if firstGap == nil then
+                -- Solid floor ahead: nothing to block.
+                hideBarrier()
+                if SafeWalkFeature then
+                    SafeWalkFeature:SetStatus(nil)
+                end
+                return
+            end
+
+            local edgeDistance: number = (lastGrounded + firstGap) * 0.5
+            local feetHeight: number = root.Size.Y * 0.5 + humanoid.HipHeight
+            local barrierHeight: number = math.max(safeWalkSettings.barrierHeight, 3)
+            local part: BasePart = ensureBarrier()
+            part.Size = Vector3.new(7, barrierHeight, 0.35)
+            local feetY: number = root.Position.Y - feetHeight
+            local position: Vector3 = root.Position + moveDirection * edgeDistance
+            -- Thin axis (Z) points along the movement direction, so the wide
+            -- face of the part faces the player like a wall.
+            part.CFrame = CFrame.lookAt(
+                Vector3.new(position.X, feetY + barrierHeight * 0.5, position.Z),
+                Vector3.new(position.X, feetY + barrierHeight * 0.5, position.Z)
+                    + moveDirection
+            )
+            if SafeWalkFeature then
+                SafeWalkFeature:SetStatus("edge")
+            end
+        end)
+    end
+
+    SafeWalkFeature = createUniversalFeature(
+        "SafeWalk",
+        "Place an invisible barrier at edges so you cannot walk off ledges",
+        21,
+        toggleSafeWalk,
+        {
+            configKey = "Universal.SafeWalk",
+            categoryName = "Movement",
+        }
+    )
+    addNumberOption(
+        SafeWalkFeature,
+        "Edge look-ahead",
+        safeWalkSettings.lookAhead,
+        1.5,
+        6,
+        function(value: number): ()
+            safeWalkSettings.lookAhead = value
+        end
+    )
+    addNumberOption(
+        SafeWalkFeature,
+        "Barrier height",
+        safeWalkSettings.barrierHeight,
+        3,
+        10,
+        function(value: number): ()
+            safeWalkSettings.barrierHeight = value
+        end
+    )
+
+    activeCleanup = function(): ()
+        disconnectFeatureConnection("SafeWalk")
+        hideBarrier()
+    end
+    Module.Initialized = true
+    return SafeWalkFeature
+end
+
+function Module.destroy(): ()
+    if activeCleanup then
+        pcall(activeCleanup)
+    end
+    activeCleanup = nil
+    Module.Initialized = false
+end
+
+return Module
+
+]=],
+        ["src/games/universal/Fun/SpinBot.lua"] = [=[
+export type Runtime = {
+    framework: any,
+    host: any,
+    services: any,
+}
+
+local Module = {
+    Name = "SpinBot",
+    PlaceId = 0,
+    Events = {} :: {[string]: any},
+    Initialized = false,
+}
+
+local activeCard: any = nil
+
+function Module.init(context: Runtime): any
+    local framework: any = context.framework
+    local getCharacterParts: any = context.host.getCharacterParts
+    local baselines: any = setmetatable({}, {__mode = "k"})
+    local currentRoot: BasePart? = nil
+
+    local function restoreRoot(root: BasePart): ()
+        local baseline: any = baselines[root]
+        if not baseline then
+            return
+        end
+        if root.Parent then
+            root.AssemblyAngularVelocity = baseline.angularVelocity
+            if baseline.cframeTouched then
+                root.CFrame = CFrame.new(root.Position)
+                    * (baseline.cframe - baseline.cframe.Position)
+            end
+            local humanoid: Humanoid? = root.Parent:FindFirstChildOfClass("Humanoid")
+            if humanoid then
+                humanoid.AutoRotate = baseline.autoRotate
+            end
+        end
+        baselines[root] = nil
+    end
+
+    local function restore(): ()
+        for root: BasePart in pairs(baselines) do
+            restoreRoot(root)
+        end
+        currentRoot = nil
+        baselines = setmetatable({}, {__mode = "k"})
+    end
+
+    local card: any
+    card = framework.Categories.Fun:CreateModule({
+        Name = "SpinBot",
+        Category = "Fun",
+        ConfigKey = "Universal.SpinBot",
+        Order = 40,
+        Tooltip = "Rotates your character continuously around the selected axis.",
+        Function = function(enabled: boolean): ()
+            if not enabled then
+                restore()
+                card:SetStatus(nil)
+                return
+            end
+            card:SetStatus(card.Options["Mode"].Value)
+            card:Loop(function(deltaTime: number): ()
+                local _character: Model?, humanoid: Humanoid?, root: BasePart? =
+                    getCharacterParts()
+                if not humanoid or not root or humanoid.Health <= 0 then
+                    if currentRoot then
+                        restoreRoot(currentRoot :: BasePart)
+                        currentRoot = nil
+                    end
+                    return
+                end
+                if currentRoot and currentRoot ~= root then
+                    restoreRoot(currentRoot :: BasePart)
+                end
+                currentRoot = root
+                if not baselines[root] then
+                    baselines[root] = {
+                        angularVelocity = root.AssemblyAngularVelocity,
+                        autoRotate = humanoid.AutoRotate,
+                        cframe = root.CFrame,
+                        cframeTouched = false,
+                    }
+                end
+                humanoid.AutoRotate = false
+                local speed: number = card.Options["Speed"].Value
+                local axisName: string = card.Options["Axis"].Value
+                local axis: Vector3 = axisName == "X" and Vector3.new(1, 0, 0)
+                    or axisName == "Z" and Vector3.new(0, 0, 1)
+                    or Vector3.new(0, 1, 0)
+                if card.Options["Mode"].Value == "Velocity" then
+                    root.AssemblyAngularVelocity = axis * math.rad(speed)
+                else
+                    root.AssemblyAngularVelocity = Vector3.zero
+                    baselines[root].cframeTouched = true
+                    local angle: number = math.rad(speed) * deltaTime
+                    local rotation: CFrame = axisName == "X" and CFrame.Angles(angle, 0, 0)
+                        or axisName == "Z" and CFrame.Angles(0, 0, angle)
+                        or CFrame.Angles(0, angle, 0)
+                    root.CFrame = root.CFrame * rotation
+                end
+            end)
+            card:Clean(restore)
+        end,
+    })
+
+    card:CreateDropdown({
+        Name = "Mode",
+        List = {"CFrame", "Velocity"},
+        Index = 1,
+        Tooltip = "CFrame turns the root directly. Velocity asks the physics "
+            .. "engine to spin the assembly, which a server that owns your "
+            .. "character can clamp.",
+        Function = function(value: string): ()
+            if card then
+                card:SetStatus(value)
+            end
+        end,
+    })
+    card:CreateDropdown({
+        Name = "Axis",
+        List = {"Y", "X", "Z"},
+        Index = 1,
+        Tooltip = "Y turns you in place. X and Z tumble.",
+    })
+    card:CreateSlider({
+        Name = "Speed",
+        Min = 30,
+        Max = 1440,
+        Step = 15,
+        Default = 360,
+        Tooltip = "Degrees per second. 360 is one turn a second.",
+    })
+
+    activeCard = card
+    Module.Initialized = true
+    return card
+end
+
+function Module.destroy(): ()
+    if activeCard and activeCard.Enabled then
+        activeCard:Toggle(false)
+    end
+    activeCard = nil
+    Module.Initialized = false
+end
+
+return Module
+
+]=],
+        ["src/games/universal/Other/Disguise.lua"] = [=[
+--!strict
+export type Runtime = {
+    framework: any,
+    host: any,
+    services: any,
+}
+
+type AppearanceTemplate = {
+    object: Instance,
+    parent: Instance?,
+}
+
+type MeshTemplate = {
+    part: MeshPart,
+    meshId: string,
+    textureId: string,
+}
+
+type AnimationTemplate = {
+    animation: Animation,
+    animationId: string,
+}
+
+type AppearanceSnapshot = {
+    character: Model,
+    items: {AppearanceTemplate},
+    meshParts: {MeshTemplate},
+    animations: {AnimationTemplate},
+    emotes: any,
+    equippedEmotes: any,
+    scales: {[string]: number},
+}
+
+local Module = {
+    Name = "Disguise",
+    PlaceId = 0,
+    Events = {} :: {[string]: any},
+    Initialized = false,
+}
+
+local activeCard: any = nil
+
+local DEFAULT_USER_ID: number = 239702688
+local SCALE_FIELDS: {string} = {
+    "HeightScale",
+    "WidthScale",
+    "DepthScale",
+    "HeadScale",
+    "BodyTypeScale",
+    "ProportionScale",
+}
+local BODY_PARTS: {[string]: boolean} = {
+    Head = true,
+    Torso = true,
+    UpperTorso = true,
+    LowerTorso = true,
+    LeftArm = true,
+    RightArm = true,
+    LeftLeg = true,
+    RightLeg = true,
+    LeftUpperArm = true,
+    LeftLowerArm = true,
+    LeftHand = true,
+    RightUpperArm = true,
+    RightLowerArm = true,
+    RightHand = true,
+    LeftUpperLeg = true,
+    LeftLowerLeg = true,
+    LeftFoot = true,
+    RightUpperLeg = true,
+    RightLowerLeg = true,
+    RightFoot = true,
+}
+local MOVEMENT_ANIMATIONS: {{descriptionField: string, scriptCategory: string}} = {
+    {descriptionField = "IdleAnimation", scriptCategory = "idle"},
+    {descriptionField = "WalkAnimation", scriptCategory = "walk"},
+    {descriptionField = "RunAnimation", scriptCategory = "run"},
+    {descriptionField = "JumpAnimation", scriptCategory = "jump"},
+    {descriptionField = "ClimbAnimation", scriptCategory = "climb"},
+    {descriptionField = "FallAnimation", scriptCategory = "fall"},
+    {descriptionField = "SwimAnimation", scriptCategory = "swim"},
+    {descriptionField = "SwimIdleAnimation", scriptCategory = "swimidle"},
+    {descriptionField = "MoodAnimation", scriptCategory = "mood"},
+}
+
+function Module.init(context: Runtime): any
+    local framework: any = context.framework
+    local host: any = context.host
+    local Players: Players = host.Players or (game :: any):GetService("Players")
+    local MarketplaceService: MarketplaceService = host.MarketplaceService
+        or (game :: any):GetService("MarketplaceService")
+    local LocalPlayer: Player = host.LocalPlayer or Players.LocalPlayer
+
+    local cloned = setmetatable({}, {__mode = "k"}) :: {[Instance]: boolean}
+    local disguisedItems = setmetatable({}, {__mode = "k"}) :: {[Instance]: boolean}
+    local snapshot: AppearanceSnapshot? = nil
+    local filteredCharacter: Model? = nil
+    local filterConnection: RBXScriptConnection? = nil
+    local generation: number = 0
+    local restoring: boolean = false
+    local emotesAppliedToHumanoid: boolean = false
+    local animationOverrideApplied: boolean = false
+    local targetEmotes: any = nil
+    local targetEquippedEmotes: any = nil
+
+    local settings = {
+        mode = "Character",
+        id = tostring(DEFAULT_USER_ID),
+        useTargetMovementAnimations = false,
+    }
+
+    local function notify(message: string): ()
+        pcall(print, "[Wurst:Disguise] " .. message)
+        if activeCard then
+            pcall(activeCard.Notify, activeCard, message)
+        end
+    end
+
+    local function isAppearanceItem(obj: Instance): boolean
+        return obj:IsA("Accessory")
+            or obj:IsA("ShirtGraphic")
+            or obj:IsA("Shirt")
+            or obj:IsA("Pants")
+            or obj:IsA("BodyColors")
+            or ((obj:IsA("Decal") or obj:IsA("Texture"))
+                and string.lower(obj.Name) == "face")
+    end
+
+    local function isInsideCharacter(obj: Instance, character: Model): boolean
+        local ok: boolean, result: any = pcall(function()
+            return obj:IsDescendantOf(character)
+        end)
+        return ok and result == true
+    end
+
+    local function rebindAccessory(character: Model, accessory: Accessory): ()
+        for _, descendant: Instance in ipairs(accessory:GetDescendants()) do
+            if descendant:IsA("Weld") and descendant.Part1 then
+                local part: Instance? = character:FindFirstChild(
+                    descendant.Part1.Name
+                )
+                if part and part:IsA("BasePart") then
+                    descendant.Part1 = part
+                end
+            elseif descendant:IsA("RigidConstraint")
+                and descendant.Attachment1 then
+                local attachment: Instance? = character:FindFirstChild(
+                    descendant.Attachment1.Name,
+                    true
+                )
+                if attachment and attachment:IsA("Attachment") then
+                    descendant.Attachment1 = attachment
+                end
+            end
+        end
+    end
+
+    local function destroySnapshot(): ()
+        local current: AppearanceSnapshot? = snapshot
+        snapshot = nil
+        emotesAppliedToHumanoid = false
+        animationOverrideApplied = false
+        if current then
+            for _, entry: AppearanceTemplate in ipairs(current.items) do
+                pcall(entry.object.Destroy, entry.object)
+            end
+        end
+    end
+
+    local function getAppliedDescription(humanoid: Humanoid): (any?, boolean)
+        local child: HumanoidDescription? = humanoid:FindFirstChildOfClass(
+            "HumanoidDescription"
+        ) :: HumanoidDescription?
+        if not child then
+            local waitOk: boolean, waited: any = pcall(function()
+                return humanoid:WaitForChild("HumanoidDescription", 2)
+            end)
+            if waitOk and waited and waited:IsA("HumanoidDescription") then
+                child = waited :: HumanoidDescription
+            end
+        end
+        if child then
+            return child, false
+        end
+        local ok: boolean, result: any = pcall(function()
+            return humanoid:GetAppliedDescription()
+        end)
+        if ok and result then
+            return result, true
+        end
+        return nil, false
+    end
+
+    local function cloneTable(value: any): any
+        if type(value) ~= "table" then
+            return value
+        end
+        local copy: any = {}
+        for key: any, entry: any in pairs(value) do
+            copy[key] = if type(entry) == "table" then table.clone(entry) else entry
+        end
+        return copy
+    end
+
+    local function readDescriptionEmotes(description: any): (any?, any?)
+        local ok: boolean, emotes: any, equipped: any = pcall(function()
+            return description:GetEmotes(), description:GetEquippedEmotes()
+        end)
+        if not ok or type(emotes) ~= "table" or type(equipped) ~= "table" then
+            return nil, nil
+        end
+        return cloneTable(emotes), cloneTable(equipped)
+    end
+
+    local function applyDescriptionToHumanoid(
+        humanoid: Humanoid,
+        description: any
+    ): (boolean, string?)
+        local humanoidObject: any = humanoid
+        local lastError: string = "ApplyDescription is unavailable."
+        for _, methodName: string in ipairs({
+            "ApplyDescriptionResetAsync",
+            "ApplyDescriptionAsync",
+            "ApplyDescriptionReset",
+            "ApplyDescription",
+        }) do
+            local method: any = humanoidObject[methodName]
+            if type(method) == "function" then
+                local ok: boolean, result: any = pcall(
+                    method,
+                    humanoidObject,
+                    description
+                )
+                if ok then
+                    return true, nil
+                end
+                lastError = tostring(result)
+            end
+        end
+        return false, lastError
+    end
+
+    local function setHumanoidEmotes(
+        humanoid: Humanoid,
+        emotes: any,
+        equippedEmotes: any
+    ): (boolean, string?)
+        if type(emotes) ~= "table" or type(equippedEmotes) ~= "table" then
+            return false, "The avatar description did not expose emote data."
+        end
+        local description: any, isTemporary: boolean = getAppliedDescription(humanoid)
+        if not description then
+            return false, "Could not read the current HumanoidDescription."
+        end
+        local setOk: boolean, setError: any = pcall(function()
+            description:SetEmotes(cloneTable(emotes))
+            description:SetEquippedEmotes(cloneTable(equippedEmotes))
+        end)
+        if not setOk then
+            if isTemporary then
+                pcall(description.Destroy, description)
+            end
+            return false, tostring(setError)
+        end
+        if not isTemporary then
+            -- The Humanoid's child HumanoidDescription is the live avatar
+            -- description, matching the original VapeV4 emote flow.
+            return true, nil
+        end
+
+        -- Some games do not keep a HumanoidDescription child. In that case
+        -- apply the edited copy to the local Humanoid so the emote wheel sees
+        -- the new equipped list, then let Disguise re-copy its visual items.
+        local applied: boolean, applyError: string? =
+            applyDescriptionToHumanoid(humanoid, description)
+        pcall(description.Destroy, description)
+        return applied, applyError
+    end
+
+    local function captureSnapshot(
+        character: Model,
+        humanoid: Humanoid
+    ): AppearanceSnapshot
+        local items: {AppearanceTemplate} = {}
+        local meshParts: {MeshTemplate} = {}
+        local animations: {AnimationTemplate} = {}
+        local scales: {[string]: number} = {}
+        local emotes: any = {}
+        local equippedEmotes: any = {}
+
+        for _, obj: Instance in ipairs(character:GetDescendants()) do
+            if isAppearanceItem(obj) then
+                local ok: boolean, copy: any = pcall(function()
+                    return obj:Clone()
+                end)
+                if ok and copy then
+                    copy.Parent = nil
+                    table.insert(items, {
+                        object = copy,
+                        parent = obj.Parent,
+                    })
+                end
+            elseif obj:IsA("MeshPart") and BODY_PARTS[obj.Name] then
+                table.insert(meshParts, {
+                    part = obj,
+                    meshId = obj.MeshId,
+                    textureId = obj.TextureID,
+                })
+            elseif obj:IsA("Animation") then
+                local animate: Instance? = character:FindFirstChild("Animate")
+                if animate and obj:IsDescendantOf(animate) then
+                    table.insert(animations, {
+                        animation = obj,
+                        animationId = obj.AnimationId,
+                    })
+                end
+            end
+        end
+
+        local description: any, isTemporary: boolean = getAppliedDescription(humanoid)
+        if description then
+            for _, field: string in ipairs(SCALE_FIELDS) do
+                local ok: boolean, value: any = pcall(function()
+                    return description[field]
+                end)
+                if ok and type(value) == "number" then
+                    scales[field] = value
+                end
+            end
+            local originalEmotes: any, originalEquipped: any =
+                readDescriptionEmotes(description)
+            if originalEmotes and originalEquipped then
+                emotes = originalEmotes
+                equippedEmotes = originalEquipped
+            end
+            if isTemporary then
+                pcall(description.Destroy, description)
+            end
+        end
+
+        return {
+            character = character,
+            items = items,
+            meshParts = meshParts,
+            animations = animations,
+            emotes = emotes,
+            equippedEmotes = equippedEmotes,
+            scales = scales,
+        }
+    end
+
+    local function ensureSnapshot(
+        character: Model,
+        humanoid: Humanoid
+    ): AppearanceSnapshot
+        if snapshot and snapshot.character == character then
+            return snapshot
+        end
+        destroySnapshot()
+        snapshot = captureSnapshot(character, humanoid)
+        return snapshot
+    end
+
+    local function restartAnimateScript(animate: Instance): ()
+        local scriptObject: any = animate
+        local enabledOk: boolean, wasEnabled: any = pcall(function()
+            return scriptObject.Enabled
+        end)
+        if enabledOk and type(wasEnabled) == "boolean" then
+            if not wasEnabled then
+                return
+            end
+            local disabledOk: boolean = pcall(function()
+                scriptObject.Enabled = false
+            end)
+            if disabledOk then
+                task.wait()
+                pcall(function()
+                    scriptObject.Enabled = wasEnabled
+                end)
+                task.wait()
+                return
+            end
+        end
+
+        -- Older clients expose Disabled instead of Enabled.
+        local disabledOk: boolean, wasDisabled: any = pcall(function()
+            return scriptObject.Disabled
+        end)
+        if disabledOk and type(wasDisabled) == "boolean" then
+            local pauseOk: boolean = pcall(function()
+                scriptObject.Disabled = true
+            end)
+            if pauseOk then
+                task.wait()
+                pcall(function()
+                    scriptObject.Disabled = wasDisabled
+                end)
+                task.wait()
+            end
+        end
+    end
+
+    local function normalizeAnimationId(value: any): string?
+        if type(value) == "number" then
+            if value <= 0 or value % 1 ~= 0 then
+                return nil
+            end
+            return "rbxassetid://" .. string.format("%.0f", value)
+        end
+
+        local raw: string = tostring(value or "")
+        if raw == "" then
+            return nil
+        end
+        local assetId: string? = string.match(raw, "^rbxassetid://(%d+)$")
+        if assetId then
+            local numericId: number? = tonumber(assetId)
+            return if numericId and numericId > 0 then raw else nil
+        end
+        local numericId: number? = tonumber(raw)
+        if not numericId or numericId <= 0 or numericId % 1 ~= 0 then
+            return nil
+        end
+        return "rbxassetid://" .. string.format("%.0f", numericId)
+    end
+
+    local animationAssetCache: {[string]: {string}} = {}
+
+    local function extractAnimationsFromAsset(rawAssetId: any): {string}
+        local cacheKey: string = tostring(rawAssetId or "")
+        if cacheKey == "" or cacheKey == "0" then
+            return {}
+        end
+        if animationAssetCache[cacheKey] then
+            return animationAssetCache[cacheKey]
+        end
+
+        local numericId: number? = nil
+        if type(rawAssetId) == "number" and rawAssetId > 0 then
+            numericId = rawAssetId
+        elseif type(rawAssetId) == "string" then
+            local matched: string? = string.match(rawAssetId, "%d+")
+            if matched then
+                numericId = tonumber(matched)
+            end
+        end
+
+        local result: {string} = {}
+        if numericId and numericId > 0 then
+            -- Download asset container via game:GetObjects to extract true AnimationId keyframes
+            local objectsOk: boolean, objects: any = pcall(function()
+                return (game :: any):GetObjects("rbxassetid://" .. tostring(numericId))
+            end)
+            if objectsOk and type(objects) == "table" and #objects > 0 then
+                for _, obj: Instance in ipairs(objects) do
+                    if obj:IsA("Animation") and obj.AnimationId ~= "" then
+                        table.insert(result, obj.AnimationId)
+                    end
+                    for _, descendant: Instance in ipairs(obj:GetDescendants()) do
+                        if descendant:IsA("Animation") and descendant.AnimationId ~= "" then
+                            table.insert(result, descendant.AnimationId)
+                        end
+                    end
+                end
+                for _, obj: Instance in ipairs(objects) do
+                    destroyInstance(obj)
+                end
+            end
+
+            -- Fallback to InsertService:LoadAsset if GetObjects did not unpack animations
+            if #result == 0 then
+                local insertService: any = (game :: any):GetService("InsertService")
+                if insertService and type(insertService.LoadAsset) == "function" then
+                    local loadOk: boolean, loaded: any = pcall(function()
+                        return insertService:LoadAsset(numericId)
+                    end)
+                    if loadOk and loaded then
+                        if loaded:IsA("Animation") and loaded.AnimationId ~= "" then
+                            table.insert(result, loaded.AnimationId)
+                        end
+                        for _, descendant: Instance in ipairs(loaded:GetDescendants()) do
+                            if descendant:IsA("Animation") and descendant.AnimationId ~= "" then
+                                table.insert(result, descendant.AnimationId)
+                            end
+                        end
+                        destroyInstance(loaded)
+                    end
+                end
+            end
+
+            -- Fallback to standard rbxassetid url if unpacking was blocked
+            if #result == 0 then
+                table.insert(result, "rbxassetid://" .. tostring(numericId))
+            end
+        elseif type(rawAssetId) == "string" and rawAssetId ~= "" then
+            table.insert(result, rawAssetId)
+        end
+
+        animationAssetCache[cacheKey] = result
+        return result
+    end
+
+    local function copyTargetMovementAnimations(
+        character: Model,
+        humanoid: Humanoid,
+        description: any
+    ): number
+        local animate: Instance? = character:FindFirstChild("Animate")
+        if not animate then
+            return 0
+        end
+
+        local changedCount: number = 0
+        for _, mapping in ipairs(MOVEMENT_ANIMATIONS) do
+            local readOk: boolean, value: any = pcall(function()
+                return description[mapping.descriptionField]
+            end)
+            local assetId: any = if readOk then value else nil
+            local category: Instance? = animate:FindFirstChild(mapping.scriptCategory)
+            if assetId and category then
+                local animIds: {string} = extractAnimationsFromAsset(assetId)
+                if #animIds > 0 then
+                    local targets: {Animation} = {}
+                    if category:IsA("Animation") then
+                        table.insert(targets, category)
+                    end
+                    for _, descendant: Instance in ipairs(category:GetDescendants()) do
+                        if descendant:IsA("Animation") then
+                            table.insert(targets, descendant)
+                        end
+                    end
+                    for idx: number, animation: Animation in ipairs(targets) do
+                        local chosenId: string = animIds[idx] or animIds[1]
+                        if chosenId and chosenId ~= "" and animation.AnimationId ~= chosenId then
+                            local changed: boolean = pcall(function()
+                                animation.AnimationId = chosenId
+                            end)
+                            if changed then
+                                changedCount += 1
+                            end
+                        end
+                    end
+                end
+            end
+        end
+
+        if changedCount > 0 then
+            animationOverrideApplied = true
+            local animator: Animator? = humanoid:FindFirstChildOfClass("Animator")
+            if animator then
+                local tracksOk: boolean, tracks: any = pcall(function()
+                    return animator:GetPlayingAnimationTracks()
+                end)
+                if tracksOk and type(tracks) == "table" then
+                    for _, track: AnimationTrack in ipairs(tracks) do
+                        pcall(track.Stop, track)
+                    end
+                end
+            end
+            restartAnimateScript(animate)
+        end
+        return changedCount
+    end
+
+    local function applyTargetMovementAnimationsToCharacter(numericId: number): ()
+        local character: Model? = LocalPlayer.Character
+        local humanoid: Humanoid? = character
+            and character:FindFirstChildOfClass("Humanoid")
+            :: Humanoid?
+        if not character or not humanoid or humanoid.Health <= 0 then
+            notify("Your character is not available.")
+            return
+        end
+
+        local animate: Instance? = character:FindFirstChild("Animate")
+        if not animate then
+            notify("Your character has no Animate script to update.")
+            return
+        end
+
+        local current: AppearanceSnapshot = ensureSnapshot(character, humanoid)
+        notify("Downloading target movement animations...")
+
+        task.spawn(function(): ()
+            local changedCount: number = 0
+
+            -- 1. Check if target player is in the current game server for instant 1:1 copy
+            local targetPlayer: Player? = Players:GetPlayerByUserId(numericId)
+            if not targetPlayer then
+                for _, p: Player in ipairs(Players:GetPlayers()) do
+                    if tostring(p.UserId) == tostring(settings.id)
+                        or string.lower(p.Name) == string.lower(tostring(settings.id))
+                        or string.lower(p.DisplayName) == string.lower(tostring(settings.id)) then
+                        targetPlayer = p
+                        break
+                    end
+                end
+            end
+
+            local targetChar: Model? = targetPlayer and targetPlayer.Character
+            local targetAnimate: Instance? = targetChar and targetChar:FindFirstChild("Animate")
+            if targetAnimate then
+                for _, mapping in ipairs(MOVEMENT_ANIMATIONS) do
+                    local sourceCat: Instance? = targetAnimate:FindFirstChild(mapping.scriptCategory)
+                    local targetCat: Instance? = animate:FindFirstChild(mapping.scriptCategory)
+                    if sourceCat and targetCat then
+                        local sourceAnims: {Animation} = {}
+                        if sourceCat:IsA("Animation") and sourceCat.AnimationId ~= "" then
+                            table.insert(sourceAnims, sourceCat)
+                        end
+                        for _, obj: Instance in ipairs(sourceCat:GetDescendants()) do
+                            if obj:IsA("Animation") and obj.AnimationId ~= "" then
+                                table.insert(sourceAnims, obj)
+                            end
+                        end
+                        if #sourceAnims > 0 then
+                            local targetAnims: {Animation} = {}
+                            if targetCat:IsA("Animation") then
+                                table.insert(targetAnims, targetCat)
+                            end
+                            for _, obj: Instance in ipairs(targetCat:GetDescendants()) do
+                                if obj:IsA("Animation") then
+                                    table.insert(targetAnims, obj)
+                                end
+                            end
+                            for idx: number, targetAnim: Animation in ipairs(targetAnims) do
+                                local src: Animation? = sourceAnims[idx] or sourceAnims[1]
+                                if src and src.AnimationId ~= "" and targetAnim.AnimationId ~= src.AnimationId then
+                                    local changed: boolean = pcall(function()
+                                        targetAnim.AnimationId = src.AnimationId
+                                    end)
+                                    if changed then
+                                        changedCount += 1
+                                    end
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+
+            -- 2. If not in server or no animations found, fetch HumanoidDescription and download assets
+            if changedCount == 0 then
+                local description: any, fetchError: string? = getUserDescription(numericId)
+                if not description then
+                    notify("Could not load target avatar description: " .. tostring(fetchError))
+                    return
+                end
+                changedCount = copyTargetMovementAnimations(character, humanoid, description)
+                destroyInstance(description)
+            else
+                animationOverrideApplied = true
+                local animator: Animator? = humanoid:FindFirstChildOfClass("Animator")
+                if animator then
+                    local tracksOk: boolean, tracks: any = pcall(function()
+                        return animator:GetPlayingAnimationTracks()
+                    end)
+                    if tracksOk and type(tracks) == "table" then
+                        for _, track: AnimationTrack in ipairs(tracks) do
+                            pcall(track.Stop, track)
+                        end
+                    end
+                end
+                restartAnimateScript(animate)
+            end
+
+            if changedCount > 0 then
+                notify("Applied " .. tostring(changedCount) .. " target movement animation slot(s); Animate restarted.")
+            else
+                notify("No custom movement animations found for ID " .. tostring(numericId) .. " (target may use default animations).")
+            end
+        end)
+    end
+
+    local function refreshMeshPartSnapshot(
+        character: Model,
+        current: AppearanceSnapshot
+    ): ()
+        local originalByName: {[string]: {meshId: string, textureId: string}} = {}
+        for _, entry: MeshTemplate in ipairs(current.meshParts) do
+            originalByName[entry.part.Name] = {
+                meshId = entry.meshId,
+                textureId = entry.textureId,
+            }
+        end
+
+        local refreshed: {MeshTemplate} = {}
+        for _, obj: Instance in ipairs(character:GetDescendants()) do
+            if obj:IsA("MeshPart") and BODY_PARTS[obj.Name] then
+                local original: {meshId: string, textureId: string}? =
+                    originalByName[obj.Name]
+                table.insert(refreshed, {
+                    part = obj,
+                    meshId = original and original.meshId or obj.MeshId,
+                    textureId = original and original.textureId or obj.TextureID,
+                })
+            end
+        end
+        if #refreshed > 0 then
+            current.meshParts = refreshed
+        end
+    end
+
+    local function restoreOriginalAppearance(
+        character: Model,
+        humanoid: Humanoid?
+    ): ()
+        local current: AppearanceSnapshot? = snapshot
+        if not current or current.character ~= character then
+            return
+        end
+
+        restoring = true
+        if emotesAppliedToHumanoid and humanoid then
+            local emotesRestored: boolean = setHumanoidEmotes(
+                humanoid,
+                current.emotes,
+                current.equippedEmotes
+            )
+            if emotesRestored then
+                emotesAppliedToHumanoid = false
+                refreshMeshPartSnapshot(character, current)
+            end
+        end
+
+        local removals: {Instance} = {}
+        table.clear(disguisedItems)
+        table.clear(cloned)
+        for _, obj: Instance in ipairs(character:GetDescendants()) do
+            if isAppearanceItem(obj) then
+                table.insert(removals, obj)
+            end
+        end
+        for _, obj: Instance in ipairs(removals) do
+            pcall(obj.Destroy, obj)
+        end
+
+        for _, entry: MeshTemplate in ipairs(current.meshParts) do
+            if isInsideCharacter(entry.part, character) then
+                pcall(function()
+                    entry.part.MeshId = entry.meshId
+                    entry.part.TextureID = entry.textureId
+                end)
+            end
+        end
+        for _, entry: AnimationTemplate in ipairs(current.animations) do
+            if isInsideCharacter(entry.animation, character) then
+                pcall(function()
+                    entry.animation.AnimationId = entry.animationId
+                end)
+            end
+        end
+
+        local restartRestoredAnimations: boolean = animationOverrideApplied
+        animationOverrideApplied = false
+
+        for _, entry: AppearanceTemplate in ipairs(current.items) do
+            local ok: boolean, copy: any = pcall(function()
+                return entry.object:Clone()
+            end)
+            if ok and copy then
+                local parent: Instance = entry.parent or character
+                if parent ~= character and not isInsideCharacter(parent, character) then
+                    if (copy:IsA("Decal") or copy:IsA("Texture"))
+                        and string.lower(copy.Name) == "face" then
+                        parent = character:FindFirstChild("Head") or character
+                    else
+                        parent = character
+                    end
+                end
+                if copy:IsA("Accessory") then
+                    rebindAccessory(character, copy)
+                end
+                pcall(function()
+                    copy.Parent = parent
+                end)
+            end
+        end
+        restoring = false
+        if restartRestoredAnimations then
+            local animate: Instance? = character:FindFirstChild("Animate")
+            if animate then
+                if humanoid then
+                    local animator: Animator? = humanoid:FindFirstChildOfClass("Animator")
+                    if animator then
+                        local tracksOk: boolean, tracks: any = pcall(function()
+                            return animator:GetPlayingAnimationTracks()
+                        end)
+                        if tracksOk and type(tracks) == "table" then
+                            for _, track: AnimationTrack in ipairs(tracks) do
+                                pcall(track.Stop, track)
+                            end
+                        end
+                    end
+                end
+                restartAnimateScript(animate)
+            end
+        end
+    end
+
+    local function stopAppearanceFilter(): ()
+        if filterConnection then
+            pcall(filterConnection.Disconnect, filterConnection)
+            filterConnection = nil
+        end
+        filteredCharacter = nil
+    end
+
+    local function removeUnexpectedAppearance(obj: Instance): ()
+        if restoring
+            or not isAppearanceItem(obj)
+            or cloned[obj]
+            or disguisedItems[obj]
+            or not activeCard
+            or not activeCard.Enabled
+            or settings.mode ~= "Character" then
+            return
+        end
+        task.defer(function(): ()
+            if restoring
+                or not activeCard
+                or not activeCard.Enabled
+                or settings.mode ~= "Character"
+                or cloned[obj]
+                or disguisedItems[obj] then
+                return
+            end
+            pcall(obj.Destroy, obj)
+        end)
+    end
+
+    local function installAppearanceFilter(character: Model): ()
+        if filteredCharacter == character
+            and filterConnection
+            and filterConnection.Connected then
+            return
+        end
+        stopAppearanceFilter()
+        filteredCharacter = character
+        filterConnection = character.DescendantAdded:Connect(
+            removeUnexpectedAppearance
+        )
+        if activeCard then
+            activeCard:Clean(filterConnection)
+        end
+    end
+
+    local function parseId(): (number?, string?)
+        local trimmed: string = tostring(settings.id)
+            :gsub("^%s+", "")
+            :gsub("%s+$", "")
+        if trimmed == "" then
+            return nil, "Enter a positive integer ID or username first."
+        end
+        local value: number? = tonumber(trimmed)
+        if value and value > 0 and value % 1 == 0 then
+            return value, nil
+        end
+        for _, p: Player in ipairs(Players:GetPlayers()) do
+            if string.lower(p.Name) == string.lower(trimmed)
+                or string.lower(p.DisplayName) == string.lower(trimmed) then
+                return p.UserId, nil
+            end
+        end
+        local ok: boolean, resolvedId: any = pcall(function()
+            return Players:GetUserIdFromNameAsync(trimmed)
+        end)
+        if ok and type(resolvedId) == "number" and resolvedId > 0 then
+            return resolvedId, nil
+        end
+        return nil, "Enter a positive integer ID or valid username."
+    end
+
+    local function getUserDescription(userId: number): (any?, string?)
+        local playersObject: any = Players
+        local asyncGetter: any = playersObject.GetHumanoidDescriptionFromUserIdAsync
+        local syncGetter: any = playersObject.GetHumanoidDescriptionFromUserId
+        if type(asyncGetter) == "function" then
+            local ok: boolean, result: any = pcall(asyncGetter, playersObject, userId)
+            if ok and result then
+                return result, nil
+            end
+            if not ok then
+                local asyncError: string = tostring(result)
+                if type(syncGetter) ~= "function" then
+                    return nil, asyncError
+                end
+            end
+        end
+        if type(syncGetter) == "function" then
+            local ok: boolean, result: any = pcall(syncGetter, playersObject, userId)
+            if ok and result then
+                return result, nil
+            end
+            return nil, tostring(result)
+        end
+        return nil, "This client does not expose a HumanoidDescription lookup API."
+    end
+
+    local function stillCurrent(token: number, character: Model): boolean
+        return generation == token
+            and activeCard ~= nil
+            and activeCard.Enabled
+            and LocalPlayer.Character == character
+    end
+
+    local function setDescriptionScales(
+        description: any,
+        current: AppearanceSnapshot
+    ): ()
+        for _, field: string in ipairs(SCALE_FIELDS) do
+            local value: number? = current.scales[field]
+            if value ~= nil then
+                pcall(function()
+                    description[field] = value
+                end)
+            end
+        end
+    end
+
+    local function copyCharacterAppearance(
+        character: Model,
+        clone: Model
+    ): ()
+        local realHead: Instance? = character:FindFirstChild("Head")
+        for _, source: Instance in ipairs(clone:GetChildren()) do
+            if isAppearanceItem(source) then
+                cloned[source] = true
+                disguisedItems[source] = true
+                if source:IsA("Accessory") then
+                    rebindAccessory(character, source)
+                end
+                source.Parent = character
+            elseif BODY_PARTS[source.Name]
+                and source:IsA("MeshPart") then
+                local target: Instance? = character:FindFirstChild(source.Name)
+                if target and target:IsA("MeshPart") then
+                    -- Copy mesh identifiers only; retain live part dimensions,
+                    -- joint objects, and collision settings.
+                    pcall(function()
+                        target.MeshId = source.MeshId
+                        target.TextureID = source.TextureID
+                    end)
+                end
+            end
+        end
+
+        local targetFace: Instance? = clone:FindFirstChild("face", true)
+        if targetFace and isAppearanceItem(targetFace) and realHead then
+            cloned[targetFace] = true
+            disguisedItems[targetFace] = true
+            targetFace.Parent = realHead
+        end
+
+    end
+
+    local function destroyInstance(instance: Instance?): ()
+        if instance then
+            pcall(instance.Destroy, instance)
+        end
+    end
+
+    local function applyCharacterDisguise(
+        token: number,
+        character: Model,
+        humanoid: Humanoid,
+        userId: number
+    ): ()
+        local description: any, fetchError: string? = getUserDescription(userId)
+        if not description then
+            if stillCurrent(token, character) then
+                notify("Could not load that avatar: " .. tostring(fetchError))
+            end
+            return
+        end
+        if not stillCurrent(token, character) then
+            destroyInstance(description)
+            return
+        end
+
+        local current: AppearanceSnapshot = ensureSnapshot(character, humanoid)
+        restoreOriginalAppearance(character, humanoid)
+        setDescriptionScales(description, current)
+
+        local oldArchivable: boolean = character.Archivable
+        character.Archivable = true
+        local cloneOk: boolean, cloneResult: any = pcall(function()
+            return character:Clone()
+        end)
+        character.Archivable = oldArchivable
+        if not cloneOk or not cloneResult then
+            destroyInstance(description)
+            notify("Could not stage the disguise character.")
+            return
+        end
+
+        local clone: Model = cloneResult :: Model
+        local parentOk: boolean = pcall(function()
+            clone.Parent = game
+        end)
+        if not parentOk then
+            destroyInstance(description)
+            destroyInstance(clone)
+            notify("Could not stage the disguise character in this client.")
+            return
+        end
+
+        local cloneHumanoid: Humanoid? = clone:FindFirstChildOfClass("Humanoid")
+        if not cloneHumanoid then
+            destroyInstance(description)
+            destroyInstance(clone)
+            notify("The staged character has no Humanoid.")
+            return
+        end
+
+        local applied: boolean, applyError: string? =
+            applyDescriptionToHumanoid(cloneHumanoid, description)
+        if not applied then
+            destroyInstance(description)
+            destroyInstance(clone)
+            notify("Could not apply the avatar description: " .. tostring(applyError))
+            return
+        end
+        if not stillCurrent(token, character) then
+            destroyInstance(description)
+            destroyInstance(clone)
+            return
+        end
+
+        targetEmotes, targetEquippedEmotes = readDescriptionEmotes(description)
+        local emoteWarning: string? = nil
+        if targetEmotes and targetEquippedEmotes then
+            local emotesApplied: boolean, emoteError: string? = setHumanoidEmotes(
+                humanoid,
+                targetEmotes,
+                targetEquippedEmotes
+            )
+            if emotesApplied then
+                emotesAppliedToHumanoid = true
+                refreshMeshPartSnapshot(character, current)
+            else
+                emoteWarning = tostring(emoteError)
+                -- SetEmotes may have succeeded before SetEquippedEmotes failed;
+                -- roll back a partial update using the captured local profile.
+                local rolledBack: boolean = setHumanoidEmotes(
+                    humanoid,
+                    current.emotes,
+                    current.equippedEmotes
+                )
+                if not rolledBack then
+                    emotesAppliedToHumanoid = true
+                    emoteWarning ..= " The original emotes could not be restored yet."
+                end
+            end
+        else
+            emoteWarning = "The target avatar description did not expose emotes."
+        end
+        if not stillCurrent(token, character) then
+            if emotesAppliedToHumanoid then
+                local rolledBack: boolean = setHumanoidEmotes(
+                    humanoid,
+                    current.emotes,
+                    current.equippedEmotes
+                )
+                if rolledBack then
+                    emotesAppliedToHumanoid = false
+                end
+            end
+            destroyInstance(description)
+            destroyInstance(clone)
+            return
+        end
+
+        local movementAnimationCount: number = 0
+        if settings.useTargetMovementAnimations then
+            movementAnimationCount = copyTargetMovementAnimations(
+                character,
+                humanoid,
+                description
+            )
+            if not stillCurrent(token, character) then
+                destroyInstance(description)
+                destroyInstance(clone)
+                return
+            end
+        end
+
+        installAppearanceFilter(character)
+        restoring = true
+        local oldItems: {Instance} = {}
+        for _, obj: Instance in ipairs(character:GetDescendants()) do
+            if isAppearanceItem(obj) then
+                table.insert(oldItems, obj)
+            end
+        end
+        for _, obj: Instance in ipairs(oldItems) do
+            pcall(obj.Destroy, obj)
+        end
+        restoring = false
+
+        local copied: boolean, copyError: any = pcall(function()
+            copyCharacterAppearance(character, clone)
+        end)
+        destroyInstance(description)
+        destroyInstance(clone)
+        if not copied then
+            notify("The avatar was loaded, but some appearance parts could not be copied: "
+                .. tostring(copyError))
+            return
+        end
+        if stillCurrent(token, character) then
+            activeCard:SetStatus("Character")
+            local emoteCount: number = 0
+            if type(targetEmotes) == "table" then
+                for _ in pairs(targetEmotes) do
+                    emoteCount += 1
+                end
+            end
+            local message: string = "Avatar disguise applied; live body-part dimensions were left unchanged. "
+            if emoteWarning then
+                message ..= "Emotes could not be applied: " .. emoteWarning
+            elseif emoteCount > 0 then
+                message ..= tostring(emoteCount)
+                    .. " target emote(s) copied; open the Roblox emote menu."
+            else
+                message ..= "The target description returned no emotes."
+            end
+            if settings.useTargetMovementAnimations then
+                if movementAnimationCount > 0 then
+                    message ..= " Copied " .. tostring(movementAnimationCount)
+                        .. " target movement animation slot(s)."
+                else
+                    message ..= " No target movement animation IDs were available."
+                end
+            end
+            notify(message)
+        end
+    end
+
+    local function getService(name: string): any
+        local supplied: any = host[name]
+        if supplied then
+            return supplied
+        end
+        local ok: boolean, result: any = pcall(function()
+            return (game :: any):GetService(name)
+        end)
+        return if ok then result else nil
+    end
+
+    local function getBundleItems(
+        bundleId: number,
+        productInfo: any
+    ): ({any}?, string?)
+        local directItems: any = productInfo.Items or productInfo.items
+        local hasDirectItems: boolean = type(directItems) == "table"
+            and #directItems > 0
+        local directType: string = tostring(productInfo.BundleType or "")
+        if hasDirectItems and directType ~= "" then
+            return directItems, directType
+        end
+
+        for _, serviceName: string in ipairs({"AssetService", "AvatarEditorService"}) do
+            local service: any = getService(serviceName)
+            local method: any = service and service.GetBundleDetailsAsync
+            if type(method) == "function" then
+                local ok: boolean, details: any = pcall(method, service, bundleId)
+                if ok and type(details) == "table" then
+                    local items: any = details.Items or details.items
+                    local bundleType: string = tostring(
+                        details.BundleType or directType
+                    )
+                    if bundleType ~= ""
+                        and type(items) == "table"
+                        and #items > 0 then
+                        return items, bundleType
+                    end
+                    if bundleType ~= "" and hasDirectItems then
+                        return directItems, bundleType
+                    end
+                end
+            end
+        end
+        if hasDirectItems then
+            return directItems, directType
+        end
+        return nil, nil
+    end
+
+    local function getAnimationType(itemName: string): string
+        local normalized: string = string.lower(itemName)
+            :gsub("%s*animations?%s*$", "")
+            :gsub("%s+", "")
+        local aliases: {[string]: string} = {
+            pose = "idle",
+            idling = "idle",
+            walking = "walk",
+            running = "run",
+            jumping = "jump",
+            falling = "fall",
+            climbing = "climb",
+            swimming = "swim",
+        }
+        return aliases[normalized] or normalized
+    end
+
+    local function applyAnimationBundle(
+        token: number,
+        character: Model,
+        humanoid: Humanoid,
+        bundleId: number
+    ): ()
+        local items: {any}?, rawBundleType: string? = getBundleItems(
+            bundleId,
+            {}
+        )
+        local productInfoError: string? = nil
+        if not items or rawBundleType == nil or rawBundleType == "" then
+            if not stillCurrent(token, character) then
+                return
+            end
+            local infoOk: boolean, productInfo: any = pcall(function()
+                return MarketplaceService:GetProductInfo(
+                    bundleId,
+                    Enum.InfoType.Bundle
+                )
+            end)
+            if not stillCurrent(token, character) then
+                return
+            end
+            if infoOk and type(productInfo) == "table" then
+                local fallbackItems: {any}?, fallbackBundleType: string? =
+                    getBundleItems(bundleId, productInfo)
+                if fallbackItems then
+                    items = fallbackItems
+                end
+                if fallbackBundleType and fallbackBundleType ~= "" then
+                    rawBundleType = fallbackBundleType
+                end
+            else
+                productInfoError = tostring(productInfo)
+            end
+        end
+        if not stillCurrent(token, character) then
+            return
+        end
+        if not items then
+            local detail: string = productInfoError
+                and (" " .. productInfoError)
+                or ""
+            notify("Could not read the bundle's animation items." .. detail)
+            return
+        end
+        local bundleType: string = string.lower(tostring(rawBundleType or ""))
+        if bundleType == "" then
+            notify("This client could not verify the bundle type.")
+            return
+        end
+        if not string.find(bundleType, "animation", 1, true) then
+            notify("That ID is not an avatar animation bundle.")
+            return
+        end
+
+        local current: AppearanceSnapshot = ensureSnapshot(character, humanoid)
+        restoreOriginalAppearance(character, humanoid)
+        stopAppearanceFilter()
+
+        local animate: Instance? = character:FindFirstChild("Animate")
+        if not animate then
+            notify("This character has no Animate script to update.")
+            return
+        end
+
+        local changedCount: number = 0
+        for _, item: any in ipairs(items) do
+            if not stillCurrent(token, character) then
+                return
+            end
+            local itemName: string = tostring(item.Name or item.name or "")
+            local itemId: number? = tonumber(item.Id or item.AssetId or item.id)
+            local itemType: string = getAnimationType(itemName)
+            local targetCategory: Instance? = animate:FindFirstChild(itemType)
+            if itemId and targetCategory then
+                local objectsOk: boolean, objects: any = pcall(function()
+                    return (game :: any):GetObjects(
+                        "rbxassetid://" .. tostring(itemId)
+                    )
+                end)
+                if objectsOk and type(objects) == "table" then
+                    if not stillCurrent(token, character) then
+                        for _, object: Instance in ipairs(objects) do
+                            destroyInstance(object)
+                        end
+                        return
+                    end
+                    local sourceAnimation: Animation? = nil
+                    for _, object: Instance in ipairs(objects) do
+                        if object:IsA("Animation") then
+                            sourceAnimation = object
+                            break
+                        end
+                        sourceAnimation = object:FindFirstChildWhichIsA(
+                            "Animation",
+                            true
+                        ) :: Animation?
+                        if sourceAnimation then
+                            break
+                        end
+                    end
+                    if sourceAnimation then
+                        local targetAnimations: {Animation} = {}
+                        if targetCategory:IsA("Animation") then
+                            table.insert(targetAnimations, targetCategory)
+                        end
+                        for _, object: Instance in ipairs(targetCategory:GetDescendants()) do
+                            if object:IsA("Animation") then
+                                table.insert(targetAnimations, object)
+                            end
+                        end
+                        for _, animation: Animation in ipairs(targetAnimations) do
+                            local changed: boolean = pcall(function()
+                                animation.AnimationId = sourceAnimation.AnimationId
+                            end)
+                            if changed then
+                                changedCount += 1
+                            end
+                        end
+                    end
+                    for _, object: Instance in ipairs(objects) do
+                        destroyInstance(object)
+                    end
+                end
+            end
+        end
+
+        if changedCount == 0 then
+            -- Ensure a failed lookup doesn't leave a half-selected mode behind.
+            restoreOriginalAppearance(character, humanoid)
+            notify("No compatible animations were found in that bundle.")
+            return
+        end
+
+        animationOverrideApplied = true
+        local animator: Animator? = humanoid:FindFirstChildOfClass("Animator")
+        if animator then
+            for _, track: AnimationTrack in ipairs(animator:GetPlayingAnimationTracks()) do
+                pcall(track.Stop, track)
+            end
+        end
+        restartAnimateScript(animate)
+        if current.character == character and stillCurrent(token, character) then
+            activeCard:SetStatus("Animation")
+            notify("Animation bundle applied to " .. tostring(changedCount)
+                .. " slots; Animate restarted. Original IDs return when disabled.")
+        end
+    end
+
+    local function applyDisguise(): ()
+        generation += 1
+        local token: number = generation
+        local character: Model? = LocalPlayer.Character
+        local humanoid: Humanoid? = character
+            and character:FindFirstChildOfClass("Humanoid")
+            :: Humanoid?
+        if not character or not humanoid or humanoid.Health <= 0 then
+            notify("Your character is not ready yet.")
+            return
+        end
+        local numericId: number?, idError: string? = parseId()
+        if not numericId then
+            notify(tostring(idError))
+            return
+        end
+
+        local selectedMode: string = settings.mode
+        targetEmotes = nil
+        targetEquippedEmotes = nil
+        task.spawn(function(): ()
+            if selectedMode == "Character" then
+                applyCharacterDisguise(
+                    token,
+                    character :: Model,
+                    humanoid :: Humanoid,
+                    numericId :: number
+                )
+            else
+                applyAnimationBundle(
+                    token,
+                    character :: Model,
+                    humanoid :: Humanoid,
+                    numericId :: number
+                )
+            end
+        end)
+    end
+
+    local function restoreAndRelease(): ()
+        generation += 1
+        stopAppearanceFilter()
+        local character: Model? = LocalPlayer.Character
+        local humanoid: Humanoid? = character
+            and character:FindFirstChildOfClass("Humanoid")
+            :: Humanoid?
+        if character then
+            restoreOriginalAppearance(character, humanoid)
+        end
+        destroySnapshot()
+        table.clear(cloned)
+        table.clear(disguisedItems)
+    end
+
+    local function sortedEmoteNames(data: any): {string}
+        local names: {string} = {}
+        if type(data) == "table" then
+            for name: any in pairs(data) do
+                if type(name) == "string" then
+                    table.insert(names, name)
+                end
+            end
+        end
+        table.sort(names)
+        return names
+    end
+
+    local function equippedEmoteNames(data: any): {string}
+        local names: {string} = {}
+        local seen: {[string]: boolean} = {}
+        if type(data) == "table" then
+            for key: any, entry: any in pairs(data) do
+                local name: any = nil
+                if type(entry) == "string" then
+                    name = entry
+                elseif entry == true and type(key) == "string" then
+                    name = key
+                elseif type(entry) == "table" then
+                    name = entry.Name or entry.name or entry[1]
+                end
+                if type(name) == "string" and not seen[name] then
+                    seen[name] = true
+                    table.insert(names, name)
+                end
+            end
+        end
+        table.sort(names)
+        return names
+    end
+
+    local function formatNameList(names: {string}): string
+        if #names == 0 then
+            return "none"
+        end
+        local shown: {string} = {}
+        for index = 1, math.min(#names, 12) do
+            table.insert(shown, names[index])
+        end
+        if #names > 12 then
+            table.insert(shown, "+" .. tostring(#names - 12) .. " more")
+        end
+        return table.concat(shown, ", ")
+    end
+
+    local card: any
+    card = framework.Categories.Other:CreateModule({
+        Name = "Disguise",
+        Category = "Other",
+        ConfigKey = "Universal.Disguise",
+        Order = 26,
+        Tooltip = "Copies a target avatar's cosmetics and emotes; optionally copies its movement animations. Animation mode changes local motion IDs only, not the visible avatar.",
+        Function = function(enabled: boolean): ()
+            if enabled then
+                card:SetStatus(settings.mode)
+                card:Clean(LocalPlayer.CharacterAdded:Connect(function(): ()
+                    generation += 1
+                    stopAppearanceFilter()
+                    destroySnapshot()
+                    task.wait(0.5)
+                    if card.Enabled then
+                        applyDisguise()
+                    end
+                end))
+                applyDisguise()
+            else
+                restoreAndRelease()
+                card:SetStatus(nil)
+            end
+        end,
+    })
+
+    card:CreateDropdown({
+        Name = "Mode",
+        List = {"Character", "Animation"},
+        Index = 1,
+        Function = function(value: string): ()
+            settings.mode = value
+            card:SetStatus(value)
+            if card.Enabled then
+                if value == "Animation" then
+                    targetEmotes = nil
+                    targetEquippedEmotes = nil
+                    local character: Model? = LocalPlayer.Character
+                    local humanoid: Humanoid? = character
+                        and character:FindFirstChildOfClass("Humanoid")
+                        :: Humanoid?
+                    if character then
+                        restoreOriginalAppearance(character, humanoid)
+                    end
+                    stopAppearanceFilter()
+                end
+                applyDisguise()
+            end
+        end,
+        Tooltip = "Character: visible avatar cosmetics and emotes from a user ID. Animation: movement animation IDs from a bundle; it does not render the target character.",
+    })
+
+    card:CreateButton({
+        Name = "Use target movement animations",
+        Function = function(): ()
+            local numericId: number?, idError: string? = parseId()
+            if not numericId then
+                notify(tostring(idError))
+                return
+            end
+            settings.useTargetMovementAnimations = true
+            applyTargetMovementAnimationsToCharacter(numericId)
+        end,
+        Tooltip = "Downloads and applies the target user's movement animations (idle, walk, run, jump, climb, fall, swim) to your character. Original IDs return when Disguise is turned off.",
+    })
+
+    card:CreateTextBox({
+        Name = "Target ID",
+        Default = settings.id,
+        Function = function(value: string): ()
+            local trimmed: string = tostring(value or "")
+                :gsub("^%s+", "")
+                :gsub("%s+$", "")
+            if trimmed == "" then
+                notify("Enter a user ID or animation bundle ID first.")
+                return
+            end
+            settings.id = trimmed
+            if card.Enabled then
+                applyDisguise()
+            end
+        end,
+        Tooltip = "Positive integer user ID (Character) or avatar-animation bundle ID (Animation).",
+    })
+
+
+    card:CreateButton({
+        Name = "Show target emotes",
+        Function = function(): ()
+            if type(targetEmotes) ~= "table" then
+                notify("Load a user ID in Character mode before listing emotes.")
+                return
+            end
+            local names: {string} = sortedEmoteNames(targetEmotes)
+            local equipped: {string} = equippedEmoteNames(targetEquippedEmotes)
+            notify(string.format(
+                "Target emotes (%d): %s | Equipped (%d): %s",
+                #names,
+                formatNameList(names),
+                #equipped,
+                formatNameList(equipped)
+            ))
+        end,
+        Tooltip = "Lists the emotes and equipped emote slots returned for the target user ID.",
+    })
+
+    activeCard = card
+    Module.Initialized = true
+    return card
+end
+
+function Module.destroy(): ()
+    if activeCard then
+        if activeCard.Enabled then
+            pcall(activeCard.Toggle, activeCard, false)
+        end
+        activeCard = nil
+    end
+    Module.Initialized = false
+end
+
+return Module
+
+]=],
+        ["src/games/universal/Other/AntiAfk.lua"] = [=[
+export type Runtime = {
+    framework: any,
+    entity: any,
+    host: any,
+}
+
+local Module = {
+    Name = "AntiAfk",
+    PlaceId = 0,
+    Events = {} :: {[string]: any},
+    Initialized = false,
+}
+
+local activeCleanup: (() -> ())? = nil
+
+function Module.init(context: Runtime): any
+    local host: any = context.host
+    local LocalPlayer: any = host.LocalPlayer
+    local featureConnections: any = host.featureConnections
+    local disconnectFeatureConnection: any = host.disconnectFeatureConnection
+    local createUniversalFeature: any = host.createUniversalFeature
+    local addFeatureTooltip: any = host.addFeatureTooltip
+    local function toggleAntiAfk(enabled)
+        disconnectFeatureConnection("AntiAFK")
+
+        if not enabled then
+            return
+        end
+
+        featureConnections.AntiAFK = LocalPlayer.Idled:Connect(function()
+            local virtualUserOk, virtualUser = pcall(function()
+                return game:GetService("VirtualUser")
+            end)
+            if virtualUserOk and virtualUser then
+                virtualUser:CaptureController()
+                virtualUser:ClickButton2(Vector2.new(0, 0))
+            end
+        end)
+    end
+
+    local AntiAfkFeature = createUniversalFeature(
+        "AntiAFK",
+        "Prevent the local idle event from disconnecting",
+        13,
+        toggleAntiAfk,
+        {
+            noOptions = true,
+            configKey = "Universal.AntiAFK",
+            categoryName = "Other",
+        }
+    )
+    addFeatureTooltip(AntiAfkFeature, "Responds only to Roblox's local idle event and "
+        .. "disconnects immediately when disabled.")
+
+    activeCleanup = function(): ()
+
+        disconnectFeatureConnection("AntiAFK")
+    end
+    Module.Initialized = true
+    return AntiAfkFeature
+end
+
+function Module.destroy(): ()
+    if activeCleanup then
+        pcall(activeCleanup)
+    end
+    activeCleanup = nil
+    Module.Initialized = false
+end
+
+return Module
+
+]=],
+        ["src/games/universal/Other/InteractExtender.lua"] = [=[
+export type Runtime = {
+    framework: any,
+    entity: any,
+    host: any,
+}
+
+local Module = {
+    Name = "InteractExtender",
+    PlaceId = 0,
+    Events = {} :: {[string]: any},
+    Initialized = false,
+}
+
+local activeCleanup: (() -> ())? = nil
+
+function Module.init(context: Runtime): any
+    local host: any = context.host
+    local TaskManager: any = host.TaskManager
+    local featureConnections: any = host.featureConnections
+    local disconnectFeatureConnection: any = host.disconnectFeatureConnection
+    local createUniversalFeature: any = host.createUniversalFeature
+    local addToggleOption: any = host.addToggleOption
+    local addNumberOption: any = host.addNumberOption
+    type InteractionSettings = {
+        distance: number,
+        instantPrompts: boolean,
+        proximityPrompts: boolean,
+        clickDetectors: boolean,
+    }
+    type PromptState = {distance: number, holdDuration: number}
+    local interactionSettings: InteractionSettings = {
+        distance = 32,
+        instantPrompts = false,
+        proximityPrompts = true,
+        clickDetectors = true,
+    }
+    local originalPrompts: {[ProximityPrompt]: PromptState} =
+        setmetatable({}, {__mode = "k"}) :: any
+    local originalClickDetectors: {[ClickDetector]: number} =
+        setmetatable({}, {__mode = "k"}) :: any
+    local interactionExtenderEnabled: boolean = false
+    local InteractFeature: any = nil
+    local interactionRefreshClock: number = 0
+
+    local function refreshInteractionExtender(): ()
+        for prompt: ProximityPrompt, original: PromptState in pairs(originalPrompts) do
+            if not prompt.Parent then
+                continue
+            end
+            local wantedDistance: number = interactionExtenderEnabled
+                    and interactionSettings.proximityPrompts
+                    and interactionSettings.distance
+                or original.distance
+            local wantedHold: number = interactionExtenderEnabled
+                    and interactionSettings.proximityPrompts
+                    and interactionSettings.instantPrompts
+                    and 0
+                or original.holdDuration
+
+            if prompt.MaxActivationDistance ~= wantedDistance then
+                prompt.MaxActivationDistance = wantedDistance
+            end
+            if prompt.HoldDuration ~= wantedHold then
+                prompt.HoldDuration = wantedHold
+            end
+        end
+        for detector: ClickDetector, originalDistance: number in pairs(originalClickDetectors) do
+            if not detector.Parent then
+                continue
+            end
+            local wantedDistance: number = interactionExtenderEnabled
+                    and interactionSettings.clickDetectors
+                    and interactionSettings.distance
+                or originalDistance
+            if detector.MaxActivationDistance ~= wantedDistance then
+                detector.MaxActivationDistance = wantedDistance
+            end
+        end
+    end
+
+    local function applyInteractionExtension(instance: Instance): ()
+        if not interactionExtenderEnabled then
+            return
+        end
+        if instance:IsA("ProximityPrompt") then
+            if originalPrompts[instance] == nil then
+                originalPrompts[instance] = {
+                    distance = instance.MaxActivationDistance,
+                    holdDuration = instance.HoldDuration,
+                }
+            end
+            local original: PromptState = originalPrompts[instance]
+            instance.MaxActivationDistance = interactionSettings.proximityPrompts
+                    and interactionSettings.distance
+                or original.distance
+            instance.HoldDuration = interactionSettings.proximityPrompts
+                    and interactionSettings.instantPrompts
+                    and 0
+                or original.holdDuration
+        elseif instance:IsA("ClickDetector") then
+            if originalClickDetectors[instance] == nil then
+                originalClickDetectors[instance] = instance.MaxActivationDistance
+            end
+            instance.MaxActivationDistance = interactionSettings.clickDetectors
+                    and interactionSettings.distance
+                or originalClickDetectors[instance]
+        end
+    end
+
+    local function restoreInteractionExtender(): ()
+        interactionExtenderEnabled = false
+        refreshInteractionExtender()
+        originalPrompts = setmetatable({}, {__mode = "k"}) :: any
+        originalClickDetectors = setmetatable({}, {__mode = "k"}) :: any
+    end
+
+    local function toggleInteractionExtender(enabled: boolean): ()
+        disconnectFeatureConnection("InteractExtender")
+        disconnectFeatureConnection("InteractExtenderRefresh")
+        restoreInteractionExtender()
+        interactionRefreshClock = 0
+        if not enabled then
+            if InteractFeature then InteractFeature:SetStatus(nil) end
+            return
+        end
+        InteractFeature:SetStatus(tostring(math.round(interactionSettings.distance)) .. " studs")
+        interactionExtenderEnabled = true
+        featureConnections.InteractExtender = workspace.DescendantAdded:Connect(
+            applyInteractionExtension
+        )
+        featureConnections.InteractExtenderRefresh = TaskManager:Connect(
+            function(deltaTime: number): ()
+                interactionRefreshClock += deltaTime
+                if interactionRefreshClock >= 0.5 then
+                    interactionRefreshClock = 0
+                    refreshInteractionExtender()
+                end
+            end
+        )
+        task.spawn(function(): ()
+            for index: number, instance: Instance in ipairs(workspace:GetDescendants()) do
+                if not interactionExtenderEnabled then
+                    return
+                end
+                applyInteractionExtension(instance)
+                if index % 240 == 0 then
+                    task.wait()
+                end
+            end
+        end)
+    end
+
+    InteractFeature = createUniversalFeature(
+        "Interact Extender",
+        "Extend prompt and click interaction range without auto-firing",
+        24,
+        toggleInteractionExtender,
+        {categoryName = "Other"}
+    )
+    addNumberOption(
+        InteractFeature,
+        "Interaction distance",
+        interactionSettings.distance,
+        8,
+        250,
+        function(value: number): ()
+            interactionSettings.distance = value
+            if InteractFeature.enabled then
+                InteractFeature:SetStatus(tostring(math.round(value)) .. " studs")
+            end
+            refreshInteractionExtender()
+        end
+    )
+    addToggleOption(
+        InteractFeature,
+        "Instant prompts",
+        interactionSettings.instantPrompts,
+        function(value: boolean): ()
+            interactionSettings.instantPrompts = value
+            refreshInteractionExtender()
+        end
+    )
+    addToggleOption(
+        InteractFeature,
+        "Proximity prompts",
+        interactionSettings.proximityPrompts,
+        function(value: boolean): ()
+            interactionSettings.proximityPrompts = value
+            refreshInteractionExtender()
+        end
+    )
+    addToggleOption(
+        InteractFeature,
+        "Click detectors",
+        interactionSettings.clickDetectors,
+        function(value: boolean): ()
+            interactionSettings.clickDetectors = value
+            refreshInteractionExtender()
+        end
+    )
+
+    activeCleanup = function(): ()
+        disconnectFeatureConnection("InteractExtender")
+        disconnectFeatureConnection("InteractExtenderRefresh")
+        restoreInteractionExtender()
+        interactionRefreshClock = 0
+        if InteractFeature then
+            InteractFeature:SetStatus(nil)
+        end
+    end
+    Module.Initialized = true
+    return InteractFeature
+end
+
+function Module.destroy(): ()
+    if activeCleanup then
+        pcall(activeCleanup)
+    end
+    activeCleanup = nil
+    Module.Initialized = false
+end
+
+return Module
+
+]=],
+        ["src/games/universal/Other/RejoinServer.lua"] = [=[
+export type Runtime = {
+    framework: any,
+    entity: any,
+    host: any,
+    services: any,
+}
+
+local Module = {
+    Name = "RejoinServer",
+    PlaceId = 0,
+    Events = {} :: {[string]: any},
+    Initialized = false,
+}
+
+local activeCleanup: (() -> ())? = nil
+
+function Module.init(context: Runtime): any
+    local host: any = context.host
+    local LocalPlayer: any = host.LocalPlayer
+    local createUniversalFeature: any = host.createUniversalFeature
+    local cloneReference: any = host.cloneReference
+    local notify: (string) -> () = host.notify
+    local function rejoinCurrentServer(): ()
+        local teleportService: TeleportService = cloneReference(
+            game:GetService("TeleportService")
+        )
+        local placeId: number = game.PlaceId
+        local jobId: string = tostring(game.JobId or "")
+
+        local rejoined: boolean = false
+        if jobId ~= "" then
+            rejoined = pcall(function(): ()
+                teleportService:TeleportToPlaceInstance(placeId, jobId, LocalPlayer)
+            end)
+        end
+        if not rejoined then
+            local ok: boolean, teleportError: any = pcall(function(): ()
+                teleportService:Teleport(placeId, LocalPlayer)
+            end)
+            if not ok then
+                notify("Rejoin failed: " .. tostring(teleportError))
+            end
+        end
+    end
+    local actionId: string = "RejoinServer"
+    local registries: any = context.services.registries
+    local wurstOptions: any = registries.wurstOptions()
+    if wurstOptions and type(wurstOptions.RegisterAction) == "function" then
+        local registered: boolean, registration: any = pcall(
+            wurstOptions.RegisterAction,
+            actionId,
+            "Rejoin Server",
+            rejoinCurrentServer,
+            {
+                description = "Reconnect to the current server instance",
+                configKey = "Universal.RejoinServer",
+            }
+        )
+        if not registered then
+            error("Wurst Options refused Rejoin Server: " .. tostring(registration))
+        end
+        local search: any = registries.moduleSearch()
+        local searchFeature: any = {
+            name = "Rejoin Server",
+            configKey = "Universal.RejoinServer",
+            kind = "action",
+            searchable = false,
+            enabled = false,
+            activate = rejoinCurrentServer,
+        }
+        if search and type(search.Register) == "function" then
+            search.Register(searchFeature)
+        end
+        activeCleanup = function(): ()
+            if search and type(search.Unregister) == "function" then
+                search.Unregister(searchFeature)
+            end
+            if type(registration) == "table"
+                and type(registration.Unregister) == "function" then
+                registration.Unregister()
+            elseif type(wurstOptions.UnregisterAction) == "function" then
+                pcall(wurstOptions.UnregisterAction, actionId)
+            end
+        end
+        Module.Initialized = true
+        return registration
+    end
+
+    local feature: any = createUniversalFeature(
+        "Rejoin Server",
+        "Reconnect to the current server instance",
+        22,
+        rejoinCurrentServer,
+        {
+            action = true,
+            noOptions = true,
+            categoryName = "Other",
+            searchable = false,
+        }
+    )
+
+    activeCleanup = function(): () end
+    Module.Initialized = true
+    return feature
+end
+
+function Module.destroy(): ()
+    if activeCleanup then
+        pcall(activeCleanup)
+    end
+    activeCleanup = nil
+    Module.Initialized = false
+end
+
+return Module
+
+]=],
+        ["src/games/universal/Other/LagSwitch.lua"] = [=[
 export type Runtime = {
     framework: any,
     entity: any,
@@ -21413,6 +24513,185 @@ function Module.init(context: Runtime): any
     end
     Module.Initialized = true
     return LagSwitchFeature
+end
+
+function Module.destroy(): ()
+    if activeCleanup then
+        pcall(activeCleanup)
+    end
+    activeCleanup = nil
+    Module.Initialized = false
+end
+
+return Module
+
+]=],
+        ["src/games/universal/Other/ImproveFps.lua"] = [=[
+export type Runtime = {
+    framework: any,
+    entity: any,
+    host: any,
+}
+
+local Module = {
+    Name = "ImproveFps",
+    PlaceId = 0,
+    Events = {} :: {[string]: any},
+    Initialized = false,
+}
+
+local activeCleanup: (() -> ())? = nil
+
+function Module.init(context: Runtime): any
+    local host: any = context.host
+    local featureConnections: any = host.featureConnections
+    local disconnectFeatureConnection: any = host.disconnectFeatureConnection
+    local createUniversalFeature: any = host.createUniversalFeature
+    local addToggleOption: any = host.addToggleOption
+
+    local fpsSettings: {[string]: boolean} = {
+        textures = true,
+        particles = true,
+        shadows = true,
+        materials = false,
+    }
+    local fpsModeEnabled: boolean = false
+    local ImproveFpsFeature: any = nil
+    local function selectedEffectCount(): number
+        local count: number = 0
+        for _name: string, selected: boolean in pairs(fpsSettings) do
+            if selected then count += 1 end
+        end
+        return count
+    end
+
+    local fpsVisualCache: any = setmetatable({}, {__mode = "k"})
+
+    local function cacheFpsProperty(object: any, property: string): ()
+        local data: any = fpsVisualCache[object]
+        if not data then
+            data = {}
+            fpsVisualCache[object] = data
+        end
+        if data[property] == nil then
+            data[property] = object[property]
+        end
+    end
+
+    local function applyFpsObject(object: Instance): ()
+        local target: any = object
+        if fpsSettings.textures and (object:IsA("Decal") or object:IsA("Texture")) then
+            cacheFpsProperty(object, "Transparency")
+            target.Transparency = 1
+        elseif fpsSettings.textures and object:IsA("MeshPart") then
+            cacheFpsProperty(object, "TextureID")
+            target.TextureID = ""
+        end
+
+        if fpsSettings.particles
+            and (object:IsA("ParticleEmitter")
+                or object:IsA("Trail")
+                or object:IsA("Beam")
+                or object:IsA("Smoke")
+                or object:IsA("Fire")
+                or object:IsA("Sparkles")) then
+            cacheFpsProperty(object, "Enabled")
+            target.Enabled = false
+        end
+
+        if object:IsA("BasePart") then
+            if fpsSettings.shadows then
+                cacheFpsProperty(object, "CastShadow")
+                object.CastShadow = false
+            end
+            if fpsSettings.materials then
+                cacheFpsProperty(object, "Material")
+                cacheFpsProperty(object, "Reflectance")
+                object.Material = Enum.Material.SmoothPlastic
+                object.Reflectance = 0
+            end
+        end
+    end
+
+    local function restoreFpsObjects(): ()
+        for object: any, properties: any in pairs(fpsVisualCache) do
+            if object and object.Parent then
+                for property: string, value: any in pairs(properties) do
+                    pcall(function(): ()
+                        object[property] = value
+                    end)
+                end
+            end
+        end
+        fpsVisualCache = setmetatable({}, {__mode = "k"})
+    end
+
+    local function toggleImproveFps(enabled: boolean): ()
+        fpsModeEnabled = enabled
+        disconnectFeatureConnection("ImproveFPS")
+        restoreFpsObjects()
+
+        if not enabled then
+            if ImproveFpsFeature then ImproveFpsFeature:SetStatus(nil) end
+            return
+        end
+        ImproveFpsFeature:SetStatus(tostring(selectedEffectCount()) .. " effects")
+
+        task.spawn(function(): ()
+            for index: number, object: Instance in ipairs(workspace:GetDescendants()) do
+                if not fpsModeEnabled then
+                    return
+                end
+                pcall(applyFpsObject, object)
+                if index % 250 == 0 then
+                    task.wait()
+                end
+            end
+        end)
+        featureConnections.ImproveFPS = workspace.DescendantAdded:Connect(
+            function(object: Instance): ()
+                if fpsModeEnabled then
+                    pcall(applyFpsObject, object)
+                end
+            end
+        )
+    end
+
+    local function refreshFps(): ()
+        if fpsModeEnabled then
+            toggleImproveFps(true)
+        end
+    end
+
+    ImproveFpsFeature = createUniversalFeature(
+        "Improve FPS",
+        "Apply only the selected reversible optimizations",
+        26,
+        toggleImproveFps,
+        {categoryName = "Other"}
+    )
+    addToggleOption(ImproveFpsFeature, "Remove textures", true, function(value: boolean): ()
+        fpsSettings.textures = value
+        refreshFps()
+    end)
+    addToggleOption(ImproveFpsFeature, "Disable particles", true, function(value: boolean): ()
+        fpsSettings.particles = value
+        refreshFps()
+    end)
+    addToggleOption(ImproveFpsFeature, "Disable shadows", true, function(value: boolean): ()
+        fpsSettings.shadows = value
+        refreshFps()
+    end)
+    addToggleOption(ImproveFpsFeature, "Simple materials", false, function(value: boolean): ()
+        fpsSettings.materials = value
+        refreshFps()
+    end)
+
+    activeCleanup = function(): ()
+        toggleImproveFps(false)
+    end
+    Module.Initialized = true
+    return ImproveFpsFeature
 end
 
 function Module.destroy(): ()
@@ -21713,7 +24992,7 @@ end
 return Module
 
 ]=],
-        ["src/games/universal/Utility/ImproveFps.lua"] = [=[
+        ["src/games/universal/Other/RemoteLogger.lua"] = [=[
 export type Runtime = {
     framework: any,
     entity: any,
@@ -21721,7 +25000,7 @@ export type Runtime = {
 }
 
 local Module = {
-    Name = "ImproveFps",
+    Name = "RemoteLogger",
     PlaceId = 0,
     Events = {} :: {[string]: any},
     Initialized = false,
@@ -21729,1836 +25008,561 @@ local Module = {
 
 local activeCleanup: (() -> ())? = nil
 
-function Module.init(context: Runtime): any
-    local host: any = context.host
-    local featureConnections: any = host.featureConnections
-    local disconnectFeatureConnection: any = host.disconnectFeatureConnection
-    local createUniversalFeature: any = host.createUniversalFeature
-    local addToggleOption: any = host.addToggleOption
+local function fullName(instance: Instance): string
+    local ok: boolean, name: any = pcall(function(): string
+        return instance:GetFullName()
+    end)
+    return ok and tostring(name) or instance.Name
+end
 
-    local fpsSettings: {[string]: boolean} = {
-        textures = true,
-        particles = true,
-        shadows = true,
-        materials = false,
-    }
-    local fpsModeEnabled: boolean = false
-    local ImproveFpsFeature: any = nil
-    local function selectedEffectCount(): number
+local function describe(value: any, depth: number): string
+    local kind: string = typeof(value)
+    if kind == "string" then
+        return string.format("%q", (value :: string):sub(1, 200))
+    end
+    if kind == "number" or kind == "boolean" or kind == "nil" then
+        return tostring(value)
+    end
+    if kind == "Instance" then
+        return "«" .. (value :: Instance).ClassName .. " " .. fullName(value :: Instance) .. "»"
+    end
+    if kind == "Vector3" or kind == "Vector2" or kind == "CFrame"
+        or kind == "Color3" or kind == "UDim2" or kind == "EnumItem" then
+        return kind .. "(" .. tostring(value) .. ")"
+    end
+    if kind == "table" then
+        if depth <= 0 then
+            return "{...}"
+        end
+        local parts: {string} = {}
         local count: number = 0
-        for _name: string, selected: boolean in pairs(fpsSettings) do
-            if selected then count += 1 end
-        end
-        return count
-    end
-
-    local fpsVisualCache: any = setmetatable({}, {__mode = "k"})
-
-    local function cacheFpsProperty(object: any, property: string): ()
-        local data: any = fpsVisualCache[object]
-        if not data then
-            data = {}
-            fpsVisualCache[object] = data
-        end
-        if data[property] == nil then
-            data[property] = object[property]
-        end
-    end
-
-    local function applyFpsObject(object: Instance): ()
-        local target: any = object
-        if fpsSettings.textures and (object:IsA("Decal") or object:IsA("Texture")) then
-            cacheFpsProperty(object, "Transparency")
-            target.Transparency = 1
-        elseif fpsSettings.textures and object:IsA("MeshPart") then
-            cacheFpsProperty(object, "TextureID")
-            target.TextureID = ""
-        end
-
-        if fpsSettings.particles
-            and (object:IsA("ParticleEmitter")
-                or object:IsA("Trail")
-                or object:IsA("Beam")
-                or object:IsA("Smoke")
-                or object:IsA("Fire")
-                or object:IsA("Sparkles")) then
-            cacheFpsProperty(object, "Enabled")
-            target.Enabled = false
-        end
-
-        if object:IsA("BasePart") then
-            if fpsSettings.shadows then
-                cacheFpsProperty(object, "CastShadow")
-                object.CastShadow = false
+        for key: any, entry: any in pairs(value :: any) do
+            count += 1
+            if count > 12 then
+                table.insert(parts, "...")
+                break
             end
-            if fpsSettings.materials then
-                cacheFpsProperty(object, "Material")
-                cacheFpsProperty(object, "Reflectance")
-                object.Material = Enum.Material.SmoothPlastic
-                object.Reflectance = 0
-            end
-        end
-    end
-
-    local function restoreFpsObjects(): ()
-        for object: any, properties: any in pairs(fpsVisualCache) do
-            if object and object.Parent then
-                for property: string, value: any in pairs(properties) do
-                    pcall(function(): ()
-                        object[property] = value
-                    end)
-                end
-            end
-        end
-        fpsVisualCache = setmetatable({}, {__mode = "k"})
-    end
-
-    local function toggleImproveFps(enabled: boolean): ()
-        fpsModeEnabled = enabled
-        disconnectFeatureConnection("ImproveFPS")
-        restoreFpsObjects()
-
-        if not enabled then
-            if ImproveFpsFeature then ImproveFpsFeature:SetStatus(nil) end
-            return
-        end
-        ImproveFpsFeature:SetStatus(tostring(selectedEffectCount()) .. " effects")
-
-        task.spawn(function(): ()
-            for index: number, object: Instance in ipairs(workspace:GetDescendants()) do
-                if not fpsModeEnabled then
-                    return
-                end
-                pcall(applyFpsObject, object)
-                if index % 250 == 0 then
-                    task.wait()
-                end
-            end
-        end)
-        featureConnections.ImproveFPS = workspace.DescendantAdded:Connect(
-            function(object: Instance): ()
-                if fpsModeEnabled then
-                    pcall(applyFpsObject, object)
-                end
-            end
-        )
-    end
-
-    local function refreshFps(): ()
-        if fpsModeEnabled then
-            toggleImproveFps(true)
-        end
-    end
-
-    ImproveFpsFeature = createUniversalFeature(
-        "Improve FPS",
-        "Apply only the selected reversible optimizations",
-        26,
-        toggleImproveFps,
-        {categoryName = "Other"}
-    )
-    addToggleOption(ImproveFpsFeature, "Remove textures", true, function(value: boolean): ()
-        fpsSettings.textures = value
-        refreshFps()
-    end)
-    addToggleOption(ImproveFpsFeature, "Disable particles", true, function(value: boolean): ()
-        fpsSettings.particles = value
-        refreshFps()
-    end)
-    addToggleOption(ImproveFpsFeature, "Disable shadows", true, function(value: boolean): ()
-        fpsSettings.shadows = value
-        refreshFps()
-    end)
-    addToggleOption(ImproveFpsFeature, "Simple materials", false, function(value: boolean): ()
-        fpsSettings.materials = value
-        refreshFps()
-    end)
-
-    activeCleanup = function(): ()
-        toggleImproveFps(false)
-    end
-    Module.Initialized = true
-    return ImproveFpsFeature
-end
-
-function Module.destroy(): ()
-    if activeCleanup then
-        pcall(activeCleanup)
-    end
-    activeCleanup = nil
-    Module.Initialized = false
-end
-
-return Module
-
-]=],
-        ["src/games/universal/Render/Fullbright.lua"] = [=[
-export type Runtime = {
-    framework: any,
-    entity: any,
-    host: any,
-}
-
-local Module = {
-    Name = "Fullbright",
-    PlaceId = 0,
-    Events = {} :: {[string]: any},
-    Initialized = false,
-}
-
-local activeCleanup: (() -> ())? = nil
-
-function Module.init(context: Runtime): any
-    local host: any = context.host
-    local createUniversalFeature: any = host.createUniversalFeature
-    local addNumberOption: any = host.addNumberOption
-    local Lighting: any = host.Lighting
-    local disconnectFeatureConnection: any = host.disconnectFeatureConnection
-    local featureConnections: any = host.featureConnections
-    local TaskManager: any = host.TaskManager
-
-    local fullbrightSettings = {
-        brightness = 3,
-        clockTime = 14,
-    }
-    local originalLighting: any = nil
-
-    local function toggleFullbright(enabled: boolean): ()
-        disconnectFeatureConnection("Fullbright")
-
-        if not enabled then
-            if originalLighting then
-                Lighting.Brightness = originalLighting.brightness
-                Lighting.ClockTime = originalLighting.clockTime
-                Lighting.GlobalShadows = originalLighting.globalShadows
-                Lighting.FogEnd = originalLighting.fogEnd
-                Lighting.Ambient = originalLighting.ambient
-                Lighting.OutdoorAmbient = originalLighting.outdoorAmbient
-            end
-            return
-        end
-
-        originalLighting = {
-            brightness = Lighting.Brightness,
-            clockTime = Lighting.ClockTime,
-            globalShadows = Lighting.GlobalShadows,
-            fogEnd = Lighting.FogEnd,
-            ambient = Lighting.Ambient,
-            outdoorAmbient = Lighting.OutdoorAmbient,
-        }
-
-        featureConnections.Fullbright = TaskManager:Connect(function()
-            Lighting.Brightness = fullbrightSettings.brightness
-            Lighting.ClockTime = fullbrightSettings.clockTime
-            Lighting.GlobalShadows = false
-            Lighting.FogEnd = 100000
-            Lighting.Ambient = Color3.fromRGB(178, 178, 178)
-            Lighting.OutdoorAmbient = Color3.fromRGB(178, 178, 178)
-        end)
-    end
-
-    local FullbrightFeature = createUniversalFeature(
-        "Fullbright",
-        "Keep the scene bright and remove global shadows",
-        15,
-        toggleFullbright,
-        {categoryName = "Render"}
-    )
-    addNumberOption(
-        FullbrightFeature,
-        "Brightness",
-        fullbrightSettings.brightness,
-        0,
-        10,
-        function(value)
-            fullbrightSettings.brightness = value
-        end
-    )
-    addNumberOption(
-        FullbrightFeature,
-        "Clock time",
-        fullbrightSettings.clockTime,
-        0,
-        24,
-        function(value)
-            fullbrightSettings.clockTime = value
-        end
-    )
-
-    activeCleanup = function(): ()
-        toggleFullbright(false)
-    end
-    Module.Initialized = true
-    return FullbrightFeature
-end
-
-function Module.destroy(): ()
-    if activeCleanup then
-        pcall(activeCleanup)
-    end
-    activeCleanup = nil
-    Module.Initialized = false
-end
-
-return Module
-
-]=],
-        ["src/games/universal/Movement/FreezeMovements.lua"] = [=[
-export type Runtime = {
-    framework: any,
-    entity: any,
-    host: any,
-}
-
-local Module = {
-    Name = "FreezeMovements",
-    PlaceId = 0,
-    Events = {} :: {[string]: any},
-    Initialized = false,
-}
-
-local activeCleanup: (() -> ())? = nil
-
-function Module.init(context: Runtime): any
-    local host: any = context.host
-    local TaskManager: any = host.TaskManager
-    local featureConnections: any = host.featureConnections
-    local disconnectFeatureConnection: any = host.disconnectFeatureConnection
-    local getCharacterParts: any = host.getCharacterParts
-    local createUniversalFeature: any = host.createUniversalFeature
-    local addCycleOption: any = host.addCycleOption
-    local addInformationOption: any = host.addInformationOption
-    local freezeSettings = {mode = "Anchor"}
-    local FreezeFeature: any = nil
-    local originalFreezeState = setmetatable({}, {__mode = "k"})
-
-    local function restoreFreezeMovements()
-        for humanoid, original in pairs(originalFreezeState) do
-            if humanoid and humanoid.Parent then
-                humanoid.WalkSpeed = original.walkSpeed
-                humanoid.JumpPower = original.jumpPower
-                humanoid.AutoRotate = original.autoRotate
-                if original.root and original.root.Parent then
-                    original.root.Anchored = original.rootAnchored
-                end
-            end
-        end
-        originalFreezeState = setmetatable({}, {__mode = "k"})
-    end
-
-    local function toggleFreezeMovements(enabled)
-        disconnectFeatureConnection("FreezeMovements")
-        restoreFreezeMovements()
-
-        if not enabled then
-            if FreezeFeature then
-                FreezeFeature:SetStatus(nil)
-            end
-            return
-        end
-
-        FreezeFeature:SetStatus(freezeSettings.mode)
-        featureConnections.FreezeMovements = TaskManager:Connect(function()
-            local _, humanoid, root = getCharacterParts()
-            if not humanoid or not root then
-                return
-            end
-
-            if not originalFreezeState[humanoid] then
-                originalFreezeState[humanoid] = {
-                    walkSpeed = humanoid.WalkSpeed,
-                    jumpPower = humanoid.JumpPower,
-                    autoRotate = humanoid.AutoRotate,
-                    root = root,
-                    rootAnchored = root.Anchored,
-                }
-            end
-
-            local original = originalFreezeState[humanoid]
-            humanoid.WalkSpeed = 0
-            humanoid.JumpPower = 0
-            humanoid.AutoRotate = false
-            root.AssemblyLinearVelocity = Vector3.zero
-            root.AssemblyAngularVelocity = Vector3.zero
-            root.Anchored = freezeSettings.mode == "Anchor"
-                and true
-                or original.rootAnchored
-        end)
-    end
-
-    FreezeFeature = createUniversalFeature(
-        "Freeze Movements",
-        "Prevent the local character from moving",
-        1,
-        toggleFreezeMovements,
-        {
-            categoryName = "Movement",
-            configKey = "Movement.FreezeMovements",
-        }
-    )
-    addCycleOption(
-        FreezeFeature,
-        "Freeze mode",
-        {"Anchor", "Humanoid"},
-        1,
-        function(value)
-            freezeSettings.mode = value
-            if FreezeFeature.enabled then
-                FreezeFeature:SetStatus(value)
-            end
-        end
-    )
-    addInformationOption(
-        FreezeFeature,
-        "Anchor stops all physics; Humanoid only blocks character controls."
-    )
-
-    activeCleanup = function(): ()
-        disconnectFeatureConnection("FreezeMovements")
-        restoreFreezeMovements()
-    end
-    Module.Initialized = true
-    return FreezeFeature
-end
-
-function Module.destroy(): ()
-    if activeCleanup then
-        pcall(activeCleanup)
-    end
-    activeCleanup = nil
-    Module.Initialized = false
-end
-
-return Module
-
-]=],
-        ["src/games/universal/Blatant/Speed.lua"] = [=[
-export type Runtime = {
-    framework: any,
-    entity: any,
-    host: any,
-    services: any,
-}
-
-local Module = {
-    Name = "Speed",
-    PlaceId = 0,
-    Events = {} :: {[string]: any},
-    Initialized = false,
-}
-
-local activeCleanup: (() -> ())? = nil
-
-function Module.init(context: Runtime): any
-    local host: any = context.host
-    local movementInput: any = context.services.movementInput
-    local framework: any = context.framework
-    local LocalPlayer: Player = host.LocalPlayer
-    local currentWorkspace: Workspace = host.workspace or workspace
-
-    local runtime: any = {
-        originalWalkSpeed = setmetatable({}, {__mode = "k"}) :: any,
-        nextTeleportAt = 0,
-    }
-
-    local function characterParts(): (Model?, Humanoid?, BasePart?)
-        local character: Model? = LocalPlayer.Character
-        if not character then
-            return nil, nil, nil
-        end
-        local humanoid: Humanoid? =
-            character:FindFirstChildOfClass("Humanoid") :: Humanoid?
-        local root: BasePart? =
-            character:FindFirstChild("HumanoidRootPart") :: BasePart?
-        return character, humanoid, root
-    end
-
-    local function restoreWalkSpeed(): ()
-        for humanoid: Humanoid, value: number in pairs(runtime.originalWalkSpeed) do
-            if humanoid and humanoid.Parent then
-                humanoid.WalkSpeed = value
-            end
-        end
-        runtime.originalWalkSpeed = setmetatable({}, {__mode = "k"}) :: any
-    end
-
-    local function moveDirection(): Vector3
-        local camera: Camera? = currentWorkspace.CurrentCamera
-        local forward: number, right: number = 0, 0
-        if movementInput.getVector then
-            forward, right = movementInput.getVector()
-        end
-        if forward == 0 and right == 0 then
-            local _, humanoid: Humanoid? = characterParts()
-            local move: Vector3 = humanoid and humanoid.MoveDirection or Vector3.zero
-            return move.Magnitude > 0.05 and move.Unit or Vector3.zero
-        end
-        if not camera then
-            return Vector3.zero
-        end
-        local look: Vector3 = (camera :: Camera).CFrame.LookVector
-        local side: Vector3 = (camera :: Camera).CFrame.RightVector
-        local flatLook: Vector3 = Vector3.new(look.X, 0, look.Z)
-        local flatSide: Vector3 = Vector3.new(side.X, 0, side.Z)
-        if flatLook.Magnitude < 0.001 then
-            return Vector3.zero
-        end
-        local direction: Vector3 =
-            flatLook.Unit * forward + flatSide.Unit * right
-        return direction.Magnitude > 0.05 and direction.Unit or Vector3.zero
-    end
-
-    local function blocked(root: BasePart, step: Vector3): Vector3
-        local parameters: RaycastParams = RaycastParams.new()
-        parameters.FilterType = Enum.RaycastFilterType.Exclude
-        parameters.RespectCanCollide = true
-        local ignore: {Instance} = {LocalPlayer.Character :: Instance}
-        for _, player: Player in ipairs(host.Players:GetPlayers()) do
-            if player ~= LocalPlayer and player.Character then
-                table.insert(ignore, player.Character :: Instance)
-            end
-        end
-        parameters.FilterDescendantsInstances = ignore
-        local hit: RaycastResult? =
-            currentWorkspace:Raycast(root.Position, step, parameters)
-        if not hit then
-            return step
-        end
-        return ((hit :: RaycastResult).Position + (hit :: RaycastResult).Normal)
-            - root.Position
-    end
-
-    local speed: any
-    speed = framework.Categories.Blatant:CreateModule({
-        Name = "SpeedHack",
-        Category = "Blatant",
-        ConfigKey = "Universal.Speed",
-        Order = 1,
-        Tooltip = "Move faster, by whichever of five methods this game lets "
-            .. "through.",
-        Function = function(enabled: boolean): ()
-            runtime.nextTeleportAt = 0
-            if not enabled then
-                speed:SetStatus(nil)
-                restoreWalkSpeed()
-                return
-            end
-            speed:SetStatus(
-                tostring(speed.Options["Mode"].Value)
-                    .. " "
-                    .. tostring(math.round(speed.Options["Speed"].Value))
+            table.insert(
+                parts,
+                "[" .. describe(key, depth - 1) .. "] = " .. describe(entry, depth - 1)
             )
-            speed:Clean(restoreWalkSpeed)
-            speed:Loop(function(deltaTime: number): ()
-                local options: any = speed.Options
-                local _, humanoid: Humanoid?, root: BasePart? = characterParts()
-                if not humanoid or not root then
-                    return
-                end
-                local resolvedHumanoid: Humanoid = humanoid :: Humanoid
-                local resolvedRoot: BasePart = root :: BasePart
-                if resolvedHumanoid.Health <= 0 then
-                    return
-                end
-
-                local mode: string = options["Mode"].Value
-                local target: number = options["Speed"].Value
-
-                if mode == "WalkSpeed" then
-                    if runtime.originalWalkSpeed[resolvedHumanoid] == nil then
-                        runtime.originalWalkSpeed[resolvedHumanoid] =
-                            resolvedHumanoid.WalkSpeed
-                    end
-                    resolvedHumanoid.WalkSpeed = target
-                    return
-                end
-                restoreWalkSpeed()
-
-                local direction: Vector3 = moveDirection()
-                if direction.Magnitude < 0.05 then
-                    return
-                end
-
-                if options["Auto jump"].Value
-                    and resolvedHumanoid.FloorMaterial ~= Enum.Material.Air then
-                    resolvedHumanoid:ChangeState(Enum.HumanoidStateType.Jumping)
-                end
-
-                local velocity: Vector3 = resolvedRoot.AssemblyLinearVelocity
-                if mode == "Velocity" then
-                    resolvedRoot.AssemblyLinearVelocity = Vector3.new(
-                        direction.X * target,
-                        velocity.Y,
-                        direction.Z * target
-                    )
-                    return
-                end
-                if mode == "Impulse" then
-                    local wanted: Vector3 = direction * target
-                    local difference: Vector3 = Vector3.new(
-                        wanted.X - velocity.X,
-                        0,
-                        wanted.Z - velocity.Z
-                    )
-                    if difference.Magnitude > 2 then
-                        resolvedRoot:ApplyImpulse(
-                            difference * resolvedRoot.AssemblyMass
-                        )
-                    end
-                    return
-                end
-
-                local extra: number =
-                    math.max(target - resolvedHumanoid.WalkSpeed, 0)
-                if mode == "Teleport" then
-                    local now: number = os.clock()
-                    if now < runtime.nextTeleportAt then
-                        return
-                    end
-                    runtime.nextTeleportAt = now + options["Burst delay"].Value
-                    local step: Vector3 = direction * extra
-                        * options["Burst delay"].Value
-                    if options["Wall check"].Value then
-                        step = blocked(resolvedRoot, step)
-                    end
-                    resolvedRoot.CFrame = resolvedRoot.CFrame + step
-                    return
-                end
-
-                local step: Vector3 = direction * extra * deltaTime
-                if options["Wall check"].Value then
-                    step = blocked(resolvedRoot, step)
-                end
-                resolvedRoot.CFrame = resolvedRoot.CFrame + step
-            end)
-        end,
-    })
-
-    speed:CreateDropdown({
-        Name = "Mode",
-        List = {"WalkSpeed", "Velocity", "Impulse", "CFrame", "Teleport"},
-        Index = 1,
-        Function = function(value: string): ()
-            if speed.Enabled then
-                speed:SetStatus(
-                    value .. " " .. tostring(math.round(speed.Options["Speed"].Value))
-                )
-            end
-        end,
-        Tooltip = "WalkSpeed is the quietest and the first thing a game "
-            .. "clamps; CFrame works where the others are ignored; Teleport is "
-            .. "the fastest and the most obvious.",
-    })
-    speed:CreateSlider({
-        Name = "Speed",
-        Min = 16,
-        Max = 200,
-        Default = 32,
-        Function = function(value: number): ()
-            if speed.Enabled then
-                speed:SetStatus(
-                    tostring(speed.Options["Mode"].Value)
-                        .. " "
-                        .. tostring(math.round(value))
-                )
-            end
-        end,
-        Tooltip = "Studs per second. A default character walks at 16, sprints "
-            .. "in most games at 24-28; past about 60 you are visibly not "
-            .. "running.",
-    })
-    speed:CreateToggle({
-        Name = "Wall check",
-        Show = {Option = "Mode", Values = {"CFrame", "Teleport"}},
-        Default = true,
-        Tooltip = "Stop at geometry instead of stepping through it. Only the "
-            .. "two modes that move you directly can go through a wall.",
-    })
-    speed:CreateSlider({
-        Name = "Burst delay",
-        Show = {Option = "Mode", Values = {"Teleport"}},
-        Min = 0.05,
-        Max = 1,
-        Default = 0.2,
-        Tooltip = "Seconds between jumps. Shorter is faster and reads as "
-            .. "teleporting; longer reads as lag.",
-    })
-    speed:CreateToggle({
-        Name = "Auto jump",
-        Show = {Option = "Mode", Values = {"Velocity", "Impulse", "CFrame", "Teleport"}},
-        Default = false,
-        Tooltip = "Hop continuously while moving, for games that only clamp a "
-            .. "character that is standing on something.",
-    })
-    speed:CreateNote(
-        "If nothing happens, the game is clamping that method — try the next "
-            .. "one down the list. WalkSpeed and Velocity are the two that "
-            .. "look like a person moving."
-    )
-
-    activeCleanup = function(): ()
-        restoreWalkSpeed()
+        end
+        return "{" .. table.concat(parts, ", ") .. "}"
     end
-    Module.Initialized = true
-    return speed
+    return kind
 end
 
-function Module.destroy(): ()
-    if activeCleanup then
-        pcall(activeCleanup)
+local function snippetFor(entry: any): string
+    local parts: {string} = {}
+    for _, argument: string in ipairs(entry.arguments) do
+        table.insert(parts, argument)
     end
-    activeCleanup = nil
-    Module.Initialized = false
+    return "game:GetService(\"ReplicatedStorage\")"
+        .. " -- "
+        .. entry.path
+        .. "\n-- :"
+        .. entry.method
+        .. "("
+        .. table.concat(parts, ", ")
+        .. ")"
 end
-
-return Module
-
-]=],
-        ["src/games/universal/Blatant/Hitboxes.lua"] = [=[
-export type Runtime = {
-    framework: any,
-    entity: any,
-    host: any,
-}
-
-local Module = {
-    Name = "Hitboxes",
-    PlaceId = 0,
-    Events = {} :: {[string]: any},
-    Initialized = false,
-}
-
-local activeCleanup: (() -> ())? = nil
 
 function Module.init(context: Runtime): any
     local host: any = context.host
     local framework: any = context.framework
-    local entityLibrary: any = context.entity
-    local Players: any = host.Players
-    local LocalPlayer: any = host.LocalPlayer
-
-    type HitboxSettings = {
-        part: string,
-        expand: number,
-        reveal: boolean,
-        transparency: number,
-        teamCheck: boolean,
-        includeNpcs: boolean,
-        noCollision: boolean,
-    }
-
-    type HitboxWritten = {
-        size: Vector3,
-        transparency: number,
-        canCollide: boolean,
-        massless: boolean,
-    }
-
-    type OriginalHitboxState = {
-        size: Vector3,
-        transparency: number,
-        canCollide: boolean,
-        massless: boolean,
-
-        written: HitboxWritten,
-    }
-
-    local hitboxSettings: HitboxSettings = {
-        part = "Root",
-        expand = 6,
-        reveal = false,
-        transparency = 60,
-        teamCheck = true,
-        includeNpcs = false,
-        noCollision = true,
-    }
-    local originalHitboxes: {[BasePart]: OriginalHitboxState} =
-        setmetatable({}, {__mode = "k"}) :: any
-
-    local function restoreHitboxPart(part: BasePart): ()
-        local original: OriginalHitboxState? = originalHitboxes[part]
-        if not original then
-            return
-        end
-        if part.Parent then
-            part.Size = (original :: OriginalHitboxState).size
-            part.Transparency = (original :: OriginalHitboxState).transparency
-            part.CanCollide = (original :: OriginalHitboxState).canCollide
-            part.Massless = (original :: OriginalHitboxState).massless
-        end
-        originalHitboxes[part] = nil
-    end
-
-    local function restoreHitboxes(): ()
-        for part: BasePart in pairs(originalHitboxes) do
-            restoreHitboxPart(part)
-        end
-        originalHitboxes = setmetatable({}, {__mode = "k"}) :: any
-    end
-
-    local function applyHitboxToPart(part: BasePart): ()
-        local original: OriginalHitboxState? = originalHitboxes[part]
-        if not original then
-            original = {
-                size = part.Size,
-                transparency = part.Transparency,
-                canCollide = part.CanCollide,
-                massless = part.Massless,
-                written = {
-                    size = part.Size,
-                    transparency = part.Transparency,
-                    canCollide = part.CanCollide,
-                    massless = part.Massless,
-                },
-            }
-            originalHitboxes[part] = original
-        end
-        local resolved: OriginalHitboxState = original :: OriginalHitboxState
-        local last: HitboxWritten = resolved.written
-
-        if part.Size ~= last.size then
-            resolved.size = part.Size
-        end
-        if part.Transparency ~= last.transparency then
-            resolved.transparency = part.Transparency
-        end
-        if part.CanCollide ~= last.canCollide then
-            resolved.canCollide = part.CanCollide
-        end
-        if part.Massless ~= last.massless then
-            resolved.massless = part.Massless
-        end
-
-        local expand: number = hitboxSettings.expand
-        local nextSize: Vector3 = resolved.size + Vector3.new(expand, expand, expand)
-        local nextTransparency: number = hitboxSettings.reveal
-            and math.clamp(hitboxSettings.transparency / 100, 0, 1)
-            or resolved.transparency
-        local nextCanCollide: boolean = not hitboxSettings.noCollision and resolved.canCollide
-
-        if part.Size ~= nextSize then
-            part.Size = nextSize
-        end
-        if part.Transparency ~= nextTransparency then
-            part.Transparency = nextTransparency
-        end
-        if part.CanCollide ~= nextCanCollide then
-            part.CanCollide = nextCanCollide
-        end
-        if not part.Massless then
-            part.Massless = true
-        end
-        last.size = nextSize
-        last.transparency = nextTransparency
-        last.canCollide = nextCanCollide
-        last.massless = true
-    end
-
-    local function applyHitboxCharacter(character: Model): ()
-        local wanted: {string} = hitboxSettings.part == "Head"
-            and {"Head"}
-            or (hitboxSettings.part == "Both" and {"HumanoidRootPart", "Head"})
-            or {"HumanoidRootPart"}
-        for _, child: Instance in ipairs(character:GetChildren()) do
-            if not child:IsA("BasePart") then
-                continue
-            end
-            local part: BasePart = child :: BasePart
-            if table.find(wanted, part.Name) then
-                applyHitboxToPart(part)
-            else
-                restoreHitboxPart(part)
-            end
-        end
-    end
-
-    local function hitboxTargets(): {Model}
-        local targets: {Model} = {}
-        entityLibrary:Refresh()
-        for _, player: Player in ipairs(Players:GetPlayers()) do
-            if player == LocalPlayer then
-                continue
-            end
-            if hitboxSettings.teamCheck and entityLibrary:IsFriendly(player) then
-                continue
-            end
-            if entityLibrary:IsProtected(player) then
-                continue
-            end
-            local character: Model? = player.Character
-            local humanoid: Humanoid? = character
-                and character:FindFirstChildOfClass("Humanoid") :: Humanoid?
-            if character and humanoid and humanoid.Health > 0 then
-                table.insert(targets, character :: Model)
-            end
-        end
-        if hitboxSettings.includeNpcs then
-            for _, npc: any in ipairs(entityLibrary.NPCList or {}) do
-                if (not hitboxSettings.teamCheck or not npc.IsFriendly)
-                    and npc.Character
-                    and npc.Humanoid
-                    and npc.Humanoid.Health > 0 then
-                    table.insert(targets, npc.Character)
-                end
-            end
-        end
-        return targets
-    end
-
-    local function sweepHitboxes(): ()
-        local alive: {[BasePart]: boolean} = {}
-        for _, character: Model in ipairs(hitboxTargets()) do
-            applyHitboxCharacter(character)
-            for _, child: Instance in ipairs(character:GetChildren()) do
-                if child:IsA("BasePart") and originalHitboxes[child :: BasePart] then
-                    alive[child :: BasePart] = true
-                end
-            end
-        end
-
-        for part: BasePart in pairs(originalHitboxes) do
-            if not alive[part] then
-                restoreHitboxPart(part)
-            end
-        end
-    end
-
-    local hitboxes: any
-    hitboxes = framework.Categories.Blatant:CreateModule({
-        Name = "Hitboxes",
-        Category = "Blatant",
-        Order = 3,
-        Tooltip = "Expand the part enemies are hit on, in studs. Teammates and "
-            .. "friends are left alone, and every part is restored exactly when "
-            .. "it stops being a target.",
-        Function = function(enabled: boolean): ()
-            restoreHitboxes()
-            if not enabled then
-                hitboxes:SetStatus(nil)
-                return
-            end
-            hitboxes:SetStatus(
-                hitboxSettings.part .. " +" .. tostring(math.round(hitboxSettings.expand))
-            )
-            hitboxes:Clean(restoreHitboxes)
-
-            hitboxes:Loop(function(): ()
-                sweepHitboxes()
-            end)
-        end,
-    })
-    hitboxes:CreateDropdown({
-        Name = "Part",
-        List = {"Root", "Head", "Both"},
-        Index = 1,
-        Function = function(value: string): ()
-            hitboxSettings.part = value
-            if hitboxes.Enabled then
-                hitboxes:SetStatus(
-                    value .. " +" .. tostring(math.round(hitboxSettings.expand))
-                )
-            end
-        end,
-        Tooltip = "Which part of the character is expanded. Parts the new "
-            .. "mode no longer owns are restored on the next sweep.",
-    })
-    hitboxes:CreateSlider({
-        Name = "Expand",
-        Min = 0,
-        Max = 30,
-        Default = hitboxSettings.expand,
-        Function = function(value: number): ()
-            hitboxSettings.expand = value
-            if hitboxes.Enabled then
-                hitboxes:SetStatus(
-                    hitboxSettings.part .. " +" .. tostring(math.round(value))
-                )
-            end
-        end,
-        Tooltip = "Studs added to the target part. Past roughly 10 the box is "
-            .. "wider than the character is tall and anyone watching can see "
-            .. "hits landing on nothing.",
-    })
-    hitboxes:CreateToggle({
-        Name = "Team check",
-        Default = hitboxSettings.teamCheck,
-        Function = function(value: boolean): ()
-            hitboxSettings.teamCheck = value
-        end,
-        Tooltip = "Leave teammates at their real size.",
-    })
-    hitboxes:CreateToggle({
-        Name = "Include NPCs",
-        Default = hitboxSettings.includeNpcs,
-        Function = function(value: boolean): ()
-            hitboxSettings.includeNpcs = value
-        end,
-    })
-    hitboxes:CreateToggle({
-        Name = "Show hitbox",
-        Default = hitboxSettings.reveal,
-        Function = function(value: boolean): ()
-            hitboxSettings.reveal = value
-        end,
-        Tooltip = "Draw the expanded part so you can see what you are actually "
-            .. "aiming at.",
-    })
-    hitboxes:CreateSlider({
-        Name = "Show transparency %",
-        Show = {Option = "Show hitbox"},
-        Min = 0,
-        Max = 95,
-        Default = hitboxSettings.transparency,
-        Function = function(value: number): ()
-            hitboxSettings.transparency = value
-        end,
-    })
-    hitboxes:CreateToggle({
-        Name = "No collision",
-        Default = hitboxSettings.noCollision,
-        Function = function(value: boolean): ()
-            hitboxSettings.noCollision = value
-        end,
-        Tooltip = "An expanded part that still collides pushes its owner "
-            .. "around the map, which everyone in the server can see.",
-    })
-
-    activeCleanup = function(): ()
-        restoreHitboxes()
-    end
-    Module.Initialized = true
-    return hitboxes
-end
-
-function Module.destroy(): ()
-    if activeCleanup then
-        pcall(activeCleanup)
-    end
-    activeCleanup = nil
-    Module.Initialized = false
-end
-
-return Module
-
-]=],
-        ["src/games/universal/Render/ProjectileCalibration.lua"] = [=[
-export type Runtime = {
-    framework: any,
-    entity: any,
-    host: any,
-    services: any,
-}
-
-local Module = {
-    Name = "ProjectileCalibration",
-    PlaceId = 0,
-    Events = {} :: {[string]: any},
-    Initialized = false,
-}
-
-local activeController: any = nil
-local activeRegistry: any = nil
-
-function Module.init(context: Runtime): any
-    local host: any = context.host
-    local calibrationService: any = context.services.projectileCalibration
+    local httpService: HttpService = host.HttpService
     local product: any = host.PRODUCT
-    local notify: any = host.notify
-    local createUniversalFeature: any = host.createUniversalFeature
-    local addNumberOption: any = host.addNumberOption
-    local addActionOption: any = host.addActionOption
-    local addInformationOption: any = host.addInformationOption
-    local TaskManager: any = host.TaskManager
-    local LocalPlayer: any = host.LocalPlayer
-    local HttpService: any = host.HttpService
-    local Stats: any = host.Stats
+    local remoteLogFolder: string = product.storageFolder .. "/RemoteLogs"
 
-    local controllerFactory = (function(): any
-        type PendingActivation = {
-            tool: Tool,
-            activatedAt: number,
-            origin: Vector3?,
-            aim: Vector3?,
-            pingMs: number,
-        }
-        type ProjectileSample = {
-            t: number,
-            position: {number},
-            velocity: {number},
-            speed: number,
-        }
-        type ProjectileTrack = {
-            instance: BasePart,
-            toolName: string,
-            projectileName: string,
-            startedAt: number,
-            launchDelayMs: number,
-            pingMs: number,
-            origin: Vector3,
-            previousAt: number?,
-            previousPosition: Vector3?,
-            speeds: {number},
-            accelerations: {number},
-            verticalAccelerations: {number},
-            samples: {ProjectileSample},
-            distance: number,
-            destroyConnection: RBXScriptConnection?,
-        }
-        type BucketRecord = {
-            count: number,
-            speedSum: number,
-            speedSquaredSum: number,
-            delaySum: number,
-        }
-        type Controller = {
-            setEnabled: (self: Controller, enabled: boolean) -> (),
-            save: (self: Controller, reason: string?) -> boolean,
-            delete: (self: Controller) -> boolean,
-            status: (self: Controller) -> string,
-            destroy: (self: Controller) -> (),
-            tuning: {[string]: number},
-        }
+    local log: {[string]: any} = {}
+    local order: {string} = {}
+    local pathCache: any = setmetatable({}, {__mode = "k"})
+    local hooked: boolean = false
+    local restore: (() -> ())? = nil
+    local capturing: boolean = false
 
-        local tuning: {[string]: number} = {
-            bucketWidthMs = 5,
-            maxBucketMs = 250,
-            sampleWindowSeconds = 2.5,
-            maxSamplesPerTrack = 150,
-            minProjectileSpeed = 10,
-            matchDistanceStuds = 40,
-            maxPendingActivations = 10,
-            candidateLifetimeSeconds = 1.1,
-        }
+    local logger: any
 
-        local executorEnvironment: {[string]: any} = getfenv() :: any
-        local mouse: Mouse = LocalPlayer:GetMouse()
-        local outputRoot: string = product.storageFolder
-        local outputTelemetry: string = outputRoot .. "/Telemetry"
-        local outputFolder: string = outputTelemetry .. "/Universal"
-        local outputPath: string = outputFolder
-            .. "/Place_"
-            .. tostring(game.PlaceId)
-            .. "_Projectile_Calibration.json"
-        local runtime: any = {
-            enabled = false,
-            dirty = false,
-            startedAt = os.clock(),
-            pending = {} :: {PendingActivation},
-            tracks = {} :: {[BasePart]: ProjectileTrack},
-            events = {} :: {{[string]: any}},
-            buckets = {} :: {[string]: BucketRecord},
-            connections = {} :: {RBXScriptConnection},
-            observedTools = setmetatable({}, {__mode = "k"}) :: {[Tool]: boolean},
-            observedCandidates = setmetatable({}, {__mode = "k"}) :: {[BasePart]: boolean},
-            sampler = nil :: any,
-            totalActivations = 0,
-            totalProjectiles = 0,
-            rejectedCandidates = 0,
-        }
-        local controller: Controller
-        local saveSnapshot: (reason: string) -> boolean
-        local finishTrack: (part: BasePart, reason: string) -> ()
+    local function record(remote: Instance, method: string, ...: any): ()
+        if not capturing then
+            return
+        end
+        local options: any = logger.Options
 
-        local function finite(value: number): boolean
-            return value == value and value > -math.huge and value < math.huge
+        local path: string = pathCache[remote]
+        if not path then
+            path = fullName(remote)
+            pathCache[remote] = path
+        end
+        local filter: string = tostring(options["Only containing"].Value or "")
+        if filter ~= ""
+            and not string.find(string.lower(path), string.lower(filter), 1, true) then
+            return
         end
 
-        local function vectorArray(value: Vector3): {number}
-            return {value.X, value.Y, value.Z}
-        end
-
-        local function median(values: {number}): number?
-            if #values == 0 then
-                return nil
+        local key: string = path .. "::" .. method
+        local entry: any = log[key]
+        if not entry then
+            if #order >= math.round(options["Max remotes"].Value) then
+                return
             end
-            local sorted: {number} = table.clone(values)
-            table.sort(sorted)
-            local middle: number = math.floor((#sorted + 1) / 2)
-            if #sorted % 2 == 1 then
-                return sorted[middle]
-            end
-            return (sorted[middle] + sorted[middle + 1]) * 0.5
-        end
-
-        local function pingBucketKey(pingMs: number): string
-            local width: number = math.max(1, tuning.bucketWidthMs)
-            local ceiling: number = math.max(width, tuning.maxBucketMs)
-            if pingMs > ceiling then
-                return tostring(ceiling) .. "+"
-            end
-            local lower: number = math.clamp(
-                math.floor(pingMs / width) * width,
-                0,
-                math.max(0, ceiling - width)
-            )
-            local upper: number = lower + width
-            return string.format("%03d-%03d", lower, upper)
-        end
-
-        local function ensureBucket(key: string): BucketRecord
-            local existing: BucketRecord? = runtime.buckets[key]
-            if existing then
-                return existing
-            end
-            local created: BucketRecord = {
-                count = 0,
-                speedSum = 0,
-                speedSquaredSum = 0,
-                delaySum = 0,
+            entry = {
+                path = path,
+                class = remote.ClassName,
+                method = method,
+                calls = 0,
+                samples = 0,
+                firstSeen = os.clock(),
+                arguments = {},
             }
-            runtime.buckets[key] = created
-            return created
+            log[key] = entry
+            table.insert(order, key)
+            if options["Announce new"].Value then
+                logger:Notify(remote.Name .. " · " .. method)
+            end
         end
+        entry.calls += 1
+        entry.lastSeen = os.clock()
 
-        local function bucketPayload(): {[string]: any}
-            local payload: {[string]: any} = {}
-            for key: string, bucket: BucketRecord in pairs(runtime.buckets) do
-                local meanSpeed: number = bucket.count > 0
-                        and bucket.speedSum / bucket.count
-                    or 0
-                local variance: number = bucket.count > 1
-                        and math.max(
-                            0,
-                            bucket.speedSquaredSum / bucket.count
-                                - meanSpeed * meanSpeed
-                        )
-                    or 0
-                payload[key] = {
-                    count = bucket.count,
-                    meanSpeed = meanSpeed,
-                    speedStdDev = math.sqrt(variance),
-                    meanLaunchDelayMs = bucket.count > 0
-                            and bucket.delaySum / bucket.count
-                        or 0,
-                }
-            end
-            return payload
+        if entry.samples >= 3 and not options["Resample always"].Value then
+            return
         end
-
-        local function getPingMilliseconds(): number
-            local pingMs: number = 0
-            pcall(function(): ()
-                local network: Instance? = Stats:FindFirstChild("Network")
-                local serverItems: Instance? = network
-                    and network:FindFirstChild("ServerStatsItem")
-                local pingItem: any = serverItems
-                    and serverItems:FindFirstChild("Data Ping")
-                if pingItem and type(pingItem.GetValue) == "function" then
-                    pingMs = tonumber(pingItem:GetValue()) or 0
-                end
-            end)
-            return math.max(0, pingMs)
+        entry.samples += 1
+        local described: {string} = {}
+        local packed: {any} = table.pack(...)
+        for index: number = 1, math.min(packed.n, 10) do
+            table.insert(described, describe(packed[index], 3))
         end
-
-        local function appendEvent(event: {[string]: any}): ()
-            if #runtime.events >= 180 then
-                table.remove(runtime.events, 1)
-            end
-            table.insert(runtime.events, event)
-            runtime.dirty = true
+        if packed.n > 10 then
+            table.insert(described, "...")
         end
+        entry.arguments = described
+    end
 
-        saveSnapshot = function(reason: string): boolean
-            if type(executorEnvironment.writefile) ~= "function" then
-                return false
-            end
-            local payload: {[string]: any} = {
-                schema = 1,
-                kind = "universal-projectile-analytics",
-                placeId = game.PlaceId,
-                gameId = game.GameId,
-                savedAt = DateTime.now():ToIsoDate(),
-                reason = reason,
-                bucketSpec = {
-                    metric = "Data Ping",
-                    widthMs = tuning.bucketWidthMs,
-                    minimumMs = 0,
-                    maximumMs = tuning.maxBucketMs,
-                    overflow = tostring(tuning.maxBucketMs) .. "+",
-                },
-                summary = {
-                    activations = runtime.totalActivations,
-                    projectiles = runtime.totalProjectiles,
-                    rejectedCandidates = runtime.rejectedCandidates,
-                    elapsedSeconds = os.clock() - runtime.startedAt,
-                },
-                pingBuckets = bucketPayload(),
-                projectiles = runtime.events,
-            }
-            local encodedOk: boolean, encoded: any = pcall(
-                HttpService.JSONEncode,
-                HttpService,
-                payload
-            )
-            if not encodedOk or type(encoded) ~= "string" then
-                return false
-            end
-            if type(executorEnvironment.makefolder) == "function" then
-                pcall(executorEnvironment.makefolder, outputRoot)
-                pcall(executorEnvironment.makefolder, outputTelemetry)
-                pcall(executorEnvironment.makefolder, outputFolder)
-            end
-            local writeOk: boolean = pcall(
-                executorEnvironment.writefile,
-                outputPath,
-                encoded
-            )
-            if not writeOk then
-                return false
-            end
-            runtime.dirty = false
+    local queue: {any} = {}
+    local queued: number = 0
+    local inHook: boolean = false
+
+    local function installHook(): boolean
+        if hooked then
             return true
         end
+        local environment: any = getfenv()
+        local hookMetamethod: any = environment.hookmetamethod
+        local getNamecall: any = environment.getnamecallmethod
+        local checkCaller: any = environment.checkcaller
+        if type(hookMetamethod) ~= "function" or type(getNamecall) ~= "function" then
+            logger:Notify("executor lacks hookmetamethod")
+            return false
+        end
 
-        local function disconnectAll(): ()
-            if runtime.sampler then
-                runtime.sampler:Disconnect()
-                runtime.sampler = nil
-            end
-            for _, connection: RBXScriptConnection in ipairs(runtime.connections) do
-                connection:Disconnect()
-            end
-            table.clear(runtime.connections)
-            for part: BasePart, track: ProjectileTrack in pairs(runtime.tracks) do
-                if track.destroyConnection then
-                    track.destroyConnection:Disconnect()
+        local previous: any
+        local ok: boolean = pcall(function(): ()
+            previous = hookMetamethod(game, "__namecall", function(self: any, ...: any): any
+
+                if not capturing or inHook then
+                    return previous(self, ...)
                 end
-                runtime.tracks[part] = nil
-            end
-            table.clear(runtime.pending)
-            runtime.observedTools = setmetatable({}, {__mode = "k"})
-            runtime.observedCandidates = setmetatable({}, {__mode = "k"})
-        end
-
-        local function compactPending(now: number): ()
-            while #runtime.pending > 0
-                and now - runtime.pending[1].activatedAt
-                    > tuning.candidateLifetimeSeconds do
-                table.remove(runtime.pending, 1)
-            end
-            while #runtime.pending > tuning.maxPendingActivations do
-                table.remove(runtime.pending, 1)
-            end
-        end
-
-        local function isCharacterPart(part: BasePart): boolean
-            local model: Model? = part:FindFirstAncestorOfClass("Model")
-            return model ~= nil and model:FindFirstChildOfClass("Humanoid") ~= nil
-        end
-
-        local function hasProjectileHint(part: BasePart): boolean
-            local name: string = string.lower(part.Name)
-            local parentName: string = part.Parent and string.lower(part.Parent.Name) or ""
-            local combined: string = name .. " " .. parentName
-            return string.find(combined, "projectile", 1, true) ~= nil
-                or string.find(combined, "bullet", 1, true) ~= nil
-                or string.find(combined, "arrow", 1, true) ~= nil
-                or string.find(combined, "rocket", 1, true) ~= nil
-                or string.find(combined, "missile", 1, true) ~= nil
-                or string.find(combined, "knife", 1, true) ~= nil
-                or string.find(combined, "grenade", 1, true) ~= nil
-                or string.find(combined, "shell", 1, true) ~= nil
-                or string.find(combined, "bolt", 1, true) ~= nil
-                or string.find(combined, "orb", 1, true) ~= nil
-                or part:GetAttribute("Projectile") == true
-                or part:GetAttribute("ProjectileSpeed") ~= nil
-                or part:GetAttribute("ThrowSpeed") ~= nil
-        end
-
-        local function resolveCandidate(instance: Instance): BasePart?
-            if not instance:IsA("BasePart") then
-                return nil
-            end
-            local part: BasePart = instance
-            if part.Anchored
-                or isCharacterPart(part)
-                or (LocalPlayer.Character and part:IsDescendantOf(LocalPlayer.Character)) then
-                return nil
-            end
-            local root: BasePart = part.AssemblyRootPart or part
-            if runtime.observedCandidates[root] or isCharacterPart(root) then
-                return nil
-            end
-            return root
-        end
-
-        local function ensureSampler(): ()
-            if runtime.sampler then
-                return
-            end
-            runtime.sampler = TaskManager:Connect(function(_deltaTime: number): ()
-                local now: number = os.clock()
-                local completed: {BasePart} = {}
-                for part: BasePart, track: ProjectileTrack in pairs(runtime.tracks) do
-                    if not part.Parent
-                        or now - track.startedAt >= tuning.sampleWindowSeconds then
-                        table.insert(completed, part)
-                        continue
-                    end
-                    local position: Vector3 = part.Position
-                    local velocity: Vector3 = part.AssemblyLinearVelocity
-                    local speed: number = velocity.Magnitude
-                    if track.previousPosition and track.previousAt then
-                        local deltaTime: number = now - track.previousAt
-                        if deltaTime >= 1 / 240 then
-                            local measuredVelocity: Vector3 =
-                                (position - track.previousPosition) / deltaTime
-                            local measuredSpeed: number = measuredVelocity.Magnitude
-                            if measuredSpeed >= 1 and measuredSpeed <= 5000 then
-                                table.insert(track.speeds, measuredSpeed)
-                                if #track.samples > 0 then
-                                    local previousSample: ProjectileSample =
-                                        track.samples[#track.samples]
-                                    local previousVelocity: Vector3 = Vector3.new(
-                                        previousSample.velocity[1],
-                                        previousSample.velocity[2],
-                                        previousSample.velocity[3]
-                                    )
-                                    local acceleration: Vector3 =
-                                        (measuredVelocity - previousVelocity) / deltaTime
-                                    if acceleration.Magnitude <= 10000 then
-                                        table.insert(track.accelerations, acceleration.Magnitude)
-                                        table.insert(track.verticalAccelerations, acceleration.Y)
-                                    end
-                                end
-                            end
-                            track.distance += (position - track.previousPosition).Magnitude
-                        end
-                    end
-                    if #track.samples < tuning.maxSamplesPerTrack then
-                        table.insert(track.samples, {
-                            t = now - track.startedAt,
-                            position = vectorArray(position),
-                            velocity = vectorArray(velocity),
-                            speed = speed,
-                        })
-                    end
-                    track.previousPosition = position
-                    track.previousAt = now
+                local method: string = getNamecall()
+                if method ~= "FireServer" and method ~= "InvokeServer" then
+                    return previous(self, ...)
                 end
-                for _, part: BasePart in ipairs(completed) do
-                    finishTrack(part, "sample-window-complete")
+                if type(checkCaller) == "function" and checkCaller() then
+                    return previous(self, ...)
                 end
-                if next(runtime.tracks) == nil and runtime.sampler then
-                    runtime.sampler:Disconnect()
-                    runtime.sampler = nil
+                if queued < 256 then
+                    inHook = true
+                    queued += 1
+                    queue[queued] = {
+                        remote = self,
+                        method = method,
+                        count = select("#", ...),
+                        arguments = table.pack(...),
+                        at = os.clock(),
+                    }
+                    inHook = false
                 end
+                return previous(self, ...)
             end)
+        end)
+        if not ok then
+            logger:Notify("could not install the hook")
+            return false
+        end
+        hooked = true
+        restore = function(): ()
+
+            local removed: boolean = pcall(hookMetamethod, game, "__namecall", previous)
+            if removed then
+                hooked = false
+                return
+            end
+
+            logger:Notify("hook stays until rejoin")
+        end
+        return true
+    end
+
+    local function drainQueue(): ()
+        if queued == 0 then
+            return
+        end
+        local pending: {any} = queue
+        queue = {}
+        local count: number = queued
+        queued = 0
+        for index: number = 1, count do
+            local item: any = pending[index]
+            if item then
+                pcall(function(): ()
+                    record(
+                        item.remote,
+                        item.method,
+                        table.unpack(item.arguments, 1, item.count)
+                    )
+                end)
+            end
+        end
+        logger:SetStatus(tostring(#order))
+    end
+
+    local function buildReport(): string
+        local lines: {string} = {
+            "-- " .. tostring(product.name) .. " remote log",
+            "-- place " .. tostring(game.PlaceId),
+            "-- " .. tostring(#order) .. " remotes",
+            "",
+        }
+        for _, key: string in ipairs(order) do
+            local entry: any = log[key]
+            table.insert(lines, string.rep("-", 70))
+            table.insert(lines, entry.path)
+            table.insert(
+                lines,
+                "  class "
+                    .. entry.class
+                    .. "  ·  "
+                    .. entry.method
+                    .. "  ·  "
+                    .. tostring(entry.calls)
+                    .. " calls"
+            )
+            table.insert(lines, "  args  " .. table.concat(entry.arguments, ", "))
+            table.insert(lines, snippetFor(entry))
+        end
+        return table.concat(lines, "\n")
+    end
+
+    local function saveReport(): ()
+        local environment: any = getfenv()
+        local writeFile: any = environment.writefile
+        local makeFolder: any = environment.makefolder
+        local isFolder: any = environment.isfolder
+        if type(writeFile) ~= "function" then
+            logger:Notify("executor has no writefile")
+            return
+        end
+        if type(makeFolder) == "function" and type(isFolder) == "function" then
+            if not isFolder(product.storageFolder) then
+                pcall(makeFolder, product.storageFolder)
+            end
+            if not isFolder(remoteLogFolder) then
+                pcall(makeFolder, remoteLogFolder)
+            end
         end
 
-        finishTrack = function(part: BasePart, reason: string): ()
-            local track: ProjectileTrack? = runtime.tracks[part]
-            if not track then
-                return
-            end
-            runtime.tracks[part] = nil
-            if track.destroyConnection then
-                track.destroyConnection:Disconnect()
-                track.destroyConnection = nil
-            end
-            local speed: number? = median(track.speeds)
-            if not speed or not finite(speed) or speed < 1 then
-                runtime.rejectedCandidates += 1
-                return
-            end
-            local acceleration: number? = median(track.accelerations)
-            local verticalAcceleration: number? = median(track.verticalAccelerations)
-            local bucketKey: string = pingBucketKey(track.pingMs)
-            local bucket: BucketRecord = ensureBucket(bucketKey)
-            bucket.count += 1
-            bucket.speedSum += speed
-            bucket.speedSquaredSum += speed * speed
-            bucket.delaySum += track.launchDelayMs
-            runtime.totalProjectiles += 1
-            appendEvent({
-                tool = track.toolName,
-                projectile = track.projectileName,
-                pingMs = track.pingMs,
-                pingBucket = bucketKey,
-                launchDelayMs = track.launchDelayMs,
-                medianSpeed = speed,
-                medianAcceleration = acceleration,
-                medianVerticalAcceleration = verticalAcceleration,
-                distanceStuds = track.distance,
-                durationSeconds = os.clock() - track.startedAt,
-                reason = reason,
-                samples = track.samples,
+        local stamp: string = tostring(math.round(os.time()))
+        local base: string = remoteLogFolder
+            .. "/"
+            .. tostring(game.PlaceId)
+            .. "-"
+            .. stamp
+
+        local wrote: boolean = pcall(writeFile, base .. ".txt", buildReport())
+
+        local payload: {any} = {}
+        for _, key: string in ipairs(order) do
+            local entry: any = log[key]
+            table.insert(payload, {
+                path = entry.path,
+                class = entry.class,
+                method = entry.method,
+                calls = entry.calls,
+                arguments = entry.arguments,
             })
         end
-
-        local function considerCandidate(instance: Instance): ()
-            if not runtime.enabled or #runtime.pending == 0 then
-                return
-            end
-            local part: BasePart? = resolveCandidate(instance)
-            if not part then
-                return
-            end
-            local now: number = os.clock()
-            compactPending(now)
-            if #runtime.pending == 0 then
-                return
-            end
-            local hinted: boolean = hasProjectileHint(part)
-            local speed: number = part.AssemblyLinearVelocity.Magnitude
-            if not hinted and speed < tuning.minProjectileSpeed then
-                return
-            end
-            local selectedIndex: number? = nil
-            local selectedScore: number = math.huge
-            for index: number = #runtime.pending, 1, -1 do
-                local pending: PendingActivation = runtime.pending[index]
-                if not part:IsDescendantOf(pending.tool) and pending.origin then
-                    local offset: Vector3 = part.Position - pending.origin
-                    local distance: number = offset.Magnitude
-                    if distance <= 40 then
-                        local alignmentPenalty: number = 0
-                        if pending.aim and distance > 0.01 then
-                            local desired: Vector3 = pending.aim - pending.origin
-                            if desired.Magnitude > 0.01 then
-                                local alignment: number = offset.Unit:Dot(desired.Unit)
-                                if alignment < 0.35 and not hinted then
-                                    continue
-                                end
-                                alignmentPenalty = (1 - alignment) * 0.25
-                            end
-                        end
-                        local score: number = now - pending.activatedAt
-                            + distance * 0.01
-                            + alignmentPenalty
-                            + (hinted and 0 or 0.2)
-                        if score < selectedScore then
-                            selectedScore = score
-                            selectedIndex = index
-                        end
-                    end
-                end
-            end
-            if not selectedIndex then
-                runtime.rejectedCandidates += 1
-                return
-            end
-            local pending: PendingActivation = table.remove(runtime.pending, selectedIndex)
-            runtime.observedCandidates[part] = true
-            local track: ProjectileTrack = {
-                instance = part,
-                toolName = pending.tool.Name,
-                projectileName = part:GetFullName(),
-                startedAt = now,
-                launchDelayMs = math.max(0, (now - pending.activatedAt) * 1000),
-                pingMs = pending.pingMs,
-                origin = pending.origin :: Vector3,
-                previousAt = now,
-                previousPosition = part.Position,
-                speeds = {},
-                accelerations = {},
-                verticalAccelerations = {},
-                samples = {},
-                distance = 0,
-                destroyConnection = nil,
-            }
-            runtime.tracks[part] = track
-            track.destroyConnection = part.Destroying:Connect(function(): ()
-                finishTrack(part, "destroyed")
-            end)
-            ensureSampler()
+        local encoded: boolean, json: any = pcall(function(): string
+            return httpService:JSONEncode(payload)
+        end)
+        if encoded then
+            pcall(writeFile, base .. ".json", json)
         end
-
-        local function observeTool(tool: Tool): ()
-            if runtime.observedTools[tool] then
-                return
-            end
-            runtime.observedTools[tool] = true
-            table.insert(runtime.connections, tool.Activated:Connect(function(): ()
-                if not runtime.enabled then
-                    return
-                end
-                local originPart: BasePart? = tool:FindFirstChild("Handle") :: BasePart?
-                local characterRoot: BasePart? = LocalPlayer.Character
-                    and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
-                    :: BasePart?
-                local origin: Vector3? = originPart and originPart:IsA("BasePart")
-                        and originPart.Position
-                    or characterRoot and characterRoot.Position
-                    or nil
-                if not origin then
-                    return
-                end
-                local aim: Vector3? = nil
-                pcall(function(): ()
-                    aim = mouse.Hit.Position
-                end)
-                runtime.totalActivations += 1
-                table.insert(runtime.pending, {
-                    tool = tool,
-                    activatedAt = os.clock(),
-                    origin = origin,
-                    aim = aim,
-                    pingMs = getPingMilliseconds(),
-                })
-                compactPending(os.clock())
-            end))
+        if wrote then
+            logger:Notify("saved " .. tostring(#order) .. " remotes")
+        else
+            logger:Notify("could not write the log")
         end
+    end
 
-        local function observeContainer(container: Instance?): ()
-            if not container then
-                return
-            end
-            for _, child: Instance in ipairs(container:GetChildren()) do
-                if child:IsA("Tool") then
-                    observeTool(child)
-                end
-            end
-            table.insert(runtime.connections, container.ChildAdded:Connect(function(
-                child: Instance
-            ): ()
-                if child:IsA("Tool") then
-                    observeTool(child)
-                end
-            end))
-        end
-
-        local function loadSavedAnalytics(): ()
-            if type(executorEnvironment.readfile) ~= "function" then
-                return
-            end
-            local okRead: boolean, rawData: any = pcall(
-                executorEnvironment.readfile,
-                outputPath
-            )
-            if not okRead or type(rawData) ~= "string" or #rawData < 10 then
-                return
-            end
-            local okDecode: boolean, decoded: any = pcall(function(): any
-                return HttpService:JSONDecode(rawData)
-            end)
-            if not okDecode or type(decoded) ~= "table" then
-                return
-            end
-            if type(decoded.summary) == "table" then
-                runtime.totalActivations = tonumber(decoded.summary.totalActivations)
-                    or tonumber(decoded.summary.activations)
-                    or 0
-                runtime.totalProjectiles = tonumber(decoded.summary.totalProjectiles)
-                    or tonumber(decoded.summary.projectiles)
-                    or 0
-                runtime.rejectedCandidates = tonumber(decoded.summary.rejectedCandidates) or 0
-            end
-            if type(decoded.pingBuckets) == "table" then
-                for key: string, bData: any in pairs(decoded.pingBuckets) do
-                    if type(bData) == "table" then
-                        local c: number = tonumber(bData.count) or 0
-                        local speed: number = tonumber(bData.meanSpeed) or 0
-                        local delay: number = tonumber(bData.meanLaunchDelayMs) or 0
-                        if c > 0 then
-                            local bucket: BucketRecord = ensureBucket(key)
-                            bucket.count = c
-                            bucket.speedSum = speed * c
-                            bucket.speedSquaredSum = (speed * speed) * c
-                            bucket.delaySum = delay * c
-                        end
-                    end
-                end
-            end
-            if type(decoded.projectiles) == "table" then
-                runtime.events = {}
-                for _, p: any in ipairs(decoded.projectiles) do
-                    table.insert(runtime.events, p)
-                end
-            end
-        end
-
-        controller = {} :: Controller
-        controller.tuning = tuning
-
-        function controller:setEnabled(enabled: boolean): ()
-            if runtime.enabled == enabled then
-                return
-            end
+    logger = framework.Categories.Other:CreateModule({
+        Name = "Remote Logger",
+        Category = "Other",
+        Order = 2,
+        Tooltip = "Records the arguments the game sends to its own remotes and "
+            .. "writes them to disk.",
+        Function = function(enabled: boolean): ()
+            capturing = enabled
             if not enabled then
-                runtime.enabled = false
-                disconnectAll()
+                logger:SetStatus(nil)
                 return
             end
-            runtime.enabled = true
-            runtime.startedAt = os.clock()
-            loadSavedAnalytics()
-            observeContainer(LocalPlayer:FindFirstChildOfClass("Backpack"))
-            observeContainer(LocalPlayer.Character)
-            table.insert(runtime.connections, LocalPlayer.CharacterAdded:Connect(function(
-                character: Model
-            ): ()
-                observeContainer(character)
-            end))
-            table.insert(runtime.connections, workspace.DescendantAdded:Connect(
-                considerCandidate
-            ))
-        end
-
-        function controller:save(reason: string?): boolean
-            return saveSnapshot(reason or "manual")
-        end
-
-        function controller:delete(): boolean
-            runtime.events = {}
-            runtime.buckets = {}
-            runtime.totalActivations = 0
-            runtime.totalProjectiles = 0
-            runtime.rejectedCandidates = 0
-            runtime.dirty = false
-            local deleteFile: any = executorEnvironment.delfile
-            local okDelete: boolean = false
-            if type(deleteFile) == "function" then
-                okDelete = pcall(deleteFile, outputPath)
-            elseif type(executorEnvironment.writefile) == "function" then
-                okDelete = pcall(executorEnvironment.writefile, outputPath, "{}")
+            logger:SetStatus(tostring(#order))
+            if not installHook() then
+                capturing = false
+                return
             end
-            return okDelete
-        end
+            logger:Loop(drainQueue)
+            logger:Clean(function(): ()
+                capturing = false
+                queue = {}
+                queued = 0
+                if restore then
+                    (restore :: () -> ())()
+                    restore = nil
+                end
+            end)
+        end,
+    })
 
-        function controller:status(): string
-            return string.format(
-                "Universal · activations %d · projectiles %d · buckets %d",
-                runtime.totalActivations,
-                runtime.totalProjectiles,
-                (function(): number
-                    local count: number = 0
-                    for _key: string in pairs(runtime.buckets) do
-                        count += 1
-                    end
-                    return count
-                end)()
-            )
-        end
+    logger:CreateTextBox({
+        Name = "Only containing",
+        Default = "",
+        Tooltip = "Record only remotes whose path contains this. Leave empty "
+            .. "for everything.",
+    })
+    logger:CreateSlider({
+        Name = "Max remotes",
+        Min = 10,
+        Max = 400,
+        Default = 120,
+        Tooltip = "Stops the log growing without bound in a chatty game.",
+    })
+    logger:CreateToggle({
+        Name = "Announce new",
+        Default = false,
+        Tooltip = "Toast the first time each remote is seen.",
+    })
+    logger:CreateToggle({
+        Name = "Resample always",
+        Default = false,
+        Tooltip = "Describe the arguments of every call instead of the first "
+            .. "few. Useful for a remote whose shape changes; heavier.",
+    })
 
-        function controller:destroy(): ()
-            self:setEnabled(false)
-        end
-
-        return controller
-    end)()
-
-    local calibration: any = controllerFactory
-    calibrationService.set(calibration)
-    activeRegistry = calibrationService
-    calibration:setEnabled(true)
-
-    local tuning: any = calibration.tuning
-
-    local ProjectileCalibrationFeature: any = createUniversalFeature(
-        "Projectile Calibration",
-        "Automatic per-game projectile analytics with tunable ping buckets",
-        17,
-        function(_enabled: boolean): () end,
-        {category = true, categoryName = "Other"}
-    )
-    tuning =
-        calibration.tuning
-    addNumberOption(
-        ProjectileCalibrationFeature,
-        "Bucket width (ms)",
-        tuning.bucketWidthMs,
-        1,
-        25,
-        function(value: number): ()
-            tuning.bucketWidthMs = math.round(value)
-        end
-    )
-    addNumberOption(
-        ProjectileCalibrationFeature,
-        "Bucket ceiling (ms)",
-        tuning.maxBucketMs,
-        25,
-        500,
-        function(value: number): ()
-            tuning.maxBucketMs = math.round(value)
-        end
-    )
-    addNumberOption(
-        ProjectileCalibrationFeature,
-        "Sample window (s)",
-        tuning.sampleWindowSeconds,
-        1,
-        6,
-        function(value: number): ()
-            tuning.sampleWindowSeconds = value
-        end
-    )
-    addNumberOption(
-        ProjectileCalibrationFeature,
-        "Max samples / track",
-        tuning.maxSamplesPerTrack,
-        30,
-        600,
-        function(value: number): ()
-            tuning.maxSamplesPerTrack = math.round(value)
-        end
-    )
-    addNumberOption(
-        ProjectileCalibrationFeature,
-        "Match radius (studs)",
-        tuning.matchDistanceStuds,
-        10,
-        120,
-        function(value: number): ()
-            tuning.matchDistanceStuds = math.round(value)
-        end
-    )
-    addNumberOption(
-        ProjectileCalibrationFeature,
-        "Min projectile speed",
-        tuning.minProjectileSpeed,
-        1,
-        100,
-        function(value: number): ()
-            tuning.minProjectileSpeed = math.round(value)
-        end
-    )
-    addActionOption(ProjectileCalibrationFeature, "Show status", function(): ()
-        notify(calibration:status())
-    end)
-    addActionOption(ProjectileCalibrationFeature, "Save analytics", function(): ()
-        if calibration:save("manual") then
-            notify("analytics saved")
-        else
-            notify("save failed; check F9")
-        end
-    end)
-    addActionOption(ProjectileCalibrationFeature, "Clear History", function(): ()
-        if calibration:delete() then
-            notify("calibration history cleared")
-        else
-            notify("clear history failed; check F9")
-        end
-    end)
-    addInformationOption(
-        ProjectileCalibrationFeature,
-        "Runs automatically. Save writes the current session; Delete clears it. MM2 prediction never consumes this dataset."
+    logger:CreateButton({
+        Name = "Save to file",
+        Tooltip = "Writes " .. remoteLogFolder .. "/<place>-<time>.txt and .json",
+        Function = saveReport,
+    })
+    logger:CreateButton({
+        Name = "Copy to clipboard",
+        Function = function(): ()
+            local environment: any = getfenv()
+            local copy: any = environment.setclipboard or environment.toclipboard
+            if type(copy) ~= "function" then
+                logger:Notify("executor has no clipboard")
+                return
+            end
+            pcall(copy, buildReport())
+            logger:Notify("copied")
+        end,
+    })
+    logger:CreateButton({
+        Name = "Clear log",
+        Function = function(): ()
+            log = {}
+            order = {}
+            if logger.Enabled then
+                logger:SetStatus("0")
+            end
+            logger:Notify("cleared")
+        end,
+    })
+    logger:CreateNote(
+        "Turn it on, do the thing you want a module to do — buy, mine, place, "
+            .. "hit — then save. The log records what only a live game can "
+            .. "tell you: the arguments, in order, as the game really sent "
+            .. "them. It watches; it never blocks, delays or alters a call."
     )
 
-    activeController = calibration
+    Module.entries = function(): {any}
+        local list: {any} = {}
+        for _, key: string in ipairs(order) do
+            table.insert(list, log[key])
+        end
+        return list
+    end
+    Module.report = buildReport
+
+    activeCleanup = function(): ()
+        capturing = false
+        if restore then
+            (restore :: () -> ())()
+            restore = nil
+        end
+        Module.entries = nil
+        Module.report = nil
+    end
     Module.Initialized = true
-    return calibration
+    return logger
 end
 
 function Module.destroy(): ()
-    if activeController and type(activeController.destroy) == "function" then
-        pcall(function(): ()
-            activeController:destroy()
-        end)
+    if activeCleanup then
+        pcall(activeCleanup)
     end
-    activeController = nil
-    if activeRegistry then
-        activeRegistry.set(nil)
-    end
-    activeRegistry = nil
+    activeCleanup = nil
     Module.Initialized = false
 end
 
 return Module
 
 ]=],
-        ["src/games/universal/Utility/GameLearning.lua"] = [=[
+        ["src/games/universal/Other/Learning.lua"] = [=[
+export type Runtime = {
+    framework: any,
+    host: any,
+    services: any,
+}
+
+local Module = {
+    Name = "Learning",
+    PlaceId = 0,
+    Events = {} :: {[string]: any},
+    Initialized = false,
+}
+
+local activeCard: any = nil
+
+function Module.init(context: Runtime): any
+    local framework: any = context.framework
+    local host: any = context.host
+    local services: any = context.services
+    local captureService: any = services and services.screenCapture
+    local product: any = host.PRODUCT or {}
+    local httpService: any = host.HttpService
+    local currentWorkspace: Workspace = host.workspace or workspace
+    local sampleNumber: number = 0
+    local card: any
+
+    local function writeMetadata(path: string, payload: any): boolean
+        if not captureService or type(captureService.writeText) ~= "function" then
+            return false
+        end
+        local ok: boolean, encoded: any = pcall(function(): string
+            return httpService:JSONEncode(payload)
+        end)
+        if not ok or type(encoded) ~= "string" then
+            return false
+        end
+        return captureService.writeText(path, encoded) == true
+    end
+
+    local function captureSample(): ()
+        if not captureService or type(captureService.isAvailable) ~= "function"
+            or not captureService.isAvailable() then
+            card:Notify("screenshot API unavailable")
+            card:SetStatus("unavailable")
+            return
+        end
+        if type(captureService.capture) ~= "function"
+            or type(captureService.writeText) ~= "function" then
+            card:Notify("screen capture service incomplete")
+            card:SetStatus("unavailable")
+            return
+        end
+
+        sampleNumber += 1
+        local folder: string = tostring(product.storageFolder or "Wurst")
+            .. "/Learning"
+        local stamp: string = tostring(os.time())
+        local base: string = folder
+            .. "/"
+            .. tostring(game.PlaceId)
+            .. "-"
+            .. stamp
+            .. "-"
+            .. tostring(sampleNumber)
+        local imagePath: string = base .. ".png"
+        local metadataPath: string = base .. ".json"
+        local captured: boolean, reason: any = captureService.capture(imagePath)
+        if not captured then
+            card:Notify(tostring(reason or "screen capture failed"))
+            card:SetStatus("failed")
+            return
+        end
+
+        local camera: Camera? = currentWorkspace.CurrentCamera
+        local viewport: Vector2 = camera
+            and camera.ViewportSize
+            or Vector2.new(0, 0)
+        local payload: {[string]: any} = {
+            schema = 1,
+            kind = "learning-screen-sample",
+            image = imagePath,
+            capturedAt = os.time(),
+            placeId = game.PlaceId,
+            viewport = {width = viewport.X, height = viewport.Y},
+            source = "manual Capture now action",
+            menuVisible = services.menu.isVisible(),
+        }
+        local wrote: boolean = writeMetadata(metadataPath, payload)
+        if not wrote then
+            card:Notify("image saved; metadata could not be written")
+            card:SetStatus("image saved")
+            return
+        end
+        card:SetStatus("saved " .. tostring(sampleNumber))
+        card:Notify("saved learning sample " .. tostring(sampleNumber))
+    end
+
+    card = framework.Categories.Other:CreateModule({
+        Name = "Learning",
+        Category = "Other",
+        ConfigKey = "Universal.Learning",
+        Kind = "group",
+        Order = 26,
+        Tooltip = "Save a manual local screenshot and a small metadata sidecar.",
+        Function = function(_enabled: boolean): ()
+
+        end,
+    })
+    card:CreateButton({
+        Name = "Capture now",
+        Tooltip = "Save one screenshot locally; no upload or background capture.",
+        Function = captureSample,
+    })
+    card:CreateNote(
+        "Manual and local only. Standard Roblox Luau has no screenshot API."
+    )
+
+    activeCard = card
+    Module.Initialized = true
+    return card
+end
+
+function Module.destroy(): ()
+    if activeCard and activeCard.Enabled then
+        activeCard:Toggle(false)
+    end
+    activeCard = nil
+    Module.Initialized = false
+end
+
+return Module
+
+]=],
+        ["src/games/universal/Other/GameLearning.lua"] = [=[
 export type Runtime = {
     framework: any,
     entity: any,
@@ -24734,151 +26738,817 @@ end
 return Module
 
 ]=],
-        ["src/games/universal/Utility/SpinBot.lua"] = [=[
+        ["src/games/universal/Render/ProjectileCalibration.lua"] = [=[
 export type Runtime = {
     framework: any,
+    entity: any,
     host: any,
     services: any,
 }
 
 local Module = {
-    Name = "SpinBot",
+    Name = "ProjectileCalibration",
     PlaceId = 0,
     Events = {} :: {[string]: any},
     Initialized = false,
 }
 
-local activeCard: any = nil
+local activeController: any = nil
+local activeRegistry: any = nil
 
 function Module.init(context: Runtime): any
-    local framework: any = context.framework
-    local getCharacterParts: any = context.host.getCharacterParts
-    local baselines: any = setmetatable({}, {__mode = "k"})
-    local currentRoot: BasePart? = nil
+    local host: any = context.host
+    local calibrationService: any = context.services.projectileCalibration
+    local product: any = host.PRODUCT
+    local notify: any = host.notify
+    local createUniversalFeature: any = host.createUniversalFeature
+    local addNumberOption: any = host.addNumberOption
+    local addActionOption: any = host.addActionOption
+    local addInformationOption: any = host.addInformationOption
+    local TaskManager: any = host.TaskManager
+    local LocalPlayer: any = host.LocalPlayer
+    local HttpService: any = host.HttpService
+    local Stats: any = host.Stats
 
-    local function restoreRoot(root: BasePart): ()
-        local baseline: any = baselines[root]
-        if not baseline then
-            return
-        end
-        if root.Parent then
-            root.AssemblyAngularVelocity = baseline.angularVelocity
-            if baseline.cframeTouched then
-                root.CFrame = CFrame.new(root.Position)
-                    * (baseline.cframe - baseline.cframe.Position)
-            end
-            local humanoid: Humanoid? = root.Parent:FindFirstChildOfClass("Humanoid")
-            if humanoid then
-                humanoid.AutoRotate = baseline.autoRotate
-            end
-        end
-        baselines[root] = nil
-    end
+    local controllerFactory = (function(): any
+        type PendingActivation = {
+            tool: Tool,
+            activatedAt: number,
+            origin: Vector3?,
+            aim: Vector3?,
+            pingMs: number,
+        }
+        type ProjectileSample = {
+            t: number,
+            position: {number},
+            velocity: {number},
+            speed: number,
+        }
+        type ProjectileTrack = {
+            instance: BasePart,
+            toolName: string,
+            projectileName: string,
+            startedAt: number,
+            launchDelayMs: number,
+            pingMs: number,
+            origin: Vector3,
+            previousAt: number?,
+            previousPosition: Vector3?,
+            speeds: {number},
+            accelerations: {number},
+            verticalAccelerations: {number},
+            samples: {ProjectileSample},
+            distance: number,
+            destroyConnection: RBXScriptConnection?,
+        }
+        type BucketRecord = {
+            count: number,
+            speedSum: number,
+            speedSquaredSum: number,
+            delaySum: number,
+        }
+        type Controller = {
+            setEnabled: (self: Controller, enabled: boolean) -> (),
+            save: (self: Controller, reason: string?) -> boolean,
+            delete: (self: Controller) -> boolean,
+            status: (self: Controller) -> string,
+            destroy: (self: Controller) -> (),
+            tuning: {[string]: number},
+        }
 
-    local function restore(): ()
-        for root: BasePart in pairs(baselines) do
-            restoreRoot(root)
-        end
-        currentRoot = nil
-        baselines = setmetatable({}, {__mode = "k"})
-    end
+        local tuning: {[string]: number} = {
+            bucketWidthMs = 5,
+            maxBucketMs = 250,
+            sampleWindowSeconds = 2.5,
+            maxSamplesPerTrack = 150,
+            minProjectileSpeed = 10,
+            matchDistanceStuds = 40,
+            maxPendingActivations = 10,
+            candidateLifetimeSeconds = 1.1,
+        }
 
-    local card: any
-    card = framework.Categories.Fun:CreateModule({
-        Name = "SpinBot",
-        Category = "Fun",
-        ConfigKey = "Universal.SpinBot",
-        Order = 40,
-        Tooltip = "Rotates your character continuously around the selected axis.",
-        Function = function(enabled: boolean): ()
-            if not enabled then
-                restore()
-                card:SetStatus(nil)
-                return
+        local executorEnvironment: {[string]: any} = getfenv() :: any
+        local mouse: Mouse = LocalPlayer:GetMouse()
+        local outputRoot: string = product.storageFolder
+        local outputTelemetry: string = outputRoot .. "/Telemetry"
+        local outputFolder: string = outputTelemetry .. "/Universal"
+        local outputPath: string = outputFolder
+            .. "/Place_"
+            .. tostring(game.PlaceId)
+            .. "_Projectile_Calibration.json"
+        local runtime: any = {
+            enabled = false,
+            dirty = false,
+            startedAt = os.clock(),
+            pending = {} :: {PendingActivation},
+            tracks = {} :: {[BasePart]: ProjectileTrack},
+            events = {} :: {{[string]: any}},
+            buckets = {} :: {[string]: BucketRecord},
+            connections = {} :: {RBXScriptConnection},
+            observedTools = setmetatable({}, {__mode = "k"}) :: {[Tool]: boolean},
+            observedCandidates = setmetatable({}, {__mode = "k"}) :: {[BasePart]: boolean},
+            sampler = nil :: any,
+            totalActivations = 0,
+            totalProjectiles = 0,
+            rejectedCandidates = 0,
+        }
+        local controller: Controller
+        local saveSnapshot: (reason: string) -> boolean
+        local finishTrack: (part: BasePart, reason: string) -> ()
+
+        local function finite(value: number): boolean
+            return value == value and value > -math.huge and value < math.huge
+        end
+
+        local function vectorArray(value: Vector3): {number}
+            return {value.X, value.Y, value.Z}
+        end
+
+        local function median(values: {number}): number?
+            if #values == 0 then
+                return nil
             end
-            card:SetStatus(card.Options["Mode"].Value)
-            card:Loop(function(deltaTime: number): ()
-                local _character: Model?, humanoid: Humanoid?, root: BasePart? =
-                    getCharacterParts()
-                if not humanoid or not root or humanoid.Health <= 0 then
-                    if currentRoot then
-                        restoreRoot(currentRoot :: BasePart)
-                        currentRoot = nil
-                    end
-                    return
-                end
-                if currentRoot and currentRoot ~= root then
-                    restoreRoot(currentRoot :: BasePart)
-                end
-                currentRoot = root
-                if not baselines[root] then
-                    baselines[root] = {
-                        angularVelocity = root.AssemblyAngularVelocity,
-                        autoRotate = humanoid.AutoRotate,
-                        cframe = root.CFrame,
-                        cframeTouched = false,
-                    }
-                end
-                humanoid.AutoRotate = false
-                local speed: number = card.Options["Speed"].Value
-                local axisName: string = card.Options["Axis"].Value
-                local axis: Vector3 = axisName == "X" and Vector3.new(1, 0, 0)
-                    or axisName == "Z" and Vector3.new(0, 0, 1)
-                    or Vector3.new(0, 1, 0)
-                if card.Options["Mode"].Value == "Velocity" then
-                    root.AssemblyAngularVelocity = axis * math.rad(speed)
-                else
-                    root.AssemblyAngularVelocity = Vector3.zero
-                    baselines[root].cframeTouched = true
-                    local angle: number = math.rad(speed) * deltaTime
-                    local rotation: CFrame = axisName == "X" and CFrame.Angles(angle, 0, 0)
-                        or axisName == "Z" and CFrame.Angles(0, 0, angle)
-                        or CFrame.Angles(0, angle, 0)
-                    root.CFrame = root.CFrame * rotation
+            local sorted: {number} = table.clone(values)
+            table.sort(sorted)
+            local middle: number = math.floor((#sorted + 1) / 2)
+            if #sorted % 2 == 1 then
+                return sorted[middle]
+            end
+            return (sorted[middle] + sorted[middle + 1]) * 0.5
+        end
+
+        local function pingBucketKey(pingMs: number): string
+            local width: number = math.max(1, tuning.bucketWidthMs)
+            local ceiling: number = math.max(width, tuning.maxBucketMs)
+            if pingMs > ceiling then
+                return tostring(ceiling) .. "+"
+            end
+            local lower: number = math.clamp(
+                math.floor(pingMs / width) * width,
+                0,
+                math.max(0, ceiling - width)
+            )
+            local upper: number = lower + width
+            return string.format("%03d-%03d", lower, upper)
+        end
+
+        local function ensureBucket(key: string): BucketRecord
+            local existing: BucketRecord? = runtime.buckets[key]
+            if existing then
+                return existing
+            end
+            local created: BucketRecord = {
+                count = 0,
+                speedSum = 0,
+                speedSquaredSum = 0,
+                delaySum = 0,
+            }
+            runtime.buckets[key] = created
+            return created
+        end
+
+        local function bucketPayload(): {[string]: any}
+            local payload: {[string]: any} = {}
+            for key: string, bucket: BucketRecord in pairs(runtime.buckets) do
+                local meanSpeed: number = bucket.count > 0
+                        and bucket.speedSum / bucket.count
+                    or 0
+                local variance: number = bucket.count > 1
+                        and math.max(
+                            0,
+                            bucket.speedSquaredSum / bucket.count
+                                - meanSpeed * meanSpeed
+                        )
+                    or 0
+                payload[key] = {
+                    count = bucket.count,
+                    meanSpeed = meanSpeed,
+                    speedStdDev = math.sqrt(variance),
+                    meanLaunchDelayMs = bucket.count > 0
+                            and bucket.delaySum / bucket.count
+                        or 0,
+                }
+            end
+            return payload
+        end
+
+        local function getPingMilliseconds(): number
+            local pingMs: number = 0
+            pcall(function(): ()
+                local network: Instance? = Stats:FindFirstChild("Network")
+                local serverItems: Instance? = network
+                    and network:FindFirstChild("ServerStatsItem")
+                local pingItem: any = serverItems
+                    and serverItems:FindFirstChild("Data Ping")
+                if pingItem and type(pingItem.GetValue) == "function" then
+                    pingMs = tonumber(pingItem:GetValue()) or 0
                 end
             end)
-            card:Clean(restore)
-        end,
-    })
+            return math.max(0, pingMs)
+        end
 
-    card:CreateDropdown({
-        Name = "Mode",
-        List = {"CFrame", "Velocity"},
-        Index = 1,
-        Tooltip = "CFrame turns the root directly. Velocity asks the physics "
-            .. "engine to spin the assembly, which a server that owns your "
-            .. "character can clamp.",
-        Function = function(value: string): ()
-            if card then
-                card:SetStatus(value)
+        local function appendEvent(event: {[string]: any}): ()
+            if #runtime.events >= 180 then
+                table.remove(runtime.events, 1)
             end
-        end,
-    })
-    card:CreateDropdown({
-        Name = "Axis",
-        List = {"Y", "X", "Z"},
-        Index = 1,
-        Tooltip = "Y turns you in place. X and Z tumble.",
-    })
-    card:CreateSlider({
-        Name = "Speed",
-        Min = 30,
-        Max = 1440,
-        Step = 15,
-        Default = 360,
-        Tooltip = "Degrees per second. 360 is one turn a second.",
-    })
+            table.insert(runtime.events, event)
+            runtime.dirty = true
+        end
 
-    activeCard = card
+        saveSnapshot = function(reason: string): boolean
+            if type(executorEnvironment.writefile) ~= "function" then
+                return false
+            end
+            local payload: {[string]: any} = {
+                schema = 1,
+                kind = "universal-projectile-analytics",
+                placeId = game.PlaceId,
+                gameId = game.GameId,
+                savedAt = DateTime.now():ToIsoDate(),
+                reason = reason,
+                bucketSpec = {
+                    metric = "Data Ping",
+                    widthMs = tuning.bucketWidthMs,
+                    minimumMs = 0,
+                    maximumMs = tuning.maxBucketMs,
+                    overflow = tostring(tuning.maxBucketMs) .. "+",
+                },
+                summary = {
+                    activations = runtime.totalActivations,
+                    projectiles = runtime.totalProjectiles,
+                    rejectedCandidates = runtime.rejectedCandidates,
+                    elapsedSeconds = os.clock() - runtime.startedAt,
+                },
+                pingBuckets = bucketPayload(),
+                projectiles = runtime.events,
+            }
+            local encodedOk: boolean, encoded: any = pcall(
+                HttpService.JSONEncode,
+                HttpService,
+                payload
+            )
+            if not encodedOk or type(encoded) ~= "string" then
+                return false
+            end
+            if type(executorEnvironment.makefolder) == "function" then
+                pcall(executorEnvironment.makefolder, outputRoot)
+                pcall(executorEnvironment.makefolder, outputTelemetry)
+                pcall(executorEnvironment.makefolder, outputFolder)
+            end
+            local writeOk: boolean = pcall(
+                executorEnvironment.writefile,
+                outputPath,
+                encoded
+            )
+            if not writeOk then
+                return false
+            end
+            runtime.dirty = false
+            return true
+        end
+
+        local function disconnectAll(): ()
+            if runtime.sampler then
+                runtime.sampler:Disconnect()
+                runtime.sampler = nil
+            end
+            for _, connection: RBXScriptConnection in ipairs(runtime.connections) do
+                connection:Disconnect()
+            end
+            table.clear(runtime.connections)
+            for part: BasePart, track: ProjectileTrack in pairs(runtime.tracks) do
+                if track.destroyConnection then
+                    track.destroyConnection:Disconnect()
+                end
+                runtime.tracks[part] = nil
+            end
+            table.clear(runtime.pending)
+            runtime.observedTools = setmetatable({}, {__mode = "k"})
+            runtime.observedCandidates = setmetatable({}, {__mode = "k"})
+        end
+
+        local function compactPending(now: number): ()
+            while #runtime.pending > 0
+                and now - runtime.pending[1].activatedAt
+                    > tuning.candidateLifetimeSeconds do
+                table.remove(runtime.pending, 1)
+            end
+            while #runtime.pending > tuning.maxPendingActivations do
+                table.remove(runtime.pending, 1)
+            end
+        end
+
+        local function isCharacterPart(part: BasePart): boolean
+            local model: Model? = part:FindFirstAncestorOfClass("Model")
+            return model ~= nil and model:FindFirstChildOfClass("Humanoid") ~= nil
+        end
+
+        local function hasProjectileHint(part: BasePart): boolean
+            local name: string = string.lower(part.Name)
+            local parentName: string = part.Parent and string.lower(part.Parent.Name) or ""
+            local combined: string = name .. " " .. parentName
+            return string.find(combined, "projectile", 1, true) ~= nil
+                or string.find(combined, "bullet", 1, true) ~= nil
+                or string.find(combined, "arrow", 1, true) ~= nil
+                or string.find(combined, "rocket", 1, true) ~= nil
+                or string.find(combined, "missile", 1, true) ~= nil
+                or string.find(combined, "knife", 1, true) ~= nil
+                or string.find(combined, "grenade", 1, true) ~= nil
+                or string.find(combined, "shell", 1, true) ~= nil
+                or string.find(combined, "bolt", 1, true) ~= nil
+                or string.find(combined, "orb", 1, true) ~= nil
+                or part:GetAttribute("Projectile") == true
+                or part:GetAttribute("ProjectileSpeed") ~= nil
+                or part:GetAttribute("ThrowSpeed") ~= nil
+        end
+
+        local function resolveCandidate(instance: Instance): BasePart?
+            if not instance:IsA("BasePart") then
+                return nil
+            end
+            local part: BasePart = instance
+            if part.Anchored
+                or isCharacterPart(part)
+                or (LocalPlayer.Character and part:IsDescendantOf(LocalPlayer.Character)) then
+                return nil
+            end
+            local root: BasePart = part.AssemblyRootPart or part
+            if runtime.observedCandidates[root] or isCharacterPart(root) then
+                return nil
+            end
+            return root
+        end
+
+        local function ensureSampler(): ()
+            if runtime.sampler then
+                return
+            end
+            runtime.sampler = TaskManager:Connect(function(_deltaTime: number): ()
+                local now: number = os.clock()
+                local completed: {BasePart} = {}
+                for part: BasePart, track: ProjectileTrack in pairs(runtime.tracks) do
+                    if not part.Parent
+                        or now - track.startedAt >= tuning.sampleWindowSeconds then
+                        table.insert(completed, part)
+                        continue
+                    end
+                    local position: Vector3 = part.Position
+                    local velocity: Vector3 = part.AssemblyLinearVelocity
+                    local speed: number = velocity.Magnitude
+                    if track.previousPosition and track.previousAt then
+                        local deltaTime: number = now - track.previousAt
+                        if deltaTime >= 1 / 240 then
+                            local measuredVelocity: Vector3 =
+                                (position - track.previousPosition) / deltaTime
+                            local measuredSpeed: number = measuredVelocity.Magnitude
+                            if measuredSpeed >= 1 and measuredSpeed <= 5000 then
+                                table.insert(track.speeds, measuredSpeed)
+                                if #track.samples > 0 then
+                                    local previousSample: ProjectileSample =
+                                        track.samples[#track.samples]
+                                    local previousVelocity: Vector3 = Vector3.new(
+                                        previousSample.velocity[1],
+                                        previousSample.velocity[2],
+                                        previousSample.velocity[3]
+                                    )
+                                    local acceleration: Vector3 =
+                                        (measuredVelocity - previousVelocity) / deltaTime
+                                    if acceleration.Magnitude <= 10000 then
+                                        table.insert(track.accelerations, acceleration.Magnitude)
+                                        table.insert(track.verticalAccelerations, acceleration.Y)
+                                    end
+                                end
+                            end
+                            track.distance += (position - track.previousPosition).Magnitude
+                        end
+                    end
+                    if #track.samples < tuning.maxSamplesPerTrack then
+                        table.insert(track.samples, {
+                            t = now - track.startedAt,
+                            position = vectorArray(position),
+                            velocity = vectorArray(velocity),
+                            speed = speed,
+                        })
+                    end
+                    track.previousPosition = position
+                    track.previousAt = now
+                end
+                for _, part: BasePart in ipairs(completed) do
+                    finishTrack(part, "sample-window-complete")
+                end
+                if next(runtime.tracks) == nil and runtime.sampler then
+                    runtime.sampler:Disconnect()
+                    runtime.sampler = nil
+                end
+            end)
+        end
+
+        finishTrack = function(part: BasePart, reason: string): ()
+            local track: ProjectileTrack? = runtime.tracks[part]
+            if not track then
+                return
+            end
+            runtime.tracks[part] = nil
+            if track.destroyConnection then
+                track.destroyConnection:Disconnect()
+                track.destroyConnection = nil
+            end
+            local speed: number? = median(track.speeds)
+            if not speed or not finite(speed) or speed < 1 then
+                runtime.rejectedCandidates += 1
+                return
+            end
+            local acceleration: number? = median(track.accelerations)
+            local verticalAcceleration: number? = median(track.verticalAccelerations)
+            local bucketKey: string = pingBucketKey(track.pingMs)
+            local bucket: BucketRecord = ensureBucket(bucketKey)
+            bucket.count += 1
+            bucket.speedSum += speed
+            bucket.speedSquaredSum += speed * speed
+            bucket.delaySum += track.launchDelayMs
+            runtime.totalProjectiles += 1
+            appendEvent({
+                tool = track.toolName,
+                projectile = track.projectileName,
+                pingMs = track.pingMs,
+                pingBucket = bucketKey,
+                launchDelayMs = track.launchDelayMs,
+                medianSpeed = speed,
+                medianAcceleration = acceleration,
+                medianVerticalAcceleration = verticalAcceleration,
+                distanceStuds = track.distance,
+                durationSeconds = os.clock() - track.startedAt,
+                reason = reason,
+                samples = track.samples,
+            })
+        end
+
+        local function considerCandidate(instance: Instance): ()
+            if not runtime.enabled or #runtime.pending == 0 then
+                return
+            end
+            local part: BasePart? = resolveCandidate(instance)
+            if not part then
+                return
+            end
+            local now: number = os.clock()
+            compactPending(now)
+            if #runtime.pending == 0 then
+                return
+            end
+            local hinted: boolean = hasProjectileHint(part)
+            local speed: number = part.AssemblyLinearVelocity.Magnitude
+            if not hinted and speed < tuning.minProjectileSpeed then
+                return
+            end
+            local selectedIndex: number? = nil
+            local selectedScore: number = math.huge
+            for index: number = #runtime.pending, 1, -1 do
+                local pending: PendingActivation = runtime.pending[index]
+                if not part:IsDescendantOf(pending.tool) and pending.origin then
+                    local offset: Vector3 = part.Position - pending.origin
+                    local distance: number = offset.Magnitude
+                    if distance <= 40 then
+                        local alignmentPenalty: number = 0
+                        if pending.aim and distance > 0.01 then
+                            local desired: Vector3 = pending.aim - pending.origin
+                            if desired.Magnitude > 0.01 then
+                                local alignment: number = offset.Unit:Dot(desired.Unit)
+                                if alignment < 0.35 and not hinted then
+                                    continue
+                                end
+                                alignmentPenalty = (1 - alignment) * 0.25
+                            end
+                        end
+                        local score: number = now - pending.activatedAt
+                            + distance * 0.01
+                            + alignmentPenalty
+                            + (hinted and 0 or 0.2)
+                        if score < selectedScore then
+                            selectedScore = score
+                            selectedIndex = index
+                        end
+                    end
+                end
+            end
+            if not selectedIndex then
+                runtime.rejectedCandidates += 1
+                return
+            end
+            local pending: PendingActivation = table.remove(runtime.pending, selectedIndex)
+            runtime.observedCandidates[part] = true
+            local track: ProjectileTrack = {
+                instance = part,
+                toolName = pending.tool.Name,
+                projectileName = part:GetFullName(),
+                startedAt = now,
+                launchDelayMs = math.max(0, (now - pending.activatedAt) * 1000),
+                pingMs = pending.pingMs,
+                origin = pending.origin :: Vector3,
+                previousAt = now,
+                previousPosition = part.Position,
+                speeds = {},
+                accelerations = {},
+                verticalAccelerations = {},
+                samples = {},
+                distance = 0,
+                destroyConnection = nil,
+            }
+            runtime.tracks[part] = track
+            track.destroyConnection = part.Destroying:Connect(function(): ()
+                finishTrack(part, "destroyed")
+            end)
+            ensureSampler()
+        end
+
+        local function observeTool(tool: Tool): ()
+            if runtime.observedTools[tool] then
+                return
+            end
+            runtime.observedTools[tool] = true
+            table.insert(runtime.connections, tool.Activated:Connect(function(): ()
+                if not runtime.enabled then
+                    return
+                end
+                local originPart: BasePart? = tool:FindFirstChild("Handle") :: BasePart?
+                local characterRoot: BasePart? = LocalPlayer.Character
+                    and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+                    :: BasePart?
+                local origin: Vector3? = originPart and originPart:IsA("BasePart")
+                        and originPart.Position
+                    or characterRoot and characterRoot.Position
+                    or nil
+                if not origin then
+                    return
+                end
+                local aim: Vector3? = nil
+                pcall(function(): ()
+                    aim = mouse.Hit.Position
+                end)
+                runtime.totalActivations += 1
+                table.insert(runtime.pending, {
+                    tool = tool,
+                    activatedAt = os.clock(),
+                    origin = origin,
+                    aim = aim,
+                    pingMs = getPingMilliseconds(),
+                })
+                compactPending(os.clock())
+            end))
+        end
+
+        local function observeContainer(container: Instance?): ()
+            if not container then
+                return
+            end
+            for _, child: Instance in ipairs(container:GetChildren()) do
+                if child:IsA("Tool") then
+                    observeTool(child)
+                end
+            end
+            table.insert(runtime.connections, container.ChildAdded:Connect(function(
+                child: Instance
+            ): ()
+                if child:IsA("Tool") then
+                    observeTool(child)
+                end
+            end))
+        end
+
+        local function loadSavedAnalytics(): ()
+            if type(executorEnvironment.readfile) ~= "function" then
+                return
+            end
+            local okRead: boolean, rawData: any = pcall(
+                executorEnvironment.readfile,
+                outputPath
+            )
+            if not okRead or type(rawData) ~= "string" or #rawData < 10 then
+                return
+            end
+            local okDecode: boolean, decoded: any = pcall(function(): any
+                return HttpService:JSONDecode(rawData)
+            end)
+            if not okDecode or type(decoded) ~= "table" then
+                return
+            end
+            if type(decoded.summary) == "table" then
+                runtime.totalActivations = tonumber(decoded.summary.totalActivations)
+                    or tonumber(decoded.summary.activations)
+                    or 0
+                runtime.totalProjectiles = tonumber(decoded.summary.totalProjectiles)
+                    or tonumber(decoded.summary.projectiles)
+                    or 0
+                runtime.rejectedCandidates = tonumber(decoded.summary.rejectedCandidates) or 0
+            end
+            if type(decoded.pingBuckets) == "table" then
+                for key: string, bData: any in pairs(decoded.pingBuckets) do
+                    if type(bData) == "table" then
+                        local c: number = tonumber(bData.count) or 0
+                        local speed: number = tonumber(bData.meanSpeed) or 0
+                        local delay: number = tonumber(bData.meanLaunchDelayMs) or 0
+                        if c > 0 then
+                            local bucket: BucketRecord = ensureBucket(key)
+                            bucket.count = c
+                            bucket.speedSum = speed * c
+                            bucket.speedSquaredSum = (speed * speed) * c
+                            bucket.delaySum = delay * c
+                        end
+                    end
+                end
+            end
+            if type(decoded.projectiles) == "table" then
+                runtime.events = {}
+                for _, p: any in ipairs(decoded.projectiles) do
+                    table.insert(runtime.events, p)
+                end
+            end
+        end
+
+        controller = {} :: Controller
+        controller.tuning = tuning
+
+        function controller:setEnabled(enabled: boolean): ()
+            if runtime.enabled == enabled then
+                return
+            end
+            if not enabled then
+                runtime.enabled = false
+                disconnectAll()
+                return
+            end
+            runtime.enabled = true
+            runtime.startedAt = os.clock()
+            loadSavedAnalytics()
+            observeContainer(LocalPlayer:FindFirstChildOfClass("Backpack"))
+            observeContainer(LocalPlayer.Character)
+            table.insert(runtime.connections, LocalPlayer.CharacterAdded:Connect(function(
+                character: Model
+            ): ()
+                observeContainer(character)
+            end))
+            table.insert(runtime.connections, workspace.DescendantAdded:Connect(
+                considerCandidate
+            ))
+        end
+
+        function controller:save(reason: string?): boolean
+            return saveSnapshot(reason or "manual")
+        end
+
+        function controller:delete(): boolean
+            runtime.events = {}
+            runtime.buckets = {}
+            runtime.totalActivations = 0
+            runtime.totalProjectiles = 0
+            runtime.rejectedCandidates = 0
+            runtime.dirty = false
+            local deleteFile: any = executorEnvironment.delfile
+            local okDelete: boolean = false
+            if type(deleteFile) == "function" then
+                okDelete = pcall(deleteFile, outputPath)
+            elseif type(executorEnvironment.writefile) == "function" then
+                okDelete = pcall(executorEnvironment.writefile, outputPath, "{}")
+            end
+            return okDelete
+        end
+
+        function controller:status(): string
+            return string.format(
+                "Universal · activations %d · projectiles %d · buckets %d",
+                runtime.totalActivations,
+                runtime.totalProjectiles,
+                (function(): number
+                    local count: number = 0
+                    for _key: string in pairs(runtime.buckets) do
+                        count += 1
+                    end
+                    return count
+                end)()
+            )
+        end
+
+        function controller:destroy(): ()
+            self:setEnabled(false)
+        end
+
+        return controller
+    end)()
+
+    local calibration: any = controllerFactory
+    calibrationService.set(calibration)
+    activeRegistry = calibrationService
+    calibration:setEnabled(true)
+
+    local tuning: any = calibration.tuning
+
+    local ProjectileCalibrationFeature: any = createUniversalFeature(
+        "Projectile Calibration",
+        "Automatic per-game projectile analytics with tunable ping buckets",
+        17,
+        function(_enabled: boolean): () end,
+        {category = true, categoryName = "Other"}
+    )
+    tuning =
+        calibration.tuning
+    addNumberOption(
+        ProjectileCalibrationFeature,
+        "Bucket width (ms)",
+        tuning.bucketWidthMs,
+        1,
+        25,
+        function(value: number): ()
+            tuning.bucketWidthMs = math.round(value)
+        end
+    )
+    addNumberOption(
+        ProjectileCalibrationFeature,
+        "Bucket ceiling (ms)",
+        tuning.maxBucketMs,
+        25,
+        500,
+        function(value: number): ()
+            tuning.maxBucketMs = math.round(value)
+        end
+    )
+    addNumberOption(
+        ProjectileCalibrationFeature,
+        "Sample window (s)",
+        tuning.sampleWindowSeconds,
+        1,
+        6,
+        function(value: number): ()
+            tuning.sampleWindowSeconds = value
+        end
+    )
+    addNumberOption(
+        ProjectileCalibrationFeature,
+        "Max samples / track",
+        tuning.maxSamplesPerTrack,
+        30,
+        600,
+        function(value: number): ()
+            tuning.maxSamplesPerTrack = math.round(value)
+        end
+    )
+    addNumberOption(
+        ProjectileCalibrationFeature,
+        "Match radius (studs)",
+        tuning.matchDistanceStuds,
+        10,
+        120,
+        function(value: number): ()
+            tuning.matchDistanceStuds = math.round(value)
+        end
+    )
+    addNumberOption(
+        ProjectileCalibrationFeature,
+        "Min projectile speed",
+        tuning.minProjectileSpeed,
+        1,
+        100,
+        function(value: number): ()
+            tuning.minProjectileSpeed = math.round(value)
+        end
+    )
+    addActionOption(ProjectileCalibrationFeature, "Show status", function(): ()
+        notify(calibration:status())
+    end)
+    addActionOption(ProjectileCalibrationFeature, "Save analytics", function(): ()
+        if calibration:save("manual") then
+            notify("analytics saved")
+        else
+            notify("save failed; check F9")
+        end
+    end)
+    addActionOption(ProjectileCalibrationFeature, "Clear History", function(): ()
+        if calibration:delete() then
+            notify("calibration history cleared")
+        else
+            notify("clear history failed; check F9")
+        end
+    end)
+    addInformationOption(
+        ProjectileCalibrationFeature,
+        "Runs automatically. Save writes the current session; Delete clears it. MM2 prediction never consumes this dataset."
+    )
+
+    activeController = calibration
     Module.Initialized = true
-    return card
+    return calibration
 end
 
 function Module.destroy(): ()
-    if activeCard and activeCard.Enabled then
-        activeCard:Toggle(false)
+    if activeController and type(activeController.destroy) == "function" then
+        pcall(function(): ()
+            activeController:destroy()
+        end)
     end
-    activeCard = nil
+    activeController = nil
+    if activeRegistry then
+        activeRegistry.set(nil)
+    end
+    activeRegistry = nil
     Module.Initialized = false
 end
 
@@ -31646,2858 +34316,6 @@ function Module.destroy(): ()
     activeCleanup = function(): () end
     Module.Events = {}
     Module.Runtime = nil
-end
-
-return Module
-
-]=],
-        ["src/games/universal/Blatant/Invisible.lua"] = [=[
-export type Runtime = {
-    framework: any,
-    entity: any,
-    host: any,
-    services: any,
-}
-
-local Module = {
-    Name = "Invisible",
-    PlaceId = 0,
-    Events = {} :: {[string]: any},
-    Initialized = false,
-}
-
-local activeCleanup: (() -> ())? = nil
-
-function Module.init(context: Runtime): any
-    local host: any = context.host
-    local framework: any = context.framework
-    local LocalPlayer: any = host.LocalPlayer
-    local UserInputService: any = host.UserInputService or (game :: any):GetService("UserInputService")
-    local RunService: RunService = host.RunService or (game :: any):GetService("RunService")
-    local currentWorkspace: Workspace = host.workspace or workspace
-
-    type InvisibleSettings = {
-        voidDepth: number,
-        ghostTransparency: number,
-        fly: boolean,
-        flySpeed: number,
-    }
-
-    local invisibleSettings: InvisibleSettings = {
-        voidDepth = 120,
-        ghostTransparency = 0.5,
-        fly = true,
-        flySpeed = 55,
-    }
-
-    local invisibleRuntime = {
-        active = false,
-        ghostModel = nil :: Model?,
-        surfacePosition = nil :: CFrame?,
-        connections = {} :: {RBXScriptConnection},
-    }
-
-    local function destroyGhost(): ()
-        if invisibleRuntime.ghostModel then
-            pcall(function()
-                invisibleRuntime.ghostModel:Destroy()
-            end)
-            invisibleRuntime.ghostModel = nil
-        end
-    end
-
-    local function createGhost(character: Model): Model?
-        character.Archivable = true
-        local clone: Instance? = character:Clone()
-        character.Archivable = false
-        if not clone or not clone:IsA("Model") then
-            return nil
-        end
-        local ghost: Model = clone :: Model
-        ghost.Name = "Wurst_Ghost"
-
-        local ghostHumanoid: Humanoid? = ghost:FindFirstChildOfClass("Humanoid")
-        if ghostHumanoid then
-            ghostHumanoid.DisplayDistanceType = Enum.HumanoidDisplayDistanceType.None
-            ghostHumanoid.NameDisplayDistance = 0
-            ghostHumanoid.HealthDisplayDistance = 0
-        end
-
-        for _, desc: Instance in ipairs(ghost:GetDescendants()) do
-            if desc:IsA("Script") or desc:IsA("LocalScript") then
-                desc:Destroy()
-            elseif desc:IsA("BasePart") then
-                desc.CanCollide = false
-                desc.CanTouch = false
-                desc.CanQuery = false
-                desc.Anchored = true
-                desc.Transparency = math.clamp(invisibleSettings.ghostTransparency, 0.1, 0.9)
-                desc.CastShadow = false
-            end
-        end
-
-        local highlight: Highlight = Instance.new("Highlight")
-        highlight.Name = "GhostHighlight"
-        highlight.FillColor = Color3.fromRGB(120, 210, 255)
-        highlight.OutlineColor = Color3.fromRGB(220, 245, 255)
-        highlight.FillTransparency = 0.6
-        highlight.OutlineTransparency = 0.15
-        highlight.Adornee = ghost
-        highlight.Parent = ghost
-
-        ghost.Parent = currentWorkspace
-        return ghost
-    end
-
-    local function toggleInvisible(enabled: boolean): ()
-        for _, c: RBXScriptConnection in ipairs(invisibleRuntime.connections) do
-            pcall(function()
-                c:Disconnect()
-            end)
-        end
-        table.clear(invisibleRuntime.connections)
-
-        local character: Model? = LocalPlayer.Character
-        local root: BasePart? = character and character:FindFirstChild("HumanoidRootPart") :: BasePart?
-        local humanoid: Humanoid? = character and character:FindFirstChildOfClass("Humanoid") :: Humanoid?
-        local camera: Camera? = currentWorkspace.CurrentCamera
-
-        if not enabled then
-            if invisibleRuntime.active and root and invisibleRuntime.surfacePosition then
-                -- Teleport real character to the exact position of the ghost on the map
-                root.CFrame = invisibleRuntime.surfacePosition
-                root.AssemblyLinearVelocity = Vector3.zero
-            end
-            if camera and humanoid then
-                pcall(function()
-                    camera.CameraSubject = humanoid
-                end)
-            end
-            destroyGhost()
-            invisibleRuntime.active = false
-            invisibleRuntime.surfacePosition = nil
-            return
-        end
-
-        if not character or not root or not humanoid or humanoid.Health <= 0 then
-            destroyGhost()
-            return
-        end
-
-        invisibleRuntime.active = true
-        invisibleRuntime.surfacePosition = root.CFrame
-
-        local ghost: Model? = createGhost(character)
-        invisibleRuntime.ghostModel = ghost
-
-        local ghostRoot: BasePart? = ghost and ghost:FindFirstChild("HumanoidRootPart") :: BasePart?
-        local ghostHumanoid: Humanoid? = ghost and ghost:FindFirstChildOfClass("Humanoid") :: Humanoid?
-        if ghostRoot and invisibleRuntime.surfacePosition then
-            ghostRoot.CFrame = invisibleRuntime.surfacePosition
-        end
-
-        -- Focus the camera onto the ghost so the user stays on the map!
-        if camera and ghostHumanoid then
-            pcall(function()
-                camera.CameraSubject = ghostHumanoid
-            end)
-        end
-
-        -- RenderStepped loop: controls the ghost on the surface while keeping the real character in the void
-        table.insert(
-            invisibleRuntime.connections,
-            RunService.RenderStepped:Connect(function(deltaTime: number): ()
-                if not invisibleRuntime.active then
-                    return
-                end
-                local currentCharacter: Model? = LocalPlayer.Character
-                local currentRoot: BasePart? = currentCharacter and currentCharacter:FindFirstChild("HumanoidRootPart") :: BasePart?
-                local currentHumanoid: Humanoid? = currentCharacter and currentCharacter:FindFirstChildOfClass("Humanoid") :: Humanoid?
-                if not currentCharacter or not currentRoot or not currentHumanoid or currentHumanoid.Health <= 0 then
-                    return
-                end
-
-                local activeGhost: Model? = invisibleRuntime.ghostModel
-                if not activeGhost or not activeGhost.Parent then
-                    activeGhost = createGhost(currentCharacter)
-                    invisibleRuntime.ghostModel = activeGhost
-                    if camera and activeGhost then
-                        local newGhostHumanoid: Humanoid? = activeGhost:FindFirstChildOfClass("Humanoid")
-                        if newGhostHumanoid then
-                            camera.CameraSubject = newGhostHumanoid
-                        end
-                    end
-                end
-                local activeGhostRoot: BasePart? = activeGhost and activeGhost:FindFirstChild("HumanoidRootPart") :: BasePart?
-                local activeCam: Camera? = currentWorkspace.CurrentCamera
-
-                local surfaceCF: CFrame = invisibleRuntime.surfacePosition or currentRoot.CFrame
-
-                if invisibleSettings.fly and activeCam then
-                    -- Fly mode: Move freely in 3D through the air with camera look
-                    local flyVelocity: Vector3 = Vector3.zero
-                    local camCF: CFrame = activeCam.CFrame
-                    local look: Vector3 = camCF.LookVector
-                    local right: Vector3 = camCF.RightVector
-
-                    if UserInputService:IsKeyDown(Enum.KeyCode.W) then
-                        flyVelocity += look
-                    end
-                    if UserInputService:IsKeyDown(Enum.KeyCode.S) then
-                        flyVelocity -= look
-                    end
-                    if UserInputService:IsKeyDown(Enum.KeyCode.D) then
-                        flyVelocity += right
-                    end
-                    if UserInputService:IsKeyDown(Enum.KeyCode.A) then
-                        flyVelocity -= right
-                    end
-                    if UserInputService:IsKeyDown(Enum.KeyCode.Space) then
-                        flyVelocity += Vector3.new(0, 1, 0)
-                    end
-                    if UserInputService:IsKeyDown(Enum.KeyCode.LeftShift) or UserInputService:IsKeyDown(Enum.KeyCode.LeftControl) then
-                        flyVelocity -= Vector3.new(0, 1, 0)
-                    end
-
-                    if flyVelocity.Magnitude > 0.05 then
-                        local nextPos: Vector3 = surfaceCF.Position + (flyVelocity.Unit * (invisibleSettings.flySpeed * deltaTime))
-                        local flatLook: Vector3 = Vector3.new(look.X, 0, look.Z)
-                        if flatLook.Magnitude > 0.01 then
-                            surfaceCF = CFrame.lookAt(nextPos, nextPos + flatLook.Unit)
-                        else
-                            surfaceCF = CFrame.new(nextPos) * surfaceCF.Rotation
-                        end
-                        invisibleRuntime.surfacePosition = surfaceCF
-                    end
-                else
-                    -- Walk mode: move on ground using humanoid MoveDirection
-                    local moveDir: Vector3 = currentHumanoid.MoveDirection
-                    local walkSpeed: number = currentHumanoid.WalkSpeed
-                    if moveDir.Magnitude > 0.05 then
-                        local newPos: Vector3 = surfaceCF.Position + (moveDir.Unit * (walkSpeed * deltaTime))
-                        local rayDown: RaycastResult? = currentWorkspace:Raycast(
-                            newPos + Vector3.new(0, 3, 0),
-                            Vector3.new(0, -12, 0)
-                        )
-                        if rayDown then
-                            newPos = Vector3.new(newPos.X, rayDown.Position.Y + (currentHumanoid.HipHeight or 2), newPos.Z)
-                        end
-                        surfaceCF = CFrame.lookAt(newPos, newPos + moveDir)
-                        invisibleRuntime.surfacePosition = surfaceCF
-                    end
-                end
-
-                -- Position ghost root
-                if activeGhostRoot and surfaceCF then
-                    activeGhostRoot.CFrame = surfaceCF
-                    -- Sync limbs relative to root
-                    for _, child: Instance in ipairs(currentCharacter:GetChildren()) do
-                        if child:IsA("BasePart") and child.Name ~= "HumanoidRootPart" then
-                            local ghostPart: Instance? = activeGhost:FindFirstChild(child.Name)
-                            if ghostPart and ghostPart:IsA("BasePart") then
-                                local relCF: CFrame = currentRoot.CFrame:ToObjectSpace(child.CFrame)
-                                local ghostBasePart: BasePart = ghostPart :: BasePart
-                                ghostBasePart.CFrame = surfaceCF:ToWorldSpace(relCF)
-                            end
-                        end
-                    end
-                end
-
-                -- Keep real character safely hidden in the void below the ghost position
-                local voidPos: Vector3 = surfaceCF.Position - Vector3.new(0, invisibleSettings.voidDepth, 0)
-                currentRoot.CFrame = CFrame.new(voidPos)
-                currentRoot.AssemblyLinearVelocity = Vector3.zero
-            end)
-        )
-    end
-
-    local invisibleCard: any = framework.Categories.Blatant:CreateModule({
-        Name = "Invisible",
-        Category = "Blatant",
-        Order = 8,
-        Tooltip = "Shows your ghost on the map while your real character is hidden in the void. Turning it off teleports your real character to the ghost.",
-        Function = toggleInvisible,
-    })
-
-    invisibleCard:CreateToggle({
-        Name = "Ghost Fly",
-        Default = invisibleSettings.fly,
-        Function = function(value: boolean): ()
-            invisibleSettings.fly = value
-        end,
-        Tooltip = "Fly freely across the map as a ghost using WASD, Space and Shift/Ctrl.",
-    })
-
-    invisibleCard:CreateSlider({
-        Name = "Fly speed",
-        Min = 16,
-        Max = 200,
-        Default = invisibleSettings.flySpeed,
-        Function = function(value: number): ()
-            invisibleSettings.flySpeed = value
-        end,
-        Tooltip = "Speed of the ghost while flying.",
-    })
-
-    invisibleCard:CreateSlider({
-        Name = "Void depth",
-        Min = 50,
-        Max = 350,
-        Default = invisibleSettings.voidDepth,
-        Function = function(value: number): ()
-            invisibleSettings.voidDepth = value
-        end,
-        Tooltip = "Studs below the ground your real character sits.",
-    })
-
-    invisibleCard:CreateSlider({
-        Name = "Ghost transparency",
-        Min = 0.1,
-        Max = 0.9,
-        Step = 0.05,
-        Default = invisibleSettings.ghostTransparency,
-        Function = function(value: number): ()
-            invisibleSettings.ghostTransparency = value
-            if invisibleRuntime.ghostModel then
-                for _, desc: Instance in ipairs(invisibleRuntime.ghostModel:GetDescendants()) do
-                    if desc:IsA("BasePart") then
-                        desc.Transparency = value
-                    end
-                end
-            end
-        end,
-        Tooltip = "Transparency of your local ghost representation.",
-    })
-
-    activeCleanup = function(): ()
-        toggleInvisible(false)
-    end
-    Module.Initialized = true
-    return invisibleCard
-end
-
-function Module.destroy(): ()
-    if activeCleanup then
-        pcall(activeCleanup)
-    end
-    activeCleanup = nil
-    Module.Initialized = false
-end
-
-return Module
-
-]=],
-        ["src/games/universal/Movement/HookPart.lua"] = [=[
---!strict
-export type Runtime = {
-    framework: any,
-    host: any,
-    services: any,
-}
-
-type HookKind = "Ladder" | "Obstacle" | "Wall"
-
-type HookSighting = {
-    kind: HookKind,
-    part: BasePart,
-    normal: Vector3,
-    direction: Vector3,
-    distance: number,
-    name: string,
-    isWedge: boolean,
-}
-
-local Module = {
-    Name = "HookPart",
-    PlaceId = 0,
-    Events = {} :: {[string]: any},
-    Initialized = false,
-}
-
-local activeCard: any = nil
-
-local SCAN_DIRECTIONS: number = 16
-local SCAN_HEIGHTS: {number} = {-1.8, -0.6, 0.5, 1.5}
-
-function Module.init(context: Runtime): any
-    local framework: any = context.framework
-    local host: any = context.host
-    local services: any = context.services
-    local movementInput: any = services.movementInput
-    local getCharacterParts: any = host.getCharacterParts
-    local UserInputService: any = host.UserInputService or (game :: any):GetService("UserInputService")
-    local RunService: RunService = host.RunService or (game :: any):GetService("RunService")
-    local currentWorkspace: Workspace = host.workspace or workspace
-
-    local lastHookJumpAt: number = -math.huge
-    local lastScanAt: number = -math.huge
-    local lastClimbAt: number = -math.huge
-    local lastObstacleTouchAt: number = -math.huge
-    local currentSighting: HookSighting? = nil
-    local highlight: Highlight? = nil
-
-    local settings = {
-        ladderBoost = true,
-        ladderJumpLength = 70,
-        ladderJumpHeight = 65,
-        obstacleBoost = true,
-        obstaclePower = 90,
-        selfFling = false,
-        flingMultiplier = 1100,
-        wallhopAssist = true,
-        wallhopPower = 38,
-        airborneWallhopOnly = true,
-        requireStuckIntent = true,
-        allowDownwardBoost = true,
-        sliderAssist = true,
-        directionMode = "Camera",
-        detectionRange = 2.4,
-        checkAllParts = true,
-        highlightObject = true,
-    }
-
-    local function destroyHighlight(): ()
-        if highlight then
-            pcall(function()
-                highlight:Destroy()
-            end)
-            highlight = nil
-        end
-    end
-
-    local function isLadderStructure(part: Instance): boolean
-        if part:IsA("TrussPart") then
-            return true
-        end
-        local current: Instance? = part
-        for _ = 1, 3 do
-            if not current then break end
-            local lowerName: string = string.lower(current.Name)
-            if string.find(lowerName, "ladder") ~= nil
-                or string.find(lowerName, "truss") ~= nil
-                or string.find(lowerName, "escalera") ~= nil
-                or string.find(lowerName, "climb") ~= nil then
-                return true
-            end
-            current = current.Parent
-        end
-        return false
-    end
-
-    local function isSmallDecoration(part: BasePart): boolean
-        -- Filter out tiny fence posts, thin railings, or miniature props that shouldn't hijack ground jumps
-        local sz: Vector3 = part.Size
-        if (sz.X <= 0.9 and sz.Z <= 0.9) or (sz.X <= 0.5 and sz.Y <= 0.5) then
-            return true
-        end
-        return false
-    end
-
-    local function scanSurroundings(
-        character: Model,
-        humanoid: Humanoid,
-        root: BasePart
-    ): HookSighting?
-        local now: number = os.clock()
-        local state: Enum.HumanoidStateType = humanoid:GetState()
-        local isCurrentlyClimbing: boolean = state == Enum.HumanoidStateType.Climbing
-        if isCurrentlyClimbing then
-            lastClimbAt = now
-        end
-
-        local isGrounded: boolean = humanoid.FloorMaterial ~= Enum.Material.Air
-        local moveDir: Vector3 = humanoid.MoveDirection
-        local horizVelocity: number = Vector3.new(root.AssemblyLinearVelocity.X, 0, root.AssemblyLinearVelocity.Z).Magnitude
-
-        local filter: {Instance} = {character}
-        local ghost: Instance? = currentWorkspace:FindFirstChild("Wurst_Ghost")
-        if ghost then
-            table.insert(filter, ghost)
-        end
-
-        local parameters: RaycastParams = RaycastParams.new()
-        parameters.FilterType = Enum.RaycastFilterType.Exclude
-        parameters.FilterDescendantsInstances = filter
-        parameters.IgnoreWater = true
-        parameters.RespectCanCollide = true
-
-        -- Priority 1: Ladder detection (Roblox climbing state or 200ms grace window)
-        local climbingGrace: boolean = (now - lastClimbAt) <= 0.22
-        if isCurrentlyClimbing or climbingGrace then
-            -- Raycast forward to find the ladder part or normal
-            local forwardRay: RaycastResult? = currentWorkspace:Raycast(
-                root.Position,
-                root.CFrame.LookVector * 3.0,
-                parameters
-            )
-            local ladderPart: BasePart = (forwardRay and forwardRay.Instance:IsA("BasePart") and forwardRay.Instance) or root
-            local ladderNorm: Vector3 = (forwardRay and forwardRay.Normal) or -root.CFrame.LookVector
-
-            return {
-                kind = "Ladder",
-                part = ladderPart,
-                normal = ladderNorm,
-                direction = root.CFrame.LookVector,
-                distance = forwardRay and forwardRay.Distance or 1.2,
-                name = ladderPart.Name ~= root.Name and ladderPart.Name or "Ladder",
-                isWedge = false,
-            }
-        end
-
-        local bestSighting: HookSighting? = nil
-        local bestDistance: number = settings.detectionRange + 1
-
-        -- Priority 2: Check box in front of player for ladders / trusses (to not miss rung gaps)
-        local overlapLadder: OverlapParams = OverlapParams.new()
-        overlapLadder.FilterType = Enum.RaycastFilterType.Exclude
-        overlapLadder.FilterDescendantsInstances = filter
-        overlapLadder.MaxParts = 6
-
-        local frontBoxCF: CFrame = root.CFrame * CFrame.new(0, 0, -1.3)
-        local nearbyTrusses: {BasePart} = {}
-        pcall(function()
-            nearbyTrusses = currentWorkspace:GetPartBoundsInBox(frontBoxCF, Vector3.new(2.4, 4.0, 2.0), overlapLadder)
-        end)
-        for _, part: BasePart in ipairs(nearbyTrusses) do
-            if part.CanCollide and isLadderStructure(part) then
-                return {
-                    kind = "Ladder",
-                    part = part,
-                    normal = -root.CFrame.LookVector,
-                    direction = root.CFrame.LookVector,
-                    distance = (part.Position - root.Position).Magnitude,
-                    name = part.Name,
-                    isWedge = false,
-                }
-            end
-        end
-
-        -- Priority 3: Scan surroundings for Obstacles (Tank, Crates, Props) and Walls
-        for i: number = 0, SCAN_DIRECTIONS - 1 do
-            local angle: number = (i / SCAN_DIRECTIONS) * math.pi * 2
-            local direction: Vector3 = Vector3.new(math.sin(angle), 0, math.cos(angle))
-
-            for _, heightOffset: number in ipairs(SCAN_HEIGHTS) do
-                local origin: Vector3 = root.Position + Vector3.new(0, heightOffset, 0)
-                local hit: RaycastResult? = currentWorkspace:Raycast(
-                    origin,
-                    direction * settings.detectionRange,
-                    parameters
-                )
-
-                if hit and hit.Instance and hit.Instance:IsA("BasePart") then
-                    local part: BasePart = hit.Instance
-                    if part.CanCollide then
-                        local dist: number = hit.Distance
-                        local norm: Vector3 = hit.Normal
-                        local isLadder: boolean = isLadderStructure(part)
-
-                        if isLadder then
-                            return {
-                                kind = "Ladder",
-                                part = part,
-                                normal = norm,
-                                direction = direction,
-                                distance = dist,
-                                name = part.Name,
-                                isWedge = false,
-                            }
-                        end
-
-                        local partNameLower: string = string.lower(part.Name)
-                        local isKnownObstacle: boolean = string.find(partNameLower, "tank") ~= nil
-                            or string.find(partNameLower, "crate") ~= nil
-                            or string.find(partNameLower, "box") ~= nil
-                            or string.find(partNameLower, "prop") ~= nil
-                            or string.find(partNameLower, "vehicle") ~= nil
-                            or string.find(partNameLower, "barrel") ~= nil
-                            or string.find(partNameLower, "wheel") ~= nil
-                            or math.abs(norm.Y) > 0.40
-
-                        local isSmall: boolean = isSmallDecoration(part)
-
-                        -- Ground bypass: On the ground, ignore tiny fence posts or random decorative walls
-                        -- unless player is deliberately pushing into an obstacle/tank!
-                        if isGrounded then
-                            if isSmall and not isKnownObstacle then
-                                -- Skip small fence posts while grounded (solves Image 2!)
-                                continue
-                            end
-
-                            if settings.requireStuckIntent then
-                                -- Check if player is pressing into the obstacle
-                                local pushingIntoPart: boolean = moveDir.Magnitude > 0.1 and moveDir:Dot(direction) > 0.30
-                                local isStuckMoving: boolean = moveDir.Magnitude > 0.1 and horizVelocity < 3.0
-                                if not (pushingIntoPart or isStuckMoving or isKnownObstacle) then
-                                    continue
-                                end
-                            end
-                        else
-                            -- Airborne: Allow wallhop or obstacle vaulting
-                            if settings.airborneWallhopOnly and not isKnownObstacle and isSmall then
-                                continue
-                            end
-                        end
-
-                        local kind: HookKind = isKnownObstacle and "Obstacle" or "Wall"
-
-                        if dist < bestDistance then
-                            bestDistance = dist
-                            bestSighting = {
-                                kind = kind,
-                                part = part,
-                                normal = norm,
-                                direction = direction,
-                                distance = dist,
-                                name = part.Name,
-                                isWedge = isKnownObstacle,
-                            }
-                        end
-                    end
-                end
-            end
-        end
-
-        -- Priority 4: Spatial Query for wedged/hooked character parts (e.g. inside MM2 tank collision)
-        if settings.checkAllParts and (not bestSighting or bestDistance > 1.8) then
-            local overlap: OverlapParams = OverlapParams.new()
-            overlap.FilterType = Enum.RaycastFilterType.Exclude
-            overlap.FilterDescendantsInstances = filter
-            overlap.MaxParts = 6
-            overlap.RespectCanCollide = true
-
-            local nearbyParts: {BasePart} = {}
-            pcall(function()
-                nearbyParts = currentWorkspace:GetPartBoundsInBox(root.CFrame, Vector3.new(3.2, 4.5, 3.2), overlap)
-            end)
-
-            for _, part: BasePart in ipairs(nearbyParts) do
-                if part.CanCollide and part ~= root then
-                    local isLadder: boolean = isLadderStructure(part)
-                    if isLadder then
-                        return {
-                            kind = "Ladder",
-                            part = part,
-                            normal = -root.CFrame.LookVector,
-                            direction = root.CFrame.LookVector,
-                            distance = 1.0,
-                            name = part.Name,
-                            isWedge = false,
-                        }
-                    end
-
-                    if not isSmallDecoration(part) then
-                        local offset: Vector3 = part.Position - root.Position
-                        local dist: number = offset.Magnitude
-                        local normVec: Vector3 = offset.Magnitude > 0.01 and -offset.Unit or -root.CFrame.LookVector
-
-                        if dist < bestDistance then
-                            bestDistance = dist
-                            bestSighting = {
-                                kind = "Obstacle",
-                                part = part,
-                                normal = normVec,
-                                direction = offset.Magnitude > 0.01 and offset.Unit or root.CFrame.LookVector,
-                                distance = dist,
-                                name = part.Name,
-                                isWedge = true,
-                            }
-                        end
-                    end
-                end
-            end
-        end
-
-        return bestSighting
-    end
-
-    local function getLaunchDirection(root: BasePart, humanoid: Humanoid, sighting: HookSighting): Vector3
-        local cam: Camera? = currentWorkspace.CurrentCamera
-        local mode: string = settings.directionMode
-
-        if sighting.kind == "Ladder" then
-            -- On a ladder, launch outward from the wall and upward in the camera view
-            if cam then
-                local camLook: Vector3 = cam.CFrame.LookVector
-                return Vector3.new(camLook.X, math.max(camLook.Y, 0.4), camLook.Z).Unit
-            end
-            local outward: Vector3 = sighting.normal
-            if outward.Magnitude > 0.1 then
-                return Vector3.new(outward.X, 0.5, outward.Z).Unit
-            end
-            return Vector3.new(0, 1, 0)
-        end
-
-        if mode == "Camera" and cam then
-            return cam.CFrame.LookVector
-        elseif mode == "Movement" then
-            local moveDir: Vector3 = humanoid.MoveDirection
-            if moveDir.Magnitude > 0.1 then
-                return moveDir.Unit
-            end
-            if cam then
-                return cam.CFrame.LookVector
-            end
-            return root.CFrame.LookVector
-        elseif mode == "Normal" then
-            local norm: Vector3 = sighting.normal
-            if norm.Magnitude > 0.1 then
-                return norm.Unit
-            end
-        elseif mode == "Upward" then
-            return Vector3.new(0, 1, 0)
-        end
-
-        if cam then
-            return cam.CFrame.LookVector
-        end
-        return root.CFrame.LookVector
-    end
-
-    local function applySustainedImpulse(root: BasePart, targetVel: Vector3, durationSeconds: number): ()
-        -- Apply over multiple frames (within the 200ms server rewind window) so Roblox internal friction/ladder code
-        -- doesn't cancel or override the velocity immediately!
-        local startTime: number = os.clock()
-        local connection: RBXScriptConnection? = nil
-        connection = RunService.Heartbeat:Connect(function(): ()
-            if not root or not root.Parent or (os.clock() - startTime) >= durationSeconds then
-                if connection then
-                    connection:Disconnect()
-                    connection = nil
-                end
-                return
-            end
-            root.AssemblyLinearVelocity = targetVel
-        end)
-    end
-
-    local function executeHookJump(): ()
-        local now: number = os.clock()
-        if now - lastHookJumpAt < 0.20 then
-            return
-        end
-
-        local character: Model?, humanoid: Humanoid?, root: BasePart? = getCharacterParts()
-        if not character or not humanoid or not root or humanoid.Health <= 0 then
-            return
-        end
-
-        local sighting: HookSighting? = currentSighting or scanSurroundings(character, humanoid, root)
-        if not sighting then
-            return
-        end
-
-        local isGrounded: boolean = humanoid.FloorMaterial ~= Enum.Material.Air
-
-        -- Bypass check: If grounded on flat grass/floor and the sighting is just a casual Wall (not ladder or obstacle),
-        -- allow a normal clean Roblox jump without hijacking or deviating!
-        if isGrounded and sighting.kind == "Wall" and settings.airborneWallhopOnly then
-            return
-        end
-
-        lastHookJumpAt = now
-        local launchDir: Vector3 = getLaunchDirection(root, humanoid, sighting)
-        local flatLaunchDir: Vector3 = Vector3.new(launchDir.X, 0, launchDir.Z)
-        if flatLaunchDir.Magnitude > 0.01 then
-            flatLaunchDir = flatLaunchDir.Unit
-        else
-            flatLaunchDir = Vector3.new(root.CFrame.LookVector.X, 0, root.CFrame.LookVector.Z).Unit
-        end
-
-        local currentVel: Vector3 = root.AssemblyLinearVelocity
-
-        if sighting.kind == "Ladder" then
-            if not settings.ladderBoost then
-                return
-            end
-
-            -- Clean detach from ladder: switch to Jumping
-            humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
-
-            local horizSpeed: number = settings.ladderJumpLength
-            local vertSpeed: number = settings.ladderJumpHeight
-            local ladderVel: Vector3 = Vector3.new(
-                flatLaunchDir.X * horizSpeed,
-                vertSpeed,
-                flatLaunchDir.Z * horizSpeed
-            )
-
-            root.AssemblyLinearVelocity = ladderVel
-            -- Reinforce over 0.08s (5 frames) to defeat Roblox's ladder detach clamp
-            applySustainedImpulse(root, ladderVel, 0.08)
-
-            if activeCard then
-                activeCard:SetStatus("Ladder Leap!")
-            end
-
-        elseif sighting.kind == "Obstacle" then
-            if not settings.obstacleBoost then
-                return
-            end
-
-            humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
-
-            local outwardNorm: Vector3 = sighting.normal
-            local isSlopeOrStairs: boolean = outwardNorm.Y > 0.15 and outwardNorm.Y < 0.92
-
-            local vertVel: number
-            if settings.allowDownwardBoost and launchDir.Y < -0.10 then
-                -- Downward slide / boost on stairs and sliders
-                vertVel = launchDir.Y * (settings.obstaclePower * 1.1)
-            elseif launchDir.Y > 0.10 then
-                vertVel = math.max(launchDir.Y * settings.obstaclePower, settings.obstaclePower * 0.60)
-            else
-                vertVel = math.max(currentVel.Y + 16, settings.obstaclePower * 0.55)
-            end
-
-            if settings.selfFling then
-                local flingSpeed: number = settings.flingMultiplier
-                local vertFling: number = (settings.allowDownwardBoost and launchDir.Y < -0.10)
-                    and (launchDir.Y * flingSpeed * 0.55)
-                    or (flingSpeed * 0.40)
-
-                local flingVec: Vector3 = Vector3.new(
-                    flatLaunchDir.X * flingSpeed,
-                    vertFling,
-                    flatLaunchDir.Z * flingSpeed
-                )
-                root.AssemblyLinearVelocity = flingVec
-                applySustainedImpulse(root, flingVec, 0.09)
-                if activeCard then
-                    activeCard:SetStatus("SELF FLING!")
-                end
-            else
-                local boostPower: number = settings.obstaclePower
-                local combinedDir: Vector3
-                if isSlopeOrStairs and settings.sliderAssist then
-                    -- Follow camera/move direction cleanly along the slope/stairs
-                    combinedDir = flatLaunchDir
-                else
-                    combinedDir = (flatLaunchDir * 0.75 + Vector3.new(outwardNorm.X, 0, outwardNorm.Z) * 0.25)
-                end
-
-                if combinedDir.Magnitude > 0.01 then
-                    combinedDir = combinedDir.Unit
-                else
-                    combinedDir = flatLaunchDir
-                end
-
-                local obstacleVel: Vector3 = Vector3.new(
-                    combinedDir.X * boostPower,
-                    vertVel,
-                    combinedDir.Z * boostPower
-                )
-                root.AssemblyLinearVelocity = obstacleVel
-                applySustainedImpulse(root, obstacleVel, 0.06)
-                if activeCard then
-                    activeCard:SetStatus(vertVel < -5 and "Slope Slide!" or "Obstacle Boost!")
-                end
-            end
-
-        elseif sighting.kind == "Wall" then
-            if not settings.wallhopAssist then
-                return
-            end
-
-            humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
-
-            local kick: number = settings.wallhopPower
-            local norm: Vector3 = sighting.normal
-            local kickHoriz: Vector3 = Vector3.new(norm.X, 0, norm.Z)
-            if kickHoriz.Magnitude > 0.01 then
-                kickHoriz = kickHoriz.Unit
-            else
-                kickHoriz = -flatLaunchDir
-            end
-
-            local wallVel: Vector3 = Vector3.new(
-                currentVel.X * 0.25 + kickHoriz.X * kick + flatLaunchDir.X * (kick * 0.45),
-                math.max(currentVel.Y, 54),
-                currentVel.Z * 0.25 + kickHoriz.Z * kick + flatLaunchDir.Z * (kick * 0.45)
-            )
-            root.AssemblyLinearVelocity = wallVel
-            if activeCard then
-                activeCard:SetStatus("Wallhop!")
-            end
-        end
-    end
-
-    local card: any
-    card = framework.Categories.Movement:CreateModule({
-        Name = "HookPart",
-        Category = "Movement",
-        ConfigKey = "Universal.HookPart",
-        Order = 32,
-        Tooltip = "Amplify jumps off ladders, get unstuck from obstacles (like MM2 tanks & crates) with custom boost or self-fling, and wallhop off any part.",
-        Function = function(enabled: boolean): ()
-            destroyHighlight()
-            currentSighting = nil
-            lastHookJumpAt = -math.huge
-            lastClimbAt = -math.huge
-
-            if not enabled then
-                card:SetStatus(nil)
-                return
-            end
-            card:SetStatus("Active")
-
-            -- Connect jump hooks
-            if movementInput and type(movementInput.onJumpRequest) == "function" then
-                card:Clean(movementInput.onJumpRequest(function(): ()
-                    executeHookJump()
-                end))
-            end
-
-            if UserInputService and UserInputService.JumpRequest then
-                card:Clean(UserInputService.JumpRequest:Connect(function(): ()
-                    executeHookJump()
-                end))
-            end
-
-            -- Track humanoid state changes (especially Climbing for the 200ms grace window)
-            local character: Model?, humanoid: Humanoid?, root: BasePart? = getCharacterParts()
-            if humanoid then
-                card:Clean(humanoid.StateChanged:Connect(function(oldState: Enum.HumanoidStateType, newState: Enum.HumanoidStateType): ()
-                    if newState == Enum.HumanoidStateType.Climbing or oldState == Enum.HumanoidStateType.Climbing then
-                        lastClimbAt = os.clock()
-                    end
-                end))
-            end
-
-            -- Continuous detection loop
-            card:Loop(function(): ()
-                local now: number = os.clock()
-                if now - lastScanAt < 0.05 then
-                    return
-                end
-                lastScanAt = now
-
-                local curChar: Model?, curHum: Humanoid?, curRoot: BasePart? = getCharacterParts()
-                if not curChar or not curHum or not curRoot or curHum.Health <= 0 then
-                    destroyHighlight()
-                    currentSighting = nil
-                    return
-                end
-
-                if curHum:GetState() == Enum.HumanoidStateType.Climbing then
-                    lastClimbAt = now
-                end
-
-                local sighting: HookSighting? = scanSurroundings(curChar, curHum, curRoot)
-                currentSighting = sighting
-
-                if not sighting then
-                    destroyHighlight()
-                    card:SetStatus("Ready")
-                    return
-                end
-
-                local statusText: string = sighting.kind .. ": " .. sighting.name
-                if settings.selfFling and sighting.kind == "Obstacle" then
-                    statusText = "Fling Ready: " .. sighting.name
-                end
-                card:SetStatus(statusText)
-
-                -- Visual highlight of hooked object
-                if not settings.highlightObject or sighting.part == curRoot then
-                    destroyHighlight()
-                    return
-                end
-
-                if not highlight or not highlight.Parent then
-                    highlight = Instance.new("Highlight")
-                    highlight.Name = "Wurst_HookPart_Highlight"
-                    highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
-                    highlight.Parent = currentWorkspace
-                end
-
-                if sighting.kind == "Ladder" then
-                    highlight.FillColor = Color3.fromRGB(80, 220, 255)
-                    highlight.OutlineColor = Color3.fromRGB(150, 240, 255)
-                elseif sighting.kind == "Obstacle" then
-                    if settings.selfFling then
-                        highlight.FillColor = Color3.fromRGB(255, 60, 60)
-                        highlight.OutlineColor = Color3.fromRGB(255, 120, 120)
-                    else
-                        highlight.FillColor = Color3.fromRGB(255, 180, 50)
-                        highlight.OutlineColor = Color3.fromRGB(255, 220, 100)
-                    end
-                else
-                    highlight.FillColor = Color3.fromRGB(60, 255, 140)
-                    highlight.OutlineColor = Color3.fromRGB(120, 255, 180)
-                end
-                highlight.FillTransparency = 0.70
-                highlight.OutlineTransparency = 0.15
-                highlight.Adornee = sighting.part
-            end)
-        end,
-    })
-
-    card:CreateToggle({
-        Name = "Ladder Boost",
-        Default = settings.ladderBoost,
-        Function = function(value: boolean): ()
-            settings.ladderBoost = value
-        end,
-        Tooltip = "Makes jumps off ladders and trusses significantly longer and higher.",
-    })
-
-    card:CreateSlider({
-        Name = "Ladder Jump Length",
-        Min = 20,
-        Max = 200,
-        Default = settings.ladderJumpLength,
-        Step = 5,
-        Function = function(value: number): ()
-            settings.ladderJumpLength = value
-        end,
-        Tooltip = "Forward velocity impulse when jumping off a ladder.",
-    })
-
-    card:CreateSlider({
-        Name = "Ladder Jump Height",
-        Min = 20,
-        Max = 150,
-        Default = settings.ladderJumpHeight,
-        Step = 5,
-        Function = function(value: number): ()
-            settings.ladderJumpHeight = value
-        end,
-        Tooltip = "Upward vertical impulse when leaping from a ladder.",
-    })
-
-    card:CreateToggle({
-        Name = "Obstacle Boost",
-        Default = settings.obstacleBoost,
-        Function = function(value: boolean): ()
-            settings.obstacleBoost = value
-        end,
-        Tooltip = "Gives a strong impulse when wedged or jumping against obstacles, tanks, and crates.",
-    })
-
-    card:CreateSlider({
-        Name = "Obstacle Power",
-        Min = 25,
-        Max = 300,
-        Default = settings.obstaclePower,
-        Step = 5,
-        Function = function(value: number): ()
-            settings.obstaclePower = value
-        end,
-        Tooltip = "Power of the jump boost when hooked on an obstacle or tank.",
-    })
-
-    card:CreateToggle({
-        Name = "Self Fling",
-        Default = settings.selfFling,
-        Function = function(value: boolean): ()
-            settings.selfFling = value
-        end,
-        Tooltip = "Turns obstacle jump into a massive self-fling to launch yourself across the map.",
-    })
-
-    card:CreateSlider({
-        Name = "Fling Multiplier",
-        Min = 200,
-        Max = 3500,
-        Default = settings.flingMultiplier,
-        Step = 50,
-        Function = function(value: number): ()
-            settings.flingMultiplier = value
-        end,
-        Tooltip = "Velocity magnitude applied when triggering a self-fling.",
-    })
-
-    card:CreateToggle({
-        Name = "Wallhop Assist",
-        Default = settings.wallhopAssist,
-        Function = function(value: boolean): ()
-            settings.wallhopAssist = value
-        end,
-        Tooltip = "Allows resetting jump and leaping off any wall surface.",
-    })
-
-    card:CreateSlider({
-        Name = "Wallhop Power",
-        Min = 15,
-        Max = 100,
-        Default = settings.wallhopPower,
-        Step = 5,
-        Function = function(value: number): ()
-            settings.wallhopPower = value
-        end,
-        Tooltip = "Impulse applied when performing a wallhop.",
-    })
-
-    card:CreateToggle({
-        Name = "Airborne Wallhop Only",
-        Default = settings.airborneWallhopOnly,
-        Function = function(value: boolean): ()
-            settings.airborneWallhopOnly = value
-        end,
-        Tooltip = "Only triggers wallhop when already in mid-air, preventing strange jumps on the ground next to fences.",
-    })
-
-    card:CreateToggle({
-        Name = "Allow Downward Boost",
-        Default = settings.allowDownwardBoost,
-        Function = function(value: boolean): ()
-            settings.allowDownwardBoost = value
-        end,
-        Tooltip = "Looking downward launches or slides you down stairs, slopes, and ramps instead of forcing an upward jump.",
-    })
-
-    card:CreateToggle({
-        Name = "Slider Assist",
-        Default = settings.sliderAssist,
-        Function = function(value: boolean): ()
-            settings.sliderAssist = value
-        end,
-        Tooltip = "Follows the slope of stairs and ramps smoothly in your camera/movement direction.",
-    })
-
-    card:CreateToggle({
-        Name = "Require Stuck Intent",
-        Default = settings.requireStuckIntent,
-        Function = function(value: boolean): ()
-            settings.requireStuckIntent = value
-        end,
-        Tooltip = "Only activates obstacle boost when moving towards the object or wedged against it.",
-    })
-
-    card:CreateDropdown({
-        Name = "Direction Mode",
-        List = {"Camera", "Movement", "Normal", "Upward"},
-        Index = 1,
-        Function = function(value: string): ()
-            settings.directionMode = value
-        end,
-        Tooltip = "Determines the direction in which boost / fling impulse is applied.",
-    })
-
-    card:CreateSlider({
-        Name = "Detection Range",
-        Min = 1.5,
-        Max = 5.0,
-        Default = settings.detectionRange,
-        Step = 0.1,
-        Function = function(value: number): ()
-            settings.detectionRange = value
-        end,
-        Tooltip = "Distance around the player to scan for hooked parts, ladders, and walls.",
-    })
-
-    card:CreateToggle({
-        Name = "Check All Parts",
-        Default = settings.checkAllParts,
-        Function = function(value: boolean): ()
-            settings.checkAllParts = value
-        end,
-        Tooltip = "Deep spatial collision check (raycasts + box overlap) for tanks, crates, and geometry.",
-    })
-
-    card:CreateToggle({
-        Name = "Highlight Object",
-        Default = settings.highlightObject,
-        Function = function(value: boolean): ()
-            settings.highlightObject = value
-        end,
-        Tooltip = "Outlines the part, ladder, or obstacle you are hooked to.",
-    })
-
-    activeCard = card
-    Module.Initialized = true
-    return card
-end
-
-function Module.destroy(): ()
-    if activeCard and activeCard.Enabled then
-        pcall(activeCard.Toggle, false)
-    end
-    activeCard = nil
-    Module.Initialized = false
-end
-
-return Module
-
-]=],
-        ["src/games/universal/Render/TimeChanger.lua"] = [=[
---!strict
-export type Runtime = {
-    framework: any,
-    host: any,
-    services: any,
-}
-
-local Module = {
-    Name = "TimeChanger",
-    PlaceId = 0,
-    Events = {} :: {[string]: any},
-    Initialized = false,
-}
-
-local activeCard: any = nil
-
-function Module.init(context: Runtime): any
-    local framework: any = context.framework
-    local host: any = context.host
-    local Lighting: Lighting = host.Lighting or (game :: any):GetService("Lighting")
-
-    local originalTime: string? = nil
-    local customTime: number = 14
-
-    local function applyTime(hour: number): ()
-        local timeString: string = string.format("%02d:00:00", math.floor(hour))
-        pcall(function()
-            Lighting.TimeOfDay = timeString
-        end)
-    end
-
-    local card: any
-    card = framework.Categories.Render:CreateModule({
-        Name = "Time Changer",
-        Category = "Render",
-        ConfigKey = "Universal.TimeChanger",
-        Order = 25,
-        Tooltip = "Changes the client time of day in the current world.",
-        Function = function(enabled: boolean): ()
-            if enabled then
-                originalTime = Lighting.TimeOfDay
-                applyTime(customTime)
-                card:SetStatus(string.format("%02d:00", customTime))
-
-                card:Loop(function(): ()
-                    if originalTime then
-                        applyTime(customTime)
-                    end
-                end)
-            else
-                if originalTime then
-                    pcall(function()
-                        Lighting.TimeOfDay = originalTime
-                    end)
-                    originalTime = nil
-                end
-                card:SetStatus(nil)
-            end
-        end,
-    })
-
-    card:CreateSlider({
-        Name = "Time",
-        Min = 0,
-        Max = 24,
-        Default = 14,
-        Step = 1,
-        Function = function(value: number): ()
-            customTime = value
-            if card.Enabled then
-                applyTime(value)
-                card:SetStatus(string.format("%02d:00", value))
-            end
-        end,
-        Tooltip = "Hour of day (0 = midnight, 12 = noon, 18 = sunset).",
-    })
-
-    activeCard = card
-    Module.Initialized = true
-    return card
-end
-
-function Module.destroy(): ()
-    if activeCard and activeCard.Enabled then
-        pcall(activeCard.Toggle, false)
-    end
-    activeCard = nil
-    Module.Initialized = false
-end
-
-return Module
-
-]=],
-        ["src/games/universal/World/Disguise.lua"] = [=[
---!strict
-export type Runtime = {
-    framework: any,
-    host: any,
-    services: any,
-}
-
-type AppearanceTemplate = {
-    object: Instance,
-    parent: Instance?,
-}
-
-type MeshTemplate = {
-    part: MeshPart,
-    meshId: string,
-    textureId: string,
-}
-
-type AnimationTemplate = {
-    animation: Animation,
-    animationId: string,
-}
-
-type AppearanceSnapshot = {
-    character: Model,
-    items: {AppearanceTemplate},
-    meshParts: {MeshTemplate},
-    animations: {AnimationTemplate},
-    emotes: any,
-    equippedEmotes: any,
-    scales: {[string]: number},
-}
-
-local Module = {
-    Name = "Disguise",
-    PlaceId = 0,
-    Events = {} :: {[string]: any},
-    Initialized = false,
-}
-
-local activeCard: any = nil
-
-local DEFAULT_USER_ID: number = 239702688
-local SCALE_FIELDS: {string} = {
-    "HeightScale",
-    "WidthScale",
-    "DepthScale",
-    "HeadScale",
-    "BodyTypeScale",
-    "ProportionScale",
-}
-local BODY_PARTS: {[string]: boolean} = {
-    Head = true,
-    Torso = true,
-    UpperTorso = true,
-    LowerTorso = true,
-    LeftArm = true,
-    RightArm = true,
-    LeftLeg = true,
-    RightLeg = true,
-    LeftUpperArm = true,
-    LeftLowerArm = true,
-    LeftHand = true,
-    RightUpperArm = true,
-    RightLowerArm = true,
-    RightHand = true,
-    LeftUpperLeg = true,
-    LeftLowerLeg = true,
-    LeftFoot = true,
-    RightUpperLeg = true,
-    RightLowerLeg = true,
-    RightFoot = true,
-}
-local MOVEMENT_ANIMATIONS: {{descriptionField: string, scriptCategory: string}} = {
-    {descriptionField = "IdleAnimation", scriptCategory = "idle"},
-    {descriptionField = "WalkAnimation", scriptCategory = "walk"},
-    {descriptionField = "RunAnimation", scriptCategory = "run"},
-    {descriptionField = "JumpAnimation", scriptCategory = "jump"},
-    {descriptionField = "ClimbAnimation", scriptCategory = "climb"},
-    {descriptionField = "FallAnimation", scriptCategory = "fall"},
-    {descriptionField = "SwimAnimation", scriptCategory = "swim"},
-    {descriptionField = "SwimIdleAnimation", scriptCategory = "swimidle"},
-    {descriptionField = "MoodAnimation", scriptCategory = "mood"},
-}
-
-function Module.init(context: Runtime): any
-    local framework: any = context.framework
-    local host: any = context.host
-    local Players: Players = host.Players or (game :: any):GetService("Players")
-    local MarketplaceService: MarketplaceService = host.MarketplaceService
-        or (game :: any):GetService("MarketplaceService")
-    local LocalPlayer: Player = host.LocalPlayer or Players.LocalPlayer
-
-    local cloned = setmetatable({}, {__mode = "k"}) :: {[Instance]: boolean}
-    local disguisedItems = setmetatable({}, {__mode = "k"}) :: {[Instance]: boolean}
-    local snapshot: AppearanceSnapshot? = nil
-    local filteredCharacter: Model? = nil
-    local filterConnection: RBXScriptConnection? = nil
-    local generation: number = 0
-    local restoring: boolean = false
-    local emotesAppliedToHumanoid: boolean = false
-    local animationOverrideApplied: boolean = false
-    local targetEmotes: any = nil
-    local targetEquippedEmotes: any = nil
-
-    local settings = {
-        mode = "Character",
-        id = tostring(DEFAULT_USER_ID),
-        useTargetMovementAnimations = false,
-    }
-
-    local function notify(message: string): ()
-        pcall(print, "[Wurst:Disguise] " .. message)
-        if activeCard then
-            pcall(activeCard.Notify, activeCard, message)
-        end
-    end
-
-    local function isAppearanceItem(obj: Instance): boolean
-        return obj:IsA("Accessory")
-            or obj:IsA("ShirtGraphic")
-            or obj:IsA("Shirt")
-            or obj:IsA("Pants")
-            or obj:IsA("BodyColors")
-            or ((obj:IsA("Decal") or obj:IsA("Texture"))
-                and string.lower(obj.Name) == "face")
-    end
-
-    local function isInsideCharacter(obj: Instance, character: Model): boolean
-        local ok: boolean, result: any = pcall(function()
-            return obj:IsDescendantOf(character)
-        end)
-        return ok and result == true
-    end
-
-    local function rebindAccessory(character: Model, accessory: Accessory): ()
-        for _, descendant: Instance in ipairs(accessory:GetDescendants()) do
-            if descendant:IsA("Weld") and descendant.Part1 then
-                local part: Instance? = character:FindFirstChild(
-                    descendant.Part1.Name
-                )
-                if part and part:IsA("BasePart") then
-                    descendant.Part1 = part
-                end
-            elseif descendant:IsA("RigidConstraint")
-                and descendant.Attachment1 then
-                local attachment: Instance? = character:FindFirstChild(
-                    descendant.Attachment1.Name,
-                    true
-                )
-                if attachment and attachment:IsA("Attachment") then
-                    descendant.Attachment1 = attachment
-                end
-            end
-        end
-    end
-
-    local function destroySnapshot(): ()
-        local current: AppearanceSnapshot? = snapshot
-        snapshot = nil
-        emotesAppliedToHumanoid = false
-        animationOverrideApplied = false
-        if current then
-            for _, entry: AppearanceTemplate in ipairs(current.items) do
-                pcall(entry.object.Destroy, entry.object)
-            end
-        end
-    end
-
-    local function getAppliedDescription(humanoid: Humanoid): (any?, boolean)
-        local child: HumanoidDescription? = humanoid:FindFirstChildOfClass(
-            "HumanoidDescription"
-        ) :: HumanoidDescription?
-        if not child then
-            local waitOk: boolean, waited: any = pcall(function()
-                return humanoid:WaitForChild("HumanoidDescription", 2)
-            end)
-            if waitOk and waited and waited:IsA("HumanoidDescription") then
-                child = waited :: HumanoidDescription
-            end
-        end
-        if child then
-            return child, false
-        end
-        local ok: boolean, result: any = pcall(function()
-            return humanoid:GetAppliedDescription()
-        end)
-        if ok and result then
-            return result, true
-        end
-        return nil, false
-    end
-
-    local function cloneTable(value: any): any
-        if type(value) ~= "table" then
-            return value
-        end
-        local copy: any = {}
-        for key: any, entry: any in pairs(value) do
-            copy[key] = if type(entry) == "table" then table.clone(entry) else entry
-        end
-        return copy
-    end
-
-    local function readDescriptionEmotes(description: any): (any?, any?)
-        local ok: boolean, emotes: any, equipped: any = pcall(function()
-            return description:GetEmotes(), description:GetEquippedEmotes()
-        end)
-        if not ok or type(emotes) ~= "table" or type(equipped) ~= "table" then
-            return nil, nil
-        end
-        return cloneTable(emotes), cloneTable(equipped)
-    end
-
-    local function applyDescriptionToHumanoid(
-        humanoid: Humanoid,
-        description: any
-    ): (boolean, string?)
-        local humanoidObject: any = humanoid
-        local lastError: string = "ApplyDescription is unavailable."
-        for _, methodName: string in ipairs({
-            "ApplyDescriptionResetAsync",
-            "ApplyDescriptionAsync",
-            "ApplyDescriptionReset",
-            "ApplyDescription",
-        }) do
-            local method: any = humanoidObject[methodName]
-            if type(method) == "function" then
-                local ok: boolean, result: any = pcall(
-                    method,
-                    humanoidObject,
-                    description
-                )
-                if ok then
-                    return true, nil
-                end
-                lastError = tostring(result)
-            end
-        end
-        return false, lastError
-    end
-
-    local function setHumanoidEmotes(
-        humanoid: Humanoid,
-        emotes: any,
-        equippedEmotes: any
-    ): (boolean, string?)
-        if type(emotes) ~= "table" or type(equippedEmotes) ~= "table" then
-            return false, "The avatar description did not expose emote data."
-        end
-        local description: any, isTemporary: boolean = getAppliedDescription(humanoid)
-        if not description then
-            return false, "Could not read the current HumanoidDescription."
-        end
-        local setOk: boolean, setError: any = pcall(function()
-            description:SetEmotes(cloneTable(emotes))
-            description:SetEquippedEmotes(cloneTable(equippedEmotes))
-        end)
-        if not setOk then
-            if isTemporary then
-                pcall(description.Destroy, description)
-            end
-            return false, tostring(setError)
-        end
-        if not isTemporary then
-            -- The Humanoid's child HumanoidDescription is the live avatar
-            -- description, matching the original VapeV4 emote flow.
-            return true, nil
-        end
-
-        -- Some games do not keep a HumanoidDescription child. In that case
-        -- apply the edited copy to the local Humanoid so the emote wheel sees
-        -- the new equipped list, then let Disguise re-copy its visual items.
-        local applied: boolean, applyError: string? =
-            applyDescriptionToHumanoid(humanoid, description)
-        pcall(description.Destroy, description)
-        return applied, applyError
-    end
-
-    local function captureSnapshot(
-        character: Model,
-        humanoid: Humanoid
-    ): AppearanceSnapshot
-        local items: {AppearanceTemplate} = {}
-        local meshParts: {MeshTemplate} = {}
-        local animations: {AnimationTemplate} = {}
-        local scales: {[string]: number} = {}
-        local emotes: any = {}
-        local equippedEmotes: any = {}
-
-        for _, obj: Instance in ipairs(character:GetDescendants()) do
-            if isAppearanceItem(obj) then
-                local ok: boolean, copy: any = pcall(function()
-                    return obj:Clone()
-                end)
-                if ok and copy then
-                    copy.Parent = nil
-                    table.insert(items, {
-                        object = copy,
-                        parent = obj.Parent,
-                    })
-                end
-            elseif obj:IsA("MeshPart") and BODY_PARTS[obj.Name] then
-                table.insert(meshParts, {
-                    part = obj,
-                    meshId = obj.MeshId,
-                    textureId = obj.TextureID,
-                })
-            elseif obj:IsA("Animation") then
-                local animate: Instance? = character:FindFirstChild("Animate")
-                if animate and obj:IsDescendantOf(animate) then
-                    table.insert(animations, {
-                        animation = obj,
-                        animationId = obj.AnimationId,
-                    })
-                end
-            end
-        end
-
-        local description: any, isTemporary: boolean = getAppliedDescription(humanoid)
-        if description then
-            for _, field: string in ipairs(SCALE_FIELDS) do
-                local ok: boolean, value: any = pcall(function()
-                    return description[field]
-                end)
-                if ok and type(value) == "number" then
-                    scales[field] = value
-                end
-            end
-            local originalEmotes: any, originalEquipped: any =
-                readDescriptionEmotes(description)
-            if originalEmotes and originalEquipped then
-                emotes = originalEmotes
-                equippedEmotes = originalEquipped
-            end
-            if isTemporary then
-                pcall(description.Destroy, description)
-            end
-        end
-
-        return {
-            character = character,
-            items = items,
-            meshParts = meshParts,
-            animations = animations,
-            emotes = emotes,
-            equippedEmotes = equippedEmotes,
-            scales = scales,
-        }
-    end
-
-    local function ensureSnapshot(
-        character: Model,
-        humanoid: Humanoid
-    ): AppearanceSnapshot
-        if snapshot and snapshot.character == character then
-            return snapshot
-        end
-        destroySnapshot()
-        snapshot = captureSnapshot(character, humanoid)
-        return snapshot
-    end
-
-    local function restartAnimateScript(animate: Instance): ()
-        local scriptObject: any = animate
-        local enabledOk: boolean, wasEnabled: any = pcall(function()
-            return scriptObject.Enabled
-        end)
-        if enabledOk and type(wasEnabled) == "boolean" then
-            if not wasEnabled then
-                return
-            end
-            local disabledOk: boolean = pcall(function()
-                scriptObject.Enabled = false
-            end)
-            if disabledOk then
-                task.wait()
-                pcall(function()
-                    scriptObject.Enabled = wasEnabled
-                end)
-                task.wait()
-                return
-            end
-        end
-
-        -- Older clients expose Disabled instead of Enabled.
-        local disabledOk: boolean, wasDisabled: any = pcall(function()
-            return scriptObject.Disabled
-        end)
-        if disabledOk and type(wasDisabled) == "boolean" then
-            local pauseOk: boolean = pcall(function()
-                scriptObject.Disabled = true
-            end)
-            if pauseOk then
-                task.wait()
-                pcall(function()
-                    scriptObject.Disabled = wasDisabled
-                end)
-                task.wait()
-            end
-        end
-    end
-
-    local function normalizeAnimationId(value: any): string?
-        if type(value) == "number" then
-            if value <= 0 or value % 1 ~= 0 then
-                return nil
-            end
-            return "rbxassetid://" .. string.format("%.0f", value)
-        end
-
-        local raw: string = tostring(value or "")
-        if raw == "" then
-            return nil
-        end
-        local assetId: string? = string.match(raw, "^rbxassetid://(%d+)$")
-        if assetId then
-            local numericId: number? = tonumber(assetId)
-            return if numericId and numericId > 0 then raw else nil
-        end
-        local numericId: number? = tonumber(raw)
-        if not numericId or numericId <= 0 or numericId % 1 ~= 0 then
-            return nil
-        end
-        return "rbxassetid://" .. string.format("%.0f", numericId)
-    end
-
-    local animationAssetCache: {[string]: {string}} = {}
-
-    local function extractAnimationsFromAsset(rawAssetId: any): {string}
-        local cacheKey: string = tostring(rawAssetId or "")
-        if cacheKey == "" or cacheKey == "0" then
-            return {}
-        end
-        if animationAssetCache[cacheKey] then
-            return animationAssetCache[cacheKey]
-        end
-
-        local numericId: number? = nil
-        if type(rawAssetId) == "number" and rawAssetId > 0 then
-            numericId = rawAssetId
-        elseif type(rawAssetId) == "string" then
-            local matched: string? = string.match(rawAssetId, "%d+")
-            if matched then
-                numericId = tonumber(matched)
-            end
-        end
-
-        local result: {string} = {}
-        if numericId and numericId > 0 then
-            -- Download asset container via game:GetObjects to extract true AnimationId keyframes
-            local objectsOk: boolean, objects: any = pcall(function()
-                return (game :: any):GetObjects("rbxassetid://" .. tostring(numericId))
-            end)
-            if objectsOk and type(objects) == "table" and #objects > 0 then
-                for _, obj: Instance in ipairs(objects) do
-                    if obj:IsA("Animation") and obj.AnimationId ~= "" then
-                        table.insert(result, obj.AnimationId)
-                    end
-                    for _, descendant: Instance in ipairs(obj:GetDescendants()) do
-                        if descendant:IsA("Animation") and descendant.AnimationId ~= "" then
-                            table.insert(result, descendant.AnimationId)
-                        end
-                    end
-                end
-                for _, obj: Instance in ipairs(objects) do
-                    destroyInstance(obj)
-                end
-            end
-
-            -- Fallback to InsertService:LoadAsset if GetObjects did not unpack animations
-            if #result == 0 then
-                local insertService: any = (game :: any):GetService("InsertService")
-                if insertService and type(insertService.LoadAsset) == "function" then
-                    local loadOk: boolean, loaded: any = pcall(function()
-                        return insertService:LoadAsset(numericId)
-                    end)
-                    if loadOk and loaded then
-                        if loaded:IsA("Animation") and loaded.AnimationId ~= "" then
-                            table.insert(result, loaded.AnimationId)
-                        end
-                        for _, descendant: Instance in ipairs(loaded:GetDescendants()) do
-                            if descendant:IsA("Animation") and descendant.AnimationId ~= "" then
-                                table.insert(result, descendant.AnimationId)
-                            end
-                        end
-                        destroyInstance(loaded)
-                    end
-                end
-            end
-
-            -- Fallback to standard rbxassetid url if unpacking was blocked
-            if #result == 0 then
-                table.insert(result, "rbxassetid://" .. tostring(numericId))
-            end
-        elseif type(rawAssetId) == "string" and rawAssetId ~= "" then
-            table.insert(result, rawAssetId)
-        end
-
-        animationAssetCache[cacheKey] = result
-        return result
-    end
-
-    local function copyTargetMovementAnimations(
-        character: Model,
-        humanoid: Humanoid,
-        description: any
-    ): number
-        local animate: Instance? = character:FindFirstChild("Animate")
-        if not animate then
-            return 0
-        end
-
-        local changedCount: number = 0
-        for _, mapping in ipairs(MOVEMENT_ANIMATIONS) do
-            local readOk: boolean, value: any = pcall(function()
-                return description[mapping.descriptionField]
-            end)
-            local assetId: any = if readOk then value else nil
-            local category: Instance? = animate:FindFirstChild(mapping.scriptCategory)
-            if assetId and category then
-                local animIds: {string} = extractAnimationsFromAsset(assetId)
-                if #animIds > 0 then
-                    local targets: {Animation} = {}
-                    if category:IsA("Animation") then
-                        table.insert(targets, category)
-                    end
-                    for _, descendant: Instance in ipairs(category:GetDescendants()) do
-                        if descendant:IsA("Animation") then
-                            table.insert(targets, descendant)
-                        end
-                    end
-                    for idx: number, animation: Animation in ipairs(targets) do
-                        local chosenId: string = animIds[idx] or animIds[1]
-                        if chosenId and chosenId ~= "" and animation.AnimationId ~= chosenId then
-                            local changed: boolean = pcall(function()
-                                animation.AnimationId = chosenId
-                            end)
-                            if changed then
-                                changedCount += 1
-                            end
-                        end
-                    end
-                end
-            end
-        end
-
-        if changedCount > 0 then
-            animationOverrideApplied = true
-            local animator: Animator? = humanoid:FindFirstChildOfClass("Animator")
-            if animator then
-                local tracksOk: boolean, tracks: any = pcall(function()
-                    return animator:GetPlayingAnimationTracks()
-                end)
-                if tracksOk and type(tracks) == "table" then
-                    for _, track: AnimationTrack in ipairs(tracks) do
-                        pcall(track.Stop, track)
-                    end
-                end
-            end
-            restartAnimateScript(animate)
-        end
-        return changedCount
-    end
-
-    local function applyTargetMovementAnimationsToCharacter(numericId: number): ()
-        local character: Model? = LocalPlayer.Character
-        local humanoid: Humanoid? = character
-            and character:FindFirstChildOfClass("Humanoid")
-            :: Humanoid?
-        if not character or not humanoid or humanoid.Health <= 0 then
-            notify("Your character is not available.")
-            return
-        end
-
-        local animate: Instance? = character:FindFirstChild("Animate")
-        if not animate then
-            notify("Your character has no Animate script to update.")
-            return
-        end
-
-        local current: AppearanceSnapshot = ensureSnapshot(character, humanoid)
-        notify("Downloading target movement animations...")
-
-        task.spawn(function(): ()
-            local changedCount: number = 0
-
-            -- 1. Check if target player is in the current game server for instant 1:1 copy
-            local targetPlayer: Player? = Players:GetPlayerByUserId(numericId)
-            if not targetPlayer then
-                for _, p: Player in ipairs(Players:GetPlayers()) do
-                    if tostring(p.UserId) == tostring(settings.id)
-                        or string.lower(p.Name) == string.lower(tostring(settings.id))
-                        or string.lower(p.DisplayName) == string.lower(tostring(settings.id)) then
-                        targetPlayer = p
-                        break
-                    end
-                end
-            end
-
-            local targetChar: Model? = targetPlayer and targetPlayer.Character
-            local targetAnimate: Instance? = targetChar and targetChar:FindFirstChild("Animate")
-            if targetAnimate then
-                for _, mapping in ipairs(MOVEMENT_ANIMATIONS) do
-                    local sourceCat: Instance? = targetAnimate:FindFirstChild(mapping.scriptCategory)
-                    local targetCat: Instance? = animate:FindFirstChild(mapping.scriptCategory)
-                    if sourceCat and targetCat then
-                        local sourceAnims: {Animation} = {}
-                        if sourceCat:IsA("Animation") and sourceCat.AnimationId ~= "" then
-                            table.insert(sourceAnims, sourceCat)
-                        end
-                        for _, obj: Instance in ipairs(sourceCat:GetDescendants()) do
-                            if obj:IsA("Animation") and obj.AnimationId ~= "" then
-                                table.insert(sourceAnims, obj)
-                            end
-                        end
-                        if #sourceAnims > 0 then
-                            local targetAnims: {Animation} = {}
-                            if targetCat:IsA("Animation") then
-                                table.insert(targetAnims, targetCat)
-                            end
-                            for _, obj: Instance in ipairs(targetCat:GetDescendants()) do
-                                if obj:IsA("Animation") then
-                                    table.insert(targetAnims, obj)
-                                end
-                            end
-                            for idx: number, targetAnim: Animation in ipairs(targetAnims) do
-                                local src: Animation? = sourceAnims[idx] or sourceAnims[1]
-                                if src and src.AnimationId ~= "" and targetAnim.AnimationId ~= src.AnimationId then
-                                    local changed: boolean = pcall(function()
-                                        targetAnim.AnimationId = src.AnimationId
-                                    end)
-                                    if changed then
-                                        changedCount += 1
-                                    end
-                                end
-                            end
-                        end
-                    end
-                end
-            end
-
-            -- 2. If not in server or no animations found, fetch HumanoidDescription and download assets
-            if changedCount == 0 then
-                local description: any, fetchError: string? = getUserDescription(numericId)
-                if not description then
-                    notify("Could not load target avatar description: " .. tostring(fetchError))
-                    return
-                end
-                changedCount = copyTargetMovementAnimations(character, humanoid, description)
-                destroyInstance(description)
-            else
-                animationOverrideApplied = true
-                local animator: Animator? = humanoid:FindFirstChildOfClass("Animator")
-                if animator then
-                    local tracksOk: boolean, tracks: any = pcall(function()
-                        return animator:GetPlayingAnimationTracks()
-                    end)
-                    if tracksOk and type(tracks) == "table" then
-                        for _, track: AnimationTrack in ipairs(tracks) do
-                            pcall(track.Stop, track)
-                        end
-                    end
-                end
-                restartAnimateScript(animate)
-            end
-
-            if changedCount > 0 then
-                notify("Applied " .. tostring(changedCount) .. " target movement animation slot(s); Animate restarted.")
-            else
-                notify("No custom movement animations found for ID " .. tostring(numericId) .. " (target may use default animations).")
-            end
-        end)
-    end
-
-    local function refreshMeshPartSnapshot(
-        character: Model,
-        current: AppearanceSnapshot
-    ): ()
-        local originalByName: {[string]: {meshId: string, textureId: string}} = {}
-        for _, entry: MeshTemplate in ipairs(current.meshParts) do
-            originalByName[entry.part.Name] = {
-                meshId = entry.meshId,
-                textureId = entry.textureId,
-            }
-        end
-
-        local refreshed: {MeshTemplate} = {}
-        for _, obj: Instance in ipairs(character:GetDescendants()) do
-            if obj:IsA("MeshPart") and BODY_PARTS[obj.Name] then
-                local original: {meshId: string, textureId: string}? =
-                    originalByName[obj.Name]
-                table.insert(refreshed, {
-                    part = obj,
-                    meshId = original and original.meshId or obj.MeshId,
-                    textureId = original and original.textureId or obj.TextureID,
-                })
-            end
-        end
-        if #refreshed > 0 then
-            current.meshParts = refreshed
-        end
-    end
-
-    local function restoreOriginalAppearance(
-        character: Model,
-        humanoid: Humanoid?
-    ): ()
-        local current: AppearanceSnapshot? = snapshot
-        if not current or current.character ~= character then
-            return
-        end
-
-        restoring = true
-        if emotesAppliedToHumanoid and humanoid then
-            local emotesRestored: boolean = setHumanoidEmotes(
-                humanoid,
-                current.emotes,
-                current.equippedEmotes
-            )
-            if emotesRestored then
-                emotesAppliedToHumanoid = false
-                refreshMeshPartSnapshot(character, current)
-            end
-        end
-
-        local removals: {Instance} = {}
-        table.clear(disguisedItems)
-        table.clear(cloned)
-        for _, obj: Instance in ipairs(character:GetDescendants()) do
-            if isAppearanceItem(obj) then
-                table.insert(removals, obj)
-            end
-        end
-        for _, obj: Instance in ipairs(removals) do
-            pcall(obj.Destroy, obj)
-        end
-
-        for _, entry: MeshTemplate in ipairs(current.meshParts) do
-            if isInsideCharacter(entry.part, character) then
-                pcall(function()
-                    entry.part.MeshId = entry.meshId
-                    entry.part.TextureID = entry.textureId
-                end)
-            end
-        end
-        for _, entry: AnimationTemplate in ipairs(current.animations) do
-            if isInsideCharacter(entry.animation, character) then
-                pcall(function()
-                    entry.animation.AnimationId = entry.animationId
-                end)
-            end
-        end
-
-        local restartRestoredAnimations: boolean = animationOverrideApplied
-        animationOverrideApplied = false
-
-        for _, entry: AppearanceTemplate in ipairs(current.items) do
-            local ok: boolean, copy: any = pcall(function()
-                return entry.object:Clone()
-            end)
-            if ok and copy then
-                local parent: Instance = entry.parent or character
-                if parent ~= character and not isInsideCharacter(parent, character) then
-                    if (copy:IsA("Decal") or copy:IsA("Texture"))
-                        and string.lower(copy.Name) == "face" then
-                        parent = character:FindFirstChild("Head") or character
-                    else
-                        parent = character
-                    end
-                end
-                if copy:IsA("Accessory") then
-                    rebindAccessory(character, copy)
-                end
-                pcall(function()
-                    copy.Parent = parent
-                end)
-            end
-        end
-        restoring = false
-        if restartRestoredAnimations then
-            local animate: Instance? = character:FindFirstChild("Animate")
-            if animate then
-                if humanoid then
-                    local animator: Animator? = humanoid:FindFirstChildOfClass("Animator")
-                    if animator then
-                        local tracksOk: boolean, tracks: any = pcall(function()
-                            return animator:GetPlayingAnimationTracks()
-                        end)
-                        if tracksOk and type(tracks) == "table" then
-                            for _, track: AnimationTrack in ipairs(tracks) do
-                                pcall(track.Stop, track)
-                            end
-                        end
-                    end
-                end
-                restartAnimateScript(animate)
-            end
-        end
-    end
-
-    local function stopAppearanceFilter(): ()
-        if filterConnection then
-            pcall(filterConnection.Disconnect, filterConnection)
-            filterConnection = nil
-        end
-        filteredCharacter = nil
-    end
-
-    local function removeUnexpectedAppearance(obj: Instance): ()
-        if restoring
-            or not isAppearanceItem(obj)
-            or cloned[obj]
-            or disguisedItems[obj]
-            or not activeCard
-            or not activeCard.Enabled
-            or settings.mode ~= "Character" then
-            return
-        end
-        task.defer(function(): ()
-            if restoring
-                or not activeCard
-                or not activeCard.Enabled
-                or settings.mode ~= "Character"
-                or cloned[obj]
-                or disguisedItems[obj] then
-                return
-            end
-            pcall(obj.Destroy, obj)
-        end)
-    end
-
-    local function installAppearanceFilter(character: Model): ()
-        if filteredCharacter == character
-            and filterConnection
-            and filterConnection.Connected then
-            return
-        end
-        stopAppearanceFilter()
-        filteredCharacter = character
-        filterConnection = character.DescendantAdded:Connect(
-            removeUnexpectedAppearance
-        )
-        if activeCard then
-            activeCard:Clean(filterConnection)
-        end
-    end
-
-    local function parseId(): (number?, string?)
-        local trimmed: string = tostring(settings.id)
-            :gsub("^%s+", "")
-            :gsub("%s+$", "")
-        if trimmed == "" then
-            return nil, "Enter a positive integer ID or username first."
-        end
-        local value: number? = tonumber(trimmed)
-        if value and value > 0 and value % 1 == 0 then
-            return value, nil
-        end
-        for _, p: Player in ipairs(Players:GetPlayers()) do
-            if string.lower(p.Name) == string.lower(trimmed)
-                or string.lower(p.DisplayName) == string.lower(trimmed) then
-                return p.UserId, nil
-            end
-        end
-        local ok: boolean, resolvedId: any = pcall(function()
-            return Players:GetUserIdFromNameAsync(trimmed)
-        end)
-        if ok and type(resolvedId) == "number" and resolvedId > 0 then
-            return resolvedId, nil
-        end
-        return nil, "Enter a positive integer ID or valid username."
-    end
-
-    local function getUserDescription(userId: number): (any?, string?)
-        local playersObject: any = Players
-        local asyncGetter: any = playersObject.GetHumanoidDescriptionFromUserIdAsync
-        local syncGetter: any = playersObject.GetHumanoidDescriptionFromUserId
-        if type(asyncGetter) == "function" then
-            local ok: boolean, result: any = pcall(asyncGetter, playersObject, userId)
-            if ok and result then
-                return result, nil
-            end
-            if not ok then
-                local asyncError: string = tostring(result)
-                if type(syncGetter) ~= "function" then
-                    return nil, asyncError
-                end
-            end
-        end
-        if type(syncGetter) == "function" then
-            local ok: boolean, result: any = pcall(syncGetter, playersObject, userId)
-            if ok and result then
-                return result, nil
-            end
-            return nil, tostring(result)
-        end
-        return nil, "This client does not expose a HumanoidDescription lookup API."
-    end
-
-    local function stillCurrent(token: number, character: Model): boolean
-        return generation == token
-            and activeCard ~= nil
-            and activeCard.Enabled
-            and LocalPlayer.Character == character
-    end
-
-    local function setDescriptionScales(
-        description: any,
-        current: AppearanceSnapshot
-    ): ()
-        for _, field: string in ipairs(SCALE_FIELDS) do
-            local value: number? = current.scales[field]
-            if value ~= nil then
-                pcall(function()
-                    description[field] = value
-                end)
-            end
-        end
-    end
-
-    local function copyCharacterAppearance(
-        character: Model,
-        clone: Model
-    ): ()
-        local realHead: Instance? = character:FindFirstChild("Head")
-        for _, source: Instance in ipairs(clone:GetChildren()) do
-            if isAppearanceItem(source) then
-                cloned[source] = true
-                disguisedItems[source] = true
-                if source:IsA("Accessory") then
-                    rebindAccessory(character, source)
-                end
-                source.Parent = character
-            elseif BODY_PARTS[source.Name]
-                and source:IsA("MeshPart") then
-                local target: Instance? = character:FindFirstChild(source.Name)
-                if target and target:IsA("MeshPart") then
-                    -- Copy mesh identifiers only; retain live part dimensions,
-                    -- joint objects, and collision settings.
-                    pcall(function()
-                        target.MeshId = source.MeshId
-                        target.TextureID = source.TextureID
-                    end)
-                end
-            end
-        end
-
-        local targetFace: Instance? = clone:FindFirstChild("face", true)
-        if targetFace and isAppearanceItem(targetFace) and realHead then
-            cloned[targetFace] = true
-            disguisedItems[targetFace] = true
-            targetFace.Parent = realHead
-        end
-
-    end
-
-    local function destroyInstance(instance: Instance?): ()
-        if instance then
-            pcall(instance.Destroy, instance)
-        end
-    end
-
-    local function applyCharacterDisguise(
-        token: number,
-        character: Model,
-        humanoid: Humanoid,
-        userId: number
-    ): ()
-        local description: any, fetchError: string? = getUserDescription(userId)
-        if not description then
-            if stillCurrent(token, character) then
-                notify("Could not load that avatar: " .. tostring(fetchError))
-            end
-            return
-        end
-        if not stillCurrent(token, character) then
-            destroyInstance(description)
-            return
-        end
-
-        local current: AppearanceSnapshot = ensureSnapshot(character, humanoid)
-        restoreOriginalAppearance(character, humanoid)
-        setDescriptionScales(description, current)
-
-        local oldArchivable: boolean = character.Archivable
-        character.Archivable = true
-        local cloneOk: boolean, cloneResult: any = pcall(function()
-            return character:Clone()
-        end)
-        character.Archivable = oldArchivable
-        if not cloneOk or not cloneResult then
-            destroyInstance(description)
-            notify("Could not stage the disguise character.")
-            return
-        end
-
-        local clone: Model = cloneResult :: Model
-        local parentOk: boolean = pcall(function()
-            clone.Parent = game
-        end)
-        if not parentOk then
-            destroyInstance(description)
-            destroyInstance(clone)
-            notify("Could not stage the disguise character in this client.")
-            return
-        end
-
-        local cloneHumanoid: Humanoid? = clone:FindFirstChildOfClass("Humanoid")
-        if not cloneHumanoid then
-            destroyInstance(description)
-            destroyInstance(clone)
-            notify("The staged character has no Humanoid.")
-            return
-        end
-
-        local applied: boolean, applyError: string? =
-            applyDescriptionToHumanoid(cloneHumanoid, description)
-        if not applied then
-            destroyInstance(description)
-            destroyInstance(clone)
-            notify("Could not apply the avatar description: " .. tostring(applyError))
-            return
-        end
-        if not stillCurrent(token, character) then
-            destroyInstance(description)
-            destroyInstance(clone)
-            return
-        end
-
-        targetEmotes, targetEquippedEmotes = readDescriptionEmotes(description)
-        local emoteWarning: string? = nil
-        if targetEmotes and targetEquippedEmotes then
-            local emotesApplied: boolean, emoteError: string? = setHumanoidEmotes(
-                humanoid,
-                targetEmotes,
-                targetEquippedEmotes
-            )
-            if emotesApplied then
-                emotesAppliedToHumanoid = true
-                refreshMeshPartSnapshot(character, current)
-            else
-                emoteWarning = tostring(emoteError)
-                -- SetEmotes may have succeeded before SetEquippedEmotes failed;
-                -- roll back a partial update using the captured local profile.
-                local rolledBack: boolean = setHumanoidEmotes(
-                    humanoid,
-                    current.emotes,
-                    current.equippedEmotes
-                )
-                if not rolledBack then
-                    emotesAppliedToHumanoid = true
-                    emoteWarning ..= " The original emotes could not be restored yet."
-                end
-            end
-        else
-            emoteWarning = "The target avatar description did not expose emotes."
-        end
-        if not stillCurrent(token, character) then
-            if emotesAppliedToHumanoid then
-                local rolledBack: boolean = setHumanoidEmotes(
-                    humanoid,
-                    current.emotes,
-                    current.equippedEmotes
-                )
-                if rolledBack then
-                    emotesAppliedToHumanoid = false
-                end
-            end
-            destroyInstance(description)
-            destroyInstance(clone)
-            return
-        end
-
-        local movementAnimationCount: number = 0
-        if settings.useTargetMovementAnimations then
-            movementAnimationCount = copyTargetMovementAnimations(
-                character,
-                humanoid,
-                description
-            )
-            if not stillCurrent(token, character) then
-                destroyInstance(description)
-                destroyInstance(clone)
-                return
-            end
-        end
-
-        installAppearanceFilter(character)
-        restoring = true
-        local oldItems: {Instance} = {}
-        for _, obj: Instance in ipairs(character:GetDescendants()) do
-            if isAppearanceItem(obj) then
-                table.insert(oldItems, obj)
-            end
-        end
-        for _, obj: Instance in ipairs(oldItems) do
-            pcall(obj.Destroy, obj)
-        end
-        restoring = false
-
-        local copied: boolean, copyError: any = pcall(function()
-            copyCharacterAppearance(character, clone)
-        end)
-        destroyInstance(description)
-        destroyInstance(clone)
-        if not copied then
-            notify("The avatar was loaded, but some appearance parts could not be copied: "
-                .. tostring(copyError))
-            return
-        end
-        if stillCurrent(token, character) then
-            activeCard:SetStatus("Character")
-            local emoteCount: number = 0
-            if type(targetEmotes) == "table" then
-                for _ in pairs(targetEmotes) do
-                    emoteCount += 1
-                end
-            end
-            local message: string = "Avatar disguise applied; live body-part dimensions were left unchanged. "
-            if emoteWarning then
-                message ..= "Emotes could not be applied: " .. emoteWarning
-            elseif emoteCount > 0 then
-                message ..= tostring(emoteCount)
-                    .. " target emote(s) copied; open the Roblox emote menu."
-            else
-                message ..= "The target description returned no emotes."
-            end
-            if settings.useTargetMovementAnimations then
-                if movementAnimationCount > 0 then
-                    message ..= " Copied " .. tostring(movementAnimationCount)
-                        .. " target movement animation slot(s)."
-                else
-                    message ..= " No target movement animation IDs were available."
-                end
-            end
-            notify(message)
-        end
-    end
-
-    local function getService(name: string): any
-        local supplied: any = host[name]
-        if supplied then
-            return supplied
-        end
-        local ok: boolean, result: any = pcall(function()
-            return (game :: any):GetService(name)
-        end)
-        return if ok then result else nil
-    end
-
-    local function getBundleItems(
-        bundleId: number,
-        productInfo: any
-    ): ({any}?, string?)
-        local directItems: any = productInfo.Items or productInfo.items
-        local hasDirectItems: boolean = type(directItems) == "table"
-            and #directItems > 0
-        local directType: string = tostring(productInfo.BundleType or "")
-        if hasDirectItems and directType ~= "" then
-            return directItems, directType
-        end
-
-        for _, serviceName: string in ipairs({"AssetService", "AvatarEditorService"}) do
-            local service: any = getService(serviceName)
-            local method: any = service and service.GetBundleDetailsAsync
-            if type(method) == "function" then
-                local ok: boolean, details: any = pcall(method, service, bundleId)
-                if ok and type(details) == "table" then
-                    local items: any = details.Items or details.items
-                    local bundleType: string = tostring(
-                        details.BundleType or directType
-                    )
-                    if bundleType ~= ""
-                        and type(items) == "table"
-                        and #items > 0 then
-                        return items, bundleType
-                    end
-                    if bundleType ~= "" and hasDirectItems then
-                        return directItems, bundleType
-                    end
-                end
-            end
-        end
-        if hasDirectItems then
-            return directItems, directType
-        end
-        return nil, nil
-    end
-
-    local function getAnimationType(itemName: string): string
-        local normalized: string = string.lower(itemName)
-            :gsub("%s*animations?%s*$", "")
-            :gsub("%s+", "")
-        local aliases: {[string]: string} = {
-            pose = "idle",
-            idling = "idle",
-            walking = "walk",
-            running = "run",
-            jumping = "jump",
-            falling = "fall",
-            climbing = "climb",
-            swimming = "swim",
-        }
-        return aliases[normalized] or normalized
-    end
-
-    local function applyAnimationBundle(
-        token: number,
-        character: Model,
-        humanoid: Humanoid,
-        bundleId: number
-    ): ()
-        local items: {any}?, rawBundleType: string? = getBundleItems(
-            bundleId,
-            {}
-        )
-        local productInfoError: string? = nil
-        if not items or rawBundleType == nil or rawBundleType == "" then
-            if not stillCurrent(token, character) then
-                return
-            end
-            local infoOk: boolean, productInfo: any = pcall(function()
-                return MarketplaceService:GetProductInfo(
-                    bundleId,
-                    Enum.InfoType.Bundle
-                )
-            end)
-            if not stillCurrent(token, character) then
-                return
-            end
-            if infoOk and type(productInfo) == "table" then
-                local fallbackItems: {any}?, fallbackBundleType: string? =
-                    getBundleItems(bundleId, productInfo)
-                if fallbackItems then
-                    items = fallbackItems
-                end
-                if fallbackBundleType and fallbackBundleType ~= "" then
-                    rawBundleType = fallbackBundleType
-                end
-            else
-                productInfoError = tostring(productInfo)
-            end
-        end
-        if not stillCurrent(token, character) then
-            return
-        end
-        if not items then
-            local detail: string = productInfoError
-                and (" " .. productInfoError)
-                or ""
-            notify("Could not read the bundle's animation items." .. detail)
-            return
-        end
-        local bundleType: string = string.lower(tostring(rawBundleType or ""))
-        if bundleType == "" then
-            notify("This client could not verify the bundle type.")
-            return
-        end
-        if not string.find(bundleType, "animation", 1, true) then
-            notify("That ID is not an avatar animation bundle.")
-            return
-        end
-
-        local current: AppearanceSnapshot = ensureSnapshot(character, humanoid)
-        restoreOriginalAppearance(character, humanoid)
-        stopAppearanceFilter()
-
-        local animate: Instance? = character:FindFirstChild("Animate")
-        if not animate then
-            notify("This character has no Animate script to update.")
-            return
-        end
-
-        local changedCount: number = 0
-        for _, item: any in ipairs(items) do
-            if not stillCurrent(token, character) then
-                return
-            end
-            local itemName: string = tostring(item.Name or item.name or "")
-            local itemId: number? = tonumber(item.Id or item.AssetId or item.id)
-            local itemType: string = getAnimationType(itemName)
-            local targetCategory: Instance? = animate:FindFirstChild(itemType)
-            if itemId and targetCategory then
-                local objectsOk: boolean, objects: any = pcall(function()
-                    return (game :: any):GetObjects(
-                        "rbxassetid://" .. tostring(itemId)
-                    )
-                end)
-                if objectsOk and type(objects) == "table" then
-                    if not stillCurrent(token, character) then
-                        for _, object: Instance in ipairs(objects) do
-                            destroyInstance(object)
-                        end
-                        return
-                    end
-                    local sourceAnimation: Animation? = nil
-                    for _, object: Instance in ipairs(objects) do
-                        if object:IsA("Animation") then
-                            sourceAnimation = object
-                            break
-                        end
-                        sourceAnimation = object:FindFirstChildWhichIsA(
-                            "Animation",
-                            true
-                        ) :: Animation?
-                        if sourceAnimation then
-                            break
-                        end
-                    end
-                    if sourceAnimation then
-                        local targetAnimations: {Animation} = {}
-                        if targetCategory:IsA("Animation") then
-                            table.insert(targetAnimations, targetCategory)
-                        end
-                        for _, object: Instance in ipairs(targetCategory:GetDescendants()) do
-                            if object:IsA("Animation") then
-                                table.insert(targetAnimations, object)
-                            end
-                        end
-                        for _, animation: Animation in ipairs(targetAnimations) do
-                            local changed: boolean = pcall(function()
-                                animation.AnimationId = sourceAnimation.AnimationId
-                            end)
-                            if changed then
-                                changedCount += 1
-                            end
-                        end
-                    end
-                    for _, object: Instance in ipairs(objects) do
-                        destroyInstance(object)
-                    end
-                end
-            end
-        end
-
-        if changedCount == 0 then
-            -- Ensure a failed lookup doesn't leave a half-selected mode behind.
-            restoreOriginalAppearance(character, humanoid)
-            notify("No compatible animations were found in that bundle.")
-            return
-        end
-
-        animationOverrideApplied = true
-        local animator: Animator? = humanoid:FindFirstChildOfClass("Animator")
-        if animator then
-            for _, track: AnimationTrack in ipairs(animator:GetPlayingAnimationTracks()) do
-                pcall(track.Stop, track)
-            end
-        end
-        restartAnimateScript(animate)
-        if current.character == character and stillCurrent(token, character) then
-            activeCard:SetStatus("Animation")
-            notify("Animation bundle applied to " .. tostring(changedCount)
-                .. " slots; Animate restarted. Original IDs return when disabled.")
-        end
-    end
-
-    local function applyDisguise(): ()
-        generation += 1
-        local token: number = generation
-        local character: Model? = LocalPlayer.Character
-        local humanoid: Humanoid? = character
-            and character:FindFirstChildOfClass("Humanoid")
-            :: Humanoid?
-        if not character or not humanoid or humanoid.Health <= 0 then
-            notify("Your character is not ready yet.")
-            return
-        end
-        local numericId: number?, idError: string? = parseId()
-        if not numericId then
-            notify(tostring(idError))
-            return
-        end
-
-        local selectedMode: string = settings.mode
-        targetEmotes = nil
-        targetEquippedEmotes = nil
-        task.spawn(function(): ()
-            if selectedMode == "Character" then
-                applyCharacterDisguise(
-                    token,
-                    character :: Model,
-                    humanoid :: Humanoid,
-                    numericId :: number
-                )
-            else
-                applyAnimationBundle(
-                    token,
-                    character :: Model,
-                    humanoid :: Humanoid,
-                    numericId :: number
-                )
-            end
-        end)
-    end
-
-    local function restoreAndRelease(): ()
-        generation += 1
-        stopAppearanceFilter()
-        local character: Model? = LocalPlayer.Character
-        local humanoid: Humanoid? = character
-            and character:FindFirstChildOfClass("Humanoid")
-            :: Humanoid?
-        if character then
-            restoreOriginalAppearance(character, humanoid)
-        end
-        destroySnapshot()
-        table.clear(cloned)
-        table.clear(disguisedItems)
-    end
-
-    local function sortedEmoteNames(data: any): {string}
-        local names: {string} = {}
-        if type(data) == "table" then
-            for name: any in pairs(data) do
-                if type(name) == "string" then
-                    table.insert(names, name)
-                end
-            end
-        end
-        table.sort(names)
-        return names
-    end
-
-    local function equippedEmoteNames(data: any): {string}
-        local names: {string} = {}
-        local seen: {[string]: boolean} = {}
-        if type(data) == "table" then
-            for key: any, entry: any in pairs(data) do
-                local name: any = nil
-                if type(entry) == "string" then
-                    name = entry
-                elseif entry == true and type(key) == "string" then
-                    name = key
-                elseif type(entry) == "table" then
-                    name = entry.Name or entry.name or entry[1]
-                end
-                if type(name) == "string" and not seen[name] then
-                    seen[name] = true
-                    table.insert(names, name)
-                end
-            end
-        end
-        table.sort(names)
-        return names
-    end
-
-    local function formatNameList(names: {string}): string
-        if #names == 0 then
-            return "none"
-        end
-        local shown: {string} = {}
-        for index = 1, math.min(#names, 12) do
-            table.insert(shown, names[index])
-        end
-        if #names > 12 then
-            table.insert(shown, "+" .. tostring(#names - 12) .. " more")
-        end
-        return table.concat(shown, ", ")
-    end
-
-    local card: any
-    card = framework.Categories.Other:CreateModule({
-        Name = "Disguise",
-        Category = "Other",
-        ConfigKey = "Universal.Disguise",
-        Order = 26,
-        Tooltip = "Copies a target avatar's cosmetics and emotes; optionally copies its movement animations. Animation mode changes local motion IDs only, not the visible avatar.",
-        Function = function(enabled: boolean): ()
-            if enabled then
-                card:SetStatus(settings.mode)
-                card:Clean(LocalPlayer.CharacterAdded:Connect(function(): ()
-                    generation += 1
-                    stopAppearanceFilter()
-                    destroySnapshot()
-                    task.wait(0.5)
-                    if card.Enabled then
-                        applyDisguise()
-                    end
-                end))
-                applyDisguise()
-            else
-                restoreAndRelease()
-                card:SetStatus(nil)
-            end
-        end,
-    })
-
-    card:CreateDropdown({
-        Name = "Mode",
-        List = {"Character", "Animation"},
-        Index = 1,
-        Function = function(value: string): ()
-            settings.mode = value
-            card:SetStatus(value)
-            if card.Enabled then
-                if value == "Animation" then
-                    targetEmotes = nil
-                    targetEquippedEmotes = nil
-                    local character: Model? = LocalPlayer.Character
-                    local humanoid: Humanoid? = character
-                        and character:FindFirstChildOfClass("Humanoid")
-                        :: Humanoid?
-                    if character then
-                        restoreOriginalAppearance(character, humanoid)
-                    end
-                    stopAppearanceFilter()
-                end
-                applyDisguise()
-            end
-        end,
-        Tooltip = "Character: visible avatar cosmetics and emotes from a user ID. Animation: movement animation IDs from a bundle; it does not render the target character.",
-    })
-
-    card:CreateButton({
-        Name = "Use target movement animations",
-        Function = function(): ()
-            local numericId: number?, idError: string? = parseId()
-            if not numericId then
-                notify(tostring(idError))
-                return
-            end
-            settings.useTargetMovementAnimations = true
-            applyTargetMovementAnimationsToCharacter(numericId)
-        end,
-        Tooltip = "Downloads and applies the target user's movement animations (idle, walk, run, jump, climb, fall, swim) to your character. Original IDs return when Disguise is turned off.",
-    })
-
-    card:CreateTextBox({
-        Name = "Target ID",
-        Default = settings.id,
-        Function = function(value: string): ()
-            local trimmed: string = tostring(value or "")
-                :gsub("^%s+", "")
-                :gsub("%s+$", "")
-            if trimmed == "" then
-                notify("Enter a user ID or animation bundle ID first.")
-                return
-            end
-            settings.id = trimmed
-            if card.Enabled then
-                applyDisguise()
-            end
-        end,
-        Tooltip = "Positive integer user ID (Character) or avatar-animation bundle ID (Animation).",
-    })
-
-
-    card:CreateButton({
-        Name = "Show target emotes",
-        Function = function(): ()
-            if type(targetEmotes) ~= "table" then
-                notify("Load a user ID in Character mode before listing emotes.")
-                return
-            end
-            local names: {string} = sortedEmoteNames(targetEmotes)
-            local equipped: {string} = equippedEmoteNames(targetEquippedEmotes)
-            notify(string.format(
-                "Target emotes (%d): %s | Equipped (%d): %s",
-                #names,
-                formatNameList(names),
-                #equipped,
-                formatNameList(equipped)
-            ))
-        end,
-        Tooltip = "Lists the emotes and equipped emote slots returned for the target user ID.",
-    })
-
-    activeCard = card
-    Module.Initialized = true
-    return card
-end
-
-function Module.destroy(): ()
-    if activeCard then
-        if activeCard.Enabled then
-            pcall(activeCard.Toggle, activeCard, false)
-        end
-        activeCard = nil
-    end
-    Module.Initialized = false
 end
 
 return Module
