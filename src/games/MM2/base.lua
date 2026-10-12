@@ -70,6 +70,11 @@ local mm2Settings = {
     predictionRtt = 0.08,
     gunLeadBias = 0,
     autoTuneLead = false,
+    -- How often the Shoot motion tracker samples the target (acceleration +
+    -- heading stability). 60 Hz matches the engine step; going higher cannot
+    -- help because MM2 only replicates remote characters at ~20 Hz, so there
+    -- is no new information to read past the replication cadence.
+    motionSampleHz = 60,
     silentSweep = 0.5,
     -- Where the silent bullet is authored: "Front" (shooter's side of the
     -- torso), "Through" (pierces the torso), "Top" (old, 1.6 above), "Behind"
@@ -3910,9 +3915,12 @@ end
 -- client-created parts replicate to the server - so we hang one invisible,
 -- anchored, query-only box under the target: big enough that a shot which
 -- would have passed beside the body now passes through the box instead, and
--- the server maps that hit to the player. Because the box is CanCollide =
--- false it never shoves anybody, CanTouch = false keeps it out of Touched
--- handlers, and Transparency = 1 keeps it invisible.
+-- the server maps that hit to the player. CanQuery = true so gun rays hit
+-- it, CanTouch = true so projectile Touched handlers (the knife) fire on it,
+-- CanCollide = false so it never shoves anybody, and Transparency = 1 keeps
+-- it invisible. An earlier revision shipped CanTouch = false, which is why
+-- the knife throw walked straight through the box: a part cannot fire
+-- Touched while CanTouch is off.
 --
 -- The box is re-centred on the target's root every time it is applied (once
 -- per authored shot/throw) and rebuilt automatically after a respawn or if
@@ -3970,7 +3978,7 @@ local function applyHitbox(player: Player?, size: number?): ()
         box.Transparency = 1
         box.CanCollide = false
         box.CanQuery = true
-        box.CanTouch = false
+        box.CanTouch = true
         box.Anchored = true
         box.Massless = true
         box.TopSurface = Enum.SurfaceType.Smooth

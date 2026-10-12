@@ -41,10 +41,8 @@ function Module.init(runtime: any): any
     -- backpack 0.01s later so it is barely visible. Toggle below ("Macro").
     local shootMacro: boolean = false
 
-    -- Client hitbox expansion: grow the target's invisible HumanoidRootPart so
-    -- the server's hitscan lands inside the widened capsule regardless of lag.
-    -- MM2 telemetry confirms the server accepts kills through expanded hitbox
-    -- boundaries, so this is the single biggest lever for "hit every time".
+    -- Client hitbox box: an invisible query/touch volume hung under the target
+    -- so server-side rays (gun) and Touched events (knife) both land on it.
     local hitboxEnabled: boolean = false
     local hitboxSize: number = 8
     -- Burst fires several packets per trigger at slightly different lead times,
@@ -693,7 +691,9 @@ function Module.init(runtime: any): any
                     deltaTime: number
                 ): ()
                     motionElapsed += deltaTime
-                    if motionElapsed < 1 / 30 then
+                    -- Read live so the Motion Hz slider applies immediately.
+                    if motionElapsed
+                        < 1 / math.clamp(mm2Settings.motionSampleHz, 20, 120) then
                         return
                     end
                     motionElapsed = 0
@@ -1009,6 +1009,20 @@ function Module.init(runtime: any): any
             .. "It is added to the prediction horizon, bounded to +/-0.1s, and "
             .. "does not change character physics.",
         0.005
+    )
+    addNumberOption(
+        ShootFeature,
+        "Motion Hz",
+        mm2Settings.motionSampleHz,
+        20,
+        120,
+        function(value: number): ()
+            mm2Settings.motionSampleHz = math.clamp(math.round(value), 20, 120)
+        end,
+        "Target motion samples per second (acceleration + turn stability). "
+            .. "60 is the sweet spot: MM2 replicates remote players at ~20 Hz, "
+            .. "so higher values only cost CPU - they cannot see more.",
+        5
     )
     addActionOption(ShootFeature, "Lead status", function(): ()
         local status: any = type(getGunLeadStatus) == "function"
