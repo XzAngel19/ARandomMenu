@@ -35,6 +35,24 @@ function Module.init(runtime: any): any
     local mm2Settings: any = core.mm2Settings
     local motionSamples: any = core.motionSamples
 
+    -- Pistol macro: right after a shot is authored, drop the gun back into the
+    -- backpack 0.01s later so it is barely visible. Toggle below ("Macro").
+    local shootMacro: boolean = false
+    local function macroUnequip(gun: Tool?): ()
+        if not shootMacro or not gun then
+            return
+        end
+        task.delay(0.01, function(): ()
+            pcall(function(): ()
+                local backpack: Instance? = LocalPlayer:FindFirstChildOfClass("Backpack")
+                local character: Model? = LocalPlayer.Character
+                if backpack and character and gun.Parent == character then
+                    gun.Parent = backpack
+                end
+            end)
+        end)
+    end
+
     -- One motion model, one lead time, one error budget.
     --
     -- Everything the solver needs is a measured quantity: the target's filtered
@@ -523,6 +541,7 @@ function Module.init(runtime: any): any
                 silent = true,
                 variant = variant,
             })
+            macroUnequip(gun)
             return true
         end
 
@@ -548,6 +567,7 @@ function Module.init(runtime: any): any
             target = target,
             silent = false,
         })
+        macroUnequip(gun)
         return true
     end
 
@@ -742,6 +762,15 @@ function Module.init(runtime: any): any
         end,
         "Holds fire while a wall blocks the muzzle. SilentAIM skips it: it "
             .. "authors the shot at the target."
+    )
+    addToggleOption(
+        ShootFeature,
+        "Macro",
+        shootMacro,
+        function(value: boolean): ()
+            shootMacro = value
+        end,
+        "Pistol macro: hides the gun 0.01 seconds after every shot."
     )
     addToggleOption(
         ShootFeature,

@@ -209,17 +209,39 @@ function Module.init(runtime: any): any
             end)
     end
 
-    local KnifeThrowFeature = createUniversalFeature(
+    -- Attach to the shared "Knife" card created by KnifeAura; only build a new
+    -- card if that module failed to load so the options never dangle.
+    local KnifeThrowFeature: any = state.mm2KnifeFeature
+    if not KnifeThrowFeature then
+        KnifeThrowFeature = createUniversalFeature(
+            "Knife",
+            "Knife aura and knife throw, each behind its own option below",
+            6,
+            function(enabled: boolean): ()
+                if not enabled then
+                    toggleKnifeThrow(false)
+                end
+            end,
+            {
+                categoryName = "Exploits",
+                parent = MM2Scroll,
+                registry = mm2Features,
+            }
+        )
+        state.mm2KnifeFeature = KnifeThrowFeature
+    end
+
+    state.mm2KnifeThrowOff = function(): ()
+        toggleKnifeThrow(false)
+    end
+
+    addToggleOption(
+        KnifeThrowFeature,
         "Knife Throw",
-        "Auto-throws the knife at the nearest target. Silent spawns the blade"
-            .. " beside the target so it connects at any distance or through walls.",
-        7,
+        false,
         toggleKnifeThrow,
-        {
-            categoryName = "Blatant",
-            parent = MM2Scroll,
-            registry = mm2Features,
-        }
+        "Auto-throws the knife at the nearest target. Silent spawns the blade"
+            .. " beside the target so it connects at any distance or through walls."
     )
     addCycleOption(
         KnifeThrowFeature,
@@ -269,6 +291,7 @@ function Module.init(runtime: any): any
 
     activeCleanup = function(): ()
         toggleKnifeThrow(false)
+        state.mm2KnifeThrowOff = nil
     end
     Module.Events = featureConnections
     Module.Initialized = true

@@ -3,26 +3,31 @@ local RUNTIME_COMPATIBILITY_MARKER: string =
 local RUNTIME_SAFETY_SOURCE_URL: string =
     "https://raw.githubusercontent.com/XzAngel19/ARandomMenu/refs/heads/arena/2daf1a78-arandommenu/src/Wurst.lua"
 
-local DEFAULT_FEATURE_CATEGORY: string = "Other"
+local DEFAULT_FEATURE_CATEGORY: string = "Utilities"
 
 local OFFICIAL_CATEGORIES: {string} = {
     "Combat",
-    "Blatant",
+    "Exploits",
     "Render",
     "Blocks",
-    "Movement",
+    "World",
     "Fun",
     "Items",
-    "Other",
+    "Utilities",
 }
 
+-- Old window names keep resolving to the renamed ones so any module or saved
+-- config that still says Blatant/Movement/Other lands in the right window.
 local CATEGORY_ALIASES: {[string]: string} = {
+    ["Blatant"] = "Exploits",
+    ["Movement"] = "World",
+    ["Other"] = "Utilities",
     ["Visuals"] = "Render",
-    ["Protection"] = "Movement",
-    ["Utility"] = "Other",
+    ["Protection"] = "World",
+    ["Utility"] = "Utilities",
     ["Spoof"] = "Fun",
-    ["General"] = "Other",
-    ["Player"] = "Movement",
+    ["General"] = "Utilities",
+    ["Player"] = "World",
 }
 
 local function normalizeFeatureCategory(name: any): string
@@ -35,17 +40,15 @@ end
 
 local FEATURE_CATEGORIES: {[string]: string} = {
 
-    ["Fly"] = "Blatant",
-    ["Jump"] = "Movement",
-    ["Noclip"] = "Blatant",
-    ["Speed"] = "Movement",
-    ["Spider"] = "Movement",
-    ["Walk Speed"] = "Movement",
-    ["Invisible"] = "Blatant",
+    ["Fly"] = "Exploits",
+    ["Jump"] = "World",
+    ["Noclip"] = "Exploits",
+    ["Speed"] = "Exploits",
+    ["Spider"] = "Exploits",
+    ["Walk Speed"] = "World",
+    ["Invisible"] = "Exploits",
 
-    ["AutoWin"] = "Blatant",
-    ["Knife"] = "Blatant",
-    ["Team Detection"] = "Render",
+    ["Knife"] = "Exploits",
 
     ["Click Teleport"] = "Movement",
     ["Freeze Movements"] = "Movement",
@@ -69,10 +72,10 @@ local FEATURE_CATEGORIES: {[string]: string} = {
     ["Anti-AFK"] = "Other",
     ["AntiAFK"] = "Other",
     ["Disguise"] = "Other",
-    ["Fling"] = "Other",
+    ["Fling"] = "Exploits",
     ["Improve FPS"] = "Other",
     ["Interact Extender"] = "Other",
-    ["Lag Switch"] = "Other",
+    ["Lag Switch"] = "Exploits",
     ["Rejoin Server"] = "Other",
     ["Learning"] = "Other",
     ["Remote Logger"] = "Other",
@@ -82,9 +85,7 @@ local FEATURE_CATEGORIES: {[string]: string} = {
     -- mirror that folder layout exactly.
     ["Instant Role Notify"] = "Fun",
     ["Blurt Roles"] = "Fun",
-    ["Shoot"] = "Blatant",
-    ["Knife Aura"] = "Blatant",
-    ["Knife Throw"] = "Blatant",
+    ["Shoot"] = "Exploits",
     ["Trajectory Calibration"] = "Other",
     ["Sprint"] = "Movement",
     ["Teleport"] = "Movement",
@@ -105,10 +106,10 @@ local FEATURE_CATEGORIES: {[string]: string} = {
     ["Auto Parry / Auto Block"] = "Movement",
     ["Killer Hit Aura"] = "Combat",
     ["Fast Vault Optimizer"] = "Movement",
-    ["Cooldown Modifier"] = "Other",
-    ["Damage Boost"] = "Movement",
-    ["Noclip (Vaults & Pallets)"] = "Movement",
-    ["WalkSpeed Hack"] = "Movement",
+    ["Cooldown Modifier"] = "Exploits",
+    ["Damage Boost"] = "Exploits",
+    ["Noclip (Vaults & Pallets)"] = "Exploits",
+    ["WalkSpeed Hack"] = "Exploits",
     ["Silent Steps / Anti-Sound"] = "Movement",
     ["Killer Proximity Visualizer"] = "Render",
     ["Line of Sight ESP"] = "Render",
@@ -224,7 +225,7 @@ local RUNTIME_RAW_BASE: string =
         .. RUNTIME_BRANCH
         .. "/"
 
-local SOURCE_STAMP: string = "v5-20261011-1700"
+local SOURCE_STAMP: string = "v6-20261011-1800"
 
 local BOOT_STARTED_AT: number = os.clock()
 local BOOT_FINGERPRINT_SECONDS: number = 0
@@ -309,21 +310,10 @@ local CONFIG_FILE = CONFIG_PROFILE_FOLDER
 local REPOSITORY_RAW_BASE = RUNTIME_RAW_BASE
 
 local GAME_MODULES: {[number]: string} = {
-    [6872265039] = "BedWars",
-    [6872274481] = "BedWars",
-    [8444591321] = "BedWars",
-    [8560631822] = "BedWars",
     [71480482338212] = "BedFight",
     [142823291] = "MM2",
     [14315258385] = "TRS",
     [93978595733734] = "VD",
-    -- Murderers VS Sheriffs Duels. Every queue mode is its own place on top of
-    -- the lobby, and new ones keep appearing, so this list is only a fast path:
-    -- GAME_FINGERPRINTS below catches any place that is not listed here.
-    [92876937625630] = "MVSD",
-    [135856908115931] = "MVSD",
-    [12355337193] = "MVSD",
-    [86549877824547] = "MVSD",
 }
 
 type GameFingerprint = {
@@ -406,95 +396,6 @@ local GAME_FINGERPRINTS: {GameFingerprint} = {
         },
     },
 
-    -- Murderers VS Sheriffs Duels (RED21 Games). Each queue mode lives in its
-    -- own place, so matching the PlaceId alone kept missing new queues; these
-    -- markers come from a recorded remote dump of the game itself.
-    {
-        module = "MVSD",
-        required = 2,
-        markers = {
-
-            function(replicated: ReplicatedStorage): boolean
-                local packages: Instance? = replicated:FindFirstChild("Packages")
-                local networking: Instance? = packages
-                    and packages:FindFirstChild("Networking")
-                local remoteEvents: Instance? = networking
-                    and networking:FindFirstChild("RE")
-                local confirmMap: Instance? = remoteEvents
-                    and remoteEvents:FindFirstChild("Match")
-                confirmMap = confirmMap and confirmMap:FindFirstChild("ConfirmMatchMap")
-                return confirmMap ~= nil
-            end,
-
-            function(replicated: ReplicatedStorage): boolean
-                local packages: Instance? = replicated:FindFirstChild("Packages")
-                local networking: Instance? = packages
-                    and packages:FindFirstChild("Networking")
-                local remoteEvents: Instance? = networking
-                    and networking:FindFirstChild("RE")
-                for _, folderName: string in ipairs({"Combat", "Events"}) do
-                    local folder: Instance? = remoteEvents
-                        and remoteEvents:FindFirstChild(folderName)
-                    if folder and folder:FindFirstChildOfClass("RemoteEvent") then
-                        return true
-                    end
-                end
-                return false
-            end,
-
-            function(replicated: ReplicatedStorage): boolean
-                local packages: Instance? = replicated:FindFirstChild("Packages")
-                local net: Instance? = packages and packages:FindFirstChild("Net")
-                local remoteEvents: Instance? = net and net:FindFirstChild("RE")
-                if not remoteEvents then
-                    return false
-                end
-                for _, child: Instance in ipairs(remoteEvents:GetChildren()) do
-                    -- The hashed remote names Net generates are 64 hex chars.
-                    if child:IsA("RemoteEvent") and #child.Name == 64 then
-                        return true
-                    end
-                end
-                return false
-            end,
-
-            function(replicated: ReplicatedStorage): boolean
-                local generated: Instance? =
-                    replicated:FindFirstChild("UserGenerated")
-                local analytics: Instance? = generated
-                    and generated:FindFirstChild("Analytics")
-                local clientKit: Instance? = analytics
-                    and analytics:FindFirstChild("ClientKit")
-                return clientKit ~= nil
-                    and clientKit:FindFirstChild("Ping") ~= nil
-                    and clientKit:FindFirstChild("Fps") ~= nil
-            end,
-
-            function(_replicated: ReplicatedStorage): boolean
-                -- Matched characters carry a DefaultGun with fire/showBeam.
-                for _, object: Instance in ipairs(workspace:GetChildren()) do
-                    if not object:IsA("Model") then
-                        continue
-                    end
-                    for _, child: Instance in ipairs(object:GetChildren()) do
-                        if child:IsA("Tool")
-                            or child:IsA("Model")
-                            or child:IsA("Folder") then
-                            local gun: Instance? = child.Name:lower():find("gun")
-                                and child
-                                or child:FindFirstChild("DefaultGun")
-                            if gun
-                                and gun:FindFirstChild("fire")
-                                and gun:FindFirstChild("showBeam") then
-                                return true
-                            end
-                        end
-                    end
-                end
-                return false
-            end,
-        },
-    },
 }
 
 local function detectGameModuleByStructure(): (string?, number)
@@ -532,16 +433,12 @@ end
 local GAME_CHECK = {
     MM2 = 142823291,
     BedFight = 71480482338212,
-    BedWars = 8444591321,
     TRS = 14315258385,
     VD = 93978595733734,
-    MVSD = 135856908115931,
     MM2Active = ACTIVE_GAME_MODULE == "MM2",
     TRSActive = ACTIVE_GAME_MODULE == "TRS",
     VDActive = ACTIVE_GAME_MODULE == "VD",
-    MVSDActive = ACTIVE_GAME_MODULE == "MVSD",
     BedFightActive = ACTIVE_GAME_MODULE == "BedFight",
-    BedWarsActive = ACTIVE_GAME_MODULE == "BedWars",
 }
 
 function GAME_CHECK.matches(identifier: number): boolean
@@ -4890,15 +4787,7 @@ local function loadGameModule(
     local moduleName: string = GAME_MODULES[placeId]
         or ACTIVE_GAME_MODULE
         or tostring(placeId)
-    local paths: {string} = if moduleName == "MVSD" then {
-        -- base.lua has to come first: it publishes state.mvsdCore (team/role
-        -- resolution) and the team provider the ESP colours players with.
-        "src/games/MVSD/base.lua",
-        "src/games/MVSD/Blatant/SilentAim.lua",
-        "src/games/MVSD/Other/Shoot.lua",
-        "src/games/MVSD/Blatant/Knife.lua",
-        "src/games/MVSD/Blatant/AutoWin.lua",
-    } elseif moduleName == "MM2" then {
+    local paths: {string} = if moduleName == "MM2" then {
         -- base.lua is the shared core (round data, roles, prediction, weapon
         -- service). It has to come first: every feature below reads
         -- state.mm2Core. The rest mirrors the menu windows one file per card.
@@ -4918,13 +4807,7 @@ local function loadGameModule(
         "src/games/BedFight/base.lua",
         "src/games/BedFight/Combat/AutoSwing.lua",
         "src/games/BedFight/Render/RoundInfo.lua",
-    } elseif moduleName == "BedWars" and placeId ~= 6872265039 then {
-        "src/games/BedWars/6872274481 - game/base.lua",
-        "src/games/BedWars/6872274481 - game/World/FastPlace.lua",
-        "src/games/BedWars/6872274481 - game/Blatant/Nuker.lua",
-        "src/games/BedWars/6872274481 - game/World/ChestSteal.lua",
-        "src/games/BedWars/6872274481 - game/World/AutoTool.lua",
-    } elseif moduleName == "BedWars" then {} else {"src/games/" .. moduleName .. "/base.lua"}
+    } else {"src/games/" .. moduleName .. "/base.lua"}
     local moduleEnvironment: any = createGameModuleEnvironment(diagnostics)
     local loadedModules: {GameModule} = {}
     local skipped: {string} = {}
@@ -5135,12 +5018,8 @@ local function registerPlaceModule(
             state.cleanupTRSRuntime = destroyModule
         elseif tabName == "VD" then
             state.cleanupVDRuntime = destroyModule
-        elseif tabName == "MVSD" then
-            state.cleanupMVSDRuntime = destroyModule
         elseif tabName == "BedFight" then
             state.cleanupBedFightRuntime = destroyModule
-        elseif tabName == "BedWars" then
-            state.cleanupBedWarsRuntime = destroyModule
         end
     end)
 end
@@ -5155,9 +5034,7 @@ state.logBootstrap(
 registerPlaceModule("MM2", GAME_CHECK.MM2)
 registerPlaceModule("TRS", GAME_CHECK.TRS)
 registerPlaceModule("VD", GAME_CHECK.VD)
-registerPlaceModule("MVSD", GAME_CHECK.MVSD)
 registerPlaceModule("BedFight", GAME_CHECK.BedFight)
-registerPlaceModule("BedWars", GAME_CHECK.BedWars)
 
 if PENDING_FINGERPRINT then
     task.spawn(function(): ()
@@ -5173,9 +5050,7 @@ if PENDING_FINGERPRINT then
                 GAME_CHECK.MM2Active = detected == "MM2"
                 GAME_CHECK.TRSActive = detected == "TRS"
                 GAME_CHECK.VDActive = detected == "VD"
-                GAME_CHECK.MVSDActive = detected == "MVSD"
                 GAME_CHECK.BedFightActive = detected == "BedFight"
-                GAME_CHECK.BedWarsActive = detected == "BedWars"
                 GAME_CHECK.source = ACTIVE_GAME_SOURCE
                 PENDING_FINGERPRINT = false
                 registerPlaceModule(detected, GAME_CHECK[detected] or 0)
@@ -6196,9 +6071,7 @@ local function cleanupRuntime(): ()
         "cleanupFrameworkRuntime",
         "cleanupTRSRuntime",
         "cleanupVDRuntime",
-        "cleanupMVSDRuntime",
         "cleanupBedFightRuntime",
-        "cleanupBedWarsRuntime",
     }) do
         local cleanup: any = state[key]
         if type(cleanup) == "function" then

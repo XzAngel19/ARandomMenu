@@ -199,16 +199,34 @@ function Module.init(runtime: any): any
         refreshKnifeController()
     end
 
+    -- One shared "Knife" card: aura and throw live on it as options. KnifeThrow
+    -- (loaded right after this file) attaches its options to the same card.
     local KnifeFeature = createUniversalFeature(
-        "Knife Aura",
-        "Stabs the nearest valid target in range through the game's own HandleTouched",
+        "Knife",
+        "Knife aura and knife throw, each behind its own option below",
         6,
-        toggleKnifeAura,
+        function(enabled: boolean): ()
+            if not enabled then
+                toggleKnifeAura(false)
+                if type(state.mm2KnifeThrowOff) == "function" then
+                    state.mm2KnifeThrowOff()
+                end
+            end
+        end,
         {
-            categoryName = "Blatant",
+            categoryName = "Exploits",
             parent = MM2Scroll,
             registry = mm2Features,
         }
+    )
+    state.mm2KnifeFeature = KnifeFeature
+
+    addToggleOption(
+        KnifeFeature,
+        "Knife Aura",
+        false,
+        toggleKnifeAura,
+        "Stabs the nearest valid target in range through the game's own HandleTouched"
     )
     addNumberOption(KnifeFeature, "Range", 14, 7, 30, function(
         value: number
@@ -227,6 +245,7 @@ function Module.init(runtime: any): any
 
     activeCleanup = function(): ()
         toggleKnifeAura(false)
+        state.mm2KnifeFeature = nil
     end
     Module.Events = featureConnections
     Module.Initialized = true

@@ -1412,7 +1412,6 @@ function Module.init(context: any): any
         or GAME_CHECK.TRSActive and "TRS"
         or GAME_CHECK.VDActive and "VD"
         or GAME_CHECK.BedFightActive and "BedFight"
-        or GAME_CHECK.MVSDActive and "MVSD"
         or "Universal only"
 
     -- Keybinds and Windows live as rows inside UI Settings only; registering
