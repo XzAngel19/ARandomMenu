@@ -34,10 +34,22 @@ function Module.init(runtime: any): any
     local isProtectedTarget: any = core.isProtectedTarget
     local mm2Settings: any = core.mm2Settings
     local motionSamples: any = core.motionSamples
+    local applyHitbox: any = core.applyHitbox
+    local clearAllHitboxes: any = core.clearAllHitboxes
 
     -- Pistol macro: right after a shot is authored, drop the gun back into the
     -- backpack 0.01s later so it is barely visible. Toggle below ("Macro").
     local shootMacro: boolean = false
+
+    -- Client hitbox expansion: grow the target's invisible HumanoidRootPart so
+    -- the server's hitscan lands inside the widened capsule regardless of lag.
+    -- MM2 telemetry confirms the server accepts kills through expanded hitbox
+    -- boundaries, so this is the single biggest lever for "hit every time".
+    local hitboxEnabled: boolean = false
+    local hitboxSize: number = 8
+    -- Burst fires several packets per trigger at slightly different lead times,
+    -- hedging prediction error. 1 = single shot (vanilla cadence).
+    local shootBurst: number = 1
     local function macroUnequip(gun: Tool?): ()
         if not shootMacro or not gun then
             return
@@ -78,6 +90,13 @@ function Module.init(runtime: any): any
         -- the target, so line of sight is irrelevant and must not veto the
         -- solution.
         ignoreVisibility: boolean?,
+        silent: boolean?,
+        maxError: number?,
+        wallCheck: boolean?,
+        -- Burst sampling offsets the lead horizon by this many seconds.
+        leadBias: number?,
+        -- Widened capsule half width (client hitbox); relaxes the error gate.
+        bodyHalfWidth: number?,
     }
 
     -- Half width of the capsule the server will score the ray against. Used to
@@ -154,7 +173,10 @@ function Module.init(runtime: any): any
             horizontalVelocity = Vector3.new(desired.X, 0, desired.Z)
         end
 
+        -- Burst sampling nudges the lead time a hair either way; the base
+        -- horizon is the calibrated round trip.
         local horizon: number = getGunHorizonSeconds()
+            + (resolvedOptions.leadBias or 0)
         local discount: number = getGunTurnDiscount(horizon, turnRate)
         local lead: number = horizon * discount
         local leadSensitivity: number = type(getGunLeadSensitivity) == "function"
@@ -223,7 +245,15 @@ function Module.init(runtime: any): any
             MINIMUM_ERROR_RADIUS,
             turnError + jitter
         )
-        local allowedErrorBudget: number = ignoreVisibility and (BODY_HALF_WIDTH * 1.75) or BODY_HALF_WIDTH
+        -- A client hitbox widens the capsule the server scores, so the same
+        -- prediction error is far more forgiving: grow the budget with it.
+        local capsuleHalfWidth: number = math.max(
+            BODY_HALF_WIDTH,
+            resolvedOptions.bodyHalfWidth or 0
+        )
+        local allowedErrorBudget: number = ignoreVisibility
+            and (capsuleHalfWidth * 1.75)
+            or capsuleHalfWidth
         if errorRadius > allowedErrorBudget then
             return nil, nil, "turning too hard"
         end
@@ -413,6 +443,8 @@ function Module.init(runtime: any): any
         silent: boolean?,
         maxError: number?,
         quiet: boolean?,
+        leadBias: number?,
+        bodyHalfWidth: number?,
     }
 
     -- Set by the most recent reject() call so the auto-shoot loop can surface
@@ -451,6 +483,11 @@ function Module.init(runtime: any): any
         if not character or not humanoid then
             return reject("Your character is not available.")
         end
+        -- Widen the target's capsule before the shot is authored so the server's
+        -- hitscan lands inside it even if the prediction is a touch off.
+        if hitboxEnabled then
+            applyHitbox(target, hitboxSize)
+        end
 
         local gun: Tool? = getPlayerWeapon(LocalPlayer, "Gun")
         local backpack: Backpack? = LocalPlayer:FindFirstChildOfClass("Backpack")
@@ -473,11 +510,13 @@ function Module.init(runtime: any): any
 
         local aim: CFrame?, prediction: GunPrediction?, reason: string? = nil
         if origin then
-            aim, prediction, reason = computeGunAim(
-                target,
-                origin :: CFrame,
-                silent and {ignoreVisibility = true} or nil
-            )
+            local aimOptions: GunAimOptions = {
+                silent = silent,
+                ignoreVisibility = silent,
+                leadBias = opts.leadBias,
+                bodyHalfWidth = hitboxEnabled and (hitboxSize * 0.5) or nil,
+            }
+            aim, prediction, reason = computeGunAim(target, origin :: CFrame, aimOptions)
         end
 
         local rejectMessages: {[string]: string} = {
@@ -571,6 +610,36 @@ function Module.init(runtime: any): any
         return true
     end
 
+    -- Fire one trigger pull as a small burst of packets at slightly different
+    -- lead times. This hedges the prediction: when the target's motion is
+    -- erratic at least one sample lines up with the server's acceptance window.
+    -- burst = 1 (default) keeps the vanilla single-shot cadence.
+    local function fireGunBurst(
+        target: Player?,
+        options: FireOptions?
+    ): boolean
+        local opts: FireOptions = options or {}
+        local count: number = math.clamp(math.floor(shootBurst or 1), 1, 4)
+        if count <= 1 then
+            return fireGunAtTarget(target, opts)
+        end
+        local spread: number = getGunHorizonSeconds() * 0.5
+        local step: number = (2 * spread) / (count - 1)
+        local fired: boolean = false
+        for index: number = 1, count do
+            local sample: FireOptions = {
+                silent = opts.silent,
+                maxError = opts.maxError,
+                quiet = opts.quiet,
+                leadBias = -spread + step * (index - 1),
+            }
+            if fireGunAtTarget(target, sample) then
+                fired = true
+            end
+        end
+        return fired
+    end
+
     local shootFeatureActive: boolean = false
     local autoShootActive: boolean = false
 
@@ -619,7 +688,7 @@ function Module.init(runtime: any): any
             notify("Enable Shoot first.")
             return
         end
-        fireGunAtTarget(getSelectedShootTarget())
+        fireGunBurst(getSelectedShootTarget())
     end
 
     local function toggleShootMurderer(enabled: boolean): ()
@@ -675,7 +744,7 @@ function Module.init(runtime: any): any
             return
         end
         lastRejectReason = ""
-        local fired: boolean = fireGunAtTarget(target, {
+        local fired: boolean = fireGunBurst(target, {
             silent = autoSettings.mode == "Silent",
             maxError = autoSettings.maxError,
             quiet = true,
@@ -780,6 +849,48 @@ function Module.init(runtime: any): any
             mm2Settings.silentAim = value
         end,
         "Authors the shot at the target: same prediction as Shoot, ignores walls."
+    )
+    addToggleOption(
+        ShootFeature,
+        "Hitbox",
+        hitboxEnabled,
+        function(value: boolean): ()
+            hitboxEnabled = value
+            if not value then
+                clearAllHitboxes()
+            end
+        end,
+        "Expands the target's invisible hitbox on your client so the server's "
+            .. "hitscan lands inside the widened capsule regardless of lag. The "
+            .. "single biggest lever for hitting every shot; set the size below."
+    )
+    addNumberOption(
+        ShootFeature,
+        "Hitbox size",
+        hitboxSize,
+        1,
+        40,
+        function(value: number): ()
+            hitboxSize = math.clamp(value, 1, 40)
+        end,
+        "How wide the expanded target hitbox is, in studs. Bigger is easier to "
+            .. "land but more conspicuous; 8 is a good balance. Only applies "
+            .. "while Hitbox is on.",
+        1
+    )
+    addNumberOption(
+        ShootFeature,
+        "Burst",
+        shootBurst,
+        1,
+        4,
+        function(value: number): ()
+            shootBurst = math.clamp(math.floor(value), 1, 4)
+        end,
+        "Packets fired per trigger, spread across slightly different lead times, "
+            .. "to hedge prediction error against erratic movement. 1 = vanilla "
+            .. "single shot. Higher uses more ammo per trigger.",
+        1
     )
     addNumberOption(
         ShootFeature,
@@ -952,6 +1063,8 @@ function Module.init(runtime: any): any
     activeCleanup = function(): ()
         toggleShootMurderer(false)
         toggleAutoShoot(false)
+        hitboxEnabled = false
+        clearAllHitboxes()
         state.mm2ShotFeedback.hide()
     end
     Module.Events = featureConnections

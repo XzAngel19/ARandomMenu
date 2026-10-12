@@ -39,6 +39,8 @@ function Module.init(runtime: any): any
     local isProtectedTarget: any = core.isProtectedTarget
     local getFilteredVelocity: any = core.getFilteredVelocity
     local trajectoryCalibration: any = core.trajectoryCalibration
+    local applyHitbox: any = core.applyHitbox
+    local clearAllHitboxes: any = core.clearAllHitboxes
 
     local knifeThrowSettings = {
         enabled = false,
@@ -47,6 +49,11 @@ function Module.init(runtime: any): any
         range = 120,
         spawnOffset = 5,
     }
+    -- Client hitbox expansion for the blade: MM2 scores the throw against the
+    -- replicated collision geometry, so widening the target's capsule makes the
+    -- projectile connect regardless of lag (same lever as the gun).
+    local knifeHitbox: boolean = false
+    local knifeHitboxSize: number = 8
     local lastThrow = -math.huge
 
     local function isValidTarget(player: Player): boolean
@@ -160,6 +167,11 @@ function Module.init(runtime: any): any
         end
         local targetRoot: BasePart =
             target.Character:FindFirstChild("HumanoidRootPart") :: BasePart
+        -- Widen the target's capsule before the blade is authored so the server's
+        -- collision check lands inside it even if the lead is a touch off.
+        if knifeHitbox then
+            applyHitbox(target, knifeHitboxSize)
+        end
 
         local originPos: Vector3
         if silent then
@@ -288,9 +300,37 @@ function Module.init(runtime: any): any
         "Silent only: how far beside the target the blade spawns.",
         1
     )
+    addToggleOption(
+        KnifeThrowFeature,
+        "Hitbox",
+        knifeHitbox,
+        function(value: boolean): ()
+            knifeHitbox = value
+            if not value then
+                clearAllHitboxes()
+            end
+        end,
+        "Expands the target's invisible hitbox so the thrown blade connects "
+            .. "regardless of lag. Works with both Normal and Silent throws."
+    )
+    addNumberOption(
+        KnifeThrowFeature,
+        "Hitbox size",
+        knifeHitboxSize,
+        1,
+        40,
+        function(value: number): ()
+            knifeHitboxSize = math.clamp(value, 1, 40)
+        end,
+        "How wide the expanded target hitbox is, in studs. Only applies while "
+            .. "Hitbox is on.",
+        1
+    )
 
     activeCleanup = function(): ()
         toggleKnifeThrow(false)
+        knifeHitbox = false
+        clearAllHitboxes()
         state.mm2KnifeThrowOff = nil
     end
     Module.Events = featureConnections

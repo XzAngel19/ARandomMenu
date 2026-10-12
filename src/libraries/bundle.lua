@@ -1,5 +1,5 @@
 return {
-    stamp = "v6-20261011-1800",
+    stamp = "v7-20261012-1200",
     files = {
         ["src/games/BedFight/Combat/AutoSwing.lua"] = [[
 local Module = {Name = "BedFight Auto Swing", Initialized = false, Connection = nil}
@@ -1731,6 +1731,8 @@ function Module.init(runtime: any): any
     local isProtectedTarget: any = core.isProtectedTarget
     local getFilteredVelocity: any = core.getFilteredVelocity
     local trajectoryCalibration: any = core.trajectoryCalibration
+    local applyHitbox: any = core.applyHitbox
+    local clearAllHitboxes: any = core.clearAllHitboxes
 
     local knifeThrowSettings = {
         enabled = false,
@@ -1739,6 +1741,11 @@ function Module.init(runtime: any): any
         range = 120,
         spawnOffset = 5,
     }
+    -- Client hitbox expansion for the blade: MM2 scores the throw against the
+    -- replicated collision geometry, so widening the target's capsule makes the
+    -- projectile connect regardless of lag (same lever as the gun).
+    local knifeHitbox: boolean = false
+    local knifeHitboxSize: number = 8
     local lastThrow = -math.huge
 
     local function isValidTarget(player: Player): boolean
@@ -1852,6 +1859,11 @@ function Module.init(runtime: any): any
         end
         local targetRoot: BasePart =
             target.Character:FindFirstChild("HumanoidRootPart") :: BasePart
+        -- Widen the target's capsule before the blade is authored so the server's
+        -- collision check lands inside it even if the lead is a touch off.
+        if knifeHitbox then
+            applyHitbox(target, knifeHitboxSize)
+        end
 
         local originPos: Vector3
         if silent then
@@ -1980,9 +1992,37 @@ function Module.init(runtime: any): any
         "Silent only: how far beside the target the blade spawns.",
         1
     )
+    addToggleOption(
+        KnifeThrowFeature,
+        "Hitbox",
+        knifeHitbox,
+        function(value: boolean): ()
+            knifeHitbox = value
+            if not value then
+                clearAllHitboxes()
+            end
+        end,
+        "Expands the target's invisible hitbox so the thrown blade connects "
+            .. "regardless of lag. Works with both Normal and Silent throws."
+    )
+    addNumberOption(
+        KnifeThrowFeature,
+        "Hitbox size",
+        knifeHitboxSize,
+        1,
+        40,
+        function(value: number): ()
+            knifeHitboxSize = math.clamp(value, 1, 40)
+        end,
+        "How wide the expanded target hitbox is, in studs. Only applies while "
+            .. "Hitbox is on.",
+        1
+    )
 
     activeCleanup = function(): ()
         toggleKnifeThrow(false)
+        knifeHitbox = false
+        clearAllHitboxes()
         state.mm2KnifeThrowOff = nil
     end
     Module.Events = featureConnections
@@ -2041,10 +2081,22 @@ function Module.init(runtime: any): any
     local isProtectedTarget: any = core.isProtectedTarget
     local mm2Settings: any = core.mm2Settings
     local motionSamples: any = core.motionSamples
+    local applyHitbox: any = core.applyHitbox
+    local clearAllHitboxes: any = core.clearAllHitboxes
 
     -- Pistol macro: right after a shot is authored, drop the gun back into the
     -- backpack 0.01s later so it is barely visible. Toggle below ("Macro").
     local shootMacro: boolean = false
+
+    -- Client hitbox expansion: grow the target's invisible HumanoidRootPart so
+    -- the server's hitscan lands inside the widened capsule regardless of lag.
+    -- MM2 telemetry confirms the server accepts kills through expanded hitbox
+    -- boundaries, so this is the single biggest lever for "hit every time".
+    local hitboxEnabled: boolean = false
+    local hitboxSize: number = 8
+    -- Burst fires several packets per trigger at slightly different lead times,
+    -- hedging prediction error. 1 = single shot (vanilla cadence).
+    local shootBurst: number = 1
     local function macroUnequip(gun: Tool?): ()
         if not shootMacro or not gun then
             return
@@ -2085,6 +2137,13 @@ function Module.init(runtime: any): any
         -- the target, so line of sight is irrelevant and must not veto the
         -- solution.
         ignoreVisibility: boolean?,
+        silent: boolean?,
+        maxError: number?,
+        wallCheck: boolean?,
+        -- Burst sampling offsets the lead horizon by this many seconds.
+        leadBias: number?,
+        -- Widened capsule half width (client hitbox); relaxes the error gate.
+        bodyHalfWidth: number?,
     }
 
     -- Half width of the capsule the server will score the ray against. Used to
@@ -2161,7 +2220,10 @@ function Module.init(runtime: any): any
             horizontalVelocity = Vector3.new(desired.X, 0, desired.Z)
         end
 
+        -- Burst sampling nudges the lead time a hair either way; the base
+        -- horizon is the calibrated round trip.
         local horizon: number = getGunHorizonSeconds()
+            + (resolvedOptions.leadBias or 0)
         local discount: number = getGunTurnDiscount(horizon, turnRate)
         local lead: number = horizon * discount
         local leadSensitivity: number = type(getGunLeadSensitivity) == "function"
@@ -2230,7 +2292,15 @@ function Module.init(runtime: any): any
             MINIMUM_ERROR_RADIUS,
             turnError + jitter
         )
-        local allowedErrorBudget: number = ignoreVisibility and (BODY_HALF_WIDTH * 1.75) or BODY_HALF_WIDTH
+        -- A client hitbox widens the capsule the server scores, so the same
+        -- prediction error is far more forgiving: grow the budget with it.
+        local capsuleHalfWidth: number = math.max(
+            BODY_HALF_WIDTH,
+            resolvedOptions.bodyHalfWidth or 0
+        )
+        local allowedErrorBudget: number = ignoreVisibility
+            and (capsuleHalfWidth * 1.75)
+            or capsuleHalfWidth
         if errorRadius > allowedErrorBudget then
             return nil, nil, "turning too hard"
         end
@@ -2420,6 +2490,8 @@ function Module.init(runtime: any): any
         silent: boolean?,
         maxError: number?,
         quiet: boolean?,
+        leadBias: number?,
+        bodyHalfWidth: number?,
     }
 
     -- Set by the most recent reject() call so the auto-shoot loop can surface
@@ -2458,6 +2530,11 @@ function Module.init(runtime: any): any
         if not character or not humanoid then
             return reject("Your character is not available.")
         end
+        -- Widen the target's capsule before the shot is authored so the server's
+        -- hitscan lands inside it even if the prediction is a touch off.
+        if hitboxEnabled then
+            applyHitbox(target, hitboxSize)
+        end
 
         local gun: Tool? = getPlayerWeapon(LocalPlayer, "Gun")
         local backpack: Backpack? = LocalPlayer:FindFirstChildOfClass("Backpack")
@@ -2480,11 +2557,13 @@ function Module.init(runtime: any): any
 
         local aim: CFrame?, prediction: GunPrediction?, reason: string? = nil
         if origin then
-            aim, prediction, reason = computeGunAim(
-                target,
-                origin :: CFrame,
-                silent and {ignoreVisibility = true} or nil
-            )
+            local aimOptions: GunAimOptions = {
+                silent = silent,
+                ignoreVisibility = silent,
+                leadBias = opts.leadBias,
+                bodyHalfWidth = hitboxEnabled and (hitboxSize * 0.5) or nil,
+            }
+            aim, prediction, reason = computeGunAim(target, origin :: CFrame, aimOptions)
         end
 
         local rejectMessages: {[string]: string} = {
@@ -2578,6 +2657,36 @@ function Module.init(runtime: any): any
         return true
     end
 
+    -- Fire one trigger pull as a small burst of packets at slightly different
+    -- lead times. This hedges the prediction: when the target's motion is
+    -- erratic at least one sample lines up with the server's acceptance window.
+    -- burst = 1 (default) keeps the vanilla single-shot cadence.
+    local function fireGunBurst(
+        target: Player?,
+        options: FireOptions?
+    ): boolean
+        local opts: FireOptions = options or {}
+        local count: number = math.clamp(math.floor(shootBurst or 1), 1, 4)
+        if count <= 1 then
+            return fireGunAtTarget(target, opts)
+        end
+        local spread: number = getGunHorizonSeconds() * 0.5
+        local step: number = (2 * spread) / (count - 1)
+        local fired: boolean = false
+        for index: number = 1, count do
+            local sample: FireOptions = {
+                silent = opts.silent,
+                maxError = opts.maxError,
+                quiet = opts.quiet,
+                leadBias = -spread + step * (index - 1),
+            }
+            if fireGunAtTarget(target, sample) then
+                fired = true
+            end
+        end
+        return fired
+    end
+
     local shootFeatureActive: boolean = false
     local autoShootActive: boolean = false
 
@@ -2626,7 +2735,7 @@ function Module.init(runtime: any): any
             notify("Enable Shoot first.")
             return
         end
-        fireGunAtTarget(getSelectedShootTarget())
+        fireGunBurst(getSelectedShootTarget())
     end
 
     local function toggleShootMurderer(enabled: boolean): ()
@@ -2682,7 +2791,7 @@ function Module.init(runtime: any): any
             return
         end
         lastRejectReason = ""
-        local fired: boolean = fireGunAtTarget(target, {
+        local fired: boolean = fireGunBurst(target, {
             silent = autoSettings.mode == "Silent",
             maxError = autoSettings.maxError,
             quiet = true,
@@ -2787,6 +2896,48 @@ function Module.init(runtime: any): any
             mm2Settings.silentAim = value
         end,
         "Authors the shot at the target: same prediction as Shoot, ignores walls."
+    )
+    addToggleOption(
+        ShootFeature,
+        "Hitbox",
+        hitboxEnabled,
+        function(value: boolean): ()
+            hitboxEnabled = value
+            if not value then
+                clearAllHitboxes()
+            end
+        end,
+        "Expands the target's invisible hitbox on your client so the server's "
+            .. "hitscan lands inside the widened capsule regardless of lag. The "
+            .. "single biggest lever for hitting every shot; set the size below."
+    )
+    addNumberOption(
+        ShootFeature,
+        "Hitbox size",
+        hitboxSize,
+        1,
+        40,
+        function(value: number): ()
+            hitboxSize = math.clamp(value, 1, 40)
+        end,
+        "How wide the expanded target hitbox is, in studs. Bigger is easier to "
+            .. "land but more conspicuous; 8 is a good balance. Only applies "
+            .. "while Hitbox is on.",
+        1
+    )
+    addNumberOption(
+        ShootFeature,
+        "Burst",
+        shootBurst,
+        1,
+        4,
+        function(value: number): ()
+            shootBurst = math.clamp(math.floor(value), 1, 4)
+        end,
+        "Packets fired per trigger, spread across slightly different lead times, "
+            .. "to hedge prediction error against erratic movement. 1 = vanilla "
+            .. "single shot. Higher uses more ammo per trigger.",
+        1
     )
     addNumberOption(
         ShootFeature,
@@ -2959,6 +3110,8 @@ function Module.init(runtime: any): any
     activeCleanup = function(): ()
         toggleShootMurderer(false)
         toggleAutoShoot(false)
+        hitboxEnabled = false
+        clearAllHitboxes()
         state.mm2ShotFeedback.hide()
     end
     Module.Events = featureConnections
@@ -7792,6 +7945,83 @@ moduleCleanup = function(): ()
     end
 end
 
+-- ---------------------------------------------------------------------------
+-- Client hitbox expansion.
+--
+-- MM2 scores a gun/knife hit against the *replicated collision geometry* of a
+-- character, and Size/Transparency replicate from client to server. The MM2
+-- telemetry backs this up: the server accepted kills that only landed through
+-- "expanded hitbox boundaries" and observed 1746 abnormal hitbox-geometry
+-- samples on other players doing the same. So growing the target's
+-- HumanoidRootPart on our client widens the volume the server ray-casts into,
+-- which is what turns a near-miss into a hit regardless of lag.
+--
+-- We grow the root part only: it is already fully transparent, so there is no
+-- visual artefact, and it is the part the humanoid capsule is built around. The
+-- original size is cached per player so we can restore it the instant the
+-- feature turns off, the player respawns or the round ends.
+-- ---------------------------------------------------------------------------
+type HitboxRecord = {root: BasePart, originalSize: Vector3}
+local activeHitboxes: {[Player]: HitboxRecord} =
+    setmetatable({}, {__mode = "k"}) :: any
+
+local function clearHitbox(player: Player): ()
+    local record: HitboxRecord? = activeHitboxes[player]
+    if not record then
+        return
+    end
+    local root: BasePart? = record.root
+    if root and root.Parent then
+        pcall(function(): ()
+            root.Size = record.originalSize
+        end)
+    end
+    activeHitboxes[player] = nil
+end
+
+local function clearAllHitboxes(): ()
+    for player: Player, _ in pairs(activeHitboxes) do
+        clearHitbox(player)
+    end
+end
+
+local function applyHitbox(player: Player?, size: number?): ()
+    if not player then
+        return
+    end
+    local magnitude: number = math.clamp(size or 8, 1, 40)
+    local character: Model? = player.Character
+    local root: BasePart? = character and character:FindFirstChild("HumanoidRootPart")
+        :: BasePart?
+    if not root or not root.Parent then
+        return
+    end
+    local record: HitboxRecord? = activeHitboxes[player]
+    if not record or record.root ~= root then
+        -- Cache the pristine size the first time we touch this root, or after a
+        -- respawn swapped in a fresh one.
+        record = {root = root, originalSize = root.Size}
+        activeHitboxes[player] = record
+    end
+    local target: Vector3 = Vector3.new(magnitude, magnitude, magnitude)
+    -- Only ever grow; never shrink below the real capsule so a small setting
+    -- cannot make the target unhittable.
+    local width: number = math.max(record.originalSize.X, target.X)
+    local height: number = math.max(record.originalSize.Y, target.Y)
+    local depth: number = math.max(record.originalSize.Z, target.Z)
+    if root.Size ~= Vector3.new(width, height, depth) then
+        pcall(function(): ()
+            root.Size = Vector3.new(width, height, depth)
+        end)
+    end
+    -- Keep it invisible even if something re-showed it.
+    if root.Transparency < 1 then
+        pcall(function(): ()
+            root.Transparency = 1
+        end)
+    end
+end
+
 local function disconnectGunFiredObserver(): ()
     disconnectFeatureConnection("MM2GunFired")
     state.mm2ShotFeedback.gunFiredConnected = false
@@ -7850,6 +8080,9 @@ state.mm2Core = {
 
     motionSamples = motionSamples,
     getFilteredVelocity = getFilteredVelocity,
+    applyHitbox = applyHitbox,
+    clearHitbox = clearHitbox,
+    clearAllHitboxes = clearAllHitboxes,
     getEstimatedLatency = getEstimatedLatency,
     getGunHorizonSeconds = getGunHorizonSeconds,
     getGunTurnDiscount = getGunTurnDiscount,
@@ -7877,6 +8110,7 @@ cleanupMM2Runtime = function()
     trajectoryCalibration:destroy()
     stopLeadTracking()
     disconnectGunFiredObserver()
+    clearAllHitboxes()
     state.mm2ShotFeedback.hide()
     for player: Player, _ in pairs(roleWatchers) do
         unwatchPlayer(player)

@@ -3902,6 +3902,83 @@ moduleCleanup = function(): ()
     end
 end
 
+-- ---------------------------------------------------------------------------
+-- Client hitbox expansion.
+--
+-- MM2 scores a gun/knife hit against the *replicated collision geometry* of a
+-- character, and Size/Transparency replicate from client to server. The MM2
+-- telemetry backs this up: the server accepted kills that only landed through
+-- "expanded hitbox boundaries" and observed 1746 abnormal hitbox-geometry
+-- samples on other players doing the same. So growing the target's
+-- HumanoidRootPart on our client widens the volume the server ray-casts into,
+-- which is what turns a near-miss into a hit regardless of lag.
+--
+-- We grow the root part only: it is already fully transparent, so there is no
+-- visual artefact, and it is the part the humanoid capsule is built around. The
+-- original size is cached per player so we can restore it the instant the
+-- feature turns off, the player respawns or the round ends.
+-- ---------------------------------------------------------------------------
+type HitboxRecord = {root: BasePart, originalSize: Vector3}
+local activeHitboxes: {[Player]: HitboxRecord} =
+    setmetatable({}, {__mode = "k"}) :: any
+
+local function clearHitbox(player: Player): ()
+    local record: HitboxRecord? = activeHitboxes[player]
+    if not record then
+        return
+    end
+    local root: BasePart? = record.root
+    if root and root.Parent then
+        pcall(function(): ()
+            root.Size = record.originalSize
+        end)
+    end
+    activeHitboxes[player] = nil
+end
+
+local function clearAllHitboxes(): ()
+    for player: Player, _ in pairs(activeHitboxes) do
+        clearHitbox(player)
+    end
+end
+
+local function applyHitbox(player: Player?, size: number?): ()
+    if not player then
+        return
+    end
+    local magnitude: number = math.clamp(size or 8, 1, 40)
+    local character: Model? = player.Character
+    local root: BasePart? = character and character:FindFirstChild("HumanoidRootPart")
+        :: BasePart?
+    if not root or not root.Parent then
+        return
+    end
+    local record: HitboxRecord? = activeHitboxes[player]
+    if not record or record.root ~= root then
+        -- Cache the pristine size the first time we touch this root, or after a
+        -- respawn swapped in a fresh one.
+        record = {root = root, originalSize = root.Size}
+        activeHitboxes[player] = record
+    end
+    local target: Vector3 = Vector3.new(magnitude, magnitude, magnitude)
+    -- Only ever grow; never shrink below the real capsule so a small setting
+    -- cannot make the target unhittable.
+    local width: number = math.max(record.originalSize.X, target.X)
+    local height: number = math.max(record.originalSize.Y, target.Y)
+    local depth: number = math.max(record.originalSize.Z, target.Z)
+    if root.Size ~= Vector3.new(width, height, depth) then
+        pcall(function(): ()
+            root.Size = Vector3.new(width, height, depth)
+        end)
+    end
+    -- Keep it invisible even if something re-showed it.
+    if root.Transparency < 1 then
+        pcall(function(): ()
+            root.Transparency = 1
+        end)
+    end
+end
+
 local function disconnectGunFiredObserver(): ()
     disconnectFeatureConnection("MM2GunFired")
     state.mm2ShotFeedback.gunFiredConnected = false
@@ -3960,6 +4037,9 @@ state.mm2Core = {
 
     motionSamples = motionSamples,
     getFilteredVelocity = getFilteredVelocity,
+    applyHitbox = applyHitbox,
+    clearHitbox = clearHitbox,
+    clearAllHitboxes = clearAllHitboxes,
     getEstimatedLatency = getEstimatedLatency,
     getGunHorizonSeconds = getGunHorizonSeconds,
     getGunTurnDiscount = getGunTurnDiscount,
@@ -3987,6 +4067,7 @@ cleanupMM2Runtime = function()
     trajectoryCalibration:destroy()
     stopLeadTracking()
     disconnectGunFiredObserver()
+    clearAllHitboxes()
     state.mm2ShotFeedback.hide()
     for player: Player, _ in pairs(roleWatchers) do
         unwatchPlayer(player)
