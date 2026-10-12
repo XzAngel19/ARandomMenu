@@ -1,5 +1,5 @@
 return {
-    stamp = "v7-20261012-1200",
+    stamp = "v8-20261012-2330",
     files = {
         ["src/games/BedFight/Combat/AutoSwing.lua"] = [[
 local Module = {Name = "BedFight Auto Swing", Initialized = false, Connection = nil}
@@ -2130,6 +2130,11 @@ function Module.init(runtime: any): any
         errorRadius: number,
         leadSeconds: number,
         leadSensitivity: number,
+        -- Where the target's root was on our screen when the shot was solved.
+        -- The silent "Through" variant authors the segment captured -> predicted
+        -- so it covers the target's whole swept path: whichever instant inside
+        -- the acceptance window the server scores, the capsule is on the ray.
+        capturedPosition: Vector3,
     }
 
     type GunAimOptions = {
@@ -2313,6 +2318,7 @@ function Module.init(runtime: any): any
             errorRadius = errorRadius,
             leadSeconds = lead,
             leadSensitivity = leadSensitivity,
+            capturedPosition = (root :: BasePart).Position,
         }, nil
     end
 
@@ -2442,8 +2448,12 @@ function Module.init(runtime: any): any
         local startPoint: Vector3
         local endPoint: Vector3
         if variant == "Through" and approach then
-            -- Front to far side: the segment crosses the full body.
-            startPoint = predicted - approach * approachOffset + sweepStart
+            -- Swept-path geometry: the segment runs from just behind where the
+            -- target was when we solved (captured) to just past where it will
+            -- be (predicted + pierce). The server scores somewhere inside that
+            -- window, so the capsule is on the segment at any scoring instant.
+            local captured: Vector3 = prediction.capturedPosition or predicted
+            startPoint = captured - approach * 1.0 + sweepStart
             endPoint = predicted + approach * SILENT_PIERCE_STUDS + sweepEnd
         elseif variant == "Top" then
             startPoint = predicted + Vector3.new(0, SILENT_LIFT_STUDS, 0)
@@ -2661,6 +2671,31 @@ function Module.init(runtime: any): any
     -- lead times. This hedges the prediction: when the target's motion is
     -- erratic at least one sample lines up with the server's acceptance window.
     -- burst = 1 (default) keeps the vanilla single-shot cadence.
+    --
+    -- The FIRST sample is always the calibrated horizon (bias 0). An earlier
+    -- version spread the samples symmetrically around it, so with burst = 2
+    -- the two packets fired at 0.5x and 1.5x the horizon and the correct lead
+    -- sat exactly between them: telemetry (Place 142823291, 16 gun shots)
+    -- shows aim errors in a 1:3 ratio with every shot a miss. Never skip 0.
+    local function buildBurstBiases(count: number): {number}
+        local biases: {number} = {0}
+        if count <= 1 then
+            return biases
+        end
+        -- Steps of half the horizon; jitter is asymmetric (ping spikes up), so
+        -- overshoot is sampled before undershoot: {0, +s, -s, +2s, ...}.
+        local step: number = getGunHorizonSeconds() * 0.5
+        local tier: number = 1
+        while #biases < count do
+            table.insert(biases, step * tier)
+            if #biases < count then
+                table.insert(biases, -step * tier)
+            end
+            tier += 1
+        end
+        return biases
+    end
+
     local function fireGunBurst(
         target: Player?,
         options: FireOptions?
@@ -2670,15 +2705,13 @@ function Module.init(runtime: any): any
         if count <= 1 then
             return fireGunAtTarget(target, opts)
         end
-        local spread: number = getGunHorizonSeconds() * 0.5
-        local step: number = (2 * spread) / (count - 1)
         local fired: boolean = false
-        for index: number = 1, count do
+        for _, bias: number in ipairs(buildBurstBiases(count)) do
             local sample: FireOptions = {
                 silent = opts.silent,
                 maxError = opts.maxError,
                 quiet = opts.quiet,
-                leadBias = -spread + step * (index - 1),
+                leadBias = bias,
             }
             if fireGunAtTarget(target, sample) then
                 fired = true
@@ -3752,6 +3785,49 @@ function Module.init(runtime: any): any
         end
     end
 
+    -- Name typed into the "Player name" box; "Teleport to Player" moves you to
+    -- that player (case-insensitive, partial names allowed).
+    local teleportTargetName = ""
+
+    local function teleportToPlayer()
+        local character = LocalPlayer.Character
+        if not character then
+            notify("Your character is not available.")
+            return
+        end
+        local needle = string.lower(
+            string.gsub(teleportTargetName or "", "%s+", "")
+        )
+        if needle == "" then
+            notify("Type a player name in the Player name box first.")
+            return
+        end
+        local exact, partial = nil, nil
+        for _, player in ipairs(Players:GetPlayers()) do
+            if player ~= LocalPlayer then
+                local name = string.lower(player.Name)
+                if string.gsub(name, "%s+", "") == needle then
+                    exact = player
+                    break
+                end
+                if not partial and string.find(name, needle, 1, true) then
+                    partial = player
+                end
+            end
+        end
+        local target = exact or partial
+        local targetRoot = target
+            and target.Character
+            and target.Character:FindFirstChild("HumanoidRootPart")
+        if targetRoot then
+            character:PivotTo(targetRoot.CFrame + Vector3.new(0, 3, 0))
+        elseif target then
+            notify(target.Name .. " has no character to teleport to.")
+        else
+            notify("No player named \"" .. teleportTargetName .. "\" was found.")
+        end
+    end
+
     local function teleportToDroppedGun()
         local gunDrop = findDroppedGun()
         local character = LocalPlayer.Character
@@ -3781,6 +3857,17 @@ function Module.init(runtime: any): any
     )
     addActionOption(TeleportFeature, "Teleport to Map", teleportToMap)
     addActionOption(TeleportFeature, "Teleport to Lobby", teleportToLobby)
+    addTextOption(
+        TeleportFeature,
+        "Player name",
+        "",
+        function(value)
+            teleportTargetName = value
+        end,
+        false,
+        "Exact or partial name"
+    )
+    addActionOption(TeleportFeature, "Teleport to Player", teleportToPlayer)
     addActionOption(TeleportFeature, "Get Gun", teleportToDroppedGun)
     local GetGunKeyButton: TextButton = addKeyOption(
         TeleportFeature,
@@ -3867,18 +3954,25 @@ function Module.init(runtime: any): any
     Module.Runtime = runtime
     local trajectoryCalibration: any = core.trajectoryCalibration
 
-    local TrajectoryFeature: any = createUniversalFeature(
-        "Trajectory Calibration",
-        "MM2-only target motion, jump, ping, endpoint and knife-flight analytics",
-        5,
-        function(): () end,
-        {
-            category = true,
-            categoryName = "Other",
-            parent = MM2Scroll,
-            registry = mm2Features,
-        }
-    )
+    -- Attaches to the shared "Metrics" card created by the universal telemetry
+    -- modules; only builds its own card if those failed to load.
+    local TrajectoryFeature: any = state.metricsFeature
+    if not TrajectoryFeature then
+        TrajectoryFeature = createUniversalFeature(
+            "Metrics",
+            "Calibration and game-learning telemetry in one card: projectile "
+                .. "analytics, passive server learning, motion calibration.",
+            5,
+            function(): () end,
+            {
+                category = true,
+                categoryName = "Other",
+                parent = MM2Scroll,
+                registry = mm2Features,
+            }
+        )
+        state.metricsFeature = TrajectoryFeature
+    end
     addActionOption(TrajectoryFeature, "Show learned profile", function(): ()
         notify(trajectoryCalibration:status())
     end)
@@ -3889,7 +3983,7 @@ function Module.init(runtime: any): any
             notify("Trajectory calibration could not be saved; check F9.")
         end
     end)
-    addActionOption(TrajectoryFeature, "Clear History", function(): ()
+    addActionOption(TrajectoryFeature, "Clear MM2 history", function(): ()
         trajectoryCalibration:reset()
         notify("Trajectory calibration history cleared.")
     end)
@@ -7948,20 +8042,20 @@ end
 -- ---------------------------------------------------------------------------
 -- Client hitbox expansion.
 --
--- MM2 scores a gun/knife hit against the *replicated collision geometry* of a
--- character, and Size/Transparency replicate from client to server. The MM2
--- telemetry backs this up: the server accepted kills that only landed through
--- "expanded hitbox boundaries" and observed 1746 abnormal hitbox-geometry
--- samples on other players doing the same. So growing the target's
--- HumanoidRootPart on our client widens the volume the server ray-casts into,
--- which is what turns a near-miss into a hit regardless of lag.
+-- MM2 scores a gun/knife hit by ray-casting the shot against the character's
+-- collision geometry. Anything parented under the character counts, and
+-- client-created parts replicate to the server - so we hang one invisible,
+-- anchored, query-only box under the target: big enough that a shot which
+-- would have passed beside the body now passes through the box instead, and
+-- the server maps that hit to the player. Because the box is CanCollide =
+-- false it never shoves anybody, CanTouch = false keeps it out of Touched
+-- handlers, and Transparency = 1 keeps it invisible.
 --
--- We grow the root part only: it is already fully transparent, so there is no
--- visual artefact, and it is the part the humanoid capsule is built around. The
--- original size is cached per player so we can restore it the instant the
--- feature turns off, the player respawns or the round ends.
+-- The box is re-centred on the target's root every time it is applied (once
+-- per authored shot/throw) and rebuilt automatically after a respawn or if
+-- the server cleans the part up.
 -- ---------------------------------------------------------------------------
-type HitboxRecord = {root: BasePart, originalSize: Vector3}
+type HitboxRecord = {box: BasePart, character: Model}
 local activeHitboxes: {[Player]: HitboxRecord} =
     setmetatable({}, {__mode = "k"}) :: any
 
@@ -7970,10 +8064,10 @@ local function clearHitbox(player: Player): ()
     if not record then
         return
     end
-    local root: BasePart? = record.root
-    if root and root.Parent then
+    local box: BasePart? = record.box
+    if box and box.Parent then
         pcall(function(): ()
-            root.Size = record.originalSize
+            (box :: BasePart):Destroy()
         end)
     end
     activeHitboxes[player] = nil
@@ -7993,31 +8087,50 @@ local function applyHitbox(player: Player?, size: number?): ()
     local character: Model? = player.Character
     local root: BasePart? = character and character:FindFirstChild("HumanoidRootPart")
         :: BasePart?
-    if not root or not root.Parent then
+    if not character or not root or not root.Parent then
         return
     end
     local record: HitboxRecord? = activeHitboxes[player]
-    if not record or record.root ~= root then
-        -- Cache the pristine size the first time we touch this root, or after a
-        -- respawn swapped in a fresh one.
-        record = {root = root, originalSize = root.Size}
+    if not record
+        or record.character ~= character
+        or not record.box
+        or not record.box.Parent then
+        -- First touch, a respawn swapped the character, or the server removed
+        -- the part: build a fresh box under the current character.
+        if record and record.box and record.box.Parent then
+            pcall(function(): ()
+                (record :: HitboxRecord).box:Destroy()
+            end)
+        end
+        local box: BasePart = Instance.new("Part")
+        box.Name = "WurstHitbox"
+        box.Transparency = 1
+        box.CanCollide = false
+        box.CanQuery = true
+        box.CanTouch = false
+        box.Anchored = true
+        box.Massless = true
+        box.TopSurface = Enum.SurfaceType.Smooth
+        box.BottomSurface = Enum.SurfaceType.Smooth
+        box.Parent = character
+        record = {box = box, character = character :: Model}
         activeHitboxes[player] = record
     end
-    local target: Vector3 = Vector3.new(magnitude, magnitude, magnitude)
-    -- Only ever grow; never shrink below the real capsule so a small setting
-    -- cannot make the target unhittable.
-    local width: number = math.max(record.originalSize.X, target.X)
-    local height: number = math.max(record.originalSize.Y, target.Y)
-    local depth: number = math.max(record.originalSize.Z, target.Z)
-    if root.Size ~= Vector3.new(width, height, depth) then
+    local box: BasePart = record.box
+    -- A little taller than wide so jumps stay inside the box.
+    local target: Vector3 = Vector3.new(magnitude, magnitude * 1.2, magnitude)
+    if box.Size ~= target then
         pcall(function(): ()
-            root.Size = Vector3.new(width, height, depth)
+            box.Size = target
         end)
     end
+    pcall(function(): ()
+        box.CFrame = (root :: BasePart).CFrame
+    end)
     -- Keep it invisible even if something re-showed it.
-    if root.Transparency < 1 then
+    if box.Transparency < 1 then
         pcall(function(): ()
-            root.Transparency = 1
+            box.Transparency = 1
         end)
     end
 end
@@ -12038,12 +12151,16 @@ function Module.init(context: Runtime): any
     local gameBridge: any = context.services.gameBridge
     local createUniversalFeature: any = host.createUniversalFeature
     local addActionOption: any = host.addActionOption
+    local addTextOption: any = host.addTextOption
     local addInformationOption: any = host.addInformationOption
 
     local workspace: any = host.workspace
     local RunService: any = host.RunService
 
     local flingRunning: boolean = false
+    -- Name typed into the "Target player" box; the "Fling" action flings that
+    -- exact player (case-insensitive, partial names allowed).
+    local flingTargetName: string = ""
 
     local function setFlingRunning(running: boolean): ()
         flingRunning = running
@@ -12273,10 +12390,50 @@ function Module.init(context: Runtime): any
             end
         end)
     end)
+    addTextOption(
+        FlingFeature,
+        "Target player",
+        "",
+        function(value: string): ()
+            flingTargetName = value
+        end,
+        false,
+        "Exact or partial name"
+    )
+    addActionOption(FlingFeature, "Fling", function(): ()
+        local needle: string = string.lower(
+            string.gsub(flingTargetName or "", "%s+", "")
+        )
+        if needle == "" then
+            notify("Type a player name in the Target player box first.")
+            return
+        end
+        local exact: Player? = nil
+        local partial: Player? = nil
+        for _, player: Player in ipairs(Players:GetPlayers()) do
+            if player ~= LocalPlayer then
+                local name: string = string.lower(player.Name)
+                if string.gsub(name, "%s+", "") == needle then
+                    exact = player
+                    break
+                end
+                if not partial and string.find(name, needle, 1, true) then
+                    partial = player
+                end
+            end
+        end
+        local target: Player? = exact or partial
+        if target then
+            performFling(target)
+        else
+            notify("No player named \"" .. flingTargetName .. "\" was found.")
+        end
+    end)
     addInformationOption(
         FlingFeature,
         "Role names come from the game (MM2: Murderer / Sheriff / Innocent). "
-            .. "The card replaced the old text-target Fling and Role Fling."
+            .. "Target player + Fling works in any game: type a name (partial "
+            .. "is fine) and press Fling."
     )
 
     activeCleanup = function(): ()
@@ -20472,14 +20629,20 @@ function Module.init(context: Runtime): any
         end
     end)
 
-    local GameLearningFeature: any = createUniversalFeature(
-        "Game Learning",
-        "Passive log of shots, hitboxes and movement: learns what the server "
-            .. "accepts or allows by accident (wallshots, range, teleports).",
-        16,
-        function(_enabled: boolean): () end,
-        {category = true, categoryName = "Other"}
-    )
+    -- Attaches to the shared "Metrics" card (created by whichever telemetry
+    -- module loads first) so all calibration/learning options live together.
+    local GameLearningFeature: any = state.metricsFeature
+    if not GameLearningFeature then
+        GameLearningFeature = createUniversalFeature(
+            "Metrics",
+            "Calibration and game-learning telemetry in one card: projectile "
+                .. "analytics, passive server learning, motion calibration.",
+            16,
+            function(_enabled: boolean): () end,
+            {category = true, categoryName = "Other"}
+        )
+        state.metricsFeature = GameLearningFeature
+    end
     addToggleOption(
         GameLearningFeature,
         "Log shots",
@@ -20522,13 +20685,13 @@ function Module.init(context: Runtime): any
         "Seconds after a shot a death still counts as this shot's result.",
         0.5
     )
-    addActionOption(GameLearningFeature, "Show status", function(): ()
+    addActionOption(GameLearningFeature, "Learning status", function(): ()
         notify(gameLearning:status())
     end)
-    addActionOption(GameLearningFeature, "Save logs", function(): ()
+    addActionOption(GameLearningFeature, "Save learning logs", function(): ()
         gameLearning:save()
     end)
-    addActionOption(GameLearningFeature, "Clear History", function(): ()
+    addActionOption(GameLearningFeature, "Clear learning logs", function(): ()
         gameLearning:delete()
     end)
     addInformationOption(
@@ -24802,13 +24965,21 @@ function Module.init(context: Runtime): any
 
     local tuning: any = calibration.tuning
 
-    local ProjectileCalibrationFeature: any = createUniversalFeature(
-        "Projectile Calibration",
-        "Automatic per-game projectile analytics with tunable ping buckets",
-        17,
-        function(_enabled: boolean): () end,
-        {category = true, categoryName = "Other"}
-    )
+    -- One shared "Metrics" card: projectile analytics, game learning and the
+    -- per-game calibration all attach their options to it (whoever loads
+    -- first creates it; the rest attach through state.metricsFeature).
+    local ProjectileCalibrationFeature: any = state.metricsFeature
+    if not ProjectileCalibrationFeature then
+        ProjectileCalibrationFeature = createUniversalFeature(
+            "Metrics",
+            "Calibration and game-learning telemetry in one card: projectile "
+                .. "analytics, passive server learning, motion calibration.",
+            17,
+            function(_enabled: boolean): () end,
+            {category = true, categoryName = "Other"}
+        )
+        state.metricsFeature = ProjectileCalibrationFeature
+    end
     tuning =
         calibration.tuning
     addNumberOption(
@@ -24871,17 +25042,17 @@ function Module.init(context: Runtime): any
             tuning.minProjectileSpeed = math.round(value)
         end
     )
-    addActionOption(ProjectileCalibrationFeature, "Show status", function(): ()
+    addActionOption(ProjectileCalibrationFeature, "Projectile status", function(): ()
         notify(calibration:status())
     end)
-    addActionOption(ProjectileCalibrationFeature, "Save analytics", function(): ()
+    addActionOption(ProjectileCalibrationFeature, "Save projectile data", function(): ()
         if calibration:save("manual") then
             notify("analytics saved")
         else
             notify("save failed; check F9")
         end
     end)
-    addActionOption(ProjectileCalibrationFeature, "Clear History", function(): ()
+    addActionOption(ProjectileCalibrationFeature, "Clear projectile data", function(): ()
         if calibration:delete() then
             notify("calibration history cleared")
         else

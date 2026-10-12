@@ -87,6 +87,49 @@ function Module.init(runtime: any): any
         end
     end
 
+    -- Name typed into the "Player name" box; "Teleport to Player" moves you to
+    -- that player (case-insensitive, partial names allowed).
+    local teleportTargetName = ""
+
+    local function teleportToPlayer()
+        local character = LocalPlayer.Character
+        if not character then
+            notify("Your character is not available.")
+            return
+        end
+        local needle = string.lower(
+            string.gsub(teleportTargetName or "", "%s+", "")
+        )
+        if needle == "" then
+            notify("Type a player name in the Player name box first.")
+            return
+        end
+        local exact, partial = nil, nil
+        for _, player in ipairs(Players:GetPlayers()) do
+            if player ~= LocalPlayer then
+                local name = string.lower(player.Name)
+                if string.gsub(name, "%s+", "") == needle then
+                    exact = player
+                    break
+                end
+                if not partial and string.find(name, needle, 1, true) then
+                    partial = player
+                end
+            end
+        end
+        local target = exact or partial
+        local targetRoot = target
+            and target.Character
+            and target.Character:FindFirstChild("HumanoidRootPart")
+        if targetRoot then
+            character:PivotTo(targetRoot.CFrame + Vector3.new(0, 3, 0))
+        elseif target then
+            notify(target.Name .. " has no character to teleport to.")
+        else
+            notify("No player named \"" .. teleportTargetName .. "\" was found.")
+        end
+    end
+
     local function teleportToDroppedGun()
         local gunDrop = findDroppedGun()
         local character = LocalPlayer.Character
@@ -116,6 +159,17 @@ function Module.init(runtime: any): any
     )
     addActionOption(TeleportFeature, "Teleport to Map", teleportToMap)
     addActionOption(TeleportFeature, "Teleport to Lobby", teleportToLobby)
+    addTextOption(
+        TeleportFeature,
+        "Player name",
+        "",
+        function(value)
+            teleportTargetName = value
+        end,
+        false,
+        "Exact or partial name"
+    )
+    addActionOption(TeleportFeature, "Teleport to Player", teleportToPlayer)
     addActionOption(TeleportFeature, "Get Gun", teleportToDroppedGun)
     local GetGunKeyButton: TextButton = addKeyOption(
         TeleportFeature,

@@ -701,13 +701,21 @@ function Module.init(context: Runtime): any
 
     local tuning: any = calibration.tuning
 
-    local ProjectileCalibrationFeature: any = createUniversalFeature(
-        "Projectile Calibration",
-        "Automatic per-game projectile analytics with tunable ping buckets",
-        17,
-        function(_enabled: boolean): () end,
-        {category = true, categoryName = "Other"}
-    )
+    -- One shared "Metrics" card: projectile analytics, game learning and the
+    -- per-game calibration all attach their options to it (whoever loads
+    -- first creates it; the rest attach through state.metricsFeature).
+    local ProjectileCalibrationFeature: any = state.metricsFeature
+    if not ProjectileCalibrationFeature then
+        ProjectileCalibrationFeature = createUniversalFeature(
+            "Metrics",
+            "Calibration and game-learning telemetry in one card: projectile "
+                .. "analytics, passive server learning, motion calibration.",
+            17,
+            function(_enabled: boolean): () end,
+            {category = true, categoryName = "Other"}
+        )
+        state.metricsFeature = ProjectileCalibrationFeature
+    end
     tuning =
         calibration.tuning
     addNumberOption(
@@ -770,17 +778,17 @@ function Module.init(context: Runtime): any
             tuning.minProjectileSpeed = math.round(value)
         end
     )
-    addActionOption(ProjectileCalibrationFeature, "Show status", function(): ()
+    addActionOption(ProjectileCalibrationFeature, "Projectile status", function(): ()
         notify(calibration:status())
     end)
-    addActionOption(ProjectileCalibrationFeature, "Save analytics", function(): ()
+    addActionOption(ProjectileCalibrationFeature, "Save projectile data", function(): ()
         if calibration:save("manual") then
             notify("analytics saved")
         else
             notify("save failed; check F9")
         end
     end)
-    addActionOption(ProjectileCalibrationFeature, "Clear History", function(): ()
+    addActionOption(ProjectileCalibrationFeature, "Clear projectile data", function(): ()
         if calibration:delete() then
             notify("calibration history cleared")
         else

@@ -17,18 +17,25 @@ function Module.init(runtime: any): any
     Module.Runtime = runtime
     local trajectoryCalibration: any = core.trajectoryCalibration
 
-    local TrajectoryFeature: any = createUniversalFeature(
-        "Trajectory Calibration",
-        "MM2-only target motion, jump, ping, endpoint and knife-flight analytics",
-        5,
-        function(): () end,
-        {
-            category = true,
-            categoryName = "Other",
-            parent = MM2Scroll,
-            registry = mm2Features,
-        }
-    )
+    -- Attaches to the shared "Metrics" card created by the universal telemetry
+    -- modules; only builds its own card if those failed to load.
+    local TrajectoryFeature: any = state.metricsFeature
+    if not TrajectoryFeature then
+        TrajectoryFeature = createUniversalFeature(
+            "Metrics",
+            "Calibration and game-learning telemetry in one card: projectile "
+                .. "analytics, passive server learning, motion calibration.",
+            5,
+            function(): () end,
+            {
+                category = true,
+                categoryName = "Other",
+                parent = MM2Scroll,
+                registry = mm2Features,
+            }
+        )
+        state.metricsFeature = TrajectoryFeature
+    end
     addActionOption(TrajectoryFeature, "Show learned profile", function(): ()
         notify(trajectoryCalibration:status())
     end)
@@ -39,7 +46,7 @@ function Module.init(runtime: any): any
             notify("Trajectory calibration could not be saved; check F9.")
         end
     end)
-    addActionOption(TrajectoryFeature, "Clear History", function(): ()
+    addActionOption(TrajectoryFeature, "Clear MM2 history", function(): ()
         trajectoryCalibration:reset()
         notify("Trajectory calibration history cleared.")
     end)

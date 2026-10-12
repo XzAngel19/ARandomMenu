@@ -3905,20 +3905,20 @@ end
 -- ---------------------------------------------------------------------------
 -- Client hitbox expansion.
 --
--- MM2 scores a gun/knife hit against the *replicated collision geometry* of a
--- character, and Size/Transparency replicate from client to server. The MM2
--- telemetry backs this up: the server accepted kills that only landed through
--- "expanded hitbox boundaries" and observed 1746 abnormal hitbox-geometry
--- samples on other players doing the same. So growing the target's
--- HumanoidRootPart on our client widens the volume the server ray-casts into,
--- which is what turns a near-miss into a hit regardless of lag.
+-- MM2 scores a gun/knife hit by ray-casting the shot against the character's
+-- collision geometry. Anything parented under the character counts, and
+-- client-created parts replicate to the server - so we hang one invisible,
+-- anchored, query-only box under the target: big enough that a shot which
+-- would have passed beside the body now passes through the box instead, and
+-- the server maps that hit to the player. Because the box is CanCollide =
+-- false it never shoves anybody, CanTouch = false keeps it out of Touched
+-- handlers, and Transparency = 1 keeps it invisible.
 --
--- We grow the root part only: it is already fully transparent, so there is no
--- visual artefact, and it is the part the humanoid capsule is built around. The
--- original size is cached per player so we can restore it the instant the
--- feature turns off, the player respawns or the round ends.
+-- The box is re-centred on the target's root every time it is applied (once
+-- per authored shot/throw) and rebuilt automatically after a respawn or if
+-- the server cleans the part up.
 -- ---------------------------------------------------------------------------
-type HitboxRecord = {root: BasePart, originalSize: Vector3}
+type HitboxRecord = {box: BasePart, character: Model}
 local activeHitboxes: {[Player]: HitboxRecord} =
     setmetatable({}, {__mode = "k"}) :: any
 
@@ -3927,10 +3927,10 @@ local function clearHitbox(player: Player): ()
     if not record then
         return
     end
-    local root: BasePart? = record.root
-    if root and root.Parent then
+    local box: BasePart? = record.box
+    if box and box.Parent then
         pcall(function(): ()
-            root.Size = record.originalSize
+            (box :: BasePart):Destroy()
         end)
     end
     activeHitboxes[player] = nil
@@ -3950,31 +3950,50 @@ local function applyHitbox(player: Player?, size: number?): ()
     local character: Model? = player.Character
     local root: BasePart? = character and character:FindFirstChild("HumanoidRootPart")
         :: BasePart?
-    if not root or not root.Parent then
+    if not character or not root or not root.Parent then
         return
     end
     local record: HitboxRecord? = activeHitboxes[player]
-    if not record or record.root ~= root then
-        -- Cache the pristine size the first time we touch this root, or after a
-        -- respawn swapped in a fresh one.
-        record = {root = root, originalSize = root.Size}
+    if not record
+        or record.character ~= character
+        or not record.box
+        or not record.box.Parent then
+        -- First touch, a respawn swapped the character, or the server removed
+        -- the part: build a fresh box under the current character.
+        if record and record.box and record.box.Parent then
+            pcall(function(): ()
+                (record :: HitboxRecord).box:Destroy()
+            end)
+        end
+        local box: BasePart = Instance.new("Part")
+        box.Name = "WurstHitbox"
+        box.Transparency = 1
+        box.CanCollide = false
+        box.CanQuery = true
+        box.CanTouch = false
+        box.Anchored = true
+        box.Massless = true
+        box.TopSurface = Enum.SurfaceType.Smooth
+        box.BottomSurface = Enum.SurfaceType.Smooth
+        box.Parent = character
+        record = {box = box, character = character :: Model}
         activeHitboxes[player] = record
     end
-    local target: Vector3 = Vector3.new(magnitude, magnitude, magnitude)
-    -- Only ever grow; never shrink below the real capsule so a small setting
-    -- cannot make the target unhittable.
-    local width: number = math.max(record.originalSize.X, target.X)
-    local height: number = math.max(record.originalSize.Y, target.Y)
-    local depth: number = math.max(record.originalSize.Z, target.Z)
-    if root.Size ~= Vector3.new(width, height, depth) then
+    local box: BasePart = record.box
+    -- A little taller than wide so jumps stay inside the box.
+    local target: Vector3 = Vector3.new(magnitude, magnitude * 1.2, magnitude)
+    if box.Size ~= target then
         pcall(function(): ()
-            root.Size = Vector3.new(width, height, depth)
+            box.Size = target
         end)
     end
+    pcall(function(): ()
+        box.CFrame = (root :: BasePart).CFrame
+    end)
     -- Keep it invisible even if something re-showed it.
-    if root.Transparency < 1 then
+    if box.Transparency < 1 then
         pcall(function(): ()
-            root.Transparency = 1
+            box.Transparency = 1
         end)
     end
 end

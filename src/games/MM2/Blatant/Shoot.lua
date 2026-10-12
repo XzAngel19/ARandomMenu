@@ -83,6 +83,11 @@ function Module.init(runtime: any): any
         errorRadius: number,
         leadSeconds: number,
         leadSensitivity: number,
+        -- Where the target's root was on our screen when the shot was solved.
+        -- The silent "Through" variant authors the segment captured -> predicted
+        -- so it covers the target's whole swept path: whichever instant inside
+        -- the acceptance window the server scores, the capsule is on the ray.
+        capturedPosition: Vector3,
     }
 
     type GunAimOptions = {
@@ -266,6 +271,7 @@ function Module.init(runtime: any): any
             errorRadius = errorRadius,
             leadSeconds = lead,
             leadSensitivity = leadSensitivity,
+            capturedPosition = (root :: BasePart).Position,
         }, nil
     end
 
@@ -395,8 +401,12 @@ function Module.init(runtime: any): any
         local startPoint: Vector3
         local endPoint: Vector3
         if variant == "Through" and approach then
-            -- Front to far side: the segment crosses the full body.
-            startPoint = predicted - approach * approachOffset + sweepStart
+            -- Swept-path geometry: the segment runs from just behind where the
+            -- target was when we solved (captured) to just past where it will
+            -- be (predicted + pierce). The server scores somewhere inside that
+            -- window, so the capsule is on the segment at any scoring instant.
+            local captured: Vector3 = prediction.capturedPosition or predicted
+            startPoint = captured - approach * 1.0 + sweepStart
             endPoint = predicted + approach * SILENT_PIERCE_STUDS + sweepEnd
         elseif variant == "Top" then
             startPoint = predicted + Vector3.new(0, SILENT_LIFT_STUDS, 0)
@@ -614,6 +624,31 @@ function Module.init(runtime: any): any
     -- lead times. This hedges the prediction: when the target's motion is
     -- erratic at least one sample lines up with the server's acceptance window.
     -- burst = 1 (default) keeps the vanilla single-shot cadence.
+    --
+    -- The FIRST sample is always the calibrated horizon (bias 0). An earlier
+    -- version spread the samples symmetrically around it, so with burst = 2
+    -- the two packets fired at 0.5x and 1.5x the horizon and the correct lead
+    -- sat exactly between them: telemetry (Place 142823291, 16 gun shots)
+    -- shows aim errors in a 1:3 ratio with every shot a miss. Never skip 0.
+    local function buildBurstBiases(count: number): {number}
+        local biases: {number} = {0}
+        if count <= 1 then
+            return biases
+        end
+        -- Steps of half the horizon; jitter is asymmetric (ping spikes up), so
+        -- overshoot is sampled before undershoot: {0, +s, -s, +2s, ...}.
+        local step: number = getGunHorizonSeconds() * 0.5
+        local tier: number = 1
+        while #biases < count do
+            table.insert(biases, step * tier)
+            if #biases < count then
+                table.insert(biases, -step * tier)
+            end
+            tier += 1
+        end
+        return biases
+    end
+
     local function fireGunBurst(
         target: Player?,
         options: FireOptions?
@@ -623,15 +658,13 @@ function Module.init(runtime: any): any
         if count <= 1 then
             return fireGunAtTarget(target, opts)
         end
-        local spread: number = getGunHorizonSeconds() * 0.5
-        local step: number = (2 * spread) / (count - 1)
         local fired: boolean = false
-        for index: number = 1, count do
+        for _, bias: number in ipairs(buildBurstBiases(count)) do
             local sample: FireOptions = {
                 silent = opts.silent,
                 maxError = opts.maxError,
                 quiet = opts.quiet,
-                leadBias = -spread + step * (index - 1),
+                leadBias = bias,
             }
             if fireGunAtTarget(target, sample) then
                 fired = true

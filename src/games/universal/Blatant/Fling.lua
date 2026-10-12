@@ -25,12 +25,16 @@ function Module.init(context: Runtime): any
     local gameBridge: any = context.services.gameBridge
     local createUniversalFeature: any = host.createUniversalFeature
     local addActionOption: any = host.addActionOption
+    local addTextOption: any = host.addTextOption
     local addInformationOption: any = host.addInformationOption
 
     local workspace: any = host.workspace
     local RunService: any = host.RunService
 
     local flingRunning: boolean = false
+    -- Name typed into the "Target player" box; the "Fling" action flings that
+    -- exact player (case-insensitive, partial names allowed).
+    local flingTargetName: string = ""
 
     local function setFlingRunning(running: boolean): ()
         flingRunning = running
@@ -260,10 +264,50 @@ function Module.init(context: Runtime): any
             end
         end)
     end)
+    addTextOption(
+        FlingFeature,
+        "Target player",
+        "",
+        function(value: string): ()
+            flingTargetName = value
+        end,
+        false,
+        "Exact or partial name"
+    )
+    addActionOption(FlingFeature, "Fling", function(): ()
+        local needle: string = string.lower(
+            string.gsub(flingTargetName or "", "%s+", "")
+        )
+        if needle == "" then
+            notify("Type a player name in the Target player box first.")
+            return
+        end
+        local exact: Player? = nil
+        local partial: Player? = nil
+        for _, player: Player in ipairs(Players:GetPlayers()) do
+            if player ~= LocalPlayer then
+                local name: string = string.lower(player.Name)
+                if string.gsub(name, "%s+", "") == needle then
+                    exact = player
+                    break
+                end
+                if not partial and string.find(name, needle, 1, true) then
+                    partial = player
+                end
+            end
+        end
+        local target: Player? = exact or partial
+        if target then
+            performFling(target)
+        else
+            notify("No player named \"" .. flingTargetName .. "\" was found.")
+        end
+    end)
     addInformationOption(
         FlingFeature,
         "Role names come from the game (MM2: Murderer / Sheriff / Innocent). "
-            .. "The card replaced the old text-target Fling and Role Fling."
+            .. "Target player + Fling works in any game: type a name (partial "
+            .. "is fine) and press Fling."
     )
 
     activeCleanup = function(): ()

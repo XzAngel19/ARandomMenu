@@ -1086,14 +1086,20 @@ function Module.init(context: Runtime): any
         end
     end)
 
-    local GameLearningFeature: any = createUniversalFeature(
-        "Game Learning",
-        "Passive log of shots, hitboxes and movement: learns what the server "
-            .. "accepts or allows by accident (wallshots, range, teleports).",
-        16,
-        function(_enabled: boolean): () end,
-        {category = true, categoryName = "Other"}
-    )
+    -- Attaches to the shared "Metrics" card (created by whichever telemetry
+    -- module loads first) so all calibration/learning options live together.
+    local GameLearningFeature: any = state.metricsFeature
+    if not GameLearningFeature then
+        GameLearningFeature = createUniversalFeature(
+            "Metrics",
+            "Calibration and game-learning telemetry in one card: projectile "
+                .. "analytics, passive server learning, motion calibration.",
+            16,
+            function(_enabled: boolean): () end,
+            {category = true, categoryName = "Other"}
+        )
+        state.metricsFeature = GameLearningFeature
+    end
     addToggleOption(
         GameLearningFeature,
         "Log shots",
@@ -1136,13 +1142,13 @@ function Module.init(context: Runtime): any
         "Seconds after a shot a death still counts as this shot's result.",
         0.5
     )
-    addActionOption(GameLearningFeature, "Show status", function(): ()
+    addActionOption(GameLearningFeature, "Learning status", function(): ()
         notify(gameLearning:status())
     end)
-    addActionOption(GameLearningFeature, "Save logs", function(): ()
+    addActionOption(GameLearningFeature, "Save learning logs", function(): ()
         gameLearning:save()
     end)
-    addActionOption(GameLearningFeature, "Clear History", function(): ()
+    addActionOption(GameLearningFeature, "Clear learning logs", function(): ()
         gameLearning:delete()
     end)
     addInformationOption(
