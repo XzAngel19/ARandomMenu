@@ -77,9 +77,12 @@ local mm2Settings = {
     motionSampleHz = 60,
     silentSweep = 0.5,
     -- Where the silent bullet is authored: "Front" (shooter's side of the
-    -- torso), "Through" (pierces the torso), "Top" (old, 1.6 above), "Behind"
-    -- (far side). The Spawn A/B status measures which actually scores.
-    silentSpawn = "Front",
+    -- torso), "Through" (swept segment: captured position -> predicted point,
+    -- so the capsule is on the ray at any scoring instant), "Top" (old, 1.6
+    -- above), "Behind" (far side). Telemetry made the choice: Top scored
+    -- 0/8 with close-range misses exactly as wide as the lead, which is the
+    -- case the Through sweep covers. The Spawn A/B status keeps measuring.
+    silentSpawn = "Through",
     getGunKey = Enum.KeyCode.G,
     instantRoleNotify = false,
     roleEspAll = false,

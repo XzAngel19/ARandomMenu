@@ -68,6 +68,11 @@ function Module.init(context: Runtime): any
             scene: {SceneEntry},
             outcome: {[string]: any}?,
             silentSpawn: {variant: string, offset: number}?,
+            -- Name of the player the menu authored this shot at (module shots
+            -- only). Kill attribution reads it: without it, knife throws and
+            -- manual module shots whose target sat outside the scene-geometry
+            -- window ended up as unattributed deaths (7 in one session).
+            target: string?,
         }
         type MovementRecord = {
             t: number,
@@ -387,6 +392,9 @@ function Module.init(context: Runtime): any
                 scene = buildScene(shotOrigin, aimDir),
                 outcome = nil,
                 silentSpawn = nil,
+                target = typeof(info.target) == "Instance"
+                    and (info.target :: Player).Name
+                    or nil,
             }
             finalizeShot(shot, info.variant)
         end

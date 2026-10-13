@@ -38,6 +38,7 @@ function Module.init(runtime: any): any
     local isPlayerAlive: any = core.isPlayerAlive
     local isProtectedTarget: any = core.isProtectedTarget
     local getFilteredVelocity: any = core.getFilteredVelocity
+    local getEstimatedLatency: any = core.getEstimatedLatency
     local trajectoryCalibration: any = core.trajectoryCalibration
     local applyHitbox: any = core.applyHitbox
     local clearAllHitboxes: any = core.clearAllHitboxes
@@ -131,8 +132,13 @@ function Module.init(runtime: any): any
         if estimates and estimates.knifeSpeed and estimates.knifeSpeed > 1 then
             knifeSpeed = estimates.knifeSpeed
         end
+        -- The packet spends half the round trip reaching the server before the
+        -- blade even spawns, and the target keeps moving that whole time: lead
+        -- by flight + rtt/2, not flight alone. Calibration measured the knife
+        -- at exactly 96 studs/s (162 samples), so flight time is distance/96.
         local flightTime: number =
             (root.Position - originPos).Magnitude / knifeSpeed
+                + getEstimatedLatency() * 0.5
         local velocity: Vector3 = getFilteredVelocity(target, root)
         return root.Position + velocity * flightTime
     end

@@ -1,5 +1,5 @@
 return {
-    stamp = "v9-20261013-0030",
+    stamp = "v10-20261013-0130",
     files = {
         ["src/games/BedFight/Combat/AutoSwing.lua"] = [[
 local Module = {Name = "BedFight Auto Swing", Initialized = false, Connection = nil}
@@ -1730,6 +1730,7 @@ function Module.init(runtime: any): any
     local isPlayerAlive: any = core.isPlayerAlive
     local isProtectedTarget: any = core.isProtectedTarget
     local getFilteredVelocity: any = core.getFilteredVelocity
+    local getEstimatedLatency: any = core.getEstimatedLatency
     local trajectoryCalibration: any = core.trajectoryCalibration
     local applyHitbox: any = core.applyHitbox
     local clearAllHitboxes: any = core.clearAllHitboxes
@@ -1823,8 +1824,13 @@ function Module.init(runtime: any): any
         if estimates and estimates.knifeSpeed and estimates.knifeSpeed > 1 then
             knifeSpeed = estimates.knifeSpeed
         end
+        -- The packet spends half the round trip reaching the server before the
+        -- blade even spawns, and the target keeps moving that whole time: lead
+        -- by flight + rtt/2, not flight alone. Calibration measured the knife
+        -- at exactly 96 studs/s (162 samples), so flight time is distance/96.
         local flightTime: number =
             (root.Position - originPos).Magnitude / knifeSpeed
+                + getEstimatedLatency() * 0.5
         local velocity: Vector3 = getFilteredVelocity(target, root)
         return root.Position + velocity * flightTime
     end
@@ -4228,9 +4234,12 @@ local mm2Settings = {
     motionSampleHz = 60,
     silentSweep = 0.5,
     -- Where the silent bullet is authored: "Front" (shooter's side of the
-    -- torso), "Through" (pierces the torso), "Top" (old, 1.6 above), "Behind"
-    -- (far side). The Spawn A/B status measures which actually scores.
-    silentSpawn = "Front",
+    -- torso), "Through" (swept segment: captured position -> predicted point,
+    -- so the capsule is on the ray at any scoring instant), "Top" (old, 1.6
+    -- above), "Behind" (far side). Telemetry made the choice: Top scored
+    -- 0/8 with close-range misses exactly as wide as the lead, which is the
+    -- case the Through sweep covers. The Spawn A/B status keeps measuring.
+    silentSpawn = "Through",
     getGunKey = Enum.KeyCode.G,
     instantRoleNotify = false,
     roleEspAll = false,
@@ -19633,6 +19642,11 @@ function Module.init(context: Runtime): any
             scene: {SceneEntry},
             outcome: {[string]: any}?,
             silentSpawn: {variant: string, offset: number}?,
+            -- Name of the player the menu authored this shot at (module shots
+            -- only). Kill attribution reads it: without it, knife throws and
+            -- manual module shots whose target sat outside the scene-geometry
+            -- window ended up as unattributed deaths (7 in one session).
+            target: string?,
         }
         type MovementRecord = {
             t: number,
@@ -19952,6 +19966,9 @@ function Module.init(context: Runtime): any
                 scene = buildScene(shotOrigin, aimDir),
                 outcome = nil,
                 silentSpawn = nil,
+                target = typeof(info.target) == "Instance"
+                    and (info.target :: Player).Name
+                    or nil,
             }
             finalizeShot(shot, info.variant)
         end
