@@ -40,7 +40,6 @@ function Module.init(context: Runtime): any
     local currentWorkspace: Workspace = host.workspace or workspace
     local highlights: {[Player]: Highlight} = {}
     local murderTag: BillboardGui? = nil
-    local murderPerk: BillboardGui? = nil
     local roleTags: {[Player]: BillboardGui} = {}
     local lastUpdate: number = -math.huge
 
@@ -48,13 +47,6 @@ function Module.init(context: Runtime): any
         if murderTag then
             pcall(murderTag.Destroy, murderTag)
             murderTag = nil
-        end
-    end
-
-    local function destroyMurderPerk(): ()
-        if murderPerk then
-            pcall(murderPerk.Destroy, murderPerk)
-            murderPerk = nil
         end
     end
 
@@ -113,7 +105,6 @@ function Module.init(context: Runtime): any
             highlight:Destroy()
         end
         destroyMurderTag()
-        destroyMurderPerk()
         clearRoleTags()
         syncMM2Extras(false)
     end
@@ -139,7 +130,10 @@ function Module.init(context: Runtime): any
                 lastUpdate = now
                 local seen: {[Player]: boolean} = {}
                 local count: number = 0
-                for _, target: any in ipairs(entity:Refresh()) do
+                -- One refresh per tick: the highlight pass, the murder lookup
+                -- and the role tags below all walk the same snapshot.
+                local targets: any = entity:Refresh()
+                for _, target: any in ipairs(targets) do
                     local player: Player = target.Player
                     local allowedTeam: boolean = card.Options["Teammates"].Value
                         or not target.IsFriendly
@@ -202,7 +196,7 @@ function Module.init(context: Runtime): any
                 local tagTarget: Player? = nil
                 if card.Options["Murder tag"].Value == true
                     and type(gameBridge.playerRole) == "function" then
-                    for _, target: any in ipairs(entity:Refresh()) do
+                    for _, target: any in ipairs(targets) do
                         local okRole: boolean, role: any = pcall(
                             gameBridge.playerRole,
                             target.Player
@@ -254,6 +248,20 @@ function Module.init(context: Runtime): any
                             label.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
                             label.TextStrokeTransparency = 0.3
                             label.Parent = billboard
+
+                            -- The perk icon lives inside the same billboard as
+                            -- the tag text: one adornee, one anchor, so it can
+                            -- never drift into or flicker against the text.
+                            local icon: ImageLabel = Instance.new("ImageLabel")
+                            icon.Name = "PerkIcon"
+                            icon.BackgroundTransparency = 1
+                            icon.ImageTransparency = 1
+                            icon.Visible = false
+                            icon.Size = UDim2.fromOffset(20, 20)
+                            icon.Position = UDim2.new(0, 3, 0.5, 0)
+                            icon.AnchorPoint = Vector2.new(0, 0.5)
+                            icon.Parent = billboard
+
                             murderTag = billboard
                         end
                         if type(gameBridge.playerRoleColor) == "function" then
@@ -272,8 +280,11 @@ function Module.init(context: Runtime): any
                     end
                 end
 
-                -- Show Perk sticker above Murderer
-                if card.Options["Show Perk"] and card.Options["Show Perk"].Value == true and tagTarget and tagHead then
+                -- Perk icon (merged into the Murder tag billboard above)
+                local perkIcon: any = murderTag
+                    and murderTag:FindFirstChild("PerkIcon")
+                if card.Options["Show Perk"] and card.Options["Show Perk"].Value == true
+                    and tagTarget and perkIcon then
                     local targetPerk: string? = nil
                     if type(gameBridge.playerPerk) == "function" then
                         targetPerk = gameBridge.playerPerk(tagTarget)
@@ -284,56 +295,20 @@ function Module.init(context: Runtime): any
 
                     local perkIconId: string? = targetPerk and (PERK_ICONS[targetPerk] or PERK_ICONS[string.gsub(targetPerk, "%s+", "")]) or nil
                     if perkIconId then
-                        if not murderPerk or not murderPerk.Parent or murderPerk.Adornee ~= tagHead then
-                            destroyMurderPerk()
-                            local billboard: BillboardGui = Instance.new("BillboardGui")
-                            billboard.Name = "Wurst_MurderPerk"
-                            billboard.AlwaysOnTop = true
-                            billboard.LightInfluence = 0
-                            billboard.Size = UDim2.fromOffset(36, 36)
-                            billboard.StudsOffset = Vector3.new(0, 5.2, 0)
-                            billboard.MaxDistance = 1500
-                            billboard.Adornee = tagHead
-                            billboard.Parent = tagHead
-
-                            local bg: Frame = Instance.new("Frame")
-                            bg.Name = "StickerBackground"
-                            bg.BackgroundColor3 = Color3.fromRGB(20, 20, 24)
-                            bg.BackgroundTransparency = 0.15
-                            bg.Size = UDim2.fromScale(1, 1)
-                            bg.Parent = billboard
-
-                            local corner: UICorner = Instance.new("UICorner")
-                            corner.CornerRadius = UDim.new(0, 8)
-                            corner.Parent = bg
-
-                            local stroke: UIStroke = Instance.new("UIStroke")
-                            stroke.Color = Color3.fromRGB(230, 55, 55)
-                            stroke.Thickness = 1.8
-                            stroke.Parent = bg
-
-                            local img: ImageLabel = Instance.new("ImageLabel")
-                            img.Name = "PerkIcon"
-                            img.BackgroundTransparency = 1
-                            img.Size = UDim2.fromScale(0.85, 0.85)
-                            img.Position = UDim2.fromScale(0.5, 0.5)
-                            img.AnchorPoint = Vector2.new(0.5, 0.5)
-                            img.Image = perkIconId
-                            img.Parent = bg
-
-                            murderPerk = billboard
-                        else
-                            local bg: any = murderPerk:FindFirstChild("StickerBackground")
-                            local img: any = bg and bg:FindFirstChild("PerkIcon")
-                            if img and img.Image ~= perkIconId then
-                                img.Image = perkIconId
-                            end
+                        if perkIcon.Image ~= perkIconId then
+                            perkIcon.Image = perkIconId
                         end
-                    else
-                        destroyMurderPerk()
+                        if not perkIcon.Visible then
+                            perkIcon.Visible = true
+                        end
+                        if perkIcon.ImageTransparency ~= 0 then
+                            perkIcon.ImageTransparency = 0
+                        end
+                    elseif perkIcon.Visible then
+                        perkIcon.Visible = false
                     end
-                else
-                    destroyMurderPerk()
+                elseif perkIcon and perkIcon.Visible then
+                    perkIcon.Visible = false
                 end
 
                 -- Role tags: floating role labels over player heads
@@ -341,7 +316,7 @@ function Module.init(context: Runtime): any
                 if roleTagsOption and roleTagsOption.Value == true
                     and type(gameBridge.playerRole) == "function" then
                     local seenRoleTags: {[Player]: boolean} = {}
-                    for _, target: any in ipairs(entity:Refresh()) do
+                    for _, target: any in ipairs(targets) do
                         local player: Player = target.Player
                         if player ~= LocalPlayer
                             and target.Character

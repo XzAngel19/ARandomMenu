@@ -1,5 +1,5 @@
 return {
-    stamp = "v11-20261013-2130",
+    stamp = "v12-20261013-2355",
     files = {
         ["src/games/BedFight/Combat/AutoSwing.lua"] = [[
 local Module = {Name = "BedFight Auto Swing", Initialized = false, Connection = nil}
@@ -1730,10 +1730,7 @@ function Module.init(runtime: any): any
     local isPlayerAlive: any = core.isPlayerAlive
     local isProtectedTarget: any = core.isProtectedTarget
     local getFilteredVelocity: any = core.getFilteredVelocity
-    local getEstimatedLatency: any = core.getEstimatedLatency
     local trajectoryCalibration: any = core.trajectoryCalibration
-    local applyHitbox: any = core.applyHitbox
-    local clearAllHitboxes: any = core.clearAllHitboxes
 
     local knifeThrowSettings = {
         enabled = false,
@@ -1744,11 +1741,6 @@ function Module.init(runtime: any): any
         throwHz = 60,
         animation = true,
     }
-    -- Client hitbox expansion for the blade: MM2 scores the throw against the
-    -- replicated collision geometry, so widening the target's capsule makes the
-    -- projectile connect regardless of lag (same lever as the gun).
-    local knifeHitbox: boolean = false
-    local knifeHitboxSize: number = 8
     local lastThrow = -math.huge
 
     local function isValidTarget(player: Player): boolean
@@ -1826,13 +1818,8 @@ function Module.init(runtime: any): any
         if estimates and estimates.knifeSpeed and estimates.knifeSpeed > 1 then
             knifeSpeed = estimates.knifeSpeed
         end
-        -- The packet spends half the round trip reaching the server before the
-        -- blade even spawns, and the target keeps moving that whole time: lead
-        -- by flight + rtt/2, not flight alone. Calibration measured the knife
-        -- at exactly 96 studs/s (162 samples), so flight time is distance/96.
         local flightTime: number =
             (root.Position - originPos).Magnitude / knifeSpeed
-                + getEstimatedLatency() * 0.5
         local velocity: Vector3 = getFilteredVelocity(target, root)
         return root.Position + velocity * flightTime
     end
@@ -1909,11 +1896,6 @@ function Module.init(runtime: any): any
         end
         local targetRoot: BasePart =
             target.Character:FindFirstChild("HumanoidRootPart") :: BasePart
-        -- Widen the target's capsule before the blade is authored so the server's
-        -- collision check lands inside it even if the lead is a touch off.
-        if knifeHitbox then
-            applyHitbox(target, knifeHitboxSize)
-        end
 
         local originPos: Vector3
         if silent then
@@ -1953,16 +1935,15 @@ function Module.init(runtime: any): any
         end
         lastThrow = -math.huge
         local elapsed: number = 0
-            featureConnections.MM2KnifeThrow =
-                TaskManager:Connect(function(deltaTime: number): ()
-                    elapsed += deltaTime
-                    if elapsed
-                        < 1 / math.clamp(knifeThrowSettings.throwHz, 20, 120) then
-                        return
-                    end
-                    elapsed = 0
-                    throwKnife()
-                end)
+        featureConnections.MM2KnifeThrow =
+            TaskManager:Connect(function(deltaTime: number): ()
+                elapsed += deltaTime
+                if elapsed < 1 / 30 then
+                    return
+                end
+                elapsed = 0
+                throwKnife()
+            end)
     end
 
     -- Attach to the shared "Knife" card created by KnifeAura; only build a new
@@ -2069,37 +2050,9 @@ function Module.init(runtime: any): any
             .. "CPU.",
         5
     )
-    addToggleOption(
-        KnifeThrowFeature,
-        "Hitbox",
-        knifeHitbox,
-        function(value: boolean): ()
-            knifeHitbox = value
-            if not value then
-                clearAllHitboxes()
-            end
-        end,
-        "Expands the target's invisible hitbox so the thrown blade connects "
-            .. "regardless of lag. Works with both Normal and Silent throws."
-    )
-    addNumberOption(
-        KnifeThrowFeature,
-        "Hitbox size",
-        knifeHitboxSize,
-        1,
-        40,
-        function(value: number): ()
-            knifeHitboxSize = math.clamp(value, 1, 40)
-        end,
-        "How wide the expanded target hitbox is, in studs. Only applies while "
-            .. "Hitbox is on.",
-        1
-    )
 
     activeCleanup = function(): ()
         toggleKnifeThrow(false)
-        knifeHitbox = false
-        clearAllHitboxes()
         state.mm2KnifeThrowOff = nil
     end
     Module.Events = featureConnections
@@ -2158,20 +2111,10 @@ function Module.init(runtime: any): any
     local isProtectedTarget: any = core.isProtectedTarget
     local mm2Settings: any = core.mm2Settings
     local motionSamples: any = core.motionSamples
-    local applyHitbox: any = core.applyHitbox
-    local clearAllHitboxes: any = core.clearAllHitboxes
 
     -- Pistol macro: right after a shot is authored, drop the gun back into the
     -- backpack 0.01s later so it is barely visible. Toggle below ("Macro").
     local shootMacro: boolean = false
-
-    -- Client hitbox box: an invisible query/touch volume hung under the target
-    -- so server-side rays (gun) and Touched events (knife) both land on it.
-    local hitboxEnabled: boolean = false
-    local hitboxSize: number = 8
-    -- Burst fires several packets per trigger at slightly different lead times,
-    -- hedging prediction error. 1 = single shot (vanilla cadence).
-    local shootBurst: number = 1
     local function macroUnequip(gun: Tool?): ()
         if not shootMacro or not gun then
             return
@@ -2205,11 +2148,6 @@ function Module.init(runtime: any): any
         errorRadius: number,
         leadSeconds: number,
         leadSensitivity: number,
-        -- Where the target's root was on our screen when the shot was solved.
-        -- The silent "Through" variant authors the segment captured -> predicted
-        -- so it covers the target's whole swept path: whichever instant inside
-        -- the acceptance window the server scores, the capsule is on the ray.
-        capturedPosition: Vector3,
     }
 
     type GunAimOptions = {
@@ -2217,13 +2155,6 @@ function Module.init(runtime: any): any
         -- the target, so line of sight is irrelevant and must not veto the
         -- solution.
         ignoreVisibility: boolean?,
-        silent: boolean?,
-        maxError: number?,
-        wallCheck: boolean?,
-        -- Burst sampling offsets the lead horizon by this many seconds.
-        leadBias: number?,
-        -- Widened capsule half width (client hitbox); relaxes the error gate.
-        bodyHalfWidth: number?,
     }
 
     -- Half width of the capsule the server will score the ray against. Used to
@@ -2300,10 +2231,7 @@ function Module.init(runtime: any): any
             horizontalVelocity = Vector3.new(desired.X, 0, desired.Z)
         end
 
-        -- Burst sampling nudges the lead time a hair either way; the base
-        -- horizon is the calibrated round trip.
         local horizon: number = getGunHorizonSeconds()
-            + (resolvedOptions.leadBias or 0)
         local discount: number = getGunTurnDiscount(horizon, turnRate)
         local lead: number = horizon * discount
         local leadSensitivity: number = type(getGunLeadSensitivity) == "function"
@@ -2372,15 +2300,7 @@ function Module.init(runtime: any): any
             MINIMUM_ERROR_RADIUS,
             turnError + jitter
         )
-        -- A client hitbox widens the capsule the server scores, so the same
-        -- prediction error is far more forgiving: grow the budget with it.
-        local capsuleHalfWidth: number = math.max(
-            BODY_HALF_WIDTH,
-            resolvedOptions.bodyHalfWidth or 0
-        )
-        local allowedErrorBudget: number = ignoreVisibility
-            and (capsuleHalfWidth * 1.75)
-            or capsuleHalfWidth
+        local allowedErrorBudget: number = ignoreVisibility and (BODY_HALF_WIDTH * 1.75) or BODY_HALF_WIDTH
         if errorRadius > allowedErrorBudget then
             return nil, nil, "turning too hard"
         end
@@ -2393,7 +2313,6 @@ function Module.init(runtime: any): any
             errorRadius = errorRadius,
             leadSeconds = lead,
             leadSensitivity = leadSensitivity,
-            capturedPosition = (root :: BasePart).Position,
         }, nil
     end
 
@@ -2523,12 +2442,8 @@ function Module.init(runtime: any): any
         local startPoint: Vector3
         local endPoint: Vector3
         if variant == "Through" and approach then
-            -- Swept-path geometry: the segment runs from just behind where the
-            -- target was when we solved (captured) to just past where it will
-            -- be (predicted + pierce). The server scores somewhere inside that
-            -- window, so the capsule is on the segment at any scoring instant.
-            local captured: Vector3 = prediction.capturedPosition or predicted
-            startPoint = captured - approach * 1.0 + sweepStart
+            -- Front to far side: the segment crosses the full body.
+            startPoint = predicted - approach * approachOffset + sweepStart
             endPoint = predicted + approach * SILENT_PIERCE_STUDS + sweepEnd
         elseif variant == "Top" then
             startPoint = predicted + Vector3.new(0, SILENT_LIFT_STUDS, 0)
@@ -2575,8 +2490,6 @@ function Module.init(runtime: any): any
         silent: boolean?,
         maxError: number?,
         quiet: boolean?,
-        leadBias: number?,
-        bodyHalfWidth: number?,
     }
 
     -- Set by the most recent reject() call so the auto-shoot loop can surface
@@ -2615,11 +2528,6 @@ function Module.init(runtime: any): any
         if not character or not humanoid then
             return reject("Your character is not available.")
         end
-        -- Widen the target's capsule before the shot is authored so the server's
-        -- hitscan lands inside it even if the prediction is a touch off.
-        if hitboxEnabled then
-            applyHitbox(target, hitboxSize)
-        end
 
         local gun: Tool? = getPlayerWeapon(LocalPlayer, "Gun")
         local backpack: Backpack? = LocalPlayer:FindFirstChildOfClass("Backpack")
@@ -2642,13 +2550,11 @@ function Module.init(runtime: any): any
 
         local aim: CFrame?, prediction: GunPrediction?, reason: string? = nil
         if origin then
-            local aimOptions: GunAimOptions = {
-                silent = silent,
-                ignoreVisibility = silent,
-                leadBias = opts.leadBias,
-                bodyHalfWidth = hitboxEnabled and (hitboxSize * 0.5) or nil,
-            }
-            aim, prediction, reason = computeGunAim(target, origin :: CFrame, aimOptions)
+            aim, prediction, reason = computeGunAim(
+                target,
+                origin :: CFrame,
+                silent and {ignoreVisibility = true} or nil
+            )
         end
 
         local rejectMessages: {[string]: string} = {
@@ -2742,59 +2648,6 @@ function Module.init(runtime: any): any
         return true
     end
 
-    -- Fire one trigger pull as a small burst of packets at slightly different
-    -- lead times. This hedges the prediction: when the target's motion is
-    -- erratic at least one sample lines up with the server's acceptance window.
-    -- burst = 1 (default) keeps the vanilla single-shot cadence.
-    --
-    -- The FIRST sample is always the calibrated horizon (bias 0). An earlier
-    -- version spread the samples symmetrically around it, so with burst = 2
-    -- the two packets fired at 0.5x and 1.5x the horizon and the correct lead
-    -- sat exactly between them: telemetry (Place 142823291, 16 gun shots)
-    -- shows aim errors in a 1:3 ratio with every shot a miss. Never skip 0.
-    local function buildBurstBiases(count: number): {number}
-        local biases: {number} = {0}
-        if count <= 1 then
-            return biases
-        end
-        -- Steps of half the horizon; jitter is asymmetric (ping spikes up), so
-        -- overshoot is sampled before undershoot: {0, +s, -s, +2s, ...}.
-        local step: number = getGunHorizonSeconds() * 0.5
-        local tier: number = 1
-        while #biases < count do
-            table.insert(biases, step * tier)
-            if #biases < count then
-                table.insert(biases, -step * tier)
-            end
-            tier += 1
-        end
-        return biases
-    end
-
-    local function fireGunBurst(
-        target: Player?,
-        options: FireOptions?
-    ): boolean
-        local opts: FireOptions = options or {}
-        local count: number = math.clamp(math.floor(shootBurst or 1), 1, 4)
-        if count <= 1 then
-            return fireGunAtTarget(target, opts)
-        end
-        local fired: boolean = false
-        for _, bias: number in ipairs(buildBurstBiases(count)) do
-            local sample: FireOptions = {
-                silent = opts.silent,
-                maxError = opts.maxError,
-                quiet = opts.quiet,
-                leadBias = bias,
-            }
-            if fireGunAtTarget(target, sample) then
-                fired = true
-            end
-        end
-        return fired
-    end
-
     local shootFeatureActive: boolean = false
     local autoShootActive: boolean = false
 
@@ -2815,9 +2668,7 @@ function Module.init(runtime: any): any
                     deltaTime: number
                 ): ()
                     motionElapsed += deltaTime
-                    -- Read live so the Motion Hz slider applies immediately.
-                    if motionElapsed
-                        < 1 / math.clamp(mm2Settings.motionSampleHz, 20, 120) then
+                    if motionElapsed < 1 / 30 then
                         return
                     end
                     motionElapsed = 0
@@ -2845,7 +2696,7 @@ function Module.init(runtime: any): any
             notify("Enable Shoot first.")
             return
         end
-        fireGunBurst(getSelectedShootTarget())
+        fireGunAtTarget(getSelectedShootTarget())
     end
 
     local function toggleShootMurderer(enabled: boolean): ()
@@ -2901,7 +2752,7 @@ function Module.init(runtime: any): any
             return
         end
         lastRejectReason = ""
-        local fired: boolean = fireGunBurst(target, {
+        local fired: boolean = fireGunAtTarget(target, {
             silent = autoSettings.mode == "Silent",
             maxError = autoSettings.maxError,
             quiet = true,
@@ -3007,48 +2858,6 @@ function Module.init(runtime: any): any
         end,
         "Authors the shot at the target: same prediction as Shoot, ignores walls."
     )
-    addToggleOption(
-        ShootFeature,
-        "Hitbox",
-        hitboxEnabled,
-        function(value: boolean): ()
-            hitboxEnabled = value
-            if not value then
-                clearAllHitboxes()
-            end
-        end,
-        "Expands the target's invisible hitbox on your client so the server's "
-            .. "hitscan lands inside the widened capsule regardless of lag. The "
-            .. "single biggest lever for hitting every shot; set the size below."
-    )
-    addNumberOption(
-        ShootFeature,
-        "Hitbox size",
-        hitboxSize,
-        1,
-        40,
-        function(value: number): ()
-            hitboxSize = math.clamp(value, 1, 40)
-        end,
-        "How wide the expanded target hitbox is, in studs. Bigger is easier to "
-            .. "land but more conspicuous; 8 is a good balance. Only applies "
-            .. "while Hitbox is on.",
-        1
-    )
-    addNumberOption(
-        ShootFeature,
-        "Burst",
-        shootBurst,
-        1,
-        4,
-        function(value: number): ()
-            shootBurst = math.clamp(math.floor(value), 1, 4)
-        end,
-        "Packets fired per trigger, spread across slightly different lead times, "
-            .. "to hedge prediction error against erratic movement. 1 = vanilla "
-            .. "single shot. Higher uses more ammo per trigger.",
-        1
-    )
     addNumberOption(
         ShootFeature,
         "Silent sweep",
@@ -3133,20 +2942,6 @@ function Module.init(runtime: any): any
             .. "It is added to the prediction horizon, bounded to +/-0.1s, and "
             .. "does not change character physics.",
         0.005
-    )
-    addNumberOption(
-        ShootFeature,
-        "Motion Hz",
-        mm2Settings.motionSampleHz,
-        20,
-        120,
-        function(value: number): ()
-            mm2Settings.motionSampleHz = math.clamp(math.round(value), 20, 120)
-        end,
-        "Target motion samples per second (acceleration + turn stability). "
-            .. "60 is the sweet spot: MM2 replicates remote players at ~20 Hz, "
-            .. "so higher values only cost CPU - they cannot see more.",
-        5
     )
     addActionOption(ShootFeature, "Lead status", function(): ()
         local status: any = type(getGunLeadStatus) == "function"
@@ -3234,8 +3029,6 @@ function Module.init(runtime: any): any
     activeCleanup = function(): ()
         toggleShootMurderer(false)
         toggleAutoShoot(false)
-        hitboxEnabled = false
-        clearAllHitboxes()
         state.mm2ShotFeedback.hide()
     end
     Module.Events = featureConnections
@@ -4298,19 +4091,11 @@ local mm2Settings = {
     predictionRtt = 0.08,
     gunLeadBias = 0,
     autoTuneLead = false,
-    -- How often the Shoot motion tracker samples the target (acceleration +
-    -- heading stability). 60 Hz matches the engine step; going higher cannot
-    -- help because MM2 only replicates remote characters at ~20 Hz, so there
-    -- is no new information to read past the replication cadence.
-    motionSampleHz = 60,
     silentSweep = 0.5,
     -- Where the silent bullet is authored: "Front" (shooter's side of the
-    -- torso), "Through" (swept segment: captured position -> predicted point,
-    -- so the capsule is on the ray at any scoring instant), "Top" (old, 1.6
-    -- above), "Behind" (far side). Telemetry made the choice: Top scored
-    -- 0/8 with close-range misses exactly as wide as the lead, which is the
-    -- case the Through sweep covers. The Spawn A/B status keeps measuring.
-    silentSpawn = "Through",
+    -- torso), "Through" (pierces the torso), "Top" (old, 1.6 above), "Behind"
+    -- (far side). The Spawn A/B status measures which actually scores.
+    silentSpawn = "Front",
     getGunKey = Enum.KeyCode.G,
     instantRoleNotify = false,
     roleEspAll = false,
@@ -4341,7 +4126,9 @@ local mm2Settings = {
     trapColor = Color3.fromRGB(145, 25, 25),
     trapTransparency = 0.7,
 
-    gunColor = Color3.fromRGB(226, 226, 232),
+    -- Yellow, like the user asked: the gun tag now uses the same bare-text
+    -- style as the Murder tag and the yellow reads clearly against both.
+    gunColor = Color3.fromRGB(255, 215, 0),
     gunTransparency = 0.55,
     autoPlayId = "",
 }
@@ -5117,8 +4904,10 @@ local function createMM2Marker(folder, adornee, labelText, color, transparency)
         billboard.Name = labelText .. "Label"
         billboard.Adornee = head
         billboard.AlwaysOnTop = true
-        billboard.Size = UDim2.fromOffset(130, 28)
-        billboard.StudsOffset = Vector3.new(0, 3, 0)
+        billboard.LightInfluence = 0
+        billboard.MaxDistance = 1500
+        billboard.Size = UDim2.fromOffset(150, 22)
+        billboard.StudsOffset = Vector3.new(0, 3.5, 0)
         billboard.Parent = head
 
         local billboardReference = Instance.new("ObjectValue")
@@ -5126,38 +4915,20 @@ local function createMM2Marker(folder, adornee, labelText, color, transparency)
         billboardReference.Value = billboard
         billboardReference.Parent = folder
 
+        -- Same recipe as the Chams "Murder" tag: bare bold text with a black
+        -- stroke, tinted with the marker colour (yellow for the gun). No box,
+        -- no accent bar - the two tags now read as one visual family.
         local text = Instance.new("TextLabel")
-        text.BackgroundColor3 = Theme.background
-        text.BackgroundTransparency = 0.28
+        text.BackgroundTransparency = 1
         text.BorderSizePixel = 0
-        text.FontFace = CONTROL_FONT
+        text.Font = Enum.Font.GothamBold
         text.Size = UDim2.fromScale(1, 1)
         text.Text = labelText
-        text.TextColor3 = Theme.text
-        text.TextSize = 12
+        text.TextColor3 = color
+        text.TextSize = 14
+        text.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
+        text.TextStrokeTransparency = 0.3
         text.Parent = billboard
-
-        local corner = Instance.new("UICorner")
-        corner.CornerRadius = UDim.new(0, 6)
-        corner.Parent = text
-
-        local stroke = Instance.new("UIStroke")
-        stroke.Color = Theme.outline
-        stroke.Transparency = 0.55
-        stroke.Thickness = 1
-        stroke.Parent = text
-
-        local accent = Instance.new("Frame")
-        accent.AnchorPoint = Vector2.new(0.5, 1)
-        accent.BackgroundColor3 = color
-        accent.BorderSizePixel = 0
-        accent.Position = UDim2.new(0.5, 0, 1, -3)
-        accent.Size = UDim2.new(0.55, 0, 0, 2)
-        accent.Parent = text
-
-        local accentCorner = Instance.new("UICorner")
-        accentCorner.CornerRadius = UDim.new(1, 0)
-        accentCorner.Parent = accent
     end
 end
 
@@ -8138,105 +7909,6 @@ moduleCleanup = function(): ()
     end
 end
 
--- ---------------------------------------------------------------------------
--- Client hitbox expansion.
---
--- MM2 scores a gun/knife hit by ray-casting the shot against the character's
--- collision geometry. Anything parented under the character counts, and
--- client-created parts replicate to the server - so we hang one invisible,
--- anchored, query-only box under the target: big enough that a shot which
--- would have passed beside the body now passes through the box instead, and
--- the server maps that hit to the player. CanQuery = true so gun rays hit
--- it, CanTouch = true so projectile Touched handlers (the knife) fire on it,
--- CanCollide = false so it never shoves anybody, and Transparency = 1 keeps
--- it invisible. An earlier revision shipped CanTouch = false, which is why
--- the knife throw walked straight through the box: a part cannot fire
--- Touched while CanTouch is off.
---
--- The box is re-centred on the target's root every time it is applied (once
--- per authored shot/throw) and rebuilt automatically after a respawn or if
--- the server cleans the part up.
--- ---------------------------------------------------------------------------
-type HitboxRecord = {box: BasePart, character: Model}
-local activeHitboxes: {[Player]: HitboxRecord} =
-    setmetatable({}, {__mode = "k"}) :: any
-
-local function clearHitbox(player: Player): ()
-    local record: HitboxRecord? = activeHitboxes[player]
-    if not record then
-        return
-    end
-    local box: BasePart? = record.box
-    if box and box.Parent then
-        pcall(function(): ()
-            (box :: BasePart):Destroy()
-        end)
-    end
-    activeHitboxes[player] = nil
-end
-
-local function clearAllHitboxes(): ()
-    for player: Player, _ in pairs(activeHitboxes) do
-        clearHitbox(player)
-    end
-end
-
-local function applyHitbox(player: Player?, size: number?): ()
-    if not player then
-        return
-    end
-    local magnitude: number = math.clamp(size or 8, 1, 40)
-    local character: Model? = player.Character
-    local root: BasePart? = character and character:FindFirstChild("HumanoidRootPart")
-        :: BasePart?
-    if not character or not root or not root.Parent then
-        return
-    end
-    local record: HitboxRecord? = activeHitboxes[player]
-    if not record
-        or record.character ~= character
-        or not record.box
-        or not record.box.Parent then
-        -- First touch, a respawn swapped the character, or the server removed
-        -- the part: build a fresh box under the current character.
-        if record and record.box and record.box.Parent then
-            pcall(function(): ()
-                (record :: HitboxRecord).box:Destroy()
-            end)
-        end
-        local box: BasePart = Instance.new("Part")
-        box.Name = "WurstHitbox"
-        box.Transparency = 1
-        box.CanCollide = false
-        box.CanQuery = true
-        box.CanTouch = true
-        box.Anchored = true
-        box.Massless = true
-        box.TopSurface = Enum.SurfaceType.Smooth
-        box.BottomSurface = Enum.SurfaceType.Smooth
-        box.Parent = character
-        record = {box = box, character = character :: Model}
-        activeHitboxes[player] = record
-    end
-    local box: BasePart = record.box
-    -- A little taller than wide so jumps stay inside the box.
-    local target: Vector3 = Vector3.new(magnitude, magnitude * 1.2, magnitude)
-    if box.Size ~= target then
-        pcall(function(): ()
-            box.Size = target
-        end)
-    end
-    pcall(function(): ()
-        box.CFrame = (root :: BasePart).CFrame
-    end)
-    -- Keep it invisible even if something re-showed it.
-    if box.Transparency < 1 then
-        pcall(function(): ()
-            box.Transparency = 1
-        end)
-    end
-end
-
 local function disconnectGunFiredObserver(): ()
     disconnectFeatureConnection("MM2GunFired")
     state.mm2ShotFeedback.gunFiredConnected = false
@@ -8295,9 +7967,6 @@ state.mm2Core = {
 
     motionSamples = motionSamples,
     getFilteredVelocity = getFilteredVelocity,
-    applyHitbox = applyHitbox,
-    clearHitbox = clearHitbox,
-    clearAllHitboxes = clearAllHitboxes,
     getEstimatedLatency = getEstimatedLatency,
     getGunHorizonSeconds = getGunHorizonSeconds,
     getGunTurnDiscount = getGunTurnDiscount,
@@ -8325,7 +7994,6 @@ cleanupMM2Runtime = function()
     trajectoryCalibration:destroy()
     stopLeadTracking()
     disconnectGunFiredObserver()
-    clearAllHitboxes()
     state.mm2ShotFeedback.hide()
     for player: Player, _ in pairs(roleWatchers) do
         unwatchPlayer(player)
@@ -22209,7 +21877,6 @@ function Module.init(context: Runtime): any
     local currentWorkspace: Workspace = host.workspace or workspace
     local highlights: {[Player]: Highlight} = {}
     local murderTag: BillboardGui? = nil
-    local murderPerk: BillboardGui? = nil
     local roleTags: {[Player]: BillboardGui} = {}
     local lastUpdate: number = -math.huge
 
@@ -22217,13 +21884,6 @@ function Module.init(context: Runtime): any
         if murderTag then
             pcall(murderTag.Destroy, murderTag)
             murderTag = nil
-        end
-    end
-
-    local function destroyMurderPerk(): ()
-        if murderPerk then
-            pcall(murderPerk.Destroy, murderPerk)
-            murderPerk = nil
         end
     end
 
@@ -22282,7 +21942,6 @@ function Module.init(context: Runtime): any
             highlight:Destroy()
         end
         destroyMurderTag()
-        destroyMurderPerk()
         clearRoleTags()
         syncMM2Extras(false)
     end
@@ -22308,7 +21967,10 @@ function Module.init(context: Runtime): any
                 lastUpdate = now
                 local seen: {[Player]: boolean} = {}
                 local count: number = 0
-                for _, target: any in ipairs(entity:Refresh()) do
+                -- One refresh per tick: the highlight pass, the murder lookup
+                -- and the role tags below all walk the same snapshot.
+                local targets: any = entity:Refresh()
+                for _, target: any in ipairs(targets) do
                     local player: Player = target.Player
                     local allowedTeam: boolean = card.Options["Teammates"].Value
                         or not target.IsFriendly
@@ -22371,7 +22033,7 @@ function Module.init(context: Runtime): any
                 local tagTarget: Player? = nil
                 if card.Options["Murder tag"].Value == true
                     and type(gameBridge.playerRole) == "function" then
-                    for _, target: any in ipairs(entity:Refresh()) do
+                    for _, target: any in ipairs(targets) do
                         local okRole: boolean, role: any = pcall(
                             gameBridge.playerRole,
                             target.Player
@@ -22423,6 +22085,20 @@ function Module.init(context: Runtime): any
                             label.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
                             label.TextStrokeTransparency = 0.3
                             label.Parent = billboard
+
+                            -- The perk icon lives inside the same billboard as
+                            -- the tag text: one adornee, one anchor, so it can
+                            -- never drift into or flicker against the text.
+                            local icon: ImageLabel = Instance.new("ImageLabel")
+                            icon.Name = "PerkIcon"
+                            icon.BackgroundTransparency = 1
+                            icon.ImageTransparency = 1
+                            icon.Visible = false
+                            icon.Size = UDim2.fromOffset(20, 20)
+                            icon.Position = UDim2.new(0, 3, 0.5, 0)
+                            icon.AnchorPoint = Vector2.new(0, 0.5)
+                            icon.Parent = billboard
+
                             murderTag = billboard
                         end
                         if type(gameBridge.playerRoleColor) == "function" then
@@ -22441,8 +22117,11 @@ function Module.init(context: Runtime): any
                     end
                 end
 
-                -- Show Perk sticker above Murderer
-                if card.Options["Show Perk"] and card.Options["Show Perk"].Value == true and tagTarget and tagHead then
+                -- Perk icon (merged into the Murder tag billboard above)
+                local perkIcon: any = murderTag
+                    and murderTag:FindFirstChild("PerkIcon")
+                if card.Options["Show Perk"] and card.Options["Show Perk"].Value == true
+                    and tagTarget and perkIcon then
                     local targetPerk: string? = nil
                     if type(gameBridge.playerPerk) == "function" then
                         targetPerk = gameBridge.playerPerk(tagTarget)
@@ -22453,56 +22132,20 @@ function Module.init(context: Runtime): any
 
                     local perkIconId: string? = targetPerk and (PERK_ICONS[targetPerk] or PERK_ICONS[string.gsub(targetPerk, "%s+", "")]) or nil
                     if perkIconId then
-                        if not murderPerk or not murderPerk.Parent or murderPerk.Adornee ~= tagHead then
-                            destroyMurderPerk()
-                            local billboard: BillboardGui = Instance.new("BillboardGui")
-                            billboard.Name = "Wurst_MurderPerk"
-                            billboard.AlwaysOnTop = true
-                            billboard.LightInfluence = 0
-                            billboard.Size = UDim2.fromOffset(36, 36)
-                            billboard.StudsOffset = Vector3.new(0, 5.2, 0)
-                            billboard.MaxDistance = 1500
-                            billboard.Adornee = tagHead
-                            billboard.Parent = tagHead
-
-                            local bg: Frame = Instance.new("Frame")
-                            bg.Name = "StickerBackground"
-                            bg.BackgroundColor3 = Color3.fromRGB(20, 20, 24)
-                            bg.BackgroundTransparency = 0.15
-                            bg.Size = UDim2.fromScale(1, 1)
-                            bg.Parent = billboard
-
-                            local corner: UICorner = Instance.new("UICorner")
-                            corner.CornerRadius = UDim.new(0, 8)
-                            corner.Parent = bg
-
-                            local stroke: UIStroke = Instance.new("UIStroke")
-                            stroke.Color = Color3.fromRGB(230, 55, 55)
-                            stroke.Thickness = 1.8
-                            stroke.Parent = bg
-
-                            local img: ImageLabel = Instance.new("ImageLabel")
-                            img.Name = "PerkIcon"
-                            img.BackgroundTransparency = 1
-                            img.Size = UDim2.fromScale(0.85, 0.85)
-                            img.Position = UDim2.fromScale(0.5, 0.5)
-                            img.AnchorPoint = Vector2.new(0.5, 0.5)
-                            img.Image = perkIconId
-                            img.Parent = bg
-
-                            murderPerk = billboard
-                        else
-                            local bg: any = murderPerk:FindFirstChild("StickerBackground")
-                            local img: any = bg and bg:FindFirstChild("PerkIcon")
-                            if img and img.Image ~= perkIconId then
-                                img.Image = perkIconId
-                            end
+                        if perkIcon.Image ~= perkIconId then
+                            perkIcon.Image = perkIconId
                         end
-                    else
-                        destroyMurderPerk()
+                        if not perkIcon.Visible then
+                            perkIcon.Visible = true
+                        end
+                        if perkIcon.ImageTransparency ~= 0 then
+                            perkIcon.ImageTransparency = 0
+                        end
+                    elseif perkIcon.Visible then
+                        perkIcon.Visible = false
                     end
-                else
-                    destroyMurderPerk()
+                elseif perkIcon and perkIcon.Visible then
+                    perkIcon.Visible = false
                 end
 
                 -- Role tags: floating role labels over player heads
@@ -22510,7 +22153,7 @@ function Module.init(context: Runtime): any
                 if roleTagsOption and roleTagsOption.Value == true
                     and type(gameBridge.playerRole) == "function" then
                     local seenRoleTags: {[Player]: boolean} = {}
-                    for _, target: any in ipairs(entity:Refresh()) do
+                    for _, target: any in ipairs(targets) do
                         local player: Player = target.Player
                         if player ~= LocalPlayer
                             and target.Character

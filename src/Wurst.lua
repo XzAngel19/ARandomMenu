@@ -225,7 +225,7 @@ local RUNTIME_RAW_BASE: string =
         .. RUNTIME_BRANCH
         .. "/"
 
-local SOURCE_STAMP: string = "v11-20261013-2130"
+local SOURCE_STAMP: string = "v12-20261013-2355"
 
 local BOOT_STARTED_AT: number = os.clock()
 local BOOT_FINGERPRINT_SECONDS: number = 0
@@ -5586,7 +5586,6 @@ local fallbackManifest: any = {
         {path = "src/games/universal/Render/Arrows.lua", name = "Arrows", category = "Render"},
         {path = "src/games/universal/Render/NPCESP.lua", name = "NPCESP", category = "Render"},
         {path = "src/games/universal/Combat/KillAura.lua", name = "Killaura", category = "Combat"},
-        {path = "src/games/universal/Other/RemoteLogger.lua", name = "Remote Logger", category = "Other"},
         {path = "src/games/universal/Other/Learning.lua", name = "Learning", category = "Other"},
         {path = "src/games/universal/Movement/ClickTeleport.lua", name = "Click Teleport", category = "Movement"},
         {path = "src/games/universal/Combat/AimAssist.lua", name = "Aim Assist", category = "Combat"},
@@ -5617,6 +5616,7 @@ local fallbackManifest: any = {
         {path = "src/games/universal/Movement/Speed.lua", name = "Speed", category = "Movement"},
         {path = "src/games/universal/Render/ProjectileCalibration.lua", name = "Projectile Calibration", category = "Other"},
         {path = "src/games/universal/Other/GameLearning.lua", name = "Game Learning", category = "Other"},
+        {path = "src/games/universal/Other/RemoteLogger.lua", name = "Remote Logger", category = "Other"},
         {path = "src/games/universal/Fun/SpinBot.lua", name = "SpinBot", category = "Fun"},
     },
 }

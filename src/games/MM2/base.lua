@@ -70,19 +70,11 @@ local mm2Settings = {
     predictionRtt = 0.08,
     gunLeadBias = 0,
     autoTuneLead = false,
-    -- How often the Shoot motion tracker samples the target (acceleration +
-    -- heading stability). 60 Hz matches the engine step; going higher cannot
-    -- help because MM2 only replicates remote characters at ~20 Hz, so there
-    -- is no new information to read past the replication cadence.
-    motionSampleHz = 60,
     silentSweep = 0.5,
     -- Where the silent bullet is authored: "Front" (shooter's side of the
-    -- torso), "Through" (swept segment: captured position -> predicted point,
-    -- so the capsule is on the ray at any scoring instant), "Top" (old, 1.6
-    -- above), "Behind" (far side). Telemetry made the choice: Top scored
-    -- 0/8 with close-range misses exactly as wide as the lead, which is the
-    -- case the Through sweep covers. The Spawn A/B status keeps measuring.
-    silentSpawn = "Through",
+    -- torso), "Through" (pierces the torso), "Top" (old, 1.6 above), "Behind"
+    -- (far side). The Spawn A/B status measures which actually scores.
+    silentSpawn = "Front",
     getGunKey = Enum.KeyCode.G,
     instantRoleNotify = false,
     roleEspAll = false,
@@ -113,7 +105,9 @@ local mm2Settings = {
     trapColor = Color3.fromRGB(145, 25, 25),
     trapTransparency = 0.7,
 
-    gunColor = Color3.fromRGB(226, 226, 232),
+    -- Yellow, like the user asked: the gun tag now uses the same bare-text
+    -- style as the Murder tag and the yellow reads clearly against both.
+    gunColor = Color3.fromRGB(255, 215, 0),
     gunTransparency = 0.55,
     autoPlayId = "",
 }
@@ -889,8 +883,10 @@ local function createMM2Marker(folder, adornee, labelText, color, transparency)
         billboard.Name = labelText .. "Label"
         billboard.Adornee = head
         billboard.AlwaysOnTop = true
-        billboard.Size = UDim2.fromOffset(130, 28)
-        billboard.StudsOffset = Vector3.new(0, 3, 0)
+        billboard.LightInfluence = 0
+        billboard.MaxDistance = 1500
+        billboard.Size = UDim2.fromOffset(150, 22)
+        billboard.StudsOffset = Vector3.new(0, 3.5, 0)
         billboard.Parent = head
 
         local billboardReference = Instance.new("ObjectValue")
@@ -898,38 +894,20 @@ local function createMM2Marker(folder, adornee, labelText, color, transparency)
         billboardReference.Value = billboard
         billboardReference.Parent = folder
 
+        -- Same recipe as the Chams "Murder" tag: bare bold text with a black
+        -- stroke, tinted with the marker colour (yellow for the gun). No box,
+        -- no accent bar - the two tags now read as one visual family.
         local text = Instance.new("TextLabel")
-        text.BackgroundColor3 = Theme.background
-        text.BackgroundTransparency = 0.28
+        text.BackgroundTransparency = 1
         text.BorderSizePixel = 0
-        text.FontFace = CONTROL_FONT
+        text.Font = Enum.Font.GothamBold
         text.Size = UDim2.fromScale(1, 1)
         text.Text = labelText
-        text.TextColor3 = Theme.text
-        text.TextSize = 12
+        text.TextColor3 = color
+        text.TextSize = 14
+        text.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
+        text.TextStrokeTransparency = 0.3
         text.Parent = billboard
-
-        local corner = Instance.new("UICorner")
-        corner.CornerRadius = UDim.new(0, 6)
-        corner.Parent = text
-
-        local stroke = Instance.new("UIStroke")
-        stroke.Color = Theme.outline
-        stroke.Transparency = 0.55
-        stroke.Thickness = 1
-        stroke.Parent = text
-
-        local accent = Instance.new("Frame")
-        accent.AnchorPoint = Vector2.new(0.5, 1)
-        accent.BackgroundColor3 = color
-        accent.BorderSizePixel = 0
-        accent.Position = UDim2.new(0.5, 0, 1, -3)
-        accent.Size = UDim2.new(0.55, 0, 0, 2)
-        accent.Parent = text
-
-        local accentCorner = Instance.new("UICorner")
-        accentCorner.CornerRadius = UDim.new(1, 0)
-        accentCorner.Parent = accent
     end
 end
 
@@ -3910,105 +3888,6 @@ moduleCleanup = function(): ()
     end
 end
 
--- ---------------------------------------------------------------------------
--- Client hitbox expansion.
---
--- MM2 scores a gun/knife hit by ray-casting the shot against the character's
--- collision geometry. Anything parented under the character counts, and
--- client-created parts replicate to the server - so we hang one invisible,
--- anchored, query-only box under the target: big enough that a shot which
--- would have passed beside the body now passes through the box instead, and
--- the server maps that hit to the player. CanQuery = true so gun rays hit
--- it, CanTouch = true so projectile Touched handlers (the knife) fire on it,
--- CanCollide = false so it never shoves anybody, and Transparency = 1 keeps
--- it invisible. An earlier revision shipped CanTouch = false, which is why
--- the knife throw walked straight through the box: a part cannot fire
--- Touched while CanTouch is off.
---
--- The box is re-centred on the target's root every time it is applied (once
--- per authored shot/throw) and rebuilt automatically after a respawn or if
--- the server cleans the part up.
--- ---------------------------------------------------------------------------
-type HitboxRecord = {box: BasePart, character: Model}
-local activeHitboxes: {[Player]: HitboxRecord} =
-    setmetatable({}, {__mode = "k"}) :: any
-
-local function clearHitbox(player: Player): ()
-    local record: HitboxRecord? = activeHitboxes[player]
-    if not record then
-        return
-    end
-    local box: BasePart? = record.box
-    if box and box.Parent then
-        pcall(function(): ()
-            (box :: BasePart):Destroy()
-        end)
-    end
-    activeHitboxes[player] = nil
-end
-
-local function clearAllHitboxes(): ()
-    for player: Player, _ in pairs(activeHitboxes) do
-        clearHitbox(player)
-    end
-end
-
-local function applyHitbox(player: Player?, size: number?): ()
-    if not player then
-        return
-    end
-    local magnitude: number = math.clamp(size or 8, 1, 40)
-    local character: Model? = player.Character
-    local root: BasePart? = character and character:FindFirstChild("HumanoidRootPart")
-        :: BasePart?
-    if not character or not root or not root.Parent then
-        return
-    end
-    local record: HitboxRecord? = activeHitboxes[player]
-    if not record
-        or record.character ~= character
-        or not record.box
-        or not record.box.Parent then
-        -- First touch, a respawn swapped the character, or the server removed
-        -- the part: build a fresh box under the current character.
-        if record and record.box and record.box.Parent then
-            pcall(function(): ()
-                (record :: HitboxRecord).box:Destroy()
-            end)
-        end
-        local box: BasePart = Instance.new("Part")
-        box.Name = "WurstHitbox"
-        box.Transparency = 1
-        box.CanCollide = false
-        box.CanQuery = true
-        box.CanTouch = true
-        box.Anchored = true
-        box.Massless = true
-        box.TopSurface = Enum.SurfaceType.Smooth
-        box.BottomSurface = Enum.SurfaceType.Smooth
-        box.Parent = character
-        record = {box = box, character = character :: Model}
-        activeHitboxes[player] = record
-    end
-    local box: BasePart = record.box
-    -- A little taller than wide so jumps stay inside the box.
-    local target: Vector3 = Vector3.new(magnitude, magnitude * 1.2, magnitude)
-    if box.Size ~= target then
-        pcall(function(): ()
-            box.Size = target
-        end)
-    end
-    pcall(function(): ()
-        box.CFrame = (root :: BasePart).CFrame
-    end)
-    -- Keep it invisible even if something re-showed it.
-    if box.Transparency < 1 then
-        pcall(function(): ()
-            box.Transparency = 1
-        end)
-    end
-end
-
 local function disconnectGunFiredObserver(): ()
     disconnectFeatureConnection("MM2GunFired")
     state.mm2ShotFeedback.gunFiredConnected = false
@@ -4067,9 +3946,6 @@ state.mm2Core = {
 
     motionSamples = motionSamples,
     getFilteredVelocity = getFilteredVelocity,
-    applyHitbox = applyHitbox,
-    clearHitbox = clearHitbox,
-    clearAllHitboxes = clearAllHitboxes,
     getEstimatedLatency = getEstimatedLatency,
     getGunHorizonSeconds = getGunHorizonSeconds,
     getGunTurnDiscount = getGunTurnDiscount,
@@ -4097,7 +3973,6 @@ cleanupMM2Runtime = function()
     trajectoryCalibration:destroy()
     stopLeadTracking()
     disconnectGunFiredObserver()
-    clearAllHitboxes()
     state.mm2ShotFeedback.hide()
     for player: Player, _ in pairs(roleWatchers) do
         unwatchPlayer(player)
