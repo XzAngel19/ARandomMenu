@@ -22,7 +22,7 @@ function Module.init(runtime: any): any
         TrajectoryFeature = createUniversalFeature(
             "Metrics",
             "Calibration and game-learning telemetry in one card: projectile "
-                .. "analytics, passive server learning, motion calibration.",
+                .. "analytics, client observations, optional motion calibration.",
             5,
             function(): () end,
             {
@@ -35,7 +35,26 @@ function Module.init(runtime: any): any
         state.metricsFeature = TrajectoryFeature
     end
     addActionOption(TrajectoryFeature, "Show learned profile", function(): ()
-        notify(trajectoryCalibration:status())
+        local text = trajectoryCalibration:status()
+        print("[Wurst:MM2:Calibration] " .. text)
+        notify(text)
+    end)
+    addToggleOption(TrajectoryFeature, "Detailed MM2 trajectories", false, function(value: boolean): ()
+        core.mm2Settings.calibrationDetails = value
+    end, "OFF keeps lightweight attempts/observations; ON adds target-motion windows. This does not enable prediction training.")
+    addToggleOption(TrajectoryFeature, "MM2 automatic saves", false, function(value: boolean): ()
+        core.mm2Settings.calibrationAutosave = value
+    end, "Optional 10-second batched saves. OFF still permits Save calibration and final save on Destruct.")
+    addToggleOption(TrajectoryFeature, "Adaptive gun timing", false, function(value: boolean): ()
+        core.mm2Settings.adaptiveGunTiming = value
+    end, "Experimental: use fresh uniquely matched authored-shot response timing. OFF preserves the RTT baseline; response time is not collision time.")
+    addToggleOption(TrajectoryFeature, "Use observed knife speed", false, function(value: boolean): ()
+        core.mm2Settings.useKnifeSpeedCalibration = value
+    end, "OFF uses 96 studs/s. ON uses at least 3 fresh speed observations (60s window), not the historical mean. This may describe a client visual, not collision physics.")
+    addActionOption(TrajectoryFeature, "Reset live timing", function(): ()
+        trajectoryCalibration:resetTiming()
+        core.resetAutoLeadCorrection()
+        notify("Live timing and auto lead cleared; saved history and manual biases kept.")
     end)
     addActionOption(TrajectoryFeature, "Save calibration", function(): ()
         if trajectoryCalibration:save("manual") then
@@ -50,7 +69,7 @@ function Module.init(runtime: any): any
     end)
     addInformationOption(
         TrajectoryFeature,
-        "Schema 2 records 30 Hz target windows only around your shots/throws. It stays isolated from Universal analytics and never changes weapon arguments."
+        "Schema 4: attempts, matched signals and projectile observations are NOT kills. Detailed capture, autosave and timing adaptation are independent. See Show learned profile/F9 for observer health and save cost."
     )
 
     activeCleanup = function(): ()

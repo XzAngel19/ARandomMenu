@@ -13,6 +13,7 @@ local Module = {
 }
 
 local activeController: any = nil
+local unsubscribeBridge: any = nil
 
 function Module.init(context: Runtime): any
     local host: any = context.host
@@ -911,6 +912,7 @@ function Module.init(context: Runtime): any
         end
 
         controller.save = function(_reason: string?): boolean
+            loadStoredLogs() -- protect existing file even if Save is clicked before enabling
             return saveSnapshot("manual")
         end
         controller.flush = function(): boolean
@@ -938,7 +940,7 @@ function Module.init(context: Runtime): any
     local gameLearning: any = controllerFactory
 
     if gameBridge and type(gameBridge.onEvent) == "function" then
-        gameBridge.onEvent(function(eventType: string, payload: any): ()
+        unsubscribeBridge = gameBridge.onEvent(function(eventType: string, payload: any): ()
             if eventType == "authoringShot" then
                 gameLearning:noteAuthoringShot(payload)
             elseif eventType == "shotConfirmation" then
@@ -967,6 +969,9 @@ function Module.init(context: Runtime): any
         )
         state.metricsFeature = GameLearningFeature
     end
+    addToggleOption(GameLearningFeature, "Game learning observer", false, function(value: boolean): ()
+        gameLearning:setEnabled(value)
+    end, "Optional scene/movement evidence logger, not prediction training. Turning OFF stops probes and saves pending data.")
     addToggleOption(
         GameLearningFeature,
         "Log shots",
@@ -1025,7 +1030,6 @@ function Module.init(context: Runtime): any
     )
 
     activeController = gameLearning
-    gameLearning:setEnabled(true)
 
     Module.Initialized = true
     return Module
@@ -1040,6 +1044,8 @@ function Module.destroy(): ()
         activeController:setEnabled(false)
     end
     activeController = nil
+    if type(unsubscribeBridge) == "function" then pcall(unsubscribeBridge) end
+    unsubscribeBridge = nil
     Module.Events = {}
 end
 

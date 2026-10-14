@@ -21,6 +21,8 @@ function Module.init(runtime: any): any
     local isProtectedTarget: any = core.isProtectedTarget
     local trajectoryCalibration: any = core.trajectoryCalibration
     local predictionMath: any = core.predictionMath
+    local knifeControl: any = core.knifeControl
+    local setWeaponStatus: any = core.setWeaponStatus
 
     type KnifeRuntimeState = {
         lastAuraSwing: number,
@@ -106,12 +108,16 @@ function Module.init(runtime: any): any
     end
 
     local function processKnifeAura(): ()
-        if os.clock() - state.mm2KnifeRuntime.lastAuraSwing < 0.86 then return end
+        if os.clock() - state.mm2KnifeRuntime.lastAuraSwing < 0.86 then
+            setWeaponStatus("Aura", "Cooldown"); return
+        end
         local knife: Tool?, localRoot: BasePart? = canUseEquippedKnife()
         if not knife or not localRoot then
+            setWeaponStatus("Aura", "Requires Murderer role and an equipped, ready Knife")
             return
         end
 
+        setWeaponStatus("Aura", "No valid target in Aura Range")
         local currentRange: number = getEffectiveRange()
         local target: Player? =
             findKnifeAuraTarget(localRoot, currentRange)
@@ -138,6 +144,7 @@ function Module.init(runtime: any): any
         local handleTouched: Instance? = events
             and events:FindFirstChild("HandleTouched")
         knife:Activate()
+        setWeaponStatus("Aura", "Activated; waiting for contact, not a confirmed hit")
         task.delay(0.025, function(): ()
             local currentKnife: Tool?, currentLocalRoot: BasePart? =
                 canUseEquippedKnife()
@@ -160,11 +167,16 @@ function Module.init(runtime: any): any
                 return
             end
 
+            local attempted: boolean = false
             if handleTouched and handleTouched:IsA("RemoteEvent") then
-                handleTouched:FireServer(currentRoot)
+                attempted = pcall(function(): () handleTouched:FireServer(currentRoot) end)
             elseif type(state.fireTouchInterest) == "function" then
-                pcall(state.fireTouchInterest, currentHandle, currentRoot, 0)
-                pcall(state.fireTouchInterest, currentHandle, currentRoot, 1)
+                local began = pcall(state.fireTouchInterest, currentHandle, currentRoot, 0)
+                local ended = pcall(state.fireTouchInterest, currentHandle, currentRoot, 1)
+                attempted = began and ended
+            end
+            if not attempted then
+                setWeaponStatus("Aura", "No contact sent (remote/touch API unavailable or failed)"); return
             end
             pcall(trajectoryCalibration.noteAuthoredShot, trajectoryCalibration, {
                 kind = "stab",
@@ -189,28 +201,31 @@ function Module.init(runtime: any): any
             TaskManager:Connect(function(deltaTime: number): ()
                 local due: boolean
                 due, elapsed = predictionMath.sampleDue(elapsed, deltaTime, 20)
-                if due then processKnifeAura() end
+                if due then
+                    local ok, failure = pcall(processKnifeAura)
+                    if not ok then
+                        state.mm2KnifeRuntime.lastAuraSwing = os.clock()
+                        setWeaponStatus("Aura", "Error: " .. tostring(failure))
+                        warn("[Wurst:MM2:Aura] " .. tostring(failure))
+                    end
+                end
             end)
     end
 
     local function toggleKnifeAura(enabled: boolean): ()
         knifeSettings.aura = enabled
+        setWeaponStatus("Aura", enabled and "Searching" or "Paused (master or Aura OFF)")
         state.mm2KnifeRuntime.lastAuraSwing = -math.huge
         refreshKnifeController()
     end
+
+    knifeControl:register("aura", toggleKnifeAura)
 
     local KnifeFeature = createUniversalFeature(
         "Knife",
         "Knife aura and knife throw, each behind its own option below",
         6,
-        function(enabled: boolean): ()
-            if not enabled then
-                toggleKnifeAura(false)
-                if type(state.mm2KnifeThrowOff) == "function" then
-                    state.mm2KnifeThrowOff()
-                end
-            end
-        end,
+        function(enabled: boolean): () knifeControl:setMaster(enabled) end,
         {
             categoryName = "Exploits",
             parent = MM2Scroll,
@@ -223,13 +238,13 @@ function Module.init(runtime: any): any
         KnifeFeature,
         "Knife Aura",
         false,
-        toggleKnifeAura,
+        function(value: boolean): () knifeControl:setWanted("aura", value) end,
         "Stabs the nearest valid target in range through the game's own HandleTouched"
     )
-    addNumberOption(KnifeFeature, "Range", 14, 7, 30, function(
+    addNumberOption(KnifeFeature, "Aura Range", 14, 7, 30, function(
         value: number
     ): ()
-        knifeSettings.auraRange = value
+        knifeSettings.auraRange = math.clamp(value, 7, 30)
     end)
     addToggleOption(
         KnifeFeature,
@@ -242,7 +257,13 @@ function Module.init(runtime: any): any
             .. "no verified sample exists. Unconfirmed attempts never expand reach."
     )
 
+    addActionOption(KnifeFeature, "Knife status", function(): ()
+        notify(string.format("Knife master %s | Aura wanted %s | Throw wanted %s\n%s\n%s",
+            tostring(knifeControl.master), tostring(knifeControl.wanted.aura),
+            tostring(knifeControl.wanted.throw), core.weaponStatus("Aura"), core.weaponStatus("Throw")))
+    end)
     activeCleanup = function(): ()
+        knifeControl:remove("aura")
         toggleKnifeAura(false)
         state.mm2KnifeFeature = nil
     end

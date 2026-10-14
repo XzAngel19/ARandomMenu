@@ -1,2 +1,2 @@
-getgenv().WURST_BRANCH = "arena/f208cfd3-arandommenu"
-loadstring(game:HttpGet("https://raw.githubusercontent.com/XzAngel19/ARandomMenu/refs/heads/arena/f208cfd3-arandommenu/src/Wurst.lua?v=" .. tostring(os.time()), true))()
+getgenv().WURST_BRANCH = "arena/d83a806d-arandommenu"
+loadstring(game:HttpGet("https://raw.githubusercontent.com/XzAngel19/ARandomMenu/refs/heads/arena/d83a806d-arandommenu/src/Wurst.lua?v=" .. tostring(os.time()), true))()

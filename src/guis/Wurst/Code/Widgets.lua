@@ -578,6 +578,7 @@ function Module.init(context: any): WidgetLibrary
         local editing: boolean = false
 
         local function quantize(raw: number, fromSlider: boolean): number
+            raw = math.clamp(raw, minimum, maximum)
             if not fromSlider then
                 return raw
             end

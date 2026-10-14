@@ -4,7 +4,9 @@
 
 **Trabajo de esta sesión:** `arena/d83a806d-arandommenu`.
 
-**Tipo de entrega:** estudio, informe y reproducciones; **sin modificar el runtime, hacer push ni ejecutar Roblox**.
+**Alcance original de este informe:** estudio y reproducciones de v16, sin modificar su runtime ni ejecutar Roblox. La auditoría se publicó después en el PR #39.
+
+> **Actualización posterior:** esta misma rama incorpora ahora una implementación v17 y el baseline v16. Consulta [la guía de cambios, loader y pruebas](../MM2-v17-guia.md). Las conclusiones de este informe describen las revisiones históricas fijadas; `audit_mm2_remaining.py` reproduce sus defectos, no verifica el runtime v17.
 
 ## Conclusión
 

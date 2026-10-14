@@ -37,6 +37,7 @@ function Module.init(runtime: any): any
     local predictionMath: any = core.predictionMath
     local isMotionGrounded: any = core.isMotionGrounded
     local isWeaponPathClear: any = core.isWeaponPathClear
+    local setWeaponStatus: any = core.setWeaponStatus
 
     local shootMacro: boolean = false
     local function macroUnequip(gun: Tool?): ()
@@ -125,7 +126,8 @@ function Module.init(runtime: any): any
         local grounded: boolean = isMotionGrounded(humanoid, velocity)
 
         local turnRate: number = getGunTurnRate(
-            sample and sample.character == character and sample.stability or nil
+            sample and sample.character == character and sample.stability or nil,
+            sample and sample.sampleInterval or nil
         )
 
         local moveDirection: Vector3 = humanoid.MoveDirection
@@ -366,6 +368,7 @@ function Module.init(runtime: any): any
         local quiet: boolean = opts.quiet == true
         local function reject(message: string): boolean
             lastRejectReason = message
+            setWeaponStatus("Shoot", message)
             if not quiet then
                 notify(message)
             end
@@ -394,6 +397,9 @@ function Module.init(runtime: any): any
         end
 
         gun = getPlayerWeapon(LocalPlayer, "Gun", true) or gun
+        if gun and (gun:GetAttribute("Disabled") == true or gun.Enabled == false) then
+            return reject("Gun disabled/cooling down.")
+        end
         local remote: Instance? = gun and gun:FindFirstChild("Shoot")
         local origin: CFrame? = getGunOriginCFrame(character, gun)
 
@@ -443,20 +449,21 @@ function Module.init(runtime: any): any
             if not shotOrigin or not shotEnd then
                 return reject("Another player blocks the silent shot.")
             end
-            state.mm2ShotFeedback.queue(target, gun, shotOrigin, aim, resolved)
-            if state.mm2ShotFeedback.pending then
-                state.mm2ShotFeedback.pending.silentSpawn = variant
-            end
 
             state.lastSilentShotInfo = {
                 variant = variant,
                 at = os.clock(),
                 offset = math.floor(offset * 10) / 10,
             }
-            remote:FireServer(shotOrigin, shotEnd)
+            local sentAt: number = os.clock()
+            local sent, failure = pcall(function(): () remote:FireServer(shotOrigin, shotEnd) end)
+            if not sent then return reject("Send error: " .. tostring(failure)) end
+            setWeaponStatus("Shoot", "Silent sent to " .. target.Name .. "; not a confirmed hit")
+            state.mm2ShotFeedback.queue(target, gun, shotOrigin, shotEnd, resolved, variant)
 
             pcall(trajectoryCalibration.noteAuthoredShot, trajectoryCalibration, {
                 kind = "gun",
+                sentAt = sentAt,
                 tool = gun,
                 toolName = gun and gun.Name or "Gun",
                 originPos = shotOrigin.Position,
@@ -466,19 +473,24 @@ function Module.init(runtime: any): any
                 variant = variant,
                 offset = offset,
                 settings = {mode = "Silent", spawn = mm2Settings.silentSpawn,
-                    sweep = mm2Settings.silentSweep, motionHz = mm2Settings.motionSampleHz},
+                    sweep = mm2Settings.silentSweep, motionHz = mm2Settings.motionSampleHz,
+                    leadBias = mm2Settings.gunLeadBias, horizon = getGunHorizonSeconds(),
+                    adaptiveTiming = mm2Settings.adaptiveGunTiming, autoTune = mm2Settings.autoTuneLead},
             })
             macroUnequip(gun)
             return true
         end
 
+        local sentAt: number = os.clock()
+        local sent, failure = pcall(function(): ()
+            remote:FireServer(CFrame.lookAt(origin.Position, resolved.endpoint), CFrame.new(resolved.endpoint))
+        end)
+        if not sent then return reject("Send error: " .. tostring(failure)) end
+        setWeaponStatus("Shoot", "Normal sent to " .. target.Name .. "; not a confirmed hit")
         state.mm2ShotFeedback.queue(target, gun, origin, aim, resolved)
-        remote:FireServer(
-            CFrame.lookAt(origin.Position, resolved.endpoint),
-            CFrame.new(resolved.endpoint)
-        )
         pcall(trajectoryCalibration.noteAuthoredShot, trajectoryCalibration, {
             kind = "gun",
+            sentAt = sentAt,
             tool = gun,
             toolName = gun and gun.Name or "Gun",
             originPos = origin.Position,
@@ -486,7 +498,9 @@ function Module.init(runtime: any): any
             target = target,
             silent = false,
             settings = {mode = "Normal", wallCheck = mm2Settings.shootWallCheck,
-                motionHz = mm2Settings.motionSampleHz, leadBias = mm2Settings.gunLeadBias},
+                motionHz = mm2Settings.motionSampleHz, leadBias = mm2Settings.gunLeadBias,
+                horizon = getGunHorizonSeconds(), adaptiveTiming = mm2Settings.adaptiveGunTiming,
+                autoTune = mm2Settings.autoTuneLead},
         })
         macroUnequip(gun)
         return true
@@ -524,6 +538,7 @@ function Module.init(runtime: any): any
         disconnectFeatureConnection("MM2MotionTracker")
         disconnectGunFiredObserver()
         state.mm2ShotFeedback.pending = nil
+        table.clear(state.mm2ShotFeedback.pendingShots)
         state.mm2ShotFeedback.lastAccepted = nil
         state.mm2ShotFeedback.hide()
     end
@@ -577,6 +592,7 @@ function Module.init(runtime: any): any
         end
         local target: Player? = getSelectedShootTarget()
         if not target then
+            setWeaponStatus("Shoot", "No valid selected target (role/custom/protection)")
             return
         end
         lastRejectReason = ""
@@ -585,7 +601,7 @@ function Module.init(runtime: any): any
             maxError = autoSettings.maxError,
             quiet = true,
         })
-        if fired then
+        if fired or string.find(lastRejectReason, "Send error:", 1, true) then
             lastAutoShot = os.clock()
             lastAutoReject = nil
         elseif lastRejectReason ~= "" then
@@ -727,10 +743,8 @@ function Module.init(runtime: any): any
                 table.insert(
                     parts,
                     string.format(
-                        "%s %d/%d",
-                        variant,
-                        s.hits,
-                        s.shots
+                        "%s: %d hit-part / %d signals / %d attempts / %d unknown",
+                        variant, s.hits, s.confirmed, s.shots, s.unconfirmed
                     )
                 )
             end
@@ -738,7 +752,7 @@ function Module.init(runtime: any): any
         if #parts == 0 then
             return "Spawn A/B: no silent shots counted yet."
         end
-        return "Spawn A/B (hits/shots): " .. table.concat(parts, " · ")
+        return "Spawn A/B (observations, not kill rate): " .. table.concat(parts, " · ")
     end
     addActionOption(ShootFeature, "Spawn A/B status", function(): ()
         notify(spawnStatsText())
@@ -817,9 +831,7 @@ function Module.init(runtime: any): any
 
     local AutoShootFeature = createUniversalFeature(
         "Auto Shoot",
-        "Fires by itself when a high-probability shot exists. Normal holds for line"
-            .. " of sight and answers peeks; Silent shoots the murderer from any"
-            .. " distance, through walls.",
+        "Automatic requests with a prediction-error gate. Its Mode is independent of Shoot SilentAIM; server acceptance is not guaranteed.",
         5,
         toggleAutoShoot,
         {
@@ -841,10 +853,10 @@ function Module.init(runtime: any): any
         AutoShootFeature,
         "Max error",
         autoSettings.maxError,
-        0.1,
+        MINIMUM_ERROR_RADIUS,
         1,
         function(value: number): ()
-            autoSettings.maxError = value
+            autoSettings.maxError = math.clamp(value, MINIMUM_ERROR_RADIUS, 1)
         end,
         "Only fire when predicted error is within this many studs. Applies "
             .. "to both Normal and Silent; extra sweep never overrides this gate.",
@@ -857,12 +869,20 @@ function Module.init(runtime: any): any
         0.1,
         2,
         function(value: number): ()
-            autoSettings.fireDelay = value
+            autoSettings.fireDelay = math.clamp(value, 0.1, 2)
         end,
         "Seconds between automatic shots.",
         0.05
     )
 
+    addActionOption(ShootFeature, "Shoot status", function(): ()
+        local text = core.weaponStatus("Shoot") .. " | " .. core.weaponStatus("Gun observation")
+            .. string.format(" | manual %s | auto %s (%s) | max error %.2f | horizon %.3fs | adaptive timing %s",
+                mm2Settings.silentAim and "Silent" or "Normal", autoSettings.mode,
+                autoShootActive and "ON" or "OFF", autoSettings.maxError,
+                getGunHorizonSeconds(), tostring(mm2Settings.adaptiveGunTiming))
+        print("[Wurst:MM2] " .. text); notify(text)
+    end)
     activeCleanup = function(): ()
         toggleShootMurderer(false)
         toggleAutoShoot(false)

@@ -176,7 +176,7 @@ assert(loaded==3)
 pass("actual animation lifecycle: not Equip; cache by knife/id; cleanup even if Stop errors; OFF")
 end
 ''']
-    chunks += ["do\nlocal mm2Settings={predictionRtt=0.08,autoTuneLead=false,gunLeadBias=0}\nlocal Stats={FindFirstChild=function() return nil end}\n",
+    chunks += ["do\nlocal mm2Settings={predictionRtt=0.08,autoTuneLead=false,gunLeadBias=0,adaptiveGunTiming=true}\nlocal Stats={FindFirstChild=function() return nil end}\n",
                section(BASE, "local lastLatencyReadAt:", "local function getGunOriginCFrame"), r'''
     local baseline=getGunHorizonSeconds()
     near(baseline,0.2+1/40+1/120)
@@ -219,7 +219,10 @@ local velocity=Vector3.new(16,0,0)
 local root={Position=Vector3.new(120,0,0)}
 local target={Character={FindFirstChild=function() return root end}}
 local speed=96
-local trajectoryCalibration={getEstimates=function() return {knifeSpeed=speed} end}
+local core={mm2Settings={useKnifeSpeedCalibration=true}}
+local knifeThrowSettings={latencyModel="Packet RTT/2",leadBias=0}
+local lastPrediction
+local trajectoryCalibration={getEstimates=function() return {knifeSpeed=speed,liveKnifeSpeed=speed,liveKnifeSamples=3} end}
 local function getFilteredVelocity() return velocity end
 local function getEstimatedLatency() return 0.2 end
 ''', section(KNIFE, "    local function predictAim", "    local throwTrack:"), r'''
@@ -293,8 +296,11 @@ do
 local knob={enabled=false,mode="Normal",fireDelay=1,range=120,spawnOffset=5,throwHz=60,animation=true}
 local knifeThrowSettings=knob
 local lastThrow=-math.huge
+local lastPrediction=nil
+local setWeaponStatus=function() end
+local knifeControl={register=function() end}
 local root={Position=Vector3.new(30,0,0)}
-local target={Character={FindFirstChild=function() return root end}}
+local target={Name="target",Character={FindFirstChild=function() return root end}}
 local thrower={Position=Vector3.zero}
 local LocalPlayer={Character={FindFirstChild=function() return thrower end}}
 local sends,notes,animations=0,0,0
@@ -354,6 +360,7 @@ local target={Character={FindFirstChild=function() return targetRoot end}}
 local function canUseEquippedKnife() return knife,localRoot end
 local function findKnifeAuraTarget(root,range) near(range,20); return target end
 local function isValidKnifeTarget() return true end
+local setWeaponStatus=function() end
 local state={mm2KnifeRuntime={lastAuraSwing=-math.huge}}
 local task={delay=function(_,fn) fn() end}
 ''', section(AURA, "    local function processKnifeAura", "    local function refreshKnifeController"), r'''
@@ -419,7 +426,7 @@ def main() -> None:
     assert 'predictionMath.sampleDue(autoElapsed, deltaTime, 60)' in SHOOT
     assert 'predictionMath.sampleDue(elapsed, deltaTime, 30)' in BASE
     assert 'task.delay(10, function()' in BASE
-    assert 'if directHit then tuneFromConfirmedShot(candidate) end' in BASE
+    assert 'if observed and directHit then' in BASE and 'tuneFromConfirmedShot(candidate)' in BASE
     assert 'or candidate.silentSpawn then' in BASE
     assert 'candidate.aimRootOffset' in BASE and 'aimRootOffset = part.Position' in SHOOT
     with tempfile.TemporaryDirectory(prefix="mm2-precision-") as directory:

@@ -22,6 +22,7 @@ function Module.init(context: Runtime): any
     local notify: any = host.notify
     local createUniversalFeature: any = host.createUniversalFeature
     local addNumberOption: any = host.addNumberOption
+    local addToggleOption: any = host.addToggleOption
     local addActionOption: any = host.addActionOption
     local addInformationOption: any = host.addInformationOption
     local TaskManager: any = host.TaskManager
@@ -97,6 +98,7 @@ function Module.init(context: Runtime): any
             .. "_Projectile_Calibration.json"
         local runtime: any = {
             enabled = false,
+            historyLoaded = false,
             dirty = false,
             startedAt = os.clock(),
             pending = {} :: {PendingActivation},
@@ -215,6 +217,7 @@ function Module.init(context: Runtime): any
         end
 
         saveSnapshot = function(reason: string): boolean
+            if not runtime.historyLoaded then return false end -- enable first; do not overwrite unseen history
             if type(executorEnvironment.writefile) ~= "function" then
                 return false
             end
@@ -575,6 +578,8 @@ function Module.init(context: Runtime): any
         end
 
         local function loadSavedAnalytics(): ()
+            if runtime.historyLoaded then return end
+            runtime.historyLoaded = true
             if type(executorEnvironment.readfile) ~= "function" then
                 return
             end
@@ -656,6 +661,7 @@ function Module.init(context: Runtime): any
         end
 
         function controller:delete(): boolean
+            runtime.historyLoaded = true
             runtime.events = {}
             runtime.buckets = {}
             runtime.totalActivations = 0
@@ -674,8 +680,8 @@ function Module.init(context: Runtime): any
 
         function controller:status(): string
             return string.format(
-                "Universal · activations %d · projectiles %d · buckets %d",
-                runtime.totalActivations,
+                "Universal observer %s · activations %d · projectiles %d · buckets %d",
+                runtime.enabled and "ON" or "OFF", runtime.totalActivations,
                 runtime.totalProjectiles,
                 (function(): number
                     local count: number = 0
@@ -697,7 +703,6 @@ function Module.init(context: Runtime): any
     local calibration: any = controllerFactory
     calibrationService.set(calibration)
     activeRegistry = calibrationService
-    calibration:setEnabled(true)
 
     local tuning: any = calibration.tuning
 
@@ -706,13 +711,16 @@ function Module.init(context: Runtime): any
         ProjectileCalibrationFeature = createUniversalFeature(
             "Metrics",
             "Calibration and game-learning telemetry in one card: projectile "
-                .. "analytics, passive server learning, motion calibration.",
+                .. "analytics, client observations, optional motion calibration.",
             17,
             function(_enabled: boolean): () end,
             {category = true, categoryName = "Other"}
         )
         state.metricsFeature = ProjectileCalibrationFeature
     end
+    addToggleOption(ProjectileCalibrationFeature, "Projectile observer", false, function(value: boolean): ()
+        calibration:setEnabled(value)
+    end, "Optional generic physical-projectile logger. It does not train MM2 Shoot/Knife and may not observe hitscan or direct remote requests.")
     tuning =
         calibration.tuning
     addNumberOption(
@@ -794,7 +802,7 @@ function Module.init(context: Runtime): any
     end)
     addInformationOption(
         ProjectileCalibrationFeature,
-        "Runs automatically. Save writes the current session; Delete clears it. MM2 prediction never consumes this dataset."
+        "Opt-in observer. Enable before saving; OFF releases its listeners. Data is heuristic, not hit confirmation. MM2 prediction never consumes this dataset."
     )
 
     activeController = calibration

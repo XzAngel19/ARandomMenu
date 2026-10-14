@@ -1,7 +1,7 @@
 local RUNTIME_COMPATIBILITY_MARKER: string =
     "Initialization error — check executor console"
 local RUNTIME_SAFETY_SOURCE_URL: string =
-    "https://raw.githubusercontent.com/XzAngel19/ARandomMenu/refs/heads/arena/f208cfd3-arandommenu/src/Wurst.lua"
+    "https://raw.githubusercontent.com/XzAngel19/ARandomMenu/refs/heads/arena/d83a806d-arandommenu/src/Wurst.lua"
 
 local DEFAULT_FEATURE_CATEGORY: string = "Utilities"
 
@@ -196,7 +196,7 @@ local function computeLayoutMetrics(
     }
 end
 
-local RUNTIME_BRANCH: string = "arena/f208cfd3-arandommenu"
+local RUNTIME_BRANCH: string = "arena/d83a806d-arandommenu"
 do
     local override: any = nil
     local okGenv, genv = pcall(function()
@@ -221,7 +221,7 @@ local RUNTIME_RAW_BASE: string =
         .. RUNTIME_BRANCH
         .. "/"
 
-local SOURCE_STAMP: string = "v16-20261014-mm2-visuals-telemetry"
+local SOURCE_STAMP: string = "v17-20261014-mm2-controls-calibration"
 
 local BOOT_STARTED_AT: number = os.clock()
 local BOOT_FINGERPRINT_SECONDS: number = 0
@@ -863,6 +863,15 @@ local function colorToConfig(color)
 end
 
 loadConfig()
+-- The old two Range controls collided. Preserve the ambiguous value for recovery,
+-- but never copy it into both independent options.
+if configData.values["MM2.Knife.RangeMigration"] ~= 1 then
+    configData.values["MM2.Knife.LegacyRange"] = configData.values["MM2.Knife.Range"]
+    if configData.values["MM2.Knife.AuraRange"] == nil then configData.values["MM2.Knife.AuraRange"] = 14 end
+    if configData.values["MM2.Knife.ThrowRange"] == nil then configData.values["MM2.Knife.ThrowRange"] = 120 end
+    configData.values["MM2.Knife.RangeMigration"] = 1
+    queueConfigSave()
+end
 
 local function findExistingGui()
     local locations = {PlayerGui}

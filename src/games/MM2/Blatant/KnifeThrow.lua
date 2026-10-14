@@ -25,6 +25,8 @@ function Module.init(runtime: any): any
     local predictionMath: any = core.predictionMath
     local isWeaponPathClear: any = core.isWeaponPathClear
     local trajectoryCalibration: any = core.trajectoryCalibration
+    local knifeControl: any = core.knifeControl
+    local setWeaponStatus: any = core.setWeaponStatus
 
     local knifeThrowSettings = {
         enabled = false,
@@ -34,8 +36,11 @@ function Module.init(runtime: any): any
         spawnOffset = 5,
         throwHz = 60,
         animation = true,
+        latencyModel = "Packet RTT/2",
+        leadBias = 0,
     }
     local lastThrow = -math.huge
+    local lastPrediction: any = nil
 
     local function isValidTarget(player: Player): boolean
         if player == LocalPlayer
@@ -76,16 +81,21 @@ function Module.init(runtime: any): any
 
     local function getReadyKnife(): Tool?
         if findMurderer() ~= LocalPlayer then
+            setWeaponStatus("Throw", "Waiting for Murderer role")
             return nil
         end
         local character: Model? = LocalPlayer.Character
         if not character then
+            setWeaponStatus("Throw", "Waiting for character")
             return nil
         end
 
         local knife: Tool? = getPlayerWeapon(LocalPlayer, "Knife")
-        if not knife or knife:GetAttribute("Disabled") == true then
-            return nil
+        if not knife then
+            setWeaponStatus("Throw", "Knife not found (tool/tag/remotes)"); return nil
+        end
+        if knife:GetAttribute("Disabled") == true or knife.Enabled == false then
+            setWeaponStatus("Throw", "Knife disabled/cooling down"); return nil
         end
         if knife.Parent ~= character then
             local humanoid: Humanoid? =
@@ -93,6 +103,7 @@ function Module.init(runtime: any): any
             if humanoid then
                 humanoid:EquipTool(knife)
             end
+            setWeaponStatus("Throw", "Equipping Knife")
             return nil
         end
         return knife
@@ -105,19 +116,23 @@ function Module.init(runtime: any): any
         local ok: boolean, estimates: any = pcall(function(): any
             return trajectoryCalibration:getEstimates()
         end)
-        if ok and type(estimates) == "table" and predictionMath.finite(estimates.knifeSpeed)
-            and estimates.knifeSpeed >= 24 and estimates.knifeSpeed <= 300 then
-            knifeSpeed = estimates.knifeSpeed
+        local learned: number? = ok and type(estimates) == "table" and estimates.liveKnifeSpeed or nil
+        if core.mm2Settings.useKnifeSpeedCalibration and predictionMath.finite(learned)
+            and (estimates.liveKnifeSamples or 0) >= 3 and learned >= 24 and learned <= 300 then
+            knifeSpeed = learned
         end
         local velocity: Vector3 = getFilteredVelocity(target, root)
-        -- Restore v10's packet-flight lead. Solve the remaining moving-target
+        -- Default: v10 packet-flight lead. Solve the remaining moving-target
         -- flight instead of using distance-to-the-old-position / blade speed.
-        local packetTime: number = getEstimatedLatency() * 0.5
+        local multiplier: number = knifeThrowSettings.latencyModel == "Replica RTT" and 1 or 0.5
+        local packetTime: number = math.clamp(getEstimatedLatency() * multiplier
+            + knifeThrowSettings.leadBias, 0, 0.6)
         local positionAtSpawn: Vector3 = root.Position + velocity * packetTime
         local flightTime: number? = predictionMath.interceptTime(
             positionAtSpawn - originPos, velocity, knifeSpeed
         )
         if flightTime == nil then return nil end
+        lastPrediction = {networkLead = packetTime, flightTime = flightTime, speed = knifeSpeed}
         return positionAtSpawn + velocity * flightTime
     end
 
@@ -178,6 +193,7 @@ function Module.init(runtime: any): any
 
     local function throwKnife(): ()
         if os.clock() - lastThrow < knifeThrowSettings.fireDelay then
+            setWeaponStatus("Throw", "Fire delay")
             return
         end
         local silent: boolean = knifeThrowSettings.mode == "Silent"
@@ -188,13 +204,16 @@ function Module.init(runtime: any): any
         local events: Instance? = knife:FindFirstChild("Events")
         local remote: Instance? = events and events:FindFirstChild("KnifeThrown")
         if not remote or not remote:IsA("RemoteEvent") then
+            setWeaponStatus("Throw", "Missing Knife.Events.KnifeThrown RemoteEvent")
             return
         end
         local character: Model? = LocalPlayer.Character
         local throwerPart: BasePart? = character
             and (character:FindFirstChild("RightHand")
+                or character:FindFirstChild("Right Arm")
                 or character:FindFirstChild("HumanoidRootPart")) :: BasePart?
         if not throwerPart then
+            setWeaponStatus("Throw", "Missing hand/root")
             return
         end
 
@@ -202,6 +221,7 @@ function Module.init(runtime: any): any
             findNearestTarget(silent and 100000 or knifeThrowSettings.range,
                 not silent and throwerPart.Position or nil)
         if not target then
+            setWeaponStatus("Throw", "No valid visible target in Throw Range (or protected/dead)")
             return
         end
         local targetRoot: BasePart =
@@ -222,12 +242,25 @@ function Module.init(runtime: any): any
         end
 
         local aimPos: Vector3? = predictAim(target, originPos)
-        if not aimPos or (aimPos - originPos).Magnitude < 0.05 then return end
-        if not silent and not isWeaponPathClear(originPos, aimPos, target.Character) then return end
-        remote:FireServer(CFrame.new(originPos), CFrame.new(aimPos))
-        lastThrow = os.clock()
+        if not aimPos or (aimPos - originPos).Magnitude < 0.05 then
+            setWeaponStatus("Throw", "No usable constant-velocity intercept"); return
+        end
+        if not silent and not isWeaponPathClear(originPos, aimPos, target.Character) then
+            setWeaponStatus("Throw", "Predicted path blocked"); return
+        end
+        local sentAt: number = os.clock()
+        local sent, failure = pcall(function(): ()
+            remote:FireServer(CFrame.new(originPos), CFrame.new(aimPos))
+        end)
+        if not sent then
+            lastThrow = sentAt -- bounded retry even when the executor throws
+            setWeaponStatus("Throw", "Send error: " .. tostring(failure)); return
+        end
+        lastThrow = sentAt
+        setWeaponStatus("Throw", "Sent to " .. target.Name .. "; projectile/hit not yet confirmed")
         pcall(trajectoryCalibration.noteAuthoredShot, trajectoryCalibration, {
             kind = "knife",
+            sentAt = sentAt,
             tool = knife,
             toolName = knife.Name,
             originPos = originPos,
@@ -235,14 +268,19 @@ function Module.init(runtime: any): any
             target = target,
             silent = silent,
             settings = {mode = knifeThrowSettings.mode, throwHz = knifeThrowSettings.throwHz,
-                fireDelay = knifeThrowSettings.fireDelay, spawnOffset = knifeThrowSettings.spawnOffset},
+                fireDelay = knifeThrowSettings.fireDelay, spawnOffset = knifeThrowSettings.spawnOffset,
+                range = knifeThrowSettings.range, latencyModel = knifeThrowSettings.latencyModel,
+                leadBias = knifeThrowSettings.leadBias, prediction = lastPrediction},
         })
         -- Nothing cosmetic may delay the packet, cooldown, or telemetry timestamp.
         pcall(playThrowAnimation, knife)
     end
 
     local function toggleKnifeThrow(enabled: boolean): ()
+        if knifeThrowSettings.enabled == enabled and (not enabled
+            or (featureConnections.MM2KnifeThrow and featureConnections.MM2KnifeThrow.Connected)) then return end
         knifeThrowSettings.enabled = enabled
+        setWeaponStatus("Throw", enabled and "Searching" or "Paused (master or Throw OFF)")
         disconnectFeatureConnection("MM2KnifeThrow")
         if not enabled then
             stopThrowAnimation()
@@ -254,9 +292,18 @@ function Module.init(runtime: any): any
             TaskManager:Connect(function(deltaTime: number): ()
                 local due: boolean
                 due, elapsed = predictionMath.sampleDue(elapsed, deltaTime, knifeThrowSettings.throwHz)
-                if due then throwKnife() end
+                if due then
+                    local ok, failure = pcall(throwKnife)
+                    if not ok then
+                        lastThrow = os.clock()
+                        setWeaponStatus("Throw", "Error: " .. tostring(failure))
+                        warn("[Wurst:MM2:Throw] " .. tostring(failure))
+                    end
+                end
             end)
     end
+
+    knifeControl:register("throw", toggleKnifeThrow)
 
     local KnifeThrowFeature: any = state.mm2KnifeFeature
     if not KnifeThrowFeature then
@@ -264,11 +311,7 @@ function Module.init(runtime: any): any
             "Knife",
             "Knife aura and knife throw, each behind its own option below",
             6,
-            function(enabled: boolean): ()
-                if not enabled then
-                    toggleKnifeThrow(false)
-                end
-            end,
+            function(enabled: boolean): () knifeControl:setMaster(enabled) end,
             {
                 categoryName = "Exploits",
                 parent = MM2Scroll,
@@ -286,9 +329,8 @@ function Module.init(runtime: any): any
         KnifeThrowFeature,
         "Knife Throw",
         false,
-        toggleKnifeThrow,
-        "Auto-throws the knife at the nearest target. Silent spawns the blade"
-            .. " beside the target so it connects at any distance or through walls."
+        function(value: boolean): () knifeControl:setWanted("throw", value) end,
+        "Requires Knife master ON. Silent changes the authored origin; server acceptance and damage are not guaranteed."
     )
     addCycleOption(
         KnifeThrowFeature,
@@ -306,19 +348,19 @@ function Module.init(runtime: any): any
         0.2,
         3,
         function(value: number): ()
-            knifeThrowSettings.fireDelay = value
+            knifeThrowSettings.fireDelay = math.clamp(value, 0.2, 3)
         end,
         "Seconds between automatic throws.",
         0.1
     )
     addNumberOption(
         KnifeThrowFeature,
-        "Range",
+        "Throw Range",
         knifeThrowSettings.range,
         10,
         400,
         function(value: number): ()
-            knifeThrowSettings.range = value
+            knifeThrowSettings.range = math.clamp(value, 10, 400)
         end,
         "Maximum target distance for normal throws. Silent ignores this.",
         5
@@ -330,7 +372,7 @@ function Module.init(runtime: any): any
         1,
         15,
         function(value: number): ()
-            knifeThrowSettings.spawnOffset = value
+            knifeThrowSettings.spawnOffset = math.clamp(value, 1, 15)
         end,
         "Silent only: how far beside the target the blade spawns.",
         1
@@ -361,8 +403,22 @@ function Module.init(runtime: any): any
         5
     )
 
+    addCycleOption(KnifeThrowFeature, "Knife latency model", {"Packet RTT/2", "Replica RTT"}, 1,
+        function(value: string): () knifeThrowSettings.latencyModel = value end,
+        "RTT/2 covers packet travel only; RTT also budgets replicated-position age. Experimental A/B, not a server measurement.")
+    addNumberOption(KnifeThrowFeature, "Knife lead bias", 0, -0.15, 0.15,
+        function(value: number): () knifeThrowSettings.leadBias = math.clamp(value, -0.15, 0.15) end,
+        "Extra seconds of target motion before flight. Change one variable per test.", 0.005)
+    addActionOption(KnifeThrowFeature, "Throw prediction status", function(): ()
+        local p = lastPrediction
+        notify(core.weaponStatus("Throw") .. " | " .. core.weaponStatus("Throw error") .. string.format(" | %s | range %.0f | checks %.0f Hz | delay %.2fs",
+            knifeThrowSettings.latencyModel, knifeThrowSettings.range, knifeThrowSettings.throwHz, knifeThrowSettings.fireDelay)
+            .. (p and string.format(" | last network lead %.3fs + flight %.3fs at %.1f studs/s",
+                p.networkLead, p.flightTime, p.speed) or " | no solved throw yet"))
+    end)
     featureConnections.MM2KnifeThrowCharacter = LocalPlayer.CharacterAdded:Connect(stopThrowAnimation)
     activeCleanup = function(): ()
+        knifeControl:remove("throw")
         toggleKnifeThrow(false)
         disconnectFeatureConnection("MM2KnifeThrowCharacter")
         state.mm2KnifeThrowOff = nil
