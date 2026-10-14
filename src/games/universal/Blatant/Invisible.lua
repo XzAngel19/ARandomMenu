@@ -110,7 +110,7 @@ function Module.init(context: Runtime): any
 
         if not enabled then
             if invisibleRuntime.active and root and invisibleRuntime.surfacePosition then
-                -- Teleport real character to the exact position of the ghost on the map
+
                 root.CFrame = invisibleRuntime.surfacePosition
                 root.AssemblyLinearVelocity = Vector3.zero
             end
@@ -142,14 +142,12 @@ function Module.init(context: Runtime): any
             ghostRoot.CFrame = invisibleRuntime.surfacePosition
         end
 
-        -- Focus the camera onto the ghost so the user stays on the map!
         if camera and ghostHumanoid then
             pcall(function()
                 camera.CameraSubject = ghostHumanoid
             end)
         end
 
-        -- RenderStepped loop: controls the ghost on the surface while keeping the real character in the void
         table.insert(
             invisibleRuntime.connections,
             RunService.RenderStepped:Connect(function(deltaTime: number): ()
@@ -180,7 +178,7 @@ function Module.init(context: Runtime): any
                 local surfaceCF: CFrame = invisibleRuntime.surfacePosition or currentRoot.CFrame
 
                 if invisibleSettings.fly and activeCam then
-                    -- Fly mode: Move freely in 3D through the air with camera look
+
                     local flyVelocity: Vector3 = Vector3.zero
                     local camCF: CFrame = activeCam.CFrame
                     local look: Vector3 = camCF.LookVector
@@ -216,7 +214,7 @@ function Module.init(context: Runtime): any
                         invisibleRuntime.surfacePosition = surfaceCF
                     end
                 else
-                    -- Walk mode: move on ground using humanoid MoveDirection
+
                     local moveDir: Vector3 = currentHumanoid.MoveDirection
                     local walkSpeed: number = currentHumanoid.WalkSpeed
                     if moveDir.Magnitude > 0.05 then
@@ -233,10 +231,9 @@ function Module.init(context: Runtime): any
                     end
                 end
 
-                -- Position ghost root
                 if activeGhostRoot and surfaceCF then
                     activeGhostRoot.CFrame = surfaceCF
-                    -- Sync limbs relative to root
+
                     for _, child: Instance in ipairs(currentCharacter:GetChildren()) do
                         if child:IsA("BasePart") and child.Name ~= "HumanoidRootPart" then
                             local ghostPart: Instance? = activeGhost:FindFirstChild(child.Name)
@@ -249,7 +246,6 @@ function Module.init(context: Runtime): any
                     end
                 end
 
-                -- Keep real character safely hidden in the void below the ghost position
                 local voidPos: Vector3 = surfaceCF.Position - Vector3.new(0, invisibleSettings.voidDepth, 0)
                 currentRoot.CFrame = CFrame.new(voidPos)
                 currentRoot.AssemblyLinearVelocity = Vector3.zero

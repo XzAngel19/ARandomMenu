@@ -48,8 +48,7 @@ function Module.init(context: Runtime): any
             if SpiderFeature then
                 SpiderFeature:SetStatus(nil)
             end
-            local character: Model?, humanoidOrNil: Humanoid?, rootOrNil: BasePart? =
-                getCharacterParts()
+            local _, _, rootOrNil: BasePart? = getCharacterParts()
             if rootOrNil then
                 local curPos: Vector3 = rootOrNil.Position
                 local flatForward: Vector3 = Vector3.new(rootOrNil.CFrame.LookVector.X, 0, rootOrNil.CFrame.LookVector.Z)
@@ -63,7 +62,6 @@ function Module.init(context: Runtime): any
         SpiderFeature:SetStatus(spiderSettings.mode)
 
         local onSurface: boolean = false
-        local lastSurfaceNormal: Vector3 = Vector3.new(0, 1, 0)
 
         featureConnections.Spider = TaskManager:Connect(function(deltaTime: number): ()
             local character: Model?, humanoidOrNil: Humanoid?, rootOrNil: BasePart? =
@@ -92,16 +90,14 @@ function Module.init(context: Runtime): any
             local moveDir: Vector3 = humanoid.MoveDirection
             local isGrounded: boolean = humanoid.FloorMaterial ~= Enum.Material.Air
 
-            -- Mode: Spiderman (realistic feet-on-wall & ceiling walking with natural physics)
             if spiderSettings.mode == "Spiderman" then
-                -- Ray 1: Check under feet (primary when already on a wall/ceiling)
+
                 local feetRay: RaycastResult? = workspace:Raycast(
                     rootPos,
                     -root.CFrame.UpVector * (hipHeight + 2.2),
                     raycastParams
                 )
 
-                -- Ray 2: Check in front of the feet to transition onto a wall when walking into it
                 local wallRay: RaycastResult? = nil
                 if moveDir.Magnitude > 0.05 then
                     wallRay = workspace:Raycast(
@@ -111,7 +107,6 @@ function Module.init(context: Runtime): any
                     )
                 end
 
-                -- Ray 3: Check above for ceilings
                 local ceilingRay: RaycastResult? = nil
                 if spiderSettings.ceilingWalk then
                     ceilingRay = workspace:Raycast(
@@ -124,7 +119,7 @@ function Module.init(context: Runtime): any
                 local activeSurface: RaycastResult? = nil
 
                 if onSurface then
-                    -- Already on a wall or ceiling: feet ray maintains contact
+
                     if feetRay and feetRay.Instance and feetRay.Instance:IsA("BasePart") then
                         activeSurface = feetRay
                     elseif wallRay and wallRay.Instance and wallRay.Instance:IsA("BasePart") then
@@ -133,7 +128,7 @@ function Module.init(context: Runtime): any
                         activeSurface = ceilingRay
                     end
                 else
-                    -- On the ground: only transition to wall if walking directly into it at close range (< 1.5 studs)
+
                     if wallRay and wallRay.Instance and wallRay.Instance:IsA("BasePart") and math.abs(wallRay.Normal.Y) <= 0.35 then
                         activeSurface = wallRay
                     elseif ceilingRay and ceilingRay.Instance and ceilingRay.Instance:IsA("BasePart") and ceilingRay.Normal.Y < -0.5 and not isGrounded then
@@ -143,15 +138,11 @@ function Module.init(context: Runtime): any
 
                 if activeSurface and activeSurface.Instance and activeSurface.Instance:IsA("BasePart") then
                     local surfNormal: Vector3 = activeSurface.Normal.Unit
-                    lastSurfaceNormal = surfNormal
                     onSurface = true
 
-                    -- Prevent humanoid tripping or ragdolling
                     humanoid.PlatformStand = false
                     humanoid:ChangeState(Enum.HumanoidStateType.Running)
 
-                    -- Wall tangent axes
-                    local surfUp: Vector3 = surfNormal
                     local wallUpVector: Vector3 = Vector3.new(0, 1, 0) - surfNormal * surfNormal.Y
                     if wallUpVector.Magnitude > 0.01 then
                         wallUpVector = wallUpVector.Unit
@@ -179,14 +170,13 @@ function Module.init(context: Runtime): any
                         end
                     end
 
-                    -- Prevent clipping into the wall: Ensure root position is offset away from wall
                     local standDistance: number = hipHeight + 1.1
                     local wallHitPos: Vector3 = activeSurface.Position
                     local currentDistFromWall: number = (rootPos - wallHitPos):Dot(surfNormal)
                     local adjustedRootPos: Vector3 = rootPos
 
                     if currentDistFromWall < standDistance then
-                        -- Push out from wall so head and torso are NEVER buried inside
+
                         adjustedRootPos = wallHitPos + surfNormal * standDistance
                     end
 
@@ -194,7 +184,6 @@ function Module.init(context: Runtime): any
                     local targetCF: CFrame = CFrame.lookAt(adjustedRootPos, adjustedRootPos + lookRef, surfNormal)
                     root.CFrame = root.CFrame:Lerp(targetCF, math.clamp(deltaTime * 12, 0, 1))
 
-                    -- Natural walking velocity: along the wall surface with minimal adhesion (no wall penetration!)
                     local walkVelocity: Vector3 = (surfaceMove.Magnitude > 0.05) and (surfaceMove * spiderSettings.speed) or Vector3.zero
                     local gentleAdhesion: Vector3 = -surfNormal * 5
 
@@ -202,7 +191,7 @@ function Module.init(context: Runtime): any
                     return
                 else
                     if onSurface then
-                        -- Stepped off the wall onto ground or into air: smoothly restore upright
+
                         local curPos: Vector3 = root.Position
                         local flatForward: Vector3 = Vector3.new(root.CFrame.LookVector.X, 0, root.CFrame.LookVector.Z)
                         if flatForward.Magnitude > 0.01 then
@@ -219,7 +208,6 @@ function Module.init(context: Runtime): any
                 return
             end
 
-            -- Classic Climb Modes (Velocity, Impulse, CFrame)
             if moveDir.Magnitude < 0.05 then
                 return
             end

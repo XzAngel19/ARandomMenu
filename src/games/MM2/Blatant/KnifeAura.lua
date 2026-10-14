@@ -199,8 +199,6 @@ function Module.init(runtime: any): any
         refreshKnifeController()
     end
 
-    -- One shared "Knife" card: aura and throw live on it as options. KnifeThrow
-    -- (loaded right after this file) attaches its options to the same card.
     local KnifeFeature = createUniversalFeature(
         "Knife",
         "Knife aura and knife throw, each behind its own option below",

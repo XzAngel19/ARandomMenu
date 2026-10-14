@@ -32,8 +32,7 @@ function Module.init(context: Runtime): any
     local RunService: any = host.RunService
 
     local flingRunning: boolean = false
-    -- Name typed into the "Target player" box; the "Fling" action flings that
-    -- exact player (case-insensitive, partial names allowed).
+
     local flingTargetName: string = ""
 
     local function setFlingRunning(running: boolean): ()
@@ -43,9 +42,6 @@ function Module.init(context: Runtime): any
 
     local performFling: (Player) -> ()
 
-    -- Fixed flight profile: the old per-user Duration/Power options were
-    -- replaced by the role actions; 6 s at power 1 matches what the old
-    -- defaults produced.
     local FLING_DURATION: number = 6
     local FLING_POWER: number = 1
 
@@ -195,9 +191,6 @@ function Module.init(context: Runtime): any
         end)
     end
 
-    -- Role lookup goes through the game bridge, so these actions only exist
-    -- where the game exposes roles (MM2). In other games the provider is
-    -- nil and every action reports that no roles were found.
     local function findPlayerByRole(match: (string) -> boolean): Player?
         if type(gameBridge.playerRole) ~= "function" then
             return nil

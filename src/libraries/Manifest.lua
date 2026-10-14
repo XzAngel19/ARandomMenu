@@ -40,7 +40,7 @@ local Manifest: Manifest = {
         "src/guis/Wurst/Code/Furniture.lua",
     },
     modules = {
-        -- Render
+
         {
             path = "src/games/universal/Render/ItemRender.lua",
             name = "ItemESP",
@@ -92,7 +92,6 @@ local Manifest: Manifest = {
             category = "Render",
         },
 
-        -- Combat
         {
             path = "src/games/universal/Combat/KillAura.lua",
             name = "Killaura",
@@ -104,14 +103,12 @@ local Manifest: Manifest = {
             category = "Combat",
         },
 
-        -- Blatant
         {
             path = "src/games/universal/Blatant/Invisible.lua",
             name = "Invisible",
             category = "Blatant",
         },
 
-        -- Movement
         {
             path = "src/games/universal/Movement/Speed.lua",
             name = "Speed",
@@ -178,14 +175,12 @@ local Manifest: Manifest = {
             category = "Movement",
         },
 
-        -- Fun
         {
             path = "src/games/universal/Fun/SpinBot.lua",
             name = "SpinBot",
             category = "Fun",
         },
 
-        -- Other
         {
             path = "src/games/universal/Other/Disguise.lua",
             name = "Disguise",

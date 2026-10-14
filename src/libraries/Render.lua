@@ -425,11 +425,7 @@ function Module.init(context: any): RenderLibrary
     end
 
     function library:Project(camera: Camera, position: Vector3): Vector2?
-        -- The host ScreenGui has IgnoreGuiInset = true, so drawings live in raw
-        -- viewport pixel space and WorldToViewportPoint is the matching projection.
-        -- Points merely outside the viewport still project so skeleton lines
-        -- keep their bearings at the screen edge; only points behind the
-        -- camera are rejected.
+
         local point: Vector3 = camera:WorldToViewportPoint(position)
         if point.Z <= 0 then
             return nil
@@ -437,11 +433,6 @@ function Module.init(context: any): RenderLibrary
         return Vector2.new(point.X, point.Y)
     end
 
-    -- Builds a screen rectangle from world sample points. Points behind the
-    -- camera are dropped, the rest contribute to the bounds, and the final
-    -- rectangle is clamped to the viewport so a target that is merely close
-    -- can never produce a box larger than the screen. Models that are fully
-    -- off-screen return nil so callers can hide their drawings cleanly.
     local function rectFromPoints(
         camera: Camera,
         viewport: Vector2,
@@ -508,8 +499,7 @@ function Module.init(context: any): RenderLibrary
         local root: BasePart? = model:FindFirstChild("HumanoidRootPart") :: BasePart?
             or model.PrimaryPart
         if humanoid and root then
-            -- Character rig: anchor directly to top of head and bottom of feet
-            -- so the box perfectly wraps the visible avatar without floating above it.
+
             local head: BasePart? = model:FindFirstChild("Head") :: BasePart?
             local rootPosition: Vector3 = root.Position
             local topPosition: Vector3 = head
@@ -539,10 +529,6 @@ function Module.init(context: any): RenderLibrary
             }, 0.38)
         end
 
-        -- Anything without a live humanoid rig: take the engine-side bounding
-        -- box and project its eight corners. One engine call and eight
-        -- projections, instead of walking and projecting every descendant
-        -- part each frame.
         local boundsOk: boolean, boundsCFrame: any, boundsSize: any =
             pcall(model.GetBoundingBox, model)
         if not boundsOk or typeof(boundsSize) ~= "Vector3" or boundsSize.Magnitude <= 0 then

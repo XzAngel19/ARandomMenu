@@ -701,9 +701,6 @@ function Module.init(context: Runtime): any
 
     local tuning: any = calibration.tuning
 
-    -- One shared "Metrics" card: projectile analytics, game learning and the
-    -- per-game calibration all attach their options to it (whoever loads
-    -- first creates it; the rest attach through state.metricsFeature).
     local ProjectileCalibrationFeature: any = state.metricsFeature
     if not ProjectileCalibrationFeature then
         ProjectileCalibrationFeature = createUniversalFeature(

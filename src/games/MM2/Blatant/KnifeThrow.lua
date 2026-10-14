@@ -8,23 +8,6 @@ local Module = {
 
 local activeCleanup: () -> () = function(): () end
 
---[[
-    MM2 Knife Throw
-
-    Automatically throws the knife at the nearest valid target — the murderer's
-    counterpart to the gun's Auto Shoot.
-
-    Normal throws from the murderer's hand and leads the target by the blade's
-    flight time (distance / throw speed), so the target has to be roughly in the
-    open. Silent authors the throw so the blade spawns right beside the target
-    (origin placed next to them, aim at them): the server spawns the projectile
-    at that origin, so it connects at any distance or through walls — the same
-    trick the gun's silent shot uses, and reliable because the knife's hitbox is
-    long.
-
-    Remote (confirmed against YARHM's "knife throw to closest"):
-      KnifeThrown:FireServer(CFrame.new(origin), CFrame.new(aim))
-]]
 function Module.init(runtime: any): any
     if Module.Initialized then
         return Module
@@ -87,8 +70,6 @@ function Module.init(runtime: any): any
         return closest
     end
 
-    -- The murderer role is required, and the knife must be equipped and off its
-    -- post-throw cooldown (the tool flags itself Disabled while it respawns).
     local function getReadyKnife(): Tool?
         if findMurderer() ~= LocalPlayer then
             return nil
@@ -97,8 +78,7 @@ function Module.init(runtime: any): any
         if not character then
             return nil
         end
-        -- Search backpack too: an unequipped knife must be equipped before the
-        -- next tick, exactly like Shoot does with the gun.
+
         local knife: Tool? = getPlayerWeapon(LocalPlayer, "Knife")
         if not knife or knife:GetAttribute("Disabled") == true then
             return nil
@@ -114,8 +94,6 @@ function Module.init(runtime: any): any
         return knife
     end
 
-    -- Lead the target by the blade's flight time so a moving target is still
-    -- where the knife arrives. Uses the calibrated throw speed when available.
     local function predictAim(target: Player, originPos: Vector3): Vector3
         local root: BasePart =
             target.Character:FindFirstChild("HumanoidRootPart") :: BasePart
@@ -132,10 +110,6 @@ function Module.init(runtime: any): any
         return root.Position + velocity * flightTime
     end
 
-    -- Best-effort throw animation: the knife tool ships its throw animation as
-    -- an Animation instance; load it on our humanoid and play it right before
-    -- the packet so an auto throw looks like a real one. Purely cosmetic - the
-    -- packet is what throws - and a missing animation never blocks the throw.
     local throwTrack: any = nil
     local throwTrackHumanoid: Humanoid? = nil
     local function playThrowAnimation(knife: Tool): ()
@@ -151,7 +125,7 @@ function Module.init(runtime: any): any
         local anim: Animation? =
             knife:FindFirstChildWhichIsA("Animation", true) :: Animation?
         if not anim then
-            -- A tool with no animation must never replay a stale track.
+
             throwTrack = nil
             throwTrackHumanoid = nil
             return
@@ -196,7 +170,6 @@ function Module.init(runtime: any): any
             return
         end
 
-        -- Silent ignores range: the whole point is to reach a target anywhere.
         local target: Player? =
             findNearestTarget(silent and 100000 or knifeThrowSettings.range)
         if not target then
@@ -207,8 +180,7 @@ function Module.init(runtime: any): any
 
         local originPos: Vector3
         if silent then
-            -- Spawn the blade just beside the target, on the thrower's side, so
-            -- it travels a few studs into them and connects regardless of walls.
+
             local toThrower: Vector3 = throwerPart.Position - targetRoot.Position
             if toThrower.Magnitude > 0.1 then
                 toThrower = toThrower.Unit
@@ -254,8 +226,6 @@ function Module.init(runtime: any): any
             end)
     end
 
-    -- Attach to the shared "Knife" card created by KnifeAura; only build a new
-    -- card if that module failed to load so the options never dangle.
     local KnifeThrowFeature: any = state.mm2KnifeFeature
     if not KnifeThrowFeature then
         KnifeThrowFeature = createUniversalFeature(

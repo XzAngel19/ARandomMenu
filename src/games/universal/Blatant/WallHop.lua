@@ -32,7 +32,6 @@ function Module.init(context: Runtime): any
     local currentWorkspace: Workspace = host.workspace or workspace
     local lastHopAt: number = -math.huge
     local lastScanAt: number = -math.huge
-    local nearestWall: WallSighting? = nil
     local highlight: Highlight? = nil
 
     local function destroyHighlight(): ()
@@ -115,15 +114,13 @@ function Module.init(context: Runtime): any
         local index: number = math.floor(
             (angle / (math.pi * 2)) * SCAN_DIRECTIONS + 0.5
         ) % SCAN_DIRECTIONS
-        -- Arrows are listed clockwise starting at forward; atan2 grows
-        -- counter-clockwise, so mirror the index.
+
         index = (SCAN_DIRECTIONS - index) % SCAN_DIRECTIONS + 1
         return ARROWS[index]
     end
 
     local card: any
     local function clearVisuals(): ()
-        nearestWall = nil
         destroyHighlight()
     end
 
@@ -173,8 +170,7 @@ function Module.init(context: Runtime): any
                     )
                 end
                 local velocity: Vector3 = root.AssemblyLinearVelocity
-                -- One clean impulse: kick away from the wall plus a natural
-                -- jump arc. No teleports, no chained boosts.
+
                 root.AssemblyLinearVelocity = Vector3.new(
                     velocity.X * 0.35 + sighting.normal.X * kick,
                     math.max(velocity.Y, jumpVelocity + 3),
@@ -201,7 +197,6 @@ function Module.init(context: Runtime): any
 
                 local range: number = tonumber(card.Options["Wall range"].Value) or 2.6
                 local sighting: WallSighting? = findWall(character, humanoid, root, range)
-                nearestWall = sighting
 
                 local grounded: boolean = humanoid.FloorMaterial ~= Enum.Material.Air
                 if not sighting or not grounded then

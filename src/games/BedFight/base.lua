@@ -63,17 +63,6 @@ local function gameInfo(): Instance?
     return replicated and replicated:FindFirstChild("GameInfo") or nil
 end
 
-local function readValue(name: string): any
-    local info: Instance? = gameInfo()
-    if not info then
-        return nil
-    end
-    local value: Instance? = info:FindFirstChild(name)
-    if value and (value:IsA("StringValue") or value:IsA("BoolValue") or value:IsA("NumberValue")) then
-        return (value :: any).Value
-    end
-    return nil
-end
 
 local function scanBeds(): {Model}
     local beds: {Model} = {}
@@ -434,7 +423,6 @@ function Module.init(runtime: any): any
             },
         },
     })
-
 
     local nukerSettings: any = {
         range = 18,

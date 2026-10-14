@@ -29,23 +29,10 @@ function Module.init(context: Runtime): any
     local Stats: any = host.Stats or (game :: any):GetService("Stats")
     local httpService: any = host.HttpService or (game :: any):GetService("HttpService")
     local UserInputService: any = host.UserInputService or (game :: any):GetService("UserInputService")
-    -- Games that author shots (MM2's SilentAIM) publish the last authored
-    -- geometry here; nil everywhere else, so this stays a no-op.
+
     local gameBridge: any = context.services and
         context.services.gameBridge
 
-    -- ---------------------------------------------------------------------------
-    -- Game Learning: a passive log of what the server actually accepts.
-    --
-    -- Every tool activation snapshots the scene (every other player's distance,
-    -- angle to the aim, line of sight, and the hitbox geometry at that instant).
-    -- Every death is then matched back against the last few shots: a kill whose
-    -- line of sight was blocked is a wallshot the server did not validate, a
-    -- kill past 80 studs is a range the server did not cap, and a local
-    -- teleport that is neither kicked nor snapped back is movement the server
-    -- tolerated. Nothing is sent anywhere: the log lives in memory and can be
-    -- saved next to the Projectile Calibration data for offline reading.
-    -- ---------------------------------------------------------------------------
     local controllerFactory = (function(): any
         type SceneEntry = {
             player: string,
@@ -68,10 +55,7 @@ function Module.init(context: Runtime): any
             scene: {SceneEntry},
             outcome: {[string]: any}?,
             silentSpawn: {variant: string, offset: number}?,
-            -- Name of the player the menu authored this shot at (module shots
-            -- only). Kill attribution reads it: without it, knife throws and
-            -- manual module shots whose target sat outside the scene-geometry
-            -- window ended up as unattributed deaths (7 in one session).
+
             target: string?,
         }
         type MovementRecord = {
@@ -135,8 +119,6 @@ function Module.init(context: Runtime): any
         local controller: any
         local saveSnapshot: (reason: string) -> boolean
 
-        -- Assigned before any method is defined on it: `function
-        -- controller:foo()` is sugar for controller.foo = function(...).
         controller = {} :: any
         controller.tuning = tuning
 
@@ -270,8 +252,7 @@ function Module.init(context: Runtime): any
             shot: ShotRecord,
             explicitVariant: string?
         ): ()
-            -- Tag silent-authored shots with their spawn variant so the log
-            -- can compare hit rates per geometry (Front/Through/Top/Behind).
+
             local variant: string? = explicitVariant
             local variantOffset: number = 0
             if not variant
@@ -295,8 +276,6 @@ function Module.init(context: Runtime): any
             runtime.aggregates.shots += 1
             runtime.saveDirty = true
 
-            -- A few seconds later the shot either produced a kill (handled by
-            -- the death watcher) or it missed the only plausible target it had.
             task.delay(tuning.killWindowSeconds + 0.5, function(): ()
                 if shot.outcome ~= nil then
                     return
@@ -350,10 +329,6 @@ function Module.init(context: Runtime): any
             finalizeShot(shot, nil)
         end
 
-        -- Shots authored by the menu (silent or manual module fires) publish
-        -- an "authoringShot" bridge event at the FireServer moment; they never
-        -- trigger tool.Activated, which is exactly why the collector used to
-        -- see nothing while the user shot with Silent Aim.
         local function recordAuthoredShot(info: any): ()
             if type(info) ~= "table" then
                 return
@@ -523,9 +498,7 @@ function Module.init(context: Runtime): any
                     if not (runtime.enabled and tuning.logShots) then
                         return
                     end
-                    -- The menu's authored fires (silent or module) publish a
-                    -- bridge event milliseconds earlier; don't double count
-                    -- the same physical shot from both collectors.
+
                     if os.clock() - runtime.lastAuthoredAt < 0.35 then
                         return
                     end
@@ -595,7 +568,7 @@ function Module.init(context: Runtime): any
                     local elapsed: number = now - lastAt
                     if elapsed >= 0.02 then
                         local jumped: number = (position - lastPosition).Magnitude
-                        -- Disregard massive jumps (> 3000 studs) that correspond to MM2 map loading/teleporting
+
                         if jumped > 25 and elapsed < 0.15 and jumped < 3000 then
                             recordMovement("teleport", jumped, {
                                 from = vectorArray(lastPosition),
@@ -666,20 +639,17 @@ function Module.init(context: Runtime): any
                             and character:FindFirstChild("UpperTorso")
                             :: BasePart?
                         local anomaly: string? = nil
-                        local magnitude: number = 0
                         if root and head then
                             local offset: number =
                                 (head.Position - root.Position).Magnitude
                             if offset > 3.2 or offset < 0.9 then
                                 anomaly = "headOffset"
-                                magnitude = round2(offset)
                             end
                         end
                         if not anomaly and root and torso then
                             local torsoY: number = torso.Size.Y
                             if torsoY > 2.6 or torsoY < 0.7 then
                                 anomaly = "torsoSize"
-                                magnitude = round2(torsoY)
                             end
                         end
                         if anomaly then
@@ -967,8 +937,7 @@ function Module.init(context: Runtime): any
                 end
                 table.clear(runtime.connections)
                 runtime.observedTools = setmetatable({}, {__mode = "k"})
-                -- Without this, re-enabling would skip re-watching players whose
-                -- connections were just disconnected.
+
                 runtime.watchedPlayers = setmetatable({}, {__mode = "k"})
                 if runtime.movementTask then
                     runtime.movementTask:Disconnect()
@@ -983,8 +952,7 @@ function Module.init(context: Runtime): any
                     runtime.autosaveTask = nil
                 end
                 if runtime.saveDirty then
-                    -- Turning it off archives the session so the data is
-                    -- never stranded in memory.
+
                     saveSnapshot("disabled")
                 end
                 return
@@ -1072,10 +1040,6 @@ function Module.init(context: Runtime): any
 
     local gameLearning: any = controllerFactory
 
-    -- The game publishes "authoringShot" at the exact FireServer moment for
-    -- every menu-authored shot (silent gun, knife throw, stab). Those never
-    -- trigger tool.Activated, which is exactly why the collector used to
-    -- record nothing while the user shot with Silent Aim.
     if gameBridge and type(gameBridge.onEvent) == "function" then
         gameBridge.onEvent(function(eventType: string, payload: any): ()
             if eventType == "authoringShot" then
@@ -1084,8 +1048,6 @@ function Module.init(context: Runtime): any
         end)
     end
 
-    -- Consecutive saving: flush to disk when the game closes so no session
-    -- is lost to a disconnect or an abrupt exit.
     pcall(function(): ()
         if type((game :: any).BindToClose) == "function" then
             game:BindToClose(function(): ()
@@ -1094,8 +1056,6 @@ function Module.init(context: Runtime): any
         end
     end)
 
-    -- Attaches to the shared "Metrics" card (created by whichever telemetry
-    -- module loads first) so all calibration/learning options live together.
     local GameLearningFeature: any = state.metricsFeature
     if not GameLearningFeature then
         GameLearningFeature = createUniversalFeature(

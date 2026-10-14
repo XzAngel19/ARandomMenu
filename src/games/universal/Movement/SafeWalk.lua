@@ -87,8 +87,7 @@ function Module.init(context: Runtime): any
                 hideBarrier()
                 return
             end
-            -- While airborne or standing still the last barrier stays in place
-            -- so momentum cannot carry you over an edge mid-jump.
+
             if humanoid.MoveDirection.Magnitude < 0.05 then
                 return
             end
@@ -102,8 +101,6 @@ function Module.init(context: Runtime): any
             parameters.FilterDescendantsInstances = {character}
             parameters.IgnoreWater = true
 
-            -- Sample the ground along the movement direction to find where the
-            -- floor ends. The barrier is placed just before that edge.
             local stepCount: number = 7
             local reach: number = 1.0 + safeWalkSettings.lookAhead + 0.8
             local step: number = (reach - 1.0) / (stepCount - 1)
@@ -126,12 +123,12 @@ function Module.init(context: Runtime): any
             end
 
             if lastGrounded == nil then
-                -- The edge is already under the feet: block right ahead.
+
                 lastGrounded = 0.4
                 firstGap = 1.0
             end
             if firstGap == nil then
-                -- Solid floor ahead: nothing to block.
+
                 hideBarrier()
                 if SafeWalkFeature then
                     SafeWalkFeature:SetStatus(nil)
@@ -146,8 +143,7 @@ function Module.init(context: Runtime): any
             part.Size = Vector3.new(7, barrierHeight, 0.35)
             local feetY: number = root.Position.Y - feetHeight
             local position: Vector3 = root.Position + moveDirection * edgeDistance
-            -- Thin axis (Z) points along the movement direction, so the wide
-            -- face of the part faces the player like a wall.
+
             part.CFrame = CFrame.lookAt(
                 Vector3.new(position.X, feetY + barrierHeight * 0.5, position.Z),
                 Vector3.new(position.X, feetY + barrierHeight * 0.5, position.Z)

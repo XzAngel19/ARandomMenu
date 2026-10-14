@@ -15,9 +15,6 @@ local Module = {
 
 local activeCard: any = nil
 
--- Normalized names of the parts every R6/R15 character rig is built from.
--- Character-shaped models (including display statues of players) are built
--- from these; random props and creature rigs are not.
 local STANDARD_PART_NAMES: {[string]: boolean} = {
     head = true,
     torso = true,
@@ -42,9 +39,6 @@ local STANDARD_PART_NAMES: {[string]: boolean} = {
     rightfoot = true,
 }
 
--- A model re-classified more often than this keeps its previous verdict until
--- the burst of changes settles, so a streaming model never turns
--- reclassification into a per-frame cost.
 local VERDICT_COOLDOWN: number = 0.5
 
 local function normalizeName(value: string): string
@@ -62,12 +56,6 @@ function Module.init(context: Runtime): any
     local lastStatusAt: number = -math.huge
     local lastSweepAt: number = -math.huge
 
-    -- Tracked models, their resolved root/humanoid, and the structural
-    -- verdict per model: "rig" is a character-shaped model (with or without
-    -- a living Humanoid — display statues count), "creature" merely carries a
-    -- Humanoid, "reject" is neither. Verdicts and rig info are weak so
-    -- destroyed models never leak, and both are only recomputed when the
-    -- model's direct children actually change.
     local bots: {[Model]: boolean} = {}
     local rigInfo: any = setmetatable({}, {__mode = "k"})
     local verdicts: any = setmetatable({}, {__mode = "k"})
@@ -103,10 +91,8 @@ function Module.init(context: Runtime): any
         return false
     end
 
-    -- Classification only inspects direct children, which is what a character
-    -- rig is made of, so even huge models cost one GetChildren call.
     local function classify(model: Model): string
-        -- The local Disguise body double is scenery, not an NPC.
+
         if model:GetAttribute("WurstDisguise") == true then
             return "reject"
         end
@@ -126,15 +112,13 @@ function Module.init(context: Runtime): any
             end
         end
         if humanoid ~= nil then
-            -- A character model is still a character model when its Humanoid
-            -- is dead or purely decorative; health never gates detection.
+
             if standardParts >= 3 then
                 return "rig"
             end
             return "creature"
         end
-        -- Humanoid-less character structures: display rigs and statues keep
-        -- the standard limbs (and usually their Motor6D joints).
+
         if standardParts >= 4 or (standardParts >= 3 and motors >= 2) then
             return "rig"
         end
@@ -175,7 +159,6 @@ function Module.init(context: Runtime): any
         rigInfo[model] = nil
     end
 
-    -- Only the model whose direct children changed needs a fresh look.
     local function invalidate(instance: Instance): ()
         local parent: Instance? = instance.Parent
         if parent and parent:IsA("Model") then
@@ -191,8 +174,7 @@ function Module.init(context: Runtime): any
             bots[model] = true
             return
         end
-        -- Prefer the innermost rig so a rig nested inside a wrapper never
-        -- draws two boxes.
+
         for existing: Model in pairs(bots) do
             if existing:IsDescendantOf(model) then
                 return
@@ -234,8 +216,6 @@ function Module.init(context: Runtime): any
         end
     end
 
-    -- Models stream in over time; a dirty verdict that no further event
-    -- refreshes is settled here so nothing stays undetected.
     local function sweep(now: number): ()
         for model: any, entry: any in pairs(verdicts) do
             if entry.dirty and now - entry.at >= VERDICT_COOLDOWN then
@@ -314,8 +294,7 @@ function Module.init(context: Runtime): any
                         or players:GetPlayerFromCharacter(model) ~= nil then
                         bots[model] = nil
                         render:Release(layer, model)
-                        -- The model turned out to be a player character; pin
-                        -- the verdict so streaming parts do not re-add it.
+
                         verdicts[model] = {verdict = "reject", at = now, dirty = false}
                         continue
                     end
@@ -327,8 +306,7 @@ function Module.init(context: Runtime): any
                     end
 
                     if verdict == "creature" and not includeCreatures then
-                        -- Not tracked right now; make sure nothing is left
-                        -- over from a previous frame and move on.
+
                         render:Release(layer, model)
                         continue
                     end
@@ -351,9 +329,7 @@ function Module.init(context: Runtime): any
                         drawing:Show(false)
                         continue
                     end
-                    -- Creatures are living things, so a dead one stops
-                    -- counting; character rigs stay visible whatever their
-                    -- Humanoid says.
+
                     if verdict == "creature"
                         and info.humanoid
                         and info.humanoid.Health <= 0 then

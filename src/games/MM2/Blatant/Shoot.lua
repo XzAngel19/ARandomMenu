@@ -35,8 +35,6 @@ function Module.init(runtime: any): any
     local mm2Settings: any = core.mm2Settings
     local motionSamples: any = core.motionSamples
 
-    -- Pistol macro: right after a shot is authored, drop the gun back into the
-    -- backpack 0.01s later so it is barely visible. Toggle below ("Macro").
     local shootMacro: boolean = false
     local function macroUnequip(gun: Tool?): ()
         if not shootMacro or not gun then
@@ -53,17 +51,6 @@ function Module.init(runtime: any): any
         end)
     end
 
-    -- One motion model, one lead time, one error budget.
-    --
-    -- Everything the solver needs is a measured quantity: the target's filtered
-    -- velocity and acceleration from the core's motion sampler, whether it is on
-    -- the ground, and the shot horizon the core derives from the round trip (see
-    -- GUN_LEAD in base.lua). There is no per-ping special case and no ladder of
-    -- fallback leads: the same expression runs at 20 ms and at 350 ms, and the
-    -- only thing that changes with ping is the horizon itself.
-    -- Only the fields a caller actually reads. The solver computes more than
-    -- this internally (horizon, turn rate/discount), but those stay local: a
-    -- field nobody consumes is just dead weight (KISS/YAGNI).
     type GunPrediction = {
         targetPosition: Vector3,
         endpoint: Vector3,
@@ -71,25 +58,17 @@ function Module.init(runtime: any): any
         errorRadius: number,
         leadSeconds: number,
         leadSensitivity: number,
-        -- Where the target's root was on our screen when the shot was solved.
-        -- The silent "Through" variant authors the segment captured -> predicted
-        -- so it covers the target's whole swept path: whichever instant inside
-        -- the acceptance window the server scores, the capsule is on the ray.
+
         capturedPosition: Vector3,
     }
 
     type GunAimOptions = {
-        -- Silent aim does not travel through the world: the shot is authored at
-        -- the target, so line of sight is irrelevant and must not veto the
-        -- solution.
+
         ignoreVisibility: boolean?,
     }
 
-    -- Half width of the capsule the server will score the ray against. Used to
-    -- turn the prediction error into a yes/no answer instead of a guess.
     local BODY_HALF_WIDTH: number = 1.0
-    -- Floor for the error budget: even a perfect model does not know where a
-    -- strafing player will be, so never claim better than this.
+
     local MINIMUM_ERROR_RADIUS: number = 0.35
 
     local AIM_PARTS: {string} = {
@@ -109,9 +88,6 @@ function Module.init(runtime: any): any
         return nil
     end
 
-    -- Where the target will be when the server scores the shot, plus how much
-    -- that answer is worth. Returns nil when there is nothing to shoot at or the
-    -- prediction is worse than the body is wide.
     local function computeGunAim(
         target: Player,
         origin: CFrame,
@@ -140,16 +116,11 @@ function Module.init(runtime: any): any
         local acceleration: Vector3 = sample and sample.acceleration or Vector3.zero
         local grounded: boolean = sample and sample.grounded
             or humanoid.FloorMaterial ~= Enum.Material.Air
-        -- How well the target's heading from one sample ago predicts this one.
-        -- Straight running scores ~1, a hard turn scores ~0. Without a reading
-        -- (first frame after a teleport, dead sampler) we assume a brisk turn.
+
         local turnRate: number = getGunTurnRate(
             sample and sample.character == character and sample.stability or nil
         )
 
-        -- A player who has not moved for a frame is standing still: use the
-        -- Humanoid's intent so the first shot after a stop is not led at all,
-        -- and the first shot after a start is led at walking speed.
         local moveDirection: Vector3 = humanoid.MoveDirection
         local horizontalVelocity: Vector3 = Vector3.new(velocity.X, 0, velocity.Z)
         if horizontalVelocity.Magnitude < 1.5
@@ -178,8 +149,7 @@ function Module.init(runtime: any): any
         ) + horizontalAcceleration * (0.25 * lead * lead)
 
         if grounded then
-            -- On the ground there is no flight to integrate: the only vertical
-            -- error is the noise in the sampled velocity.
+
             displacement = Vector3.new(
                 displacement.X,
                 math.clamp(velocity.Y, -2.5, 2.5) * lead,
@@ -216,11 +186,6 @@ function Module.init(runtime: any): any
             end
         end
 
-        -- Error budget: the sideways distance a turn of the measured rate puts
-        -- between the target and the point we solved for, plus the sampler's own
-        -- uncertainty, floored so a straight-line runner is never treated as a
-        -- guaranteed hit. This is the number that decides the shot, and it is
-        -- reported verbatim so a miss can be read back off the telemetry.
         local turnError: number = displacement.Magnitude
             * math.sin(math.min(horizon * turnRate * 0.5, math.pi * 0.5))
         local jitter: number = math.min(acceleration.Magnitude / 240, 0.45)
@@ -266,9 +231,6 @@ function Module.init(runtime: any): any
         return target
     end
 
-    -- Is somebody else's body sitting on the silent-aim segment? Hitting the
-    -- wrong player as sheriff is an instant loss, so the sweep collapses to a
-    -- point rather than risking it.
     local function bystanderOnSegment(
         target: Player,
         startPoint: Vector3,
@@ -293,29 +255,6 @@ function Module.init(runtime: any): any
         return workspace:Raycast(startPoint, endPoint - startPoint, parameters) ~= nil
     end
 
-    -- Silent aim authors the shot at the target instead of at the muzzle, so the
-    -- only thing that decides a hit is how close the authored point is to where
-    -- the server believes the target is. That is exactly what the Shoot solver
-    -- already computes, so silent aim now consumes the same prediction instead of
-    -- the raw, one-frame-old root position it used before.
-    --
-    -- The bullet appears where arg1 sits, so arg1 is the visual spawn point.
-    -- Four authored geometries are offered as a live A/B (the menu cannot
-    -- assert which one scores best - the server's hit test is inferred, not
-    -- known), and every shot is tagged with its variant so the Spawn A/B
-    -- status and the Game Learning log can count real hits per geometry:
-    --
-    --   Front   in front of the torso, shooter's side, at torso height.
-    --           Straight-on shots travel straight and level.
-    --   Through the whole segment pierces the torso (front to far side):
-    --           the longest possible segment inside the body, so a predicted
-    --           point off by up to ~1 stud still leaves the segment crossing
-    --           the capsule.
-    --   Top     the old geometry: 1.6 studs above the impact point. The
-    --           vertical segment through the body axis crosses more of the
-    --           capsule than Front does, which is why it may have scored more.
-    --   Behind  authored on the far side of the torso; the bullet visibly
-    --           travels toward the shooter.
     local SILENT_ORIGIN_STUDS: number = 2.5
     local SILENT_PIERCE_STUDS: number = 1.0
     local SILENT_LIFT_STUDS: number = 1.6
@@ -340,9 +279,7 @@ function Module.init(runtime: any): any
         local sweep: number = 0
         if horizontal.Magnitude > 1.5 then
             direction = horizontal.Unit
-            -- This option is a literal geometric extension, not an invented
-            -- error value: each end of the authored ray moves by exactly the
-            -- configured distance along measured horizontal target movement.
+
             sweep = getSilentSweepDistance()
         end
         local sweepStart: Vector3 =
@@ -350,10 +287,6 @@ function Module.init(runtime: any): any
         local sweepEnd: Vector3 =
             direction and direction * sweep or Vector3.zero
 
-        -- Horizontal direction from the shooter to the predicted point: the
-        -- bullet appears on the shooter's side of the torso. The offset is
-        -- clamped to 60 % of the flat distance so at point blank the origin
-        -- never lands past the body.
         local approach: Vector3? = nil
         local approachOffset: number = SILENT_ORIGIN_STUDS
         if muzzleOrigin then
@@ -371,10 +304,7 @@ function Module.init(runtime: any): any
         local startPoint: Vector3
         local endPoint: Vector3
         if variant == "Through" and approach then
-            -- Swept-path geometry: the segment runs from just behind where the
-            -- target was when we solved (captured) to just past where it will
-            -- be (predicted + pierce). The server scores somewhere inside that
-            -- window, so the capsule is on the segment at any scoring instant.
+
             local captured: Vector3 = prediction.capturedPosition or predicted
             startPoint = captured - approach * 1.0 + sweepStart
             endPoint = predicted + approach * SILENT_PIERCE_STUDS + sweepEnd
@@ -386,22 +316,20 @@ function Module.init(runtime: any): any
             startPoint = predicted + approach * approachOffset + sweepStart
             endPoint = predicted + sweepEnd
         elseif approach then
-            -- "Front" (default) and the fallback for Behind without approach.
+
             startPoint = predicted - approach * approachOffset + sweepStart
             endPoint = predicted + sweepEnd
         elseif direction then
             startPoint = predicted + sweepStart
             endPoint = predicted + sweepEnd
         else
-            -- Shooter directly above the target with no movement axis to lean
-            -- on: the old lifted origin is the only usable geometry.
+
             startPoint = predicted + Vector3.new(0, SILENT_LIFT_STUDS, 0)
             endPoint = predicted
         end
 
         if sweep > 0 and bystanderOnSegment(target, startPoint, endPoint) then
-            -- Collapse to a point on the body: hitting the wrong player as
-            -- sheriff is an instant loss.
+
             if variant ~= "Top" and approach then
                 startPoint = predicted - approach * approachOffset
             else
@@ -414,28 +342,14 @@ function Module.init(runtime: any): any
             approachOffset
     end
 
-    -- Options for one trigger pull. `silent` authors the shot at the target
-    -- (through walls, any distance); `maxError` is an optional accuracy gate the
-    -- auto-fire uses so it only takes high-probability shots; `quiet` suppresses
-    -- the toast notifications the manual key press relies on (and, with it, the
-    -- one yielding call, so the auto-fire never yields inside a frame callback).
     type FireOptions = {
         silent: boolean?,
         maxError: number?,
         quiet: boolean?,
     }
 
-    -- Set by the most recent reject() call so the auto-shoot loop can surface
-    -- the reason once per change even when quiet mode suppresses the toast.
-    -- Declared before fireGunAtTarget so reject() captures it as an upvalue.
     local lastRejectReason: string = ""
 
-    -- Fire one packet at the solved point.
-    --
-    -- The remote takes two CFrames: a rotated frame that looks from the muzzle at
-    -- the impact point, and the impact point itself as a plain position. That is
-    -- the shape the legitimate client sends, so the packet is indistinguishable at
-    -- any ping; the only thing the solver changes is where the point sits.
     local function fireGunAtTarget(
         target: Player?,
         options: FireOptions?
@@ -469,8 +383,7 @@ function Module.init(runtime: any): any
         if gun and gun.Parent == backpack and humanoid:IsA("Humanoid") then
             humanoid:EquipTool(gun)
             if quiet then
-                -- Auto-fire runs inside a frame callback that must not yield; let
-                -- the equip settle and try again on the next tick.
+
                 return reject("Equipping the sheriff gun.")
             end
             task.wait()
@@ -514,15 +427,12 @@ function Module.init(runtime: any): any
         local resolved: GunPrediction = prediction :: GunPrediction
         if opts.maxError
             and resolved.errorRadius > opts.maxError then
-            -- A longer ray does not make the motion estimate more accurate.
-            -- Keep this gate tied to the solver's error budget, not the visual
-            -- sweep length, so changing sweep cannot force a speculative shot.
+
             return reject("Shot accuracy is too low to fire.")
         end
 
         if silent then
-            -- The silent packet is authored at the target, so the feedback must
-            -- expect the GunFired origin there, not at the muzzle.
+
             local variant: string = mm2Settings.silentSpawn
             local shotOrigin: CFrame, shotEnd: CFrame, offset: number =
                 buildSilentShot(target, resolved, origin, variant)
@@ -530,16 +440,14 @@ function Module.init(runtime: any): any
             if state.mm2ShotFeedback.pending then
                 state.mm2ShotFeedback.pending.silentSpawn = variant
             end
-            -- Published through the game bridge so the passive Game Learning
-            -- log can tag this shot with its authored geometry.
+
             state.lastSilentShotInfo = {
                 variant = variant,
                 at = os.clock(),
                 offset = math.floor(offset * 10) / 10,
             }
             remote:FireServer(shotOrigin, shotEnd)
-            -- The silent packet never triggers tool.Activated, so feed the
-            -- authored geometry to the calibration + passive loggers directly.
+
             pcall(trajectoryCalibration.noteAuthoredShot, trajectoryCalibration, {
                 kind = "gun",
                 tool = gun,
@@ -554,14 +462,6 @@ function Module.init(runtime: any): any
             return true
         end
 
-        -- arg1 must sit at the muzzle. Captured vanilla packets show the server
-        -- ignoring arg1's rotation entirely (muzzle frames up to 176 deg away
-        -- from the endpoint still register), so the hit geometry comes from the
-        -- two positions: a segment that starts and ends on the target is zero
-        -- long and never registers. `aim` is deliberately positioned at the
-        -- target (the feedback module reads aim.Position as the aim point), so
-        -- the shot frame is built from the muzzle - this is what the vanilla
-        -- client sends.
         state.mm2ShotFeedback.queue(target, gun, origin, aim, resolved)
         remote:FireServer(
             CFrame.lookAt(origin.Position, resolved.endpoint),
@@ -583,9 +483,6 @@ function Module.init(runtime: any): any
     local shootFeatureActive: boolean = false
     local autoShootActive: boolean = false
 
-    -- Shared motion sampling + gun-fired observer. Both the manual Shoot and
-    -- Auto Shoot need live filtered velocities, so the sampler stays alive while
-    -- either is on and is torn down only when both are off.
     local function refreshShootInfrastructure(): ()
         local wantActive: boolean = shootFeatureActive or autoShootActive
         state.mm2ShotFeedback.shootActive = wantActive
@@ -600,7 +497,7 @@ function Module.init(runtime: any): any
                     deltaTime: number
                 ): ()
                     motionElapsed += deltaTime
-                    -- Read live so the Motion Hz slider applies immediately.
+
                     if motionElapsed
                         < 1 / math.clamp(mm2Settings.motionSampleHz, 20, 120) then
                         return
@@ -638,11 +535,6 @@ function Module.init(runtime: any): any
         refreshShootInfrastructure()
     end
 
-    -- ----- Auto Shoot -----
-    -- Fires on its own the moment a high-probability solution exists. Normal mode
-    -- shoots from the muzzle and respects the wall check, so it holds fire until
-    -- the murderer peeks out from cover (that is the peek detection); Silent mode
-    -- authors the shot at the target and fires from any distance, through walls.
     local autoSettings = {
         mode = "Normal" :: string,
         maxError = 0.6,
@@ -652,9 +544,6 @@ function Module.init(runtime: any): any
     local lastGunCheck: number = -math.huge
     local lastAutoReject: {message: string, at: number}? = nil
 
-    -- Keep the sheriff gun in hand the moment it is available (round start,
-    -- role handout, picking the dropped gun), not only when a target shows up:
-    -- otherwise the first auto shot is delayed by the equip animation.
     local function equipSheriffGun(): ()
         local backpack: Backpack? = LocalPlayer:FindFirstChildOfClass("Backpack")
         if not backpack then
@@ -676,8 +565,7 @@ function Module.init(runtime: any): any
             lastGunCheck = os.clock()
             equipSheriffGun()
         end
-        -- Hold the fire rate, then look for a shot every tick once it is off
-        -- cooldown so a peek is answered immediately.
+
         if os.clock() - lastAutoShot < autoSettings.fireDelay then
             return
         end
@@ -695,8 +583,7 @@ function Module.init(runtime: any): any
             lastAutoShot = os.clock()
             lastAutoReject = nil
         elseif lastRejectReason ~= "" then
-            -- Quiet mode swallows the reject reason; surface it once per reason
-            -- change so a waiting auto shooter is not a mystery.
+
             if lastAutoReject == nil or lastAutoReject.message ~= lastRejectReason then
                 lastAutoReject = {message = lastRejectReason, at = os.clock()}
                 notify("Auto Shoot waiting: " .. lastRejectReason)

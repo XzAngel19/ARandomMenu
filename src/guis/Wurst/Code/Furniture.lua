@@ -575,8 +575,6 @@ function Module.init(context: any): any
     local hudSignature: string = ""
     local hudElapsed: number = 0
 
-    -- By default the hack list is only visible while the menu is open; the
-    -- "Show" toggle in the HackList window keeps it on screen permanently.
     local hudAlways: boolean = configData.states["HackList.Show"] == true
         or configData.states["ClickGUI.ShowHackList"] == true
     local hudVisible: boolean = hudAlways or state.visible == true

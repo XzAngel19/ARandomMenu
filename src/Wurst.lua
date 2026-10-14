@@ -16,8 +16,6 @@ local OFFICIAL_CATEGORIES: {string} = {
     "Utilities",
 }
 
--- Old window names keep resolving to the renamed ones so any module or saved
--- config that still says Blatant/Movement/Other lands in the right window.
 local CATEGORY_ALIASES: {[string]: string} = {
     ["Blatant"] = "Exploits",
     ["Movement"] = "World",
@@ -81,8 +79,6 @@ local FEATURE_CATEGORIES: {[string]: string} = {
     ["Remote Logger"] = "Other",
     ["SpinBot"] = "Fun",
 
-    -- MM2: one file per card under src/games/MM2/<Window>/, and these entries
-    -- mirror that folder layout exactly.
     ["Instant Role Notify"] = "Fun",
     ["Blurt Roles"] = "Fun",
     ["Shoot"] = "Exploits",
@@ -225,7 +221,7 @@ local RUNTIME_RAW_BASE: string =
         .. RUNTIME_BRANCH
         .. "/"
 
-local SOURCE_STAMP: string = "v13-20261014-0115"
+local SOURCE_STAMP: string = "v14-20261014-0230"
 
 local BOOT_STARTED_AT: number = os.clock()
 local BOOT_FINGERPRINT_SECONDS: number = 0
@@ -663,10 +659,6 @@ local configData: any = {
 }
 local configSaveQueued = false
 
--- Durable per-game config: "Profiles/Game_<id>.lua". The file is plain Lua
--- (return {...}), a ".lua.bak" keeps the previous good copy, and the loader
--- falls back to it before ever resetting to defaults. The old JSON config
--- is migrated on first boot after the switch.
 local function serializeLuaValue(value: any, depth: number): string
     local kind: string = typeof(value)
     if kind == "string" then
@@ -755,7 +747,6 @@ local function loadConfig()
         return decodeLuaConfig(source)
     end
 
-    -- 1. the durable Lua file, 2. its previous good copy, 3. legacy JSON.
     local loaded: any = readLuaConfig(CONFIG_FILE_LUA)
     if not applyLoadedConfig(loaded) then
         loaded = readLuaConfig(CONFIG_FILE_BAK)
@@ -808,8 +799,7 @@ local function saveConfigNow()
             .. serializeLuaValue(configData.ui, 0)
             .. ",\n"
             .. "}\n"
-        -- Rotate the previous good copy to .bak before overwriting, so a
-        -- crash mid-write can never wipe the whole config.
+
         if type(isfile) == "function" and type(readfile) == "function" then
             local existsOk: boolean, exists: any = pcall(isfile, CONFIG_FILE_LUA)
             if existsOk and exists == true then
@@ -1088,11 +1078,7 @@ local function resolveTeleportQueue(): any
 end
 
 local function buildTeleportSnippet(): string
-    -- The PlaceId the menu was armed in. The snippet only reinjects when the
-    -- arrival place matches it: that is an instance teleport inside the same
-    -- game (MM2 lobby <-> map <-> new server all keep PlaceId 142823291, as
-    -- the telemetry sessions prove). Leaving for a different game lands on a
-    -- different PlaceId and the menu deliberately does NOT follow.
+
     local armedPlaceId: number = game.PlaceId
 
     return table.concat({
@@ -1296,7 +1282,7 @@ local function setMenuCursorUnlocked(visible: boolean): ()
     menuCursorState.applying = true
     pcall(function(): ()
         local targetBehavior: Enum.MouseBehavior = Enum.MouseBehavior.Default
-        -- Prevent cursor from locking in the center like shiftlock when closing the menu
+
         if menuCursorState.behavior and menuCursorState.behavior ~= Enum.MouseBehavior.LockCenter then
             targetBehavior = menuCursorState.behavior
         end
@@ -1313,7 +1299,7 @@ local function enforceMenuCursor(): ()
     if menuCursorState.applying then
         return
     end
-    -- Allow free camera movement when holding right click even with menu open
+
     local rightClicking: boolean = false
     pcall(function(): ()
         rightClicking = UserInputService:IsMouseButtonPressed(Enum.UserInputType.MouseButton2)
@@ -4264,9 +4250,7 @@ end
 
 state.gameBridge = {
     roleProvider = nil :: any,
-    -- A game that keeps every player Neutral (Murderers VS Sheriffs Duels does
-    -- this) cannot be answered by the Entity library's Teams-service lookup, so
-    -- the game module publishes its own friendly/enemy resolver here.
+
     teamProvider = nil :: any,
     extras = {} :: {any},
     listeners = {} :: {(string, any) -> ()},
@@ -4293,9 +4277,6 @@ state.onGameBridge = function(listener: (string, any) -> ()): () -> ()
     end
 end
 
--- The Entity library asks this before its own Teams/attribute heuristics. It is
--- what lets "Team colours" paint Murderers VS Sheriffs teammates white instead
--- of painting the whole server red.
 state.registerTeamProvider = function(provider: any): ()
     if type(provider) ~= "table"
         or (type(provider.IsFriendly) ~= "function"
@@ -4332,10 +4313,6 @@ state.registerEspExtra = function(extra: any): ()
     end
 end
 
--- The ESP, the chams and any game-specific tag all ask for the same player's
--- role (and colour) on the same frame. Each lookup is a pcall into the game
--- module, so without this memo a 12 player server paid ~50 provider round
--- trips per frame. One frame of staleness is invisible; the lag was not.
 local roleMemo: {[Player]: {role: string?, at: number}} =
     setmetatable({}, {__mode = "k"}) :: any
 local roleColorMemo: {[Player]: {colour: Color3?, at: number}} =
@@ -4403,17 +4380,12 @@ state.playerPerk = function(player: Player): string?
     return nil
 end
 
--- Dropped whenever a module registers/changes a provider so a game switch or a
--- colour change is never served from the memo.
 local function clearRoleMemo(): ()
     table.clear(roleMemo :: any)
     table.clear(roleColorMemo :: any)
 end
 state.clearRoleMemo = clearRoleMemo
 
--- Game modules call this on the exact server/tool signal that changed roles.
--- Player ESP reads the cleared cache on the next render and throttled consumers
--- can skip their timer through the roleUpdate bridge event.
 state.invalidateGameRoles = function(): ()
     clearRoleMemo()
     for _, listener: (string, any) -> () in ipairs(state.gameBridge.listeners) do
@@ -4421,15 +4393,11 @@ state.invalidateGameRoles = function(): ()
     end
 end
 
--- Game modules publish typed events to universal listeners (e.g. MM2 emits
--- "authoringShot" for every gun/knife/stab the menu authors, silent or not,
--- so passive loggers see shots the player never clicked a tool to fire).
 state.emitGameBridgeEvent = function(eventType: string, payload: any): ()
     for _, listener: (string, any) -> () in ipairs(state.gameBridge.listeners) do
         pcall(listener, eventType, payload)
     end
 end
-
 
 state.featureTooltip = create("TextLabel", {
     TextTruncate = Enum.TextTruncate.AtEnd,
@@ -4585,9 +4553,6 @@ type FlyRuntime = {
     walkSpeed: number?,
 }
 
--- Shared by every module that accepts a player by name (Shoot's Custom mode,
--- fling targets...). Exact name/display-name first, then prefix, then
--- substring, so a partial copy still finds the right player.
 local findPlayerByText: (string) -> Player? = function(text: string): Player?
     local query: string = string.lower(text)
     if query == "" then
@@ -4795,9 +4760,7 @@ local function loadGameModule(
         or ACTIVE_GAME_MODULE
         or tostring(placeId)
     local paths: {string} = if moduleName == "MM2" then {
-        -- base.lua is the shared core (round data, roles, prediction, weapon
-        -- service). It has to come first: every feature below reads
-        -- state.mm2Core. The rest mirrors the menu windows one file per card.
+
         "src/games/MM2/base.lua",
         "src/games/MM2/Blatant/Shoot.lua",
         "src/games/MM2/Blatant/KnifeAura.lua",
@@ -4853,8 +4816,7 @@ local function loadGameModule(
         end
         table.insert(loadedModules, loaded)
     end
-    -- A single unreadable file must not hide the whole game section: the rest
-    -- of the cards still work, so load them and report what was dropped.
+
     if #loadedModules == 0 then
         return nil, nil, diagnostics,
             "No " .. moduleName .. " file loaded (" .. table.concat(skipped, " | ") .. ")"
@@ -4871,9 +4833,7 @@ local function loadGameModule(
             if ok then
                 initializedCount += 1
             else
-                -- Keep the cards that did initialize: a single module raising
-                -- used to roll the whole section back, so one bad file meant
-                -- no MVSD cards at all.
+
                 pcall(loaded.destroy)
                 table.insert(failures, tostring(loaded.Name) .. ": " .. tostring(failure))
                 state.logBootstrapError(
@@ -5212,8 +5172,7 @@ state.sweepStaleSources = function(): number
             else
                 local relative: string = entry:gsub("\\", "/")
                     :gsub("^.-Wurst/", "")
-                -- Only cached bundle sources live under src/. Never touch
-                -- anything else (Profiles holds the saved configs).
+
                 if relative ~= ".stamp"
                     and string.sub(relative, 1, 4) == "src/"
                     and bundle[relative] == nil then
@@ -5548,8 +5507,7 @@ local moduleServices: ModuleServices = {
         playerRole = state.playerRole,
         playerRoleColor = state.playerRoleColor,
         playerPerk = state.playerPerk,
-        -- Games expose their last authored-shot geometry (variant, offset) so
-        -- passive loggers can tag each shot without game-specific coupling.
+
         silentShot = function(): any
             return state.lastSilentShotInfo
         end,
@@ -6091,8 +6049,7 @@ end
 
 state.destruct = function(): ()
     cleanupStep("runtime", cleanupRuntime)
-    -- De-inject: kill the queued teleport reinject for the rest of this
-    -- session so the menu only comes back when the loader runs again.
+
     cleanupStep("session kill switch", function(): ()
         local environment: any = getfenv()
         local getGenv: any = environment.getgenv
@@ -6185,8 +6142,7 @@ if not initialized then
     if type(reportFatal) == "function" then
         reportFatal("[" .. PRODUCT.logPrefix .. ":Bootstrap] Initialization stopped:\n" .. tostring(bootstrapError))
     end
-    -- Executors without a console hide warn() — surface the failure on screen
-    -- so a dead bootstrap is never invisible.
+
     pcall(function(): ()
         local players: any = game:GetService("Players")
         local playerGui: any = players.LocalPlayer:WaitForChild("PlayerGui")

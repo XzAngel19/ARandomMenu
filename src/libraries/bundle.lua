@@ -1,5 +1,5 @@
 return {
-    stamp = "v13-20261014-0115",
+    stamp = "v14-20261014-0230",
     files = {
         ["src/games/BedFight/Combat/AutoSwing.lua"] = [[
 local Module = {Name = "BedFight Auto Swing", Initialized = false, Connection = nil}
@@ -153,17 +153,6 @@ local function gameInfo(): Instance?
     return replicated and replicated:FindFirstChild("GameInfo") or nil
 end
 
-local function readValue(name: string): any
-    local info: Instance? = gameInfo()
-    if not info then
-        return nil
-    end
-    local value: Instance? = info:FindFirstChild(name)
-    if value and (value:IsA("StringValue") or value:IsA("BoolValue") or value:IsA("NumberValue")) then
-        return (value :: any).Value
-    end
-    return nil
-end
 
 local function scanBeds(): {Model}
     local beds: {Model} = {}
@@ -524,7 +513,6 @@ function Module.init(runtime: any): any
             },
         },
     })
-
 
     local nukerSettings: any = {
         range = 18,
@@ -1622,8 +1610,6 @@ function Module.init(runtime: any): any
         refreshKnifeController()
     end
 
-    -- One shared "Knife" card: aura and throw live on it as options. KnifeThrow
-    -- (loaded right after this file) attaches its options to the same card.
     local KnifeFeature = createUniversalFeature(
         "Knife",
         "Knife aura and knife throw, each behind its own option below",
@@ -1689,7 +1675,7 @@ end
 return Module
 
 ]],
-        ["src/games/MM2/Blatant/KnifeThrow.lua"] = [=[
+        ["src/games/MM2/Blatant/KnifeThrow.lua"] = [[
 local Module = {
     Name = "MM2 Knife Throw",
     PlaceId = 142823291,
@@ -1700,23 +1686,6 @@ local Module = {
 
 local activeCleanup: () -> () = function(): () end
 
---[[
-    MM2 Knife Throw
-
-    Automatically throws the knife at the nearest valid target — the murderer's
-    counterpart to the gun's Auto Shoot.
-
-    Normal throws from the murderer's hand and leads the target by the blade's
-    flight time (distance / throw speed), so the target has to be roughly in the
-    open. Silent authors the throw so the blade spawns right beside the target
-    (origin placed next to them, aim at them): the server spawns the projectile
-    at that origin, so it connects at any distance or through walls — the same
-    trick the gun's silent shot uses, and reliable because the knife's hitbox is
-    long.
-
-    Remote (confirmed against YARHM's "knife throw to closest"):
-      KnifeThrown:FireServer(CFrame.new(origin), CFrame.new(aim))
-]]
 function Module.init(runtime: any): any
     if Module.Initialized then
         return Module
@@ -1779,8 +1748,6 @@ function Module.init(runtime: any): any
         return closest
     end
 
-    -- The murderer role is required, and the knife must be equipped and off its
-    -- post-throw cooldown (the tool flags itself Disabled while it respawns).
     local function getReadyKnife(): Tool?
         if findMurderer() ~= LocalPlayer then
             return nil
@@ -1789,8 +1756,7 @@ function Module.init(runtime: any): any
         if not character then
             return nil
         end
-        -- Search backpack too: an unequipped knife must be equipped before the
-        -- next tick, exactly like Shoot does with the gun.
+
         local knife: Tool? = getPlayerWeapon(LocalPlayer, "Knife")
         if not knife or knife:GetAttribute("Disabled") == true then
             return nil
@@ -1806,8 +1772,6 @@ function Module.init(runtime: any): any
         return knife
     end
 
-    -- Lead the target by the blade's flight time so a moving target is still
-    -- where the knife arrives. Uses the calibrated throw speed when available.
     local function predictAim(target: Player, originPos: Vector3): Vector3
         local root: BasePart =
             target.Character:FindFirstChild("HumanoidRootPart") :: BasePart
@@ -1824,10 +1788,6 @@ function Module.init(runtime: any): any
         return root.Position + velocity * flightTime
     end
 
-    -- Best-effort throw animation: the knife tool ships its throw animation as
-    -- an Animation instance; load it on our humanoid and play it right before
-    -- the packet so an auto throw looks like a real one. Purely cosmetic - the
-    -- packet is what throws - and a missing animation never blocks the throw.
     local throwTrack: any = nil
     local throwTrackHumanoid: Humanoid? = nil
     local function playThrowAnimation(knife: Tool): ()
@@ -1843,7 +1803,7 @@ function Module.init(runtime: any): any
         local anim: Animation? =
             knife:FindFirstChildWhichIsA("Animation", true) :: Animation?
         if not anim then
-            -- A tool with no animation must never replay a stale track.
+
             throwTrack = nil
             throwTrackHumanoid = nil
             return
@@ -1888,7 +1848,6 @@ function Module.init(runtime: any): any
             return
         end
 
-        -- Silent ignores range: the whole point is to reach a target anywhere.
         local target: Player? =
             findNearestTarget(silent and 100000 or knifeThrowSettings.range)
         if not target then
@@ -1899,8 +1858,7 @@ function Module.init(runtime: any): any
 
         local originPos: Vector3
         if silent then
-            -- Spawn the blade just beside the target, on the thrower's side, so
-            -- it travels a few studs into them and connects regardless of walls.
+
             local toThrower: Vector3 = throwerPart.Position - targetRoot.Position
             if toThrower.Magnitude > 0.1 then
                 toThrower = toThrower.Unit
@@ -1946,8 +1904,6 @@ function Module.init(runtime: any): any
             end)
     end
 
-    -- Attach to the shared "Knife" card created by KnifeAura; only build a new
-    -- card if that module failed to load so the options never dangle.
     local KnifeThrowFeature: any = state.mm2KnifeFeature
     if not KnifeThrowFeature then
         KnifeThrowFeature = createUniversalFeature(
@@ -2073,7 +2029,7 @@ end
 
 return Module
 
-]=],
+]],
         ["src/games/MM2/Blatant/Shoot.lua"] = [[
 local Module = {
     Name = "MM2 Shoot",
@@ -2112,8 +2068,6 @@ function Module.init(runtime: any): any
     local mm2Settings: any = core.mm2Settings
     local motionSamples: any = core.motionSamples
 
-    -- Pistol macro: right after a shot is authored, drop the gun back into the
-    -- backpack 0.01s later so it is barely visible. Toggle below ("Macro").
     local shootMacro: boolean = false
     local function macroUnequip(gun: Tool?): ()
         if not shootMacro or not gun then
@@ -2130,17 +2084,6 @@ function Module.init(runtime: any): any
         end)
     end
 
-    -- One motion model, one lead time, one error budget.
-    --
-    -- Everything the solver needs is a measured quantity: the target's filtered
-    -- velocity and acceleration from the core's motion sampler, whether it is on
-    -- the ground, and the shot horizon the core derives from the round trip (see
-    -- GUN_LEAD in base.lua). There is no per-ping special case and no ladder of
-    -- fallback leads: the same expression runs at 20 ms and at 350 ms, and the
-    -- only thing that changes with ping is the horizon itself.
-    -- Only the fields a caller actually reads. The solver computes more than
-    -- this internally (horizon, turn rate/discount), but those stay local: a
-    -- field nobody consumes is just dead weight (KISS/YAGNI).
     type GunPrediction = {
         targetPosition: Vector3,
         endpoint: Vector3,
@@ -2148,25 +2091,17 @@ function Module.init(runtime: any): any
         errorRadius: number,
         leadSeconds: number,
         leadSensitivity: number,
-        -- Where the target's root was on our screen when the shot was solved.
-        -- The silent "Through" variant authors the segment captured -> predicted
-        -- so it covers the target's whole swept path: whichever instant inside
-        -- the acceptance window the server scores, the capsule is on the ray.
+
         capturedPosition: Vector3,
     }
 
     type GunAimOptions = {
-        -- Silent aim does not travel through the world: the shot is authored at
-        -- the target, so line of sight is irrelevant and must not veto the
-        -- solution.
+
         ignoreVisibility: boolean?,
     }
 
-    -- Half width of the capsule the server will score the ray against. Used to
-    -- turn the prediction error into a yes/no answer instead of a guess.
     local BODY_HALF_WIDTH: number = 1.0
-    -- Floor for the error budget: even a perfect model does not know where a
-    -- strafing player will be, so never claim better than this.
+
     local MINIMUM_ERROR_RADIUS: number = 0.35
 
     local AIM_PARTS: {string} = {
@@ -2186,9 +2121,6 @@ function Module.init(runtime: any): any
         return nil
     end
 
-    -- Where the target will be when the server scores the shot, plus how much
-    -- that answer is worth. Returns nil when there is nothing to shoot at or the
-    -- prediction is worse than the body is wide.
     local function computeGunAim(
         target: Player,
         origin: CFrame,
@@ -2217,16 +2149,11 @@ function Module.init(runtime: any): any
         local acceleration: Vector3 = sample and sample.acceleration or Vector3.zero
         local grounded: boolean = sample and sample.grounded
             or humanoid.FloorMaterial ~= Enum.Material.Air
-        -- How well the target's heading from one sample ago predicts this one.
-        -- Straight running scores ~1, a hard turn scores ~0. Without a reading
-        -- (first frame after a teleport, dead sampler) we assume a brisk turn.
+
         local turnRate: number = getGunTurnRate(
             sample and sample.character == character and sample.stability or nil
         )
 
-        -- A player who has not moved for a frame is standing still: use the
-        -- Humanoid's intent so the first shot after a stop is not led at all,
-        -- and the first shot after a start is led at walking speed.
         local moveDirection: Vector3 = humanoid.MoveDirection
         local horizontalVelocity: Vector3 = Vector3.new(velocity.X, 0, velocity.Z)
         if horizontalVelocity.Magnitude < 1.5
@@ -2255,8 +2182,7 @@ function Module.init(runtime: any): any
         ) + horizontalAcceleration * (0.25 * lead * lead)
 
         if grounded then
-            -- On the ground there is no flight to integrate: the only vertical
-            -- error is the noise in the sampled velocity.
+
             displacement = Vector3.new(
                 displacement.X,
                 math.clamp(velocity.Y, -2.5, 2.5) * lead,
@@ -2293,11 +2219,6 @@ function Module.init(runtime: any): any
             end
         end
 
-        -- Error budget: the sideways distance a turn of the measured rate puts
-        -- between the target and the point we solved for, plus the sampler's own
-        -- uncertainty, floored so a straight-line runner is never treated as a
-        -- guaranteed hit. This is the number that decides the shot, and it is
-        -- reported verbatim so a miss can be read back off the telemetry.
         local turnError: number = displacement.Magnitude
             * math.sin(math.min(horizon * turnRate * 0.5, math.pi * 0.5))
         local jitter: number = math.min(acceleration.Magnitude / 240, 0.45)
@@ -2343,9 +2264,6 @@ function Module.init(runtime: any): any
         return target
     end
 
-    -- Is somebody else's body sitting on the silent-aim segment? Hitting the
-    -- wrong player as sheriff is an instant loss, so the sweep collapses to a
-    -- point rather than risking it.
     local function bystanderOnSegment(
         target: Player,
         startPoint: Vector3,
@@ -2370,29 +2288,6 @@ function Module.init(runtime: any): any
         return workspace:Raycast(startPoint, endPoint - startPoint, parameters) ~= nil
     end
 
-    -- Silent aim authors the shot at the target instead of at the muzzle, so the
-    -- only thing that decides a hit is how close the authored point is to where
-    -- the server believes the target is. That is exactly what the Shoot solver
-    -- already computes, so silent aim now consumes the same prediction instead of
-    -- the raw, one-frame-old root position it used before.
-    --
-    -- The bullet appears where arg1 sits, so arg1 is the visual spawn point.
-    -- Four authored geometries are offered as a live A/B (the menu cannot
-    -- assert which one scores best - the server's hit test is inferred, not
-    -- known), and every shot is tagged with its variant so the Spawn A/B
-    -- status and the Game Learning log can count real hits per geometry:
-    --
-    --   Front   in front of the torso, shooter's side, at torso height.
-    --           Straight-on shots travel straight and level.
-    --   Through the whole segment pierces the torso (front to far side):
-    --           the longest possible segment inside the body, so a predicted
-    --           point off by up to ~1 stud still leaves the segment crossing
-    --           the capsule.
-    --   Top     the old geometry: 1.6 studs above the impact point. The
-    --           vertical segment through the body axis crosses more of the
-    --           capsule than Front does, which is why it may have scored more.
-    --   Behind  authored on the far side of the torso; the bullet visibly
-    --           travels toward the shooter.
     local SILENT_ORIGIN_STUDS: number = 2.5
     local SILENT_PIERCE_STUDS: number = 1.0
     local SILENT_LIFT_STUDS: number = 1.6
@@ -2417,9 +2312,7 @@ function Module.init(runtime: any): any
         local sweep: number = 0
         if horizontal.Magnitude > 1.5 then
             direction = horizontal.Unit
-            -- This option is a literal geometric extension, not an invented
-            -- error value: each end of the authored ray moves by exactly the
-            -- configured distance along measured horizontal target movement.
+
             sweep = getSilentSweepDistance()
         end
         local sweepStart: Vector3 =
@@ -2427,10 +2320,6 @@ function Module.init(runtime: any): any
         local sweepEnd: Vector3 =
             direction and direction * sweep or Vector3.zero
 
-        -- Horizontal direction from the shooter to the predicted point: the
-        -- bullet appears on the shooter's side of the torso. The offset is
-        -- clamped to 60 % of the flat distance so at point blank the origin
-        -- never lands past the body.
         local approach: Vector3? = nil
         local approachOffset: number = SILENT_ORIGIN_STUDS
         if muzzleOrigin then
@@ -2448,10 +2337,7 @@ function Module.init(runtime: any): any
         local startPoint: Vector3
         local endPoint: Vector3
         if variant == "Through" and approach then
-            -- Swept-path geometry: the segment runs from just behind where the
-            -- target was when we solved (captured) to just past where it will
-            -- be (predicted + pierce). The server scores somewhere inside that
-            -- window, so the capsule is on the segment at any scoring instant.
+
             local captured: Vector3 = prediction.capturedPosition or predicted
             startPoint = captured - approach * 1.0 + sweepStart
             endPoint = predicted + approach * SILENT_PIERCE_STUDS + sweepEnd
@@ -2463,22 +2349,20 @@ function Module.init(runtime: any): any
             startPoint = predicted + approach * approachOffset + sweepStart
             endPoint = predicted + sweepEnd
         elseif approach then
-            -- "Front" (default) and the fallback for Behind without approach.
+
             startPoint = predicted - approach * approachOffset + sweepStart
             endPoint = predicted + sweepEnd
         elseif direction then
             startPoint = predicted + sweepStart
             endPoint = predicted + sweepEnd
         else
-            -- Shooter directly above the target with no movement axis to lean
-            -- on: the old lifted origin is the only usable geometry.
+
             startPoint = predicted + Vector3.new(0, SILENT_LIFT_STUDS, 0)
             endPoint = predicted
         end
 
         if sweep > 0 and bystanderOnSegment(target, startPoint, endPoint) then
-            -- Collapse to a point on the body: hitting the wrong player as
-            -- sheriff is an instant loss.
+
             if variant ~= "Top" and approach then
                 startPoint = predicted - approach * approachOffset
             else
@@ -2491,28 +2375,14 @@ function Module.init(runtime: any): any
             approachOffset
     end
 
-    -- Options for one trigger pull. `silent` authors the shot at the target
-    -- (through walls, any distance); `maxError` is an optional accuracy gate the
-    -- auto-fire uses so it only takes high-probability shots; `quiet` suppresses
-    -- the toast notifications the manual key press relies on (and, with it, the
-    -- one yielding call, so the auto-fire never yields inside a frame callback).
     type FireOptions = {
         silent: boolean?,
         maxError: number?,
         quiet: boolean?,
     }
 
-    -- Set by the most recent reject() call so the auto-shoot loop can surface
-    -- the reason once per change even when quiet mode suppresses the toast.
-    -- Declared before fireGunAtTarget so reject() captures it as an upvalue.
     local lastRejectReason: string = ""
 
-    -- Fire one packet at the solved point.
-    --
-    -- The remote takes two CFrames: a rotated frame that looks from the muzzle at
-    -- the impact point, and the impact point itself as a plain position. That is
-    -- the shape the legitimate client sends, so the packet is indistinguishable at
-    -- any ping; the only thing the solver changes is where the point sits.
     local function fireGunAtTarget(
         target: Player?,
         options: FireOptions?
@@ -2546,8 +2416,7 @@ function Module.init(runtime: any): any
         if gun and gun.Parent == backpack and humanoid:IsA("Humanoid") then
             humanoid:EquipTool(gun)
             if quiet then
-                -- Auto-fire runs inside a frame callback that must not yield; let
-                -- the equip settle and try again on the next tick.
+
                 return reject("Equipping the sheriff gun.")
             end
             task.wait()
@@ -2591,15 +2460,12 @@ function Module.init(runtime: any): any
         local resolved: GunPrediction = prediction :: GunPrediction
         if opts.maxError
             and resolved.errorRadius > opts.maxError then
-            -- A longer ray does not make the motion estimate more accurate.
-            -- Keep this gate tied to the solver's error budget, not the visual
-            -- sweep length, so changing sweep cannot force a speculative shot.
+
             return reject("Shot accuracy is too low to fire.")
         end
 
         if silent then
-            -- The silent packet is authored at the target, so the feedback must
-            -- expect the GunFired origin there, not at the muzzle.
+
             local variant: string = mm2Settings.silentSpawn
             local shotOrigin: CFrame, shotEnd: CFrame, offset: number =
                 buildSilentShot(target, resolved, origin, variant)
@@ -2607,16 +2473,14 @@ function Module.init(runtime: any): any
             if state.mm2ShotFeedback.pending then
                 state.mm2ShotFeedback.pending.silentSpawn = variant
             end
-            -- Published through the game bridge so the passive Game Learning
-            -- log can tag this shot with its authored geometry.
+
             state.lastSilentShotInfo = {
                 variant = variant,
                 at = os.clock(),
                 offset = math.floor(offset * 10) / 10,
             }
             remote:FireServer(shotOrigin, shotEnd)
-            -- The silent packet never triggers tool.Activated, so feed the
-            -- authored geometry to the calibration + passive loggers directly.
+
             pcall(trajectoryCalibration.noteAuthoredShot, trajectoryCalibration, {
                 kind = "gun",
                 tool = gun,
@@ -2631,14 +2495,6 @@ function Module.init(runtime: any): any
             return true
         end
 
-        -- arg1 must sit at the muzzle. Captured vanilla packets show the server
-        -- ignoring arg1's rotation entirely (muzzle frames up to 176 deg away
-        -- from the endpoint still register), so the hit geometry comes from the
-        -- two positions: a segment that starts and ends on the target is zero
-        -- long and never registers. `aim` is deliberately positioned at the
-        -- target (the feedback module reads aim.Position as the aim point), so
-        -- the shot frame is built from the muzzle - this is what the vanilla
-        -- client sends.
         state.mm2ShotFeedback.queue(target, gun, origin, aim, resolved)
         remote:FireServer(
             CFrame.lookAt(origin.Position, resolved.endpoint),
@@ -2660,9 +2516,6 @@ function Module.init(runtime: any): any
     local shootFeatureActive: boolean = false
     local autoShootActive: boolean = false
 
-    -- Shared motion sampling + gun-fired observer. Both the manual Shoot and
-    -- Auto Shoot need live filtered velocities, so the sampler stays alive while
-    -- either is on and is torn down only when both are off.
     local function refreshShootInfrastructure(): ()
         local wantActive: boolean = shootFeatureActive or autoShootActive
         state.mm2ShotFeedback.shootActive = wantActive
@@ -2677,7 +2530,7 @@ function Module.init(runtime: any): any
                     deltaTime: number
                 ): ()
                     motionElapsed += deltaTime
-                    -- Read live so the Motion Hz slider applies immediately.
+
                     if motionElapsed
                         < 1 / math.clamp(mm2Settings.motionSampleHz, 20, 120) then
                         return
@@ -2715,11 +2568,6 @@ function Module.init(runtime: any): any
         refreshShootInfrastructure()
     end
 
-    -- ----- Auto Shoot -----
-    -- Fires on its own the moment a high-probability solution exists. Normal mode
-    -- shoots from the muzzle and respects the wall check, so it holds fire until
-    -- the murderer peeks out from cover (that is the peek detection); Silent mode
-    -- authors the shot at the target and fires from any distance, through walls.
     local autoSettings = {
         mode = "Normal" :: string,
         maxError = 0.6,
@@ -2729,9 +2577,6 @@ function Module.init(runtime: any): any
     local lastGunCheck: number = -math.huge
     local lastAutoReject: {message: string, at: number}? = nil
 
-    -- Keep the sheriff gun in hand the moment it is available (round start,
-    -- role handout, picking the dropped gun), not only when a target shows up:
-    -- otherwise the first auto shot is delayed by the equip animation.
     local function equipSheriffGun(): ()
         local backpack: Backpack? = LocalPlayer:FindFirstChildOfClass("Backpack")
         if not backpack then
@@ -2753,8 +2598,7 @@ function Module.init(runtime: any): any
             lastGunCheck = os.clock()
             equipSheriffGun()
         end
-        -- Hold the fire rate, then look for a shot every tick once it is off
-        -- cooldown so a peek is answered immediately.
+
         if os.clock() - lastAutoShot < autoSettings.fireDelay then
             return
         end
@@ -2772,8 +2616,7 @@ function Module.init(runtime: any): any
             lastAutoShot = os.clock()
             lastAutoReject = nil
         elseif lastRejectReason ~= "" then
-            -- Quiet mode swallows the reject reason; surface it once per reason
-            -- change so a waiting auto shooter is not a mystery.
+
             if lastAutoReject == nil or lastAutoReject.message ~= lastRejectReason then
                 lastAutoReject = {message = lastRejectReason, at = os.clock()}
                 notify("Auto Shoot waiting: " .. lastRejectReason)
@@ -3098,9 +2941,6 @@ function Module.init(runtime: any): any
     local hasActiveRoundRoles: any = core.hasActiveRoundRoles
     local mm2Settings: any = core.mm2Settings
 
-    -- ---------------------------------------------------------------------------
-    -- Blurt Roles: announce the round's murderer and sheriff in the public chat.
-    -- ---------------------------------------------------------------------------
     local blurtEnabled: boolean = false
     local blurtSignature: string = ""
     local blurtPending: boolean = false
@@ -3157,9 +2997,7 @@ function Module.init(runtime: any): any
         local message: string
         local signature: string
         if mm2Settings.blurtFake then
-            -- Deception mode: announce the roles swapped and drop the Wurst
-            -- signature so the line looks organic. The wrong names send the
-            -- crew (and the sheriff's suspicion) at the wrong player.
+
             message = string.format(
                 'Murder; "%s" Sheriff; "%s"',
                 sheriffName,
@@ -3350,8 +3188,6 @@ function Module.init(runtime: any): any
     local findSheriff: any = core.findSheriff
     local mm2Settings: any = core.mm2Settings
 
-    -- The latch lives here now: the core only reports "the round has roles",
-    -- every announcement feature decides on its own what to do with that.
     local roleNotificationSent: boolean = false
 
     local function announceRoles(): ()
@@ -3384,8 +3220,7 @@ function Module.init(runtime: any): any
         if not enabled then
             return
         end
-        -- Enabled mid-round: say it once right away instead of waiting for the
-        -- next PlayerDataChanged push.
+
         if not roleNotificationSent and findMurderer() and findSheriff() then
             announceRoles()
         end
@@ -3694,8 +3529,6 @@ function Module.init(runtime: any): any
         end
     end
 
-    -- Name typed into the "Player name" box; "Teleport to Player" moves you to
-    -- that player (case-insensitive, partial names allowed).
     local teleportTargetName = ""
 
     local function teleportToPlayer()
@@ -3863,8 +3696,6 @@ function Module.init(runtime: any): any
     Module.Runtime = runtime
     local trajectoryCalibration: any = core.trajectoryCalibration
 
-    -- Attaches to the shared "Metrics" card created by the universal telemetry
-    -- modules; only builds its own card if those failed to load.
     local TrajectoryFeature: any = state.metricsFeature
     if not TrajectoryFeature then
         TrajectoryFeature = createUniversalFeature(
@@ -3902,7 +3733,7 @@ function Module.init(runtime: any): any
     )
 
     activeCleanup = function(): ()
-        -- nothing persistent to undo
+
     end
     Module.Events = featureConnections
     Module.Initialized = true
@@ -4097,10 +3928,7 @@ pcall(function()
         "GetCurrentPlayerData"
     )
     if getCurrentPlayerData and getCurrentPlayerData:IsA("RemoteFunction") then
-        -- Do not InvokeServer while the module is still wiring its listeners.
-        -- A yielding server response used to leave RoundStart disconnected long
-        -- enough to miss the event that should prime the ESP. The first fetch is
-        -- queued after every role/lifecycle signal below is ready.
+
         mm2RoleRemote = getCurrentPlayerData
     end
 end)
@@ -4116,15 +3944,10 @@ local mm2Settings = {
     predictionRtt = 0.08,
     gunLeadBias = 0,
     autoTuneLead = false,
-    -- How often the Shoot motion tracker samples the target (acceleration +
-    -- heading stability). 60 Hz matches the engine step; going higher cannot
-    -- help because MM2 only replicates remote characters at ~20 Hz, so there
-    -- is no new information to read past the replication cadence.
+
     motionSampleHz = 60,
     silentSweep = 0.5,
-    -- Where the silent bullet is authored: "Front" (shooter's side of the
-    -- torso), "Through" (pierces the torso), "Top" (old, 1.6 above), "Behind"
-    -- (far side). The Spawn A/B status measures which actually scores.
+
     silentSpawn = "Front",
     getGunKey = Enum.KeyCode.G,
     instantRoleNotify = false,
@@ -4134,9 +3957,7 @@ local mm2Settings = {
     roleEspInnocent = false,
     roleEspMurderer = false,
     roleEspSheriff = false,
-    -- Bright, saturated role palette: the dark greens/reds were nearly
-    -- invisible through walls and indistinguishable from the default white
-    -- fallback.
+
     innocentColor = Color3.fromRGB(0, 255, 8),
     innocentTransparency = 0.62,
     deadColor = Color3.fromRGB(170, 170, 180),
@@ -4156,8 +3977,6 @@ local mm2Settings = {
     trapColor = Color3.fromRGB(145, 25, 25),
     trapTransparency = 0.7,
 
-    -- Yellow, like the user asked: the gun tag now uses the same bare-text
-    -- style as the Murder tag and the yellow reads clearly against both.
     gunColor = Color3.fromRGB(255, 215, 0),
     gunTransparency = 0.55,
     autoPlayId = "",
@@ -4240,16 +4059,6 @@ local function isPlayerAlive(player: Player): boolean
     return humanoid ~= nil and humanoid.Health > 0
 end
 
-local function findMM2Role(toolName: string, excludedPlayer: Player?): Player?
-    for _, player: Player in ipairs(Players:GetPlayers()) do
-        if player ~= excludedPlayer
-            and isPlayerAlive(player)
-            and getPlayerWeapon(player, toolName) then
-            return player
-        end
-    end
-    return nil
-end
 
 local function playerFromRoundKey(key: any, data: any): Player?
     if typeof(key) == "Instance" and key:IsA("Player") then
@@ -4266,9 +4075,7 @@ local function playerFromRoundKey(key: any, data: any): Player?
         if data.Name then
             local namedFromData: Instance? =
                 Players:FindFirstChild(tostring(data.Name))
-            -- Only upgrade the match: when the payload carries a stale or
-            -- renamed entry we must keep whatever the key already resolved to,
-            -- otherwise the role is lost and the ESP falls back to white.
+
             if namedFromData and namedFromData:IsA("Player") then
                 player = namedFromData :: Player
             end
@@ -4304,8 +4111,6 @@ local function getRoundRole(player: Player): string?
     return nil
 end
 
--- Feature modules (Blurt Roles, Instant Role Notify, Role Tags, ...) subscribe
--- to one event instead of polling role data on their own.
 local roundRolesListeners: {(boolean) -> ()} = {}
 local publishedRoundRolesActive: boolean = false
 local function emitRoundRoles(active: boolean): ()
@@ -4316,9 +4121,7 @@ local function emitRoundRoles(active: boolean): ()
 end
 local function onRoundRoles(listener: (boolean) -> ()): () -> ()
     table.insert(roundRolesListeners, listener)
-    -- A role snapshot may have arrived while the loader was still downloading
-    -- this feature file. Replay the latest state instead of waiting for another
-    -- server event.
+
     task.defer(function(): ()
         if table.find(roundRolesListeners, listener) then
             pcall(listener, publishedRoundRolesActive)
@@ -4332,8 +4135,6 @@ local function onRoundRoles(listener: (boolean) -> ()): () -> ()
     end
 end
 
--- Forward declared: role refreshes invalidate the index when fresh server data
--- lands, and the index itself is defined below requestRoleRefresh.
 local invalidateRoleCaches: () -> ()
 local rebuildRoleIndex: () -> ()
 
@@ -4363,18 +4164,6 @@ local function requestRoleRefresh(force: boolean?): ()
     end)
 end
 
--- ---------------------------------------------------------------------------
--- Role index
---
--- Every visual (ESP, Chams, Role Tags) asks for roles once per player per
--- frame. Resolving a role used to walk that player's character and backpack,
--- and `roundRolesKnown` walked *every* player's backpack on top of that, so a
--- 12 player server cost hundreds of Instance traversals per frame and the game
--- crawled. Now a single pass fills this index, and it is only rebuilt when
--- something that can change a role actually happens: a tool appears or leaves
--- a backpack/character, a character spawns or dies, or the server pushes new
--- round data. Reads are plain table lookups.
--- ---------------------------------------------------------------------------
 local roleIndex: {
     roles: {[Player]: string?},
     murderer: Player?,
@@ -4388,16 +4177,11 @@ local roleWatchers: {[Player]: {RBXScriptConnection}} = {}
 
 function invalidateRoleCaches(): ()
     roleIndexDirty = true
-    -- The generic Player ESP renders every frame, but Wurst memoises its role
-    -- bridge for one frame. Drop that memo on the actual MM2 signal so even
-    -- that single stale frame disappears.
+
     if type(state.clearRoleMemo) == "function" then
         state.clearRoleMemo()
     end
 
-    -- Coalesce the burst of ChildAdded/CollisionGroup events produced while a
-    -- character is assembled, then publish the complete index before the next
-    -- rendered frame. Consumers no longer wait for their own polling interval.
     if roleIndexRefreshQueued then
         return
     end
@@ -4422,8 +4206,6 @@ local function hasMurdererCollisionGroup(character: Model?): boolean
     return false
 end
 
--- One pass over the round payload so the per-player loop below does not have
--- to re-scan it (and re-resolve names to Players) for every single player.
 local function buildRoundRoleMap(): {[Player]: string}
     local map: {[Player]: string} = {}
     for key: any, data: any in pairs(mm2RoundData) do
@@ -4474,8 +4256,7 @@ rebuildRoleIndex = function(): ()
 
         if resolved then
             special[player] = resolved
-            -- Prefer a living candidate, but keep a dead one rather than none
-            -- (a corpse still tells the ESP who the murderer was).
+
             if resolved == "Murderer" then
                 if not murderer or (isAlive and not alive[murderer]) then
                     murderer = player
@@ -4488,8 +4269,6 @@ rebuildRoleIndex = function(): ()
         end
     end
 
-    -- "Roles are known" means the round actually handed something out. Only
-    -- then can an unarmed, living player be called an innocent by elimination.
     local rolesKnown: boolean = next(special) ~= nil
     if roundLifecycleActive == false then
         rolesKnown = false
@@ -4529,8 +4308,7 @@ rebuildRoleIndex = function(): ()
     roleIndex.rolesKnown = rolesKnown
 
     if rolesChanged then
-        -- Player ESP sees the new palette on its next render; throttled visual
-        -- consumers receive roleUpdate and can bypass their normal interval.
+
         if type(state.invalidateGameRoles) == "function" then
             state.invalidateGameRoles()
         elseif type(state.clearRoleMemo) == "function" then
@@ -4539,16 +4317,13 @@ rebuildRoleIndex = function(): ()
         emitRoundRoles(rolesKnown)
     end
 
-    -- Round is live but nothing has been handed out yet: ask the server once
-    -- rather than spinning on backpack scans every frame.
     if not rolesKnown and roundLifecycleActive ~= false then
         requestRoleRefresh()
     end
 end
 
 local function ensureRoleIndex(): ()
-    -- The 1s sweep is only a safety net for changes with no signal attached
-    -- (collision group swaps, for instance); the dirty flag does the real work.
+
     if roleIndexDirty or os.clock() - roleIndexAt > 1 then
         rebuildRoleIndex()
     end
@@ -4567,9 +4342,6 @@ local function unwatchPlayer(player: Player): ()
     end
 end
 
--- Cheap signals instead of polling: the index is marked dirty the instant a
--- knife or gun is handed out, which is what makes the ESP colour correctly on
--- the very first frame of the round instead of up to a second later.
 local function watchPlayer(player: Player): ()
     unwatchPlayer(player)
     local connections: {RBXScriptConnection} = {}
@@ -4580,9 +4352,7 @@ local function watchPlayer(player: Player): ()
             return
         end
         watchedTools[tool] = true
-        -- Roblox can parent a Tool before its Shoot/Events descendants finish
-        -- replicating. Observe that assembly too; otherwise the first scan can
-        -- reject the weapon and the ESP waits for the 1 s safety sweep.
+
         table.insert(
             connections,
             tool.DescendantAdded:Connect(invalidateRoleCaches)
@@ -4736,15 +4506,12 @@ local function findSheriff(): Player?
         or findPlayerByRoundRole("Hero")
 end
 
-
 local MM2_MAP_COIN_CONTAINERS: {string} = {
     "CoinContainer",
     "CoinAreas",
     "Coins",
 }
 
--- The current map parents its lobby under "MainLobby"/"RegularLobby"; the
--- older "Lobby" name is kept for the places that still use it.
 local LOBBY_MODEL_NAMES: {string} = {
     "Lobby",
     "MainLobby",
@@ -4772,12 +4539,6 @@ local function isMM2MapModel(object: Instance): boolean
     return false
 end
 
--- Gun ESP, Auto Get Gun, Loop Interact and Silence all ask for the map
--- several times a second, so the answer is cached until the model it points
--- at goes away. The first scan only touches top level children; the fallback
--- still walks the map subtree once for CoinSpawn on old maps, but on the
--- current map (no CoinSpawn anywhere) it stops at the top level "Spawns"
--- check.
 local mm2MapCache: {map: Instance?, at: number} = {map = nil, at = -math.huge}
 
 local function findMM2MapUncached(): Instance?
@@ -4787,11 +4548,6 @@ local function findMM2MapUncached(): Instance?
         end
     end
 
-    -- The current map no longer ships CoinSpawn (or any coin container), so a
-    -- direct "Spawns" child is the map marker that still survives (old maps
-    -- had it too, alongside CoinSpawn). detectRoundPhase re-checks the
-    -- player's actual parentage before trusting this, so a map model that
-    -- lingers in the lobby cannot flip the phase.
     for _, object: Instance in ipairs(workspace:GetChildren()) do
         if object:IsA("Model")
             and not isLobbyName(object.Name)
@@ -4815,10 +4571,6 @@ local function findMM2Map(): Instance?
     return mm2MapCache.map
 end
 
--- Full workspace:GetDescendants() every half second was the single most
--- expensive thing the MM2 module did; on a loaded map that is tens of
--- thousands of instances. Cheap lookups first, the exhaustive sweep at most
--- once every three seconds, and the answer cached while it stays valid.
 local droppedGunCache: {gun: (Model | BasePart)?, at: number} =
     {gun = nil, at = -math.huge}
 local lastGunSweepAt: number = -math.huge
@@ -4830,7 +4582,7 @@ local function isLooseGun(object: Instance): boolean
     if object.Name ~= "Gun" and not CollectionService:HasTag(object, "Weapon_Gun") then
         return false
     end
-    -- A gun inside a character or a backpack is owned, not dropped.
+
     return object:IsDescendantOf(workspace)
         and not object:FindFirstAncestorOfClass("Backpack")
         and (object.Parent == workspace or object.Parent == findMM2Map()
@@ -4945,9 +4697,6 @@ local function createMM2Marker(folder, adornee, labelText, color, transparency)
         billboardReference.Value = billboard
         billboardReference.Parent = folder
 
-        -- Same recipe as the Chams "Murder" tag: bare bold text with a black
-        -- stroke, tinted with the marker colour (yellow for the gun). No box,
-        -- no accent bar - the two tags now read as one visual family.
         local text = Instance.new("TextLabel")
         text.BackgroundTransparency = 1
         text.BorderSizePixel = 0
@@ -5055,10 +4804,7 @@ if mm2GameplayRemotes then
             if type(newData) ~= "table" or roundLifecycleActive == false then
                 mm2RoundData = {}
             else
-                -- MM2 pushes partial payloads (often a single player's entry).
-                -- Replacing the table wholesale erased every other role and
-                -- left the ESP/Chams colourless, so merge instead. The table is
-                -- cleared on RoundStart/RoundEndFade, never left stale.
+
                 for key: any, value: any in pairs(newData) do
                     mm2RoundData[key] = value
                 end
@@ -5069,8 +4815,6 @@ if mm2GameplayRemotes then
     end
 end
 
--- Forward declared: the round phase machine below assigns these, and the
--- lifecycle handlers here already need them.
 local primeRoundState: () -> ()
 local setRoundPhase: (string, string) -> ()
 local lastPhase: string = "unknown"
@@ -5095,9 +4839,7 @@ if timerRoundStart and timerRoundStart:IsA("RemoteEvent") then
             end
             roleRefreshGeneration += 1
             if duration and duration > 0 then
-                -- Roles are handed out at the top of the round. Ask for them
-                -- right now (and again a few times while they are missing)
-                -- instead of waiting for the first PlayerDataChanged push.
+
                 primeRoundState()
                 lastPhase = "map"
                 setRoundPhase("map", "RoundStart")
@@ -5124,21 +4866,6 @@ if timerRoundEnd and timerRoundEnd:IsA("RemoteEvent") then
     end)
 end
 
--- ---------------------------------------------------------------------------
--- Round phase
---
--- RoundStart/RoundEndFade are the only lifecycle signals the game sends, and
--- both are missed when Wurst finishes booting after they fired (a mid-round
--- join, or a teleport into a round that was already running). Everything that
--- depends on "are we in a round" then sat on a stale answer: the ESP had no
--- roles, the timer had no countdown, and nothing re-asked until the next
--- RoundStart.
---
--- The map model is the ground truth the teleport actually changes: MM2 parents
--- the round map while you are playing and leaves only the Lobby otherwise. So
--- the phase is derived from where your character stands, debounced, and every
--- transition re-primes the round state on the spot.
--- ---------------------------------------------------------------------------
 local roundPhase: string = "unknown"
 local roundPhaseListeners: {(string, string) -> ()} = {}
 
@@ -5189,9 +4916,7 @@ local function detectRoundPhase(): string
     if not root then
         return "lobby"
     end
-    -- Check the lobby by the player's actual parentage first: a round map model
-    -- can linger in workspace after a round, and trusting its presence over the
-    -- player's location would report "map" while standing in the lobby.
+
     local lobby: Instance? = findLobbyModel()
     if lobby and root:IsDescendantOf(lobby) then
         return "lobby"
@@ -5199,19 +4924,16 @@ local function detectRoundPhase(): string
     if findMM2Map() then
         return "map"
     end
-    -- Standing in neither (mid-teleport): trust the last known phase, not flap.
+
     return roundPhase == "map" and "map" or "lobby"
 end
 
--- One fresh role fetch per transition, plus a short retry ladder for the rounds
--- where the server hands the payload out a beat after the teleport.
 primeRoundState = function(): ()
     roleRefreshGeneration += 1
     local generation: number = roleRefreshGeneration
     requestRoleRefresh(true)
     task.spawn(function(): ()
-        -- Two retries cover the rounds where the server hands the payload out a
-        -- beat after the teleport; more is belt-and-suspenders (YAGNI).
+
         for _, delay: number in ipairs({0.2, 0.6}) do
             task.wait(delay)
             if generation ~= roleRefreshGeneration or roundRolesKnown() then
@@ -5236,9 +4958,7 @@ featureConnections.MM2RoundPhase = TaskManager:Connect(function(deltaTime: numbe
     end
     lastPhase = phase
     if phase == "map" then
-        -- Teleported into a round: the round payload from the previous map is
-        -- worthless and RoundStart may never fire for us, so treat the round as
-        -- live now and pull the roles immediately.
+
         mm2RoundData = {}
         roundLifecycleActive = true
         invalidateRoleCaches()
@@ -5255,18 +4975,6 @@ featureConnections.MM2RoundPhase = TaskManager:Connect(function(deltaTime: numbe
 end)
 setRoundPhase(lastPhase, "boot")
 
--- ---------------------------------------------------------------------------
--- Round clock
---
--- The live countdown used to be published on workspace.RoundTimerPart as a
--- "Time" attribute, but the current map no longer ships that part at all, so
--- a mid-round join (RoundStart missed) left the clock with no source. The
--- game still draws the exact same number in its own HUD label
--- (PlayerGui.MainGUI.Game.Timer), which is the fallback authority here: read,
--- parsed, and re-anchored from the text the player is already seeing. Source
--- priority: RoundTimerPart attribute (when a map still has it) > HUD label >
--- the one-shot RoundStart anchor.
--- ---------------------------------------------------------------------------
 local roundTimerPartCache: {part: Instance?, at: number} =
     {part = nil, at = -math.huge}
 
@@ -5312,14 +5020,12 @@ local function findHudTimerLabel(): Instance?
     local mainGui: Instance? = playerGui and playerGui:FindFirstChild("MainGUI")
     local gameFrame: Instance? = mainGui and mainGui:FindFirstChild("Game")
     local frame: Instance? = gameFrame and gameFrame:FindFirstChild("Timer")
-    -- If the expected path was restructured, fall back to a "Timer" frame
-    -- anywhere under MainGUI (still bounded, and only runs once a second).
+
     if not frame then
         frame = mainGui and mainGui:FindFirstChild("Timer", true)
     end
     hudTimerCache.frame = (frame and frame:IsA("GuiObject")) and frame or nil
-    -- MM2 has renamed this label across updates, so take the first TextLabel
-    -- in the frame instead of trusting a single name.
+
     local label: Instance? = frame
         and (frame:FindFirstChild("XPText")
             or frame:FindFirstChild("Timer")
@@ -5328,8 +5034,6 @@ local function findHudTimerLabel(): Instance?
     return hudTimerCache.label
 end
 
--- Accepts the formats MM2 has used for the HUD countdown: "1:32", "1:32s",
--- plain seconds "32" / "32s", with optional surrounding whitespace.
 local function parseHudTimerSeconds(text: string?): number?
     if type(text) ~= "string" or text == "" then
         return nil
@@ -5346,9 +5050,7 @@ local function parseHudTimerSeconds(text: string?): number?
 end
 
 local function isHudTimerVisible(label: Instance): boolean
-    -- In the lobby the game hides its timer frame; a hidden frame still
-    -- holding last round's text would resurrect a finished round, so the
-    -- game's own visibility doubles as the "round is live" check.
+
     local ancestor: Instance? = label
     while ancestor do
         if ancestor:IsA("GuiObject") and ancestor.Visible == false then
@@ -5386,15 +5088,11 @@ featureConnections.MM2RoundClock = TaskManager:Connect(function(deltaTime: numbe
     local remaining: number? = readRoundTimerPartSeconds()
         or readHudTimerSeconds()
     if not remaining or roundPhase == "lobby" then
-        -- In the lobby the part (or last round's label text) is usually still
-        -- holding a positive number; believing it would resurrect a finished
-        -- round.
+
         lastAttributeRemaining = nil
         return
     end
-    -- A frozen source must not pin the clock: only treat it as the authority
-    -- while it is actually counting down. The HUD label ticks every second,
-    -- the part attribute ticks continuously - both pass this gate while live.
+
     if lastAttributeRemaining == nil
         or math.abs(remaining - lastAttributeRemaining) > 0.01 then
         lastAttributeChangeAt = os.clock()
@@ -5409,9 +5107,6 @@ featureConnections.MM2RoundClock = TaskManager:Connect(function(deltaTime: numbe
     end
 end)
 
--- All server pushes and lifecycle events are connected before this asynchronous
--- snapshot starts. Loading Wurst during an active round now paints ESP as soon
--- as GetCurrentPlayerData answers without ever blocking or missing RoundStart.
 requestRoleRefresh(true)
 
 type MotionSample = {
@@ -5511,35 +5206,6 @@ local function getEstimatedLatency(): number
     )
 end
 
--- ---------------------------------------------------------------------------
--- Shot lead
---
--- MM2's gun is a hitscan: the server scores the ray we hand it against the
--- target's position at the instant it processes the shot. The lead time is the
--- real time that elapses between the target frame we can see and the target
--- frame the server scores, and every term is a nameable delay:
---
---   HORIZON = roundTrip + staleness + serverStep
---
---   roundTrip  the FULL measured round trip. The copy we aim from is already one
---              network hop old (the server sent it rtt/2 ago), and our shot
---              spends another rtt/2 reaching the server, so the target keeps
---              moving for the whole round trip in between. An earlier version
---              used rtt/2 here and under-led by rtt/2: invisible at 20 ms, but a
---              visible miss behind the target at 100 ms+.
---   staleness  on top of network latency, the replicated copy we read is half a
---              replication interval old on average.
---   serverStep the server scores the ray on its next frame, up to one frame
---              away. Half a frame is the expected value.
---
--- `gunLeadBias` stays as the single calibration knob: the telemetry module can
--- measure a constant residual and fold it in here instead of anyone inventing a
--- second formula. The horizon is capped so a 900 ms round trip cannot ask for a
--- half second of extrapolation; past that point the turn discount below is what
--- keeps the shot honest, not the cap.
--- ---------------------------------------------------------------------------
--- Luau infers the field types from the literals; the explicit annotation was
--- redundant (KISS).
 local GUN_LEAD = {
     replicationRate = 20,
     serverFrame = 1 / 60,
@@ -5547,16 +5213,13 @@ local GUN_LEAD = {
     maximumHorizon = 0.45,
     maximumManualBias = 0.1,
     maximumAutoCorrection = 0.1,
-    -- If no motion sample exists yet, assume a brisk 90 degree/second turn.
+
     defaultTurnRate = math.pi * 0.5,
     maxTurnRate = math.pi * 1.5,
     turnRatePerInstability = 6,
 }
 local autoLeadCorrection: number = 0
 
--- The manual slider and the hit-confirmed calibration are separate terms. This
--- keeps the visible setting truthful instead of silently rewriting the user's
--- slider value after a hit.
 local function getActiveAutoLeadCorrection(): number
     return mm2Settings.autoTuneLead and autoLeadCorrection or 0
 end
@@ -5575,7 +5238,7 @@ local function getGunHorizonSeconds(): number
             measuredAcceptance = (est.gunAcceptanceMs :: number) / 1000
         end
     end
-    -- Use empirically measured server rewind/acceptance latency from calibration when available (defaults to confirmed 200ms baseline)
+
     local latencyTime: number = measuredAcceptance or math.max(getEstimatedLatency(), 0.200)
     local staleness: number = 1 / (2 * GUN_LEAD.replicationRate)
     local manualBias: number = math.clamp(
@@ -5600,12 +5263,6 @@ local function getGunHorizonSeconds(): number
     )
 end
 
--- Fraction of the constant-velocity lead that is still worth believing after
--- `horizon` seconds. A target can turn, and the expected projection of a turn
--- of theta onto the heading we measured is cos(theta / 2), so the lead shrinks
--- with the horizon at a rate set by how unstable the target's motion actually
--- is. The companion error term (see the Shoot solver) is the part of that turn
--- the discount does not pay for.
 local function getGunTurnRate(stability: number?): number
     if type(stability) ~= "number" then
         return GUN_LEAD.defaultTurnRate
@@ -5618,8 +5275,7 @@ local function getGunTurnRate(stability: number?): number
 end
 
 local function getGunTurnDiscount(horizon: number, turnRate: number?): number
-    -- `turnRate` is already a rate in radians/second (see getGunTurnRate); do not
-    -- convert it again. Nil means "no reading", which falls back to the default.
+
     local rate: number = turnRate or GUN_LEAD.defaultTurnRate
     return math.clamp(
         math.cos(math.min(horizon * rate * 0.5, math.pi * 0.5)),
@@ -5629,8 +5285,7 @@ local function getGunTurnDiscount(horizon: number, turnRate: number?): number
 end
 
 local function getGunLeadSensitivity(horizon: number, turnRate: number?): number
-    -- Derivative of horizon * turnDiscount with respect to a time correction.
-    -- The tuner skips samples where the turn model has flattened or reversed.
+
     local rate: number = turnRate or GUN_LEAD.defaultTurnRate
     local angle: number = horizon * rate * 0.5
     if angle >= math.pi * 0.5 then
@@ -5666,9 +5321,6 @@ local function getGunOriginCFrame(character: Model, gun: Tool?): CFrame?
         return attachment.WorldCFrame
     end
 
-    -- The attachment only exists while the gun is fully replicated. Without a
-    -- fallback the whole shot aborted with "unavailable or obstructed", so walk
-    -- the same chain the real client would: muzzle, hand, head, camera.
     if gun then
         for _, partName: string in ipairs({"Muzzle", "Handle"}) do
             local part: Instance? = gun:FindFirstChild(partName)
@@ -5851,10 +5503,6 @@ local function createTrajectoryCalibration(): any
         return value == value and value > -math.huge and value < math.huge
     end
 
-    -- Welford merge: fold `stored` (the on-disk aggregate from previous
-    -- saves/sessions) into `current`. Enables consecutive accumulation:
-    -- leaving the game and coming back extends the statistics instead of
-    -- replacing them.
     local function mergeStatsPayload(
         current: {[string]: number},
         stored: any
@@ -6475,10 +6123,7 @@ local function createTrajectoryCalibration(): any
             warn(trajectoryLogPrefix .. " writefile is unavailable; data was not saved.")
             return false
         end
-        -- Consecutive accumulation: fold only this save's NEW samples and
-        -- events into whatever previous sessions already wrote, then adopt
-        -- the merged totals as the running history. Leaving the game (or the
-        -- 0.8 s autosave) therefore extends the file instead of resetting it.
+
         local stored: any = nil
         if type(environment.readfile) == "function" then
             local okRead: boolean, existingRaw: any = pcall(
@@ -6609,8 +6254,7 @@ local function createTrajectoryCalibration(): any
             warn(trajectoryLogPrefix .. " writefile failed: " .. tostring(writeError))
             return false
         end
-        -- Adopt the merged totals as the running history and start a fresh
-        -- delta, so the next save only folds in genuinely new samples.
+
         applyStatsPayload(runtime.gunAcceptance, mergedGun)
         applyStatsPayload(runtime.knifeSpeed, mergedKnife)
         applyStatsPayload(runtime.knifeSpawnDelay, mergedDelay)
@@ -7127,9 +6771,6 @@ local function createTrajectoryCalibration(): any
         print(trajectoryLogPrefix .. " Passive calibration started in the background.")
     end
 
-    -- Drop the working history so the next capture starts clean. Shared by the
-    -- manual save (snapshot then clear) and the explicit reset (clear then
-    -- snapshot an empty file).
     local function clearHistory(): ()
         runtime.gunAcceptance = newStats()
         runtime.knifeSpeed = newStats()
@@ -7169,10 +6810,6 @@ local function createTrajectoryCalibration(): any
         return estimates()
     end
 
-    -- Called by the module-shot authors (Shoot silent/manual, KnifeThrow,
-    -- KnifeAura stabs) at the exact FireServer moment. Those shots never
-    -- trigger tool.Activated, so without this the calibration would never see
-    -- them and gun-acceptance / knife-speed / stab ranges would stay empty.
     function controller:noteAuthoredShot(info: any): ()
         if not runtime.active or type(info) ~= "table" then
             return
@@ -7220,9 +6857,7 @@ local function createTrajectoryCalibration(): any
             if typeof(info.tool) == "Instance" and info.tool:IsA("Tool") then
                 authoredTool = info.tool :: Tool
             end
-            -- Knife matching indexes pending.tool directly (HandleLink), so a
-            -- knife pending without a tool is both useless and a crash; a gun
-            -- pending works without a tool (the origin match covers it).
+
             if isGun or authoredTool ~= nil then
                 if isGun then
                     runtime.sessionGunAttempts += 1
@@ -7246,9 +6881,7 @@ local function createTrajectoryCalibration(): any
                 ensureTrajectorySampler()
             end
         end
-        -- Publish through the game bridge so the universal Game Learning log
-        -- records the same authored shot (silent shots are otherwise
-        -- invisible to any tool.Activated-based collector).
+
         if type(state.emitGameBridgeEvent) == "function" then
             state.emitGameBridgeEvent("authoringShot", {
                 kind = kind,
@@ -7314,8 +6947,6 @@ local trajectoryCalibration: any = createTrajectoryCalibration()
 state.mm2TrajectoryCalibration = trajectoryCalibration
 trajectoryCalibration:start()
 
--- Consecutive saving: flush the accumulated calibration to disk the moment
--- the player leaves the game, so no session is ever lost to a disconnect.
 pcall(function(): ()
     if type((game :: any).BindToClose) == "function" then
         game:BindToClose(function(): ()
@@ -7336,18 +6967,15 @@ type PendingShot = {
     healthBefore: number,
     targetedMurderer: boolean,
     queuedAt: number,
-    -- Lead tuner bookkeeping: the effective predicted lead (after the turn
-    -- discount), its sensitivity to time correction, and the 30 Hz root samples.
+
     leadSeconds: number?,
     leadSensitivity: number?,
     velocity: Vector3?,
     trajectory: {{t: number, p: Vector3}}?,
-    -- Silent spawn A/B: which authored geometry this shot used (Front,
-    -- Through, Top or Behind); nil for normal-mode shots.
+
     silentSpawn: string?,
 }
--- Structural shape of the Shoot solver's prediction; only the fields the
--- feedback UI and the lead tuner read are named here.
+
 type GunPrediction = {
     targetPosition: Vector3?,
     endpoint: Vector3?,
@@ -7358,14 +6986,11 @@ type GunPrediction = {
 }
 
 state.mm2ShotFeedback = {
-    -- Flipped by the Shoot module; the feedback UI is core-owned because the
-    -- target provider reads the pending shot too.
+
     shootActive = false,
     pending = nil :: PendingShot?,
     lastAccepted = nil :: PendingShot?,
-    -- Per silent-spawn-variant scorecard (Front/Through/Top/Behind): the only
-    -- way to settle which authored geometry actually scores is to count real
-    -- shots. Accumulates for the session; surfaced by the Spawn A/B action.
+
     spawnStats = {} :: {[string]: {shots: number, hits: number, misses: number}},
     token = 0,
     defaultDuration = 5,
@@ -7453,19 +7078,6 @@ state.mm2ShotFeedback.getDuration = function(gun: Tool?): number
     return state.mm2ShotFeedback.defaultDuration
 end
 
--- ---------------------------------------------------------------------------
--- Lead tuner
---
--- The horizon model is right in expectation but not in fact: the server's
--- exact scoring instant, the replication cadence and our RTT estimator all
--- carry a small, slowly drifting offset. Every confirmed shot measures it for
--- free. While the shot is pending we sample the target's root at 30 Hz; on a
--- confirmed hit the moment the target crossed the aimed point IS the lead the
--- server actually needed. We drift gunLeadBias toward that reading - slowly
--- (25 % of one residual) and bounded (+-0.03 s per shot, +-0.25 s total) - so
--- one noisy shot can never wreck the calibration. Noisy windows (a turn mid
--- flight, a stopped target, a late read) are rejected instead of applied.
--- ---------------------------------------------------------------------------
 local leadTracking: PendingShot? = nil
 
 local function stopLeadTracking(): ()
@@ -7548,7 +7160,7 @@ local function tuneFromConfirmedShot(candidate: PendingShot): ()
     if leadMeasured < 0.03 or leadMeasured > 1.2 then
         return
     end
-    -- A target that changed heading mid-window corrupts the reading: reject it.
+
     local firstSample: {t: number, p: Vector3} = samples[1]
     local lastSample: {t: number, p: Vector3} = samples[#samples]
     local span: number = lastSample.t - firstSample.t
@@ -7567,7 +7179,7 @@ local function tuneFromConfirmedShot(candidate: PendingShot): ()
     if sampledHorizontal.Unit:Dot(horizontal.Unit) < 0.75 then
         return
     end
-    -- Invert the turn model: residual is in seconds of horizon correction.
+
     local residual: number = (leadMeasured - leadSeconds) / leadSensitivity
     local delta: number = residual * 0.25
     autoLeadCorrection = math.clamp(
@@ -7723,8 +7335,6 @@ state.mm2ShotFeedback.resolve = function(
             state.mm2ShotFeedback.hide()
         end
 
-        -- Silent spawn A/B: count confirmed hits and misses per authored
-        -- geometry so the user can compare variants with real shots.
         local variant: string? = candidate.silentSpawn
         if variant then
             local stats: any = state.mm2ShotFeedback.spawnStats[variant]
@@ -7945,11 +7555,7 @@ local function disconnectGunFiredObserver(): ()
 end
 
 registerMM2Roles()
--- ---------------------------------------------------------------------------
--- Everything the per-feature MM2 modules are allowed to reach for. The files
--- under Blatant/, Render/, Movement/, Fun/ and Other/ share this one
--- table instead of duplicating the round, weapon and prediction plumbing.
--- ---------------------------------------------------------------------------
+
 state.mm2Core = {
     settings = mm2Settings,
     mm2Settings = mm2Settings,
@@ -8013,8 +7619,7 @@ state.mm2Core = {
 }
 
 cleanupMM2Runtime = function()
-    -- Only the core's own state: every feature module tears itself down in its
-    -- own Module.destroy, which the loader calls in reverse order.
+
     if state.gameRoleProvider == mm2RoleProvider then
         state.gameRoleProvider = nil
     end
@@ -10536,33 +10141,6 @@ local function buildVDFeatures(): ()
         end)
     end
 
-    local function survivorStatus(player: Player, character: Model): (string, Color3)
-        local humanoid: Humanoid? = character:FindFirstChildOfClass("Humanoid")
-        if not humanoid then
-            return "UNKNOWN", Theme.textMuted
-        end
-        local hooked: boolean = character:GetAttribute("Hooked") == true
-            or character:GetAttribute("IsHooked") == true
-            or player:GetAttribute("Hooked") == true
-        local downed: boolean = character:GetAttribute("Knocked") == true
-            or character:GetAttribute("Downed") == true
-            or humanoid.Health <= math.max(1, humanoid.MaxHealth * 0.05)
-        local recovery: number? = readNumberAttribute(
-            character,
-            {"Recovery", "RecoverProgress", "RecoveryProgress"}
-        )
-        if recovery and recovery <= 1 then
-            recovery *= 100
-        end
-        if hooked then
-            return "HOOKED", VD_KILLER_COLOR
-        elseif downed then
-            return "DOWNED · REC " .. string.format("%.0f%%", recovery or 0), VD_KILLER_COLOR
-        elseif humanoid.Health < humanoid.MaxHealth * 0.75 then
-            return "INJURED · " .. string.format("%.0f%%", humanoid.Health / humanoid.MaxHealth * 100), Color3.fromRGB(244, 190, 88)
-        end
-        return "HEALTHY", Theme.positive
-    end
 
     local function findRemoteEvent(folderName: string, eventName: string): RemoteEvent?
         local remotes: Instance? = ReplicatedStorageService:FindFirstChild("Remotes")
@@ -11958,8 +11536,7 @@ function Module.init(context: Runtime): any
     local RunService: any = host.RunService
 
     local flingRunning: boolean = false
-    -- Name typed into the "Target player" box; the "Fling" action flings that
-    -- exact player (case-insensitive, partial names allowed).
+
     local flingTargetName: string = ""
 
     local function setFlingRunning(running: boolean): ()
@@ -11969,9 +11546,6 @@ function Module.init(context: Runtime): any
 
     local performFling: (Player) -> ()
 
-    -- Fixed flight profile: the old per-user Duration/Power options were
-    -- replaced by the role actions; 6 s at power 1 matches what the old
-    -- defaults produced.
     local FLING_DURATION: number = 6
     local FLING_POWER: number = 1
 
@@ -12121,9 +11695,6 @@ function Module.init(context: Runtime): any
         end)
     end
 
-    -- Role lookup goes through the game bridge, so these actions only exist
-    -- where the game exposes roles (MM2). In other games the provider is
-    -- nil and every action reports that no roles were found.
     local function findPlayerByRole(match: (string) -> boolean): Player?
         if type(gameBridge.playerRole) ~= "function" then
             return nil
@@ -13006,7 +12577,7 @@ function Module.init(context: Runtime): any
 
         if not enabled then
             if invisibleRuntime.active and root and invisibleRuntime.surfacePosition then
-                -- Teleport real character to the exact position of the ghost on the map
+
                 root.CFrame = invisibleRuntime.surfacePosition
                 root.AssemblyLinearVelocity = Vector3.zero
             end
@@ -13038,14 +12609,12 @@ function Module.init(context: Runtime): any
             ghostRoot.CFrame = invisibleRuntime.surfacePosition
         end
 
-        -- Focus the camera onto the ghost so the user stays on the map!
         if camera and ghostHumanoid then
             pcall(function()
                 camera.CameraSubject = ghostHumanoid
             end)
         end
 
-        -- RenderStepped loop: controls the ghost on the surface while keeping the real character in the void
         table.insert(
             invisibleRuntime.connections,
             RunService.RenderStepped:Connect(function(deltaTime: number): ()
@@ -13076,7 +12645,7 @@ function Module.init(context: Runtime): any
                 local surfaceCF: CFrame = invisibleRuntime.surfacePosition or currentRoot.CFrame
 
                 if invisibleSettings.fly and activeCam then
-                    -- Fly mode: Move freely in 3D through the air with camera look
+
                     local flyVelocity: Vector3 = Vector3.zero
                     local camCF: CFrame = activeCam.CFrame
                     local look: Vector3 = camCF.LookVector
@@ -13112,7 +12681,7 @@ function Module.init(context: Runtime): any
                         invisibleRuntime.surfacePosition = surfaceCF
                     end
                 else
-                    -- Walk mode: move on ground using humanoid MoveDirection
+
                     local moveDir: Vector3 = currentHumanoid.MoveDirection
                     local walkSpeed: number = currentHumanoid.WalkSpeed
                     if moveDir.Magnitude > 0.05 then
@@ -13129,10 +12698,9 @@ function Module.init(context: Runtime): any
                     end
                 end
 
-                -- Position ghost root
                 if activeGhostRoot and surfaceCF then
                     activeGhostRoot.CFrame = surfaceCF
-                    -- Sync limbs relative to root
+
                     for _, child: Instance in ipairs(currentCharacter:GetChildren()) do
                         if child:IsA("BasePart") and child.Name ~= "HumanoidRootPart" then
                             local ghostPart: Instance? = activeGhost:FindFirstChild(child.Name)
@@ -13145,7 +12713,6 @@ function Module.init(context: Runtime): any
                     end
                 end
 
-                -- Keep real character safely hidden in the void below the ghost position
                 local voidPos: Vector3 = surfaceCF.Position - Vector3.new(0, invisibleSettings.voidDepth, 0)
                 currentRoot.CFrame = CFrame.new(voidPos)
                 currentRoot.AssemblyLinearVelocity = Vector3.zero
@@ -13372,8 +12939,7 @@ function Module.init(context: Runtime): any
             if SpiderFeature then
                 SpiderFeature:SetStatus(nil)
             end
-            local character: Model?, humanoidOrNil: Humanoid?, rootOrNil: BasePart? =
-                getCharacterParts()
+            local _, _, rootOrNil: BasePart? = getCharacterParts()
             if rootOrNil then
                 local curPos: Vector3 = rootOrNil.Position
                 local flatForward: Vector3 = Vector3.new(rootOrNil.CFrame.LookVector.X, 0, rootOrNil.CFrame.LookVector.Z)
@@ -13387,7 +12953,6 @@ function Module.init(context: Runtime): any
         SpiderFeature:SetStatus(spiderSettings.mode)
 
         local onSurface: boolean = false
-        local lastSurfaceNormal: Vector3 = Vector3.new(0, 1, 0)
 
         featureConnections.Spider = TaskManager:Connect(function(deltaTime: number): ()
             local character: Model?, humanoidOrNil: Humanoid?, rootOrNil: BasePart? =
@@ -13416,16 +12981,14 @@ function Module.init(context: Runtime): any
             local moveDir: Vector3 = humanoid.MoveDirection
             local isGrounded: boolean = humanoid.FloorMaterial ~= Enum.Material.Air
 
-            -- Mode: Spiderman (realistic feet-on-wall & ceiling walking with natural physics)
             if spiderSettings.mode == "Spiderman" then
-                -- Ray 1: Check under feet (primary when already on a wall/ceiling)
+
                 local feetRay: RaycastResult? = workspace:Raycast(
                     rootPos,
                     -root.CFrame.UpVector * (hipHeight + 2.2),
                     raycastParams
                 )
 
-                -- Ray 2: Check in front of the feet to transition onto a wall when walking into it
                 local wallRay: RaycastResult? = nil
                 if moveDir.Magnitude > 0.05 then
                     wallRay = workspace:Raycast(
@@ -13435,7 +12998,6 @@ function Module.init(context: Runtime): any
                     )
                 end
 
-                -- Ray 3: Check above for ceilings
                 local ceilingRay: RaycastResult? = nil
                 if spiderSettings.ceilingWalk then
                     ceilingRay = workspace:Raycast(
@@ -13448,7 +13010,7 @@ function Module.init(context: Runtime): any
                 local activeSurface: RaycastResult? = nil
 
                 if onSurface then
-                    -- Already on a wall or ceiling: feet ray maintains contact
+
                     if feetRay and feetRay.Instance and feetRay.Instance:IsA("BasePart") then
                         activeSurface = feetRay
                     elseif wallRay and wallRay.Instance and wallRay.Instance:IsA("BasePart") then
@@ -13457,7 +13019,7 @@ function Module.init(context: Runtime): any
                         activeSurface = ceilingRay
                     end
                 else
-                    -- On the ground: only transition to wall if walking directly into it at close range (< 1.5 studs)
+
                     if wallRay and wallRay.Instance and wallRay.Instance:IsA("BasePart") and math.abs(wallRay.Normal.Y) <= 0.35 then
                         activeSurface = wallRay
                     elseif ceilingRay and ceilingRay.Instance and ceilingRay.Instance:IsA("BasePart") and ceilingRay.Normal.Y < -0.5 and not isGrounded then
@@ -13467,15 +13029,11 @@ function Module.init(context: Runtime): any
 
                 if activeSurface and activeSurface.Instance and activeSurface.Instance:IsA("BasePart") then
                     local surfNormal: Vector3 = activeSurface.Normal.Unit
-                    lastSurfaceNormal = surfNormal
                     onSurface = true
 
-                    -- Prevent humanoid tripping or ragdolling
                     humanoid.PlatformStand = false
                     humanoid:ChangeState(Enum.HumanoidStateType.Running)
 
-                    -- Wall tangent axes
-                    local surfUp: Vector3 = surfNormal
                     local wallUpVector: Vector3 = Vector3.new(0, 1, 0) - surfNormal * surfNormal.Y
                     if wallUpVector.Magnitude > 0.01 then
                         wallUpVector = wallUpVector.Unit
@@ -13503,14 +13061,13 @@ function Module.init(context: Runtime): any
                         end
                     end
 
-                    -- Prevent clipping into the wall: Ensure root position is offset away from wall
                     local standDistance: number = hipHeight + 1.1
                     local wallHitPos: Vector3 = activeSurface.Position
                     local currentDistFromWall: number = (rootPos - wallHitPos):Dot(surfNormal)
                     local adjustedRootPos: Vector3 = rootPos
 
                     if currentDistFromWall < standDistance then
-                        -- Push out from wall so head and torso are NEVER buried inside
+
                         adjustedRootPos = wallHitPos + surfNormal * standDistance
                     end
 
@@ -13518,7 +13075,6 @@ function Module.init(context: Runtime): any
                     local targetCF: CFrame = CFrame.lookAt(adjustedRootPos, adjustedRootPos + lookRef, surfNormal)
                     root.CFrame = root.CFrame:Lerp(targetCF, math.clamp(deltaTime * 12, 0, 1))
 
-                    -- Natural walking velocity: along the wall surface with minimal adhesion (no wall penetration!)
                     local walkVelocity: Vector3 = (surfaceMove.Magnitude > 0.05) and (surfaceMove * spiderSettings.speed) or Vector3.zero
                     local gentleAdhesion: Vector3 = -surfNormal * 5
 
@@ -13526,7 +13082,7 @@ function Module.init(context: Runtime): any
                     return
                 else
                     if onSurface then
-                        -- Stepped off the wall onto ground or into air: smoothly restore upright
+
                         local curPos: Vector3 = root.Position
                         local flatForward: Vector3 = Vector3.new(root.CFrame.LookVector.X, 0, root.CFrame.LookVector.Z)
                         if flatForward.Magnitude > 0.01 then
@@ -13543,7 +13099,6 @@ function Module.init(context: Runtime): any
                 return
             end
 
-            -- Classic Climb Modes (Velocity, Impulse, CFrame)
             if moveDir.Magnitude < 0.05 then
                 return
             end
@@ -13680,7 +13235,6 @@ function Module.init(context: Runtime): any
     local currentWorkspace: Workspace = host.workspace or workspace
     local lastHopAt: number = -math.huge
     local lastScanAt: number = -math.huge
-    local nearestWall: WallSighting? = nil
     local highlight: Highlight? = nil
 
     local function destroyHighlight(): ()
@@ -13763,15 +13317,13 @@ function Module.init(context: Runtime): any
         local index: number = math.floor(
             (angle / (math.pi * 2)) * SCAN_DIRECTIONS + 0.5
         ) % SCAN_DIRECTIONS
-        -- Arrows are listed clockwise starting at forward; atan2 grows
-        -- counter-clockwise, so mirror the index.
+
         index = (SCAN_DIRECTIONS - index) % SCAN_DIRECTIONS + 1
         return ARROWS[index]
     end
 
     local card: any
     local function clearVisuals(): ()
-        nearestWall = nil
         destroyHighlight()
     end
 
@@ -13821,8 +13373,7 @@ function Module.init(context: Runtime): any
                     )
                 end
                 local velocity: Vector3 = root.AssemblyLinearVelocity
-                -- One clean impulse: kick away from the wall plus a natural
-                -- jump arc. No teleports, no chained boosts.
+
                 root.AssemblyLinearVelocity = Vector3.new(
                     velocity.X * 0.35 + sighting.normal.X * kick,
                     math.max(velocity.Y, jumpVelocity + 3),
@@ -13849,7 +13400,6 @@ function Module.init(context: Runtime): any
 
                 local range: number = tonumber(card.Options["Wall range"].Value) or 2.6
                 local sighting: WallSighting? = findWall(character, humanoid, root, range)
-                nearestWall = sighting
 
                 local grounded: boolean = humanoid.FloorMaterial ~= Enum.Material.Air
                 if not sighting or not grounded then
@@ -15894,7 +15444,6 @@ function Module.init(context: Runtime): any
     local lastHookJumpAt: number = -math.huge
     local lastScanAt: number = -math.huge
     local lastClimbAt: number = -math.huge
-    local lastObstacleTouchAt: number = -math.huge
     local currentSighting: HookSighting? = nil
     local highlight: Highlight? = nil
 
@@ -15947,7 +15496,7 @@ function Module.init(context: Runtime): any
     end
 
     local function isSmallDecoration(part: BasePart): boolean
-        -- Filter out tiny fence posts, thin railings, or miniature props that shouldn't hijack ground jumps
+
         local sz: Vector3 = part.Size
         if (sz.X <= 0.9 and sz.Z <= 0.9) or (sz.X <= 0.5 and sz.Y <= 0.5) then
             return true
@@ -15983,10 +15532,9 @@ function Module.init(context: Runtime): any
         parameters.IgnoreWater = true
         parameters.RespectCanCollide = true
 
-        -- Priority 1: Ladder detection (Roblox climbing state or 200ms grace window)
         local climbingGrace: boolean = (now - lastClimbAt) <= 0.22
         if isCurrentlyClimbing or climbingGrace then
-            -- Raycast forward to find the ladder part or normal
+
             local forwardRay: RaycastResult? = currentWorkspace:Raycast(
                 root.Position,
                 root.CFrame.LookVector * 3.0,
@@ -16009,7 +15557,6 @@ function Module.init(context: Runtime): any
         local bestSighting: HookSighting? = nil
         local bestDistance: number = settings.detectionRange + 1
 
-        -- Priority 2: Check box in front of player for ladders / trusses (to not miss rung gaps)
         local overlapLadder: OverlapParams = OverlapParams.new()
         overlapLadder.FilterType = Enum.RaycastFilterType.Exclude
         overlapLadder.FilterDescendantsInstances = filter
@@ -16034,7 +15581,6 @@ function Module.init(context: Runtime): any
             end
         end
 
-        -- Priority 3: Scan surroundings for Obstacles (Tank, Crates, Props) and Walls
         for i: number = 0, SCAN_DIRECTIONS - 1 do
             local angle: number = (i / SCAN_DIRECTIONS) * math.pi * 2
             local direction: Vector3 = Vector3.new(math.sin(angle), 0, math.cos(angle))
@@ -16078,16 +15624,14 @@ function Module.init(context: Runtime): any
 
                         local isSmall: boolean = isSmallDecoration(part)
 
-                        -- Ground bypass: On the ground, ignore tiny fence posts or random decorative walls
-                        -- unless player is deliberately pushing into an obstacle/tank!
                         if isGrounded then
                             if isSmall and not isKnownObstacle then
-                                -- Skip small fence posts while grounded (solves Image 2!)
+
                                 continue
                             end
 
                             if settings.requireStuckIntent then
-                                -- Check if player is pressing into the obstacle
+
                                 local pushingIntoPart: boolean = moveDir.Magnitude > 0.1 and moveDir:Dot(direction) > 0.30
                                 local isStuckMoving: boolean = moveDir.Magnitude > 0.1 and horizVelocity < 3.0
                                 if not (pushingIntoPart or isStuckMoving or isKnownObstacle) then
@@ -16095,7 +15639,7 @@ function Module.init(context: Runtime): any
                                 end
                             end
                         else
-                            -- Airborne: Allow wallhop or obstacle vaulting
+
                             if settings.airborneWallhopOnly and not isKnownObstacle and isSmall then
                                 continue
                             end
@@ -16120,7 +15664,6 @@ function Module.init(context: Runtime): any
             end
         end
 
-        -- Priority 4: Spatial Query for wedged/hooked character parts (e.g. inside MM2 tank collision)
         if settings.checkAllParts and (not bestSighting or bestDistance > 1.8) then
             local overlap: OverlapParams = OverlapParams.new()
             overlap.FilterType = Enum.RaycastFilterType.Exclude
@@ -16178,7 +15721,7 @@ function Module.init(context: Runtime): any
         local mode: string = settings.directionMode
 
         if sighting.kind == "Ladder" then
-            -- On a ladder, launch outward from the wall and upward in the camera view
+
             if cam then
                 local camLook: Vector3 = cam.CFrame.LookVector
                 return Vector3.new(camLook.X, math.max(camLook.Y, 0.4), camLook.Z).Unit
@@ -16217,8 +15760,7 @@ function Module.init(context: Runtime): any
     end
 
     local function applySustainedImpulse(root: BasePart, targetVel: Vector3, durationSeconds: number): ()
-        -- Apply over multiple frames (within the 200ms server rewind window) so Roblox internal friction/ladder code
-        -- doesn't cancel or override the velocity immediately!
+
         local startTime: number = os.clock()
         local connection: RBXScriptConnection? = nil
         connection = RunService.Heartbeat:Connect(function(): ()
@@ -16239,7 +15781,7 @@ function Module.init(context: Runtime): any
             return
         end
 
-        local character: Model?, humanoid: Humanoid?, root: BasePart? = getCharacterParts()
+        local _, humanoid: Humanoid? = getCharacterParts()
         if not character or not humanoid or not root or humanoid.Health <= 0 then
             return
         end
@@ -16251,8 +15793,6 @@ function Module.init(context: Runtime): any
 
         local isGrounded: boolean = humanoid.FloorMaterial ~= Enum.Material.Air
 
-        -- Bypass check: If grounded on flat grass/floor and the sighting is just a casual Wall (not ladder or obstacle),
-        -- allow a normal clean Roblox jump without hijacking or deviating!
         if isGrounded and sighting.kind == "Wall" and settings.airborneWallhopOnly then
             return
         end
@@ -16273,7 +15813,6 @@ function Module.init(context: Runtime): any
                 return
             end
 
-            -- Clean detach from ladder: switch to Jumping
             humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
 
             local horizSpeed: number = settings.ladderJumpLength
@@ -16285,7 +15824,7 @@ function Module.init(context: Runtime): any
             )
 
             root.AssemblyLinearVelocity = ladderVel
-            -- Reinforce over 0.08s (5 frames) to defeat Roblox's ladder detach clamp
+
             applySustainedImpulse(root, ladderVel, 0.08)
 
             if activeCard then
@@ -16304,7 +15843,7 @@ function Module.init(context: Runtime): any
 
             local vertVel: number
             if settings.allowDownwardBoost and launchDir.Y < -0.10 then
-                -- Downward slide / boost on stairs and sliders
+
                 vertVel = launchDir.Y * (settings.obstaclePower * 1.1)
             elseif launchDir.Y > 0.10 then
                 vertVel = math.max(launchDir.Y * settings.obstaclePower, settings.obstaclePower * 0.60)
@@ -16332,7 +15871,7 @@ function Module.init(context: Runtime): any
                 local boostPower: number = settings.obstaclePower
                 local combinedDir: Vector3
                 if isSlopeOrStairs and settings.sliderAssist then
-                    -- Follow camera/move direction cleanly along the slope/stairs
+
                     combinedDir = flatLaunchDir
                 else
                     combinedDir = (flatLaunchDir * 0.75 + Vector3.new(outwardNorm.X, 0, outwardNorm.Z) * 0.25)
@@ -16403,7 +15942,6 @@ function Module.init(context: Runtime): any
             end
             card:SetStatus("Active")
 
-            -- Connect jump hooks
             if movementInput and type(movementInput.onJumpRequest) == "function" then
                 card:Clean(movementInput.onJumpRequest(function(): ()
                     executeHookJump()
@@ -16416,8 +15954,7 @@ function Module.init(context: Runtime): any
                 end))
             end
 
-            -- Track humanoid state changes (especially Climbing for the 200ms grace window)
-            local character: Model?, humanoid: Humanoid?, root: BasePart? = getCharacterParts()
+            local _, humanoid: Humanoid? = getCharacterParts()
             if humanoid then
                 card:Clean(humanoid.StateChanged:Connect(function(oldState: Enum.HumanoidStateType, newState: Enum.HumanoidStateType): ()
                     if newState == Enum.HumanoidStateType.Climbing or oldState == Enum.HumanoidStateType.Climbing then
@@ -16426,7 +15963,6 @@ function Module.init(context: Runtime): any
                 end))
             end
 
-            -- Continuous detection loop
             card:Loop(function(): ()
                 local now: number = os.clock()
                 if now - lastScanAt < 0.05 then
@@ -16460,7 +15996,6 @@ function Module.init(context: Runtime): any
                 end
                 card:SetStatus(statusText)
 
-                -- Visual highlight of hooked object
                 if not settings.highlightObject or sighting.part == curRoot then
                     destroyHighlight()
                     return
@@ -16805,7 +16340,6 @@ function Module.init(context: Runtime): any
             jump:SetStatus("active")
             jump:Clean(restoreJumpPower)
 
-            -- Connect infinite jump request if movementInput service is present
             if movementInput and type(movementInput.onJumpRequest) == "function" then
                 jump:Clean(movementInput.onJumpRequest(function(): ()
                     local opts = jump.Options
@@ -16829,7 +16363,6 @@ function Module.init(context: Runtime): any
                     return
                 end
 
-                -- 1. Apply Custom Jump Power only if option is enabled
                 if opts["Custom jump power"] and opts["Custom jump power"].Value then
                     local wantedPower: number = opts["Jump power"] and opts["Jump power"].Value or 80
                     if originalJumpPower[humanoid] == nil then
@@ -16844,7 +16377,6 @@ function Module.init(context: Runtime): any
                     restoreJumpPower()
                 end
 
-                -- 2. Auto Jump
                 if opts["Auto jump"] and opts["Auto jump"].Value then
                     local moveDir: Vector3 = humanoid.MoveDirection
                     if moveDir.Magnitude > 0.05 and humanoid.FloorMaterial ~= Enum.Material.Air then
@@ -16852,7 +16384,6 @@ function Module.init(context: Runtime): any
                     end
                 end
 
-                -- 3. Infinite Jump "Rise" mode (hold to rise)
                 if opts["Infinite jump"] and opts["Infinite jump"].Value then
                     local mode: string = opts["Infinite jump mode"] and opts["Infinite jump mode"].Value or "Normal"
                     if mode == "Rise" and movementInput and type(movementInput.isJumpHeld) == "function" and movementInput.isJumpHeld() then
@@ -16866,7 +16397,6 @@ function Module.init(context: Runtime): any
         end,
     })
 
-    -- Section: Jump Power
     jump:CreateToggle({
         Name = "Custom jump power",
         Default = false,
@@ -16887,7 +16417,6 @@ function Module.init(context: Runtime): any
         Tooltip = "Character jump power (default Roblox jump is 50).",
     })
 
-    -- Section: High Jump
     jump:CreateButton({
         Name = "High jump",
         Function = function(): ()
@@ -16905,7 +16434,6 @@ function Module.init(context: Runtime): any
         Tooltip = "Vertical velocity applied when High Jump button is pressed.",
     })
 
-    -- Section: Infinite Jump
     jump:CreateToggle({
         Name = "Infinite jump",
         Default = false,
@@ -16947,7 +16475,6 @@ function Module.init(context: Runtime): any
         Tooltip = "Minimum delay in seconds between mid-air jumps.",
     })
 
-    -- Section: Auto Jump
     jump:CreateToggle({
         Name = "Auto jump",
         Default = false,
@@ -17062,8 +16589,7 @@ function Module.init(context: Runtime): any
                 hideBarrier()
                 return
             end
-            -- While airborne or standing still the last barrier stays in place
-            -- so momentum cannot carry you over an edge mid-jump.
+
             if humanoid.MoveDirection.Magnitude < 0.05 then
                 return
             end
@@ -17077,8 +16603,6 @@ function Module.init(context: Runtime): any
             parameters.FilterDescendantsInstances = {character}
             parameters.IgnoreWater = true
 
-            -- Sample the ground along the movement direction to find where the
-            -- floor ends. The barrier is placed just before that edge.
             local stepCount: number = 7
             local reach: number = 1.0 + safeWalkSettings.lookAhead + 0.8
             local step: number = (reach - 1.0) / (stepCount - 1)
@@ -17101,12 +16625,12 @@ function Module.init(context: Runtime): any
             end
 
             if lastGrounded == nil then
-                -- The edge is already under the feet: block right ahead.
+
                 lastGrounded = 0.4
                 firstGap = 1.0
             end
             if firstGap == nil then
-                -- Solid floor ahead: nothing to block.
+
                 hideBarrier()
                 if SafeWalkFeature then
                     SafeWalkFeature:SetStatus(nil)
@@ -17121,8 +16645,7 @@ function Module.init(context: Runtime): any
             part.Size = Vector3.new(7, barrierHeight, 0.35)
             local feetY: number = root.Position.Y - feetHeight
             local position: Vector3 = root.Position + moveDirection * edgeDistance
-            -- Thin axis (Z) points along the movement direction, so the wide
-            -- face of the part faces the player like a wall.
+
             part.CFrame = CFrame.lookAt(
                 Vector3.new(position.X, feetY + barrierHeight * 0.5, position.Z),
                 Vector3.new(position.X, feetY + barrierHeight * 0.5, position.Z)
@@ -17469,7 +16992,6 @@ function Module.init(context: Runtime): any
                     return
                 end
 
-                -- Vehicle Speed handler
                 if options["Vehicle speed"] and options["Vehicle speed"].Value then
                     local assembly: BasePart?, model: Model?, seat: VehicleSeat? =
                         resolveVehicle()
@@ -17494,7 +17016,6 @@ function Module.init(context: Runtime): any
                     end
                 end
 
-                -- On-foot character speed handler
                 local mode: string = options["Mode"].Value
                 local target: number = options["Speed"].Value
 
@@ -17618,7 +17139,6 @@ function Module.init(context: Runtime): any
         Tooltip = "Hop continuously while moving.",
     })
 
-    -- Vehicle Speed section integrated into Speed
     speed:CreateToggle({
         Name = "Vehicle speed",
         Default = false,
@@ -18018,14 +17538,10 @@ function Module.init(context: Runtime): any
             return false, tostring(setError)
         end
         if not isTemporary then
-            -- The Humanoid's child HumanoidDescription is the live avatar
-            -- description, matching the original VapeV4 emote flow.
+
             return true, nil
         end
 
-        -- Some games do not keep a HumanoidDescription child. In that case
-        -- apply the edited copy to the local Humanoid so the emote wheel sees
-        -- the new equipped list, then let Disguise re-copy its visual items.
         local applied: boolean, applyError: string? =
             applyDescriptionToHumanoid(humanoid, description)
         pcall(description.Destroy, description)
@@ -18138,7 +17654,6 @@ function Module.init(context: Runtime): any
             end
         end
 
-        -- Older clients expose Disabled instead of Enabled.
         local disabledOk: boolean, wasDisabled: any = pcall(function()
             return scriptObject.Disabled
         end)
@@ -18156,29 +17671,6 @@ function Module.init(context: Runtime): any
         end
     end
 
-    local function normalizeAnimationId(value: any): string?
-        if type(value) == "number" then
-            if value <= 0 or value % 1 ~= 0 then
-                return nil
-            end
-            return "rbxassetid://" .. string.format("%.0f", value)
-        end
-
-        local raw: string = tostring(value or "")
-        if raw == "" then
-            return nil
-        end
-        local assetId: string? = string.match(raw, "^rbxassetid://(%d+)$")
-        if assetId then
-            local numericId: number? = tonumber(assetId)
-            return if numericId and numericId > 0 then raw else nil
-        end
-        local numericId: number? = tonumber(raw)
-        if not numericId or numericId <= 0 or numericId % 1 ~= 0 then
-            return nil
-        end
-        return "rbxassetid://" .. string.format("%.0f", numericId)
-    end
 
     local animationAssetCache: {[string]: {string}} = {}
 
@@ -18203,7 +17695,7 @@ function Module.init(context: Runtime): any
 
         local result: {string} = {}
         if numericId and numericId > 0 then
-            -- Download asset container via game:GetObjects to extract true AnimationId keyframes
+
             local objectsOk: boolean, objects: any = pcall(function()
                 return (game :: any):GetObjects("rbxassetid://" .. tostring(numericId))
             end)
@@ -18223,7 +17715,6 @@ function Module.init(context: Runtime): any
                 end
             end
 
-            -- Fallback to InsertService:LoadAsset if GetObjects did not unpack animations
             if #result == 0 then
                 local insertService: any = (game :: any):GetService("InsertService")
                 if insertService and type(insertService.LoadAsset) == "function" then
@@ -18244,7 +17735,6 @@ function Module.init(context: Runtime): any
                 end
             end
 
-            -- Fallback to standard rbxassetid url if unpacking was blocked
             if #result == 0 then
                 table.insert(result, "rbxassetid://" .. tostring(numericId))
             end
@@ -18334,13 +17824,12 @@ function Module.init(context: Runtime): any
             return
         end
 
-        local current: AppearanceSnapshot = ensureSnapshot(character, humanoid)
+        ensureSnapshot(character, humanoid)
         notify("Downloading target movement animations...")
 
         task.spawn(function(): ()
             local changedCount: number = 0
 
-            -- 1. Check if target player is in the current game server for instant 1:1 copy
             local targetPlayer: Player? = Players:GetPlayerByUserId(numericId)
             if not targetPlayer then
                 for _, p: Player in ipairs(Players:GetPlayers()) do
@@ -18395,7 +17884,6 @@ function Module.init(context: Runtime): any
                 end
             end
 
-            -- 2. If not in server or no animations found, fetch HumanoidDescription and download assets
             if changedCount == 0 then
                 local description: any, fetchError: string? = getUserDescription(numericId)
                 if not description then
@@ -18691,8 +18179,7 @@ function Module.init(context: Runtime): any
                 and source:IsA("MeshPart") then
                 local target: Instance? = character:FindFirstChild(source.Name)
                 if target and target:IsA("MeshPart") then
-                    -- Copy mesh identifiers only; retain live part dimensions,
-                    -- joint objects, and collision settings.
+
                     pcall(function()
                         target.MeshId = source.MeshId
                         target.TextureID = source.TextureID
@@ -18796,8 +18283,7 @@ function Module.init(context: Runtime): any
                 refreshMeshPartSnapshot(character, current)
             else
                 emoteWarning = tostring(emoteError)
-                -- SetEmotes may have succeeded before SetEquippedEmotes failed;
-                -- roll back a partial update using the captured local profile.
+
                 local rolledBack: boolean = setHumanoidEmotes(
                     humanoid,
                     current.emotes,
@@ -19090,7 +18576,7 @@ function Module.init(context: Runtime): any
         end
 
         if changedCount == 0 then
-            -- Ensure a failed lookup doesn't leave a half-selected mode behind.
+
             restoreOriginalAppearance(character, humanoid)
             notify("No compatible animations were found in that bundle.")
             return
@@ -19301,7 +18787,6 @@ function Module.init(context: Runtime): any
         Tooltip = "Positive integer user ID (Character) or avatar-animation bundle ID (Animation).",
     })
 
-
     card:CreateButton({
         Name = "Show target emotes",
         Function = function(): ()
@@ -19372,23 +18857,10 @@ function Module.init(context: Runtime): any
     local Stats: any = host.Stats or (game :: any):GetService("Stats")
     local httpService: any = host.HttpService or (game :: any):GetService("HttpService")
     local UserInputService: any = host.UserInputService or (game :: any):GetService("UserInputService")
-    -- Games that author shots (MM2's SilentAIM) publish the last authored
-    -- geometry here; nil everywhere else, so this stays a no-op.
+
     local gameBridge: any = context.services and
         context.services.gameBridge
 
-    -- ---------------------------------------------------------------------------
-    -- Game Learning: a passive log of what the server actually accepts.
-    --
-    -- Every tool activation snapshots the scene (every other player's distance,
-    -- angle to the aim, line of sight, and the hitbox geometry at that instant).
-    -- Every death is then matched back against the last few shots: a kill whose
-    -- line of sight was blocked is a wallshot the server did not validate, a
-    -- kill past 80 studs is a range the server did not cap, and a local
-    -- teleport that is neither kicked nor snapped back is movement the server
-    -- tolerated. Nothing is sent anywhere: the log lives in memory and can be
-    -- saved next to the Projectile Calibration data for offline reading.
-    -- ---------------------------------------------------------------------------
     local controllerFactory = (function(): any
         type SceneEntry = {
             player: string,
@@ -19411,10 +18883,7 @@ function Module.init(context: Runtime): any
             scene: {SceneEntry},
             outcome: {[string]: any}?,
             silentSpawn: {variant: string, offset: number}?,
-            -- Name of the player the menu authored this shot at (module shots
-            -- only). Kill attribution reads it: without it, knife throws and
-            -- manual module shots whose target sat outside the scene-geometry
-            -- window ended up as unattributed deaths (7 in one session).
+
             target: string?,
         }
         type MovementRecord = {
@@ -19478,8 +18947,6 @@ function Module.init(context: Runtime): any
         local controller: any
         local saveSnapshot: (reason: string) -> boolean
 
-        -- Assigned before any method is defined on it: `function
-        -- controller:foo()` is sugar for controller.foo = function(...).
         controller = {} :: any
         controller.tuning = tuning
 
@@ -19613,8 +19080,7 @@ function Module.init(context: Runtime): any
             shot: ShotRecord,
             explicitVariant: string?
         ): ()
-            -- Tag silent-authored shots with their spawn variant so the log
-            -- can compare hit rates per geometry (Front/Through/Top/Behind).
+
             local variant: string? = explicitVariant
             local variantOffset: number = 0
             if not variant
@@ -19638,8 +19104,6 @@ function Module.init(context: Runtime): any
             runtime.aggregates.shots += 1
             runtime.saveDirty = true
 
-            -- A few seconds later the shot either produced a kill (handled by
-            -- the death watcher) or it missed the only plausible target it had.
             task.delay(tuning.killWindowSeconds + 0.5, function(): ()
                 if shot.outcome ~= nil then
                     return
@@ -19693,10 +19157,6 @@ function Module.init(context: Runtime): any
             finalizeShot(shot, nil)
         end
 
-        -- Shots authored by the menu (silent or manual module fires) publish
-        -- an "authoringShot" bridge event at the FireServer moment; they never
-        -- trigger tool.Activated, which is exactly why the collector used to
-        -- see nothing while the user shot with Silent Aim.
         local function recordAuthoredShot(info: any): ()
             if type(info) ~= "table" then
                 return
@@ -19866,9 +19326,7 @@ function Module.init(context: Runtime): any
                     if not (runtime.enabled and tuning.logShots) then
                         return
                     end
-                    -- The menu's authored fires (silent or module) publish a
-                    -- bridge event milliseconds earlier; don't double count
-                    -- the same physical shot from both collectors.
+
                     if os.clock() - runtime.lastAuthoredAt < 0.35 then
                         return
                     end
@@ -19938,7 +19396,7 @@ function Module.init(context: Runtime): any
                     local elapsed: number = now - lastAt
                     if elapsed >= 0.02 then
                         local jumped: number = (position - lastPosition).Magnitude
-                        -- Disregard massive jumps (> 3000 studs) that correspond to MM2 map loading/teleporting
+
                         if jumped > 25 and elapsed < 0.15 and jumped < 3000 then
                             recordMovement("teleport", jumped, {
                                 from = vectorArray(lastPosition),
@@ -20009,20 +19467,17 @@ function Module.init(context: Runtime): any
                             and character:FindFirstChild("UpperTorso")
                             :: BasePart?
                         local anomaly: string? = nil
-                        local magnitude: number = 0
                         if root and head then
                             local offset: number =
                                 (head.Position - root.Position).Magnitude
                             if offset > 3.2 or offset < 0.9 then
                                 anomaly = "headOffset"
-                                magnitude = round2(offset)
                             end
                         end
                         if not anomaly and root and torso then
                             local torsoY: number = torso.Size.Y
                             if torsoY > 2.6 or torsoY < 0.7 then
                                 anomaly = "torsoSize"
-                                magnitude = round2(torsoY)
                             end
                         end
                         if anomaly then
@@ -20310,8 +19765,7 @@ function Module.init(context: Runtime): any
                 end
                 table.clear(runtime.connections)
                 runtime.observedTools = setmetatable({}, {__mode = "k"})
-                -- Without this, re-enabling would skip re-watching players whose
-                -- connections were just disconnected.
+
                 runtime.watchedPlayers = setmetatable({}, {__mode = "k"})
                 if runtime.movementTask then
                     runtime.movementTask:Disconnect()
@@ -20326,8 +19780,7 @@ function Module.init(context: Runtime): any
                     runtime.autosaveTask = nil
                 end
                 if runtime.saveDirty then
-                    -- Turning it off archives the session so the data is
-                    -- never stranded in memory.
+
                     saveSnapshot("disabled")
                 end
                 return
@@ -20415,10 +19868,6 @@ function Module.init(context: Runtime): any
 
     local gameLearning: any = controllerFactory
 
-    -- The game publishes "authoringShot" at the exact FireServer moment for
-    -- every menu-authored shot (silent gun, knife throw, stab). Those never
-    -- trigger tool.Activated, which is exactly why the collector used to
-    -- record nothing while the user shot with Silent Aim.
     if gameBridge and type(gameBridge.onEvent) == "function" then
         gameBridge.onEvent(function(eventType: string, payload: any): ()
             if eventType == "authoringShot" then
@@ -20427,8 +19876,6 @@ function Module.init(context: Runtime): any
         end)
     end
 
-    -- Consecutive saving: flush to disk when the game closes so no session
-    -- is lost to a disconnect or an abrupt exit.
     pcall(function(): ()
         if type((game :: any).BindToClose) == "function" then
             game:BindToClose(function(): ()
@@ -20437,8 +19884,6 @@ function Module.init(context: Runtime): any
         end
     end)
 
-    -- Attaches to the shared "Metrics" card (created by whichever telemetry
-    -- module loads first) so all calibration/learning options live together.
     local GameLearningFeature: any = state.metricsFeature
     if not GameLearningFeature then
         GameLearningFeature = createUniversalFeature(
@@ -21997,8 +21442,7 @@ function Module.init(context: Runtime): any
                 lastUpdate = now
                 local seen: {[Player]: boolean} = {}
                 local count: number = 0
-                -- One refresh per tick: the highlight pass, the murder lookup
-                -- and the role tags below all walk the same snapshot.
+
                 local targets: any = entity:Refresh()
                 for _, target: any in ipairs(targets) do
                     local player: Player = target.Player
@@ -22059,7 +21503,6 @@ function Module.init(context: Runtime): any
                     end
                 end
 
-                -- Murder tag lookup
                 local tagTarget: Player? = nil
                 if card.Options["Murder tag"].Value == true
                     and type(gameBridge.playerRole) == "function" then
@@ -22116,9 +21559,6 @@ function Module.init(context: Runtime): any
                             label.TextStrokeTransparency = 0.3
                             label.Parent = billboard
 
-                            -- The perk icon lives inside the same billboard as
-                            -- the tag text: one adornee, one anchor, so it can
-                            -- never drift into or flicker against the text.
                             local icon: ImageLabel = Instance.new("ImageLabel")
                             icon.Name = "PerkIcon"
                             icon.BackgroundTransparency = 1
@@ -22147,7 +21587,6 @@ function Module.init(context: Runtime): any
                     end
                 end
 
-                -- Perk icon (merged into the Murder tag billboard above)
                 local perkIcon: any = murderTag
                     and murderTag:FindFirstChild("PerkIcon")
                 if card.Options["Show Perk"] and card.Options["Show Perk"].Value == true
@@ -22178,7 +21617,6 @@ function Module.init(context: Runtime): any
                     perkIcon.Visible = false
                 end
 
-                -- Role tags: floating role labels over player heads
                 local roleTagsOption: any = card.Options["Role tags"]
                 if roleTagsOption and roleTagsOption.Value == true
                     and type(gameBridge.playerRole) == "function" then
@@ -22192,7 +21630,7 @@ function Module.init(context: Runtime): any
                             and not protectedTargets.isProtected(player) then
                             local okRole: boolean, role: any = pcall(gameBridge.playerRole, player)
                             if okRole and type(role) == "string" and role ~= "Dead" then
-                                -- FIX: Do not double-tag the murderer if Murder tag is active!
+
                                 if card.Options["Murder tag"].Value == true and (role == "Murderer" or player == tagTarget) then
                                     continue
                                 end
@@ -23030,9 +22468,6 @@ local Module = {
 
 local activeCard: any = nil
 
--- Normalized names of the parts every R6/R15 character rig is built from.
--- Character-shaped models (including display statues of players) are built
--- from these; random props and creature rigs are not.
 local STANDARD_PART_NAMES: {[string]: boolean} = {
     head = true,
     torso = true,
@@ -23057,9 +22492,6 @@ local STANDARD_PART_NAMES: {[string]: boolean} = {
     rightfoot = true,
 }
 
--- A model re-classified more often than this keeps its previous verdict until
--- the burst of changes settles, so a streaming model never turns
--- reclassification into a per-frame cost.
 local VERDICT_COOLDOWN: number = 0.5
 
 local function normalizeName(value: string): string
@@ -23077,12 +22509,6 @@ function Module.init(context: Runtime): any
     local lastStatusAt: number = -math.huge
     local lastSweepAt: number = -math.huge
 
-    -- Tracked models, their resolved root/humanoid, and the structural
-    -- verdict per model: "rig" is a character-shaped model (with or without
-    -- a living Humanoid — display statues count), "creature" merely carries a
-    -- Humanoid, "reject" is neither. Verdicts and rig info are weak so
-    -- destroyed models never leak, and both are only recomputed when the
-    -- model's direct children actually change.
     local bots: {[Model]: boolean} = {}
     local rigInfo: any = setmetatable({}, {__mode = "k"})
     local verdicts: any = setmetatable({}, {__mode = "k"})
@@ -23118,10 +22544,8 @@ function Module.init(context: Runtime): any
         return false
     end
 
-    -- Classification only inspects direct children, which is what a character
-    -- rig is made of, so even huge models cost one GetChildren call.
     local function classify(model: Model): string
-        -- The local Disguise body double is scenery, not an NPC.
+
         if model:GetAttribute("WurstDisguise") == true then
             return "reject"
         end
@@ -23141,15 +22565,13 @@ function Module.init(context: Runtime): any
             end
         end
         if humanoid ~= nil then
-            -- A character model is still a character model when its Humanoid
-            -- is dead or purely decorative; health never gates detection.
+
             if standardParts >= 3 then
                 return "rig"
             end
             return "creature"
         end
-        -- Humanoid-less character structures: display rigs and statues keep
-        -- the standard limbs (and usually their Motor6D joints).
+
         if standardParts >= 4 or (standardParts >= 3 and motors >= 2) then
             return "rig"
         end
@@ -23190,7 +22612,6 @@ function Module.init(context: Runtime): any
         rigInfo[model] = nil
     end
 
-    -- Only the model whose direct children changed needs a fresh look.
     local function invalidate(instance: Instance): ()
         local parent: Instance? = instance.Parent
         if parent and parent:IsA("Model") then
@@ -23206,8 +22627,7 @@ function Module.init(context: Runtime): any
             bots[model] = true
             return
         end
-        -- Prefer the innermost rig so a rig nested inside a wrapper never
-        -- draws two boxes.
+
         for existing: Model in pairs(bots) do
             if existing:IsDescendantOf(model) then
                 return
@@ -23249,8 +22669,6 @@ function Module.init(context: Runtime): any
         end
     end
 
-    -- Models stream in over time; a dirty verdict that no further event
-    -- refreshes is settled here so nothing stays undetected.
     local function sweep(now: number): ()
         for model: any, entry: any in pairs(verdicts) do
             if entry.dirty and now - entry.at >= VERDICT_COOLDOWN then
@@ -23329,8 +22747,7 @@ function Module.init(context: Runtime): any
                         or players:GetPlayerFromCharacter(model) ~= nil then
                         bots[model] = nil
                         render:Release(layer, model)
-                        -- The model turned out to be a player character; pin
-                        -- the verdict so streaming parts do not re-add it.
+
                         verdicts[model] = {verdict = "reject", at = now, dirty = false}
                         continue
                     end
@@ -23342,8 +22759,7 @@ function Module.init(context: Runtime): any
                     end
 
                     if verdict == "creature" and not includeCreatures then
-                        -- Not tracked right now; make sure nothing is left
-                        -- over from a previous frame and move on.
+
                         render:Release(layer, model)
                         continue
                     end
@@ -23366,9 +22782,7 @@ function Module.init(context: Runtime): any
                         drawing:Show(false)
                         continue
                     end
-                    -- Creatures are living things, so a dead one stops
-                    -- counting; character rigs stay visible whatever their
-                    -- Humanoid says.
+
                     if verdict == "creature"
                         and info.humanoid
                         and info.humanoid.Health <= 0 then
@@ -23842,16 +23256,12 @@ function Module.render(
 
         local rect: any = render:ModelRect(resolvedCamera, entity.Character)
 
-        -- Mark the player as seen before the rect check: a target that is
-        -- momentarily behind the camera or off-screen must keep its pooled
-        -- drawing (hidden) instead of being released and rebuilt every frame.
         seen[player] = true
         pool[player] = true
         local drawings: any = render:Set(container, player)
 
         if not rect then
-            -- Behind the camera or fully outside the viewport: hide instead
-            -- of leaving the previous frame's box frozen on screen.
+
             drawings:Show(false)
             continue
         end
@@ -24748,9 +24158,6 @@ function Module.init(context: Runtime): any
 
     local tuning: any = calibration.tuning
 
-    -- One shared "Metrics" card: projectile analytics, game learning and the
-    -- per-game calibration all attach their options to it (whoever loads
-    -- first creates it; the rest attach through state.metricsFeature).
     local ProjectileCalibrationFeature: any = state.metricsFeature
     if not ProjectileCalibrationFeature then
         ProjectileCalibrationFeature = createUniversalFeature(
@@ -28582,8 +27989,6 @@ function Module.init(context: any): any
     local hudSignature: string = ""
     local hudElapsed: number = 0
 
-    -- By default the hack list is only visible while the menu is open; the
-    -- "Show" toggle in the HackList window keeps it on screen permanently.
     local hudAlways: boolean = configData.states["HackList.Show"] == true
         or configData.states["ClickGUI.ShowHackList"] == true
     local hudVisible: boolean = hudAlways or state.visible == true
@@ -31371,9 +30776,6 @@ function Module.init(context: any): any
         raiseOpen(windowsRecord)
     end
 
-    -- Hidden windows must stay hidden on the next join too: the saved
-    -- "ClickGUI.Windows.<name>" states have to be re-applied at boot,
-    -- without opening the Windows panel first.
     local function applySavedWindowVisibility(): boolean
         local clickGui: any = state.clickGui
         if not clickGui or type(clickGui.order) ~= "table" then
@@ -31397,8 +30799,7 @@ function Module.init(context: any): any
     end
 
     task.spawn(function(): ()
-        -- Category windows appear as modules register, so keep re-applying
-        -- the saved visibility for a while; it is idempotent and cheap.
+
         for _ = 1, 15 do
             applySavedWindowVisibility()
             task.wait(1)
@@ -31699,9 +31100,6 @@ function Module.init(context: any): any
         or GAME_CHECK.BedFightActive and "BedFight"
         or "Universal only"
 
-    -- Keybinds and Windows live as rows inside UI Settings only; registering
-    -- them here as well duplicated the whole UI Settings window inside
-    -- Wurst Options.
     reinjectHandle = state.wurstOptions.RegisterAction(
         "Reinject", "Reinject latest", runReinject
     )
@@ -35679,11 +35077,6 @@ function Module.init(context: any): EntityLibrary
         return teamToken(localPlayer)
     end
 
-    -- A game module may publish a resolver that knows how that game splits
-    -- players into sides. Murderers VS Sheriffs Duels leaves every Player
-    -- Neutral and keeps the side in match data, so the Teams-service lookup
-    -- below answers "nobody is a teammate" there and the ESP painted the whole
-    -- server as an enemy. The provider always wins when it has an answer.
     local function teamResolver(): any
         local hostState: any = host.state
         if hostState and hostState.gameBridge then
@@ -35725,9 +35118,6 @@ function Module.init(context: any): EntityLibrary
             end
         end
 
-        -- Without a game-specific resolver the Neutral guard stays: a game that
-        -- uses Teams for something else (or not at all) must not report every
-        -- player as a teammate just because two tokens happen to match.
         if provider == nil
             and (player.Neutral == true or localPlayer.Neutral == true) then
             return false
@@ -35770,8 +35160,7 @@ function Module.init(context: any): EntityLibrary
         if players:GetPlayerFromCharacter(model) ~= nil then
             return false
         end
-        -- The local Disguise body double is the local player's own stand-in,
-        -- never an NPC to target.
+
         if model:GetAttribute("WurstDisguise") == true then
             return false
         end
@@ -37082,7 +36471,7 @@ local Manifest: Manifest = {
         "src/guis/Wurst/Code/Furniture.lua",
     },
     modules = {
-        -- Render
+
         {
             path = "src/games/universal/Render/ItemRender.lua",
             name = "ItemESP",
@@ -37134,7 +36523,6 @@ local Manifest: Manifest = {
             category = "Render",
         },
 
-        -- Combat
         {
             path = "src/games/universal/Combat/KillAura.lua",
             name = "Killaura",
@@ -37146,14 +36534,12 @@ local Manifest: Manifest = {
             category = "Combat",
         },
 
-        -- Blatant
         {
             path = "src/games/universal/Blatant/Invisible.lua",
             name = "Invisible",
             category = "Blatant",
         },
 
-        -- Movement
         {
             path = "src/games/universal/Movement/Speed.lua",
             name = "Speed",
@@ -37220,14 +36606,12 @@ local Manifest: Manifest = {
             category = "Movement",
         },
 
-        -- Fun
         {
             path = "src/games/universal/Fun/SpinBot.lua",
             name = "SpinBot",
             category = "Fun",
         },
 
-        -- Other
         {
             path = "src/games/universal/Other/Disguise.lua",
             name = "Disguise",
@@ -37717,11 +37101,7 @@ function Module.init(context: any): RenderLibrary
     end
 
     function library:Project(camera: Camera, position: Vector3): Vector2?
-        -- The host ScreenGui has IgnoreGuiInset = true, so drawings live in raw
-        -- viewport pixel space and WorldToViewportPoint is the matching projection.
-        -- Points merely outside the viewport still project so skeleton lines
-        -- keep their bearings at the screen edge; only points behind the
-        -- camera are rejected.
+
         local point: Vector3 = camera:WorldToViewportPoint(position)
         if point.Z <= 0 then
             return nil
@@ -37729,11 +37109,6 @@ function Module.init(context: any): RenderLibrary
         return Vector2.new(point.X, point.Y)
     end
 
-    -- Builds a screen rectangle from world sample points. Points behind the
-    -- camera are dropped, the rest contribute to the bounds, and the final
-    -- rectangle is clamped to the viewport so a target that is merely close
-    -- can never produce a box larger than the screen. Models that are fully
-    -- off-screen return nil so callers can hide their drawings cleanly.
     local function rectFromPoints(
         camera: Camera,
         viewport: Vector2,
@@ -37800,8 +37175,7 @@ function Module.init(context: any): RenderLibrary
         local root: BasePart? = model:FindFirstChild("HumanoidRootPart") :: BasePart?
             or model.PrimaryPart
         if humanoid and root then
-            -- Character rig: anchor directly to top of head and bottom of feet
-            -- so the box perfectly wraps the visible avatar without floating above it.
+
             local head: BasePart? = model:FindFirstChild("Head") :: BasePart?
             local rootPosition: Vector3 = root.Position
             local topPosition: Vector3 = head
@@ -37831,10 +37205,6 @@ function Module.init(context: any): RenderLibrary
             }, 0.38)
         end
 
-        -- Anything without a live humanoid rig: take the engine-side bounding
-        -- box and project its eight corners. One engine call and eight
-        -- projections, instead of walking and projecting every descendant
-        -- part each frame.
         local boundsOk: boolean, boundsCFrame: any, boundsSize: any =
             pcall(model.GetBoundingBox, model)
         if not boundsOk or typeof(boundsSize) ~= "Vector3" or boundsSize.Magnitude <= 0 then

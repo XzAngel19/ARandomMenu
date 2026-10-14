@@ -19,8 +19,6 @@ function Module.init(runtime: any): any
     local findSheriff: any = core.findSheriff
     local mm2Settings: any = core.mm2Settings
 
-    -- The latch lives here now: the core only reports "the round has roles",
-    -- every announcement feature decides on its own what to do with that.
     local roleNotificationSent: boolean = false
 
     local function announceRoles(): ()
@@ -53,8 +51,7 @@ function Module.init(runtime: any): any
         if not enabled then
             return
         end
-        -- Enabled mid-round: say it once right away instead of waiting for the
-        -- next PlayerDataChanged push.
+
         if not roleNotificationSent and findMurderer() and findSheriff() then
             announceRoles()
         end

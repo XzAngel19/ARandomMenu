@@ -51,10 +51,7 @@ pcall(function()
         "GetCurrentPlayerData"
     )
     if getCurrentPlayerData and getCurrentPlayerData:IsA("RemoteFunction") then
-        -- Do not InvokeServer while the module is still wiring its listeners.
-        -- A yielding server response used to leave RoundStart disconnected long
-        -- enough to miss the event that should prime the ESP. The first fetch is
-        -- queued after every role/lifecycle signal below is ready.
+
         mm2RoleRemote = getCurrentPlayerData
     end
 end)
@@ -70,15 +67,10 @@ local mm2Settings = {
     predictionRtt = 0.08,
     gunLeadBias = 0,
     autoTuneLead = false,
-    -- How often the Shoot motion tracker samples the target (acceleration +
-    -- heading stability). 60 Hz matches the engine step; going higher cannot
-    -- help because MM2 only replicates remote characters at ~20 Hz, so there
-    -- is no new information to read past the replication cadence.
+
     motionSampleHz = 60,
     silentSweep = 0.5,
-    -- Where the silent bullet is authored: "Front" (shooter's side of the
-    -- torso), "Through" (pierces the torso), "Top" (old, 1.6 above), "Behind"
-    -- (far side). The Spawn A/B status measures which actually scores.
+
     silentSpawn = "Front",
     getGunKey = Enum.KeyCode.G,
     instantRoleNotify = false,
@@ -88,9 +80,7 @@ local mm2Settings = {
     roleEspInnocent = false,
     roleEspMurderer = false,
     roleEspSheriff = false,
-    -- Bright, saturated role palette: the dark greens/reds were nearly
-    -- invisible through walls and indistinguishable from the default white
-    -- fallback.
+
     innocentColor = Color3.fromRGB(0, 255, 8),
     innocentTransparency = 0.62,
     deadColor = Color3.fromRGB(170, 170, 180),
@@ -110,8 +100,6 @@ local mm2Settings = {
     trapColor = Color3.fromRGB(145, 25, 25),
     trapTransparency = 0.7,
 
-    -- Yellow, like the user asked: the gun tag now uses the same bare-text
-    -- style as the Murder tag and the yellow reads clearly against both.
     gunColor = Color3.fromRGB(255, 215, 0),
     gunTransparency = 0.55,
     autoPlayId = "",
@@ -194,16 +182,6 @@ local function isPlayerAlive(player: Player): boolean
     return humanoid ~= nil and humanoid.Health > 0
 end
 
-local function findMM2Role(toolName: string, excludedPlayer: Player?): Player?
-    for _, player: Player in ipairs(Players:GetPlayers()) do
-        if player ~= excludedPlayer
-            and isPlayerAlive(player)
-            and getPlayerWeapon(player, toolName) then
-            return player
-        end
-    end
-    return nil
-end
 
 local function playerFromRoundKey(key: any, data: any): Player?
     if typeof(key) == "Instance" and key:IsA("Player") then
@@ -220,9 +198,7 @@ local function playerFromRoundKey(key: any, data: any): Player?
         if data.Name then
             local namedFromData: Instance? =
                 Players:FindFirstChild(tostring(data.Name))
-            -- Only upgrade the match: when the payload carries a stale or
-            -- renamed entry we must keep whatever the key already resolved to,
-            -- otherwise the role is lost and the ESP falls back to white.
+
             if namedFromData and namedFromData:IsA("Player") then
                 player = namedFromData :: Player
             end
@@ -258,8 +234,6 @@ local function getRoundRole(player: Player): string?
     return nil
 end
 
--- Feature modules (Blurt Roles, Instant Role Notify, Role Tags, ...) subscribe
--- to one event instead of polling role data on their own.
 local roundRolesListeners: {(boolean) -> ()} = {}
 local publishedRoundRolesActive: boolean = false
 local function emitRoundRoles(active: boolean): ()
@@ -270,9 +244,7 @@ local function emitRoundRoles(active: boolean): ()
 end
 local function onRoundRoles(listener: (boolean) -> ()): () -> ()
     table.insert(roundRolesListeners, listener)
-    -- A role snapshot may have arrived while the loader was still downloading
-    -- this feature file. Replay the latest state instead of waiting for another
-    -- server event.
+
     task.defer(function(): ()
         if table.find(roundRolesListeners, listener) then
             pcall(listener, publishedRoundRolesActive)
@@ -286,8 +258,6 @@ local function onRoundRoles(listener: (boolean) -> ()): () -> ()
     end
 end
 
--- Forward declared: role refreshes invalidate the index when fresh server data
--- lands, and the index itself is defined below requestRoleRefresh.
 local invalidateRoleCaches: () -> ()
 local rebuildRoleIndex: () -> ()
 
@@ -317,18 +287,6 @@ local function requestRoleRefresh(force: boolean?): ()
     end)
 end
 
--- ---------------------------------------------------------------------------
--- Role index
---
--- Every visual (ESP, Chams, Role Tags) asks for roles once per player per
--- frame. Resolving a role used to walk that player's character and backpack,
--- and `roundRolesKnown` walked *every* player's backpack on top of that, so a
--- 12 player server cost hundreds of Instance traversals per frame and the game
--- crawled. Now a single pass fills this index, and it is only rebuilt when
--- something that can change a role actually happens: a tool appears or leaves
--- a backpack/character, a character spawns or dies, or the server pushes new
--- round data. Reads are plain table lookups.
--- ---------------------------------------------------------------------------
 local roleIndex: {
     roles: {[Player]: string?},
     murderer: Player?,
@@ -342,16 +300,11 @@ local roleWatchers: {[Player]: {RBXScriptConnection}} = {}
 
 function invalidateRoleCaches(): ()
     roleIndexDirty = true
-    -- The generic Player ESP renders every frame, but Wurst memoises its role
-    -- bridge for one frame. Drop that memo on the actual MM2 signal so even
-    -- that single stale frame disappears.
+
     if type(state.clearRoleMemo) == "function" then
         state.clearRoleMemo()
     end
 
-    -- Coalesce the burst of ChildAdded/CollisionGroup events produced while a
-    -- character is assembled, then publish the complete index before the next
-    -- rendered frame. Consumers no longer wait for their own polling interval.
     if roleIndexRefreshQueued then
         return
     end
@@ -376,8 +329,6 @@ local function hasMurdererCollisionGroup(character: Model?): boolean
     return false
 end
 
--- One pass over the round payload so the per-player loop below does not have
--- to re-scan it (and re-resolve names to Players) for every single player.
 local function buildRoundRoleMap(): {[Player]: string}
     local map: {[Player]: string} = {}
     for key: any, data: any in pairs(mm2RoundData) do
@@ -428,8 +379,7 @@ rebuildRoleIndex = function(): ()
 
         if resolved then
             special[player] = resolved
-            -- Prefer a living candidate, but keep a dead one rather than none
-            -- (a corpse still tells the ESP who the murderer was).
+
             if resolved == "Murderer" then
                 if not murderer or (isAlive and not alive[murderer]) then
                     murderer = player
@@ -442,8 +392,6 @@ rebuildRoleIndex = function(): ()
         end
     end
 
-    -- "Roles are known" means the round actually handed something out. Only
-    -- then can an unarmed, living player be called an innocent by elimination.
     local rolesKnown: boolean = next(special) ~= nil
     if roundLifecycleActive == false then
         rolesKnown = false
@@ -483,8 +431,7 @@ rebuildRoleIndex = function(): ()
     roleIndex.rolesKnown = rolesKnown
 
     if rolesChanged then
-        -- Player ESP sees the new palette on its next render; throttled visual
-        -- consumers receive roleUpdate and can bypass their normal interval.
+
         if type(state.invalidateGameRoles) == "function" then
             state.invalidateGameRoles()
         elseif type(state.clearRoleMemo) == "function" then
@@ -493,16 +440,13 @@ rebuildRoleIndex = function(): ()
         emitRoundRoles(rolesKnown)
     end
 
-    -- Round is live but nothing has been handed out yet: ask the server once
-    -- rather than spinning on backpack scans every frame.
     if not rolesKnown and roundLifecycleActive ~= false then
         requestRoleRefresh()
     end
 end
 
 local function ensureRoleIndex(): ()
-    -- The 1s sweep is only a safety net for changes with no signal attached
-    -- (collision group swaps, for instance); the dirty flag does the real work.
+
     if roleIndexDirty or os.clock() - roleIndexAt > 1 then
         rebuildRoleIndex()
     end
@@ -521,9 +465,6 @@ local function unwatchPlayer(player: Player): ()
     end
 end
 
--- Cheap signals instead of polling: the index is marked dirty the instant a
--- knife or gun is handed out, which is what makes the ESP colour correctly on
--- the very first frame of the round instead of up to a second later.
 local function watchPlayer(player: Player): ()
     unwatchPlayer(player)
     local connections: {RBXScriptConnection} = {}
@@ -534,9 +475,7 @@ local function watchPlayer(player: Player): ()
             return
         end
         watchedTools[tool] = true
-        -- Roblox can parent a Tool before its Shoot/Events descendants finish
-        -- replicating. Observe that assembly too; otherwise the first scan can
-        -- reject the weapon and the ESP waits for the 1 s safety sweep.
+
         table.insert(
             connections,
             tool.DescendantAdded:Connect(invalidateRoleCaches)
@@ -690,15 +629,12 @@ local function findSheriff(): Player?
         or findPlayerByRoundRole("Hero")
 end
 
-
 local MM2_MAP_COIN_CONTAINERS: {string} = {
     "CoinContainer",
     "CoinAreas",
     "Coins",
 }
 
--- The current map parents its lobby under "MainLobby"/"RegularLobby"; the
--- older "Lobby" name is kept for the places that still use it.
 local LOBBY_MODEL_NAMES: {string} = {
     "Lobby",
     "MainLobby",
@@ -726,12 +662,6 @@ local function isMM2MapModel(object: Instance): boolean
     return false
 end
 
--- Gun ESP, Auto Get Gun, Loop Interact and Silence all ask for the map
--- several times a second, so the answer is cached until the model it points
--- at goes away. The first scan only touches top level children; the fallback
--- still walks the map subtree once for CoinSpawn on old maps, but on the
--- current map (no CoinSpawn anywhere) it stops at the top level "Spawns"
--- check.
 local mm2MapCache: {map: Instance?, at: number} = {map = nil, at = -math.huge}
 
 local function findMM2MapUncached(): Instance?
@@ -741,11 +671,6 @@ local function findMM2MapUncached(): Instance?
         end
     end
 
-    -- The current map no longer ships CoinSpawn (or any coin container), so a
-    -- direct "Spawns" child is the map marker that still survives (old maps
-    -- had it too, alongside CoinSpawn). detectRoundPhase re-checks the
-    -- player's actual parentage before trusting this, so a map model that
-    -- lingers in the lobby cannot flip the phase.
     for _, object: Instance in ipairs(workspace:GetChildren()) do
         if object:IsA("Model")
             and not isLobbyName(object.Name)
@@ -769,10 +694,6 @@ local function findMM2Map(): Instance?
     return mm2MapCache.map
 end
 
--- Full workspace:GetDescendants() every half second was the single most
--- expensive thing the MM2 module did; on a loaded map that is tens of
--- thousands of instances. Cheap lookups first, the exhaustive sweep at most
--- once every three seconds, and the answer cached while it stays valid.
 local droppedGunCache: {gun: (Model | BasePart)?, at: number} =
     {gun = nil, at = -math.huge}
 local lastGunSweepAt: number = -math.huge
@@ -784,7 +705,7 @@ local function isLooseGun(object: Instance): boolean
     if object.Name ~= "Gun" and not CollectionService:HasTag(object, "Weapon_Gun") then
         return false
     end
-    -- A gun inside a character or a backpack is owned, not dropped.
+
     return object:IsDescendantOf(workspace)
         and not object:FindFirstAncestorOfClass("Backpack")
         and (object.Parent == workspace or object.Parent == findMM2Map()
@@ -899,9 +820,6 @@ local function createMM2Marker(folder, adornee, labelText, color, transparency)
         billboardReference.Value = billboard
         billboardReference.Parent = folder
 
-        -- Same recipe as the Chams "Murder" tag: bare bold text with a black
-        -- stroke, tinted with the marker colour (yellow for the gun). No box,
-        -- no accent bar - the two tags now read as one visual family.
         local text = Instance.new("TextLabel")
         text.BackgroundTransparency = 1
         text.BorderSizePixel = 0
@@ -1009,10 +927,7 @@ if mm2GameplayRemotes then
             if type(newData) ~= "table" or roundLifecycleActive == false then
                 mm2RoundData = {}
             else
-                -- MM2 pushes partial payloads (often a single player's entry).
-                -- Replacing the table wholesale erased every other role and
-                -- left the ESP/Chams colourless, so merge instead. The table is
-                -- cleared on RoundStart/RoundEndFade, never left stale.
+
                 for key: any, value: any in pairs(newData) do
                     mm2RoundData[key] = value
                 end
@@ -1023,8 +938,6 @@ if mm2GameplayRemotes then
     end
 end
 
--- Forward declared: the round phase machine below assigns these, and the
--- lifecycle handlers here already need them.
 local primeRoundState: () -> ()
 local setRoundPhase: (string, string) -> ()
 local lastPhase: string = "unknown"
@@ -1049,9 +962,7 @@ if timerRoundStart and timerRoundStart:IsA("RemoteEvent") then
             end
             roleRefreshGeneration += 1
             if duration and duration > 0 then
-                -- Roles are handed out at the top of the round. Ask for them
-                -- right now (and again a few times while they are missing)
-                -- instead of waiting for the first PlayerDataChanged push.
+
                 primeRoundState()
                 lastPhase = "map"
                 setRoundPhase("map", "RoundStart")
@@ -1078,21 +989,6 @@ if timerRoundEnd and timerRoundEnd:IsA("RemoteEvent") then
     end)
 end
 
--- ---------------------------------------------------------------------------
--- Round phase
---
--- RoundStart/RoundEndFade are the only lifecycle signals the game sends, and
--- both are missed when Wurst finishes booting after they fired (a mid-round
--- join, or a teleport into a round that was already running). Everything that
--- depends on "are we in a round" then sat on a stale answer: the ESP had no
--- roles, the timer had no countdown, and nothing re-asked until the next
--- RoundStart.
---
--- The map model is the ground truth the teleport actually changes: MM2 parents
--- the round map while you are playing and leaves only the Lobby otherwise. So
--- the phase is derived from where your character stands, debounced, and every
--- transition re-primes the round state on the spot.
--- ---------------------------------------------------------------------------
 local roundPhase: string = "unknown"
 local roundPhaseListeners: {(string, string) -> ()} = {}
 
@@ -1143,9 +1039,7 @@ local function detectRoundPhase(): string
     if not root then
         return "lobby"
     end
-    -- Check the lobby by the player's actual parentage first: a round map model
-    -- can linger in workspace after a round, and trusting its presence over the
-    -- player's location would report "map" while standing in the lobby.
+
     local lobby: Instance? = findLobbyModel()
     if lobby and root:IsDescendantOf(lobby) then
         return "lobby"
@@ -1153,19 +1047,16 @@ local function detectRoundPhase(): string
     if findMM2Map() then
         return "map"
     end
-    -- Standing in neither (mid-teleport): trust the last known phase, not flap.
+
     return roundPhase == "map" and "map" or "lobby"
 end
 
--- One fresh role fetch per transition, plus a short retry ladder for the rounds
--- where the server hands the payload out a beat after the teleport.
 primeRoundState = function(): ()
     roleRefreshGeneration += 1
     local generation: number = roleRefreshGeneration
     requestRoleRefresh(true)
     task.spawn(function(): ()
-        -- Two retries cover the rounds where the server hands the payload out a
-        -- beat after the teleport; more is belt-and-suspenders (YAGNI).
+
         for _, delay: number in ipairs({0.2, 0.6}) do
             task.wait(delay)
             if generation ~= roleRefreshGeneration or roundRolesKnown() then
@@ -1190,9 +1081,7 @@ featureConnections.MM2RoundPhase = TaskManager:Connect(function(deltaTime: numbe
     end
     lastPhase = phase
     if phase == "map" then
-        -- Teleported into a round: the round payload from the previous map is
-        -- worthless and RoundStart may never fire for us, so treat the round as
-        -- live now and pull the roles immediately.
+
         mm2RoundData = {}
         roundLifecycleActive = true
         invalidateRoleCaches()
@@ -1209,18 +1098,6 @@ featureConnections.MM2RoundPhase = TaskManager:Connect(function(deltaTime: numbe
 end)
 setRoundPhase(lastPhase, "boot")
 
--- ---------------------------------------------------------------------------
--- Round clock
---
--- The live countdown used to be published on workspace.RoundTimerPart as a
--- "Time" attribute, but the current map no longer ships that part at all, so
--- a mid-round join (RoundStart missed) left the clock with no source. The
--- game still draws the exact same number in its own HUD label
--- (PlayerGui.MainGUI.Game.Timer), which is the fallback authority here: read,
--- parsed, and re-anchored from the text the player is already seeing. Source
--- priority: RoundTimerPart attribute (when a map still has it) > HUD label >
--- the one-shot RoundStart anchor.
--- ---------------------------------------------------------------------------
 local roundTimerPartCache: {part: Instance?, at: number} =
     {part = nil, at = -math.huge}
 
@@ -1266,14 +1143,12 @@ local function findHudTimerLabel(): Instance?
     local mainGui: Instance? = playerGui and playerGui:FindFirstChild("MainGUI")
     local gameFrame: Instance? = mainGui and mainGui:FindFirstChild("Game")
     local frame: Instance? = gameFrame and gameFrame:FindFirstChild("Timer")
-    -- If the expected path was restructured, fall back to a "Timer" frame
-    -- anywhere under MainGUI (still bounded, and only runs once a second).
+
     if not frame then
         frame = mainGui and mainGui:FindFirstChild("Timer", true)
     end
     hudTimerCache.frame = (frame and frame:IsA("GuiObject")) and frame or nil
-    -- MM2 has renamed this label across updates, so take the first TextLabel
-    -- in the frame instead of trusting a single name.
+
     local label: Instance? = frame
         and (frame:FindFirstChild("XPText")
             or frame:FindFirstChild("Timer")
@@ -1282,8 +1157,6 @@ local function findHudTimerLabel(): Instance?
     return hudTimerCache.label
 end
 
--- Accepts the formats MM2 has used for the HUD countdown: "1:32", "1:32s",
--- plain seconds "32" / "32s", with optional surrounding whitespace.
 local function parseHudTimerSeconds(text: string?): number?
     if type(text) ~= "string" or text == "" then
         return nil
@@ -1300,9 +1173,7 @@ local function parseHudTimerSeconds(text: string?): number?
 end
 
 local function isHudTimerVisible(label: Instance): boolean
-    -- In the lobby the game hides its timer frame; a hidden frame still
-    -- holding last round's text would resurrect a finished round, so the
-    -- game's own visibility doubles as the "round is live" check.
+
     local ancestor: Instance? = label
     while ancestor do
         if ancestor:IsA("GuiObject") and ancestor.Visible == false then
@@ -1340,15 +1211,11 @@ featureConnections.MM2RoundClock = TaskManager:Connect(function(deltaTime: numbe
     local remaining: number? = readRoundTimerPartSeconds()
         or readHudTimerSeconds()
     if not remaining or roundPhase == "lobby" then
-        -- In the lobby the part (or last round's label text) is usually still
-        -- holding a positive number; believing it would resurrect a finished
-        -- round.
+
         lastAttributeRemaining = nil
         return
     end
-    -- A frozen source must not pin the clock: only treat it as the authority
-    -- while it is actually counting down. The HUD label ticks every second,
-    -- the part attribute ticks continuously - both pass this gate while live.
+
     if lastAttributeRemaining == nil
         or math.abs(remaining - lastAttributeRemaining) > 0.01 then
         lastAttributeChangeAt = os.clock()
@@ -1363,9 +1230,6 @@ featureConnections.MM2RoundClock = TaskManager:Connect(function(deltaTime: numbe
     end
 end)
 
--- All server pushes and lifecycle events are connected before this asynchronous
--- snapshot starts. Loading Wurst during an active round now paints ESP as soon
--- as GetCurrentPlayerData answers without ever blocking or missing RoundStart.
 requestRoleRefresh(true)
 
 type MotionSample = {
@@ -1465,35 +1329,6 @@ local function getEstimatedLatency(): number
     )
 end
 
--- ---------------------------------------------------------------------------
--- Shot lead
---
--- MM2's gun is a hitscan: the server scores the ray we hand it against the
--- target's position at the instant it processes the shot. The lead time is the
--- real time that elapses between the target frame we can see and the target
--- frame the server scores, and every term is a nameable delay:
---
---   HORIZON = roundTrip + staleness + serverStep
---
---   roundTrip  the FULL measured round trip. The copy we aim from is already one
---              network hop old (the server sent it rtt/2 ago), and our shot
---              spends another rtt/2 reaching the server, so the target keeps
---              moving for the whole round trip in between. An earlier version
---              used rtt/2 here and under-led by rtt/2: invisible at 20 ms, but a
---              visible miss behind the target at 100 ms+.
---   staleness  on top of network latency, the replicated copy we read is half a
---              replication interval old on average.
---   serverStep the server scores the ray on its next frame, up to one frame
---              away. Half a frame is the expected value.
---
--- `gunLeadBias` stays as the single calibration knob: the telemetry module can
--- measure a constant residual and fold it in here instead of anyone inventing a
--- second formula. The horizon is capped so a 900 ms round trip cannot ask for a
--- half second of extrapolation; past that point the turn discount below is what
--- keeps the shot honest, not the cap.
--- ---------------------------------------------------------------------------
--- Luau infers the field types from the literals; the explicit annotation was
--- redundant (KISS).
 local GUN_LEAD = {
     replicationRate = 20,
     serverFrame = 1 / 60,
@@ -1501,16 +1336,13 @@ local GUN_LEAD = {
     maximumHorizon = 0.45,
     maximumManualBias = 0.1,
     maximumAutoCorrection = 0.1,
-    -- If no motion sample exists yet, assume a brisk 90 degree/second turn.
+
     defaultTurnRate = math.pi * 0.5,
     maxTurnRate = math.pi * 1.5,
     turnRatePerInstability = 6,
 }
 local autoLeadCorrection: number = 0
 
--- The manual slider and the hit-confirmed calibration are separate terms. This
--- keeps the visible setting truthful instead of silently rewriting the user's
--- slider value after a hit.
 local function getActiveAutoLeadCorrection(): number
     return mm2Settings.autoTuneLead and autoLeadCorrection or 0
 end
@@ -1529,7 +1361,7 @@ local function getGunHorizonSeconds(): number
             measuredAcceptance = (est.gunAcceptanceMs :: number) / 1000
         end
     end
-    -- Use empirically measured server rewind/acceptance latency from calibration when available (defaults to confirmed 200ms baseline)
+
     local latencyTime: number = measuredAcceptance or math.max(getEstimatedLatency(), 0.200)
     local staleness: number = 1 / (2 * GUN_LEAD.replicationRate)
     local manualBias: number = math.clamp(
@@ -1554,12 +1386,6 @@ local function getGunHorizonSeconds(): number
     )
 end
 
--- Fraction of the constant-velocity lead that is still worth believing after
--- `horizon` seconds. A target can turn, and the expected projection of a turn
--- of theta onto the heading we measured is cos(theta / 2), so the lead shrinks
--- with the horizon at a rate set by how unstable the target's motion actually
--- is. The companion error term (see the Shoot solver) is the part of that turn
--- the discount does not pay for.
 local function getGunTurnRate(stability: number?): number
     if type(stability) ~= "number" then
         return GUN_LEAD.defaultTurnRate
@@ -1572,8 +1398,7 @@ local function getGunTurnRate(stability: number?): number
 end
 
 local function getGunTurnDiscount(horizon: number, turnRate: number?): number
-    -- `turnRate` is already a rate in radians/second (see getGunTurnRate); do not
-    -- convert it again. Nil means "no reading", which falls back to the default.
+
     local rate: number = turnRate or GUN_LEAD.defaultTurnRate
     return math.clamp(
         math.cos(math.min(horizon * rate * 0.5, math.pi * 0.5)),
@@ -1583,8 +1408,7 @@ local function getGunTurnDiscount(horizon: number, turnRate: number?): number
 end
 
 local function getGunLeadSensitivity(horizon: number, turnRate: number?): number
-    -- Derivative of horizon * turnDiscount with respect to a time correction.
-    -- The tuner skips samples where the turn model has flattened or reversed.
+
     local rate: number = turnRate or GUN_LEAD.defaultTurnRate
     local angle: number = horizon * rate * 0.5
     if angle >= math.pi * 0.5 then
@@ -1620,9 +1444,6 @@ local function getGunOriginCFrame(character: Model, gun: Tool?): CFrame?
         return attachment.WorldCFrame
     end
 
-    -- The attachment only exists while the gun is fully replicated. Without a
-    -- fallback the whole shot aborted with "unavailable or obstructed", so walk
-    -- the same chain the real client would: muzzle, hand, head, camera.
     if gun then
         for _, partName: string in ipairs({"Muzzle", "Handle"}) do
             local part: Instance? = gun:FindFirstChild(partName)
@@ -1805,10 +1626,6 @@ local function createTrajectoryCalibration(): any
         return value == value and value > -math.huge and value < math.huge
     end
 
-    -- Welford merge: fold `stored` (the on-disk aggregate from previous
-    -- saves/sessions) into `current`. Enables consecutive accumulation:
-    -- leaving the game and coming back extends the statistics instead of
-    -- replacing them.
     local function mergeStatsPayload(
         current: {[string]: number},
         stored: any
@@ -2429,10 +2246,7 @@ local function createTrajectoryCalibration(): any
             warn(trajectoryLogPrefix .. " writefile is unavailable; data was not saved.")
             return false
         end
-        -- Consecutive accumulation: fold only this save's NEW samples and
-        -- events into whatever previous sessions already wrote, then adopt
-        -- the merged totals as the running history. Leaving the game (or the
-        -- 0.8 s autosave) therefore extends the file instead of resetting it.
+
         local stored: any = nil
         if type(environment.readfile) == "function" then
             local okRead: boolean, existingRaw: any = pcall(
@@ -2563,8 +2377,7 @@ local function createTrajectoryCalibration(): any
             warn(trajectoryLogPrefix .. " writefile failed: " .. tostring(writeError))
             return false
         end
-        -- Adopt the merged totals as the running history and start a fresh
-        -- delta, so the next save only folds in genuinely new samples.
+
         applyStatsPayload(runtime.gunAcceptance, mergedGun)
         applyStatsPayload(runtime.knifeSpeed, mergedKnife)
         applyStatsPayload(runtime.knifeSpawnDelay, mergedDelay)
@@ -3081,9 +2894,6 @@ local function createTrajectoryCalibration(): any
         print(trajectoryLogPrefix .. " Passive calibration started in the background.")
     end
 
-    -- Drop the working history so the next capture starts clean. Shared by the
-    -- manual save (snapshot then clear) and the explicit reset (clear then
-    -- snapshot an empty file).
     local function clearHistory(): ()
         runtime.gunAcceptance = newStats()
         runtime.knifeSpeed = newStats()
@@ -3123,10 +2933,6 @@ local function createTrajectoryCalibration(): any
         return estimates()
     end
 
-    -- Called by the module-shot authors (Shoot silent/manual, KnifeThrow,
-    -- KnifeAura stabs) at the exact FireServer moment. Those shots never
-    -- trigger tool.Activated, so without this the calibration would never see
-    -- them and gun-acceptance / knife-speed / stab ranges would stay empty.
     function controller:noteAuthoredShot(info: any): ()
         if not runtime.active or type(info) ~= "table" then
             return
@@ -3174,9 +2980,7 @@ local function createTrajectoryCalibration(): any
             if typeof(info.tool) == "Instance" and info.tool:IsA("Tool") then
                 authoredTool = info.tool :: Tool
             end
-            -- Knife matching indexes pending.tool directly (HandleLink), so a
-            -- knife pending without a tool is both useless and a crash; a gun
-            -- pending works without a tool (the origin match covers it).
+
             if isGun or authoredTool ~= nil then
                 if isGun then
                     runtime.sessionGunAttempts += 1
@@ -3200,9 +3004,7 @@ local function createTrajectoryCalibration(): any
                 ensureTrajectorySampler()
             end
         end
-        -- Publish through the game bridge so the universal Game Learning log
-        -- records the same authored shot (silent shots are otherwise
-        -- invisible to any tool.Activated-based collector).
+
         if type(state.emitGameBridgeEvent) == "function" then
             state.emitGameBridgeEvent("authoringShot", {
                 kind = kind,
@@ -3268,8 +3070,6 @@ local trajectoryCalibration: any = createTrajectoryCalibration()
 state.mm2TrajectoryCalibration = trajectoryCalibration
 trajectoryCalibration:start()
 
--- Consecutive saving: flush the accumulated calibration to disk the moment
--- the player leaves the game, so no session is ever lost to a disconnect.
 pcall(function(): ()
     if type((game :: any).BindToClose) == "function" then
         game:BindToClose(function(): ()
@@ -3290,18 +3090,15 @@ type PendingShot = {
     healthBefore: number,
     targetedMurderer: boolean,
     queuedAt: number,
-    -- Lead tuner bookkeeping: the effective predicted lead (after the turn
-    -- discount), its sensitivity to time correction, and the 30 Hz root samples.
+
     leadSeconds: number?,
     leadSensitivity: number?,
     velocity: Vector3?,
     trajectory: {{t: number, p: Vector3}}?,
-    -- Silent spawn A/B: which authored geometry this shot used (Front,
-    -- Through, Top or Behind); nil for normal-mode shots.
+
     silentSpawn: string?,
 }
--- Structural shape of the Shoot solver's prediction; only the fields the
--- feedback UI and the lead tuner read are named here.
+
 type GunPrediction = {
     targetPosition: Vector3?,
     endpoint: Vector3?,
@@ -3312,14 +3109,11 @@ type GunPrediction = {
 }
 
 state.mm2ShotFeedback = {
-    -- Flipped by the Shoot module; the feedback UI is core-owned because the
-    -- target provider reads the pending shot too.
+
     shootActive = false,
     pending = nil :: PendingShot?,
     lastAccepted = nil :: PendingShot?,
-    -- Per silent-spawn-variant scorecard (Front/Through/Top/Behind): the only
-    -- way to settle which authored geometry actually scores is to count real
-    -- shots. Accumulates for the session; surfaced by the Spawn A/B action.
+
     spawnStats = {} :: {[string]: {shots: number, hits: number, misses: number}},
     token = 0,
     defaultDuration = 5,
@@ -3407,19 +3201,6 @@ state.mm2ShotFeedback.getDuration = function(gun: Tool?): number
     return state.mm2ShotFeedback.defaultDuration
 end
 
--- ---------------------------------------------------------------------------
--- Lead tuner
---
--- The horizon model is right in expectation but not in fact: the server's
--- exact scoring instant, the replication cadence and our RTT estimator all
--- carry a small, slowly drifting offset. Every confirmed shot measures it for
--- free. While the shot is pending we sample the target's root at 30 Hz; on a
--- confirmed hit the moment the target crossed the aimed point IS the lead the
--- server actually needed. We drift gunLeadBias toward that reading - slowly
--- (25 % of one residual) and bounded (+-0.03 s per shot, +-0.25 s total) - so
--- one noisy shot can never wreck the calibration. Noisy windows (a turn mid
--- flight, a stopped target, a late read) are rejected instead of applied.
--- ---------------------------------------------------------------------------
 local leadTracking: PendingShot? = nil
 
 local function stopLeadTracking(): ()
@@ -3502,7 +3283,7 @@ local function tuneFromConfirmedShot(candidate: PendingShot): ()
     if leadMeasured < 0.03 or leadMeasured > 1.2 then
         return
     end
-    -- A target that changed heading mid-window corrupts the reading: reject it.
+
     local firstSample: {t: number, p: Vector3} = samples[1]
     local lastSample: {t: number, p: Vector3} = samples[#samples]
     local span: number = lastSample.t - firstSample.t
@@ -3521,7 +3302,7 @@ local function tuneFromConfirmedShot(candidate: PendingShot): ()
     if sampledHorizontal.Unit:Dot(horizontal.Unit) < 0.75 then
         return
     end
-    -- Invert the turn model: residual is in seconds of horizon correction.
+
     local residual: number = (leadMeasured - leadSeconds) / leadSensitivity
     local delta: number = residual * 0.25
     autoLeadCorrection = math.clamp(
@@ -3677,8 +3458,6 @@ state.mm2ShotFeedback.resolve = function(
             state.mm2ShotFeedback.hide()
         end
 
-        -- Silent spawn A/B: count confirmed hits and misses per authored
-        -- geometry so the user can compare variants with real shots.
         local variant: string? = candidate.silentSpawn
         if variant then
             local stats: any = state.mm2ShotFeedback.spawnStats[variant]
@@ -3899,11 +3678,7 @@ local function disconnectGunFiredObserver(): ()
 end
 
 registerMM2Roles()
--- ---------------------------------------------------------------------------
--- Everything the per-feature MM2 modules are allowed to reach for. The files
--- under Blatant/, Render/, Movement/, Fun/ and Other/ share this one
--- table instead of duplicating the round, weapon and prediction plumbing.
--- ---------------------------------------------------------------------------
+
 state.mm2Core = {
     settings = mm2Settings,
     mm2Settings = mm2Settings,
@@ -3967,8 +3742,7 @@ state.mm2Core = {
 }
 
 cleanupMM2Runtime = function()
-    -- Only the core's own state: every feature module tears itself down in its
-    -- own Module.destroy, which the loader calls in reverse order.
+
     if state.gameRoleProvider == mm2RoleProvider then
         state.gameRoleProvider = nil
     end

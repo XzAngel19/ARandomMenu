@@ -263,14 +263,10 @@ function Module.init(context: Runtime): any
             return false, tostring(setError)
         end
         if not isTemporary then
-            -- The Humanoid's child HumanoidDescription is the live avatar
-            -- description, matching the original VapeV4 emote flow.
+
             return true, nil
         end
 
-        -- Some games do not keep a HumanoidDescription child. In that case
-        -- apply the edited copy to the local Humanoid so the emote wheel sees
-        -- the new equipped list, then let Disguise re-copy its visual items.
         local applied: boolean, applyError: string? =
             applyDescriptionToHumanoid(humanoid, description)
         pcall(description.Destroy, description)
@@ -383,7 +379,6 @@ function Module.init(context: Runtime): any
             end
         end
 
-        -- Older clients expose Disabled instead of Enabled.
         local disabledOk: boolean, wasDisabled: any = pcall(function()
             return scriptObject.Disabled
         end)
@@ -401,29 +396,6 @@ function Module.init(context: Runtime): any
         end
     end
 
-    local function normalizeAnimationId(value: any): string?
-        if type(value) == "number" then
-            if value <= 0 or value % 1 ~= 0 then
-                return nil
-            end
-            return "rbxassetid://" .. string.format("%.0f", value)
-        end
-
-        local raw: string = tostring(value or "")
-        if raw == "" then
-            return nil
-        end
-        local assetId: string? = string.match(raw, "^rbxassetid://(%d+)$")
-        if assetId then
-            local numericId: number? = tonumber(assetId)
-            return if numericId and numericId > 0 then raw else nil
-        end
-        local numericId: number? = tonumber(raw)
-        if not numericId or numericId <= 0 or numericId % 1 ~= 0 then
-            return nil
-        end
-        return "rbxassetid://" .. string.format("%.0f", numericId)
-    end
 
     local animationAssetCache: {[string]: {string}} = {}
 
@@ -448,7 +420,7 @@ function Module.init(context: Runtime): any
 
         local result: {string} = {}
         if numericId and numericId > 0 then
-            -- Download asset container via game:GetObjects to extract true AnimationId keyframes
+
             local objectsOk: boolean, objects: any = pcall(function()
                 return (game :: any):GetObjects("rbxassetid://" .. tostring(numericId))
             end)
@@ -468,7 +440,6 @@ function Module.init(context: Runtime): any
                 end
             end
 
-            -- Fallback to InsertService:LoadAsset if GetObjects did not unpack animations
             if #result == 0 then
                 local insertService: any = (game :: any):GetService("InsertService")
                 if insertService and type(insertService.LoadAsset) == "function" then
@@ -489,7 +460,6 @@ function Module.init(context: Runtime): any
                 end
             end
 
-            -- Fallback to standard rbxassetid url if unpacking was blocked
             if #result == 0 then
                 table.insert(result, "rbxassetid://" .. tostring(numericId))
             end
@@ -579,13 +549,12 @@ function Module.init(context: Runtime): any
             return
         end
 
-        local current: AppearanceSnapshot = ensureSnapshot(character, humanoid)
+        ensureSnapshot(character, humanoid)
         notify("Downloading target movement animations...")
 
         task.spawn(function(): ()
             local changedCount: number = 0
 
-            -- 1. Check if target player is in the current game server for instant 1:1 copy
             local targetPlayer: Player? = Players:GetPlayerByUserId(numericId)
             if not targetPlayer then
                 for _, p: Player in ipairs(Players:GetPlayers()) do
@@ -640,7 +609,6 @@ function Module.init(context: Runtime): any
                 end
             end
 
-            -- 2. If not in server or no animations found, fetch HumanoidDescription and download assets
             if changedCount == 0 then
                 local description: any, fetchError: string? = getUserDescription(numericId)
                 if not description then
@@ -936,8 +904,7 @@ function Module.init(context: Runtime): any
                 and source:IsA("MeshPart") then
                 local target: Instance? = character:FindFirstChild(source.Name)
                 if target and target:IsA("MeshPart") then
-                    -- Copy mesh identifiers only; retain live part dimensions,
-                    -- joint objects, and collision settings.
+
                     pcall(function()
                         target.MeshId = source.MeshId
                         target.TextureID = source.TextureID
@@ -1041,8 +1008,7 @@ function Module.init(context: Runtime): any
                 refreshMeshPartSnapshot(character, current)
             else
                 emoteWarning = tostring(emoteError)
-                -- SetEmotes may have succeeded before SetEquippedEmotes failed;
-                -- roll back a partial update using the captured local profile.
+
                 local rolledBack: boolean = setHumanoidEmotes(
                     humanoid,
                     current.emotes,
@@ -1335,7 +1301,7 @@ function Module.init(context: Runtime): any
         end
 
         if changedCount == 0 then
-            -- Ensure a failed lookup doesn't leave a half-selected mode behind.
+
             restoreOriginalAppearance(character, humanoid)
             notify("No compatible animations were found in that bundle.")
             return
@@ -1545,7 +1511,6 @@ function Module.init(context: Runtime): any
         end,
         Tooltip = "Positive integer user ID (Character) or avatar-animation bundle ID (Animation).",
     })
-
 
     card:CreateButton({
         Name = "Show target emotes",

@@ -1086,9 +1086,6 @@ function Module.init(context: any): any
         raiseOpen(windowsRecord)
     end
 
-    -- Hidden windows must stay hidden on the next join too: the saved
-    -- "ClickGUI.Windows.<name>" states have to be re-applied at boot,
-    -- without opening the Windows panel first.
     local function applySavedWindowVisibility(): boolean
         local clickGui: any = state.clickGui
         if not clickGui or type(clickGui.order) ~= "table" then
@@ -1112,8 +1109,7 @@ function Module.init(context: any): any
     end
 
     task.spawn(function(): ()
-        -- Category windows appear as modules register, so keep re-applying
-        -- the saved visibility for a while; it is idempotent and cheap.
+
         for _ = 1, 15 do
             applySavedWindowVisibility()
             task.wait(1)
@@ -1414,9 +1410,6 @@ function Module.init(context: any): any
         or GAME_CHECK.BedFightActive and "BedFight"
         or "Universal only"
 
-    -- Keybinds and Windows live as rows inside UI Settings only; registering
-    -- them here as well duplicated the whole UI Settings window inside
-    -- Wurst Options.
     reinjectHandle = state.wurstOptions.RegisterAction(
         "Reinject", "Reinject latest", runReinject
     )

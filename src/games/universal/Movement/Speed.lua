@@ -282,7 +282,6 @@ function Module.init(context: Runtime): any
                     return
                 end
 
-                -- Vehicle Speed handler
                 if options["Vehicle speed"] and options["Vehicle speed"].Value then
                     local assembly: BasePart?, model: Model?, seat: VehicleSeat? =
                         resolveVehicle()
@@ -307,7 +306,6 @@ function Module.init(context: Runtime): any
                     end
                 end
 
-                -- On-foot character speed handler
                 local mode: string = options["Mode"].Value
                 local target: number = options["Speed"].Value
 
@@ -431,7 +429,6 @@ function Module.init(context: Runtime): any
         Tooltip = "Hop continuously while moving.",
     })
 
-    -- Vehicle Speed section integrated into Speed
     speed:CreateToggle({
         Name = "Vehicle speed",
         Default = false,

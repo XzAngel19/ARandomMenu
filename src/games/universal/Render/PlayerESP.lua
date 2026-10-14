@@ -335,16 +335,12 @@ function Module.render(
 
         local rect: any = render:ModelRect(resolvedCamera, entity.Character)
 
-        -- Mark the player as seen before the rect check: a target that is
-        -- momentarily behind the camera or off-screen must keep its pooled
-        -- drawing (hidden) instead of being released and rebuilt every frame.
         seen[player] = true
         pool[player] = true
         local drawings: any = render:Set(container, player)
 
         if not rect then
-            -- Behind the camera or fully outside the viewport: hide instead
-            -- of leaving the previous frame's box frozen on screen.
+
             drawings:Show(false)
             continue
         end

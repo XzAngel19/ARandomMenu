@@ -527,33 +527,6 @@ local function buildVDFeatures(): ()
         end)
     end
 
-    local function survivorStatus(player: Player, character: Model): (string, Color3)
-        local humanoid: Humanoid? = character:FindFirstChildOfClass("Humanoid")
-        if not humanoid then
-            return "UNKNOWN", Theme.textMuted
-        end
-        local hooked: boolean = character:GetAttribute("Hooked") == true
-            or character:GetAttribute("IsHooked") == true
-            or player:GetAttribute("Hooked") == true
-        local downed: boolean = character:GetAttribute("Knocked") == true
-            or character:GetAttribute("Downed") == true
-            or humanoid.Health <= math.max(1, humanoid.MaxHealth * 0.05)
-        local recovery: number? = readNumberAttribute(
-            character,
-            {"Recovery", "RecoverProgress", "RecoveryProgress"}
-        )
-        if recovery and recovery <= 1 then
-            recovery *= 100
-        end
-        if hooked then
-            return "HOOKED", VD_KILLER_COLOR
-        elseif downed then
-            return "DOWNED · REC " .. string.format("%.0f%%", recovery or 0), VD_KILLER_COLOR
-        elseif humanoid.Health < humanoid.MaxHealth * 0.75 then
-            return "INJURED · " .. string.format("%.0f%%", humanoid.Health / humanoid.MaxHealth * 100), Color3.fromRGB(244, 190, 88)
-        end
-        return "HEALTHY", Theme.positive
-    end
 
     local function findRemoteEvent(folderName: string, eventName: string): RemoteEvent?
         local remotes: Instance? = ReplicatedStorageService:FindFirstChild("Remotes")

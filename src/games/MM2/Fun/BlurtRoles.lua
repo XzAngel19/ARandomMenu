@@ -20,9 +20,6 @@ function Module.init(runtime: any): any
     local hasActiveRoundRoles: any = core.hasActiveRoundRoles
     local mm2Settings: any = core.mm2Settings
 
-    -- ---------------------------------------------------------------------------
-    -- Blurt Roles: announce the round's murderer and sheriff in the public chat.
-    -- ---------------------------------------------------------------------------
     local blurtEnabled: boolean = false
     local blurtSignature: string = ""
     local blurtPending: boolean = false
@@ -79,9 +76,7 @@ function Module.init(runtime: any): any
         local message: string
         local signature: string
         if mm2Settings.blurtFake then
-            -- Deception mode: announce the roles swapped and drop the Wurst
-            -- signature so the line looks organic. The wrong names send the
-            -- crew (and the sheriff's suspicion) at the wrong player.
+
             message = string.format(
                 'Murder; "%s" Sheriff; "%s"',
                 sheriffName,

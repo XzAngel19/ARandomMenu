@@ -17,8 +17,6 @@ function Module.init(runtime: any): any
     Module.Runtime = runtime
     local trajectoryCalibration: any = core.trajectoryCalibration
 
-    -- Attaches to the shared "Metrics" card created by the universal telemetry
-    -- modules; only builds its own card if those failed to load.
     local TrajectoryFeature: any = state.metricsFeature
     if not TrajectoryFeature then
         TrajectoryFeature = createUniversalFeature(
@@ -56,7 +54,7 @@ function Module.init(runtime: any): any
     )
 
     activeCleanup = function(): ()
-        -- nothing persistent to undo
+
     end
     Module.Events = featureConnections
     Module.Initialized = true

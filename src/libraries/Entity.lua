@@ -237,11 +237,6 @@ function Module.init(context: any): EntityLibrary
         return teamToken(localPlayer)
     end
 
-    -- A game module may publish a resolver that knows how that game splits
-    -- players into sides. Murderers VS Sheriffs Duels leaves every Player
-    -- Neutral and keeps the side in match data, so the Teams-service lookup
-    -- below answers "nobody is a teammate" there and the ESP painted the whole
-    -- server as an enemy. The provider always wins when it has an answer.
     local function teamResolver(): any
         local hostState: any = host.state
         if hostState and hostState.gameBridge then
@@ -283,9 +278,6 @@ function Module.init(context: any): EntityLibrary
             end
         end
 
-        -- Without a game-specific resolver the Neutral guard stays: a game that
-        -- uses Teams for something else (or not at all) must not report every
-        -- player as a teammate just because two tokens happen to match.
         if provider == nil
             and (player.Neutral == true or localPlayer.Neutral == true) then
             return false
@@ -328,8 +320,7 @@ function Module.init(context: any): EntityLibrary
         if players:GetPlayerFromCharacter(model) ~= nil then
             return false
         end
-        -- The local Disguise body double is the local player's own stand-in,
-        -- never an NPC to target.
+
         if model:GetAttribute("WurstDisguise") == true then
             return false
         end

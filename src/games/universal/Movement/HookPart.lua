@@ -42,7 +42,6 @@ function Module.init(context: Runtime): any
     local lastHookJumpAt: number = -math.huge
     local lastScanAt: number = -math.huge
     local lastClimbAt: number = -math.huge
-    local lastObstacleTouchAt: number = -math.huge
     local currentSighting: HookSighting? = nil
     local highlight: Highlight? = nil
 
@@ -95,7 +94,7 @@ function Module.init(context: Runtime): any
     end
 
     local function isSmallDecoration(part: BasePart): boolean
-        -- Filter out tiny fence posts, thin railings, or miniature props that shouldn't hijack ground jumps
+
         local sz: Vector3 = part.Size
         if (sz.X <= 0.9 and sz.Z <= 0.9) or (sz.X <= 0.5 and sz.Y <= 0.5) then
             return true
@@ -131,10 +130,9 @@ function Module.init(context: Runtime): any
         parameters.IgnoreWater = true
         parameters.RespectCanCollide = true
 
-        -- Priority 1: Ladder detection (Roblox climbing state or 200ms grace window)
         local climbingGrace: boolean = (now - lastClimbAt) <= 0.22
         if isCurrentlyClimbing or climbingGrace then
-            -- Raycast forward to find the ladder part or normal
+
             local forwardRay: RaycastResult? = currentWorkspace:Raycast(
                 root.Position,
                 root.CFrame.LookVector * 3.0,
@@ -157,7 +155,6 @@ function Module.init(context: Runtime): any
         local bestSighting: HookSighting? = nil
         local bestDistance: number = settings.detectionRange + 1
 
-        -- Priority 2: Check box in front of player for ladders / trusses (to not miss rung gaps)
         local overlapLadder: OverlapParams = OverlapParams.new()
         overlapLadder.FilterType = Enum.RaycastFilterType.Exclude
         overlapLadder.FilterDescendantsInstances = filter
@@ -182,7 +179,6 @@ function Module.init(context: Runtime): any
             end
         end
 
-        -- Priority 3: Scan surroundings for Obstacles (Tank, Crates, Props) and Walls
         for i: number = 0, SCAN_DIRECTIONS - 1 do
             local angle: number = (i / SCAN_DIRECTIONS) * math.pi * 2
             local direction: Vector3 = Vector3.new(math.sin(angle), 0, math.cos(angle))
@@ -226,16 +222,14 @@ function Module.init(context: Runtime): any
 
                         local isSmall: boolean = isSmallDecoration(part)
 
-                        -- Ground bypass: On the ground, ignore tiny fence posts or random decorative walls
-                        -- unless player is deliberately pushing into an obstacle/tank!
                         if isGrounded then
                             if isSmall and not isKnownObstacle then
-                                -- Skip small fence posts while grounded (solves Image 2!)
+
                                 continue
                             end
 
                             if settings.requireStuckIntent then
-                                -- Check if player is pressing into the obstacle
+
                                 local pushingIntoPart: boolean = moveDir.Magnitude > 0.1 and moveDir:Dot(direction) > 0.30
                                 local isStuckMoving: boolean = moveDir.Magnitude > 0.1 and horizVelocity < 3.0
                                 if not (pushingIntoPart or isStuckMoving or isKnownObstacle) then
@@ -243,7 +237,7 @@ function Module.init(context: Runtime): any
                                 end
                             end
                         else
-                            -- Airborne: Allow wallhop or obstacle vaulting
+
                             if settings.airborneWallhopOnly and not isKnownObstacle and isSmall then
                                 continue
                             end
@@ -268,7 +262,6 @@ function Module.init(context: Runtime): any
             end
         end
 
-        -- Priority 4: Spatial Query for wedged/hooked character parts (e.g. inside MM2 tank collision)
         if settings.checkAllParts and (not bestSighting or bestDistance > 1.8) then
             local overlap: OverlapParams = OverlapParams.new()
             overlap.FilterType = Enum.RaycastFilterType.Exclude
@@ -326,7 +319,7 @@ function Module.init(context: Runtime): any
         local mode: string = settings.directionMode
 
         if sighting.kind == "Ladder" then
-            -- On a ladder, launch outward from the wall and upward in the camera view
+
             if cam then
                 local camLook: Vector3 = cam.CFrame.LookVector
                 return Vector3.new(camLook.X, math.max(camLook.Y, 0.4), camLook.Z).Unit
@@ -365,8 +358,7 @@ function Module.init(context: Runtime): any
     end
 
     local function applySustainedImpulse(root: BasePart, targetVel: Vector3, durationSeconds: number): ()
-        -- Apply over multiple frames (within the 200ms server rewind window) so Roblox internal friction/ladder code
-        -- doesn't cancel or override the velocity immediately!
+
         local startTime: number = os.clock()
         local connection: RBXScriptConnection? = nil
         connection = RunService.Heartbeat:Connect(function(): ()
@@ -387,7 +379,7 @@ function Module.init(context: Runtime): any
             return
         end
 
-        local character: Model?, humanoid: Humanoid?, root: BasePart? = getCharacterParts()
+        local _, humanoid: Humanoid? = getCharacterParts()
         if not character or not humanoid or not root or humanoid.Health <= 0 then
             return
         end
@@ -399,8 +391,6 @@ function Module.init(context: Runtime): any
 
         local isGrounded: boolean = humanoid.FloorMaterial ~= Enum.Material.Air
 
-        -- Bypass check: If grounded on flat grass/floor and the sighting is just a casual Wall (not ladder or obstacle),
-        -- allow a normal clean Roblox jump without hijacking or deviating!
         if isGrounded and sighting.kind == "Wall" and settings.airborneWallhopOnly then
             return
         end
@@ -421,7 +411,6 @@ function Module.init(context: Runtime): any
                 return
             end
 
-            -- Clean detach from ladder: switch to Jumping
             humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
 
             local horizSpeed: number = settings.ladderJumpLength
@@ -433,7 +422,7 @@ function Module.init(context: Runtime): any
             )
 
             root.AssemblyLinearVelocity = ladderVel
-            -- Reinforce over 0.08s (5 frames) to defeat Roblox's ladder detach clamp
+
             applySustainedImpulse(root, ladderVel, 0.08)
 
             if activeCard then
@@ -452,7 +441,7 @@ function Module.init(context: Runtime): any
 
             local vertVel: number
             if settings.allowDownwardBoost and launchDir.Y < -0.10 then
-                -- Downward slide / boost on stairs and sliders
+
                 vertVel = launchDir.Y * (settings.obstaclePower * 1.1)
             elseif launchDir.Y > 0.10 then
                 vertVel = math.max(launchDir.Y * settings.obstaclePower, settings.obstaclePower * 0.60)
@@ -480,7 +469,7 @@ function Module.init(context: Runtime): any
                 local boostPower: number = settings.obstaclePower
                 local combinedDir: Vector3
                 if isSlopeOrStairs and settings.sliderAssist then
-                    -- Follow camera/move direction cleanly along the slope/stairs
+
                     combinedDir = flatLaunchDir
                 else
                     combinedDir = (flatLaunchDir * 0.75 + Vector3.new(outwardNorm.X, 0, outwardNorm.Z) * 0.25)
@@ -551,7 +540,6 @@ function Module.init(context: Runtime): any
             end
             card:SetStatus("Active")
 
-            -- Connect jump hooks
             if movementInput and type(movementInput.onJumpRequest) == "function" then
                 card:Clean(movementInput.onJumpRequest(function(): ()
                     executeHookJump()
@@ -564,8 +552,7 @@ function Module.init(context: Runtime): any
                 end))
             end
 
-            -- Track humanoid state changes (especially Climbing for the 200ms grace window)
-            local character: Model?, humanoid: Humanoid?, root: BasePart? = getCharacterParts()
+            local _, humanoid: Humanoid? = getCharacterParts()
             if humanoid then
                 card:Clean(humanoid.StateChanged:Connect(function(oldState: Enum.HumanoidStateType, newState: Enum.HumanoidStateType): ()
                     if newState == Enum.HumanoidStateType.Climbing or oldState == Enum.HumanoidStateType.Climbing then
@@ -574,7 +561,6 @@ function Module.init(context: Runtime): any
                 end))
             end
 
-            -- Continuous detection loop
             card:Loop(function(): ()
                 local now: number = os.clock()
                 if now - lastScanAt < 0.05 then
@@ -608,7 +594,6 @@ function Module.init(context: Runtime): any
                 end
                 card:SetStatus(statusText)
 
-                -- Visual highlight of hooked object
                 if not settings.highlightObject or sighting.part == curRoot then
                     destroyHighlight()
                     return

@@ -119,7 +119,6 @@ function Module.init(context: Runtime): any
             jump:SetStatus("active")
             jump:Clean(restoreJumpPower)
 
-            -- Connect infinite jump request if movementInput service is present
             if movementInput and type(movementInput.onJumpRequest) == "function" then
                 jump:Clean(movementInput.onJumpRequest(function(): ()
                     local opts = jump.Options
@@ -143,7 +142,6 @@ function Module.init(context: Runtime): any
                     return
                 end
 
-                -- 1. Apply Custom Jump Power only if option is enabled
                 if opts["Custom jump power"] and opts["Custom jump power"].Value then
                     local wantedPower: number = opts["Jump power"] and opts["Jump power"].Value or 80
                     if originalJumpPower[humanoid] == nil then
@@ -158,7 +156,6 @@ function Module.init(context: Runtime): any
                     restoreJumpPower()
                 end
 
-                -- 2. Auto Jump
                 if opts["Auto jump"] and opts["Auto jump"].Value then
                     local moveDir: Vector3 = humanoid.MoveDirection
                     if moveDir.Magnitude > 0.05 and humanoid.FloorMaterial ~= Enum.Material.Air then
@@ -166,7 +163,6 @@ function Module.init(context: Runtime): any
                     end
                 end
 
-                -- 3. Infinite Jump "Rise" mode (hold to rise)
                 if opts["Infinite jump"] and opts["Infinite jump"].Value then
                     local mode: string = opts["Infinite jump mode"] and opts["Infinite jump mode"].Value or "Normal"
                     if mode == "Rise" and movementInput and type(movementInput.isJumpHeld) == "function" and movementInput.isJumpHeld() then
@@ -180,7 +176,6 @@ function Module.init(context: Runtime): any
         end,
     })
 
-    -- Section: Jump Power
     jump:CreateToggle({
         Name = "Custom jump power",
         Default = false,
@@ -201,7 +196,6 @@ function Module.init(context: Runtime): any
         Tooltip = "Character jump power (default Roblox jump is 50).",
     })
 
-    -- Section: High Jump
     jump:CreateButton({
         Name = "High jump",
         Function = function(): ()
@@ -219,7 +213,6 @@ function Module.init(context: Runtime): any
         Tooltip = "Vertical velocity applied when High Jump button is pressed.",
     })
 
-    -- Section: Infinite Jump
     jump:CreateToggle({
         Name = "Infinite jump",
         Default = false,
@@ -261,7 +254,6 @@ function Module.init(context: Runtime): any
         Tooltip = "Minimum delay in seconds between mid-air jumps.",
     })
 
-    -- Section: Auto Jump
     jump:CreateToggle({
         Name = "Auto jump",
         Default = false,

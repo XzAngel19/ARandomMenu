@@ -87,8 +87,6 @@ function Module.init(runtime: any): any
         end
     end
 
-    -- Name typed into the "Player name" box; "Teleport to Player" moves you to
-    -- that player (case-insensitive, partial names allowed).
     local teleportTargetName = ""
 
     local function teleportToPlayer()

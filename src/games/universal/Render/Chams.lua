@@ -130,8 +130,7 @@ function Module.init(context: Runtime): any
                 lastUpdate = now
                 local seen: {[Player]: boolean} = {}
                 local count: number = 0
-                -- One refresh per tick: the highlight pass, the murder lookup
-                -- and the role tags below all walk the same snapshot.
+
                 local targets: any = entity:Refresh()
                 for _, target: any in ipairs(targets) do
                     local player: Player = target.Player
@@ -192,7 +191,6 @@ function Module.init(context: Runtime): any
                     end
                 end
 
-                -- Murder tag lookup
                 local tagTarget: Player? = nil
                 if card.Options["Murder tag"].Value == true
                     and type(gameBridge.playerRole) == "function" then
@@ -249,9 +247,6 @@ function Module.init(context: Runtime): any
                             label.TextStrokeTransparency = 0.3
                             label.Parent = billboard
 
-                            -- The perk icon lives inside the same billboard as
-                            -- the tag text: one adornee, one anchor, so it can
-                            -- never drift into or flicker against the text.
                             local icon: ImageLabel = Instance.new("ImageLabel")
                             icon.Name = "PerkIcon"
                             icon.BackgroundTransparency = 1
@@ -280,7 +275,6 @@ function Module.init(context: Runtime): any
                     end
                 end
 
-                -- Perk icon (merged into the Murder tag billboard above)
                 local perkIcon: any = murderTag
                     and murderTag:FindFirstChild("PerkIcon")
                 if card.Options["Show Perk"] and card.Options["Show Perk"].Value == true
@@ -311,7 +305,6 @@ function Module.init(context: Runtime): any
                     perkIcon.Visible = false
                 end
 
-                -- Role tags: floating role labels over player heads
                 local roleTagsOption: any = card.Options["Role tags"]
                 if roleTagsOption and roleTagsOption.Value == true
                     and type(gameBridge.playerRole) == "function" then
@@ -325,7 +318,7 @@ function Module.init(context: Runtime): any
                             and not protectedTargets.isProtected(player) then
                             local okRole: boolean, role: any = pcall(gameBridge.playerRole, player)
                             if okRole and type(role) == "string" and role ~= "Dead" then
-                                -- FIX: Do not double-tag the murderer if Murder tag is active!
+
                                 if card.Options["Murder tag"].Value == true and (role == "Murderer" or player == tagTarget) then
                                     continue
                                 end
