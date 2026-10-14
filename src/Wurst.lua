@@ -225,7 +225,7 @@ local RUNTIME_RAW_BASE: string =
         .. RUNTIME_BRANCH
         .. "/"
 
-local SOURCE_STAMP: string = "v10-20261013-0130"
+local SOURCE_STAMP: string = "v11-20261013-2130"
 
 local BOOT_STARTED_AT: number = os.clock()
 local BOOT_FINGERPRINT_SECONDS: number = 0
@@ -1088,11 +1088,18 @@ local function resolveTeleportQueue(): any
 end
 
 local function buildTeleportSnippet(): string
+    -- The PlaceId the menu was armed in. The snippet only reinjects when the
+    -- arrival place matches it: that is an instance teleport inside the same
+    -- game (MM2 lobby <-> map <-> new server all keep PlaceId 142823291, as
+    -- the telemetry sessions prove). Leaving for a different game lands on a
+    -- different PlaceId and the menu deliberately does NOT follow.
+    local armedPlaceId: number = game.PlaceId
 
     return table.concat({
         "local genv = (type(getgenv) == \"function\" and getgenv()) or {}",
         "genv.WURST_TP_QUEUED = false",
         "if genv.WURST_STOPPED == true then return end",
+        "if game.PlaceId ~= " .. tostring(armedPlaceId) .. " then return end",
         "genv.WURST_BRANCH = \"" .. RUNTIME_BRANCH .. "\"",
 
         "if not game:IsLoaded() then",

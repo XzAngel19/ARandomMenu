@@ -1,5 +1,5 @@
 return {
-    stamp = "v10-20261013-0130",
+    stamp = "v11-20261013-2130",
     files = {
         ["src/games/BedFight/Combat/AutoSwing.lua"] = [[
 local Module = {Name = "BedFight Auto Swing", Initialized = false, Connection = nil}
@@ -1741,6 +1741,8 @@ function Module.init(runtime: any): any
         fireDelay = 1,
         range = 120,
         spawnOffset = 5,
+        throwHz = 60,
+        animation = true,
     }
     -- Client hitbox expansion for the blade: MM2 scores the throw against the
     -- replicated collision geometry, so widening the target's capsule makes the
@@ -1835,6 +1837,48 @@ function Module.init(runtime: any): any
         return root.Position + velocity * flightTime
     end
 
+    -- Best-effort throw animation: the knife tool ships its throw animation as
+    -- an Animation instance; load it on our humanoid and play it right before
+    -- the packet so an auto throw looks like a real one. Purely cosmetic - the
+    -- packet is what throws - and a missing animation never blocks the throw.
+    local throwTrack: any = nil
+    local throwTrackHumanoid: Humanoid? = nil
+    local function playThrowAnimation(knife: Tool): ()
+        if not knifeThrowSettings.animation then
+            return
+        end
+        local character: Model? = LocalPlayer.Character
+        local humanoid: Humanoid? = character
+            and character:FindFirstChildOfClass("Humanoid") :: Humanoid?
+        if not humanoid then
+            return
+        end
+        local anim: Animation? =
+            knife:FindFirstChildWhichIsA("Animation", true) :: Animation?
+        if not anim then
+            -- A tool with no animation must never replay a stale track.
+            throwTrack = nil
+            throwTrackHumanoid = nil
+            return
+        end
+        if not throwTrack or throwTrackHumanoid ~= humanoid then
+            throwTrack = nil
+            throwTrackHumanoid = nil
+            local ok: boolean, track: any = pcall(function(): any
+                return (humanoid :: Humanoid):LoadAnimation(anim :: Animation)
+            end)
+            if ok then
+                throwTrack = track
+                throwTrackHumanoid = humanoid
+            end
+        end
+        if throwTrack then
+            pcall(function(): ()
+                throwTrack:Play(0.1, 1, 1)
+            end)
+        end
+    end
+
     local function throwKnife(): ()
         if os.clock() - lastThrow < knifeThrowSettings.fireDelay then
             return
@@ -1887,6 +1931,7 @@ function Module.init(runtime: any): any
         end
 
         local aimPos: Vector3 = predictAim(target, originPos)
+        playThrowAnimation(knife)
         remote:FireServer(CFrame.new(originPos), CFrame.new(aimPos))
         lastThrow = os.clock()
         pcall(trajectoryCalibration.noteAuthoredShot, trajectoryCalibration, {
@@ -1908,15 +1953,16 @@ function Module.init(runtime: any): any
         end
         lastThrow = -math.huge
         local elapsed: number = 0
-        featureConnections.MM2KnifeThrow =
-            TaskManager:Connect(function(deltaTime: number): ()
-                elapsed += deltaTime
-                if elapsed < 1 / 30 then
-                    return
-                end
-                elapsed = 0
-                throwKnife()
-            end)
+            featureConnections.MM2KnifeThrow =
+                TaskManager:Connect(function(deltaTime: number): ()
+                    elapsed += deltaTime
+                    if elapsed
+                        < 1 / math.clamp(knifeThrowSettings.throwHz, 20, 120) then
+                        return
+                    end
+                    elapsed = 0
+                    throwKnife()
+                end)
     end
 
     -- Attach to the shared "Knife" card created by KnifeAura; only build a new
@@ -1997,6 +2043,31 @@ function Module.init(runtime: any): any
         end,
         "Silent only: how far beside the target the blade spawns.",
         1
+    )
+    addToggleOption(
+        KnifeThrowFeature,
+        "Throw animation",
+        knifeThrowSettings.animation,
+        function(value: boolean): ()
+            knifeThrowSettings.animation = value
+        end,
+        "Plays the knife's throw animation right before each auto throw so it "
+            .. "looks like a normal throw. Cosmetic only; turn it off to throw "
+            .. "with zero wind-up."
+    )
+    addNumberOption(
+        KnifeThrowFeature,
+        "Throw Hz",
+        knifeThrowSettings.throwHz,
+        20,
+        120,
+        function(value: number): ()
+            knifeThrowSettings.throwHz = math.clamp(math.round(value), 20, 120)
+        end,
+        "Target checks per second while auto throw is on. 60 is the sweet "
+            .. "spot: remote players replicate at ~20 Hz, so more only costs "
+            .. "CPU.",
+        5
     )
     addToggleOption(
         KnifeThrowFeature,
