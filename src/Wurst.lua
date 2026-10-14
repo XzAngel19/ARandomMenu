@@ -221,7 +221,7 @@ local RUNTIME_RAW_BASE: string =
         .. RUNTIME_BRANCH
         .. "/"
 
-local SOURCE_STAMP: string = "v15-20261014-mm2-precision"
+local SOURCE_STAMP: string = "v16-20261014-mm2-visuals-telemetry"
 
 local BOOT_STARTED_AT: number = os.clock()
 local BOOT_FINGERPRINT_SECONDS: number = 0
@@ -4766,6 +4766,7 @@ local function loadGameModule(
         "src/games/MM2/Blatant/KnifeAura.lua",
         "src/games/MM2/Blatant/KnifeThrow.lua",
         "src/games/MM2/Render/RoundEsp.lua",
+        "src/games/MM2/Render/WeaponVisuals.lua",
         "src/games/MM2/Movement/Sprint.lua",
         "src/games/MM2/Movement/Teleport.lua",
         "src/games/MM2/Fun/InstantRoleNotify.lua",

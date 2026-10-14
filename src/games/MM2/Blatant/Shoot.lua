@@ -36,6 +36,7 @@ function Module.init(runtime: any): any
     local motionSamples: any = core.motionSamples
     local predictionMath: any = core.predictionMath
     local isMotionGrounded: any = core.isMotionGrounded
+    local isWeaponPathClear: any = core.isWeaponPathClear
 
     local shootMacro: boolean = false
     local function macroUnequip(gun: Tool?): ()
@@ -175,21 +176,9 @@ function Module.init(runtime: any): any
             return nil, nil, "too close"
         end
 
-        if not ignoreVisibility and mm2Settings.shootWallCheck then
-            local raycastParams: RaycastParams = RaycastParams.new()
-            raycastParams.FilterType = Enum.RaycastFilterType.Exclude
-            raycastParams.IgnoreWater = true
-            raycastParams.FilterDescendantsInstances = {
-                LocalPlayer.Character :: Instance,
-            }
-            local result: RaycastResult? = workspace:Raycast(
-                origin.Position,
-                predicted - origin.Position,
-                raycastParams
-            )
-            if result and not result.Instance:IsDescendantOf(character :: Model) then
-                return nil, nil, "obstructed"
-            end
+        if not ignoreVisibility and mm2Settings.shootWallCheck
+            and not isWeaponPathClear(origin.Position, predicted, character) then
+            return nil, nil, "obstructed"
         end
 
         local turnError: number = displacement.Magnitude
@@ -475,6 +464,9 @@ function Module.init(runtime: any): any
                 target = target,
                 silent = true,
                 variant = variant,
+                offset = offset,
+                settings = {mode = "Silent", spawn = mm2Settings.silentSpawn,
+                    sweep = mm2Settings.silentSweep, motionHz = mm2Settings.motionSampleHz},
             })
             macroUnequip(gun)
             return true
@@ -493,6 +485,8 @@ function Module.init(runtime: any): any
             aimPos = resolved.endpoint,
             target = target,
             silent = false,
+            settings = {mode = "Normal", wallCheck = mm2Settings.shootWallCheck,
+                motionHz = mm2Settings.motionSampleHz, leadBias = mm2Settings.gunLeadBias},
         })
         macroUnequip(gun)
         return true

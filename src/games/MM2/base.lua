@@ -120,6 +120,32 @@ local function clearEffects(folder)
     end
 end
 
+-- Match the recovered client's cursor filters, not an assertion about server rules.
+local function isWeaponPathClear(origin: Vector3, endpoint: Vector3, target: Model?): boolean
+    local direction: Vector3 = endpoint - origin
+    if direction.Magnitude < 0.05 then return true end
+    local excluded: {Instance} = {}
+    if LocalPlayer.Character then table.insert(excluded, LocalPlayer.Character) end
+    for _, object: Instance in ipairs(CollectionService:GetTagged("WeaponPassthrough")) do
+        table.insert(excluded, object)
+    end
+    local params: RaycastParams = RaycastParams.new()
+    params.FilterType = Enum.RaycastFilterType.Exclude
+    params.IgnoreWater = true
+    for _ = 1, 32 do
+        params.FilterDescendantsInstances = excluded
+        local hit: RaycastResult? = workspace:Raycast(origin, direction, params)
+        if not hit then return true end
+        if target and hit.Instance:IsDescendantOf(target) then return true end
+        if hit.Instance:IsA("BasePart") and hit.Instance.Transparency == 1 then
+            table.insert(excluded, hit.Instance)
+        else
+            return false
+        end
+    end
+    return false -- bounded work, conservative if a map has many transparent layers
+end
+
 local function getWeaponFromContainer(
     container: Instance?,
     weaponName: string,
@@ -1570,6 +1596,8 @@ local function createTrajectoryCalibration(): any
         maximum: number,
     }
     type PendingGun = {
+        shotId: string?,
+        attemptCounted: boolean?,
         tool: Tool,
         activatedAt: number,
         origin: Vector3?,
@@ -1585,6 +1613,8 @@ local function createTrajectoryCalibration(): any
         confirmedHitTarget: boolean?,
     }
     type PendingKnife = {
+        shotId: string?,
+        attemptCounted: boolean?,
         tool: Tool,
         activatedAt: number,
         origin: Vector3?,
@@ -1596,6 +1626,8 @@ local function createTrajectoryCalibration(): any
         lastTrajectorySampleAt: number,
     }
     type KnifeTrack = {
+        shotId: string?,
+        attemptCounted: boolean?,
         startedAt: number,
         previousAt: number?,
         previousPosition: Vector3?,
@@ -1610,6 +1642,11 @@ local function createTrajectoryCalibration(): any
         destroyConnection: RBXScriptConnection?,
     }
     type CalibrationEvent = {
+        shotId: string?,
+        settings: any?,
+        phase: string?,
+        sessionId: string?,
+        buildStamp: string?,
         kind: string,
         serverTime: number,
         pingMs: number,
@@ -1668,6 +1705,15 @@ local function createTrajectoryCalibration(): any
         revision = 0,
         saveScheduled = false,
         startedAt = os.clock(),
+        startedAtUnix = os.time(),
+        sessionId = HttpService:GenerateGUID(false),
+        buildStamp = tostring(host.SOURCE_STAMP or "unknown"),
+        shotSequence = 0,
+        historyBackup = nil :: string?,
+        persistenceBlocked = false,
+        rawKnifeActivations = 0,
+        unmatchedGunSignals = 0,
+        sessionStabAttempts = 0,
         sessionGunAttempts = 0,
         sessionGunConfirmed = 0,
         sessionKnifeAttempts = 0,
@@ -1689,6 +1735,18 @@ local function createTrajectoryCalibration(): any
     local saveSnapshot: (reason: string) -> boolean
     local compactPending: (queue: {any}, now: number) -> ()
     local finalizeGunCapture: (pending: PendingGun) -> ()
+
+    local function nextShotId(): string
+        runtime.shotSequence += 1
+        return runtime.sessionId .. ":" .. tostring(runtime.shotSequence)
+    end
+    local function emitShot(eventType: string, info: any): ()
+        info.sessionId = runtime.sessionId
+        info.buildStamp = runtime.buildStamp
+        if type(state.emitGameBridgeEvent) == "function" then
+            state.emitGameBridgeEvent(eventType, info)
+        end
+    end
 
     local function newStats(): RunningStats
         return {
@@ -1745,58 +1803,46 @@ local function createTrajectoryCalibration(): any
 
     local function loadSavedHistory(): ()
         if type(environment.readfile) ~= "function" then
+            runtime.persistenceBlocked = true
             return
         end
-        local okRead: boolean, rawData: any = pcall(
-            environment.readfile,
-            OUTPUT_PATH
-        )
-        if not okRead or type(rawData) ~= "string" or #rawData < 10 then
+        local okRead: boolean, raw: any = pcall(environment.readfile, OUTPUT_PATH)
+        if not okRead then
+            local okExists, exists = pcall(function() return environment.isfile(OUTPUT_PATH) end)
+            runtime.persistenceBlocked = not (okExists and exists == false)
             return
         end
-        local okDecode: boolean, decoded: any = pcall(function(): any
-            return HttpService:JSONDecode(rawData)
-        end)
-        if not okDecode or type(decoded) ~= "table" then
+        if type(raw) ~= "string" then runtime.persistenceBlocked = true; return end
+        if #raw == 0 then return end
+        local backup: string = OUTPUT_PATH .. ".before-" .. runtime.sessionId .. ".json"
+        local okBackup: boolean = type(environment.writefile) == "function"
+            and pcall(environment.writefile, backup, raw)
+        local okVerify, backedUp = pcall(environment.readfile, backup)
+        if not okBackup or not okVerify or backedUp ~= raw then
+            runtime.persistenceBlocked = true
+            warn(trajectoryLogPrefix .. " History backup failed; existing file will not be overwritten.")
             return
         end
-        local aggregate: any = decoded.aggregate or {}
-        if type(aggregate.gunAcceptanceMs) == "table" then
-            applyStatsPayload(runtime.gunAcceptance, aggregate.gunAcceptanceMs)
-        end
-        if type(aggregate.knifeSpeedStudsPerSecond) == "table" then
-            applyStatsPayload(runtime.knifeSpeed, aggregate.knifeSpeedStudsPerSecond)
-        end
-        if type(aggregate.knifeSpawnDelayMs) == "table" then
-            applyStatsPayload(runtime.knifeSpawnDelay, aggregate.knifeSpawnDelayMs)
-        end
-        if type(decoded.analytics) == "table" and type(decoded.analytics.motionModel) == "table" then
-            for key: string, bucket: any in pairs(decoded.analytics.motionModel) do
-                if type(bucket) == "table" then
-                    runtime.motionBuckets[key] = restoreMotionBucket(bucket)
-                end
+        runtime.historyBackup = backup
+        local ok, decoded = pcall(HttpService.JSONDecode, HttpService, raw)
+        if not ok or type(decoded) ~= "table" then return end
+        -- Only plausible statistical estimates are portable. Counts such as
+        -- 10^57, old events and old motion buckets never become session data.
+        local aggregate: any = type(decoded.aggregate) == "table" and decoded.aggregate or {}
+        local function importStats(stats: RunningStats, payload: any, low: number, high: number): ()
+            if type(payload) ~= "table" then return end
+            for _, key in ipairs({"count", "mean", "m2", "minimum", "maximum"}) do
+                if not predictionMath.finite(payload[key]) then return end
             end
+            if payload.count < 1 or payload.count > 1000000 or payload.count % 1 ~= 0
+                or payload.m2 < 0 or payload.m2 > payload.count * (high - low) ^ 2
+                or payload.minimum < low or payload.maximum > high
+                or payload.mean < payload.minimum or payload.mean > payload.maximum then return end
+            applyStatsPayload(stats, payload)
         end
-        if type(decoded.session) == "table" then
-            runtime.sessionGunAttempts = tonumber(decoded.session.gunAttempts) or 0
-            runtime.sessionGunConfirmed = tonumber(decoded.session.gunConfirmed) or 0
-            runtime.sessionKnifeAttempts = tonumber(decoded.session.knifeAttempts) or 0
-            runtime.sessionKnifeConfirmed = tonumber(decoded.session.knifeConfirmed) or 0
-            if type(decoded.session.events) == "table" then
-                runtime.events = {}
-                local savedEvents: {any} = decoded.session.events
-                for index: number = math.max(1, #savedEvents - MAX_EVENTS + 1), #savedEvents do
-                    table.insert(runtime.events, savedEvents[index])
-                end
-            end
-        end
-        print(string.format(
-            "%s Loaded history from disk: gun %d confirmed · knife %d confirmed · %d events",
-            trajectoryLogPrefix,
-            runtime.sessionGunConfirmed,
-            runtime.sessionKnifeConfirmed,
-            #runtime.events
-        ))
+        importStats(runtime.gunAcceptance, aggregate.gunAcceptanceMs, 0, 2500)
+        importStats(runtime.knifeSpeed, aggregate.knifeSpeedStudsPerSecond, 24, 300)
+        importStats(runtime.knifeSpawnDelay, aggregate.knifeSpawnDelayMs, 0, 5000)
     end
 
     local function vectorArray(value: Vector3): {number}
@@ -2009,6 +2055,8 @@ local function createTrajectoryCalibration(): any
     end
 
     local function appendEvent(record: CalibrationEvent): ()
+        record.sessionId = runtime.sessionId
+        record.buildStamp = runtime.buildStamp
         if #runtime.events >= MAX_EVENTS then
             table.remove(runtime.events, 1)
         end
@@ -2327,6 +2375,7 @@ local function createTrajectoryCalibration(): any
     end
 
     saveSnapshot = function(reason: string): boolean
+        if runtime.persistenceBlocked then return false end
         if type(environment.writefile) ~= "function" then
             warn(trajectoryLogPrefix .. " writefile is unavailable; data was not saved.")
             return false
@@ -2339,11 +2388,24 @@ local function createTrajectoryCalibration(): any
         local mergedKnife = statsPayload(runtime.knifeSpeed)
         local mergedDelay = statsPayload(runtime.knifeSpawnDelay)
         local payload: {[string]: any} = {
-            schema = 3,
+            schema = 4,
             kind = "mm2-trajectory-analytics",
+            buildStamp = runtime.buildStamp,
+            sessionId = runtime.sessionId,
+            historyBackup = runtime.historyBackup,
+            settings = {
+                motionSampleHz = mm2Settings.motionSampleHz,
+                silentSpawn = mm2Settings.silentSpawn,
+                silentAim = mm2Settings.silentAim,
+                silentSweep = mm2Settings.silentSweep,
+                wallCheck = mm2Settings.shootWallCheck,
+                leadBias = mm2Settings.gunLeadBias,
+                autoTuneLead = mm2Settings.autoTuneLead,
+            },
             placeId = game.PlaceId,
             savedAt = DateTime.now():ToIsoDate(),
             reason = reason,
+            aggregateScope = "validated-history-plus-this-session; not a hit-rate denominator",
             aggregate = {
                 gunAcceptanceMs = mergedGun,
                 knifeSpeedStudsPerSecond = mergedKnife,
@@ -2366,6 +2428,13 @@ local function createTrajectoryCalibration(): any
                 motionModel = motionModelPayload(runtime.motionBuckets),
             },
             session = {
+                startedAt = runtime.startedAtUnix,
+                countersScope = "this-session-only",
+                gunConfirmationMeaning = "matched GunFired signal; not necessarily damage or death",
+                knifeConfirmationMeaning = "observed projectile with valid speed; not an impact",
+                rawKnifeActivations = runtime.rawKnifeActivations,
+                unmatchedGunSignals = runtime.unmatchedGunSignals,
+                stabAttempts = runtime.sessionStabAttempts,
                 elapsedSeconds = os.clock() - runtime.startedAt,
                 gunAttempts = runtime.sessionGunAttempts,
                 gunConfirmed = runtime.sessionGunConfirmed,
@@ -2427,6 +2496,8 @@ local function createTrajectoryCalibration(): any
             (pending.latencyMs or 0) / 1000
         )
         appendEvent({
+            shotId = pending.shotId,
+            phase = "confirmation",
             kind = "gun",
             serverTime = workspace:GetServerTimeNow(),
             pingMs = pending.pingMs,
@@ -2488,36 +2559,9 @@ local function createTrajectoryCalibration(): any
                 isLocalShooter = true
             end
             if isLocalShooter then
-                local pingMs: number = getPingMilliseconds()
-                local target: Player? = findMurderer()
-                local endpoint: Vector3? = worldPosition(endpointValue)
-                local targetCharacter: Model? = target and target.Character
-                local hitTarget: boolean = typeof(hitPartValue) == "Instance"
-                    and targetCharacter ~= nil
-                    and hitPartValue:IsDescendantOf(targetCharacter)
-                addSample(runtime.gunAcceptance, pingMs)
-                runtime.sessionGunAttempts += 1
-                runtime.sessionGunConfirmed += 1
-                appendEvent({
-                    kind = "gun",
-                    serverTime = workspace:GetServerTimeNow(),
-                    pingMs = pingMs,
-                    latencyMs = pingMs,
-                    targetUserId = target and target.UserId or nil,
-                    targetName = target and target.Name or nil,
-                    endpoint = endpoint and vectorArray(endpoint) or nil,
-                    hitTarget = hitTarget,
-                })
-                if type(state.emitGameBridgeEvent) == "function" then
-                    state.emitGameBridgeEvent("authoringShot", {
-                        kind = "gun",
-                        toolName = eventTool and eventTool.Name or "Gun",
-                        originPos = eventOrigin or (root and root.Position),
-                        aimPos = endpoint or Vector3.zero,
-                        targetName = target and target.Name or nil,
-                        silent = false,
-                    })
-                end
+                runtime.unmatchedGunSignals += 1
+                appendEvent({kind = "gun", phase = "unmatched-signal",
+                    serverTime = workspace:GetServerTimeNow(), pingMs = getPingMilliseconds()})
             end
             return
         end
@@ -2552,6 +2596,11 @@ local function createTrajectoryCalibration(): any
         pending.latencyMs = latencyMs
         pending.confirmedEndpoint = endpoint
         pending.confirmedHitTarget = hitTarget
+        emitShot("shotConfirmation", {
+            shotId = pending.shotId, kind = "gun", hitTarget = hitTarget,
+            targetName = pending.targetName, latencyMs = latencyMs,
+            endpoint = endpoint, evidence = "GunFired.hitPart",
+        })
         ensureTrajectorySampler()
     end
 
@@ -2584,6 +2633,8 @@ local function createTrajectoryCalibration(): any
             addSample(runtime.knifeSpeed, resolvedSpeed)
             runtime.sessionKnifeConfirmed += 1
             appendEvent({
+                shotId = track.shotId,
+                phase = "projectile-observed",
                 kind = "knife",
                 serverTime = workspace:GetServerTimeNow(),
                 pingMs = track.pingMs,
@@ -2664,10 +2715,11 @@ local function createTrajectoryCalibration(): any
     end
 
     local function resolveKnifeProjectile(projectile: Instance): ()
+        local sessionId = runtime.sessionId
         task.spawn(function(): ()
             local linkedHandle: Instance? = nil
             for _attempt: number = 1, 20 do
-                if not runtime.active or not projectile.Parent then
+                if not runtime.active or runtime.sessionId ~= sessionId or not projectile.Parent then
                     return
                 end
                 local handleLink: Instance? = projectile:FindFirstChild(
@@ -2711,7 +2763,17 @@ local function createTrajectoryCalibration(): any
             if rawSpeed and (rawSpeed < 24 or rawSpeed > 300) then
                 rawSpeed = nil
             end
+            if not pending.attemptCounted then
+                runtime.sessionKnifeAttempts += 1
+                emitShot("authoringShot", {shotId = pending.shotId, kind = "knife",
+                    toolName = pending.tool.Name, originPos = pending.origin,
+                    aimPos = pending.requestedAim, targetName = pending.targetName,
+                    eventSource = "observed-projectile"})
+            end
+            emitShot("shotConfirmation", {shotId = pending.shotId, kind = "knife",
+                evidence = "projectile-observed", targetName = pending.targetName})
             local track: KnifeTrack = {
+                shotId = pending.shotId,
                 startedAt = now,
                 previousAt = now,
                 previousPosition = projectilePosition(projectile),
@@ -2742,7 +2804,8 @@ local function createTrajectoryCalibration(): any
     local function isKnife(tool: Tool): boolean
         return tool.Name == "Knife"
             or CollectionService:HasTag(tool, "Weapon_Knife")
-            or tool:FindFirstChild("Events") ~= nil
+            or (tool:FindFirstChild("Events") ~= nil
+                and tool.Events:FindFirstChild("KnifeThrown") ~= nil)
     end
 
     local function observeTool(tool: Tool): ()
@@ -2776,9 +2839,19 @@ local function createTrajectoryCalibration(): any
                     table.insert(targetTrajectory, initialPoint)
                 end
             end
+            local shotId: string = nextShotId()
+            appendEvent({shotId = shotId, kind = gun and "gun" or "knifeActivation",
+                phase = gun and "attempt" or "activation",
+                serverTime = workspace:GetServerTimeNow(), pingMs = pingMs,
+                targetName = target and target.Name or nil})
+            emitShot("authoringShot", {shotId = shotId, kind = gun and "gun" or "knifeActivation",
+                toolName = tool.Name, originPos = toolOrigin(tool), aimPos = requestedAim,
+                targetName = target and target.Name or nil, eventSource = "tool-activation"})
             if gun then
                 runtime.sessionGunAttempts += 1
                 table.insert(runtime.pendingGuns, {
+                    shotId = shotId,
+                    attemptCounted = gun,
                     tool = tool,
                     activatedAt = now,
                     origin = toolOrigin(tool),
@@ -2791,8 +2864,10 @@ local function createTrajectoryCalibration(): any
                 })
                 compactPending(runtime.pendingGuns, now)
             elseif knife then
-                runtime.sessionKnifeAttempts += 1
+                runtime.rawKnifeActivations += 1
                 table.insert(runtime.pendingKnives, {
+                    shotId = shotId,
+                    attemptCounted = gun,
                     tool = tool,
                     activatedAt = now,
                     origin = toolOrigin(tool),
@@ -2885,6 +2960,7 @@ local function createTrajectoryCalibration(): any
         end
         runtime.active = true
         runtime.startedAt = os.clock()
+        runtime.startedAtUnix = os.time()
         loadSavedHistory()
         observeContainer(LocalPlayer:FindFirstChildOfClass("Backpack"))
         observeContainer(LocalPlayer.Character)
@@ -2915,6 +2991,20 @@ local function createTrajectoryCalibration(): any
         runtime.sessionGunConfirmed = 0
         runtime.sessionKnifeAttempts = 0
         runtime.sessionKnifeConfirmed = 0
+        runtime.rawKnifeActivations = 0
+        runtime.unmatchedGunSignals = 0
+        runtime.sessionStabAttempts = 0
+        runtime.startedAt = os.clock()
+        runtime.startedAtUnix = os.time()
+        for _, track in pairs(runtime.tracks) do
+            if track.destroyConnection then track.destroyConnection:Disconnect() end
+        end
+        table.clear(runtime.tracks)
+        disconnectFeatureConnection("MM2TrajectorySampler")
+        runtime.sessionId = HttpService:GenerateGUID(false)
+        runtime.shotSequence = 0
+        table.clear(runtime.pendingGuns)
+        table.clear(runtime.pendingKnives)
     end
 
     function controller:save(reason: string?): boolean
@@ -2941,6 +3031,12 @@ local function createTrajectoryCalibration(): any
             return
         end
         local kind: string = tostring(info.kind or "gun")
+        local shotId: string = nextShotId()
+        if kind ~= "stab" then
+            appendEvent({kind = kind, shotId = shotId, phase = "authored",
+                serverTime = workspace:GetServerTimeNow(), pingMs = getPingMilliseconds(),
+                settings = info.settings, targetName = info.target and info.target.Name or nil})
+        end
         local now: number = os.clock()
         local pingMs: number = getPingMilliseconds()
         local target: Player? =
@@ -2957,6 +3053,7 @@ local function createTrajectoryCalibration(): any
             end
         end
         if kind == "stab" then
+            runtime.sessionStabAttempts += 1
             local targetRoot: BasePart? = getTargetRoot(target)
             local localRoot: BasePart? =
                 LocalPlayer.Character
@@ -2966,7 +3063,7 @@ local function createTrajectoryCalibration(): any
                 and localRoot
                 and (targetRoot.Position - localRoot.Position).Magnitude
             appendEvent({
-                kind = "stab",
+                kind = "stab", shotId = shotId, phase = "attempt",
                 serverTime = workspace:GetServerTimeNow(),
                 pingMs = pingMs,
                 distance = distance and math.floor(distance * 10 + 0.5) / 10 or nil,
@@ -2993,6 +3090,8 @@ local function createTrajectoryCalibration(): any
                 local queue: {any} =
                     isGun and runtime.pendingGuns or runtime.pendingKnives
                 table.insert(queue, {
+                    shotId = shotId,
+                    attemptCounted = true,
                     tool = authoredTool,
                     activatedAt = now,
                     origin = info.originPos,
@@ -3009,7 +3108,10 @@ local function createTrajectoryCalibration(): any
         end
 
         if type(state.emitGameBridgeEvent) == "function" then
-            state.emitGameBridgeEvent("authoringShot", {
+            emitShot("authoringShot", {
+                shotId = shotId,
+                eventSource = "authored",
+                settings = info.settings,
                 kind = kind,
                 toolName = tostring(info.toolName or (kind == "knife" and "Knife" or "Gun")),
                 originPos = info.originPos,
@@ -3017,6 +3119,7 @@ local function createTrajectoryCalibration(): any
                 targetName = target and target.Name or nil,
                 silent = info.silent == true,
                 variant = info.variant,
+                offset = info.offset,
             })
         end
     end
@@ -3031,9 +3134,9 @@ local function createTrajectoryCalibration(): any
             bucketCount += 1
         end
         return string.format(
-            "MM2 analytics · shots %d · throws %d · motion buckets %d · knife %s",
-            current.confirmedShots,
-            current.confirmedThrows,
+            "MM2 session observations · guns %d · knives %d · motion buckets %d · knife %s",
+            runtime.sessionGunConfirmed,
+            runtime.sessionKnifeConfirmed,
             bucketCount,
             knifeText
         )
@@ -3720,6 +3823,7 @@ state.mm2Core = {
     findMM2Map = findMM2Map,
     findDroppedGun = findDroppedGun,
 
+    isWeaponPathClear = isWeaponPathClear,
     predictionMath = predictionMath,
     isMotionGrounded = isMotionGrounded,
     motionSamples = motionSamples,

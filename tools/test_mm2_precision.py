@@ -303,6 +303,8 @@ local knife={Name="Knife",FindFirstChild=function() return {FindFirstChild=funct
 local function getReadyKnife() return knife end
 local function findNearestTarget() return target end
 local function predictAim() return root.Position end
+local visibility=true
+local function isWeaponPathClear() return visibility end
 local function playThrowAnimation()
     animations+=1
     assert(notes==sends,"telemetry must be queued before cosmetic work")
@@ -330,6 +332,10 @@ for _,hz in ipairs({20,60,120}) do
     assert(callbacks[1]==nil)
 end
 assert(stops==3)
+visibility=false; sends=0; notes=0; now=100
+knob.mode="Normal"; toggleKnifeThrow(true); throwKnife(); assert(sends==0)
+knob.mode="Silent"; throwKnife(); assert(sends==1 and notes==1)
+toggleKnifeThrow(false)
 pass("actual Knife loop: live frequency, 1s cooldown, cosmetic failure isolation, disable cleanup")
 end
 ''']
@@ -366,6 +372,7 @@ local runtime={active=true,dirty=true,revision=0,startedAt=0,events={},motionBuc
     gunAcceptance={count=1,mean=120,m2=0,minimum=120,maximum=120},
     knifeSpeed={count=1,mean=96,m2=0,minimum=96,maximum=96},
     knifeSpawnDelay={count=1,mean=80,m2=0,minimum=80,maximum=80}}
+local mm2Settings={}
 local payloads={}
 local failWrite=false
 local appendDuringWrite=false
@@ -393,7 +400,7 @@ runtime.sessionGunAttempts+=1; runtime.dirty=true
 failWrite=true; assert(not saveSnapshot("failed")); assert(runtime.dirty)
 failWrite=false; assert(saveSnapshot("retry")); assert(not runtime.dirty)
 assert(payloads[#payloads].session.gunAttempts==2)
-assert(payloads[#payloads].schema==3)
+assert(payloads[#payloads].schema==4)
 appendDuringWrite=true
 assert(saveSnapshot("yielding-write") and runtime.dirty)
 appendDuringWrite=false

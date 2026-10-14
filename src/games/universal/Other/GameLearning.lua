@@ -30,6 +30,7 @@ function Module.init(context: Runtime): any
     local httpService: any = host.HttpService or (game :: any):GetService("HttpService")
     local UserInputService: any = host.UserInputService or (game :: any):GetService("UserInputService")
 
+    local isMM2: boolean = game.PlaceId == 142823291
     local gameBridge: any = context.services and
         context.services.gameBridge
 
@@ -44,6 +45,13 @@ function Module.init(context: Runtime): any
             torso: {number}?,
         }
         type ShotRecord = {
+            shotId: string?,
+            sessionId: string?,
+            buildStamp: string?,
+            settings: any?,
+            eventSource: string?,
+            evidence: any?,
+            deathObservation: any?,
             id: number,
             t: number,
             clockAt: number,
@@ -54,7 +62,7 @@ function Module.init(context: Runtime): any
             aim: {number},
             scene: {SceneEntry},
             outcome: {[string]: any}?,
-            silentSpawn: {variant: string, offset: number}?,
+            silentSpawn: {variant: string, offset: number?}?,
 
             target: string?,
         }
@@ -85,11 +93,23 @@ function Module.init(context: Runtime): any
             .. "_Game_Learning.json"
         local runtime: any = {
             enabled = false,
+            sessionId = httpService:GenerateGUID(false),
+            startedAt = os.time(),
+            startedClock = os.clock(),
+            buildStamp = tostring(host.SOURCE_STAMP or "unknown"),
+            historyLoaded = false,
+            persistenceBlocked = false,
+            historyBackup = nil,
             shots = {} :: {ShotRecord},
             movements = {} :: {MovementRecord},
             hits = {} :: {{[string]: any}},
             aggregates = {
                 shots = 0,
+                confirmations = 0,
+                targetHits = 0,
+                projectileObservations = 0,
+                unconfirmed = 0,
+                deathAssociations = 0,
                 kills = 0,
                 cleanKills = 0,
                 wallshotKills = 0,
@@ -108,6 +128,7 @@ function Module.init(context: Runtime): any
             spawnKills = {} :: {[string]: number},
             lastAuthoredAt = 0,
             saveDirty = false,
+            revision = 0,
             connections = {} :: {RBXScriptConnection},
             observedTools = setmetatable({}, {__mode = "k"}) :: {[Tool]: boolean},
             watchedPlayers = setmetatable({}, {__mode = "k"}) :: {[Player]: boolean},
@@ -250,12 +271,13 @@ function Module.init(context: Runtime): any
 
         local function finalizeShot(
             shot: ShotRecord,
-            explicitVariant: string?
+            explicitVariant: string?,
+            explicitOffset: number?
         ): ()
 
             local variant: string? = explicitVariant
-            local variantOffset: number = 0
-            if not variant
+            local variantOffset: number? = explicitOffset
+            if not isMM2 and not variant
                 and gameBridge
                 and type(gameBridge.silentShot) == "function" then
                 local okInfo: boolean, info: any = pcall(gameBridge.silentShot)
@@ -264,7 +286,7 @@ function Module.init(context: Runtime): any
                     and info.variant ~= nil
                     and os.clock() - (tonumber(info.at) or 0) < 2 then
                     variant = info.variant
-                    variantOffset = tonumber(info.offset) or 0
+                    variantOffset = tonumber(info.offset)
                 end
             end
             if variant then
@@ -274,28 +296,28 @@ function Module.init(context: Runtime): any
             table.insert(runtime.shots, shot)
             clampTrim(runtime.shots, tuning.maxEvents)
             runtime.aggregates.shots += 1
+            runtime.revision += 1
             runtime.saveDirty = true
 
+            local timerSession = runtime.sessionId
             task.delay(tuning.killWindowSeconds + 0.5, function(): ()
+                if timerSession ~= runtime.sessionId then return end
                 if shot.outcome ~= nil then
                     return
                 end
-                local candidate: SceneEntry? = nil
-                for _, entry: SceneEntry in ipairs(shot.scene) do
-                    if entry.dist <= 60
-                        and (entry.angleDeg == nil or entry.angleDeg <= 30) then
-                        candidate = entry
-                    end
-                end
-                if candidate then
-                    shot.outcome = {verdict = "miss"}
-                    runtime.aggregates.misses += 1
-                    runtime.saveDirty = true
-                end
+                shot.outcome = {verdict = "unconfirmed", evidence = "observation-timeout"}
+                runtime.aggregates.unconfirmed += 1
+                runtime.revision += 1
+                runtime.saveDirty = true
             end)
         end
 
         local function recordShot(tool: Tool): ()
+            -- MM2's core is the sole weapon observer; no mouse/Tool double count.
+            if isMM2 then return end
+            local name = string.lower(tool.Name)
+            if not string.find(name, "gun", 1, true) and not string.find(name, "knife", 1, true)
+                and not tool:FindFirstChild("Shoot") then return end
             runtime.lastAuthoredAt = os.clock()
             local character: Model? = LocalPlayer.Character
             local root: BasePart? = character
@@ -315,6 +337,8 @@ function Module.init(context: Runtime): any
             local aimDir: Vector3? = aimDelta.Magnitude > 0.01 and aimDelta.Unit or nil
             runtime.shotCounter += 1
             local shot: ShotRecord = {
+                sessionId = runtime.sessionId,
+                buildStamp = runtime.buildStamp,
                 id = runtime.shotCounter,
                 t = os.time(),
                 clockAt = os.clock(),
@@ -332,6 +356,12 @@ function Module.init(context: Runtime): any
         local function recordAuthoredShot(info: any): ()
             if type(info) ~= "table" then
                 return
+            end
+            if info.kind == "knifeActivation" then return end -- activation is not a throw/stab
+            if type(info.shotId) == "string" then
+                for _, previous in ipairs(runtime.shots) do
+                    if previous.shotId == info.shotId then return end
+                end
             end
             local character: Model? = LocalPlayer.Character
             local root: BasePart? = character
@@ -356,6 +386,11 @@ function Module.init(context: Runtime): any
             runtime.lastAuthoredAt = os.clock()
             runtime.shotCounter += 1
             local shot: ShotRecord = {
+                shotId = info.shotId,
+                sessionId = info.sessionId or runtime.sessionId,
+                buildStamp = info.buildStamp or runtime.buildStamp,
+                settings = info.settings,
+                eventSource = info.eventSource,
                 id = runtime.shotCounter,
                 t = os.time(),
                 clockAt = os.clock(),
@@ -367,79 +402,57 @@ function Module.init(context: Runtime): any
                 scene = buildScene(shotOrigin, aimDir),
                 outcome = nil,
                 silentSpawn = nil,
-                target = typeof(info.target) == "Instance"
-                    and (info.target :: Player).Name
-                    or nil,
+                target = type(info.targetName) == "string" and info.targetName
+                    or (typeof(info.target) == "Instance" and info.target.Name or nil),
             }
-            finalizeShot(shot, info.variant)
+            finalizeShot(shot, info.variant, tonumber(info.offset))
+        end
+
+        local function recordConfirmation(info: any): ()
+            if type(info) ~= "table" or type(info.shotId) ~= "string" then return end
+            for index = #runtime.shots, 1, -1 do
+                local shot = runtime.shots[index]
+                if shot.shotId ~= info.shotId then continue end
+                if shot.evidence then return end -- repeated notifications are idempotent
+                if shot.outcome and shot.outcome.verdict == "unconfirmed" then
+                    runtime.aggregates.unconfirmed = math.max(0, runtime.aggregates.unconfirmed - 1)
+                end
+                shot.evidence = {source = info.evidence, hitTarget = info.hitTarget,
+                    latencyMs = info.latencyMs, targetName = info.targetName}
+                local verdict = "projectile-observed"
+                if info.kind == "gun" then
+                    verdict = info.hitTarget == true and "target-hit" or "shot-confirmed"
+                    if info.hitTarget == true then runtime.aggregates.targetHits += 1 end
+                else
+                    runtime.aggregates.projectileObservations += 1
+                end
+                runtime.aggregates.confirmations += 1
+                shot.outcome = {verdict = verdict, evidence = info.evidence}
+                runtime.revision += 1
+                runtime.saveDirty = true
+                return
+            end
         end
 
         local function recordDeath(player: Player): ()
-            local attributed: boolean = false
-            for index: number = #runtime.shots, 1, -1 do
-                local shot: ShotRecord = runtime.shots[index]
-                if os.clock() - shot.clockAt > tuning.killWindowSeconds then
-                    break
-                end
-                if shot.outcome ~= nil then
-                    continue
-                end
-                local entry: SceneEntry? = findSceneEntry(shot, player)
-                local isAuthoredTarget: boolean = (shot.target == player.Name) or (shot.silentSpawn ~= nil)
-                if entry or isAuthoredTarget then
-                    local dist: number = entry and entry.dist or 0
-                    local los: string = entry and entry.los or "clear"
-                    local verdict: string = "clean"
-                    if los == "blocked" then
-                        verdict = "wallshot"
-                    elseif dist > 80 then
-                        verdict = "longrange"
-                    end
-                    shot.outcome = {
-                        killed = player.Name,
-                        delayMs = math.floor((os.clock() - shot.clockAt) * 1000),
-                        verdict = verdict,
-                        distance = dist,
-                        lineOfSight = los,
-                    }
-                    runtime.aggregates.kills += 1
-                    if verdict == "wallshot" then
-                        runtime.aggregates.wallshotKills += 1
-                    elseif verdict == "longrange" then
-                        runtime.aggregates.longrangeKills += 1
-                    else
-                        runtime.aggregates.cleanKills += 1
-                    end
-                    if dist > runtime.aggregates.farthestKill then
-                        runtime.aggregates.farthestKill = dist
-                    end
-                    if entry and ((dist > 5 and string.find(string.lower(shot.tool), "knife") ~= nil) or (entry.headOffset and entry.headOffset > 2.5)) then
-                        runtime.aggregates.hitboxKills = (runtime.aggregates.hitboxKills or 0) + 1
-                    end
-                    if shot.silentSpawn then
-                        local variant: string = shot.silentSpawn.variant
-                        runtime.spawnKills[variant] =
-                            (runtime.spawnKills[variant] or 0) + 1
-                    end
-                    table.insert(runtime.hits, {
-                        t = os.time(),
-                        killed = player.Name,
-                        tool = shot.tool,
-                        verdict = verdict,
-                        distance = dist,
-                        lineOfSight = los,
-                        headOffset = entry and entry.headOffset or nil,
-                        torso = entry and entry.torso or nil,
-                        silentSpawn = shot.silentSpawn,
-                    })
-                    clampTrim(runtime.hits, tuning.maxEvents)
-                    attributed = true
-                    break
-                end
+            -- Temporal association only: another player may have caused the death.
+            local attributed = false
+            for index = #runtime.shots, 1, -1 do
+                local shot = runtime.shots[index]
+                if os.clock() - shot.clockAt > tuning.killWindowSeconds then break end
+                if shot.target ~= player.Name or shot.deathObservation then continue end
+                shot.deathObservation = {player = player.Name,
+                    delayMs = math.floor((os.clock() - shot.clockAt) * 1000),
+                    evidence = "temporal-association-only"}
+                runtime.aggregates.deathAssociations += 1
+                table.insert(runtime.hits, {t = os.time(), shotId = shot.shotId,
+                    player = player.Name, verdict = "death-associated-not-attributed"})
+                clampTrim(runtime.hits, tuning.maxEvents)
+                attributed = true
+                break
             end
-            if not attributed then
-                runtime.aggregates.unattributedDeaths += 1
-            end
+            if not attributed then runtime.aggregates.unattributedDeaths += 1 end
+            runtime.revision += 1
             runtime.saveDirty = true
         end
 
@@ -484,10 +497,12 @@ function Module.init(context: Runtime): any
                 detail = detail,
             } :: MovementRecord)
             clampTrim(runtime.movements, tuning.maxEvents)
+            runtime.revision += 1
             runtime.saveDirty = true
         end
 
         local function observeTool(tool: Tool): ()
+            if isMM2 then return end
             if runtime.observedTools[tool] then
                 return
             end
@@ -657,6 +672,7 @@ function Module.init(context: Runtime): any
                             if not lastFlag or os.clock() - lastFlag > 5 then
                                 runtime.anomalyCooldown[player] = os.clock()
                                 runtime.aggregates.hitboxAnomalies += 1
+                                runtime.revision += 1
                                 runtime.saveDirty = true
                             end
                         end
@@ -666,144 +682,51 @@ function Module.init(context: Runtime): any
         end
 
         local function buildInsights(): {string}
-            local insights: {string} = {}
-            local agg: any = runtime.aggregates
-            if agg.wallshotKills > 0 then
-                table.insert(
-                    insights,
-                    "Server accepted "
-                        .. tostring(agg.wallshotKills)
-                        .. " kill(s) through a blocked line of sight: wallshots are not validated."
-                )
-            end
-            if agg.longrangeKills > 0 then
-                table.insert(
-                    insights,
-                    "Server accepted "
-                        .. tostring(agg.longrangeKills)
-                        .. " kill(s) beyond 80 studs: no range cap observed."
-                )
-            end
-            if agg.teleports > 0 then
-                table.insert(
-                    insights,
-                    tostring(agg.teleports)
-                        .. " local teleport(s) were tolerated (no kick, no snapback)."
-                )
-            end
-            if agg.speedSpikes > 0 then
-                table.insert(
-                    insights,
-                    tostring(agg.speedSpikes)
-                        .. " sustained speed spike(s) above 90 studs/s were tolerated."
-                )
-            end
-            if (agg.hitboxKills or 0) > 0 then
-                table.insert(
-                    insights,
-                    "Server accepted "
-                        .. tostring(agg.hitboxKills)
-                        .. " kill(s) through expanded hitbox boundaries: client collision manipulation (Touched / GetPartsInPart) verified effective."
-                )
-            end
-            if agg.hitboxAnomalies > 0 then
-                table.insert(
-                    insights,
-                    tostring(agg.hitboxAnomalies)
-                        .. " abnormal hitbox geometry sample(s) observed on other players."
-                )
-            end
-            local spawnTotal: number = 0
-            local spawnParts: {string} = {}
-            for _, variant: string in ipairs({"Front", "Through", "Top", "Behind"}) do
-                local shotsTaken: number = runtime.spawnShots[variant] or 0
-                if shotsTaken > 0 then
-                    spawnTotal += shotsTaken
-                    table.insert(
-                        spawnParts,
-                        string.format(
-                            "%s %d/%d",
-                            variant,
-                            runtime.spawnKills[variant] or 0,
-                            shotsTaken
-                        )
-                    )
-                end
-            end
-            if spawnTotal > 0 then
-                table.insert(
-                    insights,
-                    "Silent spawn A/B (kills/shots): "
-                        .. table.concat(spawnParts, " · ")
-                        .. ". Compare variants before changing the default."
-                )
-            end
-            if #insights == 0 then
-                table.insert(
-                    insights,
-                    "No server-tolerance anomalies recorded yet this session."
-                )
-            end
-            return insights
+            local agg = runtime.aggregates
+            return {
+                string.format("%d attempts; %d observations confirmed; %d intended-target gun impacts.",
+                    agg.shots, agg.confirmations, agg.targetHits),
+                string.format("%d projectile observations are NOT impact/damage confirmations.", agg.projectileObservations),
+                string.format("%d attempts unconfirmed; absence of evidence is NOT a miss.", agg.unconfirmed),
+                string.format("%d temporally associated deaths do NOT establish who caused them.", agg.deathAssociations),
+                "Local movement/geometry observations do not establish server tolerance or successful hitbox manipulation.",
+            }
         end
 
         local MAX_STORED_EVENTS: number = 3000
 
         local function loadStoredLogs(): ()
+            if runtime.historyLoaded then return end
+            runtime.historyLoaded = true
             if type(executorEnvironment.readfile) ~= "function" then
+                runtime.persistenceBlocked = true
                 return
             end
-            local okRead: boolean, existingRaw: any = pcall(
-                executorEnvironment.readfile,
-                outputPath
-            )
-            if not okRead or type(existingRaw) ~= "string" or #existingRaw < 10 then
+            local ok, raw = pcall(executorEnvironment.readfile, outputPath)
+            if not ok then
+                local okExists, exists = pcall(function() return executorEnvironment.isfile(outputPath) end)
+                runtime.persistenceBlocked = not (okExists and exists == false)
                 return
             end
-            local okDecode: boolean, existing: any = pcall(function(): any
-                return httpService:JSONDecode(existingRaw)
-            end)
-            if not okDecode or type(existing) ~= "table" then
+            if type(raw) ~= "string" then runtime.persistenceBlocked = true; return end
+            if #raw == 0 then return end
+            local backup = outputPath .. ".before-" .. runtime.sessionId .. ".json"
+            local okBackup = type(executorEnvironment.writefile) == "function"
+                and pcall(executorEnvironment.writefile, backup, raw)
+            local okVerify, backedUp = pcall(executorEnvironment.readfile, backup)
+            if not okBackup or not okVerify or backedUp ~= raw then
+                runtime.persistenceBlocked = true
+                notify("Game Learning: history backup failed; existing file protected")
                 return
             end
-            if type(existing.aggregates) == "table" then
-                for key: string, val: any in pairs(existing.aggregates) do
-                    if runtime.aggregates[key] ~= nil and type(val) == "number" then
-                        runtime.aggregates[key] = val
-                    end
-                end
-            end
-            if type(existing.spawnShots) == "table" then
-                for key: string, val: any in pairs(existing.spawnShots) do
-                    runtime.spawnShots[key] = tonumber(val) or 0
-                end
-            end
-            if type(existing.spawnKills) == "table" then
-                for key: string, val: any in pairs(existing.spawnKills) do
-                    runtime.spawnKills[key] = tonumber(val) or 0
-                end
-            end
-            if type(existing.shots) == "table" then
-                runtime.shots = {}
-                for _, s: any in ipairs(existing.shots) do
-                    table.insert(runtime.shots, s)
-                end
-            end
-            if type(existing.movements) == "table" then
-                runtime.movements = {}
-                for _, m: any in ipairs(existing.movements) do
-                    table.insert(runtime.movements, m)
-                end
-            end
-            if type(existing.hits) == "table" then
-                runtime.hits = {}
-                for _, h: any in ipairs(existing.hits) do
-                    table.insert(runtime.hits, h)
-                end
-            end
+            runtime.historyBackup = backup
+            -- Retained logs stay in the backup, never in this session's counters.
         end
 
         saveSnapshot = function(reason: string?, silent: boolean?): boolean
+            if runtime.persistenceBlocked then return false end
+            loadStoredLogs()
+            if runtime.persistenceBlocked then return false end
             if type(executorEnvironment.writefile) ~= "function" then
                 return false
             end
@@ -821,15 +744,21 @@ function Module.init(context: Runtime): any
             while #runtime.hits > MAX_STORED_EVENTS do
                 table.remove(runtime.hits, 1)
             end
+            local savedRevision = runtime.revision
             local payload: {[string]: any} = {
-                schema = 1,
+                schema = 2,
+                buildStamp = runtime.buildStamp,
+                sessionId = runtime.sessionId,
+                historyBackup = runtime.historyBackup,
                 kind = "game-learning-log",
+                outcomeContract = "attempts != confirmations != impacts; kills not measured; legacy kill/miss fields are unused",
                 placeId = game.PlaceId,
                 savedAt = os.time(),
                 savedReason = reason or "manual",
                 session = {
-                    startedAt = os.time(),
-                    uptimeSeconds = math.floor(os.clock()),
+                    startedAt = runtime.startedAt,
+                    countersScope = "this-session-only",
+                    uptimeSeconds = math.floor(os.clock() - runtime.startedClock),
                 },
                 aggregates = runtime.aggregates,
                 insights = buildInsights(),
@@ -853,7 +782,7 @@ function Module.init(context: Runtime): any
                 encoded
             )
             if okWrite then
-                runtime.saveDirty = false
+                runtime.saveDirty = runtime.revision ~= savedRevision
                 if not silent then
                     notify("Game Learning: saved " .. outputPath)
                 end
@@ -861,51 +790,16 @@ function Module.init(context: Runtime): any
             return okWrite
         end
         local function status(): string
-            local agg: any = runtime.aggregates
-            local base: string = string.format(
-                "Game Learning · shots %d · kills %d (wall %d · far %d · hitbox %d) · misses %d · teleports %d · speed %d · anomalies %d",
-                agg.shots,
-                agg.kills,
-                agg.wallshotKills,
-                agg.longrangeKills,
-                agg.hitboxKills or 0,
-                agg.misses,
-                agg.teleports,
-                agg.speedSpikes,
-                agg.hitboxAnomalies
-            )
-            local spawnParts: {string} = {}
-            for _, variant: string in ipairs({"Front", "Through", "Top", "Behind"}) do
-                local shotsTaken: number = runtime.spawnShots[variant] or 0
-                if shotsTaken > 0 then
-                    table.insert(
-                        spawnParts,
-                        string.format(
-                            "%s %d/%d",
-                            variant,
-                            runtime.spawnKills[variant] or 0,
-                            shotsTaken
-                        )
-                    )
-                end
-            end
-            if #spawnParts > 0 then
-                base = base .. " · spawn " .. table.concat(spawnParts, " ")
-            end
-            return base
+            local agg = runtime.aggregates
+            return string.format("%d attempts · %d confirmed · %d target hits · %d unconfirmed",
+                agg.shots, agg.confirmations, agg.targetHits, agg.unconfirmed)
         end
 
         local function deleteLogs(): boolean
-            runtime.aggregates = {
-                shots = 0,
-                kills = 0,
-                wallshotKills = 0,
-                longrangeKills = 0,
-                misses = 0,
-                teleports = 0,
-                speedSpikes = 0,
-                hitboxAnomalies = 0,
-            }
+            for key in pairs(runtime.aggregates) do runtime.aggregates[key] = 0 end
+            runtime.sessionId = httpService:GenerateGUID(false)
+            runtime.startedAt = os.time()
+            runtime.startedClock = os.clock()
             runtime.spawnShots = {}
             runtime.spawnKills = {}
             runtime.shots = {}
@@ -985,7 +879,7 @@ function Module.init(context: Runtime): any
             table.insert(
                 runtime.connections,
                 UserInputService.InputBegan:Connect(function(input: InputObject, gameProcessed: boolean): ()
-                    if gameProcessed then
+                    if isMM2 or gameProcessed then
                         return
                     end
                     if input.UserInputType ~= Enum.UserInputType.MouseButton1
@@ -1031,6 +925,9 @@ function Module.init(context: Runtime): any
                 recordAuthoredShot(info)
             end
         end
+        controller.noteConfirmation = function(info: any): ()
+            if runtime.enabled and tuning.logShots then recordConfirmation(info) end
+        end
         controller.delete = function(): boolean
             return deleteLogs()
         end
@@ -1044,6 +941,8 @@ function Module.init(context: Runtime): any
         gameBridge.onEvent(function(eventType: string, payload: any): ()
             if eventType == "authoringShot" then
                 gameLearning:noteAuthoringShot(payload)
+            elseif eventType == "shotConfirmation" then
+                gameLearning.noteConfirmation(payload)
             end
         end)
     end
@@ -1061,7 +960,7 @@ function Module.init(context: Runtime): any
         GameLearningFeature = createUniversalFeature(
             "Metrics",
             "Calibration and game-learning telemetry in one card: projectile "
-                .. "analytics, passive server learning, motion calibration.",
+                .. "analytics, client observations, motion calibration.",
             16,
             function(_enabled: boolean): () end,
             {category = true, categoryName = "Other"}
@@ -1086,7 +985,7 @@ function Module.init(context: Runtime): any
             gameLearning.tuning.logMovement = value
         end,
         "Tracks teleports, sustained speed spikes and long airtime on your "
-            .. "character: movement the server tolerates."
+            .. "character. These are local observations, not proof of server tolerance."
     )
     addToggleOption(
         GameLearningFeature,
@@ -1100,14 +999,14 @@ function Module.init(context: Runtime): any
     )
     addNumberOption(
         GameLearningFeature,
-        "Kill window",
+        "Observation window",
         gameLearning.tuning.killWindowSeconds,
         1,
         10,
         function(value: number): ()
             gameLearning.tuning.killWindowSeconds = value
         end,
-        "Seconds after a shot a death still counts as this shot's result.",
+        "Seconds for observing a nearby-in-time death; this does not attribute a kill.",
         0.5
     )
     addActionOption(GameLearningFeature, "Learning status", function(): ()

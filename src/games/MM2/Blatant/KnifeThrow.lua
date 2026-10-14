@@ -23,6 +23,7 @@ function Module.init(runtime: any): any
     local getFilteredVelocity: any = core.getFilteredVelocity
     local getEstimatedLatency: any = core.getEstimatedLatency
     local predictionMath: any = core.predictionMath
+    local isWeaponPathClear: any = core.isWeaponPathClear
     local trajectoryCalibration: any = core.trajectoryCalibration
 
     local knifeThrowSettings = {
@@ -47,7 +48,7 @@ function Module.init(runtime: any): any
             and player.Character:FindFirstChild("HumanoidRootPart") ~= nil
     end
 
-    local function findNearestTarget(maxDistance: number): Player?
+    local function findNearestTarget(maxDistance: number, origin: Vector3?): Player?
         local localRoot: BasePart? = LocalPlayer.Character
             and LocalPlayer.Character:FindFirstChild("HumanoidRootPart") :: BasePart?
         if not localRoot then
@@ -62,7 +63,8 @@ function Module.init(runtime: any): any
                 if targetRoot then
                     local distance: number =
                         (targetRoot.Position - localRoot.Position).Magnitude
-                    if distance <= closestDistance then
+                    if distance <= closestDistance and (not origin
+                        or isWeaponPathClear(origin, targetRoot.Position, player.Character)) then
                         closest = player
                         closestDistance = distance
                     end
@@ -197,7 +199,8 @@ function Module.init(runtime: any): any
         end
 
         local target: Player? =
-            findNearestTarget(silent and 100000 or knifeThrowSettings.range)
+            findNearestTarget(silent and 100000 or knifeThrowSettings.range,
+                not silent and throwerPart.Position or nil)
         if not target then
             return
         end
@@ -220,6 +223,7 @@ function Module.init(runtime: any): any
 
         local aimPos: Vector3? = predictAim(target, originPos)
         if not aimPos or (aimPos - originPos).Magnitude < 0.05 then return end
+        if not silent and not isWeaponPathClear(originPos, aimPos, target.Character) then return end
         remote:FireServer(CFrame.new(originPos), CFrame.new(aimPos))
         lastThrow = os.clock()
         pcall(trajectoryCalibration.noteAuthoredShot, trajectoryCalibration, {
@@ -230,6 +234,8 @@ function Module.init(runtime: any): any
             aimPos = aimPos,
             target = target,
             silent = silent,
+            settings = {mode = knifeThrowSettings.mode, throwHz = knifeThrowSettings.throwHz,
+                fireDelay = knifeThrowSettings.fireDelay, spawnOffset = knifeThrowSettings.spawnOffset},
         })
         -- Nothing cosmetic may delay the packet, cooldown, or telemetry timestamp.
         pcall(playThrowAnimation, knife)
