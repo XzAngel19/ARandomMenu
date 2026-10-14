@@ -380,6 +380,7 @@ local runtime={active=true,dirty=true,revision=0,startedAt=0,events={},motionBuc
     knifeSpeed={count=1,mean=96,m2=0,minimum=96,maximum=96},
     knifeSpawnDelay={count=1,mean=80,m2=0,minimum=80,maximum=80}}
 local mm2Settings={}
+local state={mm2ShootDiagnostics={checks=3,sentNormal=1,sentSilent=0,rejected={disabled=2}}}
 local payloads={}
 local failWrite=false
 local appendDuringWrite=false
@@ -408,6 +409,7 @@ failWrite=true; assert(not saveSnapshot("failed")); assert(runtime.dirty)
 failWrite=false; assert(saveSnapshot("retry")); assert(not runtime.dirty)
 assert(payloads[#payloads].session.gunAttempts==2)
 assert(payloads[#payloads].schema==4)
+assert(payloads[#payloads].session.shootDiagnostics.checks==3)
 appendDuringWrite=true
 assert(saveSnapshot("yielding-write") and runtime.dirty)
 appendDuringWrite=false

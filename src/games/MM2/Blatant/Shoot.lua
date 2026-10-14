@@ -37,8 +37,11 @@ function Module.init(runtime: any): any
     local predictionMath: any = core.predictionMath
     local isMotionGrounded: any = core.isMotionGrounded
     local isWeaponPathClear: any = core.isWeaponPathClear
+    local getLandingRootY: any = core.getLandingRootY
     local setWeaponStatus: any = core.setWeaponStatus
 
+    local diagnostics = {checks = 0, sentNormal = 0, sentSilent = 0, rejected = {}}
+    state.mm2ShootDiagnostics = diagnostics
     local shootMacro: boolean = false
     local function macroUnequip(gun: Tool?): ()
         if not shootMacro or not gun then
@@ -65,6 +68,7 @@ function Module.init(runtime: any): any
 
         capturedPosition: Vector3,
         aimRootOffset: Vector3,
+        snapshot: any,
     }
 
     type GunAimOptions = {
@@ -130,27 +134,43 @@ function Module.init(runtime: any): any
             sample and sample.sampleInterval or nil
         )
 
+        local motionModel = mm2Settings.gunMotionModel or "V17"
+        if motionModel == "Classic 66d" then
+            -- Restore the v10 per-sample response, not its poisoned historical
+            -- latency average, local hitboxes, or multi-packet burst.
+            local similarity = sample and (sample.classicStability or sample.stability)
+            turnRate = type(similarity) == "number"
+                and math.clamp((1 - math.clamp(similarity, 0, 1)) * 6, 0, math.pi * 1.5)
+                or math.pi * 0.5
+        end
+        local measuredVelocity = velocity
         local moveDirection: Vector3 = humanoid.MoveDirection
         local horizontalVelocity: Vector3 = Vector3.new(velocity.X, 0, velocity.Z)
-        if horizontalVelocity.Magnitude < 1.5
+        if motionModel ~= "Intent blend" and horizontalVelocity.Magnitude < 1.5
             and moveDirection.Magnitude > 0.05 then
             local desired: Vector3 = moveDirection.Unit * humanoid.WalkSpeed
             velocity = Vector3.new(desired.X, velocity.Y, desired.Z)
             horizontalVelocity = Vector3.new(desired.X, 0, desired.Z)
         end
 
+        if motionModel == "Intent blend" then
+            velocity = predictionMath.blendIntent(velocity, moveDirection)
+        end
         local horizon: number = getGunHorizonSeconds()
         local discount: number = getGunTurnDiscount(horizon, turnRate)
+        if motionModel == "Intent blend" then discount = 1 end
         local lead: number = horizon * discount
         local leadSensitivity: number = type(getGunLeadSensitivity) == "function"
             and getGunLeadSensitivity(horizon, turnRate)
             or discount
+        if motionModel == "Intent blend" then leadSensitivity = 1 end
 
         local horizontalAcceleration: Vector3 = Vector3.new(
             acceleration.X,
             0,
             acceleration.Z
         )
+        if motionModel == "Intent blend" then horizontalAcceleration = Vector3.zero end
         local displacement: Vector3 = Vector3.new(
             velocity.X * lead,
             0,
@@ -173,6 +193,15 @@ function Module.init(runtime: any): any
         end
 
         local predicted: Vector3 = part.Position + displacement
+        local landingRootY: number? = nil
+        if mm2Settings.gunLandingGuard and not grounded and displacement.Y < 0 then
+            landingRootY = getLandingRootY(root, humanoid, displacement)
+            if landingRootY then
+                predicted = Vector3.new(predicted.X,
+                    math.max(predicted.Y, landingRootY + part.Position.Y - root.Position.Y), predicted.Z)
+                displacement = predicted - part.Position
+            end
+        end
         local delta: Vector3 = predicted - origin.Position
         if delta.Magnitude <= 0.05 then
             return nil, nil, "too close"
@@ -191,7 +220,7 @@ function Module.init(runtime: any): any
             turnError + jitter
         )
         local allowedErrorBudget: number = ignoreVisibility and (BODY_HALF_WIDTH * 1.75) or BODY_HALF_WIDTH
-        if errorRadius > allowedErrorBudget then
+        if mm2Settings.manualErrorGate and errorRadius > allowedErrorBudget then
             return nil, nil, "turning too hard"
         end
 
@@ -205,6 +234,19 @@ function Module.init(runtime: any): any
             leadSensitivity = leadSensitivity,
             capturedPosition = part.Position,
             aimRootOffset = part.Position - (root :: BasePart).Position,
+            snapshot = {
+                model = motionModel, timingModel = mm2Settings.gunTimingModel, horizon = horizon, lead = lead, turnRate = turnRate,
+                grounded = grounded, errorRadius = errorRadius,
+                landingGuard = mm2Settings.gunLandingGuard, landingRootY = landingRootY,
+                root = {root.Position.X, root.Position.Y, root.Position.Z},
+                part = {part.Position.X, part.Position.Y, part.Position.Z},
+                measuredVelocity = {measuredVelocity.X, measuredVelocity.Y, measuredVelocity.Z},
+                usedVelocity = {velocity.X, velocity.Y, velocity.Z},
+                acceleration = {acceleration.X, acceleration.Y, acceleration.Z},
+                moveDirection = {moveDirection.X, moveDirection.Y, moveDirection.Z},
+                sampleAge = sample and os.clock() - sample.sampledAt or nil,
+                sampleInterval = sample and sample.sampleInterval or nil,
+            },
         }, nil
     end
 
@@ -361,6 +403,7 @@ function Module.init(runtime: any): any
         options: FireOptions?
     ): boolean
         local opts: FireOptions = options or {}
+        diagnostics.checks += 1
         local silent: boolean = mm2Settings.silentAim
         if opts.silent ~= nil then
             silent = opts.silent
@@ -368,6 +411,8 @@ function Module.init(runtime: any): any
         local quiet: boolean = opts.quiet == true
         local function reject(message: string): boolean
             lastRejectReason = message
+            local diagnosticReason = string.find(message, "Send error:", 1, true) and "Send error" or message
+            diagnostics.rejected[diagnosticReason] = (diagnostics.rejected[diagnosticReason] or 0) + 1
             setWeaponStatus("Shoot", message)
             if not quiet then
                 notify(message)
@@ -458,6 +503,7 @@ function Module.init(runtime: any): any
             local sentAt: number = os.clock()
             local sent, failure = pcall(function(): () remote:FireServer(shotOrigin, shotEnd) end)
             if not sent then return reject("Send error: " .. tostring(failure)) end
+            diagnostics.sentSilent += 1
             setWeaponStatus("Shoot", "Silent sent to " .. target.Name .. "; not a confirmed hit")
             state.mm2ShotFeedback.queue(target, gun, shotOrigin, shotEnd, resolved, variant)
 
@@ -474,6 +520,7 @@ function Module.init(runtime: any): any
                 offset = offset,
                 settings = {mode = "Silent", spawn = mm2Settings.silentSpawn,
                     sweep = mm2Settings.silentSweep, motionHz = mm2Settings.motionSampleHz,
+                    prediction = resolved.snapshot, manualErrorGate = mm2Settings.manualErrorGate,
                     leadBias = mm2Settings.gunLeadBias, horizon = getGunHorizonSeconds(),
                     adaptiveTiming = mm2Settings.adaptiveGunTiming, autoTune = mm2Settings.autoTuneLead},
             })
@@ -486,6 +533,7 @@ function Module.init(runtime: any): any
             remote:FireServer(CFrame.lookAt(origin.Position, resolved.endpoint), CFrame.new(resolved.endpoint))
         end)
         if not sent then return reject("Send error: " .. tostring(failure)) end
+        diagnostics.sentNormal += 1
         setWeaponStatus("Shoot", "Normal sent to " .. target.Name .. "; not a confirmed hit")
         state.mm2ShotFeedback.queue(target, gun, origin, aim, resolved)
         pcall(trajectoryCalibration.noteAuthoredShot, trajectoryCalibration, {
@@ -499,6 +547,7 @@ function Module.init(runtime: any): any
             silent = false,
             settings = {mode = "Normal", wallCheck = mm2Settings.shootWallCheck,
                 motionHz = mm2Settings.motionSampleHz, leadBias = mm2Settings.gunLeadBias,
+                prediction = resolved.snapshot, manualErrorGate = mm2Settings.manualErrorGate,
                 horizon = getGunHorizonSeconds(), adaptiveTiming = mm2Settings.adaptiveGunTiming,
                 autoTune = mm2Settings.autoTuneLead},
         })
@@ -757,6 +806,31 @@ function Module.init(runtime: any): any
     addActionOption(ShootFeature, "Spawn A/B status", function(): ()
         notify(spawnStatsText())
     end)
+    addCycleOption(ShootFeature, "Motion model", {"Classic 66d", "V17", "Intent blend"}, 1,
+        function(value: string): ()
+            if mm2Settings.gunMotionModel ~= value then core.resetAutoLeadCorrection() end
+            mm2Settings.gunMotionModel = value
+        end,
+        "Classic restores v10 motion response with safe timing. V17 keeps time-normalized turn damping. Intent blend is experimental; offline average error improved, tail errors did not uniformly improve.")
+    addCycleOption(ShootFeature, "Gun timing", {"RTT", "V17 floor"}, 1, function(value: string): ()
+        if mm2Settings.gunTimingModel ~= value then core.resetAutoLeadCorrection() end
+        mm2Settings.gunTimingModel = value
+    end, "RTT removes the unverified 200ms floor; both modes retain 33.3ms of legacy age/frame margin. V17 floor is the previous baseline. Neither is an impact timestamp measurement.")
+    addToggleOption(ShootFeature, "Landing guard", true, function(value: boolean): ()
+        mm2Settings.gunLandingGuard = value
+    end, "One bounded downward map ray prevents descending ballistic aim below a detected floor. No hitbox edits. Does not predict future jump input or guarantee terrain contact.")
+    addToggleOption(ShootFeature, "Hold uncertain manual shots", false, function(value: boolean): ()
+        mm2Settings.manualErrorGate = value
+    end, "OFF sends the best available manual solution, without a fake enlarged hitbox. Auto Shoot still obeys its own Max error. No accuracy percentage is implied.")
+    addActionOption(ShootFeature, "Shoot diagnostics", function(): ()
+        local parts = {string.format("%d solver checks | %d Normal sent | %d Silent sent",
+            diagnostics.checks, diagnostics.sentNormal, diagnostics.sentSilent)}
+        for reason, count in pairs(diagnostics.rejected) do
+            table.insert(parts, tostring(count) .. " checks rejected: " .. reason)
+        end
+        local text = table.concat(parts, "\n")
+        print("[Wurst:MM2] " .. text); notify(text)
+    end)
     addToggleOption(
         ShootFeature,
         "Auto tune lead",
@@ -877,6 +951,9 @@ function Module.init(runtime: any): any
 
     addActionOption(ShootFeature, "Shoot status", function(): ()
         local text = core.weaponStatus("Shoot") .. " | " .. core.weaponStatus("Gun observation")
+            .. " | motion " .. tostring(mm2Settings.gunMotionModel)
+            .. " | timing " .. tostring(mm2Settings.gunTimingModel)
+            .. " | manual hold " .. tostring(mm2Settings.manualErrorGate)
             .. string.format(" | manual %s | auto %s (%s) | max error %.2f | horizon %.3fs | adaptive timing %s",
                 mm2Settings.silentAim and "Silent" or "Normal", autoSettings.mode,
                 autoShootActive and "ON" or "OFF", autoSettings.maxError,

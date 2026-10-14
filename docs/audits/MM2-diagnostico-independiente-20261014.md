@@ -8,6 +8,8 @@
 
 > **Actualización posterior:** esta misma rama incorpora ahora una implementación v17 y el baseline v16. Consulta [la guía de cambios, loader y pruebas](../MM2-v17-guia.md). Las conclusiones de este informe describen las revisiones históricas fijadas; `audit_mm2_remaining.py` reproduce sus defectos, no verifica el runtime v17.
 
+> **Análisis posterior de los JSON subidos:** [resultados y actualización v18](../MM2-v18-resultados.md).
+
 ## Conclusión
 
 No es correcto reducir el problema a «quitamos Hitboxes y Burst y por eso todo dejó de funcionar». Hubo regresiones adicionales, varias ya reparadas en la segunda rama, y **siguen existiendo defectos de integración y medición en v16**.

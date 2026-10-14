@@ -66,6 +66,10 @@ local mm2Settings = {
     showMissCooldown = false,
     predictionRtt = 0.08,
     gunLeadBias = 0,
+    gunMotionModel = "Classic 66d",
+    gunTimingModel = "RTT",
+    manualErrorGate = false,
+    gunLandingGuard = true,
     autoTuneLead = false,
     adaptiveGunTiming = false,
     useKnifeSpeedCalibration = false,
@@ -148,6 +152,38 @@ local function isWeaponPathClear(origin: Vector3, endpoint: Vector3, target: Mod
         end
     end
     return false -- bounded work, conservative if a map has many transparent layers
+end
+
+-- One bounded map probe at the forecast X/Z; never edit character geometry.
+-- This constrains descending ballistic predictions, not arbitrary future jumps.
+local function getLandingRootY(root: BasePart, humanoid: Humanoid, displacement: Vector3): number?
+    local clearance = root.Size.Y * 0.5 + humanoid.HipHeight
+    if humanoid.RigType == Enum.HumanoidRigType.R6 then
+        local leg = root.Parent and root.Parent:FindFirstChild("Left Leg")
+        clearance += leg and leg:IsA("BasePart") and leg.Size.Y or 2
+    end
+    clearance = math.clamp(clearance, 1, 6)
+    local excluded = {}
+    for _, player in ipairs(Players:GetPlayers()) do
+        if player.Character then table.insert(excluded, player.Character) end
+    end
+    for _, object in ipairs(CollectionService:GetTagged("WeaponPassthrough")) do
+        table.insert(excluded, object)
+    end
+    local params = RaycastParams.new()
+    params.FilterType = Enum.RaycastFilterType.Exclude
+    params.FilterDescendantsInstances = excluded
+    params.IgnoreWater = true
+    params.RespectCanCollide = true
+    local origin = root.Position + Vector3.new(displacement.X, 0, displacement.Z)
+    local depth = math.clamp(math.max(0, -displacement.Y) + clearance + 2, 4, 64)
+    local hit = workspace:Raycast(origin, Vector3.new(0, -depth, 0), params)
+    if not hit or hit.Normal.Y < 0.6 then return nil end
+    local standingY = hit.Position.Y + clearance
+    -- Do not snap onto a ledge above the current root or a non-collidable visual.
+    if standingY > root.Position.Y + 0.25 then return nil end
+    if hit.Instance:IsA("BasePart") and not hit.Instance.CanCollide then return nil end
+    return standingY
 end
 
 local function getWeaponFromContainer(
@@ -1330,6 +1366,16 @@ local function isMotionGrounded(humanoid: Humanoid?, velocity: Vector3): boolean
         and math.abs(velocity.Y) <= 6
 end
 
+-- Experimental intent blend: bound desired speed by measured horizontal speed.
+-- Averaging can reduce speed on turns; vertical velocity stays measured.
+function predictionMath.blendIntent(velocity: Vector3, direction: Vector3): Vector3
+    local horizontal = Vector3.new(velocity.X, 0, velocity.Z)
+    local intent = Vector3.new(direction.X, 0, direction.Z)
+    if horizontal.Magnitude < 1.5 or intent.Magnitude < 0.05 then return velocity end
+    local blended = horizontal * 0.5 + intent.Unit * (horizontal.Magnitude * 0.5)
+    return Vector3.new(blended.X, velocity.Y, blended.Z)
+end
+
 function predictionMath.matchAttempt(queue: {any}, tool: any, origin: Vector3?, endpoint: Vector3?, now: number): (any?, string)
     if not origin or not endpoint then return nil, "missing geometry" end
     local actual: Vector3 = endpoint - origin
@@ -1398,6 +1444,7 @@ type MotionSample = {
     velocity: Vector3,
     acceleration: Vector3,
     stability: number,
+    classicStability: number,
     grounded: boolean,
 }
 
@@ -1418,6 +1465,7 @@ local function getFilteredVelocity(player: Player, root: BasePart): Vector3
     local sample: MotionSample? = motionSamples[player]
     local acceleration: Vector3 = Vector3.zero
     local stability: number = 1
+    local classicStability: number = 1
     local sampleInterval: number = 1 / 60
     local directionAt: number = now
     local character: Model? = player.Character
@@ -1451,6 +1499,7 @@ local function getFilteredVelocity(player: Player, root: BasePart): Vector3
             if previousHorizontal.Magnitude > 1
                 and currentHorizontal.Magnitude > 1 then
                 local similarity = math.clamp(previousHorizontal.Unit:Dot(currentHorizontal.Unit), -1, 1)
+                classicStability = math.clamp(similarity, 0, 1)
                 if similarity < 1 - 1e-6 then
                     stability = similarity
                     sampleInterval = math.max(now - (sample.directionAt or sample.sampledAt), 1 / 120)
@@ -1473,6 +1522,7 @@ local function getFilteredVelocity(player: Player, root: BasePart): Vector3
         velocity = velocity,
         acceleration = acceleration,
         stability = stability,
+        classicStability = classicStability,
         grounded = grounded,
     }
     return velocity
@@ -1534,7 +1584,8 @@ end
 local trajectoryCalibration: any = nil
 
 local function getGunHorizonSeconds(): number
-    local baseline: number = math.max(getEstimatedLatency(), 0.200)
+    local rtt: number = getEstimatedLatency()
+    local baseline: number = mm2Settings.gunTimingModel == "RTT" and rtt or math.max(rtt, 0.200)
     local latencyTime: number = baseline
     -- Never use the cumulative historical mean as a live network measurement.
     -- TestingStuff contains 1.6s outliers and unmatched GunFired observations.
@@ -2174,7 +2225,11 @@ local function createTrajectoryCalibration(): any
                 appendEvent({kind = pending.kind or "gun", shotId = pending.shotId,
                     phase = "unconfirmed", reason = "observation-window-expired; not a miss",
                     serverTime = workspace:GetServerTimeNow(), pingMs = pending.pingMs,
-                    targetName = pending.targetName, settings = pending.settings})
+                    targetName = pending.targetName, settings = pending.settings,
+                    origin = pending.origin and vectorArray(pending.origin) or nil,
+                    aim = pending.requestedAim and vectorArray(pending.requestedAim) or nil,
+                    targetTrajectory = pending.targetTrajectory,
+                    trajectoryMeaning = "client observations; no acknowledgement or impact inferred"})
             end
         end
     end
@@ -2493,6 +2548,10 @@ local function createTrajectoryCalibration(): any
             historyBackup = runtime.historyBackup,
             settings = {
                 motionSampleHz = mm2Settings.motionSampleHz,
+                gunMotionModel = mm2Settings.gunMotionModel,
+                gunTimingModel = mm2Settings.gunTimingModel,
+                manualErrorGate = mm2Settings.manualErrorGate,
+                gunLandingGuard = mm2Settings.gunLandingGuard,
                 silentSpawn = mm2Settings.silentSpawn,
                 silentAim = mm2Settings.silentAim,
                 silentSweep = mm2Settings.silentSweep,
@@ -2533,6 +2592,7 @@ local function createTrajectoryCalibration(): any
                 startedAt = runtime.startedAtUnix,
                 countersScope = "this-session-only",
                 gunConfirmationMeaning = "matched GunFired signal; not necessarily damage or death",
+                shootDiagnostics = state.mm2ShootDiagnostics,
                 knifeConfirmationMeaning = "observed projectile with valid speed; not an impact",
                 rawKnifeActivations = runtime.rawKnifeActivations,
                 unmatchedGunSignals = runtime.unmatchedGunSignals,
@@ -3884,6 +3944,7 @@ state.mm2Core = {
     findDroppedGun = findDroppedGun,
 
     isWeaponPathClear = isWeaponPathClear,
+    getLandingRootY = getLandingRootY,
     predictionMath = predictionMath,
     isMotionGrounded = isMotionGrounded,
     motionSamples = motionSamples,

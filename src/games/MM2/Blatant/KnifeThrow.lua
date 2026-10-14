@@ -36,7 +36,7 @@ function Module.init(runtime: any): any
         spawnOffset = 5,
         throwHz = 60,
         animation = true,
-        latencyModel = "Packet RTT/2",
+        latencyModel = "Replica RTT",
         leadBias = 0,
     }
     local lastThrow = -math.huge
@@ -122,7 +122,7 @@ function Module.init(runtime: any): any
             knifeSpeed = learned
         end
         local velocity: Vector3 = getFilteredVelocity(target, root)
-        -- Default: v10 packet-flight lead. Solve the remaining moving-target
+        -- Replica RTT is the new-profile default; keep packet-only A/B. Solve the moving-target
         -- flight instead of using distance-to-the-old-position / blade speed.
         local multiplier: number = knifeThrowSettings.latencyModel == "Replica RTT" and 1 or 0.5
         local packetTime: number = math.clamp(getEstimatedLatency() * multiplier
@@ -403,7 +403,7 @@ function Module.init(runtime: any): any
         5
     )
 
-    addCycleOption(KnifeThrowFeature, "Knife latency model", {"Packet RTT/2", "Replica RTT"}, 1,
+    addCycleOption(KnifeThrowFeature, "Knife latency model", {"Packet RTT/2", "Replica RTT"}, 2,
         function(value: string): () knifeThrowSettings.latencyModel = value end,
         "RTT/2 covers packet travel only; RTT also budgets replicated-position age. Experimental A/B, not a server measurement.")
     addNumberOption(KnifeThrowFeature, "Knife lead bias", 0, -0.15, 0.15,

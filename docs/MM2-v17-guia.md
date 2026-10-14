@@ -1,5 +1,7 @@
 # MM2 v17 — actualización utilizable y guía de diagnóstico
 
+> Documento histórico de v17. La rama y su loader ahora entregan v18: consulta [los resultados de tus JSON y la guía actual](MM2-v18-resultados.md).
+
 **Build:** `v17-20261014-mm2-controls-calibration`
 
 **Rama:** `arena/d83a806d-arandommenu`.
