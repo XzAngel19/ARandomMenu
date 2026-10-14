@@ -20,6 +20,7 @@ function Module.init(runtime: any): any
     local isPlayerAlive: any = core.isPlayerAlive
     local isProtectedTarget: any = core.isProtectedTarget
     local trajectoryCalibration: any = core.trajectoryCalibration
+    local predictionMath: any = core.predictionMath
 
     type KnifeRuntimeState = {
         lastAuraSwing: number,
@@ -105,6 +106,7 @@ function Module.init(runtime: any): any
     end
 
     local function processKnifeAura(): ()
+        if os.clock() - state.mm2KnifeRuntime.lastAuraSwing < 0.86 then return end
         local knife: Tool?, localRoot: BasePart? = canUseEquippedKnife()
         if not knife or not localRoot then
             return
@@ -148,12 +150,13 @@ function Module.init(runtime: any): any
             if not knifeSettings.aura
                 or currentKnife ~= knife
                 or not currentLocalRoot
-                or not currentCharacter
+                or currentCharacter ~= targetCharacter
+                or not isValidKnifeTarget(target)
                 or not currentRoot
                 or not currentHandle
                 or not currentHandle:IsA("BasePart")
                 or (currentRoot.Position - currentLocalRoot.Position).Magnitude
-                    > knifeSettings.auraRange then
+                    > getEffectiveRange() then
                 return
             end
 
@@ -184,12 +187,9 @@ function Module.init(runtime: any): any
         local elapsed: number = 0
         featureConnections.MM2KnifeController =
             TaskManager:Connect(function(deltaTime: number): ()
-                elapsed += deltaTime
-                if elapsed < 0.05 then
-                    return
-                end
-                elapsed %= 0.05
-                processKnifeAura()
+                local due: boolean
+                due, elapsed = predictionMath.sampleDue(elapsed, deltaTime, 20)
+                if due then processKnifeAura() end
             end)
     end
 
@@ -238,7 +238,8 @@ function Module.init(runtime: any): any
         function(value: boolean): ()
             knifeSettings.autoRange = value
         end,
-        "Automatically adjusts stab reach to the maximum distance verified by calibration telemetry."
+        "Uses confirmed stab records only; falls back to manual Range when "
+            .. "no verified sample exists. Unconfirmed attempts never expand reach."
     )
 
     activeCleanup = function(): ()

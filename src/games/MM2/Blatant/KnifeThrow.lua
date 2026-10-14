@@ -21,6 +21,8 @@ function Module.init(runtime: any): any
     local isPlayerAlive: any = core.isPlayerAlive
     local isProtectedTarget: any = core.isProtectedTarget
     local getFilteredVelocity: any = core.getFilteredVelocity
+    local getEstimatedLatency: any = core.getEstimatedLatency
+    local predictionMath: any = core.predictionMath
     local trajectoryCalibration: any = core.trajectoryCalibration
 
     local knifeThrowSettings = {
@@ -94,55 +96,79 @@ function Module.init(runtime: any): any
         return knife
     end
 
-    local function predictAim(target: Player, originPos: Vector3): Vector3
+    local function predictAim(target: Player, originPos: Vector3): Vector3?
         local root: BasePart =
             target.Character:FindFirstChild("HumanoidRootPart") :: BasePart
         local knifeSpeed: number = 96
-        local estimates: any = trajectoryCalibration
-            and trajectoryCalibration.getEstimates
-            and trajectoryCalibration.getEstimates()
-        if estimates and estimates.knifeSpeed and estimates.knifeSpeed > 1 then
+        local ok: boolean, estimates: any = pcall(function(): any
+            return trajectoryCalibration:getEstimates()
+        end)
+        if ok and type(estimates) == "table" and predictionMath.finite(estimates.knifeSpeed)
+            and estimates.knifeSpeed >= 24 and estimates.knifeSpeed <= 300 then
             knifeSpeed = estimates.knifeSpeed
         end
-        local flightTime: number =
-            (root.Position - originPos).Magnitude / knifeSpeed
         local velocity: Vector3 = getFilteredVelocity(target, root)
-        return root.Position + velocity * flightTime
+        -- Restore v10's packet-flight lead. Solve the remaining moving-target
+        -- flight instead of using distance-to-the-old-position / blade speed.
+        local packetTime: number = getEstimatedLatency() * 0.5
+        local positionAtSpawn: Vector3 = root.Position + velocity * packetTime
+        local flightTime: number? = predictionMath.interceptTime(
+            positionAtSpawn - originPos, velocity, knifeSpeed
+        )
+        if flightTime == nil then return nil end
+        return positionAtSpawn + velocity * flightTime
     end
 
     local throwTrack: any = nil
     local throwTrackHumanoid: Humanoid? = nil
-    local function playThrowAnimation(knife: Tool): ()
-        if not knifeThrowSettings.animation then
-            return
+    local throwTrackKnife: Tool? = nil
+    local throwTrackId: string? = nil
+    local function stopThrowAnimation(): ()
+        if throwTrack then
+            pcall(function(): () throwTrack:Stop(0) end)
+            pcall(function(): () throwTrack:Destroy() end)
         end
+        throwTrack = nil
+        throwTrackHumanoid = nil
+        throwTrackKnife = nil
+        throwTrackId = nil
+    end
+
+    local function playThrowAnimation(knife: Tool): ()
+        if not knifeThrowSettings.animation then return end
         local character: Model? = LocalPlayer.Character
         local humanoid: Humanoid? = character
             and character:FindFirstChildOfClass("Humanoid") :: Humanoid?
-        if not humanoid then
-            return
+        if not humanoid then stopThrowAnimation(); return end
+        -- A random first Animation can be Equip or Stab. Unknown tools simply
+        -- skip this cosmetic operation; they never delay/block the packet.
+        local anim: Animation? = nil
+        for _, descendant: Instance in ipairs(knife:GetDescendants()) do
+            if descendant:IsA("Animation")
+                and string.find(string.lower(descendant.Name), "throw", 1, true) then
+                anim = descendant :: Animation
+                break
+            end
         end
-        local anim: Animation? =
-            knife:FindFirstChildWhichIsA("Animation", true) :: Animation?
-        if not anim then
-
-            throwTrack = nil
-            throwTrackHumanoid = nil
-            return
-        end
-        if not throwTrack or throwTrackHumanoid ~= humanoid then
-            throwTrack = nil
-            throwTrackHumanoid = nil
+        if not anim then stopThrowAnimation(); return end
+        if throwTrackHumanoid ~= humanoid or throwTrackKnife ~= knife
+            or throwTrackId ~= anim.AnimationId then
+            stopThrowAnimation()
+            local animator: Animator? = humanoid:FindFirstChildOfClass("Animator") :: Animator?
+            if not animator then return end
             local ok: boolean, track: any = pcall(function(): any
-                return (humanoid :: Humanoid):LoadAnimation(anim :: Animation)
+                return animator:LoadAnimation(anim :: Animation)
             end)
             if ok then
                 throwTrack = track
                 throwTrackHumanoid = humanoid
+                throwTrackKnife = knife
+                throwTrackId = anim.AnimationId
             end
         end
         if throwTrack then
             pcall(function(): ()
+                throwTrack.Looped = false
                 throwTrack:Play(0.1, 1, 1)
             end)
         end
@@ -192,8 +218,8 @@ function Module.init(runtime: any): any
             originPos = throwerPart.Position
         end
 
-        local aimPos: Vector3 = predictAim(target, originPos)
-        playThrowAnimation(knife)
+        local aimPos: Vector3? = predictAim(target, originPos)
+        if not aimPos or (aimPos - originPos).Magnitude < 0.05 then return end
         remote:FireServer(CFrame.new(originPos), CFrame.new(aimPos))
         lastThrow = os.clock()
         pcall(trajectoryCalibration.noteAuthoredShot, trajectoryCalibration, {
@@ -205,24 +231,24 @@ function Module.init(runtime: any): any
             target = target,
             silent = silent,
         })
+        -- Nothing cosmetic may delay the packet, cooldown, or telemetry timestamp.
+        pcall(playThrowAnimation, knife)
     end
 
     local function toggleKnifeThrow(enabled: boolean): ()
         knifeThrowSettings.enabled = enabled
         disconnectFeatureConnection("MM2KnifeThrow")
         if not enabled then
+            stopThrowAnimation()
             return
         end
         lastThrow = -math.huge
         local elapsed: number = 0
         featureConnections.MM2KnifeThrow =
             TaskManager:Connect(function(deltaTime: number): ()
-                elapsed += deltaTime
-                if elapsed < 1 / 30 then
-                    return
-                end
-                elapsed = 0
-                throwKnife()
+                local due: boolean
+                due, elapsed = predictionMath.sampleDue(elapsed, deltaTime, knifeThrowSettings.throwHz)
+                if due then throwKnife() end
             end)
     end
 
@@ -309,10 +335,10 @@ function Module.init(runtime: any): any
         knifeThrowSettings.animation,
         function(value: boolean): ()
             knifeThrowSettings.animation = value
+            if not value then stopThrowAnimation() end
         end,
-        "Plays the knife's throw animation right before each auto throw so it "
-            .. "looks like a normal throw. Cosmetic only; turn it off to throw "
-            .. "with zero wind-up."
+        "Plays an identified throw animation after sending the packet. Cosmetic "
+            .. "only; unknown animations are skipped and OFF releases the track."
     )
     addNumberOption(
         KnifeThrowFeature,
@@ -323,14 +349,16 @@ function Module.init(runtime: any): any
         function(value: number): ()
             knifeThrowSettings.throwHz = math.clamp(math.round(value), 20, 120)
         end,
-        "Target checks per second while auto throw is on. 60 is the sweet "
-            .. "spot: remote players replicate at ~20 Hz, so more only costs "
-            .. "CPU.",
+        "Target checks per second, not throws per second. Default 60; 120 only "
+            .. "helps response granularity on high-FPS clients. Fire delay is "
+            .. "always respected.",
         5
     )
 
+    featureConnections.MM2KnifeThrowCharacter = LocalPlayer.CharacterAdded:Connect(stopThrowAnimation)
     activeCleanup = function(): ()
         toggleKnifeThrow(false)
+        disconnectFeatureConnection("MM2KnifeThrowCharacter")
         state.mm2KnifeThrowOff = nil
     end
     Module.Events = featureConnections

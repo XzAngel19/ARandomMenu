@@ -34,6 +34,8 @@ function Module.init(runtime: any): any
     local isProtectedTarget: any = core.isProtectedTarget
     local mm2Settings: any = core.mm2Settings
     local motionSamples: any = core.motionSamples
+    local predictionMath: any = core.predictionMath
+    local isMotionGrounded: any = core.isMotionGrounded
 
     local shootMacro: boolean = false
     local function macroUnequip(gun: Tool?): ()
@@ -60,6 +62,7 @@ function Module.init(runtime: any): any
         leadSensitivity: number,
 
         capturedPosition: Vector3,
+        aimRootOffset: Vector3,
     }
 
     type GunAimOptions = {
@@ -113,9 +116,12 @@ function Module.init(runtime: any): any
 
         local velocity: Vector3 = getFilteredVelocity(target, root :: BasePart)
         local sample: MotionSample? = motionSamples[target]
+        if sample and (sample.character ~= character or os.clock() - sample.sampledAt > 0.25) then
+            sample = nil
+        end
         local acceleration: Vector3 = sample and sample.acceleration or Vector3.zero
-        local grounded: boolean = sample and sample.grounded
-            or humanoid.FloorMaterial ~= Enum.Material.Air
+        -- Do not use `a and false or fallback`: airborne false is meaningful.
+        local grounded: boolean = isMotionGrounded(humanoid, velocity)
 
         local turnRate: number = getGunTurnRate(
             sample and sample.character == character and sample.stability or nil
@@ -206,7 +212,8 @@ function Module.init(runtime: any): any
             errorRadius = errorRadius,
             leadSeconds = lead,
             leadSensitivity = leadSensitivity,
-            capturedPosition = (root :: BasePart).Position,
+            capturedPosition = part.Position,
+            aimRootOffset = part.Position - (root :: BasePart).Position,
         }, nil
     end
 
@@ -270,7 +277,7 @@ function Module.init(runtime: any): any
         prediction: GunPrediction,
         muzzleOrigin: CFrame?,
         variant: string
-    ): (CFrame, CFrame, number)
+    ): (CFrame?, CFrame?, number)
         local predicted: Vector3 = prediction.targetPosition
         local velocity: Vector3 = prediction.velocity
         local horizontal: Vector3 = Vector3.new(velocity.X, 0, velocity.Z)
@@ -328,7 +335,12 @@ function Module.init(runtime: any): any
             endPoint = predicted
         end
 
-        if sweep > 0 and bystanderOnSegment(target, startPoint, endPoint) then
+        if (endPoint - startPoint).Magnitude <= 0.05 then
+            startPoint = predicted + Vector3.new(0, SILENT_LIFT_STUDS, 0)
+            endPoint = predicted
+        end
+        -- Through has length even when the configurable extra sweep is zero.
+        if bystanderOnSegment(target, startPoint, endPoint) then
 
             if variant ~= "Top" and approach then
                 startPoint = predicted - approach * approachOffset
@@ -336,6 +348,9 @@ function Module.init(runtime: any): any
                 startPoint = predicted + Vector3.new(0, SILENT_LIFT_STUDS, 0)
             end
             endPoint = predicted
+            if bystanderOnSegment(target, startPoint, endPoint) then
+                return nil, nil, 0
+            end
         end
 
         return CFrame.lookAt(startPoint, endPoint), CFrame.new(endPoint),
@@ -434,8 +449,11 @@ function Module.init(runtime: any): any
         if silent then
 
             local variant: string = mm2Settings.silentSpawn
-            local shotOrigin: CFrame, shotEnd: CFrame, offset: number =
+            local shotOrigin: CFrame?, shotEnd: CFrame?, offset: number =
                 buildSilentShot(target, resolved, origin, variant)
+            if not shotOrigin or not shotEnd then
+                return reject("Another player blocks the silent shot.")
+            end
             state.mm2ShotFeedback.queue(target, gun, shotOrigin, aim, resolved)
             if state.mm2ShotFeedback.pending then
                 state.mm2ShotFeedback.pending.silentSpawn = variant
@@ -496,21 +514,15 @@ function Module.init(runtime: any): any
                 featureConnections.MM2MotionTracker = TaskManager:Connect(function(
                     deltaTime: number
                 ): ()
-                    motionElapsed += deltaTime
-
-                    if motionElapsed
-                        < 1 / math.clamp(mm2Settings.motionSampleHz, 20, 120) then
-                        return
-                    end
-                    motionElapsed = 0
-                    for _, player: Player in ipairs(Players:GetPlayers()) do
-                        local root: BasePart? = player.Character
-                            and player.Character:FindFirstChild("HumanoidRootPart")
-                            :: BasePart?
-                        if root and isPlayerAlive(player) then
-                            getFilteredVelocity(player, root)
-                        end
-                    end
+                    local due: boolean
+                    due, motionElapsed = predictionMath.sampleDue(motionElapsed, deltaTime, mm2Settings.motionSampleHz)
+                    if not due then return end
+                    -- Only the selected target needs prediction history; the
+                    -- solver also reads fresh velocity at the instant of fire.
+                    local player: Player? = getSelectedShootTarget()
+                    local root: BasePart? = player and player.Character
+                        and player.Character:FindFirstChild("HumanoidRootPart") :: BasePart?
+                    if player and root then getFilteredVelocity(player, root) end
                 end)
             end
             return
@@ -603,12 +615,9 @@ function Module.init(runtime: any): any
         featureConnections.MM2AutoShoot = TaskManager:Connect(function(
             deltaTime: number
         ): ()
-            autoElapsed += deltaTime
-            if autoElapsed < 1 / 30 then
-                return
-            end
-            autoElapsed = 0
-            autoShootTick()
+            local due: boolean
+            due, autoElapsed = predictionMath.sampleDue(autoElapsed, deltaTime, 60)
+            if due then autoShootTick() end
         end)
     end
 
@@ -690,8 +699,8 @@ function Module.init(runtime: any): any
         end,
         "Exact extra distance in studs at each end of the silent shot ray, "
             .. "along measured horizontal movement. 0 disables it; max 1.5. "
-            .. "No local physics change; a ray that would cross a bystander is "
-            .. "collapsed to a point.",
+            .. "No local physics change. Segments crossing another player are "
+            .. "shortened and checked again, or rejected.",
         0.05
     )
     local silentSpawnValues: {string} = {"Front", "Through", "Top", "Behind"}
@@ -773,9 +782,9 @@ function Module.init(runtime: any): any
         function(value: number): ()
             mm2Settings.motionSampleHz = math.clamp(math.round(value), 20, 120)
         end,
-        "Target motion samples per second (acceleration + turn stability). "
-            .. "60 is the sweet spot: MM2 replicates remote players at ~20 Hz, "
-            .. "so higher values only cost CPU - they cannot see more.",
+        "Selected-target motion samples per second. Default 60; 120 is optional "
+            .. "on high-FPS clients, not a network replication boost. Prediction "
+            .. "always reads current velocity when firing.",
         5
     )
     addActionOption(ShootFeature, "Lead status", function(): ()
@@ -843,9 +852,8 @@ function Module.init(runtime: any): any
         function(value: number): ()
             autoSettings.maxError = value
         end,
-        "Only fire when the predicted error is within this many studs. In "
-            .. "Silent mode the sweep cap relaxes it: the authored segment "
-            .. "already covers the error up to its length.",
+        "Only fire when predicted error is within this many studs. Applies "
+            .. "to both Normal and Silent; extra sweep never overrides this gate.",
         0.05
     )
     addNumberOption(

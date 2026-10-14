@@ -71,7 +71,7 @@ local mm2Settings = {
     motionSampleHz = 60,
     silentSweep = 0.5,
 
-    silentSpawn = "Front",
+    silentSpawn = "Through",
     getGunKey = Enum.KeyCode.G,
     instantRoleNotify = false,
     roleEspAll = false,
@@ -1232,6 +1232,74 @@ end)
 
 requestRoleRefresh(true)
 
+-- Pure prediction helpers: shared by Shoot/Knife and exercised without Roblox.
+local predictionMath = {}
+function predictionMath.finite(value: any): boolean
+    return type(value) == "number" and value == value and math.abs(value) < math.huge
+end
+
+function predictionMath.sampleDue(elapsed: number, deltaTime: number, hz: number): (boolean, number)
+    local interval: number = 1 / math.clamp(hz, 1, 120)
+    local total: number = elapsed + math.max(0, deltaTime)
+    if total + 1e-9 < interval then
+        return false, total
+    end
+    -- Preserve fractional frames, but never issue catch-up shots after a stall.
+    return true, math.max(0, total - math.floor((total + 1e-9) / interval) * interval)
+end
+
+function predictionMath.interceptTime(offset: Vector3, velocity: Vector3, speed: number): number?
+    if not predictionMath.finite(speed) or speed <= 1 then return nil end
+    local a: number = velocity:Dot(velocity) - speed * speed
+    local b: number = 2 * offset:Dot(velocity)
+    local c: number = offset:Dot(offset)
+    if not predictionMath.finite(a) or not predictionMath.finite(b)
+        or not predictionMath.finite(c) then return nil end
+    if c < 1e-8 then return 0 end
+    local time: number? = nil
+    if math.abs(a) < 1e-6 then
+        if b < -1e-6 then time = -c / b end
+    else
+        local discriminant: number = b * b - 4 * a * c
+        if discriminant >= 0 then
+            local root: number = math.sqrt(discriminant)
+            local first: number = (-b - root) / (2 * a)
+            local second: number = (-b + root) / (2 * a)
+            if first >= 0 then time = first end
+            if second >= 0 and (not time or second < time) then time = second end
+        end
+    end
+    -- A long/unsolvable trajectory is not a reliable shot; do not clamp it
+    -- into a fictitious intercept. Covers the configured 400-stud knife range.
+    return time and predictionMath.finite(time) and time <= 5 and time or nil
+end
+
+function predictionMath.closestCrossing(samples: {{t: number, p: Vector3}}, point: Vector3): (number?, number)
+    local bestTime: number? = nil
+    local bestDistance: number = math.huge
+    for index: number = 2, #samples do
+        local first, last = samples[index - 1], samples[index]
+        local step: Vector3 = last.p - first.p
+        local lengthSquared: number = step:Dot(step)
+        if last.t > first.t and lengthSquared > 1e-8 then
+            local alpha: number = math.clamp((point - first.p):Dot(step) / lengthSquared, 0, 1)
+            local distance: number = (first.p + step * alpha - point).Magnitude
+            if distance < bestDistance then
+                bestDistance = distance
+                bestTime = first.t + (last.t - first.t) * alpha
+            end
+        end
+    end
+    return bestTime, bestDistance
+end
+
+local function isMotionGrounded(humanoid: Humanoid?, velocity: Vector3): boolean
+    -- Remote FloorMaterial can lag a jump (also visible in TestingStuff logs).
+    return humanoid ~= nil and humanoid.FloorMaterial ~= Enum.Material.Air
+        and humanoid:GetState() ~= Enum.HumanoidStateType.Jumping
+        and math.abs(velocity.Y) <= 6
+end
+
 type MotionSample = {
     character: Model?,
     position: Vector3,
@@ -1248,6 +1316,11 @@ local motionSamples: {[Player]: MotionSample} =
 local function getFilteredVelocity(player: Player, root: BasePart): Vector3
     local now: number = os.clock()
     local velocity: Vector3 = root.AssemblyLinearVelocity
+    if not predictionMath.finite(velocity.X) or not predictionMath.finite(velocity.Y)
+        or not predictionMath.finite(velocity.Z) then
+        motionSamples[player] = nil
+        return Vector3.zero
+    end
     if velocity.Magnitude > 110 then
         velocity = velocity.Unit * 110
     end
@@ -1258,15 +1331,15 @@ local function getFilteredVelocity(player: Player, root: BasePart): Vector3
     local humanoid: Humanoid? = character
         and character:FindFirstChildOfClass("Humanoid")
         :: Humanoid?
-    local grounded: boolean = humanoid ~= nil
-        and humanoid.FloorMaterial ~= Enum.Material.Air
+    local grounded: boolean = isMotionGrounded(humanoid, velocity)
 
     if sample and sample.character == character then
         local deltaTime: number = now - sample.sampledAt
-        if deltaTime < 0.012 then
+        if deltaTime + 1e-9 < 1 / 120 then
             return velocity
         end
-        if deltaTime < 0.5 then
+        -- Teleports/respawns must not seed an acceleration estimate.
+        if deltaTime < 0.25 and (root.Position - sample.position).Magnitude < 32 then
             acceleration = (velocity - sample.velocity) / deltaTime
             if acceleration.Magnitude > 250 then
                 acceleration = acceleration.Unit * 250
@@ -1305,7 +1378,14 @@ local function getFilteredVelocity(player: Player, root: BasePart): Vector3
     return velocity
 end
 
+local lastLatencyReadAt: number = -math.huge
 local function getEstimatedLatency(): number
+    local now: number = os.clock()
+    if now - lastLatencyReadAt < 0.1 then
+        return math.clamp(mm2Settings.predictionRtt, 0.03, 0.3)
+    end
+    local elapsed: number = now - lastLatencyReadAt
+    lastLatencyReadAt = now
     local measuredRtt: number = mm2Settings.predictionRtt
     pcall(function(): ()
         local network: Instance? = Stats:FindFirstChild("Network")
@@ -1314,13 +1394,14 @@ local function getEstimatedLatency(): number
         local pingItem: any = serverItems and serverItems:FindFirstChild("Data Ping")
         if pingItem and type(pingItem.GetValue) == "function" then
             local pingMilliseconds: number? = tonumber(pingItem:GetValue())
-            if pingMilliseconds then
+            if predictionMath.finite(pingMilliseconds) and pingMilliseconds >= 0 then
                 measuredRtt = pingMilliseconds / 1000
             end
         end
     end)
-    mm2Settings.predictionRtt +=
-        (measuredRtt - mm2Settings.predictionRtt) * 0.18
+    -- Time-based smoothing: changing Motion/Throw Hz must not change the RTT.
+    local alpha: number = 1 - math.exp(-math.min(elapsed, 1) / 0.5)
+    mm2Settings.predictionRtt += (measuredRtt - mm2Settings.predictionRtt) * alpha
 
     return math.clamp(
         mm2Settings.predictionRtt,
@@ -1351,18 +1432,21 @@ local function resetAutoLeadCorrection(): ()
     autoLeadCorrection = 0
 end
 
+local trajectoryCalibration: any = nil
+
 local function getGunHorizonSeconds(): number
-    local measuredAcceptance: number? = nil
+    local baseline: number = math.max(getEstimatedLatency(), 0.200)
+    local latencyTime: number = baseline
+    -- Never use the cumulative historical mean as a live network measurement.
+    -- TestingStuff contains 1.6s outliers and unmatched GunFired observations.
     if trajectoryCalibration and type(trajectoryCalibration.getEstimates) == "function" then
-        local okEst, est = pcall(function()
-            return trajectoryCalibration:getEstimates()
-        end)
-        if okEst and type(est) == "table" and est.gunAcceptanceMs and est.confirmedShots and est.confirmedShots >= 2 then
-            measuredAcceptance = (est.gunAcceptanceMs :: number) / 1000
+        local ok: boolean, est: any = pcall(trajectoryCalibration.getEstimates, trajectoryCalibration)
+        if ok and type(est) == "table" and predictionMath.finite(est.liveGunAcceptanceMs)
+            and (est.liveGunSamples or 0) >= 6 then
+            latencyTime = math.clamp(est.liveGunAcceptanceMs / 1000,
+                math.max(0.03, baseline - 0.075), math.min(0.45, baseline + 0.075))
         end
     end
-
-    local latencyTime: number = measuredAcceptance or math.max(getEstimatedLatency(), 0.200)
     local staleness: number = 1 / (2 * GUN_LEAD.replicationRate)
     local manualBias: number = math.clamp(
         mm2Settings.gunLeadBias,
@@ -1556,6 +1640,9 @@ local function createTrajectoryCalibration(): any
         knifeSpeed: number?,
         confirmedShots: number,
         confirmedThrows: number,
+        liveGunAcceptanceMs: number?,
+        liveGunSamples: number,
+        maxStabDistance: number?,
     }
     type Controller = {
         start: (self: Controller) -> (),
@@ -1571,13 +1658,14 @@ local function createTrajectoryCalibration(): any
     local OUTPUT_FOLDER: string = OUTPUT_ROOT .. "/Telemetry"
     local OUTPUT_PATH: string = OUTPUT_FOLDER
         .. "/MM2_Trajectory_Calibration.json"
-    local MAX_EVENTS: number = 240
+    local MAX_EVENTS: number = 2400
     local MAX_PENDING_AGE: number = 2.5
     local environment: {[string]: any} = getfenv() :: any
     local playerMouse: Mouse = LocalPlayer:GetMouse()
     local runtime: any = {
         active = false,
         dirty = false,
+        revision = 0,
         saveScheduled = false,
         startedAt = os.clock(),
         sessionGunAttempts = 0,
@@ -1590,13 +1678,10 @@ local function createTrajectoryCalibration(): any
         observedTools = setmetatable({}, {__mode = "k"}) :: {[Tool]: boolean},
         connections = {} :: {RBXScriptConnection},
         events = {} :: {CalibrationEvent},
-        eventsNew = {} :: {CalibrationEvent},
+        freshGunLatency = {} :: {{at: number, ms: number}},
         gunAcceptance = nil :: RunningStats?,
         knifeSpeed = nil :: RunningStats?,
         knifeSpawnDelay = nil :: RunningStats?,
-        gunAcceptanceDelta = nil :: RunningStats?,
-        knifeSpeedDelta = nil :: RunningStats?,
-        knifeSpawnDelayDelta = nil :: RunningStats?,
         motionBuckets = {} :: {[string]: any},
         trajectorySampler = nil :: any,
     }
@@ -1618,54 +1703,9 @@ local function createTrajectoryCalibration(): any
     runtime.gunAcceptance = newStats()
     runtime.knifeSpeed = newStats()
     runtime.knifeSpawnDelay = newStats()
-    runtime.gunAcceptanceDelta = newStats()
-    runtime.knifeSpeedDelta = newStats()
-    runtime.knifeSpawnDelayDelta = newStats()
 
     local function finite(value: number): boolean
         return value == value and value > -math.huge and value < math.huge
-    end
-
-    local function mergeStatsPayload(
-        current: {[string]: number},
-        stored: any
-    ): {[string]: number}
-        if type(stored) ~= "table" then
-            return current
-        end
-        local storedCount: number = tonumber(stored.count) or 0
-        if storedCount <= 0 then
-            return current
-        end
-        local currentCount: number = tonumber(current.count) or 0
-        if currentCount <= 0 then
-            return {
-                count = storedCount,
-                mean = tonumber(stored.mean) or 0,
-                m2 = tonumber(stored.m2) or 0,
-                minimum = tonumber(stored.minimum) or 0,
-                maximum = tonumber(stored.maximum) or 0,
-            }
-        end
-        local storedMean: number = tonumber(stored.mean) or 0
-        local currentMean: number = tonumber(current.mean) or 0
-        local total: number = currentCount + storedCount
-        local delta: number = storedMean - currentMean
-        return {
-            count = total,
-            mean = currentMean + delta * (storedCount / total),
-            m2 = (tonumber(current.m2) or 0)
-                + (tonumber(stored.m2) or 0)
-                + delta * delta * currentCount * storedCount / total,
-            minimum = math.min(
-                tonumber(current.minimum) or 0,
-                tonumber(stored.minimum) or 0
-            ),
-            maximum = math.max(
-                tonumber(current.maximum) or 0,
-                tonumber(stored.maximum) or 0
-            ),
-        }
     end
 
     local function applyStatsPayload(
@@ -1681,6 +1721,26 @@ local function createTrajectoryCalibration(): any
         stats.maximum = stats.count > 0
             and (tonumber(payload.maximum) or 0)
             or -math.huge
+    end
+
+    local function restoreMotionBucket(bucket: any): any
+        local count: number = tonumber(bucket.count) or 0
+        local residual: any = bucket.meanConstantVelocityResidual or {}
+        local errors: any = bucket.meanModelError or {}
+        return {
+            count = count,
+            durationSum = bucket.durationSum or (bucket.meanDurationSeconds or 0) * count,
+            horizontalLeadCount = bucket.horizontalLeadCount or (bucket.meanHorizontalLeadSeconds and count or 0),
+            horizontalLeadSum = bucket.horizontalLeadSum or (bucket.meanHorizontalLeadSeconds or 0) * count,
+            verticalLeadCount = bucket.verticalLeadCount or (bucket.meanVerticalLeadSeconds and count or 0),
+            verticalLeadSum = bucket.verticalLeadSum or (bucket.meanVerticalLeadSeconds or 0) * count,
+            residualXSum = bucket.residualXSum or (residual[1] or 0) * count,
+            residualYSum = bucket.residualYSum or (residual[2] or 0) * count,
+            residualZSum = bucket.residualZSum or (residual[3] or 0) * count,
+            constantVelocityErrorSum = bucket.constantVelocityErrorSum or (errors.constantVelocity or 0) * count,
+            observedAccelerationErrorSum = bucket.observedAccelerationErrorSum or (errors.observedAcceleration or 0) * count,
+            airborneBallisticErrorSum = bucket.airborneBallisticErrorSum or (errors.airborneBallistic or 0) * count,
+        }
     end
 
     local function loadSavedHistory(): ()
@@ -1713,7 +1773,7 @@ local function createTrajectoryCalibration(): any
         if type(decoded.analytics) == "table" and type(decoded.analytics.motionModel) == "table" then
             for key: string, bucket: any in pairs(decoded.analytics.motionModel) do
                 if type(bucket) == "table" then
-                    runtime.motionBuckets[key] = table.clone(bucket)
+                    runtime.motionBuckets[key] = restoreMotionBucket(bucket)
                 end
             end
         end
@@ -1724,8 +1784,9 @@ local function createTrajectoryCalibration(): any
             runtime.sessionKnifeConfirmed = tonumber(decoded.session.knifeConfirmed) or 0
             if type(decoded.session.events) == "table" then
                 runtime.events = {}
-                for _, ev: any in ipairs(decoded.session.events) do
-                    table.insert(runtime.events, ev)
+                local savedEvents: {any} = decoded.session.events
+                for index: number = math.max(1, #savedEvents - MAX_EVENTS + 1), #savedEvents do
+                    table.insert(runtime.events, savedEvents[index])
                 end
             end
         end
@@ -1952,13 +2013,13 @@ local function createTrajectoryCalibration(): any
             table.remove(runtime.events, 1)
         end
         table.insert(runtime.events, record)
-        table.insert(runtime.eventsNew, record)
+        runtime.revision += 1
         runtime.dirty = true
         if runtime.saveScheduled then
             return
         end
         runtime.saveScheduled = true
-        task.delay(0.8, function(): ()
+        task.delay(10, function(): ()
             runtime.saveScheduled = false
             if runtime.active and runtime.dirty then
                 saveSnapshot("autosave")
@@ -2196,6 +2257,17 @@ local function createTrajectoryCalibration(): any
                 end
 
                 payload[key] = {
+                    durationSum = bucket.durationSum,
+                    horizontalLeadSum = bucket.horizontalLeadSum,
+                    horizontalLeadCount = bucket.horizontalLeadCount,
+                    verticalLeadSum = bucket.verticalLeadSum,
+                    verticalLeadCount = bucket.verticalLeadCount,
+                    residualXSum = bucket.residualXSum,
+                    residualYSum = bucket.residualYSum,
+                    residualZSum = bucket.residualZSum,
+                    constantVelocityErrorSum = bucket.constantVelocityErrorSum,
+                    observedAccelerationErrorSum = bucket.observedAccelerationErrorSum,
+                    airborneBallisticErrorSum = bucket.airborneBallisticErrorSum,
                     count = tonumber(bucket.count) or 0,
                     meanDurationSeconds = meanDuration,
                     meanHorizontalLeadSeconds = meanHorizLead,
@@ -2221,24 +2293,37 @@ local function createTrajectoryCalibration(): any
         return (sorted[middle] + sorted[middle + 1]) * 0.5
     end
 
+    local estimatesCache: Estimates? = nil
+    local estimatesAt: number = -math.huge
     local function estimates(): Estimates
+        local now: number = os.clock()
+        if estimatesCache and now - estimatesAt < 0.25 then return estimatesCache end
+        local fresh: {number} = {}
+        for _, sample in ipairs(runtime.freshGunLatency) do
+            if now - sample.at <= 60 then table.insert(fresh, sample.ms) end
+        end
         local gunStats: RunningStats = runtime.gunAcceptance
         local speedStats: RunningStats = runtime.knifeSpeed
         local maxStab: number? = nil
         for _, ev in ipairs(runtime.events) do
-            if ev.kind == "stab" and ev.distance and type(ev.distance) == "number" then
+            if ev.kind == "stab" and ev.hitTarget == true
+                and predictionMath.finite(ev.distance) then
                 if not maxStab or ev.distance > maxStab then
                     maxStab = ev.distance
                 end
             end
         end
-        return {
+        estimatesCache = {
             gunAcceptanceMs = gunStats.count > 0 and gunStats.mean or nil,
             knifeSpeed = speedStats.count > 0 and speedStats.mean or nil,
             confirmedShots = gunStats.count,
             confirmedThrows = speedStats.count,
             maxStabDistance = maxStab,
+            liveGunAcceptanceMs = #fresh >= 6 and median(fresh) or nil,
+            liveGunSamples = #fresh,
         }
+        estimatesAt = now
+        return estimatesCache :: Estimates
     end
 
     saveSnapshot = function(reason: string): boolean
@@ -2247,76 +2332,14 @@ local function createTrajectoryCalibration(): any
             return false
         end
 
-        local stored: any = nil
-        if type(environment.readfile) == "function" then
-            local okRead: boolean, existingRaw: any = pcall(
-                environment.readfile,
-                OUTPUT_PATH
-            )
-            if okRead and type(existingRaw) == "string" then
-                local okDecode: boolean, decoded: any = pcall(function(): any
-                    return HttpService:JSONDecode(existingRaw)
-                end)
-                if okDecode and type(decoded) == "table" then
-                    stored = decoded
-                end
-            end
-        end
-        local storedAgg: any =
-            type(stored) == "table" and stored.aggregate or {}
-        local mergedGun: {[string]: number} = mergeStatsPayload(
-            statsPayload(runtime.gunAcceptanceDelta),
-            storedAgg.gunAcceptanceMs
-        )
-        local mergedKnife: {[string]: number} = mergeStatsPayload(
-            statsPayload(runtime.knifeSpeedDelta),
-            storedAgg.knifeSpeedStudsPerSecond
-        )
-        local mergedDelay: {[string]: number} = mergeStatsPayload(
-            statsPayload(runtime.knifeSpawnDelayDelta),
-            storedAgg.knifeSpawnDelayMs
-        )
-        local storedBuckets: any =
-            type(stored) == "table"
-            and stored.analytics
-            and stored.analytics.motionModel
-            or {}
-        local mergedBuckets: {[string]: any} = {}
-        for key: string, bucket: any in pairs(runtime.motionBuckets) do
-            mergedBuckets[key] = table.clone(bucket)
-        end
-        if type(storedBuckets) == "table" then
-            for key: string, storedBucket: any in pairs(storedBuckets) do
-                local target: any = mergedBuckets[key]
-                if not target or type(target) ~= "table" then
-                    mergedBuckets[key] = table.clone(storedBucket)
-                else
-                    for field: string, value: any in pairs(storedBucket) do
-                        if type(value) == "number" and type(target[field]) == "number" then
-                            target[field] = target[field] + value
-                        end
-                    end
-                end
-            end
-        end
-        local mergedEvents: {CalibrationEvent} = {}
-        if type(stored) == "table"
-            and type(stored.session) == "table"
-            and type(stored.session.events) == "table" then
-            for _, event: any in ipairs(stored.session.events) do
-                table.insert(mergedEvents, event)
-            end
-        end
-        for _, event: CalibrationEvent in ipairs(runtime.eventsNew) do
-            table.insert(mergedEvents, event)
-        end
-        while #mergedEvents > 2400 do
-            table.remove(mergedEvents, 1)
-        end
-        local storedSession: any =
-            type(stored) == "table" and stored.session or {}
+        -- History is loaded once. Re-merging the on-disk totals at each save
+        -- used to double counters/buckets and read/decode a large JSON per shot.
+        local savedRevision: number = runtime.revision
+        local mergedGun = statsPayload(runtime.gunAcceptance)
+        local mergedKnife = statsPayload(runtime.knifeSpeed)
+        local mergedDelay = statsPayload(runtime.knifeSpawnDelay)
         local payload: {[string]: any} = {
-            schema = 2,
+            schema = 3,
             kind = "mm2-trajectory-analytics",
             placeId = game.PlaceId,
             savedAt = DateTime.now():ToIsoDate(),
@@ -2340,19 +2363,15 @@ local function createTrajectoryCalibration(): any
                     maximumMs = 250,
                     states = {"Grounded", "Airborne"},
                 },
-                motionModel = motionModelPayload(mergedBuckets),
+                motionModel = motionModelPayload(runtime.motionBuckets),
             },
             session = {
                 elapsedSeconds = os.clock() - runtime.startedAt,
-                gunAttempts = (tonumber(storedSession.gunAttempts) or 0)
-                    + runtime.sessionGunAttempts,
-                gunConfirmed = (tonumber(storedSession.gunConfirmed) or 0)
-                    + runtime.sessionGunConfirmed,
-                knifeAttempts = (tonumber(storedSession.knifeAttempts) or 0)
-                    + runtime.sessionKnifeAttempts,
-                knifeConfirmed = (tonumber(storedSession.knifeConfirmed) or 0)
-                    + runtime.sessionKnifeConfirmed,
-                events = mergedEvents,
+                gunAttempts = runtime.sessionGunAttempts,
+                gunConfirmed = runtime.sessionGunConfirmed,
+                knifeAttempts = runtime.sessionKnifeAttempts,
+                knifeConfirmed = runtime.sessionKnifeConfirmed,
+                events = runtime.events,
             },
         }
         local encodedOk: boolean, encoded: any = pcall(
@@ -2378,20 +2397,8 @@ local function createTrajectoryCalibration(): any
             return false
         end
 
-        applyStatsPayload(runtime.gunAcceptance, mergedGun)
-        applyStatsPayload(runtime.knifeSpeed, mergedKnife)
-        applyStatsPayload(runtime.knifeSpawnDelay, mergedDelay)
-        runtime.motionBuckets = mergedBuckets
-        runtime.events = mergedEvents
-        runtime.gunAcceptanceDelta = newStats()
-        runtime.knifeSpeedDelta = newStats()
-        runtime.knifeSpawnDelayDelta = newStats()
-        runtime.eventsNew = {}
-        runtime.sessionGunAttempts = payload.session.gunAttempts
-        runtime.sessionGunConfirmed = payload.session.gunConfirmed
-        runtime.sessionKnifeAttempts = payload.session.knifeAttempts
-        runtime.sessionKnifeConfirmed = payload.session.knifeConfirmed
-        runtime.dirty = false
+        -- A yielding executor write must not clear events recorded meanwhile.
+        runtime.dirty = runtime.revision ~= savedRevision
         print(
             trajectoryLogPrefix .. " Saved "
                 .. OUTPUT_PATH
@@ -2489,7 +2496,6 @@ local function createTrajectoryCalibration(): any
                     and targetCharacter ~= nil
                     and hitPartValue:IsDescendantOf(targetCharacter)
                 addSample(runtime.gunAcceptance, pingMs)
-                addSample(runtime.gunAcceptanceDelta, pingMs)
                 runtime.sessionGunAttempts += 1
                 runtime.sessionGunConfirmed += 1
                 appendEvent({
@@ -2535,8 +2541,12 @@ local function createTrajectoryCalibration(): any
         local hitTarget: boolean = typeof(hitPartValue) == "Instance"
             and targetCharacter ~= nil
             and hitPartValue:IsDescendantOf(targetCharacter)
+        if latencyMs >= 30 and latencyMs <= 450 then
+            table.insert(runtime.freshGunLatency, {at = now, ms = latencyMs})
+            if #runtime.freshGunLatency > 24 then table.remove(runtime.freshGunLatency, 1) end
+            estimatesAt = -math.huge
+        end
         addSample(runtime.gunAcceptance, latencyMs)
-        addSample(runtime.gunAcceptanceDelta, latencyMs)
         runtime.sessionGunConfirmed += 1
         pending.confirmedAt = now
         pending.latencyMs = latencyMs
@@ -2572,7 +2582,6 @@ local function createTrajectoryCalibration(): any
                 nil
             )
             addSample(runtime.knifeSpeed, resolvedSpeed)
-            addSample(runtime.knifeSpeedDelta, resolvedSpeed)
             runtime.sessionKnifeConfirmed += 1
             appendEvent({
                 kind = "knife",
@@ -2698,7 +2707,6 @@ local function createTrajectoryCalibration(): any
                 (now - pending.activatedAt) * 1000
             )
             addSample(runtime.knifeSpawnDelay, spawnDelayMs)
-            addSample(runtime.knifeSpawnDelayDelta, spawnDelayMs)
             local rawSpeed: number? = tonumber(projectile:GetAttribute("ThrowSpeed"))
             if rawSpeed and (rawSpeed < 24 or rawSpeed > 300) then
                 rawSpeed = nil
@@ -2898,12 +2906,11 @@ local function createTrajectoryCalibration(): any
         runtime.gunAcceptance = newStats()
         runtime.knifeSpeed = newStats()
         runtime.knifeSpawnDelay = newStats()
-        runtime.gunAcceptanceDelta = newStats()
-        runtime.knifeSpeedDelta = newStats()
-        runtime.knifeSpawnDelayDelta = newStats()
         runtime.motionBuckets = {}
         runtime.events = {}
-        runtime.eventsNew = {}
+        runtime.freshGunLatency = {}
+        estimatesCache = nil
+        estimatesAt = -math.huge
         runtime.sessionGunAttempts = 0
         runtime.sessionGunConfirmed = 0
         runtime.sessionKnifeAttempts = 0
@@ -2911,11 +2918,7 @@ local function createTrajectoryCalibration(): any
     end
 
     function controller:save(reason: string?): boolean
-        local saved: boolean = saveSnapshot(reason or "manual")
-        if saved then
-            runtime.dirty = false
-        end
-        return saved
+        return saveSnapshot(reason or "manual")
     end
 
     function controller:reset(): ()
@@ -3066,7 +3069,7 @@ local function createTrajectoryCalibration(): any
     return controller
 end
 
-local trajectoryCalibration: any = createTrajectoryCalibration()
+trajectoryCalibration = createTrajectoryCalibration()
 state.mm2TrajectoryCalibration = trajectoryCalibration
 trajectoryCalibration:start()
 
@@ -3091,6 +3094,7 @@ type PendingShot = {
     targetedMurderer: boolean,
     queuedAt: number,
 
+    aimRootOffset: Vector3?,
     leadSeconds: number?,
     leadSensitivity: number?,
     velocity: Vector3?,
@@ -3100,6 +3104,7 @@ type PendingShot = {
 }
 
 type GunPrediction = {
+    aimRootOffset: Vector3?,
     targetPosition: Vector3?,
     endpoint: Vector3?,
     velocity: Vector3?,
@@ -3220,7 +3225,7 @@ local function startLeadTracking(candidate: PendingShot): ()
     end
     stopLeadTracking()
     leadTracking = candidate
-    local samples: {{t: number, p: Vector3}} = {}
+    local samples: {{t: number, p: Vector3}} = {{t = os.clock(), p = root.Position}}
     candidate.trajectory = samples
     local elapsed: number = 0
     featureConnections.MM2LeadTuner = TaskManager:Connect(function(
@@ -3234,11 +3239,9 @@ local function startLeadTracking(candidate: PendingShot): ()
             stopLeadTracking()
             return
         end
-        elapsed += deltaTime
-        if elapsed < 1 / 30 then
-            return
-        end
-        elapsed = 0
+        local due: boolean
+        due, elapsed = predictionMath.sampleDue(elapsed, deltaTime, 30)
+        if not due then return end
         table.insert(samples, {t = os.clock(), p = root.Position})
         if #samples > 64 then
             table.remove(samples, 1)
@@ -3247,7 +3250,7 @@ local function startLeadTracking(candidate: PendingShot): ()
 end
 
 local function tuneFromConfirmedShot(candidate: PendingShot): ()
-    if not mm2Settings.autoTuneLead or not candidate.aimPosition then
+    if not mm2Settings.autoTuneLead or not candidate.aimPosition or candidate.silentSpawn then
         return
     end
     local samples: {{t: number, p: Vector3}}? = candidate.trajectory
@@ -3266,19 +3269,10 @@ local function tuneFromConfirmedShot(candidate: PendingShot): ()
     if horizontal.Magnitude < 8 then
         return
     end
-    local closestDistance: number = math.huge
-    local crossedAt: number? = nil
-    for _, sample: {t: number, p: Vector3} in ipairs(samples) do
-        local distance: number =
-            (sample.p - (candidate.aimPosition :: Vector3)).Magnitude
-        if distance < closestDistance then
-            closestDistance = distance
-            crossedAt = sample.t
-        end
-    end
-    if crossedAt == nil then
-        return
-    end
+    -- Interpolate between 30 Hz samples instead of quantizing to a frame.
+    local rootAim: Vector3 = candidate.aimPosition - (candidate.aimRootOffset or Vector3.zero)
+    local crossedAt: number?, closestDistance: number = predictionMath.closestCrossing(samples, rootAim)
+    if crossedAt == nil or closestDistance > 1 then return end
     local leadMeasured: number = crossedAt - candidate.queuedAt
     if leadMeasured < 0.03 or leadMeasured > 1.2 then
         return
@@ -3339,6 +3333,7 @@ state.mm2ShotFeedback.queue = function(
         leadSeconds = prediction and prediction.leadSeconds or nil,
         leadSensitivity = prediction and prediction.leadSensitivity or nil,
         velocity = prediction and prediction.velocity or nil,
+        aimRootOffset = prediction and prediction.aimRootOffset or nil,
     }
     state.mm2ShotFeedback.pending = candidate
     startLeadTracking(candidate)
@@ -3454,7 +3449,8 @@ state.mm2ShotFeedback.resolve = function(
             )
 
         if hitConfirmed then
-            tuneFromConfirmedShot(candidate)
+            -- Disconnection/role changes are UI heuristics, not tuning evidence.
+            if directHit then tuneFromConfirmedShot(candidate) end
             state.mm2ShotFeedback.hide()
         end
 
@@ -3724,6 +3720,8 @@ state.mm2Core = {
     findMM2Map = findMM2Map,
     findDroppedGun = findDroppedGun,
 
+    predictionMath = predictionMath,
+    isMotionGrounded = isMotionGrounded,
     motionSamples = motionSamples,
     getFilteredVelocity = getFilteredVelocity,
     getEstimatedLatency = getEstimatedLatency,
