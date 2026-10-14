@@ -13,7 +13,6 @@ import math
 from pathlib import Path
 import statistics
 
-SNAPSHOT = "43ee19ac7946861c2106822fa9060258e62758de"
 MODELS = ("linear", "acceleration", "intent25", "intent50", "intent100", "classic-proxy", "v17-proxy")
 HORIZONS = (.15, .20, 7 / 30, .30)
 
@@ -139,17 +138,36 @@ def inspect_trajectory(data):
                                       for e in authored.values() if e["kind"] == "gun"))
     result["knife_authored_models"] = dict(collections.Counter(e.get("settings", {}).get("latencyModel", "unknown")
                                          for e in authored.values() if e["kind"] == "knife"))
+    terminal = {e["shotId"]: e for e in events if e.get("shotId") and e.get("phase") in ("confirmation", "unconfirmed")}
+    result["auto_tune_cohorts"] = {}
+    for enabled, label in ((False, "off"), (True, "on")):
+        shots = [e for e in authored.values() if e["kind"] == "gun" and e.get("settings", {}).get("autoTune") is enabled]
+        signals = [terminal[e["shotId"]] for e in shots if terminal.get(e["shotId"], {}).get("phase") == "confirmation"]
+        result["auto_tune_cohorts"][label] = {"authored": len(shots), "signals": len(signals),
+            "target_hit_parts": sum(e.get("hitTarget") is True for e in signals),
+            "unconfirmed": sum(terminal.get(e["shotId"], {}).get("phase") == "unconfirmed" for e in shots),
+            "horizon_seconds": stats([e["settings"]["horizon"] for e in shots if "horizon" in e["settings"]]),
+            "actual_correction_logged": sum("autoLeadCorrection" in e.get("settings", {}).get("prediction", {}) for e in shots)}
+    knife_shots = sorted((e for e in authored.values() if e["kind"] == "knife"), key=lambda e: e["serverTime"])
+    result["knife_configured_delays"] = dict(collections.Counter(str(e.get("settings", {}).get("fireDelay")) for e in knife_shots))
+    result["knife_spacing_seconds"] = stats([b["serverTime"] - a["serverTime"] for a, b in zip(knife_shots, knife_shots[1:])])
     result["legacy_hit_labels_not_rate"] = dict(collections.Counter(str(e.get("hitTarget")) for e in events if e["kind"] == "gun"))
     return result
 
-def analyze(directory):
-    report = {"reference_snapshot": SNAPSHOT, "files": [], "duplicate_files": [], "datasets": [],
+def analyze(directory, snapshot=None):
+    report = {"reference_snapshot": snapshot, "files": [], "duplicate_files": [], "datasets": [],
               "method": {"gravity_assumption": 196.2, "maximum_interpolation_gap_seconds": .15,
                          "horizons_seconds": HORIZONS, "selection": "retrospective exploratory comparison; not a blind holdout",
                          "limitations": ["client positions, not server collisions", "legacy hit labels and totals are not reliable hit-rate denominators",
                                          "overlapping forecast windows are not independent shots", "classic/v17 proxies run at recorded cadence, not the original 120Hz internal state",
-                                         "map geometry, landing collisions and actual fire-time sampler states unavailable",
+                                         "map geometry unavailable; generic kernels do not replay authored snapshots or landing probes",
                                          "fixed-horizon comparisons do not identify the correct server prediction horizon"]}}
+    # Recognize MM2-specific recordings from structurally detected places, but
+    # keep their datasets separate. Never pool those sessions into the main place.
+    mm2_places = {142823291}
+    for path in directory.glob("*.json"):
+        data = json.loads(path.read_bytes())
+        if data.get("kind") == "mm2-trajectory-analytics": mm2_places.add(data.get("placeId"))
     seen = {}
     for path in sorted(directory.glob("*.json")):
         raw = path.read_bytes()
@@ -163,7 +181,7 @@ def analyze(directory):
             continue
         seen[digest] = path.name
         item = {"file": path.name, "placeId": data.get("placeId")}
-        if data.get("placeId") != 142823291:
+        if data.get("placeId") not in mm2_places:
             item["excluded_from_MM2"] = "different place; retained in manifest, not pooled"
         elif isinstance(data.get("session", {}).get("events"), list):
             item.update(inspect_trajectory(data))
@@ -180,8 +198,9 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--data", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--snapshot", help="Source commit, if known; never inferred from filenames")
     args = parser.parse_args()
-    report = analyze(args.data)
+    report = analyze(args.data, args.snapshot)
     if not report["files"]: parser.error("No JSON files found")
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(report, indent=2, allow_nan=False) + "\n")

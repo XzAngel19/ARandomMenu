@@ -1683,6 +1683,54 @@ function Module.init(context: any): WidgetLibrary
         return button :: TextButton
     end
 
+    -- One selector shared by all Metrics producers, independent of module order.
+    -- Switching the view never silently changes collection/training preferences.
+    state.beginMetricsPanel = function(feature: any, name: string): () -> ()
+        local panels = feature.metricsPanels
+        if not panels then
+            local mm2 = game.PlaceId == 142823291 or state.activeGameName == "MM2"
+                or state.mm2Core ~= nil or name == "Calibration"
+            local values = mm2 and {"Calibration", "Game learning", "Projectiles"}
+                or {"Game learning", "Projectiles"}
+            panels = {selected = values[1], values = values, groups = {}}
+            feature.metricsPanels = panels
+            function panels:refresh(): ()
+                for group, rows in pairs(self.groups) do
+                    for _, row in ipairs(rows) do row.Visible = group == self.selected end
+                end
+                feature.updateExpandedSize()
+            end
+            function panels:buildSelector(): ()
+                if self.selector then
+                    if state.closeChoiceList then state.closeChoiceList() end
+                    local oldRow = self.selector.Parent
+                    local index = table.find(feature.optionRows, oldRow)
+                    if index then table.remove(feature.optionRows, index) end
+                    oldRow:Destroy()
+                end
+                self.selector = addCycleOption(feature, "Mode", self.values,
+                    table.find(self.values, self.selected) or 1, function(value: string): ()
+                        self.selected = value
+                        self:refresh()
+                    end, "Select controls to display. Recording toggles stay independent; switching views never discards data or stops an enabled observer.")
+                if self.selector then self.selector.Parent.LayoutOrder = -1 end
+            end
+            panels:buildSelector()
+        end
+        -- Structural detection may load MM2 after universal modules in another place.
+        if not table.find(panels.values, name) then
+            table.insert(panels.values, name)
+            panels:buildSelector()
+        end
+        local first = #feature.optionRows + 1
+        return function(): ()
+            local rows = {}
+            for index = first, #feature.optionRows do table.insert(rows, feature.optionRows[index]) end
+            panels.groups[name] = rows
+            panels:refresh()
+        end
+    end
+
     local function addKeyOption(
         feature: any,
         labelText: string,

@@ -31,7 +31,9 @@ function Module.init(context: Runtime): any
     local httpService: any = host.HttpService or (game :: any):GetService("HttpService")
     local UserInputService: any = host.UserInputService or (game :: any):GetService("UserInputService")
 
-    local isMM2: boolean = game.PlaceId == 142823291
+    local function isMM2(): boolean
+        return game.PlaceId == 142823291 or state.activeGameName == "MM2" or state.mm2Core ~= nil
+    end
     local gameBridge: any = context.services and
         context.services.gameBridge
 
@@ -278,7 +280,7 @@ function Module.init(context: Runtime): any
 
             local variant: string? = explicitVariant
             local variantOffset: number? = explicitOffset
-            if not isMM2 and not variant
+            if not isMM2() and not variant
                 and gameBridge
                 and type(gameBridge.silentShot) == "function" then
                 local okInfo: boolean, info: any = pcall(gameBridge.silentShot)
@@ -315,7 +317,7 @@ function Module.init(context: Runtime): any
 
         local function recordShot(tool: Tool): ()
             -- MM2's core is the sole weapon observer; no mouse/Tool double count.
-            if isMM2 then return end
+            if isMM2() then return end
             local name = string.lower(tool.Name)
             if not string.find(name, "gun", 1, true) and not string.find(name, "knife", 1, true)
                 and not tool:FindFirstChild("Shoot") then return end
@@ -503,7 +505,7 @@ function Module.init(context: Runtime): any
         end
 
         local function observeTool(tool: Tool): ()
-            if isMM2 then return end
+            if isMM2() then return end
             if runtime.observedTools[tool] then
                 return
             end
@@ -880,7 +882,7 @@ function Module.init(context: Runtime): any
             table.insert(
                 runtime.connections,
                 UserInputService.InputBegan:Connect(function(input: InputObject, gameProcessed: boolean): ()
-                    if isMM2 or gameProcessed then
+                    if isMM2() or gameProcessed then
                         return
                     end
                     if input.UserInputType ~= Enum.UserInputType.MouseButton1
@@ -969,6 +971,7 @@ function Module.init(context: Runtime): any
         )
         state.metricsFeature = GameLearningFeature
     end
+    local finishPanel = state.beginMetricsPanel(GameLearningFeature, "Game learning")
     addToggleOption(GameLearningFeature, "Game learning observer", false, function(value: boolean): ()
         gameLearning:setEnabled(value)
     end, "Optional scene/movement evidence logger, not prediction training. Turning OFF stops probes and saves pending data.")
@@ -1029,6 +1032,7 @@ function Module.init(context: Runtime): any
             .. "Calibration file as _Game_Learning.json."
     )
 
+    finishPanel()
     activeController = gameLearning
 
     Module.Initialized = true

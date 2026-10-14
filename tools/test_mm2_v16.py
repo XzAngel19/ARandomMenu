@@ -86,7 +86,7 @@ local runtime={sessionId="GL-session",buildStamp="v16",shots={},spawnShots={},hi
 local timers={}
 local task={delay=function(_,fn) table.insert(timers,fn) end}
 local tuning={killWindowSeconds=4,maxEvents=300}
-local isMM2=true
+local function isMM2() return true end
 local function clampTrim() end
 local function vectorArray(v) return {v.X,v.Y,v.Z} end
 local function getPingMilliseconds() return 180 end

@@ -7,7 +7,7 @@ import unittest
 import sys
 sys.dont_write_bytecode = True
 
-from analyze_mm2_json import analyze, clean_track, forecasts, replay
+from analyze_mm2_json import analyze, clean_track, forecasts, replay, inspect_trajectory
 
 class EvidenceAnalysisTests(unittest.TestCase):
     def track(self):
@@ -54,5 +54,30 @@ class EvidenceAnalysisTests(unittest.TestCase):
             self.assertEqual(len(result['datasets']), 2)
             self.assertEqual(result['datasets'][0]['outcomes'], {'unconfirmed': 1})
             self.assertIn('excluded_from_MM2', result['datasets'][1])
+
+    def test_auto_tune_cohorts_are_not_merged(self):
+        events = [
+            {"kind": "gun", "phase": "authored", "shotId": "a", "settings": {"autoTune": True, "horizon": .2}},
+            {"kind": "gun", "phase": "confirmation", "shotId": "a", "latencyMs": 180, "hitTarget": True},
+            {"kind": "gun", "phase": "authored", "shotId": "b", "settings": {"autoTune": False, "horizon": .2}},
+            {"kind": "gun", "phase": "unconfirmed", "shotId": "b"},
+        ]
+        r = inspect_trajectory({"session": {"events": events}})["auto_tune_cohorts"]
+        self.assertEqual(r["on"]["target_hit_parts"], 1)
+        self.assertEqual(r["off"]["signals"], 0)
+        self.assertEqual(r["off"]["unconfirmed"], 1)
+        self.assertEqual(r["on"]["actual_correction_logged"], 0)
+
+    def test_detected_mm2_place_stays_separate(self):
+        with tempfile.TemporaryDirectory() as folder:
+            p = Path(folder)
+            for place in (142823291, 99):
+                (p / f"{place}.json").write_text(json.dumps({"placeId": place,
+                    "kind": "mm2-trajectory-analytics", "session": {"events": []}}))
+            (p / 'learning.json').write_text(json.dumps({"placeId": 99, "shots": [], "schema": 2}))
+            r = analyze(p)
+            self.assertEqual(len(r['datasets']), 3)
+            self.assertFalse(any('excluded_from_MM2' in d for d in r['datasets']))
+            self.assertIsNone(r['reference_snapshot'])
 
 if __name__ == '__main__': unittest.main()

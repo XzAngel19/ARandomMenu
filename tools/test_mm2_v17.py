@@ -34,21 +34,27 @@ local function disconnectFeatureConnection(key)
     if featureConnections[key] then featureConnections[key]:Disconnect() end
     featureConnections[key]=nil
 end
-local toggles,numbers,actions={},{},{}
+local toggles,numbers,actions,cycles={},{},{},{}
 local function createUniversalFeature(name,description,order,onToggle)
-    return {configKey="MM2."..name,onToggle=onToggle}
+    return {configKey="MM2."..name,onToggle=onToggle,optionRows={},updateExpandedSize=function() end}
+end
+local function optionRow(feature,label)
+    local row={Name="Option_"..label:gsub("%W",""),Visible=true}
+    table.insert(feature.optionRows,row); return row
 end
 local function addToggleOption(feature,label,default,callback)
+    optionRow(feature,label)
     local c={value=default}
     function c:click() self.value=not self.value; callback(self.value) end
     toggles[label]=c; callback(default)
 end
 local function addNumberOption(feature,label,default,lo,hi,callback)
+    optionRow(feature,label)
     table.insert(numbers,{key=feature.configKey.."."..label:gsub("%W",""),value=default})
     callback(math.clamp(default,lo,hi))
 end
-local function addCycleOption(feature,label,values,index,callback) callback(values[index]) end
-local function addActionOption(feature,label,callback) actions[label]=callback end
+local function addCycleOption(feature,label,values,index,callback) optionRow(feature,label); cycles[label]=callback; callback(values[index]) end
+local function addActionOption(feature,label,callback) optionRow(feature,label); actions[label]=callback end
 local Aura=(function()
 ''', AURA, r'''
 end)()
@@ -57,6 +63,11 @@ local Throw=(function()
 end)()
 Aura.init({}); Throw.init({})
 local card=state.mm2KnifeFeature
+local delayRow
+for _,row in ipairs(card.optionRows) do if row.Name=="Option_Firedelay" then delayRow=row end end
+assert(delayRow and not delayRow.Visible)
+cycles["Throw cadence"]("Manual");assert(delayRow.Visible)
+cycles["Throw cadence"]("Auto");assert(not delayRow.Visible)
 -- Wanted settings can be restored before the master without starting anything.
 toggles["Knife Throw"]:click()
 assert(toggles["Knife Throw"].value and featureConnections.MM2KnifeThrow==nil)
@@ -88,7 +99,7 @@ local configData={values={["MM2.Knife.Range"]=250}}
 local saved=0
 local function queueConfigSave() saved+=1 end
 local function migrate()
-''', section(LOADER, 'if configData.values["MM2.Knife.RangeMigration"]', 'local function findExistingGui()'), r'''
+''', section(LOADER, 'if configData.values["MM2.Knife.RangeMigration"]', '-- v19 separates'), r'''
 end
 migrate()
 assert(configData.values["MM2.Knife.LegacyRange"]==250)
@@ -381,7 +392,7 @@ print("v17 regression groups passed:",passed)
 def main():
     assert 'autoSettings.maxError = math.clamp(value, MINIMUM_ERROR_RADIUS, 1)' in SHOOT
     assert 'silent = autoSettings.mode == "Silent"' in SHOOT
-    assert 'v18-20261014-mm2-evidence-motion' in LOADER
+    assert 'v19-20261014-mm2-panels-knife' in LOADER
     assert 'arena/d83a806d-arandommenu' in LOADER
     with tempfile.TemporaryDirectory(prefix='mm2-v17-') as directory:
         file = Path(directory) / 'test.luau'

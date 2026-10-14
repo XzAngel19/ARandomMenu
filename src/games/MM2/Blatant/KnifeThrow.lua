@@ -32,6 +32,7 @@ function Module.init(runtime: any): any
         enabled = false,
         mode = "Normal",
         fireDelay = 1,
+        cadence = "Auto",
         range = 120,
         spawnOffset = 5,
         throwHz = 60,
@@ -136,63 +137,120 @@ function Module.init(runtime: any): any
         return positionAtSpawn + velocity * flightTime
     end
 
+    local function getThrowCadence(knife: Tool?): (number, string, boolean)
+        local perk = core.getPlayerPerk and core.getPlayerPerk(LocalPlayer)
+        local sleight = type(perk) == "string" and string.lower(perk) == "sleight"
+        local cooldown = knife and knife:GetAttribute("ThrowCooldown")
+        if knife and (not predictionMath.finite(cooldown) or cooldown < 0.1 or cooldown > 5) then
+            cooldown = knife:GetAttribute("ThrowDelay")
+        end
+        local delay, source = predictionMath.knifeCadence(knifeThrowSettings.cadence,
+            knifeThrowSettings.fireDelay, cooldown, sleight)
+        return delay, source, sleight
+    end
+
     local throwTrack: any = nil
     local throwTrackHumanoid: Humanoid? = nil
     local throwTrackKnife: Tool? = nil
     local throwTrackId: string? = nil
+    local throwAnimation: Animation? = nil
+    local animationGeneration = 0
+    local animationHooks = {}
+    local animationStatus = "idle"
     local function stopThrowAnimation(): ()
+        animationGeneration += 1
+        for _, connection in ipairs(animationHooks) do pcall(function() connection:Disconnect() end) end
+        table.clear(animationHooks)
         if throwTrack then
-            pcall(function(): () throwTrack:Stop(0) end)
+            pcall(function(): () throwTrack:Stop(0.05) end)
             pcall(function(): () throwTrack:Destroy() end)
         end
         throwTrack = nil
         throwTrackHumanoid = nil
         throwTrackKnife = nil
         throwTrackId = nil
+        throwAnimation = nil
+        animationStatus = "released"
     end
 
-    local function playThrowAnimation(knife: Tool): ()
+    local function selectThrowAnimation(knife: Tool, humanoid: Humanoid): Animation?
+        local best, bestScore = nil, 0
+        local rig = tostring(humanoid.RigType)
+        for _, descendant in ipairs(knife:GetDescendants()) do
+            if descendant:IsA("Animation") then
+                local name = string.lower(descendant.Name):gsub("%W", "")
+                local parentName = descendant.Parent and descendant.Parent.Name or ""
+                local context = string.lower(name .. parentName)
+                local wrongRig = (string.find(rig, "R15", 1, true) and string.find(context, "r6", 1, true))
+                    or (string.find(rig, "R6", 1, true) and string.find(context, "r15", 1, true))
+                local normalized = name:gsub("r15", ""):gsub("r6", "")
+                local score = ({throwrelease=4, knifethrow=3, throw=2})[normalized] or 0
+                if not wrongRig and score > bestScore then best, bestScore = descendant, score end
+            end
+        end
+        return best
+    end
+
+    local function playThrowAnimation(knife: Tool, interval: number?, sleight: boolean?): ()
         if not knifeThrowSettings.animation then return end
         local character: Model? = LocalPlayer.Character
-        local humanoid: Humanoid? = character
-            and character:FindFirstChildOfClass("Humanoid") :: Humanoid?
-        if not humanoid then stopThrowAnimation(); return end
-        -- A random first Animation can be Equip or Stab. Unknown tools simply
-        -- skip this cosmetic operation; they never delay/block the packet.
-        local anim: Animation? = nil
-        for _, descendant: Instance in ipairs(knife:GetDescendants()) do
-            if descendant:IsA("Animation")
-                and string.find(string.lower(descendant.Name), "throw", 1, true) then
-                anim = descendant :: Animation
-                break
-            end
-        end
-        if not anim then stopThrowAnimation(); return end
-        if throwTrackHumanoid ~= humanoid or throwTrackKnife ~= knife
-            or throwTrackId ~= anim.AnimationId then
+        local humanoid: Humanoid? = character and character:FindFirstChildOfClass("Humanoid") :: Humanoid?
+        if not humanoid or knife.Parent ~= character then stopThrowAnimation(); return end
+        if throwTrackHumanoid ~= humanoid or throwTrackKnife ~= knife then
             stopThrowAnimation()
-            local animator: Animator? = humanoid:FindFirstChildOfClass("Animator") :: Animator?
-            if not animator then return end
-            local ok: boolean, track: any = pcall(function(): any
-                return animator:LoadAnimation(anim :: Animation)
-            end)
-            if ok then
-                throwTrack = track
-                throwTrackHumanoid = humanoid
-                throwTrackKnife = knife
-                throwTrackId = anim.AnimationId
+            throwTrackHumanoid, throwTrackKnife = humanoid, knife
+            throwAnimation = selectThrowAnimation(knife, humanoid)
+            if knife.Unequipped then table.insert(animationHooks, knife.Unequipped:Connect(stopThrowAnimation)) end
+            if humanoid.Died then table.insert(animationHooks, humanoid.Died:Connect(stopThrowAnimation)) end
+            if knife.DescendantAdded then
+                table.insert(animationHooks, knife.DescendantAdded:Connect(function(child)
+                    if child:IsA("Animation") then stopThrowAnimation() end
+                end))
             end
         end
-        if throwTrack then
-            pcall(function(): ()
-                throwTrack.Looped = false
-                throwTrack:Play(0.1, 1, 1)
-            end)
+        local anim = throwAnimation
+        if not anim then animationStatus = "no known release animation (charge/idle skipped)"; return end
+        local animator: Animator? = humanoid:FindFirstChildOfClass("Animator") :: Animator?
+        if not animator then animationStatus = "no Animator"; return end
+        if type(animator.GetPlayingAnimationTracks) == "function" then
+            for _, native in ipairs(animator:GetPlayingAnimationTracks()) do
+                if native ~= throwTrack and native.IsPlaying and native.Animation
+                    and native.Animation.AnimationId == anim.AnimationId then
+                    if throwTrack then pcall(function() throwTrack:Stop(0.05) end) end
+                    animationStatus = "native throw already playing"
+                    return
+                end
+            end
         end
+        if not throwTrack or throwTrackId ~= anim.AnimationId then
+            if throwTrack then
+                pcall(function() throwTrack:Stop(0.05) end)
+                pcall(function() throwTrack:Destroy() end)
+            end
+            throwTrack = animator:LoadAnimation(anim)
+            throwTrackId = anim.AnimationId
+        end
+        local duration = math.clamp(interval or 0.5, 0.1, 5)
+        local speed = sleight and 2 or 1
+        if throwTrack.Length > 0 then speed = math.clamp(math.max(speed, throwTrack.Length / (duration * 0.85)), 1, 4) end
+        animationGeneration += 1
+        local generation, track = animationGeneration, throwTrack
+        if track.IsPlaying then track:Stop(0.03) end
+        track.Looped = false
+        track.Priority = Enum.AnimationPriority.Action
+        track:Play(0.04, 1, speed)
+        animationStatus = string.format("release %.2fx", speed)
+        -- Stop only our track; a stale timer cannot stop the next throw/native animation.
+        task.delay(duration * 0.9, function(): ()
+            if generation == animationGeneration and track == throwTrack then
+                pcall(function() track:Stop(0.06) end)
+            end
+        end)
     end
 
     local function throwKnife(): ()
-        if os.clock() - lastThrow < knifeThrowSettings.fireDelay then
+        local effectiveDelay, cadenceSource, sleight = getThrowCadence(getPlayerWeapon(LocalPlayer, "Knife"))
+        if os.clock() - lastThrow < effectiveDelay then
             setWeaponStatus("Throw", "Fire delay")
             return
         end
@@ -268,12 +326,15 @@ function Module.init(runtime: any): any
             target = target,
             silent = silent,
             settings = {mode = knifeThrowSettings.mode, throwHz = knifeThrowSettings.throwHz,
-                fireDelay = knifeThrowSettings.fireDelay, spawnOffset = knifeThrowSettings.spawnOffset,
+                fireDelay = effectiveDelay, manualFireDelay = knifeThrowSettings.fireDelay,
+                cadence = knifeThrowSettings.cadence, cadenceSource = cadenceSource, sleight = sleight,
+                spawnOffset = knifeThrowSettings.spawnOffset,
                 range = knifeThrowSettings.range, latencyModel = knifeThrowSettings.latencyModel,
                 leadBias = knifeThrowSettings.leadBias, prediction = lastPrediction},
         })
         -- Nothing cosmetic may delay the packet, cooldown, or telemetry timestamp.
-        pcall(playThrowAnimation, knife)
+        local animated, animationFailure = pcall(playThrowAnimation, knife, effectiveDelay, sleight)
+        if not animated then animationStatus = "error: " .. string.sub(tostring(animationFailure), 1, 160) end
     end
 
     local function toggleKnifeThrow(enabled: boolean): ()
@@ -341,14 +402,24 @@ function Module.init(runtime: any): any
             knifeThrowSettings.mode = value
         end
     )
+    local function refreshKnifeOptions(): ()
+        for _, row in ipairs(KnifeThrowFeature.optionRows) do
+            if row.Name == "Option_Firedelay" then row.Visible = knifeThrowSettings.cadence == "Manual" end
+        end
+        KnifeThrowFeature.updateExpandedSize()
+    end
+    addCycleOption(KnifeThrowFeature, "Throw cadence", {"Auto", "Manual"}, 1, function(value: string): ()
+        knifeThrowSettings.cadence = value
+        refreshKnifeOptions()
+    end, "Auto uses explicit weapon throw cooldown; otherwise 0.50s normal / 0.25s detected Sleight. Fallback policy, not a measured server limit. Manual keeps your saved Fire delay.")
     addNumberOption(
         KnifeThrowFeature,
         "Fire delay",
         knifeThrowSettings.fireDelay,
-        0.2,
+        0.1,
         3,
         function(value: number): ()
-            knifeThrowSettings.fireDelay = math.clamp(value, 0.2, 3)
+            knifeThrowSettings.fireDelay = math.clamp(value, 0.1, 3)
         end,
         "Seconds between automatic throws.",
         0.1
@@ -385,8 +456,7 @@ function Module.init(runtime: any): any
             knifeThrowSettings.animation = value
             if not value then stopThrowAnimation() end
         end,
-        "Plays an identified throw animation after sending the packet. Cosmetic "
-            .. "only; unknown animations are skipped and OFF releases the track."
+        "Plays only a recognized release, not charge/idle. Avoids duplicate native tracks, releases the arm before the next throw, and cleans up on unequip/death. Cosmetic; never delays the request."
     )
     addNumberOption(
         KnifeThrowFeature,
@@ -398,8 +468,7 @@ function Module.init(runtime: any): any
             knifeThrowSettings.throwHz = math.clamp(math.round(value), 20, 120)
         end,
         "Target checks per second, not throws per second. Default 60; 120 only "
-            .. "helps response granularity on high-FPS clients. Fire delay is "
-            .. "always respected.",
+            .. "helps response granularity on high-FPS clients. Selected cadence is always respected; no catch-up burst.",
         5
     )
 
@@ -411,11 +480,15 @@ function Module.init(runtime: any): any
         "Extra seconds of target motion before flight. Change one variable per test.", 0.005)
     addActionOption(KnifeThrowFeature, "Throw prediction status", function(): ()
         local p = lastPrediction
-        notify(core.weaponStatus("Throw") .. " | " .. core.weaponStatus("Throw error") .. string.format(" | %s | range %.0f | checks %.0f Hz | delay %.2fs",
-            knifeThrowSettings.latencyModel, knifeThrowSettings.range, knifeThrowSettings.throwHz, knifeThrowSettings.fireDelay)
+        local delay, source = getThrowCadence(getPlayerWeapon(LocalPlayer, "Knife"))
+        local text = core.weaponStatus("Throw") .. string.format(" | %s | range %.0f | checks %.0f Hz | delay %.2fs",
+            knifeThrowSettings.latencyModel, knifeThrowSettings.range, knifeThrowSettings.throwHz, delay)
+            .. " | " .. source .. " | animation " .. animationStatus
             .. (p and string.format(" | last network lead %.3fs + flight %.3fs at %.1f studs/s",
-                p.networkLead, p.flightTime, p.speed) or " | no solved throw yet"))
+                p.networkLead, p.flightTime, p.speed) or " | no solved throw yet")
+        print("[Wurst:MM2:Throw] " .. text); notify(text)
     end)
+    refreshKnifeOptions()
     featureConnections.MM2KnifeThrowCharacter = LocalPlayer.CharacterAdded:Connect(stopThrowAnimation)
     activeCleanup = function(): ()
         knifeControl:remove("throw")

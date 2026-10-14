@@ -146,27 +146,29 @@ end
     chunks += [r'''
 do
 local knifeThrowSettings={animation=true}
+local task={delay=function() end}
+Enum.AnimationPriority={Action="Action"}
 local loaded,stopped,destroyed,played=0,0,0,0
 local animator={LoadAnimation=function(self,anim)
     loaded+=1
-    return {Stop=function() stopped+=1; error("already stopped") end,
+    return {Length=0,Stop=function() stopped+=1; error("already stopped") end,
         Destroy=function() destroyed+=1 end,Play=function() played+=1 end}
 end}
 local h={FindFirstChildOfClass=function() return animator end}
 local LocalPlayer={Character={FindFirstChildOfClass=function() return h end}}
 local function anim(name,id) return {Name=name,AnimationId=id,IsA=function() return true end} end
 local throw=anim("Throw","1")
-local knife={GetDescendants=function() return {anim("Equip","0"),throw} end}
+local knife={Parent=LocalPlayer.Character,GetDescendants=function() return {anim("Equip","0"),throw} end}
 ''', section(KNIFE, "    local throwTrack:", "    local function throwKnife"), r'''
 playThrowAnimation(knife); playThrowAnimation(knife)
 assert(loaded==1 and played==2)
 throw.AnimationId="2"
 playThrowAnimation(knife)
 assert(loaded==2 and destroyed==1 and stopped==1)
-local other={GetDescendants=function() return {anim("Throw","2")} end}
+local other={Parent=LocalPlayer.Character,GetDescendants=function() return {anim("Throw","2")} end}
 playThrowAnimation(other)
 assert(loaded==3 and destroyed==2)
-playThrowAnimation({GetDescendants=function() return {anim("Equip","0")} end})
+playThrowAnimation({Parent=LocalPlayer.Character,GetDescendants=function() return {anim("Equip","0")} end})
 assert(destroyed==3 and loaded==3)
 stopThrowAnimation(); stopThrowAnimation()
 assert(destroyed==3)
@@ -306,6 +308,8 @@ local LocalPlayer={Character={FindFirstChild=function() return thrower end}}
 local sends,notes,animations=0,0,0
 local remote={IsA=function() return true end,FireServer=function() sends+=1 end}
 local knife={Name="Knife",FindFirstChild=function() return {FindFirstChild=function() return remote end} end}
+local function getPlayerWeapon() return knife end
+local function getThrowCadence() return knob.fireDelay,"manual",false end
 local function getReadyKnife() return knife end
 local function findNearestTarget() return target end
 local function predictAim() return root.Position end

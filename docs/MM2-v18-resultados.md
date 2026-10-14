@@ -1,5 +1,7 @@
 # MM2: resultados de tus JSON y actualización v18
 
+> Histórico de v18. La rama entrega ahora [v19: paneles, animación/cadencia Knife y análisis de los nuevos JSON](MM2-v19-paneles-knife.md).
+
 **Build:** `v18-20261014-mm2-evidence-motion`
 **Rama:** `arena/d83a806d-arandommenu`
 **Evidencia:** [TestingStuff, snapshot 43ee19a](https://github.com/XzAngel19/TestingStuff/tree/43ee19ac7946861c2106822fa9060258e62758de).

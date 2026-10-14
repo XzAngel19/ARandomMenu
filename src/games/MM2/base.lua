@@ -58,7 +58,7 @@ end)
 
 local mm2Settings = {
     autoGetGunDelay = 0.25,
-    shootMode = "Manual",
+    shootMode = "Murder",
     shootWallCheck = true,
     silentAim = false,
     shootKey = Enum.KeyCode.Q,
@@ -925,6 +925,19 @@ local function getPlayerPerk(player: Player): string?
             return perkAttr
         end
     end
+    if char then
+        for _, child in ipairs(char:GetChildren()) do
+            if CollectionService:HasTag(child, "Perk") then return child.Name end
+        end
+    end
+    if player == LocalPlayer then
+        local gui = player:FindFirstChildOfClass("PlayerGui")
+        if gui then
+            for _, child in ipairs(gui:GetChildren()) do
+                if CollectionService:HasTag(child, "Perk") then return child.Name end
+            end
+        end
+    end
     for key: any, data: any in pairs(mm2RoundData) do
         if playerFromRoundKey(key, data) == player and type(data) == "table" then
             local perk: any = data.Perk or data.EquippedPerk or data.perk
@@ -1366,8 +1379,16 @@ local function isMotionGrounded(humanoid: Humanoid?, velocity: Vector3): boolean
         and math.abs(velocity.Y) <= 6
 end
 
--- Experimental intent blend: bound desired speed by measured horizontal speed.
--- Averaging can reduce speed on turns; vertical velocity stays measured.
+-- Weapon attributes win; fallback intervals are client policy, not server proof.
+function predictionMath.knifeCadence(mode: string?, manual: number, cooldown: any, sleight: boolean): (number, string)
+    if mode == "Manual" then return math.clamp(manual, 0.1, 3), "manual" end
+    if predictionMath.finite(cooldown) and cooldown >= 0.1 and cooldown <= 5 then
+        return cooldown, "weapon ThrowCooldown/ThrowDelay"
+    end
+    return sleight and 0.25 or 0.5, sleight and "Sleight fallback" or "normal fallback"
+end
+
+-- Intent averaging can reduce speed on turns; vertical velocity stays measured.
 function predictionMath.blendIntent(velocity: Vector3, direction: Vector3): Vector3
     local horizontal = Vector3.new(velocity.X, 0, velocity.Z)
     local intent = Vector3.new(direction.X, 0, direction.Z)

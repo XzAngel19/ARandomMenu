@@ -244,6 +244,7 @@ function Module.init(runtime: any): any
                 usedVelocity = {velocity.X, velocity.Y, velocity.Z},
                 acceleration = {acceleration.X, acceleration.Y, acceleration.Z},
                 moveDirection = {moveDirection.X, moveDirection.Y, moveDirection.Z},
+                autoLeadCorrection = type(getGunLeadStatus) == "function" and getGunLeadStatus().autoCorrection or 0,
                 sampleAge = sample and os.clock() - sample.sampledAt or nil,
                 sampleInterval = sample and sample.sampleInterval or nil,
             },
@@ -691,26 +692,34 @@ function Module.init(runtime: any): any
             registry = mm2Features,
         }
     )
-    local ShootTargetBox
+    local predictionRows = {
+        Option_WallCheck=true, Option_Motionmodel=true, Option_Guntiming=true,
+        Option_Landingguard=true, Option_Holduncertainmanualshots=true,
+        Option_Autotunelead=true, Option_Leadbias=true, Option_MotionHz=true,
+        Option_Leadstatus=true, Option_Resetautoleadcorrection=true,
+    }
+    local silentRows = {Option_Silentsweep=true, Option_Silentspawn=true, Option_SpawnABstatus=true}
     local function refreshShootOptions(): ()
-        if ShootTargetBox then
-            setOptionVisible(
-                ShootFeature,
-                ShootTargetBox.Parent :: GuiObject,
-                mm2Settings.shootMode == "Custom"
-            )
+        for _, row in ipairs(ShootFeature.optionRows) do
+            local visible = true
+            if predictionRows[row.Name] then visible = not mm2Settings.silentAim end
+            if silentRows[row.Name] then visible = mm2Settings.silentAim end
+            if row.Name == "Option_Targetplayer" then visible = mm2Settings.shootMode == "Custom" end
+            row.Visible = visible
         end
+        ShootFeature.updateExpandedSize()
     end
-    addCycleOption(
-        ShootFeature,
-        "Mode",
-        {"Manual", "Custom"},
-        1,
-        function(value: string): ()
-            mm2Settings.shootMode = value
-            refreshShootOptions()
-        end
-    )
+    addCycleOption(ShootFeature, "Mode", {"Prediction", "Silent AIM"}, 1, function(value: string): ()
+        mm2Settings.silentAim = value == "Silent AIM"
+        refreshShootOptions()
+    end, "Prediction fires from your gun. Silent AIM configures the target-side ray; it retains the shared prediction settings.")
+    addCycleOption(ShootFeature, "Target", {"Murder", "Custom"}, 1, function(value: string): ()
+        mm2Settings.shootMode = value
+        refreshShootOptions()
+    end)
+    addTextOption(ShootFeature, "Target player", "", function(value: string): ()
+        mm2Settings.shootTarget = value
+    end, false)
 
     if state.bindFeatureActivationKey then
         state.bindFeatureActivationKey(
@@ -737,15 +746,6 @@ function Module.init(runtime: any): any
             shootMacro = value
         end,
         "Pistol macro: hides the gun 0.01 seconds after every shot."
-    )
-    addToggleOption(
-        ShootFeature,
-        "SilentAIM",
-        mm2Settings.silentAim,
-        function(value: boolean): ()
-            mm2Settings.silentAim = value
-        end,
-        "Authors the shot at the target: same prediction as Shoot, ignores walls."
     )
     addNumberOption(
         ShootFeature,
@@ -896,16 +896,11 @@ function Module.init(runtime: any): any
         end
         notify("Adaptive lead correction reset to zero.")
     end)
-    ShootTargetBox = addTextOption(ShootFeature, "Target player", "", function(
-        value: string
-    ): ()
-        mm2Settings.shootTarget = value
-    end, false)
     refreshShootOptions()
 
     local AutoShootFeature = createUniversalFeature(
         "Auto Shoot",
-        "Automatic requests with a prediction-error gate. Its Mode is independent of Shoot SilentAIM; server acceptance is not guaranteed.",
+        "Automatic requests with a prediction-error gate. Uses Shoot Target; its Mode is independent of Shoot Mode; server acceptance is not guaranteed.",
         5,
         toggleAutoShoot,
         {
@@ -917,10 +912,10 @@ function Module.init(runtime: any): any
     addCycleOption(
         AutoShootFeature,
         "Mode",
-        {"Normal", "Silent"},
+        {"Prediction", "Silent AIM"},
         1,
         function(value: string): ()
-            autoSettings.mode = value
+            autoSettings.mode = value == "Silent AIM" and "Silent" or "Normal"
         end
     )
     addNumberOption(
@@ -955,11 +950,13 @@ function Module.init(runtime: any): any
             .. " | timing " .. tostring(mm2Settings.gunTimingModel)
             .. " | manual hold " .. tostring(mm2Settings.manualErrorGate)
             .. string.format(" | manual %s | auto %s (%s) | max error %.2f | horizon %.3fs | adaptive timing %s",
-                mm2Settings.silentAim and "Silent" or "Normal", autoSettings.mode,
+                mm2Settings.silentAim and "Silent AIM" or "Prediction",
+                autoSettings.mode == "Silent" and "Silent AIM" or "Prediction",
                 autoShootActive and "ON" or "OFF", autoSettings.maxError,
                 getGunHorizonSeconds(), tostring(mm2Settings.adaptiveGunTiming))
         print("[Wurst:MM2] " .. text); notify(text)
     end)
+    refreshShootOptions()
     activeCleanup = function(): ()
         toggleShootMurderer(false)
         toggleAutoShoot(false)

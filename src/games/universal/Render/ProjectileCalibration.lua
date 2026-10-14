@@ -718,6 +718,7 @@ function Module.init(context: Runtime): any
         )
         state.metricsFeature = ProjectileCalibrationFeature
     end
+    local finishPanel = state.beginMetricsPanel(ProjectileCalibrationFeature, "Projectiles")
     addToggleOption(ProjectileCalibrationFeature, "Projectile observer", false, function(value: boolean): ()
         calibration:setEnabled(value)
     end, "Optional generic physical-projectile logger. It does not train MM2 Shoot/Knife and may not observe hitscan or direct remote requests.")
@@ -805,6 +806,7 @@ function Module.init(context: Runtime): any
         "Opt-in observer. Enable before saving; OFF releases its listeners. Data is heuristic, not hit confirmation. MM2 prediction never consumes this dataset."
     )
 
+    finishPanel()
     activeController = calibration
     Module.Initialized = true
     return calibration

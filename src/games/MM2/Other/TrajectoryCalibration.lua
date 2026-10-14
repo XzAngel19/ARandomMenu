@@ -34,6 +34,7 @@ function Module.init(runtime: any): any
         )
         state.metricsFeature = TrajectoryFeature
     end
+    local finishPanel = state.beginMetricsPanel(TrajectoryFeature, "Calibration")
     addActionOption(TrajectoryFeature, "Show learned profile", function(): ()
         local text = trajectoryCalibration:status()
         print("[Wurst:MM2:Calibration] " .. text)
@@ -72,6 +73,7 @@ function Module.init(runtime: any): any
         "Schema 4: attempts, matched signals and projectile observations are NOT kills. Detailed capture, autosave and timing adaptation are independent. See Show learned profile/F9 for observer health and save cost."
     )
 
+    finishPanel()
     activeCleanup = function(): ()
 
     end

@@ -221,7 +221,7 @@ local RUNTIME_RAW_BASE: string =
         .. RUNTIME_BRANCH
         .. "/"
 
-local SOURCE_STAMP: string = "v18-20261014-mm2-evidence-motion"
+local SOURCE_STAMP: string = "v19-20261014-mm2-panels-knife"
 
 local BOOT_STARTED_AT: number = os.clock()
 local BOOT_FINGERPRINT_SECONDS: number = 0
@@ -870,6 +870,23 @@ if configData.values["MM2.Knife.RangeMigration"] ~= 1 then
     if configData.values["MM2.Knife.AuraRange"] == nil then configData.values["MM2.Knife.AuraRange"] = 14 end
     if configData.values["MM2.Knife.ThrowRange"] == nil then configData.values["MM2.Knife.ThrowRange"] = 120 end
     configData.values["MM2.Knife.RangeMigration"] = 1
+    queueConfigSave()
+end
+
+-- v19 separates the old target Mode from the old SilentAIM boolean.
+if configData.values["MM2.Shoot.MenuMigration"] ~= 1 then
+    local oldMode = configData.values["MM2.Shoot.Mode"]
+    if configData.values["MM2.Shoot.Target"] == nil then
+        configData.values["MM2.Shoot.Target"] = oldMode == "Custom" and "Custom" or "Murder"
+    end
+    if oldMode ~= "Prediction" and oldMode ~= "Silent AIM" then
+        configData.values["MM2.Shoot.Mode"] = configData.states["MM2.Shoot.SilentAIM"] == true
+            and "Silent AIM" or "Prediction"
+    end
+    local autoMode = configData.values["MM2.AutoShoot.Mode"]
+    if autoMode == "Normal" then configData.values["MM2.AutoShoot.Mode"] = "Prediction" end
+    if autoMode == "Silent" then configData.values["MM2.AutoShoot.Mode"] = "Silent AIM" end
+    configData.values["MM2.Shoot.MenuMigration"] = 1
     queueConfigSave()
 end
 
