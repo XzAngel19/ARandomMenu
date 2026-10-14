@@ -70,6 +70,11 @@ local mm2Settings = {
     predictionRtt = 0.08,
     gunLeadBias = 0,
     autoTuneLead = false,
+    -- How often the Shoot motion tracker samples the target (acceleration +
+    -- heading stability). 60 Hz matches the engine step; going higher cannot
+    -- help because MM2 only replicates remote characters at ~20 Hz, so there
+    -- is no new information to read past the replication cadence.
+    motionSampleHz = 60,
     silentSweep = 0.5,
     -- Where the silent bullet is authored: "Front" (shooter's side of the
     -- torso), "Through" (pierces the torso), "Top" (old, 1.6 above), "Behind"

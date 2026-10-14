@@ -1,5 +1,5 @@
 return {
-    stamp = "v12-20261013-2355",
+    stamp = "v13-20261014-0115",
     files = {
         ["src/games/BedFight/Combat/AutoSwing.lua"] = [[
 local Module = {Name = "BedFight Auto Swing", Initialized = false, Connection = nil}
@@ -2148,6 +2148,11 @@ function Module.init(runtime: any): any
         errorRadius: number,
         leadSeconds: number,
         leadSensitivity: number,
+        -- Where the target's root was on our screen when the shot was solved.
+        -- The silent "Through" variant authors the segment captured -> predicted
+        -- so it covers the target's whole swept path: whichever instant inside
+        -- the acceptance window the server scores, the capsule is on the ray.
+        capturedPosition: Vector3,
     }
 
     type GunAimOptions = {
@@ -2313,6 +2318,7 @@ function Module.init(runtime: any): any
             errorRadius = errorRadius,
             leadSeconds = lead,
             leadSensitivity = leadSensitivity,
+            capturedPosition = (root :: BasePart).Position,
         }, nil
     end
 
@@ -2442,8 +2448,12 @@ function Module.init(runtime: any): any
         local startPoint: Vector3
         local endPoint: Vector3
         if variant == "Through" and approach then
-            -- Front to far side: the segment crosses the full body.
-            startPoint = predicted - approach * approachOffset + sweepStart
+            -- Swept-path geometry: the segment runs from just behind where the
+            -- target was when we solved (captured) to just past where it will
+            -- be (predicted + pierce). The server scores somewhere inside that
+            -- window, so the capsule is on the segment at any scoring instant.
+            local captured: Vector3 = prediction.capturedPosition or predicted
+            startPoint = captured - approach * 1.0 + sweepStart
             endPoint = predicted + approach * SILENT_PIERCE_STUDS + sweepEnd
         elseif variant == "Top" then
             startPoint = predicted + Vector3.new(0, SILENT_LIFT_STUDS, 0)
@@ -2528,7 +2538,6 @@ function Module.init(runtime: any): any
         if not character or not humanoid then
             return reject("Your character is not available.")
         end
-
         local gun: Tool? = getPlayerWeapon(LocalPlayer, "Gun")
         local backpack: Backpack? = LocalPlayer:FindFirstChildOfClass("Backpack")
         if not gun and backpack then
@@ -2668,7 +2677,9 @@ function Module.init(runtime: any): any
                     deltaTime: number
                 ): ()
                     motionElapsed += deltaTime
-                    if motionElapsed < 1 / 30 then
+                    -- Read live so the Motion Hz slider applies immediately.
+                    if motionElapsed
+                        < 1 / math.clamp(mm2Settings.motionSampleHz, 20, 120) then
                         return
                     end
                     motionElapsed = 0
@@ -2942,6 +2953,20 @@ function Module.init(runtime: any): any
             .. "It is added to the prediction horizon, bounded to +/-0.1s, and "
             .. "does not change character physics.",
         0.005
+    )
+    addNumberOption(
+        ShootFeature,
+        "Motion Hz",
+        mm2Settings.motionSampleHz,
+        20,
+        120,
+        function(value: number): ()
+            mm2Settings.motionSampleHz = math.clamp(math.round(value), 20, 120)
+        end,
+        "Target motion samples per second (acceleration + turn stability). "
+            .. "60 is the sweet spot: MM2 replicates remote players at ~20 Hz, "
+            .. "so higher values only cost CPU - they cannot see more.",
+        5
     )
     addActionOption(ShootFeature, "Lead status", function(): ()
         local status: any = type(getGunLeadStatus) == "function"
@@ -4091,6 +4116,11 @@ local mm2Settings = {
     predictionRtt = 0.08,
     gunLeadBias = 0,
     autoTuneLead = false,
+    -- How often the Shoot motion tracker samples the target (acceleration +
+    -- heading stability). 60 Hz matches the engine step; going higher cannot
+    -- help because MM2 only replicates remote characters at ~20 Hz, so there
+    -- is no new information to read past the replication cadence.
+    motionSampleHz = 60,
     silentSweep = 0.5,
     -- Where the silent bullet is authored: "Front" (shooter's side of the
     -- torso), "Through" (pierces the torso), "Top" (old, 1.6 above), "Behind"
