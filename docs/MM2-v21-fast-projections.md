@@ -1,5 +1,7 @@
 # MM2 v21 — selector local rápido, red inestable y menú ligero
 
+> La rama entrega ahora [v21.1: aspecto Wurst clásico](Wurst-v21.1-classic.md). Se conservan las mejoras MM2 de esta guía; la paleta violeta y Midnight aquí descritas son históricas.
+
 Build: **`v21-20261014-mm2-fast-projections`**. Rama: `arena/d83a806d-arandommenu`.
 
 Implementa el plan aprobado: comparar predicciones **antes de enviar**, distinguir el ping observado de su estimación y ordenar el menú sin añadir efectos continuos costosos. Se prioriza responder con los frames disponibles, no esperar artificialmente 5–10 ms entre candidatos.

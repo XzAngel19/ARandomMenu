@@ -88,7 +88,7 @@ function Module.init(context: any): WidgetLibrary
         kind: string,
         color: Color3?
     ): Frame
-        local paint: Color3 = color or Theme.accent
+        local paint: Color3 = color or Color3.fromRGB(0, 204, 0)
         local existing: Instance? = (parent :: any):FindFirstChild("PixelIcon")
         if existing then
             existing:Destroy()
@@ -1629,29 +1629,30 @@ function Module.init(context: any): WidgetLibrary
 
         if #values >= 2 and #values <= 3 and (labelText == "Mode" or labelText == "Target"
             or labelText == "Prediction profile" or labelText == "Network policy" or labelText == "Throw cadence") then
-            option.Size = UDim2.new(1, 0, 0, 54)
+            option.Size = UDim2.new(1, 0, 0, 46)
             local label = option:FindFirstChild("OptionLabel")
             if label then label.Size = UDim2.new(1, -8, 0, 18); label.TextSize = 12; label.TextColor3 = Theme.textMuted end
             local segments = {}
             local function paint(): ()
                 for i, segment in ipairs(segments) do
-                    local background = i == index and "accentSoft" or "surfaceRaised"
-                    local foreground = i == index and "text" or "textMuted"
+                    local background = i == index and "enabled" or "surfaceRaised"
+                    local foreground = i == index and "accent" or "text"
                     segment.BackgroundColor3 = Theme[background]; segment.TextColor3 = Theme[foreground]
+                    segment.BorderColor3 = Theme.outline
                     segment:SetAttribute("Selected", i == index)
                     if host.ThemeEngine then
                         host.ThemeEngine.Bind(segment, "BackgroundColor3", background)
                         host.ThemeEngine.Bind(segment, "TextColor3", foreground)
+                        host.ThemeEngine.Bind(segment, "BorderColor3", "outline")
                     end
                 end
             end
             for i, value in ipairs(values) do
                 local segment = create("TextButton", {Parent=option, Name="Segment"..i,
-                    AutoButtonColor=false, BorderSizePixel=0, FontFace=CONTROL_FONT,
+                    AutoButtonColor=false, BorderSizePixel=1, BorderColor3=Theme.outline, FontFace=CONTROL_FONT,
                     Text=value, TextSize=12, TextScaled=true, BackgroundColor3=Theme.surfaceRaised,
-                    TextColor3=Theme.text, Position=UDim2.new((i-1)/#values, 3, 0, 21),
-                    Size=UDim2.new(1/#values, -6, 0, 30), ZIndex=option.ZIndex+2})
-                create("UICorner", {Parent=segment, CornerRadius=UDim.new(0, 5)})
+                    TextColor3=Theme.text, Position=UDim2.new((i-1)/#values, 2, 0, 20),
+                    Size=UDim2.new(1/#values, -4, 0, 24), ZIndex=option.ZIndex+2})
                 create("UITextSizeConstraint", {Parent=segment, MinTextSize=9, MaxTextSize=12})
                 segments[i] = segment
                 trackUiConnection(segment.MouseButton1Click:Connect(function(): ()
@@ -1697,7 +1698,7 @@ function Module.init(context: any): WidgetLibrary
             Text = "",
             ZIndex = option.ZIndex + 2,
         }) :: any) :: TextButton
-        drawPixelIcon(arrowBox, "down", Theme.accent)
+        drawPixelIcon(arrowBox, "down", Color3.fromRGB(0, 204, 0))
 
         local function refreshChoiceVisual(): ()
             button.Text = values[index]
@@ -1737,7 +1738,7 @@ function Module.init(context: any): WidgetLibrary
         local bars = {}
         for i=1,40 do
             bars[i] = create("Frame", {Parent=option, Name="Sample"..i, BorderSizePixel=0,
-                BackgroundColor3=Theme.accent, AnchorPoint=Vector2.new(0,1), Position=UDim2.new((i-1)/40,1,0,94),
+                BackgroundColor3=Theme.enabled, AnchorPoint=Vector2.new(0,1), Position=UDim2.new((i-1)/40,1,0,94),
                 Size=UDim2.new(1/40,-2,0,1), ZIndex=option.ZIndex+1})
         end
         local function visible(): boolean
@@ -1773,7 +1774,7 @@ function Module.init(context: any): WidgetLibrary
                 bar.Visible = value ~= nil
                 if value then
                     bar.Size = UDim2.new(1/40,-2,0,math.max(1, math.min(value/ceiling,1)*30))
-                    bar.BackgroundColor3 = value > 300 and Theme.negative or Theme.accent
+                    bar.BackgroundColor3 = value > 300 and Theme.negative or Theme.enabled
                 end
             end
         end

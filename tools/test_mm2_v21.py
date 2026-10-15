@@ -262,7 +262,7 @@ local uiPanel={optionCount=0,configKey="UI"}
 local uiRecord={}
 local uiSettingsValues={Rainbow=true}
 local configData={values={["UI.Accent"]="custom"}}
-local CLICKGUI_BACKGROUND,CLICKGUI_ACCENT,CLICKGUI_TEXT,CLICKGUI_ENABLED="bg","violet","text","violet"
+local CLICKGUI_BACKGROUND,CLICKGUI_ACCENT,CLICKGUI_TEXT,CLICKGUI_ENABLED="gray","black","white","lime"
 local saved,painted,applied,updates=0,0,0,nil
 local host={colorToConfig=function(c) return c end}
 local function queueConfigSave() saved+=1 end
@@ -274,10 +274,10 @@ local ThemeEngine={Apply=function() applied+=1 end,SetMany=function(t) updates=t
 assert(configData.values["UI.Accent"]=="custom" and applied==0)
 callback();assert(applied==0 and saved==0)
 uiSettingsValues.Rainbow=false;callback()
-assert(saved==1 and painted==4 and applied==1 and configData.values["UI.Accent"]=="violet")
+assert(saved==1 and painted==4 and applied==1 and configData.values["UI.Accent"]=="black")
 assert(updates.accent==configData.values["UI.Accent"] and updates.outline==updates.accent)
 assert(updates.surface==configData.values["UI.Background"])
-pass("actual Midnight preset: preserves custom colors until requested, requires Rainbow OFF, saves reload-consistent tokens")
+pass("actual palette preset: preserves custom colors until requested, requires Rainbow OFF, saves reload-consistent tokens")
 end
 
 -- Minimal instance/signals implementation for the actual new widgets.
@@ -294,6 +294,7 @@ local UDim={new=function(s,o) return {Scale=s,Offset=o} end}
 local UDim2={new=function(a,b,c,d) return {X=UDim.new(a,b),Y=UDim.new(c,d)} end,
     fromOffset=function(x,y) return {X=UDim.new(0,x),Y=UDim.new(0,y)} end}
 local Vector2={new=function(x,y) return {X=x,Y=y} end}
+local Color3={fromRGB=function(r,g,b) return {r,g,b} end}
 local Enum={TextTruncate={AtEnd=1},TextXAlignment={Left=1,Right=2}}
 local function create(class,props)
  allocations+=1
@@ -308,7 +309,7 @@ local function create(class,props)
  if o.Parent then table.insert(o.Parent.children,o) end
  return o
 end
-local Theme={text="white",textMuted="muted",accent="violet",accentSoft="soft",surfaceRaised="dark",positive="green",negative="red"}
+local Theme={enabled="lime",outline="dark",text="white",textMuted="muted",accent="dark",accentSoft="soft",surfaceRaised="dark",positive="green",negative="red"}
 local ThemeEngine={}
 local themeBindings={}
 ''',section(L,'function ThemeEngine.Bind(', 'function ThemeEngine.OnChange('),r'''
@@ -333,12 +334,14 @@ section(W,'    state.addTelemetryOption =', '    -- One selector shared'),r'''
 local selected
 local first=addCycleOption(feature,"Mode",{"Prediction","Silent AIM"},1,function(v) selected=v end)
 local row=first.Parent
-assert(selected=="Silent AIM" and row.Size.Y.Offset==54)
+assert(selected=="Silent AIM" and row.Size.Y.Offset==46)
 assert(row:FindFirstChild("Segment2"):GetAttribute("Selected"))
+assert(row:FindFirstChild("Segment2").BackgroundColor3==Theme.enabled and first.BorderSizePixel==1)
+for _,child in ipairs(first.children) do assert(child.ClassName~="UICorner") end
 first.MouseButton1Click:Fire();assert(selected=="Prediction" and configData.values["Test.Mode"]=="Prediction" and saves==1)
 first.MouseButton1Click:Fire();assert(saves==1)
 for _=1,20 do row:FindFirstChild("Segment2").MouseButton1Click:Fire();first.MouseButton1Click:Fire() end
-assert(#themeBindings[first]==2) -- no repeated property bindings accumulating per click
+assert(#themeBindings[first]==3) -- no repeated property bindings accumulating per click
 local long=addCycleOption(feature,"Long",{"A","B","C","D"},1,function(v) selected=v end)
 long.MouseButton1Click:Fire();assert(dropdowns==1 and selected=="C")
 local reads=0

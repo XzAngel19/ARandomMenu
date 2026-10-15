@@ -602,7 +602,7 @@ function Module.init(context: any): any
             end
             if definition.pinnable ~= false then
 
-                local pin: TextButton = chromeButton("pin", Color3.fromRGB(166, 139, 250))
+                local pin: TextButton = chromeButton("pin", Color3.fromRGB(0, 204, 0))
                 local function paintPin(): ()
                     pin.BackgroundTransparency = window.pinned and 0.2 or 0.72
                     pin.BackgroundColor3 = window.pinned

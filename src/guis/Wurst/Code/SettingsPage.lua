@@ -15,13 +15,13 @@ local TITLE_HEIGHT: number = 26
 
 function Module.init(context: any): any
 
-    local OPACITY: number = 0.82
+    local OPACITY: number = 0.75
     local TOOLTIP_OPACITY: number = 0.75
     local MAX_HEIGHT: number = 200
     local MAX_SETTINGS_HEIGHT: number = 320
-    local CLICKGUI_BACKGROUND: Color3 = Color3.fromRGB(17, 19, 27)
-    local CLICKGUI_ACCENT: Color3 = Color3.fromRGB(166, 139, 250)
-    local CLICKGUI_TEXT: Color3 = Color3.fromRGB(237, 240, 248)
+    local CLICKGUI_BACKGROUND: Color3 = Color3.fromRGB(64, 64, 64)
+    local CLICKGUI_ACCENT: Color3 = Color3.fromRGB(16, 16, 16)
+    local CLICKGUI_TEXT: Color3 = Color3.fromRGB(240, 240, 240)
     local HACKLIST_MODE: string = "Auto"
     local HACKLIST_POSITION: string = "Left"
     local HACKLIST_COLOR: Color3 = Color3.fromRGB(255, 255, 255)
@@ -283,7 +283,7 @@ function Module.init(context: any): any
             ZIndex = row.ZIndex + 1,
         }) :: any) :: Frame
 
-        drawPixelIcon(arrowBox, "right", Color3.fromRGB(166, 139, 250))
+        drawPixelIcon(arrowBox, "right", Color3.fromRGB(0, 204, 0))
         trackUiConnection(row.MouseEnter:Connect(function(): ()
             row.BackgroundTransparency = 0.3
         end))
@@ -1466,7 +1466,34 @@ function Module.init(context: any): any
     local uiSettingsValues: {[string]: any} = {}
     state.uiSettings = uiSettingsValues
 
-    local CLICKGUI_ENABLED: Color3 = Color3.fromRGB(166, 139, 250)
+    local CLICKGUI_ENABLED: Color3 = Color3.fromRGB(0, 255, 0)
+    -- Migrate only the exact v21 Midnight palette, once; keep custom/mixed palettes.
+    local function migrateV21Palette(): ()
+        local prefix = uiPanel.configKey .. "."
+        if configData.values[prefix .. "WurstClassicMigration"] == 1 then return end
+        local previous = {Background={17,19,27}, Accent={166,139,250},
+            Text={237,240,248}, Enabled={166,139,250}}
+        local matches = true
+        for label, rgb in pairs(previous) do
+            local saved = configData.values[prefix .. label]
+            if type(saved) ~= "table" or saved[1] ~= rgb[1] or saved[2] ~= rgb[2] or saved[3] ~= rgb[3] then
+                matches = false; break
+            end
+        end
+        if matches then
+            for label, color in pairs({Background=CLICKGUI_BACKGROUND, Accent=CLICKGUI_ACCENT,
+                Text=CLICKGUI_TEXT, Enabled=CLICKGUI_ENABLED}) do
+                configData.values[prefix .. label] = host.colorToConfig(color)
+            end
+            if configData.values[prefix .. "Opacity"] == 0.82 then
+                configData.values[prefix .. "Opacity"] = OPACITY
+            end
+        end
+        configData.values[prefix .. "WurstClassicMigration"] = 1
+        queueConfigSave()
+    end
+    migrateV21Palette()
+
     local uiPaletteRows: {[string]: Frame} = {}
     local function paintPalette(labelText: string, color: Color3): ()
         local option: Frame? = uiPaletteRows[labelText]
@@ -1524,8 +1551,8 @@ function Module.init(context: any): any
     local rainbowElapsed: number = 0
     local rainbowSince: number = 0
     uiPanel.optionCount += 1
-    actionRow(uiRecord, uiPanel.optionCount, "Midnight preset", function(): ()
-        if uiSettingsValues.Rainbow then notify("Turn Rainbow OFF before applying Midnight."); return end
+    actionRow(uiRecord, uiPanel.optionCount, "Wurst Classic preset", function(): ()
+        if uiSettingsValues.Rainbow then notify("Turn Rainbow OFF before applying Wurst Classic."); return end
         ThemeEngine.Apply("Wurst")
         for label, color in pairs({Background=CLICKGUI_BACKGROUND, Accent=CLICKGUI_ACCENT,
             Text=CLICKGUI_TEXT, Enabled=CLICKGUI_ENABLED}) do
@@ -1538,7 +1565,7 @@ function Module.init(context: any): any
             accent=CLICKGUI_ACCENT, outline=CLICKGUI_ACCENT, text=CLICKGUI_TEXT,
             accentText=CLICKGUI_TEXT, enabled=CLICKGUI_ENABLED})
         queueConfigSave()
-        notify("Midnight palette applied; custom colors remain editable.")
+        notify("Wurst Classic palette applied; custom colors remain editable.")
     end)
     addToggleOption(uiPanel, "Rainbow", false, function(value: boolean): ()
         uiSettingsValues["Rainbow"] = value
