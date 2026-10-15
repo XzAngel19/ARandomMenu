@@ -1346,8 +1346,8 @@ local GUN_LEAD = {
     replicationRate = 20,
     serverFrame = 1 / 60,
     minimumHorizon = 0,
-    maximumHorizon = 0.15,
-    maximumManualBias = 0.1,
+    maximumHorizon = 0.25,
+    maximumManualBias = 0.15,
     maximumAutoCorrection = 0.1,
 
     -- Radians/second. The turn rate itself is measured per motion sample in
@@ -1494,15 +1494,20 @@ end
 local trajectoryCalibration: any = nil
 
 local function getGunHorizonSeconds(): number
-    -- MM2's gun accepts shots aimed at positions the target occupied within
-    -- the last ~277 ms (the measured acceptance window rewinds the victim).
-    -- What we observe is ALREADY replication-delayed by roughly half a round
-    -- trip, so the observed position already sits inside that window. The old
-    -- model led FORWARD by the whole window - it aimed at a position the
-    -- rewind can never cover, which missed walking targets left/right and,
-    -- combined with the ballistic drop term, buried shots into the floor.
-    -- Default lead is now ZERO (aim at what you see); the manual bias and the
-    -- opt-in auto correction are the only forward-lead sources, capped tight.
+    -- Two field reports, one per direction:
+    --  * v24: leading by the FULL ~277 ms acceptance window missed AHEAD
+    --    (shots landing where the target could never be).
+    --  * v24.1: aiming at the raw observed position missed BEHIND moving
+    --    targets ("apunta a donde estaba hace 1 segundo").
+    -- Reconciliation: our view of the target trails the server by about half
+    -- a round trip (victim -> server -> us), so we lead by exactly that
+    -- staleness - no more. The acceptance window is a REWIND (it covers past
+    -- positions) and must not be spent as forward lead.
+    local staleness: number = math.clamp(
+        getEstimatedLatency() * 0.5,
+        0,
+        0.15
+    )
     local manualBias: number = math.clamp(
         mm2Settings.gunLeadBias,
         -GUN_LEAD.maximumManualBias,
@@ -1514,7 +1519,7 @@ local function getGunHorizonSeconds(): number
         GUN_LEAD.maximumAutoCorrection
     )
     return math.clamp(
-        manualBias + autoCorrection,
+        staleness + manualBias + autoCorrection,
         GUN_LEAD.minimumHorizon,
         GUN_LEAD.maximumHorizon
     )

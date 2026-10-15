@@ -21,6 +21,11 @@ function Module.init(context: Runtime): any
 
     local originalTime: string? = nil
     local customTime: number = 14
+    local fastTime: boolean = false
+    local fastElapsed: number = 0
+
+    -- Full 00:00 -> 24:00 sweep in under five seconds, looping while on.
+    local FAST_CYCLE_SECONDS: number = 4
 
     local function applyTime(hour: number): ()
         local timeString: string = string.format("%02d:00:00", math.floor(hour))
@@ -42,8 +47,20 @@ function Module.init(context: Runtime): any
                 applyTime(customTime)
                 card:SetStatus(string.format("%02d:00", customTime))
 
-                card:Loop(function(): ()
-                    if originalTime then
+                card:Loop(function(deltaTime: number): ()
+                    if not originalTime then
+                        return
+                    end
+                    if fastTime then
+                        fastElapsed += deltaTime
+                        if fastElapsed >= FAST_CYCLE_SECONDS then
+                            fastElapsed -= FAST_CYCLE_SECONDS
+                        end
+                        local hour: number =
+                            (fastElapsed / FAST_CYCLE_SECONDS) * 24 % 24
+                        applyTime(hour)
+                        card:SetStatus(string.format("%02d:00", hour))
+                    else
                         applyTime(customTime)
                     end
                 end)
@@ -67,12 +84,26 @@ function Module.init(context: Runtime): any
         Step = 1,
         Function = function(value: number): ()
             customTime = value
-            if card.Enabled then
+            if card.Enabled and not fastTime then
                 applyTime(value)
                 card:SetStatus(string.format("%02d:00", value))
             end
         end,
         Tooltip = "Hour of day (0 = midnight, 12 = noon, 18 = sunset).",
+    })
+    card:CreateToggle({
+        Name = "Fast time",
+        Default = false,
+        Function = function(value: boolean): ()
+            fastTime = value
+            fastElapsed = 0
+            if card.Enabled and not fastTime then
+                applyTime(customTime)
+                card:SetStatus(string.format("%02d:00", customTime))
+            end
+        end,
+        Tooltip = "Sweeps the whole day from 00:00 to 24:00 in about "
+            .. "four seconds, on repeat, while the module is on.",
     })
 
     activeCard = card

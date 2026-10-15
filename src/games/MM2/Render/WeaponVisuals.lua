@@ -76,23 +76,25 @@ function Module.init(runtime: any): any
     end
 
     local function resetMirror(character: Model): ()
-        local torso: Instance? = character:FindFirstChild("UpperTorso")
-            or character:FindFirstChild("Torso")
-        if not torso then
-            return
-        end
-        local candidates: {Instance} = {
-            (character:FindFirstChild("LeftUpperArm") :: Instance?)
-                or (character:FindFirstChild("Left Arm") :: Instance?),
-            character:FindFirstChild("LeftLowerArm"),
-            character:FindFirstChild("LeftHand"),
-            torso,
-        }
-        for _, holder: Instance? in ipairs(candidates) do
-            if not holder then
-                continue
+        -- Rigs differ: R15 keeps its joints inside the limb parts, R6 keeps
+        -- them inside the Torso. Collect whichever exist (a plain list with
+        -- possible nil holes would stop ipairs early and leave the R6
+        -- shoulder frozen in its last mirrored pose).
+        local candidates: {Instance} = {}
+        local function consider(name: string): ()
+            local found: Instance? = character:FindFirstChild(name)
+            if found then
+                table.insert(candidates, found)
             end
-            for _, child: Instance in ipairs((holder :: Instance):GetChildren()) do
+        end
+        consider("LeftUpperArm")
+        consider("Left Arm")
+        consider("LeftLowerArm")
+        consider("LeftHand")
+        consider("UpperTorso")
+        consider("Torso")
+        for _, holder: Instance in ipairs(candidates) do
+            for _, child: Instance in ipairs(holder:GetChildren()) do
                 if child:IsA("Motor6D")
                     and string.find(child.Name, "Left") then
                     (child :: Motor6D).Transform = CFrame.new()
@@ -191,8 +193,13 @@ function Module.init(runtime: any): any
                 return
             end
             queued = false
-            if options.enabled then
-                rebuild()
+            if not options.enabled then
+                return
+            end
+            local ok: boolean, failure: any = pcall(rebuild)
+            if not ok then
+                warn("[Wurst] Weapon Visuals rebuild failed: "
+                    .. tostring(failure))
             end
         end)
     end
@@ -308,6 +315,31 @@ function Module.init(runtime: any): any
         return (tool:FindFirstChildWhichIsA("BasePart", true) :: BasePart?)
     end
 
+    local function equippedWeapon(kind: string): Tool?
+        local weapon: Tool? = core.getPlayerWeapon(LocalPlayer, kind, true)
+        if weapon then
+            return weapon
+        end
+        -- Fall back to a plain name match: visual-only, and it keeps the
+        -- module working if the game renames or drops its weapon tags.
+        local character: Model? = LocalPlayer.Character
+        if not character then
+            return nil
+        end
+        for _, child: Instance in ipairs(character:GetChildren()) do
+            if child:IsA("Tool")
+                and string.find(
+                    string.lower(child.Name),
+                    string.lower(kind),
+                    1,
+                    true
+                ) then
+                return child :: Tool
+            end
+        end
+        return nil
+    end
+
     rebuild = function(): ()
         clearVisuals()
         local character: Model? = LocalPlayer.Character
@@ -322,7 +354,7 @@ function Module.init(runtime: any): any
         visualFolder.Name = "MM2LocalWeaponVisuals"
         visualFolder.Parent = workspace
         for _, kind: string in ipairs({"Gun", "Knife"}) do
-            local tool: Tool? = core.getPlayerWeapon(LocalPlayer, kind, true)
+            local tool: Tool? = equippedWeapon(kind)
             if not tool or tool.Parent ~= character then
                 continue
             end
@@ -444,16 +476,27 @@ function Module.init(runtime: any): any
             end)
         )
         -- Mirror the animated right arm onto the left arm every frame while a
-        -- double weapon is on screen (after the Animator pass, before render).
-        table.insert(
-            connections,
-            RunService.PreSimulation:Connect(function(): ()
-                local character: Model? = LocalPlayer.Character
-                if character then
-                    pcall(mirrorArms, character :: Model)
-                end
-            end)
-        )
+        -- double weapon is on screen. The write must land AFTER the Animator
+        -- applies its poses (otherwise it is overwritten): PostAnimation fires
+        -- exactly there; PreSimulation is the fallback (also post-animator).
+        local mirrorSignals: {any} = {}
+        if RunService.PostAnimation then
+            table.insert(mirrorSignals, RunService.PostAnimation)
+        end
+        if RunService.PreSimulation then
+            table.insert(mirrorSignals, RunService.PreSimulation)
+        end
+        for _, signal: any in ipairs(mirrorSignals) do
+            table.insert(
+                connections,
+                signal:Connect(function(): ()
+                    local character: Model? = LocalPlayer.Character
+                    if character then
+                        pcall(mirrorArms, character :: Model)
+                    end
+                end)
+            )
+        end
         if LocalPlayer.Character then
             watchCharacter(LocalPlayer.Character)
         end

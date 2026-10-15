@@ -851,15 +851,16 @@ function Module.init(runtime: any): any
         ShootFeature,
         "Lead bias",
         mm2Settings.gunLeadBias,
-        -0.1,
-        0.1,
+        -0.15,
+        0.15,
         function(value: number): ()
-            mm2Settings.gunLeadBias = math.clamp(value, -0.1, 0.1)
+            mm2Settings.gunLeadBias = math.clamp(value, -0.15, 0.15)
         end,
-        "Optional forward lead in seconds on top of the observed position. "
-            .. "MM2 rewinds the victim (~277 ms acceptance), so 0 - the "
-            .. "default - already hits moving targets. Raise it only to "
-            .. "experiment; it is capped at +0.1s.",
+        "Manual correction in seconds on top of the automatic half-ping "
+            .. "lead (our view of the target trails the server by ~RTT/2, so "
+            .. "the aim leads by exactly that). Positive aims further ahead, "
+            .. "negative aims closer; 0 keeps the automatic model. Capped at "
+            .. "+/-0.15s.",
         0.005
     )
     addNumberOption(

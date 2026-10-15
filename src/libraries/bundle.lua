@@ -1,5 +1,5 @@
 return {
-    stamp = "v24.1-20261015-aim-palette",
+    stamp = "v25-20261015-itemesp-fasttime-lead",
     files = {
         ["src/games/BedFight/Combat/AutoSwing.lua"] = [[
 local Module = {Name = "BedFight Auto Swing", Initialized = false, Connection = nil}
@@ -2959,15 +2959,16 @@ function Module.init(runtime: any): any
         ShootFeature,
         "Lead bias",
         mm2Settings.gunLeadBias,
-        -0.1,
-        0.1,
+        -0.15,
+        0.15,
         function(value: number): ()
-            mm2Settings.gunLeadBias = math.clamp(value, -0.1, 0.1)
+            mm2Settings.gunLeadBias = math.clamp(value, -0.15, 0.15)
         end,
-        "Optional forward lead in seconds on top of the observed position. "
-            .. "MM2 rewinds the victim (~277 ms acceptance), so 0 - the "
-            .. "default - already hits moving targets. Raise it only to "
-            .. "experiment; it is capped at +0.1s.",
+        "Manual correction in seconds on top of the automatic half-ping "
+            .. "lead (our view of the target trails the server by ~RTT/2, so "
+            .. "the aim leads by exactly that). Positive aims further ahead, "
+            .. "negative aims closer; 0 keeps the automatic model. Capped at "
+            .. "+/-0.15s.",
         0.005
     )
     addNumberOption(
@@ -3995,10 +3996,10 @@ function Module.init(runtime: any): any
 
     local function syncEspToggles(): ()
         if type(core.toggleGunEsp) == "function" then
-            pcall(core.toggleGunEsp, settings.enabled and settings.gunEsp)
+            pcall(core.toggleGunEsp, settings.gunEsp)
         end
         if type(core.toggleTrapEsp) == "function" then
-            pcall(core.toggleTrapEsp, settings.enabled and settings.trapEsp)
+            pcall(core.toggleTrapEsp, settings.trapEsp)
         end
     end
 
@@ -4219,7 +4220,6 @@ function Module.init(runtime: any): any
         disconnectFeatureConnection("MM2RoleTags")
         destroyMurderTag()
         clearRoleTags()
-        syncEspToggles()
         if not enabled then
             if feature then
                 feature:SetStatus(nil)
@@ -4274,29 +4274,43 @@ function Module.init(runtime: any): any
         end,
         "Perk icon beside the Murder tag."
     )
-    addToggleOption(
-        feature,
-        "Gun ESP",
-        settings.gunEsp,
-        function(value: boolean): ()
-            settings.gunEsp = value
-            syncEspToggles()
-        end,
-        "Highlights dropped and carried guns."
-    )
-    addToggleOption(
-        feature,
-        "Trap ESP",
-        settings.trapEsp,
-        function(value: boolean): ()
-            settings.trapEsp = value
-            syncEspToggles()
-        end,
-        "Highlights murderer traps."
-    )
+    -- Gun ESP and Trap ESP live in the universal ItemESP card now (the user
+    -- asked for them there): they are registered as item providers, so the
+    -- universal card keeps no MM2 knowledge of its own.
+    local unregisterProviders: {() -> ()} = {}
+    local itemEspService: any = services and services.itemEsp
+    if itemEspService and type(itemEspService.register) == "function" then
+        local function registerEsp(name: string, tooltip: string, key: string): ()
+            local unregister: any = itemEspService.register({
+                name = name,
+                tooltip = tooltip,
+                setEnabled = function(on: boolean): ()
+                    settings[key] = on
+                    syncEspToggles()
+                end,
+            })
+            if type(unregister) == "function" then
+                table.insert(unregisterProviders, unregister)
+            end
+        end
+        registerEsp(
+            "Gun ESP",
+            "Highlights dropped and carried guns.",
+            "gunEsp"
+        )
+        registerEsp(
+            "Trap ESP",
+            "Highlights murderer traps.",
+            "trapEsp"
+        )
+    end
 
     activeCleanup = function(): ()
         setEnabled(false)
+        for _, unregister: () -> () in ipairs(unregisterProviders) do
+            pcall(unregister)
+        end
+        table.clear(unregisterProviders)
     end
     Module.Events = featureConnections
     Module.Initialized = true
@@ -4516,23 +4530,25 @@ function Module.init(runtime: any): any
     end
 
     local function resetMirror(character: Model): ()
-        local torso: Instance? = character:FindFirstChild("UpperTorso")
-            or character:FindFirstChild("Torso")
-        if not torso then
-            return
-        end
-        local candidates: {Instance} = {
-            (character:FindFirstChild("LeftUpperArm") :: Instance?)
-                or (character:FindFirstChild("Left Arm") :: Instance?),
-            character:FindFirstChild("LeftLowerArm"),
-            character:FindFirstChild("LeftHand"),
-            torso,
-        }
-        for _, holder: Instance? in ipairs(candidates) do
-            if not holder then
-                continue
+        -- Rigs differ: R15 keeps its joints inside the limb parts, R6 keeps
+        -- them inside the Torso. Collect whichever exist (a plain list with
+        -- possible nil holes would stop ipairs early and leave the R6
+        -- shoulder frozen in its last mirrored pose).
+        local candidates: {Instance} = {}
+        local function consider(name: string): ()
+            local found: Instance? = character:FindFirstChild(name)
+            if found then
+                table.insert(candidates, found)
             end
-            for _, child: Instance in ipairs((holder :: Instance):GetChildren()) do
+        end
+        consider("LeftUpperArm")
+        consider("Left Arm")
+        consider("LeftLowerArm")
+        consider("LeftHand")
+        consider("UpperTorso")
+        consider("Torso")
+        for _, holder: Instance in ipairs(candidates) do
+            for _, child: Instance in ipairs(holder:GetChildren()) do
                 if child:IsA("Motor6D")
                     and string.find(child.Name, "Left") then
                     (child :: Motor6D).Transform = CFrame.new()
@@ -4631,8 +4647,13 @@ function Module.init(runtime: any): any
                 return
             end
             queued = false
-            if options.enabled then
-                rebuild()
+            if not options.enabled then
+                return
+            end
+            local ok: boolean, failure: any = pcall(rebuild)
+            if not ok then
+                warn("[Wurst] Weapon Visuals rebuild failed: "
+                    .. tostring(failure))
             end
         end)
     end
@@ -4748,6 +4769,31 @@ function Module.init(runtime: any): any
         return (tool:FindFirstChildWhichIsA("BasePart", true) :: BasePart?)
     end
 
+    local function equippedWeapon(kind: string): Tool?
+        local weapon: Tool? = core.getPlayerWeapon(LocalPlayer, kind, true)
+        if weapon then
+            return weapon
+        end
+        -- Fall back to a plain name match: visual-only, and it keeps the
+        -- module working if the game renames or drops its weapon tags.
+        local character: Model? = LocalPlayer.Character
+        if not character then
+            return nil
+        end
+        for _, child: Instance in ipairs(character:GetChildren()) do
+            if child:IsA("Tool")
+                and string.find(
+                    string.lower(child.Name),
+                    string.lower(kind),
+                    1,
+                    true
+                ) then
+                return child :: Tool
+            end
+        end
+        return nil
+    end
+
     rebuild = function(): ()
         clearVisuals()
         local character: Model? = LocalPlayer.Character
@@ -4762,7 +4808,7 @@ function Module.init(runtime: any): any
         visualFolder.Name = "MM2LocalWeaponVisuals"
         visualFolder.Parent = workspace
         for _, kind: string in ipairs({"Gun", "Knife"}) do
-            local tool: Tool? = core.getPlayerWeapon(LocalPlayer, kind, true)
+            local tool: Tool? = equippedWeapon(kind)
             if not tool or tool.Parent ~= character then
                 continue
             end
@@ -4884,16 +4930,27 @@ function Module.init(runtime: any): any
             end)
         )
         -- Mirror the animated right arm onto the left arm every frame while a
-        -- double weapon is on screen (after the Animator pass, before render).
-        table.insert(
-            connections,
-            RunService.PreSimulation:Connect(function(): ()
-                local character: Model? = LocalPlayer.Character
-                if character then
-                    pcall(mirrorArms, character :: Model)
-                end
-            end)
-        )
+        -- double weapon is on screen. The write must land AFTER the Animator
+        -- applies its poses (otherwise it is overwritten): PostAnimation fires
+        -- exactly there; PreSimulation is the fallback (also post-animator).
+        local mirrorSignals: {any} = {}
+        if RunService.PostAnimation then
+            table.insert(mirrorSignals, RunService.PostAnimation)
+        end
+        if RunService.PreSimulation then
+            table.insert(mirrorSignals, RunService.PreSimulation)
+        end
+        for _, signal: any in ipairs(mirrorSignals) do
+            table.insert(
+                connections,
+                signal:Connect(function(): ()
+                    local character: Model? = LocalPlayer.Character
+                    if character then
+                        pcall(mirrorArms, character :: Model)
+                    end
+                end)
+            )
+        end
         if LocalPlayer.Character then
             watchCharacter(LocalPlayer.Character)
         end
@@ -6296,8 +6353,8 @@ local GUN_LEAD = {
     replicationRate = 20,
     serverFrame = 1 / 60,
     minimumHorizon = 0,
-    maximumHorizon = 0.15,
-    maximumManualBias = 0.1,
+    maximumHorizon = 0.25,
+    maximumManualBias = 0.15,
     maximumAutoCorrection = 0.1,
 
     -- Radians/second. The turn rate itself is measured per motion sample in
@@ -6444,15 +6501,20 @@ end
 local trajectoryCalibration: any = nil
 
 local function getGunHorizonSeconds(): number
-    -- MM2's gun accepts shots aimed at positions the target occupied within
-    -- the last ~277 ms (the measured acceptance window rewinds the victim).
-    -- What we observe is ALREADY replication-delayed by roughly half a round
-    -- trip, so the observed position already sits inside that window. The old
-    -- model led FORWARD by the whole window - it aimed at a position the
-    -- rewind can never cover, which missed walking targets left/right and,
-    -- combined with the ballistic drop term, buried shots into the floor.
-    -- Default lead is now ZERO (aim at what you see); the manual bias and the
-    -- opt-in auto correction are the only forward-lead sources, capped tight.
+    -- Two field reports, one per direction:
+    --  * v24: leading by the FULL ~277 ms acceptance window missed AHEAD
+    --    (shots landing where the target could never be).
+    --  * v24.1: aiming at the raw observed position missed BEHIND moving
+    --    targets ("apunta a donde estaba hace 1 segundo").
+    -- Reconciliation: our view of the target trails the server by about half
+    -- a round trip (victim -> server -> us), so we lead by exactly that
+    -- staleness - no more. The acceptance window is a REWIND (it covers past
+    -- positions) and must not be spent as forward lead.
+    local staleness: number = math.clamp(
+        getEstimatedLatency() * 0.5,
+        0,
+        0.15
+    )
     local manualBias: number = math.clamp(
         mm2Settings.gunLeadBias,
         -GUN_LEAD.maximumManualBias,
@@ -6464,7 +6526,7 @@ local function getGunHorizonSeconds(): number
         GUN_LEAD.maximumAutoCorrection
     )
     return math.clamp(
-        manualBias + autoCorrection,
+        staleness + manualBias + autoCorrection,
         GUN_LEAD.minimumHorizon,
         GUN_LEAD.maximumHorizon
     )
@@ -23374,6 +23436,18 @@ function Module.init(context: Runtime): any
     local layer: Frame? = renderLib and renderLib:Layer("ItemRenderLayer") or nil
     Module.layer = layer
 
+    local itemEsp: any = context.services and context.services.itemEsp
+    local providerStates: {[string]: boolean} = {}
+
+    local function forEachProvider(callback: (any) -> ()): ()
+        if not itemEsp or type(itemEsp.providers) ~= "function" then
+            return
+        end
+        for _, provider: any in ipairs(itemEsp.providers()) do
+            pcall(callback, provider)
+        end
+    end
+
     local render: any
     render = framework.Categories.Visuals:CreateModule({
         Name = "ItemESP",
@@ -23386,11 +23460,21 @@ function Module.init(context: Runtime): any
                 layer.Visible = enabled
             end
             if not enabled then
+                forEachProvider(function(provider: any): ()
+                    if providerStates[provider.name] then
+                        pcall(provider.setEnabled, false)
+                    end
+                end)
                 render:SetStatus(nil)
                 releaseAll()
                 picking = false
                 return
             end
+            forEachProvider(function(provider: any): ()
+                if providerStates[provider.name] then
+                    pcall(provider.setEnabled, true)
+                end
+            end)
             render:SetStatus("0")
             render:Clean(function(): ()
                 releaseAll()
@@ -23647,11 +23731,44 @@ function Module.init(context: Runtime): any
         "Every object sharing the name is rendered, not just the one you tapped."
     )
 
+    -- Game-provided item highlights (for example MM2's Gun ESP and Trap ESP)
+    -- appear here as their own toggles. The card itself stays game-agnostic:
+    -- games register providers, this module only renders them.
+    local providerOptionNames: {[string]: boolean} = {}
+    local function attachProvider(provider: any): ()
+        if providerOptionNames[provider.name] then
+            return
+        end
+        providerOptionNames[provider.name] = true
+        render:CreateToggle({
+            Name = provider.name,
+            Default = false,
+            Tooltip = provider.tooltip,
+            Function = function(value: boolean): ()
+                providerStates[provider.name] = value
+                if render.Enabled then
+                    pcall(provider.setEnabled, value)
+                end
+            end,
+        })
+    end
+    forEachProvider(attachProvider)
+    local providerWatch: (() -> ())? = nil
+    if itemEsp and type(itemEsp.onChanged) == "function" then
+        providerWatch = itemEsp.onChanged(function(): ()
+            forEachProvider(attachProvider)
+        end)
+    end
+
     activeCleanup = function(): ()
         picking = false
         pcall(function(): ()
             pickConnection:Disconnect()
         end)
+        if providerWatch then
+            pcall(providerWatch)
+            providerWatch = nil
+        end
         releaseAll()
     end
     Module.Initialized = true
@@ -25645,6 +25762,11 @@ function Module.init(context: Runtime): any
 
     local originalTime: string? = nil
     local customTime: number = 14
+    local fastTime: boolean = false
+    local fastElapsed: number = 0
+
+    -- Full 00:00 -> 24:00 sweep in under five seconds, looping while on.
+    local FAST_CYCLE_SECONDS: number = 4
 
     local function applyTime(hour: number): ()
         local timeString: string = string.format("%02d:00:00", math.floor(hour))
@@ -25666,8 +25788,20 @@ function Module.init(context: Runtime): any
                 applyTime(customTime)
                 card:SetStatus(string.format("%02d:00", customTime))
 
-                card:Loop(function(): ()
-                    if originalTime then
+                card:Loop(function(deltaTime: number): ()
+                    if not originalTime then
+                        return
+                    end
+                    if fastTime then
+                        fastElapsed += deltaTime
+                        if fastElapsed >= FAST_CYCLE_SECONDS then
+                            fastElapsed -= FAST_CYCLE_SECONDS
+                        end
+                        local hour: number =
+                            (fastElapsed / FAST_CYCLE_SECONDS) * 24 % 24
+                        applyTime(hour)
+                        card:SetStatus(string.format("%02d:00", hour))
+                    else
                         applyTime(customTime)
                     end
                 end)
@@ -25691,12 +25825,26 @@ function Module.init(context: Runtime): any
         Step = 1,
         Function = function(value: number): ()
             customTime = value
-            if card.Enabled then
+            if card.Enabled and not fastTime then
                 applyTime(value)
                 card:SetStatus(string.format("%02d:00", value))
             end
         end,
         Tooltip = "Hour of day (0 = midnight, 12 = noon, 18 = sunset).",
+    })
+    card:CreateToggle({
+        Name = "Fast time",
+        Default = false,
+        Function = function(value: boolean): ()
+            fastTime = value
+            fastElapsed = 0
+            if card.Enabled and not fastTime then
+                applyTime(customTime)
+                card:SetStatus(string.format("%02d:00", customTime))
+            end
+        end,
+        Tooltip = "Sweeps the whole day from 00:00 to 24:00 in about "
+            .. "four seconds, on repeat, while the module is on.",
     })
 
     activeCard = card

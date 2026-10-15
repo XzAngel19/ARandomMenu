@@ -62,10 +62,10 @@ function Module.init(runtime: any): any
 
     local function syncEspToggles(): ()
         if type(core.toggleGunEsp) == "function" then
-            pcall(core.toggleGunEsp, settings.enabled and settings.gunEsp)
+            pcall(core.toggleGunEsp, settings.gunEsp)
         end
         if type(core.toggleTrapEsp) == "function" then
-            pcall(core.toggleTrapEsp, settings.enabled and settings.trapEsp)
+            pcall(core.toggleTrapEsp, settings.trapEsp)
         end
     end
 
@@ -286,7 +286,6 @@ function Module.init(runtime: any): any
         disconnectFeatureConnection("MM2RoleTags")
         destroyMurderTag()
         clearRoleTags()
-        syncEspToggles()
         if not enabled then
             if feature then
                 feature:SetStatus(nil)
@@ -341,29 +340,43 @@ function Module.init(runtime: any): any
         end,
         "Perk icon beside the Murder tag."
     )
-    addToggleOption(
-        feature,
-        "Gun ESP",
-        settings.gunEsp,
-        function(value: boolean): ()
-            settings.gunEsp = value
-            syncEspToggles()
-        end,
-        "Highlights dropped and carried guns."
-    )
-    addToggleOption(
-        feature,
-        "Trap ESP",
-        settings.trapEsp,
-        function(value: boolean): ()
-            settings.trapEsp = value
-            syncEspToggles()
-        end,
-        "Highlights murderer traps."
-    )
+    -- Gun ESP and Trap ESP live in the universal ItemESP card now (the user
+    -- asked for them there): they are registered as item providers, so the
+    -- universal card keeps no MM2 knowledge of its own.
+    local unregisterProviders: {() -> ()} = {}
+    local itemEspService: any = services and services.itemEsp
+    if itemEspService and type(itemEspService.register) == "function" then
+        local function registerEsp(name: string, tooltip: string, key: string): ()
+            local unregister: any = itemEspService.register({
+                name = name,
+                tooltip = tooltip,
+                setEnabled = function(on: boolean): ()
+                    settings[key] = on
+                    syncEspToggles()
+                end,
+            })
+            if type(unregister) == "function" then
+                table.insert(unregisterProviders, unregister)
+            end
+        end
+        registerEsp(
+            "Gun ESP",
+            "Highlights dropped and carried guns.",
+            "gunEsp"
+        )
+        registerEsp(
+            "Trap ESP",
+            "Highlights murderer traps.",
+            "trapEsp"
+        )
+    end
 
     activeCleanup = function(): ()
         setEnabled(false)
+        for _, unregister: () -> () in ipairs(unregisterProviders) do
+            pcall(unregister)
+        end
+        table.clear(unregisterProviders)
     end
     Module.Events = featureConnections
     Module.Initialized = true

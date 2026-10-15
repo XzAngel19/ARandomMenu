@@ -105,6 +105,18 @@ function Module.init(context: Runtime): any
     local layer: Frame? = renderLib and renderLib:Layer("ItemRenderLayer") or nil
     Module.layer = layer
 
+    local itemEsp: any = context.services and context.services.itemEsp
+    local providerStates: {[string]: boolean} = {}
+
+    local function forEachProvider(callback: (any) -> ()): ()
+        if not itemEsp or type(itemEsp.providers) ~= "function" then
+            return
+        end
+        for _, provider: any in ipairs(itemEsp.providers()) do
+            pcall(callback, provider)
+        end
+    end
+
     local render: any
     render = framework.Categories.Visuals:CreateModule({
         Name = "ItemESP",
@@ -117,11 +129,21 @@ function Module.init(context: Runtime): any
                 layer.Visible = enabled
             end
             if not enabled then
+                forEachProvider(function(provider: any): ()
+                    if providerStates[provider.name] then
+                        pcall(provider.setEnabled, false)
+                    end
+                end)
                 render:SetStatus(nil)
                 releaseAll()
                 picking = false
                 return
             end
+            forEachProvider(function(provider: any): ()
+                if providerStates[provider.name] then
+                    pcall(provider.setEnabled, true)
+                end
+            end)
             render:SetStatus("0")
             render:Clean(function(): ()
                 releaseAll()
@@ -378,11 +400,44 @@ function Module.init(context: Runtime): any
         "Every object sharing the name is rendered, not just the one you tapped."
     )
 
+    -- Game-provided item highlights (for example MM2's Gun ESP and Trap ESP)
+    -- appear here as their own toggles. The card itself stays game-agnostic:
+    -- games register providers, this module only renders them.
+    local providerOptionNames: {[string]: boolean} = {}
+    local function attachProvider(provider: any): ()
+        if providerOptionNames[provider.name] then
+            return
+        end
+        providerOptionNames[provider.name] = true
+        render:CreateToggle({
+            Name = provider.name,
+            Default = false,
+            Tooltip = provider.tooltip,
+            Function = function(value: boolean): ()
+                providerStates[provider.name] = value
+                if render.Enabled then
+                    pcall(provider.setEnabled, value)
+                end
+            end,
+        })
+    end
+    forEachProvider(attachProvider)
+    local providerWatch: (() -> ())? = nil
+    if itemEsp and type(itemEsp.onChanged) == "function" then
+        providerWatch = itemEsp.onChanged(function(): ()
+            forEachProvider(attachProvider)
+        end)
+    end
+
     activeCleanup = function(): ()
         picking = false
         pcall(function(): ()
             pickConnection:Disconnect()
         end)
+        if providerWatch then
+            pcall(providerWatch)
+            providerWatch = nil
+        end
         releaseAll()
     end
     Module.Initialized = true

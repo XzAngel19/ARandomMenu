@@ -177,33 +177,37 @@ pass("actual animation lifecycle: not Equip; cache by knife/id; cleanup even if 
 end
 ''']
     chunks += ["do\nlocal mm2Settings={predictionRtt=0.08,autoTuneLead=false,gunLeadBias=0}\n"
-               "local GUN_LEAD={replicationRate=20,serverFrame=1/60,minimumHorizon=0,maximumHorizon=0.15,"
-               "maximumManualBias=0.1,maximumAutoCorrection=0.1,defaultTurnRate=math.pi*0.5,maxTurnRate=math.pi*1.5}\n"
+               "local GUN_LEAD={replicationRate=20,serverFrame=1/60,minimumHorizon=0,maximumHorizon=0.25,"
+               "maximumManualBias=0.15,maximumAutoCorrection=0.1,defaultTurnRate=math.pi*0.5,maxTurnRate=math.pi*1.5}\n"
                "local autoLeadCorrection=0\n"
                "local function getActiveAutoLeadCorrection() return mm2Settings.autoTuneLead and autoLeadCorrection or 0 end\n"
                "local Stats={FindFirstChild=function() return nil end}\n",
                section(BASE, "local lastLatencyReadAt:", "local function getGunOriginCFrame"), r'''
-    -- MM2 rewinds the victim (~277 ms acceptance): the observed position is
-    -- already inside the window, so the default forward lead is ZERO.
-    near(getGunHorizonSeconds(),0)
+    -- Half-ping staleness: our view trails the server by ~RTT/2 (0.08 -> 0.04).
+    near(getGunHorizonSeconds(),0.04)
     mm2Settings.gunLeadBias=0.1
-    near(getGunHorizonSeconds(),0.1)
+    near(getGunHorizonSeconds(),0.14)
     mm2Settings.gunLeadBias=-0.1
     near(getGunHorizonSeconds(),0)
     mm2Settings.gunLeadBias=0.05
     autoLeadCorrection=0.08
     mm2Settings.autoTuneLead=true
-    near(getGunHorizonSeconds(),0.13)
+    near(getGunHorizonSeconds(),0.17)
     autoLeadCorrection=0.2
-    assert(getGunHorizonSeconds()==0.15,"bias+auto is capped at 0.15")
+    assert(getGunHorizonSeconds()==0.19,"auto correction is capped at 0.1 on top of staleness+bias")
     mm2Settings.autoTuneLead=false
-    assert(getGunHorizonSeconds()==0.05,"auto correction only applies when opted in")
+    assert(getGunHorizonSeconds()==0.09,"auto correction only applies when opted in")
     mm2Settings.gunLeadBias=0
     autoLeadCorrection=0
+    -- A huge ping must not blow the lead up: staleness caps at 0.15.
+    mm2Settings.predictionRtt=0.6
+    near(getGunHorizonSeconds(),0.15)
+    mm2Settings.predictionRtt=0.08
+    near(getGunHorizonSeconds(),0.04)
     -- Stale calibration data must never push the horizon again.
     trajectoryCalibration={getEstimates=function() return {liveGunAcceptanceMs=400,liveGunSamples=50} end}
-    near(getGunHorizonSeconds(),0)
-    pass("gun horizon: rewind semantics; zero default lead; bias+auto capped at 0.15")
+    near(getGunHorizonSeconds(),0.04)
+    pass("gun horizon: half-ping staleness lead; auto capped at 0.1; huge ping capped")
 end
 ''']
     chunks += [r'''

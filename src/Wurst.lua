@@ -225,7 +225,7 @@ local RUNTIME_RAW_BASE: string =
         .. RUNTIME_BRANCH
         .. "/"
 
-local SOURCE_STAMP: string = "v24.1-20261015-aim-palette"
+local SOURCE_STAMP: string = "v25-20261015-itemesp-fasttime-lead"
 
 local BOOT_STARTED_AT: number = os.clock()
 local BOOT_FINGERPRINT_SECONDS: number = 0
@@ -4261,6 +4261,9 @@ trackUiConnection(UserInputService.WindowFocusReleased:Connect(function(): ()
 end))
 end
 
+state.itemEspProviders = {}
+state.itemEspListeners = {}
+
 state.gameBridge = {
     roleProvider = nil :: any,
 
@@ -4904,6 +4907,10 @@ local function loadGameModule(
         "src/games/BedFight/Render/RoundInfo.lua",
     } else {"src/games/" .. moduleName .. "/base.lua"}
     local moduleEnvironment: any = createGameModuleEnvironment(diagnostics)
+    -- Game modules get the same services facade the framework environment
+    -- uses. Without this, any module touching `services` (RoleTags reads
+    -- services.gameBridge) fails to load and its options vanish from the UI.
+    moduleEnvironment.services = state.moduleServices
     local loadedModules: {GameModule} = {}
     local skipped: {string} = {}
     for _, path: string in paths do
@@ -5627,6 +5634,45 @@ local moduleServices: ModuleServices = {
         set = function(owner: any): () projectileCalibrationOwner = owner end,
         get = function(): any return projectileCalibrationOwner end,
     },
+    itemEsp = {
+        register = function(provider: any): (() -> ())?
+            if type(provider) ~= "table"
+                or type(provider.name) ~= "string"
+                or #provider.name == 0
+                or type(provider.setEnabled) ~= "function" then
+                return nil
+            end
+            for _, existing: any in ipairs(state.itemEspProviders) do
+                if existing.name == provider.name then
+                    return nil
+                end
+            end
+            table.insert(state.itemEspProviders, provider)
+            for _, listener: () -> () in ipairs(state.itemEspListeners) do
+                pcall(listener)
+            end
+            return function(): ()
+                local index: number? =
+                    table.find(state.itemEspProviders, provider)
+                if index then
+                    table.remove(state.itemEspProviders, index :: number)
+                end
+            end
+        end,
+        providers = function(): {any}
+            return state.itemEspProviders
+        end,
+        onChanged = function(listener: () -> ()): (() -> ())?
+            table.insert(state.itemEspListeners, listener)
+            return function(): ()
+                local index: number? =
+                    table.find(state.itemEspListeners, listener)
+                if index then
+                    table.remove(state.itemEspListeners, index :: number)
+                end
+            end
+        end,
+    },
     gameBridge = {
         onEvent = state.onGameBridge,
         teamCheck = state.teamCheck,
@@ -5645,6 +5691,7 @@ local moduleServices: ModuleServices = {
     },
 }
 state.frameworkEnvironment.services = moduleServices
+state.moduleServices = moduleServices
 
 local fallbackManifest: any = {
     version = 1,

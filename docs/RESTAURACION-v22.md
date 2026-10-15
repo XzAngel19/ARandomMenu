@@ -322,3 +322,81 @@ checkboxes.
    observada, sin lead fantasma).
 4. Opciones → UI → color "Enabled" → cualquier color: todos los checkboxes
    activados se repintan al instante y el check interior sigue visible.
+
+## v25 — Gun ESP/Trap ESP en ItemESP · Fast time · lead ½-ping · Weapon Visuals blindado
+
+Reporte: no aparecían Gun ESP ni Trap ESP (había que ponerlas en ItemESP);
+TimeChanger necesita un "Fast time" que recorra 00:00→24:00 en menos de 5
+segundos; Weapon Visuals sigue con un error; y el disparo ahora apunta
+demasiado tarde — a donde el Murder estaba hace ~1 segundo — sin acertar
+ningún tiro con movimiento activo.
+
+### Por qué no veías Gun ESP / Trap ESP (bug real de carga)
+
+Los módulos de juego (MM2) corrían sin la fachada `services`: RoleTags leía
+`services.gameBridge` sobre un entorno donde `services` era nil → el módulo
+fallaba al cargar y sus opciones desaparecían del menú. Arreglado: el entorno
+de juego recibe `state.moduleServices` como el del framework.
+
+### Gun ESP / Trap ESP ahora viven en ItemESP
+
+Nuevo servicio `itemEsp` (registro de proveedores): el ItemESP universal
+renderiza un toggle por proveedor y sigue siendo agnóstico al juego — MM2
+registra "Gun ESP" y "Trap ESP" (respaldados por los toggles del core de
+RoundEsp), y aparecen como opciones dentro de la tarjeta ItemESP, con el
+interruptor maestro de la tarjeta controlándolos. Role Tags conserva Murder
+tag / Role tags / Show Perk.
+
+### Fast time (Time Changer)
+
+Nuevo toggle "Fast time": recorre el día completo 00:00→24:00 en ~4 segundos,
+en bucle mientras el módulo esté activo. Al apagarlo vuelve a la hora del
+slider. El estado de la tarjeta muestra la hora ciclando.
+
+### Predicción del arma: lead de ½ ping
+
+Dos reportes de campo, uno por dirección: v24 (lead del ventana completa de
+aceptación ~277 ms) fallaba por DELANTE; v24.1 (lead 0) fallaba por DETRÁS
+("apunta a donde estaba"). La reconciliación física: nuestra vista del
+objetivo llega al servidor con ~½ RTT de retraso (víctima → servidor →
+nosotros), así que el lead correcto es exactamente ese staleness — ni 0, ni
+277 ms. Ahora: `horizonte = ½·RTT (máx 0.15) + Lead bias (±0.15) + auto
+(opt-in, máx 0.1)`, acotado a [0, 0.25] s. Con ping de 120 ms el lead
+automático es 0.06 s; el slider permite afinar ±0.15 s si tu conexión lo
+pide. La aceptación medida (277 ms) es un rewind y ya no se gasta como lead
+adelante.
+
+### Weapon Visuals (blindado)
+
+- **Reset R6 roto (bug real)**: la lista de candidatos usaba `ipairs` con
+  huecos nil — en R6 el Torso nunca se alcanzaba y el hombro izquierdo quedaba
+  congelado en la última pose espejada tras apagar. Ahora se colectan solo
+  las partes existentes.
+- **Espejo tras el Animator**: el write del Transform ahora cae en
+  `PostAnimation` (el momento exacto posterior al paso del Animator) con
+  `PreSimulation` de respaldo — si el orden del entorno era el problema, ya
+  no lo es.
+- **Errores visibles**: el rebuild diferido va con pcall y `warn` — si algo
+  falla verás "[Wurst] Weapon Visuals rebuild failed: <motivo>" en consola en
+  vez de un fallo mudo.
+- **Respaldo de búsqueda de arma**: si el lookup por tags no encuentra el
+  arma, se intenta por nombre (solo visual).
+
+### Verificación
+
+- 72 archivos compilados con Luau 0.732 — 0 errores; bundle 70 módulos,
+  sello `v25-20261015-itemesp-fasttime-lead`.
+- `test_mm2_precision` 14/14 con el bloque nuevo "gun horizon: half-ping
+  staleness lead; auto capped at 0.1; huge ping capped" (ping gigante ⇒
+  staleness tope 0.15). `test_entity_team_provider` 14/14, `test_mm2_v16`
+  4/4.
+
+### Prueba sugerida
+
+1. ItemESP → activa "Gun ESP" / "Trap ESP" (aparecen ahí mismo).
+2. Time Changer → "Fast time" → el día cicla completo en ~4 s.
+3. Sheriff vs murder caminando: el tiro debe caer SOBRE el cuerpo; si tu
+   conexión es inusual, ajusta "Lead bias" (+ si sigue corto, − si se pasa).
+4. Double Gun/Knife: ambos brazos; al apagar, el brazo izquierdo vuelve a su
+   pose (R6 incluido). Si ves "[Wurst] Weapon Visuals rebuild failed: …",
+   mándame el texto exacto del motivo.
