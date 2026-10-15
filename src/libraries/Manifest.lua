@@ -102,6 +102,11 @@ local Manifest: Manifest = {
             name = "Aim Assist",
             category = "Combat",
         },
+        {
+            path = "src/games/universal/Combat/TriggerBot.lua",
+            name = "TriggerBot",
+            category = "Combat",
+        },
 
         {
             path = "src/games/universal/Blatant/Invisible.lua",

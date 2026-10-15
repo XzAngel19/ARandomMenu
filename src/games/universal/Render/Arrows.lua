@@ -20,9 +20,22 @@ function Module.init(context: Runtime): any
     local entity: any = context.entity
     local render: any = context.render
     local protectedTargets: any = context.services.protectedTargets
+    local gameBridge: any = context.services.gameBridge
+    local teamCheck: any = context.host.state and context.host.state.teamCheck
     local currentWorkspace: Workspace = context.host.workspace or workspace
     local layer: Frame = render:Layer("ArrowsLayer")
     local shown: {[Player]: boolean} = {}
+
+    local function roleColour(player: Player): Color3?
+        if gameBridge and type(gameBridge.playerRoleColor) == "function" then
+            local ok: boolean, colour: any =
+                pcall(gameBridge.playerRoleColor, player)
+            if ok and typeof(colour) == "Color3" then
+                return colour
+            end
+        end
+        return nil
+    end
 
     local card: any
     local function clear(): ()
@@ -58,7 +71,13 @@ function Module.init(context: Runtime): any
                 local count: number = 0
                 for _, target: any in ipairs(entity:Refresh()) do
                     local player: Player = target.Player
-                    if (not card.Options["Teammates"].Value and target.IsFriendly)
+                    local friendly: boolean = target.IsFriendly
+                    if not friendly
+                        and teamCheck
+                        and type(teamCheck.isSameTeam) == "function" then
+                        friendly = teamCheck.isSameTeam(player)
+                    end
+                    if (not card.Options["Teammates"].Value and friendly)
                         or protectedTargets.isProtected(player)
                         or not target.Humanoid
                         or target.Humanoid.Health <= 0
@@ -85,7 +104,16 @@ function Module.init(context: Runtime): any
                     local perpendicular: Vector2 = Vector2.new(-direction.Y, direction.X)
                     local tip: Vector2 = centre + direction * radius
                     local back: Vector2 = tip - direction * 16
-                    local colour: Color3 = card.Options["Colour"].Value
+                    -- Colour priority: the game's role colour when roles are
+                    -- known (white by default otherwise), then teammates in
+                    -- their team colour while the team-colour option is on.
+                    local roleColourForTarget: Color3? = roleColour(player)
+                    local colour: Color3 = roleColourForTarget
+                        or (card.Options["Team colours"].Value
+                            and friendly
+                            and player.Team
+                            and player.Team.TeamColor.Color
+                            or card.Options["Colour"].Value)
                     drawing:Line("Arrow", 1, tip, back + perpendicular * 8, 2, colour)
                     drawing:Line("Arrow", 2, tip, back - perpendicular * 8, 2, colour)
                     drawing:HideLines("Arrow", 3, 8)
@@ -118,10 +146,11 @@ function Module.init(context: Runtime): any
         end,
     })
 
-    card:CreateColor({Name = "Colour", Default = Color3.fromRGB(0, 204, 255)})
+    card:CreateColor({Name = "Colour", Default = Color3.fromRGB(255, 255, 255), Tooltip = "Base arrow colour. Arrows use role colours instead whenever the game knows roles."})
     card:CreateToggle({Name = "Distance", Default = true})
     card:CreateSlider({Name = "Max distance", Min = 25, Max = 2000, Step = 25, Default = 500})
-    card:CreateToggle({Name = "Teammates", Default = false})
+    card:CreateToggle({Name = "Teammates", Default = false, Tooltip = "Also point at teammates. The advanced team check decides who counts."})
+    card:CreateToggle({Name = "Team colours", Default = false, Tooltip = "Teammates point in their Roblox team colour; everyone else keeps the base colour. Role colours always win."})
 
     activeCard = card
     Module.Initialized = true

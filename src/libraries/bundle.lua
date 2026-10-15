@@ -1,5 +1,5 @@
 return {
-    stamp = "v23-20261015-clean-org",
+    stamp = "v24-20261015-teamcheck-visuals",
     files = {
         ["src/games/BedFight/Combat/AutoSwing.lua"] = [[
 local Module = {Name = "BedFight Auto Swing", Initialized = false, Connection = nil}
@@ -3919,6 +3919,393 @@ end
 return Module
 
 ]],
+        ["src/games/MM2/Render/RoleTags.lua"] = [[
+local Module = {
+    Name = "MM2 Role Tags",
+    PlaceId = 142823291,
+    Events = {} :: {[string]: any},
+    Initialized = false,
+    Runtime = nil :: any,
+}
+
+local activeCleanup: () -> () = function(): () end
+
+local PERK_ICONS: {[string]: string} = {
+    ["Footsteps"] = "rbxassetid://336404773",
+    ["Sleight"] = "rbxassetid://340309581",
+    ["Ninja"] = "rbxassetid://416832054",
+    ["Haste"] = "rbxassetid://416942717",
+    ["FakeGun"] = "rbxassetid://17899774181",
+    ["Fake Gun"] = "rbxassetid://17899774181",
+    ["Ghost"] = "rbxassetid://335206856",
+    ["Xray"] = "rbxassetid://340313896",
+    ["X-Ray"] = "rbxassetid://340313896",
+    ["Trap"] = "rbxassetid://4966828196",
+    ["Sprint"] = "rbxassetid://4970219155",
+    ["VampireBat"] = "rbxassetid://129078122681639",
+    ["Bat Form"] = "rbxassetid://129078122681639",
+    ["Decoy"] = "rbxassetid://113722008817201",
+}
+
+function Module.init(runtime: any): any
+    if Module.Initialized then
+        return Module
+    end
+    local core: any = state.mm2Core
+    assert(type(core) == "table", "MM2 Role Tags requires the MM2 core module")
+    Module.Runtime = runtime
+
+    local settings = {
+        enabled = false,
+        murderTag = true,
+        roleTags = true,
+        showPerk = true,
+        gunEsp = true,
+        trapEsp = true,
+    }
+
+    local murderTag: BillboardGui? = nil
+    local roleTags: {[Player]: BillboardGui} = {}
+    local lastUpdate: number = -math.huge
+
+    local function destroyMurderTag(): ()
+        if murderTag then
+            pcall(murderTag.Destroy, murderTag)
+            murderTag = nil
+        end
+    end
+
+    local function clearRoleTags(): ()
+        for player: Player, tag: BillboardGui in pairs(roleTags) do
+            roleTags[player] = nil
+            pcall(tag.Destroy, tag)
+        end
+    end
+
+    local function syncEspToggles(): ()
+        if type(core.toggleGunEsp) == "function" then
+            pcall(core.toggleGunEsp, settings.enabled and settings.gunEsp)
+        end
+        if type(core.toggleTrapEsp) == "function" then
+            pcall(core.toggleTrapEsp, settings.enabled and settings.trapEsp)
+        end
+    end
+
+    local bridge: any = services.gameBridge
+
+    local function playerRole(player: Player): string?
+        if bridge and type(bridge.playerRole) == "function" then
+            local ok: boolean, role: any = pcall(bridge.playerRole, player)
+            if ok and type(role) == "string" then
+                return role
+            end
+        end
+        return nil
+    end
+
+    local function playerRoleColor(player: Player): Color3?
+        if bridge and type(bridge.playerRoleColor) == "function" then
+            local ok: boolean, colour: any =
+                pcall(bridge.playerRoleColor, player)
+            if ok and typeof(colour) == "Color3" then
+                return colour
+            end
+        end
+        return nil
+    end
+
+    local function playerPerk(player: Player): string?
+        if type(core.getPlayerPerk) == "function" then
+            local ok: boolean, perk: any = pcall(core.getPlayerPerk, player)
+            if ok and type(perk) == "string" then
+                return perk
+            end
+        end
+        return nil
+    end
+
+    local function headOf(character: Model): BasePart?
+        local head: Instance? = character:FindFirstChild("Head")
+            or character:FindFirstChild("HumanoidRootPart")
+        if head and head:IsA("BasePart") then
+            return head :: BasePart
+        end
+        return nil
+    end
+
+    local function update(): ()
+        local now: number = os.clock()
+        if now - lastUpdate < 0.2 then
+            return
+        end
+        lastUpdate = now
+
+        -- Murder tag: one billboard over the murderer.
+        local tagTarget: Player? = nil
+        if settings.murderTag then
+            for _, player: Player in ipairs(Players:GetPlayers()) do
+                if player ~= LocalPlayer
+                    and player.Character
+                    and player.Character:FindFirstChildOfClass("Humanoid")
+                    and (player.Character:FindFirstChildOfClass("Humanoid")
+                        :: Humanoid).Health > 0
+                    and playerRole(player) == "Murderer" then
+                    tagTarget = player
+                    break
+                end
+            end
+        end
+        if not tagTarget then
+            destroyMurderTag()
+        else
+            local head: BasePart? = headOf(tagTarget.Character :: Model)
+            if not head then
+                destroyMurderTag()
+            else
+                if not murderTag
+                    or not murderTag.Parent
+                    or murderTag.Adornee ~= head then
+                    destroyMurderTag()
+                    local billboard: BillboardGui = Instance.new("BillboardGui")
+                    billboard.Name = "Wurst_MurderTag"
+                    billboard.AlwaysOnTop = true
+                    billboard.LightInfluence = 0
+                    billboard.Size = UDim2.fromOffset(150, 22)
+                    billboard.StudsOffset = Vector3.new(0, 3.5, 0)
+                    billboard.MaxDistance = 1500
+                    billboard.Adornee = head
+                    billboard.Parent = head
+                    local label: TextLabel = Instance.new("TextLabel")
+                    label.Name = "Murder"
+                    label.BackgroundTransparency = 1
+                    label.Size = UDim2.fromScale(1, 1)
+                    label.Font = Enum.Font.GothamBold
+                    label.TextSize = 14
+                    label.Text = "Murder"
+                    label.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
+                    label.TextStrokeTransparency = 0.3
+                    label.Parent = billboard
+                    local icon: ImageLabel = Instance.new("ImageLabel")
+                    icon.Name = "PerkIcon"
+                    icon.BackgroundTransparency = 1
+                    icon.ImageTransparency = 1
+                    icon.Visible = false
+                    icon.Size = UDim2.fromOffset(20, 20)
+                    icon.Position = UDim2.new(0, 3, 0.5, 0)
+                    icon.AnchorPoint = Vector2.new(0, 0.5)
+                    icon.Parent = billboard
+                    murderTag = billboard
+                end
+                local colour: Color3? = playerRoleColor(tagTarget)
+                if colour then
+                    local label: any =
+                        murderTag and murderTag:FindFirstChild("Murder")
+                    if label and label.TextColor3 ~= colour then
+                        label.TextColor3 = colour
+                    end
+                end
+            end
+        end
+
+        -- Perk icon on the murder tag.
+        local perkIcon: any = murderTag
+            and murderTag:FindFirstChild("PerkIcon")
+        if settings.showPerk and perkIcon and tagTarget then
+            local perk: string? = playerPerk(tagTarget)
+            local iconId: string? = perk
+                and (PERK_ICONS[perk]
+                    or PERK_ICONS[string.gsub(perk, "%s+", "")])
+                or nil
+            if iconId then
+                if perkIcon.Image ~= iconId then
+                    perkIcon.Image = iconId
+                end
+                perkIcon.Visible = true
+                perkIcon.ImageTransparency = 0
+            else
+                perkIcon.Visible = false
+            end
+        elseif perkIcon and perkIcon.Visible then
+            perkIcon.Visible = false
+        end
+
+        -- Role tags for every player with a known living role.
+        if not settings.roleTags then
+            clearRoleTags()
+            return
+        end
+        local seen: {[Player]: boolean} = {}
+        for _, player: Player in ipairs(Players:GetPlayers()) do
+            if player ~= LocalPlayer then
+                local character: Model? = player.Character
+                local humanoid: Humanoid? = character
+                    and character:FindFirstChildOfClass("Humanoid")
+                    :: Humanoid?
+                local role: string? = playerRole(player)
+                if character
+                    and humanoid
+                    and (humanoid :: Humanoid).Health > 0
+                    and role
+                    and role ~= "Dead"
+                    and not (settings.murderTag and role == "Murderer") then
+                    local head: BasePart? = headOf(character :: Model)
+                    if head then
+                        seen[player] = true
+                        local tag: BillboardGui? = roleTags[player]
+                        if not tag
+                            or not tag.Parent
+                            or tag.Adornee ~= head then
+                            if tag then
+                                pcall(tag.Destroy, tag)
+                            end
+                            local billboard: BillboardGui =
+                                Instance.new("BillboardGui")
+                            billboard.Name = "Wurst_RoleTag"
+                            billboard.AlwaysOnTop = true
+                            billboard.LightInfluence = 0
+                            billboard.Size = UDim2.fromOffset(170, 24)
+                            billboard.StudsOffset = Vector3.new(0, 2.7, 0)
+                            billboard.MaxDistance = 1500
+                            billboard.Adornee = head
+                            billboard.Parent = head
+                            local label: TextLabel = Instance.new("TextLabel")
+                            label.Name = "Role"
+                            label.BackgroundTransparency = 1
+                            label.Size = UDim2.fromScale(1, 1)
+                            label.Font = Enum.Font.GothamBold
+                            label.TextSize = 14
+                            label.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
+                            label.TextStrokeTransparency = 0.2
+                            label.Parent = billboard
+                            roleTags[player] = billboard
+                            tag = billboard
+                        end
+                        local label: any = tag and tag:FindFirstChild("Role")
+                        if label then
+                            local roleUpper: string = string.upper(role :: string)
+                            if label.Text ~= roleUpper then
+                                label.Text = roleUpper
+                            end
+                            local colour: Color3? = playerRoleColor(player)
+                            if colour and label.TextColor3 ~= colour then
+                                label.TextColor3 = colour
+                            end
+                        end
+                    end
+                end
+            end
+        end
+        for player: Player, tag: BillboardGui in pairs(roleTags) do
+            if not seen[player] then
+                roleTags[player] = nil
+                pcall(tag.Destroy, tag)
+            end
+        end
+    end
+
+    local function setEnabled(enabled: boolean): ()
+        settings.enabled = enabled
+        disconnectFeatureConnection("MM2RoleTags")
+        destroyMurderTag()
+        clearRoleTags()
+        syncEspToggles()
+        if not enabled then
+            if feature then
+                feature:SetStatus(nil)
+            end
+            return
+        end
+        lastUpdate = -math.huge
+        featureConnections.MM2RoleTags = TaskManager:Connect(function(
+            deltaTime: number
+        ): ()
+            update()
+        end)
+    end
+
+    local feature = createUniversalFeature(
+        "Role Tags",
+        "MM2 role billboards: role tags, the Murder tag with perk icon, and "
+            .. "gun/trap ESP",
+        16,
+        setEnabled,
+        {
+            categoryName = "Render",
+            parent = MM2Scroll,
+            registry = mm2Features,
+        }
+    )
+
+    addToggleOption(
+        feature,
+        "Murder tag",
+        settings.murderTag,
+        function(value: boolean): ()
+            settings.murderTag = value
+        end,
+        "A billboard reading MURDER over the murderer, in their role colour."
+    )
+    addToggleOption(
+        feature,
+        "Role tags",
+        settings.roleTags,
+        function(value: boolean): ()
+            settings.roleTags = value
+        end,
+        "Every player's role above their head once the round reveals it."
+    )
+    addToggleOption(
+        feature,
+        "Show Perk",
+        settings.showPerk,
+        function(value: boolean): ()
+            settings.showPerk = value
+        end,
+        "Perk icon beside the Murder tag."
+    )
+    addToggleOption(
+        feature,
+        "Gun ESP",
+        settings.gunEsp,
+        function(value: boolean): ()
+            settings.gunEsp = value
+            syncEspToggles()
+        end,
+        "Highlights dropped and carried guns."
+    )
+    addToggleOption(
+        feature,
+        "Trap ESP",
+        settings.trapEsp,
+        function(value: boolean): ()
+            settings.trapEsp = value
+            syncEspToggles()
+        end,
+        "Highlights murderer traps."
+    )
+
+    activeCleanup = function(): ()
+        setEnabled(false)
+    end
+    Module.Events = featureConnections
+    Module.Initialized = true
+    return Module
+end
+
+function Module.destroy(): ()
+    if not Module.Initialized then
+        return
+    end
+    Module.Initialized = false
+    pcall(activeCleanup)
+    activeCleanup = function(): () end
+    Module.Events = {}
+    Module.Runtime = nil
+end
+
+return Module
+
+]],
         ["src/games/MM2/Render/RoundEsp.lua"] = [[
 local Module = {
     Name = "MM2 Round ESP",
@@ -4036,6 +4423,516 @@ function Module.destroy(): ()
     Module.Runtime = nil
 end
 
+return Module
+
+]],
+        ["src/games/MM2/Render/WeaponVisuals.lua"] = [[
+local Module = {
+    Name = "MM2 Weapon Visuals",
+    PlaceId = 142823291,
+    Events = {} :: {[string]: any},
+    Initialized = false,
+    Runtime = nil :: any,
+}
+local activeCleanup: () -> () = function(): () end
+
+function Module.init(runtime: any): any
+    if Module.Initialized then
+        return Module
+    end
+    local core: any = state.mm2Core
+    assert(type(core) == "table", "Weapon Visuals requires the MM2 core")
+    Module.Runtime = runtime
+    local options = {
+        enabled = false,
+        doubleGun = false,
+        doubleKnife = false,
+        electricKnife = false,
+        color = Color3.fromRGB(100, 185, 255),
+        intensity = 1,
+    }
+    local connections: {RBXScriptConnection} = {}
+    local characterConnections: {RBXScriptConnection} = {}
+    local visualFolder: Folder? = nil
+    local electricTask: any = nil
+    local arcs: {any} = {}
+    local queued = false
+    local generation = 0
+    local activeDouble = false
+    local rebuild: () -> ()
+
+    local function disconnectAll(list: {RBXScriptConnection}): ()
+        for _, connection in ipairs(list) do
+            connection:Disconnect()
+        end
+        table.clear(list)
+    end
+
+    -- ------------------------------------------------------------------
+    -- Arm mirroring: while a double weapon is shown, the left arm chain
+    -- copies the right arm's animated pose mirrored across the torso, so
+    -- BOTH arms raise together (R15 shoulder/elbow/wrist and R6 shoulder).
+    -- ------------------------------------------------------------------
+
+    local function mirrorAcross(frame: CFrame, source: CFrame): CFrame
+        local offset: CFrame = frame:ToObjectSpace(source)
+        local position: Vector3 = offset.Position
+        local right: Vector3 = offset.RightVector
+        local up: Vector3 = offset.UpVector
+        return frame * CFrame.fromMatrix(
+            Vector3.new(-position.X, position.Y, position.Z),
+            Vector3.new(right.X, -right.Y, -right.Z),
+            Vector3.new(-up.X, up.Y, up.Z)
+        )
+    end
+
+    local function mirrorJoint(
+        joint: Motor6D,
+        parentFrame: CFrame,
+        desired: CFrame
+    ): ()
+        joint.Transform = (parentFrame * joint.C0):Inverse() * desired * joint.C1
+    end
+
+    local function findJoint(parent: Instance, names: {string}): Motor6D?
+        for _, name: string in ipairs(names) do
+            local joint: Instance? = parent:FindFirstChild(name)
+            if joint and joint:IsA("Motor6D") then
+                return joint :: Motor6D
+            end
+        end
+        return nil
+    end
+
+    local function resetMirror(character: Model): ()
+        local torso: Instance? = character:FindFirstChild("UpperTorso")
+            or character:FindFirstChild("Torso")
+        if not torso then
+            return
+        end
+        local candidates: {Instance} = {
+            (character:FindFirstChild("LeftUpperArm") :: Instance?)
+                or (character:FindFirstChild("Left Arm") :: Instance?),
+            character:FindFirstChild("LeftLowerArm"),
+            character:FindFirstChild("LeftHand"),
+            torso,
+        }
+        for _, holder: Instance? in ipairs(candidates) do
+            if not holder then
+                continue
+            end
+            for _, child: Instance in ipairs((holder :: Instance):GetChildren()) do
+                if child:IsA("Motor6D")
+                    and string.find(child.Name, "Left") then
+                    (child :: Motor6D).Transform = CFrame.new()
+                end
+            end
+        end
+    end
+
+    local function mirrorArms(character: Model): ()
+        if not activeDouble then
+            return
+        end
+        local torso: BasePart? = (character:FindFirstChild("UpperTorso")
+            or character:FindFirstChild("Torso")) :: BasePart?
+        if not torso then
+            return
+        end
+        local rUpper: BasePart? = (character:FindFirstChild("RightUpperArm")
+            or character:FindFirstChild("Right Arm")) :: BasePart?
+        local lUpper: BasePart? = (character:FindFirstChild("LeftUpperArm")
+            or character:FindFirstChild("Left Arm")) :: BasePart?
+        if not rUpper or not lUpper then
+            return
+        end
+        local rLower: BasePart? =
+            character:FindFirstChild("RightLowerArm") :: BasePart?
+        local lLower: BasePart? =
+            character:FindFirstChild("LeftLowerArm") :: BasePart?
+        local rHand: BasePart? =
+            character:FindFirstChild("RightHand") :: BasePart?
+        local lHand: BasePart? = character:FindFirstChild("LeftHand") :: BasePart?
+
+        local leftShoulder: Motor6D? =
+            findJoint(lUpper, {"LeftShoulder", "Left Shoulder"})
+                or findJoint(torso, {"Left Shoulder", "LeftShoulder"})
+        if not leftShoulder then
+            return
+        end
+        local frame: CFrame = (torso :: BasePart).CFrame
+        local desiredUpper: CFrame =
+            mirrorAcross(frame, (rUpper :: BasePart).CFrame)
+        mirrorJoint(leftShoulder :: Motor6D, frame, desiredUpper)
+
+        if rLower and lLower then
+            local leftElbow: Motor6D? = findJoint(lLower, {"LeftElbow"})
+            if leftElbow then
+                local desiredLower: CFrame =
+                    mirrorAcross(frame, (rLower :: BasePart).CFrame)
+                mirrorJoint(leftElbow :: Motor6D, desiredUpper, desiredLower)
+                if rHand and lHand then
+                    local leftWrist: Motor6D? =
+                        findJoint(lHand, {"LeftWrist"})
+                    if leftWrist then
+                        local desiredHand: CFrame =
+                            mirrorAcross(frame, (rHand :: BasePart).CFrame)
+                        mirrorJoint(
+                            leftWrist :: Motor6D,
+                            desiredLower,
+                            desiredHand
+                        )
+                    end
+                end
+            end
+        end
+    end
+
+    -- ------------------------------------------------------------------
+
+    local function clearVisuals(): ()
+        if electricTask then
+            electricTask:Disconnect()
+            electricTask = nil
+        end
+        table.clear(arcs)
+        if visualFolder then
+            visualFolder:Destroy()
+            visualFolder = nil
+        end
+        if activeDouble then
+            activeDouble = false
+            local character: Model? = LocalPlayer.Character
+            if character then
+                pcall(resetMirror, character :: Model)
+            end
+        end
+    end
+
+    local function queueRebuild(): ()
+        if not options.enabled or queued then
+            return
+        end
+        queued = true
+        local version: number = generation
+        task.defer(function(): ()
+            if version ~= generation then
+                return
+            end
+            queued = false
+            if options.enabled then
+                rebuild()
+            end
+        end)
+    end
+
+    -- Clone geometry only, never a Tool/model or functional descendants. All
+    -- sanitization happens detached, before anything enters the DataModel.
+    local function geometryClone(source: BasePart): BasePart?
+        if not (source:IsA("Part") or source:IsA("MeshPart") or source:IsA("UnionOperation")
+            or source:IsA("WedgePart") or source:IsA("CornerWedgePart")) then
+            return nil
+        end
+        local ok: boolean, copy: any = pcall(source.Clone, source)
+        if not ok or not copy then
+            return nil
+        end
+        copy:ClearAllChildren()
+        for _, tag: string in ipairs(CollectionService:GetTags(copy)) do
+            CollectionService:RemoveTag(copy, tag)
+        end
+        for key: string in pairs(copy:GetAttributes()) do
+            copy:SetAttribute(key, nil)
+        end
+        copy.Name = "LocalWeaponGeometry"
+        copy.Anchored = false
+        copy.CanCollide = false
+        copy.CanTouch = false
+        copy.CanQuery = false
+        copy.Massless = true
+        copy.AssemblyLinearVelocity = Vector3.zero
+        copy.AssemblyAngularVelocity = Vector3.zero
+        -- Recreate only visual children; no nested scripts, references or tags.
+        for _, child: Instance in ipairs(source:GetChildren()) do
+            if child:IsA("DataModelMesh") or child:IsA("Decal")
+                or child:IsA("Texture") or child:IsA("SurfaceAppearance") then
+                local childOk: boolean, visual: any = pcall(child.Clone, child)
+                if childOk and visual then
+                    visual:ClearAllChildren()
+                    for _, tag: string in ipairs(CollectionService:GetTags(visual)) do
+                        CollectionService:RemoveTag(visual, tag)
+                    end
+                    for key: string in pairs(visual:GetAttributes()) do
+                        visual:SetAttribute(key, nil)
+                    end
+                    visual.Parent = copy
+                end
+            end
+        end
+        return copy
+    end
+
+    local function attach(part: BasePart, limb: BasePart, pose: CFrame): ()
+        part.CFrame = pose
+        local joint = Instance.new("WeldConstraint")
+        joint.Part0 = limb
+        joint.Part1 = part
+        joint.Parent = part
+        part.Parent = visualFolder
+    end
+
+    local function addElectric(part: BasePart): ()
+        -- Own invisible carrier: the real weapon receives no children/changes.
+        local carrier = Instance.new("Part")
+        carrier.Name = "LocalElectricCarrier"
+        carrier.Size = Vector3.new(0.05, 0.05, 0.05)
+        carrier.Transparency = 1
+        carrier.Anchored = false
+        carrier.CanCollide = false
+        carrier.CanTouch = false
+        carrier.CanQuery = false
+        carrier.Massless = true
+        attach(carrier, part, part.CFrame)
+        local size: Vector3 = part.Size
+        local length: number = math.max(size.X, size.Y, size.Z, 0.5)
+        local axis: Vector3 = size.X >= size.Y and size.X >= size.Z and Vector3.xAxis
+            or (size.Y >= size.Z and Vector3.yAxis or Vector3.zAxis)
+        local nodes: {Attachment} = {}
+        for i = 1, 6 do
+            local node = Instance.new("Attachment")
+            node.Position = axis * length * ((i - 1) / 5 - 0.5)
+            node.Parent = carrier
+            table.insert(nodes, node)
+            if i > 1 then
+                local beam = Instance.new("Beam")
+                beam.Attachment0 = nodes[i - 1]
+                beam.Attachment1 = node
+                beam.FaceCamera = true
+                beam.Color = ColorSequence.new(options.color)
+                beam.LightEmission = 1
+                beam.Width0 = 0.02 + 0.025 * options.intensity
+                beam.Width1 = beam.Width0
+                beam.Transparency = NumberSequence.new(0.1)
+                beam.Parent = carrier
+            end
+        end
+        table.insert(arcs, {nodes = nodes, axis = axis, length = length})
+    end
+
+    local function visualBlade(tool: Tool): BasePart?
+        local vh: Instance? = tool:FindFirstChild("VH", true)
+        if vh then
+            if vh:IsA("BasePart") then
+                return vh :: BasePart
+            end
+            local geometry: Instance? = vh:FindFirstChildWhichIsA("BasePart", true)
+            if geometry then
+                return geometry :: BasePart
+            end
+        end
+        local handle: Instance? = tool:FindFirstChild("Handle")
+        if handle and handle:IsA("BasePart") then
+            return handle :: BasePart
+        end
+        return (tool:FindFirstChildWhichIsA("BasePart", true) :: BasePart?)
+    end
+
+    rebuild = function(): ()
+        clearVisuals()
+        local character: Model? = LocalPlayer.Character
+        if not options.enabled or not character then
+            return
+        end
+        local left: BasePart? = (character:FindFirstChild("LeftHand")
+            or character:FindFirstChild("Left Arm")) :: BasePart?
+        local right: BasePart? = (character:FindFirstChild("RightHand")
+            or character:FindFirstChild("Right Arm")) :: BasePart?
+        visualFolder = Instance.new("Folder")
+        visualFolder.Name = "MM2LocalWeaponVisuals"
+        visualFolder.Parent = workspace
+        for _, kind: string in ipairs({"Gun", "Knife"}) do
+            local tool: Tool? = core.getPlayerWeapon(LocalPlayer, kind, true)
+            if not tool or tool.Parent ~= character then
+                continue
+            end
+            local double: boolean = kind == "Gun" and options.doubleGun
+                or kind == "Knife" and options.doubleKnife
+            local blade: BasePart? = visualBlade(tool)
+            if kind == "Knife" and options.electricKnife and blade then
+                addElectric(blade)
+            end
+            if not double
+                or not left
+                or not right
+                or not left:IsA("BasePart")
+                or not right:IsA("BasePart") then
+                continue
+            end
+            local copied: number = 0
+            for _, source: Instance in ipairs(tool:GetDescendants()) do
+                if not source:IsA("BasePart") then
+                    continue
+                end
+                local part: BasePart? =
+                    geometryClone(source :: BasePart)
+                if part then
+                    attach(
+                        part,
+                        left :: BasePart,
+                        (left :: BasePart).CFrame
+                            * (right :: BasePart).CFrame:ToObjectSpace(
+                                (source :: BasePart).CFrame
+                            )
+                    )
+                    if kind == "Knife"
+                        and options.electricKnife
+                        and source == blade then
+                        addElectric(part)
+                    end
+                    copied += 1
+                    if copied >= 64 then
+                        break -- bounded cost for complex skins
+                    end
+                end
+            end
+            if copied > 0 then
+                -- A mirrored left arm keeps the cloned weapon raised next to
+                -- the real one instead of hanging from a dead limb.
+                activeDouble = true
+            end
+        end
+        if #arcs > 0 then
+            local elapsed: number = 0
+            electricTask = TaskManager:Connect(function(dt: number): ()
+                elapsed += dt
+                if elapsed < 0.125 then
+                    return -- 8 Hz only while electric is visible
+                end
+                elapsed = 0
+                for _, arc: any in ipairs(arcs) do
+                    for i, node: Attachment in ipairs(arc.nodes) do
+                        local jitter: Vector3 = (i == 1 or i == #arc.nodes)
+                                and Vector3.zero
+                            or Vector3.new(
+                                math.random() - 0.5,
+                                math.random() - 0.5,
+                                math.random() - 0.5
+                            ) * 0.22 * options.intensity
+                        node.Position = arc.axis * arc.length
+                            * ((i - 1) / 5 - 0.5)
+                            + jitter
+                    end
+                end
+            end)
+        end
+    end
+
+    local function watchCharacter(character: Model): ()
+        disconnectAll(characterConnections)
+        clearVisuals()
+        table.insert(
+            characterConnections,
+            character.DescendantAdded:Connect(function(object: Instance): ()
+                if object:IsA("Tool") or object:IsA("BasePart") then
+                    queueRebuild()
+                end
+            end)
+        )
+        table.insert(
+            characterConnections,
+            character.DescendantRemoving:Connect(function(object: Instance): ()
+                if object:IsA("Tool") or object:IsA("BasePart") then
+                    queueRebuild()
+                end
+            end)
+        )
+        queueRebuild()
+    end
+
+    local function setEnabled(enabled: boolean): ()
+        generation += 1
+        queued = false
+        options.enabled = enabled
+        disconnectAll(connections)
+        disconnectAll(characterConnections)
+        clearVisuals()
+        if not enabled then
+            return
+        end
+        table.insert(
+            connections,
+            LocalPlayer.CharacterAdded:Connect(watchCharacter)
+        )
+        table.insert(
+            connections,
+            LocalPlayer.CharacterRemoving:Connect(function(): ()
+                generation += 1
+                queued = false
+                disconnectAll(characterConnections)
+                clearVisuals()
+            end)
+        )
+        -- Mirror the animated right arm onto the left arm every frame while a
+        -- double weapon is on screen (after the Animator pass, before render).
+        table.insert(
+            connections,
+            RunService.PreSimulation:Connect(function(): ()
+                local character: Model? = LocalPlayer.Character
+                if character then
+                    pcall(mirrorArms, character :: Model)
+                end
+            end)
+        )
+        if LocalPlayer.Character then
+            watchCharacter(LocalPlayer.Character)
+        end
+    end
+
+    local feature = createUniversalFeature(
+        "Weapon Visuals",
+        "Local cosmetics only: double weapons raise both arms, electric "
+            .. "knife arcs. No extra damage or replication.",
+        15,
+        setEnabled,
+        {categoryName = "Render", parent = MM2Scroll, registry = mm2Features}
+    )
+    addToggleOption(feature, "Double Gun", false, function(value: boolean): ()
+        options.doubleGun = value
+        queueRebuild()
+    end)
+    addToggleOption(feature, "Double Knife", false, function(value: boolean): ()
+        options.doubleKnife = value
+        queueRebuild()
+    end)
+    addToggleOption(feature, "Electric Knife", false, function(value: boolean): ()
+        options.electricKnife = value
+        queueRebuild()
+    end, "Original local beam effect, not the official inventory effect.")
+    addColorOption(feature, "Electric color", options.color, function(value: Color3): ()
+        options.color = value
+        queueRebuild()
+    end)
+    addNumberOption(feature, "Electric intensity", 1, 0.25, 3, function(value: number): ()
+        options.intensity = math.clamp(value, 0.25, 3)
+        queueRebuild()
+    end)
+
+    activeCleanup = function(): ()
+        setEnabled(false)
+    end
+    Module.Initialized = true
+    return Module
+end
+
+function Module.destroy(): ()
+    if not Module.Initialized then
+        return
+    end
+    Module.Initialized = false
+    pcall(activeCleanup)
+    activeCleanup = function(): () end
+    Module.Runtime = nil
+end
 return Module
 
 ]],
@@ -14155,6 +15052,10 @@ function Module.init(context: Runtime): any
     local localPlayer: Player = host.LocalPlayer
     local userInput: UserInputService = host.UserInputService
     local currentWorkspace: Workspace = host.workspace or workspace
+    -- Advanced team check (always on): the entity library only knows team
+    -- providers, so role-based verdicts (MM2 sides, for example) are applied
+    -- as a post filter here.
+    local teamCheck: any = host.state and host.state.teamCheck
 
     local nextSwingAt: number = 0
     local nextStatusAt: number = 0
@@ -14388,6 +15289,20 @@ function Module.init(context: Runtime): any
                     IncludeNPCs = options["Target NPCs"].Value,
                     Sort = options["Priority"].Value,
                 })
+                if options["Team check"].Value and teamCheck then
+                    local kept: {any} = {}
+                    for _, entity: any in ipairs(targets) do
+                        local teammate: boolean = false
+                        if entity.Player
+                            and type(teamCheck.isSameTeam) == "function" then
+                            teammate = teamCheck.isSameTeam(entity.Player)
+                        end
+                        if not teammate then
+                            table.insert(kept, entity)
+                        end
+                    end
+                    targets = kept
+                end
                 updateTargetStatus(#targets)
                 if #targets == 0 then
                     clearHighlights()
@@ -14434,8 +15349,7 @@ function Module.init(context: Runtime): any
                     if weapons then
                         for _, label: string in ipairs(aura.Options["Weapons"].Selected or {}) do
                             local candidate: any = weapons:Find(label)
-
-                        if candidate and weapons:Activate(candidate, entity) then
+                            if candidate and weapons:Activate(candidate, entity) then
                                 swung = true
                             end
                         end
@@ -14491,38 +15405,15 @@ function Module.init(context: Runtime): any
         end,
     })
 
-    aura:CreateList({
-        Name = "Weapons",
-        Items = function(): {string}
-            if not weapons then
-                return {}
-            end
-            return weapons:Labels({All = true, Melee = true})
-        end,
-
-        EmptyText = "",
-        Tooltip = "Melee weapons this module may swing: tools, view models, "
-            .. "inventory slots and the game's own attack button. Empty means "
-            .. "whatever you are holding.",
+    aura:CreateDropdown({
+        Name = "Activation",
+        List = {"Always", "Hold key"},
+        Index = 1,
     })
-    aura:CreateTextBox({
-        Name = "Weapon name",
-        Default = "",
-        Tooltip = "Part of the tool's name. Leave empty and the module uses "
-            .. "whatever you last swung by hand.",
-    })
-    aura:CreateButton({
-        Name = "Bind held tool",
-        Tooltip = "Remembers whatever is in your hands right now.",
-        Function = function(): ()
-            local tool: Tool? = equippedTool()
-            if not tool then
-                aura:Notify("nothing equipped")
-                return
-            end
-            learnedWeapon = (tool :: Tool).Name
-            aura:Notify((tool :: Tool).Name .. " bound")
-        end,
+    aura:CreateBind({
+        Name = "Hold key",
+        Show = {Option = "Activation", Values = {"Hold key"}},
+        Default = Enum.KeyCode.Unknown,
     })
     aura:CreateSlider({
         Name = "Reach",
@@ -14556,16 +15447,6 @@ function Module.init(context: Runtime): any
             .. "not a person, and a server that logs click rates knows it.",
     })
 
-    aura:CreateDropdown({
-        Name = "Activation",
-        List = {"Always", "Hold key"},
-        Index = 1,
-    })
-    aura:CreateBind({
-        Name = "Hold key",
-        Show = {Option = "Activation", Values = {"Hold key"}},
-        Default = Enum.KeyCode.Unknown,
-    })
     aura:CreateSlider({
         Name = "Field of view",
         Min = 30,
@@ -14589,39 +15470,38 @@ function Module.init(context: Runtime): any
         Tooltip = "How many times the weapon is pressed for each swing the "
             .. "rate allows. Some games count every press.",
     })
-    aura:CreateToggle({
-        Name = "Hit through walls",
-        Default = true,
-        Tooltip = "Fire contact damage even when the target is behind "
-            .. "geometry. Independent of the wall check, which decides "
-            .. "whether the target is picked at all.",
+    aura:CreateList({
+        Name = "Weapons",
+        Items = function(): {string}
+            if not weapons then
+                return {}
+            end
+            return weapons:Labels({All = true, Melee = true})
+        end,
+
+        EmptyText = "",
+        Tooltip = "Melee weapons this module may swing: tools, view models, "
+            .. "inventory slots and the game's own attack button. Empty means "
+            .. "whatever you are holding.",
     })
-    aura:CreateToggle({
-        Name = "Contact damage",
-        Default = true,
-        Tooltip = "Also fire the weapon's touch events. Needed by most melee "
-            .. "weapons; requires firetouchinterest.",
+    aura:CreateTextBox({
+        Name = "Weapon name",
+        Default = "",
+        Tooltip = "Part of the tool's name. Leave empty and the module uses "
+            .. "whatever you last swung by hand.",
     })
-    aura:CreateToggle({
-        Name = "Wall check",
-        Default = false,
-        Tooltip = "Off by default: the aura hits through walls and floors "
-            .. "until you ask it not to.",
-    })
-    aura:CreateToggle({
-        Name = "Team check",
-        Default = true,
-        Tooltip = "Skip teammates and Friend List entries.",
-    })
-    aura:CreateToggle({
-        Name = "Target NPCs",
-        Default = false,
-        Tooltip = "Include non-player humanoid models in the reach scan.",
-    })
-    aura:CreateToggle({
-        Name = "Require tool",
-        Default = false,
-        Tooltip = "Do nothing while your hands are empty.",
+    aura:CreateButton({
+        Name = "Bind held tool",
+        Tooltip = "Remembers whatever is in your hands right now.",
+        Function = function(): ()
+            local tool: Tool? = equippedTool()
+            if not tool then
+                aura:Notify("nothing equipped")
+                return
+            end
+            learnedWeapon = (tool :: Tool).Name
+            aura:Notify((tool :: Tool).Name .. " bound")
+        end,
     })
     aura:CreateToggle({
         Name = "Auto equip",
@@ -14634,6 +15514,42 @@ function Module.init(context: Runtime): any
                 weapons:SetAllowEquip(value)
             end
         end,
+    })
+    aura:CreateToggle({
+        Name = "Require tool",
+        Default = false,
+        Tooltip = "Do nothing while your hands are empty.",
+    })
+    aura:CreateToggle({
+        Name = "Team check",
+        Default = true,
+        Tooltip = "Skip teammates, analysed by the always-on advanced team "
+            .. "check (game teams, roles, team colours, neutral rules), plus "
+            .. "Friend List entries.",
+    })
+    aura:CreateToggle({
+        Name = "Wall check",
+        Default = false,
+        Tooltip = "Off by default: the aura hits through walls and floors "
+            .. "until you ask it not to.",
+    })
+    aura:CreateToggle({
+        Name = "Contact damage",
+        Default = true,
+        Tooltip = "Also fire the weapon's touch events. Needed by most melee "
+            .. "weapons; requires firetouchinterest.",
+    })
+    aura:CreateToggle({
+        Name = "Hit through walls",
+        Default = true,
+        Tooltip = "Fire contact damage even when the target is behind "
+            .. "geometry. Independent of the wall check, which decides "
+            .. "whether the target is picked at all.",
+    })
+    aura:CreateToggle({
+        Name = "Target NPCs",
+        Default = false,
+        Tooltip = "Include non-player humanoid models in the reach scan.",
     })
     aura:CreateToggle({
         Name = "Highlight targets",
@@ -14660,10 +15576,231 @@ function Module.init(context: Runtime): any
 end
 
 function Module.destroy(): ()
+    if aura and aura.Enabled then
+        pcall(function(): ()
+            aura:Toggle(false)
+        end)
+    end
     if activeCleanup then
         pcall(activeCleanup)
     end
     activeCleanup = nil
+    Module.Initialized = false
+end
+
+return Module
+
+]],
+        ["src/games/universal/Combat/TriggerBot.lua"] = [[
+export type Runtime = {
+    framework: any,
+    entity: any,
+    host: any,
+    services: any,
+}
+
+local Module = {
+    Name = "TriggerBot",
+    PlaceId = 0,
+    Events = {} :: {[string]: any},
+    Initialized = false,
+}
+
+local activeCard: any = nil
+local activeCleanup: (() -> ())? = nil
+
+function Module.init(context: Runtime): any
+    local host: any = context.host
+    local framework: any = context.framework
+    local localPlayer: Player = host.LocalPlayer
+    local playersService: Players = host.Players
+    local currentWorkspace: Workspace = host.workspace or workspace
+    local protectedTargets: any = context.services.protectedTargets
+    local teamCheck: any = host.state and host.state.teamCheck
+
+    local nextShotAt: number = 0
+
+    local function pressMouseButton(): ()
+        local environment: any = getfenv()
+        local press: any = environment.mouse1press
+        local release: any = environment.mouse1release
+        if type(press) == "function" and type(release) == "function" then
+            pcall(press)
+            pcall(release)
+            return
+        end
+        local ok: boolean, virtualInput: any = pcall(function(): any
+            return game:GetService("VirtualInputManager")
+        end)
+        if not ok or type(virtualInput) ~= "table" then
+            return
+        end
+        local camera: Camera? = currentWorkspace.CurrentCamera
+        local viewport: Vector2 = camera
+            and camera.ViewportSize
+            or Vector2.new(0, 0)
+        local x: number = viewport.X / 2
+        local y: number = viewport.Y / 2
+        pcall(function(): ()
+            (virtualInput :: any):SendMouseButtonEvent(x, y, 0, true, game, 0)
+        end)
+        pcall(function(): ()
+            (virtualInput :: any):SendMouseButtonEvent(x, y, 0, false, game, 0)
+        end)
+    end
+
+    local function characterOf(part: BasePart): Model?
+        local current: Instance? = part
+        while current and current ~= currentWorkspace do
+            if current:IsA("Model") then
+                local humanoid: Humanoid? =
+                    (current :: Model):FindFirstChildOfClass("Humanoid")
+                    :: Humanoid?
+                if humanoid then
+                    return current :: Model
+                end
+            end
+            current = current.Parent
+        end
+        return nil
+    end
+
+    local trigger: any = nil
+
+    trigger = framework.Categories.Combat:CreateModule({
+        Name = "TriggerBot",
+        Category = "Combat",
+        ConfigKey = "Universal.TriggerBot",
+        Order = 2,
+        Tooltip = "Fires your weapon the instant the crosshair rests on a "
+            .. "valid enemy. Uses the always-on team check.",
+        Function = function(enabled: boolean): ()
+            if not enabled then
+                trigger:SetStatus(nil)
+                return
+            end
+            nextShotAt = 0
+            trigger:SetStatus("armed")
+
+            trigger:Render(function(): ()
+                local camera: Camera? = currentWorkspace.CurrentCamera
+                if not camera then
+                    return
+                end
+                local now: number = os.clock()
+                if now < nextShotAt then
+                    return
+                end
+
+                local options: any = trigger.Options
+                local range: number = options["Range"].Value
+                local viewport: Vector2 = camera.ViewportSize
+                local ray: Ray = camera:ViewportPointToRay(
+                    viewport.X / 2,
+                    viewport.Y / 2
+                )
+                local parameters: RaycastParams = RaycastParams.new()
+                parameters.FilterType = Enum.RaycastFilterType.Exclude
+                parameters.IgnoreWater = true
+                local exclude: {Instance} = {}
+                if localPlayer.Character then
+                    table.insert(exclude, localPlayer.Character :: Instance)
+                end
+                parameters.FilterDescendantsInstances = exclude
+
+                local hit: RaycastResult? = currentWorkspace:Raycast(
+                    ray.Origin,
+                    ray.Direction * range,
+                    parameters
+                )
+                if not hit then
+                    trigger:SetStatus("armed")
+                    return
+                end
+                local character: Model? = characterOf((hit :: RaycastResult).Instance :: BasePart)
+                if not character then
+                    trigger:SetStatus("armed")
+                    return
+                end
+                local player: Player? =
+                    playersService:GetPlayerFromCharacter(character :: Model)
+                if not player or player == localPlayer then
+                    trigger:SetStatus("armed")
+                    return
+                end
+                local humanoid: Humanoid? =
+                    (character :: Model):FindFirstChildOfClass("Humanoid")
+                    :: Humanoid?
+                if not humanoid or (humanoid :: Humanoid).Health <= 0 then
+                    return
+                end
+                if protectedTargets and protectedTargets.isProtected(player) then
+                    return
+                end
+                -- Advanced team check (always on): never fire at a teammate.
+                if not options["Teammates"].Value then
+                    local friendly: boolean = false
+                    if teamCheck and type(teamCheck.isSameTeam) == "function" then
+                        friendly = teamCheck.isSameTeam(player)
+                    end
+                    if friendly then
+                        trigger:SetStatus("teammate")
+                        return
+                    end
+                end
+
+                nextShotAt = now + options["Delay"].Value
+                pressMouseButton()
+                trigger:SetStatus("fired")
+            end)
+        end,
+    })
+
+    trigger:CreateSlider({
+        Name = "Range",
+        Min = 25,
+        Max = 2000,
+        Step = 25,
+        Default = 500,
+        Tooltip = "How far the crosshair ray searches for a target.",
+    })
+    trigger:CreateSlider({
+        Name = "Delay",
+        Min = 0.05,
+        Max = 1,
+        Step = 0.05,
+        Default = 0.15,
+        Tooltip = "Seconds between automatic shots.",
+    })
+    trigger:CreateToggle({
+        Name = "Teammates",
+        Default = false,
+        Tooltip = "Also fire at teammates. The advanced team check protects "
+            .. "them while this is off.",
+    })
+    trigger:CreateNote(
+        "Clicks the mouse for you when the crosshair is over an enemy. It "
+            .. "never aims - point the crosshair yourself. Uses mouse1press "
+            .. "when the executor provides it, VirtualInputManager otherwise."
+    )
+
+    activeCard = trigger
+    activeCleanup = function(): () end
+    Module.Initialized = true
+    return trigger
+end
+
+function Module.destroy(): ()
+    if activeCard and activeCard.Enabled then
+        pcall(function(): ()
+            activeCard:Toggle(false)
+        end)
+    end
+    if activeCleanup then
+        pcall(activeCleanup)
+    end
+    activeCleanup = nil
+    activeCard = nil
     Module.Initialized = false
 end
 
@@ -17078,6 +18215,12 @@ function Module.init(context: Runtime): any
         originalMotorHinges = setmetatable({}, {__mode = "k"}) :: {[HingeConstraint]: HingeState},
         velocityExcess = setmetatable({}, {__mode = "k"}) :: {[BasePart]: number},
         motorExcess = setmetatable({}, {__mode = "k"}) :: {[HingeConstraint]: number},
+        -- Belt and suspenders for disable: the capture map is weak-keyed, so
+        -- a respawn or a stale session could lose it while the humanoid still
+        -- runs at the boosted value. Remember the base and the last applied
+        -- value so "off" always returns the character to normal speed.
+        baseWalkSpeed = nil :: number?,
+        lastAppliedWalkSpeed = nil :: number?,
     }
 
     local function characterParts(): (Model?, Humanoid?, BasePart?)
@@ -17298,6 +18441,19 @@ function Module.init(context: Runtime): any
             restoreWalkSpeed()
             restoreVehicle()
             if not enabled then
+                -- Even when the weak capture map was lost, the live humanoid
+                -- must return to its normal speed the moment the card goes
+                -- off - not "whenever the game next touches WalkSpeed".
+                if runtime.baseWalkSpeed and runtime.lastAppliedWalkSpeed then
+                    local _, humanoid: Humanoid? = characterParts()
+                    if humanoid
+                        and (humanoid :: Humanoid).WalkSpeed
+                            == runtime.lastAppliedWalkSpeed then
+                        (humanoid :: Humanoid).WalkSpeed =
+                            runtime.baseWalkSpeed
+                    end
+                end
+                runtime.lastAppliedWalkSpeed = nil
                 speed:SetStatus(nil)
                 return
             end
@@ -17353,8 +18509,13 @@ function Module.init(context: Runtime): any
                     if runtime.originalWalkSpeed[resolvedHumanoid] == nil then
                         runtime.originalWalkSpeed[resolvedHumanoid] =
                             resolvedHumanoid.WalkSpeed
+                        if runtime.baseWalkSpeed == nil
+                            or resolvedHumanoid.WalkSpeed < runtime.baseWalkSpeed then
+                            runtime.baseWalkSpeed = resolvedHumanoid.WalkSpeed
+                        end
                     end
                     resolvedHumanoid.WalkSpeed = target
+                    runtime.lastAppliedWalkSpeed = target
                     return
                 end
                 restoreWalkSpeed()
@@ -21453,9 +22614,22 @@ function Module.init(context: Runtime): any
     local entity: any = context.entity
     local render: any = context.render
     local protectedTargets: any = context.services.protectedTargets
+    local gameBridge: any = context.services.gameBridge
+    local teamCheck: any = context.host.state and context.host.state.teamCheck
     local currentWorkspace: Workspace = context.host.workspace or workspace
     local layer: Frame = render:Layer("ArrowsLayer")
     local shown: {[Player]: boolean} = {}
+
+    local function roleColour(player: Player): Color3?
+        if gameBridge and type(gameBridge.playerRoleColor) == "function" then
+            local ok: boolean, colour: any =
+                pcall(gameBridge.playerRoleColor, player)
+            if ok and typeof(colour) == "Color3" then
+                return colour
+            end
+        end
+        return nil
+    end
 
     local card: any
     local function clear(): ()
@@ -21491,7 +22665,13 @@ function Module.init(context: Runtime): any
                 local count: number = 0
                 for _, target: any in ipairs(entity:Refresh()) do
                     local player: Player = target.Player
-                    if (not card.Options["Teammates"].Value and target.IsFriendly)
+                    local friendly: boolean = target.IsFriendly
+                    if not friendly
+                        and teamCheck
+                        and type(teamCheck.isSameTeam) == "function" then
+                        friendly = teamCheck.isSameTeam(player)
+                    end
+                    if (not card.Options["Teammates"].Value and friendly)
                         or protectedTargets.isProtected(player)
                         or not target.Humanoid
                         or target.Humanoid.Health <= 0
@@ -21518,7 +22698,16 @@ function Module.init(context: Runtime): any
                     local perpendicular: Vector2 = Vector2.new(-direction.Y, direction.X)
                     local tip: Vector2 = centre + direction * radius
                     local back: Vector2 = tip - direction * 16
-                    local colour: Color3 = card.Options["Colour"].Value
+                    -- Colour priority: the game's role colour when roles are
+                    -- known (white by default otherwise), then teammates in
+                    -- their team colour while the team-colour option is on.
+                    local roleColourForTarget: Color3? = roleColour(player)
+                    local colour: Color3 = roleColourForTarget
+                        or (card.Options["Team colours"].Value
+                            and friendly
+                            and player.Team
+                            and player.Team.TeamColor.Color
+                            or card.Options["Colour"].Value)
                     drawing:Line("Arrow", 1, tip, back + perpendicular * 8, 2, colour)
                     drawing:Line("Arrow", 2, tip, back - perpendicular * 8, 2, colour)
                     drawing:HideLines("Arrow", 3, 8)
@@ -21551,10 +22740,11 @@ function Module.init(context: Runtime): any
         end,
     })
 
-    card:CreateColor({Name = "Colour", Default = Color3.fromRGB(0, 204, 255)})
+    card:CreateColor({Name = "Colour", Default = Color3.fromRGB(255, 255, 255), Tooltip = "Base arrow colour. Arrows use role colours instead whenever the game knows roles."})
     card:CreateToggle({Name = "Distance", Default = true})
     card:CreateSlider({Name = "Max distance", Min = 25, Max = 2000, Step = 25, Default = 500})
-    card:CreateToggle({Name = "Teammates", Default = false})
+    card:CreateToggle({Name = "Teammates", Default = false, Tooltip = "Also point at teammates. The advanced team check decides who counts."})
+    card:CreateToggle({Name = "Team colours", Default = false, Tooltip = "Teammates point in their Roblox team colour; everyone else keeps the base colour. Role colours always win."})
 
     activeCard = card
     Module.Initialized = true
@@ -21590,54 +22780,46 @@ local Module = {
 local activeCard: any = nil
 local activeBridgeCleanup: (() -> ())? = nil
 
-local PERK_ICONS: {[string]: string} = {
-    ["Footsteps"] = "rbxassetid://336404773",
-    ["Sleight"] = "rbxassetid://340309581",
-    ["Ninja"] = "rbxassetid://416832054",
-    ["Haste"] = "rbxassetid://416942717",
-    ["FakeGun"] = "rbxassetid://17899774181",
-    ["Fake Gun"] = "rbxassetid://17899774181",
-    ["Ghost"] = "rbxassetid://335206856",
-    ["Xray"] = "rbxassetid://340313896",
-    ["X-Ray"] = "rbxassetid://340313896",
-    ["Trap"] = "rbxassetid://4966828196",
-    ["Sprint"] = "rbxassetid://4970219155",
-    ["VampireBat"] = "rbxassetid://129078122681639",
-    ["Bat Form"] = "rbxassetid://129078122681639",
-    ["Decoy"] = "rbxassetid://113722008817201",
-}
-
 function Module.init(context: Runtime): any
     local framework: any = context.framework
     local entity: any = context.entity
     local host: any = context.host
     local protectedTargets: any = context.services.protectedTargets
+    local gameBridge: any = context.services.gameBridge
+    local teamCheck: any = host.state and host.state.teamCheck
     local currentWorkspace: Workspace = host.workspace or workspace
     local highlights: {[Player]: Highlight} = {}
-    local murderTag: BillboardGui? = nil
-    local roleTags: {[Player]: BillboardGui} = {}
+    local nameTags: {[Player]: BillboardGui} = {}
     local lastUpdate: number = -math.huge
 
-    local function destroyMurderTag(): ()
-        if murderTag then
-            pcall(murderTag.Destroy, murderTag)
-            murderTag = nil
+    local function roleNameColour(player: Player): Color3?
+        if type(gameBridge) == "table"
+            and type(gameBridge.playerRoleColor) == "function" then
+            local ok: boolean, colour: any =
+                pcall(gameBridge.playerRoleColor, player)
+            if ok and typeof(colour) == "Color3" then
+                return colour
+            end
         end
+        return nil
     end
 
-    local function clearRoleTags(): ()
-        for player: Player, tag: BillboardGui in pairs(roleTags) do
-            roleTags[player] = nil
+    local function clearNameTags(): ()
+        for player: Player, tag: BillboardGui in pairs(nameTags) do
+            nameTags[player] = nil
             pcall(tag.Destroy, tag)
         end
     end
 
-    local gameBridge: any = context.services.gameBridge
-    if activeBridgeCleanup then
-        pcall(activeBridgeCleanup)
-        activeBridgeCleanup = nil
+    local function clear(): ()
+        for player: Player, highlight: Highlight in pairs(highlights) do
+            highlights[player] = nil
+            highlight:Destroy()
+        end
+        clearNameTags()
     end
-    if type(gameBridge.onEvent) == "function" then
+
+    if type(gameBridge) == "table" and type(gameBridge.onEvent) == "function" then
         activeBridgeCleanup = gameBridge.onEvent(function(kind: string): ()
             if kind == "roleUpdate" then
                 lastUpdate = -math.huge
@@ -21659,37 +22841,30 @@ function Module.init(context: Runtime): any
                 host.queueConfigSave()
             end
         end
+        -- The old build shipped team colours ON by default, which painted
+        -- everyone red when no team data existed. Forget that legacy state
+        -- (unless the player actually customised the colours) so the new
+        -- white default applies.
+        local teamKey: string = "Universal.Chams.Teamcolours"
+        if store.states[teamKey] == true
+            and store.values["Universal.Chams.Fillcolour"] == nil
+            and store.values["Universal.Chams.Outlinecolour"] == nil then
+            store.states[teamKey] = false
+            if type(host.queueConfigSave) == "function" then
+                host.queueConfigSave()
+            end
+        end
     end
 
     local card: any
-
-    local function syncMM2Extras(enabled: boolean): ()
-        if state and state.mm2Core then
-            if type(state.mm2Core.toggleGunEsp) == "function" then
-                pcall(state.mm2Core.toggleGunEsp, enabled and card.Options["Gun ESP"] and card.Options["Gun ESP"].Value == true)
-            end
-            if type(state.mm2Core.toggleTrapEsp) == "function" then
-                pcall(state.mm2Core.toggleTrapEsp, enabled and card.Options["Trap ESP"] and card.Options["Trap ESP"].Value == true)
-            end
-        end
-    end
-
-    local function clear(): ()
-        for player: Player, highlight: Highlight in pairs(highlights) do
-            highlights[player] = nil
-            highlight:Destroy()
-        end
-        destroyMurderTag()
-        clearRoleTags()
-        syncMM2Extras(false)
-    end
 
     card = framework.Categories.Visuals:CreateModule({
         Name = "Chams",
         Category = "Render",
         ConfigKey = "Universal.Chams",
         Order = 2,
-        Tooltip = "Highlights live players, optionally through walls.",
+        Tooltip = "Highlights live players, optionally through walls, with "
+            .. "optional name tags.",
         Function = function(enabled: boolean): ()
             if not enabled then
                 clear()
@@ -21697,27 +22872,41 @@ function Module.init(context: Runtime): any
                 return
             end
             card:SetStatus("0")
-            syncMM2Extras(true)
 
             card:Render(function(): ()
                 local now: number = os.clock()
-                if now - lastUpdate < 0.2 then return end
+                if now - lastUpdate < 0.2 then
+                    return
+                end
                 lastUpdate = now
                 local seen: {[Player]: boolean} = {}
                 local count: number = 0
+                local showNames: boolean = card.Options["Nametags"].Value
+                local nameMaxDistance: number =
+                    card.Options["Nametag distance"].Value
+                local useTeamColours: boolean =
+                    card.Options["Team colours"].Value
 
                 local targets: any = entity:Refresh()
                 for _, target: any in ipairs(targets) do
                     local player: Player = target.Player
-                    local allowedTeam: boolean = card.Options["Teammates"].Value
-                        or not target.IsFriendly
-                    local protected: boolean = protectedTargets.isProtected(player)
-                    if allowedTeam and not protected
+                    local friendly: boolean = target.IsFriendly
+                    if not friendly and teamCheck
+                        and type(teamCheck.isSameTeam) == "function" then
+                        friendly = teamCheck.isSameTeam(player)
+                    end
+                    local allowedTeam: boolean =
+                        card.Options["Teammates"].Value or not friendly
+                    local protected: boolean =
+                        protectedTargets.isProtected(player)
+                    if allowedTeam
+                        and not protected
                         and target.Character
                         and target.Humanoid
                         and target.Humanoid.Health > 0 then
                         seen[player] = true
                         count += 1
+
                         local highlight: Highlight? = highlights[player]
                         if not highlight or not highlight.Parent then
                             highlight = Instance.new("Highlight")
@@ -21726,19 +22915,17 @@ function Module.init(context: Runtime): any
                             highlights[player] = highlight
                         end
                         local resolved: Highlight = highlight :: Highlight
-                        local roleColour: Color3? = nil
-                        if type(gameBridge.playerRoleColor) == "function" then
-                            roleColour = gameBridge.playerRoleColor(player)
-                        end
+
+                        -- Colour priority: the game's role colour (when the
+                        -- game knows roles), then team colour (only when the
+                        -- team-colour option is on), then the chosen fill.
+                        local roleColour: Color3? = roleNameColour(player)
                         local teamColour: Color3? = nil
-                        local teamOption: any = card.Options["Team colours"]
-                        if not roleColour
-                            and teamOption ~= nil
-                            and teamOption.Value == true then
-                            local isTeammate: boolean = target.IsFriendly
-                                or (LocalPlayer and target.Team and LocalPlayer.Team and target.Team == LocalPlayer.Team)
-                                or (LocalPlayer and player:GetAttribute("Team") ~= nil and player:GetAttribute("Team") == LocalPlayer:GetAttribute("Team"))
-                            teamColour = isTeammate and Color3.fromRGB(255, 255, 255) or Color3.fromRGB(255, 0, 0)
+                        if not roleColour and useTeamColours and friendly then
+                            local team: Team? = player.Team
+                            if team then
+                                teamColour = team.TeamColor.Color
+                            end
                         end
                         local fillColour: Color3 = roleColour
                             or teamColour
@@ -21746,17 +22933,98 @@ function Module.init(context: Runtime): any
                         local outlineColour: Color3 = roleColour
                             or teamColour
                             or card.Options["Outline colour"].Value
-                        local fillTransparency: number = card.Options["Fill transparency"].Value
-                        local outlineTransparency: number = card.Options["Outline transparency"].Value
-                        local depthMode: Enum.HighlightDepthMode = card.Options["Through walls"].Value
+                        local fillTransparency: number =
+                            card.Options["Fill transparency"].Value
+                        local outlineTransparency: number =
+                            card.Options["Outline transparency"].Value
+                        local depthMode: Enum.HighlightDepthMode =
+                            card.Options["Through walls"].Value
                                 and Enum.HighlightDepthMode.AlwaysOnTop
                             or Enum.HighlightDepthMode.Occluded
-                        if resolved.Adornee ~= target.Character then resolved.Adornee = target.Character end
-                        if resolved.FillColor ~= fillColour then resolved.FillColor = fillColour end
-                        if resolved.OutlineColor ~= outlineColour then resolved.OutlineColor = outlineColour end
-                        if resolved.FillTransparency ~= fillTransparency then resolved.FillTransparency = fillTransparency end
-                        if resolved.OutlineTransparency ~= outlineTransparency then resolved.OutlineTransparency = outlineTransparency end
-                        if resolved.DepthMode ~= depthMode then resolved.DepthMode = depthMode end
+                        if resolved.Adornee ~= target.Character then
+                            resolved.Adornee = target.Character
+                        end
+                        if resolved.FillColor ~= fillColour then
+                            resolved.FillColor = fillColour
+                        end
+                        if resolved.OutlineColor ~= outlineColour then
+                            resolved.OutlineColor = outlineColour
+                        end
+                        if resolved.FillTransparency ~= fillTransparency then
+                            resolved.FillTransparency = fillTransparency
+                        end
+                        if resolved.OutlineTransparency ~= outlineTransparency then
+                            resolved.OutlineTransparency = outlineTransparency
+                        end
+                        if resolved.DepthMode ~= depthMode then
+                            resolved.DepthMode = depthMode
+                        end
+
+                        if showNames and target.Distance <= nameMaxDistance then
+                            local head: BasePart? =
+                                target.Character:FindFirstChild("Head")
+                                    or target.Character
+                                        :FindFirstChild("HumanoidRootPart")
+                                    :: BasePart?
+                            if head then
+                                local tag: BillboardGui? = nameTags[player]
+                                if not tag
+                                    or not tag.Parent
+                                    or tag.Adornee ~= head then
+                                    if tag then
+                                        pcall(tag.Destroy, tag)
+                                    end
+                                    local billboard: BillboardGui =
+                                        Instance.new("BillboardGui")
+                                    billboard.Name = "Wurst_NameTag"
+                                    billboard.AlwaysOnTop = true
+                                    billboard.LightInfluence = 0
+                                    billboard.Size = UDim2.fromOffset(200, 20)
+                                    billboard.StudsOffset =
+                                        Vector3.new(0, 2.2, 0)
+                                    billboard.MaxDistance = nameMaxDistance
+                                    billboard.Adornee = head
+                                    billboard.Parent = head
+                                    local label: TextLabel =
+                                        Instance.new("TextLabel")
+                                    label.Name = "Name"
+                                    label.BackgroundTransparency = 1
+                                    label.Size = UDim2.fromScale(1, 1)
+                                    label.Font = Enum.Font.GothamBold
+                                    label.TextSize = 13
+                                    label.TextStrokeColor3 =
+                                        Color3.fromRGB(0, 0, 0)
+                                    label.TextStrokeTransparency = 0.3
+                                    label.Parent = billboard
+                                    nameTags[player] = billboard
+                                    tag = billboard
+                                end
+                                local label: any =
+                                    tag and tag:FindFirstChild("Name")
+                                if label then
+                                    local wanted: string = player.DisplayName
+                                    if player.DisplayName ~= player.Name then
+                                        wanted = wanted .. " ("
+                                            .. player.Name .. ")"
+                                    end
+                                    if target.Distance > 15 then
+                                        wanted = wanted .. " · "
+                                            .. tostring(
+                                                math.round(target.Distance)
+                                            ) .. "m"
+                                    end
+                                    if label.Text ~= wanted then
+                                        label.Text = wanted
+                                    end
+                                    local nameColour: Color3 = roleColour
+                                        or teamColour
+                                        or Color3.fromRGB(255, 255, 255)
+                                    if label.TextColor3 ~= nameColour then
+                                        label.TextColor3 = nameColour
+                                    end
+                                end
+                            end
+                        end
                     end
                 end
                 for player: Player, highlight: Highlight in pairs(highlights) do
@@ -21765,218 +23033,28 @@ function Module.init(context: Runtime): any
                         highlight:Destroy()
                     end
                 end
-
-                local tagTarget: Player? = nil
-                if card.Options["Murder tag"].Value == true
-                    and type(gameBridge.playerRole) == "function" then
-                    for _, target: any in ipairs(targets) do
-                        local okRole: boolean, role: any = pcall(
-                            gameBridge.playerRole,
-                            target.Player
-                        )
-                        if okRole
-                            and role == "Murderer"
-                            and target.Character
-                            and target.Humanoid
-                            and target.Humanoid.Health > 0 then
-                            tagTarget = target.Player
-                            break
-                        end
+                for player: Player, tag: BillboardGui in pairs(nameTags) do
+                    if not seen[player] or not showNames then
+                        nameTags[player] = nil
+                        pcall(tag.Destroy, tag)
                     end
                 end
 
-                local tagHead: BasePart? = nil
-                if not tagTarget then
-                    destroyMurderTag()
-                else
-                    local tagCharacter: Model? = tagTarget.Character
-                    tagHead = tagCharacter
-                        and (tagCharacter:FindFirstChild("Head")
-                            or tagCharacter:FindFirstChild("HumanoidRootPart"))
-                        :: BasePart?
-                    if not tagHead then
-                        destroyMurderTag()
-                    else
-                        if not murderTag
-                            or not murderTag.Parent
-                            or murderTag.Adornee ~= tagHead then
-                            destroyMurderTag()
-                            local billboard: BillboardGui = Instance.new("BillboardGui")
-                            billboard.Name = "Wurst_MurderTag"
-                            billboard.AlwaysOnTop = true
-                            billboard.LightInfluence = 0
-                            billboard.Size = UDim2.fromOffset(150, 22)
-                            billboard.StudsOffset = Vector3.new(0, 3.5, 0)
-                            billboard.MaxDistance = 1500
-                            billboard.Adornee = tagHead
-                            billboard.Parent = tagHead
-                            local label: TextLabel = Instance.new("TextLabel")
-                            label.Name = "Murder"
-                            label.BackgroundTransparency = 1
-                            label.Size = UDim2.fromScale(1, 1)
-                            label.Font = Enum.Font.GothamBold
-                            label.TextSize = 14
-                            label.TextScaled = false
-                            label.Text = "Murder"
-                            label.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
-                            label.TextStrokeTransparency = 0.3
-                            label.Parent = billboard
-
-                            local icon: ImageLabel = Instance.new("ImageLabel")
-                            icon.Name = "PerkIcon"
-                            icon.BackgroundTransparency = 1
-                            icon.ImageTransparency = 1
-                            icon.Visible = false
-                            icon.Size = UDim2.fromOffset(20, 20)
-                            icon.Position = UDim2.new(0, 3, 0.5, 0)
-                            icon.AnchorPoint = Vector2.new(0, 0.5)
-                            icon.Parent = billboard
-
-                            murderTag = billboard
-                        end
-                        if type(gameBridge.playerRoleColor) == "function" then
-                            local okColour: boolean, colour: any = pcall(
-                                gameBridge.playerRoleColor,
-                                tagTarget
-                            )
-                            if okColour and typeof(colour) == "Color3" then
-                                local label: any =
-                                    murderTag and murderTag:FindFirstChild("Murder")
-                                if label and label.TextColor3 ~= colour then
-                                    label.TextColor3 = colour
-                                end
-                            end
-                        end
-                    end
-                end
-
-                local perkIcon: any = murderTag
-                    and murderTag:FindFirstChild("PerkIcon")
-                if card.Options["Show Perk"] and card.Options["Show Perk"].Value == true
-                    and tagTarget and perkIcon then
-                    local targetPerk: string? = nil
-                    if type(gameBridge.playerPerk) == "function" then
-                        targetPerk = gameBridge.playerPerk(tagTarget)
-                    end
-                    if not targetPerk and state and state.mm2Core and type(state.mm2Core.getPlayerPerk) == "function" then
-                        targetPerk = state.mm2Core.getPlayerPerk(tagTarget)
-                    end
-
-                    local perkIconId: string? = targetPerk and (PERK_ICONS[targetPerk] or PERK_ICONS[string.gsub(targetPerk, "%s+", "")]) or nil
-                    if perkIconId then
-                        if perkIcon.Image ~= perkIconId then
-                            perkIcon.Image = perkIconId
-                        end
-                        if not perkIcon.Visible then
-                            perkIcon.Visible = true
-                        end
-                        if perkIcon.ImageTransparency ~= 0 then
-                            perkIcon.ImageTransparency = 0
-                        end
-                    elseif perkIcon.Visible then
-                        perkIcon.Visible = false
-                    end
-                elseif perkIcon and perkIcon.Visible then
-                    perkIcon.Visible = false
-                end
-
-                local roleTagsOption: any = card.Options["Role tags"]
-                if roleTagsOption and roleTagsOption.Value == true
-                    and type(gameBridge.playerRole) == "function" then
-                    local seenRoleTags: {[Player]: boolean} = {}
-                    for _, target: any in ipairs(targets) do
-                        local player: Player = target.Player
-                        if player ~= LocalPlayer
-                            and target.Character
-                            and target.Humanoid
-                            and target.Humanoid.Health > 0
-                            and not protectedTargets.isProtected(player) then
-                            local okRole: boolean, role: any = pcall(gameBridge.playerRole, player)
-                            if okRole and type(role) == "string" and role ~= "Dead" then
-
-                                if card.Options["Murder tag"].Value == true and (role == "Murderer" or player == tagTarget) then
-                                    continue
-                                end
-
-                                local head: BasePart? = target.Character:FindFirstChild("Head")
-                                    or target.Character:FindFirstChild("HumanoidRootPart")
-                                if head then
-                                    seenRoleTags[player] = true
-                                    local tag: BillboardGui? = roleTags[player]
-                                    if not tag or not tag.Parent or tag.Adornee ~= head then
-                                        if tag then pcall(tag.Destroy, tag) end
-                                        local billboard: BillboardGui = Instance.new("BillboardGui")
-                                        billboard.Name = "Wurst_RoleTag"
-                                        billboard.AlwaysOnTop = true
-                                        billboard.LightInfluence = 0
-                                        billboard.Size = UDim2.fromOffset(170, 24)
-                                        billboard.StudsOffset = Vector3.new(0, 2.7, 0)
-                                        billboard.MaxDistance = 1500
-                                        billboard.Adornee = head
-                                        billboard.Parent = head
-
-                                        local label: TextLabel = Instance.new("TextLabel")
-                                        label.Name = "Role"
-                                        label.BackgroundTransparency = 1
-                                        label.Size = UDim2.fromScale(1, 1)
-                                        label.Font = Enum.Font.GothamBold
-                                        label.TextSize = 14
-                                        label.TextScaled = false
-                                        label.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
-                                        label.TextStrokeTransparency = 0.2
-                                        label.Parent = billboard
-
-                                        roleTags[player] = billboard
-                                        tag = billboard
-                                    end
-                                    local label: any = tag and tag:FindFirstChild("Role")
-                                    if label then
-                                        local roleUpper: string = string.upper(role)
-                                        if label.Text ~= roleUpper then
-                                            label.Text = roleUpper
-                                        end
-                                        if type(gameBridge.playerRoleColor) == "function" then
-                                            local okColor: boolean, color: any = pcall(gameBridge.playerRoleColor, player)
-                                            if okColor and typeof(color) == "Color3" then
-                                                if label.TextColor3 ~= color then
-                                                    label.TextColor3 = color
-                                                end
-                                            end
-                                        end
-                                    end
-                                end
-                            end
-                        end
-                    end
-                    for player: Player, tag: BillboardGui in pairs(roleTags) do
-                        if not seenRoleTags[player] then
-                            roleTags[player] = nil
-                            pcall(tag.Destroy, tag)
-                        end
-                    end
-                else
-                    clearRoleTags()
-                end
-
-                syncMM2Extras(true)
                 card:SetStatus(tostring(count))
             end)
             card:Clean(clear)
         end,
     })
 
-    card:CreateColor({Name = "Fill colour", Default = Color3.fromRGB(150, 230, 255)})
+    card:CreateColor({Name = "Fill colour", Default = Color3.fromRGB(255, 255, 255)})
     card:CreateColor({Name = "Outline colour", Default = Color3.fromRGB(235, 250, 255)})
     card:CreateSlider({Name = "Fill transparency", Min = 0, Max = 1, Step = 0.05, Default = 0.55})
     card:CreateSlider({Name = "Outline transparency", Min = 0, Max = 1, Step = 0.05, Default = 0})
     card:CreateToggle({Name = "Through walls", Default = true})
-    card:CreateToggle({Name = "Teammates", Default = false})
-    card:CreateToggle({Name = "Team colours", Default = true})
-    card:CreateToggle({Name = "Murder tag", Default = true})
-    card:CreateToggle({Name = "Role tags", Default = true})
-    card:CreateToggle({Name = "Show Perk", Default = true})
-    card:CreateToggle({Name = "Gun ESP", Default = true})
-    card:CreateToggle({Name = "Trap ESP", Default = true})
+    card:CreateToggle({Name = "Nametags", Default = false, Tooltip = "Shows each player's name and distance above the highlight, coloured by role or team when known."})
+    card:CreateSlider({Name = "Nametag distance", Min = 100, Max = 2000, Step = 100, Default = 1000, Tooltip = "How far name tags stay visible."})
+    card:CreateToggle({Name = "Teammates", Default = false, Tooltip = "Also highlight teammates. The advanced team check decides who counts."})
+    card:CreateToggle({Name = "Team colours", Default = false, Tooltip = "Teammates get their Roblox team colour; everyone else keeps the fill colour. Role colours (when the game knows roles) always win."})
 
     activeCard = card
     Module.Initialized = true
@@ -24671,11 +25749,42 @@ function Module.init(context: Runtime): any
         originalXrayTransparency = setmetatable({}, {__mode = "k"}) :: any
     end
 
+    -- Safety net: a previous session that died without restoring (crash,
+    -- executor kill, older build) leaves the map translucent forever. Sweep
+    -- every map part and clear the modifier. LocalTransparencyModifier is
+    -- only used by us here; the local character is excluded because Roblox
+    -- itself fades it in first person.
+    local function sweepStuckTransparency(): ()
+        local localCharacter: Model? = LocalPlayer.Character
+        for _, descendant: Instance in ipairs(workspace:GetDescendants()) do
+            if descendant:IsA("BasePart")
+                and (descendant :: BasePart).LocalTransparencyModifier ~= 0 then
+                local part: BasePart = descendant :: BasePart
+                if (localCharacter and part:IsDescendantOf(localCharacter :: Model))
+                    or part:FindFirstAncestorOfClass("Tool") then
+                    continue
+                end
+                local ancestorModel: Model? =
+                    part:FindFirstAncestorOfClass("Model")
+                if ancestorModel and ancestorModel:FindFirstChildOfClass("Humanoid") then
+                    continue
+                end
+                part.LocalTransparencyModifier = 0
+            end
+        end
+    end
+
+    -- Clear anything a previous, unloaded session left translucent.
+    task.spawn(sweepStuckTransparency)
+
     local function toggleXray(enabled: boolean): ()
         disconnectFeatureConnection("Xray")
         xrayEnabled = false
         restoreXray()
         if not enabled then
+            -- Also sweep: if the capture table ever lost an entry, the map
+            -- would stay translucent. Cheap and idempotent.
+            task.spawn(sweepStuckTransparency)
             if feature then feature:SetStatus(nil) end
             return
         end
@@ -36704,11 +37813,18 @@ function Module.init(context: any): Framework
             if value ~= nil and value == created.Enabled then
                 return
             end
+            -- A real state change: run the module's Function with the wanted
+            -- state so it can stop loops and restore whatever it changed.
+            -- (feature.activate only flips the card UI and must not be used
+            -- here - module.destroy() relies on Toggle(false) actually
+            -- disabling the module.)
+            onToggle(value == nil and not created.Enabled or value == true)
+        end
+
+        function created:Reveal(): ()
             if feature and type(feature.activate) == "function" then
                 feature.activate()
-                return
             end
-            onToggle(not created.Enabled)
         end
 
         function created:SetStatus(status: string?): ()
@@ -36915,6 +38031,11 @@ local Manifest: Manifest = {
         {
             path = "src/games/universal/Combat/AimAssist.lua",
             name = "Aim Assist",
+            category = "Combat",
+        },
+        {
+            path = "src/games/universal/Combat/TriggerBot.lua",
+            name = "TriggerBot",
             category = "Combat",
         },
 

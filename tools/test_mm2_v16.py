@@ -180,6 +180,11 @@ Vector3.xAxis=Vector3.new(1,0,0); Vector3.yAxis=Vector3.new(0,1,0); Vector3.zAxi
 local Color3={fromRGB=function(...) return {...} end}
 local ColorSequence={new=function(v) return v end}
 local NumberSequence={new=function(v) return v end}
+local RunService={PreSimulation=signal()}
+CFrame.fromMatrix=function(pos,_,_) return CFrame.new(pos) end
+cfMt.__index.Inverse=function(a) return CFrame.new(-a.Position) end
+cfMt.__index.RightVector=Vector3.xAxis
+cfMt.__index.UpVector=Vector3.yAxis
 local workspace=Instance.new("Folder")
 local LocalPlayer={CharacterAdded=signal(),CharacterRemoving=signal()}
 local deferred={}
@@ -200,8 +205,24 @@ local function child(parent,class,name)
 end
 local function character(r15)
     local c=Instance.new("Model")
-    child(c,"Part",r15 and "LeftHand" or "Left Arm")
-    child(c,"Part",r15 and "RightHand" or "Right Arm")
+    child(c,"Part",r15 and "UpperTorso" or "Torso")
+    local function joint(parent,name)
+        local j=child(parent,"Motor6D",name)
+        j.C0=CFrame.new(); j.C1=CFrame.new(); j.Transform=CFrame.new()
+        return j
+    end
+    if r15 then
+        joint(child(c,"Part","RightUpperArm"),"RightShoulder")
+        joint(child(c,"Part","LeftUpperArm"),"LeftShoulder")
+        joint(child(c,"Part","RightLowerArm"),"RightElbow")
+        joint(child(c,"Part","LeftLowerArm"),"LeftElbow")
+        joint(child(c,"Part","RightHand"),"RightWrist")
+        joint(child(c,"Part","LeftHand"),"LeftWrist")
+    else
+        joint(c:FindFirstChild("Torso"),"Right Shoulder")
+        joint(c:FindFirstChild("Torso"),"Left Shoulder")
+        child(c,"Part","Right Arm"); child(c,"Part","Left Arm")
+    end
     return c
 end
 LocalPlayer.Character=character(false)
@@ -223,6 +244,22 @@ for _,copy in ipairs(folder.children) do
 end
 assert(handle.Anchored and #handle.tags==1 and handle.attributes.Damage==100 and #handle.children==4)
 assert(taskCount()==0,"Double cosmetics need no loop")
+do
+    -- Both arms raise: the mirror tick poses the left shoulder as the exact
+    -- mirror of the right arm's animation.
+    local torso=LocalPlayer.Character:FindFirstChild("Torso")
+    local rArm=LocalPlayer.Character:FindFirstChild("Right Arm")
+    local lJoint=torso:FindFirstChild("Left Shoulder")
+    torso.CFrame=CFrame.new(Vector3.zero)
+    rArm.CFrame=CFrame.new(Vector3.new(1,0.5,-1.4))
+    RunService.PreSimulation:Fire()
+    local p=lJoint.Transform.Position
+    near(p.X,-1); near(p.Y,0.5); near(p.Z,-1.4)
+    rArm.CFrame=CFrame.new(Vector3.new(1,0.5,0))
+    RunService.PreSimulation:Fire()
+    p=lJoint.Transform.Position
+    near(p.Z,0)
+end
 gun.Parent=nil; LocalPlayer.Character.DescendantRemoving:Fire(gun); flush()
 assert(folder.destroyed and #workspace.children[1].children==0)
 local newChar=character(true)
@@ -231,10 +268,29 @@ local newVh=child(knife,"Model","VH"); child(newVh,"MeshPart","Blade")
 LocalPlayer.CharacterRemoving:Fire(); LocalPlayer.Character=newChar; LocalPlayer.CharacterAdded:Fire(newChar)
 options["Double Knife"](true); options["Electric Knife"](true); flush()
 assert(taskCount()==1 and #workspace.children[1].children==4,"R15 plus VH and two own carriers")
+do
+    -- Full R15 chain: shoulder, elbow and wrist all mirror the right side.
+    local rUpper=newChar:FindFirstChild("RightUpperArm")
+    local rLower=newChar:FindFirstChild("RightLowerArm")
+    local rHand=newChar:FindFirstChild("RightHand")
+    local lShoulder=newChar:FindFirstChild("LeftUpperArm"):FindFirstChild("LeftShoulder")
+    local lElbow=newChar:FindFirstChild("LeftLowerArm"):FindFirstChild("LeftElbow")
+    local lWrist=newChar:FindFirstChild("LeftHand"):FindFirstChild("LeftWrist")
+    rUpper.CFrame=CFrame.new(Vector3.new(1,1.3,-0.4))
+    rLower.CFrame=CFrame.new(Vector3.new(1,0.9,-0.9))
+    rHand.CFrame=CFrame.new(Vector3.new(1,0.8,-1.2))
+    RunService.PreSimulation:Fire()
+    local ps=lShoulder.Transform.Position
+    near(ps.X,-1); near(ps.Y,1.3); near(ps.Z,-0.4)
+    local pe=lElbow.Transform.Position
+    near(pe.X,0); near(pe.Y,-0.4); near(pe.Z,-0.5)
+    local pw=lWrist.Transform.Position
+    near(pw.X,0); near(pw.Y,-0.1); near(pw.Z,-0.3)
+end
 for _,t in ipairs(tasks) do if t.Connected then t.fn(0.125) end end
 options["Electric Knife"](false); flush(); assert(taskCount()==0)
 master(false); flush(); assert(#workspace.children==0 and taskCount()==0)
-for _,sig in ipairs({newChar.DescendantAdded,newChar.DescendantRemoving,LocalPlayer.CharacterAdded,LocalPlayer.CharacterRemoving}) do
+for _,sig in ipairs({newChar.DescendantAdded,newChar.DescendantRemoving,LocalPlayer.CharacterAdded,LocalPlayer.CharacterRemoving,RunService.PreSimulation}) do
     for _,c in ipairs(sig.connections) do assert(not c.Connected) end
 end
 master(true); options["Electric Knife"](true); Module.destroy(); flush()

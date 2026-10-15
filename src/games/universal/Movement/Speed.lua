@@ -38,6 +38,12 @@ function Module.init(context: Runtime): any
         originalMotorHinges = setmetatable({}, {__mode = "k"}) :: {[HingeConstraint]: HingeState},
         velocityExcess = setmetatable({}, {__mode = "k"}) :: {[BasePart]: number},
         motorExcess = setmetatable({}, {__mode = "k"}) :: {[HingeConstraint]: number},
+        -- Belt and suspenders for disable: the capture map is weak-keyed, so
+        -- a respawn or a stale session could lose it while the humanoid still
+        -- runs at the boosted value. Remember the base and the last applied
+        -- value so "off" always returns the character to normal speed.
+        baseWalkSpeed = nil :: number?,
+        lastAppliedWalkSpeed = nil :: number?,
     }
 
     local function characterParts(): (Model?, Humanoid?, BasePart?)
@@ -258,6 +264,19 @@ function Module.init(context: Runtime): any
             restoreWalkSpeed()
             restoreVehicle()
             if not enabled then
+                -- Even when the weak capture map was lost, the live humanoid
+                -- must return to its normal speed the moment the card goes
+                -- off - not "whenever the game next touches WalkSpeed".
+                if runtime.baseWalkSpeed and runtime.lastAppliedWalkSpeed then
+                    local _, humanoid: Humanoid? = characterParts()
+                    if humanoid
+                        and (humanoid :: Humanoid).WalkSpeed
+                            == runtime.lastAppliedWalkSpeed then
+                        (humanoid :: Humanoid).WalkSpeed =
+                            runtime.baseWalkSpeed
+                    end
+                end
+                runtime.lastAppliedWalkSpeed = nil
                 speed:SetStatus(nil)
                 return
             end
@@ -313,8 +332,13 @@ function Module.init(context: Runtime): any
                     if runtime.originalWalkSpeed[resolvedHumanoid] == nil then
                         runtime.originalWalkSpeed[resolvedHumanoid] =
                             resolvedHumanoid.WalkSpeed
+                        if runtime.baseWalkSpeed == nil
+                            or resolvedHumanoid.WalkSpeed < runtime.baseWalkSpeed then
+                            runtime.baseWalkSpeed = resolvedHumanoid.WalkSpeed
+                        end
                     end
                     resolvedHumanoid.WalkSpeed = target
+                    runtime.lastAppliedWalkSpeed = target
                     return
                 end
                 restoreWalkSpeed()

@@ -176,7 +176,12 @@ assert(loaded==3)
 pass("actual animation lifecycle: not Equip; cache by knife/id; cleanup even if Stop errors; OFF")
 end
 ''']
-    chunks += ["do\nlocal mm2Settings={predictionRtt=0.08,autoTuneLead=false,gunLeadBias=0}\nlocal Stats={FindFirstChild=function() return nil end}\n",
+    chunks += ["do\nlocal mm2Settings={predictionRtt=0.08,autoTuneLead=false,gunLeadBias=0}\n"
+               "local GUN_LEAD={replicationRate=20,serverFrame=1/60,minimumHorizon=0.02,maximumHorizon=0.45,"
+               "maximumManualBias=0.1,maximumAutoCorrection=0.1,defaultTurnRate=math.pi*0.5,maxTurnRate=math.pi*1.5}\n"
+               "local autoLeadCorrection=0\n"
+               "local function getActiveAutoLeadCorrection() return mm2Settings.autoTuneLead and autoLeadCorrection or 0 end\n"
+               "local Stats={FindFirstChild=function() return nil end}\n",
                section(BASE, "local lastLatencyReadAt:", "local function getGunOriginCFrame"), r'''
     local baseline=getGunHorizonSeconds()
     near(baseline,0.2+1/40+1/120)
@@ -197,7 +202,7 @@ end
 ''']
     chunks += [r'''
 do
-local runtime={events={{kind="stab",distance=28,hitTarget=false}},freshGunLatency={},gunAcceptance={count=62,mean=200.0177},knifeSpeed={count=162,mean=96}}
+local runtime={events={{kind="stab",distance=28,hitTarget=false}},freshGunLatency={},gunAcceptance={count=62,mean=200.0177},knifeSpeed={count=162,mean=96},knifeSpawnDelay={count=0,mean=0}}
 ''', section(BASE, "    local function median(", "    saveSnapshot = function"), r'''
 now=10
 assert(estimates().maxStabDistance==nil)
@@ -226,13 +231,15 @@ local function getEstimatedLatency() return 0.2 end
 for _,origin in ipairs({Vector3.zero,Vector3.new(115,0,0)}) do
     local aim=predictAim(target,origin)
     local t=(aim-origin).Magnitude/96
-    near(aim.X,root.Position.X+velocity.X*(0.1+t))
+    -- v22+ lead model: the packet window is the full round trip (or the
+    -- measured spawn delay once enough throws confirm it), not RTT/2.
+    near(aim.X,root.Position.X+velocity.X*(0.2+t))
 end
 speed=0/0
 assert(predictAim(target,Vector3.zero)~=nil,"invalid learned speed must use 96")
 velocity=Vector3.new(110,0,0)
 assert(predictAim(target,Vector3.zero)==nil)
-pass("actual Knife predictor: RTT/2 plus intercept in Normal and near-target Silent")
+pass("actual Knife predictor: full-RTT packet window plus intercept; measured spawn delay preferred")
 end
 ''']
     chunks += [r'''
@@ -314,6 +321,7 @@ end
 local stops=0
 local function stopThrowAnimation() stops+=1 end
 local trajectoryCalibration={noteAuthoredShot=function() notes+=1 end}
+local state={mm2KnifeRuntime={}}
 local callbacks={}
 local featureConnections={}
 local TaskManager={Connect=function(self,cb) callbacks[1]=cb; return {Disconnect=function() callbacks[1]=nil end} end}

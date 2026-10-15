@@ -175,3 +175,84 @@ sigue ignorando el WallCheck como siempre (firma el disparo en el objetivo).
 3. Dispara: el tiro debe salir apuntado a la parte visible (antes decía
    "A wall blocks the shot").
 4. Ocultación total detrás de la pared → sigue rechazando correctamente.
+
+## v24 — TeamCheck avanzado + desactivación real + Weapon Visuals restaurado
+
+Pedido: arreglar Kill Aura y crear TriggerBot; persistencia de teletransporte;
+Chams con nametags y blanco por defecto (dejaba todo rojo); quitar opciones MM2
+del Chams universal; Xray y Speed deben restaurar al apagarse; Double Gun /
+Double Knife deben levantar AMBOS brazos; Electric Effects no hacía nada;
+Arrows con colores de rol; y un TeamCheck avanzado siempre activo.
+
+### TeamCheck avanzado (siempre activo, no es módulo, no configurable aún)
+
+`state.teamCheck` en Wurst.lua responde con el primer método que pueda decidir:
+
+1. Proveedor de equipos del juego (`registerTeamProvider`).
+2. Lados por rol cuando el juego registra roles (MM2: Inocente/Héroe/Sheriff
+   juntos, Asesino solo).
+3. Servicio Teams de Roblox (`player.Team`).
+4. TeamColor, solo si el juego usa equipos.
+5. Neutrales jamás son compañeros.
+
+Todo lo que no pueda decidir devuelve "desconocido" — nunca adivina. Lo usan
+TriggerBot, Chams, Arrows y Killaura (post-filtro tras `InRange`).
+
+### Reparaciones incluidas
+
+- **Kill Aura**: opciones reordenadas (activación → alcance → campo → armas →
+  filtros → resaltado), post-filtro del TeamCheck avanzado, destroy real
+  (apaga el aura antes de limpiar) y bloque de activación reindentado.
+- **TriggerBot (nuevo, universal, Combat)**: dispara cuando la mira reposa
+  sobre un enemigo válido. Alcance, retardo y "disparar a compañeros"
+  (protegidos por el TeamCheck mientras esté apagado). Usa `mouse1press`
+  cuando el executor lo ofrece, `VirtualInputManager` como respaldo.
+- **Teleport persistente**: el snippet ahora se arma por `game.GameId`
+  (universo), no por PlaceId — los teletransportes internos del juego (nueva
+  instancia, lobby) mantienen el menú.
+- **Chams (reescrito, universal)**: color de relleno BLANCO por defecto. La
+  causa del "todo rojo" era la opción "Team colours" activada por defecto sin
+  datos de equipo — se eliminó del default y se migra el estado heredado.
+  Opciones nuevas: **Nametags** (nombre + distancia, coloreado por rol) y
+  distancia de nametag. Colores de equipo solo con la opción Team colours
+  (genérica, Roblox teams); los colores de rol del juego siempre ganan.
+- **Role Tags (nuevo, MM2, Render)**: todo lo MM2 que vivía en el Chams
+  universal — Murder tag con icono de perk, role tags por jugador, Gun ESP y
+  Trap ESP. Los módulos universales quedan 100 % agnósticos al juego.
+- **X-Ray**: además del restore normal, un barrido de
+  `LocalTransparencyModifier` atascado al iniciar y al apagar — nunca más
+  queda el mapa translúcido tras una sesión muerta.
+- **Speed**: recuerda `baseWalkSpeed`/`lastAppliedWalkSpeed`; al apagar, el
+  humanoide vivo vuelve a su velocidad base inmediatamente aunque el mapa
+  débil de capturas se haya perdido (respawn).
+- **Arrows**: color por defecto blanco; colores de rol cuando el juego conoce
+  roles; Team colours opcional para compañeros; TeamCheck avanzado integrado.
+- **Weapon Visuals (restaurado de v16 + fix de brazos)**: Double Gun y Double
+  Knife ahora levantan AMBOS brazos — el brazo izquierdo copia la animación
+  del derecho espejada (hombro/codo/muñeca en R15, hombro en R6) cada frame
+  vía `RunService.PreSimulation`. Electric Knife vuelve a funcionar (el
+  módulo no estaba en la lista de carga; ahora sí). Los R6 guardan sus
+  Motor6D en el Torso — la búsqueda cubre ambos rigs.
+
+### Verificación
+
+- 72 archivos `.lua` compilados con Luau 0.732 — 0 errores.
+- Bundle regenerado: 70 módulos, sello `v24-20261015-teamcheck-visuals`.
+- `test_entity_team_provider`: 14/14. `test_mm2_v16`: 4/4 grupos (incluye
+  aserciones nuevas del espejo de brazos R6 y de la cadena R15 completa).
+- `test_mm2_precision`: 14/14 grupos — estaba roto desde v22 (el extractor
+  del test no seguía los cambios de base.lua: GUN_LEAD, knifeSpawnDelay,
+  mm2KnifeRuntime y el modelo de lead medido de v22); reparado y actualizado
+  a la fórmula aceptada (ventana de paquete = RTT completo, con demora de
+  spawn medida cuando hay ≥3 confirmaciones).
+
+### Prueba sugerida
+
+1. Chams ON sin tocar nada → todos blancos (ya no rojos).
+2. MM2 con roles revelados → Role Tags con colores; Chams/Arrows heredan el
+   color de rol.
+3. Double Gun/Knife + apuntar → ambos brazos se levantan simétricos.
+4. Electric Knife → arcos visibles sobre el cuchillo real y el clonado.
+5. X-Ray ON/OFF → el mapa vuelve opaco al instante. Igual Speed.
+6. TriggerBot con el dedo fuera del gatillo → dispara solo contra enemigos.
+7. Teletransporte interno del juego → el menú reaparece solo.

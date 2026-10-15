@@ -82,6 +82,10 @@ function Module.init(context: Runtime): any
     local localPlayer: Player = host.LocalPlayer
     local userInput: UserInputService = host.UserInputService
     local currentWorkspace: Workspace = host.workspace or workspace
+    -- Advanced team check (always on): the entity library only knows team
+    -- providers, so role-based verdicts (MM2 sides, for example) are applied
+    -- as a post filter here.
+    local teamCheck: any = host.state and host.state.teamCheck
 
     local nextSwingAt: number = 0
     local nextStatusAt: number = 0
@@ -315,6 +319,20 @@ function Module.init(context: Runtime): any
                     IncludeNPCs = options["Target NPCs"].Value,
                     Sort = options["Priority"].Value,
                 })
+                if options["Team check"].Value and teamCheck then
+                    local kept: {any} = {}
+                    for _, entity: any in ipairs(targets) do
+                        local teammate: boolean = false
+                        if entity.Player
+                            and type(teamCheck.isSameTeam) == "function" then
+                            teammate = teamCheck.isSameTeam(entity.Player)
+                        end
+                        if not teammate then
+                            table.insert(kept, entity)
+                        end
+                    end
+                    targets = kept
+                end
                 updateTargetStatus(#targets)
                 if #targets == 0 then
                     clearHighlights()
@@ -361,8 +379,7 @@ function Module.init(context: Runtime): any
                     if weapons then
                         for _, label: string in ipairs(aura.Options["Weapons"].Selected or {}) do
                             local candidate: any = weapons:Find(label)
-
-                        if candidate and weapons:Activate(candidate, entity) then
+                            if candidate and weapons:Activate(candidate, entity) then
                                 swung = true
                             end
                         end
@@ -418,38 +435,15 @@ function Module.init(context: Runtime): any
         end,
     })
 
-    aura:CreateList({
-        Name = "Weapons",
-        Items = function(): {string}
-            if not weapons then
-                return {}
-            end
-            return weapons:Labels({All = true, Melee = true})
-        end,
-
-        EmptyText = "",
-        Tooltip = "Melee weapons this module may swing: tools, view models, "
-            .. "inventory slots and the game's own attack button. Empty means "
-            .. "whatever you are holding.",
+    aura:CreateDropdown({
+        Name = "Activation",
+        List = {"Always", "Hold key"},
+        Index = 1,
     })
-    aura:CreateTextBox({
-        Name = "Weapon name",
-        Default = "",
-        Tooltip = "Part of the tool's name. Leave empty and the module uses "
-            .. "whatever you last swung by hand.",
-    })
-    aura:CreateButton({
-        Name = "Bind held tool",
-        Tooltip = "Remembers whatever is in your hands right now.",
-        Function = function(): ()
-            local tool: Tool? = equippedTool()
-            if not tool then
-                aura:Notify("nothing equipped")
-                return
-            end
-            learnedWeapon = (tool :: Tool).Name
-            aura:Notify((tool :: Tool).Name .. " bound")
-        end,
+    aura:CreateBind({
+        Name = "Hold key",
+        Show = {Option = "Activation", Values = {"Hold key"}},
+        Default = Enum.KeyCode.Unknown,
     })
     aura:CreateSlider({
         Name = "Reach",
@@ -483,16 +477,6 @@ function Module.init(context: Runtime): any
             .. "not a person, and a server that logs click rates knows it.",
     })
 
-    aura:CreateDropdown({
-        Name = "Activation",
-        List = {"Always", "Hold key"},
-        Index = 1,
-    })
-    aura:CreateBind({
-        Name = "Hold key",
-        Show = {Option = "Activation", Values = {"Hold key"}},
-        Default = Enum.KeyCode.Unknown,
-    })
     aura:CreateSlider({
         Name = "Field of view",
         Min = 30,
@@ -516,39 +500,38 @@ function Module.init(context: Runtime): any
         Tooltip = "How many times the weapon is pressed for each swing the "
             .. "rate allows. Some games count every press.",
     })
-    aura:CreateToggle({
-        Name = "Hit through walls",
-        Default = true,
-        Tooltip = "Fire contact damage even when the target is behind "
-            .. "geometry. Independent of the wall check, which decides "
-            .. "whether the target is picked at all.",
+    aura:CreateList({
+        Name = "Weapons",
+        Items = function(): {string}
+            if not weapons then
+                return {}
+            end
+            return weapons:Labels({All = true, Melee = true})
+        end,
+
+        EmptyText = "",
+        Tooltip = "Melee weapons this module may swing: tools, view models, "
+            .. "inventory slots and the game's own attack button. Empty means "
+            .. "whatever you are holding.",
     })
-    aura:CreateToggle({
-        Name = "Contact damage",
-        Default = true,
-        Tooltip = "Also fire the weapon's touch events. Needed by most melee "
-            .. "weapons; requires firetouchinterest.",
+    aura:CreateTextBox({
+        Name = "Weapon name",
+        Default = "",
+        Tooltip = "Part of the tool's name. Leave empty and the module uses "
+            .. "whatever you last swung by hand.",
     })
-    aura:CreateToggle({
-        Name = "Wall check",
-        Default = false,
-        Tooltip = "Off by default: the aura hits through walls and floors "
-            .. "until you ask it not to.",
-    })
-    aura:CreateToggle({
-        Name = "Team check",
-        Default = true,
-        Tooltip = "Skip teammates and Friend List entries.",
-    })
-    aura:CreateToggle({
-        Name = "Target NPCs",
-        Default = false,
-        Tooltip = "Include non-player humanoid models in the reach scan.",
-    })
-    aura:CreateToggle({
-        Name = "Require tool",
-        Default = false,
-        Tooltip = "Do nothing while your hands are empty.",
+    aura:CreateButton({
+        Name = "Bind held tool",
+        Tooltip = "Remembers whatever is in your hands right now.",
+        Function = function(): ()
+            local tool: Tool? = equippedTool()
+            if not tool then
+                aura:Notify("nothing equipped")
+                return
+            end
+            learnedWeapon = (tool :: Tool).Name
+            aura:Notify((tool :: Tool).Name .. " bound")
+        end,
     })
     aura:CreateToggle({
         Name = "Auto equip",
@@ -561,6 +544,42 @@ function Module.init(context: Runtime): any
                 weapons:SetAllowEquip(value)
             end
         end,
+    })
+    aura:CreateToggle({
+        Name = "Require tool",
+        Default = false,
+        Tooltip = "Do nothing while your hands are empty.",
+    })
+    aura:CreateToggle({
+        Name = "Team check",
+        Default = true,
+        Tooltip = "Skip teammates, analysed by the always-on advanced team "
+            .. "check (game teams, roles, team colours, neutral rules), plus "
+            .. "Friend List entries.",
+    })
+    aura:CreateToggle({
+        Name = "Wall check",
+        Default = false,
+        Tooltip = "Off by default: the aura hits through walls and floors "
+            .. "until you ask it not to.",
+    })
+    aura:CreateToggle({
+        Name = "Contact damage",
+        Default = true,
+        Tooltip = "Also fire the weapon's touch events. Needed by most melee "
+            .. "weapons; requires firetouchinterest.",
+    })
+    aura:CreateToggle({
+        Name = "Hit through walls",
+        Default = true,
+        Tooltip = "Fire contact damage even when the target is behind "
+            .. "geometry. Independent of the wall check, which decides "
+            .. "whether the target is picked at all.",
+    })
+    aura:CreateToggle({
+        Name = "Target NPCs",
+        Default = false,
+        Tooltip = "Include non-player humanoid models in the reach scan.",
     })
     aura:CreateToggle({
         Name = "Highlight targets",
@@ -587,6 +606,11 @@ function Module.init(context: Runtime): any
 end
 
 function Module.destroy(): ()
+    if aura and aura.Enabled then
+        pcall(function(): ()
+            aura:Toggle(false)
+        end)
+    end
     if activeCleanup then
         pcall(activeCleanup)
     end

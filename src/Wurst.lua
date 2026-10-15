@@ -118,6 +118,9 @@ local FEATURE_CATEGORIES: {[string]: string} = {
 
     ["Silent Aim"] = "Combat",
     ["Auto Shoot"] = "Combat",
+    ["TriggerBot"] = "Combat",
+    ["Role Tags"] = "Render",
+    ["Weapon Visuals"] = "Render",
 
     ["Round Info"] = "Render",
     ["Auto Swing"] = "Combat",
@@ -222,7 +225,7 @@ local RUNTIME_RAW_BASE: string =
         .. RUNTIME_BRANCH
         .. "/"
 
-local SOURCE_STAMP: string = "v23-20261015-clean-org"
+local SOURCE_STAMP: string = "v24-20261015-teamcheck-visuals"
 
 local BOOT_STARTED_AT: number = os.clock()
 local BOOT_FINGERPRINT_SECONDS: number = 0
@@ -1080,13 +1083,17 @@ end
 
 local function buildTeleportSnippet(): string
 
-    local armedPlaceId: number = game.PlaceId
+    -- Arm on the universe (GameId), not the place: games that teleport you
+    -- to their own instanced places (new servers, event places, private
+    -- instances) keep the same GameId but a different PlaceId, and the menu
+    -- must follow them all.
+    local armedGameId: number = game.GameId
 
     return table.concat({
         "local genv = (type(getgenv) == \"function\" and getgenv()) or {}",
         "genv.WURST_TP_QUEUED = false",
         "if genv.WURST_STOPPED == true then return end",
-        "if game.PlaceId ~= " .. tostring(armedPlaceId) .. " then return end",
+        "if game.GameId ~= " .. tostring(armedGameId) .. " then return end",
         "genv.WURST_BRANCH = \"" .. RUNTIME_BRANCH .. "\"",
 
         "if not game:IsLoaded() then",
@@ -4320,6 +4327,115 @@ local roleColorMemo: {[Player]: {colour: Color3?, at: number}} =
     setmetatable({}, {__mode = "k"}) :: any
 local ROLE_MEMO_SECONDS: number = 1 / 30
 
+-- Advanced team analysis. Always enabled: it is not a module and currently
+-- cannot be turned off. Every query tries several independent methods and
+-- returns the first that can decide:
+--   1. the game's own team provider (registered via registerTeamProvider)
+--   2. role sides, when the game registers roles (MM2: Innocent/Hero/Sheriff
+--      side together, the Murderer alone)
+--   3. the Roblox Teams service (player.Team)
+--   4. team colours, but only when the game actually uses teams
+--   5. neutral players are never teammates
+-- Anything the methods cannot decide is reported as unknown, never guessed.
+local TEAM_SIDE_BY_ROLE: {[string]: string} = {
+    ["murderer"] = "hostile",
+    ["killer"] = "hostile",
+    ["traitor"] = "hostile",
+    ["zombie"] = "hostile",
+    ["infected"] = "hostile",
+    ["sheriff"] = "guard",
+    ["hero"] = "guard",
+    ["detective"] = "guard",
+    ["innocent"] = "guard",
+    ["survivor"] = "guard",
+    ["crewmate"] = "guard",
+    ["dead"] = "none",
+}
+
+state.teamCheck = {}
+
+function state.teamCheck.analyze(player: Player?): {[string]: any}
+    if not player or player == LocalPlayer then
+        return {sameTeam = false, method = "self", hostile = false}
+    end
+
+    local provider: any = state.gameBridge.teamProvider
+    if provider and type(provider.IsFriendly) == "function" then
+        local ok: boolean, friendly: any = pcall(provider.IsFriendly, player)
+        if ok and type(friendly) == "boolean" then
+            return {sameTeam = friendly, method = "provider", hostile = not friendly}
+        end
+    end
+
+    if state.gameBridge.roleProvider and type(state.playerRole) == "function" then
+        local myRole: string? = state.playerRole(LocalPlayer)
+        local theirRole: string? = state.playerRole(player :: Player)
+        if myRole and theirRole then
+            local mySide: string? = TEAM_SIDE_BY_ROLE[string.lower(myRole)]
+            local theirSide: string? = TEAM_SIDE_BY_ROLE[string.lower(theirRole)]
+            if mySide and theirSide and mySide ~= "none" and theirSide ~= "none" then
+                return {
+                    sameTeam = mySide == theirSide,
+                    method = "roles",
+                    hostile = mySide ~= theirSide,
+                }
+            end
+            if myRole == theirRole then
+                return {sameTeam = true, method = "roles", hostile = false}
+            end
+        end
+    end
+
+    local myTeam: Team? = LocalPlayer.Team
+    local theirTeam: Team? = (player :: Player).Team
+    if myTeam ~= nil or theirTeam ~= nil then
+        if myTeam == nil or theirTeam == nil then
+            return {sameTeam = false, method = "teams", hostile = true}
+        end
+        return {
+            sameTeam = (myTeam :: Team) == (theirTeam :: Team),
+            method = "teams",
+            hostile = (myTeam :: Team) ~= (theirTeam :: Team),
+        }
+    end
+
+    local teamsService: any = game:FindService("Teams")
+    if teamsService and #teamsService:GetTeams() > 0 then
+        if LocalPlayer.Neutral or (player :: Player).Neutral then
+            return {sameTeam = false, method = "teamcolor", hostile = true}
+        end
+        local sameColour: boolean =
+            LocalPlayer.TeamColor == (player :: Player).TeamColor
+        return {
+            sameTeam = sameColour,
+            method = "teamcolor",
+            hostile = not sameColour,
+        }
+    end
+
+    if LocalPlayer.Neutral and (player :: Player).Neutral then
+        return {sameTeam = false, method = "neutral", hostile = true}
+    end
+
+    return {sameTeam = nil, method = "unknown", hostile = nil}
+end
+
+function state.teamCheck.isSameTeam(player: Player?): boolean
+    local verdict: any = state.teamCheck.analyze(player)
+    return verdict.sameTeam == true
+end
+
+function state.teamCheck.isEnemy(player: Player?): boolean
+    local verdict: any = state.teamCheck.analyze(player)
+    if verdict.hostile ~= nil then
+        return verdict.hostile
+    end
+    if verdict.sameTeam == false then
+        return true
+    end
+    return false
+end
+
 state.playerRole = function(player: Player): string?
     local provider: any = state.gameBridge.roleProvider
     if not provider then
@@ -4724,6 +4840,7 @@ local function createGameModuleEnvironment(
         registerEspExtra = state.registerEspExtra,
         onGameBridge = state.onGameBridge,
         playerRole = state.playerRole,
+        teamCheck = state.teamCheck,
         findPlayerByText = findPlayerByText,
         performFling = performFling,
         MM2Scroll = MM2Scroll,
@@ -4767,6 +4884,8 @@ local function loadGameModule(
         "src/games/MM2/Blatant/KnifeAura.lua",
         "src/games/MM2/Blatant/KnifeThrow.lua",
         "src/games/MM2/Render/RoundEsp.lua",
+        "src/games/MM2/Render/RoleTags.lua",
+        "src/games/MM2/Render/WeaponVisuals.lua",
         "src/games/MM2/Movement/Sprint.lua",
         "src/games/MM2/Movement/Teleport.lua",
         "src/games/MM2/Fun/InstantRoleNotify.lua",
@@ -5505,6 +5624,7 @@ local moduleServices: ModuleServices = {
     },
     gameBridge = {
         onEvent = state.onGameBridge,
+        teamCheck = state.teamCheck,
         playerRole = state.playerRole,
         playerRoleColor = state.playerRoleColor,
         playerPerk = state.playerPerk,
@@ -5548,6 +5668,7 @@ local fallbackManifest: any = {
         {path = "src/games/universal/Other/Learning.lua", name = "Learning", category = "Other"},
         {path = "src/games/universal/Movement/ClickTeleport.lua", name = "Click Teleport", category = "Movement"},
         {path = "src/games/universal/Combat/AimAssist.lua", name = "Aim Assist", category = "Combat"},
+        {path = "src/games/universal/Combat/TriggerBot.lua", name = "TriggerBot", category = "Combat"},
         {path = "src/games/universal/Render/XRay.lua", name = "X-Ray", category = "Render"},
         {path = "src/games/universal/Movement/Jump.lua", name = "Jump", category = "Movement"},
         {path = "src/games/universal/Blatant/Spider.lua", name = "Spider", category = "Movement"},

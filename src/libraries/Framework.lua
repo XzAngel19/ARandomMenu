@@ -752,11 +752,18 @@ function Module.init(context: any): Framework
             if value ~= nil and value == created.Enabled then
                 return
             end
+            -- A real state change: run the module's Function with the wanted
+            -- state so it can stop loops and restore whatever it changed.
+            -- (feature.activate only flips the card UI and must not be used
+            -- here - module.destroy() relies on Toggle(false) actually
+            -- disabling the module.)
+            onToggle(value == nil and not created.Enabled or value == true)
+        end
+
+        function created:Reveal(): ()
             if feature and type(feature.activate) == "function" then
                 feature.activate()
-                return
             end
-            onToggle(not created.Enabled)
         end
 
         function created:SetStatus(status: string?): ()
