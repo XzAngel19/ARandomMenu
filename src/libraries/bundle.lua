@@ -1,5 +1,5 @@
 return {
-    stamp = "v16-20261014-mm2-visuals-telemetry",
+    stamp = "v22-20261015-classic-restore",
     files = {
         ["src/games/BedFight/Combat/AutoSwing.lua"] = [[
 local Module = {Name = "BedFight Auto Swing", Initialized = false, Connection = nil}
@@ -1434,6 +1434,9 @@ function Module.init(runtime: any): any
     local predictionMath: any = core.predictionMath
 
     type KnifeRuntimeState = {
+        masterEnabled: boolean,
+        auraWanted: boolean,
+        throwWanted: boolean,
         lastAuraSwing: number,
     }
 
@@ -1443,6 +1446,9 @@ function Module.init(runtime: any): any
         autoRange = false,
     }
     state.mm2KnifeRuntime = {
+        masterEnabled = false,
+        auraWanted = false,
+        throwWanted = false,
         lastAuraSwing = -math.huge,
     } :: KnifeRuntimeState
 
@@ -1606,6 +1612,7 @@ function Module.init(runtime: any): any
 
     local function toggleKnifeAura(enabled: boolean): ()
         knifeSettings.aura = enabled
+        state.mm2KnifeRuntime.auraWanted = enabled
         state.mm2KnifeRuntime.lastAuraSwing = -math.huge
         refreshKnifeController()
     end
@@ -1615,11 +1622,20 @@ function Module.init(runtime: any): any
         "Knife aura and knife throw, each behind its own option below",
         6,
         function(enabled: boolean): ()
-            if not enabled then
-                toggleKnifeAura(false)
-                if type(state.mm2KnifeThrowOff) == "function" then
-                    state.mm2KnifeThrowOff()
-                end
+            state.mm2KnifeRuntime.masterEnabled = enabled
+            if enabled then
+                return
+            end
+            -- Master OFF is a hard stop: both controllers halt AND their
+            -- checkboxes uncheck (visual, saved state and callback move
+            -- together), so a checked-but-dead sub-option can never happen.
+            toggleKnifeAura(false)
+            if type(state.mm2KnifeThrowOff) == "function" then
+                state.mm2KnifeThrowOff()
+            end
+            if type(state.setToggleChecked) == "function" then
+                state.setToggleChecked("MM2.Knife.KnifeAura", false)
+                state.setToggleChecked("MM2.Knife.KnifeThrow", false)
             end
         end,
         {
@@ -1637,11 +1653,11 @@ function Module.init(runtime: any): any
         toggleKnifeAura,
         "Stabs the nearest valid target in range through the game's own HandleTouched"
     )
-    addNumberOption(KnifeFeature, "Range", 14, 7, 30, function(
+    addNumberOption(KnifeFeature, "Aura Range", 14, 7, 30, function(
         value: number
     ): ()
         knifeSettings.auraRange = value
-    end)
+    end, "Stab reach in studs when Auto Range has no confirmed sample.")
     addToggleOption(
         KnifeFeature,
         "Auto Range",
@@ -1655,6 +1671,8 @@ function Module.init(runtime: any): any
 
     activeCleanup = function(): ()
         toggleKnifeAura(false)
+        state.mm2KnifeRuntime.masterEnabled = false
+        state.mm2KnifeRuntime.throwWanted = false
         state.mm2KnifeFeature = nil
     end
     Module.Events = featureConnections
@@ -1781,18 +1799,37 @@ function Module.init(runtime: any): any
         local root: BasePart =
             target.Character:FindFirstChild("HumanoidRootPart") :: BasePart
         local knifeSpeed: number = 96
-        local ok: boolean, estimates: any = pcall(function(): any
+        local estimates: any = nil
+        local ok: boolean, estimatesValue: any = pcall(function(): any
             return trajectoryCalibration:getEstimates()
         end)
-        if ok and type(estimates) == "table" and predictionMath.finite(estimates.knifeSpeed)
+        if ok and type(estimatesValue) == "table" then
+            estimates = estimatesValue
+        end
+        if estimates and predictionMath.finite(estimates.knifeSpeed)
             and estimates.knifeSpeed >= 24 and estimates.knifeSpeed <= 300 then
             knifeSpeed = estimates.knifeSpeed
         end
         local velocity: Vector3 = getFilteredVelocity(target, root)
-        -- Restore v10's packet-flight lead. Solve the remaining moving-target
-        -- flight instead of using distance-to-the-old-position / blade speed.
-        local packetTime: number = getEstimatedLatency() * 0.5
+        -- Packet-flight lead: the blade spawns on the server a full round
+        -- trip after we author the throw, and our observation of the target
+        -- is a round trip old, so the target keeps moving for that whole
+        -- window. The calibration measures exactly that window (observed
+        -- spawn delay, ~240 ms on record); use it when enough throws
+        -- confirmed it, otherwise fall back to the live RTT estimate.
+        local packetTime: number = getEstimatedLatency()
+        if estimates
+            and predictionMath.finite(estimates.knifeSpawnDelayMs)
+            and (estimates.confirmedSpawnDelays or 0) >= 3 then
+            packetTime = math.clamp(
+                estimates.knifeSpawnDelayMs / 1000,
+                0.05,
+                0.6
+            )
+        end
         local positionAtSpawn: Vector3 = root.Position + velocity * packetTime
+        -- Solve the remaining moving-target flight instead of using
+        -- distance-to-the-old-position / blade speed.
         local flightTime: number? = predictionMath.interceptTime(
             positionAtSpawn - originPos, velocity, knifeSpeed
         )
@@ -1922,6 +1959,9 @@ function Module.init(runtime: any): any
 
     local function toggleKnifeThrow(enabled: boolean): ()
         knifeThrowSettings.enabled = enabled
+        if state.mm2KnifeRuntime then
+            state.mm2KnifeRuntime.throwWanted = enabled
+        end
         disconnectFeatureConnection("MM2KnifeThrow")
         if not enabled then
             stopThrowAnimation()
@@ -1992,7 +2032,7 @@ function Module.init(runtime: any): any
     )
     addNumberOption(
         KnifeThrowFeature,
-        "Range",
+        "Throw Range",
         knifeThrowSettings.range,
         10,
         400,
@@ -2193,7 +2233,7 @@ function Module.init(runtime: any): any
         local grounded: boolean = isMotionGrounded(humanoid, velocity)
 
         local turnRate: number = getGunTurnRate(
-            sample and sample.character == character and sample.stability or nil
+            sample and sample.character == character and sample or nil
         )
 
         local moveDirection: Vector3 = humanoid.MoveDirection
@@ -2909,13 +2949,15 @@ function Module.init(runtime: any): any
         AutoShootFeature,
         "Max error",
         autoSettings.maxError,
-        0.1,
+        0.35,
         1,
         function(value: number): ()
             autoSettings.maxError = value
         end,
         "Only fire when predicted error is within this many studs. Applies "
-            .. "to both Normal and Silent; extra sweep never overrides this gate.",
+            .. "to both Normal and Silent; extra sweep never overrides this "
+            .. "gate. The solver never reports below 0.35, so the slider "
+            .. "starts there.",
         0.05
     )
     addNumberOption(
@@ -3908,255 +3950,6 @@ function Module.destroy(): ()
     Module.Runtime = nil
 end
 
-return Module
-
-]],
-        ["src/games/MM2/Render/WeaponVisuals.lua"] = [[
-local Module = {
-    Name = "MM2 Weapon Visuals",
-    PlaceId = 142823291,
-    Events = {} :: {[string]: any},
-    Initialized = false,
-    Runtime = nil :: any,
-}
-local activeCleanup: () -> () = function(): () end
-
-function Module.init(runtime: any): any
-    if Module.Initialized then return Module end
-    local core: any = state.mm2Core
-    assert(type(core) == "table", "Weapon Visuals requires the MM2 core")
-    Module.Runtime = runtime
-    local options = {
-        enabled = false, doubleGun = false, doubleKnife = false, electricKnife = false,
-        color = Color3.fromRGB(100, 185, 255), intensity = 1,
-    }
-    local connections: {RBXScriptConnection} = {}
-    local characterConnections: {RBXScriptConnection} = {}
-    local visualFolder: Folder? = nil
-    local electricTask: any = nil
-    local arcs: {any} = {}
-    local queued = false
-    local generation = 0
-    local rebuild: () -> ()
-
-    local function disconnectAll(list: {RBXScriptConnection}): ()
-        for _, connection in ipairs(list) do connection:Disconnect() end
-        table.clear(list)
-    end
-    local function clearVisuals(): ()
-        if electricTask then electricTask:Disconnect(); electricTask = nil end
-        table.clear(arcs)
-        if visualFolder then visualFolder:Destroy(); visualFolder = nil end
-    end
-    local function queueRebuild(): ()
-        if not options.enabled or queued then return end
-        queued = true
-        local version = generation
-        task.defer(function(): ()
-            if version ~= generation then return end
-            queued = false
-            if options.enabled then rebuild() end
-        end)
-    end
-
-    -- Clone geometry only, never a Tool/model or functional descendants. All
-    -- sanitization happens detached, before anything enters the DataModel.
-    local function geometryClone(source: BasePart): BasePart?
-        if not (source:IsA("Part") or source:IsA("MeshPart") or source:IsA("UnionOperation")
-            or source:IsA("WedgePart") or source:IsA("CornerWedgePart")) then return nil end
-        local ok, copy = pcall(source.Clone, source)
-        if not ok or not copy then return nil end
-        copy:ClearAllChildren()
-        for _, tag in ipairs(CollectionService:GetTags(copy)) do CollectionService:RemoveTag(copy, tag) end
-        for key in pairs(copy:GetAttributes()) do copy:SetAttribute(key, nil) end
-        copy.Name = "LocalWeaponGeometry"
-        copy.Anchored = false
-        copy.CanCollide = false
-        copy.CanTouch = false
-        copy.CanQuery = false
-        copy.Massless = true
-        copy.AssemblyLinearVelocity = Vector3.zero
-        copy.AssemblyAngularVelocity = Vector3.zero
-        -- Recreate only visual children; no nested scripts, references or tags.
-        for _, child in ipairs(source:GetChildren()) do
-            if child:IsA("DataModelMesh") or child:IsA("Decal")
-                or child:IsA("Texture") or child:IsA("SurfaceAppearance") then
-                local childOk, visual = pcall(child.Clone, child)
-                if childOk and visual then
-                    visual:ClearAllChildren()
-                    for _, tag in ipairs(CollectionService:GetTags(visual)) do CollectionService:RemoveTag(visual, tag) end
-                    for key in pairs(visual:GetAttributes()) do visual:SetAttribute(key, nil) end
-                    visual.Parent = copy
-                end
-            end
-        end
-        return copy
-    end
-
-    local function attach(part: BasePart, limb: BasePart, pose: CFrame): ()
-        part.CFrame = pose
-        local joint = Instance.new("WeldConstraint")
-        joint.Part0 = limb
-        joint.Part1 = part
-        joint.Parent = part
-        part.Parent = visualFolder
-    end
-
-    local function addElectric(part: BasePart): ()
-        -- Own invisible carrier: the real weapon receives no children/changes.
-        local carrier = Instance.new("Part")
-        carrier.Name = "LocalElectricCarrier"
-        carrier.Size = Vector3.new(0.05, 0.05, 0.05)
-        carrier.Transparency = 1
-        carrier.Anchored = false
-        carrier.CanCollide = false
-        carrier.CanTouch = false
-        carrier.CanQuery = false
-        carrier.Massless = true
-        attach(carrier, part, part.CFrame)
-        local size = part.Size
-        local length = math.max(size.X, size.Y, size.Z, 0.5)
-        local axis = size.X >= size.Y and size.X >= size.Z and Vector3.xAxis
-            or (size.Y >= size.Z and Vector3.yAxis or Vector3.zAxis)
-        local nodes: {Attachment} = {}
-        for i = 1, 6 do
-            local node = Instance.new("Attachment")
-            node.Position = axis * length * ((i - 1) / 5 - 0.5)
-            node.Parent = carrier
-            table.insert(nodes, node)
-            if i > 1 then
-                local beam = Instance.new("Beam")
-                beam.Attachment0 = nodes[i - 1]
-                beam.Attachment1 = node
-                beam.FaceCamera = true
-                beam.Color = ColorSequence.new(options.color)
-                beam.LightEmission = 1
-                beam.Width0 = 0.02 + 0.025 * options.intensity
-                beam.Width1 = beam.Width0
-                beam.Transparency = NumberSequence.new(0.1)
-                beam.Parent = carrier
-            end
-        end
-        table.insert(arcs, {nodes = nodes, axis = axis, length = length})
-    end
-
-    local function visualBlade(tool: Tool): BasePart?
-        local vh = tool:FindFirstChild("VH", true)
-        if vh then
-            if vh:IsA("BasePart") then return vh end
-            local geometry = vh:FindFirstChildWhichIsA("BasePart", true)
-            if geometry then return geometry end
-        end
-        local handle = tool:FindFirstChild("Handle")
-        return handle and handle:IsA("BasePart") and handle or nil
-    end
-
-    rebuild = function(): ()
-        clearVisuals()
-        local character = LocalPlayer.Character
-        if not options.enabled or not character then return end
-        local left = character:FindFirstChild("LeftHand") or character:FindFirstChild("Left Arm")
-        local right = character:FindFirstChild("RightHand") or character:FindFirstChild("Right Arm")
-        visualFolder = Instance.new("Folder")
-        visualFolder.Name = "MM2LocalWeaponVisuals"
-        visualFolder.Parent = workspace
-        for _, kind in ipairs({"Gun", "Knife"}) do
-            local tool = core.getPlayerWeapon(LocalPlayer, kind, true)
-            if not tool or tool.Parent ~= character then continue end
-            local double = kind == "Gun" and options.doubleGun or kind == "Knife" and options.doubleKnife
-            local blade = visualBlade(tool)
-            if kind == "Knife" and options.electricKnife and blade then addElectric(blade) end
-            if not double or not left or not right or not left:IsA("BasePart") or not right:IsA("BasePart") then continue end
-            local copied = 0
-            for _, source in ipairs(tool:GetDescendants()) do
-                if not source:IsA("BasePart") then continue end
-                local part = geometryClone(source)
-                if part then
-                    attach(part, left, left.CFrame * right.CFrame:ToObjectSpace(source.CFrame))
-                    if kind == "Knife" and options.electricKnife and source == blade then addElectric(part) end
-                    copied += 1
-                    if copied >= 64 then break end -- bounded cost for complex skins
-                end
-            end
-        end
-        if #arcs > 0 then
-            local elapsed = 0
-            electricTask = TaskManager:Connect(function(dt: number): ()
-                elapsed += dt
-                if elapsed < 0.125 then return end -- 8 Hz only while electric is visible
-                elapsed = 0
-                for _, arc in ipairs(arcs) do
-                    for i, node in ipairs(arc.nodes) do
-                        local jitter = (i == 1 or i == #arc.nodes) and Vector3.zero
-                            or Vector3.new(math.random() - 0.5, math.random() - 0.5, math.random() - 0.5)
-                                * 0.22 * options.intensity
-                        node.Position = arc.axis * arc.length * ((i - 1) / 5 - 0.5) + jitter
-                    end
-                end
-            end)
-        end
-    end
-
-    local function watchCharacter(character: Model): ()
-        disconnectAll(characterConnections)
-        clearVisuals()
-        table.insert(characterConnections, character.DescendantAdded:Connect(function(object: Instance): ()
-            if object:IsA("Tool") or object:IsA("BasePart") then queueRebuild() end
-        end))
-        table.insert(characterConnections, character.DescendantRemoving:Connect(function(object: Instance): ()
-            if object:IsA("Tool") or object:IsA("BasePart") then queueRebuild() end
-        end))
-        queueRebuild()
-    end
-    local function setEnabled(enabled: boolean): ()
-        generation += 1
-        queued = false
-        options.enabled = enabled
-        disconnectAll(connections)
-        disconnectAll(characterConnections)
-        clearVisuals()
-        if not enabled then return end
-        table.insert(connections, LocalPlayer.CharacterAdded:Connect(watchCharacter))
-        table.insert(connections, LocalPlayer.CharacterRemoving:Connect(function(): ()
-            generation += 1
-            queued = false
-            disconnectAll(characterConnections)
-            clearVisuals()
-        end))
-        if LocalPlayer.Character then watchCharacter(LocalPlayer.Character) end
-    end
-
-    local feature = createUniversalFeature("Weapon Visuals",
-        "Local cosmetics only. No extra damage, unlocks or replication to other players.",
-        15, setEnabled, {categoryName = "Render", parent = MM2Scroll, registry = mm2Features})
-    addToggleOption(feature, "Double Gun", false, function(value: boolean): ()
-        options.doubleGun = value; queueRebuild()
-    end)
-    addToggleOption(feature, "Double Knife", false, function(value: boolean): ()
-        options.doubleKnife = value; queueRebuild()
-    end)
-    addToggleOption(feature, "Electric Knife", false, function(value: boolean): ()
-        options.electricKnife = value; queueRebuild()
-    end, "Original local beam effect, not the official inventory effect.")
-    addColorOption(feature, "Electric color", options.color, function(value: Color3): ()
-        options.color = value; queueRebuild()
-    end)
-    addNumberOption(feature, "Electric intensity", 1, 0.25, 3, function(value: number): ()
-        options.intensity = math.clamp(value, 0.25, 3); queueRebuild()
-    end)
-
-    activeCleanup = function(): () setEnabled(false) end
-    Module.Initialized = true
-    return Module
-end
-
-function Module.destroy(): ()
-    if not Module.Initialized then return end
-    Module.Initialized = false
-    pcall(activeCleanup)
-    activeCleanup = function(): () end
-    Module.Runtime = nil
-end
 return Module
 
 ]],
@@ -5497,10 +5290,36 @@ type MotionSample = {
     acceleration: Vector3,
     stability: number,
     grounded: boolean,
+
+    turnRate: number?,
+    turnReferenceAt: number?,
 }
 
 local motionSamples: {[Player]: MotionSample} =
     setmetatable({}, {__mode = "k"}) :: any
+
+local GUN_LEAD = {
+    replicationRate = 20,
+    serverFrame = 1 / 60,
+    minimumHorizon = 0.02,
+    maximumHorizon = 0.45,
+    maximumManualBias = 0.1,
+    maximumAutoCorrection = 0.1,
+
+    -- Radians/second. The turn rate itself is measured per motion sample in
+    -- getFilteredVelocity; these are only its bounds and its fallback.
+    defaultTurnRate = math.pi * 0.5,
+    maxTurnRate = math.pi * 1.5,
+}
+local autoLeadCorrection: number = 0
+
+local function getActiveAutoLeadCorrection(): number
+    return mm2Settings.autoTuneLead and autoLeadCorrection or 0
+end
+
+local function resetAutoLeadCorrection(): ()
+    autoLeadCorrection = 0
+end
 
 local function getFilteredVelocity(player: Player, root: BasePart): Vector3
     local now: number = os.clock()
@@ -5516,6 +5335,8 @@ local function getFilteredVelocity(player: Player, root: BasePart): Vector3
     local sample: MotionSample? = motionSamples[player]
     local acceleration: Vector3 = Vector3.zero
     local stability: number = 1
+    local turnRate: number? = nil
+    local turnReferenceAt: number? = nil
     local character: Model? = player.Character
     local humanoid: Humanoid? = character
         and character:FindFirstChildOfClass("Humanoid")
@@ -5552,6 +5373,31 @@ local function getFilteredVelocity(player: Player, root: BasePart): Vector3
                     1
                 )
             end
+
+            -- Time-normalized turn rate in radians/second. Measured over the
+            -- window since the last direction change, so it stays the same
+            -- whether Motion Hz is 20 or 120: replication updates are chunky
+            -- and per-sample deltas would scale with the sampling frequency.
+            local referenceAt: number = sample.turnReferenceAt
+                or sample.sampledAt
+            if stability < 0.99999 then
+                local window: number = now - referenceAt
+                if window >= 1 / 240 then
+                    turnRate = math.clamp(
+                        math.acos(stability) / window,
+                        0,
+                        GUN_LEAD.maxTurnRate
+                    )
+                end
+                turnReferenceAt = now
+            else
+                turnRate = sample.turnRate
+                turnReferenceAt = referenceAt
+                -- Straight-line motion decays any stale turn estimate.
+                if now - referenceAt > 0.2 then
+                    turnRate = 0
+                end
+            end
         end
     end
 
@@ -5563,6 +5409,8 @@ local function getFilteredVelocity(player: Player, root: BasePart): Vector3
         acceleration = acceleration,
         stability = stability,
         grounded = grounded,
+        turnRate = turnRate,
+        turnReferenceAt = turnReferenceAt,
     }
     return velocity
 end
@@ -5597,28 +5445,6 @@ local function getEstimatedLatency(): number
         0.03,
         0.3
     )
-end
-
-local GUN_LEAD = {
-    replicationRate = 20,
-    serverFrame = 1 / 60,
-    minimumHorizon = 0.02,
-    maximumHorizon = 0.45,
-    maximumManualBias = 0.1,
-    maximumAutoCorrection = 0.1,
-
-    defaultTurnRate = math.pi * 0.5,
-    maxTurnRate = math.pi * 1.5,
-    turnRatePerInstability = 6,
-}
-local autoLeadCorrection: number = 0
-
-local function getActiveAutoLeadCorrection(): number
-    return mm2Settings.autoTuneLead and autoLeadCorrection or 0
-end
-
-local function resetAutoLeadCorrection(): ()
-    autoLeadCorrection = 0
 end
 
 local trajectoryCalibration: any = nil
@@ -5659,15 +5485,19 @@ local function getGunHorizonSeconds(): number
     )
 end
 
-local function getGunTurnRate(stability: number?): number
-    if type(stability) ~= "number" then
+local function getGunTurnRate(sample: MotionSample?): number
+    -- Reads the time-normalized turn rate measured in getFilteredVelocity
+    -- (radians/second), so the lead discount no longer changes meaning when
+    -- Motion Hz changes. A missing or stale sample keeps the conservative
+    -- default.
+    if type(sample) ~= "table" then
         return GUN_LEAD.defaultTurnRate
     end
-    return math.clamp(
-        (1 - math.clamp(stability, 0, 1)) * GUN_LEAD.turnRatePerInstability,
-        0,
-        GUN_LEAD.maxTurnRate
-    )
+    local measured: any = (sample :: any).turnRate
+    if type(measured) ~= "number" then
+        return GUN_LEAD.defaultTurnRate
+    end
+    return math.clamp(measured, 0, GUN_LEAD.maxTurnRate)
 end
 
 local function getGunTurnDiscount(horizon: number, turnRate: number?): number
@@ -5843,6 +5673,8 @@ local function createTrajectoryCalibration(): any
         liveGunAcceptanceMs: number?,
         liveGunSamples: number,
         maxStabDistance: number?,
+        knifeSpawnDelayMs: number?,
+        confirmedSpawnDelays: number,
     }
     type Controller = {
         start: (self: Controller) -> (),
@@ -6515,6 +6347,7 @@ local function createTrajectoryCalibration(): any
         end
         local gunStats: RunningStats = runtime.gunAcceptance
         local speedStats: RunningStats = runtime.knifeSpeed
+        local spawnDelayStats: RunningStats = runtime.knifeSpawnDelay
         local maxStab: number? = nil
         for _, ev in ipairs(runtime.events) do
             if ev.kind == "stab" and ev.hitTarget == true
@@ -6532,6 +6365,10 @@ local function createTrajectoryCalibration(): any
             maxStabDistance = maxStab,
             liveGunAcceptanceMs = #fresh >= 6 and median(fresh) or nil,
             liveGunSamples = #fresh,
+            knifeSpawnDelayMs = spawnDelayStats.count > 0
+                and spawnDelayStats.mean
+                or nil,
+            confirmedSpawnDelays = spawnDelayStats.count,
         }
         estimatesAt = now
         return estimatesCache :: Estimates
@@ -6698,19 +6535,35 @@ local function createTrajectoryCalibration(): any
         compactPending(runtime.pendingGuns, now)
         local eventTool: Tool? = normalizeGun(eventGun)
         local eventOrigin: Vector3? = worldPosition(eventOriginValue)
+        -- Match the OLDEST unconfirmed attempt whose tool and origin geometry
+        -- agree with the signal. Iterating newest-first let a signal confirm
+        -- a younger shot and feed a wrong latency into the adaptive horizon.
         local selectedIndex: number? = nil
-        for index: number = #runtime.pendingGuns, 1, -1 do
+        local fallbackIndex: number? = nil
+        for index: number = 1, #runtime.pendingGuns do
             local pending: PendingGun = runtime.pendingGuns[index]
-            local toolMatches: boolean = not pending.confirmedAt
-                and eventTool == pending.tool
-            local originMatches: boolean = eventOrigin ~= nil
-                and pending.origin ~= nil
-                and (eventOrigin - pending.origin).Magnitude <= 8
-            if not pending.confirmedAt
-                and (toolMatches or (eventTool == nil and originMatches)) then
-                selectedIndex = index
-                break
+            if not pending.confirmedAt then
+                local toolMatches: boolean = eventTool ~= nil
+                    and eventTool == pending.tool
+                local originMatches: boolean = eventOrigin ~= nil
+                    and pending.origin ~= nil
+                    and (eventOrigin - pending.origin).Magnitude <= 8
+                if toolMatches and originMatches then
+                    selectedIndex = index
+                    break
+                end
+                if fallbackIndex == nil then
+                    if toolMatches
+                        and (eventOrigin == nil or pending.origin == nil) then
+                        fallbackIndex = index
+                    elseif eventTool == nil and originMatches then
+                        fallbackIndex = index
+                    end
+                end
             end
+        end
+        if not selectedIndex then
+            selectedIndex = fallbackIndex
         end
         if not selectedIndex then
             local character: Model? = LocalPlayer.Character
@@ -7725,9 +7578,12 @@ state.mm2ShotFeedback.resolve = function(
             local stats: any = state.mm2ShotFeedback.spawnStats[variant]
                 or {shots = 0, hits = 0, misses = 0}
             stats.shots += 1
-            if hitConfirmed then
+            -- Only the server's own hit evidence counts as a hit here.
+            -- Disconnects, role changes and health drops are ambiguous: they
+            -- count as neither hit nor miss, so the A/B label stays honest.
+            if directHit then
                 stats.hits += 1
-            else
+            elseif not hitConfirmed then
                 stats.misses += 1
             end
             state.mm2ShotFeedback.spawnStats[variant] = stats
@@ -31971,6 +31827,27 @@ function Module.init(context: any): WidgetLibrary
         end
         trackUiConnection(button.MouseButton1Click:Connect(toggleOption))
 
+        -- Programmatic state sync (e.g. a card master switch turning its
+        -- sub-options off). Mirrors the listControls pattern: the visual, the
+        -- persisted state and the module callback all move together.
+        state.toggleControls = state.toggleControls or {}
+        state.toggleControls[optionKey] = {
+            setChecked = function(checked: boolean): ()
+                if not button.Parent then
+                    return
+                end
+                local wanted: boolean = checked == true
+                if wanted == (enabled :: boolean) then
+                    return
+                end
+                enabled = wanted
+                refreshOptionState()
+                configData.states[optionKey] = enabled
+                callback(enabled :: boolean)
+                queueConfigSave()
+            end,
+        }
+
         refreshOptionState()
         callback(enabled :: boolean)
         return button
@@ -32085,8 +31962,10 @@ function Module.init(context: any): WidgetLibrary
             feature.configKey .. "." .. labelText:gsub("%W", "")
         local storedValue: number? = tonumber(configData.values[optionKey])
 
+        -- A restored profile may predate a narrower interval; clamp it so the
+        -- control never starts outside its advertised range.
         local value: number = isFiniteNumber(storedValue)
-            and (storedValue :: number)
+            and math.clamp(storedValue :: number, minimum, maximum)
             or defaultValue
         local integerOnly: boolean = defaultValue % 1 == 0
             and minimum % 1 == 0
@@ -32242,6 +32121,9 @@ function Module.init(context: any): WidgetLibrary
         local editing: boolean = false
 
         local function quantize(raw: number, fromSlider: boolean): number
+            -- Manual entry and restored profiles both pass through here;
+            -- values are always clamped to the advertised interval.
+            raw = math.clamp(raw, minimum, maximum)
             if not fromSlider then
                 return raw
             end
@@ -33962,6 +33844,18 @@ function Module.init(context: any): WidgetLibrary
         createFeatures = createFeaturesFromDefinitions,
         addOptions = addConfiguredOptions,
     }
+
+    -- Lets a module sync a toggle row (visual + saved state + callback)
+    -- without clicking it. Returns false when the option does not exist.
+    state.setToggleChecked = function(optionKey: string, checked: boolean): boolean
+        local control: any = state.toggleControls
+            and state.toggleControls[optionKey]
+        if type(control) == "table" and type(control.setChecked) == "function" then
+            control.setChecked(checked)
+            return true
+        end
+        return false
+    end
 
     Module.Initialized = true
     return {

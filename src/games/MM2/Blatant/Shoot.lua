@@ -125,7 +125,7 @@ function Module.init(runtime: any): any
         local grounded: boolean = isMotionGrounded(humanoid, velocity)
 
         local turnRate: number = getGunTurnRate(
-            sample and sample.character == character and sample.stability or nil
+            sample and sample.character == character and sample or nil
         )
 
         local moveDirection: Vector3 = humanoid.MoveDirection
@@ -841,13 +841,15 @@ function Module.init(runtime: any): any
         AutoShootFeature,
         "Max error",
         autoSettings.maxError,
-        0.1,
+        0.35,
         1,
         function(value: number): ()
             autoSettings.maxError = value
         end,
         "Only fire when predicted error is within this many studs. Applies "
-            .. "to both Normal and Silent; extra sweep never overrides this gate.",
+            .. "to both Normal and Silent; extra sweep never overrides this "
+            .. "gate. The solver never reports below 0.35, so the slider "
+            .. "starts there.",
         0.05
     )
     addNumberOption(

@@ -1334,10 +1334,36 @@ type MotionSample = {
     acceleration: Vector3,
     stability: number,
     grounded: boolean,
+
+    turnRate: number?,
+    turnReferenceAt: number?,
 }
 
 local motionSamples: {[Player]: MotionSample} =
     setmetatable({}, {__mode = "k"}) :: any
+
+local GUN_LEAD = {
+    replicationRate = 20,
+    serverFrame = 1 / 60,
+    minimumHorizon = 0.02,
+    maximumHorizon = 0.45,
+    maximumManualBias = 0.1,
+    maximumAutoCorrection = 0.1,
+
+    -- Radians/second. The turn rate itself is measured per motion sample in
+    -- getFilteredVelocity; these are only its bounds and its fallback.
+    defaultTurnRate = math.pi * 0.5,
+    maxTurnRate = math.pi * 1.5,
+}
+local autoLeadCorrection: number = 0
+
+local function getActiveAutoLeadCorrection(): number
+    return mm2Settings.autoTuneLead and autoLeadCorrection or 0
+end
+
+local function resetAutoLeadCorrection(): ()
+    autoLeadCorrection = 0
+end
 
 local function getFilteredVelocity(player: Player, root: BasePart): Vector3
     local now: number = os.clock()
@@ -1353,6 +1379,8 @@ local function getFilteredVelocity(player: Player, root: BasePart): Vector3
     local sample: MotionSample? = motionSamples[player]
     local acceleration: Vector3 = Vector3.zero
     local stability: number = 1
+    local turnRate: number? = nil
+    local turnReferenceAt: number? = nil
     local character: Model? = player.Character
     local humanoid: Humanoid? = character
         and character:FindFirstChildOfClass("Humanoid")
@@ -1389,6 +1417,31 @@ local function getFilteredVelocity(player: Player, root: BasePart): Vector3
                     1
                 )
             end
+
+            -- Time-normalized turn rate in radians/second. Measured over the
+            -- window since the last direction change, so it stays the same
+            -- whether Motion Hz is 20 or 120: replication updates are chunky
+            -- and per-sample deltas would scale with the sampling frequency.
+            local referenceAt: number = sample.turnReferenceAt
+                or sample.sampledAt
+            if stability < 0.99999 then
+                local window: number = now - referenceAt
+                if window >= 1 / 240 then
+                    turnRate = math.clamp(
+                        math.acos(stability) / window,
+                        0,
+                        GUN_LEAD.maxTurnRate
+                    )
+                end
+                turnReferenceAt = now
+            else
+                turnRate = sample.turnRate
+                turnReferenceAt = referenceAt
+                -- Straight-line motion decays any stale turn estimate.
+                if now - referenceAt > 0.2 then
+                    turnRate = 0
+                end
+            end
         end
     end
 
@@ -1400,6 +1453,8 @@ local function getFilteredVelocity(player: Player, root: BasePart): Vector3
         acceleration = acceleration,
         stability = stability,
         grounded = grounded,
+        turnRate = turnRate,
+        turnReferenceAt = turnReferenceAt,
     }
     return velocity
 end
@@ -1434,28 +1489,6 @@ local function getEstimatedLatency(): number
         0.03,
         0.3
     )
-end
-
-local GUN_LEAD = {
-    replicationRate = 20,
-    serverFrame = 1 / 60,
-    minimumHorizon = 0.02,
-    maximumHorizon = 0.45,
-    maximumManualBias = 0.1,
-    maximumAutoCorrection = 0.1,
-
-    defaultTurnRate = math.pi * 0.5,
-    maxTurnRate = math.pi * 1.5,
-    turnRatePerInstability = 6,
-}
-local autoLeadCorrection: number = 0
-
-local function getActiveAutoLeadCorrection(): number
-    return mm2Settings.autoTuneLead and autoLeadCorrection or 0
-end
-
-local function resetAutoLeadCorrection(): ()
-    autoLeadCorrection = 0
 end
 
 local trajectoryCalibration: any = nil
@@ -1496,15 +1529,19 @@ local function getGunHorizonSeconds(): number
     )
 end
 
-local function getGunTurnRate(stability: number?): number
-    if type(stability) ~= "number" then
+local function getGunTurnRate(sample: MotionSample?): number
+    -- Reads the time-normalized turn rate measured in getFilteredVelocity
+    -- (radians/second), so the lead discount no longer changes meaning when
+    -- Motion Hz changes. A missing or stale sample keeps the conservative
+    -- default.
+    if type(sample) ~= "table" then
         return GUN_LEAD.defaultTurnRate
     end
-    return math.clamp(
-        (1 - math.clamp(stability, 0, 1)) * GUN_LEAD.turnRatePerInstability,
-        0,
-        GUN_LEAD.maxTurnRate
-    )
+    local measured: any = (sample :: any).turnRate
+    if type(measured) ~= "number" then
+        return GUN_LEAD.defaultTurnRate
+    end
+    return math.clamp(measured, 0, GUN_LEAD.maxTurnRate)
 end
 
 local function getGunTurnDiscount(horizon: number, turnRate: number?): number
@@ -1680,6 +1717,8 @@ local function createTrajectoryCalibration(): any
         liveGunAcceptanceMs: number?,
         liveGunSamples: number,
         maxStabDistance: number?,
+        knifeSpawnDelayMs: number?,
+        confirmedSpawnDelays: number,
     }
     type Controller = {
         start: (self: Controller) -> (),
@@ -2352,6 +2391,7 @@ local function createTrajectoryCalibration(): any
         end
         local gunStats: RunningStats = runtime.gunAcceptance
         local speedStats: RunningStats = runtime.knifeSpeed
+        local spawnDelayStats: RunningStats = runtime.knifeSpawnDelay
         local maxStab: number? = nil
         for _, ev in ipairs(runtime.events) do
             if ev.kind == "stab" and ev.hitTarget == true
@@ -2369,6 +2409,10 @@ local function createTrajectoryCalibration(): any
             maxStabDistance = maxStab,
             liveGunAcceptanceMs = #fresh >= 6 and median(fresh) or nil,
             liveGunSamples = #fresh,
+            knifeSpawnDelayMs = spawnDelayStats.count > 0
+                and spawnDelayStats.mean
+                or nil,
+            confirmedSpawnDelays = spawnDelayStats.count,
         }
         estimatesAt = now
         return estimatesCache :: Estimates
@@ -2535,19 +2579,35 @@ local function createTrajectoryCalibration(): any
         compactPending(runtime.pendingGuns, now)
         local eventTool: Tool? = normalizeGun(eventGun)
         local eventOrigin: Vector3? = worldPosition(eventOriginValue)
+        -- Match the OLDEST unconfirmed attempt whose tool and origin geometry
+        -- agree with the signal. Iterating newest-first let a signal confirm
+        -- a younger shot and feed a wrong latency into the adaptive horizon.
         local selectedIndex: number? = nil
-        for index: number = #runtime.pendingGuns, 1, -1 do
+        local fallbackIndex: number? = nil
+        for index: number = 1, #runtime.pendingGuns do
             local pending: PendingGun = runtime.pendingGuns[index]
-            local toolMatches: boolean = not pending.confirmedAt
-                and eventTool == pending.tool
-            local originMatches: boolean = eventOrigin ~= nil
-                and pending.origin ~= nil
-                and (eventOrigin - pending.origin).Magnitude <= 8
-            if not pending.confirmedAt
-                and (toolMatches or (eventTool == nil and originMatches)) then
-                selectedIndex = index
-                break
+            if not pending.confirmedAt then
+                local toolMatches: boolean = eventTool ~= nil
+                    and eventTool == pending.tool
+                local originMatches: boolean = eventOrigin ~= nil
+                    and pending.origin ~= nil
+                    and (eventOrigin - pending.origin).Magnitude <= 8
+                if toolMatches and originMatches then
+                    selectedIndex = index
+                    break
+                end
+                if fallbackIndex == nil then
+                    if toolMatches
+                        and (eventOrigin == nil or pending.origin == nil) then
+                        fallbackIndex = index
+                    elseif eventTool == nil and originMatches then
+                        fallbackIndex = index
+                    end
+                end
             end
+        end
+        if not selectedIndex then
+            selectedIndex = fallbackIndex
         end
         if not selectedIndex then
             local character: Model? = LocalPlayer.Character
@@ -3562,9 +3622,12 @@ state.mm2ShotFeedback.resolve = function(
             local stats: any = state.mm2ShotFeedback.spawnStats[variant]
                 or {shots = 0, hits = 0, misses = 0}
             stats.shots += 1
-            if hitConfirmed then
+            -- Only the server's own hit evidence counts as a hit here.
+            -- Disconnects, role changes and health drops are ambiguous: they
+            -- count as neither hit nor miss, so the A/B label stays honest.
+            if directHit then
                 stats.hits += 1
-            else
+            elseif not hitConfirmed then
                 stats.misses += 1
             end
             state.mm2ShotFeedback.spawnStats[variant] = stats

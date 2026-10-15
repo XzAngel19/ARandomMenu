@@ -307,6 +307,27 @@ function Module.init(context: any): WidgetLibrary
         end
         trackUiConnection(button.MouseButton1Click:Connect(toggleOption))
 
+        -- Programmatic state sync (e.g. a card master switch turning its
+        -- sub-options off). Mirrors the listControls pattern: the visual, the
+        -- persisted state and the module callback all move together.
+        state.toggleControls = state.toggleControls or {}
+        state.toggleControls[optionKey] = {
+            setChecked = function(checked: boolean): ()
+                if not button.Parent then
+                    return
+                end
+                local wanted: boolean = checked == true
+                if wanted == (enabled :: boolean) then
+                    return
+                end
+                enabled = wanted
+                refreshOptionState()
+                configData.states[optionKey] = enabled
+                callback(enabled :: boolean)
+                queueConfigSave()
+            end,
+        }
+
         refreshOptionState()
         callback(enabled :: boolean)
         return button
@@ -421,8 +442,10 @@ function Module.init(context: any): WidgetLibrary
             feature.configKey .. "." .. labelText:gsub("%W", "")
         local storedValue: number? = tonumber(configData.values[optionKey])
 
+        -- A restored profile may predate a narrower interval; clamp it so the
+        -- control never starts outside its advertised range.
         local value: number = isFiniteNumber(storedValue)
-            and (storedValue :: number)
+            and math.clamp(storedValue :: number, minimum, maximum)
             or defaultValue
         local integerOnly: boolean = defaultValue % 1 == 0
             and minimum % 1 == 0
@@ -578,6 +601,9 @@ function Module.init(context: any): WidgetLibrary
         local editing: boolean = false
 
         local function quantize(raw: number, fromSlider: boolean): number
+            -- Manual entry and restored profiles both pass through here;
+            -- values are always clamped to the advertised interval.
+            raw = math.clamp(raw, minimum, maximum)
             if not fromSlider then
                 return raw
             end
@@ -2298,6 +2324,18 @@ function Module.init(context: any): WidgetLibrary
         createFeatures = createFeaturesFromDefinitions,
         addOptions = addConfiguredOptions,
     }
+
+    -- Lets a module sync a toggle row (visual + saved state + callback)
+    -- without clicking it. Returns false when the option does not exist.
+    state.setToggleChecked = function(optionKey: string, checked: boolean): boolean
+        local control: any = state.toggleControls
+            and state.toggleControls[optionKey]
+        if type(control) == "table" and type(control.setChecked) == "function" then
+            control.setChecked(checked)
+            return true
+        end
+        return false
+    end
 
     Module.Initialized = true
     return {

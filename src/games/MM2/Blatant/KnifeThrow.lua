@@ -102,18 +102,37 @@ function Module.init(runtime: any): any
         local root: BasePart =
             target.Character:FindFirstChild("HumanoidRootPart") :: BasePart
         local knifeSpeed: number = 96
-        local ok: boolean, estimates: any = pcall(function(): any
+        local estimates: any = nil
+        local ok: boolean, estimatesValue: any = pcall(function(): any
             return trajectoryCalibration:getEstimates()
         end)
-        if ok and type(estimates) == "table" and predictionMath.finite(estimates.knifeSpeed)
+        if ok and type(estimatesValue) == "table" then
+            estimates = estimatesValue
+        end
+        if estimates and predictionMath.finite(estimates.knifeSpeed)
             and estimates.knifeSpeed >= 24 and estimates.knifeSpeed <= 300 then
             knifeSpeed = estimates.knifeSpeed
         end
         local velocity: Vector3 = getFilteredVelocity(target, root)
-        -- Restore v10's packet-flight lead. Solve the remaining moving-target
-        -- flight instead of using distance-to-the-old-position / blade speed.
-        local packetTime: number = getEstimatedLatency() * 0.5
+        -- Packet-flight lead: the blade spawns on the server a full round
+        -- trip after we author the throw, and our observation of the target
+        -- is a round trip old, so the target keeps moving for that whole
+        -- window. The calibration measures exactly that window (observed
+        -- spawn delay, ~240 ms on record); use it when enough throws
+        -- confirmed it, otherwise fall back to the live RTT estimate.
+        local packetTime: number = getEstimatedLatency()
+        if estimates
+            and predictionMath.finite(estimates.knifeSpawnDelayMs)
+            and (estimates.confirmedSpawnDelays or 0) >= 3 then
+            packetTime = math.clamp(
+                estimates.knifeSpawnDelayMs / 1000,
+                0.05,
+                0.6
+            )
+        end
         local positionAtSpawn: Vector3 = root.Position + velocity * packetTime
+        -- Solve the remaining moving-target flight instead of using
+        -- distance-to-the-old-position / blade speed.
         local flightTime: number? = predictionMath.interceptTime(
             positionAtSpawn - originPos, velocity, knifeSpeed
         )
@@ -243,6 +262,9 @@ function Module.init(runtime: any): any
 
     local function toggleKnifeThrow(enabled: boolean): ()
         knifeThrowSettings.enabled = enabled
+        if state.mm2KnifeRuntime then
+            state.mm2KnifeRuntime.throwWanted = enabled
+        end
         disconnectFeatureConnection("MM2KnifeThrow")
         if not enabled then
             stopThrowAnimation()
@@ -313,7 +335,7 @@ function Module.init(runtime: any): any
     )
     addNumberOption(
         KnifeThrowFeature,
-        "Range",
+        "Throw Range",
         knifeThrowSettings.range,
         10,
         400,

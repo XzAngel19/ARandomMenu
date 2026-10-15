@@ -23,6 +23,9 @@ function Module.init(runtime: any): any
     local predictionMath: any = core.predictionMath
 
     type KnifeRuntimeState = {
+        masterEnabled: boolean,
+        auraWanted: boolean,
+        throwWanted: boolean,
         lastAuraSwing: number,
     }
 
@@ -32,6 +35,9 @@ function Module.init(runtime: any): any
         autoRange = false,
     }
     state.mm2KnifeRuntime = {
+        masterEnabled = false,
+        auraWanted = false,
+        throwWanted = false,
         lastAuraSwing = -math.huge,
     } :: KnifeRuntimeState
 
@@ -195,6 +201,7 @@ function Module.init(runtime: any): any
 
     local function toggleKnifeAura(enabled: boolean): ()
         knifeSettings.aura = enabled
+        state.mm2KnifeRuntime.auraWanted = enabled
         state.mm2KnifeRuntime.lastAuraSwing = -math.huge
         refreshKnifeController()
     end
@@ -204,11 +211,20 @@ function Module.init(runtime: any): any
         "Knife aura and knife throw, each behind its own option below",
         6,
         function(enabled: boolean): ()
-            if not enabled then
-                toggleKnifeAura(false)
-                if type(state.mm2KnifeThrowOff) == "function" then
-                    state.mm2KnifeThrowOff()
-                end
+            state.mm2KnifeRuntime.masterEnabled = enabled
+            if enabled then
+                return
+            end
+            -- Master OFF is a hard stop: both controllers halt AND their
+            -- checkboxes uncheck (visual, saved state and callback move
+            -- together), so a checked-but-dead sub-option can never happen.
+            toggleKnifeAura(false)
+            if type(state.mm2KnifeThrowOff) == "function" then
+                state.mm2KnifeThrowOff()
+            end
+            if type(state.setToggleChecked) == "function" then
+                state.setToggleChecked("MM2.Knife.KnifeAura", false)
+                state.setToggleChecked("MM2.Knife.KnifeThrow", false)
             end
         end,
         {
@@ -226,11 +242,11 @@ function Module.init(runtime: any): any
         toggleKnifeAura,
         "Stabs the nearest valid target in range through the game's own HandleTouched"
     )
-    addNumberOption(KnifeFeature, "Range", 14, 7, 30, function(
+    addNumberOption(KnifeFeature, "Aura Range", 14, 7, 30, function(
         value: number
     ): ()
         knifeSettings.auraRange = value
-    end)
+    end, "Stab reach in studs when Auto Range has no confirmed sample.")
     addToggleOption(
         KnifeFeature,
         "Auto Range",
@@ -244,6 +260,8 @@ function Module.init(runtime: any): any
 
     activeCleanup = function(): ()
         toggleKnifeAura(false)
+        state.mm2KnifeRuntime.masterEnabled = false
+        state.mm2KnifeRuntime.throwWanted = false
         state.mm2KnifeFeature = nil
     end
     Module.Events = featureConnections
