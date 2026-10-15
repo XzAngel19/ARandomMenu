@@ -50,7 +50,6 @@ local CHILD_GAP: number = 4
 
 function Module.init(context: any): WidgetLibrary
 
-    local WURST_GREEN: Color3 = Color3.fromRGB(0, 204, 0)
     local host: any = context
 
     local UserInputService: any = host.UserInputService
@@ -89,7 +88,7 @@ function Module.init(context: any): WidgetLibrary
         kind: string,
         color: Color3?
     ): Frame
-        local paint: Color3 = color or WURST_GREEN
+        local paint: Color3 = color or Theme.accent
         local existing: Instance? = (parent :: any):FindFirstChild("PixelIcon")
         if existing then
             existing:Destroy()
@@ -278,7 +277,7 @@ function Module.init(context: any): WidgetLibrary
             Transparency = 0.35,
         }) :: any) :: UIStroke
 
-        local mark: Frame = drawPixelIcon(box, "check", WURST_GREEN)
+        local mark: Frame = drawPixelIcon(box, "check", Theme.accent)
         mark.Visible = false
         local optionLabel: TextLabel? =
             option:FindFirstChild("OptionLabel") :: TextLabel?
@@ -1628,6 +1627,44 @@ function Module.init(context: any): WidgetLibrary
             end
         end
 
+        if #values >= 2 and #values <= 3 and (labelText == "Mode" or labelText == "Target"
+            or labelText == "Prediction profile" or labelText == "Network policy" or labelText == "Throw cadence") then
+            option.Size = UDim2.new(1, 0, 0, 54)
+            local label = option:FindFirstChild("OptionLabel")
+            if label then label.Size = UDim2.new(1, -8, 0, 18); label.TextSize = 12; label.TextColor3 = Theme.textMuted end
+            local segments = {}
+            local function paint(): ()
+                for i, segment in ipairs(segments) do
+                    local background = i == index and "accentSoft" or "surfaceRaised"
+                    local foreground = i == index and "text" or "textMuted"
+                    segment.BackgroundColor3 = Theme[background]; segment.TextColor3 = Theme[foreground]
+                    segment:SetAttribute("Selected", i == index)
+                    if host.ThemeEngine then
+                        host.ThemeEngine.Bind(segment, "BackgroundColor3", background)
+                        host.ThemeEngine.Bind(segment, "TextColor3", foreground)
+                    end
+                end
+            end
+            for i, value in ipairs(values) do
+                local segment = create("TextButton", {Parent=option, Name="Segment"..i,
+                    AutoButtonColor=false, BorderSizePixel=0, FontFace=CONTROL_FONT,
+                    Text=value, TextSize=12, TextScaled=true, BackgroundColor3=Theme.surfaceRaised,
+                    TextColor3=Theme.text, Position=UDim2.new((i-1)/#values, 3, 0, 21),
+                    Size=UDim2.new(1/#values, -6, 0, 30), ZIndex=option.ZIndex+2})
+                create("UICorner", {Parent=segment, CornerRadius=UDim.new(0, 5)})
+                create("UITextSizeConstraint", {Parent=segment, MinTextSize=9, MaxTextSize=12})
+                segments[i] = segment
+                trackUiConnection(segment.MouseButton1Click:Connect(function(): ()
+                    if index == i then return end
+                    index = i; paint()
+                    configData.values[optionKey] = values[index]
+                    callback(values[index]); queueConfigSave()
+                end))
+            end
+            paint(); callback(values[index]); feature.updateExpandedSize()
+            return segments[1]
+        end
+
         local button: TextButton = (create("TextButton", {
             TextTruncate = Enum.TextTruncate.AtEnd,
             Parent = option,
@@ -1660,7 +1697,7 @@ function Module.init(context: any): WidgetLibrary
             Text = "",
             ZIndex = option.ZIndex + 2,
         }) :: any) :: TextButton
-        drawPixelIcon(arrowBox, "down", WURST_GREEN)
+        drawPixelIcon(arrowBox, "down", Theme.accent)
 
         local function refreshChoiceVisual(): ()
             button.Text = values[index]
@@ -1681,6 +1718,68 @@ function Module.init(context: any): WidgetLibrary
 
         callback(values[index])
         return button :: TextButton
+    end
+
+    -- Fixed-size graph, sampled at 4 Hz only while every ancestor is visible.
+    -- No drawing instances are created during updates; destruction disconnects the callback.
+    state.addTelemetryOption = function(feature: any, title: string, provider: () -> any): any
+        local option = createOptionRow(feature, title)
+        option.Size = UDim2.new(1, 0, 0, 98)
+        local label = option:FindFirstChild("OptionLabel")
+        if label then label.Visible = false end
+        local function textRow(name: string, top: number, size: number): any
+            return create("TextLabel", {Parent=option, Name=name, BackgroundTransparency=1,
+                FontFace=CONTROL_FONT, TextSize=size, TextColor3=Theme.text, TextXAlignment=Enum.TextXAlignment.Left,
+                TextTruncate=Enum.TextTruncate.AtEnd, Text="", Position=UDim2.fromOffset(4,top),
+                Size=UDim2.new(1,-8,0,20), ZIndex=option.ZIndex+1})
+        end
+        local status, timing, weapon = textRow("NetworkState",0,12), textRow("Timing",20,11), textRow("WeaponState",40,11)
+        local bars = {}
+        for i=1,40 do
+            bars[i] = create("Frame", {Parent=option, Name="Sample"..i, BorderSizePixel=0,
+                BackgroundColor3=Theme.accent, AnchorPoint=Vector2.new(0,1), Position=UDim2.new((i-1)/40,1,0,94),
+                Size=UDim2.new(1/40,-2,0,1), ZIndex=option.ZIndex+1})
+        end
+        local function visible(): boolean
+            local node = option
+            while node do
+                if node:IsA("GuiObject") and not node.Visible then return false end
+                if node:IsA("ScreenGui") and not node.Enabled then return false end
+                node = node.Parent
+            end
+            return true
+        end
+        local elapsed = 0
+        local connection
+        local function update(dt: number): ()
+            elapsed += math.max(0, dt)
+            if elapsed < 0.25 then return end
+            elapsed %= 0.25
+            if not option.Parent then if connection then connection:Disconnect() end; return end
+            if not visible() then return end
+            local ok, net = pcall(provider)
+            if not ok or type(net) ~= "table" then status.Text = "Network: unavailable"; return end
+            local fps = net.renderSeconds and string.format("%.0f", 1 / math.max(net.renderSeconds, 0.001)) or "—"
+            status.Text = string.format("%s  ·  %s FPS  ·  jitter %.0f ms", (net.status or "Unknown") .. (net.capped and " / capped" or ""), fps, (net.jitter or 0)*1000)
+            status.TextColor3 = (net.spike or net.stale or net.capped) and Theme.negative or Theme.positive
+            timing.Text = string.format("RTT %s  /  estimate %.0f ms", net.stale and "stale" or (net.raw and string.format("%.0f ms",net.raw*1000) or "—"), (net.estimate or 0)*1000)
+            timing.TextColor3 = Theme.textMuted
+            weapon.Text = net.weapon or ""; weapon.TextColor3 = Theme.text
+            local samples = net.history or {}
+            local ceiling = 300
+            for _, value in ipairs(samples) do ceiling = math.max(ceiling, value) end
+            for i, bar in ipairs(bars) do
+                local value = samples[math.max(0,#samples-40)+i]
+                bar.Visible = value ~= nil
+                if value then
+                    bar.Size = UDim2.new(1/40,-2,0,math.max(1, math.min(value/ceiling,1)*30))
+                    bar.BackgroundColor3 = value > 300 and Theme.negative or Theme.accent
+                end
+            end
+        end
+        if host.RunService then connection = trackUiConnection(host.RunService.Heartbeat:Connect(update)) end
+        feature.updateExpandedSize()
+        return option
     end
 
     -- One selector shared by all Metrics producers, independent of module order.
@@ -2212,6 +2311,7 @@ function Module.init(context: any): WidgetLibrary
         hexValue.Text = hexOf(color)
 
         swatch.MouseButton1Click:Connect(function()
+            color = colorFromConfig(configData.values[optionKey], color)
             colorPicker.open(color, function(newColor)
                 color = newColor
                 bar.BackgroundColor3 = color

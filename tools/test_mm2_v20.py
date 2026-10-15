@@ -28,6 +28,7 @@ assert(settings.predictionProfile==initialProfile)
 assert(not visible("Prediction profile") and not visible("Hitbox") and not visible("Burst"))
 callbacks["Shoot.Mode"]("Prediction")
 assert(visible("Prediction profile"))
+callbacks["Shoot.Advanced"](true)
 for _,profile in ipairs({"Old","Actual","Experimental"}) do
     callbacks["Shoot.Prediction profile"](profile)
     assert(visible("Hitbox")==(profile=="Old"))
@@ -105,7 +106,7 @@ local _,actual=computeGunAim(target,origin)
 assert(actual and actual.snapshot.model=="V17" and actual.snapshot.allowedErrorBudget==1)
 mm2Settings.predictionProfile="Experimental"
 local _,experimental=computeGunAim(target,origin)
-assert(experimental and experimental.snapshot.model=="Intent blend")
+assert(experimental and experimental.snapshot.model=="Projection selector")
 mm2Settings.predictionProfile="Old"
 local _,silent=computeGunAim(target,origin,{ignoreVisibility=true})
 assert(silent.snapshot.profile=="Actual" and silent.snapshot.model=="V17" and silent.snapshot.allowedErrorBudget==1.75)

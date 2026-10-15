@@ -65,6 +65,7 @@ local mm2Settings = {
     shootTarget = "",
     showMissCooldown = false,
     predictionRtt = 0.08,
+    gunNetworkPolicy = "Best effort",
     gunLeadBias = 0,
     predictionProfile = "Actual",
     predictionEpoch = 0,
@@ -134,7 +135,7 @@ local function clearEffects(folder)
 end
 
 -- Match the recovered client's cursor filters, not an assertion about server rules.
-local function isWeaponPathClear(origin: Vector3, endpoint: Vector3, target: Model?): boolean
+local function isWeaponPathClear(origin: Vector3, endpoint: Vector3, target: Model?, budget: {remaining: number}?): boolean
     local direction: Vector3 = endpoint - origin
     if direction.Magnitude < 0.05 then return true end
     local excluded: {Instance} = {}
@@ -146,6 +147,10 @@ local function isWeaponPathClear(origin: Vector3, endpoint: Vector3, target: Mod
     params.FilterType = Enum.RaycastFilterType.Exclude
     params.IgnoreWater = true
     for _ = 1, 32 do
+        if budget then
+            if budget.remaining <= 0 then return false end
+            budget.remaining -= 1
+        end
         params.FilterDescendantsInstances = excluded
         local hit: RaycastResult? = workspace:Raycast(origin, direction, params)
         if not hit then return true end
@@ -1358,15 +1363,107 @@ function predictionMath.interceptTime(offset: Vector3, velocity: Vector3, speed:
     return time and predictionMath.finite(time) and time <= 5 and time or nil
 end
 
--- Straight projectile; gravity belongs to the target, not to the knife.
--- A bounded numerical intercept also handles a target landing on a sampled floor.
+-- Network measurements are observations, not server collision timestamps.
+function predictionMath.newNetworkEstimator(initial: number): any
+    local net = {raw = initial, baseline = initial, estimate = initial, jitter = 0,
+        lastValidAt = nil, lastReadValid = false, spikeUntil = -math.huge, history = {}, frameSeconds = 1 / 60}
+    function net:observe(value: any, now: number): ()
+        self.lastReadValid = predictionMath.finite(value) and value >= 0 and value <= 10
+        if not self.lastReadValid then return end
+        local dt = self.lastValidAt and math.clamp(now - self.lastValidAt, 0, 2) or 0.1
+        if self.lastValidAt == nil then
+            self.raw, self.baseline, self.estimate = value, value, value
+        else
+            local jump = math.abs(value - self.raw)
+            if jump > math.max(0.05, self.baseline * 0.3)
+                or value > self.baseline + math.max(0.08, self.jitter * 2) then
+                self.spikeUntil = now + 0.6
+            end
+            self.jitter += (jump - self.jitter) * (1 - math.exp(-dt / 0.5))
+            self.baseline += (value - self.baseline) * (1 - math.exp(-dt / 2))
+            if math.abs(value - self.estimate) > math.max(0.06, self.baseline * 0.3) then
+                self.estimate = value -- react on the first observed large change, in either direction
+            else
+                self.estimate += (value - self.estimate) * (1 - math.exp(-dt / 0.12))
+            end
+            self.raw = value
+        end
+        self.lastValidAt = now
+        table.insert(self.history, value * 1000)
+        if #self.history > 40 then table.remove(self.history, 1) end
+    end
+    function net:snapshot(now: number, includeHistory: boolean?): any
+        local age = self.lastValidAt and math.max(0, now - self.lastValidAt) or nil
+        local stale = not self.lastReadValid or age == nil or age > 1
+        local spike = now < self.spikeUntil
+        local capped = self.estimate > 1.2
+        return {raw = self.lastValidAt and self.raw or nil, estimate = math.clamp(self.estimate, 0.03, 1.2),
+            baseline = self.baseline, jitter = self.jitter, age = age, stale = stale, spike = spike,
+            capped = capped, frameSeconds = self.frameSeconds, renderSeconds = self.renderSeconds,
+            status = stale and "Unknown" or (spike and "Spike" or (self.raw > 0.3 and "High" or "Stable")),
+            history = includeHistory and table.clone(self.history) or nil}
+    end
+    return net
+end
+
+-- Three candidate segments ranked against nine hypotheses, never against future truth.
+-- Fixed work; no Parts, waits, deferred callbacks, or network sends.
+function predictionMath.rankProjections(origin: Vector3, position: Vector3, velocity: Vector3,
+    acceleration: Vector3, intent: Vector3, horizon: number, uncertainty: number, grounded: boolean,
+    gravity: number, floorAt: ((Vector3) -> number?)?): {any}
+    local horizontalA = Vector3.new(acceleration.X, 0, acceleration.Z)
+    if horizontalA.Magnitude > 80 then horizontalA = horizontalA.Unit * 80 end
+    local models = {
+        {name = "Velocity", velocity = velocity, acceleration = Vector3.zero},
+        {name = "Intent", velocity = predictionMath.blendIntent(velocity, intent), acceleration = Vector3.zero},
+        {name = "Acceleration", velocity = velocity, acceleration = horizontalA},
+    }
+    local spread = math.clamp(uncertainty, 0.005, 0.15)
+    local times = {math.max(0.02, horizon - spread), horizon, math.min(1, horizon + spread)}
+    local hypotheses, candidates = {}, {}
+    local function project(model: any, t: number): Vector3
+        local v = model.velocity
+        local y = grounded and math.clamp(v.Y, -2.5, 2.5) * t or v.Y * t - 0.5 * gravity * t * t
+        return position + Vector3.new(v.X * t, y, v.Z * t) + model.acceleration * (0.5 * t * t)
+    end
+    for index, model in ipairs(models) do
+        local central = project(model, horizon)
+        local floorY = floorAt and floorAt(central) or nil
+        for _, t in ipairs(times) do
+            local p = project(model, t)
+            if floorY and model.velocity.Y - gravity * t <= 0 then p = Vector3.new(p.X, math.max(p.Y, floorY), p.Z) end
+            table.insert(hypotheses, p)
+        end
+        central = hypotheses[#hypotheses - 1]
+        table.insert(candidates, {point = central, name = model.name, velocity = model.velocity, floorY = floorY, index = index})
+    end
+    for _, candidate in ipairs(candidates) do
+        local segment = candidate.point - origin
+        local length2 = segment:Dot(segment)
+        local worst, sum = 0, 0
+        for _, p in ipairs(hypotheses) do
+            local along = length2 > 1e-8 and math.clamp((p - origin):Dot(segment) / length2, 0, 1) or 0
+            local distance = (p - (origin + segment * along)).Magnitude
+            worst = math.max(worst, distance); sum += distance
+        end
+        candidate.worst = worst
+        candidate.score = worst * 0.7 + (sum / #hypotheses) * 0.3
+    end
+    table.sort(candidates, function(a, b)
+        if a.score == b.score then return a.index < b.index end
+        return a.score < b.score
+    end)
+    return candidates
+end
+
+-- Straight projectile; gravity and sampled ground belong to the target.
 function predictionMath.verticalIntercept(offset: Vector3, velocity: Vector3, speed: number,
     delay: number, gravity: number, grounded: boolean, floorOffset: number?): (Vector3?, number?)
     for _, value in ipairs({offset.X, offset.Y, offset.Z, velocity.X, velocity.Y, velocity.Z,
         speed, delay, gravity}) do
         if not predictionMath.finite(value) then return nil, nil end
     end
-    if speed <= 1 or delay < 0 or delay > 0.6 or gravity < 0 then return nil, nil end
+    if speed <= 1 or delay < 0 or delay > 1.2 or gravity < 0 then return nil, nil end
     local function position(t: number): Vector3
         local total = delay + t
         local y = grounded and math.clamp(velocity.Y, -2.5, 2.5) * total
@@ -1611,42 +1708,41 @@ local function getFilteredVelocity(player: Player, root: BasePart): Vector3
 end
 
 local lastLatencyReadAt: number = -math.huge
-local function getEstimatedLatency(): number
-    local now: number = os.clock()
-    if now - lastLatencyReadAt < 0.1 then
-        return math.clamp(mm2Settings.predictionRtt, 0.03, 0.3)
-    end
-    local elapsed: number = now - lastLatencyReadAt
-    lastLatencyReadAt = now
-    local measuredRtt: number = mm2Settings.predictionRtt
-    pcall(function(): ()
-        local network: Instance? = Stats:FindFirstChild("Network")
-        local serverItems: Instance? = network
-            and network:FindFirstChild("ServerStatsItem")
-        local pingItem: any = serverItems and serverItems:FindFirstChild("Data Ping")
-        if pingItem and type(pingItem.GetValue) == "function" then
-            local pingMilliseconds: number? = tonumber(pingItem:GetValue())
-            if predictionMath.finite(pingMilliseconds) and pingMilliseconds >= 0 then
-                measuredRtt = pingMilliseconds / 1000
+local networkEstimator = predictionMath.newNetworkEstimator(mm2Settings.predictionRtt)
+local function getEstimatedLatency(force: boolean?): number
+    local now = os.clock()
+    if now - lastLatencyReadAt >= 0.1 or (force and now - lastLatencyReadAt >= 1 / 120) then
+        lastLatencyReadAt = now
+        local value: number? = nil
+        pcall(function(): ()
+            local network = Stats:FindFirstChild("Network")
+            local items = network and network:FindFirstChild("ServerStatsItem")
+            local ping = items and items:FindFirstChild("Data Ping")
+            if ping and type(ping.GetValue) == "function" then
+                local ms = tonumber(ping:GetValue())
+                if predictionMath.finite(ms) then value = (ms :: number) / 1000 end
             end
-        end
-    end)
-    -- Time-based smoothing: changing Motion/Throw Hz must not change the RTT.
-    local alpha: number = 1 - math.exp(-math.min(elapsed, 1) / 0.5)
-    mm2Settings.predictionRtt += (measuredRtt - mm2Settings.predictionRtt) * alpha
-
-    return math.clamp(
-        mm2Settings.predictionRtt,
-        0.03,
-        0.3
-    )
+        end)
+        networkEstimator:observe(value, now)
+        mm2Settings.predictionRtt = networkEstimator.estimate
+    end
+    return math.clamp(networkEstimator.estimate, 0.03, 1.2)
+end
+local function getNetworkStatus(includeHistory: boolean?): any
+    return networkEstimator:snapshot(os.clock(), includeHistory)
+end
+local function shouldHoldForNetwork(policy: string?): boolean
+    if policy ~= "Hold spikes" then return false end
+    getEstimatedLatency()
+    local net = getNetworkStatus()
+    return net.stale or net.spike or net.capped
 end
 
 local GUN_LEAD = {
     replicationRate = 20,
     serverFrame = 1 / 60,
     minimumHorizon = 0.02,
-    maximumHorizon = 0.45,
+    maximumHorizon = 0.85,
     maximumManualBias = 0.1,
     maximumAutoCorrection = 0.1,
 
@@ -1678,7 +1774,7 @@ local function getGunHorizonSeconds(): number
         if ok and type(est) == "table" and predictionMath.finite(est.liveGunAcceptanceMs)
             and (est.liveGunSamples or 0) >= 6 then
             latencyTime = math.clamp(est.liveGunAcceptanceMs / 1000,
-                math.max(0.03, baseline - 0.075), math.min(0.45, baseline + 0.075))
+                math.max(0.03, baseline - 0.075), math.min(1.2, baseline + 0.075))
         end
     end
     local staleness: number = 1 / (2 * GUN_LEAD.replicationRate)
@@ -2850,8 +2946,12 @@ local function createTrajectoryCalibration(): any
             and targetCharacter ~= nil
             and hitPartValue:IsDescendantOf(targetCharacter)
         local burst = pending.settings and pending.settings.burst
+        local net = type(getNetworkStatus) == "function" and getNetworkStatus() or nil
+        local shotNet = pending.settings and pending.settings.prediction and pending.settings.prediction.network
         if pending.authored == true and not syntheticHit and (not burst or (burst.count or 1) <= 1)
-            and latencyMs >= 30 and latencyMs <= 450 then
+            and (not net or (not net.stale and not net.spike and not net.capped))
+            and (not shotNet or (not shotNet.stale and not shotNet.spike and not shotNet.capped))
+            and latencyMs >= 30 and latencyMs <= 1200 then
             table.insert(runtime.freshGunLatency, {at = now, ms = latencyMs})
             if #runtime.freshGunLatency > 24 then table.remove(runtime.freshGunLatency, 1) end
             estimatesAt = -math.huge
@@ -3514,6 +3614,7 @@ type PendingShot = {
     silentSpawn: string?,
     predictionEpoch: number?,
     burstCount: number?,
+    learningEligible: boolean?,
 }
 
 type GunPrediction = {
@@ -3629,7 +3730,7 @@ local function stopLeadTracking(): ()
 end
 
 local function startLeadTracking(candidate: PendingShot): ()
-    if not mm2Settings.autoTuneLead or (candidate.burstCount or 1) > 1 then
+    if not mm2Settings.autoTuneLead or candidate.learningEligible == false or (candidate.burstCount or 1) > 1 then
         return
     end
     local root: BasePart? = candidate.targetCharacter
@@ -3649,8 +3750,9 @@ local function startLeadTracking(candidate: PendingShot): ()
         if leadTracking ~= candidate then
             return
         end
-        if state.mm2ShotFeedback.pending ~= candidate
-            and state.mm2ShotFeedback.lastAccepted ~= candidate then
+        if not mm2Settings.autoTuneLead
+            or (candidate.predictionEpoch ~= nil and candidate.predictionEpoch ~= (mm2Settings.predictionEpoch or 0))
+            or (state.mm2ShotFeedback.pending ~= candidate and state.mm2ShotFeedback.lastAccepted ~= candidate) then
             stopLeadTracking()
             return
         end
@@ -3665,7 +3767,7 @@ local function startLeadTracking(candidate: PendingShot): ()
 end
 
 local function tuneFromConfirmedShot(candidate: PendingShot): ()
-    if not mm2Settings.autoTuneLead or not candidate.aimPosition or candidate.silentSpawn
+    if not mm2Settings.autoTuneLead or candidate.learningEligible == false or not candidate.aimPosition or candidate.silentSpawn
         or (candidate.burstCount or 1) > 1
         or (candidate.predictionEpoch ~= nil and candidate.predictionEpoch ~= (mm2Settings.predictionEpoch or 0)) then
         return
@@ -3758,6 +3860,7 @@ state.mm2ShotFeedback.queue = function(
         aimRootOffset = prediction and prediction.aimRootOffset or nil,
         predictionEpoch = prediction and prediction.snapshot and prediction.snapshot.epoch,
         burstCount = prediction and prediction.snapshot and prediction.snapshot.burstCount,
+        learningEligible = prediction and prediction.snapshot and prediction.snapshot.learningEligible,
     }
     state.mm2ShotFeedback.pending = candidate
     local queue = state.mm2ShotFeedback.pendingShots
@@ -4009,6 +4112,21 @@ local function disconnectGunFiredObserver(): ()
 end
 
 registerMM2Roles()
+-- One shared monitor, independent of requested prediction Hz. UI rendering stays separate.
+featureConnections.MM2FrameMonitor = TaskManager:Connect(function(dt: number): ()
+    if not predictionMath.finite(dt) or dt <= 0 then return end
+    local previous = networkEstimator.renderSeconds or dt
+    networkEstimator.renderSeconds = previous + (math.min(dt, 1) - previous) * (1 - math.exp(-math.min(dt, 1) / 0.5))
+end, "render")
+local networkElapsed = 0
+featureConnections.MM2NetworkMonitor = TaskManager:Connect(function(dt: number): ()
+    if not predictionMath.finite(dt) or dt <= 0 then return end
+    networkEstimator.frameSeconds += (math.min(dt, 1) - networkEstimator.frameSeconds)
+        * (1 - math.exp(-math.min(dt, 1) / 0.5))
+    local due
+    due, networkElapsed = predictionMath.sampleDue(networkElapsed, dt, 10)
+    if due then getEstimatedLatency(true) end
+end)
 
 state.mm2Core = {
     settings = mm2Settings,
@@ -4065,6 +4183,8 @@ state.mm2Core = {
     motionSamples = motionSamples,
     getFilteredVelocity = getFilteredVelocity,
     getEstimatedLatency = getEstimatedLatency,
+    getNetworkStatus = getNetworkStatus,
+    shouldHoldForNetwork = shouldHoldForNetwork,
     getGunHorizonSeconds = getGunHorizonSeconds,
     getGunTurnDiscount = getGunTurnDiscount,
     getGunTurnRate = getGunTurnRate,
@@ -4096,6 +4216,8 @@ cleanupMM2Runtime = function()
     end
     table.clear(roleIndex.roles)
     for _, connectionName: string in ipairs({
+        "MM2NetworkMonitor",
+        "MM2FrameMonitor",
         "MM2PlayerDataChanged",
         "MM2TimerTrackerStart",
         "MM2TimerTrackerEnd",

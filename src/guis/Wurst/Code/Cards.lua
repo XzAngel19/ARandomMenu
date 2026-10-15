@@ -136,7 +136,7 @@ function Module.init(context: any): any
             BackgroundColor3 = state.guiStyle == "Default"
                 and Theme.surface
                 or Theme.background,
-            BackgroundTransparency = state.guiStyle == "Default" and 0.82 or 1,
+            BackgroundTransparency = state.guiStyle == "Default" and 0.18 or 1,
             BorderSizePixel = 0,
             ClipsDescendants = true,
             LayoutOrder = layoutOrder,
@@ -235,7 +235,7 @@ function Module.init(context: any): any
                 drawPixelIcon(
                     arrow :: TextButton,
                     feature.expanded and "up" or "down",
-                    Color3.fromRGB(0, 204, 0)
+                    Color3.fromRGB(166, 139, 250)
                 )
             end
         end
@@ -499,7 +499,7 @@ function Module.init(context: any): any
             local UNBOUND_BG: Color3 = Color3.fromRGB(0, 0, 0)
             local BOUND_BG: Color3 = Color3.fromRGB(0, 80, 0)
             local CONFLICT_BG: Color3 = Color3.fromRGB(80, 0, 0)
-            local BOUND_EDGE: Color3 = Color3.fromRGB(0, 204, 0)
+            local BOUND_EDGE: Color3 = Color3.fromRGB(166, 139, 250)
             local CONFLICT_EDGE: Color3 = Color3.fromRGB(204, 0, 0)
             local square: TextButton = (create("TextButton", {
                 TextTruncate = Enum.TextTruncate.AtEnd,

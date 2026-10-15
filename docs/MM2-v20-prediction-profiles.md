@@ -1,5 +1,7 @@
 # MM2 v20 — Old / Actual / Experimental
 
+> Histórico de v20. La rama entrega ahora [v21: selector local rápido, red inestable y menú ligero](MM2-v21-fast-projections.md).
+
 Build: **`v20-20261014-mm2-prediction-profiles`**.
 
 Esta entrega implementa la organización elegida: tres perfiles dentro de **Shoot → Mode: Prediction**, recupera las funciones legacy solicitadas y añade una opción vertical independiente para Knife. No declara un nuevo ganador ni una vulnerabilidad verificada.

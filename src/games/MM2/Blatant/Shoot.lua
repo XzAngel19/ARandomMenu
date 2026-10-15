@@ -21,6 +21,9 @@ function Module.init(runtime: any): any
     local findMurderer: any = core.findMurderer
     local getFilteredVelocity: any = core.getFilteredVelocity
     local getGunHorizonSeconds: any = core.getGunHorizonSeconds
+    local refreshNetwork: any = core.getEstimatedLatency
+    local getNetworkStatus: any = core.getNetworkStatus
+    local shouldHoldForNetwork: any = core.shouldHoldForNetwork
     local getGunTurnDiscount: any = core.getGunTurnDiscount
     local getGunTurnRate: any = core.getGunTurnRate
     local getGunLeadSensitivity: any = core.getGunLeadSensitivity
@@ -110,8 +113,10 @@ function Module.init(runtime: any): any
         horizon: number?,
         leadBias: number?,
         burstCount: number?,
+        maxError: number?,
     }
 
+    local candidateBystanderCheck: any = nil
     local BODY_HALF_WIDTH: number = 1.0
 
     local MINIMUM_ERROR_RADIUS: number = 0.35
@@ -157,6 +162,11 @@ function Module.init(runtime: any): any
         end
 
         local velocity: Vector3 = getFilteredVelocity(target, root :: BasePart)
+        for _, point in ipairs({origin.Position, part.Position, root.Position, velocity}) do
+            if not predictionMath.finite(point.X) or not predictionMath.finite(point.Y) or not predictionMath.finite(point.Z) then
+                return nil, nil, "no body"
+            end
+        end
         local sample: MotionSample? = motionSamples[target]
         if sample and (sample.character ~= character or os.clock() - sample.sampledAt > 0.25) then
             sample = nil
@@ -173,8 +183,72 @@ function Module.init(runtime: any): any
         local profile = resolvedOptions.profile or (ignoreVisibility and "Actual")
             or mm2Settings.predictionProfile or "Actual"
         local motionModel = mm2Settings.gunMotionModel or "V17"
-        if profile == "Old" then motionModel = "Classic 66d"
-        elseif profile == "Experimental" then motionModel = "Intent blend" end
+        if profile == "Old" then motionModel = "Classic 66d" end
+        if profile == "Experimental" then
+            local horizon = getGunHorizonSeconds()
+            local net = type(getNetworkStatus) == "function" and getNetworkStatus() or nil
+            local uncertainty = net and (net.jitter + math.abs((net.raw or net.estimate) - net.estimate) * 0.5
+                + math.min(net.frameSeconds, 0.1) * 0.5) or (1 / 60)
+            local terrainProbes = 0
+            local candidates = predictionMath.rankProjections(origin.Position, part.Position, velocity,
+                acceleration, humanoid.MoveDirection, horizon, uncertainty, grounded, workspace.Gravity,
+                function(point: Vector3): number?
+                    if not mm2Settings.gunLandingGuard or grounded or point.Y >= part.Position.Y then return nil end
+                    terrainProbes += 1
+                    local floor = getLandingRootY(root, humanoid, point - part.Position)
+                    return floor and floor + part.Position.Y - root.Position.Y or nil
+                end)
+            local checked = {}
+            local pathBudget = {remaining = 12} -- shared across candidates, including transparent layers
+            local pathChecks, bystanderChecks, usable, rejectedError = 0, 0, 0, false
+            for _, candidate in ipairs(candidates) do
+                local duplicate = false
+                for _, point in ipairs(checked) do
+                    if (candidate.point - point).Magnitude < 0.01 then duplicate = true; break end
+                end
+                if duplicate then continue end
+                table.insert(checked, candidate.point)
+                local delta = candidate.point - origin.Position
+                if delta.Magnitude <= 0.05 then continue end
+                usable += 1
+                local errorRadius = math.max(MINIMUM_ERROR_RADIUS, candidate.worst)
+                local limit = resolvedOptions.maxError or (mm2Settings.manualErrorGate and BODY_HALF_WIDTH or nil)
+                if limit and errorRadius > limit then rejectedError = true; continue end
+                if not ignoreVisibility and mm2Settings.shootWallCheck then
+                    pathChecks += 1
+                    if not isWeaponPathClear(origin.Position, candidate.point, character, pathBudget) then continue end
+                end
+                if type(candidateBystanderCheck) == "function" then
+                    bystanderChecks += 1
+                    if candidateBystanderCheck(target, origin.Position, candidate.point) then continue end
+                end
+                local summaries = {}
+                for i, item in ipairs(candidates) do
+                    summaries[i] = {name=item.name, point={item.point.X,item.point.Y,item.point.Z},
+                        score=item.score, worst=item.worst}
+                end
+                return CFrame.lookAt(candidate.point, candidate.point + delta.Unit), {
+                    targetPosition = candidate.point, endpoint = candidate.point, velocity = candidate.velocity,
+                    errorRadius = errorRadius, leadSeconds = horizon, leadSensitivity = 0,
+                    capturedPosition = part.Position, aimRootOffset = part.Position - root.Position,
+                    snapshot = {profile = profile, model = "Projection selector", epoch = mm2Settings.predictionEpoch or 0,
+                        timingModel = mm2Settings.gunTimingModel, horizon = horizon, lead = horizon,
+                        learningEligible = false, burstCount = 1, grounded = grounded, errorRadius = errorRadius,
+                        candidate = candidate.name, candidateCount = 3, hypothesisCount = 9, score = candidate.score,
+                        uncertaintySeconds = math.clamp(uncertainty, 0.005, 0.15), terrainProbes = terrainProbes,
+                        pathChecks = pathChecks, worldRaycasts = 12 - pathBudget.remaining, bystanderChecks = bystanderChecks, network = net, landingPartY = candidate.floorY,
+                        candidates = summaries, horizonLimit = 0.85,
+                        moveDirection = {humanoid.MoveDirection.X, humanoid.MoveDirection.Y, humanoid.MoveDirection.Z},
+                        autoLeadCorrection = type(getGunLeadStatus) == "function" and getGunLeadStatus().autoCorrection or 0,
+                        root = {root.Position.X, root.Position.Y, root.Position.Z},
+                        part = {part.Position.X, part.Position.Y, part.Position.Z},
+                        measuredVelocity = {velocity.X, velocity.Y, velocity.Z},
+                        acceleration = {acceleration.X, acceleration.Y, acceleration.Z}},
+                }, nil
+            end
+            return nil, nil, usable == 0 and "too close" or (rejectedError and "projection uncertain"
+                or (pathBudget.remaining == 0 and "scene budget" or (bystanderChecks > 0 and "bystander" or "obstructed")))
+        end
         if motionModel == "Classic 66d" then
             -- Restore the v10 per-sample response, not its historical latency mean.
             -- Only the separate Old profile can add legacy Hitbox/Burst.
@@ -344,6 +418,8 @@ function Module.init(runtime: any): any
         return workspace:Raycast(startPoint, endPoint - startPoint, parameters) ~= nil
     end
 
+    candidateBystanderCheck = bystanderOnSegment
+
     local SILENT_ORIGIN_STUDS: number = 2.5
     local SILENT_PIERCE_STUDS: number = 1.0
     local SILENT_LIFT_STUDS: number = 1.6
@@ -459,6 +535,7 @@ function Module.init(runtime: any): any
     ): boolean
         lastRejectReason = ""
         local opts: FireOptions = options or {}
+        local shotGeneration = opts.generation or legacyGeneration
         diagnostics.checks += 1
         local silent: boolean = mm2Settings.silentAim
         if opts.silent ~= nil then
@@ -497,7 +574,7 @@ function Module.init(runtime: any): any
             task.wait()
         end
 
-        if (opts.generation ~= nil and opts.generation ~= legacyGeneration)
+        if (shotGeneration ~= nil and shotGeneration ~= legacyGeneration)
             or (opts.burst and opts.burst.groupId ~= activeLegacyGroupId)
             or (opts.burst and opts.burst.epoch ~= nil and opts.burst.epoch ~= (mm2Settings.predictionEpoch or 0)) then
             return reject("Shot cancelled: controls changed.")
@@ -505,6 +582,10 @@ function Module.init(runtime: any): any
         gun = getPlayerWeapon(LocalPlayer, "Gun", true) or gun
         if gun and (gun:GetAttribute("Disabled") == true or gun.Enabled == false) then
             return reject("Gun disabled/cooling down.")
+        end
+        if not opts.quiet and type(refreshNetwork) == "function" then refreshNetwork(true) end
+        if type(shouldHoldForNetwork) == "function" and shouldHoldForNetwork(mm2Settings.gunNetworkPolicy) then
+            return reject("Network unstable: Hold spikes policy.")
         end
         local remote: Instance? = gun and gun:FindFirstChild("Shoot")
         local origin: CFrame? = getGunOriginCFrame(character, gun)
@@ -515,11 +596,14 @@ function Module.init(runtime: any): any
                 target,
                 origin :: CFrame,
                 {ignoreVisibility = silent, profile = silent and "Actual" or opts.profile,
-                    horizon = opts.horizon, leadBias = opts.leadBias, burstCount = opts.burst and opts.burst.count or 1}
+                    horizon = opts.horizon, maxError = opts.maxError, leadBias = opts.leadBias, burstCount = opts.burst and opts.burst.count or 1}
             )
         end
 
         local rejectMessages: {[string]: string} = {
+            ["scene budget"] = "Scene check budget reached; no clear projection.",
+            ["projection uncertain"] = "Projection uncertainty exceeds error limit.",
+            ["bystander"] = "Another player blocks the projection.",
             ["no body"] = "The murderer has no usable body to aim at.",
             ["too close"] = "The murderer is too close to shoot cleanly.",
             ["obstructed"] = "A wall blocks the shot.",
@@ -542,6 +626,16 @@ function Module.init(runtime: any): any
         end
 
         local resolved: GunPrediction = prediction :: GunPrediction
+        if resolved.snapshot and type(getNetworkStatus) == "function" then
+            local net = getNetworkStatus()
+            resolved.snapshot.network = net
+            local limit = resolved.snapshot.profile == "Old" and 0.6 or 0.85
+            resolved.snapshot.horizonLimit = limit
+            resolved.snapshot.horizonAtLimit = (resolved.snapshot.horizon or 0) >= limit
+            if net.spike or net.stale or net.capped or resolved.snapshot.horizonAtLimit then
+                resolved.snapshot.learningEligible = false
+            end
+        end
         if opts.maxError
             and resolved.errorRadius > opts.maxError then
 
@@ -633,6 +727,7 @@ function Module.init(runtime: any): any
         if os.clock() - lastLegacyGroup < 0.5 then return false end
         lastLegacyGroup = os.clock()
         local count = math.clamp(math.floor(mm2Settings.oldBurst or 1), 1, 4)
+        if not opts.quiet and type(refreshNetwork) == "function" then refreshNetwork(true) end
         local baseHorizon = getGunHorizonSeconds()
         local step = baseHorizon * 0.5
         local biases = {0, step, -step, 2 * step}
@@ -800,7 +895,7 @@ function Module.init(runtime: any): any
             deltaTime: number
         ): ()
             local due: boolean
-            due, autoElapsed = predictionMath.sampleDue(autoElapsed, deltaTime, 60)
+            due, autoElapsed = predictionMath.sampleDue(autoElapsed, deltaTime, 120)
             if due then autoShootTick() end
         end)
     end
@@ -816,6 +911,12 @@ function Module.init(runtime: any): any
             registry = mm2Features,
         }
     )
+    local showAdvanced = false
+    local advancedRows = {Option_Motionmodel=true, Option_Guntiming=true, Option_Landingguard=true,
+        Option_Holduncertainmanualshots=true, Option_Autotunelead=true, Option_Leadbias=true,
+        Option_MotionHz=true, Option_Leadstatus=true, Option_Resetautoleadcorrection=true,
+        Option_Shootdiagnostics=true, Option_Shootstatus=true, Option_Oldstatus=true,
+        Option_Silentsweep=true, Option_Silentspawn=true, Option_SpawnABstatus=true}
     local predictionRows = {
         Option_Predictionprofile=true, Option_WallCheck=true, Option_Motionmodel=true, Option_Guntiming=true,
         Option_Landingguard=true, Option_Holduncertainmanualshots=true,
@@ -831,6 +932,9 @@ function Module.init(runtime: any): any
             if row.Name == "Option_Motionmodel" then
                 visible = not mm2Settings.silentAim and (mm2Settings.predictionProfile or "Actual") == "Actual"
             end
+            if row.Name == "Option_Autotunelead" or row.Name == "Option_Resetautoleadcorrection" then
+                visible = not mm2Settings.silentAim and mm2Settings.predictionProfile ~= "Experimental"
+            end
             if row.Name == "Option_Holduncertainmanualshots" then
                 visible = not mm2Settings.silentAim and mm2Settings.predictionProfile ~= "Old"
             end
@@ -841,6 +945,7 @@ function Module.init(runtime: any): any
                 visible = not mm2Settings.silentAim and mm2Settings.predictionProfile == "Old" and mm2Settings.oldHitbox == true
             end
             if row.Name == "Option_Targetplayer" then visible = mm2Settings.shootMode == "Custom" end
+            if advancedRows[row.Name] and not showAdvanced then visible = false end
             row.Visible = visible
         end
         ShootFeature.updateExpandedSize()
@@ -871,7 +976,20 @@ function Module.init(runtime: any): any
             mm2Settings.predictionProfile = value
             refreshShootOptions()
         end,
-        "Old: corrected 66d with local Hitbox and bounded Burst. Actual: your v19 solver settings. Experimental: intent blend with existing vertical/landing physics; not a proven winner. Silent and Knife stay separate.")
+        "Old: corrected 66d with local Hitbox and bounded Burst. Actual: your v19 solver settings. Experimental: three local candidates against nine hypotheses, then one send; no added wait and no win-rate promise. Silent and Knife stay separate.")
+    addCycleOption(ShootFeature, "Network policy", {"Best effort", "Hold spikes"}, 1, function(value: string): ()
+        mm2Settings.gunNetworkPolicy = value
+    end, "Best effort adds no network hold. Hold spikes pauses on detected jitter/outage, not ordinary 30 FPS. Auto Max error remains independent.")
+    addToggleOption(ShootFeature, "Advanced", false, function(value: boolean): ()
+        showAdvanced = value; refreshShootOptions()
+    end, "Show tuning and diagnostic controls without changing their saved values.")
+    if state.addTelemetryOption and type(getNetworkStatus) == "function" then
+        state.addTelemetryOption(ShootFeature, "Live status", function(): any
+            local net = getNetworkStatus(true)
+            net.weapon = core.weaponStatus("Shoot")
+            return net
+        end)
+    end
     addToggleOption(ShootFeature, "Hitbox", mm2Settings.oldHitbox == true, function(value: boolean): ()
         legacyGeneration += 1
         mm2Settings.oldHitbox = value
@@ -1020,7 +1138,7 @@ function Module.init(runtime: any): any
             mm2Settings.autoTuneLead = value
         end,
         "Opt-in calibration from confirmed hits. It learns a separate runtime "
-            .. "correction and never rewrites the manual Lead bias slider."
+            .. "correction and never rewrites the manual Lead bias slider. Experimental, multi-request Burst, unstable network and capped horizons do not train this correction."
     )
     addNumberOption(
         ShootFeature,

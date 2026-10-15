@@ -179,11 +179,11 @@ local function computeLayoutMetrics(
         compact = mobile,
         touch = touchEnabled,
         contentPadding = 10,
-        cardSpacing = 2,
-        cardHeight = 22,
+        cardSpacing = 5,
+        cardHeight = 28,
         cardCorner = UI_RADIUS.card,
         controlHeight = 20,
-        optionRowHeight = 22,
+        optionRowHeight = 26,
         switchWidth = 26,
         switchHeight = 14,
         iconButton = 16,
@@ -221,7 +221,7 @@ local RUNTIME_RAW_BASE: string =
         .. RUNTIME_BRANCH
         .. "/"
 
-local SOURCE_STAMP: string = "v20-20261014-mm2-prediction-profiles"
+local SOURCE_STAMP: string = "v21-20261014-mm2-fast-projections"
 
 local BOOT_STARTED_AT: number = os.clock()
 local BOOT_FINGERPRINT_SECONDS: number = 0
@@ -465,27 +465,26 @@ export type ThemeShape = {
 local THEME_PRESETS: {[string]: {[string]: Color3}} = {
 
     Wurst = {
-        background = Color3.fromRGB(64, 64, 64),
-        sidebar = Color3.fromRGB(48, 48, 48),
-        surface = Color3.fromRGB(64, 64, 64),
-        surfaceRaised = Color3.fromRGB(74, 74, 74),
-        surfaceHover = Color3.fromRGB(86, 86, 86),
-        surfacePressed = Color3.fromRGB(96, 96, 96),
-        button = Color3.fromRGB(56, 56, 56),
-        buttonHover = Color3.fromRGB(72, 72, 72),
-        buttonPressed = Color3.fromRGB(84, 84, 84),
-        outline = Color3.fromRGB(16, 16, 16),
-        accent = Color3.fromRGB(16, 16, 16),
-        accentDim = Color3.fromRGB(36, 36, 36),
-        accentFaint = Color3.fromRGB(56, 56, 56),
-        accentSoft = Color3.fromRGB(40, 40, 40),
-        accentText = Color3.fromRGB(240, 240, 240),
-
-        enabled = Color3.fromRGB(32, 175, 32),
-        enabledText = Color3.fromRGB(240, 240, 240),
-        text = Color3.fromRGB(240, 240, 240),
-        textMuted = Color3.fromRGB(168, 168, 168),
-        tooltip = Color3.fromRGB(24, 24, 24),
+        background = Color3.fromRGB(17, 19, 27),
+        sidebar = Color3.fromRGB(13, 15, 22),
+        surface = Color3.fromRGB(24, 27, 38),
+        surfaceRaised = Color3.fromRGB(33, 36, 50),
+        surfaceHover = Color3.fromRGB(43, 46, 63),
+        surfacePressed = Color3.fromRGB(52, 55, 74),
+        button = Color3.fromRGB(30, 33, 46),
+        buttonHover = Color3.fromRGB(44, 47, 65),
+        buttonPressed = Color3.fromRGB(54, 57, 78),
+        outline = Color3.fromRGB(74, 77, 99),
+        accent = Color3.fromRGB(166, 139, 250),
+        accentDim = Color3.fromRGB(128, 107, 194),
+        accentFaint = Color3.fromRGB(71, 62, 98),
+        accentSoft = Color3.fromRGB(57, 48, 84),
+        accentText = Color3.fromRGB(240, 237, 255),
+        enabled = Color3.fromRGB(166, 139, 250),
+        enabledText = Color3.fromRGB(245, 242, 255),
+        text = Color3.fromRGB(237, 240, 248),
+        textMuted = Color3.fromRGB(155, 165, 185),
+        tooltip = Color3.fromRGB(15, 17, 25),
     },
 
     Monochrome = {
@@ -548,7 +547,11 @@ function ThemeEngine.Bind(
         record = {}
         themeBindings[instance] = record
     end
-    table.insert(record, {property = property, token = token})
+    local found = false
+    for _, binding in ipairs(record) do
+        if binding.property == property then binding.token = token; found = true; break end
+    end
+    if not found then table.insert(record, {property = property, token = token}) end
     local value: Color3? = Theme[token]
     if value then
         (instance :: any)[property] = value

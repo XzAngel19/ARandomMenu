@@ -1,6 +1,6 @@
 # MM2 v17 — actualización utilizable y guía de diagnóstico
 
-> Documento histórico de v17. La rama y su loader ahora entregan v19: consulta [la guía actual de paneles, Knife y nuevos JSON](MM2-v19-paneles-knife.md).
+> Histórico de v17. La rama entrega ahora [v21: selector local rápido, red inestable y menú ligero](MM2-v21-fast-projections.md).
 
 **Build:** `v17-20261014-mm2-controls-calibration`
 

@@ -1,5 +1,5 @@
 return {
-    stamp = "v20-20261014-mm2-prediction-profiles",
+    stamp = "v21-20261014-mm2-fast-projections",
     files = {
         ["src/games/BedFight/Combat/AutoSwing.lua"] = [[
 local Module = {Name = "BedFight Auto Swing", Initialized = false, Connection = nil}
@@ -1722,6 +1722,8 @@ function Module.init(runtime: any): any
     local isProtectedTarget: any = core.isProtectedTarget
     local getFilteredVelocity: any = core.getFilteredVelocity
     local getEstimatedLatency: any = core.getEstimatedLatency
+    local shouldHoldForNetwork: any = core.shouldHoldForNetwork
+    local getNetworkStatus: any = core.getNetworkStatus
     local predictionMath: any = core.predictionMath
     local isWeaponPathClear: any = core.isWeaponPathClear
     local trajectoryCalibration: any = core.trajectoryCalibration
@@ -1738,6 +1740,7 @@ function Module.init(runtime: any): any
         throwHz = 60,
         animation = true,
         latencyModel = "Replica RTT",
+        networkPolicy = "Best effort",
         motionModel = "Linear",
         leadBias = 0,
     }
@@ -1827,15 +1830,15 @@ function Module.init(runtime: any): any
         -- Replica RTT is the new-profile default; keep packet-only A/B. Solve the moving-target
         -- flight instead of using distance-to-the-old-position / blade speed.
         local multiplier: number = knifeThrowSettings.latencyModel == "Replica RTT" and 1 or 0.5
-        local packetTime: number = math.clamp(getEstimatedLatency() * multiplier
-            + knifeThrowSettings.leadBias, 0, 0.6)
+        local packetTime: number = math.clamp(getEstimatedLatency(true) * multiplier
+            + knifeThrowSettings.leadBias, 0, 1.2)
         if knifeThrowSettings.motionModel == "Vertical (experimental)" then
             local humanoid = target.Character:FindFirstChildOfClass("Humanoid")
             if not humanoid then lastPrediction = nil; return nil end
             local grounded = core.isMotionGrounded(humanoid, velocity)
             local gravity = workspace.Gravity
             local floorY: number? = nil
-            local roughTime = math.clamp((root.Position - originPos).Magnitude / knifeSpeed + packetTime, 0, 5.6)
+            local roughTime = math.clamp((root.Position - originPos).Magnitude / knifeSpeed + packetTime, 0, 6.2)
             if not grounded then
                 local displacement = Vector3.new(velocity.X * roughTime,
                     velocity.Y * roughTime - 0.5 * gravity * roughTime * roughTime, velocity.Z * roughTime)
@@ -2035,6 +2038,9 @@ function Module.init(runtime: any): any
             originPos = throwerPart.Position
         end
 
+        if type(shouldHoldForNetwork) == "function" and shouldHoldForNetwork(knifeThrowSettings.networkPolicy) then
+            setWeaponStatus("Throw", "Network unstable: Hold spikes policy."); return
+        end
         local aimPos: Vector3? = predictAim(target, originPos)
         if not aimPos or (aimPos - originPos).Magnitude < 0.05 then
             setWeaponStatus("Throw", "No usable intercept for the selected motion model"); return
@@ -2066,7 +2072,8 @@ function Module.init(runtime: any): any
                 cadence = knifeThrowSettings.cadence, cadenceSource = cadenceSource, sleight = sleight,
                 spawnOffset = knifeThrowSettings.spawnOffset,
                 range = knifeThrowSettings.range, latencyModel = knifeThrowSettings.latencyModel,
-                motionModel = knifeThrowSettings.motionModel,
+                motionModel = knifeThrowSettings.motionModel, networkPolicy = knifeThrowSettings.networkPolicy,
+                network = type(getNetworkStatus) == "function" and getNetworkStatus() or nil,
                 leadBias = knifeThrowSettings.leadBias, prediction = lastPrediction},
         })
         -- Nothing cosmetic may delay the packet, cooldown, or telemetry timestamp.
@@ -2209,6 +2216,14 @@ function Module.init(runtime: any): any
         5
     )
 
+    addCycleOption(KnifeThrowFeature, "Network policy", {"Best effort", "Hold spikes"}, 1,
+        function(value: string): () knifeThrowSettings.networkPolicy = value end,
+        "Independent of Gun. Best effort adds no network wait; Hold spikes pauses only on detected instability or missing data.")
+    if state.addTelemetryOption and type(core.getNetworkStatus) == "function" then
+        state.addTelemetryOption(KnifeThrowFeature, "Live status", function(): any
+            local net = core.getNetworkStatus(true); net.weapon = core.weaponStatus("Throw"); return net
+        end)
+    end
     addCycleOption(KnifeThrowFeature, "Knife motion", {"Linear", "Vertical (experimental)"}, 1,
         function(value: string): () knifeThrowSettings.motionModel = value; lastPrediction = nil end,
         "Linear preserves v19. Vertical solves target gravity plus a sampled landing floor with at most two map probes per throw. Knife flight stays straight; not future-input knowledge or an accuracy guarantee.")
@@ -2279,6 +2294,9 @@ function Module.init(runtime: any): any
     local findMurderer: any = core.findMurderer
     local getFilteredVelocity: any = core.getFilteredVelocity
     local getGunHorizonSeconds: any = core.getGunHorizonSeconds
+    local refreshNetwork: any = core.getEstimatedLatency
+    local getNetworkStatus: any = core.getNetworkStatus
+    local shouldHoldForNetwork: any = core.shouldHoldForNetwork
     local getGunTurnDiscount: any = core.getGunTurnDiscount
     local getGunTurnRate: any = core.getGunTurnRate
     local getGunLeadSensitivity: any = core.getGunLeadSensitivity
@@ -2368,8 +2386,10 @@ function Module.init(runtime: any): any
         horizon: number?,
         leadBias: number?,
         burstCount: number?,
+        maxError: number?,
     }
 
+    local candidateBystanderCheck: any = nil
     local BODY_HALF_WIDTH: number = 1.0
 
     local MINIMUM_ERROR_RADIUS: number = 0.35
@@ -2415,6 +2435,11 @@ function Module.init(runtime: any): any
         end
 
         local velocity: Vector3 = getFilteredVelocity(target, root :: BasePart)
+        for _, point in ipairs({origin.Position, part.Position, root.Position, velocity}) do
+            if not predictionMath.finite(point.X) or not predictionMath.finite(point.Y) or not predictionMath.finite(point.Z) then
+                return nil, nil, "no body"
+            end
+        end
         local sample: MotionSample? = motionSamples[target]
         if sample and (sample.character ~= character or os.clock() - sample.sampledAt > 0.25) then
             sample = nil
@@ -2431,8 +2456,72 @@ function Module.init(runtime: any): any
         local profile = resolvedOptions.profile or (ignoreVisibility and "Actual")
             or mm2Settings.predictionProfile or "Actual"
         local motionModel = mm2Settings.gunMotionModel or "V17"
-        if profile == "Old" then motionModel = "Classic 66d"
-        elseif profile == "Experimental" then motionModel = "Intent blend" end
+        if profile == "Old" then motionModel = "Classic 66d" end
+        if profile == "Experimental" then
+            local horizon = getGunHorizonSeconds()
+            local net = type(getNetworkStatus) == "function" and getNetworkStatus() or nil
+            local uncertainty = net and (net.jitter + math.abs((net.raw or net.estimate) - net.estimate) * 0.5
+                + math.min(net.frameSeconds, 0.1) * 0.5) or (1 / 60)
+            local terrainProbes = 0
+            local candidates = predictionMath.rankProjections(origin.Position, part.Position, velocity,
+                acceleration, humanoid.MoveDirection, horizon, uncertainty, grounded, workspace.Gravity,
+                function(point: Vector3): number?
+                    if not mm2Settings.gunLandingGuard or grounded or point.Y >= part.Position.Y then return nil end
+                    terrainProbes += 1
+                    local floor = getLandingRootY(root, humanoid, point - part.Position)
+                    return floor and floor + part.Position.Y - root.Position.Y or nil
+                end)
+            local checked = {}
+            local pathBudget = {remaining = 12} -- shared across candidates, including transparent layers
+            local pathChecks, bystanderChecks, usable, rejectedError = 0, 0, 0, false
+            for _, candidate in ipairs(candidates) do
+                local duplicate = false
+                for _, point in ipairs(checked) do
+                    if (candidate.point - point).Magnitude < 0.01 then duplicate = true; break end
+                end
+                if duplicate then continue end
+                table.insert(checked, candidate.point)
+                local delta = candidate.point - origin.Position
+                if delta.Magnitude <= 0.05 then continue end
+                usable += 1
+                local errorRadius = math.max(MINIMUM_ERROR_RADIUS, candidate.worst)
+                local limit = resolvedOptions.maxError or (mm2Settings.manualErrorGate and BODY_HALF_WIDTH or nil)
+                if limit and errorRadius > limit then rejectedError = true; continue end
+                if not ignoreVisibility and mm2Settings.shootWallCheck then
+                    pathChecks += 1
+                    if not isWeaponPathClear(origin.Position, candidate.point, character, pathBudget) then continue end
+                end
+                if type(candidateBystanderCheck) == "function" then
+                    bystanderChecks += 1
+                    if candidateBystanderCheck(target, origin.Position, candidate.point) then continue end
+                end
+                local summaries = {}
+                for i, item in ipairs(candidates) do
+                    summaries[i] = {name=item.name, point={item.point.X,item.point.Y,item.point.Z},
+                        score=item.score, worst=item.worst}
+                end
+                return CFrame.lookAt(candidate.point, candidate.point + delta.Unit), {
+                    targetPosition = candidate.point, endpoint = candidate.point, velocity = candidate.velocity,
+                    errorRadius = errorRadius, leadSeconds = horizon, leadSensitivity = 0,
+                    capturedPosition = part.Position, aimRootOffset = part.Position - root.Position,
+                    snapshot = {profile = profile, model = "Projection selector", epoch = mm2Settings.predictionEpoch or 0,
+                        timingModel = mm2Settings.gunTimingModel, horizon = horizon, lead = horizon,
+                        learningEligible = false, burstCount = 1, grounded = grounded, errorRadius = errorRadius,
+                        candidate = candidate.name, candidateCount = 3, hypothesisCount = 9, score = candidate.score,
+                        uncertaintySeconds = math.clamp(uncertainty, 0.005, 0.15), terrainProbes = terrainProbes,
+                        pathChecks = pathChecks, worldRaycasts = 12 - pathBudget.remaining, bystanderChecks = bystanderChecks, network = net, landingPartY = candidate.floorY,
+                        candidates = summaries, horizonLimit = 0.85,
+                        moveDirection = {humanoid.MoveDirection.X, humanoid.MoveDirection.Y, humanoid.MoveDirection.Z},
+                        autoLeadCorrection = type(getGunLeadStatus) == "function" and getGunLeadStatus().autoCorrection or 0,
+                        root = {root.Position.X, root.Position.Y, root.Position.Z},
+                        part = {part.Position.X, part.Position.Y, part.Position.Z},
+                        measuredVelocity = {velocity.X, velocity.Y, velocity.Z},
+                        acceleration = {acceleration.X, acceleration.Y, acceleration.Z}},
+                }, nil
+            end
+            return nil, nil, usable == 0 and "too close" or (rejectedError and "projection uncertain"
+                or (pathBudget.remaining == 0 and "scene budget" or (bystanderChecks > 0 and "bystander" or "obstructed")))
+        end
         if motionModel == "Classic 66d" then
             -- Restore the v10 per-sample response, not its historical latency mean.
             -- Only the separate Old profile can add legacy Hitbox/Burst.
@@ -2602,6 +2691,8 @@ function Module.init(runtime: any): any
         return workspace:Raycast(startPoint, endPoint - startPoint, parameters) ~= nil
     end
 
+    candidateBystanderCheck = bystanderOnSegment
+
     local SILENT_ORIGIN_STUDS: number = 2.5
     local SILENT_PIERCE_STUDS: number = 1.0
     local SILENT_LIFT_STUDS: number = 1.6
@@ -2717,6 +2808,7 @@ function Module.init(runtime: any): any
     ): boolean
         lastRejectReason = ""
         local opts: FireOptions = options or {}
+        local shotGeneration = opts.generation or legacyGeneration
         diagnostics.checks += 1
         local silent: boolean = mm2Settings.silentAim
         if opts.silent ~= nil then
@@ -2755,7 +2847,7 @@ function Module.init(runtime: any): any
             task.wait()
         end
 
-        if (opts.generation ~= nil and opts.generation ~= legacyGeneration)
+        if (shotGeneration ~= nil and shotGeneration ~= legacyGeneration)
             or (opts.burst and opts.burst.groupId ~= activeLegacyGroupId)
             or (opts.burst and opts.burst.epoch ~= nil and opts.burst.epoch ~= (mm2Settings.predictionEpoch or 0)) then
             return reject("Shot cancelled: controls changed.")
@@ -2763,6 +2855,10 @@ function Module.init(runtime: any): any
         gun = getPlayerWeapon(LocalPlayer, "Gun", true) or gun
         if gun and (gun:GetAttribute("Disabled") == true or gun.Enabled == false) then
             return reject("Gun disabled/cooling down.")
+        end
+        if not opts.quiet and type(refreshNetwork) == "function" then refreshNetwork(true) end
+        if type(shouldHoldForNetwork) == "function" and shouldHoldForNetwork(mm2Settings.gunNetworkPolicy) then
+            return reject("Network unstable: Hold spikes policy.")
         end
         local remote: Instance? = gun and gun:FindFirstChild("Shoot")
         local origin: CFrame? = getGunOriginCFrame(character, gun)
@@ -2773,11 +2869,14 @@ function Module.init(runtime: any): any
                 target,
                 origin :: CFrame,
                 {ignoreVisibility = silent, profile = silent and "Actual" or opts.profile,
-                    horizon = opts.horizon, leadBias = opts.leadBias, burstCount = opts.burst and opts.burst.count or 1}
+                    horizon = opts.horizon, maxError = opts.maxError, leadBias = opts.leadBias, burstCount = opts.burst and opts.burst.count or 1}
             )
         end
 
         local rejectMessages: {[string]: string} = {
+            ["scene budget"] = "Scene check budget reached; no clear projection.",
+            ["projection uncertain"] = "Projection uncertainty exceeds error limit.",
+            ["bystander"] = "Another player blocks the projection.",
             ["no body"] = "The murderer has no usable body to aim at.",
             ["too close"] = "The murderer is too close to shoot cleanly.",
             ["obstructed"] = "A wall blocks the shot.",
@@ -2800,6 +2899,16 @@ function Module.init(runtime: any): any
         end
 
         local resolved: GunPrediction = prediction :: GunPrediction
+        if resolved.snapshot and type(getNetworkStatus) == "function" then
+            local net = getNetworkStatus()
+            resolved.snapshot.network = net
+            local limit = resolved.snapshot.profile == "Old" and 0.6 or 0.85
+            resolved.snapshot.horizonLimit = limit
+            resolved.snapshot.horizonAtLimit = (resolved.snapshot.horizon or 0) >= limit
+            if net.spike or net.stale or net.capped or resolved.snapshot.horizonAtLimit then
+                resolved.snapshot.learningEligible = false
+            end
+        end
         if opts.maxError
             and resolved.errorRadius > opts.maxError then
 
@@ -2891,6 +3000,7 @@ function Module.init(runtime: any): any
         if os.clock() - lastLegacyGroup < 0.5 then return false end
         lastLegacyGroup = os.clock()
         local count = math.clamp(math.floor(mm2Settings.oldBurst or 1), 1, 4)
+        if not opts.quiet and type(refreshNetwork) == "function" then refreshNetwork(true) end
         local baseHorizon = getGunHorizonSeconds()
         local step = baseHorizon * 0.5
         local biases = {0, step, -step, 2 * step}
@@ -3058,7 +3168,7 @@ function Module.init(runtime: any): any
             deltaTime: number
         ): ()
             local due: boolean
-            due, autoElapsed = predictionMath.sampleDue(autoElapsed, deltaTime, 60)
+            due, autoElapsed = predictionMath.sampleDue(autoElapsed, deltaTime, 120)
             if due then autoShootTick() end
         end)
     end
@@ -3074,6 +3184,12 @@ function Module.init(runtime: any): any
             registry = mm2Features,
         }
     )
+    local showAdvanced = false
+    local advancedRows = {Option_Motionmodel=true, Option_Guntiming=true, Option_Landingguard=true,
+        Option_Holduncertainmanualshots=true, Option_Autotunelead=true, Option_Leadbias=true,
+        Option_MotionHz=true, Option_Leadstatus=true, Option_Resetautoleadcorrection=true,
+        Option_Shootdiagnostics=true, Option_Shootstatus=true, Option_Oldstatus=true,
+        Option_Silentsweep=true, Option_Silentspawn=true, Option_SpawnABstatus=true}
     local predictionRows = {
         Option_Predictionprofile=true, Option_WallCheck=true, Option_Motionmodel=true, Option_Guntiming=true,
         Option_Landingguard=true, Option_Holduncertainmanualshots=true,
@@ -3089,6 +3205,9 @@ function Module.init(runtime: any): any
             if row.Name == "Option_Motionmodel" then
                 visible = not mm2Settings.silentAim and (mm2Settings.predictionProfile or "Actual") == "Actual"
             end
+            if row.Name == "Option_Autotunelead" or row.Name == "Option_Resetautoleadcorrection" then
+                visible = not mm2Settings.silentAim and mm2Settings.predictionProfile ~= "Experimental"
+            end
             if row.Name == "Option_Holduncertainmanualshots" then
                 visible = not mm2Settings.silentAim and mm2Settings.predictionProfile ~= "Old"
             end
@@ -3099,6 +3218,7 @@ function Module.init(runtime: any): any
                 visible = not mm2Settings.silentAim and mm2Settings.predictionProfile == "Old" and mm2Settings.oldHitbox == true
             end
             if row.Name == "Option_Targetplayer" then visible = mm2Settings.shootMode == "Custom" end
+            if advancedRows[row.Name] and not showAdvanced then visible = false end
             row.Visible = visible
         end
         ShootFeature.updateExpandedSize()
@@ -3129,7 +3249,20 @@ function Module.init(runtime: any): any
             mm2Settings.predictionProfile = value
             refreshShootOptions()
         end,
-        "Old: corrected 66d with local Hitbox and bounded Burst. Actual: your v19 solver settings. Experimental: intent blend with existing vertical/landing physics; not a proven winner. Silent and Knife stay separate.")
+        "Old: corrected 66d with local Hitbox and bounded Burst. Actual: your v19 solver settings. Experimental: three local candidates against nine hypotheses, then one send; no added wait and no win-rate promise. Silent and Knife stay separate.")
+    addCycleOption(ShootFeature, "Network policy", {"Best effort", "Hold spikes"}, 1, function(value: string): ()
+        mm2Settings.gunNetworkPolicy = value
+    end, "Best effort adds no network hold. Hold spikes pauses on detected jitter/outage, not ordinary 30 FPS. Auto Max error remains independent.")
+    addToggleOption(ShootFeature, "Advanced", false, function(value: boolean): ()
+        showAdvanced = value; refreshShootOptions()
+    end, "Show tuning and diagnostic controls without changing their saved values.")
+    if state.addTelemetryOption and type(getNetworkStatus) == "function" then
+        state.addTelemetryOption(ShootFeature, "Live status", function(): any
+            local net = getNetworkStatus(true)
+            net.weapon = core.weaponStatus("Shoot")
+            return net
+        end)
+    end
     addToggleOption(ShootFeature, "Hitbox", mm2Settings.oldHitbox == true, function(value: boolean): ()
         legacyGeneration += 1
         mm2Settings.oldHitbox = value
@@ -3278,7 +3411,7 @@ function Module.init(runtime: any): any
             mm2Settings.autoTuneLead = value
         end,
         "Opt-in calibration from confirmed hits. It learns a separate runtime "
-            .. "correction and never rewrites the manual Lead bias slider."
+            .. "correction and never rewrites the manual Lead bias slider. Experimental, multi-request Burst, unstable network and capped horizons do not train this correction."
     )
     addNumberOption(
         ShootFeature,
@@ -4720,6 +4853,7 @@ local mm2Settings = {
     shootTarget = "",
     showMissCooldown = false,
     predictionRtt = 0.08,
+    gunNetworkPolicy = "Best effort",
     gunLeadBias = 0,
     predictionProfile = "Actual",
     predictionEpoch = 0,
@@ -4789,7 +4923,7 @@ local function clearEffects(folder)
 end
 
 -- Match the recovered client's cursor filters, not an assertion about server rules.
-local function isWeaponPathClear(origin: Vector3, endpoint: Vector3, target: Model?): boolean
+local function isWeaponPathClear(origin: Vector3, endpoint: Vector3, target: Model?, budget: {remaining: number}?): boolean
     local direction: Vector3 = endpoint - origin
     if direction.Magnitude < 0.05 then return true end
     local excluded: {Instance} = {}
@@ -4801,6 +4935,10 @@ local function isWeaponPathClear(origin: Vector3, endpoint: Vector3, target: Mod
     params.FilterType = Enum.RaycastFilterType.Exclude
     params.IgnoreWater = true
     for _ = 1, 32 do
+        if budget then
+            if budget.remaining <= 0 then return false end
+            budget.remaining -= 1
+        end
         params.FilterDescendantsInstances = excluded
         local hit: RaycastResult? = workspace:Raycast(origin, direction, params)
         if not hit then return true end
@@ -6013,15 +6151,107 @@ function predictionMath.interceptTime(offset: Vector3, velocity: Vector3, speed:
     return time and predictionMath.finite(time) and time <= 5 and time or nil
 end
 
--- Straight projectile; gravity belongs to the target, not to the knife.
--- A bounded numerical intercept also handles a target landing on a sampled floor.
+-- Network measurements are observations, not server collision timestamps.
+function predictionMath.newNetworkEstimator(initial: number): any
+    local net = {raw = initial, baseline = initial, estimate = initial, jitter = 0,
+        lastValidAt = nil, lastReadValid = false, spikeUntil = -math.huge, history = {}, frameSeconds = 1 / 60}
+    function net:observe(value: any, now: number): ()
+        self.lastReadValid = predictionMath.finite(value) and value >= 0 and value <= 10
+        if not self.lastReadValid then return end
+        local dt = self.lastValidAt and math.clamp(now - self.lastValidAt, 0, 2) or 0.1
+        if self.lastValidAt == nil then
+            self.raw, self.baseline, self.estimate = value, value, value
+        else
+            local jump = math.abs(value - self.raw)
+            if jump > math.max(0.05, self.baseline * 0.3)
+                or value > self.baseline + math.max(0.08, self.jitter * 2) then
+                self.spikeUntil = now + 0.6
+            end
+            self.jitter += (jump - self.jitter) * (1 - math.exp(-dt / 0.5))
+            self.baseline += (value - self.baseline) * (1 - math.exp(-dt / 2))
+            if math.abs(value - self.estimate) > math.max(0.06, self.baseline * 0.3) then
+                self.estimate = value -- react on the first observed large change, in either direction
+            else
+                self.estimate += (value - self.estimate) * (1 - math.exp(-dt / 0.12))
+            end
+            self.raw = value
+        end
+        self.lastValidAt = now
+        table.insert(self.history, value * 1000)
+        if #self.history > 40 then table.remove(self.history, 1) end
+    end
+    function net:snapshot(now: number, includeHistory: boolean?): any
+        local age = self.lastValidAt and math.max(0, now - self.lastValidAt) or nil
+        local stale = not self.lastReadValid or age == nil or age > 1
+        local spike = now < self.spikeUntil
+        local capped = self.estimate > 1.2
+        return {raw = self.lastValidAt and self.raw or nil, estimate = math.clamp(self.estimate, 0.03, 1.2),
+            baseline = self.baseline, jitter = self.jitter, age = age, stale = stale, spike = spike,
+            capped = capped, frameSeconds = self.frameSeconds, renderSeconds = self.renderSeconds,
+            status = stale and "Unknown" or (spike and "Spike" or (self.raw > 0.3 and "High" or "Stable")),
+            history = includeHistory and table.clone(self.history) or nil}
+    end
+    return net
+end
+
+-- Three candidate segments ranked against nine hypotheses, never against future truth.
+-- Fixed work; no Parts, waits, deferred callbacks, or network sends.
+function predictionMath.rankProjections(origin: Vector3, position: Vector3, velocity: Vector3,
+    acceleration: Vector3, intent: Vector3, horizon: number, uncertainty: number, grounded: boolean,
+    gravity: number, floorAt: ((Vector3) -> number?)?): {any}
+    local horizontalA = Vector3.new(acceleration.X, 0, acceleration.Z)
+    if horizontalA.Magnitude > 80 then horizontalA = horizontalA.Unit * 80 end
+    local models = {
+        {name = "Velocity", velocity = velocity, acceleration = Vector3.zero},
+        {name = "Intent", velocity = predictionMath.blendIntent(velocity, intent), acceleration = Vector3.zero},
+        {name = "Acceleration", velocity = velocity, acceleration = horizontalA},
+    }
+    local spread = math.clamp(uncertainty, 0.005, 0.15)
+    local times = {math.max(0.02, horizon - spread), horizon, math.min(1, horizon + spread)}
+    local hypotheses, candidates = {}, {}
+    local function project(model: any, t: number): Vector3
+        local v = model.velocity
+        local y = grounded and math.clamp(v.Y, -2.5, 2.5) * t or v.Y * t - 0.5 * gravity * t * t
+        return position + Vector3.new(v.X * t, y, v.Z * t) + model.acceleration * (0.5 * t * t)
+    end
+    for index, model in ipairs(models) do
+        local central = project(model, horizon)
+        local floorY = floorAt and floorAt(central) or nil
+        for _, t in ipairs(times) do
+            local p = project(model, t)
+            if floorY and model.velocity.Y - gravity * t <= 0 then p = Vector3.new(p.X, math.max(p.Y, floorY), p.Z) end
+            table.insert(hypotheses, p)
+        end
+        central = hypotheses[#hypotheses - 1]
+        table.insert(candidates, {point = central, name = model.name, velocity = model.velocity, floorY = floorY, index = index})
+    end
+    for _, candidate in ipairs(candidates) do
+        local segment = candidate.point - origin
+        local length2 = segment:Dot(segment)
+        local worst, sum = 0, 0
+        for _, p in ipairs(hypotheses) do
+            local along = length2 > 1e-8 and math.clamp((p - origin):Dot(segment) / length2, 0, 1) or 0
+            local distance = (p - (origin + segment * along)).Magnitude
+            worst = math.max(worst, distance); sum += distance
+        end
+        candidate.worst = worst
+        candidate.score = worst * 0.7 + (sum / #hypotheses) * 0.3
+    end
+    table.sort(candidates, function(a, b)
+        if a.score == b.score then return a.index < b.index end
+        return a.score < b.score
+    end)
+    return candidates
+end
+
+-- Straight projectile; gravity and sampled ground belong to the target.
 function predictionMath.verticalIntercept(offset: Vector3, velocity: Vector3, speed: number,
     delay: number, gravity: number, grounded: boolean, floorOffset: number?): (Vector3?, number?)
     for _, value in ipairs({offset.X, offset.Y, offset.Z, velocity.X, velocity.Y, velocity.Z,
         speed, delay, gravity}) do
         if not predictionMath.finite(value) then return nil, nil end
     end
-    if speed <= 1 or delay < 0 or delay > 0.6 or gravity < 0 then return nil, nil end
+    if speed <= 1 or delay < 0 or delay > 1.2 or gravity < 0 then return nil, nil end
     local function position(t: number): Vector3
         local total = delay + t
         local y = grounded and math.clamp(velocity.Y, -2.5, 2.5) * total
@@ -6266,42 +6496,41 @@ local function getFilteredVelocity(player: Player, root: BasePart): Vector3
 end
 
 local lastLatencyReadAt: number = -math.huge
-local function getEstimatedLatency(): number
-    local now: number = os.clock()
-    if now - lastLatencyReadAt < 0.1 then
-        return math.clamp(mm2Settings.predictionRtt, 0.03, 0.3)
-    end
-    local elapsed: number = now - lastLatencyReadAt
-    lastLatencyReadAt = now
-    local measuredRtt: number = mm2Settings.predictionRtt
-    pcall(function(): ()
-        local network: Instance? = Stats:FindFirstChild("Network")
-        local serverItems: Instance? = network
-            and network:FindFirstChild("ServerStatsItem")
-        local pingItem: any = serverItems and serverItems:FindFirstChild("Data Ping")
-        if pingItem and type(pingItem.GetValue) == "function" then
-            local pingMilliseconds: number? = tonumber(pingItem:GetValue())
-            if predictionMath.finite(pingMilliseconds) and pingMilliseconds >= 0 then
-                measuredRtt = pingMilliseconds / 1000
+local networkEstimator = predictionMath.newNetworkEstimator(mm2Settings.predictionRtt)
+local function getEstimatedLatency(force: boolean?): number
+    local now = os.clock()
+    if now - lastLatencyReadAt >= 0.1 or (force and now - lastLatencyReadAt >= 1 / 120) then
+        lastLatencyReadAt = now
+        local value: number? = nil
+        pcall(function(): ()
+            local network = Stats:FindFirstChild("Network")
+            local items = network and network:FindFirstChild("ServerStatsItem")
+            local ping = items and items:FindFirstChild("Data Ping")
+            if ping and type(ping.GetValue) == "function" then
+                local ms = tonumber(ping:GetValue())
+                if predictionMath.finite(ms) then value = (ms :: number) / 1000 end
             end
-        end
-    end)
-    -- Time-based smoothing: changing Motion/Throw Hz must not change the RTT.
-    local alpha: number = 1 - math.exp(-math.min(elapsed, 1) / 0.5)
-    mm2Settings.predictionRtt += (measuredRtt - mm2Settings.predictionRtt) * alpha
-
-    return math.clamp(
-        mm2Settings.predictionRtt,
-        0.03,
-        0.3
-    )
+        end)
+        networkEstimator:observe(value, now)
+        mm2Settings.predictionRtt = networkEstimator.estimate
+    end
+    return math.clamp(networkEstimator.estimate, 0.03, 1.2)
+end
+local function getNetworkStatus(includeHistory: boolean?): any
+    return networkEstimator:snapshot(os.clock(), includeHistory)
+end
+local function shouldHoldForNetwork(policy: string?): boolean
+    if policy ~= "Hold spikes" then return false end
+    getEstimatedLatency()
+    local net = getNetworkStatus()
+    return net.stale or net.spike or net.capped
 end
 
 local GUN_LEAD = {
     replicationRate = 20,
     serverFrame = 1 / 60,
     minimumHorizon = 0.02,
-    maximumHorizon = 0.45,
+    maximumHorizon = 0.85,
     maximumManualBias = 0.1,
     maximumAutoCorrection = 0.1,
 
@@ -6333,7 +6562,7 @@ local function getGunHorizonSeconds(): number
         if ok and type(est) == "table" and predictionMath.finite(est.liveGunAcceptanceMs)
             and (est.liveGunSamples or 0) >= 6 then
             latencyTime = math.clamp(est.liveGunAcceptanceMs / 1000,
-                math.max(0.03, baseline - 0.075), math.min(0.45, baseline + 0.075))
+                math.max(0.03, baseline - 0.075), math.min(1.2, baseline + 0.075))
         end
     end
     local staleness: number = 1 / (2 * GUN_LEAD.replicationRate)
@@ -7505,8 +7734,12 @@ local function createTrajectoryCalibration(): any
             and targetCharacter ~= nil
             and hitPartValue:IsDescendantOf(targetCharacter)
         local burst = pending.settings and pending.settings.burst
+        local net = type(getNetworkStatus) == "function" and getNetworkStatus() or nil
+        local shotNet = pending.settings and pending.settings.prediction and pending.settings.prediction.network
         if pending.authored == true and not syntheticHit and (not burst or (burst.count or 1) <= 1)
-            and latencyMs >= 30 and latencyMs <= 450 then
+            and (not net or (not net.stale and not net.spike and not net.capped))
+            and (not shotNet or (not shotNet.stale and not shotNet.spike and not shotNet.capped))
+            and latencyMs >= 30 and latencyMs <= 1200 then
             table.insert(runtime.freshGunLatency, {at = now, ms = latencyMs})
             if #runtime.freshGunLatency > 24 then table.remove(runtime.freshGunLatency, 1) end
             estimatesAt = -math.huge
@@ -8169,6 +8402,7 @@ type PendingShot = {
     silentSpawn: string?,
     predictionEpoch: number?,
     burstCount: number?,
+    learningEligible: boolean?,
 }
 
 type GunPrediction = {
@@ -8284,7 +8518,7 @@ local function stopLeadTracking(): ()
 end
 
 local function startLeadTracking(candidate: PendingShot): ()
-    if not mm2Settings.autoTuneLead or (candidate.burstCount or 1) > 1 then
+    if not mm2Settings.autoTuneLead or candidate.learningEligible == false or (candidate.burstCount or 1) > 1 then
         return
     end
     local root: BasePart? = candidate.targetCharacter
@@ -8304,8 +8538,9 @@ local function startLeadTracking(candidate: PendingShot): ()
         if leadTracking ~= candidate then
             return
         end
-        if state.mm2ShotFeedback.pending ~= candidate
-            and state.mm2ShotFeedback.lastAccepted ~= candidate then
+        if not mm2Settings.autoTuneLead
+            or (candidate.predictionEpoch ~= nil and candidate.predictionEpoch ~= (mm2Settings.predictionEpoch or 0))
+            or (state.mm2ShotFeedback.pending ~= candidate and state.mm2ShotFeedback.lastAccepted ~= candidate) then
             stopLeadTracking()
             return
         end
@@ -8320,7 +8555,7 @@ local function startLeadTracking(candidate: PendingShot): ()
 end
 
 local function tuneFromConfirmedShot(candidate: PendingShot): ()
-    if not mm2Settings.autoTuneLead or not candidate.aimPosition or candidate.silentSpawn
+    if not mm2Settings.autoTuneLead or candidate.learningEligible == false or not candidate.aimPosition or candidate.silentSpawn
         or (candidate.burstCount or 1) > 1
         or (candidate.predictionEpoch ~= nil and candidate.predictionEpoch ~= (mm2Settings.predictionEpoch or 0)) then
         return
@@ -8413,6 +8648,7 @@ state.mm2ShotFeedback.queue = function(
         aimRootOffset = prediction and prediction.aimRootOffset or nil,
         predictionEpoch = prediction and prediction.snapshot and prediction.snapshot.epoch,
         burstCount = prediction and prediction.snapshot and prediction.snapshot.burstCount,
+        learningEligible = prediction and prediction.snapshot and prediction.snapshot.learningEligible,
     }
     state.mm2ShotFeedback.pending = candidate
     local queue = state.mm2ShotFeedback.pendingShots
@@ -8664,6 +8900,21 @@ local function disconnectGunFiredObserver(): ()
 end
 
 registerMM2Roles()
+-- One shared monitor, independent of requested prediction Hz. UI rendering stays separate.
+featureConnections.MM2FrameMonitor = TaskManager:Connect(function(dt: number): ()
+    if not predictionMath.finite(dt) or dt <= 0 then return end
+    local previous = networkEstimator.renderSeconds or dt
+    networkEstimator.renderSeconds = previous + (math.min(dt, 1) - previous) * (1 - math.exp(-math.min(dt, 1) / 0.5))
+end, "render")
+local networkElapsed = 0
+featureConnections.MM2NetworkMonitor = TaskManager:Connect(function(dt: number): ()
+    if not predictionMath.finite(dt) or dt <= 0 then return end
+    networkEstimator.frameSeconds += (math.min(dt, 1) - networkEstimator.frameSeconds)
+        * (1 - math.exp(-math.min(dt, 1) / 0.5))
+    local due
+    due, networkElapsed = predictionMath.sampleDue(networkElapsed, dt, 10)
+    if due then getEstimatedLatency(true) end
+end)
 
 state.mm2Core = {
     settings = mm2Settings,
@@ -8720,6 +8971,8 @@ state.mm2Core = {
     motionSamples = motionSamples,
     getFilteredVelocity = getFilteredVelocity,
     getEstimatedLatency = getEstimatedLatency,
+    getNetworkStatus = getNetworkStatus,
+    shouldHoldForNetwork = shouldHoldForNetwork,
     getGunHorizonSeconds = getGunHorizonSeconds,
     getGunTurnDiscount = getGunTurnDiscount,
     getGunTurnRate = getGunTurnRate,
@@ -8751,6 +9004,8 @@ cleanupMM2Runtime = function()
     end
     table.clear(roleIndex.roles)
     for _, connectionName: string in ipairs({
+        "MM2NetworkMonitor",
+        "MM2FrameMonitor",
         "MM2PlayerDataChanged",
         "MM2TimerTrackerStart",
         "MM2TimerTrackerEnd",
@@ -25798,7 +26053,7 @@ function Module.init(context: any): any
             BackgroundColor3 = state.guiStyle == "Default"
                 and Theme.surface
                 or Theme.background,
-            BackgroundTransparency = state.guiStyle == "Default" and 0.82 or 1,
+            BackgroundTransparency = state.guiStyle == "Default" and 0.18 or 1,
             BorderSizePixel = 0,
             ClipsDescendants = true,
             LayoutOrder = layoutOrder,
@@ -25897,7 +26152,7 @@ function Module.init(context: any): any
                 drawPixelIcon(
                     arrow :: TextButton,
                     feature.expanded and "up" or "down",
-                    Color3.fromRGB(0, 204, 0)
+                    Color3.fromRGB(166, 139, 250)
                 )
             end
         end
@@ -26161,7 +26416,7 @@ function Module.init(context: any): any
             local UNBOUND_BG: Color3 = Color3.fromRGB(0, 0, 0)
             local BOUND_BG: Color3 = Color3.fromRGB(0, 80, 0)
             local CONFLICT_BG: Color3 = Color3.fromRGB(80, 0, 0)
-            local BOUND_EDGE: Color3 = Color3.fromRGB(0, 204, 0)
+            local BOUND_EDGE: Color3 = Color3.fromRGB(166, 139, 250)
             local CONFLICT_EDGE: Color3 = Color3.fromRGB(204, 0, 0)
             local square: TextButton = (create("TextButton", {
                 TextTruncate = Enum.TextTruncate.AtEnd,
@@ -30740,13 +30995,13 @@ local TITLE_HEIGHT: number = 26
 
 function Module.init(context: any): any
 
-    local OPACITY: number = 0.5
+    local OPACITY: number = 0.82
     local TOOLTIP_OPACITY: number = 0.75
     local MAX_HEIGHT: number = 200
-    local MAX_SETTINGS_HEIGHT: number = 200
-    local CLICKGUI_BACKGROUND: Color3 = Color3.fromRGB(64, 64, 64)
-    local CLICKGUI_ACCENT: Color3 = Color3.fromRGB(16, 16, 16)
-    local CLICKGUI_TEXT: Color3 = Color3.fromRGB(240, 240, 240)
+    local MAX_SETTINGS_HEIGHT: number = 320
+    local CLICKGUI_BACKGROUND: Color3 = Color3.fromRGB(17, 19, 27)
+    local CLICKGUI_ACCENT: Color3 = Color3.fromRGB(166, 139, 250)
+    local CLICKGUI_TEXT: Color3 = Color3.fromRGB(237, 240, 248)
     local HACKLIST_MODE: string = "Auto"
     local HACKLIST_POSITION: string = "Left"
     local HACKLIST_COLOR: Color3 = Color3.fromRGB(255, 255, 255)
@@ -31008,7 +31263,7 @@ function Module.init(context: any): any
             ZIndex = row.ZIndex + 1,
         }) :: any) :: Frame
 
-        drawPixelIcon(arrowBox, "right", Color3.fromRGB(0, 204, 0))
+        drawPixelIcon(arrowBox, "right", Color3.fromRGB(166, 139, 250))
         trackUiConnection(row.MouseEnter:Connect(function(): ()
             row.BackgroundTransparency = 0.3
         end))
@@ -32191,7 +32446,7 @@ function Module.init(context: any): any
     local uiSettingsValues: {[string]: any} = {}
     state.uiSettings = uiSettingsValues
 
-    local CLICKGUI_ENABLED: Color3 = Color3.fromRGB(32, 175, 32)
+    local CLICKGUI_ENABLED: Color3 = Color3.fromRGB(166, 139, 250)
     local uiPaletteRows: {[string]: Frame} = {}
     local function paintPalette(labelText: string, color: Color3): ()
         local option: Frame? = uiPaletteRows[labelText]
@@ -32248,6 +32503,23 @@ function Module.init(context: any): any
     local rainbowConnection: any = nil
     local rainbowElapsed: number = 0
     local rainbowSince: number = 0
+    uiPanel.optionCount += 1
+    actionRow(uiRecord, uiPanel.optionCount, "Midnight preset", function(): ()
+        if uiSettingsValues.Rainbow then notify("Turn Rainbow OFF before applying Midnight."); return end
+        ThemeEngine.Apply("Wurst")
+        for label, color in pairs({Background=CLICKGUI_BACKGROUND, Accent=CLICKGUI_ACCENT,
+            Text=CLICKGUI_TEXT, Enabled=CLICKGUI_ENABLED}) do
+            uiSettingsValues[label] = color
+            configData.values[uiPanel.configKey .. "." .. label] = host.colorToConfig(color)
+            paintPalette(label, color)
+        end
+        -- Match the token mapping used by the persisted color widgets on reload.
+        ThemeEngine.SetMany({surface=CLICKGUI_BACKGROUND, background=CLICKGUI_BACKGROUND,
+            accent=CLICKGUI_ACCENT, outline=CLICKGUI_ACCENT, text=CLICKGUI_TEXT,
+            accentText=CLICKGUI_TEXT, enabled=CLICKGUI_ENABLED})
+        queueConfigSave()
+        notify("Midnight palette applied; custom colors remain editable.")
+    end)
     addToggleOption(uiPanel, "Rainbow", false, function(value: boolean): ()
         uiSettingsValues["Rainbow"] = value
         if rainbowConnection then
@@ -32462,7 +32734,6 @@ local CHILD_GAP: number = 4
 
 function Module.init(context: any): WidgetLibrary
 
-    local WURST_GREEN: Color3 = Color3.fromRGB(0, 204, 0)
     local host: any = context
 
     local UserInputService: any = host.UserInputService
@@ -32501,7 +32772,7 @@ function Module.init(context: any): WidgetLibrary
         kind: string,
         color: Color3?
     ): Frame
-        local paint: Color3 = color or WURST_GREEN
+        local paint: Color3 = color or Theme.accent
         local existing: Instance? = (parent :: any):FindFirstChild("PixelIcon")
         if existing then
             existing:Destroy()
@@ -32690,7 +32961,7 @@ function Module.init(context: any): WidgetLibrary
             Transparency = 0.35,
         }) :: any) :: UIStroke
 
-        local mark: Frame = drawPixelIcon(box, "check", WURST_GREEN)
+        local mark: Frame = drawPixelIcon(box, "check", Theme.accent)
         mark.Visible = false
         local optionLabel: TextLabel? =
             option:FindFirstChild("OptionLabel") :: TextLabel?
@@ -34040,6 +34311,44 @@ function Module.init(context: any): WidgetLibrary
             end
         end
 
+        if #values >= 2 and #values <= 3 and (labelText == "Mode" or labelText == "Target"
+            or labelText == "Prediction profile" or labelText == "Network policy" or labelText == "Throw cadence") then
+            option.Size = UDim2.new(1, 0, 0, 54)
+            local label = option:FindFirstChild("OptionLabel")
+            if label then label.Size = UDim2.new(1, -8, 0, 18); label.TextSize = 12; label.TextColor3 = Theme.textMuted end
+            local segments = {}
+            local function paint(): ()
+                for i, segment in ipairs(segments) do
+                    local background = i == index and "accentSoft" or "surfaceRaised"
+                    local foreground = i == index and "text" or "textMuted"
+                    segment.BackgroundColor3 = Theme[background]; segment.TextColor3 = Theme[foreground]
+                    segment:SetAttribute("Selected", i == index)
+                    if host.ThemeEngine then
+                        host.ThemeEngine.Bind(segment, "BackgroundColor3", background)
+                        host.ThemeEngine.Bind(segment, "TextColor3", foreground)
+                    end
+                end
+            end
+            for i, value in ipairs(values) do
+                local segment = create("TextButton", {Parent=option, Name="Segment"..i,
+                    AutoButtonColor=false, BorderSizePixel=0, FontFace=CONTROL_FONT,
+                    Text=value, TextSize=12, TextScaled=true, BackgroundColor3=Theme.surfaceRaised,
+                    TextColor3=Theme.text, Position=UDim2.new((i-1)/#values, 3, 0, 21),
+                    Size=UDim2.new(1/#values, -6, 0, 30), ZIndex=option.ZIndex+2})
+                create("UICorner", {Parent=segment, CornerRadius=UDim.new(0, 5)})
+                create("UITextSizeConstraint", {Parent=segment, MinTextSize=9, MaxTextSize=12})
+                segments[i] = segment
+                trackUiConnection(segment.MouseButton1Click:Connect(function(): ()
+                    if index == i then return end
+                    index = i; paint()
+                    configData.values[optionKey] = values[index]
+                    callback(values[index]); queueConfigSave()
+                end))
+            end
+            paint(); callback(values[index]); feature.updateExpandedSize()
+            return segments[1]
+        end
+
         local button: TextButton = (create("TextButton", {
             TextTruncate = Enum.TextTruncate.AtEnd,
             Parent = option,
@@ -34072,7 +34381,7 @@ function Module.init(context: any): WidgetLibrary
             Text = "",
             ZIndex = option.ZIndex + 2,
         }) :: any) :: TextButton
-        drawPixelIcon(arrowBox, "down", WURST_GREEN)
+        drawPixelIcon(arrowBox, "down", Theme.accent)
 
         local function refreshChoiceVisual(): ()
             button.Text = values[index]
@@ -34093,6 +34402,68 @@ function Module.init(context: any): WidgetLibrary
 
         callback(values[index])
         return button :: TextButton
+    end
+
+    -- Fixed-size graph, sampled at 4 Hz only while every ancestor is visible.
+    -- No drawing instances are created during updates; destruction disconnects the callback.
+    state.addTelemetryOption = function(feature: any, title: string, provider: () -> any): any
+        local option = createOptionRow(feature, title)
+        option.Size = UDim2.new(1, 0, 0, 98)
+        local label = option:FindFirstChild("OptionLabel")
+        if label then label.Visible = false end
+        local function textRow(name: string, top: number, size: number): any
+            return create("TextLabel", {Parent=option, Name=name, BackgroundTransparency=1,
+                FontFace=CONTROL_FONT, TextSize=size, TextColor3=Theme.text, TextXAlignment=Enum.TextXAlignment.Left,
+                TextTruncate=Enum.TextTruncate.AtEnd, Text="", Position=UDim2.fromOffset(4,top),
+                Size=UDim2.new(1,-8,0,20), ZIndex=option.ZIndex+1})
+        end
+        local status, timing, weapon = textRow("NetworkState",0,12), textRow("Timing",20,11), textRow("WeaponState",40,11)
+        local bars = {}
+        for i=1,40 do
+            bars[i] = create("Frame", {Parent=option, Name="Sample"..i, BorderSizePixel=0,
+                BackgroundColor3=Theme.accent, AnchorPoint=Vector2.new(0,1), Position=UDim2.new((i-1)/40,1,0,94),
+                Size=UDim2.new(1/40,-2,0,1), ZIndex=option.ZIndex+1})
+        end
+        local function visible(): boolean
+            local node = option
+            while node do
+                if node:IsA("GuiObject") and not node.Visible then return false end
+                if node:IsA("ScreenGui") and not node.Enabled then return false end
+                node = node.Parent
+            end
+            return true
+        end
+        local elapsed = 0
+        local connection
+        local function update(dt: number): ()
+            elapsed += math.max(0, dt)
+            if elapsed < 0.25 then return end
+            elapsed %= 0.25
+            if not option.Parent then if connection then connection:Disconnect() end; return end
+            if not visible() then return end
+            local ok, net = pcall(provider)
+            if not ok or type(net) ~= "table" then status.Text = "Network: unavailable"; return end
+            local fps = net.renderSeconds and string.format("%.0f", 1 / math.max(net.renderSeconds, 0.001)) or "—"
+            status.Text = string.format("%s  ·  %s FPS  ·  jitter %.0f ms", (net.status or "Unknown") .. (net.capped and " / capped" or ""), fps, (net.jitter or 0)*1000)
+            status.TextColor3 = (net.spike or net.stale or net.capped) and Theme.negative or Theme.positive
+            timing.Text = string.format("RTT %s  /  estimate %.0f ms", net.stale and "stale" or (net.raw and string.format("%.0f ms",net.raw*1000) or "—"), (net.estimate or 0)*1000)
+            timing.TextColor3 = Theme.textMuted
+            weapon.Text = net.weapon or ""; weapon.TextColor3 = Theme.text
+            local samples = net.history or {}
+            local ceiling = 300
+            for _, value in ipairs(samples) do ceiling = math.max(ceiling, value) end
+            for i, bar in ipairs(bars) do
+                local value = samples[math.max(0,#samples-40)+i]
+                bar.Visible = value ~= nil
+                if value then
+                    bar.Size = UDim2.new(1/40,-2,0,math.max(1, math.min(value/ceiling,1)*30))
+                    bar.BackgroundColor3 = value > 300 and Theme.negative or Theme.accent
+                end
+            end
+        end
+        if host.RunService then connection = trackUiConnection(host.RunService.Heartbeat:Connect(update)) end
+        feature.updateExpandedSize()
+        return option
     end
 
     -- One selector shared by all Metrics producers, independent of module order.
@@ -34624,6 +34995,7 @@ function Module.init(context: any): WidgetLibrary
         hexValue.Text = hexOf(color)
 
         swatch.MouseButton1Click:Connect(function()
+            color = colorFromConfig(configData.values[optionKey], color)
             colorPicker.open(color, function(newColor)
                 color = newColor
                 bar.BackgroundColor3 = color
@@ -35390,7 +35762,7 @@ function Module.init(context: any): any
             end
             if definition.pinnable ~= false then
 
-                local pin: TextButton = chromeButton("pin", Color3.fromRGB(0, 204, 0))
+                local pin: TextButton = chromeButton("pin", Color3.fromRGB(166, 139, 250))
                 local function paintPin(): ()
                     pin.BackgroundTransparency = window.pinned and 0.2 or 0.72
                     pin.BackgroundColor3 = window.pinned

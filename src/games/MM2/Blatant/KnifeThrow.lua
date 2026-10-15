@@ -22,6 +22,8 @@ function Module.init(runtime: any): any
     local isProtectedTarget: any = core.isProtectedTarget
     local getFilteredVelocity: any = core.getFilteredVelocity
     local getEstimatedLatency: any = core.getEstimatedLatency
+    local shouldHoldForNetwork: any = core.shouldHoldForNetwork
+    local getNetworkStatus: any = core.getNetworkStatus
     local predictionMath: any = core.predictionMath
     local isWeaponPathClear: any = core.isWeaponPathClear
     local trajectoryCalibration: any = core.trajectoryCalibration
@@ -38,6 +40,7 @@ function Module.init(runtime: any): any
         throwHz = 60,
         animation = true,
         latencyModel = "Replica RTT",
+        networkPolicy = "Best effort",
         motionModel = "Linear",
         leadBias = 0,
     }
@@ -127,15 +130,15 @@ function Module.init(runtime: any): any
         -- Replica RTT is the new-profile default; keep packet-only A/B. Solve the moving-target
         -- flight instead of using distance-to-the-old-position / blade speed.
         local multiplier: number = knifeThrowSettings.latencyModel == "Replica RTT" and 1 or 0.5
-        local packetTime: number = math.clamp(getEstimatedLatency() * multiplier
-            + knifeThrowSettings.leadBias, 0, 0.6)
+        local packetTime: number = math.clamp(getEstimatedLatency(true) * multiplier
+            + knifeThrowSettings.leadBias, 0, 1.2)
         if knifeThrowSettings.motionModel == "Vertical (experimental)" then
             local humanoid = target.Character:FindFirstChildOfClass("Humanoid")
             if not humanoid then lastPrediction = nil; return nil end
             local grounded = core.isMotionGrounded(humanoid, velocity)
             local gravity = workspace.Gravity
             local floorY: number? = nil
-            local roughTime = math.clamp((root.Position - originPos).Magnitude / knifeSpeed + packetTime, 0, 5.6)
+            local roughTime = math.clamp((root.Position - originPos).Magnitude / knifeSpeed + packetTime, 0, 6.2)
             if not grounded then
                 local displacement = Vector3.new(velocity.X * roughTime,
                     velocity.Y * roughTime - 0.5 * gravity * roughTime * roughTime, velocity.Z * roughTime)
@@ -335,6 +338,9 @@ function Module.init(runtime: any): any
             originPos = throwerPart.Position
         end
 
+        if type(shouldHoldForNetwork) == "function" and shouldHoldForNetwork(knifeThrowSettings.networkPolicy) then
+            setWeaponStatus("Throw", "Network unstable: Hold spikes policy."); return
+        end
         local aimPos: Vector3? = predictAim(target, originPos)
         if not aimPos or (aimPos - originPos).Magnitude < 0.05 then
             setWeaponStatus("Throw", "No usable intercept for the selected motion model"); return
@@ -366,7 +372,8 @@ function Module.init(runtime: any): any
                 cadence = knifeThrowSettings.cadence, cadenceSource = cadenceSource, sleight = sleight,
                 spawnOffset = knifeThrowSettings.spawnOffset,
                 range = knifeThrowSettings.range, latencyModel = knifeThrowSettings.latencyModel,
-                motionModel = knifeThrowSettings.motionModel,
+                motionModel = knifeThrowSettings.motionModel, networkPolicy = knifeThrowSettings.networkPolicy,
+                network = type(getNetworkStatus) == "function" and getNetworkStatus() or nil,
                 leadBias = knifeThrowSettings.leadBias, prediction = lastPrediction},
         })
         -- Nothing cosmetic may delay the packet, cooldown, or telemetry timestamp.
@@ -509,6 +516,14 @@ function Module.init(runtime: any): any
         5
     )
 
+    addCycleOption(KnifeThrowFeature, "Network policy", {"Best effort", "Hold spikes"}, 1,
+        function(value: string): () knifeThrowSettings.networkPolicy = value end,
+        "Independent of Gun. Best effort adds no network wait; Hold spikes pauses only on detected instability or missing data.")
+    if state.addTelemetryOption and type(core.getNetworkStatus) == "function" then
+        state.addTelemetryOption(KnifeThrowFeature, "Live status", function(): any
+            local net = core.getNetworkStatus(true); net.weapon = core.weaponStatus("Throw"); return net
+        end)
+    end
     addCycleOption(KnifeThrowFeature, "Knife motion", {"Linear", "Vertical (experimental)"}, 1,
         function(value: string): () knifeThrowSettings.motionModel = value; lastPrediction = nil end,
         "Linear preserves v19. Vertical solves target gravity plus a sampled landing floor with at most two map probes per throw. Knife flight stays straight; not future-input knowledge or an accuracy guarantee.")

@@ -429,7 +429,7 @@ def main() -> None:
     # Integration contracts not requiring a simulated Roblox scene.
     assert 'silentSpawn = "Through"' in BASE
     assert 'if profile == "Old" and mm2Settings.oldHitbox then' in SHOOT and 'local function applyHitbox' not in BASE
-    assert 'predictionMath.sampleDue(autoElapsed, deltaTime, 60)' in SHOOT
+    assert 'predictionMath.sampleDue(autoElapsed, deltaTime, 120)' in SHOOT
     assert 'predictionMath.sampleDue(elapsed, deltaTime, 30)' in BASE
     assert 'task.delay(10, function()' in BASE
     assert 'if observed and directHit then' in BASE and 'tuneFromConfirmedShot(candidate)' in BASE

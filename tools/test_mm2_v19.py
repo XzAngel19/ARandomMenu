@@ -58,7 +58,7 @@ local function addCycleOption(card,label,values,index,callback)
  row(card,label);callbacks[card.name.."."..label]=callback;choices[card.name.."."..label]=values
  callback(saved[card.name.."."..label] or values[index])
 end
-local function addToggleOption(card,label,default,callback) row(card,label);callback(default) end
+local function addToggleOption(card,label,default,callback) row(card,label);callbacks[card.name.."."..label]=callback;callback(default) end
 local function addNumberOption(card,label,default,lo,hi,callback) row(card,label);callback(default) end
 local function addTextOption(card,label,default,callback) row(card,label);callbacks[card.name.."."..label]=callback;callback(default) end
 local function addActionOption(card,label,callback) row(card,label) end
@@ -74,8 +74,10 @@ end
 assert(choices["Shoot.Mode"][1]=="Prediction" and choices["Shoot.Mode"][2]=="Silent AIM")
 assert(choices["Shoot.Target"][1]=="Murder" and choices["Shoot.Target"][2]=="Custom")
 assert(card.optionRows[1].Name=="Option_Mode" and card.optionRows[2].Name=="Option_Target")
+callbacks["Shoot.Advanced"](true)
 assert(visible("Silent sweep") and not visible("Motion model") and visible("Target player"))
 callbacks["Shoot.Target player"]("kept")
+callbacks["Shoot.Advanced"](true)
 for _,mode in ipairs({"Prediction","Silent AIM"}) do
  for _,target in ipairs({"Murder","Custom"}) do
     callbacks["Shoot.Mode"](mode);callbacks["Shoot.Target"](target)
