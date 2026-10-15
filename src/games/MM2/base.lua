@@ -1,0 +1,4279 @@
+local Module = {
+    Name = "MM2",
+    PlaceId = 142823291,
+    Events = {} :: {[string]: any},
+    Initialized = false,
+    Menu = nil :: any,
+    Runtime = nil :: any,
+}
+
+local moduleCleanup: () -> () = function(): () end
+
+local function buildMM2Features()
+local host: any = getfenv()
+local trajectoryLogPrefix: string = "[" .. tostring(host.PRODUCT.logPrefix)
+    .. ":MM2:Trajectory]"
+local MM2Effects = create("Folder", {
+    Parent = ScreenGui,
+    Name = "MM2Effects",
+})
+local GunEffects = create("Folder", {
+    Parent = MM2Effects,
+    Name = "GunESP",
+})
+local TrapEffects = create("Folder", {
+    Parent = MM2Effects,
+    Name = "TrapESP",
+})
+local CoinEffects = create("Folder", {
+    Parent = MM2Effects,
+    Name = "CoinChams",
+})
+
+local mm2RoundData: {[any]: any} = {}
+local mm2GameplayRemotes: Instance? = nil
+local mm2RoleRemote: RemoteFunction? = nil
+local roleRefreshRunning: boolean = false
+local lastRoleRefreshAt: number = -math.huge
+local roundLifecycleActive: boolean? = nil
+local roleRefreshGeneration: number = 0
+
+pcall(function()
+    local replicatedStorage: ReplicatedStorage =
+        game:GetService("ReplicatedStorage")
+    local remotes: Instance? = replicatedStorage:WaitForChild("Remotes", 5)
+    local gameplay: Instance? = remotes and remotes:WaitForChild("Gameplay", 5)
+    if not gameplay then
+        return
+    end
+    mm2GameplayRemotes = gameplay
+    local getCurrentPlayerData: Instance? = gameplay:FindFirstChild(
+        "GetCurrentPlayerData"
+    )
+    if getCurrentPlayerData and getCurrentPlayerData:IsA("RemoteFunction") then
+
+        mm2RoleRemote = getCurrentPlayerData
+    end
+end)
+
+local mm2Settings = {
+    autoGetGunDelay = 0.25,
+    shootMode = "Murder",
+    shootWallCheck = true,
+    silentAim = false,
+    shootKey = Enum.KeyCode.Q,
+    shootTarget = "",
+    showMissCooldown = false,
+    predictionRtt = 0.08,
+    gunNetworkPolicy = "Best effort",
+    gunLeadBias = 0,
+    predictionProfile = "Actual",
+    predictionEpoch = 0,
+    oldHitbox = false,
+    oldHitboxSize = 8,
+    oldBurst = 1,
+    gunMotionModel = "Classic 66d",
+    gunTimingModel = "RTT",
+    manualErrorGate = false,
+    gunLandingGuard = true,
+    autoTuneLead = false,
+    adaptiveGunTiming = false,
+    useKnifeSpeedCalibration = false,
+    calibrationDetails = false,
+    calibrationAutosave = false,
+
+    motionSampleHz = 60,
+    silentSweep = 0.5,
+
+    silentSpawn = "Through",
+    getGunKey = Enum.KeyCode.G,
+    instantRoleNotify = false,
+    roleEspAll = false,
+
+    roleEspRoundOnly = false,
+    roleEspInnocent = false,
+    roleEspMurderer = false,
+    roleEspSheriff = false,
+
+    innocentColor = Color3.fromRGB(0, 255, 8),
+    innocentTransparency = 0.62,
+    deadColor = Color3.fromRGB(170, 170, 180),
+    deadTransparency = 0.72,
+    murdererColor = Color3.fromRGB(255, 0, 4),
+    murdererTransparency = 0.5,
+    sheriffColor = Color3.fromRGB(0, 153, 255),
+    sheriffTransparency = 0.5,
+    heroColor = Color3.fromRGB(255, 196, 0),
+    heroTransparency = 0.5,
+    roleTagsAll = false,
+    blurtDelay = 1.5,
+    blurtRepeat = false,
+    blurtFake = false,
+    coinColor = Color3.fromRGB(230, 220, 65),
+    coinTransparency = 0.8,
+    trapColor = Color3.fromRGB(145, 25, 25),
+    trapTransparency = 0.7,
+
+    gunColor = Color3.fromRGB(255, 215, 0),
+    gunTransparency = 0.55,
+    autoPlayId = "",
+}
+
+local function isProtectedTarget(player: Player?): boolean
+    local runtime: any = Module.Runtime
+    local targets: any = runtime and runtime.Services and runtime.Services.protectedTargets
+    return targets ~= nil and targets.isProtected(player) == true
+end
+
+local function clearEffects(folder)
+    for _, child in ipairs(folder:GetChildren()) do
+        if child:IsA("ObjectValue") and child.Value then
+            child.Value:Destroy()
+        end
+        child:Destroy()
+    end
+end
+
+-- Match the recovered client's cursor filters, not an assertion about server rules.
+local function isWeaponPathClear(origin: Vector3, endpoint: Vector3, target: Model?, budget: {remaining: number}?): boolean
+    local direction: Vector3 = endpoint - origin
+    if direction.Magnitude < 0.05 then return true end
+    local excluded: {Instance} = {}
+    if LocalPlayer.Character then table.insert(excluded, LocalPlayer.Character) end
+    for _, object: Instance in ipairs(CollectionService:GetTagged("WeaponPassthrough")) do
+        table.insert(excluded, object)
+    end
+    local params: RaycastParams = RaycastParams.new()
+    params.FilterType = Enum.RaycastFilterType.Exclude
+    params.IgnoreWater = true
+    for _ = 1, 32 do
+        if budget then
+            if budget.remaining <= 0 then return false end
+            budget.remaining -= 1
+        end
+        params.FilterDescendantsInstances = excluded
+        local hit: RaycastResult? = workspace:Raycast(origin, direction, params)
+        if not hit then return true end
+        if target and hit.Instance:IsDescendantOf(target) then return true end
+        if hit.Instance:IsA("BasePart") and hit.Instance.Transparency == 1 then
+            table.insert(excluded, hit.Instance)
+        else
+            return false
+        end
+    end
+    return false -- bounded work, conservative if a map has many transparent layers
+end
+
+-- One bounded map probe at the forecast X/Z; never edit character geometry.
+-- This constrains descending ballistic predictions, not arbitrary future jumps.
+local function getLandingRootY(root: BasePart, humanoid: Humanoid, displacement: Vector3): number?
+    local clearance = root.Size.Y * 0.5 + humanoid.HipHeight
+    if humanoid.RigType == Enum.HumanoidRigType.R6 then
+        local leg = root.Parent and root.Parent:FindFirstChild("Left Leg")
+        clearance += leg and leg:IsA("BasePart") and leg.Size.Y or 2
+    end
+    clearance = math.clamp(clearance, 1, 6)
+    local excluded = {}
+    for _, player in ipairs(Players:GetPlayers()) do
+        if player.Character then table.insert(excluded, player.Character) end
+    end
+    for _, object in ipairs(CollectionService:GetTagged("WeaponPassthrough")) do
+        table.insert(excluded, object)
+    end
+    local params = RaycastParams.new()
+    params.FilterType = Enum.RaycastFilterType.Exclude
+    params.FilterDescendantsInstances = excluded
+    params.IgnoreWater = true
+    params.RespectCanCollide = true
+    local origin = root.Position + Vector3.new(displacement.X, 0, displacement.Z)
+    local depth = math.clamp(math.max(0, -displacement.Y) + clearance + 2, 4, 64)
+    local hit = workspace:Raycast(origin, Vector3.new(0, -depth, 0), params)
+    if not hit or hit.Normal.Y < 0.6 then return nil end
+    local standingY = hit.Position.Y + clearance
+    -- Do not snap onto a ledge above the current root or a non-collidable visual.
+    if standingY > root.Position.Y + 0.25 then return nil end
+    if hit.Instance:IsA("BasePart") and not hit.Instance.CanCollide then return nil end
+    return standingY
+end
+
+local function getWeaponFromContainer(
+    container: Instance?,
+    weaponName: string,
+    weaponTag: string
+): Tool?
+    if not container then
+        return nil
+    end
+
+    for _, child: Instance in ipairs(container:GetChildren()) do
+        if child:IsA("Tool") then
+            if CollectionService:HasTag(child, weaponTag) then
+                return child
+            end
+
+            if child.Name == weaponName then
+                if weaponName == "Gun" then
+                    local shootRemote: Instance? = child:FindFirstChild("Shoot")
+                    if shootRemote and shootRemote:IsA("RemoteEvent") then
+                        return child
+                    end
+                elseif weaponName == "Knife" then
+                    local events: Instance? = child:FindFirstChild("Events")
+                    local knifeThrown: Instance? = events
+                        and events:FindFirstChild("KnifeThrown")
+                    local knifeStabbed: Instance? = events
+                        and events:FindFirstChild("KnifeStabbed")
+                    if knifeThrown and knifeThrown:IsA("RemoteEvent")
+                        and knifeStabbed and knifeStabbed:IsA("RemoteEvent") then
+                        return child
+                    end
+                end
+            end
+        end
+    end
+    return nil
+end
+
+local function getPlayerWeapon(
+    player: Player,
+    weaponName: string,
+    equippedOnly: boolean?
+): Tool?
+    local tag: string = "Weapon_" .. weaponName
+    local equipped: Tool? = getWeaponFromContainer(player.Character, weaponName, tag)
+    if equipped or equippedOnly then
+        return equipped
+    end
+    return getWeaponFromContainer(
+        player:FindFirstChildOfClass("Backpack"),
+        weaponName,
+        tag
+    )
+end
+
+local function isPlayerAlive(player: Player): boolean
+    local humanoid: Humanoid? = player.Character
+        and player.Character:FindFirstChildOfClass("Humanoid")
+        :: Humanoid?
+    return humanoid ~= nil and humanoid.Health > 0
+end
+
+
+local function playerFromRoundKey(key: any, data: any): Player?
+    if typeof(key) == "Instance" and key:IsA("Player") then
+        return key
+    end
+
+    local player: Player? = nil
+    local namedPlayer: Instance? = Players:FindFirstChild(tostring(key))
+    if namedPlayer and namedPlayer:IsA("Player") then
+        player = namedPlayer
+    end
+
+    if type(data) == "table" then
+        if data.Name then
+            local namedFromData: Instance? =
+                Players:FindFirstChild(tostring(data.Name))
+
+            if namedFromData and namedFromData:IsA("Player") then
+                player = namedFromData :: Player
+            end
+        end
+        if not player and data.UserId then
+            local userId = tonumber(data.UserId)
+            if userId then
+                local success, resolvedPlayer = pcall(
+                    Players.GetPlayerByUserId,
+                    Players,
+                    userId
+                )
+                player = success and resolvedPlayer or nil
+            end
+        end
+    end
+
+    return player
+end
+
+local function getRoundRole(player: Player): string?
+    for key: any, data: any in pairs(mm2RoundData) do
+        if playerFromRoundKey(key, data) == player and type(data) == "table" then
+            local role: any = data.Role
+            if role == "Murderer"
+                or role == "Sheriff"
+                or role == "Hero"
+                or role == "Innocent" then
+                return role
+            end
+        end
+    end
+    return nil
+end
+
+local roundRolesListeners: {(boolean) -> ()} = {}
+local publishedRoundRolesActive: boolean = false
+local function emitRoundRoles(active: boolean): ()
+    publishedRoundRolesActive = active
+    for _, listener: (boolean) -> () in ipairs(roundRolesListeners) do
+        pcall(listener, active)
+    end
+end
+local function onRoundRoles(listener: (boolean) -> ()): () -> ()
+    table.insert(roundRolesListeners, listener)
+
+    task.defer(function(): ()
+        if table.find(roundRolesListeners, listener) then
+            pcall(listener, publishedRoundRolesActive)
+        end
+    end)
+    return function(): ()
+        local index: number? = table.find(roundRolesListeners, listener)
+        if index then
+            table.remove(roundRolesListeners, index)
+        end
+    end
+end
+
+local invalidateRoleCaches: () -> ()
+local rebuildRoleIndex: () -> ()
+
+local function requestRoleRefresh(force: boolean?): ()
+    if not mm2RoleRemote
+        or roleRefreshRunning
+        or (not force and os.clock() - lastRoleRefreshAt < 0.8) then
+        return
+    end
+
+    roleRefreshRunning = true
+    local generation: number = roleRefreshGeneration
+    task.spawn(function(): ()
+        local success: boolean, result: any = pcall(
+            mm2RoleRemote.InvokeServer,
+            mm2RoleRemote
+        )
+        roleRefreshRunning = false
+        lastRoleRefreshAt = os.clock()
+        if success
+            and generation == roleRefreshGeneration
+            and roundLifecycleActive ~= false
+            and type(result) == "table" then
+            mm2RoundData = result
+            invalidateRoleCaches()
+        end
+    end)
+end
+
+local roleIndex: {
+    roles: {[Player]: string?},
+    murderer: Player?,
+    sheriff: Player?,
+    rolesKnown: boolean,
+} = {roles = {}, murderer = nil, sheriff = nil, rolesKnown = false}
+local roleIndexDirty: boolean = true
+local roleIndexAt: number = -math.huge
+local roleIndexRefreshQueued: boolean = false
+local roleWatchers: {[Player]: {RBXScriptConnection}} = {}
+
+function invalidateRoleCaches(): ()
+    roleIndexDirty = true
+
+    if type(state.clearRoleMemo) == "function" then
+        state.clearRoleMemo()
+    end
+
+    if roleIndexRefreshQueued then
+        return
+    end
+    roleIndexRefreshQueued = true
+    task.defer(function(): ()
+        roleIndexRefreshQueued = false
+        if roleIndexDirty and rebuildRoleIndex then
+            rebuildRoleIndex()
+        end
+    end)
+end
+
+local function hasMurdererCollisionGroup(character: Model?): boolean
+    if not character then
+        return false
+    end
+    for _, child: Instance in ipairs(character:GetChildren()) do
+        if child:IsA("BasePart") and child.CollisionGroup == "Murderer" then
+            return true
+        end
+    end
+    return false
+end
+
+local function buildRoundRoleMap(): {[Player]: string}
+    local map: {[Player]: string} = {}
+    for key: any, data: any in pairs(mm2RoundData) do
+        if type(data) == "table" then
+            local role: any = data.Role
+            if role == "Murderer"
+                or role == "Sheriff"
+                or role == "Hero"
+                or role == "Innocent" then
+                local player: Player? = playerFromRoundKey(key, data)
+                if player then
+                    map[player] = role
+                end
+            end
+        end
+    end
+    return map
+end
+
+rebuildRoleIndex = function(): ()
+    roleIndexDirty = false
+    roleIndexAt = os.clock()
+
+    local roles: {[Player]: string?} = {}
+    local roundRoleByPlayer: {[Player]: string} = buildRoundRoleMap()
+    local murderer: Player? = nil
+    local sheriff: Player? = nil
+    local alive: {[Player]: boolean} = {}
+    local special: {[Player]: string} = {}
+
+    for _, player: Player in ipairs(Players:GetPlayers()) do
+        local character: Model? = player.Character
+        local humanoid: Humanoid? = character
+            and character:FindFirstChildOfClass("Humanoid")
+        local isAlive: boolean = humanoid ~= nil and humanoid.Health > 0
+        alive[player] = isAlive
+
+        local roundRole: string? = roundRoleByPlayer[player]
+        local resolved: string? = nil
+        if hasMurdererCollisionGroup(character)
+            or getPlayerWeapon(player, "Knife") then
+            resolved = "Murderer"
+        elseif getPlayerWeapon(player, "Gun") then
+            resolved = roundRole == "Hero" and "Hero" or "Sheriff"
+        elseif roundRole and roundRole ~= "Innocent" then
+            resolved = roundRole
+        end
+
+        if resolved then
+            special[player] = resolved
+
+            if resolved == "Murderer" then
+                if not murderer or (isAlive and not alive[murderer]) then
+                    murderer = player
+                end
+            elseif resolved == "Sheriff" or resolved == "Hero" then
+                if not sheriff or (isAlive and not alive[sheriff]) then
+                    sheriff = player
+                end
+            end
+        end
+    end
+
+    local rolesKnown: boolean = next(special) ~= nil
+    if roundLifecycleActive == false then
+        rolesKnown = false
+    end
+
+    for _, player: Player in ipairs(Players:GetPlayers()) do
+        local resolved: string? = special[player]
+        if not resolved and rolesKnown then
+            resolved = alive[player] and "Innocent" or "Dead"
+        end
+        roles[player] = resolved
+    end
+
+    local rolesChanged: boolean = roleIndex.rolesKnown ~= rolesKnown
+        or roleIndex.murderer ~= murderer
+        or roleIndex.sheriff ~= sheriff
+    if not rolesChanged then
+        for player: Player, role: string? in pairs(roles) do
+            if roleIndex.roles[player] ~= role then
+                rolesChanged = true
+                break
+            end
+        end
+    end
+    if not rolesChanged then
+        for player: Player in pairs(roleIndex.roles) do
+            if roles[player] == nil and roleIndex.roles[player] ~= nil then
+                rolesChanged = true
+                break
+            end
+        end
+    end
+
+    roleIndex.roles = roles
+    roleIndex.murderer = murderer
+    roleIndex.sheriff = sheriff
+    roleIndex.rolesKnown = rolesKnown
+
+    if rolesChanged then
+
+        if type(state.invalidateGameRoles) == "function" then
+            state.invalidateGameRoles()
+        elseif type(state.clearRoleMemo) == "function" then
+            state.clearRoleMemo()
+        end
+        emitRoundRoles(rolesKnown)
+    end
+
+    if not rolesKnown and roundLifecycleActive ~= false then
+        requestRoleRefresh()
+    end
+end
+
+local function ensureRoleIndex(): ()
+
+    if roleIndexDirty or os.clock() - roleIndexAt > 1 then
+        rebuildRoleIndex()
+    end
+end
+
+local function unwatchPlayer(player: Player): ()
+    local connections: {RBXScriptConnection}? = roleWatchers[player]
+    if not connections then
+        return
+    end
+    roleWatchers[player] = nil
+    for _, connection: RBXScriptConnection in ipairs(connections) do
+        pcall(function(): ()
+            connection:Disconnect()
+        end)
+    end
+end
+
+local function watchPlayer(player: Player): ()
+    unwatchPlayer(player)
+    local connections: {RBXScriptConnection} = {}
+    local watchedTools: {[Tool]: boolean} = setmetatable({}, {__mode = "k"}) :: any
+
+    local function watchTool(tool: Tool): ()
+        if watchedTools[tool] then
+            return
+        end
+        watchedTools[tool] = true
+
+        table.insert(
+            connections,
+            tool.DescendantAdded:Connect(invalidateRoleCaches)
+        )
+        table.insert(
+            connections,
+            tool.DescendantRemoving:Connect(invalidateRoleCaches)
+        )
+    end
+
+    local function watchContainer(container: Instance?): ()
+        if not container then
+            return
+        end
+        for _, child: Instance in ipairs(container:GetChildren()) do
+            if child:IsA("Tool") then
+                watchTool(child)
+            end
+        end
+        table.insert(
+            connections,
+            container.ChildAdded:Connect(function(child: Instance): ()
+                if child:IsA("Tool") then
+                    watchTool(child)
+                end
+                invalidateRoleCaches()
+            end)
+        )
+        table.insert(connections, container.ChildRemoved:Connect(invalidateRoleCaches))
+    end
+
+    local function watchCharacter(character: Model): ()
+        invalidateRoleCaches()
+        watchContainer(character)
+
+        local function watchCollisionPart(part: BasePart): ()
+            table.insert(
+                connections,
+                part:GetPropertyChangedSignal("CollisionGroup")
+                    :Connect(invalidateRoleCaches)
+            )
+        end
+        for _, child: Instance in ipairs(character:GetChildren()) do
+            if child:IsA("BasePart") then
+                watchCollisionPart(child)
+            end
+        end
+        table.insert(
+            connections,
+            character.ChildAdded:Connect(function(child: Instance): ()
+                if child:IsA("BasePart") then
+                    watchCollisionPart(child)
+                end
+            end)
+        )
+
+        local humanoid: Humanoid? = character:FindFirstChildOfClass("Humanoid")
+        if humanoid then
+            table.insert(
+                connections,
+                humanoid.Died:Connect(invalidateRoleCaches)
+            )
+        end
+    end
+
+    table.insert(connections, player.CharacterAdded:Connect(watchCharacter))
+    table.insert(connections, player.CharacterRemoving:Connect(invalidateRoleCaches))
+    table.insert(
+        connections,
+        player.ChildAdded:Connect(function(child: Instance): ()
+            if child:IsA("Backpack") then
+                watchContainer(child)
+                invalidateRoleCaches()
+            end
+        end)
+    )
+    watchContainer(player:FindFirstChildOfClass("Backpack"))
+    if player.Character then
+        watchCharacter(player.Character)
+    end
+    roleWatchers[player] = connections
+end
+
+for _, player: Player in ipairs(Players:GetPlayers()) do
+    watchPlayer(player)
+end
+featureConnections.MM2RoleWatchAdded = Players.PlayerAdded:Connect(function(player: Player): ()
+    watchPlayer(player)
+    invalidateRoleCaches()
+end)
+featureConnections.MM2RoleWatchRemoving = Players.PlayerRemoving:Connect(function(player: Player): ()
+    unwatchPlayer(player)
+    invalidateRoleCaches()
+end)
+for _, weaponTag: string in ipairs({"Weapon_Knife", "Weapon_Gun"}) do
+    featureConnections["MM2RoleTagAdded" .. weaponTag] = CollectionService
+        :GetInstanceAddedSignal(weaponTag)
+        :Connect(invalidateRoleCaches)
+    featureConnections["MM2RoleTagRemoved" .. weaponTag] = CollectionService
+        :GetInstanceRemovedSignal(weaponTag)
+        :Connect(invalidateRoleCaches)
+end
+
+local function roundRolesKnown(): boolean
+    ensureRoleIndex()
+    return roleIndex.rolesKnown
+end
+
+local function getPlayerRole(player: Player): string?
+    ensureRoleIndex()
+    return roleIndex.roles[player]
+end
+
+local function findMM2Role(toolName: string, excludedPlayer: Player?): Player?
+    ensureRoleIndex()
+    local wanted: string = toolName == "Knife" and "Murderer" or "Sheriff"
+    for player: Player, role: string? in pairs(roleIndex.roles) do
+        if player ~= excludedPlayer
+            and (role == wanted or (wanted == "Sheriff" and role == "Hero")) then
+            return player
+        end
+    end
+    return nil
+end
+
+local function findPlayerByRoundRole(role: string): Player?
+    for key, data in pairs(mm2RoundData) do
+        if type(data) == "table" and data.Role == role then
+            local player: Player? = playerFromRoundKey(key, data)
+            if player and isPlayerAlive(player) then
+                return player
+            end
+        end
+    end
+    return nil
+end
+
+local function hasActiveRoundRoles(): boolean
+    return roundRolesKnown()
+end
+
+local function findMurderer(): Player?
+    ensureRoleIndex()
+    return roleIndex.murderer or findPlayerByRoundRole("Murderer")
+end
+
+local function findSheriff(): Player?
+    ensureRoleIndex()
+    return roleIndex.sheriff
+        or findPlayerByRoundRole("Sheriff")
+        or findPlayerByRoundRole("Hero")
+end
+
+local MM2_MAP_COIN_CONTAINERS: {string} = {
+    "CoinContainer",
+    "CoinAreas",
+    "Coins",
+}
+
+local LOBBY_MODEL_NAMES: {string} = {
+    "Lobby",
+    "MainLobby",
+    "RegularLobby",
+}
+
+local function isLobbyName(name: string): boolean
+    for _, candidate: string in ipairs(LOBBY_MODEL_NAMES) do
+        if name == candidate then
+            return true
+        end
+    end
+    return false
+end
+
+local function isMM2MapModel(object: Instance): boolean
+    if not object:IsA("Model") or isLobbyName(object.Name) then
+        return false
+    end
+    for _, containerName: string in ipairs(MM2_MAP_COIN_CONTAINERS) do
+        if object:FindFirstChild(containerName) then
+            return true
+        end
+    end
+    return false
+end
+
+local mm2MapCache: {map: Instance?, at: number} = {map = nil, at = -math.huge}
+
+local function findMM2MapUncached(): Instance?
+    for _, object: Instance in ipairs(workspace:GetChildren()) do
+        if isMM2MapModel(object) then
+            return object
+        end
+    end
+
+    for _, object: Instance in ipairs(workspace:GetChildren()) do
+        if object:IsA("Model")
+            and not isLobbyName(object.Name)
+            and object:FindFirstChild("Spawns") then
+            return object
+        end
+    end
+    return nil
+end
+
+local function findMM2Map(): Instance?
+    local cached: Instance? = mm2MapCache.map
+    if cached and cached.Parent == workspace then
+        return cached
+    end
+    if os.clock() - mm2MapCache.at < 1 then
+        return cached
+    end
+    mm2MapCache.at = os.clock()
+    mm2MapCache.map = findMM2MapUncached()
+    return mm2MapCache.map
+end
+
+local droppedGunCache: {gun: (Model | BasePart)?, at: number} =
+    {gun = nil, at = -math.huge}
+local lastGunSweepAt: number = -math.huge
+
+local function isLooseGun(object: Instance): boolean
+    if not object:IsA("Tool") then
+        return false
+    end
+    if object.Name ~= "Gun" and not CollectionService:HasTag(object, "Weapon_Gun") then
+        return false
+    end
+
+    return object:IsDescendantOf(workspace)
+        and not object:FindFirstAncestorOfClass("Backpack")
+        and (object.Parent == workspace or object.Parent == findMM2Map()
+            or object.Parent ~= nil and not object.Parent:FindFirstChildOfClass("Humanoid"))
+end
+
+local function resolveGunPart(object: Instance): (Model | BasePart)?
+    if object:IsA("Model") or object:IsA("BasePart") then
+        return object :: any
+    end
+    local handle: Instance? = object:FindFirstChild("Handle")
+        or object:FindFirstChildWhichIsA("BasePart")
+    return (handle and handle:IsA("BasePart")) and handle or nil
+end
+
+local function findDroppedGunUncached(): (Model | BasePart)?
+    local map: Instance? = findMM2Map()
+    local candidate: Instance? = map and map:FindFirstChild("GunDrop")
+    if not candidate then
+        candidate = workspace:FindFirstChild("GunDrop")
+    end
+    if candidate and (candidate:IsA("Model") or candidate:IsA("BasePart")) then
+        return candidate :: any
+    end
+
+    for _, object: Instance in ipairs(CollectionService:GetTagged("Weapon_Gun")) do
+        if isLooseGun(object) then
+            local part: (Model | BasePart)? = resolveGunPart(object)
+            if part then
+                return part
+            end
+        end
+    end
+
+    for _, object: Instance in ipairs(workspace:GetChildren()) do
+        if isLooseGun(object) then
+            local part: (Model | BasePart)? = resolveGunPart(object)
+            if part then
+                return part
+            end
+        end
+    end
+
+    if os.clock() - lastGunSweepAt < 3 then
+        return nil
+    end
+    lastGunSweepAt = os.clock()
+    local deepCandidate: Instance? = (map and map:FindFirstChild("GunDrop", true))
+        or workspace:FindFirstChild("GunDrop", true)
+    if deepCandidate
+        and (deepCandidate:IsA("Model") or deepCandidate:IsA("BasePart")) then
+        return deepCandidate :: any
+    end
+    for _, object: Instance in ipairs(workspace:GetDescendants()) do
+        if isLooseGun(object) then
+            local part: (Model | BasePart)? = resolveGunPart(object)
+            if part then
+                return part
+            end
+        end
+    end
+    return nil
+end
+
+local function findDroppedGun(): (Model | BasePart)?
+    local cached: (Model | BasePart)? = droppedGunCache.gun
+    if cached and cached.Parent and cached:IsDescendantOf(workspace) then
+        return cached
+    end
+    if os.clock() - droppedGunCache.at < 0.4 then
+        return nil
+    end
+    droppedGunCache.at = os.clock()
+    droppedGunCache.gun = findDroppedGunUncached()
+    return droppedGunCache.gun
+end
+
+local function createMM2Marker(folder, adornee, labelText, color, transparency)
+    local highlight = Instance.new("Highlight")
+    highlight.Name = labelText .. "Highlight"
+    highlight.Adornee = adornee
+    highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+    highlight.FillColor = color
+    highlight.FillTransparency = transparency or 0.68
+    highlight.OutlineColor = color
+    highlight.OutlineTransparency = 0
+    highlight.Parent = adornee
+
+    local highlightReference = Instance.new("ObjectValue")
+    highlightReference.Name = labelText .. "HighlightReference"
+    highlightReference.Value = highlight
+    highlightReference.Parent = folder
+
+    local head = adornee:IsA("Model")
+        and (adornee:FindFirstChild("Head")
+            or adornee:FindFirstChild("HumanoidRootPart"))
+        or adornee
+
+    if head and head:IsA("BasePart") then
+        local billboard = Instance.new("BillboardGui")
+        billboard.Name = labelText .. "Label"
+        billboard.Adornee = head
+        billboard.AlwaysOnTop = true
+        billboard.LightInfluence = 0
+        billboard.MaxDistance = 1500
+        billboard.Size = UDim2.fromOffset(150, 22)
+        billboard.StudsOffset = Vector3.new(0, 3.5, 0)
+        billboard.Parent = head
+
+        local billboardReference = Instance.new("ObjectValue")
+        billboardReference.Name = labelText .. "LabelReference"
+        billboardReference.Value = billboard
+        billboardReference.Parent = folder
+
+        local text = Instance.new("TextLabel")
+        text.BackgroundTransparency = 1
+        text.BorderSizePixel = 0
+        text.Font = Enum.Font.GothamBold
+        text.Size = UDim2.fromScale(1, 1)
+        text.Text = labelText
+        text.TextColor3 = color
+        text.TextSize = 14
+        text.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
+        text.TextStrokeTransparency = 0.3
+        text.Parent = billboard
+    end
+end
+
+local function createMM2Cham(folder, adornee, color, transparency)
+    local highlight = Instance.new("Highlight")
+    highlight.Name = "WurstCham"
+    highlight.Adornee = adornee
+    highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+    highlight.FillColor = color
+    highlight.FillTransparency = transparency
+    highlight.OutlineColor = color
+    highlight.OutlineTransparency = math.clamp(transparency + 0.15, 0, 1)
+    highlight.Parent = adornee
+
+    local reference = Instance.new("ObjectValue")
+    reference.Name = "ChamReference"
+    reference.Value = highlight
+    reference.Parent = folder
+end
+
+local function getPlayerPerk(player: Player): string?
+    local char: Model? = player.Character
+    if char then
+        local perkAttr: any = char:GetAttribute("Perk") or player:GetAttribute("Perk")
+        if type(perkAttr) == "string" and perkAttr ~= "" then
+            return perkAttr
+        end
+    end
+    if char then
+        for _, child in ipairs(char:GetChildren()) do
+            if CollectionService:HasTag(child, "Perk") then return child.Name end
+        end
+    end
+    if player == LocalPlayer then
+        local gui = player:FindFirstChildOfClass("PlayerGui")
+        if gui then
+            for _, child in ipairs(gui:GetChildren()) do
+                if CollectionService:HasTag(child, "Perk") then return child.Name end
+            end
+        end
+    end
+    for key: any, data: any in pairs(mm2RoundData) do
+        if playerFromRoundKey(key, data) == player and type(data) == "table" then
+            local perk: any = data.Perk or data.EquippedPerk or data.perk
+            if type(perk) == "string" and perk ~= "" then
+                return perk
+            end
+        end
+    end
+    if char then
+        if char:FindFirstChild("Trap") or (player:FindFirstChild("Backpack") and player.Backpack:FindFirstChild("Trap")) then
+            return "Trap"
+        end
+        if char:FindFirstChild("FakeGun") or (player:FindFirstChild("Backpack") and player.Backpack:FindFirstChild("FakeGun")) then
+            return "FakeGun"
+        end
+    end
+    return nil
+end
+
+local function registerMM2Roles(): ()
+    registerRoleProvider({
+        Name = "MM2",
+        Roles = {"Murderer", "Sheriff", "Hero", "Innocent", "Dead"},
+        Colors = {
+            Murderer = mm2Settings.murdererColor,
+            Sheriff = mm2Settings.sheriffColor,
+            Hero = mm2Settings.heroColor,
+            Innocent = mm2Settings.innocentColor,
+            Dead = mm2Settings.deadColor,
+        },
+        Get = function(player: Player): string?
+            return getPlayerRole(player)
+        end,
+        GetPerk = function(player: Player): string?
+            return getPlayerPerk(player)
+        end,
+        GetColor = function(roleName: string): Color3?
+            if roleName == "Murderer" then return mm2Settings.murdererColor end
+            if roleName == "Sheriff" then return mm2Settings.sheriffColor end
+            if roleName == "Hero" then return mm2Settings.heroColor end
+            if roleName == "Innocent" then return mm2Settings.innocentColor end
+            if roleName == "Dead" then return mm2Settings.deadColor end
+            return nil
+        end,
+        SetColor = function(roleName: string, colour: Color3): ()
+            if roleName == "Murderer" then
+                mm2Settings.murdererColor = colour
+            elseif roleName == "Sheriff" then
+                mm2Settings.sheriffColor = colour
+            elseif roleName == "Hero" then
+                mm2Settings.heroColor = colour
+            elseif roleName == "Innocent" then
+                mm2Settings.innocentColor = colour
+            elseif roleName == "Dead" then
+                mm2Settings.deadColor = colour
+            end
+        end,
+    })
+end
+
+if mm2GameplayRemotes then
+    local playerDataChanged = mm2GameplayRemotes:FindFirstChild("PlayerDataChanged")
+    if playerDataChanged and playerDataChanged:IsA("RemoteEvent") then
+        featureConnections.MM2PlayerDataChanged = playerDataChanged.OnClientEvent:Connect(function(newData)
+            invalidateRoleCaches()
+            if type(newData) ~= "table" or roundLifecycleActive == false then
+                mm2RoundData = {}
+            else
+
+                for key: any, value: any in pairs(newData) do
+                    mm2RoundData[key] = value
+                end
+                lastRoleRefreshAt = os.clock()
+            end
+
+        end)
+    end
+end
+
+local primeRoundState: () -> ()
+local setRoundPhase: (string, string) -> ()
+local lastPhase: string = "unknown"
+
+local roundTimer: {endsAt: number?} = {endsAt = nil}
+local timerRemotes = game:GetService("ReplicatedStorage"):FindFirstChild("Remotes")
+local timerGameplay = timerRemotes and timerRemotes:FindFirstChild("Gameplay")
+local timerRoundStart = timerGameplay and timerGameplay:FindFirstChild("RoundStart")
+local timerRoundEnd = timerGameplay and timerGameplay:FindFirstChild("RoundEndFade")
+local sessionRoundActive = false
+
+if timerRoundStart and timerRoundStart:IsA("RemoteEvent") then
+    featureConnections.MM2TimerTrackerStart = timerRoundStart.OnClientEvent:Connect(
+        function(duration)
+            duration = tonumber(duration)
+            roundTimer.endsAt = duration and os.clock() + duration or nil
+            mm2RoundData = {}
+            invalidateRoleCaches()
+            roundLifecycleActive = duration ~= nil and duration > 0
+            if not duration or duration <= 0 then
+                sessionRoundActive = false
+            end
+            roleRefreshGeneration += 1
+            if duration and duration > 0 then
+
+                primeRoundState()
+                lastPhase = "map"
+                setRoundPhase("map", "RoundStart")
+            end
+            if duration and duration > 0
+                and not sessionRoundActive
+                and state.sessionInfo
+                and state.sessionInfo.addRound then
+                sessionRoundActive = true
+                state.sessionInfo.addRound()
+            end
+        end
+    )
+end
+if timerRoundEnd and timerRoundEnd:IsA("RemoteEvent") then
+    featureConnections.MM2TimerTrackerEnd = timerRoundEnd.OnClientEvent:Connect(function()
+        roundTimer.endsAt = nil
+        sessionRoundActive = false
+        roundLifecycleActive = false
+        invalidateRoleCaches()
+        roleRefreshGeneration += 1
+        mm2RoundData = {}
+        setRoundPhase("lobby", "RoundEndFade")
+    end)
+end
+
+local roundPhase: string = "unknown"
+local roundPhaseListeners: {(string, string) -> ()} = {}
+
+local function emitRoundPhase(phase: string, reason: string): ()
+    for _, listener: (string, string) -> () in ipairs(roundPhaseListeners) do
+        pcall(listener, phase, reason)
+    end
+end
+
+setRoundPhase = function(phase: string, reason: string): ()
+    if roundPhase == phase then
+        return
+    end
+    roundPhase = phase
+    emitRoundPhase(phase, reason)
+end
+
+local function onRoundPhase(listener: (string, string) -> ()): () -> ()
+    table.insert(roundPhaseListeners, listener)
+    task.defer(function(): ()
+        if table.find(roundPhaseListeners, listener) then
+            pcall(listener, roundPhase, "subscribe")
+        end
+    end)
+    return function(): ()
+        local index: number? = table.find(roundPhaseListeners, listener)
+        if index then
+            table.remove(roundPhaseListeners, index)
+        end
+    end
+end
+
+local function findLobbyModel(): Instance?
+    for _, object: Instance in ipairs(workspace:GetChildren()) do
+        if isLobbyName(object.Name) then
+            return object
+        end
+    end
+    return nil
+end
+
+local function detectRoundPhase(): string
+    local character: Model? = LocalPlayer.Character
+    if not character then
+        return "lobby"
+    end
+    local root: BasePart? = character:FindFirstChild("HumanoidRootPart") :: BasePart?
+    if not root then
+        return "lobby"
+    end
+
+    local lobby: Instance? = findLobbyModel()
+    if lobby and root:IsDescendantOf(lobby) then
+        return "lobby"
+    end
+    if findMM2Map() then
+        return "map"
+    end
+
+    return roundPhase == "map" and "map" or "lobby"
+end
+
+primeRoundState = function(): ()
+    roleRefreshGeneration += 1
+    local generation: number = roleRefreshGeneration
+    requestRoleRefresh(true)
+    task.spawn(function(): ()
+
+        for _, delay: number in ipairs({0.2, 0.6}) do
+            task.wait(delay)
+            if generation ~= roleRefreshGeneration or roundRolesKnown() then
+                break
+            end
+            requestRoleRefresh(true)
+        end
+    end)
+end
+
+local phaseElapsed: number = 0
+lastPhase = detectRoundPhase()
+featureConnections.MM2RoundPhase = TaskManager:Connect(function(deltaTime: number): ()
+    phaseElapsed += deltaTime
+    if phaseElapsed < 0.2 then
+        return
+    end
+    phaseElapsed = 0
+    local phase: string = detectRoundPhase()
+    if phase == lastPhase then
+        return
+    end
+    lastPhase = phase
+    if phase == "map" then
+
+        mm2RoundData = {}
+        roundLifecycleActive = true
+        invalidateRoleCaches()
+        primeRoundState("map")
+        setRoundPhase("map", "teleport")
+    else
+        mm2RoundData = {}
+        roundLifecycleActive = false
+        roundTimer.endsAt = nil
+        invalidateRoleCaches()
+        roleRefreshGeneration += 1
+        setRoundPhase("lobby", "teleport")
+    end
+end)
+setRoundPhase(lastPhase, "boot")
+
+local roundTimerPartCache: {part: Instance?, at: number} =
+    {part = nil, at = -math.huge}
+
+local function findRoundTimerPart(): Instance?
+    local cached: Instance? = roundTimerPartCache.part
+    if cached and cached.Parent then
+        return cached
+    end
+    if os.clock() - roundTimerPartCache.at < 1 then
+        return cached
+    end
+    roundTimerPartCache.at = os.clock()
+    local found: Instance? = workspace:FindFirstChild("RoundTimerPart")
+    roundTimerPartCache.part = found
+    return found
+end
+
+local function readRoundTimerPartSeconds(): number?
+    local part: Instance? = findRoundTimerPart()
+    if not part then
+        return nil
+    end
+    local remaining: number? = tonumber(part:GetAttribute("Time") :: any)
+    if not remaining or remaining <= 0 or remaining > 600 then
+        return nil
+    end
+    return remaining
+end
+
+local hudTimerCache: {frame: Instance?, label: Instance?, at: number} =
+    {frame = nil, label = nil, at = -math.huge}
+
+local function findHudTimerLabel(): Instance?
+    local cached: Instance? = hudTimerCache.label
+    if cached and cached.Parent then
+        return cached
+    end
+    if os.clock() - hudTimerCache.at < 1 then
+        return cached
+    end
+    hudTimerCache.at = os.clock()
+    local playerGui: PlayerGui? = LocalPlayer:FindFirstChildOfClass("PlayerGui")
+    local mainGui: Instance? = playerGui and playerGui:FindFirstChild("MainGUI")
+    local gameFrame: Instance? = mainGui and mainGui:FindFirstChild("Game")
+    local frame: Instance? = gameFrame and gameFrame:FindFirstChild("Timer")
+
+    if not frame then
+        frame = mainGui and mainGui:FindFirstChild("Timer", true)
+    end
+    hudTimerCache.frame = (frame and frame:IsA("GuiObject")) and frame or nil
+
+    local label: Instance? = frame
+        and (frame:FindFirstChild("XPText")
+            or frame:FindFirstChild("Timer")
+            or frame:FindFirstChildWhichIsA("TextLabel", true))
+    hudTimerCache.label = (label and label:IsA("TextLabel")) and label or nil
+    return hudTimerCache.label
+end
+
+local function parseHudTimerSeconds(text: string?): number?
+    if type(text) ~= "string" or text == "" then
+        return nil
+    end
+    local minutes: string?, seconds: string? = text:match("^%s*(%d+):(%d%d)s?%s*$")
+    if minutes and seconds then
+        return tonumber(minutes) * 60 + tonumber(seconds)
+    end
+    local whole: string? = text:match("^%s*(%d%d?)s?%s*$")
+    if whole then
+        return tonumber(whole)
+    end
+    return nil
+end
+
+local function isHudTimerVisible(label: Instance): boolean
+
+    local ancestor: Instance? = label
+    while ancestor do
+        if ancestor:IsA("GuiObject") and ancestor.Visible == false then
+            return false
+        end
+        ancestor = ancestor.Parent
+    end
+    return true
+end
+
+local function readHudTimerSeconds(): number?
+    local label: Instance? = findHudTimerLabel()
+    if not label then
+        return nil
+    end
+    if not isHudTimerVisible(label) then
+        return nil
+    end
+    local remaining: number? = parseHudTimerSeconds((label :: any).Text)
+    if not remaining or remaining <= 0 or remaining > 600 then
+        return nil
+    end
+    return remaining
+end
+
+local lastAttributeRemaining: number? = nil
+local lastAttributeChangeAt: number = -math.huge
+local clockElapsed: number = 0
+featureConnections.MM2RoundClock = TaskManager:Connect(function(deltaTime: number): ()
+    clockElapsed += deltaTime
+    if clockElapsed < 0.25 then
+        return
+    end
+    clockElapsed = 0
+    local remaining: number? = readRoundTimerPartSeconds()
+        or readHudTimerSeconds()
+    if not remaining or roundPhase == "lobby" then
+
+        lastAttributeRemaining = nil
+        return
+    end
+
+    if lastAttributeRemaining == nil
+        or math.abs(remaining - lastAttributeRemaining) > 0.01 then
+        lastAttributeChangeAt = os.clock()
+    end
+    lastAttributeRemaining = remaining
+    if os.clock() - lastAttributeChangeAt > 3 then
+        return
+    end
+    roundTimer.endsAt = os.clock() + remaining
+    if roundLifecycleActive == nil then
+        roundLifecycleActive = true
+    end
+end)
+
+requestRoleRefresh(true)
+
+-- Pure prediction helpers: shared by Shoot/Knife and exercised without Roblox.
+local predictionMath = {}
+function predictionMath.finite(value: any): boolean
+    return type(value) == "number" and value == value and math.abs(value) < math.huge
+end
+
+function predictionMath.sampleDue(elapsed: number, deltaTime: number, hz: number): (boolean, number)
+    local interval: number = 1 / math.clamp(hz, 1, 120)
+    local total: number = elapsed + math.max(0, deltaTime)
+    if total + 1e-9 < interval then
+        return false, total
+    end
+    -- Preserve fractional frames, but never issue catch-up shots after a stall.
+    return true, math.max(0, total - math.floor((total + 1e-9) / interval) * interval)
+end
+
+function predictionMath.interceptTime(offset: Vector3, velocity: Vector3, speed: number): number?
+    if not predictionMath.finite(speed) or speed <= 1 then return nil end
+    local a: number = velocity:Dot(velocity) - speed * speed
+    local b: number = 2 * offset:Dot(velocity)
+    local c: number = offset:Dot(offset)
+    if not predictionMath.finite(a) or not predictionMath.finite(b)
+        or not predictionMath.finite(c) then return nil end
+    if c < 1e-8 then return 0 end
+    local time: number? = nil
+    if math.abs(a) < 1e-6 then
+        if b < -1e-6 then time = -c / b end
+    else
+        local discriminant: number = b * b - 4 * a * c
+        if discriminant >= 0 then
+            local root: number = math.sqrt(discriminant)
+            local first: number = (-b - root) / (2 * a)
+            local second: number = (-b + root) / (2 * a)
+            if first >= 0 then time = first end
+            if second >= 0 and (not time or second < time) then time = second end
+        end
+    end
+    -- A long/unsolvable trajectory is not a reliable shot; do not clamp it
+    -- into a fictitious intercept. Covers the configured 400-stud knife range.
+    return time and predictionMath.finite(time) and time <= 5 and time or nil
+end
+
+-- Network measurements are observations, not server collision timestamps.
+function predictionMath.newNetworkEstimator(initial: number): any
+    local net = {raw = initial, baseline = initial, estimate = initial, jitter = 0,
+        lastValidAt = nil, lastReadValid = false, spikeUntil = -math.huge, history = {}, frameSeconds = 1 / 60}
+    function net:observe(value: any, now: number): ()
+        self.lastReadValid = predictionMath.finite(value) and value >= 0 and value <= 10
+        if not self.lastReadValid then return end
+        local dt = self.lastValidAt and math.clamp(now - self.lastValidAt, 0, 2) or 0.1
+        if self.lastValidAt == nil then
+            self.raw, self.baseline, self.estimate = value, value, value
+        else
+            local jump = math.abs(value - self.raw)
+            if jump > math.max(0.05, self.baseline * 0.3)
+                or value > self.baseline + math.max(0.08, self.jitter * 2) then
+                self.spikeUntil = now + 0.6
+            end
+            self.jitter += (jump - self.jitter) * (1 - math.exp(-dt / 0.5))
+            self.baseline += (value - self.baseline) * (1 - math.exp(-dt / 2))
+            if math.abs(value - self.estimate) > math.max(0.06, self.baseline * 0.3) then
+                self.estimate = value -- react on the first observed large change, in either direction
+            else
+                self.estimate += (value - self.estimate) * (1 - math.exp(-dt / 0.12))
+            end
+            self.raw = value
+        end
+        self.lastValidAt = now
+        table.insert(self.history, value * 1000)
+        if #self.history > 40 then table.remove(self.history, 1) end
+    end
+    function net:snapshot(now: number, includeHistory: boolean?): any
+        local age = self.lastValidAt and math.max(0, now - self.lastValidAt) or nil
+        local stale = not self.lastReadValid or age == nil or age > 1
+        local spike = now < self.spikeUntil
+        local capped = self.estimate > 1.2
+        return {raw = self.lastValidAt and self.raw or nil, estimate = math.clamp(self.estimate, 0.03, 1.2),
+            baseline = self.baseline, jitter = self.jitter, age = age, stale = stale, spike = spike,
+            capped = capped, frameSeconds = self.frameSeconds, renderSeconds = self.renderSeconds,
+            status = stale and "Unknown" or (spike and "Spike" or (self.raw > 0.3 and "High" or "Stable")),
+            history = includeHistory and table.clone(self.history) or nil}
+    end
+    return net
+end
+
+-- Three candidate segments ranked against nine hypotheses, never against future truth.
+-- Fixed work; no Parts, waits, deferred callbacks, or network sends.
+function predictionMath.rankProjections(origin: Vector3, position: Vector3, velocity: Vector3,
+    acceleration: Vector3, intent: Vector3, horizon: number, uncertainty: number, grounded: boolean,
+    gravity: number, floorAt: ((Vector3) -> number?)?): {any}
+    local horizontalA = Vector3.new(acceleration.X, 0, acceleration.Z)
+    if horizontalA.Magnitude > 80 then horizontalA = horizontalA.Unit * 80 end
+    local models = {
+        {name = "Velocity", velocity = velocity, acceleration = Vector3.zero},
+        {name = "Intent", velocity = predictionMath.blendIntent(velocity, intent), acceleration = Vector3.zero},
+        {name = "Acceleration", velocity = velocity, acceleration = horizontalA},
+    }
+    local spread = math.clamp(uncertainty, 0.005, 0.15)
+    local times = {math.max(0.02, horizon - spread), horizon, math.min(1, horizon + spread)}
+    local hypotheses, candidates = {}, {}
+    local function project(model: any, t: number): Vector3
+        local v = model.velocity
+        local y = grounded and math.clamp(v.Y, -2.5, 2.5) * t or v.Y * t - 0.5 * gravity * t * t
+        return position + Vector3.new(v.X * t, y, v.Z * t) + model.acceleration * (0.5 * t * t)
+    end
+    for index, model in ipairs(models) do
+        local central = project(model, horizon)
+        local floorY = floorAt and floorAt(central) or nil
+        for _, t in ipairs(times) do
+            local p = project(model, t)
+            if floorY and model.velocity.Y - gravity * t <= 0 then p = Vector3.new(p.X, math.max(p.Y, floorY), p.Z) end
+            table.insert(hypotheses, p)
+        end
+        central = hypotheses[#hypotheses - 1]
+        table.insert(candidates, {point = central, name = model.name, velocity = model.velocity, floorY = floorY, index = index})
+    end
+    for _, candidate in ipairs(candidates) do
+        local segment = candidate.point - origin
+        local length2 = segment:Dot(segment)
+        local worst, sum = 0, 0
+        for _, p in ipairs(hypotheses) do
+            local along = length2 > 1e-8 and math.clamp((p - origin):Dot(segment) / length2, 0, 1) or 0
+            local distance = (p - (origin + segment * along)).Magnitude
+            worst = math.max(worst, distance); sum += distance
+        end
+        candidate.worst = worst
+        candidate.score = worst * 0.7 + (sum / #hypotheses) * 0.3
+    end
+    table.sort(candidates, function(a, b)
+        if a.score == b.score then return a.index < b.index end
+        return a.score < b.score
+    end)
+    return candidates
+end
+
+-- Straight projectile; gravity and sampled ground belong to the target.
+function predictionMath.verticalIntercept(offset: Vector3, velocity: Vector3, speed: number,
+    delay: number, gravity: number, grounded: boolean, floorOffset: number?): (Vector3?, number?)
+    for _, value in ipairs({offset.X, offset.Y, offset.Z, velocity.X, velocity.Y, velocity.Z,
+        speed, delay, gravity}) do
+        if not predictionMath.finite(value) then return nil, nil end
+    end
+    if speed <= 1 or delay < 0 or delay > 1.2 or gravity < 0 then return nil, nil end
+    local function position(t: number): Vector3
+        local total = delay + t
+        local y = grounded and math.clamp(velocity.Y, -2.5, 2.5) * total
+            or velocity.Y * total - 0.5 * gravity * total * total
+        if not grounded and predictionMath.finite(floorOffset) and velocity.Y - gravity * total <= 0 then
+            y = math.max(y, floorOffset :: number)
+        end
+        return offset + Vector3.new(velocity.X * total, y, velocity.Z * total)
+    end
+    if position(0).Magnitude < 1e-5 then return position(0), 0 end
+    local low = 0
+    for step = 1, 80 do
+        local high = step * (5 / 80)
+        if position(high).Magnitude - speed * high <= 0 then
+            for _ = 1, 18 do
+                local mid = (low + high) * 0.5
+                if position(mid).Magnitude - speed * mid > 0 then low = mid else high = mid end
+            end
+            return position(high), high
+        end
+        low = high
+    end
+    return nil, nil -- no bracket: never manufacture an intercept by clamping time
+end
+
+function predictionMath.closestCrossing(samples: {{t: number, p: Vector3}}, point: Vector3): (number?, number)
+    local bestTime: number? = nil
+    local bestDistance: number = math.huge
+    for index: number = 2, #samples do
+        local first, last = samples[index - 1], samples[index]
+        local step: Vector3 = last.p - first.p
+        local lengthSquared: number = step:Dot(step)
+        if last.t > first.t and lengthSquared > 1e-8 then
+            local alpha: number = math.clamp((point - first.p):Dot(step) / lengthSquared, 0, 1)
+            local distance: number = (first.p + step * alpha - point).Magnitude
+            if distance < bestDistance then
+                bestDistance = distance
+                bestTime = first.t + (last.t - first.t) * alpha
+            end
+        end
+    end
+    return bestTime, bestDistance
+end
+
+local function isMotionGrounded(humanoid: Humanoid?, velocity: Vector3): boolean
+    -- Remote FloorMaterial can lag a jump (also visible in TestingStuff logs).
+    return humanoid ~= nil and humanoid.FloorMaterial ~= Enum.Material.Air
+        and humanoid:GetState() ~= Enum.HumanoidStateType.Jumping
+        and math.abs(velocity.Y) <= 6
+end
+
+-- Weapon attributes win; fallback intervals are client policy, not server proof.
+function predictionMath.knifeCadence(mode: string?, manual: number, cooldown: any, sleight: boolean): (number, string)
+    if mode == "Manual" then return math.clamp(manual, 0.1, 3), "manual" end
+    if predictionMath.finite(cooldown) and cooldown >= 0.1 and cooldown <= 5 then
+        return cooldown, "weapon ThrowCooldown/ThrowDelay"
+    end
+    return sleight and 0.25 or 0.5, sleight and "Sleight fallback" or "normal fallback"
+end
+
+-- Intent averaging can reduce speed on turns; vertical velocity stays measured.
+function predictionMath.blendIntent(velocity: Vector3, direction: Vector3): Vector3
+    local horizontal = Vector3.new(velocity.X, 0, velocity.Z)
+    local intent = Vector3.new(direction.X, 0, direction.Z)
+    if horizontal.Magnitude < 1.5 or intent.Magnitude < 0.05 then return velocity end
+    local blended = horizontal * 0.5 + intent.Unit * (horizontal.Magnitude * 0.5)
+    return Vector3.new(blended.X, velocity.Y, blended.Z)
+end
+
+function predictionMath.attemptMatches(pending: any, tool: any, origin: Vector3?, endpoint: Vector3?, now: number): boolean
+    if not origin or not endpoint then return false end
+    local actual = endpoint - origin
+    local age = now - pending.activatedAt
+    if actual.Magnitude < 0.05 or age < 0 or age > 2.5 or (tool ~= nil and tool ~= pending.tool)
+        or not pending.origin or not pending.requestedAim then return false end
+    local expected = pending.requestedAim - pending.origin
+    return (origin - pending.origin).Magnitude <= 3.5 and expected.Magnitude >= 0.05
+        and expected.Unit:Dot(actual.Unit) >= 0.98
+end
+
+function predictionMath.matchAttempt(queue: {any}, tool: any, origin: Vector3?, endpoint: Vector3?, now: number): (any?, string)
+    if not origin or not endpoint then return nil, "missing geometry" end
+    if (endpoint - origin).Magnitude < 0.05 then return nil, "short signal" end
+    local matched: any = nil
+    for _, pending in ipairs(queue) do
+        if predictionMath.attemptMatches(pending, tool, origin, endpoint, now) then
+            if matched then return nil, "ambiguous" end
+            matched = pending
+        end
+    end
+    if not matched then return nil, "unmatched" end
+    if matched.confirmedAt then return nil, "duplicate" end
+    return matched, "unique geometry match"
+end
+
+-- A callback can belong to one Burst group without identifying a particular request.
+-- Never use this weaker association to confirm an individual shot or train timing.
+function predictionMath.matchBurstGroup(queue: {any}, tool: any, origin: Vector3?, endpoint: Vector3?, now: number): (any?, number)
+    local first: any = nil
+    local matches = 0
+    for _, pending in ipairs(queue) do
+        if predictionMath.attemptMatches(pending, tool, origin, endpoint, now) then
+            local burst = pending.settings and pending.settings.burst
+            if not burst or not burst.groupId or (burst.count or 1) <= 1 then return nil, 0 end
+            if first and (first.settings.burst.groupId ~= burst.groupId
+                or first.targetCharacter ~= pending.targetCharacter) then return nil, 0 end
+            first = first or pending
+            matches += 1
+        end
+    end
+    return first, matches
+end
+
+function predictionMath.newKnifeControl(): any
+    local control = {master = false, wanted = {aura = false, throw = false}, handlers = {}}
+    function control:refresh(): ()
+        for name, handler in pairs(self.handlers) do handler(self.master and self.wanted[name]) end
+    end
+    function control:setMaster(value: boolean): ()
+        self.master = value
+        self:refresh()
+    end
+    function control:setWanted(name: string, value: boolean): ()
+        self.wanted[name] = value
+        local handler = self.handlers[name]
+        if handler then handler(self.master and value) end
+    end
+    function control:register(name: string, handler: (boolean) -> ()): ()
+        self.handlers[name] = handler
+        handler(self.master and self.wanted[name])
+    end
+    function control:remove(name: string): ()
+        if self.handlers[name] then self.handlers[name](false) end
+        self.handlers[name] = nil
+    end
+    return control
+end
+
+local weaponDiagnostics: {[string]: any} = {}
+local function setWeaponStatus(kind: string, reason: string): ()
+    local current = weaponDiagnostics[kind]
+    if not current or current.reason ~= reason then
+        weaponDiagnostics[kind] = {reason = reason, at = os.clock()}
+    end
+end
+local function weaponStatus(kind: string): string
+    local entry = weaponDiagnostics[kind]
+    return kind .. ": " .. (entry and entry.reason or "Idle")
+end
+
+type MotionSample = {
+    character: Model?,
+    position: Vector3,
+    sampledAt: number,
+    sampleInterval: number,
+    directionAt: number,
+    velocity: Vector3,
+    acceleration: Vector3,
+    stability: number,
+    classicStability: number,
+    grounded: boolean,
+}
+
+local motionSamples: {[Player]: MotionSample} =
+    setmetatable({}, {__mode = "k"}) :: any
+
+local function getFilteredVelocity(player: Player, root: BasePart): Vector3
+    local now: number = os.clock()
+    local velocity: Vector3 = root.AssemblyLinearVelocity
+    if not predictionMath.finite(velocity.X) or not predictionMath.finite(velocity.Y)
+        or not predictionMath.finite(velocity.Z) then
+        motionSamples[player] = nil
+        return Vector3.zero
+    end
+    if velocity.Magnitude > 110 then
+        velocity = velocity.Unit * 110
+    end
+    local sample: MotionSample? = motionSamples[player]
+    local acceleration: Vector3 = Vector3.zero
+    local stability: number = 1
+    local classicStability: number = 1
+    local sampleInterval: number = 1 / 60
+    local directionAt: number = now
+    local character: Model? = player.Character
+    local humanoid: Humanoid? = character
+        and character:FindFirstChildOfClass("Humanoid")
+        :: Humanoid?
+    local grounded: boolean = isMotionGrounded(humanoid, velocity)
+
+    if sample and sample.character == character then
+        local deltaTime: number = now - sample.sampledAt
+        if deltaTime + 1e-9 < 1 / 120 then
+            return velocity
+        end
+        -- Teleports/respawns must not seed an acceleration estimate.
+        if deltaTime < 0.25 and (root.Position - sample.position).Magnitude < 32 then
+            acceleration = (velocity - sample.velocity) / deltaTime
+            if acceleration.Magnitude > 250 then
+                acceleration = acceleration.Unit * 250
+            end
+
+            local previousHorizontal: Vector3 = Vector3.new(
+                sample.velocity.X,
+                0,
+                sample.velocity.Z
+            )
+            local currentHorizontal: Vector3 = Vector3.new(
+                velocity.X,
+                0,
+                velocity.Z
+            )
+            if previousHorizontal.Magnitude > 1
+                and currentHorizontal.Magnitude > 1 then
+                local similarity = math.clamp(previousHorizontal.Unit:Dot(currentHorizontal.Unit), -1, 1)
+                classicStability = math.clamp(similarity, 0, 1)
+                if similarity < 1 - 1e-6 then
+                    stability = similarity
+                    sampleInterval = math.max(now - (sample.directionAt or sample.sampledAt), 1 / 120)
+                else
+                    -- Re-reading the same replicated heading is not a new direction sample.
+                    directionAt = sample.directionAt or sample.sampledAt
+                    sampleInterval = sample.sampleInterval or deltaTime
+                    stability = now - directionAt < 0.15 and sample.stability or 1
+                end
+            end
+        end
+    end
+
+    motionSamples[player] = {
+        character = character,
+        position = root.Position,
+        sampledAt = now,
+        sampleInterval = sampleInterval,
+        directionAt = directionAt,
+        velocity = velocity,
+        acceleration = acceleration,
+        stability = stability,
+        classicStability = classicStability,
+        grounded = grounded,
+    }
+    return velocity
+end
+
+local lastLatencyReadAt: number = -math.huge
+local networkEstimator = predictionMath.newNetworkEstimator(mm2Settings.predictionRtt)
+local function getEstimatedLatency(force: boolean?): number
+    local now = os.clock()
+    if now - lastLatencyReadAt >= 0.1 or (force and now - lastLatencyReadAt >= 1 / 120) then
+        lastLatencyReadAt = now
+        local value: number? = nil
+        pcall(function(): ()
+            local network = Stats:FindFirstChild("Network")
+            local items = network and network:FindFirstChild("ServerStatsItem")
+            local ping = items and items:FindFirstChild("Data Ping")
+            if ping and type(ping.GetValue) == "function" then
+                local ms = tonumber(ping:GetValue())
+                if predictionMath.finite(ms) then value = (ms :: number) / 1000 end
+            end
+        end)
+        networkEstimator:observe(value, now)
+        mm2Settings.predictionRtt = networkEstimator.estimate
+    end
+    return math.clamp(networkEstimator.estimate, 0.03, 1.2)
+end
+local function getNetworkStatus(includeHistory: boolean?): any
+    return networkEstimator:snapshot(os.clock(), includeHistory)
+end
+local function shouldHoldForNetwork(policy: string?): boolean
+    if policy ~= "Hold spikes" then return false end
+    getEstimatedLatency()
+    local net = getNetworkStatus()
+    return net.stale or net.spike or net.capped
+end
+
+local GUN_LEAD = {
+    replicationRate = 20,
+    serverFrame = 1 / 60,
+    minimumHorizon = 0.02,
+    maximumHorizon = 0.85,
+    maximumManualBias = 0.1,
+    maximumAutoCorrection = 0.1,
+
+    defaultTurnRate = math.pi * 0.5,
+    maxTurnRate = math.pi * 1.5,
+}
+local autoLeadCorrection: number = 0
+
+local function getActiveAutoLeadCorrection(): number
+    return mm2Settings.autoTuneLead and autoLeadCorrection or 0
+end
+
+local function resetAutoLeadCorrection(): ()
+    autoLeadCorrection = 0
+    mm2Settings.predictionEpoch = (mm2Settings.predictionEpoch or 0) + 1
+end
+
+local trajectoryCalibration: any = nil
+
+local function getGunHorizonSeconds(): number
+    local rtt: number = getEstimatedLatency()
+    local baseline: number = mm2Settings.gunTimingModel == "RTT" and rtt or math.max(rtt, 0.200)
+    local latencyTime: number = baseline
+    -- Never use the cumulative historical mean as a live network measurement.
+    -- TestingStuff contains 1.6s outliers and unmatched GunFired observations.
+    if mm2Settings.adaptiveGunTiming and trajectoryCalibration
+        and type(trajectoryCalibration.getEstimates) == "function" then
+        local ok: boolean, est: any = pcall(trajectoryCalibration.getEstimates, trajectoryCalibration)
+        if ok and type(est) == "table" and predictionMath.finite(est.liveGunAcceptanceMs)
+            and (est.liveGunSamples or 0) >= 6 then
+            latencyTime = math.clamp(est.liveGunAcceptanceMs / 1000,
+                math.max(0.03, baseline - 0.075), math.min(1.2, baseline + 0.075))
+        end
+    end
+    local staleness: number = 1 / (2 * GUN_LEAD.replicationRate)
+    local manualBias: number = math.clamp(
+        mm2Settings.gunLeadBias,
+        -GUN_LEAD.maximumManualBias,
+        GUN_LEAD.maximumManualBias
+    )
+    local autoCorrection: number = math.clamp(
+        getActiveAutoLeadCorrection(),
+        -GUN_LEAD.maximumAutoCorrection,
+        GUN_LEAD.maximumAutoCorrection
+    )
+    local horizon: number = latencyTime
+        + staleness
+        + GUN_LEAD.serverFrame * 0.5
+        + manualBias
+        + autoCorrection
+    return math.clamp(
+        horizon,
+        GUN_LEAD.minimumHorizon,
+        GUN_LEAD.maximumHorizon
+    )
+end
+
+local function getGunTurnRate(stability: number?, interval: number?): number
+    if type(stability) ~= "number" then return GUN_LEAD.defaultTurnRate end
+    -- Angular velocity (rad/s), not an unnormalized per-frame direction delta.
+    local dt: number = math.clamp(interval or 1 / 60, 1 / 120, 0.25)
+    return math.clamp(math.acos(math.clamp(stability, -1, 1)) / dt, 0, GUN_LEAD.maxTurnRate)
+end
+
+local function getGunTurnDiscount(horizon: number, turnRate: number?): number
+
+    local rate: number = turnRate or GUN_LEAD.defaultTurnRate
+    return math.clamp(
+        math.cos(math.min(horizon * rate * 0.5, math.pi * 0.5)),
+        0.25,
+        1
+    )
+end
+
+local function getGunLeadSensitivity(horizon: number, turnRate: number?): number
+
+    local rate: number = turnRate or GUN_LEAD.defaultTurnRate
+    local angle: number = horizon * rate * 0.5
+    if angle >= math.pi * 0.5 then
+        return 0.25
+    end
+    local rawDiscount: number = math.cos(angle)
+    if rawDiscount <= 0.25 then
+        return 0.25
+    end
+    return rawDiscount - horizon * math.sin(angle) * rate * 0.5
+end
+
+local function getGunLeadStatus(): {[string]: any}
+    return {
+        manualBias = math.clamp(
+            mm2Settings.gunLeadBias,
+            -GUN_LEAD.maximumManualBias,
+            GUN_LEAD.maximumManualBias
+        ),
+        autoCorrection = getActiveAutoLeadCorrection(),
+        storedAutoCorrection = autoLeadCorrection,
+        autoTuneEnabled = mm2Settings.autoTuneLead,
+        horizon = getGunHorizonSeconds(),
+    }
+end
+
+local function getGunOriginCFrame(character: Model, gun: Tool?): CFrame?
+    local root: BasePart? = character:FindFirstChild("HumanoidRootPart") :: BasePart?
+    local attachment: Attachment? = root
+        and root:FindFirstChild("GunRaycastAttachment")
+        :: Attachment?
+    if attachment and attachment:IsA("Attachment") then
+        return attachment.WorldCFrame
+    end
+
+    if gun then
+        for _, partName: string in ipairs({"Muzzle", "Handle"}) do
+            local part: Instance? = gun:FindFirstChild(partName)
+            if part and part:IsA("BasePart") then
+                return part.CFrame
+            end
+        end
+    end
+    for _, partName: string in ipairs({"RightHand", "Right Arm", "Head"}) do
+        local part: Instance? = character:FindFirstChild(partName)
+        if part and part:IsA("BasePart") then
+            return part.CFrame
+        end
+    end
+    local camera: Camera? = workspace.CurrentCamera
+    if camera and root then
+        return CFrame.new(root.Position + Vector3.new(0, 1.5, 0))
+            * (camera.CFrame - camera.CFrame.Position)
+    end
+    return root and root.CFrame or nil
+end
+
+local function createTrajectoryCalibration(): any
+    type TrajectoryPoint = {
+        dt: number,
+        serverTime: number,
+        pingMs: number,
+        position: {number},
+        velocity: {number},
+        moveDirection: {number},
+        humanoidState: string,
+        grounded: boolean,
+        jumping: boolean,
+    }
+    type RunningStats = {
+        count: number,
+        mean: number,
+        m2: number,
+        minimum: number,
+        maximum: number,
+    }
+    type PendingGun = {
+        shotId: string?,
+        attemptCounted: boolean?,
+        tool: Tool,
+        activatedAt: number,
+        origin: Vector3?,
+        requestedAim: Vector3?,
+        pingMs: number,
+        targetUserId: number?,
+        targetName: string?,
+        targetTrajectory: {TrajectoryPoint},
+        lastTrajectorySampleAt: number,
+        confirmedAt: number?,
+        latencyMs: number?,
+        confirmedEndpoint: Vector3?,
+        confirmedHitTarget: boolean?,
+        confirmedSyntheticHit: boolean?,
+    }
+    type PendingKnife = {
+        shotId: string?,
+        attemptCounted: boolean?,
+        tool: Tool,
+        activatedAt: number,
+        origin: Vector3?,
+        requestedAim: Vector3?,
+        pingMs: number,
+        targetUserId: number?,
+        targetName: string?,
+        targetTrajectory: {TrajectoryPoint},
+        lastTrajectorySampleAt: number,
+    }
+    type KnifeTrack = {
+        shotId: string?,
+        attemptCounted: boolean?,
+        startedAt: number,
+        previousAt: number?,
+        previousPosition: Vector3?,
+        speeds: {number},
+        rawSpeed: number?,
+        spawnDelayMs: number,
+        pingMs: number,
+        targetUserId: number?,
+        targetName: string?,
+        targetTrajectory: {TrajectoryPoint},
+        lastTrajectorySampleAt: number,
+        destroyConnection: RBXScriptConnection?,
+    }
+    type CalibrationEvent = {
+        shotId: string?,
+        settings: any?,
+        phase: string?,
+        sessionId: string?,
+        buildStamp: string?,
+        kind: string,
+        serverTime: number,
+        pingMs: number,
+        latencyMs: number?,
+        distance: number?,
+        speed: number?,
+        rawSpeed: number?,
+        samples: number?,
+        reason: string?,
+        targetUserId: number?,
+        targetName: string?,
+        targetState: string?,
+        targetJumped: boolean?,
+        targetTrajectory: {TrajectoryPoint}?,
+        observedDisplacement: {number}?,
+        constantVelocityResidual: {number}?,
+        horizontalLeadSeconds: number?,
+        verticalLeadSeconds: number?,
+        endpoint: {number}?,
+        origin: {number}?,
+        hitTarget: boolean?,
+        syntheticHit: boolean?,
+        targetBodySignal: boolean?,
+        groupId: string?,
+        candidateCount: number?,
+        pingBucket: string?,
+        bestMotionModel: string?,
+        motionModelErrors: {[string]: number}?,
+        evaluationSeconds: number?,
+    }
+    type Estimates = {
+        gunAcceptanceMs: number?,
+        knifeSpeed: number?,
+        confirmedShots: number,
+        confirmedThrows: number,
+        liveGunAcceptanceMs: number?,
+        liveGunSamples: number,
+        liveKnifeSpeed: number?,
+        liveKnifeSamples: number,
+        maxStabDistance: number?,
+    }
+    type Controller = {
+        start: (self: Controller) -> (),
+        save: (self: Controller, reason: string?) -> boolean,
+        reset: (self: Controller) -> (),
+        destroy: (self: Controller) -> (),
+        status: (self: Controller) -> string,
+        getEstimates: (self: Controller) -> Estimates,
+        noteAuthoredShot: (self: Controller, info: any) -> (),
+    }
+
+    local OUTPUT_ROOT: string = host.PRODUCT.storageFolder
+    local OUTPUT_FOLDER: string = OUTPUT_ROOT .. "/Telemetry"
+    local OUTPUT_PATH: string = OUTPUT_FOLDER
+        .. "/MM2_Trajectory_Calibration.json"
+    local MAX_EVENTS: number = 600
+    local MAX_PENDING_AGE: number = 2.5
+    local environment: {[string]: any} = getfenv() :: any
+    local playerMouse: Mouse = LocalPlayer:GetMouse()
+    local runtime: any = {
+        active = false,
+        dirty = false,
+        revision = 0,
+        saveScheduled = false,
+        startedAt = os.clock(),
+        startedAtUnix = os.time(),
+        sessionId = HttpService:GenerateGUID(false),
+        buildStamp = tostring(host.SOURCE_STAMP or "unknown"),
+        shotSequence = 0,
+        historyBackup = nil :: string?,
+        persistenceBlocked = false,
+        rawKnifeActivations = 0,
+        unmatchedGunSignals = 0,
+        ambiguousGunSignals = 0,
+        ambiguousKnifeSignals = 0,
+        duplicateGunSignals = 0,
+        timedOutAttempts = 0,
+        gunObserverConnected = false,
+        lastSaveMs = 0,
+        lastSaveBytes = 0,
+        sessionStabAttempts = 0,
+        sessionGunAttempts = 0,
+        sessionGunConfirmed = 0,
+        sessionKnifeAttempts = 0,
+        sessionKnifeConfirmed = 0,
+        pendingGuns = {} :: {PendingGun},
+        pendingKnives = {} :: {PendingKnife},
+        tracks = {} :: {[Instance]: KnifeTrack},
+        observedTools = setmetatable({}, {__mode = "k"}) :: {[Tool]: boolean},
+        connections = {} :: {RBXScriptConnection},
+        events = {} :: {CalibrationEvent},
+        freshGunLatency = {} :: {{at: number, ms: number}},
+        freshKnifeSpeed = {} :: {{at: number, speed: number}},
+        observedProjectiles = setmetatable({}, {__mode = "k"}),
+        gunAcceptance = nil :: RunningStats?,
+        knifeSpeed = nil :: RunningStats?,
+        knifeSpawnDelay = nil :: RunningStats?,
+        motionBuckets = {} :: {[string]: any},
+        trajectorySampler = nil :: any,
+    }
+    local controller: Controller
+    local saveSnapshot: (reason: string) -> boolean
+    local compactPending: (queue: {any}, now: number) -> ()
+    local finalizeGunCapture: (pending: PendingGun) -> ()
+
+    local function nextShotId(): string
+        runtime.shotSequence += 1
+        return runtime.sessionId .. ":" .. tostring(runtime.shotSequence)
+    end
+    local function emitShot(eventType: string, info: any): ()
+        info.sessionId = runtime.sessionId
+        info.buildStamp = runtime.buildStamp
+        if type(state.emitGameBridgeEvent) == "function" then
+            state.emitGameBridgeEvent(eventType, info)
+        end
+    end
+
+    local function newStats(): RunningStats
+        return {
+            count = 0,
+            mean = 0,
+            m2 = 0,
+            minimum = math.huge,
+            maximum = -math.huge,
+        }
+    end
+
+    runtime.gunAcceptance = newStats()
+    runtime.knifeSpeed = newStats()
+    runtime.knifeSpawnDelay = newStats()
+
+    local function finite(value: number): boolean
+        return value == value and value > -math.huge and value < math.huge
+    end
+
+    local function applyStatsPayload(
+        stats: RunningStats,
+        payload: {[string]: number}
+    ): ()
+        stats.count = tonumber(payload.count) or 0
+        stats.mean = tonumber(payload.mean) or 0
+        stats.m2 = tonumber(payload.m2) or 0
+        stats.minimum = stats.count > 0
+            and (tonumber(payload.minimum) or 0)
+            or math.huge
+        stats.maximum = stats.count > 0
+            and (tonumber(payload.maximum) or 0)
+            or -math.huge
+    end
+
+    local function restoreMotionBucket(bucket: any): any
+        local count: number = tonumber(bucket.count) or 0
+        local residual: any = bucket.meanConstantVelocityResidual or {}
+        local errors: any = bucket.meanModelError or {}
+        return {
+            count = count,
+            durationSum = bucket.durationSum or (bucket.meanDurationSeconds or 0) * count,
+            horizontalLeadCount = bucket.horizontalLeadCount or (bucket.meanHorizontalLeadSeconds and count or 0),
+            horizontalLeadSum = bucket.horizontalLeadSum or (bucket.meanHorizontalLeadSeconds or 0) * count,
+            verticalLeadCount = bucket.verticalLeadCount or (bucket.meanVerticalLeadSeconds and count or 0),
+            verticalLeadSum = bucket.verticalLeadSum or (bucket.meanVerticalLeadSeconds or 0) * count,
+            residualXSum = bucket.residualXSum or (residual[1] or 0) * count,
+            residualYSum = bucket.residualYSum or (residual[2] or 0) * count,
+            residualZSum = bucket.residualZSum or (residual[3] or 0) * count,
+            constantVelocityErrorSum = bucket.constantVelocityErrorSum or (errors.constantVelocity or 0) * count,
+            observedAccelerationErrorSum = bucket.observedAccelerationErrorSum or (errors.observedAcceleration or 0) * count,
+            airborneBallisticErrorSum = bucket.airborneBallisticErrorSum or (errors.airborneBallistic or 0) * count,
+        }
+    end
+
+    local function loadSavedHistory(): ()
+        if type(environment.readfile) ~= "function" then
+            runtime.persistenceBlocked = true
+            return
+        end
+        local okRead: boolean, raw: any = pcall(environment.readfile, OUTPUT_PATH)
+        if not okRead then
+            local okExists, exists = pcall(function() return environment.isfile(OUTPUT_PATH) end)
+            runtime.persistenceBlocked = not (okExists and exists == false)
+            return
+        end
+        if type(raw) ~= "string" then runtime.persistenceBlocked = true; return end
+        if #raw == 0 then return end
+        local backup: string = OUTPUT_PATH .. ".before-" .. runtime.sessionId .. ".json"
+        local okBackup: boolean = type(environment.writefile) == "function"
+            and pcall(environment.writefile, backup, raw)
+        local okVerify, backedUp = pcall(environment.readfile, backup)
+        if not okBackup or not okVerify or backedUp ~= raw then
+            runtime.persistenceBlocked = true
+            warn(trajectoryLogPrefix .. " History backup failed; existing file will not be overwritten.")
+            return
+        end
+        runtime.historyBackup = backup
+        local ok, decoded = pcall(HttpService.JSONDecode, HttpService, raw)
+        if not ok or type(decoded) ~= "table" then return end
+        -- Only plausible statistical estimates are portable. Counts such as
+        -- 10^57, old events and old motion buckets never become session data.
+        local aggregate: any = type(decoded.aggregate) == "table" and decoded.aggregate or {}
+        local function importStats(stats: RunningStats, payload: any, low: number, high: number): ()
+            if type(payload) ~= "table" then return end
+            for _, key in ipairs({"count", "mean", "m2", "minimum", "maximum"}) do
+                if not predictionMath.finite(payload[key]) then return end
+            end
+            if payload.count < 1 or payload.count > 1000000 or payload.count % 1 ~= 0
+                or payload.m2 < 0 or payload.m2 > payload.count * (high - low) ^ 2
+                or payload.minimum < low or payload.maximum > high
+                or payload.mean < payload.minimum or payload.mean > payload.maximum then return end
+            applyStatsPayload(stats, payload)
+        end
+        importStats(runtime.gunAcceptance, aggregate.gunAcceptanceMs, 0, 2500)
+        importStats(runtime.knifeSpeed, aggregate.knifeSpeedStudsPerSecond, 24, 300)
+        importStats(runtime.knifeSpawnDelay, aggregate.knifeSpawnDelayMs, 0, 5000)
+    end
+
+    local function vectorArray(value: Vector3): {number}
+        return {value.X, value.Y, value.Z}
+    end
+
+    local function pingBucketKey(pingMs: number): string
+        if pingMs > 250 then
+            return "250+"
+        end
+        local lower: number = math.clamp(math.floor(pingMs / 5) * 5, 0, 245)
+        return string.format("%03d-%03d", lower, lower + 5)
+    end
+
+    local function getTargetRoot(player: Player?): BasePart?
+        return player
+            and player.Character
+            and player.Character:FindFirstChild("HumanoidRootPart") :: BasePart?
+    end
+
+    local function getTargetHumanoid(player: Player?): Humanoid?
+        return player
+            and player.Character
+            and player.Character:FindFirstChildOfClass("Humanoid") :: Humanoid?
+    end
+
+    local function captureTrajectoryPoint(
+        player: Player,
+        activatedAt: number,
+        pingMs: number
+    ): TrajectoryPoint?
+        if not mm2Settings.calibrationDetails then return nil end
+        local root: BasePart? = getTargetRoot(player)
+        local humanoid: Humanoid? = getTargetHumanoid(player)
+        if not root or not humanoid or humanoid.Health <= 0 then
+            return nil
+        end
+        local stateName: string = humanoid:GetState().Name
+        local grounded: boolean = isMotionGrounded(humanoid, root.AssemblyLinearVelocity)
+        local jumping: boolean = stateName == "Jumping"
+            or stateName == "Freefall"
+            or not grounded
+        return {
+            dt = os.clock() - activatedAt,
+            serverTime = workspace:GetServerTimeNow(),
+            pingMs = pingMs,
+            position = vectorArray(root.Position),
+            velocity = vectorArray(root.AssemblyLinearVelocity),
+            moveDirection = vectorArray(humanoid.MoveDirection),
+            humanoidState = stateName,
+            grounded = grounded,
+            jumping = jumping,
+        }
+    end
+
+    local function findKnifeAnalysisTarget(aimPosition: Vector3?): Player?
+        local selected: Player? = nil
+        local selectedScore: number = math.huge
+        for _, player: Player in ipairs(Players:GetPlayers()) do
+            if player ~= LocalPlayer
+                and isPlayerAlive(player)
+                and getPlayerRole(player) ~= "Murderer"
+                and not isProtectedTarget(player) then
+                local root: BasePart? = getTargetRoot(player)
+                if root then
+                    local score: number = aimPosition
+                            and (root.Position - aimPosition).Magnitude
+                        or (root.Position - (LocalPlayer.Character
+                                and LocalPlayer.Character:GetPivot().Position
+                            or Vector3.zero)).Magnitude
+                    if score < selectedScore then
+                        selected = player
+                        selectedScore = score
+                    end
+                end
+            end
+        end
+        return selected
+    end
+
+    local function getRequestedAim(): Vector3?
+        local aim: Vector3? = nil
+        pcall(function(): ()
+            aim = playerMouse.Hit.Position
+        end)
+        return aim
+    end
+
+    local function samplePendingTrajectories(): ()
+        local now: number = os.clock()
+        local function sampleQueue(queue: {any}): ()
+            for _, pending: any in ipairs(queue) do
+                if pending.targetUserId
+                    and now - pending.lastTrajectorySampleAt >= 1 / 30 then
+                    local target: Player? = Players:GetPlayerByUserId(
+                        pending.targetUserId
+                    )
+                    local point: TrajectoryPoint? = target
+                        and target.Character == pending.targetCharacter
+                        and captureTrajectoryPoint(
+                            target,
+                            pending.activatedAt,
+                            pending.pingMs
+                        )
+                        or nil
+                    if point and #pending.targetTrajectory < 120 then
+                        table.insert(pending.targetTrajectory, point)
+                    end
+                    pending.lastTrajectorySampleAt = now
+                end
+            end
+        end
+        sampleQueue(runtime.pendingGuns)
+        sampleQueue(runtime.pendingKnives)
+        for index: number = #runtime.pendingGuns, 1, -1 do
+            local pending: PendingGun = runtime.pendingGuns[index]
+            if pending.confirmedAt and now - pending.confirmedAt >= 0.5 then
+                table.remove(runtime.pendingGuns, index)
+                finalizeGunCapture(pending)
+            end
+        end
+        if #runtime.pendingGuns == 0 and #runtime.pendingKnives == 0
+            and runtime.trajectorySampler then
+            runtime.trajectorySampler:Disconnect()
+            runtime.trajectorySampler = nil
+        end
+    end
+
+    local function ensureTrajectorySampler(): ()
+        if runtime.trajectorySampler then
+            return
+        end
+        local elapsed: number = 0
+        runtime.trajectorySampler = TaskManager:Connect(function(deltaTime: number): ()
+            local due: boolean
+            due, elapsed = predictionMath.sampleDue(elapsed, deltaTime, 30)
+            if not due then return end
+            compactPending(runtime.pendingGuns, os.clock())
+            compactPending(runtime.pendingKnives, os.clock())
+            samplePendingTrajectories()
+        end)
+    end
+
+    local function addSample(stats: RunningStats, value: number): ()
+        if not finite(value) then
+            return
+        end
+        stats.count += 1
+        local delta: number = value - stats.mean
+        stats.mean += delta / stats.count
+        stats.m2 += delta * (value - stats.mean)
+        stats.minimum = math.min(stats.minimum, value)
+        stats.maximum = math.max(stats.maximum, value)
+    end
+
+    local function statsPayload(stats: RunningStats): {[string]: number}
+        return {
+            count = stats.count,
+            mean = stats.mean,
+            m2 = stats.m2,
+            minimum = stats.count > 0 and stats.minimum or 0,
+            maximum = stats.count > 0 and stats.maximum or 0,
+        }
+    end
+
+    local function getPingMilliseconds(): number
+        local pingMs: number = 0
+        pcall(function(): ()
+            local network: Instance? = Stats:FindFirstChild("Network")
+            local serverItems: Instance? = network
+                and network:FindFirstChild("ServerStatsItem")
+            local pingItem: any = serverItems
+                and serverItems:FindFirstChild("Data Ping")
+            if pingItem and type(pingItem.GetValue) == "function" then
+                pingMs = tonumber(pingItem:GetValue()) or 0
+            end
+        end)
+        return math.max(0, pingMs)
+    end
+
+    local function worldPosition(value: any): Vector3?
+        if typeof(value) == "Vector3" then
+            return value
+        elseif typeof(value) == "CFrame" then
+            return value.Position
+        elseif typeof(value) == "Instance" then
+            if value:IsA("Attachment") then
+                return value.WorldPosition
+            elseif value:IsA("BasePart") then
+                return value.Position
+            elseif value:IsA("Model") then
+                return value:GetPivot().Position
+            end
+        end
+        return nil
+    end
+
+    local function projectilePosition(projectile: Instance): Vector3?
+        local visual: Instance? = projectile:FindFirstChild("KnifeVisual", true)
+        if visual and visual:IsA("BasePart") then
+            return visual.Position
+        end
+        local blade: Instance? = projectile:FindFirstChild("BladePosition", true)
+        local bladePosition: Vector3? = worldPosition(blade)
+        if bladePosition then
+            return bladePosition
+        end
+        return worldPosition(projectile)
+    end
+
+    local function toolOrigin(tool: Tool): Vector3?
+        local handle: Instance? = tool:FindFirstChild("Handle")
+        return worldPosition(handle)
+    end
+
+    local function appendEvent(record: CalibrationEvent): ()
+        record.sessionId = runtime.sessionId
+        record.buildStamp = runtime.buildStamp
+        if #runtime.events >= MAX_EVENTS then
+            table.remove(runtime.events, 1)
+        end
+        table.insert(runtime.events, record)
+        runtime.revision += 1
+        runtime.dirty = true
+        if not mm2Settings.calibrationAutosave or runtime.saveScheduled then
+            return
+        end
+        runtime.saveScheduled = true
+        task.delay(10, function(): ()
+            runtime.saveScheduled = false
+            if runtime.active and runtime.dirty and mm2Settings.calibrationAutosave then
+                saveSnapshot("autosave")
+            end
+        end)
+    end
+
+    local function trackConnection(connection: RBXScriptConnection): ()
+        table.insert(runtime.connections, connection)
+    end
+
+    compactPending = function(queue: {any}, now: number): ()
+        while #queue > 0 and (now - queue[1].activatedAt > MAX_PENDING_AGE or #queue > 12) do
+            local pending = table.remove(queue, 1)
+            if pending.confirmedAt then
+                finalizeGunCapture(pending)
+            elseif pending.attemptCounted then
+                runtime.timedOutAttempts += 1
+                appendEvent({kind = pending.kind or "gun", shotId = pending.shotId,
+                    phase = "unconfirmed", reason = "observation-window-expired; not a miss",
+                    serverTime = workspace:GetServerTimeNow(), pingMs = pending.pingMs,
+                    targetName = pending.targetName, settings = pending.settings,
+                    origin = pending.origin and vectorArray(pending.origin) or nil,
+                    aim = pending.requestedAim and vectorArray(pending.requestedAim) or nil,
+                    targetTrajectory = pending.targetTrajectory,
+                    trajectoryMeaning = "client observations; no acknowledgement or impact inferred"})
+            end
+        end
+    end
+
+    local function vectorFromArray(value: {number}): Vector3
+        return Vector3.new(value[1] or 0, value[2] or 0, value[3] or 0)
+    end
+
+    local function analyzeTargetTrajectory(
+        trajectory: {TrajectoryPoint},
+        pingMs: number,
+        eventKind: string,
+        evaluationSeconds: number?
+    ): {[string]: any}
+        if #trajectory < 2 then
+            return {
+                pingBucket = pingBucketKey(pingMs),
+                sampleCount = #trajectory,
+            }
+        end
+        local first: TrajectoryPoint = trajectory[1]
+        local last: TrajectoryPoint = trajectory[#trajectory]
+        if evaluationSeconds then
+            local desiredDt: number = first.dt + evaluationSeconds
+            local closestDistance: number = math.huge
+            for _, point: TrajectoryPoint in ipairs(trajectory) do
+                local distance: number = math.abs(point.dt - desiredDt)
+                if distance < closestDistance then
+                    last = point
+                    closestDistance = distance
+                end
+            end
+        end
+        local initialPosition: Vector3 = vectorFromArray(first.position)
+        local finalPosition: Vector3 = vectorFromArray(last.position)
+        local initialVelocity: Vector3 = vectorFromArray(first.velocity)
+        local duration: number = math.max(0.0001, last.dt - first.dt)
+        local displacement: Vector3 = finalPosition - initialPosition
+        local residual: Vector3 = displacement - initialVelocity * duration
+        local constantVelocityPrediction: Vector3 = initialPosition
+            + initialVelocity * duration
+        local observedAcceleration: Vector3 = Vector3.zero
+        if #trajectory >= 3 then
+            local second: TrajectoryPoint = trajectory[2]
+            local accelerationDelta: number = math.max(
+                1 / 240,
+                second.dt - first.dt
+            )
+            observedAcceleration = (
+                vectorFromArray(second.velocity) - initialVelocity
+            ) / accelerationDelta
+            if observedAcceleration.Magnitude > 500 then
+                observedAcceleration = observedAcceleration.Unit * 500
+            end
+        end
+        local accelerationPrediction: Vector3 = initialPosition
+            + initialVelocity * duration
+            + observedAcceleration * (0.5 * duration * duration)
+        local ballisticPrediction: Vector3 = initialPosition
+            + initialVelocity * duration
+            + Vector3.new(0, -workspace.Gravity, 0)
+                * (0.5 * duration * duration)
+        local modelErrors: {[string]: number} = {
+            constantVelocity = (constantVelocityPrediction - finalPosition).Magnitude,
+            observedAcceleration = (accelerationPrediction - finalPosition).Magnitude,
+            airborneBallistic = (ballisticPrediction - finalPosition).Magnitude,
+        }
+        local bestMotionModel: string = "constantVelocity"
+        local bestMotionError: number = modelErrors.constantVelocity
+        for modelName: string, modelError: number in pairs(modelErrors) do
+            if modelError < bestMotionError then
+                bestMotionModel = modelName
+                bestMotionError = modelError
+            end
+        end
+        local horizontalVelocity: Vector3 = Vector3.new(
+            initialVelocity.X,
+            0,
+            initialVelocity.Z
+        )
+        local horizontalDisplacement: Vector3 = Vector3.new(
+            displacement.X,
+            0,
+            displacement.Z
+        )
+        local horizontalLead: number? = nil
+        if horizontalVelocity.Magnitude > 0.75 then
+            horizontalLead = math.clamp(
+                horizontalDisplacement:Dot(horizontalVelocity)
+                    / horizontalVelocity:Dot(horizontalVelocity),
+                -0.15,
+                0.6
+            )
+        end
+        local verticalLead: number? = nil
+        if math.abs(initialVelocity.Y) > 0.75 then
+            verticalLead = math.clamp(
+                displacement.Y / initialVelocity.Y,
+                -0.15,
+                0.6
+            )
+        end
+        local jumped: boolean = false
+        for _, point: TrajectoryPoint in ipairs(trajectory) do
+            if point.jumping then
+                jumped = true
+                break
+            end
+        end
+        local stateName: string = jumped and "Airborne" or "Grounded"
+        local bucketKey: string = eventKind
+            .. ":"
+            .. pingBucketKey(pingMs)
+            .. ":"
+            .. stateName
+        local bucket: any = runtime.motionBuckets[bucketKey]
+        if type(bucket) ~= "table" then
+            bucket = {
+                count = 0,
+                horizontalLeadSum = 0,
+                horizontalLeadCount = 0,
+                verticalLeadSum = 0,
+                verticalLeadCount = 0,
+                residualXSum = 0,
+                residualYSum = 0,
+                residualZSum = 0,
+                durationSum = 0,
+                constantVelocityErrorSum = 0,
+                observedAccelerationErrorSum = 0,
+                airborneBallisticErrorSum = 0,
+            }
+            runtime.motionBuckets[bucketKey] = bucket
+        end
+        bucket.count += 1
+        bucket.durationSum += duration
+        bucket.residualXSum += residual.X
+        bucket.residualYSum += residual.Y
+        bucket.residualZSum += residual.Z
+        bucket.constantVelocityErrorSum += modelErrors.constantVelocity
+        bucket.observedAccelerationErrorSum += modelErrors.observedAcceleration
+        bucket.airborneBallisticErrorSum += modelErrors.airborneBallistic
+        if horizontalLead then
+            bucket.horizontalLeadSum += horizontalLead
+            bucket.horizontalLeadCount += 1
+        end
+        if verticalLead then
+            bucket.verticalLeadSum += verticalLead
+            bucket.verticalLeadCount += 1
+        end
+        return {
+            pingBucket = pingBucketKey(pingMs),
+            sampleCount = #trajectory,
+            initialState = first.humanoidState,
+            finalState = last.humanoidState,
+            jumped = jumped,
+            durationSeconds = duration,
+            evaluationSeconds = evaluationSeconds or duration,
+            displacement = vectorArray(displacement),
+            constantVelocityResidual = vectorArray(residual),
+            horizontalLeadSeconds = horizontalLead,
+            verticalLeadSeconds = verticalLead,
+            bestMotionModel = bestMotionModel,
+            motionModelErrors = modelErrors,
+        }
+    end
+
+    local function motionModelPayload(buckets: {[string]: any}): {[string]: any}
+        local payload: {[string]: any} = {}
+        for key: string, bucket: any in pairs(buckets) do
+            if type(bucket) == "table" then
+                local count: number = math.max(1, tonumber(bucket.count) or 1)
+                local horizontalCount: number = math.max(
+                    1,
+                    tonumber(bucket.horizontalLeadCount) or 0
+                )
+                local verticalCount: number = math.max(
+                    1,
+                    tonumber(bucket.verticalLeadCount) or 0
+                )
+
+                local meanDuration: number = tonumber(bucket.meanDurationSeconds)
+                    or (bucket.durationSum and (bucket.durationSum / count))
+                    or 0
+
+                local meanHorizLead: number? = nil
+                if bucket.horizontalLeadSum and horizontalCount > 0 then
+                    meanHorizLead = bucket.horizontalLeadSum / horizontalCount
+                elseif bucket.meanHorizontalLeadSeconds then
+                    meanHorizLead = bucket.meanHorizontalLeadSeconds
+                end
+
+                local meanVertLead: number? = nil
+                if bucket.verticalLeadSum and verticalCount > 0 then
+                    meanVertLead = bucket.verticalLeadSum / verticalCount
+                elseif bucket.meanVerticalLeadSeconds then
+                    meanVertLead = bucket.meanVerticalLeadSeconds
+                end
+
+                local meanResidual: {number}
+                if type(bucket.meanConstantVelocityResidual) == "table" then
+                    meanResidual = bucket.meanConstantVelocityResidual
+                else
+                    meanResidual = {
+                        (tonumber(bucket.residualXSum) or 0) / count,
+                        (tonumber(bucket.residualYSum) or 0) / count,
+                        (tonumber(bucket.residualZSum) or 0) / count,
+                    }
+                end
+
+                local meanModelErr: {[string]: number}
+                if type(bucket.meanModelError) == "table" then
+                    meanModelErr = bucket.meanModelError
+                else
+                    meanModelErr = {
+                        constantVelocity = (tonumber(bucket.constantVelocityErrorSum) or 0) / count,
+                        observedAcceleration = (tonumber(bucket.observedAccelerationErrorSum) or 0) / count,
+                        airborneBallistic = (tonumber(bucket.airborneBallisticErrorSum) or 0) / count,
+                    }
+                end
+
+                payload[key] = {
+                    durationSum = bucket.durationSum,
+                    horizontalLeadSum = bucket.horizontalLeadSum,
+                    horizontalLeadCount = bucket.horizontalLeadCount,
+                    verticalLeadSum = bucket.verticalLeadSum,
+                    verticalLeadCount = bucket.verticalLeadCount,
+                    residualXSum = bucket.residualXSum,
+                    residualYSum = bucket.residualYSum,
+                    residualZSum = bucket.residualZSum,
+                    constantVelocityErrorSum = bucket.constantVelocityErrorSum,
+                    observedAccelerationErrorSum = bucket.observedAccelerationErrorSum,
+                    airborneBallisticErrorSum = bucket.airborneBallisticErrorSum,
+                    count = tonumber(bucket.count) or 0,
+                    meanDurationSeconds = meanDuration,
+                    meanHorizontalLeadSeconds = meanHorizLead,
+                    meanVerticalLeadSeconds = meanVertLead,
+                    meanConstantVelocityResidual = meanResidual,
+                    meanModelError = meanModelErr,
+                }
+            end
+        end
+        return payload
+    end
+
+    local function median(values: {number}): number?
+        if #values == 0 then
+            return nil
+        end
+        local sorted: {number} = table.clone(values)
+        table.sort(sorted)
+        local middle: number = math.floor((#sorted + 1) / 2)
+        if #sorted % 2 == 1 then
+            return sorted[middle]
+        end
+        return (sorted[middle] + sorted[middle + 1]) * 0.5
+    end
+
+    local estimatesCache: Estimates? = nil
+    local estimatesAt: number = -math.huge
+    local function estimates(): Estimates
+        local now: number = os.clock()
+        if estimatesCache and now - estimatesAt < 0.25 then return estimatesCache end
+        local fresh: {number} = {}
+        for _, sample in ipairs(runtime.freshGunLatency) do
+            if now - sample.at <= 60 then table.insert(fresh, sample.ms) end
+        end
+        local knifeFresh: {number} = {}
+        for _, sample in ipairs(runtime.freshKnifeSpeed or {}) do
+            if now - sample.at <= 60 then table.insert(knifeFresh, sample.speed) end
+        end
+        local gunStats: RunningStats = runtime.gunAcceptance
+        local speedStats: RunningStats = runtime.knifeSpeed
+        local maxStab: number? = nil
+        for _, ev in ipairs(runtime.events) do
+            if ev.kind == "stab" and ev.hitTarget == true
+                and predictionMath.finite(ev.distance) then
+                if not maxStab or ev.distance > maxStab then
+                    maxStab = ev.distance
+                end
+            end
+        end
+        estimatesCache = {
+            gunAcceptanceMs = gunStats.count > 0 and gunStats.mean or nil,
+            knifeSpeed = speedStats.count > 0 and speedStats.mean or nil,
+            confirmedShots = gunStats.count,
+            confirmedThrows = speedStats.count,
+            maxStabDistance = maxStab,
+            liveGunAcceptanceMs = #fresh >= 6 and median(fresh) or nil,
+            liveGunSamples = #fresh,
+            liveKnifeSpeed = #knifeFresh >= 3 and median(knifeFresh) or nil,
+            liveKnifeSamples = #knifeFresh,
+        }
+        estimatesAt = now
+        return estimatesCache :: Estimates
+    end
+
+    saveSnapshot = function(reason: string): boolean
+        if runtime.persistenceBlocked then return false end
+        if type(environment.writefile) ~= "function" then
+            warn(trajectoryLogPrefix .. " writefile is unavailable; data was not saved.")
+            return false
+        end
+
+        -- History is loaded once. Re-merging the on-disk totals at each save
+        -- used to double counters/buckets and read/decode a large JSON per shot.
+        local saveStarted: number = os.clock()
+        local savedRevision: number = runtime.revision
+        local mergedGun = statsPayload(runtime.gunAcceptance)
+        local mergedKnife = statsPayload(runtime.knifeSpeed)
+        local mergedDelay = statsPayload(runtime.knifeSpawnDelay)
+        local payload: {[string]: any} = {
+            schema = 4,
+            kind = "mm2-trajectory-analytics",
+            buildStamp = runtime.buildStamp,
+            sessionId = runtime.sessionId,
+            historyBackup = runtime.historyBackup,
+            settings = {
+                motionSampleHz = mm2Settings.motionSampleHz,
+                gunMotionModel = mm2Settings.gunMotionModel,
+                gunTimingModel = mm2Settings.gunTimingModel,
+                manualErrorGate = mm2Settings.manualErrorGate,
+                gunLandingGuard = mm2Settings.gunLandingGuard,
+                silentSpawn = mm2Settings.silentSpawn,
+                silentAim = mm2Settings.silentAim,
+                silentSweep = mm2Settings.silentSweep,
+                wallCheck = mm2Settings.shootWallCheck,
+                leadBias = mm2Settings.gunLeadBias,
+                autoTuneLead = mm2Settings.autoTuneLead,
+                adaptiveGunTiming = mm2Settings.adaptiveGunTiming,
+                useKnifeSpeedCalibration = mm2Settings.useKnifeSpeedCalibration,
+                detailedTrajectories = mm2Settings.calibrationDetails,
+                automaticSaves = mm2Settings.calibrationAutosave,
+            },
+            placeId = game.PlaceId,
+            savedAt = DateTime.now():ToIsoDate(),
+            reason = reason,
+            aggregateScope = "validated-history-plus-this-session; not a hit-rate denominator",
+            aggregate = {
+                gunAcceptanceMs = mergedGun,
+                knifeSpeedStudsPerSecond = mergedKnife,
+                knifeSpawnDelayMs = mergedDelay,
+            },
+            estimator = {
+                gunAcceptanceMs = mergedGun.count > 0 and mergedGun.mean or nil,
+                knifeSpeed = mergedKnife.count > 0 and mergedKnife.mean or nil,
+                confirmedShots = mergedGun.count,
+                confirmedThrows = mergedKnife.count,
+            },
+            analytics = {
+                bucketSpec = {
+                    metric = "Data Ping",
+                    widthMs = 5,
+                    minimumMs = 0,
+                    maximumMs = 250,
+                    states = {"Grounded", "Airborne"},
+                },
+                motionModel = motionModelPayload(runtime.motionBuckets),
+            },
+            session = {
+                startedAt = runtime.startedAtUnix,
+                countersScope = "this-session-only",
+                gunConfirmationMeaning = "matched GunFired signal; not necessarily damage or death",
+                shootDiagnostics = state.mm2ShootDiagnostics,
+                knifeConfirmationMeaning = "observed projectile with valid speed; not an impact",
+                rawKnifeActivations = runtime.rawKnifeActivations,
+                unmatchedGunSignals = runtime.unmatchedGunSignals,
+                ambiguousGunSignals = runtime.ambiguousGunSignals,
+                ambiguousKnifeSignals = runtime.ambiguousKnifeSignals,
+                duplicateGunSignals = runtime.duplicateGunSignals,
+                timedOutAttempts = runtime.timedOutAttempts,
+                correlationPolicy = "unique tool/origin/direction for gun; unique eligible handle attempt for knife; ambiguity never trains",
+                telemetryCost = {previousSaveMs = runtime.lastSaveMs, previousSaveBytes = runtime.lastSaveBytes},
+                stabAttempts = runtime.sessionStabAttempts,
+                elapsedSeconds = os.clock() - runtime.startedAt,
+                gunAttempts = runtime.sessionGunAttempts,
+                gunConfirmed = runtime.sessionGunConfirmed,
+                knifeAttempts = runtime.sessionKnifeAttempts,
+                knifeConfirmed = runtime.sessionKnifeConfirmed,
+                events = runtime.events,
+            },
+        }
+        local encodedOk: boolean, encoded: any = pcall(
+            HttpService.JSONEncode,
+            HttpService,
+            payload
+        )
+        if not encodedOk or type(encoded) ~= "string" then
+            warn(trajectoryLogPrefix .. " JSONEncode failed: " .. tostring(encoded))
+            return false
+        end
+        if type(environment.makefolder) == "function" then
+            pcall(environment.makefolder, OUTPUT_ROOT)
+            pcall(environment.makefolder, OUTPUT_FOLDER)
+        end
+        local writeOk: boolean, writeError: any = pcall(
+            environment.writefile,
+            OUTPUT_PATH,
+            encoded
+        )
+        if not writeOk then
+            warn(trajectoryLogPrefix .. " writefile failed: " .. tostring(writeError))
+            return false
+        end
+
+        -- A yielding executor write must not clear events recorded meanwhile.
+        runtime.lastSaveMs = (os.clock() - saveStarted) * 1000
+        runtime.lastSaveBytes = #encoded
+        runtime.dirty = runtime.revision ~= savedRevision
+        print(
+            trajectoryLogPrefix .. " Saved "
+                .. OUTPUT_PATH
+                .. " ("
+                .. tostring(#encoded)
+                .. " bytes)"
+        )
+        return true
+    end
+
+    local function normalizeGun(value: any): Tool?
+        if typeof(value) ~= "Instance" then
+            return nil
+        end
+        if value:IsA("Tool") then
+            return value
+        end
+        return value:FindFirstAncestorOfClass("Tool")
+    end
+
+    finalizeGunCapture = function(pending: PendingGun): ()
+        local analysis: {[string]: any} = analyzeTargetTrajectory(
+            pending.targetTrajectory,
+            pending.pingMs,
+            "gun",
+            (pending.latencyMs or 0) / 1000
+        )
+        appendEvent({
+            shotId = pending.shotId,
+            phase = "confirmation",
+            settings = pending.settings,
+            kind = "gun",
+            serverTime = workspace:GetServerTimeNow(),
+            pingMs = pending.pingMs,
+            latencyMs = pending.latencyMs,
+            targetUserId = pending.targetUserId,
+            targetName = pending.targetName,
+            targetState = analysis.initialState,
+            targetJumped = analysis.jumped,
+            targetTrajectory = pending.targetTrajectory,
+            observedDisplacement = analysis.displacement,
+            constantVelocityResidual = analysis.constantVelocityResidual,
+            horizontalLeadSeconds = analysis.horizontalLeadSeconds,
+            verticalLeadSeconds = analysis.verticalLeadSeconds,
+            endpoint = pending.confirmedEndpoint
+                    and vectorArray(pending.confirmedEndpoint)
+                or nil,
+            hitTarget = pending.confirmedHitTarget,
+            syntheticHit = pending.confirmedSyntheticHit,
+            pingBucket = analysis.pingBucket,
+            bestMotionModel = analysis.bestMotionModel,
+            motionModelErrors = analysis.motionModelErrors,
+            evaluationSeconds = analysis.evaluationSeconds,
+        })
+    end
+
+    local function handleGunFired(
+        eventGun: any,
+        eventOriginValue: any,
+        endpointValue: any,
+        hitPartValue: any
+    ): ()
+        if not runtime.active then
+            return
+        end
+        local now: number = os.clock()
+        compactPending(runtime.pendingGuns, now)
+        local eventTool: Tool? = normalizeGun(eventGun)
+        local eventOrigin: Vector3? = worldPosition(eventOriginValue)
+        local pending: any, matchReason: string = predictionMath.matchAttempt(
+            runtime.pendingGuns, eventTool, eventOrigin, worldPosition(endpointValue), now)
+        if not pending then
+            if matchReason == "ambiguous" then
+                runtime.ambiguousGunSignals += 1
+                setWeaponStatus("Gun observation", "Ambiguous signal (no shot confirmation or timing update)")
+                local group, candidates = predictionMath.matchBurstGroup(runtime.pendingGuns, eventTool,
+                    eventOrigin, worldPosition(endpointValue), now)
+                if group then
+                    local synthetic = typeof(hitPartValue) == "Instance" and hitPartValue.Name == "WurstHitbox"
+                    appendEvent({kind = "gun", phase = "burst-signal", serverTime = workspace:GetServerTimeNow(),
+                        pingMs = getPingMilliseconds(), groupId = group.settings.burst.groupId,
+                        candidateCount = candidates, targetUserId = group.targetUserId,
+                        syntheticHit = synthetic,
+                        targetBodySignal = not synthetic and typeof(hitPartValue) == "Instance"
+                            and group.targetCharacter ~= nil and hitPartValue:IsDescendantOf(group.targetCharacter),
+                        origin = eventOrigin and vectorArray(eventOrigin) or nil,
+                        endpoint = worldPosition(endpointValue) and vectorArray(worldPosition(endpointValue)) or nil,
+                        reason = "Group-level callback only; not a unique shot, damage or server acceptance count"})
+                end
+            elseif matchReason == "duplicate" then
+                runtime.duplicateGunSignals += 1
+            else
+                local character = LocalPlayer.Character
+                -- No proximity-only attribution: another player's gun can be nearby.
+                if eventTool and character and eventTool.Parent == character then
+                    runtime.unmatchedGunSignals += 1
+                    setWeaponStatus("Gun observation", "Unmatched local signal (no timing update)")
+                end
+            end
+            return
+        end
+        setWeaponStatus("Gun observation", "Unique signal observed; damage requires target hit part")
+        local latencyMs: number = math.max(0, (now - pending.activatedAt) * 1000)
+        local target: Player? = pending.targetUserId
+            and Players:GetPlayerByUserId(pending.targetUserId)
+            or nil
+        if target and target.Character == pending.targetCharacter then
+            local finalPoint: TrajectoryPoint? = captureTrajectoryPoint(
+                target,
+                pending.activatedAt,
+                pending.pingMs
+            )
+            if finalPoint then
+                table.insert(pending.targetTrajectory, finalPoint)
+            end
+        end
+        local endpoint: Vector3? = worldPosition(endpointValue)
+        local targetCharacter: Model? = pending.targetCharacter
+        local syntheticHit = typeof(hitPartValue) == "Instance" and hitPartValue.Name == "WurstHitbox"
+        local hitTarget: boolean = not syntheticHit and typeof(hitPartValue) == "Instance"
+            and targetCharacter ~= nil
+            and hitPartValue:IsDescendantOf(targetCharacter)
+        local burst = pending.settings and pending.settings.burst
+        local net = type(getNetworkStatus) == "function" and getNetworkStatus() or nil
+        local shotNet = pending.settings and pending.settings.prediction and pending.settings.prediction.network
+        if pending.authored == true and not syntheticHit and (not burst or (burst.count or 1) <= 1)
+            and (not net or (not net.stale and not net.spike and not net.capped))
+            and (not shotNet or (not shotNet.stale and not shotNet.spike and not shotNet.capped))
+            and latencyMs >= 30 and latencyMs <= 1200 then
+            table.insert(runtime.freshGunLatency, {at = now, ms = latencyMs})
+            if #runtime.freshGunLatency > 24 then table.remove(runtime.freshGunLatency, 1) end
+            estimatesAt = -math.huge
+        end
+        addSample(runtime.gunAcceptance, latencyMs)
+        runtime.sessionGunConfirmed += 1
+        pending.confirmedAt = now
+        pending.latencyMs = latencyMs
+        pending.confirmedEndpoint = endpoint
+        pending.confirmedHitTarget = hitTarget
+        pending.confirmedSyntheticHit = syntheticHit
+        emitShot("shotConfirmation", {
+            shotId = pending.shotId, kind = "gun", hitTarget = hitTarget, syntheticHit = syntheticHit,
+            targetName = pending.targetName, latencyMs = latencyMs,
+            endpoint = endpoint, evidence = "GunFired.hitPart",
+        })
+        ensureTrajectorySampler()
+    end
+
+    local finishKnifeTrack: (projectile: Instance, reason: string) -> ()
+    local function stopKnifeSamplerIfIdle(): ()
+        if next(runtime.tracks) == nil then
+            disconnectFeatureConnection("MM2TrajectorySampler")
+        end
+    end
+
+    finishKnifeTrack = function(projectile: Instance, reason: string): ()
+        local track: KnifeTrack? = runtime.tracks[projectile]
+        if not track then
+            return
+        end
+        runtime.tracks[projectile] = nil
+        if track.destroyConnection then
+            track.destroyConnection:Disconnect()
+            track.destroyConnection = nil
+        end
+        local measuredSpeed: number? = median(track.speeds)
+        local resolvedSpeed: number? = track.rawSpeed or measuredSpeed
+        if resolvedSpeed and resolvedSpeed >= 24 and resolvedSpeed <= 300 then
+            local analysis: {[string]: any} = analyzeTargetTrajectory(
+                track.targetTrajectory,
+                track.pingMs,
+                "knife",
+                nil
+            )
+            addSample(runtime.knifeSpeed, resolvedSpeed)
+            table.insert(runtime.freshKnifeSpeed, {at = os.clock(), speed = resolvedSpeed})
+            if #runtime.freshKnifeSpeed > 16 then table.remove(runtime.freshKnifeSpeed, 1) end
+            estimatesAt = -math.huge
+            runtime.sessionKnifeConfirmed += 1
+            appendEvent({
+                shotId = track.shotId,
+                phase = "projectile-observed",
+                settings = track.settings,
+                speedEvidence = track.rawSpeed and "ThrowSpeed attribute" or "client visual displacement",
+                impactMeaning = "unknown; projectile observation is not damage",
+                kind = "knife",
+                serverTime = workspace:GetServerTimeNow(),
+                pingMs = track.pingMs,
+                latencyMs = track.spawnDelayMs,
+                speed = resolvedSpeed,
+                rawSpeed = track.rawSpeed,
+                samples = #track.speeds,
+                reason = reason,
+                targetUserId = track.targetUserId,
+                targetName = track.targetName,
+                targetState = analysis.initialState,
+                targetJumped = analysis.jumped,
+                targetTrajectory = track.targetTrajectory,
+                observedDisplacement = analysis.displacement,
+                constantVelocityResidual = analysis.constantVelocityResidual,
+                horizontalLeadSeconds = analysis.horizontalLeadSeconds,
+                verticalLeadSeconds = analysis.verticalLeadSeconds,
+                pingBucket = analysis.pingBucket,
+                bestMotionModel = analysis.bestMotionModel,
+                motionModelErrors = analysis.motionModelErrors,
+                evaluationSeconds = analysis.evaluationSeconds,
+            })
+        end
+        stopKnifeSamplerIfIdle()
+    end
+
+    local function ensureKnifeSampler(): ()
+        if featureConnections.MM2TrajectorySampler then
+            return
+        end
+        featureConnections.MM2TrajectorySampler = TaskManager:Connect(function(
+            _deltaTime: number
+        ): ()
+            local now: number = os.clock()
+            local completed: {Instance} = {}
+            for projectile: Instance, track: KnifeTrack in pairs(runtime.tracks) do
+                if not projectile.Parent or now - track.startedAt >= 1.25 then
+                    table.insert(completed, projectile)
+                    continue
+                end
+                local position: Vector3? = projectilePosition(projectile)
+                if position and track.previousPosition and track.previousAt then
+                    local sampleDelta: number = now - track.previousAt
+                    local displacement: number = (position - track.previousPosition).Magnitude
+                    if sampleDelta >= 1 / 240 and displacement >= 0.01 then
+                        local speed: number = displacement / sampleDelta
+                        if speed >= 24 and speed <= 300 then
+                            table.insert(track.speeds, speed)
+                        end
+                    end
+                end
+                if position then
+                    track.previousPosition = position
+                    track.previousAt = now
+                end
+                if track.targetUserId
+                    and now - track.lastTrajectorySampleAt >= 1 / 30 then
+                    local target: Player? = Players:GetPlayerByUserId(
+                        track.targetUserId
+                    )
+                    local point: TrajectoryPoint? = target
+                        and target.Character == track.targetCharacter
+                        and captureTrajectoryPoint(
+                            target,
+                            track.startedAt - track.spawnDelayMs / 1000,
+                            track.pingMs
+                        )
+                        or nil
+                    if point and #track.targetTrajectory < 120 then
+                        table.insert(track.targetTrajectory, point)
+                    end
+                    track.lastTrajectorySampleAt = now
+                end
+            end
+            for _, projectile: Instance in ipairs(completed) do
+                finishKnifeTrack(projectile, "sample-window-complete")
+            end
+        end)
+    end
+
+    local function resolveKnifeProjectile(projectile: Instance): ()
+        local sessionId = runtime.sessionId
+        task.spawn(function(): ()
+            local linkedHandle: Instance? = nil
+            for _attempt: number = 1, 20 do
+                if not runtime.active or runtime.sessionId ~= sessionId or not projectile.Parent then
+                    return
+                end
+                local handleLink: Instance? = projectile:FindFirstChild(
+                    "HandleLink",
+                    true
+                )
+                if handleLink and handleLink:IsA("ObjectValue") and handleLink.Value then
+                    linkedHandle = handleLink.Value
+                    break
+                end
+                task.wait(0.05)
+            end
+            if not linkedHandle then
+                return
+            end
+            if runtime.observedProjectiles[projectile] then return end
+            local now: number = os.clock()
+            compactPending(runtime.pendingKnives, now)
+            local selectedIndex: number? = nil
+            local authored, native = {}, {}
+            for index: number, pending: any in ipairs(runtime.pendingKnives) do
+                local handle: Instance? = pending.tool:FindFirstChild("Handle")
+                if linkedHandle == handle or linkedHandle:IsDescendantOf(pending.tool) then
+                    table.insert(pending.attemptCounted and authored or native, index)
+                end
+            end
+            local eligible = #authored > 0 and authored or native
+            if #eligible > 1 then
+                runtime.ambiguousKnifeSignals += 1
+                setWeaponStatus("Knife observation", "Ambiguous projectile ignored (no speed/timing update)")
+                return
+            end
+            selectedIndex = eligible[1]
+            if not selectedIndex or runtime.tracks[projectile] then return end
+            runtime.observedProjectiles[projectile] = true
+            local pending: PendingKnife = table.remove(
+                runtime.pendingKnives,
+                selectedIndex
+            )
+            local spawnDelayMs: number = math.max(
+                0,
+                (now - pending.activatedAt) * 1000
+            )
+            addSample(runtime.knifeSpawnDelay, spawnDelayMs)
+            local rawSpeed: number? = tonumber(projectile:GetAttribute("ThrowSpeed"))
+            if rawSpeed and (not predictionMath.finite(rawSpeed) or rawSpeed < 24 or rawSpeed > 300) then
+                rawSpeed = nil
+            end
+            if not pending.attemptCounted then
+                runtime.sessionKnifeAttempts += 1
+                emitShot("authoringShot", {shotId = pending.shotId, kind = "knife",
+                    toolName = pending.tool.Name, originPos = pending.origin,
+                    aimPos = pending.requestedAim, targetName = pending.targetName,
+                    eventSource = "observed-projectile"})
+            end
+            setWeaponStatus("Knife observation", "Projectile observed; impact unknown")
+            emitShot("shotConfirmation", {shotId = pending.shotId, kind = "knife",
+                evidence = "projectile-observed", targetName = pending.targetName})
+            local track: KnifeTrack = {
+                shotId = pending.shotId,
+                startedAt = now,
+                previousAt = now,
+                previousPosition = projectilePosition(projectile),
+                settings = pending.settings,
+                targetCharacter = pending.targetCharacter,
+                speeds = {},
+                rawSpeed = rawSpeed,
+                spawnDelayMs = spawnDelayMs,
+                pingMs = pending.pingMs,
+                targetUserId = pending.targetUserId,
+                targetName = pending.targetName,
+                targetTrajectory = pending.targetTrajectory,
+                lastTrajectorySampleAt = now,
+                destroyConnection = nil,
+            }
+            runtime.tracks[projectile] = track
+            if rawSpeed and not mm2Settings.calibrationDetails then
+                finishKnifeTrack(projectile, "ThrowSpeed-attribute-only; no visual sampling")
+                return
+            end
+            track.destroyConnection = projectile.Destroying:Connect(function(): ()
+                finishKnifeTrack(projectile, "destroyed")
+            end)
+            ensureKnifeSampler()
+        end)
+    end
+
+    local function isGun(tool: Tool): boolean
+        return tool.Name == "Gun"
+            or CollectionService:HasTag(tool, "Weapon_Gun")
+            or tool:FindFirstChild("Shoot") ~= nil
+    end
+
+    local function isKnife(tool: Tool): boolean
+        return tool.Name == "Knife"
+            or CollectionService:HasTag(tool, "Weapon_Knife")
+            or (tool:FindFirstChild("Events") ~= nil
+                and tool.Events:FindFirstChild("KnifeThrown") ~= nil)
+    end
+
+    local function observeTool(tool: Tool): ()
+        if runtime.observedTools[tool] then
+            return
+        end
+        local gun: boolean = isGun(tool)
+        local knife: boolean = isKnife(tool)
+        if not gun and not knife then
+            return
+        end
+        runtime.observedTools[tool] = true
+        trackConnection(tool.Activated:Connect(function(): ()
+            if not runtime.active then
+                return
+            end
+            local now: number = os.clock()
+            local requestedAim: Vector3? = getRequestedAim()
+            local pingMs: number = getPingMilliseconds()
+            local target: Player? = gun
+                    and findMurderer()
+                or findKnifeAnalysisTarget(requestedAim)
+            local targetTrajectory: {TrajectoryPoint} = {}
+            if target then
+                local initialPoint: TrajectoryPoint? = captureTrajectoryPoint(
+                    target,
+                    now,
+                    pingMs
+                )
+                if initialPoint then
+                    table.insert(targetTrajectory, initialPoint)
+                end
+            end
+            local shotId: string = nextShotId()
+            appendEvent({shotId = shotId, kind = gun and "gun" or "knifeActivation",
+                phase = gun and "attempt" or "activation",
+                serverTime = workspace:GetServerTimeNow(), pingMs = pingMs,
+                targetName = target and target.Name or nil})
+            emitShot("authoringShot", {shotId = shotId, kind = gun and "gun" or "knifeActivation",
+                toolName = tool.Name, originPos = toolOrigin(tool), aimPos = requestedAim,
+                targetName = target and target.Name or nil, eventSource = "tool-activation"})
+            if gun then
+                runtime.sessionGunAttempts += 1
+                table.insert(runtime.pendingGuns, {
+                    shotId = shotId,
+                    attemptCounted = gun,
+                    kind = "gun",
+                    targetCharacter = target and target.Character,
+                    tool = tool,
+                    activatedAt = now,
+                    origin = toolOrigin(tool),
+                    requestedAim = requestedAim,
+                    pingMs = pingMs,
+                    targetUserId = target and target.UserId or nil,
+                    targetName = target and target.Name or nil,
+                    targetTrajectory = targetTrajectory,
+                    lastTrajectorySampleAt = now,
+                })
+                compactPending(runtime.pendingGuns, now)
+            elseif knife then
+                runtime.rawKnifeActivations += 1
+                table.insert(runtime.pendingKnives, {
+                    shotId = shotId,
+                    attemptCounted = gun,
+                    kind = "knife",
+                    targetCharacter = target and target.Character,
+                    tool = tool,
+                    activatedAt = now,
+                    origin = toolOrigin(tool),
+                    requestedAim = requestedAim,
+                    pingMs = pingMs,
+                    targetUserId = target and target.UserId or nil,
+                    targetName = target and target.Name or nil,
+                    targetTrajectory = targetTrajectory,
+                    lastTrajectorySampleAt = now,
+                })
+                compactPending(runtime.pendingKnives, now)
+            end
+            ensureTrajectorySampler()
+        end))
+    end
+
+    local function observeContainer(container: Instance?): ()
+        if not container then
+            return
+        end
+        for _, child: Instance in ipairs(container:GetChildren()) do
+            if child:IsA("Tool") then
+                observeTool(child)
+            end
+        end
+        trackConnection(container.ChildAdded:Connect(function(child: Instance): ()
+            if child:IsA("Tool") then
+                observeTool(child)
+            end
+        end))
+    end
+
+    local function installGunConfirmation(): ()
+        task.spawn(function(): ()
+            local clientServices: Instance? = nil
+            local weaponModule: Instance? = nil
+            for _attempt: number = 1, 20 do
+                if not runtime.active then
+                    return
+                end
+                clientServices = game:GetService("ReplicatedStorage")
+                    :FindFirstChild("ClientServices")
+                weaponModule = clientServices
+                    and clientServices:FindFirstChild("WeaponService")
+                if weaponModule then
+                    break
+                end
+                task.wait(0.25)
+            end
+            if not weaponModule then
+                warn(trajectoryLogPrefix .. " WeaponService did not appear; Knife remains active.")
+                return
+            end
+            local loaded: boolean, weaponService: any = pcall(
+                state.requireModule,
+                weaponModule
+            )
+            if not loaded or type(weaponService) ~= "table" then
+                warn(
+                    trajectoryLogPrefix .. " Could not observe WeaponService: "
+                        .. tostring(weaponService)
+                )
+                return
+            end
+            local connected: boolean, connection: any = pcall(function(): any
+                return weaponService.GunFired.OnClientEvent:Connect(handleGunFired)
+            end)
+            if connected and connection then
+                runtime.gunObserverConnected = true
+                trackConnection(connection :: RBXScriptConnection)
+                print(trajectoryLogPrefix .. " GunFired confirmation connected.")
+            else
+                warn(
+                    trajectoryLogPrefix .. " GunFired no es compatible: "
+                        .. tostring(connection)
+                )
+            end
+        end)
+    end
+
+    controller = {} :: Controller
+
+    function controller:start(): ()
+        if runtime.active then
+            return
+        end
+
+        if not (GAME_CHECK.MM2Active or game.PlaceId == Module.PlaceId) then
+            warn(trajectoryLogPrefix .. " Inicio omitido fuera de MM2.")
+            return
+        end
+        runtime.active = true
+        runtime.startedAt = os.clock()
+        runtime.startedAtUnix = os.time()
+        loadSavedHistory()
+        observeContainer(LocalPlayer:FindFirstChildOfClass("Backpack"))
+        observeContainer(LocalPlayer.Character)
+        trackConnection(LocalPlayer.CharacterAdded:Connect(function(
+            character: Model
+        ): ()
+            observeContainer(character)
+        end))
+        trackConnection(
+            CollectionService:GetInstanceAddedSignal("ThrowingKnife"):Connect(
+                resolveKnifeProjectile
+            )
+        )
+        installGunConfirmation()
+        print(trajectoryLogPrefix .. " Passive calibration started in the background.")
+    end
+
+    local function clearHistory(): ()
+        runtime.gunAcceptance = newStats()
+        runtime.knifeSpeed = newStats()
+        runtime.knifeSpawnDelay = newStats()
+        runtime.motionBuckets = {}
+        runtime.events = {}
+        runtime.freshGunLatency = {}
+        runtime.freshKnifeSpeed = {}
+        estimatesCache = nil
+        estimatesAt = -math.huge
+        runtime.sessionGunAttempts = 0
+        runtime.sessionGunConfirmed = 0
+        runtime.sessionKnifeAttempts = 0
+        runtime.sessionKnifeConfirmed = 0
+        runtime.rawKnifeActivations = 0
+        runtime.unmatchedGunSignals = 0
+        runtime.ambiguousGunSignals = 0
+        runtime.ambiguousKnifeSignals = 0
+        runtime.duplicateGunSignals = 0
+        runtime.timedOutAttempts = 0
+        runtime.sessionStabAttempts = 0
+        runtime.startedAt = os.clock()
+        runtime.startedAtUnix = os.time()
+        for _, track in pairs(runtime.tracks) do
+            if track.destroyConnection then track.destroyConnection:Disconnect() end
+        end
+        table.clear(runtime.tracks)
+        disconnectFeatureConnection("MM2TrajectorySampler")
+        if runtime.trajectorySampler then runtime.trajectorySampler:Disconnect(); runtime.trajectorySampler = nil end
+        runtime.sessionId = HttpService:GenerateGUID(false)
+        runtime.shotSequence = 0
+        table.clear(runtime.pendingGuns)
+        table.clear(runtime.pendingKnives)
+    end
+
+    function controller:save(reason: string?): boolean
+        return saveSnapshot(reason or "manual")
+    end
+
+    function controller:reset(): ()
+        clearHistory()
+        runtime.dirty = false
+        if type(environment.delfile) == "function" then
+            pcall(environment.delfile, OUTPUT_PATH)
+        elseif type(environment.writefile) == "function" then
+            pcall(environment.writefile, OUTPUT_PATH, "{}")
+        end
+        print(trajectoryLogPrefix .. " History cleared.")
+    end
+
+    function controller:resetTiming(): ()
+        table.clear(runtime.freshGunLatency)
+        table.clear(runtime.freshKnifeSpeed)
+        estimatesCache = nil
+        estimatesAt = -math.huge
+    end
+
+    function controller:getEstimates(): Estimates
+        return estimates()
+    end
+
+    function controller:noteAuthoredShot(info: any): ()
+        if not runtime.active or type(info) ~= "table" then
+            return
+        end
+        local kind: string = tostring(info.kind or "gun")
+        local shotId: string = nextShotId()
+        if kind ~= "stab" then
+            appendEvent({kind = kind, shotId = shotId, phase = "authored",
+                serverTime = workspace:GetServerTimeNow(), pingMs = getPingMilliseconds(),
+                settings = info.settings, targetName = info.target and info.target.Name or nil,
+                origin = info.originPos and vectorArray(info.originPos) or nil,
+                aim = info.aimPos and vectorArray(info.aimPos) or nil})
+        end
+        local now: number = os.clock()
+        if predictionMath.finite(info.sentAt) and info.sentAt <= now and now - info.sentAt < 1 then
+            now = info.sentAt
+        end
+        local pingMs: number = getPingMilliseconds()
+        local target: Player? =
+            info.target and info.target.Character ~= nil and info.target or nil
+        local targetTrajectory: {TrajectoryPoint} = {}
+        if target then
+            local initialPoint: TrajectoryPoint? = captureTrajectoryPoint(
+                target,
+                now,
+                pingMs
+            )
+            if initialPoint then
+                table.insert(targetTrajectory, initialPoint)
+            end
+        end
+        if kind == "stab" then
+            runtime.sessionStabAttempts += 1
+            local targetRoot: BasePart? = getTargetRoot(target)
+            local localRoot: BasePart? =
+                LocalPlayer.Character
+                and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+                :: BasePart?
+            local distance: number? = targetRoot
+                and localRoot
+                and (targetRoot.Position - localRoot.Position).Magnitude
+            appendEvent({
+                kind = "stab", shotId = shotId, phase = "attempt",
+                serverTime = workspace:GetServerTimeNow(),
+                pingMs = pingMs,
+                distance = distance and math.floor(distance * 10 + 0.5) / 10 or nil,
+                targetUserId = target and target.UserId or nil,
+                targetName = target and target.Name or nil,
+                targetState = targetTrajectory[1]
+                    and targetTrajectory[1].humanoidState
+                    or nil,
+                targetTrajectory = #targetTrajectory > 0 and targetTrajectory or nil,
+            })
+        else
+            local isGun: boolean = kind ~= "knife"
+            local authoredTool: Tool? = nil
+            if typeof(info.tool) == "Instance" and info.tool:IsA("Tool") then
+                authoredTool = info.tool :: Tool
+            end
+
+            if isGun or authoredTool ~= nil then
+                if isGun then
+                    runtime.sessionGunAttempts += 1
+                else
+                    runtime.sessionKnifeAttempts += 1
+                end
+                local queue: {any} =
+                    isGun and runtime.pendingGuns or runtime.pendingKnives
+                table.insert(queue, {
+                    shotId = shotId,
+                    attemptCounted = true,
+                    authored = true,
+                    kind = kind,
+                    settings = info.settings,
+                    targetCharacter = target and target.Character,
+                    tool = authoredTool,
+                    activatedAt = now,
+                    origin = info.originPos,
+                    requestedAim = info.aimPos,
+                    pingMs = pingMs,
+                    targetUserId = target and target.UserId or nil,
+                    targetName = target and target.Name or nil,
+                    targetTrajectory = targetTrajectory,
+                    lastTrajectorySampleAt = now,
+                })
+                compactPending(queue, now)
+                ensureTrajectorySampler()
+            end
+        end
+
+        if type(state.emitGameBridgeEvent) == "function" then
+            emitShot("authoringShot", {
+                shotId = shotId,
+                eventSource = "authored",
+                settings = info.settings,
+                kind = kind,
+                toolName = tostring(info.toolName or (kind == "knife" and "Knife" or "Gun")),
+                originPos = info.originPos,
+                aimPos = info.aimPos,
+                targetName = target and target.Name or nil,
+                silent = info.silent == true,
+                variant = info.variant,
+                offset = info.offset,
+            })
+        end
+    end
+
+    function controller:status(): string
+        local current: any = estimates()
+        return string.format(
+            "MM2 %s | Gun observer %s | gun attempts %d, matched %d | knife attempts %d, projectile-speed records %d (NOT hits) | ambiguous G/K %d/%d | expired %d | fresh timing %d @ %.1fms | fresh knife %d @ %.1f studs/s | adaptive %s | details %s | autosave %s | last save %.1fms / %d bytes | persistence %s",
+            runtime.buildStamp, tostring(runtime.gunObserverConnected), runtime.sessionGunAttempts,
+            runtime.sessionGunConfirmed, runtime.sessionKnifeAttempts, runtime.sessionKnifeConfirmed,
+            runtime.ambiguousGunSignals, runtime.ambiguousKnifeSignals, runtime.timedOutAttempts,
+            current.liveGunSamples, current.liveGunAcceptanceMs or 0,
+            current.liveKnifeSamples, current.liveKnifeSpeed or 0, tostring(mm2Settings.adaptiveGunTiming), tostring(mm2Settings.calibrationDetails),
+            tostring(mm2Settings.calibrationAutosave), runtime.lastSaveMs, runtime.lastSaveBytes,
+            runtime.persistenceBlocked and "BLOCKED (backup/read failure)" or "ready")
+    end
+
+    function controller:destroy(): ()
+        if not runtime.active then
+            return
+        end
+        if runtime.dirty then
+            saveSnapshot("module-destroy")
+        end
+        runtime.active = false
+        disconnectFeatureConnection("MM2TrajectorySampler")
+        if runtime.trajectorySampler then
+            runtime.trajectorySampler:Disconnect()
+            runtime.trajectorySampler = nil
+        end
+        for projectile: Instance, track: KnifeTrack in pairs(runtime.tracks) do
+            if track.destroyConnection then
+                track.destroyConnection:Disconnect()
+            end
+            runtime.tracks[projectile] = nil
+        end
+        for _, connection: RBXScriptConnection in ipairs(runtime.connections) do
+            connection:Disconnect()
+        end
+        table.clear(runtime.connections)
+        table.clear(runtime.pendingGuns)
+        table.clear(runtime.pendingKnives)
+    end
+
+    return controller
+end
+
+trajectoryCalibration = createTrajectoryCalibration()
+state.mm2TrajectoryCalibration = trajectoryCalibration
+trajectoryCalibration:start()
+
+pcall(function(): ()
+    if type((game :: any).BindToClose) == "function" then
+        game:BindToClose(function(): ()
+            if type(trajectoryCalibration.save) == "function" then
+                pcall(trajectoryCalibration.save, trajectoryCalibration, "close")
+            end
+        end)
+    end
+end)
+
+local weaponServiceModule: any = nil
+type PendingShot = {
+    target: Player,
+    targetCharacter: Model?,
+    gun: Tool,
+    origin: Vector3,
+    aimPosition: Vector3?,
+    healthBefore: number,
+    targetedMurderer: boolean,
+    queuedAt: number,
+
+    aimRootOffset: Vector3?,
+    leadSeconds: number?,
+    leadSensitivity: number?,
+    velocity: Vector3?,
+    trajectory: {{t: number, p: Vector3}}?,
+
+    silentSpawn: string?,
+    predictionEpoch: number?,
+    burstCount: number?,
+    learningEligible: boolean?,
+}
+
+type GunPrediction = {
+    snapshot: any,
+    aimRootOffset: Vector3?,
+    targetPosition: Vector3?,
+    endpoint: Vector3?,
+    velocity: Vector3?,
+    errorRadius: number?,
+    leadSeconds: number?,
+    leadSensitivity: number?,
+}
+
+state.mm2ShotFeedback = {
+
+    shootActive = false,
+    pending = nil :: PendingShot?,
+    pendingShots = {} :: {any},
+    lastAccepted = nil :: PendingShot?,
+
+    spawnStats = {} :: {[string]: {shots: number, hits: number, misses: number}},
+    token = 0,
+    defaultDuration = 5,
+    gunFiredConnected = false,
+    theme = {
+        Background = Color3.fromRGB(14, 14, 18),
+        Accent = Color3.fromRGB(205, 82, 42),
+        Outline = Color3.fromRGB(220, 115, 58),
+        Text = Color3.fromRGB(255, 232, 208),
+    },
+    resolve = function(_candidate: PendingShot, _directHit: boolean): () end,
+    showMiss = function(_gun: Tool, _candidate: PendingShot): () end,
+}
+state.mm2ShotFeedback.root = create("Frame", {
+    Parent = ScreenGui,
+    Name = "MM2ShotCooldown",
+    AnchorPoint = Vector2.new(0.5, 0.5),
+    BackgroundColor3 = state.mm2ShotFeedback.theme.Background,
+    BackgroundTransparency = 0.38,
+    BorderSizePixel = 0,
+    ClipsDescendants = true,
+    Position = UDim2.fromScale(0.5, 0.62),
+    Size = UDim2.fromOffset(320, 36),
+    Visible = false,
+    ZIndex = 240,
+}) :: Frame
+create("UICorner", {
+    Parent = state.mm2ShotFeedback.root,
+    CornerRadius = UDim.new(0, 7),
+})
+create("UIStroke", {
+    Parent = state.mm2ShotFeedback.root,
+    Color = state.mm2ShotFeedback.theme.Outline,
+    Transparency = 0.35,
+    Thickness = 1,
+})
+state.mm2ShotFeedback.fill = create("Frame", {
+    Parent = state.mm2ShotFeedback.root,
+    Name = "Fill",
+    BackgroundColor3 = state.mm2ShotFeedback.theme.Accent,
+    BackgroundTransparency = 0.46,
+    BorderSizePixel = 0,
+    Size = UDim2.fromScale(0, 1),
+    ZIndex = 241,
+}) :: Frame
+create("UICorner", {
+    Parent = state.mm2ShotFeedback.fill,
+    CornerRadius = UDim.new(0, 7),
+})
+state.mm2ShotFeedback.text = create("TextLabel", {
+    TextTruncate = Enum.TextTruncate.AtEnd,
+    ClipsDescendants = true,
+    Parent = state.mm2ShotFeedback.root,
+    Name = "Countdown",
+    BackgroundTransparency = 1,
+    Font = Enum.Font.GothamBold,
+    Size = UDim2.fromScale(1, 1),
+    Text = "",
+    TextColor3 = state.mm2ShotFeedback.theme.Text,
+    TextSize = 13,
+    ZIndex = 242,
+}) :: TextLabel
+
+state.mm2ShotFeedback.hide = function(): ()
+    disconnectFeatureConnection("MM2ShootCooldown")
+    state.mm2ShotFeedback.token += 1
+    state.mm2ShotFeedback.root.Visible = false
+    state.mm2ShotFeedback.fill.Size = UDim2.fromScale(0, 1)
+    state.mm2ShotFeedback.text.Text = ""
+end
+
+state.mm2ShotFeedback.getDuration = function(gun: Tool?): number
+    if gun then
+        for _, attributeName: string in ipairs({
+            "Cooldown",
+            "ReloadTime",
+            "ShotCooldown",
+        }) do
+            local value: number? = tonumber(gun:GetAttribute(attributeName))
+            if value and value >= 0.5 and value <= 15 then
+                return value
+            end
+        end
+    end
+    return state.mm2ShotFeedback.defaultDuration
+end
+
+local leadTracking: PendingShot? = nil
+
+local function stopLeadTracking(): ()
+    leadTracking = nil
+    disconnectFeatureConnection("MM2LeadTuner")
+end
+
+local function startLeadTracking(candidate: PendingShot): ()
+    if not mm2Settings.autoTuneLead or candidate.learningEligible == false or (candidate.burstCount or 1) > 1 then
+        return
+    end
+    local root: BasePart? = candidate.targetCharacter
+        and candidate.targetCharacter:FindFirstChild("HumanoidRootPart")
+        :: BasePart?
+    if not root or candidate.velocity == nil then
+        return
+    end
+    stopLeadTracking()
+    leadTracking = candidate
+    local samples: {{t: number, p: Vector3}} = {{t = os.clock(), p = root.Position}}
+    candidate.trajectory = samples
+    local elapsed: number = 0
+    featureConnections.MM2LeadTuner = TaskManager:Connect(function(
+        deltaTime: number
+    ): ()
+        if leadTracking ~= candidate then
+            return
+        end
+        if not mm2Settings.autoTuneLead
+            or (candidate.predictionEpoch ~= nil and candidate.predictionEpoch ~= (mm2Settings.predictionEpoch or 0))
+            or (state.mm2ShotFeedback.pending ~= candidate and state.mm2ShotFeedback.lastAccepted ~= candidate) then
+            stopLeadTracking()
+            return
+        end
+        local due: boolean
+        due, elapsed = predictionMath.sampleDue(elapsed, deltaTime, 30)
+        if not due then return end
+        table.insert(samples, {t = os.clock(), p = root.Position})
+        if #samples > 64 then
+            table.remove(samples, 1)
+        end
+    end)
+end
+
+local function tuneFromConfirmedShot(candidate: PendingShot): ()
+    if not mm2Settings.autoTuneLead or candidate.learningEligible == false or not candidate.aimPosition or candidate.silentSpawn
+        or (candidate.burstCount or 1) > 1
+        or (candidate.predictionEpoch ~= nil and candidate.predictionEpoch ~= (mm2Settings.predictionEpoch or 0)) then
+        return
+    end
+    local samples: {{t: number, p: Vector3}}? = candidate.trajectory
+    local velocity: Vector3? = candidate.velocity
+    local leadSeconds: number? = candidate.leadSeconds
+    local leadSensitivity: number? = candidate.leadSensitivity
+    if not samples
+        or #samples < 6
+        or velocity == nil
+        or leadSeconds == nil
+        or leadSensitivity == nil
+        or leadSensitivity < 0.15 then
+        return
+    end
+    local horizontal: Vector3 = Vector3.new(velocity.X, 0, velocity.Z)
+    if horizontal.Magnitude < 8 then
+        return
+    end
+    -- Interpolate between 30 Hz samples instead of quantizing to a frame.
+    local rootAim: Vector3 = candidate.aimPosition - (candidate.aimRootOffset or Vector3.zero)
+    local crossedAt: number?, closestDistance: number = predictionMath.closestCrossing(samples, rootAim)
+    if crossedAt == nil or closestDistance > 1 then return end
+    local leadMeasured: number = crossedAt - candidate.queuedAt
+    if leadMeasured < 0.03 or leadMeasured > 1.2 then
+        return
+    end
+
+    local firstSample: {t: number, p: Vector3} = samples[1]
+    local lastSample: {t: number, p: Vector3} = samples[#samples]
+    local span: number = lastSample.t - firstSample.t
+    if span < 0.05 then
+        return
+    end
+    local sampledVelocity: Vector3 = (lastSample.p - firstSample.p) / span
+    local sampledHorizontal: Vector3 = Vector3.new(
+        sampledVelocity.X,
+        0,
+        sampledVelocity.Z
+    )
+    if sampledHorizontal.Magnitude < 8 then
+        return
+    end
+    if sampledHorizontal.Unit:Dot(horizontal.Unit) < 0.75 then
+        return
+    end
+
+    local residual: number = (leadMeasured - leadSeconds) / leadSensitivity
+    local delta: number = residual * 0.25
+    autoLeadCorrection = math.clamp(
+        autoLeadCorrection + math.clamp(delta, -0.03, 0.03),
+        -GUN_LEAD.maximumAutoCorrection,
+        GUN_LEAD.maximumAutoCorrection
+    )
+end
+
+state.mm2ShotFeedback.queue = function(
+    target: Player?,
+    gun: Tool?,
+    origin: CFrame?,
+    aim: CFrame?,
+    prediction: GunPrediction?,
+    silentVariant: string?
+): ()
+    if not target or not gun or not origin then
+        return
+    end
+
+    local targetCharacter: Model? = target.Character
+    local targetHumanoid: Humanoid? = targetCharacter
+        and targetCharacter:FindFirstChildOfClass("Humanoid")
+        :: Humanoid?
+    local candidate: PendingShot = {
+        target = target,
+        targetCharacter = targetCharacter,
+        gun = gun,
+        tool = gun,
+        requestedAim = aim and aim.Position,
+        activatedAt = os.clock(),
+        silentSpawn = silentVariant,
+        origin = origin.Position,
+        aimPosition = aim and aim.Position,
+        healthBefore = targetHumanoid and targetHumanoid.Health or 0,
+        targetedMurderer = getPlayerRole(target) == "Murderer",
+        queuedAt = os.clock(),
+        leadSeconds = prediction and prediction.leadSeconds or nil,
+        leadSensitivity = prediction and prediction.leadSensitivity or nil,
+        velocity = prediction and prediction.velocity or nil,
+        aimRootOffset = prediction and prediction.aimRootOffset or nil,
+        predictionEpoch = prediction and prediction.snapshot and prediction.snapshot.epoch,
+        burstCount = prediction and prediction.snapshot and prediction.snapshot.burstCount,
+        learningEligible = prediction and prediction.snapshot and prediction.snapshot.learningEligible,
+    }
+    state.mm2ShotFeedback.pending = candidate
+    local queue = state.mm2ShotFeedback.pendingShots
+    table.insert(queue, candidate)
+    while #queue > 12 do
+        local oldest = table.remove(queue, 1)
+        state.mm2ShotFeedback.resolve(oldest, false, false)
+    end
+    if silentVariant then
+        local stats = state.mm2ShotFeedback.spawnStats[silentVariant]
+            or {shots = 0, hits = 0, confirmed = 0, unconfirmed = 0}
+        stats.shots += 1
+        state.mm2ShotFeedback.spawnStats[silentVariant] = stats
+    end
+    startLeadTracking(candidate)
+    task.delay(2.5, function(): ()
+        if not state.mm2ShotFeedback.shootActive then return end
+        local index = table.find(queue, candidate)
+        if index then table.remove(queue, index) end
+        if state.mm2ShotFeedback.pending == candidate then state.mm2ShotFeedback.pending = nil end
+        if not candidate.resolved then state.mm2ShotFeedback.resolve(candidate, false, false) end
+    end)
+end
+
+state.mm2ShotFeedback.showMiss = function(
+    gun: Tool,
+    candidate: PendingShot
+): ()
+    state.mm2ShotFeedback.hide()
+    local duration: number = state.mm2ShotFeedback.getDuration(gun)
+    local cooldownEndsAt: number = candidate.queuedAt + duration
+    local initialRemaining: number = cooldownEndsAt - os.clock()
+    if initialRemaining <= 0 then
+        return
+    end
+
+    disconnectFeatureConnection("MM2ShootCooldown")
+    state.mm2ShotFeedback.token += 1
+    local token: number = state.mm2ShotFeedback.token
+    state.mm2ShotFeedback.root.Visible = true
+
+    local function updateCountdown(): ()
+        if token ~= state.mm2ShotFeedback.token then
+            disconnectFeatureConnection("MM2ShootCooldown")
+            state.mm2ShotFeedback.root.Visible = false
+            return
+        end
+
+        local remaining: number = math.max(0, cooldownEndsAt - os.clock())
+        if remaining <= 0 then
+            state.mm2ShotFeedback.hide()
+            return
+        end
+
+        local progress: number = math.clamp(remaining / duration, 0, 1)
+        state.mm2ShotFeedback.fill.Size = UDim2.fromScale(progress, 1)
+        state.mm2ShotFeedback.text.Text =
+            string.format("Miss cooldown - %.1fs", remaining)
+    end
+
+    updateCountdown()
+    featureConnections.MM2ShootCooldown =
+        TaskManager:Connect(updateCountdown)
+end
+
+state.mm2ShotFeedback.toPosition = function(value: any): Vector3?
+    if typeof(value) == "Vector3" then
+        return value
+    end
+    if typeof(value) == "CFrame" then
+        return value.Position
+    end
+    if typeof(value) == "Instance" then
+        if value:IsA("Attachment") then
+            return value.WorldPosition
+        end
+        if value:IsA("BasePart") then
+            return value.Position
+        end
+    end
+    return nil
+end
+
+state.mm2ShotFeedback.resolve = function(candidate: any, directHit: boolean, observed: boolean?): ()
+    if candidate.resolved then return end
+    candidate.resolved = true
+    local stats = candidate.silentSpawn and state.mm2ShotFeedback.spawnStats[candidate.silentSpawn]
+    if stats then
+        if observed then stats.confirmed += 1 else stats.unconfirmed += 1 end
+        if observed and directHit then stats.hits += 1 end
+    end
+    if observed and directHit then
+        -- A disappearing player, role change or generic health change is NOT evidence.
+        tuneFromConfirmedShot(candidate)
+        state.mm2ShotFeedback.hide()
+    end
+    -- No synthetic 'miss cooldown' for an absent/ambiguous acknowledgement.
+end
+
+state.mm2ShotFeedback.handleGunFired = function(firedGun: any, eventOrigin: any, endpoint: any, hitPart: any): ()
+    if not state.mm2ShotFeedback.shootActive then return end
+    local eventTool: Tool? = nil
+    if typeof(firedGun) == "Instance" then
+        eventTool = firedGun:IsA("Tool") and firedGun or firedGun:FindFirstAncestorOfClass("Tool")
+    end
+    local candidate: any = predictionMath.matchAttempt(state.mm2ShotFeedback.pendingShots,
+        eventTool, state.mm2ShotFeedback.toPosition(eventOrigin),
+        state.mm2ShotFeedback.toPosition(endpoint), os.clock())
+    if not candidate then return end
+    candidate.confirmedAt = os.clock()
+    if state.mm2ShotFeedback.pending == candidate then state.mm2ShotFeedback.pending = nil end
+    local targetCharacter = candidate.targetCharacter
+    local hitTarget: boolean = typeof(hitPart) == "Instance" and hitPart.Name ~= "WurstHitbox" and targetCharacter ~= nil
+        and hitPart:IsDescendantOf(targetCharacter)
+    state.mm2ShotFeedback.resolve(candidate, hitTarget, true)
+end
+
+type KnifeSettings = {
+    aura: boolean,
+    auraRange: number,
+}
+
+local function getWeaponServiceModule(): any
+    if type(weaponServiceModule) == "table" then
+        return weaponServiceModule
+    end
+
+    local loaded: boolean, result: any = pcall(function(): any
+        return state.requireModule(
+            game:GetService("ReplicatedStorage")
+                :WaitForChild("ClientServices", 5)
+                :WaitForChild("WeaponService", 5)
+        )
+    end)
+    if loaded and type(result) == "table" then
+        weaponServiceModule = result
+        return result
+    end
+    return nil
+end
+
+local function connectGunFiredSignal(weaponService: any): boolean
+    if featureConnections.MM2GunFired then
+        state.mm2ShotFeedback.gunFiredConnected = true
+        return true
+    end
+
+    local gunFired: any = weaponService.GunFired
+    local connected: boolean, connection: any = pcall(function(): any
+        return gunFired.OnClientEvent:Connect(
+            state.mm2ShotFeedback.handleGunFired
+        )
+    end)
+    if connected and connection then
+        featureConnections.MM2GunFired = connection
+        state.mm2ShotFeedback.gunFiredConnected = true
+        return true
+    end
+    state.mm2ShotFeedback.gunFiredConnected = false
+    return false
+end
+
+local function mm2RoleProvider(player: Player): string?
+    if roundLifecycleActive == false then
+        return nil
+    end
+    return getPlayerRole(player)
+end
+
+local function mm2TargetProvider(): any
+    if not hasActiveRoundRoles() then
+        return nil
+    end
+    local localRole: string? = getPlayerRole(LocalPlayer)
+    local target: Player? = nil
+    local source: string = "MM2 role priority"
+    if localRole == "Sheriff" or localRole == "Hero" then
+        target = findMurderer()
+        source = "Sheriff priority · Murderer"
+    elseif localRole == "Murderer" then
+        target = findSheriff()
+        source = target and "Murderer priority · Sheriff/Hero" or "Murderer priority"
+        if not target then
+            for _, player: Player in ipairs(Players:GetPlayers()) do
+                if player ~= LocalPlayer
+                    and isPlayerAlive(player)
+                    and not isProtectedTarget(player) then
+                    target = player
+                    break
+                end
+            end
+        end
+    else
+        target = findMurderer()
+        source = "Threat priority · Murderer"
+    end
+    if state.mm2ShotFeedback then
+        local pending: any = state.mm2ShotFeedback.pending
+            or state.mm2ShotFeedback.lastAccepted
+        local pendingRole: string? = pending and pending.target
+            and getPlayerRole(pending.target)
+            or nil
+        local preservesRolePriority: boolean = localRole ~= "Sheriff"
+            and localRole ~= "Hero"
+            or pendingRole == "Murderer"
+        local selectedRole: string? = target and getPlayerRole(target) or nil
+        if localRole == "Murderer"
+            and (selectedRole == "Sheriff" or selectedRole == "Hero") then
+            preservesRolePriority = pendingRole == "Sheriff" or pendingRole == "Hero"
+        end
+        if pending
+            and pending.target
+            and isPlayerAlive(pending.target)
+            and preservesRolePriority then
+            target = pending.target
+            source = "Recent shot target"
+        end
+    end
+    if not target then
+        return nil
+    end
+    local role: string? = getPlayerRole(target)
+    return {
+        player = target,
+        role = role,
+        source = source,
+        accent = role == "Murderer"
+            and Theme.negative
+            or ((role == "Sheriff" or role == "Hero")
+                and Theme.accent
+                or Theme.positive),
+    }
+end
+
+state.gameRoleProvider = mm2RoleProvider
+state.gameTargetProvider = mm2TargetProvider
+moduleCleanup = function(): ()
+    if state.gameRoleProvider == mm2RoleProvider then
+        state.gameRoleProvider = nil
+    end
+    if state.gameTargetProvider == mm2TargetProvider then
+        state.gameTargetProvider = nil
+    end
+end
+
+local function disconnectGunFiredObserver(): ()
+    disconnectFeatureConnection("MM2GunFired")
+    state.mm2ShotFeedback.gunFiredConnected = false
+end
+
+registerMM2Roles()
+-- One shared monitor, independent of requested prediction Hz. UI rendering stays separate.
+featureConnections.MM2FrameMonitor = TaskManager:Connect(function(dt: number): ()
+    if not predictionMath.finite(dt) or dt <= 0 then return end
+    local previous = networkEstimator.renderSeconds or dt
+    networkEstimator.renderSeconds = previous + (math.min(dt, 1) - previous) * (1 - math.exp(-math.min(dt, 1) / 0.5))
+end, "render")
+local networkElapsed = 0
+featureConnections.MM2NetworkMonitor = TaskManager:Connect(function(dt: number): ()
+    if not predictionMath.finite(dt) or dt <= 0 then return end
+    networkEstimator.frameSeconds += (math.min(dt, 1) - networkEstimator.frameSeconds)
+        * (1 - math.exp(-math.min(dt, 1) / 0.5))
+    local due
+    due, networkElapsed = predictionMath.sampleDue(networkElapsed, dt, 10)
+    if due then getEstimatedLatency(true) end
+end)
+
+state.mm2Core = {
+    settings = mm2Settings,
+    mm2Settings = mm2Settings,
+    knifeControl = predictionMath.newKnifeControl(),
+    setWeaponStatus = setWeaponStatus,
+    weaponStatus = weaponStatus,
+
+    MM2Effects = MM2Effects,
+    GunEffects = GunEffects,
+    TrapEffects = TrapEffects,
+    CoinEffects = CoinEffects,
+    clearEffects = clearEffects,
+    createMM2Marker = createMM2Marker,
+    createMM2Cham = createMM2Cham,
+
+    mm2GameplayRemotes = mm2GameplayRemotes,
+    getRoundData = function(): {[any]: any}
+        return mm2RoundData
+    end,
+    isRoundLifecycleActive = function(): boolean?
+        return roundLifecycleActive
+    end,
+    onRoundRoles = onRoundRoles,
+    onRoundPhase = onRoundPhase,
+    getRoundPhase = function(): string
+        return roundPhase
+    end,
+    roundTimer = roundTimer,
+    findRoundTimerPart = findRoundTimerPart,
+    readRoundTimerPartSeconds = readRoundTimerPartSeconds,
+
+    getPlayerWeapon = getPlayerWeapon,
+    isPlayerAlive = isPlayerAlive,
+    findMM2Role = findMM2Role,
+    playerFromRoundKey = playerFromRoundKey,
+    getRoundRole = getRoundRole,
+    getPlayerRole = getPlayerRole,
+    getPlayerPerk = getPlayerPerk,
+    invalidateRoleCaches = invalidateRoleCaches,
+    roundRolesKnown = roundRolesKnown,
+    hasActiveRoundRoles = hasActiveRoundRoles,
+    findMurderer = findMurderer,
+    findSheriff = findSheriff,
+    isProtectedTarget = isProtectedTarget,
+
+    findMM2Map = findMM2Map,
+    findDroppedGun = findDroppedGun,
+
+    isWeaponPathClear = isWeaponPathClear,
+    getLandingRootY = getLandingRootY,
+    predictionMath = predictionMath,
+    isMotionGrounded = isMotionGrounded,
+    motionSamples = motionSamples,
+    getFilteredVelocity = getFilteredVelocity,
+    getEstimatedLatency = getEstimatedLatency,
+    getNetworkStatus = getNetworkStatus,
+    shouldHoldForNetwork = shouldHoldForNetwork,
+    getGunHorizonSeconds = getGunHorizonSeconds,
+    getGunTurnDiscount = getGunTurnDiscount,
+    getGunTurnRate = getGunTurnRate,
+    getGunLeadSensitivity = getGunLeadSensitivity,
+    getGunLeadStatus = getGunLeadStatus,
+    resetAutoLeadCorrection = resetAutoLeadCorrection,
+    getGunOriginCFrame = getGunOriginCFrame,
+    trajectoryCalibration = trajectoryCalibration,
+
+    getWeaponServiceModule = getWeaponServiceModule,
+    connectGunFiredSignal = connectGunFiredSignal,
+    disconnectGunFiredObserver = disconnectGunFiredObserver,
+}
+
+cleanupMM2Runtime = function()
+
+    if state.gameRoleProvider == mm2RoleProvider then
+        state.gameRoleProvider = nil
+    end
+    if state.gameTargetProvider == mm2TargetProvider then
+        state.gameTargetProvider = nil
+    end
+    trajectoryCalibration:destroy()
+    stopLeadTracking()
+    disconnectGunFiredObserver()
+    state.mm2ShotFeedback.hide()
+    for player: Player, _ in pairs(roleWatchers) do
+        unwatchPlayer(player)
+    end
+    table.clear(roleIndex.roles)
+    for _, connectionName: string in ipairs({
+        "MM2NetworkMonitor",
+        "MM2FrameMonitor",
+        "MM2PlayerDataChanged",
+        "MM2TimerTrackerStart",
+        "MM2TimerTrackerEnd",
+        "MM2RoundPhase",
+        "MM2RoundClock",
+        "MM2RoleWatchAdded",
+        "MM2RoleWatchRemoving",
+        "MM2RoleTagAddedWeapon_Knife",
+        "MM2RoleTagRemovedWeapon_Knife",
+        "MM2RoleTagAddedWeapon_Gun",
+        "MM2RoleTagRemovedWeapon_Gun",
+    }) do
+        disconnectFeatureConnection(connectionName)
+    end
+    state.isProtectedTarget = function(player: Player?): boolean
+        return player == nil or player == LocalPlayer
+    end
+    table.clear(roundRolesListeners)
+    table.clear(roundPhaseListeners)
+    state.mm2Core = nil
+end
+end
+
+function Module.init(runtime: any): any
+    assert(type(runtime) == "table", "MM2 requires a Runtime table")
+    assert(type(runtime.Menu) == "table", "MM2 requires Runtime.Menu")
+    assert(runtime.TaskManager ~= nil, "MM2 requires Runtime.TaskManager")
+    if Module.Initialized then
+        return Module
+    end
+
+    Module.Menu = runtime.Menu
+    Module.Runtime = runtime
+    local success: boolean, buildError: any = pcall(buildMM2Features)
+    if not success then
+        moduleCleanup()
+        error(buildError, 0)
+    end
+    local environment: any = getfenv()
+    if type(environment.cleanupMM2Runtime) == "function" then
+        moduleCleanup = environment.cleanupMM2Runtime
+    end
+    Module.Events = featureConnections
+    Module.Initialized = true
+    return Module
+end
+
+function Module.destroy(): ()
+    if not Module.Initialized then
+        return
+    end
+    Module.Initialized = false
+    moduleCleanup()
+    Module.Events = {}
+    Module.Menu = nil
+    Module.Runtime = nil
+end
+
+return Module

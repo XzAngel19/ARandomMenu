@@ -1,0 +1,2014 @@
+{
+  "reference_snapshot": "43ee19ac7946861c2106822fa9060258e62758de",
+  "files": [
+    {
+      "file": "MM2_Trajectory_Calibration.json",
+      "sha256": "6ac08e73a82e2b8889e793e2184e3ebb9310b36aeb271bf38993de2ce591ce70",
+      "bytes": 121075,
+      "placeId": 142823291,
+      "schema": 4,
+      "buildStamp": "v17-20261014-mm2-controls-calibration"
+    },
+    {
+      "file": "MM2_Trajectory_Calibration.json.before-157df374-7de8-4f0e-84a4-8ce0b0313db2.json",
+      "sha256": "7abb89c96decd71740277d12d6326a2c7bc10c9cd0d4ef0baf697c1305043787",
+      "bytes": 889694,
+      "placeId": 142823291,
+      "schema": 3,
+      "buildStamp": null
+    },
+    {
+      "file": "MM2_Trajectory_Calibration.json.before-2e0b0013-74b2-4ff7-b227-f8ae38237862.json",
+      "sha256": "7abb89c96decd71740277d12d6326a2c7bc10c9cd0d4ef0baf697c1305043787",
+      "bytes": 889694,
+      "placeId": 142823291,
+      "schema": 3,
+      "buildStamp": null
+    },
+    {
+      "file": "MM2_Trajectory_Calibration.json.before-d5c09683-9046-4147-b0ce-2a17f3ed3737.json",
+      "sha256": "7abb89c96decd71740277d12d6326a2c7bc10c9cd0d4ef0baf697c1305043787",
+      "bytes": 889694,
+      "placeId": 142823291,
+      "schema": 3,
+      "buildStamp": null
+    },
+    {
+      "file": "Place_135856908115931_Game_Learning.json",
+      "sha256": "fe20554d1bca37414205e3bec9bfce27be0f8998046da8d7f3952a8e88972a4e",
+      "bytes": 533,
+      "placeId": 135856908115931,
+      "schema": 1,
+      "buildStamp": null
+    },
+    {
+      "file": "Place_142823291_Game_Learning.json",
+      "sha256": "0e847e4796e54fb089b74342a48a0f43ac02bb2bd317e1447200176bd443d7a1",
+      "bytes": 24092,
+      "placeId": 142823291,
+      "schema": 2,
+      "buildStamp": "v17-20261014-mm2-controls-calibration"
+    },
+    {
+      "file": "Place_142823291_Game_Learning.json.before-b70a6301-40a7-44ba-ae2b-f821645a926e.json",
+      "sha256": "4301339b5c2c03be78c5be4d7e8d0aea9faa4aea7534e5a49bb3006aae04ed9a",
+      "bytes": 230467,
+      "placeId": 142823291,
+      "schema": 1,
+      "buildStamp": null
+    },
+    {
+      "file": "Place_92876937625630_Game_Learning.json",
+      "sha256": "7857a7cae68e8db2a2805f2ab8c0965cdd66befc2df3cc1f17bea93a33b26fab",
+      "bytes": 79413,
+      "placeId": 92876937625630,
+      "schema": 1,
+      "buildStamp": null
+    }
+  ],
+  "duplicate_files": [
+    {
+      "file": "MM2_Trajectory_Calibration.json.before-2e0b0013-74b2-4ff7-b227-f8ae38237862.json",
+      "same_as": "MM2_Trajectory_Calibration.json.before-157df374-7de8-4f0e-84a4-8ce0b0313db2.json"
+    },
+    {
+      "file": "MM2_Trajectory_Calibration.json.before-d5c09683-9046-4147-b0ce-2a17f3ed3737.json",
+      "same_as": "MM2_Trajectory_Calibration.json.before-157df374-7de8-4f0e-84a4-8ce0b0313db2.json"
+    }
+  ],
+  "datasets": [
+    {
+      "file": "MM2_Trajectory_Calibration.json",
+      "placeId": 142823291,
+      "session": {
+        "gunConfirmationMeaning": "matched GunFired signal; not necessarily damage or death",
+        "knifeAttempts": 24,
+        "countersScope": "this-session-only",
+        "startedAt": 1792009534,
+        "stabAttempts": 6,
+        "unmatchedGunSignals": 2,
+        "rawKnifeActivations": 11,
+        "ambiguousKnifeSignals": 5,
+        "knifeConfirmed": 10,
+        "telemetryCost": {
+          "previousSaveMs": 7.366769015789032,
+          "previousSaveBytes": 120788
+        },
+        "gunAttempts": 9,
+        "knifeConfirmationMeaning": "observed projectile with valid speed; not an impact",
+        "gunConfirmed": 4,
+        "duplicateGunSignals": 0,
+        "ambiguousGunSignals": 0,
+        "elapsedSeconds": 927.9835415170528,
+        "timedOutAttempts": 19,
+        "correlationPolicy": "unique tool/origin/direction for gun; unique eligible handle attempt for knife; ambiguity never trains"
+      },
+      "settings": {
+        "silentAim": false,
+        "adaptiveGunTiming": false,
+        "wallCheck": true,
+        "leadBias": 0,
+        "motionSampleHz": 120,
+        "automaticSaves": true,
+        "detailedTrajectories": true,
+        "silentSweep": 0.5,
+        "useKnifeSpeedCalibration": true,
+        "autoTuneLead": true,
+        "silentSpawn": "Through"
+      },
+      "events": 83,
+      "points": 188,
+      "phases": {
+        "gun/attempt": 3,
+        "gun/unconfirmed": 5,
+        "gun/authored": 6,
+        "gun/confirmation": 4,
+        "knife/authored": 24,
+        "knifeActivation/activation": 11,
+        "stab/attempt": 6,
+        "knife/unconfirmed": 14,
+        "knife/projectile-observed": 10
+      },
+      "replay": [
+        {
+          "horizon": 0.15,
+          "model": "linear",
+          "windows": 120,
+          "per_trajectory_mean_error_studs": {
+            "count": 13,
+            "mean": 1.1802733628164581,
+            "median": 1.1782216345290135,
+            "p90": 2.447141604081199,
+            "min": 0.21039505479713366,
+            "max": 3.1452160117471872
+          },
+          "horizontal_error_studs": {
+            "count": 13,
+            "mean": 0.5166008129078151,
+            "median": 0.4277984175994758,
+            "p90": 1.2844874958636392,
+            "min": 0.07403941090747562,
+            "max": 1.3100735645623833
+          },
+          "vertical_error_studs": {
+            "count": 13,
+            "mean": 0.7763896228452688,
+            "median": 0.1323895326795663,
+            "p90": 2.444276292435757,
+            "min": 0.0,
+            "max": 2.9666832338835007
+          }
+        },
+        {
+          "horizon": 0.15,
+          "model": "acceleration",
+          "windows": 120,
+          "per_trajectory_mean_error_studs": {
+            "count": 13,
+            "mean": 1.1331536211440152,
+            "median": 1.0369394470787432,
+            "p90": 2.447231501913923,
+            "min": 0.16206396956565416,
+            "max": 3.120723961530089
+          },
+          "horizontal_error_studs": {
+            "count": 13,
+            "mean": 0.46364491820702597,
+            "median": 0.3353667711945332,
+            "p90": 1.0333050799073291,
+            "min": 0.07929298186057171,
+            "max": 1.2925995217907575
+          },
+          "vertical_error_studs": {
+            "count": 13,
+            "mean": 0.7763896228452688,
+            "median": 0.1323895326795663,
+            "p90": 2.444276292435757,
+            "min": 0.0,
+            "max": 2.9666832338835007
+          }
+        },
+        {
+          "horizon": 0.15,
+          "model": "intent25",
+          "windows": 120,
+          "per_trajectory_mean_error_studs": {
+            "count": 13,
+            "mean": 1.0664933945052946,
+            "median": 0.6895140517244618,
+            "p90": 2.4471416252019833,
+            "min": 0.13879405476834766,
+            "max": 3.189006224369582
+          },
+          "horizontal_error_studs": {
+            "count": 13,
+            "mean": 0.38015608993586253,
+            "median": 0.26717147851588485,
+            "p90": 0.6827239770740202,
+            "min": 0.07403933326631838,
+            "max": 1.0281511323100092
+          },
+          "vertical_error_studs": {
+            "count": 13,
+            "mean": 0.7763896228452688,
+            "median": 0.1323895326795663,
+            "p90": 2.444276292435757,
+            "min": 0.0,
+            "max": 2.9666832338835007
+          }
+        },
+        {
+          "horizon": 0.15,
+          "model": "intent50",
+          "windows": 120,
+          "per_trajectory_mean_error_studs": {
+            "count": 13,
+            "mean": 1.0472153562175714,
+            "median": 0.6434369052908966,
+            "p90": 2.4471416463295736,
+            "min": 0.11740165734400741,
+            "max": 3.4195571021240267
+          },
+          "horizontal_error_studs": {
+            "count": 13,
+            "mean": 0.3496985336914631,
+            "median": 0.17939840627006196,
+            "p90": 0.8551596641434039,
+            "min": 0.07403925572685391,
+            "max": 1.0024915064725388
+          },
+          "vertical_error_studs": {
+            "count": 13,
+            "mean": 0.7763896228452688,
+            "median": 0.1323895326795663,
+            "p90": 2.444276292435757,
+            "min": 0.0,
+            "max": 2.9666832338835007
+          }
+        },
+        {
+          "horizon": 0.15,
+          "model": "intent100",
+          "windows": 120,
+          "per_trajectory_mean_error_studs": {
+            "count": 13,
+            "mean": 1.300465432028922,
+            "median": 1.2363820075288567,
+            "p90": 2.447141688605093,
+            "min": 0.24410366188155974,
+            "max": 4.0425065435035075
+          },
+          "horizontal_error_studs": {
+            "count": 13,
+            "mean": 0.6254656139333483,
+            "median": 0.4647031444116042,
+            "p90": 1.5238103789638524,
+            "min": 0.07403910095519871,
+            "max": 1.6289479111537473
+          },
+          "vertical_error_studs": {
+            "count": 13,
+            "mean": 0.7763896228452688,
+            "median": 0.1323895326795663,
+            "p90": 2.444276292435757,
+            "min": 0.0,
+            "max": 2.9666832338835007
+          }
+        },
+        {
+          "horizon": 0.15,
+          "model": "classic-proxy",
+          "windows": 120,
+          "per_trajectory_mean_error_studs": {
+            "count": 13,
+            "mean": 1.130269436867771,
+            "median": 1.032435109032027,
+            "p90": 2.4472314697854998,
+            "min": 0.1620688067623635,
+            "max": 3.1008190275798353
+          },
+          "horizontal_error_studs": {
+            "count": 13,
+            "mean": 0.4608482642535379,
+            "median": 0.3353669483749916,
+            "p90": 1.0287981054333029,
+            "min": 0.07929299078825698,
+            "max": 1.2796904091018917
+          },
+          "vertical_error_studs": {
+            "count": 13,
+            "mean": 0.7750596536505112,
+            "median": 0.13236743291136893,
+            "p90": 2.4442762601196817,
+            "min": 0.0,
+            "max": 2.9498124533797543
+          }
+        },
+        {
+          "horizon": 0.15,
+          "model": "v17-proxy",
+          "windows": 120,
+          "per_trajectory_mean_error_studs": {
+            "count": 13,
+            "mean": 1.1113430978834926,
+            "median": 0.9632745760264713,
+            "p90": 2.4463440430289833,
+            "min": 0.1691157668037997,
+            "max": 3.008376167144372
+          },
+          "horizontal_error_studs": {
+            "count": 13,
+            "mean": 0.45104311945699693,
+            "median": 0.342025348304204,
+            "p90": 0.9592990459424218,
+            "min": 0.07954598754672179,
+            "max": 1.2017266252181797
+          },
+          "vertical_error_studs": {
+            "count": 13,
+            "mean": 0.7646454074882124,
+            "median": 0.12889586729076857,
+            "p90": 2.4433834671845602,
+            "min": 0.0,
+            "max": 2.8562960198778833
+          }
+        },
+        {
+          "horizon": 0.2,
+          "model": "linear",
+          "windows": 108,
+          "per_trajectory_mean_error_studs": {
+            "count": 13,
+            "mean": 2.019801682211871,
+            "median": 1.9560953863259116,
+            "p90": 4.569477008711856,
+            "min": 0.3484403967817639,
+            "max": 5.533933204271333
+          },
+          "horizontal_error_studs": {
+            "count": 13,
+            "mean": 0.7975132868084555,
+            "median": 0.6475708704681806,
+            "p90": 1.9777487335006239,
+            "min": 0.10748675796291937,
+            "max": 2.0798791848760074
+          },
+          "vertical_error_studs": {
+            "count": 13,
+            "mean": 1.4229312828196599,
+            "median": 0.18235289015758127,
+            "p90": 4.566787112437396,
+            "min": 0.0,
+            "max": 5.2597660922231535
+          }
+        },
+        {
+          "horizon": 0.2,
+          "model": "acceleration",
+          "windows": 108,
+          "per_trajectory_mean_error_studs": {
+            "count": 13,
+            "mean": 1.9558040625739053,
+            "median": 1.5225864531439535,
+            "p90": 4.569625128712122,
+            "min": 0.255495879203105,
+            "max": 5.4914833767804705
+          },
+          "horizontal_error_studs": {
+            "count": 13,
+            "mean": 0.7262956850277577,
+            "median": 0.551317032318136,
+            "p90": 1.5190621366417905,
+            "min": 0.11640258544778584,
+            "max": 2.1086947039955177
+          },
+          "vertical_error_studs": {
+            "count": 13,
+            "mean": 1.4229312828196599,
+            "median": 0.18235289015758127,
+            "p90": 4.566787112437396,
+            "min": 0.0,
+            "max": 5.2597660922231535
+          }
+        },
+        {
+          "horizon": 0.2,
+          "model": "intent25",
+          "windows": 108,
+          "per_trajectory_mean_error_studs": {
+            "count": 13,
+            "mean": 1.8384400187130794,
+            "median": 1.1913679561623418,
+            "p90": 4.569477041350278,
+            "min": 0.22965952715240465,
+            "max": 5.38989459373248
+          },
+          "horizontal_error_studs": {
+            "count": 13,
+            "mean": 0.5744628525775338,
+            "median": 0.48743225694382747,
+            "p90": 1.1862670736802348,
+            "min": 0.10748665157361255,
+            "max": 1.630661775397719
+          },
+          "vertical_error_studs": {
+            "count": 13,
+            "mean": 1.4229312828196599,
+            "median": 0.18235289015758127,
+            "p90": 4.566787112437396,
+            "min": 0.0,
+            "max": 5.2597660922231535
+          }
+        },
+        {
+          "horizon": 0.2,
+          "model": "intent50",
+          "windows": 108,
+          "per_trajectory_mean_error_studs": {
+            "count": 13,
+            "mean": 1.7422516095656468,
+            "median": 0.7554294505430592,
+            "p90": 4.569477073999305,
+            "min": 0.147813954555875,
+            "max": 5.570096860409775
+          },
+          "horizontal_error_studs": {
+            "count": 13,
+            "mean": 0.4494368541939218,
+            "median": 0.26739025135602174,
+            "p90": 1.0254362925243254,
+            "min": 0.0967563330887855,
+            "max": 1.5144768084768476
+          },
+          "vertical_error_studs": {
+            "count": 13,
+            "mean": 1.4229312828196599,
+            "median": 0.18235289015758127,
+            "p90": 4.566787112437396,
+            "min": 0.0,
+            "max": 5.2597660922231535
+          }
+        },
+        {
+          "horizon": 0.2,
+          "model": "intent100",
+          "windows": 108,
+          "per_trajectory_mean_error_studs": {
+            "count": 13,
+            "mean": 1.9921554649820699,
+            "median": 1.632965167002841,
+            "p90": 4.569477139329009,
+            "min": 0.27307235141765335,
+            "max": 6.279412228061275
+          },
+          "horizontal_error_studs": {
+            "count": 13,
+            "mean": 0.7270546026679214,
+            "median": 0.49780941588400973,
+            "p90": 1.7748285411614497,
+            "min": 0.10748633322900125,
+            "max": 1.8822328306578398
+          },
+          "vertical_error_studs": {
+            "count": 13,
+            "mean": 1.4229312828196599,
+            "median": 0.18235289015758127,
+            "p90": 4.566787112437396,
+            "min": 0.0,
+            "max": 5.2597660922231535
+          }
+        },
+        {
+          "horizon": 0.2,
+          "model": "classic-proxy",
+          "windows": 108,
+          "per_trajectory_mean_error_studs": {
+            "count": 13,
+            "mean": 1.946518596201525,
+            "median": 1.515969670881957,
+            "p90": 4.569625001720671,
+            "min": 0.2555072890423189,
+            "max": 5.430574598556691
+          },
+          "horizontal_error_studs": {
+            "count": 13,
+            "mean": 0.7178085094752227,
+            "median": 0.5507161697259707,
+            "p90": 1.5124418540410058,
+            "min": 0.11640261823177894,
+            "max": 2.0567156411914236
+          },
+          "vertical_error_studs": {
+            "count": 13,
+            "mean": 1.418912881422084,
+            "median": 0.18229396119690477,
+            "p90": 4.566786984768967,
+            "min": 0.0,
+            "max": 5.209159205693476
+          }
+        },
+        {
+          "horizon": 0.2,
+          "model": "v17-proxy",
+          "windows": 108,
+          "per_trajectory_mean_error_studs": {
+            "count": 13,
+            "mean": 1.8921979203310098,
+            "median": 1.3627037355070066,
+            "p90": 4.566119120099691,
+            "min": 0.2713860210350151,
+            "max": 5.169938946149376
+          },
+          "horizontal_error_studs": {
+            "count": 13,
+            "mean": 0.6917610570214948,
+            "median": 0.5309304377644969,
+            "p90": 1.3593498493109955,
+            "min": 0.11732671021373937,
+            "max": 1.8472651410573604
+          },
+          "vertical_error_studs": {
+            "count": 13,
+            "mean": 1.387342241276762,
+            "median": 0.1753707497216226,
+            "p90": 4.563261752175492,
+            "min": 0.0,
+            "max": 4.946591933443838
+          }
+        },
+        {
+          "horizon": 0.23333333333333334,
+          "model": "linear",
+          "windows": 102,
+          "per_trajectory_mean_error_studs": {
+            "count": 13,
+            "mean": 2.7524594472320714,
+            "median": 2.409884402767878,
+            "p90": 7.338392254925697,
+            "min": 0.4436116668048672,
+            "max": 7.421480219584159
+          },
+          "horizontal_error_studs": {
+            "count": 13,
+            "mean": 1.0245504556309786,
+            "median": 0.7458967691409769,
+            "p90": 2.495656774932122,
+            "min": 0.14931233315704498,
+            "max": 2.7055797814183227
+          },
+          "vertical_error_studs": {
+            "count": 13,
+            "mean": 1.9978364945186855,
+            "median": 0.2073169708627276,
+            "p90": 6.967626277148497,
+            "min": 0.0,
+            "max": 7.419888165280763
+          }
+        },
+        {
+          "horizon": 0.23333333333333334,
+          "model": "acceleration",
+          "windows": 102,
+          "per_trajectory_mean_error_studs": {
+            "count": 13,
+            "mean": 2.6889640667864176,
+            "median": 2.022439736636001,
+            "p90": 7.286693217334459,
+            "min": 0.3251253348946609,
+            "max": 7.421754436431572
+          },
+          "horizontal_error_studs": {
+            "count": 13,
+            "mean": 0.95368720154825,
+            "median": 0.7536465084188231,
+            "p90": 2.0192383622792147,
+            "min": 0.16545641663703572,
+            "max": 2.8035841662119476
+          },
+          "vertical_error_studs": {
+            "count": 13,
+            "mean": 1.9978364945186855,
+            "median": 0.2073169708627276,
+            "p90": 6.967626277148497,
+            "min": 0.0,
+            "max": 7.419888165280763
+          }
+        },
+        {
+          "horizon": 0.23333333333333334,
+          "model": "intent25",
+          "windows": 102,
+          "per_trajectory_mean_error_studs": {
+            "count": 13,
+            "mean": 2.534502203758378,
+            "median": 1.6741126138643636,
+            "p90": 7.1111606228611635,
+            "min": 0.29848692981033037,
+            "max": 7.421480212670689
+          },
+          "horizontal_error_studs": {
+            "count": 13,
+            "mean": 0.7482691543113934,
+            "median": 0.564018563043058,
+            "p90": 1.6701178526255567,
+            "min": 0.14931200403646805,
+            "max": 2.1289506984302857
+          },
+          "vertical_error_studs": {
+            "count": 13,
+            "mean": 1.9978364945186855,
+            "median": 0.2073169708627276,
+            "p90": 6.967626277148497,
+            "min": 0.0,
+            "max": 7.419888165280763
+          }
+        },
+        {
+          "horizon": 0.23333333333333334,
+          "model": "intent50",
+          "windows": 102,
+          "per_trajectory_mean_error_studs": {
+            "count": 13,
+            "mean": 2.3798485091996024,
+            "median": 0.9294166370762343,
+            "p90": 7.168203563155502,
+            "min": 0.17880057633240465,
+            "max": 7.4214802057610445
+          },
+          "horizontal_error_studs": {
+            "count": 13,
+            "mean": 0.5537236221068776,
+            "median": 0.3720300388258553,
+            "p90": 1.0609751942207268,
+            "min": 0.1456945046061756,
+            "max": 1.9088607084689369
+          },
+          "vertical_error_studs": {
+            "count": 13,
+            "mean": 1.9978364945186855,
+            "median": 0.2073169708627276,
+            "p90": 6.967626277148497,
+            "min": 0.0,
+            "max": 7.419888165280763
+          }
+        },
+        {
+          "horizon": 0.23333333333333334,
+          "model": "intent100",
+          "windows": 102,
+          "per_trajectory_mean_error_studs": {
+            "count": 13,
+            "mean": 2.5669988898702734,
+            "median": 1.5292563994526551,
+            "p90": 7.421480191953227,
+            "min": 0.2686819959707117,
+            "max": 7.764778466036845
+          },
+          "horizontal_error_studs": {
+            "count": 13,
+            "mean": 0.7688143674882867,
+            "median": 0.4710019598692056,
+            "p90": 1.9645813138439843,
+            "min": 0.14931101777019543,
+            "max": 2.0829998705676616
+          },
+          "vertical_error_studs": {
+            "count": 13,
+            "mean": 1.9978364945186855,
+            "median": 0.2073169708627276,
+            "p90": 6.967626277148497,
+            "min": 0.0,
+            "max": 7.419888165280763
+          }
+        },
+        {
+          "horizon": 0.23333333333333334,
+          "model": "classic-proxy",
+          "windows": 102,
+          "per_trajectory_mean_error_studs": {
+            "count": 13,
+            "mean": 2.6714815036930886,
+            "median": 2.010250133210966,
+            "p90": 7.179594822985655,
+            "min": 0.32514109177469863,
+            "max": 7.4217541224645105
+          },
+          "horizontal_error_studs": {
+            "count": 13,
+            "mean": 0.9381547008169642,
+            "median": 0.7526359883878636,
+            "p90": 2.007046572206838,
+            "min": 0.16545648505881796,
+            "max": 2.698202806978125
+          },
+          "vertical_error_studs": {
+            "count": 13,
+            "mean": 1.9908640025408444,
+            "median": 0.20722339788228794,
+            "p90": 6.880114901888667,
+            "min": 0.0,
+            "max": 7.419887849918723
+          }
+        },
+        {
+          "horizon": 0.23333333333333334,
+          "model": "v17-proxy",
+          "windows": 102,
+          "per_trajectory_mean_error_studs": {
+            "count": 13,
+            "mean": 2.578688691445797,
+            "median": 1.760949314667702,
+            "p90": 6.74056451889375,
+            "min": 0.3486135571702423,
+            "max": 7.41309012881123
+          },
+          "horizontal_error_studs": {
+            "count": 13,
+            "mean": 0.8967436495911003,
+            "median": 0.7236651706893137,
+            "p90": 1.758226232921199,
+            "min": 0.1673932090275147,
+            "max": 2.3815354558213224
+          },
+          "vertical_error_studs": {
+            "count": 13,
+            "mean": 1.9363855536224428,
+            "median": 0.19632471019583164,
+            "p90": 6.444751700576123,
+            "min": 0.0,
+            "max": 7.41118371678408
+          }
+        },
+        {
+          "horizon": 0.3,
+          "model": "linear",
+          "windows": 85,
+          "per_trajectory_mean_error_studs": {
+            "count": 12,
+            "mean": 4.715146479026579,
+            "median": 3.7051849767865717,
+            "p90": 9.653546435326646,
+            "min": 0.7282279088866392,
+            "max": 13.250028843782117
+          },
+          "horizontal_error_studs": {
+            "count": 12,
+            "mean": 1.6483750119950722,
+            "median": 1.3174487763849485,
+            "p90": 3.5702292910178035,
+            "min": 0.14564495903681543,
+            "max": 4.11018316536718
+          },
+          "vertical_error_studs": {
+            "count": 12,
+            "mean": 3.5901137827427503,
+            "median": 0.7516463232140832,
+            "p90": 9.652325302679836,
+            "min": 0.0,
+            "max": 12.602494765721737
+          }
+        },
+        {
+          "horizon": 0.3,
+          "model": "acceleration",
+          "windows": 85,
+          "per_trajectory_mean_error_studs": {
+            "count": 12,
+            "mean": 4.674219796719486,
+            "median": 3.5251306521087624,
+            "p90": 9.654046145924791,
+            "min": 0.5458439625032702,
+            "max": 13.209125795453156
+          },
+          "horizontal_error_studs": {
+            "count": 12,
+            "mean": 1.5917985455975376,
+            "median": 1.2497559237118905,
+            "p90": 3.305815426831438,
+            "min": 0.18100240518134464,
+            "max": 4.3297766534428535
+          },
+          "vertical_error_studs": {
+            "count": 12,
+            "mean": 3.5901137827427503,
+            "median": 0.7516463232140832,
+            "p90": 9.652325302679836,
+            "min": 0.0,
+            "max": 12.602494765721737
+          }
+        },
+        {
+          "horizon": 0.3,
+          "model": "intent25",
+          "windows": 85,
+          "per_trajectory_mean_error_studs": {
+            "count": 12,
+            "mean": 4.4562158260552085,
+            "median": 3.0163279097690916,
+            "p90": 9.653546425772797,
+            "min": 0.5123197923634855,
+            "max": 12.953382388978186
+          },
+          "horizontal_error_studs": {
+            "count": 12,
+            "mean": 1.2718259742626277,
+            "median": 1.0370778794688675,
+            "p90": 2.8500688272969006,
+            "min": 0.14564439546725153,
+            "max": 3.176975525322708
+          },
+          "vertical_error_studs": {
+            "count": 12,
+            "mean": 3.5901137827427503,
+            "median": 0.7516463232140832,
+            "p90": 9.652325302679836,
+            "min": 0.0,
+            "max": 12.602494765721737
+          }
+        },
+        {
+          "horizon": 0.3,
+          "model": "intent50",
+          "windows": 85,
+          "per_trajectory_mean_error_studs": {
+            "count": 12,
+            "mean": 4.242725587859161,
+            "median": 2.269738261603595,
+            "p90": 9.653546416224229,
+            "min": 0.31060709924825675,
+            "max": 12.837210145154568
+          },
+          "horizontal_error_studs": {
+            "count": 12,
+            "mean": 0.9506491701479406,
+            "median": 0.7836687129053486,
+            "p90": 1.6668696623374437,
+            "min": 0.14564383220837407,
+            "max": 2.862819053177129
+          },
+          "vertical_error_studs": {
+            "count": 12,
+            "mean": 3.5901137827427503,
+            "median": 0.7516463232140832,
+            "p90": 9.652325302679836,
+            "min": 0.0,
+            "max": 12.602494765721737
+          }
+        },
+        {
+          "horizon": 0.3,
+          "model": "intent100",
+          "windows": 85,
+          "per_trajectory_mean_error_studs": {
+            "count": 12,
+            "mean": 4.201736857079069,
+            "median": 2.0736742837400017,
+            "p90": 9.653546397142913,
+            "min": 0.2772446510248348,
+            "max": 13.148766392554013
+          },
+          "horizontal_error_studs": {
+            "count": 12,
+            "mean": 0.9205945279669968,
+            "median": 0.40709157395557827,
+            "p90": 2.6182589063901363,
+            "min": 0.14564270662200857,
+            "max": 2.7899266523325457
+          },
+          "vertical_error_studs": {
+            "count": 12,
+            "mean": 3.5901137827427503,
+            "median": 0.7516463232140832,
+            "p90": 9.652325302679836,
+            "min": 0.0,
+            "max": 12.602494765721737
+          }
+        },
+        {
+          "horizon": 0.3,
+          "model": "classic-proxy",
+          "windows": 85,
+          "per_trajectory_mean_error_studs": {
+            "count": 12,
+            "mean": 4.618142498636922,
+            "median": 3.5080077277310533,
+            "p90": 9.654045286123209,
+            "min": 0.5458501612235159,
+            "max": 12.880492118458903
+          },
+          "horizontal_error_studs": {
+            "count": 12,
+            "mean": 1.5452679039780204,
+            "median": 1.249740390962164,
+            "p90": 3.233897538736176,
+            "min": 0.18100250841363208,
+            "max": 4.032911518232911
+          },
+          "vertical_error_studs": {
+            "count": 12,
+            "mean": 3.5671480639686814,
+            "median": 0.751537115075072,
+            "p90": 9.652324440917974,
+            "min": 0.0,
+            "max": 12.339866862429306
+          }
+        },
+        {
+          "horizon": 0.3,
+          "model": "v17-proxy",
+          "windows": 85,
+          "per_trajectory_mean_error_studs": {
+            "count": 12,
+            "mean": 4.312085129326443,
+            "median": 2.934263451055566,
+            "p90": 9.630344392210638,
+            "min": 0.5901219732367049,
+            "max": 11.61368808575084
+          },
+          "horizontal_error_studs": {
+            "count": 12,
+            "mean": 1.4161354893842801,
+            "median": 1.2471236695497043,
+            "p90": 3.0829491801921844,
+            "min": 0.18404704101070005,
+            "max": 3.244935289690826
+          },
+          "vertical_error_studs": {
+            "count": 12,
+            "mean": 3.3757443124940845,
+            "median": 0.741109578193455,
+            "p90": 9.628564782018904,
+            "min": 0.0,
+            "max": 11.057781196770987
+          }
+        }
+      ],
+      "timing": {
+        "gun": {
+          "sample_intervals_seconds": {
+            "count": 61,
+            "mean": 0.0513479356886819,
+            "median": 0.0490630769636482,
+            "p90": 0.07636492303572595,
+            "min": 0.017540538916364312,
+            "max": 0.11776407691650093
+          },
+          "unchanged_position_pairs": 9,
+          "pairs": 61
+        },
+        "knife": {
+          "sample_intervals_seconds": {
+            "count": 107,
+            "mean": 0.05577321206088935,
+            "median": 0.0499123849440366,
+            "p90": 0.0774962300201878,
+            "min": 0.034176922985352576,
+            "max": 0.1224765389924869
+          },
+          "unchanged_position_pairs": 2,
+          "pairs": 107
+        }
+      },
+      "gun_signals": [
+        {
+          "shot": "2",
+          "authored": true,
+          "latencyMs": 459.53784696757793,
+          "hitTarget": false,
+          "settings": {
+            "leadBias": 0,
+            "autoTune": true,
+            "horizon": 0.23333333333333334,
+            "motionHz": 120,
+            "mode": "Normal",
+            "adaptiveTiming": false,
+            "wallCheck": true
+          },
+          "trajectoryPoints": 19
+        },
+        {
+          "shot": "3",
+          "authored": true,
+          "latencyMs": 220.3105390071869,
+          "hitTarget": false,
+          "settings": {
+            "leadBias": 0,
+            "autoTune": true,
+            "horizon": 0.23333333333333334,
+            "motionHz": 120,
+            "mode": "Normal",
+            "adaptiveTiming": false,
+            "wallCheck": true
+          },
+          "trajectoryPoints": 17
+        },
+        {
+          "shot": "4",
+          "authored": true,
+          "latencyMs": 207.0439999224618,
+          "hitTarget": false,
+          "settings": {
+            "leadBias": 0,
+            "autoTune": true,
+            "horizon": 0.23333333333333334,
+            "motionHz": 120,
+            "mode": "Normal",
+            "adaptiveTiming": false,
+            "wallCheck": true
+          },
+          "trajectoryPoints": 16
+        },
+        {
+          "shot": "6",
+          "authored": false,
+          "latencyMs": 147.94953900855035,
+          "hitTarget": false,
+          "settings": null,
+          "trajectoryPoints": 13
+        }
+      ],
+      "gun_authored_modes": {
+        "Normal": 6
+      },
+      "knife_authored_models": {
+        "Replica RTT": 24
+      },
+      "legacy_hit_labels_not_rate": {
+        "None": 14,
+        "False": 4
+      }
+    },
+    {
+      "file": "MM2_Trajectory_Calibration.json.before-157df374-7de8-4f0e-84a4-8ce0b0313db2.json",
+      "placeId": 142823291,
+      "session": {
+        "knifeAttempts": 1.0997331763606774e+57,
+        "gunConfirmed": 1.1773636503621308e+57,
+        "gunAttempts": 3.139018916518778e+57,
+        "elapsedSeconds": 71.73832338897046,
+        "knifeConfirmed": 3.9191179517655252e+56
+      },
+      "settings": null,
+      "events": 206,
+      "points": 2150,
+      "phases": {
+        "gun/legacy": 48,
+        "knife/legacy": 114,
+        "stab/legacy": 44
+      },
+      "replay": [
+        {
+          "horizon": 0.15,
+          "model": "linear",
+          "windows": 1407,
+          "per_trajectory_mean_error_studs": {
+            "count": 129,
+            "mean": 1.7979006898760757,
+            "median": 1.4087956532933976,
+            "p90": 3.6140292908109664,
+            "min": 0.00014648437502273737,
+            "max": 12.33693090777895
+          },
+          "horizontal_error_studs": {
+            "count": 129,
+            "mean": 0.6199860821482273,
+            "median": 0.5237636844636896,
+            "p90": 1.0959739777251092,
+            "min": 0.0,
+            "max": 2.758860201263522
+          },
+          "vertical_error_studs": {
+            "count": 129,
+            "mean": 1.3741971461998193,
+            "median": 0.870371054559582,
+            "p90": 3.4363640914477926,
+            "min": 0.0,
+            "max": 12.336802195469318
+          }
+        },
+        {
+          "horizon": 0.15,
+          "model": "acceleration",
+          "windows": 1407,
+          "per_trajectory_mean_error_studs": {
+            "count": 129,
+            "mean": 1.7527642225124171,
+            "median": 1.3833405906159584,
+            "p90": 3.612302696410007,
+            "min": 0.00014648437502273737,
+            "max": 12.33767759465487
+          },
+          "horizontal_error_studs": {
+            "count": 129,
+            "mean": 0.5581435263647002,
+            "median": 0.44155488883207333,
+            "p90": 1.063950689092397,
+            "min": 0.0,
+            "max": 2.758860201263522
+          },
+          "vertical_error_studs": {
+            "count": 129,
+            "mean": 1.3741971461998193,
+            "median": 0.870371054559582,
+            "p90": 3.4363640914477926,
+            "min": 0.0,
+            "max": 12.336802195469318
+          }
+        },
+        {
+          "horizon": 0.15,
+          "model": "intent25",
+          "windows": 1407,
+          "per_trajectory_mean_error_studs": {
+            "count": 129,
+            "mean": 1.697493627050603,
+            "median": 1.2423556738641717,
+            "p90": 3.5445487570303764,
+            "min": 0.00014648437502273737,
+            "max": 12.338466846670165
+          },
+          "horizontal_error_studs": {
+            "count": 129,
+            "mean": 0.48657081396339924,
+            "median": 0.38248690887845005,
+            "p90": 0.9955333178832205,
+            "min": 0.0,
+            "max": 2.758860201263522
+          },
+          "vertical_error_studs": {
+            "count": 129,
+            "mean": 1.3741971461998193,
+            "median": 0.870371054559582,
+            "p90": 3.4363640914477926,
+            "min": 0.0,
+            "max": 12.336802195469318
+          }
+        },
+        {
+          "horizon": 0.15,
+          "model": "intent50",
+          "windows": 1407,
+          "per_trajectory_mean_error_studs": {
+            "count": 129,
+            "mean": 1.6846859907376264,
+            "median": 1.2897930420103352,
+            "p90": 3.7184275606510457,
+            "min": 0.00014648437502273737,
+            "max": 12.342800349481987
+          },
+          "horizontal_error_studs": {
+            "count": 129,
+            "mean": 0.47084618923917004,
+            "median": 0.3391926493447406,
+            "p90": 0.905638293591615,
+            "min": 0.0,
+            "max": 2.758860201263522
+          },
+          "vertical_error_studs": {
+            "count": 129,
+            "mean": 1.3741971461998193,
+            "median": 0.870371054559582,
+            "p90": 3.4363640914477926,
+            "min": 0.0,
+            "max": 12.336802195469318
+          }
+        },
+        {
+          "horizon": 0.15,
+          "model": "intent100",
+          "windows": 1407,
+          "per_trajectory_mean_error_studs": {
+            "count": 129,
+            "mean": 1.9030836178839594,
+            "median": 1.5701748227218648,
+            "p90": 4.10102088662682,
+            "min": 0.00014648437502273737,
+            "max": 12.359846376955554
+          },
+          "horizontal_error_studs": {
+            "count": 129,
+            "mean": 0.7531127250941282,
+            "median": 0.6338979371266004,
+            "p90": 1.5012600897704185,
+            "min": 0.0,
+            "max": 4.448080433026375
+          },
+          "vertical_error_studs": {
+            "count": 129,
+            "mean": 1.3741971461998193,
+            "median": 0.870371054559582,
+            "p90": 3.4363640914477926,
+            "min": 0.0,
+            "max": 12.336802195469318
+          }
+        },
+        {
+          "horizon": 0.15,
+          "model": "classic-proxy",
+          "windows": 1407,
+          "per_trajectory_mean_error_studs": {
+            "count": 129,
+            "mean": 1.7496694321311417,
+            "median": 1.3828498884723108,
+            "p90": 3.6123026963970286,
+            "min": 0.00014648437502273737,
+            "max": 12.337673709458294
+          },
+          "horizontal_error_studs": {
+            "count": 129,
+            "mean": 0.5557970874133698,
+            "median": 0.4409647456737159,
+            "p90": 1.0447383619975552,
+            "min": 0.0,
+            "max": 2.758860201263522
+          },
+          "vertical_error_studs": {
+            "count": 129,
+            "mean": 1.3737733551114448,
+            "median": 0.8703572926033384,
+            "p90": 3.4363640914070714,
+            "min": 0.0,
+            "max": 12.33679830787355
+          }
+        },
+        {
+          "horizon": 0.15,
+          "model": "v17-proxy",
+          "windows": 1407,
+          "per_trajectory_mean_error_studs": {
+            "count": 129,
+            "mean": 1.7230440822507176,
+            "median": 1.3487282229785713,
+            "p90": 3.5582157790702325,
+            "min": 0.00014648437502273737,
+            "max": 12.264583140811038
+          },
+          "horizontal_error_studs": {
+            "count": 129,
+            "mean": 0.5452830821271067,
+            "median": 0.4315886620696185,
+            "p90": 1.0443598632408433,
+            "min": 0.0,
+            "max": 2.758860201263522
+          },
+          "vertical_error_studs": {
+            "count": 129,
+            "mean": 1.3570127975170085,
+            "median": 0.8824413243109299,
+            "p90": 3.436334432402539,
+            "min": 0.0,
+            "max": 12.263650482569346
+          }
+        },
+        {
+          "horizon": 0.2,
+          "model": "linear",
+          "windows": 1261,
+          "per_trajectory_mean_error_studs": {
+            "count": 118,
+            "mean": 2.768089497464053,
+            "median": 2.3630166238736234,
+            "p90": 5.7745460325147135,
+            "min": 0.00019531250001136868,
+            "max": 9.326011527082855
+          },
+          "horizontal_error_studs": {
+            "count": 118,
+            "mean": 0.925092018542561,
+            "median": 0.869245442054102,
+            "p90": 1.7355183344960181,
+            "min": 0.0,
+            "max": 3.9287180303644123
+          },
+          "vertical_error_studs": {
+            "count": 118,
+            "mean": 2.1585616441383584,
+            "median": 1.8243572130853583,
+            "p90": 5.163529556338119,
+            "min": 0.0,
+            "max": 9.251549057354396
+          }
+        },
+        {
+          "horizon": 0.2,
+          "model": "acceleration",
+          "windows": 1261,
+          "per_trajectory_mean_error_studs": {
+            "count": 118,
+            "mean": 2.706292356986918,
+            "median": 2.240862356652621,
+            "p90": 5.674146907271774,
+            "min": 0.00019531250001136868,
+            "max": 9.272929351920572
+          },
+          "horizontal_error_studs": {
+            "count": 118,
+            "mean": 0.8426145305605051,
+            "median": 0.7402106831251818,
+            "p90": 1.616500183594059,
+            "min": 0.0,
+            "max": 3.496389726162871
+          },
+          "vertical_error_studs": {
+            "count": 118,
+            "mean": 2.1585616441383584,
+            "median": 1.8243572130853583,
+            "p90": 5.163529556338119,
+            "min": 0.0,
+            "max": 9.251549057354396
+          }
+        },
+        {
+          "horizon": 0.2,
+          "model": "intent25",
+          "windows": 1261,
+          "per_trajectory_mean_error_studs": {
+            "count": 118,
+            "mean": 2.5986273609308355,
+            "median": 2.127757506874093,
+            "p90": 5.414420417445734,
+            "min": 0.00019531250001136868,
+            "max": 9.288671627378626
+          },
+          "horizontal_error_studs": {
+            "count": 118,
+            "mean": 0.6937292095540006,
+            "median": 0.6321384081436212,
+            "p90": 1.2951305731890386,
+            "min": 0.0,
+            "max": 2.6419783506735044
+          },
+          "vertical_error_studs": {
+            "count": 118,
+            "mean": 2.1585616441383584,
+            "median": 1.8243572130853583,
+            "p90": 5.163529556338119,
+            "min": 0.0,
+            "max": 9.251549057354396
+          }
+        },
+        {
+          "horizon": 0.2,
+          "model": "intent50",
+          "windows": 1261,
+          "per_trajectory_mean_error_studs": {
+            "count": 118,
+            "mean": 2.5223964798447898,
+            "median": 2.1575915952945826,
+            "p90": 5.335382636101517,
+            "min": 0.00019531250001136868,
+            "max": 9.264315185266732
+          },
+          "horizontal_error_studs": {
+            "count": 118,
+            "mean": 0.588626495411785,
+            "median": 0.436530205977968,
+            "p90": 1.247084356656754,
+            "min": 0.0,
+            "max": 2.586591524937905
+          },
+          "vertical_error_studs": {
+            "count": 118,
+            "mean": 2.1585616441383584,
+            "median": 1.8243572130853583,
+            "p90": 5.163529556338119,
+            "min": 0.0,
+            "max": 9.251549057354396
+          }
+        },
+        {
+          "horizon": 0.2,
+          "model": "intent100",
+          "windows": 1261,
+          "per_trajectory_mean_error_studs": {
+            "count": 118,
+            "mean": 2.7305637404890106,
+            "median": 2.2739431931016636,
+            "p90": 5.872993815512341,
+            "min": 0.00019531250001136868,
+            "max": 9.256988431532271
+          },
+          "horizontal_error_studs": {
+            "count": 118,
+            "mean": 0.8795481348376415,
+            "median": 0.7420892994165894,
+            "p90": 1.7532442917498046,
+            "min": 0.0,
+            "max": 5.527285305573995
+          },
+          "vertical_error_studs": {
+            "count": 118,
+            "mean": 2.1585616441383584,
+            "median": 1.8243572130853583,
+            "p90": 5.163529556338119,
+            "min": 0.0,
+            "max": 9.251549057354396
+          }
+        },
+        {
+          "horizon": 0.2,
+          "model": "classic-proxy",
+          "windows": 1261,
+          "per_trajectory_mean_error_studs": {
+            "count": 118,
+            "mean": 2.7019097944269226,
+            "median": 2.2403785811304266,
+            "p90": 5.669995935037038,
+            "min": 0.00019531250001136868,
+            "max": 9.259761592970126
+          },
+          "horizontal_error_studs": {
+            "count": 118,
+            "mean": 0.8391558451551043,
+            "median": 0.7377556972265722,
+            "p90": 1.6164993870158055,
+            "min": 0.0,
+            "max": 3.4382721932354428
+          },
+          "vertical_error_studs": {
+            "count": 118,
+            "mean": 2.1580318252435293,
+            "median": 1.817048317873434,
+            "p90": 5.159380246783309,
+            "min": 0.0,
+            "max": 9.238323133089626
+          }
+        },
+        {
+          "horizon": 0.2,
+          "model": "v17-proxy",
+          "windows": 1261,
+          "per_trajectory_mean_error_studs": {
+            "count": 118,
+            "mean": 2.6310809550284646,
+            "median": 2.226503872347579,
+            "p90": 5.371594613256529,
+            "min": 0.00019531250001136868,
+            "max": 8.140473442042708
+          },
+          "horizontal_error_studs": {
+            "count": 118,
+            "mean": 0.8056345844023381,
+            "median": 0.7197999071005066,
+            "p90": 1.5707614514483146,
+            "min": 0.0,
+            "max": 3.30779516618629
+          },
+          "vertical_error_studs": {
+            "count": 118,
+            "mean": 2.1171015764253163,
+            "median": 1.7828769306068097,
+            "p90": 4.947829124666991,
+            "min": 0.0,
+            "max": 8.137452554543994
+          }
+        },
+        {
+          "horizon": 0.23333333333333334,
+          "model": "linear",
+          "windows": 1173,
+          "per_trajectory_mean_error_studs": {
+            "count": 113,
+            "mean": 3.6759738237183286,
+            "median": 3.1709418256955333,
+            "p90": 7.241410361815507,
+            "min": 0.0002278645833371229,
+            "max": 12.701659021587759
+          },
+          "horizontal_error_studs": {
+            "count": 113,
+            "mean": 1.1741539608794533,
+            "median": 1.0732065256836913,
+            "p90": 2.2773216189853844,
+            "min": 0.0,
+            "max": 4.909808171537132
+          },
+          "vertical_error_studs": {
+            "count": 113,
+            "mean": 2.9206011057627914,
+            "median": 2.437688259818392,
+            "p90": 7.0674676693619745,
+            "min": 0.0,
+            "max": 12.611970994188738
+          }
+        },
+        {
+          "horizon": 0.23333333333333334,
+          "model": "acceleration",
+          "windows": 1173,
+          "per_trajectory_mean_error_studs": {
+            "count": 113,
+            "mean": 3.6137607819149205,
+            "median": 3.1958963563010423,
+            "p90": 7.224592945556038,
+            "min": 0.0002278645833371229,
+            "max": 12.63903127332864
+          },
+          "horizontal_error_studs": {
+            "count": 113,
+            "mean": 1.0927026525140113,
+            "median": 0.9474139714160834,
+            "p90": 2.0985857082101314,
+            "min": 0.0,
+            "max": 4.478171202977593
+          },
+          "vertical_error_studs": {
+            "count": 113,
+            "mean": 2.9206011057627914,
+            "median": 2.437688259818392,
+            "p90": 7.0674676693619745,
+            "min": 0.0,
+            "max": 12.611970994188738
+          }
+        },
+        {
+          "horizon": 0.23333333333333334,
+          "model": "intent25",
+          "windows": 1173,
+          "per_trajectory_mean_error_studs": {
+            "count": 113,
+            "mean": 3.4627625919773646,
+            "median": 2.9787399280229803,
+            "p90": 7.183740213707629,
+            "min": 0.0002278645833371229,
+            "max": 12.657192717062614
+          },
+          "horizontal_error_studs": {
+            "count": 113,
+            "mean": 0.8751548437446617,
+            "median": 0.7984299656246557,
+            "p90": 1.6890425398890898,
+            "min": 0.0,
+            "max": 3.3849803525057145
+          },
+          "vertical_error_studs": {
+            "count": 113,
+            "mean": 2.9206011057627914,
+            "median": 2.437688259818392,
+            "p90": 7.0674676693619745,
+            "min": 0.0,
+            "max": 12.611970994188738
+          }
+        },
+        {
+          "horizon": 0.23333333333333334,
+          "model": "intent50",
+          "windows": 1173,
+          "per_trajectory_mean_error_studs": {
+            "count": 113,
+            "mean": 3.3249264162041516,
+            "median": 2.8966861387181955,
+            "p90": 7.099684942798604,
+            "min": 0.0002278645833371229,
+            "max": 12.627917021130248
+          },
+          "horizontal_error_studs": {
+            "count": 113,
+            "mean": 0.6837311301148378,
+            "median": 0.5759332390980227,
+            "p90": 1.4062644995814257,
+            "min": 0.0,
+            "max": 2.472411867561809
+          },
+          "vertical_error_studs": {
+            "count": 113,
+            "mean": 2.9206011057627914,
+            "median": 2.437688259818392,
+            "p90": 7.0674676693619745,
+            "min": 0.0,
+            "max": 12.611970994188738
+          }
+        },
+        {
+          "horizon": 0.23333333333333334,
+          "model": "intent100",
+          "windows": 1173,
+          "per_trajectory_mean_error_studs": {
+            "count": 113,
+            "mean": 3.471784722604905,
+            "median": 3.0383881786330162,
+            "p90": 7.1916073592233385,
+            "min": 0.0002278645833371229,
+            "max": 12.616713243480561
+          },
+          "horizontal_error_studs": {
+            "count": 113,
+            "mean": 0.912327858039039,
+            "median": 0.7743378021080477,
+            "p90": 1.8138501971112668,
+            "min": 0.0,
+            "max": 5.298147074089464
+          },
+          "vertical_error_studs": {
+            "count": 113,
+            "mean": 2.9206011057627914,
+            "median": 2.437688259818392,
+            "p90": 7.0674676693619745,
+            "min": 0.0,
+            "max": 12.611970994188738
+          }
+        },
+        {
+          "horizon": 0.23333333333333334,
+          "model": "classic-proxy",
+          "windows": 1173,
+          "per_trajectory_mean_error_studs": {
+            "count": 113,
+            "mean": 3.6048251089852905,
+            "median": 3.1431881781889595,
+            "p90": 7.224481113034206,
+            "min": 0.0002278645833371229,
+            "max": 12.610507370935126
+          },
+          "horizontal_error_studs": {
+            "count": 113,
+            "mean": 1.0848043946119033,
+            "median": 0.9473724380223327,
+            "p90": 2.066871866167572,
+            "min": 0.0,
+            "max": 4.360853940849856
+          },
+          "vertical_error_studs": {
+            "count": 113,
+            "mean": 2.9197282645625475,
+            "median": 2.4376859042721764,
+            "p90": 7.067467669697635,
+            "min": 0.0,
+            "max": 12.583442931228305
+          }
+        },
+        {
+          "horizon": 0.23333333333333334,
+          "model": "v17-proxy",
+          "windows": 1173,
+          "per_trajectory_mean_error_studs": {
+            "count": 113,
+            "mean": 3.469705961999196,
+            "median": 3.1238332299564826,
+            "p90": 7.098695818135264,
+            "min": 0.0002278645833371229,
+            "max": 12.282832879764445
+          },
+          "horizontal_error_studs": {
+            "count": 113,
+            "mean": 1.0284563345387685,
+            "median": 0.9346362621455325,
+            "p90": 1.9384397749472864,
+            "min": 0.0,
+            "max": 4.157041163021424
+          },
+          "vertical_error_studs": {
+            "count": 113,
+            "mean": 2.832234874892202,
+            "median": 2.257394838610446,
+            "p90": 6.728104713274973,
+            "min": 0.0,
+            "max": 12.27792827360578
+          }
+        },
+        {
+          "horizon": 0.3,
+          "model": "linear",
+          "windows": 1008,
+          "per_trajectory_mean_error_studs": {
+            "count": 107,
+            "mean": 5.708993300607166,
+            "median": 4.6804542639033935,
+            "p90": 11.482920631832044,
+            "min": 0.0002929687499886313,
+            "max": 22.13050975316016
+          },
+          "horizontal_error_studs": {
+            "count": 107,
+            "mean": 1.7953616381209743,
+            "median": 1.6239691262113398,
+            "p90": 3.6385709047000803,
+            "min": 0.0,
+            "max": 6.834929370432608
+          },
+          "vertical_error_studs": {
+            "count": 107,
+            "mean": 4.587158017688058,
+            "median": 3.697700400117267,
+            "p90": 11.339493459230217,
+            "min": 0.0,
+            "max": 22.129383003191247
+          }
+        },
+        {
+          "horizon": 0.3,
+          "model": "acceleration",
+          "windows": 1008,
+          "per_trajectory_mean_error_studs": {
+            "count": 107,
+            "mean": 5.681592470526762,
+            "median": 4.645879751477401,
+            "p90": 11.472138430215683,
+            "min": 0.0002929687499886313,
+            "max": 22.130847348062087
+          },
+          "horizontal_error_studs": {
+            "count": 107,
+            "mean": 1.7510207508454387,
+            "median": 1.6197845009628324,
+            "p90": 3.4788038872457223,
+            "min": 0.0,
+            "max": 6.621823916584091
+          },
+          "vertical_error_studs": {
+            "count": 107,
+            "mean": 4.587158017688058,
+            "median": 3.697700400117267,
+            "p90": 11.339493459230217,
+            "min": 0.0,
+            "max": 22.129383003191247
+          }
+        },
+        {
+          "horizon": 0.3,
+          "model": "intent25",
+          "windows": 1008,
+          "per_trajectory_mean_error_studs": {
+            "count": 107,
+            "mean": 5.417777137118817,
+            "median": 4.367614751597143,
+            "p90": 11.450610083425017,
+            "min": 0.0002929687499886313,
+            "max": 22.12999267962487
+          },
+          "horizontal_error_studs": {
+            "count": 107,
+            "mean": 1.373926440849168,
+            "median": 1.2749790984782212,
+            "p90": 2.761199176114006,
+            "min": 0.0,
+            "max": 4.919037151864785
+          },
+          "vertical_error_studs": {
+            "count": 107,
+            "mean": 4.587158017688058,
+            "median": 3.697700400117267,
+            "p90": 11.339493459230217,
+            "min": 0.0,
+            "max": 22.129383003191247
+          }
+        },
+        {
+          "horizon": 0.3,
+          "model": "intent50",
+          "windows": 1008,
+          "per_trajectory_mean_error_studs": {
+            "count": 107,
+            "mean": 5.189876038380444,
+            "median": 4.318280887630003,
+            "p90": 11.425370473477305,
+            "min": 0.0002929687499886313,
+            "max": 22.12963682560937
+          },
+          "horizontal_error_studs": {
+            "count": 107,
+            "mean": 1.0367645734879387,
+            "median": 0.9593029731498238,
+            "p90": 1.9943722846922196,
+            "min": 0.0,
+            "max": 3.394769117165102
+          },
+          "vertical_error_studs": {
+            "count": 107,
+            "mean": 4.587158017688058,
+            "median": 3.697700400117267,
+            "p90": 11.339493459230217,
+            "min": 0.0,
+            "max": 22.129383003191247
+          }
+        },
+        {
+          "horizon": 0.3,
+          "model": "intent100",
+          "windows": 1008,
+          "per_trajectory_mean_error_studs": {
+            "count": 107,
+            "mean": 5.223066862452991,
+            "median": 4.319979426858713,
+            "p90": 11.370431317235882,
+            "min": 0.0002929687499886313,
+            "max": 22.129408823288014
+          },
+          "horizontal_error_studs": {
+            "count": 107,
+            "mean": 1.1053389306982304,
+            "median": 0.8403681073223012,
+            "p90": 2.400066916764776,
+            "min": 0.0,
+            "max": 7.739143619562421
+          },
+          "vertical_error_studs": {
+            "count": 107,
+            "mean": 4.587158017688058,
+            "median": 3.697700400117267,
+            "p90": 11.339493459230217,
+            "min": 0.0,
+            "max": 22.129383003191247
+          }
+        },
+        {
+          "horizon": 0.3,
+          "model": "classic-proxy",
+          "windows": 1008,
+          "per_trajectory_mean_error_studs": {
+            "count": 107,
+            "mean": 5.6764216038083735,
+            "median": 4.645876998265979,
+            "p90": 11.472118206533326,
+            "min": 0.0002929687499886313,
+            "max": 22.13083366839706
+          },
+          "horizontal_error_studs": {
+            "count": 107,
+            "mean": 1.7323442361556523,
+            "median": 1.619221210127154,
+            "p90": 3.4730548489387734,
+            "min": 0.0,
+            "max": 6.27539742935172
+          },
+          "vertical_error_studs": {
+            "count": 107,
+            "mean": 4.604895582412674,
+            "median": 3.6106086806112723,
+            "p90": 11.289659940358925,
+            "min": 0.0,
+            "max": 22.129369326502
+          }
+        },
+        {
+          "horizon": 0.3,
+          "model": "v17-proxy",
+          "windows": 1008,
+          "per_trajectory_mean_error_studs": {
+            "count": 107,
+            "mean": 5.304610230328727,
+            "median": 4.403722722536611,
+            "p90": 10.750207656877125,
+            "min": 0.0002929687499886313,
+            "max": 21.95737972024901
+          },
+          "horizontal_error_studs": {
+            "count": 107,
+            "mean": 1.595944454384039,
+            "median": 1.4228306331124945,
+            "p90": 3.127293489485169,
+            "min": 0.0,
+            "max": 5.667109958768902
+          },
+          "vertical_error_studs": {
+            "count": 107,
+            "mean": 4.336847550792631,
+            "median": 3.2607170243102503,
+            "p90": 10.519117531209503,
+            "min": 0.0,
+            "max": 21.955925256817704
+          }
+        }
+      ],
+      "timing": {
+        "gun": {
+          "sample_intervals_seconds": {
+            "count": 335,
+            "mean": 0.04133693432546596,
+            "median": 0.04188615398015827,
+            "p90": 0.05130953900516033,
+            "min": 0.0034965379163622856,
+            "max": 0.08014099998399615
+          },
+          "unchanged_position_pairs": 26,
+          "pairs": 335
+        },
+        "knife": {
+          "sample_intervals_seconds": {
+            "count": 1620,
+            "mean": 0.04521615318235378,
+            "median": 0.046228769002482295,
+            "p90": 0.05226930801291019,
+            "min": 0.032766846008598804,
+            "max": 0.12961661501321942
+          },
+          "unchanged_position_pairs": 123,
+          "pairs": 1620
+        }
+      },
+      "gun_signals": [],
+      "gun_authored_modes": {},
+      "knife_authored_models": {},
+      "legacy_hit_labels_not_rate": {
+        "True": 19,
+        "False": 29
+      }
+    },
+    {
+      "file": "Place_135856908115931_Game_Learning.json",
+      "placeId": 135856908115931,
+      "excluded_from_MM2": "different place; retained in manifest, not pooled"
+    },
+    {
+      "file": "Place_142823291_Game_Learning.json",
+      "placeId": 142823291,
+      "aggregates": {
+        "unconfirmed": 9,
+        "projectileObservations": 8,
+        "targetHits": 0,
+        "confirmations": 8,
+        "hitboxAnomalies": 22,
+        "wallshotKills": 0,
+        "cleanKills": 0,
+        "unattributedDeaths": 1,
+        "farthestKill": 0,
+        "hitboxKills": 0,
+        "misses": 0,
+        "longAirtime": 0,
+        "deathAssociations": 5,
+        "kills": 0,
+        "teleports": 0,
+        "shots": 17,
+        "longrangeKills": 0,
+        "speedSpikes": 0
+      },
+      "retained_shots": 17,
+      "shot_kinds": {
+        "knife": 14,
+        "stab": 3
+      },
+      "outcomes": {
+        "projectile-observed": 8,
+        "unconfirmed": 9
+      },
+      "retained_hits": 5,
+      "session": {
+        "uptimeSeconds": 955,
+        "countersScope": "this-session-only",
+        "startedAt": 1792009534
+      },
+      "legacy_warning": false
+    },
+    {
+      "file": "Place_142823291_Game_Learning.json.before-b70a6301-40a7-44ba-ae2b-f821645a926e.json",
+      "placeId": 142823291,
+      "aggregates": {
+        "wallshotKills": 2,
+        "cleanKills": 11,
+        "unattributedDeaths": 52,
+        "hitboxKills": 4,
+        "farthestKill": 37,
+        "misses": 442,
+        "kills": 13,
+        "longAirtime": 12,
+        "hitboxAnomalies": 1371,
+        "teleports": 20,
+        "shots": 1317,
+        "longrangeKills": 0,
+        "speedSpikes": 8
+      },
+      "retained_shots": 300,
+      "shot_kinds": {
+        "unspecified": 268,
+        "stab": 12,
+        "gun": 20
+      },
+      "outcomes": {
+        "miss": 79,
+        "unknown": 212,
+        "clean": 8,
+        "wallshot": 1
+      },
+      "retained_hits": 13,
+      "session": {
+        "startedAt": 1791995479,
+        "uptimeSeconds": 857
+      },
+      "legacy_warning": true
+    },
+    {
+      "file": "Place_92876937625630_Game_Learning.json",
+      "placeId": 92876937625630,
+      "excluded_from_MM2": "different place; retained in manifest, not pooled"
+    }
+  ],
+  "method": {
+    "gravity_assumption": 196.2,
+    "maximum_interpolation_gap_seconds": 0.15,
+    "horizons_seconds": [
+      0.15,
+      0.2,
+      0.23333333333333334,
+      0.3
+    ],
+    "selection": "retrospective exploratory comparison; not a blind holdout",
+    "limitations": [
+      "client positions, not server collisions",
+      "legacy hit labels and totals are not reliable hit-rate denominators",
+      "overlapping forecast windows are not independent shots",
+      "classic/v17 proxies run at recorded cadence, not the original 120Hz internal state",
+      "map geometry, landing collisions and actual fire-time sampler states unavailable",
+      "fixed-horizon comparisons do not identify the correct server prediction horizon"
+    ]
+  }
+}

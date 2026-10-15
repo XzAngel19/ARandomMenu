@@ -1,0 +1,4091 @@
+{
+  "reference_snapshot": "6779e0d2ed88b7dec2b6b2d12de654e323319d04",
+  "files": [
+    {
+      "file": "MM2_Trajectory_Calibration.json",
+      "sha256": "e56ba5ba4849163bcba591d5f71d4b8496767b4a60e2470540ee8a70955c0ab6",
+      "bytes": 887844,
+      "placeId": 142823291,
+      "schema": 4,
+      "buildStamp": "v18-20261014-mm2-evidence-motion"
+    },
+    {
+      "file": "MM2_Trajectory_Calibration.json.before-157df374-7de8-4f0e-84a4-8ce0b0313db2.json",
+      "sha256": "7abb89c96decd71740277d12d6326a2c7bc10c9cd0d4ef0baf697c1305043787",
+      "bytes": 889694,
+      "placeId": 142823291,
+      "schema": 3,
+      "buildStamp": null
+    },
+    {
+      "file": "MM2_Trajectory_Calibration.json.before-2e0b0013-74b2-4ff7-b227-f8ae38237862.json",
+      "sha256": "7abb89c96decd71740277d12d6326a2c7bc10c9cd0d4ef0baf697c1305043787",
+      "bytes": 889694,
+      "placeId": 142823291,
+      "schema": 3,
+      "buildStamp": null
+    },
+    {
+      "file": "MM2_Trajectory_Calibration.json.before-89632edc-1d18-4016-bbaa-6e6681d706f2.json",
+      "sha256": "aee4e3313642953ea6de23ce835404bdccef4912781a6a5e30adc89ce4930990",
+      "bytes": 61496,
+      "placeId": 636649648,
+      "schema": 4,
+      "buildStamp": "v18-20261014-mm2-evidence-motion"
+    },
+    {
+      "file": "MM2_Trajectory_Calibration.json.before-d5c09683-9046-4147-b0ce-2a17f3ed3737.json",
+      "sha256": "7abb89c96decd71740277d12d6326a2c7bc10c9cd0d4ef0baf697c1305043787",
+      "bytes": 889694,
+      "placeId": 142823291,
+      "schema": 3,
+      "buildStamp": null
+    },
+    {
+      "file": "Place_135856908115931_Game_Learning.json",
+      "sha256": "fe20554d1bca37414205e3bec9bfce27be0f8998046da8d7f3952a8e88972a4e",
+      "bytes": 533,
+      "placeId": 135856908115931,
+      "schema": 1,
+      "buildStamp": null
+    },
+    {
+      "file": "Place_142823291_Game_Learning.json",
+      "sha256": "ac94290496b9ad96153d68a11fcf03aa69c2a125488ead31db951eb8dc84b6a6",
+      "bytes": 161136,
+      "placeId": 142823291,
+      "schema": 2,
+      "buildStamp": "v18-20261014-mm2-evidence-motion"
+    },
+    {
+      "file": "Place_142823291_Game_Learning.json.before-b70a6301-40a7-44ba-ae2b-f821645a926e.json",
+      "sha256": "4301339b5c2c03be78c5be4d7e8d0aea9faa4aea7534e5a49bb3006aae04ed9a",
+      "bytes": 230467,
+      "placeId": 142823291,
+      "schema": 1,
+      "buildStamp": null
+    },
+    {
+      "file": "Place_636649648_Game_Learning.json",
+      "sha256": "a7856f82b75592be2ba6246903646f3f8dc990f41e747c90060348682a9e64d2",
+      "bytes": 126180,
+      "placeId": 636649648,
+      "schema": 2,
+      "buildStamp": "v18-20261014-mm2-evidence-motion"
+    },
+    {
+      "file": "Place_92876937625630_Game_Learning.json",
+      "sha256": "7857a7cae68e8db2a2805f2ab8c0965cdd66befc2df3cc1f17bea93a33b26fab",
+      "bytes": 79413,
+      "placeId": 92876937625630,
+      "schema": 1,
+      "buildStamp": null
+    }
+  ],
+  "duplicate_files": [
+    {
+      "file": "MM2_Trajectory_Calibration.json.before-2e0b0013-74b2-4ff7-b227-f8ae38237862.json",
+      "same_as": "MM2_Trajectory_Calibration.json.before-157df374-7de8-4f0e-84a4-8ce0b0313db2.json"
+    },
+    {
+      "file": "MM2_Trajectory_Calibration.json.before-d5c09683-9046-4147-b0ce-2a17f3ed3737.json",
+      "same_as": "MM2_Trajectory_Calibration.json.before-157df374-7de8-4f0e-84a4-8ce0b0313db2.json"
+    }
+  ],
+  "datasets": [
+    {
+      "file": "MM2_Trajectory_Calibration.json",
+      "placeId": 142823291,
+      "session": {
+        "shootDiagnostics": {
+          "rejected": {
+            "The murderer has no usable body to aim at.": 1,
+            "No selected shoot target was found.": 8,
+            "The murderer is unavailable or obstructed.": 1,
+            "A wall blocks the shot.": 75
+          },
+          "sentNormal": 45,
+          "sentSilent": 0,
+          "checks": 130
+        },
+        "gunConfirmationMeaning": "matched GunFired signal; not necessarily damage or death",
+        "knifeAttempts": 38,
+        "countersScope": "this-session-only",
+        "startedAt": 1792012991,
+        "stabAttempts": 7,
+        "unmatchedGunSignals": 2,
+        "rawKnifeActivations": 23,
+        "ambiguousKnifeSignals": 13,
+        "knifeConfirmed": 11,
+        "telemetryCost": {
+          "previousSaveMs": 54.025770048610866,
+          "previousSaveBytes": 887847
+        },
+        "gunAttempts": 48,
+        "knifeConfirmationMeaning": "observed projectile with valid speed; not an impact",
+        "gunConfirmed": 18,
+        "duplicateGunSignals": 0,
+        "ambiguousGunSignals": 6,
+        "elapsedSeconds": 2902.537356249988,
+        "timedOutAttempts": 57,
+        "correlationPolicy": "unique tool/origin/direction for gun; unique eligible handle attempt for knife; ambiguity never trains"
+      },
+      "settings": {
+        "gunTimingModel": "RTT",
+        "automaticSaves": true,
+        "gunMotionModel": "Classic 66d",
+        "silentAim": false,
+        "adaptiveGunTiming": false,
+        "manualErrorGate": false,
+        "wallCheck": true,
+        "leadBias": 0,
+        "motionSampleHz": 120,
+        "detailedTrajectories": true,
+        "gunLandingGuard": true,
+        "silentSweep": 0.5,
+        "useKnifeSpeedCalibration": true,
+        "autoTuneLead": true,
+        "silentSpawn": "Through"
+      },
+      "events": 202,
+      "points": 2090,
+      "phases": {
+        "gun/authored": 45,
+        "gun/confirmation": 18,
+        "gun/unconfirmed": 30,
+        "knife/authored": 38,
+        "knifeActivation/activation": 23,
+        "knife/unconfirmed": 27,
+        "stab/attempt": 7,
+        "knife/projectile-observed": 11,
+        "gun/attempt": 3
+      },
+      "replay": [
+        {
+          "horizon": 0.15,
+          "model": "linear",
+          "windows": 1738,
+          "per_trajectory_mean_error_studs": {
+            "count": 69,
+            "mean": 1.3819353716801486,
+            "median": 1.2526424014845559,
+            "p90": 2.6320651355465743,
+            "min": 0.00014648437502273737,
+            "max": 3.0130825211193115
+          },
+          "horizontal_error_studs": {
+            "count": 69,
+            "mean": 0.6940135487581746,
+            "median": 0.7003522233422319,
+            "p90": 1.1628088734424358,
+            "min": 0.0,
+            "max": 1.8393425731990578
+          },
+          "vertical_error_studs": {
+            "count": 69,
+            "mean": 0.8965697362709208,
+            "median": 0.6831016776943812,
+            "p90": 2.342336809644681,
+            "min": 0.0,
+            "max": 2.909103344445333
+          }
+        },
+        {
+          "horizon": 0.15,
+          "model": "acceleration",
+          "windows": 1738,
+          "per_trajectory_mean_error_studs": {
+            "count": 69,
+            "mean": 1.369690253982388,
+            "median": 1.219556423116062,
+            "p90": 2.6261225024448747,
+            "min": 0.00014648437502273737,
+            "max": 3.0134366497693836
+          },
+          "horizontal_error_studs": {
+            "count": 69,
+            "mean": 0.678985471593411,
+            "median": 0.6652818549793017,
+            "p90": 1.1225071306538241,
+            "min": 0.0,
+            "max": 1.970480231560888
+          },
+          "vertical_error_studs": {
+            "count": 69,
+            "mean": 0.8965697362709208,
+            "median": 0.6831016776943812,
+            "p90": 2.342336809644681,
+            "min": 0.0,
+            "max": 2.909103344445333
+          }
+        },
+        {
+          "horizon": 0.15,
+          "model": "intent25",
+          "windows": 1738,
+          "per_trajectory_mean_error_studs": {
+            "count": 69,
+            "mean": 1.3100254219687355,
+            "median": 1.1235019418440622,
+            "p90": 2.554403966953349,
+            "min": 0.00014648437502273737,
+            "max": 3.0130266787122517
+          },
+          "horizontal_error_studs": {
+            "count": 69,
+            "mean": 0.6055595395275748,
+            "median": 0.5877825309704657,
+            "p90": 1.0407878621259523,
+            "min": 0.0,
+            "max": 1.8402020065040268
+          },
+          "vertical_error_studs": {
+            "count": 69,
+            "mean": 0.8965697362709208,
+            "median": 0.6831016776943812,
+            "p90": 2.342336809644681,
+            "min": 0.0,
+            "max": 2.909103344445333
+          }
+        },
+        {
+          "horizon": 0.15,
+          "model": "intent50",
+          "windows": 1738,
+          "per_trajectory_mean_error_studs": {
+            "count": 69,
+            "mean": 1.2990745700451645,
+            "median": 1.1001065139943422,
+            "p90": 2.538784007795626,
+            "min": 0.00014648437502273737,
+            "max": 3.0130626938311367
+          },
+          "horizontal_error_studs": {
+            "count": 69,
+            "mean": 0.5949511896535025,
+            "median": 0.5767635960669468,
+            "p90": 1.0181890693103741,
+            "min": 0.0,
+            "max": 1.8411414766912888
+          },
+          "vertical_error_studs": {
+            "count": 69,
+            "mean": 0.8965697362709208,
+            "median": 0.6831016776943812,
+            "p90": 2.342336809644681,
+            "min": 0.0,
+            "max": 2.909103344445333
+          }
+        },
+        {
+          "horizon": 0.15,
+          "model": "intent100",
+          "windows": 1738,
+          "per_trajectory_mean_error_studs": {
+            "count": 69,
+            "mean": 1.4409164446472773,
+            "median": 1.3170826585733695,
+            "p90": 2.7371305385923757,
+            "min": 0.00014648437502273737,
+            "max": 3.320501232476127
+          },
+          "horizontal_error_studs": {
+            "count": 69,
+            "mean": 0.7818373750504989,
+            "median": 0.8357593963526512,
+            "p90": 1.2237303856981536,
+            "min": 0.0,
+            "max": 1.9661783987121642
+          },
+          "vertical_error_studs": {
+            "count": 69,
+            "mean": 0.8965697362709208,
+            "median": 0.6831016776943812,
+            "p90": 2.342336809644681,
+            "min": 0.0,
+            "max": 2.909103344445333
+          }
+        },
+        {
+          "horizon": 0.15,
+          "model": "classic-proxy",
+          "windows": 1738,
+          "per_trajectory_mean_error_studs": {
+            "count": 69,
+            "mean": 1.3655626626243809,
+            "median": 1.2182617218290392,
+            "p90": 2.6231241909332703,
+            "min": 0.00014648437502273737,
+            "max": 3.0134366594182036
+          },
+          "horizontal_error_studs": {
+            "count": 69,
+            "mean": 0.6759796225072138,
+            "median": 0.664125982511228,
+            "p90": 1.1127889646742184,
+            "min": 0.0,
+            "max": 1.9704752195086985
+          },
+          "vertical_error_studs": {
+            "count": 69,
+            "mean": 0.894331181266048,
+            "median": 0.6831014078634942,
+            "p90": 2.3355690248005714,
+            "min": 0.0,
+            "max": 2.909103353669593
+          }
+        },
+        {
+          "horizon": 0.15,
+          "model": "v17-proxy",
+          "windows": 1738,
+          "per_trajectory_mean_error_studs": {
+            "count": 69,
+            "mean": 1.3409498526183257,
+            "median": 1.1796647247506153,
+            "p90": 2.5755420436219754,
+            "min": 0.00014648437502273737,
+            "max": 3.01344739907234
+          },
+          "horizontal_error_studs": {
+            "count": 69,
+            "mean": 0.6670468246931065,
+            "median": 0.6584058793812372,
+            "p90": 1.098706871557804,
+            "min": 0.0,
+            "max": 1.9674143324323325
+          },
+          "vertical_error_studs": {
+            "count": 69,
+            "mean": 0.8756489478684742,
+            "median": 0.634939505479534,
+            "p90": 2.27687339572106,
+            "min": 0.0,
+            "max": 2.9090961306305188
+          }
+        },
+        {
+          "horizon": 0.2,
+          "model": "linear",
+          "windows": 1678,
+          "per_trajectory_mean_error_studs": {
+            "count": 65,
+            "mean": 2.197390359736724,
+            "median": 1.9265258323930496,
+            "p90": 4.469469238995617,
+            "min": 0.00019531250001136868,
+            "max": 5.606047795541581
+          },
+          "horizontal_error_studs": {
+            "count": 65,
+            "mean": 0.959014203178572,
+            "median": 0.9348632753264063,
+            "p90": 1.7269128363105213,
+            "min": 0.0,
+            "max": 2.4648181665343847
+          },
+          "vertical_error_studs": {
+            "count": 65,
+            "mean": 1.5557607970888157,
+            "median": 1.1020897073660074,
+            "p90": 4.011140525042295,
+            "min": 0.0,
+            "max": 5.550936269407231
+          }
+        },
+        {
+          "horizon": 0.2,
+          "model": "acceleration",
+          "windows": 1678,
+          "per_trajectory_mean_error_studs": {
+            "count": 65,
+            "mean": 2.220817957622563,
+            "median": 1.9878082685168392,
+            "p90": 4.4496346852070445,
+            "min": 0.00019531250001136868,
+            "max": 5.606570785811939
+          },
+          "horizontal_error_studs": {
+            "count": 65,
+            "mean": 0.9797058215634099,
+            "median": 0.9088779586191107,
+            "p90": 1.701758302834739,
+            "min": 0.0,
+            "max": 2.7514713496505543
+          },
+          "vertical_error_studs": {
+            "count": 65,
+            "mean": 1.5557607970888157,
+            "median": 1.1020897073660074,
+            "p90": 4.011140525042295,
+            "min": 0.0,
+            "max": 5.550936269407231
+          }
+        },
+        {
+          "horizon": 0.2,
+          "model": "intent25",
+          "windows": 1678,
+          "per_trajectory_mean_error_studs": {
+            "count": 65,
+            "mean": 2.0804237109188115,
+            "median": 1.79362158879488,
+            "p90": 4.323913598806547,
+            "min": 0.00019531250001136868,
+            "max": 5.605912170716352
+          },
+          "horizontal_error_studs": {
+            "count": 65,
+            "mean": 0.8063258793435029,
+            "median": 0.8066084524993925,
+            "p90": 1.409796902982788,
+            "min": 0.0,
+            "max": 2.4654235384714513
+          },
+          "vertical_error_studs": {
+            "count": 65,
+            "mean": 1.5557607970888157,
+            "median": 1.1020897073660074,
+            "p90": 4.011140525042295,
+            "min": 0.0,
+            "max": 5.550936269407231
+          }
+        },
+        {
+          "horizon": 0.2,
+          "model": "intent50",
+          "windows": 1678,
+          "per_trajectory_mean_error_studs": {
+            "count": 65,
+            "mean": 2.031389503506198,
+            "median": 1.75108847074554,
+            "p90": 4.2625748974968225,
+            "min": 0.00019531250001136868,
+            "max": 5.605827026752164
+          },
+          "horizontal_error_studs": {
+            "count": 65,
+            "mean": 0.7485870845125028,
+            "median": 0.6806422020802458,
+            "p90": 1.2644510506497812,
+            "min": 0.0,
+            "max": 2.4660537273938252
+          },
+          "vertical_error_studs": {
+            "count": 65,
+            "mean": 1.5557607970888157,
+            "median": 1.1020897073660074,
+            "p90": 4.011140525042295,
+            "min": 0.0,
+            "max": 5.550936269407231
+          }
+        },
+        {
+          "horizon": 0.2,
+          "model": "intent100",
+          "windows": 1678,
+          "per_trajectory_mean_error_studs": {
+            "count": 65,
+            "mean": 2.1689646729714944,
+            "median": 1.8975908109413924,
+            "p90": 4.35201702253235,
+            "min": 0.00019531250001136868,
+            "max": 5.605808148537782
+          },
+          "horizontal_error_studs": {
+            "count": 65,
+            "mean": 0.9477892707591753,
+            "median": 0.907730594716771,
+            "p90": 1.5596130683809033,
+            "min": 0.0,
+            "max": 2.478953137231553
+          },
+          "vertical_error_studs": {
+            "count": 65,
+            "mean": 1.5557607970888157,
+            "median": 1.1020897073660074,
+            "p90": 4.011140525042295,
+            "min": 0.0,
+            "max": 5.550936269407231
+          }
+        },
+        {
+          "horizon": 0.2,
+          "model": "classic-proxy",
+          "windows": 1678,
+          "per_trajectory_mean_error_studs": {
+            "count": 65,
+            "mean": 2.206691633012713,
+            "median": 1.9693677591157799,
+            "p90": 4.393592531715753,
+            "min": 0.00019531250001136868,
+            "max": 5.606570743310091
+          },
+          "horizontal_error_studs": {
+            "count": 65,
+            "mean": 0.969839100433552,
+            "median": 0.9032859672345416,
+            "p90": 1.6617628550364958,
+            "min": 0.0,
+            "max": 2.751451397640524
+          },
+          "vertical_error_studs": {
+            "count": 65,
+            "mean": 1.547587170320229,
+            "median": 1.1016775639133398,
+            "p90": 4.00418878448343,
+            "min": 0.0,
+            "max": 5.550936224110963
+          }
+        },
+        {
+          "horizon": 0.2,
+          "model": "v17-proxy",
+          "windows": 1678,
+          "per_trajectory_mean_error_studs": {
+            "count": 65,
+            "mean": 2.1283847491923877,
+            "median": 1.873446105058326,
+            "p90": 4.232282420970761,
+            "min": 0.00019531250001136868,
+            "max": 5.604030475638148
+          },
+          "horizontal_error_studs": {
+            "count": 65,
+            "mean": 0.9391773322672496,
+            "median": 0.8842093871372914,
+            "p90": 1.621115912017107,
+            "min": 0.0,
+            "max": 2.739476601295717
+          },
+          "vertical_error_studs": {
+            "count": 65,
+            "mean": 1.4903989318046287,
+            "median": 1.0186764307374963,
+            "p90": 3.8865585559604523,
+            "min": 0.0,
+            "max": 5.548299974642202
+          }
+        },
+        {
+          "horizon": 0.23333333333333334,
+          "model": "linear",
+          "windows": 1637,
+          "per_trajectory_mean_error_studs": {
+            "count": 63,
+            "mean": 2.88379893485271,
+            "median": 2.53516374635185,
+            "p90": 5.896700641957335,
+            "min": 0.0002278645833371229,
+            "max": 8.166101933607807
+          },
+          "horizontal_error_studs": {
+            "count": 63,
+            "mean": 1.1605424721261668,
+            "median": 1.158739794264377,
+            "p90": 1.977579175226644,
+            "min": 0.0,
+            "max": 2.7904328321110086
+          },
+          "vertical_error_studs": {
+            "count": 63,
+            "mean": 2.1281804743450583,
+            "median": 1.5511989757604472,
+            "p90": 5.395213099397149,
+            "min": 0.0,
+            "max": 8.126896795594226
+          }
+        },
+        {
+          "horizon": 0.23333333333333334,
+          "model": "acceleration",
+          "windows": 1637,
+          "per_trajectory_mean_error_studs": {
+            "count": 63,
+            "mean": 2.93718446572819,
+            "median": 2.6221393934085904,
+            "p90": 5.914152705894593,
+            "min": 0.0002278645833371229,
+            "max": 8.168365811891345
+          },
+          "horizontal_error_studs": {
+            "count": 63,
+            "mean": 1.2128812057307807,
+            "median": 1.1800773401005007,
+            "p90": 1.9878598815025719,
+            "min": 0.0,
+            "max": 3.1866678619805953
+          },
+          "vertical_error_studs": {
+            "count": 63,
+            "mean": 2.1281804743450583,
+            "median": 1.5511989757604472,
+            "p90": 5.395213099397149,
+            "min": 0.0,
+            "max": 8.126896795594226
+          }
+        },
+        {
+          "horizon": 0.23333333333333334,
+          "model": "intent25",
+          "windows": 1637,
+          "per_trajectory_mean_error_studs": {
+            "count": 63,
+            "mean": 2.730408533397683,
+            "median": 2.345233214537799,
+            "p90": 5.794637478514917,
+            "min": 0.0002278645833371229,
+            "max": 8.165876028414054
+          },
+          "horizontal_error_studs": {
+            "count": 63,
+            "mean": 0.9537044944127623,
+            "median": 0.9838011449004096,
+            "p90": 1.6652284890202549,
+            "min": 0.0,
+            "max": 2.791195995074617
+          },
+          "vertical_error_studs": {
+            "count": 63,
+            "mean": 2.1281804743450583,
+            "median": 1.5511989757604472,
+            "p90": 5.395213099397149,
+            "min": 0.0,
+            "max": 8.126896795594226
+          }
+        },
+        {
+          "horizon": 0.23333333333333334,
+          "model": "intent50",
+          "windows": 1637,
+          "per_trajectory_mean_error_studs": {
+            "count": 63,
+            "mean": 2.6444975337809984,
+            "median": 2.258291654571706,
+            "p90": 5.687090411187428,
+            "min": 0.0002278645833371229,
+            "max": 8.165701928918779
+          },
+          "horizontal_error_studs": {
+            "count": 63,
+            "mean": 0.8437688829253424,
+            "median": 0.7807718672927385,
+            "p90": 1.414995166792102,
+            "min": 0.0,
+            "max": 2.7919988756937903
+          },
+          "vertical_error_studs": {
+            "count": 63,
+            "mean": 2.1281804743450583,
+            "median": 1.5511989757604472,
+            "p90": 5.395213099397149,
+            "min": 0.0,
+            "max": 8.126896795594226
+          }
+        },
+        {
+          "horizon": 0.23333333333333334,
+          "model": "intent100",
+          "windows": 1637,
+          "per_trajectory_mean_error_studs": {
+            "count": 63,
+            "mean": 2.772317125757267,
+            "median": 2.3771753871254924,
+            "p90": 5.725284545419268,
+            "min": 0.0002278645833371229,
+            "max": 8.165509229510413
+          },
+          "horizontal_error_studs": {
+            "count": 63,
+            "mean": 1.0370354174405807,
+            "median": 0.9778319237186589,
+            "p90": 1.659910795153817,
+            "min": 0.0,
+            "max": 2.9124331262541507
+          },
+          "vertical_error_studs": {
+            "count": 63,
+            "mean": 2.1281804743450583,
+            "median": 1.5511989757604472,
+            "p90": 5.395213099397149,
+            "min": 0.0,
+            "max": 8.126896795594226
+          }
+        },
+        {
+          "horizon": 0.23333333333333334,
+          "model": "classic-proxy",
+          "windows": 1637,
+          "per_trajectory_mean_error_studs": {
+            "count": 63,
+            "mean": 2.910854618039618,
+            "median": 2.6108862034848994,
+            "p90": 5.8591368665842865,
+            "min": 0.0002278645833371229,
+            "max": 8.168365723205936
+          },
+          "horizontal_error_studs": {
+            "count": 63,
+            "mean": 1.1943066893564127,
+            "median": 1.1500472113599065,
+            "p90": 1.94067210246045,
+            "min": 0.0,
+            "max": 3.1866287698905715
+          },
+          "vertical_error_studs": {
+            "count": 63,
+            "mean": 2.113406486855722,
+            "median": 1.5409053350825288,
+            "p90": 5.354046149946487,
+            "min": 0.0,
+            "max": 8.126896705561503
+          }
+        },
+        {
+          "horizon": 0.23333333333333334,
+          "model": "v17-proxy",
+          "windows": 1637,
+          "per_trajectory_mean_error_studs": {
+            "count": 63,
+            "mean": 2.7613622417995063,
+            "median": 2.421052321513758,
+            "p90": 5.446410773477648,
+            "min": 0.0002278645833371229,
+            "max": 8.16323695681558
+          },
+          "horizontal_error_studs": {
+            "count": 63,
+            "mean": 1.1379023969906763,
+            "median": 1.1169649443984564,
+            "p90": 1.8563013258816186,
+            "min": 0.0,
+            "max": 3.163500277464635
+          },
+          "vertical_error_studs": {
+            "count": 63,
+            "mean": 2.004773310462254,
+            "median": 1.4725193165150279,
+            "p90": 5.130266418079328,
+            "min": 0.0,
+            "max": 8.121713868971081
+          }
+        },
+        {
+          "horizon": 0.3,
+          "model": "linear",
+          "windows": 1561,
+          "per_trajectory_mean_error_studs": {
+            "count": 60,
+            "mean": 4.539718451633639,
+            "median": 3.8318738195270248,
+            "p90": 9.535582146437761,
+            "min": 0.0002929687499886313,
+            "max": 11.714753634513343
+          },
+          "horizontal_error_studs": {
+            "count": 60,
+            "mean": 1.7087017593373042,
+            "median": 1.6467963514297774,
+            "p90": 2.868378899282212,
+            "min": 0.0,
+            "max": 4.01963099322944
+          },
+          "vertical_error_studs": {
+            "count": 60,
+            "mean": 3.471267707909666,
+            "median": 2.3207075531667973,
+            "p90": 8.870899124333794,
+            "min": 0.0,
+            "max": 11.574931480946029
+          }
+        },
+        {
+          "horizon": 0.3,
+          "model": "acceleration",
+          "windows": 1561,
+          "per_trajectory_mean_error_studs": {
+            "count": 60,
+            "mean": 4.663072295504749,
+            "median": 3.9319038211324795,
+            "p90": 9.593842168476858,
+            "min": 0.0002929687499886313,
+            "max": 11.726034861138528
+          },
+          "horizontal_error_studs": {
+            "count": 60,
+            "mean": 1.8484995096304118,
+            "median": 1.82881927892968,
+            "p90": 3.047295563591661,
+            "min": 0.0,
+            "max": 4.701530697788843
+          },
+          "vertical_error_studs": {
+            "count": 60,
+            "mean": 3.471267707909666,
+            "median": 2.3207075531667973,
+            "p90": 8.870899124333794,
+            "min": 0.0,
+            "max": 11.574931480946029
+          }
+        },
+        {
+          "horizon": 0.3,
+          "model": "intent25",
+          "windows": 1561,
+          "per_trajectory_mean_error_studs": {
+            "count": 60,
+            "mean": 4.324379197521586,
+            "median": 3.5705634218655646,
+            "p90": 9.369448533273944,
+            "min": 0.0002929687499886313,
+            "max": 11.713959535676791
+          },
+          "horizontal_error_studs": {
+            "count": 60,
+            "mean": 1.4011821827501376,
+            "median": 1.346104623971947,
+            "p90": 2.299929845968788,
+            "min": 0.0,
+            "max": 3.895147241071165
+          },
+          "vertical_error_studs": {
+            "count": 60,
+            "mean": 3.471267707909666,
+            "median": 2.3207075531667973,
+            "p90": 8.870899124333794,
+            "min": 0.0,
+            "max": 11.574931480946029
+          }
+        },
+        {
+          "horizon": 0.3,
+          "model": "intent50",
+          "windows": 1561,
+          "per_trajectory_mean_error_studs": {
+            "count": 60,
+            "mean": 4.164507018459289,
+            "median": 3.375883146146826,
+            "p90": 9.163686768354868,
+            "min": 0.0002929687499886313,
+            "max": 11.713297155054297
+          },
+          "horizontal_error_studs": {
+            "count": 60,
+            "mean": 1.170657390662662,
+            "median": 1.0782174764406598,
+            "p90": 1.8588734529732016,
+            "min": 0.0,
+            "max": 3.895534491665399
+          },
+          "vertical_error_studs": {
+            "count": 60,
+            "mean": 3.471267707909666,
+            "median": 2.3207075531667973,
+            "p90": 8.870899124333794,
+            "min": 0.0,
+            "max": 11.574931480946029
+          }
+        },
+        {
+          "horizon": 0.3,
+          "model": "intent100",
+          "windows": 1561,
+          "per_trajectory_mean_error_studs": {
+            "count": 60,
+            "mean": 4.2318399033966845,
+            "median": 3.418928526360767,
+            "p90": 9.199547871212411,
+            "min": 0.0002929687499886313,
+            "max": 11.712370246356688
+          },
+          "horizontal_error_studs": {
+            "count": 60,
+            "mean": 1.2851286288574921,
+            "median": 1.1043753135704348,
+            "p90": 2.1101284918270466,
+            "min": 0.0,
+            "max": 3.896334131071193
+          },
+          "vertical_error_studs": {
+            "count": 60,
+            "mean": 3.471267707909666,
+            "median": 2.3207075531667973,
+            "p90": 8.870899124333794,
+            "min": 0.0,
+            "max": 11.574931480946029
+          }
+        },
+        {
+          "horizon": 0.3,
+          "model": "classic-proxy",
+          "windows": 1561,
+          "per_trajectory_mean_error_studs": {
+            "count": 60,
+            "mean": 4.589678604920138,
+            "median": 3.9237653691993732,
+            "p90": 9.300559111171987,
+            "min": 0.0002929687499886313,
+            "max": 11.726034637762126
+          },
+          "horizontal_error_studs": {
+            "count": 60,
+            "mean": 1.7964102677055827,
+            "median": 1.7710695958217155,
+            "p90": 2.9215715415959886,
+            "min": 0.0,
+            "max": 4.701404763123298
+          },
+          "vertical_error_studs": {
+            "count": 60,
+            "mean": 3.429348562545531,
+            "median": 2.3139568666249106,
+            "p90": 8.796762025893134,
+            "min": 0.0,
+            "max": 11.574931256277315
+          }
+        },
+        {
+          "horizon": 0.3,
+          "model": "v17-proxy",
+          "windows": 1561,
+          "per_trajectory_mean_error_studs": {
+            "count": 60,
+            "mean": 4.217899509481302,
+            "median": 3.514008023896869,
+            "p90": 8.48678331980256,
+            "min": 0.0002929687499886313,
+            "max": 11.713281005549128
+          },
+          "horizontal_error_studs": {
+            "count": 60,
+            "mean": 1.6577615972835253,
+            "median": 1.6225629781010902,
+            "p90": 2.5724291107312327,
+            "min": 0.0,
+            "max": 4.629476348440975
+          },
+          "vertical_error_studs": {
+            "count": 60,
+            "mean": 3.1542334190729466,
+            "median": 2.1305204363001886,
+            "p90": 8.05916786027475,
+            "min": 0.0,
+            "max": 11.562087516338007
+          }
+        }
+      ],
+      "timing": {
+        "gun": {
+          "sample_intervals_seconds": {
+            "count": 1121,
+            "mean": 0.053986404517525934,
+            "median": 0.0525067689595744,
+            "p90": 0.07465223094914109,
+            "min": 0.00932400010060519,
+            "max": 0.11812123109120876
+          },
+          "unchanged_position_pairs": 61,
+          "pairs": 1121
+        },
+        "knife": {
+          "sample_intervals_seconds": {
+            "count": 876,
+            "mean": 0.05591068510803369,
+            "median": 0.05309453792870045,
+            "p90": 0.07728469301946461,
+            "min": 0.033460614969953895,
+            "max": 0.11791546095628291
+          },
+          "unchanged_position_pairs": 193,
+          "pairs": 876
+        }
+      },
+      "gun_signals": [
+        {
+          "shot": "1",
+          "authored": true,
+          "latencyMs": 166.66515404358506,
+          "hitTarget": false,
+          "settings": {
+            "prediction": {
+              "horizon": 0.2210796127825756,
+              "part": [
+                49.26910400390625,
+                269.7447509765625,
+                8950.884765625
+              ],
+              "errorRadius": 0.45,
+              "sampleInterval": 0.016666666666666666,
+              "usedVelocity": [
+                2.634629249572754,
+                0,
+                15.781596183776855
+              ],
+              "sampleAge": 0.0004575380589812994,
+              "turnRate": 0,
+              "landingGuard": true,
+              "root": [
+                49.243412017822266,
+                269.77880859375,
+                8950.556640625
+              ],
+              "grounded": true,
+              "timingModel": "RTT",
+              "lead": 0.2210796127825756,
+              "model": "Classic 66d",
+              "moveDirection": [
+                0.16466431319713593,
+                0,
+                0.9863496422767639
+              ],
+              "acceleration": [
+                17.73638916015625,
+                -0.036800235509872437,
+                -249.3700408935547
+              ],
+              "measuredVelocity": [
+                0,
+                0,
+                0
+              ]
+            },
+            "manualErrorGate": false,
+            "wallCheck": true,
+            "leadBias": 0,
+            "autoTune": false,
+            "motionHz": 120,
+            "mode": "Normal",
+            "adaptiveTiming": false,
+            "horizon": 0.2210796127825756
+          },
+          "trajectoryPoints": 16
+        },
+        {
+          "shot": "6",
+          "authored": true,
+          "latencyMs": 164.12523097824305,
+          "hitTarget": false,
+          "settings": {
+            "prediction": {
+              "horizon": 0.2271345400061669,
+              "part": [
+                48.15618896484375,
+                273.88092041015625,
+                8994.3798828125
+              ],
+              "errorRadius": 0.45002281149996165,
+              "sampleInterval": 0.04117753799073398,
+              "usedVelocity": [
+                -10.873960494995117,
+                36.36768341064453,
+                11.736980438232422
+              ],
+              "sampleAge": 0.0002877690130844712,
+              "turnRate": 4.1484832763671875e-05,
+              "landingGuard": true,
+              "root": [
+                48.12344741821289,
+                273.0210876464844,
+                8994.2939453125
+              ],
+              "grounded": false,
+              "timingModel": "RTT",
+              "lead": 0.2271345400036461,
+              "model": "Classic 66d",
+              "moveDirection": [
+                -0.7070080637931824,
+                0,
+                0.7072054743766785
+              ],
+              "acceleration": [
+                0.9133325219154358,
+                -249.9968719482422,
+                0.8496466279029846
+              ],
+              "measuredVelocity": [
+                -10.873960494995117,
+                36.36768341064453,
+                11.736980438232422
+              ]
+            },
+            "manualErrorGate": false,
+            "wallCheck": true,
+            "leadBias": 0,
+            "autoTune": false,
+            "motionHz": 120,
+            "mode": "Normal",
+            "adaptiveTiming": false,
+            "horizon": 0.2271345400061669
+          },
+          "trajectoryPoints": 14
+        },
+        {
+          "shot": "8",
+          "authored": true,
+          "latencyMs": 228.60669204965234,
+          "hitTarget": true,
+          "settings": {
+            "prediction": {
+              "horizon": 0.20052818059815133,
+              "part": [
+                47.56969451904297,
+                269.6470642089844,
+                8940.083984375
+              ],
+              "errorRadius": 0.35,
+              "sampleInterval": 0.04102338501252234,
+              "usedVelocity": [
+                3.565962791442871,
+                0.0010986170964315534,
+                -17.640216827392578
+              ],
+              "sampleAge": 0.0004546919371932745,
+              "turnRate": 0.0034503936767578125,
+              "landingGuard": true,
+              "root": [
+                47.594970703125,
+                269.7030944824219,
+                8940.263671875
+              ],
+              "grounded": true,
+              "timingModel": "RTT",
+              "lead": 0.20052816859836403,
+              "model": "Classic 66d",
+              "moveDirection": [
+                -0.39353859424591064,
+                0,
+                -0.9193081259727478
+              ],
+              "acceleration": [
+                -14.413905143737793,
+                -0.01457373145967722,
+                -3.6763877868652344
+              ],
+              "measuredVelocity": [
+                3.565962791442871,
+                0.0010986170964315534,
+                -17.640216827392578
+              ]
+            },
+            "manualErrorGate": false,
+            "wallCheck": true,
+            "leadBias": 0,
+            "autoTune": true,
+            "motionHz": 120,
+            "mode": "Normal",
+            "adaptiveTiming": false,
+            "horizon": 0.20052818059815133
+          },
+          "trajectoryPoints": 4
+        },
+        {
+          "shot": "10",
+          "authored": true,
+          "latencyMs": 185.26307702995837,
+          "hitTarget": true,
+          "settings": {
+            "prediction": {
+              "horizon": 0.19347184721371832,
+              "part": [
+                -26.039073944091797,
+                292.2745056152344,
+                8974.6630859375
+              ],
+              "errorRadius": 0.35,
+              "sampleInterval": 0.03609669196885079,
+              "usedVelocity": [
+                8.433028221130371,
+                0.2669813930988312,
+                13.563027381896973
+              ],
+              "sampleAge": 0.0003212310839444399,
+              "turnRate": 0.007877469062805176,
+              "landingGuard": true,
+              "root": [
+                -26.073335647583008,
+                292.021484375,
+                8974.705078125
+              ],
+              "grounded": true,
+              "timingModel": "RTT",
+              "lead": 0.19347179103953865,
+              "model": "Classic 66d",
+              "moveDirection": [
+                0.696381688117981,
+                0,
+                0.7176716923713684
+              ],
+              "acceleration": [
+                19.403779983520508,
+                -2.1653873920440674,
+                -11.746460914611816
+              ],
+              "measuredVelocity": [
+                8.433028221130371,
+                0.2669813930988312,
+                13.563027381896973
+              ]
+            },
+            "manualErrorGate": false,
+            "wallCheck": true,
+            "leadBias": 0,
+            "autoTune": true,
+            "motionHz": 120,
+            "mode": "Normal",
+            "adaptiveTiming": false,
+            "horizon": 0.19347184721371832
+          },
+          "trajectoryPoints": 4
+        },
+        {
+          "shot": "53",
+          "authored": true,
+          "latencyMs": 255.23469201289117,
+          "hitTarget": true,
+          "settings": {
+            "prediction": {
+              "horizon": 0.2045725607451323,
+              "part": [
+                -22.438753128051758,
+                284.1138000488281,
+                8980.810546875
+              ],
+              "errorRadius": 0.35,
+              "sampleInterval": 0.036972615984268486,
+              "usedVelocity": [
+                9.00796890258789,
+                0,
+                -14.296760559082031
+              ],
+              "sampleAge": 0.00031884596683084965,
+              "turnRate": 0.0006973743438720703,
+              "landingGuard": true,
+              "root": [
+                -22.498416900634766,
+                283.966796875,
+                8981.08203125
+              ],
+              "grounded": true,
+              "timingModel": "RTT",
+              "lead": 0.2045725602246762,
+              "model": "Classic 66d",
+              "moveDirection": [
+                0.5454645156860352,
+                0,
+                -0.8381339311599731
+              ],
+              "acceleration": [
+                6.38550329208374,
+                0,
+                2.911789655685425
+              ],
+              "measuredVelocity": [
+                9.00796890258789,
+                0,
+                -14.296760559082031
+              ]
+            },
+            "manualErrorGate": false,
+            "wallCheck": true,
+            "leadBias": 0,
+            "autoTune": true,
+            "motionHz": 120,
+            "mode": "Normal",
+            "adaptiveTiming": false,
+            "horizon": 0.2045725607451323
+          },
+          "trajectoryPoints": 5
+        },
+        {
+          "shot": "55",
+          "authored": true,
+          "latencyMs": 679.1563079459593,
+          "hitTarget": false,
+          "settings": {
+            "prediction": {
+              "horizon": 0.33333333333333337,
+              "landingRootY": 274.06779515743256,
+              "part": [
+                -21.709306716918945,
+                276.0263671875,
+                9005.4541015625
+              ],
+              "errorRadius": 1.1997711186106705,
+              "sampleInterval": 0.1794895390048623,
+              "usedVelocity": [
+                12.14830207824707,
+                0.18972475826740265,
+                -10.915359497070312
+              ],
+              "sampleAge": 0.0032507689902558923,
+              "turnRate": 0.6106688976287842,
+              "landingGuard": true,
+              "root": [
+                -21.721769332885742,
+                275.918701171875,
+                9005.3662109375
+              ],
+              "grounded": false,
+              "timingModel": "RTT",
+              "lead": 0.3316083578705259,
+              "model": "Classic 66d",
+              "moveDirection": [
+                -0.8158343434333801,
+                0,
+                0.5782856345176697
+              ],
+              "acceleration": [
+                -81.61246490478516,
+                3.410524368286133,
+                -119.93659210205078
+              ],
+              "measuredVelocity": [
+                12.14830207824707,
+                0.18972475826740265,
+                -10.915359497070312
+              ]
+            },
+            "manualErrorGate": false,
+            "wallCheck": true,
+            "leadBias": 0,
+            "autoTune": true,
+            "motionHz": 120,
+            "mode": "Normal",
+            "adaptiveTiming": false,
+            "horizon": 0.33333333333333337
+          },
+          "trajectoryPoints": 27
+        },
+        {
+          "shot": "56",
+          "authored": true,
+          "latencyMs": 128.2856159377843,
+          "hitTarget": false,
+          "settings": {
+            "prediction": {
+              "horizon": 0.2019001054877511,
+              "landingRootY": 274.06791722774506,
+              "part": [
+                27.806446075439453,
+                274.1202392578125,
+                9011.9111328125
+              ],
+              "errorRadius": 1.1012369152204007,
+              "sampleInterval": 0.0589809229131788,
+              "usedVelocity": [
+                -5.853682041168213,
+                0.000231186393648386,
+                14.3992919921875
+              ],
+              "sampleAge": 0.00044807710219174623,
+              "turnRate": 1.5624918937683105,
+              "landingGuard": true,
+              "root": [
+                27.85455322265625,
+                274.0677490234375,
+                9012.0908203125
+              ],
+              "grounded": false,
+              "timingModel": "RTT",
+              "lead": 0.19939368128277157,
+              "model": "Classic 66d",
+              "moveDirection": [
+                0.07781241089105606,
+                0,
+                -0.9969680309295654
+              ],
+              "acceleration": [
+                -192.60939025878906,
+                0.00391968060284853,
+                -9.877472877502441
+              ],
+              "measuredVelocity": [
+                -5.853682041168213,
+                0.000231186393648386,
+                14.3992919921875
+              ]
+            },
+            "manualErrorGate": false,
+            "wallCheck": true,
+            "leadBias": 0,
+            "autoTune": true,
+            "motionHz": 120,
+            "mode": "Normal",
+            "adaptiveTiming": false,
+            "horizon": 0.2019001054877511
+          },
+          "trajectoryPoints": 13
+        },
+        {
+          "shot": "58",
+          "authored": true,
+          "latencyMs": 204.36653902288526,
+          "hitTarget": false,
+          "settings": {
+            "prediction": {
+              "horizon": 0.33333333333333337,
+              "landingRootY": 274.06779515743256,
+              "part": [
+                27.590139389038086,
+                274.16925048828125,
+                9011.1533203125
+              ],
+              "errorRadius": 0.35,
+              "sampleInterval": 0.025214537978172302,
+              "usedVelocity": [
+                3.166497230529785,
+                0,
+                -15.748920440673828
+              ],
+              "sampleAge": 0.005464307032525539,
+              "turnRate": 3.5762786865234375e-07,
+              "landingGuard": true,
+              "root": [
+                27.6466064453125,
+                274.0677490234375,
+                9011.15625
+              ],
+              "grounded": false,
+              "timingModel": "RTT",
+              "lead": 0.33333333333333276,
+              "model": "Classic 66d",
+              "moveDirection": [
+                0.18704859912395477,
+                0,
+                -0.9823506474494934
+              ],
+              "acceleration": [
+                -0.00011919637472601607,
+                -1.6931302582179342e-07,
+                0
+              ],
+              "measuredVelocity": [
+                3.166497230529785,
+                0,
+                -15.748920440673828
+              ]
+            },
+            "manualErrorGate": false,
+            "wallCheck": true,
+            "leadBias": 0,
+            "autoTune": true,
+            "motionHz": 120,
+            "mode": "Normal",
+            "adaptiveTiming": false,
+            "horizon": 0.33333333333333337
+          },
+          "trajectoryPoints": 14
+        },
+        {
+          "shot": "61",
+          "authored": true,
+          "latencyMs": 204.82146204449236,
+          "hitTarget": true,
+          "settings": {
+            "prediction": {
+              "horizon": 0.21084787125494564,
+              "part": [
+                4.9622483253479,
+                284.8096618652344,
+                9022.3212890625
+              ],
+              "errorRadius": 0.5348857748484047,
+              "sampleInterval": 0.032412691973149776,
+              "usedVelocity": [
+                12.855140686035156,
+                7.290348529815674,
+                -9.267691612243652
+              ],
+              "sampleAge": 0.0003260769881308079,
+              "turnRate": 0.17530059814453125,
+              "landingGuard": true,
+              "root": [
+                5.063604831695557,
+                283.8195495605469,
+                9022.3212890625
+              ],
+              "grounded": false,
+              "timingModel": "RTT",
+              "lead": 0.21081186548435327,
+              "model": "Classic 66d",
+              "moveDirection": [
+                0.7470385432243347,
+                0,
+                -0.6647807955741882
+              ],
+              "acceleration": [
+                65.53762817382812,
+                -230.0035858154297,
+                72.82290649414062
+              ],
+              "measuredVelocity": [
+                12.855140686035156,
+                7.290348529815674,
+                -9.267691612243652
+              ]
+            },
+            "manualErrorGate": false,
+            "wallCheck": true,
+            "leadBias": 0,
+            "autoTune": true,
+            "motionHz": 120,
+            "mode": "Normal",
+            "adaptiveTiming": false,
+            "horizon": 0.21084787125494564
+          },
+          "trajectoryPoints": 4
+        },
+        {
+          "shot": "63",
+          "authored": true,
+          "latencyMs": 183.48961498122662,
+          "hitTarget": false,
+          "settings": {
+            "prediction": {
+              "horizon": 0.30743468286706027,
+              "landingRootY": 269.2539849281311,
+              "part": [
+                48.777557373046875,
+                274.2654724121094,
+                8981.3359375
+              ],
+              "errorRadius": 0.35,
+              "sampleInterval": 0.017300307983532548,
+              "usedVelocity": [
+                16.687450408935547,
+                -33.29347229003906,
+                3.240734338760376
+              ],
+              "sampleAge": 0.001911692088469863,
+              "turnRate": 0,
+              "landingGuard": true,
+              "root": [
+                48.467041015625,
+                274.2738037109375,
+                8981.287109375
+              ],
+              "grounded": false,
+              "timingModel": "RTT",
+              "lead": 0.30743468286706027,
+              "model": "Classic 66d",
+              "moveDirection": [
+                0.08003677427768707,
+                0,
+                0.9967919588088989
+              ],
+              "acceleration": [
+                0.3647232949733734,
+                -1.8557106256484985,
+                0.25276511907577515
+              ],
+              "measuredVelocity": [
+                16.687450408935547,
+                -33.29347229003906,
+                3.240734338760376
+              ]
+            },
+            "manualErrorGate": false,
+            "wallCheck": true,
+            "leadBias": 0,
+            "autoTune": true,
+            "motionHz": 120,
+            "mode": "Normal",
+            "adaptiveTiming": false,
+            "horizon": 0.30743468286706027
+          },
+          "trajectoryPoints": 16
+        },
+        {
+          "shot": "67",
+          "authored": true,
+          "latencyMs": 163.75969198998064,
+          "hitTarget": false,
+          "settings": {
+            "prediction": {
+              "horizon": 0.30816569206079836,
+              "landingRootY": 266.0538811683655,
+              "part": [
+                43.00007629394531,
+                266.6304626464844,
+                9001.2880859375
+              ],
+              "errorRadius": 0.35,
+              "sampleInterval": 0.06838215398602188,
+              "usedVelocity": [
+                -16.796815872192383,
+                -11.298547744750977,
+                -1.7401196956634521
+              ],
+              "sampleAge": 0.0038535380735993385,
+              "turnRate": 0.00023818016052246094,
+              "landingGuard": true,
+              "root": [
+                43.286720275878906,
+                266.67169189453125,
+                9001.2216796875
+              ],
+              "grounded": false,
+              "timingModel": "RTT",
+              "lead": 0.30816569185327164,
+              "model": "Classic 66d",
+              "moveDirection": [
+                -0.9955558776855469,
+                0,
+                0.09417369216680527
+              ],
+              "acceleration": [
+                -0.5529294610023499,
+                16.96391487121582,
+                9.062995910644531
+              ],
+              "measuredVelocity": [
+                -16.796815872192383,
+                -11.298547744750977,
+                -1.7401196956634521
+              ]
+            },
+            "manualErrorGate": false,
+            "wallCheck": true,
+            "leadBias": 0,
+            "autoTune": true,
+            "motionHz": 120,
+            "mode": "Normal",
+            "adaptiveTiming": false,
+            "horizon": 0.30816569206079836
+          },
+          "trajectoryPoints": 16
+        },
+        {
+          "shot": "71",
+          "authored": true,
+          "latencyMs": 1007.7209230512381,
+          "hitTarget": false,
+          "settings": {
+            "prediction": {
+              "horizon": 0.3159528927026339,
+              "part": [
+                -18.836402893066406,
+                274.1166076660156,
+                8951.5888671875
+              ],
+              "errorRadius": 0.6513222049115854,
+              "sampleInterval": 0.1866873069666326,
+              "usedVelocity": [
+                -16.875513076782227,
+                0.00250244140625,
+                -0.1895456165075302
+              ],
+              "sampleAge": 0.0003176160389557481,
+              "turnRate": 0.18854963779449463,
+              "landingGuard": true,
+              "root": [
+                -18.712181091308594,
+                274.3212890625,
+                8951.3271484375
+              ],
+              "grounded": true,
+              "timingModel": "RTT",
+              "lead": 0.31581274166565376,
+              "model": "Classic 66d",
+              "moveDirection": [
+                -0.9981560707092285,
+                0,
+                -0.060699623078107834
+              ],
+              "acceleration": [
+                -16.091459274291992,
+                0,
+                146.19024658203125
+              ],
+              "measuredVelocity": [
+                -16.875513076782227,
+                0.00250244140625,
+                -0.1895456165075302
+              ]
+            },
+            "manualErrorGate": false,
+            "wallCheck": true,
+            "leadBias": 0,
+            "autoTune": true,
+            "motionHz": 120,
+            "mode": "Normal",
+            "adaptiveTiming": false,
+            "horizon": 0.3159528927026339
+          },
+          "trajectoryPoints": 29
+        },
+        {
+          "shot": "74",
+          "authored": true,
+          "latencyMs": 210.40484600234777,
+          "hitTarget": false,
+          "settings": {
+            "prediction": {
+              "horizon": 0.23305801410560137,
+              "part": [
+                27.10248374938965,
+                273.5225524902344,
+                8992.12890625
+              ],
+              "errorRadius": 0.35,
+              "sampleInterval": 0.0348012309987098,
+              "usedVelocity": [
+                -3.6692566871643066,
+                0.00250244140625,
+                16.599010467529297
+              ],
+              "sampleAge": 0.0002963850274682045,
+              "turnRate": 6.61611557006836e-05,
+              "landingGuard": true,
+              "root": [
+                27.118793487548828,
+                274.3212890625,
+                8991.771484375
+              ],
+              "grounded": true,
+              "timingModel": "RTT",
+              "lead": 0.23305801409867496,
+              "model": "Classic 66d",
+              "moveDirection": [
+                -0.4610256552696228,
+                0,
+                0.8873867988586426
+              ],
+              "acceleration": [
+                2.23799991607666,
+                0,
+                0.49282392859458923
+              ],
+              "measuredVelocity": [
+                -3.6692566871643066,
+                0.00250244140625,
+                16.599010467529297
+              ]
+            },
+            "manualErrorGate": false,
+            "wallCheck": true,
+            "leadBias": 0,
+            "autoTune": true,
+            "motionHz": 120,
+            "mode": "Normal",
+            "adaptiveTiming": false,
+            "horizon": 0.23305801410560137
+          },
+          "trajectoryPoints": 16
+        },
+        {
+          "shot": "76",
+          "authored": true,
+          "latencyMs": 187.058076960966,
+          "hitTarget": true,
+          "settings": {
+            "prediction": {
+              "horizon": 0.196927950402778,
+              "part": [
+                -9.774848937988281,
+                276.8358459472656,
+                9005.7646484375
+              ],
+              "errorRadius": 0.35,
+              "sampleInterval": 0.03070246207062155,
+              "usedVelocity": [
+                -15.05356216430664,
+                -0.13939312100410461,
+                7.81228494644165
+              ],
+              "sampleAge": 0.00046376895625144243,
+              "turnRate": 0.015302896499633789,
+              "landingGuard": true,
+              "root": [
+                -9.450425148010254,
+                276.90570068359375,
+                9005.576171875
+              ],
+              "grounded": true,
+              "timingModel": "RTT",
+              "lead": 0.19692772685039933,
+              "model": "Classic 66d",
+              "moveDirection": [
+                -0.9762707352638245,
+                0,
+                0.21655350923538208
+              ],
+              "acceleration": [
+                -18.609912872314453,
+                -3.9594528675079346,
+                -34.838172912597656
+              ],
+              "measuredVelocity": [
+                -15.05356216430664,
+                -0.13939312100410461,
+                7.81228494644165
+              ]
+            },
+            "manualErrorGate": false,
+            "wallCheck": true,
+            "leadBias": 0,
+            "autoTune": true,
+            "motionHz": 120,
+            "mode": "Normal",
+            "adaptiveTiming": false,
+            "horizon": 0.196927950402778
+          },
+          "trajectoryPoints": 5
+        },
+        {
+          "shot": "77",
+          "authored": true,
+          "latencyMs": 197.62623100541532,
+          "hitTarget": false,
+          "settings": {
+            "prediction": {
+              "horizon": 0.20028968034121278,
+              "part": [
+                541.0375366210938,
+                284.1553039550781,
+                9780.251953125
+              ],
+              "errorRadius": 0.35,
+              "sampleInterval": 0.023379154037684202,
+              "usedVelocity": [
+                0.7605943083763123,
+                0.0008544921875,
+                -18.007558822631836
+              ],
+              "sampleAge": 0.004860845976509154,
+              "turnRate": 0.00025284290313720703,
+              "landingGuard": true,
+              "root": [
+                541.0818481445312,
+                284.2138671875,
+                9780.521484375
+              ],
+              "grounded": true,
+              "timingModel": "RTT",
+              "lead": 0.20028968027700506,
+              "model": "Classic 66d",
+              "moveDirection": [
+                -0.43138644099235535,
+                0,
+                -0.9021672606468201
+              ],
+              "acceleration": [
+                -7.081479072570801,
+                0,
+                0.005873997695744038
+              ],
+              "measuredVelocity": [
+                0.7605943083763123,
+                0.0008544921875,
+                -18.007558822631836
+              ]
+            },
+            "manualErrorGate": false,
+            "wallCheck": true,
+            "leadBias": 0,
+            "autoTune": true,
+            "motionHz": 120,
+            "mode": "Normal",
+            "adaptiveTiming": false,
+            "horizon": 0.20028968034121278
+          },
+          "trajectoryPoints": 15
+        },
+        {
+          "shot": "81",
+          "authored": true,
+          "latencyMs": 211.54646098148078,
+          "hitTarget": true,
+          "settings": {
+            "prediction": {
+              "horizon": 0.18343335179741224,
+              "part": [
+                556.6392211914062,
+                282.9791564941406,
+                9747.0634765625
+              ],
+              "errorRadius": 0.5491731914191216,
+              "sampleInterval": 0.01543753792066127,
+              "usedVelocity": [
+                -9.906304359436035,
+                0.7835742831230164,
+                14.817718505859375
+              ],
+              "sampleAge": 0.003988000098615885,
+              "turnRate": 0.24104976654052734,
+              "landingGuard": true,
+              "root": [
+                556.79248046875,
+                282.9964599609375,
+                9747
+              ],
+              "grounded": true,
+              "timingModel": "RTT",
+              "lead": 0.1833885246958228,
+              "model": "Classic 66d",
+              "moveDirection": [
+                0.5735528469085693,
+                0,
+                0.8191686272621155
+              ],
+              "acceleration": [
+                124.6194839477539,
+                -78.01639556884766,
+                202.1964874267578
+              ],
+              "measuredVelocity": [
+                -9.906304359436035,
+                0.7835742831230164,
+                14.817718505859375
+              ]
+            },
+            "manualErrorGate": false,
+            "wallCheck": true,
+            "leadBias": 0,
+            "autoTune": true,
+            "motionHz": 120,
+            "mode": "Normal",
+            "adaptiveTiming": false,
+            "horizon": 0.18343335179741224
+          },
+          "trajectoryPoints": 5
+        },
+        {
+          "shot": "83",
+          "authored": true,
+          "latencyMs": 359.3046920141205,
+          "hitTarget": false,
+          "settings": {
+            "prediction": {
+              "horizon": 0.1999923622095711,
+              "part": [
+                23.784563064575195,
+                274.2528381347656,
+                9013.9208984375
+              ],
+              "errorRadius": 0.35,
+              "sampleInterval": 0.02828392293304205,
+              "usedVelocity": [
+                7.6157684326171875,
+                0.1453634798526764,
+                0.35820549726486206
+              ],
+              "sampleAge": 0.0005589999491348863,
+              "turnRate": 0,
+              "landingGuard": true,
+              "root": [
+                23.77490234375,
+                274.299072265625,
+                9014.197265625
+              ],
+              "grounded": true,
+              "timingModel": "RTT",
+              "lead": 0.1999923622095711,
+              "model": "Classic 66d",
+              "moveDirection": [
+                0.8289070129394531,
+                0,
+                -0.5593864321708679
+              ],
+              "acceleration": [
+                0,
+                0,
+                0
+              ],
+              "measuredVelocity": [
+                7.6157684326171875,
+                0.1453634798526764,
+                0.35820549726486206
+              ]
+            },
+            "manualErrorGate": false,
+            "wallCheck": true,
+            "leadBias": 0,
+            "autoTune": true,
+            "motionHz": 120,
+            "mode": "Normal",
+            "adaptiveTiming": false,
+            "horizon": 0.1999923622095711
+          },
+          "trajectoryPoints": 19
+        },
+        {
+          "shot": "90",
+          "authored": true,
+          "latencyMs": 259.1809229925275,
+          "hitTarget": true,
+          "settings": {
+            "prediction": {
+              "horizon": 0.20369136998333617,
+              "landingRootY": 274.32139897346497,
+              "part": [
+                -45.278507232666016,
+                280.8101501464844,
+                8945.482421875
+              ],
+              "errorRadius": 0.45062165836413637,
+              "sampleInterval": 0.023065460962243378,
+              "usedVelocity": [
+                -16.759180068969727,
+                -17.760711669921875,
+                -2.79355525970459
+              ],
+              "sampleAge": 0.002951693022623658,
+              "turnRate": 0.0008225440979003906,
+              "landingGuard": true,
+              "root": [
+                -44.96723556518555,
+                280.88494873046875,
+                8945.6875
+              ],
+              "grounded": false,
+              "timingModel": "RTT",
+              "lead": 0.20369136926859915,
+              "model": "Classic 66d",
+              "moveDirection": [
+                -0.9432228803634644,
+                0,
+                -0.3321606516838074
+              ],
+              "acceleration": [
+                2.068561553955078,
+                -227.39602661132812,
+                -12.023116111755371
+              ],
+              "measuredVelocity": [
+                -16.759180068969727,
+                -17.760711669921875,
+                -2.79355525970459
+              ]
+            },
+            "manualErrorGate": false,
+            "wallCheck": true,
+            "leadBias": 0,
+            "autoTune": true,
+            "motionHz": 120,
+            "mode": "Normal",
+            "adaptiveTiming": false,
+            "horizon": 0.20369136998333617
+          },
+          "trajectoryPoints": 6
+        }
+      ],
+      "gun_authored_modes": {
+        "Normal": 45
+      },
+      "knife_authored_models": {
+        "Replica RTT": 38
+      },
+      "auto_tune_cohorts": {
+        "off": {
+          "authored": 7,
+          "signals": 2,
+          "target_hit_parts": 0,
+          "unconfirmed": 5,
+          "horizon_seconds": {
+            "count": 7,
+            "mean": 0.21161979417868926,
+            "median": 0.2210796127825756,
+            "p90": 0.2271345400061669,
+            "min": 0.1812796519698302,
+            "max": 0.2305221447988968
+          },
+          "actual_correction_logged": 0
+        },
+        "on": {
+          "authored": 38,
+          "signals": 16,
+          "target_hit_parts": 7,
+          "unconfirmed": 22,
+          "horizon_seconds": {
+            "count": 38,
+            "mean": 0.25207821293084615,
+            "median": 0.22232080492303596,
+            "p90": 0.33333333333333337,
+            "min": 0.18162961273596714,
+            "max": 0.33333333333333337
+          },
+          "actual_correction_logged": 0
+        }
+      },
+      "knife_configured_delays": {
+        "1": 38
+      },
+      "knife_spacing_seconds": {
+        "count": 37,
+        "mean": 39.776682215767934,
+        "median": 1.1826508045196533,
+        "p90": 4.898914813995361,
+        "min": 1.0013680458068848,
+        "max": 1382.4396770000458
+      },
+      "legacy_hit_labels_not_rate": {
+        "None": 78,
+        "False": 11,
+        "True": 7
+      }
+    },
+    {
+      "file": "MM2_Trajectory_Calibration.json.before-157df374-7de8-4f0e-84a4-8ce0b0313db2.json",
+      "placeId": 142823291,
+      "session": {
+        "knifeAttempts": 1.0997331763606774e+57,
+        "gunConfirmed": 1.1773636503621308e+57,
+        "gunAttempts": 3.139018916518778e+57,
+        "elapsedSeconds": 71.73832338897046,
+        "knifeConfirmed": 3.9191179517655252e+56
+      },
+      "settings": null,
+      "events": 206,
+      "points": 2150,
+      "phases": {
+        "gun/legacy": 48,
+        "knife/legacy": 114,
+        "stab/legacy": 44
+      },
+      "replay": [
+        {
+          "horizon": 0.15,
+          "model": "linear",
+          "windows": 1407,
+          "per_trajectory_mean_error_studs": {
+            "count": 129,
+            "mean": 1.7979006898760757,
+            "median": 1.4087956532933976,
+            "p90": 3.6140292908109664,
+            "min": 0.00014648437502273737,
+            "max": 12.33693090777895
+          },
+          "horizontal_error_studs": {
+            "count": 129,
+            "mean": 0.6199860821482273,
+            "median": 0.5237636844636896,
+            "p90": 1.0959739777251092,
+            "min": 0.0,
+            "max": 2.758860201263522
+          },
+          "vertical_error_studs": {
+            "count": 129,
+            "mean": 1.3741971461998193,
+            "median": 0.870371054559582,
+            "p90": 3.4363640914477926,
+            "min": 0.0,
+            "max": 12.336802195469318
+          }
+        },
+        {
+          "horizon": 0.15,
+          "model": "acceleration",
+          "windows": 1407,
+          "per_trajectory_mean_error_studs": {
+            "count": 129,
+            "mean": 1.7527642225124171,
+            "median": 1.3833405906159584,
+            "p90": 3.612302696410007,
+            "min": 0.00014648437502273737,
+            "max": 12.33767759465487
+          },
+          "horizontal_error_studs": {
+            "count": 129,
+            "mean": 0.5581435263647002,
+            "median": 0.44155488883207333,
+            "p90": 1.063950689092397,
+            "min": 0.0,
+            "max": 2.758860201263522
+          },
+          "vertical_error_studs": {
+            "count": 129,
+            "mean": 1.3741971461998193,
+            "median": 0.870371054559582,
+            "p90": 3.4363640914477926,
+            "min": 0.0,
+            "max": 12.336802195469318
+          }
+        },
+        {
+          "horizon": 0.15,
+          "model": "intent25",
+          "windows": 1407,
+          "per_trajectory_mean_error_studs": {
+            "count": 129,
+            "mean": 1.697493627050603,
+            "median": 1.2423556738641717,
+            "p90": 3.5445487570303764,
+            "min": 0.00014648437502273737,
+            "max": 12.338466846670165
+          },
+          "horizontal_error_studs": {
+            "count": 129,
+            "mean": 0.48657081396339924,
+            "median": 0.38248690887845005,
+            "p90": 0.9955333178832205,
+            "min": 0.0,
+            "max": 2.758860201263522
+          },
+          "vertical_error_studs": {
+            "count": 129,
+            "mean": 1.3741971461998193,
+            "median": 0.870371054559582,
+            "p90": 3.4363640914477926,
+            "min": 0.0,
+            "max": 12.336802195469318
+          }
+        },
+        {
+          "horizon": 0.15,
+          "model": "intent50",
+          "windows": 1407,
+          "per_trajectory_mean_error_studs": {
+            "count": 129,
+            "mean": 1.6846859907376264,
+            "median": 1.2897930420103352,
+            "p90": 3.7184275606510457,
+            "min": 0.00014648437502273737,
+            "max": 12.342800349481987
+          },
+          "horizontal_error_studs": {
+            "count": 129,
+            "mean": 0.47084618923917004,
+            "median": 0.3391926493447406,
+            "p90": 0.905638293591615,
+            "min": 0.0,
+            "max": 2.758860201263522
+          },
+          "vertical_error_studs": {
+            "count": 129,
+            "mean": 1.3741971461998193,
+            "median": 0.870371054559582,
+            "p90": 3.4363640914477926,
+            "min": 0.0,
+            "max": 12.336802195469318
+          }
+        },
+        {
+          "horizon": 0.15,
+          "model": "intent100",
+          "windows": 1407,
+          "per_trajectory_mean_error_studs": {
+            "count": 129,
+            "mean": 1.9030836178839594,
+            "median": 1.5701748227218648,
+            "p90": 4.10102088662682,
+            "min": 0.00014648437502273737,
+            "max": 12.359846376955554
+          },
+          "horizontal_error_studs": {
+            "count": 129,
+            "mean": 0.7531127250941282,
+            "median": 0.6338979371266004,
+            "p90": 1.5012600897704185,
+            "min": 0.0,
+            "max": 4.448080433026375
+          },
+          "vertical_error_studs": {
+            "count": 129,
+            "mean": 1.3741971461998193,
+            "median": 0.870371054559582,
+            "p90": 3.4363640914477926,
+            "min": 0.0,
+            "max": 12.336802195469318
+          }
+        },
+        {
+          "horizon": 0.15,
+          "model": "classic-proxy",
+          "windows": 1407,
+          "per_trajectory_mean_error_studs": {
+            "count": 129,
+            "mean": 1.7496694321311417,
+            "median": 1.3828498884723108,
+            "p90": 3.6123026963970286,
+            "min": 0.00014648437502273737,
+            "max": 12.337673709458294
+          },
+          "horizontal_error_studs": {
+            "count": 129,
+            "mean": 0.5557970874133698,
+            "median": 0.4409647456737159,
+            "p90": 1.0447383619975552,
+            "min": 0.0,
+            "max": 2.758860201263522
+          },
+          "vertical_error_studs": {
+            "count": 129,
+            "mean": 1.3737733551114448,
+            "median": 0.8703572926033384,
+            "p90": 3.4363640914070714,
+            "min": 0.0,
+            "max": 12.33679830787355
+          }
+        },
+        {
+          "horizon": 0.15,
+          "model": "v17-proxy",
+          "windows": 1407,
+          "per_trajectory_mean_error_studs": {
+            "count": 129,
+            "mean": 1.7230440822507176,
+            "median": 1.3487282229785713,
+            "p90": 3.5582157790702325,
+            "min": 0.00014648437502273737,
+            "max": 12.264583140811038
+          },
+          "horizontal_error_studs": {
+            "count": 129,
+            "mean": 0.5452830821271067,
+            "median": 0.4315886620696185,
+            "p90": 1.0443598632408433,
+            "min": 0.0,
+            "max": 2.758860201263522
+          },
+          "vertical_error_studs": {
+            "count": 129,
+            "mean": 1.3570127975170085,
+            "median": 0.8824413243109299,
+            "p90": 3.436334432402539,
+            "min": 0.0,
+            "max": 12.263650482569346
+          }
+        },
+        {
+          "horizon": 0.2,
+          "model": "linear",
+          "windows": 1261,
+          "per_trajectory_mean_error_studs": {
+            "count": 118,
+            "mean": 2.768089497464053,
+            "median": 2.3630166238736234,
+            "p90": 5.7745460325147135,
+            "min": 0.00019531250001136868,
+            "max": 9.326011527082855
+          },
+          "horizontal_error_studs": {
+            "count": 118,
+            "mean": 0.925092018542561,
+            "median": 0.869245442054102,
+            "p90": 1.7355183344960181,
+            "min": 0.0,
+            "max": 3.9287180303644123
+          },
+          "vertical_error_studs": {
+            "count": 118,
+            "mean": 2.1585616441383584,
+            "median": 1.8243572130853583,
+            "p90": 5.163529556338119,
+            "min": 0.0,
+            "max": 9.251549057354396
+          }
+        },
+        {
+          "horizon": 0.2,
+          "model": "acceleration",
+          "windows": 1261,
+          "per_trajectory_mean_error_studs": {
+            "count": 118,
+            "mean": 2.706292356986918,
+            "median": 2.240862356652621,
+            "p90": 5.674146907271774,
+            "min": 0.00019531250001136868,
+            "max": 9.272929351920572
+          },
+          "horizontal_error_studs": {
+            "count": 118,
+            "mean": 0.8426145305605051,
+            "median": 0.7402106831251818,
+            "p90": 1.616500183594059,
+            "min": 0.0,
+            "max": 3.496389726162871
+          },
+          "vertical_error_studs": {
+            "count": 118,
+            "mean": 2.1585616441383584,
+            "median": 1.8243572130853583,
+            "p90": 5.163529556338119,
+            "min": 0.0,
+            "max": 9.251549057354396
+          }
+        },
+        {
+          "horizon": 0.2,
+          "model": "intent25",
+          "windows": 1261,
+          "per_trajectory_mean_error_studs": {
+            "count": 118,
+            "mean": 2.5986273609308355,
+            "median": 2.127757506874093,
+            "p90": 5.414420417445734,
+            "min": 0.00019531250001136868,
+            "max": 9.288671627378626
+          },
+          "horizontal_error_studs": {
+            "count": 118,
+            "mean": 0.6937292095540006,
+            "median": 0.6321384081436212,
+            "p90": 1.2951305731890386,
+            "min": 0.0,
+            "max": 2.6419783506735044
+          },
+          "vertical_error_studs": {
+            "count": 118,
+            "mean": 2.1585616441383584,
+            "median": 1.8243572130853583,
+            "p90": 5.163529556338119,
+            "min": 0.0,
+            "max": 9.251549057354396
+          }
+        },
+        {
+          "horizon": 0.2,
+          "model": "intent50",
+          "windows": 1261,
+          "per_trajectory_mean_error_studs": {
+            "count": 118,
+            "mean": 2.5223964798447898,
+            "median": 2.1575915952945826,
+            "p90": 5.335382636101517,
+            "min": 0.00019531250001136868,
+            "max": 9.264315185266732
+          },
+          "horizontal_error_studs": {
+            "count": 118,
+            "mean": 0.588626495411785,
+            "median": 0.436530205977968,
+            "p90": 1.247084356656754,
+            "min": 0.0,
+            "max": 2.586591524937905
+          },
+          "vertical_error_studs": {
+            "count": 118,
+            "mean": 2.1585616441383584,
+            "median": 1.8243572130853583,
+            "p90": 5.163529556338119,
+            "min": 0.0,
+            "max": 9.251549057354396
+          }
+        },
+        {
+          "horizon": 0.2,
+          "model": "intent100",
+          "windows": 1261,
+          "per_trajectory_mean_error_studs": {
+            "count": 118,
+            "mean": 2.7305637404890106,
+            "median": 2.2739431931016636,
+            "p90": 5.872993815512341,
+            "min": 0.00019531250001136868,
+            "max": 9.256988431532271
+          },
+          "horizontal_error_studs": {
+            "count": 118,
+            "mean": 0.8795481348376415,
+            "median": 0.7420892994165894,
+            "p90": 1.7532442917498046,
+            "min": 0.0,
+            "max": 5.527285305573995
+          },
+          "vertical_error_studs": {
+            "count": 118,
+            "mean": 2.1585616441383584,
+            "median": 1.8243572130853583,
+            "p90": 5.163529556338119,
+            "min": 0.0,
+            "max": 9.251549057354396
+          }
+        },
+        {
+          "horizon": 0.2,
+          "model": "classic-proxy",
+          "windows": 1261,
+          "per_trajectory_mean_error_studs": {
+            "count": 118,
+            "mean": 2.7019097944269226,
+            "median": 2.2403785811304266,
+            "p90": 5.669995935037038,
+            "min": 0.00019531250001136868,
+            "max": 9.259761592970126
+          },
+          "horizontal_error_studs": {
+            "count": 118,
+            "mean": 0.8391558451551043,
+            "median": 0.7377556972265722,
+            "p90": 1.6164993870158055,
+            "min": 0.0,
+            "max": 3.4382721932354428
+          },
+          "vertical_error_studs": {
+            "count": 118,
+            "mean": 2.1580318252435293,
+            "median": 1.817048317873434,
+            "p90": 5.159380246783309,
+            "min": 0.0,
+            "max": 9.238323133089626
+          }
+        },
+        {
+          "horizon": 0.2,
+          "model": "v17-proxy",
+          "windows": 1261,
+          "per_trajectory_mean_error_studs": {
+            "count": 118,
+            "mean": 2.6310809550284646,
+            "median": 2.226503872347579,
+            "p90": 5.371594613256529,
+            "min": 0.00019531250001136868,
+            "max": 8.140473442042708
+          },
+          "horizontal_error_studs": {
+            "count": 118,
+            "mean": 0.8056345844023381,
+            "median": 0.7197999071005066,
+            "p90": 1.5707614514483146,
+            "min": 0.0,
+            "max": 3.30779516618629
+          },
+          "vertical_error_studs": {
+            "count": 118,
+            "mean": 2.1171015764253163,
+            "median": 1.7828769306068097,
+            "p90": 4.947829124666991,
+            "min": 0.0,
+            "max": 8.137452554543994
+          }
+        },
+        {
+          "horizon": 0.23333333333333334,
+          "model": "linear",
+          "windows": 1173,
+          "per_trajectory_mean_error_studs": {
+            "count": 113,
+            "mean": 3.6759738237183286,
+            "median": 3.1709418256955333,
+            "p90": 7.241410361815507,
+            "min": 0.0002278645833371229,
+            "max": 12.701659021587759
+          },
+          "horizontal_error_studs": {
+            "count": 113,
+            "mean": 1.1741539608794533,
+            "median": 1.0732065256836913,
+            "p90": 2.2773216189853844,
+            "min": 0.0,
+            "max": 4.909808171537132
+          },
+          "vertical_error_studs": {
+            "count": 113,
+            "mean": 2.9206011057627914,
+            "median": 2.437688259818392,
+            "p90": 7.0674676693619745,
+            "min": 0.0,
+            "max": 12.611970994188738
+          }
+        },
+        {
+          "horizon": 0.23333333333333334,
+          "model": "acceleration",
+          "windows": 1173,
+          "per_trajectory_mean_error_studs": {
+            "count": 113,
+            "mean": 3.6137607819149205,
+            "median": 3.1958963563010423,
+            "p90": 7.224592945556038,
+            "min": 0.0002278645833371229,
+            "max": 12.63903127332864
+          },
+          "horizontal_error_studs": {
+            "count": 113,
+            "mean": 1.0927026525140113,
+            "median": 0.9474139714160834,
+            "p90": 2.0985857082101314,
+            "min": 0.0,
+            "max": 4.478171202977593
+          },
+          "vertical_error_studs": {
+            "count": 113,
+            "mean": 2.9206011057627914,
+            "median": 2.437688259818392,
+            "p90": 7.0674676693619745,
+            "min": 0.0,
+            "max": 12.611970994188738
+          }
+        },
+        {
+          "horizon": 0.23333333333333334,
+          "model": "intent25",
+          "windows": 1173,
+          "per_trajectory_mean_error_studs": {
+            "count": 113,
+            "mean": 3.4627625919773646,
+            "median": 2.9787399280229803,
+            "p90": 7.183740213707629,
+            "min": 0.0002278645833371229,
+            "max": 12.657192717062614
+          },
+          "horizontal_error_studs": {
+            "count": 113,
+            "mean": 0.8751548437446617,
+            "median": 0.7984299656246557,
+            "p90": 1.6890425398890898,
+            "min": 0.0,
+            "max": 3.3849803525057145
+          },
+          "vertical_error_studs": {
+            "count": 113,
+            "mean": 2.9206011057627914,
+            "median": 2.437688259818392,
+            "p90": 7.0674676693619745,
+            "min": 0.0,
+            "max": 12.611970994188738
+          }
+        },
+        {
+          "horizon": 0.23333333333333334,
+          "model": "intent50",
+          "windows": 1173,
+          "per_trajectory_mean_error_studs": {
+            "count": 113,
+            "mean": 3.3249264162041516,
+            "median": 2.8966861387181955,
+            "p90": 7.099684942798604,
+            "min": 0.0002278645833371229,
+            "max": 12.627917021130248
+          },
+          "horizontal_error_studs": {
+            "count": 113,
+            "mean": 0.6837311301148378,
+            "median": 0.5759332390980227,
+            "p90": 1.4062644995814257,
+            "min": 0.0,
+            "max": 2.472411867561809
+          },
+          "vertical_error_studs": {
+            "count": 113,
+            "mean": 2.9206011057627914,
+            "median": 2.437688259818392,
+            "p90": 7.0674676693619745,
+            "min": 0.0,
+            "max": 12.611970994188738
+          }
+        },
+        {
+          "horizon": 0.23333333333333334,
+          "model": "intent100",
+          "windows": 1173,
+          "per_trajectory_mean_error_studs": {
+            "count": 113,
+            "mean": 3.471784722604905,
+            "median": 3.0383881786330162,
+            "p90": 7.1916073592233385,
+            "min": 0.0002278645833371229,
+            "max": 12.616713243480561
+          },
+          "horizontal_error_studs": {
+            "count": 113,
+            "mean": 0.912327858039039,
+            "median": 0.7743378021080477,
+            "p90": 1.8138501971112668,
+            "min": 0.0,
+            "max": 5.298147074089464
+          },
+          "vertical_error_studs": {
+            "count": 113,
+            "mean": 2.9206011057627914,
+            "median": 2.437688259818392,
+            "p90": 7.0674676693619745,
+            "min": 0.0,
+            "max": 12.611970994188738
+          }
+        },
+        {
+          "horizon": 0.23333333333333334,
+          "model": "classic-proxy",
+          "windows": 1173,
+          "per_trajectory_mean_error_studs": {
+            "count": 113,
+            "mean": 3.6048251089852905,
+            "median": 3.1431881781889595,
+            "p90": 7.224481113034206,
+            "min": 0.0002278645833371229,
+            "max": 12.610507370935126
+          },
+          "horizontal_error_studs": {
+            "count": 113,
+            "mean": 1.0848043946119033,
+            "median": 0.9473724380223327,
+            "p90": 2.066871866167572,
+            "min": 0.0,
+            "max": 4.360853940849856
+          },
+          "vertical_error_studs": {
+            "count": 113,
+            "mean": 2.9197282645625475,
+            "median": 2.4376859042721764,
+            "p90": 7.067467669697635,
+            "min": 0.0,
+            "max": 12.583442931228305
+          }
+        },
+        {
+          "horizon": 0.23333333333333334,
+          "model": "v17-proxy",
+          "windows": 1173,
+          "per_trajectory_mean_error_studs": {
+            "count": 113,
+            "mean": 3.469705961999196,
+            "median": 3.1238332299564826,
+            "p90": 7.098695818135264,
+            "min": 0.0002278645833371229,
+            "max": 12.282832879764445
+          },
+          "horizontal_error_studs": {
+            "count": 113,
+            "mean": 1.0284563345387685,
+            "median": 0.9346362621455325,
+            "p90": 1.9384397749472864,
+            "min": 0.0,
+            "max": 4.157041163021424
+          },
+          "vertical_error_studs": {
+            "count": 113,
+            "mean": 2.832234874892202,
+            "median": 2.257394838610446,
+            "p90": 6.728104713274973,
+            "min": 0.0,
+            "max": 12.27792827360578
+          }
+        },
+        {
+          "horizon": 0.3,
+          "model": "linear",
+          "windows": 1008,
+          "per_trajectory_mean_error_studs": {
+            "count": 107,
+            "mean": 5.708993300607166,
+            "median": 4.6804542639033935,
+            "p90": 11.482920631832044,
+            "min": 0.0002929687499886313,
+            "max": 22.13050975316016
+          },
+          "horizontal_error_studs": {
+            "count": 107,
+            "mean": 1.7953616381209743,
+            "median": 1.6239691262113398,
+            "p90": 3.6385709047000803,
+            "min": 0.0,
+            "max": 6.834929370432608
+          },
+          "vertical_error_studs": {
+            "count": 107,
+            "mean": 4.587158017688058,
+            "median": 3.697700400117267,
+            "p90": 11.339493459230217,
+            "min": 0.0,
+            "max": 22.129383003191247
+          }
+        },
+        {
+          "horizon": 0.3,
+          "model": "acceleration",
+          "windows": 1008,
+          "per_trajectory_mean_error_studs": {
+            "count": 107,
+            "mean": 5.681592470526762,
+            "median": 4.645879751477401,
+            "p90": 11.472138430215683,
+            "min": 0.0002929687499886313,
+            "max": 22.130847348062087
+          },
+          "horizontal_error_studs": {
+            "count": 107,
+            "mean": 1.7510207508454387,
+            "median": 1.6197845009628324,
+            "p90": 3.4788038872457223,
+            "min": 0.0,
+            "max": 6.621823916584091
+          },
+          "vertical_error_studs": {
+            "count": 107,
+            "mean": 4.587158017688058,
+            "median": 3.697700400117267,
+            "p90": 11.339493459230217,
+            "min": 0.0,
+            "max": 22.129383003191247
+          }
+        },
+        {
+          "horizon": 0.3,
+          "model": "intent25",
+          "windows": 1008,
+          "per_trajectory_mean_error_studs": {
+            "count": 107,
+            "mean": 5.417777137118817,
+            "median": 4.367614751597143,
+            "p90": 11.450610083425017,
+            "min": 0.0002929687499886313,
+            "max": 22.12999267962487
+          },
+          "horizontal_error_studs": {
+            "count": 107,
+            "mean": 1.373926440849168,
+            "median": 1.2749790984782212,
+            "p90": 2.761199176114006,
+            "min": 0.0,
+            "max": 4.919037151864785
+          },
+          "vertical_error_studs": {
+            "count": 107,
+            "mean": 4.587158017688058,
+            "median": 3.697700400117267,
+            "p90": 11.339493459230217,
+            "min": 0.0,
+            "max": 22.129383003191247
+          }
+        },
+        {
+          "horizon": 0.3,
+          "model": "intent50",
+          "windows": 1008,
+          "per_trajectory_mean_error_studs": {
+            "count": 107,
+            "mean": 5.189876038380444,
+            "median": 4.318280887630003,
+            "p90": 11.425370473477305,
+            "min": 0.0002929687499886313,
+            "max": 22.12963682560937
+          },
+          "horizontal_error_studs": {
+            "count": 107,
+            "mean": 1.0367645734879387,
+            "median": 0.9593029731498238,
+            "p90": 1.9943722846922196,
+            "min": 0.0,
+            "max": 3.394769117165102
+          },
+          "vertical_error_studs": {
+            "count": 107,
+            "mean": 4.587158017688058,
+            "median": 3.697700400117267,
+            "p90": 11.339493459230217,
+            "min": 0.0,
+            "max": 22.129383003191247
+          }
+        },
+        {
+          "horizon": 0.3,
+          "model": "intent100",
+          "windows": 1008,
+          "per_trajectory_mean_error_studs": {
+            "count": 107,
+            "mean": 5.223066862452991,
+            "median": 4.319979426858713,
+            "p90": 11.370431317235882,
+            "min": 0.0002929687499886313,
+            "max": 22.129408823288014
+          },
+          "horizontal_error_studs": {
+            "count": 107,
+            "mean": 1.1053389306982304,
+            "median": 0.8403681073223012,
+            "p90": 2.400066916764776,
+            "min": 0.0,
+            "max": 7.739143619562421
+          },
+          "vertical_error_studs": {
+            "count": 107,
+            "mean": 4.587158017688058,
+            "median": 3.697700400117267,
+            "p90": 11.339493459230217,
+            "min": 0.0,
+            "max": 22.129383003191247
+          }
+        },
+        {
+          "horizon": 0.3,
+          "model": "classic-proxy",
+          "windows": 1008,
+          "per_trajectory_mean_error_studs": {
+            "count": 107,
+            "mean": 5.6764216038083735,
+            "median": 4.645876998265979,
+            "p90": 11.472118206533326,
+            "min": 0.0002929687499886313,
+            "max": 22.13083366839706
+          },
+          "horizontal_error_studs": {
+            "count": 107,
+            "mean": 1.7323442361556523,
+            "median": 1.619221210127154,
+            "p90": 3.4730548489387734,
+            "min": 0.0,
+            "max": 6.27539742935172
+          },
+          "vertical_error_studs": {
+            "count": 107,
+            "mean": 4.604895582412674,
+            "median": 3.6106086806112723,
+            "p90": 11.289659940358925,
+            "min": 0.0,
+            "max": 22.129369326502
+          }
+        },
+        {
+          "horizon": 0.3,
+          "model": "v17-proxy",
+          "windows": 1008,
+          "per_trajectory_mean_error_studs": {
+            "count": 107,
+            "mean": 5.304610230328727,
+            "median": 4.403722722536611,
+            "p90": 10.750207656877125,
+            "min": 0.0002929687499886313,
+            "max": 21.95737972024901
+          },
+          "horizontal_error_studs": {
+            "count": 107,
+            "mean": 1.595944454384039,
+            "median": 1.4228306331124945,
+            "p90": 3.127293489485169,
+            "min": 0.0,
+            "max": 5.667109958768902
+          },
+          "vertical_error_studs": {
+            "count": 107,
+            "mean": 4.336847550792631,
+            "median": 3.2607170243102503,
+            "p90": 10.519117531209503,
+            "min": 0.0,
+            "max": 21.955925256817704
+          }
+        }
+      ],
+      "timing": {
+        "gun": {
+          "sample_intervals_seconds": {
+            "count": 335,
+            "mean": 0.04133693432546596,
+            "median": 0.04188615398015827,
+            "p90": 0.05130953900516033,
+            "min": 0.0034965379163622856,
+            "max": 0.08014099998399615
+          },
+          "unchanged_position_pairs": 26,
+          "pairs": 335
+        },
+        "knife": {
+          "sample_intervals_seconds": {
+            "count": 1620,
+            "mean": 0.04521615318235378,
+            "median": 0.046228769002482295,
+            "p90": 0.05226930801291019,
+            "min": 0.032766846008598804,
+            "max": 0.12961661501321942
+          },
+          "unchanged_position_pairs": 123,
+          "pairs": 1620
+        }
+      },
+      "gun_signals": [],
+      "gun_authored_modes": {},
+      "knife_authored_models": {},
+      "auto_tune_cohorts": {
+        "off": {
+          "authored": 0,
+          "signals": 0,
+          "target_hit_parts": 0,
+          "unconfirmed": 0,
+          "horizon_seconds": {
+            "count": 0
+          },
+          "actual_correction_logged": 0
+        },
+        "on": {
+          "authored": 0,
+          "signals": 0,
+          "target_hit_parts": 0,
+          "unconfirmed": 0,
+          "horizon_seconds": {
+            "count": 0
+          },
+          "actual_correction_logged": 0
+        }
+      },
+      "knife_configured_delays": {},
+      "knife_spacing_seconds": {
+        "count": 0
+      },
+      "legacy_hit_labels_not_rate": {
+        "True": 19,
+        "False": 29
+      }
+    },
+    {
+      "file": "MM2_Trajectory_Calibration.json.before-89632edc-1d18-4016-bbaa-6e6681d706f2.json",
+      "placeId": 636649648,
+      "session": {
+        "shootDiagnostics": {
+          "rejected": [],
+          "sentNormal": 0,
+          "sentSilent": 0,
+          "checks": 0
+        },
+        "gunConfirmationMeaning": "matched GunFired signal; not necessarily damage or death",
+        "knifeAttempts": 10,
+        "countersScope": "this-session-only",
+        "startedAt": 1792012748,
+        "stabAttempts": 0,
+        "unmatchedGunSignals": 0,
+        "rawKnifeActivations": 40,
+        "ambiguousKnifeSignals": 11,
+        "knifeConfirmed": 10,
+        "telemetryCost": {
+          "previousSaveMs": 5.537307006306946,
+          "previousSaveBytes": 60327
+        },
+        "gunAttempts": 0,
+        "knifeConfirmationMeaning": "observed projectile with valid speed; not an impact",
+        "gunConfirmed": 0,
+        "duplicateGunSignals": 0,
+        "ambiguousGunSignals": 0,
+        "elapsedSeconds": 194.9598098580027,
+        "timedOutAttempts": 0,
+        "correlationPolicy": "unique tool/origin/direction for gun; unique eligible handle attempt for knife; ambiguity never trains"
+      },
+      "settings": {
+        "gunTimingModel": "RTT",
+        "automaticSaves": true,
+        "gunMotionModel": "Classic 66d",
+        "silentAim": false,
+        "adaptiveGunTiming": false,
+        "manualErrorGate": false,
+        "wallCheck": true,
+        "leadBias": 0,
+        "motionSampleHz": 120,
+        "detailedTrajectories": true,
+        "gunLandingGuard": true,
+        "silentSweep": 0.5,
+        "useKnifeSpeedCalibration": true,
+        "autoTuneLead": true,
+        "silentSpawn": "Through"
+      },
+      "events": 50,
+      "points": 138,
+      "phases": {
+        "knifeActivation/activation": 40,
+        "knife/projectile-observed": 10
+      },
+      "replay": [
+        {
+          "horizon": 0.15,
+          "model": "linear",
+          "windows": 95,
+          "per_trajectory_mean_error_studs": {
+            "count": 9,
+            "mean": 0.2531113840510181,
+            "median": 0.00021972656247726263,
+            "p90": 0.06743732310678752,
+            "min": 0.00014648437502273737,
+            "max": 2.2072499999999877
+          },
+          "horizontal_error_studs": {
+            "count": 9,
+            "mean": 1.7055580795040396e-08,
+            "median": 0.0,
+            "p90": 0.0,
+            "min": 0.0,
+            "max": 1.5350022715536357e-07
+          },
+          "vertical_error_studs": {
+            "count": 9,
+            "mean": 0.25311138404437045,
+            "median": 0.00021972656247726263,
+            "p90": 0.06743732310678752,
+            "min": 0.00014648437502273737,
+            "max": 2.2072499999999877
+          }
+        },
+        {
+          "horizon": 0.15,
+          "model": "acceleration",
+          "windows": 95,
+          "per_trajectory_mean_error_studs": {
+            "count": 9,
+            "mean": 0.2531113840510181,
+            "median": 0.00021972656247726263,
+            "p90": 0.06743732310678752,
+            "min": 0.00014648437502273737,
+            "max": 2.2072499999999877
+          },
+          "horizontal_error_studs": {
+            "count": 9,
+            "mean": 1.7055580795040396e-08,
+            "median": 0.0,
+            "p90": 0.0,
+            "min": 0.0,
+            "max": 1.5350022715536357e-07
+          },
+          "vertical_error_studs": {
+            "count": 9,
+            "mean": 0.25311138404437045,
+            "median": 0.00021972656247726263,
+            "p90": 0.06743732310678752,
+            "min": 0.00014648437502273737,
+            "max": 2.2072499999999877
+          }
+        },
+        {
+          "horizon": 0.15,
+          "model": "intent25",
+          "windows": 95,
+          "per_trajectory_mean_error_studs": {
+            "count": 9,
+            "mean": 0.2531113840510181,
+            "median": 0.00021972656247726263,
+            "p90": 0.06743732310678752,
+            "min": 0.00014648437502273737,
+            "max": 2.2072499999999877
+          },
+          "horizontal_error_studs": {
+            "count": 9,
+            "mean": 1.7055580795040396e-08,
+            "median": 0.0,
+            "p90": 0.0,
+            "min": 0.0,
+            "max": 1.5350022715536357e-07
+          },
+          "vertical_error_studs": {
+            "count": 9,
+            "mean": 0.25311138404437045,
+            "median": 0.00021972656247726263,
+            "p90": 0.06743732310678752,
+            "min": 0.00014648437502273737,
+            "max": 2.2072499999999877
+          }
+        },
+        {
+          "horizon": 0.15,
+          "model": "intent50",
+          "windows": 95,
+          "per_trajectory_mean_error_studs": {
+            "count": 9,
+            "mean": 0.2531113840510181,
+            "median": 0.00021972656247726263,
+            "p90": 0.06743732310678752,
+            "min": 0.00014648437502273737,
+            "max": 2.2072499999999877
+          },
+          "horizontal_error_studs": {
+            "count": 9,
+            "mean": 1.7055580795040396e-08,
+            "median": 0.0,
+            "p90": 0.0,
+            "min": 0.0,
+            "max": 1.5350022715536357e-07
+          },
+          "vertical_error_studs": {
+            "count": 9,
+            "mean": 0.25311138404437045,
+            "median": 0.00021972656247726263,
+            "p90": 0.06743732310678752,
+            "min": 0.00014648437502273737,
+            "max": 2.2072499999999877
+          }
+        },
+        {
+          "horizon": 0.15,
+          "model": "intent100",
+          "windows": 95,
+          "per_trajectory_mean_error_studs": {
+            "count": 9,
+            "mean": 0.2531113840510181,
+            "median": 0.00021972656247726263,
+            "p90": 0.06743732310678752,
+            "min": 0.00014648437502273737,
+            "max": 2.2072499999999877
+          },
+          "horizontal_error_studs": {
+            "count": 9,
+            "mean": 1.7055580795040396e-08,
+            "median": 0.0,
+            "p90": 0.0,
+            "min": 0.0,
+            "max": 1.5350022715536357e-07
+          },
+          "vertical_error_studs": {
+            "count": 9,
+            "mean": 0.25311138404437045,
+            "median": 0.00021972656247726263,
+            "p90": 0.06743732310678752,
+            "min": 0.00014648437502273737,
+            "max": 2.2072499999999877
+          }
+        },
+        {
+          "horizon": 0.15,
+          "model": "classic-proxy",
+          "windows": 95,
+          "per_trajectory_mean_error_studs": {
+            "count": 9,
+            "mean": 0.2531113840510181,
+            "median": 0.00021972656247726263,
+            "p90": 0.06743732310678752,
+            "min": 0.00014648437502273737,
+            "max": 2.2072499999999877
+          },
+          "horizontal_error_studs": {
+            "count": 9,
+            "mean": 1.7055580795040396e-08,
+            "median": 0.0,
+            "p90": 0.0,
+            "min": 0.0,
+            "max": 1.5350022715536357e-07
+          },
+          "vertical_error_studs": {
+            "count": 9,
+            "mean": 0.25311138404437045,
+            "median": 0.00021972656247726263,
+            "p90": 0.06743732310678752,
+            "min": 0.00014648437502273737,
+            "max": 2.2072499999999877
+          }
+        },
+        {
+          "horizon": 0.15,
+          "model": "v17-proxy",
+          "windows": 95,
+          "per_trajectory_mean_error_studs": {
+            "count": 9,
+            "mean": 0.2531113840510181,
+            "median": 0.00021972656247726263,
+            "p90": 0.06743732310678752,
+            "min": 0.00014648437502273737,
+            "max": 2.2072499999999877
+          },
+          "horizontal_error_studs": {
+            "count": 9,
+            "mean": 1.7055580795040396e-08,
+            "median": 0.0,
+            "p90": 0.0,
+            "min": 0.0,
+            "max": 1.5350022715536357e-07
+          },
+          "vertical_error_studs": {
+            "count": 9,
+            "mean": 0.25311138404437045,
+            "median": 0.00021972656247726263,
+            "p90": 0.06743732310678752,
+            "min": 0.00014648437502273737,
+            "max": 2.2072499999999877
+          }
+        },
+        {
+          "horizon": 0.2,
+          "model": "linear",
+          "windows": 85,
+          "per_trajectory_mean_error_studs": {
+            "count": 9,
+            "mean": 0.45023491774681473,
+            "median": 0.00029296875004547474,
+            "p90": 0.12354378044355485,
+            "min": 0.00019531250001136868,
+            "max": 3.923999999999978
+          },
+          "horizontal_error_studs": {
+            "count": 9,
+            "mean": 2.421239834799533e-08,
+            "median": 0.0,
+            "p90": 0.0,
+            "min": 0.0,
+            "max": 2.1791158513195797e-07
+          },
+          "vertical_error_studs": {
+            "count": 9,
+            "mean": 0.4502349177402095,
+            "median": 0.00029296875004547474,
+            "p90": 0.12354378044355485,
+            "min": 0.00019531250001136868,
+            "max": 3.923999999999978
+          }
+        },
+        {
+          "horizon": 0.2,
+          "model": "acceleration",
+          "windows": 85,
+          "per_trajectory_mean_error_studs": {
+            "count": 9,
+            "mean": 0.45023491774681473,
+            "median": 0.00029296875004547474,
+            "p90": 0.12354378044355485,
+            "min": 0.00019531250001136868,
+            "max": 3.923999999999978
+          },
+          "horizontal_error_studs": {
+            "count": 9,
+            "mean": 2.421239834799533e-08,
+            "median": 0.0,
+            "p90": 0.0,
+            "min": 0.0,
+            "max": 2.1791158513195797e-07
+          },
+          "vertical_error_studs": {
+            "count": 9,
+            "mean": 0.4502349177402095,
+            "median": 0.00029296875004547474,
+            "p90": 0.12354378044355485,
+            "min": 0.00019531250001136868,
+            "max": 3.923999999999978
+          }
+        },
+        {
+          "horizon": 0.2,
+          "model": "intent25",
+          "windows": 85,
+          "per_trajectory_mean_error_studs": {
+            "count": 9,
+            "mean": 0.45023491774681473,
+            "median": 0.00029296875004547474,
+            "p90": 0.12354378044355485,
+            "min": 0.00019531250001136868,
+            "max": 3.923999999999978
+          },
+          "horizontal_error_studs": {
+            "count": 9,
+            "mean": 2.421239834799533e-08,
+            "median": 0.0,
+            "p90": 0.0,
+            "min": 0.0,
+            "max": 2.1791158513195797e-07
+          },
+          "vertical_error_studs": {
+            "count": 9,
+            "mean": 0.4502349177402095,
+            "median": 0.00029296875004547474,
+            "p90": 0.12354378044355485,
+            "min": 0.00019531250001136868,
+            "max": 3.923999999999978
+          }
+        },
+        {
+          "horizon": 0.2,
+          "model": "intent50",
+          "windows": 85,
+          "per_trajectory_mean_error_studs": {
+            "count": 9,
+            "mean": 0.45023491774681473,
+            "median": 0.00029296875004547474,
+            "p90": 0.12354378044355485,
+            "min": 0.00019531250001136868,
+            "max": 3.923999999999978
+          },
+          "horizontal_error_studs": {
+            "count": 9,
+            "mean": 2.421239834799533e-08,
+            "median": 0.0,
+            "p90": 0.0,
+            "min": 0.0,
+            "max": 2.1791158513195797e-07
+          },
+          "vertical_error_studs": {
+            "count": 9,
+            "mean": 0.4502349177402095,
+            "median": 0.00029296875004547474,
+            "p90": 0.12354378044355485,
+            "min": 0.00019531250001136868,
+            "max": 3.923999999999978
+          }
+        },
+        {
+          "horizon": 0.2,
+          "model": "intent100",
+          "windows": 85,
+          "per_trajectory_mean_error_studs": {
+            "count": 9,
+            "mean": 0.45023491774681473,
+            "median": 0.00029296875004547474,
+            "p90": 0.12354378044355485,
+            "min": 0.00019531250001136868,
+            "max": 3.923999999999978
+          },
+          "horizontal_error_studs": {
+            "count": 9,
+            "mean": 2.421239834799533e-08,
+            "median": 0.0,
+            "p90": 0.0,
+            "min": 0.0,
+            "max": 2.1791158513195797e-07
+          },
+          "vertical_error_studs": {
+            "count": 9,
+            "mean": 0.4502349177402095,
+            "median": 0.00029296875004547474,
+            "p90": 0.12354378044355485,
+            "min": 0.00019531250001136868,
+            "max": 3.923999999999978
+          }
+        },
+        {
+          "horizon": 0.2,
+          "model": "classic-proxy",
+          "windows": 85,
+          "per_trajectory_mean_error_studs": {
+            "count": 9,
+            "mean": 0.45023491774681473,
+            "median": 0.00029296875004547474,
+            "p90": 0.12354378044355485,
+            "min": 0.00019531250001136868,
+            "max": 3.923999999999978
+          },
+          "horizontal_error_studs": {
+            "count": 9,
+            "mean": 2.421239834799533e-08,
+            "median": 0.0,
+            "p90": 0.0,
+            "min": 0.0,
+            "max": 2.1791158513195797e-07
+          },
+          "vertical_error_studs": {
+            "count": 9,
+            "mean": 0.4502349177402095,
+            "median": 0.00029296875004547474,
+            "p90": 0.12354378044355485,
+            "min": 0.00019531250001136868,
+            "max": 3.923999999999978
+          }
+        },
+        {
+          "horizon": 0.2,
+          "model": "v17-proxy",
+          "windows": 85,
+          "per_trajectory_mean_error_studs": {
+            "count": 9,
+            "mean": 0.45023491774681473,
+            "median": 0.00029296875004547474,
+            "p90": 0.12354378044355485,
+            "min": 0.00019531250001136868,
+            "max": 3.923999999999978
+          },
+          "horizontal_error_studs": {
+            "count": 9,
+            "mean": 2.421239834799533e-08,
+            "median": 0.0,
+            "p90": 0.0,
+            "min": 0.0,
+            "max": 2.1791158513195797e-07
+          },
+          "vertical_error_studs": {
+            "count": 9,
+            "mean": 0.4502349177402095,
+            "median": 0.00029296875004547474,
+            "p90": 0.12354378044355485,
+            "min": 0.00019531250001136868,
+            "max": 3.923999999999978
+          }
+        },
+        {
+          "horizon": 0.23333333333333334,
+          "model": "linear",
+          "windows": 76,
+          "per_trajectory_mean_error_studs": {
+            "count": 9,
+            "mean": 0.6157047636573838,
+            "median": 0.00034179687497726263,
+            "p90": 0.19468247662757676,
+            "min": 0.0002278645833371229,
+            "max": 5.341000000000008
+          },
+          "horizontal_error_studs": {
+            "count": 9,
+            "mean": 2.2271041504811567e-08,
+            "median": 0.0,
+            "p90": 0.0,
+            "min": 0.0,
+            "max": 2.004393735433041e-07
+          },
+          "vertical_error_studs": {
+            "count": 9,
+            "mean": 0.6157047636503231,
+            "median": 0.00034179687497726263,
+            "p90": 0.19468247662757676,
+            "min": 0.0002278645833371229,
+            "max": 5.341000000000008
+          }
+        },
+        {
+          "horizon": 0.23333333333333334,
+          "model": "acceleration",
+          "windows": 76,
+          "per_trajectory_mean_error_studs": {
+            "count": 9,
+            "mean": 0.6157047636573838,
+            "median": 0.00034179687497726263,
+            "p90": 0.19468247662757676,
+            "min": 0.0002278645833371229,
+            "max": 5.341000000000008
+          },
+          "horizontal_error_studs": {
+            "count": 9,
+            "mean": 2.2271041504811567e-08,
+            "median": 0.0,
+            "p90": 0.0,
+            "min": 0.0,
+            "max": 2.004393735433041e-07
+          },
+          "vertical_error_studs": {
+            "count": 9,
+            "mean": 0.6157047636503231,
+            "median": 0.00034179687497726263,
+            "p90": 0.19468247662757676,
+            "min": 0.0002278645833371229,
+            "max": 5.341000000000008
+          }
+        },
+        {
+          "horizon": 0.23333333333333334,
+          "model": "intent25",
+          "windows": 76,
+          "per_trajectory_mean_error_studs": {
+            "count": 9,
+            "mean": 0.6157047636573838,
+            "median": 0.00034179687497726263,
+            "p90": 0.19468247662757676,
+            "min": 0.0002278645833371229,
+            "max": 5.341000000000008
+          },
+          "horizontal_error_studs": {
+            "count": 9,
+            "mean": 2.2271041504811567e-08,
+            "median": 0.0,
+            "p90": 0.0,
+            "min": 0.0,
+            "max": 2.004393735433041e-07
+          },
+          "vertical_error_studs": {
+            "count": 9,
+            "mean": 0.6157047636503231,
+            "median": 0.00034179687497726263,
+            "p90": 0.19468247662757676,
+            "min": 0.0002278645833371229,
+            "max": 5.341000000000008
+          }
+        },
+        {
+          "horizon": 0.23333333333333334,
+          "model": "intent50",
+          "windows": 76,
+          "per_trajectory_mean_error_studs": {
+            "count": 9,
+            "mean": 0.6157047636573838,
+            "median": 0.00034179687497726263,
+            "p90": 0.19468247662757676,
+            "min": 0.0002278645833371229,
+            "max": 5.341000000000008
+          },
+          "horizontal_error_studs": {
+            "count": 9,
+            "mean": 2.2271041504811567e-08,
+            "median": 0.0,
+            "p90": 0.0,
+            "min": 0.0,
+            "max": 2.004393735433041e-07
+          },
+          "vertical_error_studs": {
+            "count": 9,
+            "mean": 0.6157047636503231,
+            "median": 0.00034179687497726263,
+            "p90": 0.19468247662757676,
+            "min": 0.0002278645833371229,
+            "max": 5.341000000000008
+          }
+        },
+        {
+          "horizon": 0.23333333333333334,
+          "model": "intent100",
+          "windows": 76,
+          "per_trajectory_mean_error_studs": {
+            "count": 9,
+            "mean": 0.6157047636573838,
+            "median": 0.00034179687497726263,
+            "p90": 0.19468247662757676,
+            "min": 0.0002278645833371229,
+            "max": 5.341000000000008
+          },
+          "horizontal_error_studs": {
+            "count": 9,
+            "mean": 2.2271041504811567e-08,
+            "median": 0.0,
+            "p90": 0.0,
+            "min": 0.0,
+            "max": 2.004393735433041e-07
+          },
+          "vertical_error_studs": {
+            "count": 9,
+            "mean": 0.6157047636503231,
+            "median": 0.00034179687497726263,
+            "p90": 0.19468247662757676,
+            "min": 0.0002278645833371229,
+            "max": 5.341000000000008
+          }
+        },
+        {
+          "horizon": 0.23333333333333334,
+          "model": "classic-proxy",
+          "windows": 76,
+          "per_trajectory_mean_error_studs": {
+            "count": 9,
+            "mean": 0.6157047636573838,
+            "median": 0.00034179687497726263,
+            "p90": 0.19468247662757676,
+            "min": 0.0002278645833371229,
+            "max": 5.341000000000008
+          },
+          "horizontal_error_studs": {
+            "count": 9,
+            "mean": 2.2271041504811567e-08,
+            "median": 0.0,
+            "p90": 0.0,
+            "min": 0.0,
+            "max": 2.004393735433041e-07
+          },
+          "vertical_error_studs": {
+            "count": 9,
+            "mean": 0.6157047636503231,
+            "median": 0.00034179687497726263,
+            "p90": 0.19468247662757676,
+            "min": 0.0002278645833371229,
+            "max": 5.341000000000008
+          }
+        },
+        {
+          "horizon": 0.23333333333333334,
+          "model": "v17-proxy",
+          "windows": 76,
+          "per_trajectory_mean_error_studs": {
+            "count": 9,
+            "mean": 0.6157047636573838,
+            "median": 0.00034179687497726263,
+            "p90": 0.19468247662757676,
+            "min": 0.0002278645833371229,
+            "max": 5.341000000000008
+          },
+          "horizontal_error_studs": {
+            "count": 9,
+            "mean": 2.2271041504811567e-08,
+            "median": 0.0,
+            "p90": 0.0,
+            "min": 0.0,
+            "max": 2.004393735433041e-07
+          },
+          "vertical_error_studs": {
+            "count": 9,
+            "mean": 0.6157047636503231,
+            "median": 0.00034179687497726263,
+            "p90": 0.19468247662757676,
+            "min": 0.0002278645833371229,
+            "max": 5.341000000000008
+          }
+        },
+        {
+          "horizon": 0.3,
+          "model": "linear",
+          "windows": 63,
+          "per_trajectory_mean_error_studs": {
+            "count": 8,
+            "mean": 1.1046996508136546,
+            "median": 0.0003662109374715783,
+            "p90": 0.006546425259364914,
+            "min": 0.0002929687499886313,
+            "max": 8.829000000000008
+          },
+          "horizontal_error_studs": {
+            "count": 8,
+            "mean": 1.7029898507254463e-08,
+            "median": 0.0,
+            "p90": 0.0,
+            "min": 0.0,
+            "max": 1.362391880580357e-07
+          },
+          "vertical_error_studs": {
+            "count": 8,
+            "mean": 1.1046996508041513,
+            "median": 0.0003662109374715783,
+            "p90": 0.0065464251833386045,
+            "min": 0.0002929687499886313,
+            "max": 8.829000000000008
+          }
+        },
+        {
+          "horizon": 0.3,
+          "model": "acceleration",
+          "windows": 63,
+          "per_trajectory_mean_error_studs": {
+            "count": 8,
+            "mean": 1.1046996508136546,
+            "median": 0.0003662109374715783,
+            "p90": 0.006546425259364914,
+            "min": 0.0002929687499886313,
+            "max": 8.829000000000008
+          },
+          "horizontal_error_studs": {
+            "count": 8,
+            "mean": 1.7029898507254463e-08,
+            "median": 0.0,
+            "p90": 0.0,
+            "min": 0.0,
+            "max": 1.362391880580357e-07
+          },
+          "vertical_error_studs": {
+            "count": 8,
+            "mean": 1.1046996508041513,
+            "median": 0.0003662109374715783,
+            "p90": 0.0065464251833386045,
+            "min": 0.0002929687499886313,
+            "max": 8.829000000000008
+          }
+        },
+        {
+          "horizon": 0.3,
+          "model": "intent25",
+          "windows": 63,
+          "per_trajectory_mean_error_studs": {
+            "count": 8,
+            "mean": 1.1046996508136546,
+            "median": 0.0003662109374715783,
+            "p90": 0.006546425259364914,
+            "min": 0.0002929687499886313,
+            "max": 8.829000000000008
+          },
+          "horizontal_error_studs": {
+            "count": 8,
+            "mean": 1.7029898507254463e-08,
+            "median": 0.0,
+            "p90": 0.0,
+            "min": 0.0,
+            "max": 1.362391880580357e-07
+          },
+          "vertical_error_studs": {
+            "count": 8,
+            "mean": 1.1046996508041513,
+            "median": 0.0003662109374715783,
+            "p90": 0.0065464251833386045,
+            "min": 0.0002929687499886313,
+            "max": 8.829000000000008
+          }
+        },
+        {
+          "horizon": 0.3,
+          "model": "intent50",
+          "windows": 63,
+          "per_trajectory_mean_error_studs": {
+            "count": 8,
+            "mean": 1.1046996508136546,
+            "median": 0.0003662109374715783,
+            "p90": 0.006546425259364914,
+            "min": 0.0002929687499886313,
+            "max": 8.829000000000008
+          },
+          "horizontal_error_studs": {
+            "count": 8,
+            "mean": 1.7029898507254463e-08,
+            "median": 0.0,
+            "p90": 0.0,
+            "min": 0.0,
+            "max": 1.362391880580357e-07
+          },
+          "vertical_error_studs": {
+            "count": 8,
+            "mean": 1.1046996508041513,
+            "median": 0.0003662109374715783,
+            "p90": 0.0065464251833386045,
+            "min": 0.0002929687499886313,
+            "max": 8.829000000000008
+          }
+        },
+        {
+          "horizon": 0.3,
+          "model": "intent100",
+          "windows": 63,
+          "per_trajectory_mean_error_studs": {
+            "count": 8,
+            "mean": 1.1046996508136546,
+            "median": 0.0003662109374715783,
+            "p90": 0.006546425259364914,
+            "min": 0.0002929687499886313,
+            "max": 8.829000000000008
+          },
+          "horizontal_error_studs": {
+            "count": 8,
+            "mean": 1.7029898507254463e-08,
+            "median": 0.0,
+            "p90": 0.0,
+            "min": 0.0,
+            "max": 1.362391880580357e-07
+          },
+          "vertical_error_studs": {
+            "count": 8,
+            "mean": 1.1046996508041513,
+            "median": 0.0003662109374715783,
+            "p90": 0.0065464251833386045,
+            "min": 0.0002929687499886313,
+            "max": 8.829000000000008
+          }
+        },
+        {
+          "horizon": 0.3,
+          "model": "classic-proxy",
+          "windows": 63,
+          "per_trajectory_mean_error_studs": {
+            "count": 8,
+            "mean": 1.1046996508136546,
+            "median": 0.0003662109374715783,
+            "p90": 0.006546425259364914,
+            "min": 0.0002929687499886313,
+            "max": 8.829000000000008
+          },
+          "horizontal_error_studs": {
+            "count": 8,
+            "mean": 1.7029898507254463e-08,
+            "median": 0.0,
+            "p90": 0.0,
+            "min": 0.0,
+            "max": 1.362391880580357e-07
+          },
+          "vertical_error_studs": {
+            "count": 8,
+            "mean": 1.1046996508041513,
+            "median": 0.0003662109374715783,
+            "p90": 0.0065464251833386045,
+            "min": 0.0002929687499886313,
+            "max": 8.829000000000008
+          }
+        },
+        {
+          "horizon": 0.3,
+          "model": "v17-proxy",
+          "windows": 63,
+          "per_trajectory_mean_error_studs": {
+            "count": 8,
+            "mean": 1.1046996508136546,
+            "median": 0.0003662109374715783,
+            "p90": 0.006546425259364914,
+            "min": 0.0002929687499886313,
+            "max": 8.829000000000008
+          },
+          "horizontal_error_studs": {
+            "count": 8,
+            "mean": 1.7029898507254463e-08,
+            "median": 0.0,
+            "p90": 0.0,
+            "min": 0.0,
+            "max": 1.362391880580357e-07
+          },
+          "vertical_error_studs": {
+            "count": 8,
+            "mean": 1.1046996508041513,
+            "median": 0.0003662109374715783,
+            "p90": 0.0065464251833386045,
+            "min": 0.0002929687499886313,
+            "max": 8.829000000000008
+          }
+        }
+      ],
+      "timing": {
+        "gun": {
+          "sample_intervals_seconds": {
+            "count": 0
+          },
+          "unchanged_position_pairs": 0,
+          "pairs": 0
+        },
+        "knife": {
+          "sample_intervals_seconds": {
+            "count": 129,
+            "mean": 0.04864734287514503,
+            "median": 0.04586830805055797,
+            "p90": 0.06580453796777874,
+            "min": 0.03363253804855049,
+            "max": 0.11648761492688209
+          },
+          "unchanged_position_pairs": 124,
+          "pairs": 129
+        }
+      },
+      "gun_signals": [],
+      "gun_authored_modes": {},
+      "knife_authored_models": {},
+      "auto_tune_cohorts": {
+        "off": {
+          "authored": 0,
+          "signals": 0,
+          "target_hit_parts": 0,
+          "unconfirmed": 0,
+          "horizon_seconds": {
+            "count": 0
+          },
+          "actual_correction_logged": 0
+        },
+        "on": {
+          "authored": 0,
+          "signals": 0,
+          "target_hit_parts": 0,
+          "unconfirmed": 0,
+          "horizon_seconds": {
+            "count": 0
+          },
+          "actual_correction_logged": 0
+        }
+      },
+      "knife_configured_delays": {},
+      "knife_spacing_seconds": {
+        "count": 0
+      },
+      "legacy_hit_labels_not_rate": {}
+    },
+    {
+      "file": "Place_135856908115931_Game_Learning.json",
+      "placeId": 135856908115931,
+      "excluded_from_MM2": "different place; retained in manifest, not pooled"
+    },
+    {
+      "file": "Place_142823291_Game_Learning.json",
+      "placeId": 142823291,
+      "aggregates": {
+        "unconfirmed": 64,
+        "projectileObservations": 11,
+        "targetHits": 7,
+        "confirmations": 29,
+        "hitboxAnomalies": 297,
+        "wallshotKills": 0,
+        "cleanKills": 0,
+        "unattributedDeaths": 0,
+        "farthestKill": 0,
+        "hitboxKills": 0,
+        "misses": 0,
+        "longAirtime": 4,
+        "deathAssociations": 0,
+        "kills": 0,
+        "teleports": 1,
+        "shots": 93,
+        "longrangeKills": 0,
+        "speedSpikes": 0
+      },
+      "retained_shots": 93,
+      "shot_kinds": {
+        "gun": 48,
+        "knife": 38,
+        "stab": 7
+      },
+      "outcomes": {
+        "shot-confirmed": 11,
+        "unconfirmed": 64,
+        "target-hit": 7,
+        "projectile-observed": 11
+      },
+      "retained_hits": 0,
+      "session": {
+        "uptimeSeconds": 2898,
+        "countersScope": "this-session-only",
+        "startedAt": 1792012990
+      },
+      "legacy_warning": false
+    },
+    {
+      "file": "Place_142823291_Game_Learning.json.before-b70a6301-40a7-44ba-ae2b-f821645a926e.json",
+      "placeId": 142823291,
+      "aggregates": {
+        "wallshotKills": 2,
+        "cleanKills": 11,
+        "unattributedDeaths": 52,
+        "hitboxKills": 4,
+        "farthestKill": 37,
+        "misses": 442,
+        "kills": 13,
+        "longAirtime": 12,
+        "hitboxAnomalies": 1371,
+        "teleports": 20,
+        "shots": 1317,
+        "longrangeKills": 0,
+        "speedSpikes": 8
+      },
+      "retained_shots": 300,
+      "shot_kinds": {
+        "unspecified": 268,
+        "stab": 12,
+        "gun": 20
+      },
+      "outcomes": {
+        "miss": 79,
+        "unknown": 212,
+        "clean": 8,
+        "wallshot": 1
+      },
+      "retained_hits": 13,
+      "session": {
+        "startedAt": 1791995479,
+        "uptimeSeconds": 857
+      },
+      "legacy_warning": true
+    },
+    {
+      "file": "Place_636649648_Game_Learning.json",
+      "placeId": 636649648,
+      "aggregates": {
+        "unconfirmed": 118,
+        "projectileObservations": 10,
+        "targetHits": 0,
+        "confirmations": 10,
+        "hitboxAnomalies": 2,
+        "wallshotKills": 0,
+        "cleanKills": 0,
+        "unattributedDeaths": 7,
+        "farthestKill": 0,
+        "hitboxKills": 0,
+        "misses": 0,
+        "longAirtime": 0,
+        "deathAssociations": 0,
+        "kills": 0,
+        "teleports": 0,
+        "shots": 128,
+        "longrangeKills": 0,
+        "speedSpikes": 0
+      },
+      "retained_shots": 128,
+      "shot_kinds": {
+        "unspecified": 118,
+        "knife": 10
+      },
+      "outcomes": {
+        "unconfirmed": 118,
+        "projectile-observed": 10
+      },
+      "retained_hits": 0,
+      "session": {
+        "uptimeSeconds": 194,
+        "countersScope": "this-session-only",
+        "startedAt": 1792012748
+      },
+      "legacy_warning": false
+    },
+    {
+      "file": "Place_92876937625630_Game_Learning.json",
+      "placeId": 92876937625630,
+      "excluded_from_MM2": "different place; retained in manifest, not pooled"
+    }
+  ],
+  "method": {
+    "gravity_assumption": 196.2,
+    "maximum_interpolation_gap_seconds": 0.15,
+    "horizons_seconds": [
+      0.15,
+      0.2,
+      0.23333333333333334,
+      0.3
+    ],
+    "selection": "retrospective exploratory comparison; not a blind holdout",
+    "limitations": [
+      "client positions, not server collisions",
+      "legacy hit labels and totals are not reliable hit-rate denominators",
+      "overlapping forecast windows are not independent shots",
+      "classic/v17 proxies run at recorded cadence, not the original 120Hz internal state",
+      "map geometry unavailable; generic kernels do not replay authored snapshots or landing probes",
+      "fixed-horizon comparisons do not identify the correct server prediction horizon"
+    ]
+  }
+}
