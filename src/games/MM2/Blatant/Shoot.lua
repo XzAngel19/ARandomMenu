@@ -75,6 +75,16 @@ function Module.init(runtime: any): any
 
     local MINIMUM_ERROR_RADIUS: number = 0.35
 
+    -- The gun remote casts a SEGMENT from the passed origin to the passed
+    -- endpoint, not an infinite ray: a near miss visibly stops mid-air right
+    -- where we predicted the target would be ("el disparo choca con el aire")
+    -- instead of flying on to the wall behind. Extending the endpoint a few
+    -- studs BEYOND the predicted point makes the segment pass through the
+    -- target even when the lead is slightly short, turning half-stud misses
+    -- into hits. The extension is only added when no bystander stands in the
+    -- extra tail (the sheriff dies for shooting innocents).
+    local GUN_PIERCE_STUDS: number = 4.0
+
     local AIM_PARTS: {string} = {
         "UpperTorso",
         "Torso",
@@ -277,11 +287,25 @@ function Module.init(runtime: any): any
                     end
                 end
                 if not rescued then
+                    local rootCFrame: CFrame = (root :: BasePart).CFrame
+                    -- Probe points across the torso box before falling back
+                    -- to limbs: a corner that hides the CENTRE of the torso
+                    -- usually still leaves half of the box exposed, and that
+                    -- sliver is a far better shot than a leg ("detectando la
+                    -- pierna cuando no era necesario"). The ray origin is the
+                    -- gun, not the eye, so what looks fully exposed on screen
+                    -- can be centre-blocked from the muzzle.
+                    local probeOffsets: {Vector3} = {
+                        rootCFrame.RightVector * 0.55,
+                        rootCFrame.RightVector * -0.55,
+                        rootCFrame.UpVector * 0.35,
+                        rootCFrame.RightVector * 0.35 + rootCFrame.UpVector * 0.25,
+                        rootCFrame.RightVector * -0.35 + rootCFrame.UpVector * 0.25,
+                    }
                     for _, partName: string in ipairs(VISIBILITY_PARTS) do
                         local candidate: Instance? =
                             (character :: Model):FindFirstChild(partName)
-                        if candidate ~= part
-                            and candidate
+                        if candidate
                             and candidate:IsA("BasePart") then
                             local candidatePart: BasePart =
                                 candidate :: BasePart
@@ -289,6 +313,18 @@ function Module.init(runtime: any): any
                                 candidatePart.Position + displacement,
                                 candidatePart.Position,
                             }
+                            if table.find(AIM_PARTS, partName) ~= nil then
+                                for _, offset: Vector3 in ipairs(probeOffsets) do
+                                    table.insert(
+                                        variants,
+                                        candidatePart.Position + offset + displacement
+                                    )
+                                    table.insert(
+                                        variants,
+                                        candidatePart.Position + offset
+                                    )
+                                end
+                            end
                             for _, basePoint: Vector3 in ipairs(variants) do
                                 local candidatePoint: Vector3 = basePoint
                                 local candidateDelta: Vector3 =
@@ -609,9 +645,18 @@ function Module.init(runtime: any): any
         end
 
         state.mm2ShotFeedback.queue(target, gun, origin, aim, resolved)
+        local fireEndpoint: Vector3 = resolved.endpoint
+        local fireDirection: Vector3 = fireEndpoint - origin.Position
+        if fireDirection.Magnitude > 0.05 then
+            local pierced: Vector3 =
+                fireEndpoint + fireDirection.Unit * GUN_PIERCE_STUDS
+            if not bystanderOnSegment(target, fireEndpoint, pierced) then
+                fireEndpoint = pierced
+            end
+        end
         remote:FireServer(
-            CFrame.lookAt(origin.Position, resolved.endpoint),
-            CFrame.new(resolved.endpoint)
+            CFrame.lookAt(origin.Position, fireEndpoint),
+            CFrame.new(fireEndpoint)
         )
         pcall(trajectoryCalibration.noteAuthoredShot, trajectoryCalibration, {
             kind = "gun",

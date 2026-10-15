@@ -1494,17 +1494,23 @@ end
 local trajectoryCalibration: any = nil
 
 local function getGunHorizonSeconds(): number
-    -- Two field reports, one per direction:
+    -- Three field reports, one per direction:
     --  * v24: leading by the FULL ~277 ms acceptance window missed AHEAD
     --    (shots landing where the target could never be).
     --  * v24.1: aiming at the raw observed position missed BEHIND moving
     --    targets ("apunta a donde estaba hace 1 segundo").
-    -- Reconciliation: our view of the target trails the server by about half
-    -- a round trip (victim -> server -> us), so we lead by exactly that
-    -- staleness - no more. The acceptance window is a REWIND (it covers past
-    -- positions) and must not be spent as forward lead.
+    --  * v26 (0.6xRTT): hits still landed slightly BEHIND fast movers, and
+    --    on fast strafes the aim trailed to the CENTER of the strafe path
+    --    ("le da como en el centro y no al murder"). The miss always points
+    --    along the target's movement.
+    -- Reconciliation: the victim's physics replicates victim->server->us, so
+    -- what we see is his position from ~1 RTT ago, and the server processes
+    -- our shot ~half an RTT after we send it. The full staleness is the RTT
+    -- itself: lead by exactly that - no more (the acceptance window is a
+    -- REWIND of past positions and must not be spent as forward lead), no
+    -- less (undershoot keeps aiming at the recent past).
     local staleness: number = math.clamp(
-        getEstimatedLatency() * 0.6,
+        getEstimatedLatency() * 1.0,
         0,
         0.15
     )

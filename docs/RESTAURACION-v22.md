@@ -555,3 +555,70 @@ completo con el theme real para verlo.
 2. Cambia "Arrows" en la paleta: los chevrones de la barra de título y las
    flechitas de keybind se repintan al instante.
 3. Todo lo demás de v26 (Profiles, predicción) sigue igual.
+
+## v27 — 2026-10-15 — Flechas vivas + right-click en ventanas; lead 1×RTT, pierce y sondas de torso
+
+### UI (pedido directo)
+
+- **Las flechas ya repintan solas**: los chevrones de colapso de las ventanas
+  (y el pin/cross del chrome) usaban `Theme.arrows` estático capturado al
+  crear la ventana — no se enteraban del cambio de paleta hasta que las
+  tocabas ("tengo que tocarlas para que puedan cambiarse de color
+  totalmente"). Ahora todos los íconos del chrome se dibujan con token de
+  tema (`arrows`/`enabled`/`negative`), igual que las flechas de las cards,
+  keybinds y Settings: al elegir un color en la paleta, TODAS las flechas se
+  repintan al instante (bind por píxel + refresh del chrome por ventana).
+- **Click derecho en la barra de título** colapsa/expande la ventana, además
+  de presionar la flecha. (Las cards ya tenían ambos: flecha y click
+  derecho.)
+
+### Predicción — diagnóstico de "siempre en la misma dirección"
+
+El tiro tenía el grado correcto pero caía desplazado hacia un lado
+(strafe) o adelante/atrás (profundidad), siempre en la misma dirección, y en
+strafes rápidos "le daba al centro" del recorrido. Causa: **sub-liderazgo**.
+La posición del murder viaja murder→server→nosotros, así que lo que vemos ya
+tiene ~1 RTT de atraso, y el servidor procesa nuestro disparo otro medio
+RTT después. Con el factor 0.6×RTT de v26 solo compensábamos el 60% del
+atraso real: el punto de mira siempre quedaba atrás del movimiento — en un
+strafe rápido ese atraso se ve como el centro de su recorrido.
+
+1. **Lead 0.6×RTT → 1.0×RTT** (tope de 0.15 s igual). El damping por tiempo
+   de frenado y el descuento por giro siguen protegiendo contra el
+   sobrepaso.
+2. **Pierce del endpoint (4 studs)**: el remoto del arma castea un SEGMENTO
+   hasta el punto que le pasamos, no un rayo infinito — por eso un fallo
+   "chocaba con el aire" justo donde predijimos al murder, en vez de
+   volarse a la pared de atrás. No hay ninguna entidad invisible: es el
+   final de nuestro propio punto de mira. Ahora el punto se extiende 4
+   studs MÁS ALLÁ del murder (el segmento lo atraviesa), así un error
+   chico de lead sigue dando en el torso. La extensión solo se aplica si
+   ningún inocente está en el tramo extra (el sheriff muere si dispara a
+   un inocente).
+3. **Sondas del torso en el wallcheck** ("detectando la pierna cuando no
+   era necesario"): el rayo de visibilidad sale del arma, no de la cámara;
+   una esquina puede tapar el CENTRO del torso desde la mira aunque en
+   pantalla se viera expuesto, y el rescate caía directo a la pierna.
+   Ahora se prueban 5 puntos dentro de la caja del torso (±0.55
+   lateral, +0.35 arriba y las diagonales) antes de bajar a las
+   extremidades. La pierna sigue siendo el último recurso.
+
+### Verificación
+
+- 72/72 compilan; bundle 70 módulos, sello `v27-20261015-live-arrows-lead-pierce`.
+- test_mm2_precision 15 grupos (nuevo: "wallcheck rescue: torso probe beats
+  the leg; leg-only still fires; fully blocked rejects"; horizonte actualizado
+  a 1×RTT: 0.08/0.18/0/0.21/0.23/0.13/0.15). mm2_v16 4 grupos,
+  entity_team_provider 14/14.
+- Harness de arranque completo: sin "Library failed"; SettingsPage y
+  WindowManager inicializan; sello v27 en el log.
+
+### Prueba sugerida en MM2
+
+1. UI Settings → Arrows → blanco: chevrones de ventanas, flechas de cards y
+   keybinds se ponen blancos al instante, sin tocarlos.
+2. Click derecho en la barra de una ventana: colapsa/expanda; la flecha
+   sigue haciendo lo mismo.
+3. Sheriff vs murder en strafe rápido: el tiro ya no debe quedar "en el
+   centro" del recorrido ni atrás; los fallos por poco ahora atraviesan al
+   murder en vez de morir en el aire.

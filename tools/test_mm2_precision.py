@@ -183,31 +183,34 @@ end
                "local function getActiveAutoLeadCorrection() return mm2Settings.autoTuneLead and autoLeadCorrection or 0 end\n"
                "local Stats={FindFirstChild=function() return nil end}\n",
                section(BASE, "local lastLatencyReadAt:", "local function getGunOriginCFrame"), r'''
-    -- Staleness lead: our view trails the server by ~0.6xRTT (0.08 -> 0.048).
-    near(getGunHorizonSeconds(),0.048)
+    -- Staleness lead: our view trails the server by ~1 RTT (0.08 -> 0.08).
+    -- v26's 0.6xRTT still undershot fast movers ("le da como en el centro"):
+    -- the victim replicates victim->server->us, so the full staleness is the
+    -- round trip itself.
+    near(getGunHorizonSeconds(),0.08)
     mm2Settings.gunLeadBias=0.1
-    near(getGunHorizonSeconds(),0.148)
+    near(getGunHorizonSeconds(),0.18)
     mm2Settings.gunLeadBias=-0.1
     near(getGunHorizonSeconds(),0)
     mm2Settings.gunLeadBias=0.05
     autoLeadCorrection=0.08
     mm2Settings.autoTuneLead=true
-    near(getGunHorizonSeconds(),0.178)
+    near(getGunHorizonSeconds(),0.21)
     autoLeadCorrection=0.2
-    assert(getGunHorizonSeconds()==0.198,"auto correction is capped at 0.1 on top of staleness+bias")
+    assert(getGunHorizonSeconds()==0.23,"auto correction is capped at 0.1 on top of staleness+bias")
     mm2Settings.autoTuneLead=false
-    assert(getGunHorizonSeconds()==0.098,"auto correction only applies when opted in")
+    assert(getGunHorizonSeconds()==0.13,"auto correction only applies when opted in")
     mm2Settings.gunLeadBias=0
     autoLeadCorrection=0
     -- A huge ping must not blow the lead up: staleness caps at 0.15.
     mm2Settings.predictionRtt=0.6
     near(getGunHorizonSeconds(),0.15)
     mm2Settings.predictionRtt=0.08
-    near(getGunHorizonSeconds(),0.048)
+    near(getGunHorizonSeconds(),0.08)
     -- Stale calibration data must never push the horizon again.
     trajectoryCalibration={getEstimates=function() return {liveGunAcceptanceMs=400,liveGunSamples=50} end}
-    near(getGunHorizonSeconds(),0.048)
-    pass("gun horizon: 0.6xRTT staleness lead; auto capped at 0.1; huge ping capped")
+    near(getGunHorizonSeconds(),0.08)
+    pass("gun horizon: 1.0xRTT staleness lead; auto capped at 0.1; huge ping capped")
 end
 ''']
     chunks += [r'''
@@ -304,6 +307,58 @@ local jumpH=getGunHorizonSeconds()
 near(jumping.endpoint.Y,0.8+math.clamp(8*jumpH-0.5*196.2*jumpH*jumpH,-3,3))
 humanoid.GetState=function() return "Running" end
 pass("actual Shoot solver: linear lead; torso offset; jump; stale sample; no phantom drop; stop damping; jump state")
+end
+''']
+    chunks += [r'''
+do
+-- Wallcheck rescue: a corner that hides the torso CENTRE must not send the
+-- shot to the leg while half the torso box is still exposed.
+local workspace={Gravity=196.2}
+local mm2Settings={shootWallCheck=true}
+local velocity=Vector3.new(16,0,0)
+local humanoid={Health=100,FloorMaterial="Ground",MoveDirection=Vector3.zero,WalkSpeed=16,GetState=function() return "Running" end}
+local rootCF={RightVector=Vector3.new(0,0,1),UpVector=Vector3.new(0,1,0)}
+local root={Position=Vector3.zero,CFrame=rootCF,IsA=function() return true end}
+local torso={Position=Vector3.new(0,0.8,0),IsA=function() return true end}
+local head={Position=Vector3.new(0,1.6,0),IsA=function() return true end}
+local leg={Position=Vector3.new(0,-0.6,0),IsA=function() return true end}
+local parts={UpperTorso=torso,HumanoidRootPart=root,Head=head,RightLowerLeg=leg}
+local character={FindFirstChild=function(_,name) return parts[name] end,FindFirstChildOfClass=function() return humanoid end}
+local target={Character=character}
+local sample={character=character,sampledAt=os.clock(),acceleration=Vector3.zero,stability=1,grounded=true}
+local motionSamples={[target]=sample}
+local function getFilteredVelocity() return velocity end
+local function getGunHorizonSeconds() return 0.1 end
+local function getGunTurnDiscount() return 1 end
+local function getGunTurnRate() return 0 end
+local clearList={}
+local function markClear(p) table.insert(clearList,p) end
+local function isWeaponPathClear(_,to)
+    for _,p in ipairs(clearList) do
+        if p.X==to.X and p.Y==to.Y and p.Z==to.Z then return true end
+    end
+    return false
+end
+''', section(SHOOT, "    local BODY_HALF_WIDTH:", "    local function getSelectedShootTarget"), r'''
+local origin=CFrame.new(Vector3.new(0,0,-20))
+-- Case 1: only the leg is visible -> the leg is still the correct last resort.
+markClear(Vector3.new(1.6,-0.6,0))
+local legAim,legPred=computeGunAim(target,origin)
+assert(legPred,"leg-only visibility must still produce a shot")
+near(legPred.endpoint.X,1.6); near(legPred.endpoint.Y,-0.6)
+-- Case 2: the right half of the torso box is exposed -> the probe point must
+-- beat the leg (v27: "detectando la pierna cuando no era necesario").
+clearList={}
+markClear(Vector3.new(1.6,0.8,0.55))
+local torsoAim,torsoPred=computeGunAim(target,origin)
+assert(torsoPred,"exposed torso probe must produce a shot")
+near(torsoPred.endpoint.X,1.6); near(torsoPred.endpoint.Y,0.8); near(torsoPred.endpoint.Z,0.55)
+assert(torsoPred.endpoint.Y > 0,"torso probe must outrank the leg")
+-- Case 3: nothing visible at all -> clean rejection.
+clearList={}
+local noneAim,nonePred=computeGunAim(target,origin)
+assert(noneAim==nil and nonePred==nil,"fully blocked shot must be rejected")
+pass("wallcheck rescue: torso probe beats the leg; leg-only still fires; fully blocked rejects")
 end
 ''']
     chunks += [r'''
@@ -462,6 +517,8 @@ def main() -> None:
     assert 'if directHit then tuneFromConfirmedShot(candidate) end' in BASE
     assert 'or candidate.silentSpawn then' in BASE
     assert 'candidate.aimRootOffset' in BASE and 'aimRootOffset = part.Position' in SHOOT
+    assert 'GUN_PIERCE_STUDS' in SHOOT and 'bystanderOnSegment(target, fireEndpoint, pierced)' in SHOOT
+    assert 'probeOffsets' in SHOOT and 'getEstimatedLatency() * 1.0' in BASE
     with tempfile.TemporaryDirectory(prefix="mm2-precision-") as directory:
         script = Path(directory) / "regressions.luau"
         script.write_text(build())

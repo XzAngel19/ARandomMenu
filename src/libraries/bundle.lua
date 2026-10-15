@@ -1,5 +1,5 @@
 return {
-    stamp = "v26.1-20261015-settingspage-palette-fix",
+    stamp = "v27-20261015-live-arrows-lead-pierce",
     files = {
         ["src/games/BedFight/Combat/AutoSwing.lua"] = [[
 local Module = {Name = "BedFight Auto Swing", Initialized = false, Connection = nil}
@@ -2183,6 +2183,16 @@ function Module.init(runtime: any): any
 
     local MINIMUM_ERROR_RADIUS: number = 0.35
 
+    -- The gun remote casts a SEGMENT from the passed origin to the passed
+    -- endpoint, not an infinite ray: a near miss visibly stops mid-air right
+    -- where we predicted the target would be ("el disparo choca con el aire")
+    -- instead of flying on to the wall behind. Extending the endpoint a few
+    -- studs BEYOND the predicted point makes the segment pass through the
+    -- target even when the lead is slightly short, turning half-stud misses
+    -- into hits. The extension is only added when no bystander stands in the
+    -- extra tail (the sheriff dies for shooting innocents).
+    local GUN_PIERCE_STUDS: number = 4.0
+
     local AIM_PARTS: {string} = {
         "UpperTorso",
         "Torso",
@@ -2385,11 +2395,25 @@ function Module.init(runtime: any): any
                     end
                 end
                 if not rescued then
+                    local rootCFrame: CFrame = (root :: BasePart).CFrame
+                    -- Probe points across the torso box before falling back
+                    -- to limbs: a corner that hides the CENTRE of the torso
+                    -- usually still leaves half of the box exposed, and that
+                    -- sliver is a far better shot than a leg ("detectando la
+                    -- pierna cuando no era necesario"). The ray origin is the
+                    -- gun, not the eye, so what looks fully exposed on screen
+                    -- can be centre-blocked from the muzzle.
+                    local probeOffsets: {Vector3} = {
+                        rootCFrame.RightVector * 0.55,
+                        rootCFrame.RightVector * -0.55,
+                        rootCFrame.UpVector * 0.35,
+                        rootCFrame.RightVector * 0.35 + rootCFrame.UpVector * 0.25,
+                        rootCFrame.RightVector * -0.35 + rootCFrame.UpVector * 0.25,
+                    }
                     for _, partName: string in ipairs(VISIBILITY_PARTS) do
                         local candidate: Instance? =
                             (character :: Model):FindFirstChild(partName)
-                        if candidate ~= part
-                            and candidate
+                        if candidate
                             and candidate:IsA("BasePart") then
                             local candidatePart: BasePart =
                                 candidate :: BasePart
@@ -2397,6 +2421,18 @@ function Module.init(runtime: any): any
                                 candidatePart.Position + displacement,
                                 candidatePart.Position,
                             }
+                            if table.find(AIM_PARTS, partName) ~= nil then
+                                for _, offset: Vector3 in ipairs(probeOffsets) do
+                                    table.insert(
+                                        variants,
+                                        candidatePart.Position + offset + displacement
+                                    )
+                                    table.insert(
+                                        variants,
+                                        candidatePart.Position + offset
+                                    )
+                                end
+                            end
                             for _, basePoint: Vector3 in ipairs(variants) do
                                 local candidatePoint: Vector3 = basePoint
                                 local candidateDelta: Vector3 =
@@ -2717,9 +2753,18 @@ function Module.init(runtime: any): any
         end
 
         state.mm2ShotFeedback.queue(target, gun, origin, aim, resolved)
+        local fireEndpoint: Vector3 = resolved.endpoint
+        local fireDirection: Vector3 = fireEndpoint - origin.Position
+        if fireDirection.Magnitude > 0.05 then
+            local pierced: Vector3 =
+                fireEndpoint + fireDirection.Unit * GUN_PIERCE_STUDS
+            if not bystanderOnSegment(target, fireEndpoint, pierced) then
+                fireEndpoint = pierced
+            end
+        end
         remote:FireServer(
-            CFrame.lookAt(origin.Position, resolved.endpoint),
-            CFrame.new(resolved.endpoint)
+            CFrame.lookAt(origin.Position, fireEndpoint),
+            CFrame.new(fireEndpoint)
         )
         pcall(trajectoryCalibration.noteAuthoredShot, trajectoryCalibration, {
             kind = "gun",
@@ -6569,17 +6614,23 @@ end
 local trajectoryCalibration: any = nil
 
 local function getGunHorizonSeconds(): number
-    -- Two field reports, one per direction:
+    -- Three field reports, one per direction:
     --  * v24: leading by the FULL ~277 ms acceptance window missed AHEAD
     --    (shots landing where the target could never be).
     --  * v24.1: aiming at the raw observed position missed BEHIND moving
     --    targets ("apunta a donde estaba hace 1 segundo").
-    -- Reconciliation: our view of the target trails the server by about half
-    -- a round trip (victim -> server -> us), so we lead by exactly that
-    -- staleness - no more. The acceptance window is a REWIND (it covers past
-    -- positions) and must not be spent as forward lead.
+    --  * v26 (0.6xRTT): hits still landed slightly BEHIND fast movers, and
+    --    on fast strafes the aim trailed to the CENTER of the strafe path
+    --    ("le da como en el centro y no al murder"). The miss always points
+    --    along the target's movement.
+    -- Reconciliation: the victim's physics replicates victim->server->us, so
+    -- what we see is his position from ~1 RTT ago, and the server processes
+    -- our shot ~half an RTT after we send it. The full staleness is the RTT
+    -- itself: lead by exactly that - no more (the acceptance window is a
+    -- REWIND of past positions and must not be spent as forward lead), no
+    -- less (undershoot keeps aiming at the recent past).
     local staleness: number = math.clamp(
-        getEstimatedLatency() * 0.6,
+        getEstimatedLatency() * 1.0,
         0,
         0.15
     )
@@ -36341,7 +36392,7 @@ function Module.init(context: any): any
 
             local buttonX: number = -5
 
-            local function chromeButton(kind: string, paint: Color3): TextButton
+            local function chromeButton(kind: string, paint: Color3, token: string?): TextButton
                 local button: TextButton = (create("TextButton", {
                     TextTruncate = Enum.TextTruncate.AtEnd,
                     Parent = bar,
@@ -36364,7 +36415,7 @@ function Module.init(context: any): any
                 button.Position = UDim2.new(1, buttonX, 0.5, 0)
                 button.Size = UDim2.fromOffset(22, 22)
                 button.ZIndex = 3
-                drawPixelIcon(button, kind, paint)
+                drawPixelIcon(button, kind, paint, token)
 
                 table.insert(chromeConnections, button.MouseEnter:Connect(function(): ()
                     button.BackgroundTransparency = 0.45
@@ -36377,11 +36428,11 @@ function Module.init(context: any): any
             end
 
             if definition.closable ~= false then
-                closeButton = chromeButton("cross", Theme.negative)
+                closeButton = chromeButton("cross", Theme.negative, "negative")
             end
             if definition.pinnable ~= false then
 
-                local pin: TextButton = chromeButton("pin", Theme.enabled)
+                local pin: TextButton = chromeButton("pin", Theme.enabled, "enabled")
                 local function paintPin(): ()
                     pin.BackgroundTransparency = window.pinned and 0.2 or 0.72
                     pin.BackgroundColor3 = window.pinned
@@ -36396,17 +36447,27 @@ function Module.init(context: any): any
             end
             if definition.collapsible ~= false then
 
-                local chevron: TextButton = chromeButton("up", Theme.arrows)
+                local chevron: TextButton =
+                    chromeButton("up", Theme.arrows, "arrows")
                 local function paintChevron(): ()
                     drawPixelIcon(
                         chevron,
                         window.collapsed and "down" or "up",
-                        Theme.arrows
+                        Theme.arrows,
+                        "arrows"
                     )
                 end
                 table.insert(chromeConnections, chevron.MouseButton1Click:Connect(function(): ()
                     window:SetCollapsed(not window.collapsed)
                     paintChevron()
+                end))
+                -- Right-click anywhere on the header bar also collapses and
+                -- expands the window, alongside pressing the arrow itself.
+                table.insert(chromeConnections, bar.InputBegan:Connect(function(input: InputObject): ()
+                    if input.UserInputType == Enum.UserInputType.MouseButton2 then
+                        window:SetCollapsed(not window.collapsed)
+                        paintChevron()
+                    end
                 end))
                 table.insert(paintChrome, paintChevron)
             end
@@ -36447,6 +36508,20 @@ function Module.init(context: any): any
         window = adopted
         for _, paint: () -> () in ipairs(paintChrome) do
             paint()
+        end
+        -- Palette changes must repaint the chrome (chevrons, pin) instantly.
+        -- Before this, the arrow icons kept the colour they were created
+        -- with until they were clicked ("tengo que tocarlas para que puedan
+        -- cambiarse de color").
+        if state and type(state.registerThemeRefresh) == "function" then
+            state.registerThemeRefresh(function(): ()
+                if root.Parent == nil then
+                    return
+                end
+                for _, paint: () -> () in ipairs(paintChrome) do
+                    paint()
+                end
+            end)
         end
 
         if window.collapsed then

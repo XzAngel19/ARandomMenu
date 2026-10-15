@@ -562,7 +562,7 @@ function Module.init(context: any): any
 
             local buttonX: number = -5
 
-            local function chromeButton(kind: string, paint: Color3): TextButton
+            local function chromeButton(kind: string, paint: Color3, token: string?): TextButton
                 local button: TextButton = (create("TextButton", {
                     TextTruncate = Enum.TextTruncate.AtEnd,
                     Parent = bar,
@@ -585,7 +585,7 @@ function Module.init(context: any): any
                 button.Position = UDim2.new(1, buttonX, 0.5, 0)
                 button.Size = UDim2.fromOffset(22, 22)
                 button.ZIndex = 3
-                drawPixelIcon(button, kind, paint)
+                drawPixelIcon(button, kind, paint, token)
 
                 table.insert(chromeConnections, button.MouseEnter:Connect(function(): ()
                     button.BackgroundTransparency = 0.45
@@ -598,11 +598,11 @@ function Module.init(context: any): any
             end
 
             if definition.closable ~= false then
-                closeButton = chromeButton("cross", Theme.negative)
+                closeButton = chromeButton("cross", Theme.negative, "negative")
             end
             if definition.pinnable ~= false then
 
-                local pin: TextButton = chromeButton("pin", Theme.enabled)
+                local pin: TextButton = chromeButton("pin", Theme.enabled, "enabled")
                 local function paintPin(): ()
                     pin.BackgroundTransparency = window.pinned and 0.2 or 0.72
                     pin.BackgroundColor3 = window.pinned
@@ -617,17 +617,27 @@ function Module.init(context: any): any
             end
             if definition.collapsible ~= false then
 
-                local chevron: TextButton = chromeButton("up", Theme.arrows)
+                local chevron: TextButton =
+                    chromeButton("up", Theme.arrows, "arrows")
                 local function paintChevron(): ()
                     drawPixelIcon(
                         chevron,
                         window.collapsed and "down" or "up",
-                        Theme.arrows
+                        Theme.arrows,
+                        "arrows"
                     )
                 end
                 table.insert(chromeConnections, chevron.MouseButton1Click:Connect(function(): ()
                     window:SetCollapsed(not window.collapsed)
                     paintChevron()
+                end))
+                -- Right-click anywhere on the header bar also collapses and
+                -- expands the window, alongside pressing the arrow itself.
+                table.insert(chromeConnections, bar.InputBegan:Connect(function(input: InputObject): ()
+                    if input.UserInputType == Enum.UserInputType.MouseButton2 then
+                        window:SetCollapsed(not window.collapsed)
+                        paintChevron()
+                    end
                 end))
                 table.insert(paintChrome, paintChevron)
             end
@@ -668,6 +678,20 @@ function Module.init(context: any): any
         window = adopted
         for _, paint: () -> () in ipairs(paintChrome) do
             paint()
+        end
+        -- Palette changes must repaint the chrome (chevrons, pin) instantly.
+        -- Before this, the arrow icons kept the colour they were created
+        -- with until they were clicked ("tengo que tocarlas para que puedan
+        -- cambiarse de color").
+        if state and type(state.registerThemeRefresh) == "function" then
+            state.registerThemeRefresh(function(): ()
+                if root.Parent == nil then
+                    return
+                end
+                for _, paint: () -> () in ipairs(paintChrome) do
+                    paint()
+                end
+            end)
         end
 
         if window.collapsed then
