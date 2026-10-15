@@ -225,7 +225,7 @@ local RUNTIME_RAW_BASE: string =
         .. RUNTIME_BRANCH
         .. "/"
 
-local SOURCE_STAMP: string = "v27-20261015-live-arrows-lead-pierce"
+local SOURCE_STAMP: string = "v28-20261015-theme-roles-chams"
 
 local BOOT_STARTED_AT: number = os.clock()
 local BOOT_FINGERPRINT_SECONDS: number = 0
@@ -541,8 +541,42 @@ local ThemeEngine = {
     } :: ThemeShape,
 }
 
-local themeBindings: any = setmetatable({}, {__mode = "k"})
+local themeBindings: any = {}
+-- NOTE: this registry is deliberately STRONG. A weak-keyed table
+-- ({__mode = "k"}) silently lost Roblox Instance userdata in production
+-- (executors may collect the userdata even while the instance is still
+-- parented), so ThemeEngine.SetMany repainted nothing and every bound
+-- pixel kept its creation colour until it was manually redrawn - "tengo
+-- que tocarlas para que se aplique el color". Dead entries are pruned on
+-- each repaint instead of relying on the collector.
 local themeListeners: {(string) -> ()} = {}
+
+local function repaintThemeBindings(values: {[string]: Color3}): ()
+    for instance: any, record: any in pairs(themeBindings) do
+        local alive: boolean = true
+        do
+            local ok: boolean, parent: any =
+                pcall(function(): any return (instance :: any).Parent end)
+            alive = ok and parent ~= nil
+        end
+        if not alive then
+            themeBindings[instance] = nil
+        else
+            for _, binding: any in ipairs(record) do
+                local value: Color3? = values[binding.token]
+                if value then
+                    local applied: boolean = pcall(function(): ()
+                        (instance :: any)[binding.property] = value
+                    end)
+                    if not applied then
+                        themeBindings[instance] = nil
+                        break
+                    end
+                end
+            end
+        end
+    end
+end
 
 function ThemeEngine.Bind(
     instance: Instance,
@@ -585,16 +619,7 @@ function ThemeEngine.SetMany(values: {[string]: Color3}): ()
     for token: string, value: Color3 in pairs(values) do
         Theme[token] = value
     end
-    for instance: any, record: any in pairs(themeBindings) do
-        for _, binding: any in ipairs(record) do
-            local value: Color3? = values[binding.token]
-            if value then
-                pcall(function(): ()
-                    instance[binding.property] = value
-                end)
-            end
-        end
-    end
+    repaintThemeBindings(values)
     for _, listener: (string) -> () in ipairs(themeListeners) do
         pcall(listener, ThemeEngine.name)
     end
@@ -613,17 +638,7 @@ function ThemeEngine.Apply(name: string): boolean
         Theme[token] = value
     end
     ThemeEngine.name = name
-    for instance: any, record: any in pairs(themeBindings) do
-        for _, binding: any in ipairs(record) do
-            local value: Color3? = Theme[binding.token]
-            if value then
-
-                pcall(function(): ()
-                    instance[binding.property] = value
-                end)
-            end
-        end
-    end
+    repaintThemeBindings(Theme)
     for _, listener: (string) -> () in ipairs(themeListeners) do
         pcall(listener, name)
     end

@@ -318,7 +318,8 @@ local roleIndex: {
     murderer: Player?,
     sheriff: Player?,
     rolesKnown: boolean,
-} = {roles = {}, murderer = nil, sheriff = nil, rolesKnown = false}
+    gunHolders: {[Player]: boolean}?,
+} = {roles = {}, murderer = nil, sheriff = nil, rolesKnown = false, gunHolders = {}}
 local roleIndexDirty: boolean = true
 local roleIndexAt: number = -math.huge
 local roleIndexRefreshQueued: boolean = false
@@ -384,6 +385,7 @@ rebuildRoleIndex = function(): ()
     local sheriff: Player? = nil
     local alive: {[Player]: boolean} = {}
     local special: {[Player]: string} = {}
+    local gunHolders: {[Player]: boolean} = {}
 
     for _, player: Player in ipairs(Players:GetPlayers()) do
         local character: Model? = player.Character
@@ -398,7 +400,17 @@ rebuildRoleIndex = function(): ()
             or getPlayerWeapon(player, "Knife") then
             resolved = "Murderer"
         elseif getPlayerWeapon(player, "Gun") then
-            resolved = roundRole == "Hero" and "Hero" or "Sheriff"
+            gunHolders[player] = true
+            -- The sheriff spawns WITH the gun; anyone else holding one
+            -- mid-round picked it up after the sheriff died, which makes
+            -- them the Hero. The round data can lag behind the pickup
+            -- ("si alguien agarra la gun los nametags seguiran siendo de
+            -- Inocente"), so possession decides until the data catches up.
+            if roundRole == "Innocent" or roundRole == "Hero" then
+                resolved = "Hero"
+            else
+                resolved = "Sheriff"
+            end
         elseif roundRole and roundRole ~= "Innocent" then
             resolved = roundRole
         end
@@ -455,6 +467,29 @@ rebuildRoleIndex = function(): ()
     roleIndex.murderer = murderer
     roleIndex.sheriff = sheriff
     roleIndex.rolesKnown = rolesKnown
+
+    -- A gun changing hands (sheriff died, someone picked it up) must
+    -- re-sync the round data: the server knows the new Hero long before
+    -- our cached copy does, and only a fresh remote read promotes the
+    -- picker from "Innocent" and demotes the dead sheriff.
+    local gunHoldersChanged: boolean = false
+    do
+        local previous: {[Player]: boolean} = roleIndex.gunHolders or {}
+        for player in pairs(gunHolders) do
+            if not previous[player] then
+                gunHoldersChanged = true
+            end
+        end
+        for player in pairs(previous) do
+            if not gunHolders[player] then
+                gunHoldersChanged = true
+            end
+        end
+    end
+    roleIndex.gunHolders = gunHolders
+    if gunHoldersChanged and roundLifecycleActive ~= false then
+        requestRoleRefresh()
+    end
 
     if rolesChanged then
 

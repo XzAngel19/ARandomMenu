@@ -241,6 +241,18 @@ function Module.init(context: any): any
             end
         end
         feature.syncArrow = syncArrow
+        -- Palette changes must repaint the expand arrows immediately. The
+        -- per-pixel theme binding covers this too, but the arrow icon is
+        -- destroyed and rebuilt on every expansion toggle, and a redraw hook
+        -- guarantees the chosen colour lands on every copy ("tengo que
+        -- tocarlas para que se aplica el color").
+        if state and type(state.registerThemeRefresh) == "function" then
+            state.registerThemeRefresh(function(): ()
+                if row.Parent and arrow then
+                    syncArrow()
+                end
+            end)
+        end
 
         local activationTarget: TextButton = create("TextButton", {
             TextTruncate = Enum.TextTruncate.AtEnd,

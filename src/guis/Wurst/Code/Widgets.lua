@@ -1759,6 +1759,13 @@ function Module.init(context: any): WidgetLibrary
             ZIndex = option.ZIndex + 2,
         }) :: any) :: TextButton
         drawPixelIcon(arrowBox, "down", nil, "arrows")
+        if state and type(state.registerThemeRefresh) == "function" then
+            state.registerThemeRefresh(function(): ()
+                if arrowBox.Parent then
+                    drawPixelIcon(arrowBox, "down", nil, "arrows")
+                end
+            end)
+        end
 
         local function refreshChoiceVisual(): ()
             button.Text = values[index]

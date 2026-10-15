@@ -622,3 +622,84 @@ strafe rápido ese atraso se ve como el centro de su recorrido.
 3. Sheriff vs murder en strafe rápido: el tiro ya no debe quedar "en el
    centro" del recorrido ni atrás; los fallos por poco ahora atraviesan al
    murder en vez de morir en el aire.
+
+## v28 (Parte 1) — 2026-10-15 — Theme con bindings fuertes, paleta persistente, Chams por roles, detección de Hero
+
+### Flechas de los módulos — causa raíz encontrada
+
+El fix de v27 arregló las ventanas por el redibujo explícito, no por el bind:
+en producción **el bind de ThemeEngine no repintaba nada**. La causa: el
+registro de bindings era una tabla **débil** (`__mode="k"`) — el userdata de
+las Instancias puede ser recolectado aunque la instancia siga en el
+DataModel (comportamiento dependiente del ejecutor), así que SetMany
+iteraba un registro vacío y cada píxel conservaba su color de creación
+hasta que lo tocabas (el click redibuja con el Theme vivo). El harness de
+mocks no lo reproducía porque las instancias mock son tablas Lua
+fuertemente referenciadas por el árbol.
+
+Arreglos:
+- **Wurst.lua**: `themeBindings` ahora es una tabla **fuerte**; los muertos
+  se podan en cada repintado (Parent nil o fallo de escritura). `SetMany` y
+  `Apply` comparten `repaintThemeBindings`.
+- **Cards.lua**: las flechas de expandir de cada módulo se registran además
+  en el refresh de tema (redibujo inmediato en cambio de paleta).
+- **Widgets.lua**: las flechas de los combos (dropdowns) ídem.
+- **SettingsPage.lua**: la paleta guardada se **re-aplica al Theme al
+  arrancar** — antes los colores elegidos se perdían al re-ejecutar (el
+  Theme nacía del preset) y los swatches mostraban el color guardado
+  mientras la UI usaba el del preset.
+
+### Chams en MM2 — modo por roles
+
+- En MM2 ya no aparecen "Teammates"/"Team colours" (eso es de Universal);
+  en su lugar: **Murderer ESP / Sheriff ESP / Hero ESP / Innocent ESP**
+  (todos on por defecto) + **Show Perk** (ícono del perk sobre el murder).
+  El color del highlight sigue el color de rol. En juegos universales las
+  opciones de equipo siguen igual.
+- PlayerESP ya tenía sus colores por rol (Murderer/Sheriff/Hero/Innocent/
+  Dead colour) — sin cambios ahí.
+
+### Detección de Hero (agarra la gun) — bug de datos rancios
+
+Cuando el sheriff moría y alguien agarraba la gun, los nametags seguían
+diciendo "Innocent" para siempre: el índice de roles solo re-consultaba el
+remote de datos cuando NADIE tenía rol, y con datos rancios el portador
+quedaba como estaba. Ahora:
+- Quien tiene la gun con dato de ronda "Innocent" o "Hero" resuelve
+  **Hero** inmediatamente (el sheriff spawn-ea con la gun; cualquier otro
+  portador la recogió a media ronda).
+- Cuando el set de portadores de gun cambia entre rebuilds, se fuerza
+  `requestRoleRefresh()` para re-sincronizar (baja el Hero real, sube el
+  sheriff muerto).
+
+### Weapon Visuals — diagnósticos visibles
+
+El módulo cargaba y su lógica es correcta (suite v16 verde), pero "no
+funciona" en MM2 live sin decir nada. Ahora el rebuild pone **estado en la
+card** (p.ej. "2x12 gun · arc x2") y si pides Double Gun/Knife con el arma
+equipada y no se copia geometría, **avisa por notificación** ("found no gun
+geometry - report the skin name") en vez de fallar en silencio. Con ese
+mensaje sabremos exactamente qué skin no expone geometría en el tool.
+
+### Verificación (harness de arranque completo, tools/gen_full_boot_harness.py)
+
+El harness ahora bootea el Wurst real + bundle real con **0 fallos de
+módulos** (mocks: typeof, ancestros, personajes, remotes de ronda) y
+verifica de punta a punta:
+- `HERO DETECTION VERIFIED`: ronda con dato "Innocent" + gun en mano →
+  rol **Hero**; inocente normal → Innocent; lobby → Sheriff para el
+  portador.
+- `SAVED PALETTE + DOCK RESTORE VERIFIED`: config guardada con
+  ClickGUI.Arrows blanco y Show dock off → Theme.arrows=(255,255,255) y
+  state.uiShowDock=false tras el boot; swatch "Arrows | #FFFFFF".
+- Chams MM2 muestra Murderer/Sheriff/Hero/Innocent ESP + Show Perk.
+- 72/72 compilan; suites 14/14 + 4 + 15; bundle 70 archivos, sello
+  `v28-20261015-theme-roles-chams`.
+
+### Pendiente (Parte 2)
+
+- TrailESP (línea/destino de la bala) + Tracer Data (studs de fallo vs el
+  murder) bajo Weapon Visuals.
+- Verificación de física de AutoShoot y Flight.
+- Freeze Movements: "Freeze Emotes" (caminar durante un emote) y "Glitch
+  Animations".

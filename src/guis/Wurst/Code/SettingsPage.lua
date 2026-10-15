@@ -1705,14 +1705,36 @@ function Module.init(context: any): any
     -- exactly here when Theme.arrows was nil and hexOf(nil) aborted
     -- SettingsPage.init before the "Show dock" toggle could restore the
     -- saved dock state. Isolate the rows and keep building the page.
+    local PALETTE_ROWS: {any} = {
+        {label = "Background", default = Theme.background, tokens = {"surface", "background"}},
+        {label = "Accent", default = Theme.accent, tokens = {"accent", "outline"}},
+        {label = "Text", default = Theme.text, tokens = {"text", "accentText"}},
+        {label = "Enabled", default = Theme.enabled, tokens = {"enabled"}},
+        {label = "Arrows", default = Theme.arrows, tokens = {"arrows"}},
+    }
+    -- Re-apply the saved palette when the page builds: the theme starts
+    -- from the preset on every execution, so without this the chosen
+    -- colours were forgotten on rejoin and the UI came back with preset
+    -- colours while the swatches still showed the saved ones.
+    if ThemeEngine and type(ThemeEngine.SetMany) == "function" then
+        for _, row: any in ipairs(PALETTE_ROWS) do
+            local saved: Color3? = colorFromConfig(
+                configData.values[
+                    uiPanel.configKey .. "." .. row.label:gsub("%W", "")
+                ],
+                nil
+            )
+            if saved then
+                local updates: {[string]: Color3} = {}
+                for _, token: string in ipairs(row.tokens) do
+                    updates[token] = saved
+                end
+                ThemeEngine.SetMany(updates)
+            end
+        end
+    end
     local paletteOk: boolean, paletteError: string? = pcall(function(): ()
-        for _, row: any in ipairs({
-            {label = "Background", default = Theme.background, tokens = {"surface", "background"}},
-            {label = "Accent", default = Theme.accent, tokens = {"accent", "outline"}},
-            {label = "Text", default = Theme.text, tokens = {"text", "accentText"}},
-            {label = "Enabled", default = Theme.enabled, tokens = {"enabled"}},
-            {label = "Arrows", default = Theme.arrows, tokens = {"arrows"}},
-        }) do
+        for _, row: any in ipairs(PALETTE_ROWS) do
             local tokens: {string} = row.tokens
             local labelText: string = row.label
             local swatch: TextButton? = addColorOption(

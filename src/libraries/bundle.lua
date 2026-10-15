@@ -1,5 +1,5 @@
 return {
-    stamp = "v27-20261015-live-arrows-lead-pierce",
+    stamp = "v28-20261015-theme-roles-chams",
     files = {
         ["src/games/BedFight/Combat/AutoSwing.lua"] = [[
 local Module = {Name = "BedFight Auto Swing", Initialized = false, Connection = nil}
@@ -4598,6 +4598,8 @@ function Module.init(runtime: any): any
     local generation = 0
     local activeDouble = false
     local rebuild: () -> ()
+    local feature: any = nil
+    local warnedEmptyGeometry = false
 
     local function disconnectAll(list: {RBXScriptConnection}): ()
         for _, connection in ipairs(list) do
@@ -4906,7 +4908,6 @@ function Module.init(runtime: any): any
         end
         return nil
     end
-
     rebuild = function(): ()
         clearVisuals()
         local character: Model? = LocalPlayer.Character
@@ -4920,8 +4921,11 @@ function Module.init(runtime: any): any
         visualFolder = Instance.new("Folder")
         visualFolder.Name = "MM2LocalWeaponVisuals"
         visualFolder.Parent = workspace
+        local copiedByKind: {[string]: number} = {Gun = 0, Knife = 0}
+        local equippedByKind: {[string]: boolean} = {}
         for _, kind: string in ipairs({"Gun", "Knife"}) do
             local tool: Tool? = equippedWeapon(kind)
+            equippedByKind[kind] = tool ~= nil and tool.Parent == character
             if not tool or tool.Parent ~= character then
                 continue
             end
@@ -4965,10 +4969,50 @@ function Module.init(runtime: any): any
                     end
                 end
             end
+            copiedByKind[kind] = copied
             if copied > 0 then
                 -- A mirrored left arm keeps the cloned weapon raised next to
                 -- the real one instead of hanging from a dead limb.
                 activeDouble = true
+            end
+        end
+        -- Visible diagnostics: what the last rebuild produced. If a double
+        -- was requested for an equipped weapon but nothing was copied, say
+        -- so instead of failing silently ("Gun Visual no funciona").
+        do
+            local missing: {string} = {}
+            if options.doubleGun
+                and equippedByKind.Gun
+                and copiedByKind.Gun == 0 then
+                table.insert(missing, "Double Gun found no gun geometry - report the skin name")
+            end
+            if options.doubleKnife
+                and equippedByKind.Knife
+                and copiedByKind.Knife == 0 then
+                table.insert(missing, "Double Knife found no knife geometry - report the skin name")
+            end
+            if #missing > 0 then
+                if not warnedEmptyGeometry then
+                    warnedEmptyGeometry = true
+                    if type(notify) == "function" then
+                        notify(table.concat(missing, " · "))
+                    end
+                end
+            else
+                warnedEmptyGeometry = false
+            end
+            if feature and type(feature.SetStatus) == "function" then
+                local parts: {string} = {}
+                if options.doubleGun and copiedByKind.Gun > 0 then
+                    table.insert(parts, "2x" .. copiedByKind.Gun .. " gun")
+                end
+                if options.doubleKnife and copiedByKind.Knife > 0 then
+                    table.insert(parts, "2x" .. copiedByKind.Knife .. " knife")
+                end
+                if options.electricKnife and #arcs > 0 then
+                    table.insert(parts, "arc x" .. #arcs)
+                end
+                feature:SetStatus(#parts > 0 and table.concat(parts, " · ") or nil)
             end
         end
         if #arcs > 0 then
@@ -5069,7 +5113,7 @@ function Module.init(runtime: any): any
         end
     end
 
-    local feature = createUniversalFeature(
+    feature = createUniversalFeature(
         "Weapon Visuals",
         "Local cosmetics only: double weapons raise both arms, electric "
             .. "knife arcs. No extra damage or replication.",
@@ -5438,7 +5482,8 @@ local roleIndex: {
     murderer: Player?,
     sheriff: Player?,
     rolesKnown: boolean,
-} = {roles = {}, murderer = nil, sheriff = nil, rolesKnown = false}
+    gunHolders: {[Player]: boolean}?,
+} = {roles = {}, murderer = nil, sheriff = nil, rolesKnown = false, gunHolders = {}}
 local roleIndexDirty: boolean = true
 local roleIndexAt: number = -math.huge
 local roleIndexRefreshQueued: boolean = false
@@ -5504,6 +5549,7 @@ rebuildRoleIndex = function(): ()
     local sheriff: Player? = nil
     local alive: {[Player]: boolean} = {}
     local special: {[Player]: string} = {}
+    local gunHolders: {[Player]: boolean} = {}
 
     for _, player: Player in ipairs(Players:GetPlayers()) do
         local character: Model? = player.Character
@@ -5518,7 +5564,17 @@ rebuildRoleIndex = function(): ()
             or getPlayerWeapon(player, "Knife") then
             resolved = "Murderer"
         elseif getPlayerWeapon(player, "Gun") then
-            resolved = roundRole == "Hero" and "Hero" or "Sheriff"
+            gunHolders[player] = true
+            -- The sheriff spawns WITH the gun; anyone else holding one
+            -- mid-round picked it up after the sheriff died, which makes
+            -- them the Hero. The round data can lag behind the pickup
+            -- ("si alguien agarra la gun los nametags seguiran siendo de
+            -- Inocente"), so possession decides until the data catches up.
+            if roundRole == "Innocent" or roundRole == "Hero" then
+                resolved = "Hero"
+            else
+                resolved = "Sheriff"
+            end
         elseif roundRole and roundRole ~= "Innocent" then
             resolved = roundRole
         end
@@ -5575,6 +5631,29 @@ rebuildRoleIndex = function(): ()
     roleIndex.murderer = murderer
     roleIndex.sheriff = sheriff
     roleIndex.rolesKnown = rolesKnown
+
+    -- A gun changing hands (sheriff died, someone picked it up) must
+    -- re-sync the round data: the server knows the new Hero long before
+    -- our cached copy does, and only a fresh remote read promotes the
+    -- picker from "Innocent" and demotes the dead sheriff.
+    local gunHoldersChanged: boolean = false
+    do
+        local previous: {[Player]: boolean} = roleIndex.gunHolders or {}
+        for player in pairs(gunHolders) do
+            if not previous[player] then
+                gunHoldersChanged = true
+            end
+        end
+        for player in pairs(previous) do
+            if not gunHolders[player] then
+                gunHoldersChanged = true
+            end
+        end
+    end
+    roleIndex.gunHolders = gunHolders
+    if gunHoldersChanged and roundLifecycleActive ~= false then
+        requestRoleRefresh()
+    end
 
     if rolesChanged then
 
@@ -22994,12 +23073,72 @@ function Module.init(context: Runtime): any
         end
     end
 
+    -- Role-aware games (MM2) know every player's role, so the universal
+    -- teammate/team-colour options are meaningless there ("esa opcion es
+    -- dedicadamente a Universal"): instead the card grows per-role ESP
+    -- toggles and the fill colour follows the role colour. The active game
+    -- is known when modules initialize, so the option set is fixed then.
+    local roleMode: boolean = host.state ~= nil
+        and host.state.activeGameName == "MM2"
+
+    local function playerRole(player: Player): string?
+        if type(gameBridge) ~= "table"
+            or type(gameBridge.playerRole) ~= "function" then
+            return nil
+        end
+        local ok: boolean, role: any = pcall(gameBridge.playerRole, player)
+        if ok and type(role) == "string" then
+            return role
+        end
+        return nil
+    end
+
+    local function playerPerk(player: Player): string?
+        if type(gameBridge) ~= "table"
+            or type(gameBridge.playerPerk) ~= "function" then
+            return nil
+        end
+        local ok: boolean, perk: any = pcall(gameBridge.playerPerk, player)
+        if ok and type(perk) == "string" then
+            return perk
+        end
+        return nil
+    end
+
+    -- Same icon map the MM2 Role Tags module draws beside the murder tag.
+    local PERK_ICONS: {[string]: string} = {
+        ["Footsteps"] = "rbxassetid://336404773",
+        ["Sleight"] = "rbxassetid://340309581",
+        ["Ninja"] = "rbxassetid://416832054",
+        ["Haste"] = "rbxassetid://416942717",
+        ["FakeGun"] = "rbxassetid://17899774181",
+        ["Fake Gun"] = "rbxassetid://17899774181",
+        ["Ghost"] = "rbxassetid://335206856",
+        ["Xray"] = "rbxassetid://340313896",
+        ["X-Ray"] = "rbxassetid://340313896",
+        ["Trap"] = "rbxassetid://4966828196",
+        ["Sprint"] = "rbxassetid://4970219155",
+        ["VampireBat"] = "rbxassetid://129078122681639",
+        ["Bat Form"] = "rbxassetid://129078122681639",
+        ["Decoy"] = "rbxassetid://113722008817201",
+    }
+
+    local perkTag: BillboardGui? = nil
+
+    local function destroyPerkTag(): ()
+        if perkTag then
+            pcall(perkTag.Destroy, perkTag)
+            perkTag = nil
+        end
+    end
+
     local function clear(): ()
         for player: Player, highlight: Highlight in pairs(highlights) do
             highlights[player] = nil
             highlight:Destroy()
         end
         clearNameTags()
+        destroyPerkTag()
     end
 
     if type(gameBridge) == "table" and type(gameBridge.onEvent) == "function" then
@@ -23068,148 +23207,183 @@ function Module.init(context: Runtime): any
                 local nameMaxDistance: number =
                     card.Options["Nametag distance"].Value
                 local useTeamColours: boolean =
-                    card.Options["Team colours"].Value
+                    not roleMode and card.Options["Team colours"].Value
+                local allowTeammates: boolean =
+                    not roleMode and card.Options["Teammates"].Value
+                local showRoleEsp: {[string]: boolean} = {}
+                if roleMode then
+                    showRoleEsp["Murderer"] =
+                        card.Options["Murderer ESP"].Value ~= false
+                    showRoleEsp["Sheriff"] =
+                        card.Options["Sheriff ESP"].Value ~= false
+                    showRoleEsp["Hero"] =
+                        card.Options["Hero ESP"].Value ~= false
+                    showRoleEsp["Innocent"] =
+                        card.Options["Innocent ESP"].Value ~= false
+                end
+                local showPerk: boolean = roleMode
+                    and card.Options["Show Perk"].Value ~= false
+                local perkTarget: Player? = nil
 
                 local targets: any = entity:Refresh()
                 for _, target: any in ipairs(targets) do
                     local player: Player = target.Player
-                    local friendly: boolean = target.IsFriendly
-                    if not friendly and teamCheck
-                        and type(teamCheck.isSameTeam) == "function" then
-                        friendly = teamCheck.isSameTeam(player)
+
+                    -- Universal games: the teammate toggle decides who is
+                    -- highlighted. Role games: every role is known, per-role
+                    -- toggles decide, and role colours always win.
+                    local allowedTeam: boolean = true
+                    if not roleMode then
+                        local friendly: boolean = target.IsFriendly
+                        if not friendly and teamCheck
+                            and type(teamCheck.isSameTeam) == "function" then
+                            friendly = teamCheck.isSameTeam(player)
+                        end
+                        allowedTeam = allowTeammates or not friendly
                     end
-                    local allowedTeam: boolean =
-                        card.Options["Teammates"].Value or not friendly
-                    local protected: boolean =
-                        protectedTargets.isProtected(player)
-                    if allowedTeam
-                        and not protected
+                    if not (allowedTeam
+                        and not protectedTargets.isProtected(player)
                         and target.Character
                         and target.Humanoid
-                        and target.Humanoid.Health > 0 then
-                        seen[player] = true
-                        count += 1
+                        and target.Humanoid.Health > 0) then
+                        continue
+                    end
 
-                        local highlight: Highlight? = highlights[player]
-                        if not highlight or not highlight.Parent then
-                            highlight = Instance.new("Highlight")
-                            highlight.Name = "Wurst_Chams"
-                            highlight.Parent = currentWorkspace
-                            highlights[player] = highlight
+                    local roleColour: Color3? = nil
+                    if roleMode then
+                        local role: string? = playerRole(player)
+                        if role == "Dead" then
+                            continue
                         end
-                        local resolved: Highlight = highlight :: Highlight
-
-                        -- Colour priority: the game's role colour (when the
-                        -- game knows roles), then team colour (only when the
-                        -- team-colour option is on), then the chosen fill.
-                        local roleColour: Color3? = roleNameColour(player)
-                        local teamColour: Color3? = nil
-                        if not roleColour and useTeamColours and friendly then
-                            local team: Team? = player.Team
-                            if team then
-                                teamColour = team.TeamColor.Color
+                        if role ~= nil then
+                            if not showRoleEsp[role] then
+                                continue
+                            end
+                            if role == "Murderer" then
+                                perkTarget = player
                             end
                         end
-                        local fillColour: Color3 = roleColour
-                            or teamColour
-                            or card.Options["Fill colour"].Value
-                        local outlineColour: Color3 = roleColour
-                            or teamColour
-                            or card.Options["Outline colour"].Value
-                        local fillTransparency: number =
-                            card.Options["Fill transparency"].Value
-                        local outlineTransparency: number =
-                            card.Options["Outline transparency"].Value
-                        local depthMode: Enum.HighlightDepthMode =
-                            card.Options["Through walls"].Value
-                                and Enum.HighlightDepthMode.AlwaysOnTop
-                            or Enum.HighlightDepthMode.Occluded
-                        if resolved.Adornee ~= target.Character then
-                            resolved.Adornee = target.Character
+                        roleColour = roleNameColour(player)
+                    end
+                    local teamColour: Color3? = nil
+                    if not roleColour and useTeamColours and target.IsFriendly then
+                        local team: Team? = player.Team
+                        if team then
+                            teamColour = team.TeamColor.Color
                         end
-                        if resolved.FillColor ~= fillColour then
-                            resolved.FillColor = fillColour
-                        end
-                        if resolved.OutlineColor ~= outlineColour then
-                            resolved.OutlineColor = outlineColour
-                        end
-                        if resolved.FillTransparency ~= fillTransparency then
-                            resolved.FillTransparency = fillTransparency
-                        end
-                        if resolved.OutlineTransparency ~= outlineTransparency then
-                            resolved.OutlineTransparency = outlineTransparency
-                        end
-                        if resolved.DepthMode ~= depthMode then
-                            resolved.DepthMode = depthMode
-                        end
+                    end
+                    local fillColour: Color3 = roleColour
+                        or teamColour
+                        or card.Options["Fill colour"].Value
+                    local outlineColour: Color3 = roleColour
+                        or teamColour
+                        or card.Options["Outline colour"].Value
+                    local fillTransparency: number =
+                        card.Options["Fill transparency"].Value
+                    local outlineTransparency: number =
+                        card.Options["Outline transparency"].Value
+                    local depthMode: Enum.HighlightDepthMode =
+                        card.Options["Through walls"].Value
+                            and Enum.HighlightDepthMode.AlwaysOnTop
+                        or Enum.HighlightDepthMode.Occluded
 
-                        if showNames and target.Distance <= nameMaxDistance then
-                            local head: BasePart? =
-                                target.Character:FindFirstChild("Head")
-                                    or target.Character
-                                        :FindFirstChild("HumanoidRootPart")
-                                    :: BasePart?
-                            if head then
-                                local tag: BillboardGui? = nameTags[player]
-                                if not tag
-                                    or not tag.Parent
-                                    or tag.Adornee ~= head then
-                                    if tag then
-                                        pcall(tag.Destroy, tag)
-                                    end
-                                    local billboard: BillboardGui =
-                                        Instance.new("BillboardGui")
-                                    billboard.Name = "Wurst_NameTag"
-                                    billboard.AlwaysOnTop = true
-                                    billboard.LightInfluence = 0
-                                    billboard.Size = UDim2.fromOffset(200, 20)
-                                    billboard.StudsOffset =
-                                        Vector3.new(0, 2.2, 0)
-                                    billboard.MaxDistance = nameMaxDistance
-                                    billboard.Adornee = head
-                                    billboard.Parent = head
-                                    local label: TextLabel =
-                                        Instance.new("TextLabel")
-                                    label.Name = "Name"
-                                    label.BackgroundTransparency = 1
-                                    label.Size = UDim2.fromScale(1, 1)
-                                    label.Font = Enum.Font.GothamBold
-                                    label.TextSize = 13
-                                    label.TextStrokeColor3 =
-                                        Color3.fromRGB(0, 0, 0)
-                                    label.TextStrokeTransparency = 0.3
-                                    label.Parent = billboard
-                                    nameTags[player] = billboard
-                                    tag = billboard
+                    seen[player] = true
+                    count += 1
+
+                    local highlight: Highlight? = highlights[player]
+                    if not highlight or not highlight.Parent then
+                        highlight = Instance.new("Highlight")
+                        highlight.Name = "Wurst_Chams"
+                        highlight.Parent = currentWorkspace
+                        highlights[player] = highlight
+                    end
+                    local resolved: Highlight = highlight :: Highlight
+                    if resolved.Adornee ~= target.Character then
+                        resolved.Adornee = target.Character
+                    end
+                    if resolved.FillColor ~= fillColour then
+                        resolved.FillColor = fillColour
+                    end
+                    if resolved.OutlineColor ~= outlineColour then
+                        resolved.OutlineColor = outlineColour
+                    end
+                    if resolved.FillTransparency ~= fillTransparency then
+                        resolved.FillTransparency = fillTransparency
+                    end
+                    if resolved.OutlineTransparency ~= outlineTransparency then
+                        resolved.OutlineTransparency = outlineTransparency
+                    end
+                    if resolved.DepthMode ~= depthMode then
+                        resolved.DepthMode = depthMode
+                    end
+
+                    if showNames and target.Distance <= nameMaxDistance then
+                        local head: BasePart? =
+                            target.Character:FindFirstChild("Head")
+                                or target.Character
+                                    :FindFirstChild("HumanoidRootPart")
+                                :: BasePart?
+                        if head then
+                            local tag: BillboardGui? = nameTags[player]
+                            if not tag
+                                or not tag.Parent
+                                or tag.Adornee ~= head then
+                                if tag then
+                                    pcall(tag.Destroy, tag)
                                 end
-                                local label: any =
-                                    tag and tag:FindFirstChild("Name")
-                                if label then
-                                    local wanted: string = player.DisplayName
-                                    if player.DisplayName ~= player.Name then
-                                        wanted = wanted .. " ("
-                                            .. player.Name .. ")"
-                                    end
-                                    if target.Distance > 15 then
-                                        wanted = wanted .. " · "
-                                            .. tostring(
-                                                math.round(target.Distance)
-                                            ) .. "m"
-                                    end
-                                    if label.Text ~= wanted then
-                                        label.Text = wanted
-                                    end
-                                    local nameColour: Color3 = roleColour
-                                        or teamColour
-                                        or Color3.fromRGB(255, 255, 255)
-                                    if label.TextColor3 ~= nameColour then
-                                        label.TextColor3 = nameColour
-                                    end
+                                local billboard: BillboardGui =
+                                    Instance.new("BillboardGui")
+                                billboard.Name = "Wurst_NameTag"
+                                billboard.AlwaysOnTop = true
+                                billboard.LightInfluence = 0
+                                billboard.Size = UDim2.fromOffset(200, 20)
+                                billboard.StudsOffset =
+                                    Vector3.new(0, 2.2, 0)
+                                billboard.MaxDistance = nameMaxDistance
+                                billboard.Adornee = head
+                                billboard.Parent = head
+                                local label: TextLabel =
+                                    Instance.new("TextLabel")
+                                label.Name = "Name"
+                                label.BackgroundTransparency = 1
+                                label.Size = UDim2.fromScale(1, 1)
+                                label.Font = Enum.Font.GothamBold
+                                label.TextSize = 13
+                                label.TextStrokeColor3 =
+                                    Color3.fromRGB(0, 0, 0)
+                                label.TextStrokeTransparency = 0.3
+                                label.Parent = billboard
+                                nameTags[player] = billboard
+                                tag = billboard
+                            end
+                            local label: any =
+                                tag and tag:FindFirstChild("Name")
+                            if label then
+                                local wanted: string = player.DisplayName
+                                if player.DisplayName ~= player.Name then
+                                    wanted = wanted .. " ("
+                                        .. player.Name .. ")"
+                                end
+                                if target.Distance > 15 then
+                                    wanted = wanted .. " · "
+                                        .. tostring(
+                                            math.round(target.Distance)
+                                        ) .. "m"
+                                end
+                                if label.Text ~= wanted then
+                                    label.Text = wanted
+                                end
+                                local nameColour: Color3 = roleColour
+                                    or teamColour
+                                    or Color3.fromRGB(255, 255, 255)
+                                if label.TextColor3 ~= nameColour then
+                                    label.TextColor3 = nameColour
                                 end
                             end
                         end
                     end
                 end
+
                 for player: Player, highlight: Highlight in pairs(highlights) do
                     if not seen[player] then
                         highlights[player] = nil
@@ -23221,6 +23395,49 @@ function Module.init(context: Runtime): any
                         nameTags[player] = nil
                         pcall(tag.Destroy, tag)
                     end
+                end
+
+                -- Perk icon above the murderer (role games only).
+                if roleMode and showPerk and perkTarget and perkTarget.Character then
+                    local head: BasePart? = perkTarget.Character:FindFirstChild("Head")
+                        or perkTarget.Character:FindFirstChild("HumanoidRootPart")
+                        :: BasePart?
+                    local perk: string? = head and playerPerk(perkTarget) or nil
+                    if head and perk then
+                        local iconId: string? = PERK_ICONS[perk]
+                            or PERK_ICONS[string.gsub(perk, "%s+", "")]
+                        if iconId then
+                            if not perkTag
+                                or not perkTag.Parent
+                                or perkTag.Adornee ~= head then
+                                destroyPerkTag()
+                                local billboard: BillboardGui = Instance.new("BillboardGui")
+                                billboard.Name = "Wurst_ChamPerk"
+                                billboard.AlwaysOnTop = true
+                                billboard.LightInfluence = 0
+                                billboard.Size = UDim2.fromOffset(26, 26)
+                                billboard.StudsOffset = Vector3.new(0, 2.9, 0)
+                                billboard.MaxDistance = 1500
+                                billboard.Adornee = head
+                                billboard.Parent = head
+                                local icon: ImageLabel = Instance.new("ImageLabel")
+                                icon.Name = "Perk"
+                                icon.BackgroundTransparency = 1
+                                icon.Size = UDim2.fromScale(1, 1)
+                                icon.Image = iconId
+                                icon.Parent = billboard
+                                perkTag = billboard
+                            end
+                            local icon: any = perkTag and perkTag:FindFirstChild("Perk")
+                            if icon and icon.Image ~= iconId then
+                                icon.Image = iconId
+                            end
+                        end
+                    else
+                        destroyPerkTag()
+                    end
+                else
+                    destroyPerkTag()
                 end
 
                 card:SetStatus(tostring(count))
@@ -23236,8 +23453,18 @@ function Module.init(context: Runtime): any
     card:CreateToggle({Name = "Through walls", Default = true})
     card:CreateToggle({Name = "Nametags", Default = false, Tooltip = "Shows each player's name and distance above the highlight, coloured by role or team when known."})
     card:CreateSlider({Name = "Nametag distance", Min = 100, Max = 2000, Step = 100, Default = 1000, Tooltip = "How far name tags stay visible."})
-    card:CreateToggle({Name = "Teammates", Default = false, Tooltip = "Also highlight teammates. The advanced team check decides who counts."})
-    card:CreateToggle({Name = "Team colours", Default = false, Tooltip = "Teammates get their Roblox team colour; everyone else keeps the fill colour. Role colours (when the game knows roles) always win."})
+    if roleMode then
+        -- Role games (MM2): every role is known, so per-role ESP toggles
+        -- replace the universal teammate options.
+        card:CreateToggle({Name = "Murderer ESP", Default = true, Tooltip = "Highlight the murderer in their role colour."})
+        card:CreateToggle({Name = "Sheriff ESP", Default = true, Tooltip = "Highlight the sheriff in their role colour."})
+        card:CreateToggle({Name = "Hero ESP", Default = true, Tooltip = "Highlight the hero (gun picked up mid-round) in their role colour."})
+        card:CreateToggle({Name = "Innocent ESP", Default = true, Tooltip = "Highlight innocents in their role colour."})
+        card:CreateToggle({Name = "Show Perk", Default = true, Tooltip = "Perk icon above the murderer."})
+    else
+        card:CreateToggle({Name = "Teammates", Default = false, Tooltip = "Also highlight teammates. The advanced team check decides who counts."})
+        card:CreateToggle({Name = "Team colours", Default = false, Tooltip = "Teammates get their Roblox team colour; everyone else keeps the fill colour. Role colours (when the game knows roles) always win."})
+    end
 
     activeCard = card
     Module.Initialized = true
@@ -26511,6 +26738,18 @@ function Module.init(context: any): any
             end
         end
         feature.syncArrow = syncArrow
+        -- Palette changes must repaint the expand arrows immediately. The
+        -- per-pixel theme binding covers this too, but the arrow icon is
+        -- destroyed and rebuilt on every expansion toggle, and a redraw hook
+        -- guarantees the chosen colour lands on every copy ("tengo que
+        -- tocarlas para que se aplica el color").
+        if state and type(state.registerThemeRefresh) == "function" then
+            state.registerThemeRefresh(function(): ()
+                if row.Parent and arrow then
+                    syncArrow()
+                end
+            end)
+        end
 
         local activationTarget: TextButton = create("TextButton", {
             TextTruncate = Enum.TextTruncate.AtEnd,
@@ -33045,14 +33284,36 @@ function Module.init(context: any): any
     -- exactly here when Theme.arrows was nil and hexOf(nil) aborted
     -- SettingsPage.init before the "Show dock" toggle could restore the
     -- saved dock state. Isolate the rows and keep building the page.
+    local PALETTE_ROWS: {any} = {
+        {label = "Background", default = Theme.background, tokens = {"surface", "background"}},
+        {label = "Accent", default = Theme.accent, tokens = {"accent", "outline"}},
+        {label = "Text", default = Theme.text, tokens = {"text", "accentText"}},
+        {label = "Enabled", default = Theme.enabled, tokens = {"enabled"}},
+        {label = "Arrows", default = Theme.arrows, tokens = {"arrows"}},
+    }
+    -- Re-apply the saved palette when the page builds: the theme starts
+    -- from the preset on every execution, so without this the chosen
+    -- colours were forgotten on rejoin and the UI came back with preset
+    -- colours while the swatches still showed the saved ones.
+    if ThemeEngine and type(ThemeEngine.SetMany) == "function" then
+        for _, row: any in ipairs(PALETTE_ROWS) do
+            local saved: Color3? = colorFromConfig(
+                configData.values[
+                    uiPanel.configKey .. "." .. row.label:gsub("%W", "")
+                ],
+                nil
+            )
+            if saved then
+                local updates: {[string]: Color3} = {}
+                for _, token: string in ipairs(row.tokens) do
+                    updates[token] = saved
+                end
+                ThemeEngine.SetMany(updates)
+            end
+        end
+    end
     local paletteOk: boolean, paletteError: string? = pcall(function(): ()
-        for _, row: any in ipairs({
-            {label = "Background", default = Theme.background, tokens = {"surface", "background"}},
-            {label = "Accent", default = Theme.accent, tokens = {"accent", "outline"}},
-            {label = "Text", default = Theme.text, tokens = {"text", "accentText"}},
-            {label = "Enabled", default = Theme.enabled, tokens = {"enabled"}},
-            {label = "Arrows", default = Theme.arrows, tokens = {"arrows"}},
-        }) do
+        for _, row: any in ipairs(PALETTE_ROWS) do
             local tokens: {string} = row.tokens
             local labelText: string = row.label
             local swatch: TextButton? = addColorOption(
@@ -35010,6 +35271,13 @@ function Module.init(context: any): WidgetLibrary
             ZIndex = option.ZIndex + 2,
         }) :: any) :: TextButton
         drawPixelIcon(arrowBox, "down", nil, "arrows")
+        if state and type(state.registerThemeRefresh) == "function" then
+            state.registerThemeRefresh(function(): ()
+                if arrowBox.Parent then
+                    drawPixelIcon(arrowBox, "down", nil, "arrows")
+                end
+            end)
+        end
 
         local function refreshChoiceVisual(): ()
             button.Text = values[index]

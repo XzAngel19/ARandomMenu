@@ -31,6 +31,8 @@ function Module.init(runtime: any): any
     local generation = 0
     local activeDouble = false
     local rebuild: () -> ()
+    local feature: any = nil
+    local warnedEmptyGeometry = false
 
     local function disconnectAll(list: {RBXScriptConnection}): ()
         for _, connection in ipairs(list) do
@@ -339,7 +341,6 @@ function Module.init(runtime: any): any
         end
         return nil
     end
-
     rebuild = function(): ()
         clearVisuals()
         local character: Model? = LocalPlayer.Character
@@ -353,8 +354,11 @@ function Module.init(runtime: any): any
         visualFolder = Instance.new("Folder")
         visualFolder.Name = "MM2LocalWeaponVisuals"
         visualFolder.Parent = workspace
+        local copiedByKind: {[string]: number} = {Gun = 0, Knife = 0}
+        local equippedByKind: {[string]: boolean} = {}
         for _, kind: string in ipairs({"Gun", "Knife"}) do
             local tool: Tool? = equippedWeapon(kind)
+            equippedByKind[kind] = tool ~= nil and tool.Parent == character
             if not tool or tool.Parent ~= character then
                 continue
             end
@@ -398,10 +402,50 @@ function Module.init(runtime: any): any
                     end
                 end
             end
+            copiedByKind[kind] = copied
             if copied > 0 then
                 -- A mirrored left arm keeps the cloned weapon raised next to
                 -- the real one instead of hanging from a dead limb.
                 activeDouble = true
+            end
+        end
+        -- Visible diagnostics: what the last rebuild produced. If a double
+        -- was requested for an equipped weapon but nothing was copied, say
+        -- so instead of failing silently ("Gun Visual no funciona").
+        do
+            local missing: {string} = {}
+            if options.doubleGun
+                and equippedByKind.Gun
+                and copiedByKind.Gun == 0 then
+                table.insert(missing, "Double Gun found no gun geometry - report the skin name")
+            end
+            if options.doubleKnife
+                and equippedByKind.Knife
+                and copiedByKind.Knife == 0 then
+                table.insert(missing, "Double Knife found no knife geometry - report the skin name")
+            end
+            if #missing > 0 then
+                if not warnedEmptyGeometry then
+                    warnedEmptyGeometry = true
+                    if type(notify) == "function" then
+                        notify(table.concat(missing, " · "))
+                    end
+                end
+            else
+                warnedEmptyGeometry = false
+            end
+            if feature and type(feature.SetStatus) == "function" then
+                local parts: {string} = {}
+                if options.doubleGun and copiedByKind.Gun > 0 then
+                    table.insert(parts, "2x" .. copiedByKind.Gun .. " gun")
+                end
+                if options.doubleKnife and copiedByKind.Knife > 0 then
+                    table.insert(parts, "2x" .. copiedByKind.Knife .. " knife")
+                end
+                if options.electricKnife and #arcs > 0 then
+                    table.insert(parts, "arc x" .. #arcs)
+                end
+                feature:SetStatus(#parts > 0 and table.concat(parts, " · ") or nil)
             end
         end
         if #arcs > 0 then
@@ -502,7 +546,7 @@ function Module.init(runtime: any): any
         end
     end
 
-    local feature = createUniversalFeature(
+    feature = createUniversalFeature(
         "Weapon Visuals",
         "Local cosmetics only: double weapons raise both arms, electric "
             .. "knife arcs. No extra damage or replication.",
