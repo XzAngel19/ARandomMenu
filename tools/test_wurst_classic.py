@@ -4,6 +4,8 @@ import os
 from pathlib import Path
 import subprocess
 import tempfile
+import sys
+sys.dont_write_bytecode = True
 from test_mm2_precision import section
 
 ROOT = Path(__file__).resolve().parents[1]
