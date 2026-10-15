@@ -68,6 +68,15 @@ function Module.init(context: any): WidgetLibrary
     table.clear(toggleThemeRefreshers)
     if state then
         state.optionThemeRefresh = runToggleThemeRefreshers
+        -- Other UI modules (card bind squares, window chrome) register their
+        -- repainters here so palette changes reach everything on screen.
+        state.registerThemeRefresh = function(refresh: () -> ()): ()
+            table.insert(toggleThemeRefreshers, refresh)
+        end
+        -- Live-apply registry for option VALUES (sliders, colours, cycles,
+        -- text). Profiles and the panic reset drive the whole UI through it
+        -- instead of only rewriting the saved config.
+        state.valueControls = {}
     end
     local configData: any = host.configData
     local queueConfigSave: any = host.queueConfigSave
@@ -86,6 +95,7 @@ function Module.init(context: any): WidgetLibrary
     local makeTextLabel: any = host.makeTextLabel
     local notify: any = host.notify
     local Theme: any = host.Theme
+    local ThemeEngine: any = host.ThemeEngine
     local CONTROL_FONT: any = host.CONTROL_FONT
     local ScreenGui: any = host.ScreenGui
 
@@ -101,9 +111,15 @@ function Module.init(context: any): WidgetLibrary
     local function drawPixelIcon(
         parent: Instance,
         kind: string,
-        color: Color3?
+        color: Color3?,
+        token: string?
     ): Frame
-        local paint: Color3 = color or WURST_GREEN
+        local themed: boolean = token ~= nil
+            and ThemeEngine ~= nil
+            and Theme[token or ""] ~= nil
+        local paint: Color3 = (themed and Theme[token :: string])
+            or color
+            or WURST_GREEN
         local existing: Instance? = (parent :: any):FindFirstChild("PixelIcon")
         if existing then
             existing:Destroy()
@@ -128,7 +144,7 @@ function Module.init(context: any): WidgetLibrary
             ZIndex = (tonumber((parent :: any).ZIndex) or 1) + 1,
         }) :: any) :: Frame
         local function px(x: number, y: number, w: number, h: number): ()
-            create("Frame", {
+            local pixel: any = create("Frame", {
                 Parent = container,
                 BackgroundColor3 = paint,
                 BorderSizePixel = 0,
@@ -136,6 +152,11 @@ function Module.init(context: any): WidgetLibrary
                 Size = UDim2.fromOffset(w * 2, h * 2),
                 ZIndex = container.ZIndex + 1,
             })
+            if themed then
+                -- Weak binding: destroyed icons drop out of the registry
+                -- automatically and ThemeEngine.SetMany repaints the rest.
+                ThemeEngine.Bind(pixel, "BackgroundColor3", token :: string)
+            end
         end
         if kind == "down" then
             px(0, 0, 7, 1); px(1, 1, 5, 1); px(2, 2, 3, 1); px(3, 3, 1, 1)
@@ -687,6 +708,15 @@ function Module.init(context: any): WidgetLibrary
                 1
             )
             setValue(minimum + (maximum - minimum) * alpha, true, true)
+        end
+
+        if state.valueControls then
+            state.valueControls[optionKey] = {
+                apply = function(stored: any): ()
+                    setValue(tonumber(stored) or defaultValue, true)
+                end,
+                default = defaultValue,
+            }
         end
 
         trackUiConnection(slider.InputBegan:Connect(function(
@@ -1728,7 +1758,7 @@ function Module.init(context: any): WidgetLibrary
             Text = "",
             ZIndex = option.ZIndex + 2,
         }) :: any) :: TextButton
-        drawPixelIcon(arrowBox, "down", WURST_GREEN)
+        drawPixelIcon(arrowBox, "down", nil, "arrows")
 
         local function refreshChoiceVisual(): ()
             button.Text = values[index]
@@ -1746,6 +1776,24 @@ function Module.init(context: any): WidgetLibrary
         end
         button.MouseButton1Click:Connect(openList)
         arrowBox.MouseButton1Click:Connect(openList)
+
+        if state.valueControls then
+            state.valueControls[optionKey] = {
+                apply = function(stored: any): ()
+                    local picked: number? =
+                        table.find(values, tostring(stored))
+                    if picked == nil then
+                        return
+                    end
+                    index = picked :: number
+                    refreshChoiceVisual()
+                    callback(values[index])
+                    configData.values[optionKey] = values[index]
+                    queueConfigSave()
+                end,
+                default = values[initialIndex or 1],
+            }
+        end
 
         callback(values[index])
         return button :: TextButton
@@ -1850,6 +1898,19 @@ function Module.init(context: any): WidgetLibrary
         if not shouldPersist and configData.values[optionKey] ~= nil then
             configData.values[optionKey] = nil
             queueConfigSave()
+        end
+
+        if state.valueControls then
+            state.valueControls[optionKey] = {
+                apply = function(stored: any): ()
+                    box.Text = tostring(stored or "")
+                    if shouldPersist then
+                        configData.values[optionKey] = box.Text
+                        queueConfigSave()
+                    end
+                end,
+                default = defaultText or "",
+            }
         end
         callback(initialText)
         return box :: TextBox
@@ -2242,6 +2303,22 @@ function Module.init(context: any): WidgetLibrary
             end, swatch)
         end)
 
+        if state.valueControls then
+            state.valueControls[optionKey] = {
+                apply = function(stored: any): ()
+                    local restored: Color3 =
+                        colorFromConfig(stored, defaultColor)
+                    color = restored
+                    bar.BackgroundColor3 = color
+                    hexValue.Text = hexOf(color)
+                    configData.values[optionKey] = colorToConfig(color)
+                    callback(color)
+                    queueConfigSave()
+                end,
+                default = colorToConfig(defaultColor),
+            }
+        end
+
         callback(color)
         return swatch
     end
@@ -2482,6 +2559,9 @@ end
 function Module.destroy(): ()
     Module.Initialized = false
     table.clear(toggleThemeRefreshers)
+    if boundState and type(boundState.valueControls) == "table" then
+        table.clear(boundState.valueControls)
+    end
     if boundState and boundState.optionThemeRefresh == runToggleThemeRefreshers then
         boundState.optionThemeRefresh = nil
     end

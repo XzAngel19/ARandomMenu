@@ -19,9 +19,9 @@ function Module.init(context: any): any
     local TOOLTIP_OPACITY: number = 0.75
     local MAX_HEIGHT: number = 200
     local MAX_SETTINGS_HEIGHT: number = 200
-    local CLICKGUI_BACKGROUND: Color3 = Color3.fromRGB(64, 64, 64)
-    local CLICKGUI_ACCENT: Color3 = Color3.fromRGB(16, 16, 16)
-    local CLICKGUI_TEXT: Color3 = Color3.fromRGB(240, 240, 240)
+    local CLICKGUI_BACKGROUND: Color3 = Color3.fromRGB(24, 24, 26)
+    local CLICKGUI_ACCENT: Color3 = Color3.fromRGB(236, 236, 238)
+    local CLICKGUI_TEXT: Color3 = Color3.fromRGB(245, 245, 247)
     local HACKLIST_MODE: string = "Auto"
     local HACKLIST_POSITION: string = "Left"
     local HACKLIST_COLOR: Color3 = Color3.fromRGB(255, 255, 255)
@@ -283,7 +283,7 @@ function Module.init(context: any): any
             ZIndex = row.ZIndex + 1,
         }) :: any) :: Frame
 
-        drawPixelIcon(arrowBox, "right", Color3.fromRGB(0, 204, 0))
+        drawPixelIcon(arrowBox, "right", nil, "arrows")
         trackUiConnection(row.MouseEnter:Connect(function(): ()
             row.BackgroundTransparency = 0.3
         end))
@@ -614,10 +614,156 @@ function Module.init(context: any): any
     end
 
     local function profileStore(): any
-        if type(configData.values.KeybindProfiles) ~= "table" then
-            configData.values.KeybindProfiles = {}
+        if type(configData.values.Profiles) ~= "table" then
+            configData.values.Profiles = {}
         end
-        return configData.values.KeybindProfiles
+        return configData.values.Profiles
+    end
+
+    -- Profile stores must never be captured inside a profile.
+    local PROFILE_STORE_KEYS: {[string]: boolean} = {
+        Profiles = true,
+        KeybindProfiles = true,
+    }
+
+    local function captureProfile(): any
+        local states: {[string]: any} = {}
+        for key: string, value: any in pairs(configData.states) do
+            states[key] = value
+        end
+        local values: {[string]: any} = {}
+        for key: string, value: any in pairs(configData.values) do
+            if not PROFILE_STORE_KEYS[key] then
+                values[key] = value
+            end
+        end
+        local shortcuts: {[string]: string} = {}
+        for id: string, binding: any in pairs(state.shortcutBindings) do
+            if binding.key and binding.key ~= Enum.KeyCode.Unknown then
+                shortcuts[id] = binding.key.Name
+            end
+        end
+        local enabledModules: number = 0
+        for _, feature: any in ipairs(allFeatures) do
+            if configData.states[feature.configKey] == true then
+                enabledModules += 1
+            end
+        end
+        local optionCount: number = 0
+        for _ in pairs(values) do
+            optionCount += 1
+        end
+        return {
+            savedAt = os.time(),
+            states = states,
+            values = values,
+            shortcuts = shortcuts,
+            enabledModules = enabledModules,
+            optionCount = optionCount,
+        }
+    end
+
+    local function applyProfile(name: string): boolean
+        local snapshot: any = profileStore()[name]
+        if type(snapshot) ~= "table" then
+            return false
+        end
+        -- 1) Saved config first: states are replaced wholesale, values merge
+        --    (the profile stores themselves are never captured).
+        for key: string in pairs(configData.states) do
+            configData.states[key] = nil
+        end
+        for key: string, value: any in pairs(snapshot.states) do
+            configData.states[key] = value
+        end
+        for key: string, value: any in pairs(snapshot.values) do
+            if not PROFILE_STORE_KEYS[key] then
+                configData.values[key] = value
+            end
+        end
+        -- 2) Keybinds.
+        for _, binding: any in pairs(state.shortcutBindings) do
+            local savedName: any = snapshot.shortcuts
+                and snapshot.shortcuts[tostring(binding.id)]
+            local savedKey: any = Enum.KeyCode.Unknown
+            if type(savedName) == "string" and savedName ~= "" then
+                local resolved: boolean, candidate: any = pcall(function(): any
+                    return (Enum.KeyCode :: any)[savedName]
+                end)
+                if resolved then
+                    savedKey = candidate
+                end
+            end
+            if savedKey == Enum.KeyCode.Unknown then
+                if binding.key ~= Enum.KeyCode.Unknown
+                    and type(binding.assign) == "function" then
+                    binding.assign(binding.key)
+                end
+            elseif binding.key ~= savedKey
+                and type(binding.assign) == "function" then
+                binding.assign(savedKey)
+            elseif type(binding.refresh) == "function" then
+                binding.refresh()
+            end
+        end
+        -- 3) Module masters: the cards flip with full UI sync.
+        for _, feature: any in ipairs(allFeatures) do
+            local wanted: boolean = snapshot.states[feature.configKey] == true
+            if feature.enabled ~= wanted
+                and type(feature.activate) == "function" then
+                pcall(feature.activate)
+            end
+        end
+        -- 4) Option toggles.
+        for key: string, control: any in pairs(state.toggleControls or {}) do
+            local saved: any = snapshot.states[key]
+            if saved ~= nil and type(control.setChecked) == "function" then
+                pcall(control.setChecked, saved == true)
+            end
+        end
+        -- 5) Option values (sliders, colours, cycles, text).
+        for key: string, control: any in pairs(state.valueControls or {}) do
+            local saved: any = snapshot.values[key]
+            if saved ~= nil and type(control.apply) == "function" then
+                pcall(control.apply, saved)
+            end
+        end
+        queueConfigSave()
+        return true
+    end
+
+    local function panicReset(): ()
+        -- Every module off (cards flip with full UI sync).
+        for _, feature: any in ipairs(allFeatures) do
+            if feature.enabled and type(feature.activate) == "function" then
+                pcall(feature.activate)
+            end
+        end
+        -- Every option toggle off.
+        for _, control: any in pairs(state.toggleControls or {}) do
+            if type(control.setChecked) == "function" then
+                pcall(control.setChecked, false)
+            end
+        end
+        -- Every option value back to its default, live on screen.
+        for _, control: any in pairs(state.valueControls or {}) do
+            if control.default ~= nil and type(control.apply) == "function" then
+                pcall(control.apply, control.default)
+            end
+        end
+        -- Wipe the saved config. Profile stores and keybinds survive so a
+        -- saved profile can bring everything back.
+        for key: string in pairs(configData.states) do
+            configData.states[key] = nil
+        end
+        for key: string in pairs(configData.values) do
+            if not PROFILE_STORE_KEYS[key]
+                and not string.match(key, "^Shortcut%.") then
+                configData.values[key] = nil
+            end
+        end
+        queueConfigSave()
+        notify("panic: every module and option is back to defaults")
     end
 
     local rebuildProfiles: () -> () = function(): () end
@@ -630,7 +776,7 @@ function Module.init(context: any): any
             return
         end
         local screen: Vector2 = viewport()
-        profilesRecord = configWindow("KeybindProfiles", "Keybind Profiles", {
+        profilesRecord = configWindow("Profiles", "Profiles", {
             position = Vector2.new(screen.X - WINDOW_WIDTH * 2 - 32, 260),
             anchor = keybindsRecord and keybindsRecord.window,
             settingsSized = true,
@@ -648,14 +794,23 @@ function Module.init(context: any): any
         local nameBox: TextBox = (makeTextBox(entryRow, "") :: any) :: TextBox
         nameBox.PlaceholderText = "New profile name"
         nameBox.Position = UDim2.fromOffset(0, 0)
-        nameBox.Size = UDim2.new(1, -54, 1, 0)
+        nameBox.Size = UDim2.new(1, -170, 1, 0)
         nameBox.TextSize = 14
         nameBox.ZIndex = entryRow.ZIndex + 1
         local saveButton: TextButton = (makeButton(entryRow, "SAVE", 10) :: any) :: TextButton
         saveButton.AnchorPoint = Vector2.new(1, 0.5)
-        saveButton.Position = UDim2.new(1, 0, 0.5, 0)
-        saveButton.Size = UDim2.fromOffset(48, 18)
+        saveButton.Position = UDim2.new(1, -66, 0.5, 0)
+        saveButton.Size = UDim2.fromOffset(56, 20)
         saveButton.ZIndex = entryRow.ZIndex + 1
+        local panicButton: TextButton = (makeButton(entryRow, "PANIC", 10) :: any) :: TextButton
+        panicButton.AnchorPoint = Vector2.new(1, 0.5)
+        panicButton.Position = UDim2.new(1, 0, 0.5, 0)
+        panicButton.Size = UDim2.fromOffset(56, 20)
+        panicButton.ZIndex = entryRow.ZIndex + 1
+        trackUiConnection(panicButton.MouseButton1Click:Connect(function(): ()
+            panicReset()
+            rebuildProfiles()
+        end))
 
         profilesList = (create("Frame", {
             Parent = profilesRecord.window.body,
@@ -687,15 +842,27 @@ function Module.init(context: any): any
             for name: string in pairs(profileStore()) do
                 table.insert(names, name)
             end
-            table.sort(names)
+            table.sort(names, function(a: string, b: string): boolean
+                local left: any = profileStore()[a]
+                local right: any = profileStore()[b]
+                local leftAt: number = type(left) == "table"
+                    and tonumber(left.savedAt) or 0
+                local rightAt: number = type(right) == "table"
+                    and tonumber(right.savedAt) or 0
+                if leftAt ~= rightAt then
+                    return leftAt > rightAt
+                end
+                return a < b
+            end)
             for index: number, name: string in ipairs(names) do
+                local snapshot: any = profileStore()[name]
                 local row: Frame = (create("Frame", {
                     Parent = container,
                     Name = "Profile_" .. name:gsub("%W", ""),
                     BackgroundTransparency = 1,
                     BorderSizePixel = 0,
                     LayoutOrder = index,
-                    Size = UDim2.new(1, 0, 0, ROW_HEIGHT),
+                    Size = UDim2.new(1, 0, 0, 44),
                     ZIndex = (container :: Frame).ZIndex + 1,
                 }) :: any) :: Frame
                 create("TextLabel", {
@@ -704,44 +871,88 @@ function Module.init(context: any): any
                     Name = "Label",
                     BackgroundTransparency = 1,
                     FontFace = CONTROL_FONT,
-                    Position = UDim2.fromOffset(6, 0),
-                    Size = UDim2.new(1, -60, 1, 0),
+                    Position = UDim2.fromOffset(6, 2),
+                    Size = UDim2.new(1, -180, 0, 18),
                     Text = name,
                     TextColor3 = Theme.text,
                     TextSize = 14,
                     TextXAlignment = Enum.TextXAlignment.Left,
                     ZIndex = row.ZIndex + 1,
                 })
-                local loadButton: TextButton = (makeButton(row, "LOAD", 10) :: any) :: TextButton
+                local detail: string = "profile"
+                if type(snapshot) == "table" then
+                    local savedAt: number = tonumber(snapshot.savedAt) or 0
+                    local when: string = savedAt > 0
+                        and os.date("%Y-%m-%d %H:%M", savedAt)
+                        or "unknown date"
+                    detail = when
+                        .. " · "
+                        .. tostring(snapshot.enabledModules or 0)
+                        .. " modules on · "
+                        .. tostring(snapshot.optionCount or 0)
+                        .. " options"
+                end
+                create("TextLabel", {
+                    TextTruncate = Enum.TextTruncate.AtEnd,
+                    Parent = row,
+                    Name = "Detail",
+                    BackgroundTransparency = 1,
+                    FontFace = CONTROL_FONT,
+                    Position = UDim2.fromOffset(6, 22),
+                    Size = UDim2.new(1, -180, 0, 16),
+                    Text = detail,
+                    TextColor3 = Theme.textMuted,
+                    TextSize = 12,
+                    TextXAlignment = Enum.TextXAlignment.Left,
+                    ZIndex = row.ZIndex + 1,
+                })
+                local loadButton: TextButton =
+                    (makeButton(row, "LOAD", 10) :: any) :: TextButton
                 loadButton.AnchorPoint = Vector2.new(1, 0.5)
-                loadButton.Position = UDim2.new(1, -6, 0.5, 0)
+                loadButton.Position = UDim2.new(1, -56, 0.5, 0)
                 loadButton.Size = UDim2.fromOffset(48, 18)
                 loadButton.ZIndex = row.ZIndex + 1
                 trackUiConnection(loadButton.MouseButton1Click:Connect(function(): ()
-                    local snapshot: any = profileStore()[name]
-                    if type(snapshot) ~= "table" then
-                        return
+                    if applyProfile(name) then
+                        notify("loaded profile " .. name)
+                        rebuildProfiles()
+                    else
+                        notify("profile " .. name .. " is corrupted")
                     end
-                    for _, binding: any in pairs(state.shortcutBindings) do
-                        local savedName: any = snapshot[tostring(binding.id)]
-                        local savedKey: any = nil
-                        if type(savedName) == "string" and savedName ~= "" then
-
-                            local resolved: boolean, candidate: any = pcall(function(): any
-                                return (Enum.KeyCode :: any)[savedName]
-                            end)
-                            if resolved then
-                                savedKey = candidate
-                            end
-                        end
-                        binding.key = savedKey or Enum.KeyCode.Unknown
-                        persistBindingKey(binding)
-                        if binding.refresh then
-                            binding.refresh()
-                        end
-                    end
-                    rebuildKeybinds()
-                    notify("loaded profile " .. name)
+                end))
+                local updateButton: TextButton =
+                    (makeButton(row, "UPD", 10) :: any) :: TextButton
+                updateButton.AnchorPoint = Vector2.new(1, 0.5)
+                updateButton.Position = UDim2.new(1, -108, 0.5, 0)
+                updateButton.Size = UDim2.fromOffset(44, 18)
+                updateButton.ZIndex = row.ZIndex + 1
+                trackUiConnection(updateButton.MouseButton1Click:Connect(function(): ()
+                    profileStore()[name] = captureProfile()
+                    queueConfigSave()
+                    notify("updated profile " .. name)
+                    rebuildProfiles()
+                end))
+                local deleteButton: TextButton = (create("TextButton", {
+                    Parent = row,
+                    Name = "Delete",
+                    AutoButtonColor = false,
+                    BackgroundColor3 = Color3.fromRGB(0, 0, 0),
+                    BackgroundTransparency = 0.5,
+                    BorderSizePixel = 0,
+                    FontFace = CONTROL_FONT,
+                    AnchorPoint = Vector2.new(1, 0.5),
+                    Position = UDim2.new(1, -6, 0.5, 0),
+                    Size = UDim2.fromOffset(18, 18),
+                    Text = "x",
+                    TextColor3 = Theme.negative,
+                    TextSize = 12,
+                    ZIndex = row.ZIndex + 1,
+                }) :: any) :: TextButton
+                trackUiConnection(deleteButton.MouseButton1Click:Connect(function(): ()
+                    profileStore()[name] = nil
+                    queueConfigSave()
+                    notify("deleted profile " .. name)
+                    rebuildProfiles()
                 end))
             end
             if profilesRecord then
@@ -749,7 +960,7 @@ function Module.init(context: any): any
                 if profilesRecord.repack then
                     local rows: {{any}} = {{"New profile name", nil, 60}}
                     for _, name: string in ipairs(names) do
-                        table.insert(rows, {name, nil, 66})
+                        table.insert(rows, {name, nil, 64})
                     end
                     profilesRecord.repack(rows)
                 end
@@ -763,13 +974,7 @@ function Module.init(context: any): any
                 notify("enter a profile name")
                 return
             end
-            local snapshot: {[string]: string} = {}
-            for _, binding: any in pairs(state.shortcutBindings) do
-                if binding.key ~= Enum.KeyCode.Unknown then
-                    snapshot[tostring(binding.id)] = binding.key.Name
-                end
-            end
-            profileStore()[name] = snapshot
+            profileStore()[name] = captureProfile()
             queueConfigSave()
             nameBox.Text = ""
             rebuildProfiles()
@@ -1466,7 +1671,11 @@ function Module.init(context: any): any
     local uiSettingsValues: {[string]: any} = {}
     state.uiSettings = uiSettingsValues
 
-    local CLICKGUI_ENABLED: Color3 = Color3.fromRGB(32, 175, 32)
+    -- Palette defaults come from the LIVE theme so the swatches always show
+    -- what the UI is actually drawing (the old constants drifted from the
+    -- real preset and misled the colour pickers).
+    local CLICKGUI_ENABLED: Color3 = Theme.enabled
+    local CLICKGUI_ARROWS: Color3 = Theme.arrows
     local uiPaletteRows: {[string]: Frame} = {}
     local function paintPalette(labelText: string, color: Color3): ()
         local option: Frame? = uiPaletteRows[labelText]
@@ -1488,10 +1697,11 @@ function Module.init(context: any): any
         end
     end
     for _, row: any in ipairs({
-        {label = "Background", default = CLICKGUI_BACKGROUND, tokens = {"surface", "background"}},
-        {label = "Accent", default = CLICKGUI_ACCENT, tokens = {"accent", "outline"}},
-        {label = "Text", default = CLICKGUI_TEXT, tokens = {"text", "accentText"}},
-        {label = "Enabled", default = CLICKGUI_ENABLED, tokens = {"enabled"}},
+        {label = "Background", default = Theme.background, tokens = {"surface", "background"}},
+        {label = "Accent", default = Theme.accent, tokens = {"accent", "outline"}},
+        {label = "Text", default = Theme.text, tokens = {"text", "accentText"}},
+        {label = "Enabled", default = Theme.enabled, tokens = {"enabled"}},
+        {label = "Arrows", default = Theme.arrows, tokens = {"arrows"}},
     }) do
         local tokens: {string} = row.tokens
         local labelText: string = row.label
@@ -1533,8 +1743,8 @@ function Module.init(context: any): any
             return
         end
         if not value then
-            local accent: any = uiSettingsValues["Accent"] or CLICKGUI_ACCENT
-            local enabledColor: any = uiSettingsValues["Enabled"] or CLICKGUI_ENABLED
+            local accent: any = uiSettingsValues["Accent"] or Theme.accent
+            local enabledColor: any = uiSettingsValues["Enabled"] or Theme.enabled
             paintPalette("Accent", accent)
             paintPalette("Enabled", enabledColor)
             if type(ThemeEngine.SetMany) == "function" then

@@ -225,7 +225,7 @@ local RUNTIME_RAW_BASE: string =
         .. RUNTIME_BRANCH
         .. "/"
 
-local SOURCE_STAMP: string = "v25-20261015-itemesp-fasttime-lead"
+local SOURCE_STAMP: string = "v26-20261015-profiles-arrows-aim"
 
 local BOOT_STARTED_AT: number = os.clock()
 local BOOT_FINGERPRINT_SECONDS: number = 0
@@ -510,6 +510,7 @@ local THEME_PRESETS: {[string]: {[string]: Color3}} = {
         accentText = Color3.fromRGB(8, 8, 9),
         enabled = Color3.fromRGB(236, 236, 238),
         enabledText = Color3.fromRGB(8, 8, 9),
+        arrows = Color3.fromRGB(0, 204, 0),
         text = Color3.fromRGB(245, 245, 247),
         textMuted = Color3.fromRGB(158, 158, 166),
         tooltip = Color3.fromRGB(16, 16, 18),

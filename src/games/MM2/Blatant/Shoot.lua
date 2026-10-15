@@ -173,6 +173,25 @@ function Module.init(runtime: any): any
             0,
             acceleration.Z
         )
+
+        -- Never lead further than the time the target needs to stop. A
+        -- strafing player that reverses (peeking in and out of cover) would
+        -- otherwise be overshot ahead of his movement ("como prediciendo el
+        -- futuro"); the same damping shrinks the lead the moment the target
+        -- decelerates, so the aim tracks back toward his real path.
+        local horizontalSpeed: number = horizontalVelocity.Magnitude
+        if horizontalSpeed > 1 and lead > 0 then
+            local opposing: number =
+                -horizontalAcceleration:Dot(horizontalVelocity.Unit)
+            if opposing > 0 then
+                local stopTime: number =
+                    horizontalSpeed / math.max(opposing, 1)
+                if stopTime < lead then
+                    lead = stopTime
+                end
+            end
+        end
+
         local displacement: Vector3 = Vector3.new(
             velocity.X * lead,
             0,
@@ -186,12 +205,32 @@ function Module.init(runtime: any): any
         -- A hitscan gun has no bullet drop of its own, and a walker on flat
         -- ground has no vertical motion to predict, so: near-zero vertical
         -- velocity means zero vertical lead, and the airborne term is capped.
-        local effectivelyGrounded: boolean = grounded
-            or math.abs(velocity.Y) <= 0.5
+        -- The humanoid STATE (Jumping/Freefall) replicates with the humanoid
+        -- itself and can arrive before the physics velocity does, so an
+        -- early jump gets a minimum upward assumption instead of a flat shot.
+        local jumpState: boolean = false
+        do
+            local ok: boolean, stateName: any = pcall(function(): any
+                return (humanoid :: Humanoid):GetState()
+            end)
+            jumpState = ok
+                and (stateName == Enum.HumanoidStateType.Jumping
+                    or stateName == Enum.HumanoidStateType.Freefall)
+        end
+        local effectivelyGrounded: boolean =
+            (grounded or math.abs(velocity.Y) <= 0.5) and not jumpState
         local verticalDisplacement: number = 0
         if not effectivelyGrounded then
+            local verticalVelocity: number = velocity.Y
+            local risingJump: boolean = jumpState
+                and verticalVelocity < 8
+                and verticalVelocity > -8
+            if risingJump then
+                verticalVelocity = 8
+            end
             verticalDisplacement = math.clamp(
-                velocity.Y * lead - 0.5 * workspace.Gravity * lead * lead,
+                verticalVelocity * lead
+                    - 0.5 * workspace.Gravity * lead * lead,
                 -3,
                 3
             )
@@ -219,27 +258,56 @@ function Module.init(runtime: any): any
                 -- displacement, so each candidate is simply its part position
                 -- moved by the same prediction.
                 local rescued: boolean = false
-                for _, partName: string in ipairs(VISIBILITY_PARTS) do
-                    local candidate: Instance? =
-                        (character :: Model):FindFirstChild(partName)
-                    if candidate ~= part
-                        and candidate
-                        and candidate:IsA("BasePart") then
-                        local candidatePart: BasePart = candidate :: BasePart
-                        local candidatePoint: Vector3 =
-                            candidatePart.Position + displacement
-                        local candidateDelta: Vector3 =
-                            candidatePoint - origin.Position
-                        if candidateDelta.Magnitude > 0.05
-                            and isWeaponPathClear(
-                                origin.Position,
-                                candidatePoint,
-                                character
-                            ) then
-                            predicted = candidatePoint
-                            delta = candidateDelta
-                            rescued = true
-                            break
+                -- The rewind window accepts the RAW observed position, and
+                -- during a peek the raw torso is usually exposed while the
+                -- LED point still sits inside the wall. Try the raw position
+                -- of the current aim part first (biggest part, no lead).
+                do
+                    local rawPoint: Vector3 = (part :: BasePart).Position
+                    local rawDelta: Vector3 = rawPoint - origin.Position
+                    if rawDelta.Magnitude > 0.05
+                        and isWeaponPathClear(
+                            origin.Position,
+                            rawPoint,
+                            character
+                        ) then
+                        predicted = rawPoint
+                        delta = rawDelta
+                        rescued = true
+                    end
+                end
+                if not rescued then
+                    for _, partName: string in ipairs(VISIBILITY_PARTS) do
+                        local candidate: Instance? =
+                            (character :: Model):FindFirstChild(partName)
+                        if candidate ~= part
+                            and candidate
+                            and candidate:IsA("BasePart") then
+                            local candidatePart: BasePart =
+                                candidate :: BasePart
+                            local variants: {Vector3} = {
+                                candidatePart.Position + displacement,
+                                candidatePart.Position,
+                            }
+                            for _, basePoint: Vector3 in ipairs(variants) do
+                                local candidatePoint: Vector3 = basePoint
+                                local candidateDelta: Vector3 =
+                                    candidatePoint - origin.Position
+                                if candidateDelta.Magnitude > 0.05
+                                    and isWeaponPathClear(
+                                        origin.Position,
+                                        candidatePoint,
+                                        character
+                                    ) then
+                                    predicted = candidatePoint
+                                    delta = candidateDelta
+                                    rescued = true
+                                    break
+                                end
+                            end
+                            if rescued then
+                                break
+                            end
                         end
                     end
                 end

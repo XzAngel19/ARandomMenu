@@ -183,31 +183,31 @@ end
                "local function getActiveAutoLeadCorrection() return mm2Settings.autoTuneLead and autoLeadCorrection or 0 end\n"
                "local Stats={FindFirstChild=function() return nil end}\n",
                section(BASE, "local lastLatencyReadAt:", "local function getGunOriginCFrame"), r'''
-    -- Half-ping staleness: our view trails the server by ~RTT/2 (0.08 -> 0.04).
-    near(getGunHorizonSeconds(),0.04)
+    -- Staleness lead: our view trails the server by ~0.6xRTT (0.08 -> 0.048).
+    near(getGunHorizonSeconds(),0.048)
     mm2Settings.gunLeadBias=0.1
-    near(getGunHorizonSeconds(),0.14)
+    near(getGunHorizonSeconds(),0.148)
     mm2Settings.gunLeadBias=-0.1
     near(getGunHorizonSeconds(),0)
     mm2Settings.gunLeadBias=0.05
     autoLeadCorrection=0.08
     mm2Settings.autoTuneLead=true
-    near(getGunHorizonSeconds(),0.17)
+    near(getGunHorizonSeconds(),0.178)
     autoLeadCorrection=0.2
-    assert(getGunHorizonSeconds()==0.19,"auto correction is capped at 0.1 on top of staleness+bias")
+    assert(getGunHorizonSeconds()==0.198,"auto correction is capped at 0.1 on top of staleness+bias")
     mm2Settings.autoTuneLead=false
-    assert(getGunHorizonSeconds()==0.09,"auto correction only applies when opted in")
+    assert(getGunHorizonSeconds()==0.098,"auto correction only applies when opted in")
     mm2Settings.gunLeadBias=0
     autoLeadCorrection=0
     -- A huge ping must not blow the lead up: staleness caps at 0.15.
     mm2Settings.predictionRtt=0.6
     near(getGunHorizonSeconds(),0.15)
     mm2Settings.predictionRtt=0.08
-    near(getGunHorizonSeconds(),0.04)
+    near(getGunHorizonSeconds(),0.048)
     -- Stale calibration data must never push the horizon again.
     trajectoryCalibration={getEstimates=function() return {liveGunAcceptanceMs=400,liveGunSamples=50} end}
-    near(getGunHorizonSeconds(),0.04)
-    pass("gun horizon: half-ping staleness lead; auto capped at 0.1; huge ping capped")
+    near(getGunHorizonSeconds(),0.048)
+    pass("gun horizon: 0.6xRTT staleness lead; auto capped at 0.1; huge ping capped")
 end
 ''']
     chunks += [r'''
@@ -290,7 +290,20 @@ local _,misread=computeGunAim(target,origin)
 near(misread.endpoint.Y,0.8)
 near(misread.endpoint.X,16*getGunHorizonSeconds())
 humanoid.FloorMaterial="Ground"
-pass("actual Shoot solver: known-good linear lead; torso/root offset; jump; stale respawn sample; no phantom drop")
+-- Stop-time damping: a target braking hard is never led past his stop point.
+sample.character=character; sample.acceleration=Vector3.new(-250,0,0)
+velocity=Vector3.new(16,0,0)
+local _,braking=computeGunAim(target,origin)
+local stopped=16/250
+near(braking.endpoint.X,16*stopped-250*0.25*stopped*stopped)
+-- Jump state leads before the replicated physics velocity does.
+sample.acceleration=Vector3.zero
+humanoid.GetState=function() return "Jumping" end
+local _,jumping=computeGunAim(target,origin)
+local jumpH=getGunHorizonSeconds()
+near(jumping.endpoint.Y,0.8+math.clamp(8*jumpH-0.5*196.2*jumpH*jumpH,-3,3))
+humanoid.GetState=function() return "Running" end
+pass("actual Shoot solver: linear lead; torso offset; jump; stale sample; no phantom drop; stop damping; jump state")
 end
 ''']
     chunks += [r'''

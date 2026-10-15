@@ -1,5 +1,5 @@
 return {
-    stamp = "v25-20261015-itemesp-fasttime-lead",
+    stamp = "v26-20261015-profiles-arrows-aim",
     files = {
         ["src/games/BedFight/Combat/AutoSwing.lua"] = [[
 local Module = {Name = "BedFight Auto Swing", Initialized = false, Connection = nil}
@@ -2281,6 +2281,25 @@ function Module.init(runtime: any): any
             0,
             acceleration.Z
         )
+
+        -- Never lead further than the time the target needs to stop. A
+        -- strafing player that reverses (peeking in and out of cover) would
+        -- otherwise be overshot ahead of his movement ("como prediciendo el
+        -- futuro"); the same damping shrinks the lead the moment the target
+        -- decelerates, so the aim tracks back toward his real path.
+        local horizontalSpeed: number = horizontalVelocity.Magnitude
+        if horizontalSpeed > 1 and lead > 0 then
+            local opposing: number =
+                -horizontalAcceleration:Dot(horizontalVelocity.Unit)
+            if opposing > 0 then
+                local stopTime: number =
+                    horizontalSpeed / math.max(opposing, 1)
+                if stopTime < lead then
+                    lead = stopTime
+                end
+            end
+        end
+
         local displacement: Vector3 = Vector3.new(
             velocity.X * lead,
             0,
@@ -2294,12 +2313,32 @@ function Module.init(runtime: any): any
         -- A hitscan gun has no bullet drop of its own, and a walker on flat
         -- ground has no vertical motion to predict, so: near-zero vertical
         -- velocity means zero vertical lead, and the airborne term is capped.
-        local effectivelyGrounded: boolean = grounded
-            or math.abs(velocity.Y) <= 0.5
+        -- The humanoid STATE (Jumping/Freefall) replicates with the humanoid
+        -- itself and can arrive before the physics velocity does, so an
+        -- early jump gets a minimum upward assumption instead of a flat shot.
+        local jumpState: boolean = false
+        do
+            local ok: boolean, stateName: any = pcall(function(): any
+                return (humanoid :: Humanoid):GetState()
+            end)
+            jumpState = ok
+                and (stateName == Enum.HumanoidStateType.Jumping
+                    or stateName == Enum.HumanoidStateType.Freefall)
+        end
+        local effectivelyGrounded: boolean =
+            (grounded or math.abs(velocity.Y) <= 0.5) and not jumpState
         local verticalDisplacement: number = 0
         if not effectivelyGrounded then
+            local verticalVelocity: number = velocity.Y
+            local risingJump: boolean = jumpState
+                and verticalVelocity < 8
+                and verticalVelocity > -8
+            if risingJump then
+                verticalVelocity = 8
+            end
             verticalDisplacement = math.clamp(
-                velocity.Y * lead - 0.5 * workspace.Gravity * lead * lead,
+                verticalVelocity * lead
+                    - 0.5 * workspace.Gravity * lead * lead,
                 -3,
                 3
             )
@@ -2327,27 +2366,56 @@ function Module.init(runtime: any): any
                 -- displacement, so each candidate is simply its part position
                 -- moved by the same prediction.
                 local rescued: boolean = false
-                for _, partName: string in ipairs(VISIBILITY_PARTS) do
-                    local candidate: Instance? =
-                        (character :: Model):FindFirstChild(partName)
-                    if candidate ~= part
-                        and candidate
-                        and candidate:IsA("BasePart") then
-                        local candidatePart: BasePart = candidate :: BasePart
-                        local candidatePoint: Vector3 =
-                            candidatePart.Position + displacement
-                        local candidateDelta: Vector3 =
-                            candidatePoint - origin.Position
-                        if candidateDelta.Magnitude > 0.05
-                            and isWeaponPathClear(
-                                origin.Position,
-                                candidatePoint,
-                                character
-                            ) then
-                            predicted = candidatePoint
-                            delta = candidateDelta
-                            rescued = true
-                            break
+                -- The rewind window accepts the RAW observed position, and
+                -- during a peek the raw torso is usually exposed while the
+                -- LED point still sits inside the wall. Try the raw position
+                -- of the current aim part first (biggest part, no lead).
+                do
+                    local rawPoint: Vector3 = (part :: BasePart).Position
+                    local rawDelta: Vector3 = rawPoint - origin.Position
+                    if rawDelta.Magnitude > 0.05
+                        and isWeaponPathClear(
+                            origin.Position,
+                            rawPoint,
+                            character
+                        ) then
+                        predicted = rawPoint
+                        delta = rawDelta
+                        rescued = true
+                    end
+                end
+                if not rescued then
+                    for _, partName: string in ipairs(VISIBILITY_PARTS) do
+                        local candidate: Instance? =
+                            (character :: Model):FindFirstChild(partName)
+                        if candidate ~= part
+                            and candidate
+                            and candidate:IsA("BasePart") then
+                            local candidatePart: BasePart =
+                                candidate :: BasePart
+                            local variants: {Vector3} = {
+                                candidatePart.Position + displacement,
+                                candidatePart.Position,
+                            }
+                            for _, basePoint: Vector3 in ipairs(variants) do
+                                local candidatePoint: Vector3 = basePoint
+                                local candidateDelta: Vector3 =
+                                    candidatePoint - origin.Position
+                                if candidateDelta.Magnitude > 0.05
+                                    and isWeaponPathClear(
+                                        origin.Position,
+                                        candidatePoint,
+                                        character
+                                    ) then
+                                    predicted = candidatePoint
+                                    delta = candidateDelta
+                                    rescued = true
+                                    break
+                                end
+                            end
+                            if rescued then
+                                break
+                            end
                         end
                     end
                 end
@@ -6511,7 +6579,7 @@ local function getGunHorizonSeconds(): number
     -- staleness - no more. The acceptance window is a REWIND (it covers past
     -- positions) and must not be spent as forward lead.
     local staleness: number = math.clamp(
-        getEstimatedLatency() * 0.5,
+        getEstimatedLatency() * 0.6,
         0,
         0.15
     )
@@ -26386,7 +26454,8 @@ function Module.init(context: any): any
                 drawPixelIcon(
                     arrow :: TextButton,
                     feature.expanded and "up" or "down",
-                    Color3.fromRGB(0, 204, 0)
+                    nil,
+                    "arrows"
                 )
             end
         end
@@ -26648,10 +26717,6 @@ function Module.init(context: any): any
             and state.shortcutBindings[feature.configKey] ~= nil then
             local binding: any = state.shortcutBindings[feature.configKey]
             local UNBOUND_BG: Color3 = Color3.fromRGB(0, 0, 0)
-            local BOUND_BG: Color3 = Color3.fromRGB(0, 80, 0)
-            local CONFLICT_BG: Color3 = Color3.fromRGB(80, 0, 0)
-            local BOUND_EDGE: Color3 = Color3.fromRGB(0, 204, 0)
-            local CONFLICT_EDGE: Color3 = Color3.fromRGB(204, 0, 0)
             local square: TextButton = (create("TextButton", {
                 TextTruncate = Enum.TextTruncate.AtEnd,
                 Parent = row,
@@ -26735,16 +26800,19 @@ function Module.init(context: any): any
                 square:SetAttribute("CaptureIdleText", caption)
                 local bound: boolean = binding.key ~= nil
                     and binding.key ~= Enum.KeyCode.Unknown
+                -- Palette-driven: a bound key paints with the Enabled
+                -- colour, a conflicting one with the negative colour, so the
+                -- squares match whatever the user picked in UI Settings.
                 local conflict: any = bound and conflictWith() or nil
                 if conflict then
-                    square.BackgroundColor3 = CONFLICT_BG
+                    square.BackgroundColor3 = Theme.negative
                     square.BackgroundTransparency = 0.35
-                    edge.Color = CONFLICT_EDGE
+                    edge.Color = Theme.negative
                     edge.Transparency = 0.15
                 elseif bound then
-                    square.BackgroundColor3 = BOUND_BG
+                    square.BackgroundColor3 = Theme.enabled
                     square.BackgroundTransparency = 0.35
-                    edge.Color = BOUND_EDGE
+                    edge.Color = Theme.enabled
                     edge.Transparency = 0.25
                 else
                     square.BackgroundColor3 = UNBOUND_BG
@@ -26755,6 +26823,13 @@ function Module.init(context: any): any
             end
             feature.bindSquare = square
             feature.syncBindSquare = syncSquare
+            if state.registerThemeRefresh then
+                state.registerThemeRefresh(function(): ()
+                    if square.Parent then
+                        syncSquare()
+                    end
+                end)
+            end
             local refreshBinding: any = binding.refresh
             binding.refresh = function(): ()
                 if refreshBinding then
@@ -31233,9 +31308,9 @@ function Module.init(context: any): any
     local TOOLTIP_OPACITY: number = 0.75
     local MAX_HEIGHT: number = 200
     local MAX_SETTINGS_HEIGHT: number = 200
-    local CLICKGUI_BACKGROUND: Color3 = Color3.fromRGB(64, 64, 64)
-    local CLICKGUI_ACCENT: Color3 = Color3.fromRGB(16, 16, 16)
-    local CLICKGUI_TEXT: Color3 = Color3.fromRGB(240, 240, 240)
+    local CLICKGUI_BACKGROUND: Color3 = Color3.fromRGB(24, 24, 26)
+    local CLICKGUI_ACCENT: Color3 = Color3.fromRGB(236, 236, 238)
+    local CLICKGUI_TEXT: Color3 = Color3.fromRGB(245, 245, 247)
     local HACKLIST_MODE: string = "Auto"
     local HACKLIST_POSITION: string = "Left"
     local HACKLIST_COLOR: Color3 = Color3.fromRGB(255, 255, 255)
@@ -31497,7 +31572,7 @@ function Module.init(context: any): any
             ZIndex = row.ZIndex + 1,
         }) :: any) :: Frame
 
-        drawPixelIcon(arrowBox, "right", Color3.fromRGB(0, 204, 0))
+        drawPixelIcon(arrowBox, "right", nil, "arrows")
         trackUiConnection(row.MouseEnter:Connect(function(): ()
             row.BackgroundTransparency = 0.3
         end))
@@ -31828,10 +31903,156 @@ function Module.init(context: any): any
     end
 
     local function profileStore(): any
-        if type(configData.values.KeybindProfiles) ~= "table" then
-            configData.values.KeybindProfiles = {}
+        if type(configData.values.Profiles) ~= "table" then
+            configData.values.Profiles = {}
         end
-        return configData.values.KeybindProfiles
+        return configData.values.Profiles
+    end
+
+    -- Profile stores must never be captured inside a profile.
+    local PROFILE_STORE_KEYS: {[string]: boolean} = {
+        Profiles = true,
+        KeybindProfiles = true,
+    }
+
+    local function captureProfile(): any
+        local states: {[string]: any} = {}
+        for key: string, value: any in pairs(configData.states) do
+            states[key] = value
+        end
+        local values: {[string]: any} = {}
+        for key: string, value: any in pairs(configData.values) do
+            if not PROFILE_STORE_KEYS[key] then
+                values[key] = value
+            end
+        end
+        local shortcuts: {[string]: string} = {}
+        for id: string, binding: any in pairs(state.shortcutBindings) do
+            if binding.key and binding.key ~= Enum.KeyCode.Unknown then
+                shortcuts[id] = binding.key.Name
+            end
+        end
+        local enabledModules: number = 0
+        for _, feature: any in ipairs(allFeatures) do
+            if configData.states[feature.configKey] == true then
+                enabledModules += 1
+            end
+        end
+        local optionCount: number = 0
+        for _ in pairs(values) do
+            optionCount += 1
+        end
+        return {
+            savedAt = os.time(),
+            states = states,
+            values = values,
+            shortcuts = shortcuts,
+            enabledModules = enabledModules,
+            optionCount = optionCount,
+        }
+    end
+
+    local function applyProfile(name: string): boolean
+        local snapshot: any = profileStore()[name]
+        if type(snapshot) ~= "table" then
+            return false
+        end
+        -- 1) Saved config first: states are replaced wholesale, values merge
+        --    (the profile stores themselves are never captured).
+        for key: string in pairs(configData.states) do
+            configData.states[key] = nil
+        end
+        for key: string, value: any in pairs(snapshot.states) do
+            configData.states[key] = value
+        end
+        for key: string, value: any in pairs(snapshot.values) do
+            if not PROFILE_STORE_KEYS[key] then
+                configData.values[key] = value
+            end
+        end
+        -- 2) Keybinds.
+        for _, binding: any in pairs(state.shortcutBindings) do
+            local savedName: any = snapshot.shortcuts
+                and snapshot.shortcuts[tostring(binding.id)]
+            local savedKey: any = Enum.KeyCode.Unknown
+            if type(savedName) == "string" and savedName ~= "" then
+                local resolved: boolean, candidate: any = pcall(function(): any
+                    return (Enum.KeyCode :: any)[savedName]
+                end)
+                if resolved then
+                    savedKey = candidate
+                end
+            end
+            if savedKey == Enum.KeyCode.Unknown then
+                if binding.key ~= Enum.KeyCode.Unknown
+                    and type(binding.assign) == "function" then
+                    binding.assign(binding.key)
+                end
+            elseif binding.key ~= savedKey
+                and type(binding.assign) == "function" then
+                binding.assign(savedKey)
+            elseif type(binding.refresh) == "function" then
+                binding.refresh()
+            end
+        end
+        -- 3) Module masters: the cards flip with full UI sync.
+        for _, feature: any in ipairs(allFeatures) do
+            local wanted: boolean = snapshot.states[feature.configKey] == true
+            if feature.enabled ~= wanted
+                and type(feature.activate) == "function" then
+                pcall(feature.activate)
+            end
+        end
+        -- 4) Option toggles.
+        for key: string, control: any in pairs(state.toggleControls or {}) do
+            local saved: any = snapshot.states[key]
+            if saved ~= nil and type(control.setChecked) == "function" then
+                pcall(control.setChecked, saved == true)
+            end
+        end
+        -- 5) Option values (sliders, colours, cycles, text).
+        for key: string, control: any in pairs(state.valueControls or {}) do
+            local saved: any = snapshot.values[key]
+            if saved ~= nil and type(control.apply) == "function" then
+                pcall(control.apply, saved)
+            end
+        end
+        queueConfigSave()
+        return true
+    end
+
+    local function panicReset(): ()
+        -- Every module off (cards flip with full UI sync).
+        for _, feature: any in ipairs(allFeatures) do
+            if feature.enabled and type(feature.activate) == "function" then
+                pcall(feature.activate)
+            end
+        end
+        -- Every option toggle off.
+        for _, control: any in pairs(state.toggleControls or {}) do
+            if type(control.setChecked) == "function" then
+                pcall(control.setChecked, false)
+            end
+        end
+        -- Every option value back to its default, live on screen.
+        for _, control: any in pairs(state.valueControls or {}) do
+            if control.default ~= nil and type(control.apply) == "function" then
+                pcall(control.apply, control.default)
+            end
+        end
+        -- Wipe the saved config. Profile stores and keybinds survive so a
+        -- saved profile can bring everything back.
+        for key: string in pairs(configData.states) do
+            configData.states[key] = nil
+        end
+        for key: string in pairs(configData.values) do
+            if not PROFILE_STORE_KEYS[key]
+                and not string.match(key, "^Shortcut%.") then
+                configData.values[key] = nil
+            end
+        end
+        queueConfigSave()
+        notify("panic: every module and option is back to defaults")
     end
 
     local rebuildProfiles: () -> () = function(): () end
@@ -31844,7 +32065,7 @@ function Module.init(context: any): any
             return
         end
         local screen: Vector2 = viewport()
-        profilesRecord = configWindow("KeybindProfiles", "Keybind Profiles", {
+        profilesRecord = configWindow("Profiles", "Profiles", {
             position = Vector2.new(screen.X - WINDOW_WIDTH * 2 - 32, 260),
             anchor = keybindsRecord and keybindsRecord.window,
             settingsSized = true,
@@ -31862,14 +32083,23 @@ function Module.init(context: any): any
         local nameBox: TextBox = (makeTextBox(entryRow, "") :: any) :: TextBox
         nameBox.PlaceholderText = "New profile name"
         nameBox.Position = UDim2.fromOffset(0, 0)
-        nameBox.Size = UDim2.new(1, -54, 1, 0)
+        nameBox.Size = UDim2.new(1, -170, 1, 0)
         nameBox.TextSize = 14
         nameBox.ZIndex = entryRow.ZIndex + 1
         local saveButton: TextButton = (makeButton(entryRow, "SAVE", 10) :: any) :: TextButton
         saveButton.AnchorPoint = Vector2.new(1, 0.5)
-        saveButton.Position = UDim2.new(1, 0, 0.5, 0)
-        saveButton.Size = UDim2.fromOffset(48, 18)
+        saveButton.Position = UDim2.new(1, -66, 0.5, 0)
+        saveButton.Size = UDim2.fromOffset(56, 20)
         saveButton.ZIndex = entryRow.ZIndex + 1
+        local panicButton: TextButton = (makeButton(entryRow, "PANIC", 10) :: any) :: TextButton
+        panicButton.AnchorPoint = Vector2.new(1, 0.5)
+        panicButton.Position = UDim2.new(1, 0, 0.5, 0)
+        panicButton.Size = UDim2.fromOffset(56, 20)
+        panicButton.ZIndex = entryRow.ZIndex + 1
+        trackUiConnection(panicButton.MouseButton1Click:Connect(function(): ()
+            panicReset()
+            rebuildProfiles()
+        end))
 
         profilesList = (create("Frame", {
             Parent = profilesRecord.window.body,
@@ -31901,15 +32131,27 @@ function Module.init(context: any): any
             for name: string in pairs(profileStore()) do
                 table.insert(names, name)
             end
-            table.sort(names)
+            table.sort(names, function(a: string, b: string): boolean
+                local left: any = profileStore()[a]
+                local right: any = profileStore()[b]
+                local leftAt: number = type(left) == "table"
+                    and tonumber(left.savedAt) or 0
+                local rightAt: number = type(right) == "table"
+                    and tonumber(right.savedAt) or 0
+                if leftAt ~= rightAt then
+                    return leftAt > rightAt
+                end
+                return a < b
+            end)
             for index: number, name: string in ipairs(names) do
+                local snapshot: any = profileStore()[name]
                 local row: Frame = (create("Frame", {
                     Parent = container,
                     Name = "Profile_" .. name:gsub("%W", ""),
                     BackgroundTransparency = 1,
                     BorderSizePixel = 0,
                     LayoutOrder = index,
-                    Size = UDim2.new(1, 0, 0, ROW_HEIGHT),
+                    Size = UDim2.new(1, 0, 0, 44),
                     ZIndex = (container :: Frame).ZIndex + 1,
                 }) :: any) :: Frame
                 create("TextLabel", {
@@ -31918,44 +32160,88 @@ function Module.init(context: any): any
                     Name = "Label",
                     BackgroundTransparency = 1,
                     FontFace = CONTROL_FONT,
-                    Position = UDim2.fromOffset(6, 0),
-                    Size = UDim2.new(1, -60, 1, 0),
+                    Position = UDim2.fromOffset(6, 2),
+                    Size = UDim2.new(1, -180, 0, 18),
                     Text = name,
                     TextColor3 = Theme.text,
                     TextSize = 14,
                     TextXAlignment = Enum.TextXAlignment.Left,
                     ZIndex = row.ZIndex + 1,
                 })
-                local loadButton: TextButton = (makeButton(row, "LOAD", 10) :: any) :: TextButton
+                local detail: string = "profile"
+                if type(snapshot) == "table" then
+                    local savedAt: number = tonumber(snapshot.savedAt) or 0
+                    local when: string = savedAt > 0
+                        and os.date("%Y-%m-%d %H:%M", savedAt)
+                        or "unknown date"
+                    detail = when
+                        .. " · "
+                        .. tostring(snapshot.enabledModules or 0)
+                        .. " modules on · "
+                        .. tostring(snapshot.optionCount or 0)
+                        .. " options"
+                end
+                create("TextLabel", {
+                    TextTruncate = Enum.TextTruncate.AtEnd,
+                    Parent = row,
+                    Name = "Detail",
+                    BackgroundTransparency = 1,
+                    FontFace = CONTROL_FONT,
+                    Position = UDim2.fromOffset(6, 22),
+                    Size = UDim2.new(1, -180, 0, 16),
+                    Text = detail,
+                    TextColor3 = Theme.textMuted,
+                    TextSize = 12,
+                    TextXAlignment = Enum.TextXAlignment.Left,
+                    ZIndex = row.ZIndex + 1,
+                })
+                local loadButton: TextButton =
+                    (makeButton(row, "LOAD", 10) :: any) :: TextButton
                 loadButton.AnchorPoint = Vector2.new(1, 0.5)
-                loadButton.Position = UDim2.new(1, -6, 0.5, 0)
+                loadButton.Position = UDim2.new(1, -56, 0.5, 0)
                 loadButton.Size = UDim2.fromOffset(48, 18)
                 loadButton.ZIndex = row.ZIndex + 1
                 trackUiConnection(loadButton.MouseButton1Click:Connect(function(): ()
-                    local snapshot: any = profileStore()[name]
-                    if type(snapshot) ~= "table" then
-                        return
+                    if applyProfile(name) then
+                        notify("loaded profile " .. name)
+                        rebuildProfiles()
+                    else
+                        notify("profile " .. name .. " is corrupted")
                     end
-                    for _, binding: any in pairs(state.shortcutBindings) do
-                        local savedName: any = snapshot[tostring(binding.id)]
-                        local savedKey: any = nil
-                        if type(savedName) == "string" and savedName ~= "" then
-
-                            local resolved: boolean, candidate: any = pcall(function(): any
-                                return (Enum.KeyCode :: any)[savedName]
-                            end)
-                            if resolved then
-                                savedKey = candidate
-                            end
-                        end
-                        binding.key = savedKey or Enum.KeyCode.Unknown
-                        persistBindingKey(binding)
-                        if binding.refresh then
-                            binding.refresh()
-                        end
-                    end
-                    rebuildKeybinds()
-                    notify("loaded profile " .. name)
+                end))
+                local updateButton: TextButton =
+                    (makeButton(row, "UPD", 10) :: any) :: TextButton
+                updateButton.AnchorPoint = Vector2.new(1, 0.5)
+                updateButton.Position = UDim2.new(1, -108, 0.5, 0)
+                updateButton.Size = UDim2.fromOffset(44, 18)
+                updateButton.ZIndex = row.ZIndex + 1
+                trackUiConnection(updateButton.MouseButton1Click:Connect(function(): ()
+                    profileStore()[name] = captureProfile()
+                    queueConfigSave()
+                    notify("updated profile " .. name)
+                    rebuildProfiles()
+                end))
+                local deleteButton: TextButton = (create("TextButton", {
+                    Parent = row,
+                    Name = "Delete",
+                    AutoButtonColor = false,
+                    BackgroundColor3 = Color3.fromRGB(0, 0, 0),
+                    BackgroundTransparency = 0.5,
+                    BorderSizePixel = 0,
+                    FontFace = CONTROL_FONT,
+                    AnchorPoint = Vector2.new(1, 0.5),
+                    Position = UDim2.new(1, -6, 0.5, 0),
+                    Size = UDim2.fromOffset(18, 18),
+                    Text = "x",
+                    TextColor3 = Theme.negative,
+                    TextSize = 12,
+                    ZIndex = row.ZIndex + 1,
+                }) :: any) :: TextButton
+                trackUiConnection(deleteButton.MouseButton1Click:Connect(function(): ()
+                    profileStore()[name] = nil
+                    queueConfigSave()
+                    notify("deleted profile " .. name)
+                    rebuildProfiles()
                 end))
             end
             if profilesRecord then
@@ -31963,7 +32249,7 @@ function Module.init(context: any): any
                 if profilesRecord.repack then
                     local rows: {{any}} = {{"New profile name", nil, 60}}
                     for _, name: string in ipairs(names) do
-                        table.insert(rows, {name, nil, 66})
+                        table.insert(rows, {name, nil, 64})
                     end
                     profilesRecord.repack(rows)
                 end
@@ -31977,13 +32263,7 @@ function Module.init(context: any): any
                 notify("enter a profile name")
                 return
             end
-            local snapshot: {[string]: string} = {}
-            for _, binding: any in pairs(state.shortcutBindings) do
-                if binding.key ~= Enum.KeyCode.Unknown then
-                    snapshot[tostring(binding.id)] = binding.key.Name
-                end
-            end
-            profileStore()[name] = snapshot
+            profileStore()[name] = captureProfile()
             queueConfigSave()
             nameBox.Text = ""
             rebuildProfiles()
@@ -32680,7 +32960,11 @@ function Module.init(context: any): any
     local uiSettingsValues: {[string]: any} = {}
     state.uiSettings = uiSettingsValues
 
-    local CLICKGUI_ENABLED: Color3 = Color3.fromRGB(32, 175, 32)
+    -- Palette defaults come from the LIVE theme so the swatches always show
+    -- what the UI is actually drawing (the old constants drifted from the
+    -- real preset and misled the colour pickers).
+    local CLICKGUI_ENABLED: Color3 = Theme.enabled
+    local CLICKGUI_ARROWS: Color3 = Theme.arrows
     local uiPaletteRows: {[string]: Frame} = {}
     local function paintPalette(labelText: string, color: Color3): ()
         local option: Frame? = uiPaletteRows[labelText]
@@ -32702,10 +32986,11 @@ function Module.init(context: any): any
         end
     end
     for _, row: any in ipairs({
-        {label = "Background", default = CLICKGUI_BACKGROUND, tokens = {"surface", "background"}},
-        {label = "Accent", default = CLICKGUI_ACCENT, tokens = {"accent", "outline"}},
-        {label = "Text", default = CLICKGUI_TEXT, tokens = {"text", "accentText"}},
-        {label = "Enabled", default = CLICKGUI_ENABLED, tokens = {"enabled"}},
+        {label = "Background", default = Theme.background, tokens = {"surface", "background"}},
+        {label = "Accent", default = Theme.accent, tokens = {"accent", "outline"}},
+        {label = "Text", default = Theme.text, tokens = {"text", "accentText"}},
+        {label = "Enabled", default = Theme.enabled, tokens = {"enabled"}},
+        {label = "Arrows", default = Theme.arrows, tokens = {"arrows"}},
     }) do
         local tokens: {string} = row.tokens
         local labelText: string = row.label
@@ -32747,8 +33032,8 @@ function Module.init(context: any): any
             return
         end
         if not value then
-            local accent: any = uiSettingsValues["Accent"] or CLICKGUI_ACCENT
-            local enabledColor: any = uiSettingsValues["Enabled"] or CLICKGUI_ENABLED
+            local accent: any = uiSettingsValues["Accent"] or Theme.accent
+            local enabledColor: any = uiSettingsValues["Enabled"] or Theme.enabled
             paintPalette("Accent", accent)
             paintPalette("Enabled", enabledColor)
             if type(ThemeEngine.SetMany) == "function" then
@@ -32969,6 +33254,15 @@ function Module.init(context: any): WidgetLibrary
     table.clear(toggleThemeRefreshers)
     if state then
         state.optionThemeRefresh = runToggleThemeRefreshers
+        -- Other UI modules (card bind squares, window chrome) register their
+        -- repainters here so palette changes reach everything on screen.
+        state.registerThemeRefresh = function(refresh: () -> ()): ()
+            table.insert(toggleThemeRefreshers, refresh)
+        end
+        -- Live-apply registry for option VALUES (sliders, colours, cycles,
+        -- text). Profiles and the panic reset drive the whole UI through it
+        -- instead of only rewriting the saved config.
+        state.valueControls = {}
     end
     local configData: any = host.configData
     local queueConfigSave: any = host.queueConfigSave
@@ -32987,6 +33281,7 @@ function Module.init(context: any): WidgetLibrary
     local makeTextLabel: any = host.makeTextLabel
     local notify: any = host.notify
     local Theme: any = host.Theme
+    local ThemeEngine: any = host.ThemeEngine
     local CONTROL_FONT: any = host.CONTROL_FONT
     local ScreenGui: any = host.ScreenGui
 
@@ -33002,9 +33297,15 @@ function Module.init(context: any): WidgetLibrary
     local function drawPixelIcon(
         parent: Instance,
         kind: string,
-        color: Color3?
+        color: Color3?,
+        token: string?
     ): Frame
-        local paint: Color3 = color or WURST_GREEN
+        local themed: boolean = token ~= nil
+            and ThemeEngine ~= nil
+            and Theme[token or ""] ~= nil
+        local paint: Color3 = (themed and Theme[token :: string])
+            or color
+            or WURST_GREEN
         local existing: Instance? = (parent :: any):FindFirstChild("PixelIcon")
         if existing then
             existing:Destroy()
@@ -33029,7 +33330,7 @@ function Module.init(context: any): WidgetLibrary
             ZIndex = (tonumber((parent :: any).ZIndex) or 1) + 1,
         }) :: any) :: Frame
         local function px(x: number, y: number, w: number, h: number): ()
-            create("Frame", {
+            local pixel: any = create("Frame", {
                 Parent = container,
                 BackgroundColor3 = paint,
                 BorderSizePixel = 0,
@@ -33037,6 +33338,11 @@ function Module.init(context: any): WidgetLibrary
                 Size = UDim2.fromOffset(w * 2, h * 2),
                 ZIndex = container.ZIndex + 1,
             })
+            if themed then
+                -- Weak binding: destroyed icons drop out of the registry
+                -- automatically and ThemeEngine.SetMany repaints the rest.
+                ThemeEngine.Bind(pixel, "BackgroundColor3", token :: string)
+            end
         end
         if kind == "down" then
             px(0, 0, 7, 1); px(1, 1, 5, 1); px(2, 2, 3, 1); px(3, 3, 1, 1)
@@ -33588,6 +33894,15 @@ function Module.init(context: any): WidgetLibrary
                 1
             )
             setValue(minimum + (maximum - minimum) * alpha, true, true)
+        end
+
+        if state.valueControls then
+            state.valueControls[optionKey] = {
+                apply = function(stored: any): ()
+                    setValue(tonumber(stored) or defaultValue, true)
+                end,
+                default = defaultValue,
+            }
         end
 
         trackUiConnection(slider.InputBegan:Connect(function(
@@ -34629,7 +34944,7 @@ function Module.init(context: any): WidgetLibrary
             Text = "",
             ZIndex = option.ZIndex + 2,
         }) :: any) :: TextButton
-        drawPixelIcon(arrowBox, "down", WURST_GREEN)
+        drawPixelIcon(arrowBox, "down", nil, "arrows")
 
         local function refreshChoiceVisual(): ()
             button.Text = values[index]
@@ -34647,6 +34962,24 @@ function Module.init(context: any): WidgetLibrary
         end
         button.MouseButton1Click:Connect(openList)
         arrowBox.MouseButton1Click:Connect(openList)
+
+        if state.valueControls then
+            state.valueControls[optionKey] = {
+                apply = function(stored: any): ()
+                    local picked: number? =
+                        table.find(values, tostring(stored))
+                    if picked == nil then
+                        return
+                    end
+                    index = picked :: number
+                    refreshChoiceVisual()
+                    callback(values[index])
+                    configData.values[optionKey] = values[index]
+                    queueConfigSave()
+                end,
+                default = values[initialIndex or 1],
+            }
+        end
 
         callback(values[index])
         return button :: TextButton
@@ -34751,6 +35084,19 @@ function Module.init(context: any): WidgetLibrary
         if not shouldPersist and configData.values[optionKey] ~= nil then
             configData.values[optionKey] = nil
             queueConfigSave()
+        end
+
+        if state.valueControls then
+            state.valueControls[optionKey] = {
+                apply = function(stored: any): ()
+                    box.Text = tostring(stored or "")
+                    if shouldPersist then
+                        configData.values[optionKey] = box.Text
+                        queueConfigSave()
+                    end
+                end,
+                default = defaultText or "",
+            }
         end
         callback(initialText)
         return box :: TextBox
@@ -35143,6 +35489,22 @@ function Module.init(context: any): WidgetLibrary
             end, swatch)
         end)
 
+        if state.valueControls then
+            state.valueControls[optionKey] = {
+                apply = function(stored: any): ()
+                    local restored: Color3 =
+                        colorFromConfig(stored, defaultColor)
+                    color = restored
+                    bar.BackgroundColor3 = color
+                    hexValue.Text = hexOf(color)
+                    configData.values[optionKey] = colorToConfig(color)
+                    callback(color)
+                    queueConfigSave()
+                end,
+                default = colorToConfig(defaultColor),
+            }
+        end
+
         callback(color)
         return swatch
     end
@@ -35383,6 +35745,9 @@ end
 function Module.destroy(): ()
     Module.Initialized = false
     table.clear(toggleThemeRefreshers)
+    if boundState and type(boundState.valueControls) == "table" then
+        table.clear(boundState.valueControls)
+    end
     if boundState and boundState.optionThemeRefresh == runToggleThemeRefreshers then
         boundState.optionThemeRefresh = nil
     end
@@ -35993,15 +36358,15 @@ function Module.init(context: any): any
             end
 
             if definition.closable ~= false then
-                closeButton = chromeButton("cross", Color3.fromRGB(204, 0, 0))
+                closeButton = chromeButton("cross", Theme.negative)
             end
             if definition.pinnable ~= false then
 
-                local pin: TextButton = chromeButton("pin", Color3.fromRGB(0, 204, 0))
+                local pin: TextButton = chromeButton("pin", Theme.enabled)
                 local function paintPin(): ()
                     pin.BackgroundTransparency = window.pinned and 0.2 or 0.72
                     pin.BackgroundColor3 = window.pinned
-                        and Color3.fromRGB(0, 80, 0)
+                        and Theme.enabled
                         or Color3.fromRGB(0, 0, 0)
                 end
                 table.insert(paintChrome, paintPin)
@@ -36012,12 +36377,12 @@ function Module.init(context: any): any
             end
             if definition.collapsible ~= false then
 
-                local chevron: TextButton = chromeButton("up", Color3.fromRGB(170, 32, 32))
+                local chevron: TextButton = chromeButton("up", Theme.arrows)
                 local function paintChevron(): ()
                     drawPixelIcon(
                         chevron,
                         window.collapsed and "down" or "up",
-                        Color3.fromRGB(170, 32, 32)
+                        Theme.arrows
                     )
                 end
                 table.insert(chromeConnections, chevron.MouseButton1Click:Connect(function(): ()

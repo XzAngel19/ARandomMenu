@@ -235,7 +235,8 @@ function Module.init(context: any): any
                 drawPixelIcon(
                     arrow :: TextButton,
                     feature.expanded and "up" or "down",
-                    Color3.fromRGB(0, 204, 0)
+                    nil,
+                    "arrows"
                 )
             end
         end
@@ -497,10 +498,6 @@ function Module.init(context: any): any
             and state.shortcutBindings[feature.configKey] ~= nil then
             local binding: any = state.shortcutBindings[feature.configKey]
             local UNBOUND_BG: Color3 = Color3.fromRGB(0, 0, 0)
-            local BOUND_BG: Color3 = Color3.fromRGB(0, 80, 0)
-            local CONFLICT_BG: Color3 = Color3.fromRGB(80, 0, 0)
-            local BOUND_EDGE: Color3 = Color3.fromRGB(0, 204, 0)
-            local CONFLICT_EDGE: Color3 = Color3.fromRGB(204, 0, 0)
             local square: TextButton = (create("TextButton", {
                 TextTruncate = Enum.TextTruncate.AtEnd,
                 Parent = row,
@@ -584,16 +581,19 @@ function Module.init(context: any): any
                 square:SetAttribute("CaptureIdleText", caption)
                 local bound: boolean = binding.key ~= nil
                     and binding.key ~= Enum.KeyCode.Unknown
+                -- Palette-driven: a bound key paints with the Enabled
+                -- colour, a conflicting one with the negative colour, so the
+                -- squares match whatever the user picked in UI Settings.
                 local conflict: any = bound and conflictWith() or nil
                 if conflict then
-                    square.BackgroundColor3 = CONFLICT_BG
+                    square.BackgroundColor3 = Theme.negative
                     square.BackgroundTransparency = 0.35
-                    edge.Color = CONFLICT_EDGE
+                    edge.Color = Theme.negative
                     edge.Transparency = 0.15
                 elseif bound then
-                    square.BackgroundColor3 = BOUND_BG
+                    square.BackgroundColor3 = Theme.enabled
                     square.BackgroundTransparency = 0.35
-                    edge.Color = BOUND_EDGE
+                    edge.Color = Theme.enabled
                     edge.Transparency = 0.25
                 else
                     square.BackgroundColor3 = UNBOUND_BG
@@ -604,6 +604,13 @@ function Module.init(context: any): any
             end
             feature.bindSquare = square
             feature.syncBindSquare = syncSquare
+            if state.registerThemeRefresh then
+                state.registerThemeRefresh(function(): ()
+                    if square.Parent then
+                        syncSquare()
+                    end
+                end)
+            end
             local refreshBinding: any = binding.refresh
             binding.refresh = function(): ()
                 if refreshBinding then

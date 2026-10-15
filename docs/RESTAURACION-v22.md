@@ -400,3 +400,87 @@ adelante.
 4. Double Gun/Knife: ambos brazos; al apagar, el brazo izquierdo vuelve a su
    pose (R6 incluido). Si ves "[Wurst] Weapon Visuals rebuild failed: …",
    mándame el texto exacto del motivo.
+
+## v26 — Profiles completos · paleta Arrows · auditoría UI · predicción peek/salto/frenado
+
+Pedido: verificar que nada esté hardcodeado y todo coincida con UI Settings;
+paleta "Arrows" para las flechas de los módulos; keybinds de los módulos
+coincidiendo con Enabled; "KeyBind profiles" pasa a ser **Profiles** con
+snapshot completo, update, panic y borrado por perfil; y la predicción del
+Shoot corregida (peek contra pared, tiros por detrás/lados/salto).
+
+### Auditoría UI: hallazgos y correcciones
+
+- **Defaults de la paleta mentían**: el picker "Enabled" mostraba un verde
+  (32,175,32) que no era el color real del tema (236,236,238); Background,
+  Accent y Text igual. Ahora los defaults de TODOS los pickers salen de los
+  tokens vivos del tema.
+- **Flechas hardcodeadas en verde**: flecha de expansión de cada módulo,
+  flechas de secciones de ajustes, flechas de dropdowns y chevron de ventanas
+  — todas usaban `Color3.fromRGB(0, 204, 0)` fijo. Nuevo token de tema
+  **`arrows`** + fila "Arrows" en UI Settings; los píxeles de cada icono se
+  registran con `ThemeEngine.Bind` (tabla débil: los iconos destruidos salen
+  solos) y se repintan EN VIVO al cambiar el color.
+- **Cuadraditos de keybind hardcodeados**: un bind activo pintaba verde fijo
+  y un conflicto rojo fijo. Ahora: bind activo = color **Enabled** de la
+  paleta, conflicto = color negativo del tema, con repintado en vivo.
+- **Chrome de ventanas**: cruz de cerrar y pin usaban colores fijos; ahora
+  Theme.negative / Theme.enabled.
+
+### Keybinds junto a Enabled
+
+El cuadradito de keybind de cada módulo (clic → presiona una tecla; Backspace
+limpia) ahora pinta con el color "Enabled" que elijas, en vivo, igual que los
+checkboxes.
+
+### Profiles (antes "Keybind Profiles")
+
+- **Snapshot completo**: cada perfil guarda TODOS los estados de módulos,
+  TODOS los valores de opciones, y los keybinds — no solo teclas.
+- **Aplicación en vivo**: cargar un perfil enciende/apaga las tarjetas (con
+  sincronización de UI completa), mueve los toggles de opciones, aplica
+  sliders/colores/ciclos/texto EN PANTALLA (nuevo registro
+  `state.valueControls` con apply+default por opción) y restaura keybinds.
+- **Detalle por perfil**: fecha y hora de guardado, módulos activos y número
+  de opciones guardadas.
+- **UPD** por perfil: actualiza ese perfil con la configuración actual.
+- **x** por perfil: botón pequeño que borra ese perfil.
+- **PANIC**: apaga todos los módulos, apaga todas las opciones, devuelve cada
+  valor a su default EN VIVO y limpia el config guardado (los perfiles y los
+  keybinds sobreviven para poder recuperar todo con un LOAD).
+
+### Predicción del Shoot (peek, detrás, lados, salto)
+
+- **Peek contra pared**: el rescate de visibilidad ahora prueba también la
+  posición OBSERVADA (sin lead) de la parte grande — la ventana de rewind la
+  acepta y durante un peek el torso crudo está expuesto aunque el punto con
+  lead siga dentro de la pared. Antes solo probábamos puntos con lead, y el
+  disparo acababa en la pierna.
+- **"Como prediciendo el futuro" (se pasa de largo)**: damping por tiempo de
+  frenado — nunca se lidera más allá del tiempo que el objetivo necesita para
+  detenerse. Un strafe que se invierte (peek in/out) reduce el lead al
+  momento, en vez de sobrepasarse adelante.
+- **"Le da por detrás por un poco"**: el lead de staleness pasa de ½·RTT a
+  **0.6·RTT** (mismo tope de 0.15 s).
+- **"Demasiado recto, no le da cuando salta"**: el estado del humanoid
+  (Jumping/Freefall) llega antes que la física replicada; ahora un salto
+  recién iniciado recibe lead vertical (mínimo 8 studs/s de subida asumidos
+  mientras la velocidad no llegue), en vez de un tiro plano.
+
+### Verificación
+
+- 72 archivos compilados con Luau 0.732 — 0 errores; bundle 70 módulos,
+  sello `v26-20261015-profiles-arrows-aim`.
+- Tests 14/14 con el bloque ampliado del solver: "linear lead; torso offset;
+  jump; stale sample; no phantom drop; **stop damping; jump state**" y el
+  horizonte "0.6xRTT staleness lead".
+
+### Prueba sugerida
+
+1. UI Settings → cambia "Arrows" y "Enabled": flechas, checkboxes y
+   cuadraditos de keybind se repintan al instante.
+2. Profiles → guarda un perfil con todo configurado → PANIC (todo a default)
+   → LOAD del perfil → todo vuelve tal cual estaba.
+3. Sheriff vs murder en peek: el tiro debe buscar el torso visible, no la
+   pierna; strafes con inversión no se sobrepasan; saltos reciben lead
+   vertical.

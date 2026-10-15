@@ -598,15 +598,15 @@ function Module.init(context: any): any
             end
 
             if definition.closable ~= false then
-                closeButton = chromeButton("cross", Color3.fromRGB(204, 0, 0))
+                closeButton = chromeButton("cross", Theme.negative)
             end
             if definition.pinnable ~= false then
 
-                local pin: TextButton = chromeButton("pin", Color3.fromRGB(0, 204, 0))
+                local pin: TextButton = chromeButton("pin", Theme.enabled)
                 local function paintPin(): ()
                     pin.BackgroundTransparency = window.pinned and 0.2 or 0.72
                     pin.BackgroundColor3 = window.pinned
-                        and Color3.fromRGB(0, 80, 0)
+                        and Theme.enabled
                         or Color3.fromRGB(0, 0, 0)
                 end
                 table.insert(paintChrome, paintPin)
@@ -617,12 +617,12 @@ function Module.init(context: any): any
             end
             if definition.collapsible ~= false then
 
-                local chevron: TextButton = chromeButton("up", Color3.fromRGB(170, 32, 32))
+                local chevron: TextButton = chromeButton("up", Theme.arrows)
                 local function paintChevron(): ()
                     drawPixelIcon(
                         chevron,
                         window.collapsed and "down" or "up",
-                        Color3.fromRGB(170, 32, 32)
+                        Theme.arrows
                     )
                 end
                 table.insert(chromeConnections, chevron.MouseButton1Click:Connect(function(): ()

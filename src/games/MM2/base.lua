@@ -1504,7 +1504,7 @@ local function getGunHorizonSeconds(): number
     -- staleness - no more. The acceptance window is a REWIND (it covers past
     -- positions) and must not be spent as forward lead.
     local staleness: number = math.clamp(
-        getEstimatedLatency() * 0.5,
+        getEstimatedLatency() * 0.6,
         0,
         0.15
     )
