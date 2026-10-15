@@ -1,5 +1,5 @@
 return {
-    stamp = "v24-20261015-teamcheck-visuals",
+    stamp = "v24.1-20261015-aim-palette",
     files = {
         ["src/games/BedFight/Combat/AutoSwing.lua"] = [[
 local Module = {Name = "BedFight Auto Swing", Initialized = false, Connection = nil}
@@ -2287,20 +2287,30 @@ function Module.init(runtime: any): any
             velocity.Z * lead
         ) + horizontalAcceleration * (0.25 * lead * lead)
 
-        if grounded then
-
-            displacement = Vector3.new(
-                displacement.X,
-                math.clamp(velocity.Y, -2.5, 2.5) * lead,
-                displacement.Z
-            )
-        else
-            displacement = Vector3.new(
-                displacement.X,
+        -- Vertical safety. Remote characters often read FloorMaterial = Air
+        -- on our client, so a player walking flat ground can be misclassified
+        -- as airborne; combined with the old ballistic drop this buried shots
+        -- several studs BELOW the target ("el tiro sale demasiado abajo").
+        -- A hitscan gun has no bullet drop of its own, and a walker on flat
+        -- ground has no vertical motion to predict, so: near-zero vertical
+        -- velocity means zero vertical lead, and the airborne term is capped.
+        local effectivelyGrounded: boolean = grounded
+            or math.abs(velocity.Y) <= 0.5
+        local verticalDisplacement: number = 0
+        if not effectivelyGrounded then
+            verticalDisplacement = math.clamp(
                 velocity.Y * lead - 0.5 * workspace.Gravity * lead * lead,
-                displacement.Z
+                -3,
+                3
             )
+        elseif grounded then
+            verticalDisplacement = math.clamp(velocity.Y, -2.5, 2.5) * lead
         end
+        displacement = Vector3.new(
+            displacement.X,
+            verticalDisplacement,
+            displacement.Z
+        )
 
         local predicted: Vector3 = part.Position + displacement
         local delta: Vector3 = predicted - origin.Position
@@ -2954,9 +2964,10 @@ function Module.init(runtime: any): any
         function(value: number): ()
             mm2Settings.gunLeadBias = math.clamp(value, -0.1, 0.1)
         end,
-        "Manual time correction in seconds (positive = lead further ahead). "
-            .. "It is added to the prediction horizon, bounded to +/-0.1s, and "
-            .. "does not change character physics.",
+        "Optional forward lead in seconds on top of the observed position. "
+            .. "MM2 rewinds the victim (~277 ms acceptance), so 0 - the "
+            .. "default - already hits moving targets. Raise it only to "
+            .. "experiment; it is capped at +0.1s.",
         0.005
     )
     addNumberOption(
@@ -6284,8 +6295,8 @@ local motionSamples: {[Player]: MotionSample} =
 local GUN_LEAD = {
     replicationRate = 20,
     serverFrame = 1 / 60,
-    minimumHorizon = 0.02,
-    maximumHorizon = 0.45,
+    minimumHorizon = 0,
+    maximumHorizon = 0.15,
     maximumManualBias = 0.1,
     maximumAutoCorrection = 0.1,
 
@@ -6433,19 +6444,15 @@ end
 local trajectoryCalibration: any = nil
 
 local function getGunHorizonSeconds(): number
-    local baseline: number = math.max(getEstimatedLatency(), 0.200)
-    local latencyTime: number = baseline
-    -- Never use the cumulative historical mean as a live network measurement.
-    -- TestingStuff contains 1.6s outliers and unmatched GunFired observations.
-    if trajectoryCalibration and type(trajectoryCalibration.getEstimates) == "function" then
-        local ok: boolean, est: any = pcall(trajectoryCalibration.getEstimates, trajectoryCalibration)
-        if ok and type(est) == "table" and predictionMath.finite(est.liveGunAcceptanceMs)
-            and (est.liveGunSamples or 0) >= 6 then
-            latencyTime = math.clamp(est.liveGunAcceptanceMs / 1000,
-                math.max(0.03, baseline - 0.075), math.min(0.45, baseline + 0.075))
-        end
-    end
-    local staleness: number = 1 / (2 * GUN_LEAD.replicationRate)
+    -- MM2's gun accepts shots aimed at positions the target occupied within
+    -- the last ~277 ms (the measured acceptance window rewinds the victim).
+    -- What we observe is ALREADY replication-delayed by roughly half a round
+    -- trip, so the observed position already sits inside that window. The old
+    -- model led FORWARD by the whole window - it aimed at a position the
+    -- rewind can never cover, which missed walking targets left/right and,
+    -- combined with the ballistic drop term, buried shots into the floor.
+    -- Default lead is now ZERO (aim at what you see); the manual bias and the
+    -- opt-in auto correction are the only forward-lead sources, capped tight.
     local manualBias: number = math.clamp(
         mm2Settings.gunLeadBias,
         -GUN_LEAD.maximumManualBias,
@@ -6456,13 +6463,8 @@ local function getGunHorizonSeconds(): number
         -GUN_LEAD.maximumAutoCorrection,
         GUN_LEAD.maximumAutoCorrection
     )
-    local horizon: number = latencyTime
-        + staleness
-        + GUN_LEAD.serverFrame * 0.5
-        + manualBias
-        + autoCorrection
     return math.clamp(
-        horizon,
+        manualBias + autoCorrection,
         GUN_LEAD.minimumHorizon,
         GUN_LEAD.maximumHorizon
     )
@@ -32791,6 +32793,15 @@ local Module = {
     Initialized = false,
 }
 
+local boundState: any = nil
+local toggleThemeRefreshers: {() -> ()} = {}
+
+local function runToggleThemeRefreshers(): ()
+    for _, refresh: () -> () in ipairs(toggleThemeRefreshers) do
+        pcall(refresh)
+    end
+end
+
 local LABEL_FONT_SIZE: number = 16
 local SLIDER_BAR_HEIGHT: number = 6
 local SLIDER_KNOB_WIDTH: number = 16
@@ -32806,6 +32817,11 @@ function Module.init(context: any): WidgetLibrary
 
     local UserInputService: any = host.UserInputService
     local state: any = host.state
+    boundState = state
+    table.clear(toggleThemeRefreshers)
+    if state then
+        state.optionThemeRefresh = runToggleThemeRefreshers
+    end
     local configData: any = host.configData
     local queueConfigSave: any = host.queueConfigSave
     local create: any = host.create
@@ -33029,8 +33045,32 @@ function Module.init(context: any): WidgetLibrary
             Transparency = 0.35,
         }) :: any) :: UIStroke
 
-        local mark: Frame = drawPixelIcon(box, "check", WURST_GREEN)
+        -- The checkmark contrasts with the Enabled colour (which fills the
+        -- box), so it stays visible whatever palette the user picks.
+        local function markContrast(color: Color3): Color3
+            local luminance: number =
+                0.299 * color.R + 0.587 * color.G + 0.114 * color.B
+            if luminance > 0.45 then
+                return Color3.fromRGB(12, 12, 12)
+            end
+            return Color3.fromRGB(245, 245, 247)
+        end
+        local mark: Frame = drawPixelIcon(
+            box,
+            "check",
+            markContrast(Theme.enabled or WURST_GREEN)
+        )
         mark.Visible = false
+
+        local function paintMark(): ()
+            local paint: Color3 =
+                markContrast(Theme.enabled or WURST_GREEN)
+            for _, pixel: any in ipairs(mark:GetChildren()) do
+                pcall(function(): ()
+                    pixel.BackgroundColor3 = paint
+                end)
+            end
+        end
         local optionLabel: TextLabel? =
             option:FindFirstChild("OptionLabel") :: TextLabel?
         if optionLabel then
@@ -33045,8 +33085,13 @@ function Module.init(context: any): WidgetLibrary
             box.BackgroundColor3 = on and Theme.enabled or Color3.fromRGB(0, 0, 0)
             box.BackgroundTransparency = on and 0 or 0.5
             boxStroke.Color = on and Theme.enabled or Theme.outline
+            paintMark()
             mark.Visible = on
         end
+
+        -- Palette changes must repaint existing checkboxes, not only the
+        -- ones toggled afterwards.
+        table.insert(toggleThemeRefreshers, refreshOptionState)
 
         local function toggleOption(): ()
             enabled = not enabled
@@ -35189,6 +35234,11 @@ end
 
 function Module.destroy(): ()
     Module.Initialized = false
+    table.clear(toggleThemeRefreshers)
+    if boundState and boundState.optionThemeRefresh == runToggleThemeRefreshers then
+        boundState.optionThemeRefresh = nil
+    end
+    boundState = nil
 end
 
 return Module

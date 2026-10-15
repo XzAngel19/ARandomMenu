@@ -1345,8 +1345,8 @@ local motionSamples: {[Player]: MotionSample} =
 local GUN_LEAD = {
     replicationRate = 20,
     serverFrame = 1 / 60,
-    minimumHorizon = 0.02,
-    maximumHorizon = 0.45,
+    minimumHorizon = 0,
+    maximumHorizon = 0.15,
     maximumManualBias = 0.1,
     maximumAutoCorrection = 0.1,
 
@@ -1494,19 +1494,15 @@ end
 local trajectoryCalibration: any = nil
 
 local function getGunHorizonSeconds(): number
-    local baseline: number = math.max(getEstimatedLatency(), 0.200)
-    local latencyTime: number = baseline
-    -- Never use the cumulative historical mean as a live network measurement.
-    -- TestingStuff contains 1.6s outliers and unmatched GunFired observations.
-    if trajectoryCalibration and type(trajectoryCalibration.getEstimates) == "function" then
-        local ok: boolean, est: any = pcall(trajectoryCalibration.getEstimates, trajectoryCalibration)
-        if ok and type(est) == "table" and predictionMath.finite(est.liveGunAcceptanceMs)
-            and (est.liveGunSamples or 0) >= 6 then
-            latencyTime = math.clamp(est.liveGunAcceptanceMs / 1000,
-                math.max(0.03, baseline - 0.075), math.min(0.45, baseline + 0.075))
-        end
-    end
-    local staleness: number = 1 / (2 * GUN_LEAD.replicationRate)
+    -- MM2's gun accepts shots aimed at positions the target occupied within
+    -- the last ~277 ms (the measured acceptance window rewinds the victim).
+    -- What we observe is ALREADY replication-delayed by roughly half a round
+    -- trip, so the observed position already sits inside that window. The old
+    -- model led FORWARD by the whole window - it aimed at a position the
+    -- rewind can never cover, which missed walking targets left/right and,
+    -- combined with the ballistic drop term, buried shots into the floor.
+    -- Default lead is now ZERO (aim at what you see); the manual bias and the
+    -- opt-in auto correction are the only forward-lead sources, capped tight.
     local manualBias: number = math.clamp(
         mm2Settings.gunLeadBias,
         -GUN_LEAD.maximumManualBias,
@@ -1517,13 +1513,8 @@ local function getGunHorizonSeconds(): number
         -GUN_LEAD.maximumAutoCorrection,
         GUN_LEAD.maximumAutoCorrection
     )
-    local horizon: number = latencyTime
-        + staleness
-        + GUN_LEAD.serverFrame * 0.5
-        + manualBias
-        + autoCorrection
     return math.clamp(
-        horizon,
+        manualBias + autoCorrection,
         GUN_LEAD.minimumHorizon,
         GUN_LEAD.maximumHorizon
     )

@@ -40,6 +40,15 @@ local Module = {
     Initialized = false,
 }
 
+local boundState: any = nil
+local toggleThemeRefreshers: {() -> ()} = {}
+
+local function runToggleThemeRefreshers(): ()
+    for _, refresh: () -> () in ipairs(toggleThemeRefreshers) do
+        pcall(refresh)
+    end
+end
+
 local LABEL_FONT_SIZE: number = 16
 local SLIDER_BAR_HEIGHT: number = 6
 local SLIDER_KNOB_WIDTH: number = 16
@@ -55,6 +64,11 @@ function Module.init(context: any): WidgetLibrary
 
     local UserInputService: any = host.UserInputService
     local state: any = host.state
+    boundState = state
+    table.clear(toggleThemeRefreshers)
+    if state then
+        state.optionThemeRefresh = runToggleThemeRefreshers
+    end
     local configData: any = host.configData
     local queueConfigSave: any = host.queueConfigSave
     local create: any = host.create
@@ -278,8 +292,32 @@ function Module.init(context: any): WidgetLibrary
             Transparency = 0.35,
         }) :: any) :: UIStroke
 
-        local mark: Frame = drawPixelIcon(box, "check", WURST_GREEN)
+        -- The checkmark contrasts with the Enabled colour (which fills the
+        -- box), so it stays visible whatever palette the user picks.
+        local function markContrast(color: Color3): Color3
+            local luminance: number =
+                0.299 * color.R + 0.587 * color.G + 0.114 * color.B
+            if luminance > 0.45 then
+                return Color3.fromRGB(12, 12, 12)
+            end
+            return Color3.fromRGB(245, 245, 247)
+        end
+        local mark: Frame = drawPixelIcon(
+            box,
+            "check",
+            markContrast(Theme.enabled or WURST_GREEN)
+        )
         mark.Visible = false
+
+        local function paintMark(): ()
+            local paint: Color3 =
+                markContrast(Theme.enabled or WURST_GREEN)
+            for _, pixel: any in ipairs(mark:GetChildren()) do
+                pcall(function(): ()
+                    pixel.BackgroundColor3 = paint
+                end)
+            end
+        end
         local optionLabel: TextLabel? =
             option:FindFirstChild("OptionLabel") :: TextLabel?
         if optionLabel then
@@ -294,8 +332,13 @@ function Module.init(context: any): WidgetLibrary
             box.BackgroundColor3 = on and Theme.enabled or Color3.fromRGB(0, 0, 0)
             box.BackgroundTransparency = on and 0 or 0.5
             boxStroke.Color = on and Theme.enabled or Theme.outline
+            paintMark()
             mark.Visible = on
         end
+
+        -- Palette changes must repaint existing checkboxes, not only the
+        -- ones toggled afterwards.
+        table.insert(toggleThemeRefreshers, refreshOptionState)
 
         local function toggleOption(): ()
             enabled = not enabled
@@ -2438,6 +2481,11 @@ end
 
 function Module.destroy(): ()
     Module.Initialized = false
+    table.clear(toggleThemeRefreshers)
+    if boundState and boundState.optionThemeRefresh == runToggleThemeRefreshers then
+        boundState.optionThemeRefresh = nil
+    end
+    boundState = nil
 end
 
 return Module

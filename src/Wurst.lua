@@ -225,7 +225,7 @@ local RUNTIME_RAW_BASE: string =
         .. RUNTIME_BRANCH
         .. "/"
 
-local SOURCE_STAMP: string = "v24-20261015-teamcheck-visuals"
+local SOURCE_STAMP: string = "v24.1-20261015-aim-palette"
 
 local BOOT_STARTED_AT: number = os.clock()
 local BOOT_FINGERPRINT_SECONDS: number = 0
@@ -3970,6 +3970,11 @@ ThemeEngine.OnChange(function(): ()
         if feature.row then
             pcall(state.applyCardSkin, feature, false)
         end
+    end
+    -- Palette changes (Background/Accent/Text/Enabled) must also repaint the
+    -- option checkboxes that were already on screen.
+    if type(state.optionThemeRefresh) == "function" then
+        pcall(state.optionThemeRefresh)
     end
 end)
 

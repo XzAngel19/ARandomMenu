@@ -179,20 +179,30 @@ function Module.init(runtime: any): any
             velocity.Z * lead
         ) + horizontalAcceleration * (0.25 * lead * lead)
 
-        if grounded then
-
-            displacement = Vector3.new(
-                displacement.X,
-                math.clamp(velocity.Y, -2.5, 2.5) * lead,
-                displacement.Z
-            )
-        else
-            displacement = Vector3.new(
-                displacement.X,
+        -- Vertical safety. Remote characters often read FloorMaterial = Air
+        -- on our client, so a player walking flat ground can be misclassified
+        -- as airborne; combined with the old ballistic drop this buried shots
+        -- several studs BELOW the target ("el tiro sale demasiado abajo").
+        -- A hitscan gun has no bullet drop of its own, and a walker on flat
+        -- ground has no vertical motion to predict, so: near-zero vertical
+        -- velocity means zero vertical lead, and the airborne term is capped.
+        local effectivelyGrounded: boolean = grounded
+            or math.abs(velocity.Y) <= 0.5
+        local verticalDisplacement: number = 0
+        if not effectivelyGrounded then
+            verticalDisplacement = math.clamp(
                 velocity.Y * lead - 0.5 * workspace.Gravity * lead * lead,
-                displacement.Z
+                -3,
+                3
             )
+        elseif grounded then
+            verticalDisplacement = math.clamp(velocity.Y, -2.5, 2.5) * lead
         end
+        displacement = Vector3.new(
+            displacement.X,
+            verticalDisplacement,
+            displacement.Z
+        )
 
         local predicted: Vector3 = part.Position + displacement
         local delta: Vector3 = predicted - origin.Position
@@ -846,9 +856,10 @@ function Module.init(runtime: any): any
         function(value: number): ()
             mm2Settings.gunLeadBias = math.clamp(value, -0.1, 0.1)
         end,
-        "Manual time correction in seconds (positive = lead further ahead). "
-            .. "It is added to the prediction horizon, bounded to +/-0.1s, and "
-            .. "does not change character physics.",
+        "Optional forward lead in seconds on top of the observed position. "
+            .. "MM2 rewinds the victim (~277 ms acceptance), so 0 - the "
+            .. "default - already hits moving targets. Raise it only to "
+            .. "experiment; it is capped at +0.1s.",
         0.005
     )
     addNumberOption(

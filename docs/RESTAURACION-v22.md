@@ -256,3 +256,69 @@ TriggerBot, Chams, Arrows y Killaura (post-filtro tras `InRange`).
 5. X-Ray ON/OFF → el mapa vuelve opaco al instante. Igual Speed.
 6. TriggerBot con el dedo fuera del gatillo → dispara solo contra enemigos.
 7. Teletransporte interno del juego → el menú reaparece solo.
+
+## v24.1 — Puntería real del arma + color "Enabled" en los checkboxes
+
+Reporte: el disparo cae demasiado abajo desde altura (posición imposible), la
+predicción se va a la izquierda/derecha de objetivos que giran lento, el Silent
+AIM falla demasiado, y el color "Enabled" de la paleta no se ve en los
+checkboxes.
+
+### Por qué fallaba el disparo (dos defectos encadenados)
+
+1. **El horizonte apuntaba al futuro que MM2 nunca acepta.** La telemetría
+   midió ~277 ms de "aceptación" y el modelo los interpretó como lead
+   ADELANTE: horizonte = RTT(≥0.2) + staleness + frame ≈ 0.23 s. Pero esa
+   ventana es de *rewind*: el servidor acepta tiros apuntados a posiciones que
+   el objetivo ocupó en los últimos ~277 ms. Lo que vemos ya llega retrasado
+   por replicación (~½ RTT), o sea que la posición observada ya está dentro de
+   la ventana. Sumarle 0.23 s hacia adelante apunta a una posición futura que
+   el rewind no cubre → fallos sistemáticos adelante del movimiento
+   ("a la izquierda o derecha") y, desde 30 m de altura, el rayo pasa de largo
+   y se estrella en el suelo lejos del objetivo ("una posición donde el murder
+   no podría estar").
+2. **Caída balística fantasma.** `isMotionGrounded` exige
+   `FloorMaterial ~= Air`, pero los personajes remotos suelen leer `Air` en
+   nuestro cliente, así que un jugador caminando por suelo plano entraba en la
+   rama "aérea" y recibía `−½·g·lead²` ≈ **−5.6 studs**: el tiro se enterraba
+   bajo sus pies.
+
+### Correcciones
+
+- **Lead por defecto = 0** (apuntar a lo que se ve): `getGunHorizonSeconds` ya
+  no suma RTT/staleness/frame ni la aceptación medida; solo el "Lead bias"
+  manual (±0.1 s) y la corrección automática (opt-in) pueden añadir lead,
+  acotado a **[0, 0.15] s**. Con lead 0 el chequeo "turning too hard" y el
+  descuento por giro quedan inertes: nunca más rechaza tiros por girar lento.
+- **Vertical blindado**: velocidad vertical ≈ 0 ⇒ lead vertical 0 (aunque el
+  FloorMaterial mienta); la rama aérea real queda acotada a ±3 studs. El arma
+  es hitscan — no hay caída de bala propia.
+- **Silent AIM hereda todo** (usa el mismo `computeGunAim`): ahora dispara a
+  la posición observada, con el barrido/opción de spawn intactos.
+- **Color "Enabled" aplicado de verdad**: el checkbox (caja + borde) se repinta
+  al cambiar la paleta — antes solo se releía el tema al togglear cada opción,
+  y el checkmark interior estaba hardcodeado en verde. El check ahora usa un
+  color de contraste automático (oscuro/claro según luminancia) para seguir
+  visible sobre cualquier color elegido. Se aplica en vivo y persiste igual
+  (ya se guardaba en el config).
+
+### Verificación
+
+- 72 archivos compilados con Luau 0.732 — 0 errores; bundle 70 módulos,
+  sello `v24.1-20261015-aim-palette`.
+- `test_mm2_precision` 14/14 con bloques nuevos: "gun horizon: rewind
+  semantics; zero default lead; bias+auto capped at 0.15" y la regresión
+  "no phantom drop" (FloorMaterial=Air en suelo plano ⇒ lead vertical 0).
+- Los tests del solver confirman: lead horizontal intacto cuando hay bias,
+  torso/root offset, salto real, y muestra de respawn obsoleta ignorada.
+
+### Prueba sugerida
+
+1. Sheriff en Mil, subido a una carga con el murder abajo caminando: el tiro
+   debe ir A SU CUERPO (ni al suelo ni adelante de su movimiento).
+2. Murder girando la cámara mientras camina: el tiro ya no se desvía a
+   izquierda/derecha.
+3. Silent AIM: la tasa de acierto debe subir drásticamente (misma posición
+   observada, sin lead fantasma).
+4. Opciones → UI → color "Enabled" → cualquier color: todos los checkboxes
+   activados se repintan al instante y el check interior sigue visible.
