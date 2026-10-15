@@ -2233,6 +2233,11 @@ function Module.init(context: any): WidgetLibrary
     local function addColorOption(feature, labelText, defaultColor, callback, hintText)
         local optionKey = feature.configKey .. "." .. labelText:gsub("%W", "")
         local color = colorFromConfig(configData.values[optionKey], defaultColor)
+        -- A nil here (missing saved value AND missing default token) used to
+        -- crash hexOf below and take the whole Settings page down with it.
+        if color == nil then
+            color = Color3.fromRGB(255, 255, 255)
+        end
         local option = createOptionRow(feature, labelText, hintText)
 
         option.Size = UDim2.new(1, 0, 0, 44)

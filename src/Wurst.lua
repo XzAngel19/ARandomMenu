@@ -225,7 +225,7 @@ local RUNTIME_RAW_BASE: string =
         .. RUNTIME_BRANCH
         .. "/"
 
-local SOURCE_STAMP: string = "v26-20261015-profiles-arrows-aim"
+local SOURCE_STAMP: string = "v26.1-20261015-settingspage-palette-fix"
 
 local BOOT_STARTED_AT: number = os.clock()
 local BOOT_FINGERPRINT_SECONDS: number = 0
@@ -487,6 +487,7 @@ local THEME_PRESETS: {[string]: {[string]: Color3}} = {
 
         enabled = Color3.fromRGB(32, 175, 32),
         enabledText = Color3.fromRGB(240, 240, 240),
+        arrows = Color3.fromRGB(0, 204, 0),
         text = Color3.fromRGB(240, 240, 240),
         textMuted = Color3.fromRGB(168, 168, 168),
         tooltip = Color3.fromRGB(24, 24, 24),

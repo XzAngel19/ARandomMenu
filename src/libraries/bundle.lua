@@ -1,5 +1,5 @@
 return {
-    stamp = "v26-20261015-profiles-arrows-aim",
+    stamp = "v26.1-20261015-settingspage-palette-fix",
     files = {
         ["src/games/BedFight/Combat/AutoSwing.lua"] = [[
 local Module = {Name = "BedFight Auto Swing", Initialized = false, Connection = nil}
@@ -32964,7 +32964,11 @@ function Module.init(context: any): any
     -- what the UI is actually drawing (the old constants drifted from the
     -- real preset and misled the colour pickers).
     local CLICKGUI_ENABLED: Color3 = Theme.enabled
-    local CLICKGUI_ARROWS: Color3 = Theme.arrows
+    -- Theme.arrows is a v26 token: older saved themes (and the default
+    -- "Wurst" preset before v26.1) never wrote it. Missing token must
+    -- never abort this page — fall back to the enabled colour.
+    local CLICKGUI_ARROWS: Color3 = Theme.arrows or Theme.enabled
+        or Color3.fromRGB(0, 204, 0)
     local uiPaletteRows: {[string]: Frame} = {}
     local function paintPalette(labelText: string, color: Color3): ()
         local option: Frame? = uiPaletteRows[labelText]
@@ -32985,38 +32989,48 @@ function Module.init(context: any): any
             )
         end
     end
-    for _, row: any in ipairs({
-        {label = "Background", default = Theme.background, tokens = {"surface", "background"}},
-        {label = "Accent", default = Theme.accent, tokens = {"accent", "outline"}},
-        {label = "Text", default = Theme.text, tokens = {"text", "accentText"}},
-        {label = "Enabled", default = Theme.enabled, tokens = {"enabled"}},
-        {label = "Arrows", default = Theme.arrows, tokens = {"arrows"}},
-    }) do
-        local tokens: {string} = row.tokens
-        local labelText: string = row.label
-        local swatch: TextButton? = addColorOption(
-            uiPanel,
-            labelText,
-            row.default,
-            function(color: Color3): ()
-                uiSettingsValues[labelText] = color
+    -- A single bad palette row (missing theme token, malformed saved
+    -- colour) must never kill the whole Settings window — v26 regressed
+    -- exactly here when Theme.arrows was nil and hexOf(nil) aborted
+    -- SettingsPage.init before the "Show dock" toggle could restore the
+    -- saved dock state. Isolate the rows and keep building the page.
+    local paletteOk: boolean, paletteError: string? = pcall(function(): ()
+        for _, row: any in ipairs({
+            {label = "Background", default = Theme.background, tokens = {"surface", "background"}},
+            {label = "Accent", default = Theme.accent, tokens = {"accent", "outline"}},
+            {label = "Text", default = Theme.text, tokens = {"text", "accentText"}},
+            {label = "Enabled", default = Theme.enabled, tokens = {"enabled"}},
+            {label = "Arrows", default = Theme.arrows, tokens = {"arrows"}},
+        }) do
+            local tokens: {string} = row.tokens
+            local labelText: string = row.label
+            local swatch: TextButton? = addColorOption(
+                uiPanel,
+                labelText,
+                row.default or Theme.text,
+                function(color: Color3): ()
+                    uiSettingsValues[labelText] = color
 
-                if ThemeEngine and type(ThemeEngine.SetMany) == "function" then
-                    local updates: {[string]: Color3} = {}
-                    for _, token: string in ipairs(tokens) do
-                        updates[token] = color
-                    end
-                    ThemeEngine.SetMany(updates)
-                elseif ThemeEngine and type(ThemeEngine.Set) == "function" then
-                    for _, token: string in ipairs(tokens) do
-                        ThemeEngine.Set(token, color)
+                    if ThemeEngine and type(ThemeEngine.SetMany) == "function" then
+                        local updates: {[string]: Color3} = {}
+                        for _, token: string in ipairs(tokens) do
+                            updates[token] = color
+                        end
+                        ThemeEngine.SetMany(updates)
+                    elseif ThemeEngine and type(ThemeEngine.Set) == "function" then
+                        for _, token: string in ipairs(tokens) do
+                            ThemeEngine.Set(token, color)
+                        end
                     end
                 end
+            )
+            if swatch and swatch.Parent and swatch.Parent:IsA("Frame") then
+                uiPaletteRows[labelText] = swatch.Parent :: Frame
             end
-        )
-        if swatch and swatch.Parent and swatch.Parent:IsA("Frame") then
-            uiPaletteRows[labelText] = swatch.Parent :: Frame
         end
+    end)
+    if not paletteOk then
+        warn("[Wurst:Settings] palette rows skipped: " .. tostring(paletteError))
     end
 
     local rainbowConnection: any = nil
@@ -35419,6 +35433,11 @@ function Module.init(context: any): WidgetLibrary
     local function addColorOption(feature, labelText, defaultColor, callback, hintText)
         local optionKey = feature.configKey .. "." .. labelText:gsub("%W", "")
         local color = colorFromConfig(configData.values[optionKey], defaultColor)
+        -- A nil here (missing saved value AND missing default token) used to
+        -- crash hexOf below and take the whole Settings page down with it.
+        if color == nil then
+            color = Color3.fromRGB(255, 255, 255)
+        end
         local option = createOptionRow(feature, labelText, hintText)
 
         option.Size = UDim2.new(1, 0, 0, 44)

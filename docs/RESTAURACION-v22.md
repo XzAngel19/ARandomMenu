@@ -484,3 +484,74 @@ checkboxes.
 3. Sheriff vs murder en peek: el tiro debe buscar el torso visible, no la
    pierna; strafes con inversión no se sobrepasan; saltos reciben lead
    vertical.
+
+## v26.1 — 2026-10-15 — Reparación de la regresión v26 (UI Settings desaparecido + dock reaparecido)
+
+### Síntoma reportado
+
+Tras v26 la ventana **UI Settings dejaba de aparecer** y el **dock volvía a
+verse** aunque estuviera desactivado en la config guardada. El resto del menú
+funcionaba normalmente.
+
+### Diagnóstico (reproducido con harness de arranque completo)
+
+Se construyó un harness (`full_boot.luau`) que ejecuta el **Wurst.lua real de
+punta a punta** sobre mocks de Roblox/executor, con el **bundle real v26**.
+El boot log mostró la causa exacta:
+
+```
+[Wurst:Bootstrap] Library failed (src/guis/Wurst/Code/SettingsPage.lua):
+  src/guis/Wurst/Code/Widgets.lua:2288: attempt to index nil with 'R'
+```
+
+Cadena completa:
+
+1. v26 añadió el token de tema `arrows` al preset **Monochrome** pero **no al
+   preset Wurst** (el que carga por defecto). `Theme.arrows` quedaba `nil`.
+2. SettingsPage crea la fila de paleta "Arrows" con `default = Theme.arrows`
+   (nil) → `colorFromConfig(valorGuardado, nil)` → nil (nadie tenía
+   `ClickGUI.Arrows` guardado: la fila es nueva en v26).
+3. `hexOf(nil)` en Widgets.lua:2288 → crash → **SettingsPage.init aborta a
+   mitad** ("Library failed", el boot continúa sin esa librería).
+4. Como SettingsPage muere **antes** de crear el toggle "Show dock", nunca se
+   restaura `state.uiShowDock` desde la config guardada → Furniture ve
+   `state.uiShowDock ~= false` → **dock visible** aunque el usuario lo tenía
+   apagado.
+
+El harness con mocks aislados (Widgets+WindowManager+SettingsPage) no lo
+reproducía porque el mock incluía `Theme.arrows` a mano; hizo falta el boot
+completo con el theme real para verlo.
+
+### Arreglos
+
+1. **Raíz** — `src/Wurst.lua`: el preset **Wurst** ahora incluye
+   `arrows = Color3.fromRGB(0, 204, 0)` (mismo valor que Monochrome). Ninguna
+   ruta del ThemeEngine puede dejar el token en nil (`Set`/`SetMany` solo
+   añaden, `Apply` nunca borra).
+2. **Defensa en SettingsPage** — `Theme.arrows or Theme.enabled or (0,204,0)`
+   para la constante de paleta, `row.default or Theme.text` por fila, y el
+   bucle de filas de paleta envuelto en `pcall`: si una fila volviera a
+   fallar (token nuevo ausente, color guardado corrupto) se salta esa fila
+   con un warn y **la página sigue construyéndose** (incluido "Show dock").
+3. **Defensa en Widgets** — `addColorOption` nunca deja pasar un color nil a
+   `hexOf` (fallback blanco). Un default ausente ya no puede tumbar ninguna
+   página de ajustes.
+
+### Verificación
+
+- Harness de arranque completo: "Library failed (SettingsPage)" desaparece;
+  la página construye Background/Accent/Text/Enabled/Arrows/Rainbow/Opacity/
+  **Show dock**. Variantes: preset sin `arrows` (simula theme pre-v26) también
+  pasa — los guards defensivos sostienen la página sin crash.
+- 72/72 archivos compilan; bundle 70 módulos, sello
+  `v26.1-20261015-settingspage-palette-fix`.
+- Suites: entity_team_provider 14/14, mm2_v16 4 grupos, mm2_precision 14
+  grupos — sin cambios de comportamiento (los fixes solo tocan la paleta).
+
+### Prueba sugerida en MM2
+
+1. Ejecuta con tu config habitual (dock desactivado): el dock debe seguir
+   oculto y UI Settings debe abrir con todas sus filas, incluida "Arrows".
+2. Cambia "Arrows" en la paleta: los chevrones de la barra de título y las
+   flechitas de keybind se repintan al instante.
+3. Todo lo demás de v26 (Profiles, predicción) sigue igual.
