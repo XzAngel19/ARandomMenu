@@ -428,12 +428,12 @@ end
 def main() -> None:
     # Integration contracts not requiring a simulated Roblox scene.
     assert 'silentSpawn = "Through"' in BASE
-    assert 'bodyHalfWidth' not in SHOOT and 'WurstHitbox' not in BASE
+    assert 'if profile == "Old" and mm2Settings.oldHitbox then' in SHOOT and 'local function applyHitbox' not in BASE
     assert 'predictionMath.sampleDue(autoElapsed, deltaTime, 60)' in SHOOT
     assert 'predictionMath.sampleDue(elapsed, deltaTime, 30)' in BASE
     assert 'task.delay(10, function()' in BASE
     assert 'if observed and directHit then' in BASE and 'tuneFromConfirmedShot(candidate)' in BASE
-    assert 'or candidate.silentSpawn then' in BASE
+    assert 'or candidate.silentSpawn' in BASE
     assert 'candidate.aimRootOffset' in BASE and 'aimRootOffset = part.Position' in SHOOT
     with tempfile.TemporaryDirectory(prefix="mm2-precision-") as directory:
         script = Path(directory) / "regressions.luau"

@@ -1,5 +1,7 @@
 # MM2 v19 — Shoot/Metrics organizados, Throw continuo y nueva evidencia
 
+> Histórico de v19. La rama entrega ahora [v20: perfiles Old/Actual/Experimental y Knife vertical](MM2-v20-prediction-profiles.md).
+
 Build: **`v19-20261014-mm2-panels-knife`**. Rama: `arena/d83a806d-arandommenu`.
 
 ## 1. Shoot: Mode separado de Target

@@ -139,6 +139,33 @@ def inspect_trajectory(data):
     result["knife_authored_models"] = dict(collections.Counter(e.get("settings", {}).get("latencyModel", "unknown")
                                          for e in authored.values() if e["kind"] == "knife"))
     terminal = {e["shotId"]: e for e in events if e.get("shotId") and e.get("phase") in ("confirmation", "unconfirmed")}
+    result["prediction_profiles"] = {}
+    result["burst_groups"] = {}
+    for shot in authored.values():
+        if shot["kind"] != "gun": continue
+        settings = shot.get("settings", {})
+        profile = settings.get("prediction", {}).get("profile", "unrecorded")
+        bucket = result["prediction_profiles"].setdefault(profile, {"authored": 0, "signals": 0, "target_hit_parts": 0, "unconfirmed": 0})
+        outcome = terminal.get(shot["shotId"], {})
+        bucket["authored"] += 1
+        bucket["signals"] += outcome.get("phase") == "confirmation"
+        bucket["target_hit_parts"] += outcome.get("phase") == "confirmation" and outcome.get("hitTarget") is True
+        bucket["unconfirmed"] += outcome.get("phase") == "unconfirmed"
+        burst = settings.get("burst")
+        if not isinstance(burst, dict) or not burst.get("groupId"): continue
+        group = result["burst_groups"].setdefault(burst["groupId"], {"planned": burst.get("count"), "authored": 0, "candidate_indices": [], "signals": 0, "target_hit_parts": 0})
+        group["authored"] += 1
+        group["candidate_indices"].append(burst.get("index"))
+        group["signals"] += outcome.get("phase") == "confirmation"
+        group["target_hit_parts"] += outcome.get("phase") == "confirmation" and outcome.get("hitTarget") is True
+    for event in events:
+        if event.get("kind") != "gun" or event.get("phase") != "burst-signal" or not event.get("groupId"): continue
+        group = result["burst_groups"].setdefault(event["groupId"], {"planned": None, "authored": 0, "candidate_indices": [], "signals": 0, "target_hit_parts": 0})
+        group["group_level_callbacks_not_unique_shots"] = group.get("group_level_callbacks_not_unique_shots", 0) + 1
+        group["group_level_body_signals"] = group.get("group_level_body_signals", 0) + (event.get("targetBodySignal") is True)
+        group["synthetic_contacts"] = group.get("synthetic_contacts", 0) + (event.get("syntheticHit") is True)
+    result["knife_motion_models"] = dict(collections.Counter(e.get("settings", {}).get("motionModel", "unrecorded")
+        for e in authored.values() if e["kind"] == "knife"))
     result["auto_tune_cohorts"] = {}
     for enabled, label in ((False, "off"), (True, "on")):
         shots = [e for e in authored.values() if e["kind"] == "gun" and e.get("settings", {}).get("autoTune") is enabled]

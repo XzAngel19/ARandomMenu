@@ -40,7 +40,39 @@ function Module.init(runtime: any): any
     local getLandingRootY: any = core.getLandingRootY
     local setWeaponStatus: any = core.setWeaponStatus
 
-    local diagnostics = {checks = 0, sentNormal = 0, sentSilent = 0, rejected = {}}
+    local legacyGeneration = 0
+    local activeLegacyGroupId: string? = nil
+    local legacyBox: BasePart? = nil
+    local legacyCharacter: Model? = nil
+    local function clearLegacyHitbox(): ()
+        if legacyBox then pcall(function(): () legacyBox:Destroy() end) end
+        legacyBox, legacyCharacter = nil, nil
+    end
+    local function syncLegacyHitbox(target: Player?): ()
+        local character = target and target.Character
+        local root = character and character:FindFirstChild("HumanoidRootPart")
+        if mm2Settings.predictionProfile ~= "Old" or not mm2Settings.oldHitbox or not root then
+            clearLegacyHitbox(); return
+        end
+        if legacyCharacter ~= character or not legacyBox or legacyBox.Parent ~= character then
+            clearLegacyHitbox()
+            local box = Instance.new("Part")
+            box.Name = "WurstHitbox"
+            box.Transparency = 1
+            box.Anchored = true
+            box.Massless = true
+            box.CanCollide, box.CanTouch, box.CanQuery = false, true, true
+            box.CFrame = root.CFrame
+            box.Parent = character
+            legacyBox, legacyCharacter = box, character
+        end
+        local size = math.clamp(mm2Settings.oldHitboxSize or 8, 1, 40)
+        local dimensions = Vector3.new(size, size * 1.2, size)
+        if legacyBox.Size ~= dimensions then legacyBox.Size = dimensions end
+        if legacyBox.CFrame ~= root.CFrame then legacyBox.CFrame = root.CFrame end
+    end
+
+    local diagnostics = {checks = 0, sentNormal = 0, sentSilent = 0, burstGroups = 0, rejected = {}}
     state.mm2ShootDiagnostics = diagnostics
     local shootMacro: boolean = false
     local function macroUnequip(gun: Tool?): ()
@@ -74,6 +106,10 @@ function Module.init(runtime: any): any
     type GunAimOptions = {
 
         ignoreVisibility: boolean?,
+        profile: string?,
+        horizon: number?,
+        leadBias: number?,
+        burstCount: number?,
     }
 
     local BODY_HALF_WIDTH: number = 1.0
@@ -134,10 +170,14 @@ function Module.init(runtime: any): any
             sample and sample.sampleInterval or nil
         )
 
+        local profile = resolvedOptions.profile or (ignoreVisibility and "Actual")
+            or mm2Settings.predictionProfile or "Actual"
         local motionModel = mm2Settings.gunMotionModel or "V17"
+        if profile == "Old" then motionModel = "Classic 66d"
+        elseif profile == "Experimental" then motionModel = "Intent blend" end
         if motionModel == "Classic 66d" then
-            -- Restore the v10 per-sample response, not its poisoned historical
-            -- latency average, local hitboxes, or multi-packet burst.
+            -- Restore the v10 per-sample response, not its historical latency mean.
+            -- Only the separate Old profile can add legacy Hitbox/Burst.
             local similarity = sample and (sample.classicStability or sample.stability)
             turnRate = type(similarity) == "number"
                 and math.clamp((1 - math.clamp(similarity, 0, 1)) * 6, 0, math.pi * 1.5)
@@ -156,7 +196,8 @@ function Module.init(runtime: any): any
         if motionModel == "Intent blend" then
             velocity = predictionMath.blendIntent(velocity, moveDirection)
         end
-        local horizon: number = getGunHorizonSeconds()
+        local horizon: number = resolvedOptions.horizon or getGunHorizonSeconds()
+        if profile == "Old" then horizon = math.clamp(horizon + (resolvedOptions.leadBias or 0), 0.03, 0.6) end
         local discount: number = getGunTurnDiscount(horizon, turnRate)
         if motionModel == "Intent blend" then discount = 1 end
         local lead: number = horizon * discount
@@ -219,8 +260,12 @@ function Module.init(runtime: any): any
             MINIMUM_ERROR_RADIUS,
             turnError + jitter
         )
-        local allowedErrorBudget: number = ignoreVisibility and (BODY_HALF_WIDTH * 1.75) or BODY_HALF_WIDTH
-        if mm2Settings.manualErrorGate and errorRadius > allowedErrorBudget then
+        local bodyHalfWidth = BODY_HALF_WIDTH
+        if profile == "Old" and mm2Settings.oldHitbox then
+            bodyHalfWidth = math.max(BODY_HALF_WIDTH, math.clamp(mm2Settings.oldHitboxSize or 8, 1, 40) * 0.5)
+        end
+        local allowedErrorBudget: number = ignoreVisibility and (bodyHalfWidth * 1.75) or bodyHalfWidth
+        if (profile == "Old" or mm2Settings.manualErrorGate) and errorRadius > allowedErrorBudget then
             return nil, nil, "turning too hard"
         end
 
@@ -235,6 +280,9 @@ function Module.init(runtime: any): any
             capturedPosition = part.Position,
             aimRootOffset = part.Position - (root :: BasePart).Position,
             snapshot = {
+                profile = profile, epoch = mm2Settings.predictionEpoch or 0,
+                burstCount = resolvedOptions.burstCount or 1,
+                allowedErrorBudget = allowedErrorBudget,
                 model = motionModel, timingModel = mm2Settings.gunTimingModel, horizon = horizon, lead = lead, turnRate = turnRate,
                 grounded = grounded, errorRadius = errorRadius,
                 landingGuard = mm2Settings.gunLandingGuard, landingRootY = landingRootY,
@@ -392,6 +440,12 @@ function Module.init(runtime: any): any
     end
 
     type FireOptions = {
+        profile: string?,
+        horizon: number?,
+        leadBias: number?,
+        generation: number?,
+        burst: any,
+        suppressMacro: boolean?,
         silent: boolean?,
         maxError: number?,
         quiet: boolean?,
@@ -403,6 +457,7 @@ function Module.init(runtime: any): any
         target: Player?,
         options: FireOptions?
     ): boolean
+        lastRejectReason = ""
         local opts: FireOptions = options or {}
         diagnostics.checks += 1
         local silent: boolean = mm2Settings.silentAim
@@ -442,6 +497,11 @@ function Module.init(runtime: any): any
             task.wait()
         end
 
+        if (opts.generation ~= nil and opts.generation ~= legacyGeneration)
+            or (opts.burst and opts.burst.groupId ~= activeLegacyGroupId)
+            or (opts.burst and opts.burst.epoch ~= nil and opts.burst.epoch ~= (mm2Settings.predictionEpoch or 0)) then
+            return reject("Shot cancelled: controls changed.")
+        end
         gun = getPlayerWeapon(LocalPlayer, "Gun", true) or gun
         if gun and (gun:GetAttribute("Disabled") == true or gun.Enabled == false) then
             return reject("Gun disabled/cooling down.")
@@ -454,7 +514,8 @@ function Module.init(runtime: any): any
             aim, prediction, reason = computeGunAim(
                 target,
                 origin :: CFrame,
-                silent and {ignoreVisibility = true} or nil
+                {ignoreVisibility = silent, profile = silent and "Actual" or opts.profile,
+                    horizon = opts.horizon, leadBias = opts.leadBias, burstCount = opts.burst and opts.burst.count or 1}
             )
         end
 
@@ -529,6 +590,7 @@ function Module.init(runtime: any): any
             return true
         end
 
+        if resolved.snapshot and resolved.snapshot.profile == "Old" then pcall(syncLegacyHitbox, target) end
         local sentAt: number = os.clock()
         local sent, failure = pcall(function(): ()
             remote:FireServer(CFrame.lookAt(origin.Position, resolved.endpoint), CFrame.new(resolved.endpoint))
@@ -547,14 +609,68 @@ function Module.init(runtime: any): any
             target = target,
             silent = false,
             settings = {mode = "Normal", wallCheck = mm2Settings.shootWallCheck,
+                burst = opts.burst,
+                legacyHitbox = resolved.snapshot and resolved.snapshot.profile == "Old" and mm2Settings.oldHitbox or false,
+                legacyHitboxSize = resolved.snapshot and resolved.snapshot.profile == "Old" and mm2Settings.oldHitboxSize or nil,
                 motionHz = mm2Settings.motionSampleHz, leadBias = mm2Settings.gunLeadBias,
                 prediction = resolved.snapshot, manualErrorGate = mm2Settings.manualErrorGate,
-                horizon = getGunHorizonSeconds(), adaptiveTiming = mm2Settings.adaptiveGunTiming,
+                horizon = resolved.snapshot and resolved.snapshot.horizon or getGunHorizonSeconds(),
+                adaptiveTiming = mm2Settings.adaptiveGunTiming,
                 autoTune = mm2Settings.autoTuneLead},
         })
-        macroUnequip(gun)
+        if not opts.suppressMacro then macroUnequip(gun) end
         return true
     end
+
+    local lastLegacyGroup = -math.huge
+    local legacyGroupSerial = 0
+    local function fireGunBurst(target: Player?, options: FireOptions?): boolean
+        local opts = options or {}
+        local silent = opts.silent
+        if silent == nil then silent = mm2Settings.silentAim end
+        if silent or mm2Settings.predictionProfile ~= "Old" then return fireGunAtTarget(target, opts) end
+        -- One bounded group per 0.5 s, shared by manual and Auto. No catch-up loop.
+        if os.clock() - lastLegacyGroup < 0.5 then return false end
+        lastLegacyGroup = os.clock()
+        local count = math.clamp(math.floor(mm2Settings.oldBurst or 1), 1, 4)
+        local baseHorizon = getGunHorizonSeconds()
+        local step = baseHorizon * 0.5
+        local biases = {0, step, -step, 2 * step}
+        legacyGroupSerial += 1
+        diagnostics.burstGroups += 1
+        local groupId = string.format("old:%.6f:%d", os.clock(), legacyGroupSerial)
+        activeLegacyGroupId = groupId
+        local generation = legacyGeneration
+        local epoch = mm2Settings.predictionEpoch or 0
+        local sent = 0
+        local usedHorizons = {}
+        for index = 1, count do
+            if legacyGeneration ~= generation or activeLegacyGroupId ~= groupId
+                or (mm2Settings.predictionEpoch or 0) ~= epoch then break end
+            local key = string.format("%.6f", math.clamp(baseHorizon + biases[index], 0.03, 0.6))
+            if usedHorizons[key] then continue end
+            usedHorizons[key] = true
+            local fired = fireGunAtTarget(target, {
+                silent = false, profile = "Old", horizon = baseHorizon, leadBias = biases[index],
+                maxError = opts.maxError, quiet = opts.quiet or index > 1,
+                generation = generation, suppressMacro = true,
+                burst = {groupId = groupId, index = index, count = count, bias = biases[index], epoch = epoch},
+            })
+            if fired then sent += 1 end
+            if string.find(lastRejectReason, "Send error:", 1, true) then break end
+        end
+        if sent > 0 then
+            macroUnequip(getPlayerWeapon(LocalPlayer, "Gun", true))
+            setWeaponStatus("Shoot", string.format("Old: %d/%d requests sent; not confirmed impacts", sent, count))
+        end
+        return sent > 0
+    end
+
+    local autoSettings = {
+        mode = "Normal" :: string,
+        maxError = 0.6,
+        fireDelay = 0.5,
+    }
 
     local shootFeatureActive: boolean = false
     local autoShootActive: boolean = false
@@ -569,6 +685,7 @@ function Module.init(runtime: any): any
                     connectGunFiredSignal(weaponService)
                 end
                 local motionElapsed: number = 0
+                local lastHitboxUpdate = -math.huge
                 featureConnections.MM2MotionTracker = TaskManager:Connect(function(
                     deltaTime: number
                 ): ()
@@ -581,10 +698,20 @@ function Module.init(runtime: any): any
                     local root: BasePart? = player and player.Character
                         and player.Character:FindFirstChild("HumanoidRootPart") :: BasePart?
                     if player and root then getFilteredVelocity(player, root) end
+                    if os.clock() - lastHitboxUpdate >= 0.1 then
+                        lastHitboxUpdate = os.clock()
+                        local wantsBox = mm2Settings.predictionProfile == "Old" and mm2Settings.oldHitbox
+                            and ((shootFeatureActive and not mm2Settings.silentAim)
+                                or (autoShootActive and autoSettings.mode == "Normal"))
+                        local equipped = wantsBox and getPlayerWeapon(LocalPlayer, "Gun", true)
+                        pcall(syncLegacyHitbox, equipped and player or nil)
+                    end
                 end)
             end
             return
         end
+        legacyGeneration += 1
+        clearLegacyHitbox()
         disconnectFeatureConnection("MM2MotionTracker")
         disconnectGunFiredObserver()
         state.mm2ShotFeedback.pending = nil
@@ -598,19 +725,15 @@ function Module.init(runtime: any): any
             notify("Enable Shoot first.")
             return
         end
-        fireGunAtTarget(getSelectedShootTarget())
+        fireGunBurst(getSelectedShootTarget())
     end
 
     local function toggleShootMurderer(enabled: boolean): ()
+        legacyGeneration += 1
         shootFeatureActive = enabled
         refreshShootInfrastructure()
     end
 
-    local autoSettings = {
-        mode = "Normal" :: string,
-        maxError = 0.6,
-        fireDelay = 0.5,
-    }
     local lastAutoShot: number = -math.huge
     local lastGunCheck: number = -math.huge
     local lastAutoReject: {message: string, at: number}? = nil
@@ -646,7 +769,7 @@ function Module.init(runtime: any): any
             return
         end
         lastRejectReason = ""
-        local fired: boolean = fireGunAtTarget(target, {
+        local fired: boolean = fireGunBurst(target, {
             silent = autoSettings.mode == "Silent",
             maxError = autoSettings.maxError,
             quiet = true,
@@ -664,6 +787,7 @@ function Module.init(runtime: any): any
     end
 
     local function toggleAutoShoot(enabled: boolean): ()
+        legacyGeneration += 1
         autoShootActive = enabled
         disconnectFeatureConnection("MM2AutoShoot")
         refreshShootInfrastructure()
@@ -693,7 +817,7 @@ function Module.init(runtime: any): any
         }
     )
     local predictionRows = {
-        Option_WallCheck=true, Option_Motionmodel=true, Option_Guntiming=true,
+        Option_Predictionprofile=true, Option_WallCheck=true, Option_Motionmodel=true, Option_Guntiming=true,
         Option_Landingguard=true, Option_Holduncertainmanualshots=true,
         Option_Autotunelead=true, Option_Leadbias=true, Option_MotionHz=true,
         Option_Leadstatus=true, Option_Resetautoleadcorrection=true,
@@ -704,22 +828,69 @@ function Module.init(runtime: any): any
             local visible = true
             if predictionRows[row.Name] then visible = not mm2Settings.silentAim end
             if silentRows[row.Name] then visible = mm2Settings.silentAim end
+            if row.Name == "Option_Motionmodel" then
+                visible = not mm2Settings.silentAim and (mm2Settings.predictionProfile or "Actual") == "Actual"
+            end
+            if row.Name == "Option_Holduncertainmanualshots" then
+                visible = not mm2Settings.silentAim and mm2Settings.predictionProfile ~= "Old"
+            end
+            if row.Name == "Option_Hitbox" or row.Name == "Option_Burst" or row.Name == "Option_Oldstatus" then
+                visible = not mm2Settings.silentAim and mm2Settings.predictionProfile == "Old"
+            end
+            if row.Name == "Option_Hitboxsize" then
+                visible = not mm2Settings.silentAim and mm2Settings.predictionProfile == "Old" and mm2Settings.oldHitbox == true
+            end
             if row.Name == "Option_Targetplayer" then visible = mm2Settings.shootMode == "Custom" end
             row.Visible = visible
         end
         ShootFeature.updateExpandedSize()
     end
     addCycleOption(ShootFeature, "Mode", {"Prediction", "Silent AIM"}, 1, function(value: string): ()
+        legacyGeneration += 1
+        clearLegacyHitbox()
         mm2Settings.silentAim = value == "Silent AIM"
         refreshShootOptions()
     end, "Prediction fires from your gun. Silent AIM configures the target-side ray; it retains the shared prediction settings.")
     addCycleOption(ShootFeature, "Target", {"Murder", "Custom"}, 1, function(value: string): ()
+        legacyGeneration += 1
+        clearLegacyHitbox()
         mm2Settings.shootMode = value
         refreshShootOptions()
     end)
     addTextOption(ShootFeature, "Target player", "", function(value: string): ()
+        legacyGeneration += 1
+        clearLegacyHitbox()
         mm2Settings.shootTarget = value
     end, false)
+
+    addCycleOption(ShootFeature, "Prediction profile", {"Old", "Actual", "Experimental"}, 2,
+        function(value: string): ()
+            if mm2Settings.predictionProfile ~= value then core.resetAutoLeadCorrection() end
+            legacyGeneration += 1
+            clearLegacyHitbox()
+            mm2Settings.predictionProfile = value
+            refreshShootOptions()
+        end,
+        "Old: corrected 66d with local Hitbox and bounded Burst. Actual: your v19 solver settings. Experimental: intent blend with existing vertical/landing physics; not a proven winner. Silent and Knife stay separate.")
+    addToggleOption(ShootFeature, "Hitbox", mm2Settings.oldHitbox == true, function(value: boolean): ()
+        legacyGeneration += 1
+        mm2Settings.oldHitbox = value
+        if not value then clearLegacyHitbox() end
+        refreshShootOptions()
+    end, "Old only: local volume and a wider solver error allowance. Does NOT enlarge the server hitbox. Auto Max error still applies. Local query/touch volume is not a server hitbox; synthetic contacts are excluded from target-hit labels.")
+    addNumberOption(ShootFeature, "Hitbox size", mm2Settings.oldHitboxSize or 8, 1, 40, function(value: number): ()
+        legacyGeneration += 1
+        mm2Settings.oldHitboxSize = math.clamp(value, 1, 40)
+    end, "Local volume width in studs; Old allows up to half this width as predicted error. Not a server collision size.", 1)
+    addNumberOption(ShootFeature, "Burst", mm2Settings.oldBurst or 1, 1, 4, function(value: number): ()
+        legacyGeneration += 1
+        mm2Settings.oldBurst = math.clamp(math.floor(value), 1, 4)
+    end, "Old only: 1-4 requests at legacy lead offsets, base prediction first. At most one group per 0.5 seconds; server cooldown still applies. Multi-request groups do not train timing or auto lead.", 1)
+    addActionOption(ShootFeature, "Old status", function(): ()
+        local text = string.format("Old 66d | local Hitbox %s / %.1f studs | Burst %d | groups %d | not a server acceptance count",
+            tostring(mm2Settings.oldHitbox), mm2Settings.oldHitboxSize or 8, mm2Settings.oldBurst or 1, diagnostics.burstGroups)
+        print("[Wurst:MM2:Old] " .. text); notify(text)
+    end)
 
     if state.bindFeatureActivationKey then
         state.bindFeatureActivationKey(
@@ -733,6 +904,7 @@ function Module.init(runtime: any): any
         "WallCheck",
         mm2Settings.shootWallCheck,
         function(value: boolean): ()
+            legacyGeneration += 1
             mm2Settings.shootWallCheck = value
         end,
         "Holds fire while a wall blocks the muzzle. SilentAIM skips it: it "
@@ -809,17 +981,22 @@ function Module.init(runtime: any): any
     addCycleOption(ShootFeature, "Motion model", {"Classic 66d", "V17", "Intent blend"}, 1,
         function(value: string): ()
             if mm2Settings.gunMotionModel ~= value then core.resetAutoLeadCorrection() end
+            legacyGeneration += 1
             mm2Settings.gunMotionModel = value
         end,
         "Classic restores v10 motion response with safe timing. V17 keeps time-normalized turn damping. Intent blend is experimental; offline average error improved, tail errors did not uniformly improve.")
     addCycleOption(ShootFeature, "Gun timing", {"RTT", "V17 floor"}, 1, function(value: string): ()
         if mm2Settings.gunTimingModel ~= value then core.resetAutoLeadCorrection() end
+        legacyGeneration += 1
         mm2Settings.gunTimingModel = value
     end, "RTT removes the unverified 200ms floor; both modes retain 33.3ms of legacy age/frame margin. V17 floor is the previous baseline. Neither is an impact timestamp measurement.")
     addToggleOption(ShootFeature, "Landing guard", true, function(value: boolean): ()
+        if mm2Settings.gunLandingGuard ~= value then core.resetAutoLeadCorrection() end
+        legacyGeneration += 1
         mm2Settings.gunLandingGuard = value
     end, "One bounded downward map ray prevents descending ballistic aim below a detected floor. No hitbox edits. Does not predict future jump input or guarantee terrain contact.")
     addToggleOption(ShootFeature, "Hold uncertain manual shots", false, function(value: boolean): ()
+        legacyGeneration += 1
         mm2Settings.manualErrorGate = value
     end, "OFF sends the best available manual solution, without a fake enlarged hitbox. Auto Shoot still obeys its own Max error. No accuracy percentage is implied.")
     addActionOption(ShootFeature, "Shoot diagnostics", function(): ()
@@ -836,6 +1013,10 @@ function Module.init(runtime: any): any
         "Auto tune lead",
         mm2Settings.autoTuneLead,
         function(value: boolean): ()
+            legacyGeneration += 1
+            if mm2Settings.autoTuneLead ~= value then
+                mm2Settings.predictionEpoch = (mm2Settings.predictionEpoch or 0) + 1
+            end
             mm2Settings.autoTuneLead = value
         end,
         "Opt-in calibration from confirmed hits. It learns a separate runtime "
@@ -848,6 +1029,8 @@ function Module.init(runtime: any): any
         -0.1,
         0.1,
         function(value: number): ()
+            if mm2Settings.gunLeadBias ~= math.clamp(value, -0.1, 0.1) then core.resetAutoLeadCorrection() end
+            legacyGeneration += 1
             mm2Settings.gunLeadBias = math.clamp(value, -0.1, 0.1)
         end,
         "Manual time correction in seconds (positive = lead further ahead). "
@@ -915,6 +1098,8 @@ function Module.init(runtime: any): any
         {"Prediction", "Silent AIM"},
         1,
         function(value: string): ()
+            legacyGeneration += 1
+            clearLegacyHitbox()
             autoSettings.mode = value == "Silent AIM" and "Silent" or "Normal"
         end
     )
@@ -946,7 +1131,8 @@ function Module.init(runtime: any): any
 
     addActionOption(ShootFeature, "Shoot status", function(): ()
         local text = core.weaponStatus("Shoot") .. " | " .. core.weaponStatus("Gun observation")
-            .. " | motion " .. tostring(mm2Settings.gunMotionModel)
+            .. " | Prediction profile " .. tostring(mm2Settings.predictionProfile or "Actual")
+            .. " | Actual/Silent model " .. tostring(mm2Settings.gunMotionModel)
             .. " | timing " .. tostring(mm2Settings.gunTimingModel)
             .. " | manual hold " .. tostring(mm2Settings.manualErrorGate)
             .. string.format(" | manual %s | auto %s (%s) | max error %.2f | horizon %.3fs | adaptive timing %s",

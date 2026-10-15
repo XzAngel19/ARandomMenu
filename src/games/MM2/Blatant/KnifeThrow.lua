@@ -38,6 +38,7 @@ function Module.init(runtime: any): any
         throwHz = 60,
         animation = true,
         latencyModel = "Replica RTT",
+        motionModel = "Linear",
         leadBias = 0,
     }
     local lastThrow = -math.huge
@@ -128,12 +129,47 @@ function Module.init(runtime: any): any
         local multiplier: number = knifeThrowSettings.latencyModel == "Replica RTT" and 1 or 0.5
         local packetTime: number = math.clamp(getEstimatedLatency() * multiplier
             + knifeThrowSettings.leadBias, 0, 0.6)
+        if knifeThrowSettings.motionModel == "Vertical (experimental)" then
+            local humanoid = target.Character:FindFirstChildOfClass("Humanoid")
+            if not humanoid then lastPrediction = nil; return nil end
+            local grounded = core.isMotionGrounded(humanoid, velocity)
+            local gravity = workspace.Gravity
+            local floorY: number? = nil
+            local roughTime = math.clamp((root.Position - originPos).Magnitude / knifeSpeed + packetTime, 0, 5.6)
+            if not grounded then
+                local displacement = Vector3.new(velocity.X * roughTime,
+                    velocity.Y * roughTime - 0.5 * gravity * roughTime * roughTime, velocity.Z * roughTime)
+                floorY = core.getLandingRootY(root, humanoid, displacement)
+            end
+            local offset, flight = predictionMath.verticalIntercept(root.Position - originPos, velocity,
+                knifeSpeed, packetTime, gravity, grounded, floorY and floorY - root.Position.Y)
+            if not offset or not flight then lastPrediction = nil; return nil end
+            if not grounded then
+                local probePoint = originPos + offset
+                local actualFloor = core.getLandingRootY(root, humanoid, probePoint - root.Position)
+                if actualFloor ~= floorY then
+                    floorY = actualFloor
+                    offset, flight = predictionMath.verticalIntercept(root.Position - originPos, velocity,
+                        knifeSpeed, packetTime, gravity, false, floorY and floorY - root.Position.Y)
+                    if not offset or not flight then lastPrediction = nil; return nil end
+                    local moved = originPos + offset - probePoint
+                    if floorY and Vector3.new(moved.X, 0, moved.Z).Magnitude > 2 then
+                        lastPrediction = nil; return nil -- sampled ground is no longer near the solved endpoint
+                    end
+                end
+            end
+            lastPrediction = {networkLead = packetTime, flightTime = flight, speed = knifeSpeed,
+                motionModel = "Vertical (experimental)", grounded = grounded, gravity = gravity,
+                landingRootY = floorY, targetVelocity = {velocity.X, velocity.Y, velocity.Z},
+                targetRoot = {root.Position.X, root.Position.Y, root.Position.Z}}
+            return originPos + offset
+        end
         local positionAtSpawn: Vector3 = root.Position + velocity * packetTime
         local flightTime: number? = predictionMath.interceptTime(
             positionAtSpawn - originPos, velocity, knifeSpeed
         )
-        if flightTime == nil then return nil end
-        lastPrediction = {networkLead = packetTime, flightTime = flightTime, speed = knifeSpeed}
+        if flightTime == nil then lastPrediction = nil; return nil end
+        lastPrediction = {networkLead = packetTime, flightTime = flightTime, speed = knifeSpeed, motionModel = "Linear"}
         return positionAtSpawn + velocity * flightTime
     end
 
@@ -301,7 +337,7 @@ function Module.init(runtime: any): any
 
         local aimPos: Vector3? = predictAim(target, originPos)
         if not aimPos or (aimPos - originPos).Magnitude < 0.05 then
-            setWeaponStatus("Throw", "No usable constant-velocity intercept"); return
+            setWeaponStatus("Throw", "No usable intercept for the selected motion model"); return
         end
         if not silent and not isWeaponPathClear(originPos, aimPos, target.Character) then
             setWeaponStatus("Throw", "Predicted path blocked"); return
@@ -330,6 +366,7 @@ function Module.init(runtime: any): any
                 cadence = knifeThrowSettings.cadence, cadenceSource = cadenceSource, sleight = sleight,
                 spawnOffset = knifeThrowSettings.spawnOffset,
                 range = knifeThrowSettings.range, latencyModel = knifeThrowSettings.latencyModel,
+                motionModel = knifeThrowSettings.motionModel,
                 leadBias = knifeThrowSettings.leadBias, prediction = lastPrediction},
         })
         -- Nothing cosmetic may delay the packet, cooldown, or telemetry timestamp.
@@ -472,6 +509,9 @@ function Module.init(runtime: any): any
         5
     )
 
+    addCycleOption(KnifeThrowFeature, "Knife motion", {"Linear", "Vertical (experimental)"}, 1,
+        function(value: string): () knifeThrowSettings.motionModel = value; lastPrediction = nil end,
+        "Linear preserves v19. Vertical solves target gravity plus a sampled landing floor with at most two map probes per throw. Knife flight stays straight; not future-input knowledge or an accuracy guarantee.")
     addCycleOption(KnifeThrowFeature, "Knife latency model", {"Packet RTT/2", "Replica RTT"}, 2,
         function(value: string): () knifeThrowSettings.latencyModel = value end,
         "RTT/2 covers packet travel only; RTT also budgets replicated-position age. Experimental A/B, not a server measurement.")
@@ -481,7 +521,7 @@ function Module.init(runtime: any): any
     addActionOption(KnifeThrowFeature, "Throw prediction status", function(): ()
         local p = lastPrediction
         local delay, source = getThrowCadence(getPlayerWeapon(LocalPlayer, "Knife"))
-        local text = core.weaponStatus("Throw") .. string.format(" | %s | range %.0f | checks %.0f Hz | delay %.2fs",
+        local text = core.weaponStatus("Throw") .. " | motion " .. tostring(knifeThrowSettings.motionModel) .. string.format(" | %s | range %.0f | checks %.0f Hz | delay %.2fs",
             knifeThrowSettings.latencyModel, knifeThrowSettings.range, knifeThrowSettings.throwHz, delay)
             .. " | " .. source .. " | animation " .. animationStatus
             .. (p and string.format(" | last network lead %.3fs + flight %.3fs at %.1f studs/s",

@@ -221,7 +221,7 @@ local RUNTIME_RAW_BASE: string =
         .. RUNTIME_BRANCH
         .. "/"
 
-local SOURCE_STAMP: string = "v19-20261014-mm2-panels-knife"
+local SOURCE_STAMP: string = "v20-20261014-mm2-prediction-profiles"
 
 local BOOT_STARTED_AT: number = os.clock()
 local BOOT_FINGERPRINT_SECONDS: number = 0

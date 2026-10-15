@@ -66,6 +66,11 @@ local mm2Settings = {
     showMissCooldown = false,
     predictionRtt = 0.08,
     gunLeadBias = 0,
+    predictionProfile = "Actual",
+    predictionEpoch = 0,
+    oldHitbox = false,
+    oldHitboxSize = 8,
+    oldBurst = 1,
     gunMotionModel = "Classic 66d",
     gunTimingModel = "RTT",
     manualErrorGate = false,
@@ -1353,6 +1358,40 @@ function predictionMath.interceptTime(offset: Vector3, velocity: Vector3, speed:
     return time and predictionMath.finite(time) and time <= 5 and time or nil
 end
 
+-- Straight projectile; gravity belongs to the target, not to the knife.
+-- A bounded numerical intercept also handles a target landing on a sampled floor.
+function predictionMath.verticalIntercept(offset: Vector3, velocity: Vector3, speed: number,
+    delay: number, gravity: number, grounded: boolean, floorOffset: number?): (Vector3?, number?)
+    for _, value in ipairs({offset.X, offset.Y, offset.Z, velocity.X, velocity.Y, velocity.Z,
+        speed, delay, gravity}) do
+        if not predictionMath.finite(value) then return nil, nil end
+    end
+    if speed <= 1 or delay < 0 or delay > 0.6 or gravity < 0 then return nil, nil end
+    local function position(t: number): Vector3
+        local total = delay + t
+        local y = grounded and math.clamp(velocity.Y, -2.5, 2.5) * total
+            or velocity.Y * total - 0.5 * gravity * total * total
+        if not grounded and predictionMath.finite(floorOffset) and velocity.Y - gravity * total <= 0 then
+            y = math.max(y, floorOffset :: number)
+        end
+        return offset + Vector3.new(velocity.X * total, y, velocity.Z * total)
+    end
+    if position(0).Magnitude < 1e-5 then return position(0), 0 end
+    local low = 0
+    for step = 1, 80 do
+        local high = step * (5 / 80)
+        if position(high).Magnitude - speed * high <= 0 then
+            for _ = 1, 18 do
+                local mid = (low + high) * 0.5
+                if position(mid).Magnitude - speed * mid > 0 then low = mid else high = mid end
+            end
+            return position(high), high
+        end
+        low = high
+    end
+    return nil, nil -- no bracket: never manufacture an intercept by clamping time
+end
+
 function predictionMath.closestCrossing(samples: {{t: number, p: Vector3}}, point: Vector3): (number?, number)
     local bestTime: number? = nil
     local bestDistance: number = math.huge
@@ -1397,26 +1436,48 @@ function predictionMath.blendIntent(velocity: Vector3, direction: Vector3): Vect
     return Vector3.new(blended.X, velocity.Y, blended.Z)
 end
 
+function predictionMath.attemptMatches(pending: any, tool: any, origin: Vector3?, endpoint: Vector3?, now: number): boolean
+    if not origin or not endpoint then return false end
+    local actual = endpoint - origin
+    local age = now - pending.activatedAt
+    if actual.Magnitude < 0.05 or age < 0 or age > 2.5 or (tool ~= nil and tool ~= pending.tool)
+        or not pending.origin or not pending.requestedAim then return false end
+    local expected = pending.requestedAim - pending.origin
+    return (origin - pending.origin).Magnitude <= 3.5 and expected.Magnitude >= 0.05
+        and expected.Unit:Dot(actual.Unit) >= 0.98
+end
+
 function predictionMath.matchAttempt(queue: {any}, tool: any, origin: Vector3?, endpoint: Vector3?, now: number): (any?, string)
     if not origin or not endpoint then return nil, "missing geometry" end
-    local actual: Vector3 = endpoint - origin
-    if actual.Magnitude < 0.05 then return nil, "short signal" end
+    if (endpoint - origin).Magnitude < 0.05 then return nil, "short signal" end
     local matched: any = nil
-    for _, pending: any in ipairs(queue) do
-        local age: number = now - pending.activatedAt
-        if age >= 0 and age <= 2.5 and (tool == nil or tool == pending.tool)
-            and pending.origin and pending.requestedAim then
-            local expected: Vector3 = pending.requestedAim - pending.origin
-            if (origin - pending.origin).Magnitude <= 3.5 and expected.Magnitude >= 0.05
-                and expected.Unit:Dot(actual.Unit) >= 0.98 then
-                if matched then return nil, "ambiguous" end
-                matched = pending
-            end
+    for _, pending in ipairs(queue) do
+        if predictionMath.attemptMatches(pending, tool, origin, endpoint, now) then
+            if matched then return nil, "ambiguous" end
+            matched = pending
         end
     end
     if not matched then return nil, "unmatched" end
     if matched.confirmedAt then return nil, "duplicate" end
     return matched, "unique geometry match"
+end
+
+-- A callback can belong to one Burst group without identifying a particular request.
+-- Never use this weaker association to confirm an individual shot or train timing.
+function predictionMath.matchBurstGroup(queue: {any}, tool: any, origin: Vector3?, endpoint: Vector3?, now: number): (any?, number)
+    local first: any = nil
+    local matches = 0
+    for _, pending in ipairs(queue) do
+        if predictionMath.attemptMatches(pending, tool, origin, endpoint, now) then
+            local burst = pending.settings and pending.settings.burst
+            if not burst or not burst.groupId or (burst.count or 1) <= 1 then return nil, 0 end
+            if first and (first.settings.burst.groupId ~= burst.groupId
+                or first.targetCharacter ~= pending.targetCharacter) then return nil, 0 end
+            first = first or pending
+            matches += 1
+        end
+    end
+    return first, matches
 end
 
 function predictionMath.newKnifeControl(): any
@@ -1600,6 +1661,7 @@ end
 
 local function resetAutoLeadCorrection(): ()
     autoLeadCorrection = 0
+    mm2Settings.predictionEpoch = (mm2Settings.predictionEpoch or 0) + 1
 end
 
 local trajectoryCalibration: any = nil
@@ -1753,6 +1815,7 @@ local function createTrajectoryCalibration(): any
         latencyMs: number?,
         confirmedEndpoint: Vector3?,
         confirmedHitTarget: boolean?,
+        confirmedSyntheticHit: boolean?,
     }
     type PendingKnife = {
         shotId: string?,
@@ -1808,7 +1871,12 @@ local function createTrajectoryCalibration(): any
         horizontalLeadSeconds: number?,
         verticalLeadSeconds: number?,
         endpoint: {number}?,
+        origin: {number}?,
         hitTarget: boolean?,
+        syntheticHit: boolean?,
+        targetBodySignal: boolean?,
+        groupId: string?,
+        candidateCount: number?,
         pingBucket: string?,
         bestMotionModel: string?,
         motionModelErrors: {[string]: number}?,
@@ -2707,6 +2775,7 @@ local function createTrajectoryCalibration(): any
                     and vectorArray(pending.confirmedEndpoint)
                 or nil,
             hitTarget = pending.confirmedHitTarget,
+            syntheticHit = pending.confirmedSyntheticHit,
             pingBucket = analysis.pingBucket,
             bestMotionModel = analysis.bestMotionModel,
             motionModelErrors = analysis.motionModelErrors,
@@ -2732,7 +2801,21 @@ local function createTrajectoryCalibration(): any
         if not pending then
             if matchReason == "ambiguous" then
                 runtime.ambiguousGunSignals += 1
-                setWeaponStatus("Gun observation", "Ambiguous signal ignored (no timing update)")
+                setWeaponStatus("Gun observation", "Ambiguous signal (no shot confirmation or timing update)")
+                local group, candidates = predictionMath.matchBurstGroup(runtime.pendingGuns, eventTool,
+                    eventOrigin, worldPosition(endpointValue), now)
+                if group then
+                    local synthetic = typeof(hitPartValue) == "Instance" and hitPartValue.Name == "WurstHitbox"
+                    appendEvent({kind = "gun", phase = "burst-signal", serverTime = workspace:GetServerTimeNow(),
+                        pingMs = getPingMilliseconds(), groupId = group.settings.burst.groupId,
+                        candidateCount = candidates, targetUserId = group.targetUserId,
+                        syntheticHit = synthetic,
+                        targetBodySignal = not synthetic and typeof(hitPartValue) == "Instance"
+                            and group.targetCharacter ~= nil and hitPartValue:IsDescendantOf(group.targetCharacter),
+                        origin = eventOrigin and vectorArray(eventOrigin) or nil,
+                        endpoint = worldPosition(endpointValue) and vectorArray(worldPosition(endpointValue)) or nil,
+                        reason = "Group-level callback only; not a unique shot, damage or server acceptance count"})
+                end
             elseif matchReason == "duplicate" then
                 runtime.duplicateGunSignals += 1
             else
@@ -2762,10 +2845,13 @@ local function createTrajectoryCalibration(): any
         end
         local endpoint: Vector3? = worldPosition(endpointValue)
         local targetCharacter: Model? = pending.targetCharacter
-        local hitTarget: boolean = typeof(hitPartValue) == "Instance"
+        local syntheticHit = typeof(hitPartValue) == "Instance" and hitPartValue.Name == "WurstHitbox"
+        local hitTarget: boolean = not syntheticHit and typeof(hitPartValue) == "Instance"
             and targetCharacter ~= nil
             and hitPartValue:IsDescendantOf(targetCharacter)
-        if pending.authored == true and latencyMs >= 30 and latencyMs <= 450 then
+        local burst = pending.settings and pending.settings.burst
+        if pending.authored == true and not syntheticHit and (not burst or (burst.count or 1) <= 1)
+            and latencyMs >= 30 and latencyMs <= 450 then
             table.insert(runtime.freshGunLatency, {at = now, ms = latencyMs})
             if #runtime.freshGunLatency > 24 then table.remove(runtime.freshGunLatency, 1) end
             estimatesAt = -math.huge
@@ -2776,8 +2862,9 @@ local function createTrajectoryCalibration(): any
         pending.latencyMs = latencyMs
         pending.confirmedEndpoint = endpoint
         pending.confirmedHitTarget = hitTarget
+        pending.confirmedSyntheticHit = syntheticHit
         emitShot("shotConfirmation", {
-            shotId = pending.shotId, kind = "gun", hitTarget = hitTarget,
+            shotId = pending.shotId, kind = "gun", hitTarget = hitTarget, syntheticHit = syntheticHit,
             targetName = pending.targetName, latencyMs = latencyMs,
             endpoint = endpoint, evidence = "GunFired.hitPart",
         })
@@ -3425,9 +3512,12 @@ type PendingShot = {
     trajectory: {{t: number, p: Vector3}}?,
 
     silentSpawn: string?,
+    predictionEpoch: number?,
+    burstCount: number?,
 }
 
 type GunPrediction = {
+    snapshot: any,
     aimRootOffset: Vector3?,
     targetPosition: Vector3?,
     endpoint: Vector3?,
@@ -3539,7 +3629,7 @@ local function stopLeadTracking(): ()
 end
 
 local function startLeadTracking(candidate: PendingShot): ()
-    if not mm2Settings.autoTuneLead then
+    if not mm2Settings.autoTuneLead or (candidate.burstCount or 1) > 1 then
         return
     end
     local root: BasePart? = candidate.targetCharacter
@@ -3575,7 +3665,9 @@ local function startLeadTracking(candidate: PendingShot): ()
 end
 
 local function tuneFromConfirmedShot(candidate: PendingShot): ()
-    if not mm2Settings.autoTuneLead or not candidate.aimPosition or candidate.silentSpawn then
+    if not mm2Settings.autoTuneLead or not candidate.aimPosition or candidate.silentSpawn
+        or (candidate.burstCount or 1) > 1
+        or (candidate.predictionEpoch ~= nil and candidate.predictionEpoch ~= (mm2Settings.predictionEpoch or 0)) then
         return
     end
     local samples: {{t: number, p: Vector3}}? = candidate.trajectory
@@ -3664,6 +3756,8 @@ state.mm2ShotFeedback.queue = function(
         leadSensitivity = prediction and prediction.leadSensitivity or nil,
         velocity = prediction and prediction.velocity or nil,
         aimRootOffset = prediction and prediction.aimRootOffset or nil,
+        predictionEpoch = prediction and prediction.snapshot and prediction.snapshot.epoch,
+        burstCount = prediction and prediction.snapshot and prediction.snapshot.burstCount,
     }
     state.mm2ShotFeedback.pending = candidate
     local queue = state.mm2ShotFeedback.pendingShots
@@ -3776,7 +3870,7 @@ state.mm2ShotFeedback.handleGunFired = function(firedGun: any, eventOrigin: any,
     candidate.confirmedAt = os.clock()
     if state.mm2ShotFeedback.pending == candidate then state.mm2ShotFeedback.pending = nil end
     local targetCharacter = candidate.targetCharacter
-    local hitTarget: boolean = typeof(hitPart) == "Instance" and targetCharacter ~= nil
+    local hitTarget: boolean = typeof(hitPart) == "Instance" and hitPart.Name ~= "WurstHitbox" and targetCharacter ~= nil
         and hitPart:IsDescendantOf(targetCharacter)
     state.mm2ShotFeedback.resolve(candidate, hitTarget, true)
 end

@@ -392,7 +392,7 @@ print("v17 regression groups passed:",passed)
 def main():
     assert 'autoSettings.maxError = math.clamp(value, MINIMUM_ERROR_RADIUS, 1)' in SHOOT
     assert 'silent = autoSettings.mode == "Silent"' in SHOOT
-    assert 'v19-20261014-mm2-panels-knife' in LOADER
+    assert 'v20-20261014-mm2-prediction-profiles' in LOADER
     assert 'arena/d83a806d-arandommenu' in LOADER
     with tempfile.TemporaryDirectory(prefix='mm2-v17-') as directory:
         file = Path(directory) / 'test.luau'

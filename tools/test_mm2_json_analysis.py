@@ -80,4 +80,24 @@ class EvidenceAnalysisTests(unittest.TestCase):
             self.assertFalse(any('excluded_from_MM2' in d for d in r['datasets']))
             self.assertIsNone(r['reference_snapshot'])
 
+    def test_profiles_and_burst_do_not_inflate_acceptance(self):
+        events = []
+        for index in (1, 2, 3):
+            events.append({"kind": "gun", "phase": "authored", "shotId": str(index), "settings": {
+                "prediction": {"profile": "Old"}, "burst": {"groupId": "g", "index": index, "count": 4}}})
+        events += [
+            {"kind": "gun", "phase": "burst-signal", "groupId": "g", "targetBodySignal": True},
+            {"kind": "gun", "phase": "confirmation", "shotId": "1", "latencyMs": 200, "hitTarget": False, "syntheticHit": True},
+            {"kind": "gun", "phase": "unconfirmed", "shotId": "2"},
+            {"kind": "gun", "phase": "authored", "shotId": "a", "settings": {"prediction": {"profile": "Actual"}}},
+        ]
+        r = inspect_trajectory({"session": {"events": events}})
+        self.assertEqual(r["prediction_profiles"]["Old"], {"authored": 3, "signals": 1, "target_hit_parts": 0, "unconfirmed": 1})
+        self.assertEqual(r["prediction_profiles"]["Actual"]["authored"], 1)
+        self.assertEqual(r["burst_groups"]["g"]["planned"], 4)
+        self.assertEqual(r["burst_groups"]["g"]["authored"], 3)
+        self.assertEqual(r["burst_groups"]["g"]["signals"], 1)
+        self.assertEqual(r["burst_groups"]["g"]["group_level_body_signals"], 1)
+        self.assertEqual(r["burst_groups"]["g"]["target_hit_parts"], 0)
+
 if __name__ == '__main__': unittest.main()

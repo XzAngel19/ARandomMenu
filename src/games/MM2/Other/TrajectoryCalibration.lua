@@ -47,8 +47,9 @@ function Module.init(runtime: any): any
         core.mm2Settings.calibrationAutosave = value
     end, "Optional 10-second batched saves. OFF still permits Save calibration and final save on Destruct.")
     addToggleOption(TrajectoryFeature, "Adaptive gun timing", false, function(value: boolean): ()
+        if core.mm2Settings.adaptiveGunTiming ~= value then core.resetAutoLeadCorrection() end
         core.mm2Settings.adaptiveGunTiming = value
-    end, "Experimental: use fresh uniquely matched authored-shot response timing. OFF preserves the RTT baseline; response time is not collision time.")
+    end, "Experimental: use fresh uniquely matched authored-shot response timing. OFF preserves the RTT baseline; response time is not collision time or an acceptance window; multi-request groups and synthetic contacts are excluded.")
     addToggleOption(TrajectoryFeature, "Use observed knife speed", false, function(value: boolean): ()
         core.mm2Settings.useKnifeSpeedCalibration = value
     end, "OFF uses 96 studs/s. ON uses at least 3 fresh speed observations (60s window), not the historical mean. This may describe a client visual, not collision physics.")
