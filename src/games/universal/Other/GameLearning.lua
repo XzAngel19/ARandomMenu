@@ -967,6 +967,7 @@ function Module.init(context: Runtime): any
         )
         state.metricsFeature = GameLearningFeature
     end
+    local finishPanel = state.beginCardPanel(GameLearningFeature, "Game learning")
     addToggleOption(
         GameLearningFeature,
         "Log shots",
@@ -1023,6 +1024,7 @@ function Module.init(context: Runtime): any
         "Local only: nothing is uploaded. Saved next to the Projectile "
             .. "Calibration file as _Game_Learning.json."
     )
+    finishPanel()
 
     activeController = gameLearning
     gameLearning:setEnabled(true)

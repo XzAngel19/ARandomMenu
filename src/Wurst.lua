@@ -59,6 +59,7 @@ local FEATURE_CATEGORIES: {[string]: string} = {
 
     ["Projectile Calibration"] = "Other",
     ["Game Learning"] = "Other",
+    ["Metrics"] = "Other",
 
     ["FOV"] = "Render",
     ["Fullbright"] = "Render",
@@ -221,7 +222,7 @@ local RUNTIME_RAW_BASE: string =
         .. RUNTIME_BRANCH
         .. "/"
 
-local SOURCE_STAMP: string = "v22-20261015-classic-restore"
+local SOURCE_STAMP: string = "v23-20261015-clean-org"
 
 local BOOT_STARTED_AT: number = os.clock()
 local BOOT_FINGERPRINT_SECONDS: number = 0

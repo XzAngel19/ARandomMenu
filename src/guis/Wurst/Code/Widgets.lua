@@ -2337,6 +2337,87 @@ function Module.init(context: any): WidgetLibrary
         return false
     end
 
+    -- Panel switching for shared cards (Metrics, Learning). Each producer
+    -- calls begin with its panel name and gets a finish closure; a "Mode"
+    -- cycle at the top of the card selects which panel's rows are visible.
+    -- Switching views never changes any recorded preference. `pinToFront`
+    -- moves the panel to the front of the selector and selects it (used by
+    -- the MM2 Calibration panel, which registers after the universal ones).
+    state.beginCardPanel = function(
+        feature: any,
+        name: string,
+        pinToFront: boolean?
+    ): () -> ()
+        local panels: any = feature.cardPanels
+        if not panels then
+            panels = {selected = name, values = {}, groups = {}}
+            feature.cardPanels = panels
+            function panels:refresh(): ()
+                for group: any, rows: any in pairs(self.groups) do
+                    for _, row: any in ipairs(rows) do
+                        row.Visible = group == self.selected
+                    end
+                end
+                feature.updateExpandedSize()
+            end
+            function panels:buildSelector(): ()
+                if self.selector then
+                    if state.closeChoiceList then
+                        state.closeChoiceList()
+                    end
+                    local oldRow: any = self.selector.Parent
+                    local index: number? = table.find(feature.optionRows, oldRow)
+                    if index then
+                        table.remove(feature.optionRows, index :: number)
+                    end
+                    oldRow:Destroy()
+                end
+                self.selector = addCycleOption(
+                    feature,
+                    "Mode",
+                    self.values,
+                    table.find(self.values, self.selected) or 1,
+                    function(value: string): ()
+                        self.selected = value
+                        self:refresh()
+                    end,
+                    "Select controls to display. Recording toggles stay "
+                        .. "independent; switching views never discards "
+                        .. "data or stops an enabled observer."
+                )
+                if self.selector then
+                    -- addCycleOption restores the persisted value on its own;
+                    -- keep the visible panel in sync with what it shows.
+                    local restored: any = (self.selector :: any).Text
+                    if type(restored) == "string"
+                        and table.find(self.values, restored) then
+                        self.selected = restored
+                    end
+                    (self.selector :: any).Parent.LayoutOrder = -1
+                end
+                self:refresh()
+            end
+        end
+        if not table.find(panels.values, name) then
+            if pinToFront then
+                table.insert(panels.values, 1, name)
+                panels.selected = name
+            else
+                table.insert(panels.values, name)
+            end
+            panels:buildSelector()
+        end
+        local first: number = #feature.optionRows + 1
+        return function(): ()
+            local rows: {any} = {}
+            for index: number = first, #feature.optionRows do
+                table.insert(rows, feature.optionRows[index])
+            end
+            panels.groups[name] = rows
+            panels:refresh()
+        end
+    end
+
     Module.Initialized = true
     return {
         addToggleOption = addToggleOption,

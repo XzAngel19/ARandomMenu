@@ -117,3 +117,61 @@ confirmados por el servidor; `Lead bias` sigue siendo manual y acotado.
 3. Auto Shoot Normal → Auto Shoot Silent.
 4. Knife Throw Normal → Silent; Knife Aura solo; luego maestro ON/OFF y
    confirma que las casillas se apagan y nada queda "vivo" tras reinyectar.
+
+---
+
+## v23 — Organización limpia del menú + WallCheck con visibilidad parcial
+
+**Sello:** `v23-20261015-clean-org`.
+
+### Shoot: Mode / Target como en la última versión que te gustó
+
+El card de Shoot ahora abre con la organización clara:
+
+1. **Mode** — `Prediction` / `Silent AIM`. Prediction dispara desde tu pistola
+   con compensación de lead; Silent AIM firma el disparo junto al objetivo
+   (misma predicción, atraviesa paredes). Reemplaza al interruptor SilentAIM.
+2. **Target** — `Murder` / `Custom`. Murder persigue al asesino; Custom usa el
+   jugador de "Target player" (que solo aparece con Custom).
+3. Los controles exclusivos de Silent (Silent sweep, Silent spawn, Spawn A/B)
+   se ocultan mientras el modo es Prediction — menos ruido visual.
+
+`Auto Shoot` conserva su propio Mode Normal/Silent (autoría del disparo
+automático), igual que antes.
+
+### Cards Metrics y Learning con paneles
+
+- **Metrics** tiene un selector **Mode** arriba: `Calibration` /
+  `Game learning` / `Projectiles`. Solo se muestra el panel activo; cambiar de
+  vista no detiene ningún observador encendido ni descarta datos. En MM2 abre
+  por defecto en Calibration; en otros juegos en Game learning. La última
+  vista elegida se recuerda entre sesiones.
+- **Learning** (nuevo card agrupado, misma mecánica): `Remote logger` +
+  `Screen samples`. Remote Logger ya no es un card suelto: vive dentro de
+  Learning junto a las capturas de pantalla. Misma lógica de hook, mismo
+  formato de reporte, sin cambios de comportamiento.
+
+### WallCheck: dispara a la partícula visible
+
+Antes: si el torso previsto estaba bloqueado, el disparo se rechazaba
+("obstructed") aunque se viera un pedacito del enemigo. Ahora, cuando el punto
+principal está bloqueado, se prueban las demás partes del cuerpo en orden de
+prioridad (torso → cabeza → manos → brazos → piernas) con el mismo lead
+aplicado, y **el disparo se apunta a la primera parte visible**: la manito con
+el cuchillo asomando tras la pared cuenta como blanco. Solo si absolutamente
+nada del cuerpo tiene línea de visión libre se rechaza el tiro. Silent AIM
+sigue ignorando el WallCheck como siempre (firma el disparo en el objetivo).
+
+### Verificación
+
+- 69 archivos `.lua` compilados con Luau 0.732 — 0 errores.
+- Bundle regenerado: 67 módulos, sello `v23-20261015-clean-org`.
+- Las 13 comprobaciones de caracterización de v22 siguen pasando.
+
+### Prueba sugerida del WallCheck nuevo
+
+1. Sheriff, WallCheck ON, Mode Prediction.
+2. Pega al asesino a una esquina hasta que solo se le vea la mano/brazo.
+3. Dispara: el tiro debe salir apuntado a la parte visible (antes decía
+   "A wall blocks the shot").
+4. Ocultación total detrás de la pared → sigue rechazando correctamente.

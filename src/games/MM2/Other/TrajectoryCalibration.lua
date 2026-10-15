@@ -34,6 +34,7 @@ function Module.init(runtime: any): any
         )
         state.metricsFeature = TrajectoryFeature
     end
+    local finishPanel = state.beginCardPanel(TrajectoryFeature, "Calibration", true)
     addActionOption(TrajectoryFeature, "Show learned profile", function(): ()
         notify(trajectoryCalibration:status())
     end)
@@ -52,6 +53,7 @@ function Module.init(runtime: any): any
         TrajectoryFeature,
         "Schema 2 records 30 Hz target windows only around your shots/throws. It stays isolated from Universal analytics and never changes weapon arguments."
     )
+    finishPanel()
 
     activeCleanup = function(): ()
 

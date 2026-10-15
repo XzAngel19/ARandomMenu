@@ -11,10 +11,9 @@ local Module = {
     Initialized = false,
 }
 
-local activeCard: any = nil
+local activeCleanup: (() -> ())? = nil
 
 function Module.init(context: Runtime): any
-    local framework: any = context.framework
     local host: any = context.host
     local services: any = context.services
     local captureService: any = services and services.screenCapture
@@ -22,7 +21,11 @@ function Module.init(context: Runtime): any
     local httpService: any = host.HttpService
     local currentWorkspace: Workspace = host.workspace or workspace
     local sampleNumber: number = 0
-    local card: any
+
+    local notify: any = host.notify
+    local createUniversalFeature: any = host.createUniversalFeature
+    local addActionOption: any = host.addActionOption
+    local addInformationOption: any = host.addInformationOption
 
     local function writeMetadata(path: string, payload: any): boolean
         if not captureService or type(captureService.writeText) ~= "function" then
@@ -40,14 +43,12 @@ function Module.init(context: Runtime): any
     local function captureSample(): ()
         if not captureService or type(captureService.isAvailable) ~= "function"
             or not captureService.isAvailable() then
-            card:Notify("screenshot API unavailable")
-            card:SetStatus("unavailable")
+            notify("Learning: screenshot API unavailable")
             return
         end
         if type(captureService.capture) ~= "function"
             or type(captureService.writeText) ~= "function" then
-            card:Notify("screen capture service incomplete")
-            card:SetStatus("unavailable")
+            notify("Learning: screen capture service incomplete")
             return
         end
 
@@ -66,8 +67,7 @@ function Module.init(context: Runtime): any
         local metadataPath: string = base .. ".json"
         local captured: boolean, reason: any = captureService.capture(imagePath)
         if not captured then
-            card:Notify(tostring(reason or "screen capture failed"))
-            card:SetStatus("failed")
+            notify("Learning: " .. tostring(reason or "screen capture failed"))
             return
         end
 
@@ -87,44 +87,44 @@ function Module.init(context: Runtime): any
         }
         local wrote: boolean = writeMetadata(metadataPath, payload)
         if not wrote then
-            card:Notify("image saved; metadata could not be written")
-            card:SetStatus("image saved")
+            notify("Learning: image saved; metadata could not be written")
             return
         end
-        card:SetStatus("saved " .. tostring(sampleNumber))
-        card:Notify("saved learning sample " .. tostring(sampleNumber))
+        notify("Learning: saved sample " .. tostring(sampleNumber))
     end
 
-    card = framework.Categories.Other:CreateModule({
-        Name = "Learning",
-        Category = "Other",
-        ConfigKey = "Universal.Learning",
-        Kind = "group",
-        Order = 26,
-        Tooltip = "Save a manual local screenshot and a small metadata sidecar.",
-        Function = function(_enabled: boolean): ()
+    local LearningFeature: any = state.learningFeature
+    if not LearningFeature then
+        LearningFeature = createUniversalFeature(
+            "Learning",
+            "Evidence collection in one card: remote logging and screen samples.",
+            26,
+            function(_enabled: boolean): () end,
+            {category = true, categoryName = "Other"}
+        )
+        state.learningFeature = LearningFeature
+    end
+    local finishPanel = state.beginCardPanel(LearningFeature, "Screen samples")
 
-        end,
-    })
-    card:CreateButton({
-        Name = "Capture now",
-        Tooltip = "Save one screenshot locally; no upload or background capture.",
-        Function = captureSample,
-    })
-    card:CreateNote(
+    addActionOption(LearningFeature, "Capture now", function(): ()
+        captureSample()
+    end, "Save one screenshot locally; no upload or background capture.")
+    addInformationOption(
+        LearningFeature,
         "Manual and local only. Standard Roblox Luau has no screenshot API."
     )
+    finishPanel()
 
-    activeCard = card
+    activeCleanup = function(): () end
     Module.Initialized = true
-    return card
+    return Module
 end
 
 function Module.destroy(): ()
-    if activeCard and activeCard.Enabled then
-        activeCard:Toggle(false)
+    if activeCleanup then
+        pcall(activeCleanup)
     end
-    activeCard = nil
+    activeCleanup = nil
     Module.Initialized = false
 end
 

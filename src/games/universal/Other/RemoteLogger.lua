@@ -74,10 +74,25 @@ end
 
 function Module.init(context: Runtime): any
     local host: any = context.host
-    local framework: any = context.framework
     local httpService: HttpService = host.HttpService
     local product: any = host.PRODUCT
     local remoteLogFolder: string = product.storageFolder .. "/RemoteLogs"
+
+    local notify: any = host.notify
+    local createUniversalFeature: any = host.createUniversalFeature
+    local addToggleOption: any = host.addToggleOption
+    local addNumberOption: any = host.addNumberOption
+    local addTextOption: any = host.addTextOption
+    local addActionOption: any = host.addActionOption
+    local addInformationOption: any = host.addInformationOption
+    local TaskManager: any = host.TaskManager
+
+    local settings = {
+        filter = "",
+        maxRemotes = 120,
+        announceNew = false,
+        resampleAlways = false,
+    }
 
     local log: {[string]: any} = {}
     local order: {string} = {}
@@ -85,30 +100,27 @@ function Module.init(context: Runtime): any
     local hooked: boolean = false
     local restore: (() -> ())? = nil
     local capturing: boolean = false
-
-    local logger: any
+    local drainConnection: any = nil
 
     local function record(remote: Instance, method: string, ...: any): ()
         if not capturing then
             return
         end
-        local options: any = logger.Options
 
         local path: string = pathCache[remote]
         if not path then
             path = fullName(remote)
             pathCache[remote] = path
         end
-        local filter: string = tostring(options["Only containing"].Value or "")
-        if filter ~= ""
-            and not string.find(string.lower(path), string.lower(filter), 1, true) then
+        if settings.filter ~= ""
+            and not string.find(string.lower(path), string.lower(settings.filter), 1, true) then
             return
         end
 
         local key: string = path .. "::" .. method
         local entry: any = log[key]
         if not entry then
-            if #order >= math.round(options["Max remotes"].Value) then
+            if #order >= settings.maxRemotes then
                 return
             end
             entry = {
@@ -122,14 +134,14 @@ function Module.init(context: Runtime): any
             }
             log[key] = entry
             table.insert(order, key)
-            if options["Announce new"].Value then
-                logger:Notify(remote.Name .. " · " .. method)
+            if settings.announceNew then
+                notify(remote.Name .. " · " .. method)
             end
         end
         entry.calls += 1
         entry.lastSeen = os.clock()
 
-        if entry.samples >= 3 and not options["Resample always"].Value then
+        if entry.samples >= 3 and not settings.resampleAlways then
             return
         end
         entry.samples += 1
@@ -157,7 +169,7 @@ function Module.init(context: Runtime): any
         local getNamecall: any = environment.getnamecallmethod
         local checkCaller: any = environment.checkcaller
         if type(hookMetamethod) ~= "function" or type(getNamecall) ~= "function" then
-            logger:Notify("executor lacks hookmetamethod")
+            notify("Remote Logger: executor lacks hookmetamethod")
             return false
         end
 
@@ -191,7 +203,7 @@ function Module.init(context: Runtime): any
             end)
         end)
         if not ok then
-            logger:Notify("could not install the hook")
+            notify("Remote Logger: could not install the hook")
             return false
         end
         hooked = true
@@ -203,7 +215,7 @@ function Module.init(context: Runtime): any
                 return
             end
 
-            logger:Notify("hook stays until rejoin")
+            notify("Remote Logger: hook stays until rejoin")
         end
         return true
     end
@@ -228,7 +240,6 @@ function Module.init(context: Runtime): any
                 end)
             end
         end
-        logger:SetStatus(tostring(#order))
     end
 
     local function buildReport(): string
@@ -264,7 +275,7 @@ function Module.init(context: Runtime): any
         local makeFolder: any = environment.makefolder
         local isFolder: any = environment.isfolder
         if type(writeFile) ~= "function" then
-            logger:Notify("executor has no writefile")
+            notify("Remote Logger: executor has no writefile")
             return
         end
         if type(makeFolder) == "function" and type(isFolder) == "function" then
@@ -303,102 +314,123 @@ function Module.init(context: Runtime): any
             pcall(writeFile, base .. ".json", json)
         end
         if wrote then
-            logger:Notify("saved " .. tostring(#order) .. " remotes")
+            notify("Remote Logger: saved " .. tostring(#order) .. " remotes")
         else
-            logger:Notify("could not write the log")
+            notify("Remote Logger: could not write the log")
         end
     end
 
-    logger = framework.Categories.Other:CreateModule({
-        Name = "Remote Logger",
-        Category = "Other",
-        Order = 2,
-        Tooltip = "Records the arguments the game sends to its own remotes and "
-            .. "writes them to disk.",
-        Function = function(enabled: boolean): ()
+    local function stopCapturing(): ()
+        capturing = false
+        if drainConnection then
+            pcall(function(): ()
+                drainConnection:Disconnect()
+            end)
+            drainConnection = nil
+        end
+    end
+
+    local LearningFeature: any = state.learningFeature
+    if not LearningFeature then
+        LearningFeature = createUniversalFeature(
+            "Learning",
+            "Evidence collection in one card: remote logging and screen samples.",
+            2,
+            function(_enabled: boolean): () end,
+            {category = true, categoryName = "Other"}
+        )
+        state.learningFeature = LearningFeature
+    end
+    local finishPanel = state.beginCardPanel(LearningFeature, "Remote logger")
+
+    addToggleOption(
+        LearningFeature,
+        "Remote logger",
+        false,
+        function(enabled: boolean): ()
             capturing = enabled
             if not enabled then
-                logger:SetStatus(nil)
+                stopCapturing()
                 return
             end
-            logger:SetStatus(tostring(#order))
             if not installHook() then
                 capturing = false
                 return
             end
-            logger:Loop(drainQueue)
-            logger:Clean(function(): ()
-                capturing = false
-                queue = {}
-                queued = 0
-                if restore then
-                    (restore :: () -> ())()
-                    restore = nil
-                end
+            drainConnection = TaskManager:Connect(function(): ()
+                drainQueue()
             end)
         end,
-    })
-
-    logger:CreateTextBox({
-        Name = "Only containing",
-        Default = "",
-        Tooltip = "Record only remotes whose path contains this. Leave empty "
-            .. "for everything.",
-    })
-    logger:CreateSlider({
-        Name = "Max remotes",
-        Min = 10,
-        Max = 400,
-        Default = 120,
-        Tooltip = "Stops the log growing without bound in a chatty game.",
-    })
-    logger:CreateToggle({
-        Name = "Announce new",
-        Default = false,
-        Tooltip = "Toast the first time each remote is seen.",
-    })
-    logger:CreateToggle({
-        Name = "Resample always",
-        Default = false,
-        Tooltip = "Describe the arguments of every call instead of the first "
-            .. "few. Useful for a remote whose shape changes; heavier.",
-    })
-
-    logger:CreateButton({
-        Name = "Save to file",
-        Tooltip = "Writes " .. remoteLogFolder .. "/<place>-<time>.txt and .json",
-        Function = saveReport,
-    })
-    logger:CreateButton({
-        Name = "Copy to clipboard",
-        Function = function(): ()
-            local environment: any = getfenv()
-            local copy: any = environment.setclipboard or environment.toclipboard
-            if type(copy) ~= "function" then
-                logger:Notify("executor has no clipboard")
-                return
-            end
-            pcall(copy, buildReport())
-            logger:Notify("copied")
+        "Records the arguments the game sends to its own remotes. It watches; "
+            .. "it never blocks, delays or alters a call."
+    )
+    addTextOption(
+        LearningFeature,
+        "Only containing",
+        "",
+        function(value: string): ()
+            settings.filter = value
         end,
-    })
-    logger:CreateButton({
-        Name = "Clear log",
-        Function = function(): ()
-            log = {}
-            order = {}
-            if logger.Enabled then
-                logger:SetStatus("0")
-            end
-            logger:Notify("cleared")
+        nil,
+        "Record only remotes whose path contains this. Leave empty for everything."
+    )
+    addNumberOption(
+        LearningFeature,
+        "Max remotes",
+        settings.maxRemotes,
+        10,
+        400,
+        function(value: number): ()
+            settings.maxRemotes = math.round(value)
         end,
-    })
-    logger:CreateNote(
+        "Stops the log growing without bound in a chatty game.",
+        1
+    )
+    addToggleOption(
+        LearningFeature,
+        "Announce new",
+        settings.announceNew,
+        function(value: boolean): ()
+            settings.announceNew = value
+        end,
+        "Toast the first time each remote is seen."
+    )
+    addToggleOption(
+        LearningFeature,
+        "Resample always",
+        settings.resampleAlways,
+        function(value: boolean): ()
+            settings.resampleAlways = value
+        end,
+        "Describe the arguments of every call instead of the first few. "
+            .. "Useful for a remote whose shape changes; heavier."
+    )
+    addActionOption(LearningFeature, "Save to file", function(): ()
+        saveReport()
+    end, "Writes " .. remoteLogFolder .. "/<place>-<time>.txt and .json")
+    addActionOption(LearningFeature, "Copy to clipboard", function(): ()
+        local environment: any = getfenv()
+        local copy: any = environment.setclipboard or environment.toclipboard
+        if type(copy) ~= "function" then
+            notify("Remote Logger: executor has no clipboard")
+            return
+        end
+        pcall(copy, buildReport())
+        notify("Remote Logger: copied")
+    end)
+    addActionOption(LearningFeature, "Clear log", function(): ()
+        log = {}
+        order = {}
+        notify("Remote Logger: cleared")
+    end)
+    addInformationOption(
+        LearningFeature,
         "Turn it on, do the thing you want a module to do — buy, mine, place, "
             .. "hit — then save. The log records what only a live game can "
             .. "tell you: the arguments, in order, as the game really sent "
-            .. "them. It watches; it never blocks, delays or alters a call."
+            .. "them."
     )
+    finishPanel()
 
     Module.entries = function(): {any}
         local list: {any} = {}
@@ -410,7 +442,7 @@ function Module.init(context: Runtime): any
     Module.report = buildReport
 
     activeCleanup = function(): ()
-        capturing = false
+        stopCapturing()
         if restore then
             (restore :: () -> ())()
             restore = nil
@@ -419,7 +451,7 @@ function Module.init(context: Runtime): any
         Module.report = nil
     end
     Module.Initialized = true
-    return logger
+    return Module
 end
 
 function Module.destroy(): ()

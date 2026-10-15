@@ -713,6 +713,7 @@ function Module.init(context: Runtime): any
         )
         state.metricsFeature = ProjectileCalibrationFeature
     end
+    local finishPanel = state.beginCardPanel(ProjectileCalibrationFeature, "Projectiles")
     tuning =
         calibration.tuning
     addNumberOption(
@@ -796,6 +797,7 @@ function Module.init(context: Runtime): any
         ProjectileCalibrationFeature,
         "Runs automatically. Save writes the current session; Delete clears it. MM2 prediction never consumes this dataset."
     )
+    finishPanel()
 
     activeController = calibration
     Module.Initialized = true

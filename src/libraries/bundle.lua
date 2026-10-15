@@ -1,5 +1,5 @@
 return {
-    stamp = "v22-20261015-classic-restore",
+    stamp = "v23-20261015-clean-org",
     files = {
         ["src/games/BedFight/Combat/AutoSwing.lua"] = [[
 local Module = {Name = "BedFight Auto Swing", Initialized = false, Connection = nil}
@@ -2190,6 +2190,30 @@ function Module.init(runtime: any): any
         "Head",
     }
 
+    -- Searched only when the main aim point is wall-blocked, in priority
+    -- order: big center-mass parts first, then the limbs that typically poke
+    -- out of cover (a hand holding the knife around a corner).
+    local VISIBILITY_PARTS: {string} = {
+        "UpperTorso",
+        "Torso",
+        "HumanoidRootPart",
+        "Head",
+        "RightHand",
+        "LeftHand",
+        "RightLowerArm",
+        "LeftLowerArm",
+        "RightUpperArm",
+        "LeftUpperArm",
+        "RightLowerLeg",
+        "LeftLowerLeg",
+        "RightFoot",
+        "LeftFoot",
+        "Right Arm",
+        "Left Arm",
+        "Right Leg",
+        "Left Leg",
+    }
+
     local function findAimPart(character: Model): BasePart?
         for _, partName: string in ipairs(AIM_PARTS) do
             local part: BasePart? = character:FindFirstChild(partName) :: BasePart?
@@ -2284,9 +2308,43 @@ function Module.init(runtime: any): any
             return nil, nil, "too close"
         end
 
-        if not ignoreVisibility and mm2Settings.shootWallCheck
-            and not isWeaponPathClear(origin.Position, predicted, character) then
-            return nil, nil, "obstructed"
+        if not ignoreVisibility and mm2Settings.shootWallCheck then
+            if not isWeaponPathClear(origin.Position, predicted, character) then
+                -- Partial visibility: when the target hugs a wall and only a
+                -- sliver sticks out (a hand with the knife, an arm, a corner
+                -- of the torso), aim the shot at that visible part instead of
+                -- rejecting it. The whole character shares the same lead
+                -- displacement, so each candidate is simply its part position
+                -- moved by the same prediction.
+                local rescued: boolean = false
+                for _, partName: string in ipairs(VISIBILITY_PARTS) do
+                    local candidate: Instance? =
+                        (character :: Model):FindFirstChild(partName)
+                    if candidate ~= part
+                        and candidate
+                        and candidate:IsA("BasePart") then
+                        local candidatePart: BasePart = candidate :: BasePart
+                        local candidatePoint: Vector3 =
+                            candidatePart.Position + displacement
+                        local candidateDelta: Vector3 =
+                            candidatePoint - origin.Position
+                        if candidateDelta.Magnitude > 0.05
+                            and isWeaponPathClear(
+                                origin.Position,
+                                candidatePoint,
+                                character
+                            ) then
+                            predicted = candidatePoint
+                            delta = candidateDelta
+                            rescued = true
+                            break
+                        end
+                    end
+                end
+                if not rescued then
+                    return nil, nil, "obstructed"
+                end
+            end
         end
 
         local turnError: number = displacement.Magnitude
@@ -2735,6 +2793,9 @@ function Module.init(runtime: any): any
         }
     )
     local ShootTargetBox
+    local silentSweepRow: GuiObject? = nil
+    local silentSpawnRow: GuiObject? = nil
+    local spawnStatsRow: GuiObject? = nil
     local function refreshShootOptions(): ()
         if ShootTargetBox then
             setOptionVisible(
@@ -2743,12 +2804,36 @@ function Module.init(runtime: any): any
                 mm2Settings.shootMode == "Custom"
             )
         end
+        -- Silent-only controls stay hidden while the mode is Prediction.
+        local silent: boolean = mm2Settings.silentAim == true
+        if silentSweepRow then
+            setOptionVisible(ShootFeature, silentSweepRow :: GuiObject, silent)
+        end
+        if silentSpawnRow then
+            setOptionVisible(ShootFeature, silentSpawnRow :: GuiObject, silent)
+        end
+        if spawnStatsRow then
+            setOptionVisible(ShootFeature, spawnStatsRow :: GuiObject, silent)
+        end
     end
     addCycleOption(
         ShootFeature,
         "Mode",
-        {"Manual", "Custom"},
-        1,
+        {"Prediction", "Silent AIM"},
+        mm2Settings.silentAim and 2 or 1,
+        function(value: string): ()
+            mm2Settings.silentAim = value == "Silent AIM"
+            refreshShootOptions()
+        end,
+        "Prediction fires from your gun with lead compensation. Silent AIM "
+            .. "authors the shot at the target: same prediction, works through "
+            .. "walls."
+    )
+    addCycleOption(
+        ShootFeature,
+        "Target",
+        {"Murder", "Custom"},
+        mm2Settings.shootMode == "Custom" and 2 or 1,
         function(value: string): ()
             mm2Settings.shootMode = value
             refreshShootOptions()
@@ -2769,8 +2854,10 @@ function Module.init(runtime: any): any
         function(value: boolean): ()
             mm2Settings.shootWallCheck = value
         end,
-        "Holds fire while a wall blocks the muzzle. SilentAIM skips it: it "
-            .. "authors the shot at the target."
+        "Holds fire while a wall blocks the muzzle. If only a sliver of the "
+            .. "target is exposed — a hand or arm around a corner — the shot "
+            .. "aims at that visible part. Silent AIM skips it: it authors "
+            .. "the shot at the target."
     )
     addToggleOption(
         ShootFeature,
@@ -2781,16 +2868,7 @@ function Module.init(runtime: any): any
         end,
         "Pistol macro: hides the gun 0.01 seconds after every shot."
     )
-    addToggleOption(
-        ShootFeature,
-        "SilentAIM",
-        mm2Settings.silentAim,
-        function(value: boolean): ()
-            mm2Settings.silentAim = value
-        end,
-        "Authors the shot at the target: same prediction as Shoot, ignores walls."
-    )
-    addNumberOption(
+    silentSweepRow = addNumberOption(
         ShootFeature,
         "Silent sweep",
         mm2Settings.silentSweep,
@@ -2812,7 +2890,7 @@ function Module.init(runtime: any): any
             silentSpawnIndex = valueIndex
         end
     end
-    addCycleOption(
+    local silentSpawnButton = addCycleOption(
         ShootFeature,
         "Silent spawn",
         silentSpawnValues,
@@ -2825,6 +2903,9 @@ function Module.init(runtime: any): any
             .. "geometry (1.6 studs above); Behind = far side. Check Spawn A/B "
             .. "status to see which variant actually scores."
     )
+    if silentSpawnButton then
+        silentSpawnRow = silentSpawnButton.Parent :: GuiObject
+    end
     local function spawnStatsText(): string
         local stats: any = state.mm2ShotFeedback and
             state.mm2ShotFeedback.spawnStats or {}
@@ -2848,9 +2929,12 @@ function Module.init(runtime: any): any
         end
         return "Spawn A/B (hits/shots): " .. table.concat(parts, " · ")
     end
-    addActionOption(ShootFeature, "Spawn A/B status", function(): ()
+    local spawnStatsButton = addActionOption(ShootFeature, "Spawn A/B status", function(): ()
         notify(spawnStatsText())
     end)
+    if spawnStatsButton then
+        spawnStatsRow = spawnStatsButton.Parent :: GuiObject
+    end
     addToggleOption(
         ShootFeature,
         "Auto tune lead",
@@ -3792,6 +3876,7 @@ function Module.init(runtime: any): any
         )
         state.metricsFeature = TrajectoryFeature
     end
+    local finishPanel = state.beginCardPanel(TrajectoryFeature, "Calibration", true)
     addActionOption(TrajectoryFeature, "Show learned profile", function(): ()
         notify(trajectoryCalibration:status())
     end)
@@ -3810,6 +3895,7 @@ function Module.init(runtime: any): any
         TrajectoryFeature,
         "Schema 2 records 30 Hz target windows only around your shots/throws. It stays isolated from Universal analytics and never changes weapon arguments."
     )
+    finishPanel()
 
     activeCleanup = function(): ()
 
@@ -20039,6 +20125,7 @@ function Module.init(context: Runtime): any
         )
         state.metricsFeature = GameLearningFeature
     end
+    local finishPanel = state.beginCardPanel(GameLearningFeature, "Game learning")
     addToggleOption(
         GameLearningFeature,
         "Log shots",
@@ -20095,6 +20182,7 @@ function Module.init(context: Runtime): any
         "Local only: nothing is uploaded. Saved next to the Projectile "
             .. "Calibration file as _Game_Learning.json."
     )
+    finishPanel()
 
     activeController = gameLearning
     gameLearning:setEnabled(true)
@@ -20636,10 +20724,9 @@ local Module = {
     Initialized = false,
 }
 
-local activeCard: any = nil
+local activeCleanup: (() -> ())? = nil
 
 function Module.init(context: Runtime): any
-    local framework: any = context.framework
     local host: any = context.host
     local services: any = context.services
     local captureService: any = services and services.screenCapture
@@ -20647,7 +20734,11 @@ function Module.init(context: Runtime): any
     local httpService: any = host.HttpService
     local currentWorkspace: Workspace = host.workspace or workspace
     local sampleNumber: number = 0
-    local card: any
+
+    local notify: any = host.notify
+    local createUniversalFeature: any = host.createUniversalFeature
+    local addActionOption: any = host.addActionOption
+    local addInformationOption: any = host.addInformationOption
 
     local function writeMetadata(path: string, payload: any): boolean
         if not captureService or type(captureService.writeText) ~= "function" then
@@ -20665,14 +20756,12 @@ function Module.init(context: Runtime): any
     local function captureSample(): ()
         if not captureService or type(captureService.isAvailable) ~= "function"
             or not captureService.isAvailable() then
-            card:Notify("screenshot API unavailable")
-            card:SetStatus("unavailable")
+            notify("Learning: screenshot API unavailable")
             return
         end
         if type(captureService.capture) ~= "function"
             or type(captureService.writeText) ~= "function" then
-            card:Notify("screen capture service incomplete")
-            card:SetStatus("unavailable")
+            notify("Learning: screen capture service incomplete")
             return
         end
 
@@ -20691,8 +20780,7 @@ function Module.init(context: Runtime): any
         local metadataPath: string = base .. ".json"
         local captured: boolean, reason: any = captureService.capture(imagePath)
         if not captured then
-            card:Notify(tostring(reason or "screen capture failed"))
-            card:SetStatus("failed")
+            notify("Learning: " .. tostring(reason or "screen capture failed"))
             return
         end
 
@@ -20712,44 +20800,44 @@ function Module.init(context: Runtime): any
         }
         local wrote: boolean = writeMetadata(metadataPath, payload)
         if not wrote then
-            card:Notify("image saved; metadata could not be written")
-            card:SetStatus("image saved")
+            notify("Learning: image saved; metadata could not be written")
             return
         end
-        card:SetStatus("saved " .. tostring(sampleNumber))
-        card:Notify("saved learning sample " .. tostring(sampleNumber))
+        notify("Learning: saved sample " .. tostring(sampleNumber))
     end
 
-    card = framework.Categories.Other:CreateModule({
-        Name = "Learning",
-        Category = "Other",
-        ConfigKey = "Universal.Learning",
-        Kind = "group",
-        Order = 26,
-        Tooltip = "Save a manual local screenshot and a small metadata sidecar.",
-        Function = function(_enabled: boolean): ()
+    local LearningFeature: any = state.learningFeature
+    if not LearningFeature then
+        LearningFeature = createUniversalFeature(
+            "Learning",
+            "Evidence collection in one card: remote logging and screen samples.",
+            26,
+            function(_enabled: boolean): () end,
+            {category = true, categoryName = "Other"}
+        )
+        state.learningFeature = LearningFeature
+    end
+    local finishPanel = state.beginCardPanel(LearningFeature, "Screen samples")
 
-        end,
-    })
-    card:CreateButton({
-        Name = "Capture now",
-        Tooltip = "Save one screenshot locally; no upload or background capture.",
-        Function = captureSample,
-    })
-    card:CreateNote(
+    addActionOption(LearningFeature, "Capture now", function(): ()
+        captureSample()
+    end, "Save one screenshot locally; no upload or background capture.")
+    addInformationOption(
+        LearningFeature,
         "Manual and local only. Standard Roblox Luau has no screenshot API."
     )
+    finishPanel()
 
-    activeCard = card
+    activeCleanup = function(): () end
     Module.Initialized = true
-    return card
+    return Module
 end
 
 function Module.destroy(): ()
-    if activeCard and activeCard.Enabled then
-        activeCard:Toggle(false)
+    if activeCleanup then
+        pcall(activeCleanup)
     end
-    activeCard = nil
+    activeCleanup = nil
     Module.Initialized = false
 end
 
@@ -20951,10 +21039,25 @@ end
 
 function Module.init(context: Runtime): any
     local host: any = context.host
-    local framework: any = context.framework
     local httpService: HttpService = host.HttpService
     local product: any = host.PRODUCT
     local remoteLogFolder: string = product.storageFolder .. "/RemoteLogs"
+
+    local notify: any = host.notify
+    local createUniversalFeature: any = host.createUniversalFeature
+    local addToggleOption: any = host.addToggleOption
+    local addNumberOption: any = host.addNumberOption
+    local addTextOption: any = host.addTextOption
+    local addActionOption: any = host.addActionOption
+    local addInformationOption: any = host.addInformationOption
+    local TaskManager: any = host.TaskManager
+
+    local settings = {
+        filter = "",
+        maxRemotes = 120,
+        announceNew = false,
+        resampleAlways = false,
+    }
 
     local log: {[string]: any} = {}
     local order: {string} = {}
@@ -20962,30 +21065,27 @@ function Module.init(context: Runtime): any
     local hooked: boolean = false
     local restore: (() -> ())? = nil
     local capturing: boolean = false
-
-    local logger: any
+    local drainConnection: any = nil
 
     local function record(remote: Instance, method: string, ...: any): ()
         if not capturing then
             return
         end
-        local options: any = logger.Options
 
         local path: string = pathCache[remote]
         if not path then
             path = fullName(remote)
             pathCache[remote] = path
         end
-        local filter: string = tostring(options["Only containing"].Value or "")
-        if filter ~= ""
-            and not string.find(string.lower(path), string.lower(filter), 1, true) then
+        if settings.filter ~= ""
+            and not string.find(string.lower(path), string.lower(settings.filter), 1, true) then
             return
         end
 
         local key: string = path .. "::" .. method
         local entry: any = log[key]
         if not entry then
-            if #order >= math.round(options["Max remotes"].Value) then
+            if #order >= settings.maxRemotes then
                 return
             end
             entry = {
@@ -20999,14 +21099,14 @@ function Module.init(context: Runtime): any
             }
             log[key] = entry
             table.insert(order, key)
-            if options["Announce new"].Value then
-                logger:Notify(remote.Name .. " · " .. method)
+            if settings.announceNew then
+                notify(remote.Name .. " · " .. method)
             end
         end
         entry.calls += 1
         entry.lastSeen = os.clock()
 
-        if entry.samples >= 3 and not options["Resample always"].Value then
+        if entry.samples >= 3 and not settings.resampleAlways then
             return
         end
         entry.samples += 1
@@ -21034,7 +21134,7 @@ function Module.init(context: Runtime): any
         local getNamecall: any = environment.getnamecallmethod
         local checkCaller: any = environment.checkcaller
         if type(hookMetamethod) ~= "function" or type(getNamecall) ~= "function" then
-            logger:Notify("executor lacks hookmetamethod")
+            notify("Remote Logger: executor lacks hookmetamethod")
             return false
         end
 
@@ -21068,7 +21168,7 @@ function Module.init(context: Runtime): any
             end)
         end)
         if not ok then
-            logger:Notify("could not install the hook")
+            notify("Remote Logger: could not install the hook")
             return false
         end
         hooked = true
@@ -21080,7 +21180,7 @@ function Module.init(context: Runtime): any
                 return
             end
 
-            logger:Notify("hook stays until rejoin")
+            notify("Remote Logger: hook stays until rejoin")
         end
         return true
     end
@@ -21105,7 +21205,6 @@ function Module.init(context: Runtime): any
                 end)
             end
         end
-        logger:SetStatus(tostring(#order))
     end
 
     local function buildReport(): string
@@ -21141,7 +21240,7 @@ function Module.init(context: Runtime): any
         local makeFolder: any = environment.makefolder
         local isFolder: any = environment.isfolder
         if type(writeFile) ~= "function" then
-            logger:Notify("executor has no writefile")
+            notify("Remote Logger: executor has no writefile")
             return
         end
         if type(makeFolder) == "function" and type(isFolder) == "function" then
@@ -21180,102 +21279,123 @@ function Module.init(context: Runtime): any
             pcall(writeFile, base .. ".json", json)
         end
         if wrote then
-            logger:Notify("saved " .. tostring(#order) .. " remotes")
+            notify("Remote Logger: saved " .. tostring(#order) .. " remotes")
         else
-            logger:Notify("could not write the log")
+            notify("Remote Logger: could not write the log")
         end
     end
 
-    logger = framework.Categories.Other:CreateModule({
-        Name = "Remote Logger",
-        Category = "Other",
-        Order = 2,
-        Tooltip = "Records the arguments the game sends to its own remotes and "
-            .. "writes them to disk.",
-        Function = function(enabled: boolean): ()
+    local function stopCapturing(): ()
+        capturing = false
+        if drainConnection then
+            pcall(function(): ()
+                drainConnection:Disconnect()
+            end)
+            drainConnection = nil
+        end
+    end
+
+    local LearningFeature: any = state.learningFeature
+    if not LearningFeature then
+        LearningFeature = createUniversalFeature(
+            "Learning",
+            "Evidence collection in one card: remote logging and screen samples.",
+            2,
+            function(_enabled: boolean): () end,
+            {category = true, categoryName = "Other"}
+        )
+        state.learningFeature = LearningFeature
+    end
+    local finishPanel = state.beginCardPanel(LearningFeature, "Remote logger")
+
+    addToggleOption(
+        LearningFeature,
+        "Remote logger",
+        false,
+        function(enabled: boolean): ()
             capturing = enabled
             if not enabled then
-                logger:SetStatus(nil)
+                stopCapturing()
                 return
             end
-            logger:SetStatus(tostring(#order))
             if not installHook() then
                 capturing = false
                 return
             end
-            logger:Loop(drainQueue)
-            logger:Clean(function(): ()
-                capturing = false
-                queue = {}
-                queued = 0
-                if restore then
-                    (restore :: () -> ())()
-                    restore = nil
-                end
+            drainConnection = TaskManager:Connect(function(): ()
+                drainQueue()
             end)
         end,
-    })
-
-    logger:CreateTextBox({
-        Name = "Only containing",
-        Default = "",
-        Tooltip = "Record only remotes whose path contains this. Leave empty "
-            .. "for everything.",
-    })
-    logger:CreateSlider({
-        Name = "Max remotes",
-        Min = 10,
-        Max = 400,
-        Default = 120,
-        Tooltip = "Stops the log growing without bound in a chatty game.",
-    })
-    logger:CreateToggle({
-        Name = "Announce new",
-        Default = false,
-        Tooltip = "Toast the first time each remote is seen.",
-    })
-    logger:CreateToggle({
-        Name = "Resample always",
-        Default = false,
-        Tooltip = "Describe the arguments of every call instead of the first "
-            .. "few. Useful for a remote whose shape changes; heavier.",
-    })
-
-    logger:CreateButton({
-        Name = "Save to file",
-        Tooltip = "Writes " .. remoteLogFolder .. "/<place>-<time>.txt and .json",
-        Function = saveReport,
-    })
-    logger:CreateButton({
-        Name = "Copy to clipboard",
-        Function = function(): ()
-            local environment: any = getfenv()
-            local copy: any = environment.setclipboard or environment.toclipboard
-            if type(copy) ~= "function" then
-                logger:Notify("executor has no clipboard")
-                return
-            end
-            pcall(copy, buildReport())
-            logger:Notify("copied")
+        "Records the arguments the game sends to its own remotes. It watches; "
+            .. "it never blocks, delays or alters a call."
+    )
+    addTextOption(
+        LearningFeature,
+        "Only containing",
+        "",
+        function(value: string): ()
+            settings.filter = value
         end,
-    })
-    logger:CreateButton({
-        Name = "Clear log",
-        Function = function(): ()
-            log = {}
-            order = {}
-            if logger.Enabled then
-                logger:SetStatus("0")
-            end
-            logger:Notify("cleared")
+        nil,
+        "Record only remotes whose path contains this. Leave empty for everything."
+    )
+    addNumberOption(
+        LearningFeature,
+        "Max remotes",
+        settings.maxRemotes,
+        10,
+        400,
+        function(value: number): ()
+            settings.maxRemotes = math.round(value)
         end,
-    })
-    logger:CreateNote(
+        "Stops the log growing without bound in a chatty game.",
+        1
+    )
+    addToggleOption(
+        LearningFeature,
+        "Announce new",
+        settings.announceNew,
+        function(value: boolean): ()
+            settings.announceNew = value
+        end,
+        "Toast the first time each remote is seen."
+    )
+    addToggleOption(
+        LearningFeature,
+        "Resample always",
+        settings.resampleAlways,
+        function(value: boolean): ()
+            settings.resampleAlways = value
+        end,
+        "Describe the arguments of every call instead of the first few. "
+            .. "Useful for a remote whose shape changes; heavier."
+    )
+    addActionOption(LearningFeature, "Save to file", function(): ()
+        saveReport()
+    end, "Writes " .. remoteLogFolder .. "/<place>-<time>.txt and .json")
+    addActionOption(LearningFeature, "Copy to clipboard", function(): ()
+        local environment: any = getfenv()
+        local copy: any = environment.setclipboard or environment.toclipboard
+        if type(copy) ~= "function" then
+            notify("Remote Logger: executor has no clipboard")
+            return
+        end
+        pcall(copy, buildReport())
+        notify("Remote Logger: copied")
+    end)
+    addActionOption(LearningFeature, "Clear log", function(): ()
+        log = {}
+        order = {}
+        notify("Remote Logger: cleared")
+    end)
+    addInformationOption(
+        LearningFeature,
         "Turn it on, do the thing you want a module to do — buy, mine, place, "
             .. "hit — then save. The log records what only a live game can "
             .. "tell you: the arguments, in order, as the game really sent "
-            .. "them. It watches; it never blocks, delays or alters a call."
+            .. "them."
     )
+    finishPanel()
 
     Module.entries = function(): {any}
         local list: {any} = {}
@@ -21287,7 +21407,7 @@ function Module.init(context: Runtime): any
     Module.report = buildReport
 
     activeCleanup = function(): ()
-        capturing = false
+        stopCapturing()
         if restore then
             (restore :: () -> ())()
             restore = nil
@@ -21296,7 +21416,7 @@ function Module.init(context: Runtime): any
         Module.report = nil
     end
     Module.Initialized = true
-    return logger
+    return Module
 end
 
 function Module.destroy(): ()
@@ -24313,6 +24433,7 @@ function Module.init(context: Runtime): any
         )
         state.metricsFeature = ProjectileCalibrationFeature
     end
+    local finishPanel = state.beginCardPanel(ProjectileCalibrationFeature, "Projectiles")
     tuning =
         calibration.tuning
     addNumberOption(
@@ -24396,6 +24517,7 @@ function Module.init(context: Runtime): any
         ProjectileCalibrationFeature,
         "Runs automatically. Save writes the current session; Delete clears it. MM2 prediction never consumes this dataset."
     )
+    finishPanel()
 
     activeController = calibration
     Module.Initialized = true
@@ -33855,6 +33977,87 @@ function Module.init(context: any): WidgetLibrary
             return true
         end
         return false
+    end
+
+    -- Panel switching for shared cards (Metrics, Learning). Each producer
+    -- calls begin with its panel name and gets a finish closure; a "Mode"
+    -- cycle at the top of the card selects which panel's rows are visible.
+    -- Switching views never changes any recorded preference. `pinToFront`
+    -- moves the panel to the front of the selector and selects it (used by
+    -- the MM2 Calibration panel, which registers after the universal ones).
+    state.beginCardPanel = function(
+        feature: any,
+        name: string,
+        pinToFront: boolean?
+    ): () -> ()
+        local panels: any = feature.cardPanels
+        if not panels then
+            panels = {selected = name, values = {}, groups = {}}
+            feature.cardPanels = panels
+            function panels:refresh(): ()
+                for group: any, rows: any in pairs(self.groups) do
+                    for _, row: any in ipairs(rows) do
+                        row.Visible = group == self.selected
+                    end
+                end
+                feature.updateExpandedSize()
+            end
+            function panels:buildSelector(): ()
+                if self.selector then
+                    if state.closeChoiceList then
+                        state.closeChoiceList()
+                    end
+                    local oldRow: any = self.selector.Parent
+                    local index: number? = table.find(feature.optionRows, oldRow)
+                    if index then
+                        table.remove(feature.optionRows, index :: number)
+                    end
+                    oldRow:Destroy()
+                end
+                self.selector = addCycleOption(
+                    feature,
+                    "Mode",
+                    self.values,
+                    table.find(self.values, self.selected) or 1,
+                    function(value: string): ()
+                        self.selected = value
+                        self:refresh()
+                    end,
+                    "Select controls to display. Recording toggles stay "
+                        .. "independent; switching views never discards "
+                        .. "data or stops an enabled observer."
+                )
+                if self.selector then
+                    -- addCycleOption restores the persisted value on its own;
+                    -- keep the visible panel in sync with what it shows.
+                    local restored: any = (self.selector :: any).Text
+                    if type(restored) == "string"
+                        and table.find(self.values, restored) then
+                        self.selected = restored
+                    end
+                    (self.selector :: any).Parent.LayoutOrder = -1
+                end
+                self:refresh()
+            end
+        end
+        if not table.find(panels.values, name) then
+            if pinToFront then
+                table.insert(panels.values, 1, name)
+                panels.selected = name
+            else
+                table.insert(panels.values, name)
+            end
+            panels:buildSelector()
+        end
+        local first: number = #feature.optionRows + 1
+        return function(): ()
+            local rows: {any} = {}
+            for index: number = first, #feature.optionRows do
+                table.insert(rows, feature.optionRows[index])
+            end
+            panels.groups[name] = rows
+            panels:refresh()
+        end
     end
 
     Module.Initialized = true

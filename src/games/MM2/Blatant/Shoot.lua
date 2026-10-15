@@ -82,6 +82,30 @@ function Module.init(runtime: any): any
         "Head",
     }
 
+    -- Searched only when the main aim point is wall-blocked, in priority
+    -- order: big center-mass parts first, then the limbs that typically poke
+    -- out of cover (a hand holding the knife around a corner).
+    local VISIBILITY_PARTS: {string} = {
+        "UpperTorso",
+        "Torso",
+        "HumanoidRootPart",
+        "Head",
+        "RightHand",
+        "LeftHand",
+        "RightLowerArm",
+        "LeftLowerArm",
+        "RightUpperArm",
+        "LeftUpperArm",
+        "RightLowerLeg",
+        "LeftLowerLeg",
+        "RightFoot",
+        "LeftFoot",
+        "Right Arm",
+        "Left Arm",
+        "Right Leg",
+        "Left Leg",
+    }
+
     local function findAimPart(character: Model): BasePart?
         for _, partName: string in ipairs(AIM_PARTS) do
             local part: BasePart? = character:FindFirstChild(partName) :: BasePart?
@@ -176,9 +200,43 @@ function Module.init(runtime: any): any
             return nil, nil, "too close"
         end
 
-        if not ignoreVisibility and mm2Settings.shootWallCheck
-            and not isWeaponPathClear(origin.Position, predicted, character) then
-            return nil, nil, "obstructed"
+        if not ignoreVisibility and mm2Settings.shootWallCheck then
+            if not isWeaponPathClear(origin.Position, predicted, character) then
+                -- Partial visibility: when the target hugs a wall and only a
+                -- sliver sticks out (a hand with the knife, an arm, a corner
+                -- of the torso), aim the shot at that visible part instead of
+                -- rejecting it. The whole character shares the same lead
+                -- displacement, so each candidate is simply its part position
+                -- moved by the same prediction.
+                local rescued: boolean = false
+                for _, partName: string in ipairs(VISIBILITY_PARTS) do
+                    local candidate: Instance? =
+                        (character :: Model):FindFirstChild(partName)
+                    if candidate ~= part
+                        and candidate
+                        and candidate:IsA("BasePart") then
+                        local candidatePart: BasePart = candidate :: BasePart
+                        local candidatePoint: Vector3 =
+                            candidatePart.Position + displacement
+                        local candidateDelta: Vector3 =
+                            candidatePoint - origin.Position
+                        if candidateDelta.Magnitude > 0.05
+                            and isWeaponPathClear(
+                                origin.Position,
+                                candidatePoint,
+                                character
+                            ) then
+                            predicted = candidatePoint
+                            delta = candidateDelta
+                            rescued = true
+                            break
+                        end
+                    end
+                end
+                if not rescued then
+                    return nil, nil, "obstructed"
+                end
+            end
         end
 
         local turnError: number = displacement.Magnitude
@@ -627,6 +685,9 @@ function Module.init(runtime: any): any
         }
     )
     local ShootTargetBox
+    local silentSweepRow: GuiObject? = nil
+    local silentSpawnRow: GuiObject? = nil
+    local spawnStatsRow: GuiObject? = nil
     local function refreshShootOptions(): ()
         if ShootTargetBox then
             setOptionVisible(
@@ -635,12 +696,36 @@ function Module.init(runtime: any): any
                 mm2Settings.shootMode == "Custom"
             )
         end
+        -- Silent-only controls stay hidden while the mode is Prediction.
+        local silent: boolean = mm2Settings.silentAim == true
+        if silentSweepRow then
+            setOptionVisible(ShootFeature, silentSweepRow :: GuiObject, silent)
+        end
+        if silentSpawnRow then
+            setOptionVisible(ShootFeature, silentSpawnRow :: GuiObject, silent)
+        end
+        if spawnStatsRow then
+            setOptionVisible(ShootFeature, spawnStatsRow :: GuiObject, silent)
+        end
     end
     addCycleOption(
         ShootFeature,
         "Mode",
-        {"Manual", "Custom"},
-        1,
+        {"Prediction", "Silent AIM"},
+        mm2Settings.silentAim and 2 or 1,
+        function(value: string): ()
+            mm2Settings.silentAim = value == "Silent AIM"
+            refreshShootOptions()
+        end,
+        "Prediction fires from your gun with lead compensation. Silent AIM "
+            .. "authors the shot at the target: same prediction, works through "
+            .. "walls."
+    )
+    addCycleOption(
+        ShootFeature,
+        "Target",
+        {"Murder", "Custom"},
+        mm2Settings.shootMode == "Custom" and 2 or 1,
         function(value: string): ()
             mm2Settings.shootMode = value
             refreshShootOptions()
@@ -661,8 +746,10 @@ function Module.init(runtime: any): any
         function(value: boolean): ()
             mm2Settings.shootWallCheck = value
         end,
-        "Holds fire while a wall blocks the muzzle. SilentAIM skips it: it "
-            .. "authors the shot at the target."
+        "Holds fire while a wall blocks the muzzle. If only a sliver of the "
+            .. "target is exposed — a hand or arm around a corner — the shot "
+            .. "aims at that visible part. Silent AIM skips it: it authors "
+            .. "the shot at the target."
     )
     addToggleOption(
         ShootFeature,
@@ -673,16 +760,7 @@ function Module.init(runtime: any): any
         end,
         "Pistol macro: hides the gun 0.01 seconds after every shot."
     )
-    addToggleOption(
-        ShootFeature,
-        "SilentAIM",
-        mm2Settings.silentAim,
-        function(value: boolean): ()
-            mm2Settings.silentAim = value
-        end,
-        "Authors the shot at the target: same prediction as Shoot, ignores walls."
-    )
-    addNumberOption(
+    silentSweepRow = addNumberOption(
         ShootFeature,
         "Silent sweep",
         mm2Settings.silentSweep,
@@ -704,7 +782,7 @@ function Module.init(runtime: any): any
             silentSpawnIndex = valueIndex
         end
     end
-    addCycleOption(
+    local silentSpawnButton = addCycleOption(
         ShootFeature,
         "Silent spawn",
         silentSpawnValues,
@@ -717,6 +795,9 @@ function Module.init(runtime: any): any
             .. "geometry (1.6 studs above); Behind = far side. Check Spawn A/B "
             .. "status to see which variant actually scores."
     )
+    if silentSpawnButton then
+        silentSpawnRow = silentSpawnButton.Parent :: GuiObject
+    end
     local function spawnStatsText(): string
         local stats: any = state.mm2ShotFeedback and
             state.mm2ShotFeedback.spawnStats or {}
@@ -740,9 +821,12 @@ function Module.init(runtime: any): any
         end
         return "Spawn A/B (hits/shots): " .. table.concat(parts, " · ")
     end
-    addActionOption(ShootFeature, "Spawn A/B status", function(): ()
+    local spawnStatsButton = addActionOption(ShootFeature, "Spawn A/B status", function(): ()
         notify(spawnStatsText())
     end)
+    if spawnStatsButton then
+        spawnStatsRow = spawnStatsButton.Parent :: GuiObject
+    end
     addToggleOption(
         ShootFeature,
         "Auto tune lead",
