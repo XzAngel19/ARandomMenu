@@ -74,15 +74,24 @@ function Module.init(runtime: any): any
         local _, humanoid: Humanoid? = getCharacterParts()
         ensureSprintTrail(root).Enabled = humanoid ~= nil and humanoid.MoveDirection.Magnitude > 0.05
     end
-    speed:CreateToggle({
-        Name = "Sprint", Default = false, Bindable = true,
-        Function = function(value: boolean): ()
-            if not value then clearSprintTrail() end
+    local function releaseSprint(): ()
+        disconnectFeatureConnection("MM2SprintHold")
+        speed.SetSprintHeld(false)
+        clearSprintTrail()
+    end
+    speed:CreateButton({
+        Name = "Sprint", Hold = true,
+        Function = function(): ()
+            speed.SetSprintHeld(true)
+            if not featureConnections.MM2SprintHold then
+                featureConnections.MM2SprintHold = TaskManager:Connect(speed.StepSprint)
+            end
         end,
-        Tooltip = "MM2: 30 WalkSpeed with a trail while Speed is enabled. Overrides the on-foot Speed method; use the KEY slot to assign a Sprint toggle key (unassigned by default).",
+        OnRelease = releaseSprint,
+        Tooltip = "Hold this button, its assigned key or the touch action to sprint. Works with Speed OFF; release restores normal Speed or your original speed. No toggle state is saved.",
     })
     activeCleanup = function(): ()
-        clearSprintTrail()
+        releaseSprint()
         speed.ClearSprint = nil
         speed.SprintFrame = nil
     end

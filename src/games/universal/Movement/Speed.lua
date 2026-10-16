@@ -253,6 +253,122 @@ function Module.init(context: Runtime): any
     end
 
     local speed: any
+    local function stepSpeed(deltaTime: number): ()
+        local options: any = speed.Options
+        local _, humanoid: Humanoid?, root: BasePart? = characterParts()
+        if not humanoid or not root then
+            if speed.ClearSprint then speed.ClearSprint() end
+            return
+        end
+        local sprint: boolean = speed.SprintHeld == true and not humanoid.Sit
+        local resolvedHumanoid: Humanoid = humanoid :: Humanoid
+        local resolvedRoot: BasePart = root :: BasePart
+        if resolvedHumanoid.Health <= 0 then
+            if speed.ClearSprint then speed.ClearSprint() end
+            return
+        end
+        if speed.SprintFrame then speed.SprintFrame(sprint and not humanoid.Sit, root) end
+
+        if not speed.Enabled and not sprint then restoreWalkSpeed(); return end
+        if speed.Enabled and options["Vehicle speed"] and options["Vehicle speed"].Value then
+            local assembly: BasePart?, model: Model?, seat: VehicleSeat? =
+                resolveVehicle()
+            if assembly then
+                local vehMode: string = options["Vehicle mode"] and options["Vehicle mode"].Value or "Multiplier"
+                local vehMultiplier: number = options["Vehicle multiplier"] and options["Vehicle multiplier"].Value or 2
+                local motorTorque: number = options["Motor torque"] and options["Motor torque"].Value or 50000
+                if vehMode == "Multiplier" then
+                    boostVehicleVelocity(assembly :: BasePart, nil, vehMultiplier)
+                elseif vehMode == "Motors" then
+                    boostVehicleMotors(model, vehMultiplier, motorTorque)
+                elseif vehMode == "Velocity" then
+                    local direction: Vector3? = seat
+                        and (seat :: VehicleSeat).CFrame.LookVector
+                            * (seat :: VehicleSeat).ThrottleFloat
+                        or nil
+                    boostVehicleVelocity(assembly :: BasePart, direction, vehMultiplier)
+                else
+                    boostVehicleSeatProperties(model, seat, vehMultiplier)
+                end
+                return
+            end
+        end
+
+        local mode: string = sprint and "WalkSpeed" or options["Mode"].Value
+        local target: number = sprint and 30 or options["Speed"].Value
+
+        if mode == "WalkSpeed" then
+            if runtime.originalWalkSpeed[resolvedHumanoid] == nil then
+                runtime.originalWalkSpeed[resolvedHumanoid] =
+                    resolvedHumanoid.WalkSpeed
+                if runtime.baseWalkSpeed == nil
+                    or resolvedHumanoid.WalkSpeed < runtime.baseWalkSpeed then
+                    runtime.baseWalkSpeed = resolvedHumanoid.WalkSpeed
+                end
+            end
+            resolvedHumanoid.WalkSpeed = target
+            runtime.lastAppliedWalkSpeed = target
+            return
+        end
+        restoreWalkSpeed()
+
+        local direction: Vector3 = moveDirection()
+        if direction.Magnitude < 0.05 then
+            return
+        end
+
+        if options["Auto jump"].Value
+            and resolvedHumanoid.FloorMaterial ~= Enum.Material.Air then
+            resolvedHumanoid:ChangeState(Enum.HumanoidStateType.Jumping)
+        end
+
+        local velocity: Vector3 = resolvedRoot.AssemblyLinearVelocity
+        if mode == "Velocity" then
+            resolvedRoot.AssemblyLinearVelocity = Vector3.new(
+                direction.X * target,
+                velocity.Y,
+                direction.Z * target
+            )
+            return
+        end
+        if mode == "Impulse" then
+            local wanted: Vector3 = direction * target
+            local difference: Vector3 = Vector3.new(
+                wanted.X - velocity.X,
+                0,
+                wanted.Z - velocity.Z
+            )
+            if difference.Magnitude > 2 then
+                resolvedRoot:ApplyImpulse(
+                    difference * resolvedRoot.AssemblyMass
+                )
+            end
+            return
+        end
+
+        local extra: number =
+            math.max(target - resolvedHumanoid.WalkSpeed, 0)
+        if mode == "Teleport" then
+            local now: number = os.clock()
+            if now < runtime.nextTeleportAt then
+                return
+            end
+            runtime.nextTeleportAt = now + options["Burst delay"].Value
+            local step: Vector3 = direction * extra
+                * options["Burst delay"].Value
+            if options["Wall check"].Value then
+                step = blocked(resolvedRoot, step)
+            end
+            resolvedRoot.CFrame = resolvedRoot.CFrame + step
+            return
+        end
+
+        local step: Vector3 = direction * extra * deltaTime
+        if options["Wall check"].Value then
+            step = blocked(resolvedRoot, step)
+        end
+        resolvedRoot.CFrame = resolvedRoot.CFrame + step
+    end
     speed = framework.Categories.Exploits:CreateModule({
         Name = "Speed",
         Category = "Exploits",
@@ -279,6 +395,7 @@ function Module.init(context: Runtime): any
                 end
                 runtime.lastAppliedWalkSpeed = nil
                 speed:SetStatus(nil)
+                if speed.SprintHeld then stepSpeed(0) end
                 return
             end
             speed:SetStatus(
@@ -291,123 +408,23 @@ function Module.init(context: Runtime): any
                 restoreVehicle()
                 if speed.ClearSprint then speed.ClearSprint() end
             end)
-            speed:Loop(function(deltaTime: number): ()
-                local options: any = speed.Options
-                local _, humanoid: Humanoid?, root: BasePart? = characterParts()
-                if not humanoid or not root then
-                    if speed.ClearSprint then speed.ClearSprint() end
-                    return
-                end
-                local sprint: boolean = speed.SprintFrame ~= nil and options.Sprint ~= nil and options.Sprint.Value == true
-                local resolvedHumanoid: Humanoid = humanoid :: Humanoid
-                local resolvedRoot: BasePart = root :: BasePart
-                if resolvedHumanoid.Health <= 0 then
-                    if speed.ClearSprint then speed.ClearSprint() end
-                    return
-                end
-                if speed.SprintFrame then speed.SprintFrame(sprint and not humanoid.Sit, root) end
-
-                if options["Vehicle speed"] and options["Vehicle speed"].Value then
-                    local assembly: BasePart?, model: Model?, seat: VehicleSeat? =
-                        resolveVehicle()
-                    if assembly then
-                        local vehMode: string = options["Vehicle mode"] and options["Vehicle mode"].Value or "Multiplier"
-                        local vehMultiplier: number = options["Vehicle multiplier"] and options["Vehicle multiplier"].Value or 2
-                        local motorTorque: number = options["Motor torque"] and options["Motor torque"].Value or 50000
-                        if vehMode == "Multiplier" then
-                            boostVehicleVelocity(assembly :: BasePart, nil, vehMultiplier)
-                        elseif vehMode == "Motors" then
-                            boostVehicleMotors(model, vehMultiplier, motorTorque)
-                        elseif vehMode == "Velocity" then
-                            local direction: Vector3? = seat
-                                and (seat :: VehicleSeat).CFrame.LookVector
-                                    * (seat :: VehicleSeat).ThrottleFloat
-                                or nil
-                            boostVehicleVelocity(assembly :: BasePart, direction, vehMultiplier)
-                        else
-                            boostVehicleSeatProperties(model, seat, vehMultiplier)
-                        end
-                        return
-                    end
-                end
-
-                local mode: string = sprint and "WalkSpeed" or options["Mode"].Value
-                local target: number = sprint and 30 or options["Speed"].Value
-
-                if mode == "WalkSpeed" then
-                    if runtime.originalWalkSpeed[resolvedHumanoid] == nil then
-                        runtime.originalWalkSpeed[resolvedHumanoid] =
-                            resolvedHumanoid.WalkSpeed
-                        if runtime.baseWalkSpeed == nil
-                            or resolvedHumanoid.WalkSpeed < runtime.baseWalkSpeed then
-                            runtime.baseWalkSpeed = resolvedHumanoid.WalkSpeed
-                        end
-                    end
-                    resolvedHumanoid.WalkSpeed = target
-                    runtime.lastAppliedWalkSpeed = target
-                    return
-                end
-                restoreWalkSpeed()
-
-                local direction: Vector3 = moveDirection()
-                if direction.Magnitude < 0.05 then
-                    return
-                end
-
-                if options["Auto jump"].Value
-                    and resolvedHumanoid.FloorMaterial ~= Enum.Material.Air then
-                    resolvedHumanoid:ChangeState(Enum.HumanoidStateType.Jumping)
-                end
-
-                local velocity: Vector3 = resolvedRoot.AssemblyLinearVelocity
-                if mode == "Velocity" then
-                    resolvedRoot.AssemblyLinearVelocity = Vector3.new(
-                        direction.X * target,
-                        velocity.Y,
-                        direction.Z * target
-                    )
-                    return
-                end
-                if mode == "Impulse" then
-                    local wanted: Vector3 = direction * target
-                    local difference: Vector3 = Vector3.new(
-                        wanted.X - velocity.X,
-                        0,
-                        wanted.Z - velocity.Z
-                    )
-                    if difference.Magnitude > 2 then
-                        resolvedRoot:ApplyImpulse(
-                            difference * resolvedRoot.AssemblyMass
-                        )
-                    end
-                    return
-                end
-
-                local extra: number =
-                    math.max(target - resolvedHumanoid.WalkSpeed, 0)
-                if mode == "Teleport" then
-                    local now: number = os.clock()
-                    if now < runtime.nextTeleportAt then
-                        return
-                    end
-                    runtime.nextTeleportAt = now + options["Burst delay"].Value
-                    local step: Vector3 = direction * extra
-                        * options["Burst delay"].Value
-                    if options["Wall check"].Value then
-                        step = blocked(resolvedRoot, step)
-                    end
-                    resolvedRoot.CFrame = resolvedRoot.CFrame + step
-                    return
-                end
-
-                local step: Vector3 = direction * extra * deltaTime
-                if options["Wall check"].Value then
-                    step = blocked(resolvedRoot, step)
-                end
-                resolvedRoot.CFrame = resolvedRoot.CFrame + step
-            end)
+            speed:Loop(stepSpeed)
         end,
     })
+
+    speed.SprintHeld = false
+    speed.SetSprintHeld = function(held: boolean): ()
+        speed.SprintHeld = held
+        if held or speed.Enabled then stepSpeed(0)
+        else
+            restoreWalkSpeed()
+            runtime.lastAppliedWalkSpeed = nil
+            if speed.ClearSprint then speed.ClearSprint() end
+        end
+    end
+    speed.StepSprint = function(deltaTime: number): ()
+        if speed.SprintHeld and not speed.Enabled then stepSpeed(deltaTime) end
+    end
 
     speed:CreateDropdown({
         Name = "Mode",
@@ -500,6 +517,7 @@ function Module.init(context: Runtime): any
     })
 
     activeCleanup = function(): ()
+        speed.SprintHeld = false
         restoreWalkSpeed()
         restoreVehicle()
         if speed.ClearSprint then speed.ClearSprint() end

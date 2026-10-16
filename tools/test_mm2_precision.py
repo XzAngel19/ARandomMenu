@@ -433,7 +433,7 @@ local TaskManager={Connect=function(self,cb) callbacks[1]=cb; return {Disconnect
 local function disconnectFeatureConnection(key)
     if featureConnections[key] then featureConnections[key]:Disconnect(); featureConnections[key]=nil end
 end
-''', section(KNIFE, "    local function throwKnife", "    local KnifeThrowFeature:"), r'''
+''', section(KNIFE, "    local function throwKnife", "    local aura: any = state.mm2KnifeAuraModule"), r'''
 for _,fps in ipairs({20,60,120}) do
     now=0; sends=0; notes=0
     toggleKnifeThrow(true)

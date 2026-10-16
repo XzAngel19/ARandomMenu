@@ -363,6 +363,7 @@ function Module.init(context: any): WidgetLibrary
         table.insert(toggleThemeRefreshers, refreshOptionState)
 
         local function toggleOption(): ()
+            if not option.Visible then return end
             enabled = not enabled
             refreshOptionState()
             configData.states[optionKey] = enabled
@@ -419,16 +420,18 @@ function Module.init(context: any): WidgetLibrary
         feature: any,
         labelText: string,
         callback: () -> (),
-        hintText: string?
+        hintText: string?,
+        interaction: any?
     ): TextButton
         local option = createOptionRow(feature, labelText, hintText)
-        local button = makeButton(option, "RUN", 11)
+        local button = makeButton(option, interaction and interaction.hold and "HOLD" or "RUN", 11)
         button.BackgroundColor3 = state.guiStyle == "Default"
             and Theme.buttonHover
             or Theme.accentSoft
 
         state.layoutOptionControl(option, button, 0.26)
         local function executeAction(): ()
+            if not option.Visible then return end
             runActionButton(
                 button,
                 "RUN",
@@ -437,7 +440,41 @@ function Module.init(context: any): WidgetLibrary
                 "[Random Testing Menu] " .. labelText
             )
         end
-        trackUiConnection(button.MouseButton1Click:Connect(executeAction))
+        local hold: boolean = interaction ~= nil and interaction.hold == true
+        local held = {button = false, shortcut = false}
+        local active: boolean = false
+        local buttonInput: InputObject? = nil
+        local function setHeld(source: string, value: boolean): ()
+            if value and not option.Visible then return end
+            held[source] = value
+            local wanted: boolean = held.button or held.shortcut
+            if active == wanted then return end
+            active = wanted
+            button.Text = wanted and "HELD" or "HOLD"
+            if wanted then callback()
+            elseif interaction and interaction.onRelease then interaction.onRelease() end
+        end
+        if hold then
+            trackUiConnection(button.InputBegan:Connect(function(input: InputObject): ()
+                if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+                    if buttonInput == nil then buttonInput = input; setHeld("button", true) end
+                end
+            end))
+            trackUiConnection(UserInputService.InputEnded:Connect(function(input: InputObject): ()
+                if input == buttonInput or (buttonInput and buttonInput.UserInputType == Enum.UserInputType.MouseButton1
+                    and input.UserInputType == Enum.UserInputType.MouseButton1) then
+                    buttonInput = nil
+                    setHeld("button", false)
+                end
+            end))
+            trackUiConnection(UserInputService.WindowFocusReleased:Connect(function(): ()
+                held.button = false
+                buttonInput = nil
+                setHeld("shortcut", false)
+            end))
+        else
+            trackUiConnection(button.MouseButton1Click:Connect(executeAction))
+        end
         local shortcutButton: TextButton =
             (makeButton(option, "KEY", 9) :: any) :: TextButton
         shortcutButton.BackgroundColor3 = state.guiStyle == "Default"
@@ -462,7 +499,8 @@ function Module.init(context: any): WidgetLibrary
             shortcutButton,
             feature.configKey .. labelText,
             labelText,
-            executeAction
+            hold and function(): () setHeld("shortcut", true) end or executeAction,
+            hold and {hold = true, onRelease = function(): () setHeld("shortcut", false) end} or nil
         )
         return button :: TextButton
     end

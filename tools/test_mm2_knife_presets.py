@@ -56,6 +56,7 @@ state.mm2Core={findMurderer=function() return LocalPlayer end,getPlayerRole=func
    notes+=1;lastTarget=shot.target;assert(not shot.silent and shot.settings.animation and shot.settings.wallCheck)
  end}}
 local toggle
+state.mm2KnifeAuraModule={CreateToggle=function(_,d) assert(d.Name=='Knife Throw' and d.Bindable);toggle=d.Function end}
 local function addToggleOption(_,name,_,fn,_,bindable) assert(name=='Knife Throw' and bindable);toggle=fn end
 local function addActionOption() error('No redundant action allowed') end
 local function addNumberOption() error('No numeric settings allowed') end
@@ -72,8 +73,11 @@ render(.26);assert(not loops.render)
 loops.heartbeat();assert(loops.render and sends==1,'next cycle starts without extra Fire delay')
 toggle(false);assert(not loops.render and not loops.heartbeat)
 toggle(true);knife.Enabled=false;loops.heartbeat();assert(not loops.render and sends==1)
-knife.Enabled=true;state.mm2KnifeRuntime.masterEnabled=false;loops.heartbeat();assert(not loops.render)
-state.mm2KnifeRuntime.masterEnabled=true;far.visible=false;loops.heartbeat();assert(not loops.render,'fully hidden targets are not selected')
+knife.Enabled=true;state.mm2KnifeRuntime.masterEnabled=false;state.mm2KnifeThrowRefresh()
+assert(not loops.heartbeat and not loops.render and state.mm2KnifeRuntime.throwWanted,'master stops but retains selection')
+state.mm2KnifeRuntime.masterEnabled=true;state.mm2KnifeThrowRefresh()
+assert(loops.heartbeat,'master ON resumes selected Throw')
+far.visible=false;loops.heartbeat();assert(not loops.render,'fully hidden targets are not selected')
 close.visible=true;loops.heartbeat();assert(loops.render)
 charAdded();assert(not loops.render,'respawn cancels pose and packet')
 Module.destroy();assert(not loops.heartbeat and not charAdded and sends==1)

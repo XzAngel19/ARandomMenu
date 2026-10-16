@@ -798,7 +798,7 @@ do
     end
     print("[HARNESS] FREEZE MOVEMENTS TOGGLE CYCLES CLEAN")
     local expected = {
-      Combat = {"Aim Assist", "KillAura", "TriggerBot", "Knife", "Shoot"},
+      Combat = {"Aim Assist", "KillAura", "TriggerBot", "SilentAIM"},
       Exploits = {"Fly", "Fling", "Noclip", "Spider", "Speed", "Jump", "Interact Extender"},
       Utilities = {"Anti Fling", "Anti Void", "Click Teleport", "Freeze Movements", "Ghost", "Teleport", "Disguise"},
       World = {"Improve FPS", "Gravity", "Anti AFK", "Safe Walk", "Blurt Roles"},
@@ -811,15 +811,32 @@ do
         assert(feature.row.LayoutOrder == index, name .. " in wrong display order")
       end
     end
-    for _, name in ipairs({"Metrics", "Learning", "Game Learning", "HookPart", "Flight", "Invisible", "SpinBot", "Sprint", "Instant Role Notify", "Auto Shoot"}) do
+    for _, name in ipairs({"Metrics", "Learning", "Game Learning", "HookPart", "Flight", "Invisible", "SpinBot", "Sprint", "Instant Role Notify", "Auto Shoot", "Knife", "Shoot"}) do
       assert(not findFeature(name), "Removed module still present: " .. name)
     end
     local speed = ex.state.framework:GetModule("Speed")
     assert(speed and speed.Options.Sprint, "Sprint must be an option of Speed")
     local sprintBinding = ex.state.shortcutBindings["Universal.SpeedSprint"]
     assert(sprintBinding and sprintBinding.key == Enum.KeyCode.Unknown, "Sprint needs an unassigned configurable key slot")
-    sprintBinding.onPress();assert(speed.Options.Sprint.Value == true)
-    sprintBinding.onPress();assert(speed.Options.Sprint.Value == false)
+    assert(sprintBinding.hold and speed.Options.Sprint.Metadata.type == "action", "Sprint must be a held action, not toggle")
+    assert(not speed.Enabled and not ex.state.toggleControls["Universal.Speed.Sprint"], "no Sprint checkbox")
+    sprintBinding.onPress();assert(speed.SprintHeld and not speed.Enabled)
+    sprintBinding.onRelease();assert(not speed.SprintHeld and not speed.Enabled)
+    local sprintButton = speed.Options.Sprint.Object
+    local finger = {UserInputType = Enum.UserInputType.Touch}
+    local otherFinger = {UserInputType = Enum.UserInputType.Touch}
+    sprintButton.InputBegan:Fire(finger);assert(speed.SprintHeld and not speed.Enabled)
+    UserInputService.InputEnded:Fire(otherFinger);assert(speed.SprintHeld, "unrelated touch must not release Sprint")
+    sprintBinding.onPress()
+    UserInputService.InputEnded:Fire(finger);assert(speed.SprintHeld, "key remains held after touch release")
+    sprintBinding.onRelease();assert(not speed.SprintHeld)
+    sprintButton.InputBegan:Fire(finger);UserInputService.WindowFocusReleased:Fire()
+    assert(not speed.SprintHeld, "focus loss releases hold")
+    sprintButton.MouseButton1Click:Fire();assert(not speed.SprintHeld, "click after release must not latch Sprint")
+    sprintButton.Parent.Visible = false
+    sprintBinding.onPress();assert(not speed.SprintHeld, "hidden action key must not execute")
+    sprintBinding.onRelease();sprintButton.Parent.Visible = true
+
     local shootAuto = ex.state.toggleControls["MM2.Shoot.AutoShoot"]
     assert(shootAuto, "Auto Shoot must be inside Shoot")
     local jump = ex.state.framework:GetModule("Jump")
@@ -834,19 +851,33 @@ do
     local blurt = findFeature("Blurt Roles")
     -- Option identity is also persisted in the widget toggle registry.
     assert(ex.state.toggleControls["MM2.BlurtRoles.InstantRoles"], "Instant Roles must be a Blurt Roles option")
-    local shoot = findFeature("Shoot")
+    local shoot = findFeature("SilentAIM")
     assert(ex.state.shortcutBindings["MM2.Shoot"], "Shoot keeps its main activation shortcut")
     assert(not shoot.options:FindFirstChild("Option_Shootnow"), "Shoot now duplicates its main keybind")
     assert(not ex.state.shortcutBindings["MM2.ShootShoot now"], "duplicate Shoot now shortcut must not register")
-    local knife = findFeature("Knife")
+    local knife = findFeature("KillAura")
     for _, name in ipairs({"Mode", "ThrowRange", "Firedelay", "Spawnoffset", "WallCheck", "Throwanimation", "ThrowHz", "Thrownow"}) do
       assert(not knife.options:FindFirstChild("Option_" .. name), "redundant Knife setting: " .. name)
     end
+    assert(shootAuto and shoot.options:FindFirstChild("Option_AutoShoot").Visible, "Auto Shoot must be a visible top-level Gun option")
+    local auraModule = ex.state.framework:GetModule("KillAura")
+    assert(auraModule.CombatAdapter and not auraModule.Options.Reach.Visible, "MM2 must not run/display duplicate generic melee controls")
+    auraModule:Toggle(true);assert(ex.state.mm2KnifeRuntime.masterEnabled)
+    assert(#auraModule.Cleanup == 0, "generic attack loop/watchers must not start alongside MM2 adapter")
+    auraModule:Toggle(false);assert(not ex.state.mm2KnifeRuntime.masterEnabled)
+    assert(ex.state.mm2KnifeRuntime.auraWanted, "master OFF retains the selected attack")
+    ex.state.toggleControls["Universal.KillAura.KnifeThrow"].setChecked(true)
+    assert(not ex.state.mm2KnifeRuntime.masterEnabled, "child does not bypass master")
+    auraModule:Toggle(true);assert(ex.state.mm2KnifeRuntime.masterEnabled and ex.state.mm2KnifeRuntime.throwWanted)
+    auraModule:Toggle(false);assert(ex.state.mm2KnifeRuntime.throwWanted, "stop does not erase Throw preference")
+    ex.state.toggleControls["Universal.KillAura.KnifeThrow"].setChecked(false)
+
     local auraRange = knife.options:FindFirstChild("Option_AuraRange")
-    assert(auraRange and not auraRange.Visible, "Aura-only range hidden while Aura is off")
-    ex.state.toggleControls["MM2.Knife.KnifeAura"].setChecked(true)
+    assert(auraRange and auraRange.Visible, "Knife Aura is the default MM2 KillAura attack")
+    ex.state.toggleControls["Universal.KillAura.KnifeAura"].setChecked(false)
+    assert(not auraRange.Visible)
+    ex.state.toggleControls["Universal.KillAura.KnifeAura"].setChecked(true)
     assert(auraRange.Visible)
-    ex.state.toggleControls["MM2.Knife.KnifeAura"].setChecked(false)
     local spider = findFeature("Spider")
     assert(spider.options:FindFirstChild("Option_CeilingWalk").Visible)
     assert(not spider.options:FindFirstChild("Option_Climbstate").Visible)

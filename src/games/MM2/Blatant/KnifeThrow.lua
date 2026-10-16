@@ -290,48 +290,34 @@ function Module.init(runtime: any): any
         if not ok then stopThrowAnimation() end
     end
 
+    local function refreshKnifeThrow(): ()
+        disconnectFeatureConnection("MM2KnifeThrow")
+        if not knifeThrowSettings.enabled or (state.mm2KnifeRuntime and state.mm2KnifeRuntime.masterEnabled == false) then
+            stopThrowAnimation()
+            return
+        end
+        featureConnections.MM2KnifeThrow = TaskManager:Connect(throwKnife)
+    end
     local function toggleKnifeThrow(enabled: boolean): ()
         knifeThrowSettings.enabled = enabled
         if state.mm2KnifeRuntime then state.mm2KnifeRuntime.throwWanted = enabled end
-        disconnectFeatureConnection("MM2KnifeThrow")
-        if not enabled then stopThrowAnimation(); return end
-        -- A new throw can start as soon as the previous recovery ends.
-        -- No user timer, range slider, catch-up burst or animation interruption.
-        featureConnections.MM2KnifeThrow = TaskManager:Connect(throwKnife)
+        refreshKnifeThrow()
     end
 
-    local KnifeThrowFeature: any = state.mm2KnifeFeature
-    if not KnifeThrowFeature then
-        KnifeThrowFeature = createUniversalFeature(
-            "Knife",
-            "Knife aura and knife throw, each behind its own option below",
-            6,
-            function(enabled: boolean): ()
-                if not enabled then
-                    toggleKnifeThrow(false)
-                end
-            end,
-            {
-                categoryName = "Combat",
-                parent = MM2Scroll,
-                registry = mm2Features,
-            }
-        )
-        state.mm2KnifeFeature = KnifeThrowFeature
-    end
-
-    state.mm2KnifeThrowOff = function(): ()
-        toggleKnifeThrow(false)
-    end
-
-    addToggleOption(KnifeThrowFeature, "Knife Throw", false, toggleKnifeThrow,
-        "Hold the knife: repeatedly throw at the nearest visible player. Normal origin, wall checks and full animation are automatic. No range or delay to configure.", true)
+    local aura: any = state.mm2KnifeAuraModule
+    assert(aura, "Knife Throw requires the MM2 KillAura adapter")
+    state.mm2KnifeThrowRefresh = refreshKnifeThrow
+    state.mm2KnifeThrowOff = function(): () toggleKnifeThrow(false) end
+    aura:CreateToggle({Name = "Knife Throw", Default = false, Bindable = true,
+        Function = toggleKnifeThrow,
+        Tooltip = "KillAura ON + held knife: repeatedly throw at the nearest visible target. Normal origin, full animation and WallCheck are automatic."})
 
     featureConnections.MM2KnifeThrowCharacter = LocalPlayer.CharacterAdded:Connect(stopThrowAnimation)
     activeCleanup = function(): ()
         toggleKnifeThrow(false)
         disconnectFeatureConnection("MM2KnifeThrowCharacter")
         state.mm2KnifeThrowOff = nil
+        state.mm2KnifeThrowRefresh = nil
     end
     Module.Events = featureConnections
     Module.Initialized = true

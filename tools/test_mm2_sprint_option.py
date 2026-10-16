@@ -32,14 +32,14 @@ local speed,loop,handler
 local function option(self,d)
  local value=d.Default
  if d.List then value=d.List[d.Index or 1] end
- if d.Name=='Sprint' then assert(d.Bindable==true) end
- local o={Value=value,fn=d.Function}
+ if d.Name=='Sprint' then assert(d.Hold==true and d.OnRelease) end
+ local o={Value=value,fn=d.Function,release=d.OnRelease}
  function o:Set(v) self.Value=v;if self.fn then self.fn(v) end end
  self.Options[d.Name]=o;return o
 end
 local framework={Categories={Exploits={CreateModule=function(_,d)
  handler=d.Function;speed={Options={},Enabled=false}
- speed.CreateDropdown=option;speed.CreateSlider=option;speed.CreateToggle=option
+ speed.CreateDropdown=option;speed.CreateSlider=option;speed.CreateToggle=option;speed.CreateButton=option
  function speed:SetStatus() end
  function speed:Clean(fn) self.cleanup=fn end
  function speed:Loop(fn) loop=fn end
@@ -50,6 +50,10 @@ local framework={Categories={Exploits={CreateModule=function(_,d)
  return speed
 end}}}
 function framework:GetModule(n) assert(n=='Speed');return speed end
+local standalone
+local TaskManager={Connect=function(_,fn) standalone=fn;return {Disconnect=function() standalone=nil end} end}
+local featureConnections={}
+local function disconnectFeatureConnection(k) if featureConnections[k] then featureConnections[k]:Disconnect();featureConnections[k]=nil end end
 local state={framework=framework,mm2Core={}}
 local host={LocalPlayer=LocalPlayer,state=state,workspace={}}
 local context={framework=framework,host=host,services={movementInput={getVector=function() return 0,0 end}}}
@@ -57,21 +61,23 @@ local function getCharacterParts() return character,humanoid,root end
 '''+'\nlocal Speed=(function()\n'+S+'\nend)()\nlocal Sprint=(function()\n'+K+'\nend)()\n'+r'''
 Speed.init(context);Sprint.init({})
 assert(speed.Options.Sprint and speed.SprintFrame)
+local press,release=speed.Options.Sprint.fn,speed.Options.Sprint.release
+press();assert(not speed.Enabled and speed.SprintHeld and humanoid.WalkSpeed==30 and standalone)
+release();assert(not standalone and humanoid.WalkSpeed==16 and not speed.SprintHeld)
 speed:Toggle(true);loop(1/60);assert(humanoid.WalkSpeed==32)
-speed.Options.Sprint:Set(true);loop(1/60)
-assert(humanoid.WalkSpeed==30 and root:FindFirstChild('Wurst_SprintTail').Enabled)
+press();assert(humanoid.WalkSpeed==30 and root:FindFirstChild('Wurst_SprintTail').Enabled)
 local oldHumanoid=humanoid;local oldRoot=root
 humanoid={Parent=true,Health=100,WalkSpeed=22,Sit=false,MoveDirection=Vector3.zero,FloorMaterial='Air'};root=makeRoot();loop(1/60)
 assert(humanoid.WalkSpeed==30 and not root:FindFirstChild('Wurst_SprintTail').Enabled)
 for _,o in ipairs(objects) do assert(o.Parent~=oldRoot,'old trail must be released on respawn') end
-speed.Options.Sprint:Set(false);loop(1/60);assert(humanoid.WalkSpeed==32)
-for _,o in ipairs(objects) do assert(not o.Parent,'unchecked Sprint releases all trail objects') end
-speed.Options.Sprint:Set(true);loop(1/60);speed:Toggle(false)
+release();assert(humanoid.WalkSpeed==32)
+press();speed:Toggle(false);assert(humanoid.WalkSpeed==30,'Sprint continues with Speed OFF')
+standalone(1/60);release()
 assert(oldHumanoid.WalkSpeed==16 and humanoid.WalkSpeed==22)
 for _,o in ipairs(objects) do assert(not o.Parent) end
-Sprint.destroy();Speed.destroy()
-assert(not speed.SprintFrame and not speed.ClearSprint)
-print('PASS Sprint option: actual Speed owner, 30 speed/trail, idle trail, unchecked/Speed OFF, respawn, cleanup; no standalone feature')
+press();Sprint.destroy();Speed.destroy()
+assert(not speed.SprintFrame and not speed.ClearSprint and not standalone and humanoid.WalkSpeed==22)
+print('PASS Sprint option: actual Speed owner, held action, Speed OFF/ON, release restoration, idle trail, respawn, cleanup; no standalone feature')
 '''
 assert 'createUniversalFeature(' not in K
 with tempfile.TemporaryDirectory(prefix='sprint-option-') as tmp:

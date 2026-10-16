@@ -465,12 +465,14 @@ function Module.init(context: any): Framework
         function created:RefreshVisibility(): ()
             for _, option: any in pairs(created.Options) do
                 local rule: any = option.Show
+                local available: boolean = created.OptionFilter == nil or created.OptionFilter(option.Name)
+                if type(rule) ~= "table" and available and not option.FilteredOut then continue end
+                option.FilteredOut = not available
+                local visible: boolean = available
                 if type(rule) ~= "table" then
-                    continue
-                end
-                local visible: boolean = true
-                if rule.Option ~= nil then
-                    visible = ruleHolds(rule)
+                    -- Explicitly unavailable in the current game adapter.
+                elseif rule.Option ~= nil then
+                    visible = visible and ruleHolds(rule)
                 else
                     for _, nested: any in ipairs(rule) do
                         if not ruleHolds(nested) then
@@ -679,8 +681,13 @@ function Module.init(context: any): Framework
         end
 
         function created:CreateButton(definition2: any): Option
+            if definition2.Hold then
+                assert(type(definition2.OnRelease) == "function", "A held action requires OnRelease")
+            end
             local option: any = newOption(definition2.Name, nil, "action", definition2)
+            option.Metadata.hold = definition2.Hold == true
             local function run(): ()
+                if option.Metadata.visible == false then return end
                 if type(definition2.Function) == "function" then
                     definition2.Function()
                 end
@@ -690,7 +697,8 @@ function Module.init(context: any): Framework
                 feature,
                 definition2.Name,
                 run,
-                definition2.Tooltip
+                definition2.Tooltip,
+                definition2.Hold and {hold = true, onRelease = definition2.OnRelease} or nil
             )
             return register(option, definition2)
         end

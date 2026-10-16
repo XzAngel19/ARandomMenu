@@ -616,6 +616,7 @@ function Module.init(runtime: any): any
         return true
     end
 
+    local shootOptionsReady: boolean = false
     local shootFeatureActive: boolean = false
     local autoShootActive: boolean = false
     local autoShootWanted: boolean = false
@@ -658,7 +659,7 @@ function Module.init(runtime: any): any
     local manualShotPending: boolean = false
     local function triggerManualShot(): ()
         if not shootFeatureActive then
-            notify("Enable Shoot first.")
+            notify("Enable SilentAIM first.")
             return
         end
         if manualShotPending then return end
@@ -717,7 +718,7 @@ function Module.init(runtime: any): any
 
     updateAutoShootConnection = function(): ()
         disconnectFeatureConnection("MM2AutoShoot")
-        autoShootActive = shootFeatureActive and autoShootWanted
+        autoShootActive = shootOptionsReady and shootFeatureActive and autoShootWanted
         if not autoShootActive then
             lastAutoStatus = nil
             if ShootFeature then ShootFeature:SetStatus(nil) end
@@ -754,17 +755,24 @@ function Module.init(runtime: any): any
         if changed and type(queueConfigSave) == "function" then queueConfigSave() end
     end
 
+    if type(configData) == "table" and configData.values["MM2.Shoot.Aimmethod"] == nil then
+        configData.values["MM2.Shoot.Aimmethod"] = configData.values["MM2.Shoot.Mode"]
+    end
     ShootFeature = createUniversalFeature(
-        "Shoot",
-        "Hitscan aim with filtered motion, RTT compensation, and miss feedback",
+        "SilentAIM",
+        "Gun: use the assigned key for one shot, or enable Auto Shoot below. Aim method selects Prediction or Silent AIM; Auto uses your held gun only.",
         4,
         toggleShootMurderer,
         {
             categoryName = "Combat",
+            configKey = "MM2.Shoot", -- preserve existing Gun settings and activation key
             parent = MM2Scroll,
             registry = mm2Features,
         }
     )
+    addInformationOption(ShootFeature, "Weapon: Gun")
+    addToggleOption(ShootFeature, "Auto Shoot", false, toggleAutoShoot,
+        "While Shoot is ON and you hold the gun: try every frame as soon as the current target is visible. No distance or prediction-confidence gate. Uses Shoot's mode.", true)
     local ShootTargetBox
     local wallCheckRow: GuiObject? = nil
     local silentSweepRow: GuiObject? = nil
@@ -793,7 +801,7 @@ function Module.init(runtime: any): any
     end
     addCycleOption(
         ShootFeature,
-        "Mode",
+        "Aim method",
         {"Prediction", "Silent AIM"},
         mm2Settings.silentAim and 2 or 1,
         function(value: string): ()
@@ -985,8 +993,12 @@ function Module.init(runtime: any): any
     end, false)
     refreshShootOptions()
 
-    addToggleOption(ShootFeature, "Auto Shoot", false, toggleAutoShoot,
-        "While Shoot is ON and you hold the gun: try every frame as soon as the current target is visible. No distance or prediction-confidence gate. Uses Shoot's mode.", true)
+
+
+    -- The visible Auto control is at the top, but arming waits until saved
+    -- aim method/target/lead values below have all been restored.
+    shootOptionsReady = true
+    if updateAutoShootConnection then updateAutoShootConnection() end
 
     activeCleanup = function(): ()
         toggleShootMurderer(false)

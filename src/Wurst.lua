@@ -51,7 +51,6 @@ local FEATURE_CATEGORIES: {[string]: string} = {
     ["Walk Speed"] = "World",
     ["Invisible"] = "Exploits",
 
-    ["Knife"] = "Combat",
 
     ["Click Teleport"] = "Utilities",
     ["Freeze Movements"] = "Utilities",
@@ -80,7 +79,7 @@ local FEATURE_CATEGORIES: {[string]: string} = {
     ["Remote Logger"] = "Other",
 
     ["Blurt Roles"] = "World",
-    ["Shoot"] = "Combat",
+    ["SilentAIM"] = "Combat",
     ["Trajectory Calibration"] = "Other",
     ["Teleport"] = "Utilities",
 
@@ -221,7 +220,7 @@ local RUNTIME_RAW_BASE: string =
         .. RUNTIME_BRANCH
         .. "/"
 
-local SOURCE_STAMP: string = "v38-20261016-simple-presets"
+local SOURCE_STAMP: string = "v39-20261016-combat-ownership"
 
 local BOOT_STARTED_AT: number = os.clock()
 local BOOT_FINGERPRINT_SECONDS: number = 0

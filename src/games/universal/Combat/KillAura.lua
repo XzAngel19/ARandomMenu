@@ -248,6 +248,11 @@ function Module.init(context: Runtime): any
         Tooltip = "Swings your weapon at everyone in reach, with its own "
             .. "range, rate, field of view and rotation.",
         Function = function(enabled: boolean): ()
+            if aura.CombatAdapter then
+                clearHighlights()
+                aura.CombatAdapter(enabled)
+                return
+            end
             nextSwingAt = 0
             nextStatusAt = 0
             if not enabled then

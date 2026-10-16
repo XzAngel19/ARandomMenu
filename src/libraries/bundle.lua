@@ -1,5 +1,5 @@
 return {
-    stamp = "v38-20261016-simple-presets",
+    stamp = "v39-20261016-combat-ownership",
     files = {
         ["src/Profile/142823291.lua"] = [[
 --!strict
@@ -1499,7 +1499,7 @@ end
 return Module
 
 ]],
-        ["src/games/MM2/Blatant/KnifeAura.lua"] = [[
+        ["src/games/MM2/Blatant/KnifeAura.lua"] = [=[
 local Module = {
     Name = "MM2 Knife Aura",
     PlaceId = 142823291,
@@ -1681,7 +1681,7 @@ function Module.init(runtime: any): any
         disconnectFeatureConnection("MM2KnifeVirtualHitbox")
         disconnectFeatureConnection("MM2KnifeAura")
         disconnectFeatureConnection("MM2KnifeController")
-        if not knifeSettings.aura then
+        if not knifeSettings.aura or not state.mm2KnifeRuntime.masterEnabled then
             return
         end
 
@@ -1694,64 +1694,78 @@ function Module.init(runtime: any): any
             end)
     end
 
-    local auraRangeRow: any = nil
     local function toggleKnifeAura(enabled: boolean): ()
         knifeSettings.aura = enabled
-        if auraRangeRow then setOptionVisible(state.mm2KnifeFeature, auraRangeRow, enabled) end
         state.mm2KnifeRuntime.auraWanted = enabled
         state.mm2KnifeRuntime.lastAuraSwing = -math.huge
         refreshKnifeController()
     end
 
-    local KnifeFeature = createUniversalFeature(
-        "Knife",
-        "Knife aura and knife throw, each behind its own option below",
-        6,
-        function(enabled: boolean): ()
-            state.mm2KnifeRuntime.masterEnabled = enabled
-            if enabled then
-                return
-            end
-            -- Master OFF is a hard stop: both controllers halt AND their
-            -- checkboxes uncheck (visual, saved state and callback move
-            -- together), so a checked-but-dead sub-option can never happen.
-            toggleKnifeAura(false)
-            if type(state.mm2KnifeThrowOff) == "function" then
-                state.mm2KnifeThrowOff()
-            end
-            if type(state.setToggleChecked) == "function" then
-                state.setToggleChecked("MM2.Knife.KnifeAura", false)
-                state.setToggleChecked("MM2.Knife.KnifeThrow", false)
-            end
-        end,
-        {
-            categoryName = "Combat",
-            parent = MM2Scroll,
-            registry = mm2Features,
-        }
-    )
+    local aura: any = state.framework and state.framework:GetModule("KillAura")
+    assert(aura, "MM2 Knife requires the existing KillAura module")
+    local wasEnabled: boolean = aura.Enabled
+    if type(configData) == "table" and not configData.values["MM2.Knife.MigratedToKillAura"] then
+        for _, label: string in ipairs({"KnifeAura", "KnifeThrow"}) do
+            local old: any = configData.states["MM2.Knife." .. label]
+            local key: string = "Universal.KillAura." .. label
+            if configData.states[key] == nil and old ~= nil then configData.states[key] = old end
+        end
+        for _, pair in ipairs({
+            {"MM2.Knife.AuraRange", "Universal.KillAura.AuraRange"},
+            {"Shortcut.MM2KnifeKnifeThrow", "Shortcut.UniversalKillAuraKnifeThrow"},
+            {"Shortcut.MM2Knife", "Shortcut.UniversalKillAura"},
+        }) do
+            if configData.values[pair[2]] == nil then configData.values[pair[2]] = configData.values[pair[1]] end
+        end
+        wasEnabled = wasEnabled or configData.states["MM2.Knife"] == true
+        configData.values["MM2.Knife.MigratedToKillAura"] = true
+        if type(queueConfigSave) == "function" then queueConfigSave() end
+    end
+    if wasEnabled then aura:Toggle(false) end
+    local KnifeFeature: any = aura.Feature
+    local originalDescription: string = KnifeFeature.description
+    local originalSearch: string = KnifeFeature.searchText
+    KnifeFeature.description = "MM2 knife combat: Knife Aura stabs, Knife Throw repeats full throws. KillAura is the shared master; both use your held knife."
+    KnifeFeature.tooltipText = KnifeFeature.description
+    KnifeFeature.searchText = "killaura combat mm2 knife aura throw range"
+    aura.CombatAdapter = function(enabled: boolean): ()
+        state.mm2KnifeRuntime.masterEnabled = enabled
+        refreshKnifeController()
+        if state.mm2KnifeThrowRefresh then state.mm2KnifeThrowRefresh() end
+        aura:SetStatus(enabled and "Knife" or nil)
+    end
+    -- Generic melee controls do not describe the MM2 remote-based controller.
+    aura.OptionFilter = function(name: string): boolean
+        return name == "Knife Aura" or name == "Aura Range" or name == "Knife Throw"
+    end
+    aura:RefreshVisibility()
+    state.mm2KnifeAuraModule = aura
     state.mm2KnifeFeature = KnifeFeature
 
-    addToggleOption(
-        KnifeFeature,
-        "Knife Aura",
-        false,
-        toggleKnifeAura,
-        "Stabs the nearest valid target in range through the game's own HandleTouched"
-    )
-    auraRangeRow = addNumberOption(KnifeFeature, "Aura Range", 14, 7, 30, function(
-        value: number
-    ): ()
-        knifeSettings.auraRange = value
-    end, "Manual stab reach in studs.")
-
-    if auraRangeRow then setOptionVisible(KnifeFeature, auraRangeRow, knifeSettings.aura) end
+    aura:CreateToggle({Name = "Knife Aura", Default = true, Function = toggleKnifeAura,
+        Tooltip = "MM2 stabs with your equipped knife while KillAura is ON."})
+    aura:CreateSlider({Name = "Aura Range", Min = 7, Max = 30, Default = 14,
+        Show = {Option = "Knife Aura", Values = {true}},
+        Function = function(value: number): () knifeSettings.auraRange = value end})
+    if wasEnabled then aura:Toggle(true) end
 
     activeCleanup = function(): ()
+        if aura.Enabled then aura:Toggle(false) end
         toggleKnifeAura(false)
         state.mm2KnifeRuntime.masterEnabled = false
         state.mm2KnifeRuntime.throwWanted = false
         state.mm2KnifeFeature = nil
+        state.mm2KnifeAuraModule = nil
+        aura.CombatAdapter = nil
+        KnifeFeature.description = originalDescription
+        KnifeFeature.tooltipText = originalDescription
+        KnifeFeature.searchText = originalSearch
+        -- If the adapter is detached before the whole UI is destroyed, do
+        -- not expose stale MM2 actions beside the generic controls.
+        aura.OptionFilter = function(name: string): boolean
+            return name ~= "Knife Aura" and name ~= "Knife Throw" and name ~= "Aura Range"
+        end
+        aura:RefreshVisibility()
     end
     Module.Events = featureConnections
     Module.Initialized = true
@@ -1771,7 +1785,7 @@ end
 
 return Module
 
-]],
+]=],
         ["src/games/MM2/Blatant/KnifeThrow.lua"] = [[
 local Module = {
     Name = "MM2 Knife Throw",
@@ -2065,48 +2079,34 @@ function Module.init(runtime: any): any
         if not ok then stopThrowAnimation() end
     end
 
+    local function refreshKnifeThrow(): ()
+        disconnectFeatureConnection("MM2KnifeThrow")
+        if not knifeThrowSettings.enabled or (state.mm2KnifeRuntime and state.mm2KnifeRuntime.masterEnabled == false) then
+            stopThrowAnimation()
+            return
+        end
+        featureConnections.MM2KnifeThrow = TaskManager:Connect(throwKnife)
+    end
     local function toggleKnifeThrow(enabled: boolean): ()
         knifeThrowSettings.enabled = enabled
         if state.mm2KnifeRuntime then state.mm2KnifeRuntime.throwWanted = enabled end
-        disconnectFeatureConnection("MM2KnifeThrow")
-        if not enabled then stopThrowAnimation(); return end
-        -- A new throw can start as soon as the previous recovery ends.
-        -- No user timer, range slider, catch-up burst or animation interruption.
-        featureConnections.MM2KnifeThrow = TaskManager:Connect(throwKnife)
+        refreshKnifeThrow()
     end
 
-    local KnifeThrowFeature: any = state.mm2KnifeFeature
-    if not KnifeThrowFeature then
-        KnifeThrowFeature = createUniversalFeature(
-            "Knife",
-            "Knife aura and knife throw, each behind its own option below",
-            6,
-            function(enabled: boolean): ()
-                if not enabled then
-                    toggleKnifeThrow(false)
-                end
-            end,
-            {
-                categoryName = "Combat",
-                parent = MM2Scroll,
-                registry = mm2Features,
-            }
-        )
-        state.mm2KnifeFeature = KnifeThrowFeature
-    end
-
-    state.mm2KnifeThrowOff = function(): ()
-        toggleKnifeThrow(false)
-    end
-
-    addToggleOption(KnifeThrowFeature, "Knife Throw", false, toggleKnifeThrow,
-        "Hold the knife: repeatedly throw at the nearest visible player. Normal origin, wall checks and full animation are automatic. No range or delay to configure.", true)
+    local aura: any = state.mm2KnifeAuraModule
+    assert(aura, "Knife Throw requires the MM2 KillAura adapter")
+    state.mm2KnifeThrowRefresh = refreshKnifeThrow
+    state.mm2KnifeThrowOff = function(): () toggleKnifeThrow(false) end
+    aura:CreateToggle({Name = "Knife Throw", Default = false, Bindable = true,
+        Function = toggleKnifeThrow,
+        Tooltip = "KillAura ON + held knife: repeatedly throw at the nearest visible target. Normal origin, full animation and WallCheck are automatic."})
 
     featureConnections.MM2KnifeThrowCharacter = LocalPlayer.CharacterAdded:Connect(stopThrowAnimation)
     activeCleanup = function(): ()
         toggleKnifeThrow(false)
         disconnectFeatureConnection("MM2KnifeThrowCharacter")
         state.mm2KnifeThrowOff = nil
+        state.mm2KnifeThrowRefresh = nil
     end
     Module.Events = featureConnections
     Module.Initialized = true
@@ -2746,6 +2746,7 @@ function Module.init(runtime: any): any
         return true
     end
 
+    local shootOptionsReady: boolean = false
     local shootFeatureActive: boolean = false
     local autoShootActive: boolean = false
     local autoShootWanted: boolean = false
@@ -2788,7 +2789,7 @@ function Module.init(runtime: any): any
     local manualShotPending: boolean = false
     local function triggerManualShot(): ()
         if not shootFeatureActive then
-            notify("Enable Shoot first.")
+            notify("Enable SilentAIM first.")
             return
         end
         if manualShotPending then return end
@@ -2847,7 +2848,7 @@ function Module.init(runtime: any): any
 
     updateAutoShootConnection = function(): ()
         disconnectFeatureConnection("MM2AutoShoot")
-        autoShootActive = shootFeatureActive and autoShootWanted
+        autoShootActive = shootOptionsReady and shootFeatureActive and autoShootWanted
         if not autoShootActive then
             lastAutoStatus = nil
             if ShootFeature then ShootFeature:SetStatus(nil) end
@@ -2884,17 +2885,24 @@ function Module.init(runtime: any): any
         if changed and type(queueConfigSave) == "function" then queueConfigSave() end
     end
 
+    if type(configData) == "table" and configData.values["MM2.Shoot.Aimmethod"] == nil then
+        configData.values["MM2.Shoot.Aimmethod"] = configData.values["MM2.Shoot.Mode"]
+    end
     ShootFeature = createUniversalFeature(
-        "Shoot",
-        "Hitscan aim with filtered motion, RTT compensation, and miss feedback",
+        "SilentAIM",
+        "Gun: use the assigned key for one shot, or enable Auto Shoot below. Aim method selects Prediction or Silent AIM; Auto uses your held gun only.",
         4,
         toggleShootMurderer,
         {
             categoryName = "Combat",
+            configKey = "MM2.Shoot", -- preserve existing Gun settings and activation key
             parent = MM2Scroll,
             registry = mm2Features,
         }
     )
+    addInformationOption(ShootFeature, "Weapon: Gun")
+    addToggleOption(ShootFeature, "Auto Shoot", false, toggleAutoShoot,
+        "While Shoot is ON and you hold the gun: try every frame as soon as the current target is visible. No distance or prediction-confidence gate. Uses Shoot's mode.", true)
     local ShootTargetBox
     local wallCheckRow: GuiObject? = nil
     local silentSweepRow: GuiObject? = nil
@@ -2923,7 +2931,7 @@ function Module.init(runtime: any): any
     end
     addCycleOption(
         ShootFeature,
-        "Mode",
+        "Aim method",
         {"Prediction", "Silent AIM"},
         mm2Settings.silentAim and 2 or 1,
         function(value: string): ()
@@ -3115,8 +3123,12 @@ function Module.init(runtime: any): any
     end, false)
     refreshShootOptions()
 
-    addToggleOption(ShootFeature, "Auto Shoot", false, toggleAutoShoot,
-        "While Shoot is ON and you hold the gun: try every frame as soon as the current target is visible. No distance or prediction-confidence gate. Uses Shoot's mode.", true)
+
+
+    -- The visible Auto control is at the top, but arming waits until saved
+    -- aim method/target/lead values below have all been restored.
+    shootOptionsReady = true
+    if updateAutoShootConnection then updateAutoShootConnection() end
 
     activeCleanup = function(): ()
         toggleShootMurderer(false)
@@ -3484,15 +3496,24 @@ function Module.init(runtime: any): any
         local _, humanoid: Humanoid? = getCharacterParts()
         ensureSprintTrail(root).Enabled = humanoid ~= nil and humanoid.MoveDirection.Magnitude > 0.05
     end
-    speed:CreateToggle({
-        Name = "Sprint", Default = false, Bindable = true,
-        Function = function(value: boolean): ()
-            if not value then clearSprintTrail() end
+    local function releaseSprint(): ()
+        disconnectFeatureConnection("MM2SprintHold")
+        speed.SetSprintHeld(false)
+        clearSprintTrail()
+    end
+    speed:CreateButton({
+        Name = "Sprint", Hold = true,
+        Function = function(): ()
+            speed.SetSprintHeld(true)
+            if not featureConnections.MM2SprintHold then
+                featureConnections.MM2SprintHold = TaskManager:Connect(speed.StepSprint)
+            end
         end,
-        Tooltip = "MM2: 30 WalkSpeed with a trail while Speed is enabled. Overrides the on-foot Speed method; use the KEY slot to assign a Sprint toggle key (unassigned by default).",
+        OnRelease = releaseSprint,
+        Tooltip = "Hold this button, its assigned key or the touch action to sprint. Works with Speed OFF; release restores normal Speed or your original speed. No toggle state is saved.",
     })
     activeCleanup = function(): ()
-        clearSprintTrail()
+        releaseSprint()
         speed.ClearSprint = nil
         speed.SprintFrame = nil
     end
@@ -15475,6 +15496,11 @@ function Module.init(context: Runtime): any
         Tooltip = "Swings your weapon at everyone in reach, with its own "
             .. "range, rate, field of view and rotation.",
         Function = function(enabled: boolean): ()
+            if aura.CombatAdapter then
+                clearHighlights()
+                aura.CombatAdapter(enabled)
+                return
+            end
             nextSwingAt = 0
             nextStatusAt = 0
             if not enabled then
@@ -18208,6 +18234,122 @@ function Module.init(context: Runtime): any
     end
 
     local speed: any
+    local function stepSpeed(deltaTime: number): ()
+        local options: any = speed.Options
+        local _, humanoid: Humanoid?, root: BasePart? = characterParts()
+        if not humanoid or not root then
+            if speed.ClearSprint then speed.ClearSprint() end
+            return
+        end
+        local sprint: boolean = speed.SprintHeld == true and not humanoid.Sit
+        local resolvedHumanoid: Humanoid = humanoid :: Humanoid
+        local resolvedRoot: BasePart = root :: BasePart
+        if resolvedHumanoid.Health <= 0 then
+            if speed.ClearSprint then speed.ClearSprint() end
+            return
+        end
+        if speed.SprintFrame then speed.SprintFrame(sprint and not humanoid.Sit, root) end
+
+        if not speed.Enabled and not sprint then restoreWalkSpeed(); return end
+        if speed.Enabled and options["Vehicle speed"] and options["Vehicle speed"].Value then
+            local assembly: BasePart?, model: Model?, seat: VehicleSeat? =
+                resolveVehicle()
+            if assembly then
+                local vehMode: string = options["Vehicle mode"] and options["Vehicle mode"].Value or "Multiplier"
+                local vehMultiplier: number = options["Vehicle multiplier"] and options["Vehicle multiplier"].Value or 2
+                local motorTorque: number = options["Motor torque"] and options["Motor torque"].Value or 50000
+                if vehMode == "Multiplier" then
+                    boostVehicleVelocity(assembly :: BasePart, nil, vehMultiplier)
+                elseif vehMode == "Motors" then
+                    boostVehicleMotors(model, vehMultiplier, motorTorque)
+                elseif vehMode == "Velocity" then
+                    local direction: Vector3? = seat
+                        and (seat :: VehicleSeat).CFrame.LookVector
+                            * (seat :: VehicleSeat).ThrottleFloat
+                        or nil
+                    boostVehicleVelocity(assembly :: BasePart, direction, vehMultiplier)
+                else
+                    boostVehicleSeatProperties(model, seat, vehMultiplier)
+                end
+                return
+            end
+        end
+
+        local mode: string = sprint and "WalkSpeed" or options["Mode"].Value
+        local target: number = sprint and 30 or options["Speed"].Value
+
+        if mode == "WalkSpeed" then
+            if runtime.originalWalkSpeed[resolvedHumanoid] == nil then
+                runtime.originalWalkSpeed[resolvedHumanoid] =
+                    resolvedHumanoid.WalkSpeed
+                if runtime.baseWalkSpeed == nil
+                    or resolvedHumanoid.WalkSpeed < runtime.baseWalkSpeed then
+                    runtime.baseWalkSpeed = resolvedHumanoid.WalkSpeed
+                end
+            end
+            resolvedHumanoid.WalkSpeed = target
+            runtime.lastAppliedWalkSpeed = target
+            return
+        end
+        restoreWalkSpeed()
+
+        local direction: Vector3 = moveDirection()
+        if direction.Magnitude < 0.05 then
+            return
+        end
+
+        if options["Auto jump"].Value
+            and resolvedHumanoid.FloorMaterial ~= Enum.Material.Air then
+            resolvedHumanoid:ChangeState(Enum.HumanoidStateType.Jumping)
+        end
+
+        local velocity: Vector3 = resolvedRoot.AssemblyLinearVelocity
+        if mode == "Velocity" then
+            resolvedRoot.AssemblyLinearVelocity = Vector3.new(
+                direction.X * target,
+                velocity.Y,
+                direction.Z * target
+            )
+            return
+        end
+        if mode == "Impulse" then
+            local wanted: Vector3 = direction * target
+            local difference: Vector3 = Vector3.new(
+                wanted.X - velocity.X,
+                0,
+                wanted.Z - velocity.Z
+            )
+            if difference.Magnitude > 2 then
+                resolvedRoot:ApplyImpulse(
+                    difference * resolvedRoot.AssemblyMass
+                )
+            end
+            return
+        end
+
+        local extra: number =
+            math.max(target - resolvedHumanoid.WalkSpeed, 0)
+        if mode == "Teleport" then
+            local now: number = os.clock()
+            if now < runtime.nextTeleportAt then
+                return
+            end
+            runtime.nextTeleportAt = now + options["Burst delay"].Value
+            local step: Vector3 = direction * extra
+                * options["Burst delay"].Value
+            if options["Wall check"].Value then
+                step = blocked(resolvedRoot, step)
+            end
+            resolvedRoot.CFrame = resolvedRoot.CFrame + step
+            return
+        end
+
+        local step: Vector3 = direction * extra * deltaTime
+        if options["Wall check"].Value then
+            step = blocked(resolvedRoot, step)
+        end
+        resolvedRoot.CFrame = resolvedRoot.CFrame + step
+    end
     speed = framework.Categories.Exploits:CreateModule({
         Name = "Speed",
         Category = "Exploits",
@@ -18234,6 +18376,7 @@ function Module.init(context: Runtime): any
                 end
                 runtime.lastAppliedWalkSpeed = nil
                 speed:SetStatus(nil)
+                if speed.SprintHeld then stepSpeed(0) end
                 return
             end
             speed:SetStatus(
@@ -18246,123 +18389,23 @@ function Module.init(context: Runtime): any
                 restoreVehicle()
                 if speed.ClearSprint then speed.ClearSprint() end
             end)
-            speed:Loop(function(deltaTime: number): ()
-                local options: any = speed.Options
-                local _, humanoid: Humanoid?, root: BasePart? = characterParts()
-                if not humanoid or not root then
-                    if speed.ClearSprint then speed.ClearSprint() end
-                    return
-                end
-                local sprint: boolean = speed.SprintFrame ~= nil and options.Sprint ~= nil and options.Sprint.Value == true
-                local resolvedHumanoid: Humanoid = humanoid :: Humanoid
-                local resolvedRoot: BasePart = root :: BasePart
-                if resolvedHumanoid.Health <= 0 then
-                    if speed.ClearSprint then speed.ClearSprint() end
-                    return
-                end
-                if speed.SprintFrame then speed.SprintFrame(sprint and not humanoid.Sit, root) end
-
-                if options["Vehicle speed"] and options["Vehicle speed"].Value then
-                    local assembly: BasePart?, model: Model?, seat: VehicleSeat? =
-                        resolveVehicle()
-                    if assembly then
-                        local vehMode: string = options["Vehicle mode"] and options["Vehicle mode"].Value or "Multiplier"
-                        local vehMultiplier: number = options["Vehicle multiplier"] and options["Vehicle multiplier"].Value or 2
-                        local motorTorque: number = options["Motor torque"] and options["Motor torque"].Value or 50000
-                        if vehMode == "Multiplier" then
-                            boostVehicleVelocity(assembly :: BasePart, nil, vehMultiplier)
-                        elseif vehMode == "Motors" then
-                            boostVehicleMotors(model, vehMultiplier, motorTorque)
-                        elseif vehMode == "Velocity" then
-                            local direction: Vector3? = seat
-                                and (seat :: VehicleSeat).CFrame.LookVector
-                                    * (seat :: VehicleSeat).ThrottleFloat
-                                or nil
-                            boostVehicleVelocity(assembly :: BasePart, direction, vehMultiplier)
-                        else
-                            boostVehicleSeatProperties(model, seat, vehMultiplier)
-                        end
-                        return
-                    end
-                end
-
-                local mode: string = sprint and "WalkSpeed" or options["Mode"].Value
-                local target: number = sprint and 30 or options["Speed"].Value
-
-                if mode == "WalkSpeed" then
-                    if runtime.originalWalkSpeed[resolvedHumanoid] == nil then
-                        runtime.originalWalkSpeed[resolvedHumanoid] =
-                            resolvedHumanoid.WalkSpeed
-                        if runtime.baseWalkSpeed == nil
-                            or resolvedHumanoid.WalkSpeed < runtime.baseWalkSpeed then
-                            runtime.baseWalkSpeed = resolvedHumanoid.WalkSpeed
-                        end
-                    end
-                    resolvedHumanoid.WalkSpeed = target
-                    runtime.lastAppliedWalkSpeed = target
-                    return
-                end
-                restoreWalkSpeed()
-
-                local direction: Vector3 = moveDirection()
-                if direction.Magnitude < 0.05 then
-                    return
-                end
-
-                if options["Auto jump"].Value
-                    and resolvedHumanoid.FloorMaterial ~= Enum.Material.Air then
-                    resolvedHumanoid:ChangeState(Enum.HumanoidStateType.Jumping)
-                end
-
-                local velocity: Vector3 = resolvedRoot.AssemblyLinearVelocity
-                if mode == "Velocity" then
-                    resolvedRoot.AssemblyLinearVelocity = Vector3.new(
-                        direction.X * target,
-                        velocity.Y,
-                        direction.Z * target
-                    )
-                    return
-                end
-                if mode == "Impulse" then
-                    local wanted: Vector3 = direction * target
-                    local difference: Vector3 = Vector3.new(
-                        wanted.X - velocity.X,
-                        0,
-                        wanted.Z - velocity.Z
-                    )
-                    if difference.Magnitude > 2 then
-                        resolvedRoot:ApplyImpulse(
-                            difference * resolvedRoot.AssemblyMass
-                        )
-                    end
-                    return
-                end
-
-                local extra: number =
-                    math.max(target - resolvedHumanoid.WalkSpeed, 0)
-                if mode == "Teleport" then
-                    local now: number = os.clock()
-                    if now < runtime.nextTeleportAt then
-                        return
-                    end
-                    runtime.nextTeleportAt = now + options["Burst delay"].Value
-                    local step: Vector3 = direction * extra
-                        * options["Burst delay"].Value
-                    if options["Wall check"].Value then
-                        step = blocked(resolvedRoot, step)
-                    end
-                    resolvedRoot.CFrame = resolvedRoot.CFrame + step
-                    return
-                end
-
-                local step: Vector3 = direction * extra * deltaTime
-                if options["Wall check"].Value then
-                    step = blocked(resolvedRoot, step)
-                end
-                resolvedRoot.CFrame = resolvedRoot.CFrame + step
-            end)
+            speed:Loop(stepSpeed)
         end,
     })
+
+    speed.SprintHeld = false
+    speed.SetSprintHeld = function(held: boolean): ()
+        speed.SprintHeld = held
+        if held or speed.Enabled then stepSpeed(0)
+        else
+            restoreWalkSpeed()
+            runtime.lastAppliedWalkSpeed = nil
+            if speed.ClearSprint then speed.ClearSprint() end
+        end
+    end
+    speed.StepSprint = function(deltaTime: number): ()
+        if speed.SprintHeld and not speed.Enabled then stepSpeed(deltaTime) end
+    end
 
     speed:CreateDropdown({
         Name = "Mode",
@@ -18455,6 +18498,7 @@ function Module.init(context: Runtime): any
     })
 
     activeCleanup = function(): ()
+        speed.SprintHeld = false
         restoreWalkSpeed()
         restoreVehicle()
         if speed.ClearSprint then speed.ClearSprint() end
@@ -25658,8 +25702,7 @@ function Module.init(context: any): any
             ["Aim Assist"] = 1,
             ["KillAura"] = 2,
             ["TriggerBot"] = 3,
-            ["Knife"] = 4,
-            ["Shoot"] = 5,
+            ["SilentAIM"] = 4,
             ["Fly"] = 1,
             ["Fling"] = 2,
             ["Noclip"] = 3,
@@ -33010,6 +33053,7 @@ function Module.init(context: any): WidgetLibrary
         table.insert(toggleThemeRefreshers, refreshOptionState)
 
         local function toggleOption(): ()
+            if not option.Visible then return end
             enabled = not enabled
             refreshOptionState()
             configData.states[optionKey] = enabled
@@ -33066,16 +33110,18 @@ function Module.init(context: any): WidgetLibrary
         feature: any,
         labelText: string,
         callback: () -> (),
-        hintText: string?
+        hintText: string?,
+        interaction: any?
     ): TextButton
         local option = createOptionRow(feature, labelText, hintText)
-        local button = makeButton(option, "RUN", 11)
+        local button = makeButton(option, interaction and interaction.hold and "HOLD" or "RUN", 11)
         button.BackgroundColor3 = state.guiStyle == "Default"
             and Theme.buttonHover
             or Theme.accentSoft
 
         state.layoutOptionControl(option, button, 0.26)
         local function executeAction(): ()
+            if not option.Visible then return end
             runActionButton(
                 button,
                 "RUN",
@@ -33084,7 +33130,41 @@ function Module.init(context: any): WidgetLibrary
                 "[Random Testing Menu] " .. labelText
             )
         end
-        trackUiConnection(button.MouseButton1Click:Connect(executeAction))
+        local hold: boolean = interaction ~= nil and interaction.hold == true
+        local held = {button = false, shortcut = false}
+        local active: boolean = false
+        local buttonInput: InputObject? = nil
+        local function setHeld(source: string, value: boolean): ()
+            if value and not option.Visible then return end
+            held[source] = value
+            local wanted: boolean = held.button or held.shortcut
+            if active == wanted then return end
+            active = wanted
+            button.Text = wanted and "HELD" or "HOLD"
+            if wanted then callback()
+            elseif interaction and interaction.onRelease then interaction.onRelease() end
+        end
+        if hold then
+            trackUiConnection(button.InputBegan:Connect(function(input: InputObject): ()
+                if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+                    if buttonInput == nil then buttonInput = input; setHeld("button", true) end
+                end
+            end))
+            trackUiConnection(UserInputService.InputEnded:Connect(function(input: InputObject): ()
+                if input == buttonInput or (buttonInput and buttonInput.UserInputType == Enum.UserInputType.MouseButton1
+                    and input.UserInputType == Enum.UserInputType.MouseButton1) then
+                    buttonInput = nil
+                    setHeld("button", false)
+                end
+            end))
+            trackUiConnection(UserInputService.WindowFocusReleased:Connect(function(): ()
+                held.button = false
+                buttonInput = nil
+                setHeld("shortcut", false)
+            end))
+        else
+            trackUiConnection(button.MouseButton1Click:Connect(executeAction))
+        end
         local shortcutButton: TextButton =
             (makeButton(option, "KEY", 9) :: any) :: TextButton
         shortcutButton.BackgroundColor3 = state.guiStyle == "Default"
@@ -33109,7 +33189,8 @@ function Module.init(context: any): WidgetLibrary
             shortcutButton,
             feature.configKey .. labelText,
             labelText,
-            executeAction
+            hold and function(): () setHeld("shortcut", true) end or executeAction,
+            hold and {hold = true, onRelease = function(): () setHeld("shortcut", false) end} or nil
         )
         return button :: TextButton
     end
@@ -37606,12 +37687,14 @@ function Module.init(context: any): Framework
         function created:RefreshVisibility(): ()
             for _, option: any in pairs(created.Options) do
                 local rule: any = option.Show
+                local available: boolean = created.OptionFilter == nil or created.OptionFilter(option.Name)
+                if type(rule) ~= "table" and available and not option.FilteredOut then continue end
+                option.FilteredOut = not available
+                local visible: boolean = available
                 if type(rule) ~= "table" then
-                    continue
-                end
-                local visible: boolean = true
-                if rule.Option ~= nil then
-                    visible = ruleHolds(rule)
+                    -- Explicitly unavailable in the current game adapter.
+                elseif rule.Option ~= nil then
+                    visible = visible and ruleHolds(rule)
                 else
                     for _, nested: any in ipairs(rule) do
                         if not ruleHolds(nested) then
@@ -37820,8 +37903,13 @@ function Module.init(context: any): Framework
         end
 
         function created:CreateButton(definition2: any): Option
+            if definition2.Hold then
+                assert(type(definition2.OnRelease) == "function", "A held action requires OnRelease")
+            end
             local option: any = newOption(definition2.Name, nil, "action", definition2)
+            option.Metadata.hold = definition2.Hold == true
             local function run(): ()
+                if option.Metadata.visible == false then return end
                 if type(definition2.Function) == "function" then
                     definition2.Function()
                 end
@@ -37831,7 +37919,8 @@ function Module.init(context: any): Framework
                 feature,
                 definition2.Name,
                 run,
-                definition2.Tooltip
+                definition2.Tooltip,
+                definition2.Hold and {hold = true, onRelease = definition2.OnRelease} or nil
             )
             return register(option, definition2)
         end

@@ -9,6 +9,7 @@ ROOT = Path(__file__).resolve().parents[1]
 S = (ROOT / 'src/games/MM2/Blatant/Shoot.lua').read_text()
 script = PRELUDE + r'''
 local configData={states={['MM2.AutoShoot']=true},values={['Shortcut.MM2AutoShoot']='J'}}
+local shootOptionsReady=true
 local shootFeatureActive=false
 local autoShootActive=false
 local autoShootWanted=false
@@ -58,6 +59,10 @@ targetAvailable=true;toggleShootMurderer(false)
 assert(not loop and not autoShootActive and autoShootWanted and not infrastructure)
 toggleShootMurderer(true);assert(loop and autoShootActive)
 toggleAutoShoot(false);assert(not loop and not autoShootActive and shootFeatureActive and status==nil)
+toggleShootMurderer(false);shootOptionsReady=false;toggleAutoShoot(true)
+local previous=accepted
+toggleShootMurderer(true);assert(not loop and accepted==previous,'do not fire before saved Gun settings finish restoring')
+shootOptionsReady=true;updateAutoShootConnection();assert(loop and accepted==previous+1)
 print('PASS nested Auto Shoot: immediate/current-frame, 1000 studs, current target, native readiness, master/option OFF, restart, held-only, status')
 '''
 assert 'local AutoShootFeature' not in S and '"Fire delay"' not in S

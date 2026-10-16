@@ -179,7 +179,7 @@ function Module.init(runtime: any): any
         disconnectFeatureConnection("MM2KnifeVirtualHitbox")
         disconnectFeatureConnection("MM2KnifeAura")
         disconnectFeatureConnection("MM2KnifeController")
-        if not knifeSettings.aura then
+        if not knifeSettings.aura or not state.mm2KnifeRuntime.masterEnabled then
             return
         end
 
@@ -192,64 +192,78 @@ function Module.init(runtime: any): any
             end)
     end
 
-    local auraRangeRow: any = nil
     local function toggleKnifeAura(enabled: boolean): ()
         knifeSettings.aura = enabled
-        if auraRangeRow then setOptionVisible(state.mm2KnifeFeature, auraRangeRow, enabled) end
         state.mm2KnifeRuntime.auraWanted = enabled
         state.mm2KnifeRuntime.lastAuraSwing = -math.huge
         refreshKnifeController()
     end
 
-    local KnifeFeature = createUniversalFeature(
-        "Knife",
-        "Knife aura and knife throw, each behind its own option below",
-        6,
-        function(enabled: boolean): ()
-            state.mm2KnifeRuntime.masterEnabled = enabled
-            if enabled then
-                return
-            end
-            -- Master OFF is a hard stop: both controllers halt AND their
-            -- checkboxes uncheck (visual, saved state and callback move
-            -- together), so a checked-but-dead sub-option can never happen.
-            toggleKnifeAura(false)
-            if type(state.mm2KnifeThrowOff) == "function" then
-                state.mm2KnifeThrowOff()
-            end
-            if type(state.setToggleChecked) == "function" then
-                state.setToggleChecked("MM2.Knife.KnifeAura", false)
-                state.setToggleChecked("MM2.Knife.KnifeThrow", false)
-            end
-        end,
-        {
-            categoryName = "Combat",
-            parent = MM2Scroll,
-            registry = mm2Features,
-        }
-    )
+    local aura: any = state.framework and state.framework:GetModule("KillAura")
+    assert(aura, "MM2 Knife requires the existing KillAura module")
+    local wasEnabled: boolean = aura.Enabled
+    if type(configData) == "table" and not configData.values["MM2.Knife.MigratedToKillAura"] then
+        for _, label: string in ipairs({"KnifeAura", "KnifeThrow"}) do
+            local old: any = configData.states["MM2.Knife." .. label]
+            local key: string = "Universal.KillAura." .. label
+            if configData.states[key] == nil and old ~= nil then configData.states[key] = old end
+        end
+        for _, pair in ipairs({
+            {"MM2.Knife.AuraRange", "Universal.KillAura.AuraRange"},
+            {"Shortcut.MM2KnifeKnifeThrow", "Shortcut.UniversalKillAuraKnifeThrow"},
+            {"Shortcut.MM2Knife", "Shortcut.UniversalKillAura"},
+        }) do
+            if configData.values[pair[2]] == nil then configData.values[pair[2]] = configData.values[pair[1]] end
+        end
+        wasEnabled = wasEnabled or configData.states["MM2.Knife"] == true
+        configData.values["MM2.Knife.MigratedToKillAura"] = true
+        if type(queueConfigSave) == "function" then queueConfigSave() end
+    end
+    if wasEnabled then aura:Toggle(false) end
+    local KnifeFeature: any = aura.Feature
+    local originalDescription: string = KnifeFeature.description
+    local originalSearch: string = KnifeFeature.searchText
+    KnifeFeature.description = "MM2 knife combat: Knife Aura stabs, Knife Throw repeats full throws. KillAura is the shared master; both use your held knife."
+    KnifeFeature.tooltipText = KnifeFeature.description
+    KnifeFeature.searchText = "killaura combat mm2 knife aura throw range"
+    aura.CombatAdapter = function(enabled: boolean): ()
+        state.mm2KnifeRuntime.masterEnabled = enabled
+        refreshKnifeController()
+        if state.mm2KnifeThrowRefresh then state.mm2KnifeThrowRefresh() end
+        aura:SetStatus(enabled and "Knife" or nil)
+    end
+    -- Generic melee controls do not describe the MM2 remote-based controller.
+    aura.OptionFilter = function(name: string): boolean
+        return name == "Knife Aura" or name == "Aura Range" or name == "Knife Throw"
+    end
+    aura:RefreshVisibility()
+    state.mm2KnifeAuraModule = aura
     state.mm2KnifeFeature = KnifeFeature
 
-    addToggleOption(
-        KnifeFeature,
-        "Knife Aura",
-        false,
-        toggleKnifeAura,
-        "Stabs the nearest valid target in range through the game's own HandleTouched"
-    )
-    auraRangeRow = addNumberOption(KnifeFeature, "Aura Range", 14, 7, 30, function(
-        value: number
-    ): ()
-        knifeSettings.auraRange = value
-    end, "Manual stab reach in studs.")
-
-    if auraRangeRow then setOptionVisible(KnifeFeature, auraRangeRow, knifeSettings.aura) end
+    aura:CreateToggle({Name = "Knife Aura", Default = true, Function = toggleKnifeAura,
+        Tooltip = "MM2 stabs with your equipped knife while KillAura is ON."})
+    aura:CreateSlider({Name = "Aura Range", Min = 7, Max = 30, Default = 14,
+        Show = {Option = "Knife Aura", Values = {true}},
+        Function = function(value: number): () knifeSettings.auraRange = value end})
+    if wasEnabled then aura:Toggle(true) end
 
     activeCleanup = function(): ()
+        if aura.Enabled then aura:Toggle(false) end
         toggleKnifeAura(false)
         state.mm2KnifeRuntime.masterEnabled = false
         state.mm2KnifeRuntime.throwWanted = false
         state.mm2KnifeFeature = nil
+        state.mm2KnifeAuraModule = nil
+        aura.CombatAdapter = nil
+        KnifeFeature.description = originalDescription
+        KnifeFeature.tooltipText = originalDescription
+        KnifeFeature.searchText = originalSearch
+        -- If the adapter is detached before the whole UI is destroyed, do
+        -- not expose stale MM2 actions beside the generic controls.
+        aura.OptionFilter = function(name: string): boolean
+            return name ~= "Knife Aura" and name ~= "Knife Throw" and name ~= "Aura Range"
+        end
+        aura:RefreshVisibility()
     end
     Module.Events = featureConnections
     Module.Initialized = true
