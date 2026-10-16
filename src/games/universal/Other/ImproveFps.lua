@@ -1,0 +1,176 @@
+export type Runtime = {
+    framework: any,
+    entity: any,
+    host: any,
+}
+
+local Module = {
+    Name = "ImproveFps",
+    PlaceId = 0,
+    Events = {} :: {[string]: any},
+    Initialized = false,
+}
+
+local activeCleanup: (() -> ())? = nil
+
+function Module.init(context: Runtime): any
+    local host: any = context.host
+    local featureConnections: any = host.featureConnections
+    local disconnectFeatureConnection: any = host.disconnectFeatureConnection
+    local createUniversalFeature: any = host.createUniversalFeature
+    local addToggleOption: any = host.addToggleOption
+
+    local fpsSettings: {[string]: boolean} = {
+        textures = true,
+        particles = true,
+        shadows = true,
+        materials = false,
+    }
+    local fpsModeEnabled: boolean = false
+    local ImproveFpsFeature: any = nil
+    local function selectedEffectCount(): number
+        local count: number = 0
+        for _name: string, selected: boolean in pairs(fpsSettings) do
+            if selected then count += 1 end
+        end
+        return count
+    end
+
+    local fpsVisualCache: any = setmetatable({}, {__mode = "k"})
+
+    local function cacheFpsProperty(object: any, property: string): ()
+        local data: any = fpsVisualCache[object]
+        if not data then
+            data = {}
+            fpsVisualCache[object] = data
+        end
+        if data[property] == nil then
+            data[property] = object[property]
+        end
+    end
+
+    local function applyFpsObject(object: Instance): ()
+        local target: any = object
+        if fpsSettings.textures and (object:IsA("Decal") or object:IsA("Texture")) then
+            cacheFpsProperty(object, "Transparency")
+            target.Transparency = 1
+        elseif fpsSettings.textures and object:IsA("MeshPart") then
+            cacheFpsProperty(object, "TextureID")
+            target.TextureID = ""
+        end
+
+        if fpsSettings.particles
+            and (object:IsA("ParticleEmitter")
+                or object:IsA("Trail")
+                or object:IsA("Beam")
+                or object:IsA("Smoke")
+                or object:IsA("Fire")
+                or object:IsA("Sparkles")) then
+            cacheFpsProperty(object, "Enabled")
+            target.Enabled = false
+        end
+
+        if object:IsA("BasePart") then
+            if fpsSettings.shadows then
+                cacheFpsProperty(object, "CastShadow")
+                object.CastShadow = false
+            end
+            if fpsSettings.materials then
+                cacheFpsProperty(object, "Material")
+                cacheFpsProperty(object, "Reflectance")
+                object.Material = Enum.Material.SmoothPlastic
+                object.Reflectance = 0
+            end
+        end
+    end
+
+    local function restoreFpsObjects(): ()
+        for object: any, properties: any in pairs(fpsVisualCache) do
+            if object and object.Parent then
+                for property: string, value: any in pairs(properties) do
+                    pcall(function(): ()
+                        object[property] = value
+                    end)
+                end
+            end
+        end
+        fpsVisualCache = setmetatable({}, {__mode = "k"})
+    end
+
+    local function toggleImproveFps(enabled: boolean): ()
+        fpsModeEnabled = enabled
+        disconnectFeatureConnection("ImproveFPS")
+        restoreFpsObjects()
+
+        if not enabled then
+            if ImproveFpsFeature then ImproveFpsFeature:SetStatus(nil) end
+            return
+        end
+        ImproveFpsFeature:SetStatus(tostring(selectedEffectCount()) .. " effects")
+
+        task.spawn(function(): ()
+            for index: number, object: Instance in ipairs(workspace:GetDescendants()) do
+                if not fpsModeEnabled then
+                    return
+                end
+                pcall(applyFpsObject, object)
+                if index % 250 == 0 then
+                    task.wait()
+                end
+            end
+        end)
+        featureConnections.ImproveFPS = workspace.DescendantAdded:Connect(
+            function(object: Instance): ()
+                if fpsModeEnabled then
+                    pcall(applyFpsObject, object)
+                end
+            end
+        )
+    end
+
+    local function refreshFps(): ()
+        if fpsModeEnabled then
+            toggleImproveFps(true)
+        end
+    end
+
+    ImproveFpsFeature = createUniversalFeature(
+        "Improve FPS",
+        "Apply only the selected reversible optimizations",
+        26,
+        toggleImproveFps,
+        {categoryName = "Other"}
+    )
+    addToggleOption(ImproveFpsFeature, "Remove textures", true, function(value: boolean): ()
+        fpsSettings.textures = value
+        refreshFps()
+    end)
+    addToggleOption(ImproveFpsFeature, "Disable particles", true, function(value: boolean): ()
+        fpsSettings.particles = value
+        refreshFps()
+    end)
+    addToggleOption(ImproveFpsFeature, "Disable shadows", true, function(value: boolean): ()
+        fpsSettings.shadows = value
+        refreshFps()
+    end)
+    addToggleOption(ImproveFpsFeature, "Simple materials", false, function(value: boolean): ()
+        fpsSettings.materials = value
+        refreshFps()
+    end)
+
+    activeCleanup = function(): ()
+        toggleImproveFps(false)
+    end
+    Module.Initialized = true
+    return ImproveFpsFeature
+end
+
+function Module.destroy(): ()
+    if activeCleanup then
+        pcall(activeCleanup)
+    end
+    activeCleanup = nil
+    Module.Initialized = false
+end
+
+return Module
