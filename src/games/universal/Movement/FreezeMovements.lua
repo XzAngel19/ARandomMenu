@@ -46,14 +46,35 @@ function Module.init(context: Runtime): any
     local emoteIds: {[string]: boolean} = {}
     local managedEmotes: {[any]: any} = {}
     local ownedEmotes: {[any]: boolean} = setmetatable({}, {__mode = "k"})
+    local isEmoteTrack: (any) -> boolean
     local lastGlitch: number = -math.huge
 
     local function clearStickyEmoteTracks(): ()
         if emoteConnection then emoteConnection:Disconnect() end
         emoteConnection = nil
+        local previousHumanoid: any = watchedHumanoid
         watchedHumanoid = nil
+        local stopped: {[any]: boolean} = {}
+        local function stopOnce(track: any): ()
+            if track and not stopped[track] then
+                stopped[track] = true
+                pcall(function(): () track:Stop(0.1) end)
+            end
+        end
+        -- The original Animate track can still be playing even if we never
+        -- had to hand it off. OFF must release that source as well as ours.
+        for _, source: any in ipairs(stickyEmoteTracks) do stopOnce(source) end
+        local animator: any = getAnimator(previousHumanoid)
+        if animator then
+            pcall(function(): ()
+                for _, track: any in ipairs(animator:GetPlayingAnimationTracks()) do
+                    if track.IsPlaying and not ownedEmotes[track] and isEmoteTrack(track) then stopOnce(track) end
+                end
+            end)
+        end
         for _, track: any in pairs(managedEmotes) do
-            pcall(function(): () track:Stop(0.15); track:Destroy() end)
+            stopOnce(track)
+            pcall(function(): () track:Destroy() end)
         end
         managedEmotes = {}
         ownedEmotes = setmetatable({}, {__mode = "k"})
@@ -68,7 +89,7 @@ function Module.init(context: Runtime): any
         wave = true, point = true, cheer = true, laugh = true,
     }
 
-    local function isEmoteTrack(track: any): boolean
+    isEmoteTrack = function(track: any): boolean
         -- Action priority is also used by weapon attacks; it is NOT an
         -- emote identifier. Avoid substring matches such as SpinAttack.
         local function knownName(name: string): boolean
@@ -97,7 +118,8 @@ function Module.init(context: Runtime): any
         -- A newly selected emote replaces the previous held emote. Never
         -- layer a whole history of dances on the same joints.
         for source: any, managed: any in pairs(managedEmotes) do
-            pcall(function(): () managed:Stop(0.15); managed:Destroy() end)
+            pcall(function(): () managed:Stop(0.1) end)
+            pcall(function(): () managed:Destroy() end)
             ownedEmotes[managed] = nil
             managedEmotes[source] = nil
         end
@@ -210,7 +232,8 @@ function Module.init(context: Runtime): any
                 elseif now - lastSeen > 0.5 then
                     local managed: any = managedEmotes[track]
                     if managed then
-                        pcall(function(): () managed:Stop(0.15); managed:Destroy() end)
+                        pcall(function(): () managed:Stop(0.1) end)
+                        pcall(function(): () managed:Destroy() end)
                         managedEmotes[track] = nil
                         ownedEmotes[managed] = nil
                     end

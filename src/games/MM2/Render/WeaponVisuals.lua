@@ -18,9 +18,7 @@ function Module.init(runtime: any): any
         enabled = false,
         doubleGun = false,
         doubleKnife = false,
-        electricKnife = false,
         color = Color3.fromRGB(100, 185, 255),
-        intensity = 1,
         trailEsp = false,
         tracerData = false,
     }
@@ -29,8 +27,6 @@ function Module.init(runtime: any): any
     local visualFolder: Folder? = nil
     local trailFolder: Folder? = nil
     local gunFiredConnection: any = nil
-    local electricTask: any = nil
-    local arcs: {any} = {}
     local queued = false
     local generation = 0
     local activeDouble = false
@@ -177,11 +173,6 @@ function Module.init(runtime: any): any
     -- ------------------------------------------------------------------
 
     local function clearVisuals(): ()
-        if electricTask then
-            electricTask:Disconnect()
-            electricTask = nil
-        end
-        table.clear(arcs)
         table.clear(doubleBindings)
         if visualFolder then
             visualFolder:Destroy()
@@ -263,71 +254,6 @@ function Module.init(runtime: any): any
             end
         end
         return copy
-    end
-
-    local function attach(part: BasePart, limb: BasePart, pose: CFrame): ()
-        part.CFrame = pose
-        local joint = Instance.new("WeldConstraint")
-        joint.Part0 = limb
-        joint.Part1 = part
-        joint.Parent = part
-        part.Parent = visualFolder
-    end
-
-    local function addElectric(part: BasePart): ()
-        -- Own invisible carrier: the real weapon receives no children/changes.
-        local carrier = Instance.new("Part")
-        carrier.Name = "LocalElectricCarrier"
-        carrier.Size = Vector3.new(0.05, 0.05, 0.05)
-        carrier.Transparency = 1
-        carrier.Anchored = false
-        carrier.CanCollide = false
-        carrier.CanTouch = false
-        carrier.CanQuery = false
-        carrier.Massless = true
-        attach(carrier, part, part.CFrame)
-        local size: Vector3 = part.Size
-        local length: number = math.max(size.X, size.Y, size.Z, 0.5)
-        local axis: Vector3 = size.X >= size.Y and size.X >= size.Z and Vector3.xAxis
-            or (size.Y >= size.Z and Vector3.yAxis or Vector3.zAxis)
-        local nodes: {Attachment} = {}
-        for i = 1, 6 do
-            local node = Instance.new("Attachment")
-            node.Position = axis * length * ((i - 1) / 5 - 0.5)
-            node.Parent = carrier
-            table.insert(nodes, node)
-            if i > 1 then
-                local beam = Instance.new("Beam")
-                beam.Attachment0 = nodes[i - 1]
-                beam.Attachment1 = node
-                beam.FaceCamera = true
-                beam.Color = ColorSequence.new(options.color)
-                beam.LightEmission = 1
-                beam.Width0 = 0.02 + 0.025 * options.intensity
-                beam.Width1 = beam.Width0
-                beam.Transparency = NumberSequence.new(0.1)
-                beam.Parent = carrier
-            end
-        end
-        table.insert(arcs, {nodes = nodes, axis = axis, length = length})
-    end
-
-    local function visualBlade(tool: Tool): BasePart?
-        local vh: Instance? = tool:FindFirstChild("VH", true)
-        if vh then
-            if vh:IsA("BasePart") then
-                return vh :: BasePart
-            end
-            local geometry: Instance? = vh:FindFirstChildWhichIsA("BasePart", true)
-            if geometry then
-                return geometry :: BasePart
-            end
-        end
-        local handle: Instance? = tool:FindFirstChild("Handle")
-        if handle and handle:IsA("BasePart") then
-            return handle :: BasePart
-        end
-        return (tool:FindFirstChildWhichIsA("BasePart", true) :: BasePart?)
     end
 
     local function equippedWeapon(kind: string): Tool?
@@ -560,10 +486,6 @@ function Module.init(runtime: any): any
             end
             local double: boolean = kind == "Gun" and options.doubleGun
                 or kind == "Knife" and options.doubleKnife
-            local blade: BasePart? = visualBlade(tool)
-            if kind == "Knife" and options.electricKnife and blade then
-                addElectric(blade)
-            end
             if not double
                 or not left
                 or not right
@@ -584,17 +506,12 @@ function Module.init(runtime: any): any
                     local joint: Weld = Instance.new("Weld")
                     joint.Part0 = left
                     joint.Part1 = part
-                    joint.C0 = mirrorAcross(CFrame.new(), right.CFrame:ToObjectSpace((source :: BasePart).CFrame))
+                    joint.C0 = right.CFrame:ToObjectSpace((source :: BasePart).CFrame)
                     joint.C1 = CFrame.new()
                     part.CFrame = left.CFrame * joint.C0
                     joint.Parent = part
                     part.Parent = visualFolder
                     table.insert(doubleBindings, {source = source, joint = joint, right = right})
-                    if kind == "Knife"
-                        and options.electricKnife
-                        and source == blade then
-                        addElectric(part)
-                    end
                     copied += 1
                     if copied >= 64 then
                         break -- bounded cost for complex skins
@@ -641,35 +558,8 @@ function Module.init(runtime: any): any
                 if options.doubleKnife and copiedByKind.Knife > 0 then
                     table.insert(parts, "2x" .. copiedByKind.Knife .. " knife")
                 end
-                if options.electricKnife and #arcs > 0 then
-                    table.insert(parts, "arc x" .. #arcs)
-                end
                 feature:SetStatus(#parts > 0 and table.concat(parts, " · ") or nil)
             end
-        end
-        if #arcs > 0 then
-            local elapsed: number = 0
-            electricTask = TaskManager:Connect(function(dt: number): ()
-                elapsed += dt
-                if elapsed < 0.125 then
-                    return -- 8 Hz only while electric is visible
-                end
-                elapsed = 0
-                for _, arc: any in ipairs(arcs) do
-                    for i, node: Attachment in ipairs(arc.nodes) do
-                        local jitter: Vector3 = (i == 1 or i == #arc.nodes)
-                                and Vector3.zero
-                            or Vector3.new(
-                                math.random() - 0.5,
-                                math.random() - 0.5,
-                                math.random() - 0.5
-                            ) * 0.22 * options.intensity
-                        node.Position = arc.axis * arc.length
-                            * ((i - 1) / 5 - 0.5)
-                            + jitter
-                    end
-                end
-            end)
         end
     end
 
@@ -733,8 +623,7 @@ function Module.init(runtime: any): any
                 if character then
                     for _, binding: any in ipairs(doubleBindings) do
                         if binding.source.Parent and binding.joint.Parent and binding.right.Parent then
-                            binding.joint.C0 = mirrorAcross(CFrame.new(),
-                                binding.right.CFrame:ToObjectSpace(binding.source.CFrame))
+                            binding.joint.C0 = binding.right.CFrame:ToObjectSpace(binding.source.CFrame)
                         end
                     end
                     mirrorArms(character)
@@ -768,8 +657,7 @@ function Module.init(runtime: any): any
 
     feature = createUniversalFeature(
         "Weapon Visuals",
-        "Local cosmetics only: double weapons raise both arms, electric "
-            .. "knife arcs. No extra damage or replication.",
+        "Local double-weapon cosmetics and shot feedback. No extra damage or replication.",
         15,
         setEnabled,
         {categoryName = "Render", parent = MM2Scroll, registry = mm2Features}
@@ -782,17 +670,8 @@ function Module.init(runtime: any): any
         options.doubleKnife = value
         queueRebuild()
     end)
-    addToggleOption(feature, "Electric Knife", false, function(value: boolean): ()
-        options.electricKnife = value
-        queueRebuild()
-    end, "Original local beam effect, not the official inventory effect.")
-    addColorOption(feature, "Electric color", options.color, function(value: Color3): ()
+    addColorOption(feature, "Trail color", options.color, function(value: Color3): ()
         options.color = value
-        queueRebuild()
-    end)
-    addNumberOption(feature, "Electric intensity", 1, 0.25, 3, function(value: number): ()
-        options.intensity = math.clamp(value, 0.25, 3)
-        queueRebuild()
     end)
     addToggleOption(feature, "TrailESP", false, function(value: boolean): ()
         options.trailEsp = value

@@ -37,10 +37,9 @@ function Module.init(runtime: any): any
     local predictionMath: any = core.predictionMath
     local isMotionGrounded: any = core.isMotionGrounded
     local function isWeaponPathClear(origin: Vector3, endpoint: Vector3, target: Model?): boolean
-        -- Tracer feedback includes stationary shots stopped by teleporter
-        -- triggers / spawn volumes. Invisible is not necessarily bullet-proof
-        -- passthrough: only explicit WeaponPassthrough tags are excluded.
-        return core.isWeaponPathClear(origin, endpoint, target, true)
+        -- Use the recovered WeaponService cursor filter (including its
+        -- transparent-part handling), not v32's speculative strict mode.
+        return core.isWeaponPathClear(origin, endpoint, target)
     end
 
     local shootMacro: boolean = false
@@ -74,6 +73,7 @@ function Module.init(runtime: any): any
     type GunAimOptions = {
 
         ignoreVisibility: boolean?,
+        allowUncertain: boolean?,
     }
 
     local BODY_HALF_WIDTH: number = 1.0
@@ -363,7 +363,7 @@ function Module.init(runtime: any): any
             turnError + jitter
         )
         local allowedErrorBudget: number = ignoreVisibility and (BODY_HALF_WIDTH * 1.75) or BODY_HALF_WIDTH
-        if errorRadius > allowedErrorBudget then
+        if errorRadius > allowedErrorBudget and not resolvedOptions.allowUncertain then
             return nil, nil, "turning too hard"
         end
 
@@ -524,6 +524,7 @@ function Module.init(runtime: any): any
         silent: boolean?,
         maxError: number?,
         quiet: boolean?,
+        whenReady: boolean?,
     }
 
     local lastRejectReason: string = ""
@@ -553,21 +554,14 @@ function Module.init(runtime: any): any
         if not character or not humanoid then
             return reject("Your character is not available.")
         end
-        local gun: Tool? = getPlayerWeapon(LocalPlayer, "Gun")
-        local backpack: Backpack? = LocalPlayer:FindFirstChildOfClass("Backpack")
-        if not gun and backpack then
-            return reject("You do not have the sheriff gun.")
+        local gun: Tool? = getPlayerWeapon(LocalPlayer, "Gun", true)
+        if not gun or gun.Parent ~= character then
+            return reject("Equip the sheriff gun yourself to shoot.")
         end
-        if gun and gun.Parent == backpack and humanoid:IsA("Humanoid") then
-            humanoid:EquipTool(gun)
-            if quiet then
-
-                return reject("Equipping the sheriff gun.")
-            end
-            task.wait()
+        if gun.Enabled == false or gun:GetAttribute("Disabled") == true then
+            return reject("The gun is disabled or reloading.")
         end
 
-        gun = getPlayerWeapon(LocalPlayer, "Gun", true) or gun
         local remote: Instance? = gun and gun:FindFirstChild("Shoot")
         local origin: CFrame? = getGunOriginCFrame(character, gun)
 
@@ -576,7 +570,7 @@ function Module.init(runtime: any): any
             aim, prediction, reason = computeGunAim(
                 target,
                 origin :: CFrame,
-                silent and {ignoreVisibility = true} or nil
+                {ignoreVisibility = silent, allowUncertain = opts.whenReady == true}
             )
         end
 
@@ -683,7 +677,7 @@ function Module.init(runtime: any): any
             silent = false,
             settings = {mode = "Normal", wallCheck = mm2Settings.shootWallCheck,
                 motionHz = mm2Settings.motionSampleHz, leadBias = mm2Settings.gunLeadBias,
-                strictWallCheck = true, leadSeconds = resolved.leadSeconds, errorRadius = resolved.errorRadius,
+                wallCheckPolicy = "recovered-client-filter", leadSeconds = resolved.leadSeconds, errorRadius = resolved.errorRadius,
                 predictedPoint = {resolved.endpoint.X, resolved.endpoint.Y, resolved.endpoint.Z},
                 sampledVelocity = {resolved.velocity.X, resolved.velocity.Y, resolved.velocity.Z}},
         })
@@ -742,34 +736,14 @@ function Module.init(runtime: any): any
 
     local autoSettings = {
         mode = "Normal" :: string,
-        maxError = 0.6,
-        fireDelay = 0.5,
+        fireDelay = 0.1,
     }
     local lastAutoShot: number = -math.huge
-    local lastGunCheck: number = -math.huge
     local lastAutoReject: {message: string, at: number}? = nil
 
-    local function equipSheriffGun(): ()
-        local backpack: Backpack? = LocalPlayer:FindFirstChildOfClass("Backpack")
-        if not backpack then
-            return
-        end
-        local gun: Tool? = getPlayerWeapon(LocalPlayer, "Gun")
-        if gun and gun.Parent == backpack then
-            local humanoid: Humanoid? = LocalPlayer.Character
-                and LocalPlayer.Character:FindFirstChildOfClass("Humanoid")
-                :: Humanoid?
-            if humanoid then
-                humanoid:EquipTool(gun)
-            end
-        end
-    end
-
     local function autoShootTick(): ()
-        if os.clock() - lastGunCheck >= 0.5 then
-            lastGunCheck = os.clock()
-            equipSheriffGun()
-        end
+        local gun: Tool? = getPlayerWeapon(LocalPlayer, "Gun", true)
+        if not gun or gun.Parent ~= LocalPlayer.Character then return end
 
         if os.clock() - lastAutoShot < autoSettings.fireDelay then
             return
@@ -781,7 +755,7 @@ function Module.init(runtime: any): any
         lastRejectReason = ""
         local fired: boolean = fireGunAtTarget(target, {
             silent = autoSettings.mode == "Silent",
-            maxError = autoSettings.maxError,
+            whenReady = true,
             quiet = true,
         })
         if fired then
@@ -1044,9 +1018,8 @@ function Module.init(runtime: any): any
 
     local AutoShootFeature = createUniversalFeature(
         "Auto Shoot",
-        "Fires by itself when a high-probability shot exists. Normal holds for line"
-            .. " of sight and answers peeks; Silent shoots the murderer from any"
-            .. " distance, through walls.",
+        "Fires when cooldown and target permit, only while YOU hold the gun. "
+            .. "Normal respects Shoot WallCheck. Never auto-equips or waits for a confidence threshold.",
         5,
         toggleAutoShoot,
         {
@@ -1063,21 +1036,6 @@ function Module.init(runtime: any): any
         function(value: string): ()
             autoSettings.mode = value
         end
-    )
-    addNumberOption(
-        AutoShootFeature,
-        "Max error",
-        autoSettings.maxError,
-        0.35,
-        1,
-        function(value: number): ()
-            autoSettings.maxError = value
-        end,
-        "Only fire when predicted error is within this many studs. Applies "
-            .. "to both Normal and Silent; extra sweep never overrides this "
-            .. "gate. The solver never reports below 0.35, so the slider "
-            .. "starts there.",
-        0.05
     )
     addNumberOption(
         AutoShootFeature,

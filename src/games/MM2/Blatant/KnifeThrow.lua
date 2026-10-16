@@ -83,16 +83,8 @@ function Module.init(runtime: any): any
             return nil
         end
 
-        local knife: Tool? = getPlayerWeapon(LocalPlayer, "Knife")
-        if not knife or knife:GetAttribute("Disabled") == true then
-            return nil
-        end
-        if knife.Parent ~= character then
-            local humanoid: Humanoid? =
-                character:FindFirstChildOfClass("Humanoid") :: Humanoid?
-            if humanoid then
-                humanoid:EquipTool(knife)
-            end
+        local knife: Tool? = getPlayerWeapon(LocalPlayer, "Knife", true)
+        if not knife or knife.Parent ~= character or knife:GetAttribute("Disabled") == true then
             return nil
         end
         return knife
@@ -144,7 +136,18 @@ function Module.init(runtime: any): any
     local throwTrackHumanoid: Humanoid? = nil
     local throwTrackKnife: Tool? = nil
     local throwTrackId: string? = nil
+    local reconstructedJoint: Motor6D? = nil
+    local reconstructedC0: CFrame? = nil
+    local reconstructedTransform: CFrame? = nil
     local function stopThrowAnimation(): ()
+        disconnectFeatureConnection("MM2KnifeAnimation")
+        if reconstructedJoint and reconstructedJoint.Parent and reconstructedC0 then
+            reconstructedJoint.C0 = reconstructedC0
+            if reconstructedTransform then reconstructedJoint.Transform = reconstructedTransform end
+        end
+        reconstructedJoint = nil
+        reconstructedC0 = nil
+        reconstructedTransform = nil
         if throwTrack then
             pcall(function(): () throwTrack:Stop(0.2) end)
             pcall(function(): () throwTrack:Destroy() end)
@@ -165,25 +168,49 @@ function Module.init(runtime: any): any
         if not humanoid then return end
         local anim: Animation? = nil
         for _, descendant: Instance in ipairs(knife:GetDescendants()) do
+            local label: string = string.lower(descendant.Name):gsub("[%s_%-]", "")
             if descendant:IsA("Animation")
-                and string.find(string.lower(descendant.Name), "throw", 1, true) then
+                and (label == "throw" or label == "throwanim" or label == "knifethrow" or label == "throwanimation") then
                 anim = descendant :: Animation
                 break
             end
         end
         if not anim then
             stopThrowAnimation()
-            -- Legacy R6 fallback only. Never destroy a toolanim owned by
-            -- the game, and never layer this over a known throw animation.
-            if not knife:FindFirstChild("toolanim") then
-                local marker: StringValue = Instance.new("StringValue")
-                marker.Name = "toolanim"
-                marker.Value = "Lunge"
-                marker.Parent = knife
-                task.delay(0.3, function(): ()
-                    if marker.Parent == knife then marker:Destroy() end
-                end)
-            end
+            -- Local reconstruction: wind-up, forward release, recovery.
+            -- No guessed animation asset or generic ToolLunge marker.
+            local upper: Instance? = character:FindFirstChild("RightUpperArm")
+            local torso: Instance? = character:FindFirstChild("Torso")
+                or character:FindFirstChild("UpperTorso")
+            local joint: Instance? = upper and upper:FindFirstChild("RightShoulder")
+                or torso and (torso:FindFirstChild("Right Shoulder") or torso:FindFirstChild("RightShoulder"))
+            if not joint or not joint:IsA("Motor6D") then return end
+            reconstructedJoint = joint :: Motor6D
+            reconstructedC0 = (joint :: Motor6D).C0
+            reconstructedTransform = (joint :: Motor6D).Transform
+            local base: CFrame = (reconstructedC0 :: CFrame) * (reconstructedTransform :: CFrame)
+            local windup: CFrame = base * CFrame.Angles(math.rad(-65), 0, math.rad(12))
+            local release: CFrame = base * CFrame.Angles(math.rad(85), 0, math.rad(-8))
+            local elapsed: number = 0
+            featureConnections.MM2KnifeAnimation = TaskManager:Connect(function(dt: number): ()
+                elapsed += dt
+                if knife.Parent ~= LocalPlayer.Character or not joint.Parent or elapsed >= 0.48 then
+                    stopThrowAnimation()
+                    return
+                end
+                local from: CFrame, to: CFrame, alpha: number
+                if elapsed < 0.12 then
+                    from, to, alpha = base, windup, elapsed / 0.12
+                elseif elapsed < 0.25 then
+                    from, to, alpha = windup, release, (elapsed - 0.12) / 0.13
+                else
+                    from, to, alpha = release, base, (elapsed - 0.25) / 0.23
+                end
+                alpha = alpha * alpha * (3 - 2 * alpha)
+                local posedJoint: Motor6D = joint :: Motor6D
+                posedJoint.Transform = CFrame.new()
+                posedJoint.C0 = from:Lerp(to, alpha)
+            end)
             return
         end
         if throwTrackHumanoid ~= humanoid or throwTrackKnife ~= knife
@@ -207,6 +234,14 @@ function Module.init(runtime: any): any
                 if throwTrack.IsPlaying then throwTrack:Stop(0.05) end
                 throwTrack:Play(0.1, 1, 1)
                 throwTrack.TimePosition = 0
+                disconnectFeatureConnection("MM2KnifeAnimation")
+                local elapsed: number = 0
+                featureConnections.MM2KnifeAnimation = TaskManager:Connect(function(dt: number): ()
+                    elapsed += dt
+                    if knife.Parent ~= LocalPlayer.Character or elapsed > 2 then
+                        stopThrowAnimation()
+                    end
+                end)
             end)
         end
     end
@@ -218,6 +253,7 @@ function Module.init(runtime: any): any
         local silent: boolean = knifeThrowSettings.mode == "Silent"
         local knife: Tool? = getReadyKnife()
         if not knife then
+            stopThrowAnimation()
             return
         end
         local events: Instance? = knife:FindFirstChild("Events")
@@ -325,9 +361,12 @@ function Module.init(runtime: any): any
         "Knife Throw",
         false,
         toggleKnifeThrow,
-        "Auto-throws the knife at the nearest target. Silent spawns the blade"
+        "Auto-throws only while YOU hold the knife; never equips it. Targets the nearest player. Silent spawns the blade"
             .. " beside the target so it connects at any distance or through walls."
     )
+    addActionOption(KnifeThrowFeature, "Throw now", function(): ()
+        throwKnife()
+    end)
     addCycleOption(
         KnifeThrowFeature,
         "Mode",
@@ -341,10 +380,10 @@ function Module.init(runtime: any): any
         KnifeThrowFeature,
         "Fire delay",
         knifeThrowSettings.fireDelay,
-        0.2,
+        0.5,
         3,
         function(value: number): ()
-            knifeThrowSettings.fireDelay = value
+            knifeThrowSettings.fireDelay = math.clamp(value, 0.5, 3)
         end,
         "Seconds between automatic throws.",
         0.1
@@ -381,8 +420,8 @@ function Module.init(runtime: any): any
             knifeThrowSettings.animation = value
             if not value then stopThrowAnimation() end
         end,
-        "Plays an identified throw animation after sending the packet. Cosmetic "
-            .. "only; unknown animations are skipped and OFF releases the track."
+        "Uses the weapon's throw clip when available; otherwise a local wind-up/release/recovery. "
+            .. "Never sends an extra remote; OFF and unequip restore the pose."
     )
     addNumberOption(
         KnifeThrowFeature,

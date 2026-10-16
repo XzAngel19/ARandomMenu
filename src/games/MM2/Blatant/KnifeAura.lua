@@ -32,7 +32,6 @@ function Module.init(runtime: any): any
     local knifeSettings: any = {
         aura = false,
         auraRange = 14,
-        autoRange = false,
     }
     state.mm2KnifeRuntime = {
         masterEnabled = false,
@@ -42,12 +41,6 @@ function Module.init(runtime: any): any
     } :: KnifeRuntimeState
 
     local function getEffectiveRange(): number
-        if knifeSettings.autoRange and trajectoryCalibration and type(trajectoryCalibration.getEstimates) == "function" then
-            local okEst, est = pcall(function() return trajectoryCalibration:getEstimates() end)
-            if okEst and type(est) == "table" and est.maxStabDistance and est.maxStabDistance >= 8 then
-                return math.clamp(math.floor(est.maxStabDistance), 8, 28)
-            end
-        end
         return knifeSettings.auraRange or 14
     end
 
@@ -246,17 +239,7 @@ function Module.init(runtime: any): any
         value: number
     ): ()
         knifeSettings.auraRange = value
-    end, "Stab reach in studs when Auto Range has no confirmed sample.")
-    addToggleOption(
-        KnifeFeature,
-        "Auto Range",
-        knifeSettings.autoRange,
-        function(value: boolean): ()
-            knifeSettings.autoRange = value
-        end,
-        "Uses confirmed stab records only; falls back to manual Range when "
-            .. "no verified sample exists. Unconfirmed attempts never expand reach."
-    )
+    end, "Manual stab reach in studs.")
 
     activeCleanup = function(): ()
         toggleKnifeAura(false)

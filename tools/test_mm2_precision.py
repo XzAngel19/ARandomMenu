@@ -153,7 +153,12 @@ local animator={LoadAnimation=function(self,anim)
         Destroy=function() destroyed+=1 end,Play=function() played+=1 end}
 end}
 local h={FindFirstChildOfClass=function() return animator end}
-local LocalPlayer={Character={FindFirstChildOfClass=function() return h end}}
+local LocalPlayer={Character={FindFirstChildOfClass=function() return h end,FindFirstChild=function() return nil end}}
+local featureConnections={}
+local TaskManager={Connect=function(_,fn) return {Disconnect=function() end} end}
+local function disconnectFeatureConnection(key)
+    if featureConnections[key] then featureConnections[key]:Disconnect();featureConnections[key]=nil end
+end
 local function anim(name,id) return {Name=name,AnimationId=id,IsA=function() return true end} end
 local throw=anim("Throw","1")
 local knife={GetDescendants=function() return {anim("Equip","0"),throw} end}
@@ -271,7 +276,8 @@ local function getFilteredVelocity() return velocity end
 local gunHorizon=0.2+1/40+1/120
 local function getGunHorizonSeconds() return gunHorizon end
 local function getGunTurnDiscount() return 1 end
-local function getGunTurnRate() return 0 end
+local sampledTurnRate=0
+local function getGunTurnRate() return sampledTurnRate end
 ''', section(SHOOT, "    local BODY_HALF_WIDTH:", "    local function getSelectedShootTarget"), r'''
 local origin=CFrame.new(Vector3.new(0,0,-20))
 local aim,pred=computeGunAim(target,origin)
@@ -324,6 +330,11 @@ velocity=Vector3.zero
 local _,stationary=computeGunAim(target,origin)
 near(stationary.endpoint.X,0)
 near(stationary.endpoint.Y,0.8)
+velocity=Vector3.new(30,0,0);sampledTurnRate=math.pi*1.5
+local held=computeGunAim(target,origin)
+assert(held==nil,'manual mode retains uncertainty gate')
+local _,ready=computeGunAim(target,origin,{allowUncertain=true})
+assert(ready and ready.errorRadius>1,'Auto Shoot must not wait on a confidence threshold')
 pass("actual Shoot solver: linear lead; torso offset; jump; stale sample; no phantom drop; stop damping; jump state")
 end
 ''']
@@ -454,7 +465,7 @@ end
 ''']
     chunks += [r'''
 do
-local knifeSettings={aura=true,autoRange=true,auraRange=14}
+local knifeSettings={aura=true,auraRange=20}
 local trajectoryCalibration={getEstimates=function() return {maxStabDistance=20} end,noteAuthoredShot=function() end}
 ''', section(AURA, "    local function getEffectiveRange", "    local function getEquippedWeapon"), r'''
 local activated,sent=0,0
@@ -474,7 +485,7 @@ processKnifeAura()
 assert(activated==1 and sent==1)
 processKnifeAura()
 assert(activated==1 and sent==1,"cooldown")
-pass("actual Aura: auto/manual range disagreement fixed; cooldown before scans")
+pass("actual Aura: manual range used consistently; cooldown before scans")
 end
 ''']
     # Execute the real writer with an in-memory encoder/IO sink. Detect accidental

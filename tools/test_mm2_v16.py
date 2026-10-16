@@ -292,7 +292,7 @@ do
     handle.CFrame=CFrame.new(Vector3.new(8,2,1))
     RunService.PreSimulation:Fire()
     local liveWeld=folder.children[1]:FindFirstChildWhichIsA("Weld")
-    assert(liveWeld and liveWeld.C0.Position.X==-7,"skin offsets refresh after delayed placement")
+    assert(liveWeld and liveWeld.C0.Position.X==7,"skin offsets refresh after delayed placement")
 end
 local oldLeftJoint=LocalPlayer.Character:FindFirstChild("Torso"):FindFirstChild("Left Shoulder")
 gun.Parent=nil; LocalPlayer.Character.DescendantRemoving:Fire(gun); flush()
@@ -302,8 +302,9 @@ local newChar=character(true)
 local knife=child(newChar,"Tool","Knife"); child(knife,"Part","Handle")
 local newVh=child(knife,"Model","VH"); child(newVh,"MeshPart","Blade")
 LocalPlayer.CharacterRemoving:Fire(); LocalPlayer.Character=newChar; LocalPlayer.CharacterAdded:Fire(newChar)
-options["Double Knife"](true); options["Electric Knife"](true); flush()
-assert(taskCount()==1 and #workspace.children[1].children==4,"R15 plus VH and two own carriers")
+options["Double Knife"](true); flush()
+assert(options["Electric Knife"]==nil and options["Electric intensity"]==nil)
+assert(taskCount()==0 and #workspace.children[1].children==2,"R15 geometry only; no electric carriers")
 do
     -- Full R15 chain: shoulder, elbow and wrist all mirror the right side.
     local rUpper=newChar:FindFirstChild("RightUpperArm")
@@ -324,7 +325,7 @@ do
     near(pw.X,0); near(pw.Y,-0.1); near(pw.Z,-0.3)
 end
 for _,t in ipairs(tasks) do if t.Connected then t.fn(0.125) end end
-options["Electric Knife"](false); flush(); assert(taskCount()==0)
+assert(taskCount()==0)
 master(false); flush(); assert(#workspace.children==0 and taskCount()==0)
 for _,sig in ipairs({newChar.DescendantAdded,newChar.DescendantRemoving,LocalPlayer.CharacterAdded,LocalPlayer.CharacterRemoving,RunService.PreSimulation}) do
     for _,c in ipairs(sig.connections) do assert(not c.Connected) end
@@ -349,9 +350,9 @@ gunSignal:Fire(ownHandle,Vector3.zero,Vector3.new(0/0,0,0))
 assert(#tracerCalls==2,"invalid visual endpoint rejected")
 master(false);flush()
 for _,c in ipairs(gunSignal.connections) do assert(not c.Connected) end
-master(true); options["Electric Knife"](true); Module.destroy(); flush()
+master(true); Module.destroy(); flush()
 assert(#workspace.children==0 and taskCount()==0 and not Module.Initialized,"deferred rebuild after destroy")
-pass("full Weapon Visuals lifecycle: OFF, R6/R15, nested VH, safe geometry, unequip, respawn, electric-only 8 Hz, destroy")
+pass("full Weapon Visuals lifecycle: OFF, R6/R15, nested VH, safe geometry, unequip, respawn, no electric controls, destroy")
 end
 print("v16 regression groups passed:",passed)
 ''']

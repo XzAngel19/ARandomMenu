@@ -96,10 +96,19 @@ tick();assert(not loaded[3].destroyed and loaded[3].IsPlaying,'jump must retain 
 humanoid.GetState=function() return 'Running' end
 -- Disable must release revived tracks and the event connection.
 feature.enabled=false;toggle(false)
-assert(custom.stops==0 and idOnly.stops==0 and attack.stops==0)
+assert(dance.stops==1 and attack.stops==0,'OFF stops original emote source but never an attack')
 for _,t in ipairs(loaded) do assert(t.stops==1 and t.destroyed) end
 for _,c in ipairs(animator.AnimationPlayed.listeners) do assert(not c.Connected) end
 assert(not tick)
+-- If OFF occurs before Animate cancelled the original, that source must
+-- stop too; there may be no managed replacement at all.
+local source=track('Dance2',182436842,'Core')
+tracks={source};feature.enabled=true;toggle(true);tick()
+local lateSource=track('Dance3',182436842,'Core')
+tracks={source,lateSource,attack} -- recognized source arriving before the next sampler tick
+feature.enabled=false;toggle(false)
+assert(source.stops==1 and not source.IsPlaying,'OFF must stop an original still-playing dance')
+assert(lateSource.stops==1 and attack.stops==0,'OFF must also scan the watched Animator')
 mode('Glitch Animations');feature.enabled=true;toggle(true)
 local walk=track('Walk',444,'Movement')
 local stab=track('Stab',222,'Action')

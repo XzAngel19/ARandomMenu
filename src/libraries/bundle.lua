@@ -1,5 +1,5 @@
 return {
-    stamp = "v32-20261016-arm-jump-shoot",
+    stamp = "v33-20261016-equipped-actions",
     files = {
         ["src/Profile/142823291.lua"] = [[
 --!strict
@@ -1534,7 +1534,6 @@ function Module.init(runtime: any): any
     local knifeSettings: any = {
         aura = false,
         auraRange = 14,
-        autoRange = false,
     }
     state.mm2KnifeRuntime = {
         masterEnabled = false,
@@ -1544,12 +1543,6 @@ function Module.init(runtime: any): any
     } :: KnifeRuntimeState
 
     local function getEffectiveRange(): number
-        if knifeSettings.autoRange and trajectoryCalibration and type(trajectoryCalibration.getEstimates) == "function" then
-            local okEst, est = pcall(function() return trajectoryCalibration:getEstimates() end)
-            if okEst and type(est) == "table" and est.maxStabDistance and est.maxStabDistance >= 8 then
-                return math.clamp(math.floor(est.maxStabDistance), 8, 28)
-            end
-        end
         return knifeSettings.auraRange or 14
     end
 
@@ -1748,17 +1741,7 @@ function Module.init(runtime: any): any
         value: number
     ): ()
         knifeSettings.auraRange = value
-    end, "Stab reach in studs when Auto Range has no confirmed sample.")
-    addToggleOption(
-        KnifeFeature,
-        "Auto Range",
-        knifeSettings.autoRange,
-        function(value: boolean): ()
-            knifeSettings.autoRange = value
-        end,
-        "Uses confirmed stab records only; falls back to manual Range when "
-            .. "no verified sample exists. Unconfirmed attempts never expand reach."
-    )
+    end, "Manual stab reach in studs.")
 
     activeCleanup = function(): ()
         toggleKnifeAura(false)
@@ -1871,16 +1854,8 @@ function Module.init(runtime: any): any
             return nil
         end
 
-        local knife: Tool? = getPlayerWeapon(LocalPlayer, "Knife")
-        if not knife or knife:GetAttribute("Disabled") == true then
-            return nil
-        end
-        if knife.Parent ~= character then
-            local humanoid: Humanoid? =
-                character:FindFirstChildOfClass("Humanoid") :: Humanoid?
-            if humanoid then
-                humanoid:EquipTool(knife)
-            end
+        local knife: Tool? = getPlayerWeapon(LocalPlayer, "Knife", true)
+        if not knife or knife.Parent ~= character or knife:GetAttribute("Disabled") == true then
             return nil
         end
         return knife
@@ -1932,7 +1907,18 @@ function Module.init(runtime: any): any
     local throwTrackHumanoid: Humanoid? = nil
     local throwTrackKnife: Tool? = nil
     local throwTrackId: string? = nil
+    local reconstructedJoint: Motor6D? = nil
+    local reconstructedC0: CFrame? = nil
+    local reconstructedTransform: CFrame? = nil
     local function stopThrowAnimation(): ()
+        disconnectFeatureConnection("MM2KnifeAnimation")
+        if reconstructedJoint and reconstructedJoint.Parent and reconstructedC0 then
+            reconstructedJoint.C0 = reconstructedC0
+            if reconstructedTransform then reconstructedJoint.Transform = reconstructedTransform end
+        end
+        reconstructedJoint = nil
+        reconstructedC0 = nil
+        reconstructedTransform = nil
         if throwTrack then
             pcall(function(): () throwTrack:Stop(0.2) end)
             pcall(function(): () throwTrack:Destroy() end)
@@ -1953,25 +1939,49 @@ function Module.init(runtime: any): any
         if not humanoid then return end
         local anim: Animation? = nil
         for _, descendant: Instance in ipairs(knife:GetDescendants()) do
+            local label: string = string.lower(descendant.Name):gsub("[%s_%-]", "")
             if descendant:IsA("Animation")
-                and string.find(string.lower(descendant.Name), "throw", 1, true) then
+                and (label == "throw" or label == "throwanim" or label == "knifethrow" or label == "throwanimation") then
                 anim = descendant :: Animation
                 break
             end
         end
         if not anim then
             stopThrowAnimation()
-            -- Legacy R6 fallback only. Never destroy a toolanim owned by
-            -- the game, and never layer this over a known throw animation.
-            if not knife:FindFirstChild("toolanim") then
-                local marker: StringValue = Instance.new("StringValue")
-                marker.Name = "toolanim"
-                marker.Value = "Lunge"
-                marker.Parent = knife
-                task.delay(0.3, function(): ()
-                    if marker.Parent == knife then marker:Destroy() end
-                end)
-            end
+            -- Local reconstruction: wind-up, forward release, recovery.
+            -- No guessed animation asset or generic ToolLunge marker.
+            local upper: Instance? = character:FindFirstChild("RightUpperArm")
+            local torso: Instance? = character:FindFirstChild("Torso")
+                or character:FindFirstChild("UpperTorso")
+            local joint: Instance? = upper and upper:FindFirstChild("RightShoulder")
+                or torso and (torso:FindFirstChild("Right Shoulder") or torso:FindFirstChild("RightShoulder"))
+            if not joint or not joint:IsA("Motor6D") then return end
+            reconstructedJoint = joint :: Motor6D
+            reconstructedC0 = (joint :: Motor6D).C0
+            reconstructedTransform = (joint :: Motor6D).Transform
+            local base: CFrame = (reconstructedC0 :: CFrame) * (reconstructedTransform :: CFrame)
+            local windup: CFrame = base * CFrame.Angles(math.rad(-65), 0, math.rad(12))
+            local release: CFrame = base * CFrame.Angles(math.rad(85), 0, math.rad(-8))
+            local elapsed: number = 0
+            featureConnections.MM2KnifeAnimation = TaskManager:Connect(function(dt: number): ()
+                elapsed += dt
+                if knife.Parent ~= LocalPlayer.Character or not joint.Parent or elapsed >= 0.48 then
+                    stopThrowAnimation()
+                    return
+                end
+                local from: CFrame, to: CFrame, alpha: number
+                if elapsed < 0.12 then
+                    from, to, alpha = base, windup, elapsed / 0.12
+                elseif elapsed < 0.25 then
+                    from, to, alpha = windup, release, (elapsed - 0.12) / 0.13
+                else
+                    from, to, alpha = release, base, (elapsed - 0.25) / 0.23
+                end
+                alpha = alpha * alpha * (3 - 2 * alpha)
+                local posedJoint: Motor6D = joint :: Motor6D
+                posedJoint.Transform = CFrame.new()
+                posedJoint.C0 = from:Lerp(to, alpha)
+            end)
             return
         end
         if throwTrackHumanoid ~= humanoid or throwTrackKnife ~= knife
@@ -1995,6 +2005,14 @@ function Module.init(runtime: any): any
                 if throwTrack.IsPlaying then throwTrack:Stop(0.05) end
                 throwTrack:Play(0.1, 1, 1)
                 throwTrack.TimePosition = 0
+                disconnectFeatureConnection("MM2KnifeAnimation")
+                local elapsed: number = 0
+                featureConnections.MM2KnifeAnimation = TaskManager:Connect(function(dt: number): ()
+                    elapsed += dt
+                    if knife.Parent ~= LocalPlayer.Character or elapsed > 2 then
+                        stopThrowAnimation()
+                    end
+                end)
             end)
         end
     end
@@ -2006,6 +2024,7 @@ function Module.init(runtime: any): any
         local silent: boolean = knifeThrowSettings.mode == "Silent"
         local knife: Tool? = getReadyKnife()
         if not knife then
+            stopThrowAnimation()
             return
         end
         local events: Instance? = knife:FindFirstChild("Events")
@@ -2113,9 +2132,12 @@ function Module.init(runtime: any): any
         "Knife Throw",
         false,
         toggleKnifeThrow,
-        "Auto-throws the knife at the nearest target. Silent spawns the blade"
+        "Auto-throws only while YOU hold the knife; never equips it. Targets the nearest player. Silent spawns the blade"
             .. " beside the target so it connects at any distance or through walls."
     )
+    addActionOption(KnifeThrowFeature, "Throw now", function(): ()
+        throwKnife()
+    end)
     addCycleOption(
         KnifeThrowFeature,
         "Mode",
@@ -2129,10 +2151,10 @@ function Module.init(runtime: any): any
         KnifeThrowFeature,
         "Fire delay",
         knifeThrowSettings.fireDelay,
-        0.2,
+        0.5,
         3,
         function(value: number): ()
-            knifeThrowSettings.fireDelay = value
+            knifeThrowSettings.fireDelay = math.clamp(value, 0.5, 3)
         end,
         "Seconds between automatic throws.",
         0.1
@@ -2169,8 +2191,8 @@ function Module.init(runtime: any): any
             knifeThrowSettings.animation = value
             if not value then stopThrowAnimation() end
         end,
-        "Plays an identified throw animation after sending the packet. Cosmetic "
-            .. "only; unknown animations are skipped and OFF releases the track."
+        "Uses the weapon's throw clip when available; otherwise a local wind-up/release/recovery. "
+            .. "Never sends an extra remote; OFF and unequip restore the pose."
     )
     addNumberOption(
         KnifeThrowFeature,
@@ -2252,10 +2274,9 @@ function Module.init(runtime: any): any
     local predictionMath: any = core.predictionMath
     local isMotionGrounded: any = core.isMotionGrounded
     local function isWeaponPathClear(origin: Vector3, endpoint: Vector3, target: Model?): boolean
-        -- Tracer feedback includes stationary shots stopped by teleporter
-        -- triggers / spawn volumes. Invisible is not necessarily bullet-proof
-        -- passthrough: only explicit WeaponPassthrough tags are excluded.
-        return core.isWeaponPathClear(origin, endpoint, target, true)
+        -- Use the recovered WeaponService cursor filter (including its
+        -- transparent-part handling), not v32's speculative strict mode.
+        return core.isWeaponPathClear(origin, endpoint, target)
     end
 
     local shootMacro: boolean = false
@@ -2289,6 +2310,7 @@ function Module.init(runtime: any): any
     type GunAimOptions = {
 
         ignoreVisibility: boolean?,
+        allowUncertain: boolean?,
     }
 
     local BODY_HALF_WIDTH: number = 1.0
@@ -2578,7 +2600,7 @@ function Module.init(runtime: any): any
             turnError + jitter
         )
         local allowedErrorBudget: number = ignoreVisibility and (BODY_HALF_WIDTH * 1.75) or BODY_HALF_WIDTH
-        if errorRadius > allowedErrorBudget then
+        if errorRadius > allowedErrorBudget and not resolvedOptions.allowUncertain then
             return nil, nil, "turning too hard"
         end
 
@@ -2739,6 +2761,7 @@ function Module.init(runtime: any): any
         silent: boolean?,
         maxError: number?,
         quiet: boolean?,
+        whenReady: boolean?,
     }
 
     local lastRejectReason: string = ""
@@ -2768,21 +2791,14 @@ function Module.init(runtime: any): any
         if not character or not humanoid then
             return reject("Your character is not available.")
         end
-        local gun: Tool? = getPlayerWeapon(LocalPlayer, "Gun")
-        local backpack: Backpack? = LocalPlayer:FindFirstChildOfClass("Backpack")
-        if not gun and backpack then
-            return reject("You do not have the sheriff gun.")
+        local gun: Tool? = getPlayerWeapon(LocalPlayer, "Gun", true)
+        if not gun or gun.Parent ~= character then
+            return reject("Equip the sheriff gun yourself to shoot.")
         end
-        if gun and gun.Parent == backpack and humanoid:IsA("Humanoid") then
-            humanoid:EquipTool(gun)
-            if quiet then
-
-                return reject("Equipping the sheriff gun.")
-            end
-            task.wait()
+        if gun.Enabled == false or gun:GetAttribute("Disabled") == true then
+            return reject("The gun is disabled or reloading.")
         end
 
-        gun = getPlayerWeapon(LocalPlayer, "Gun", true) or gun
         local remote: Instance? = gun and gun:FindFirstChild("Shoot")
         local origin: CFrame? = getGunOriginCFrame(character, gun)
 
@@ -2791,7 +2807,7 @@ function Module.init(runtime: any): any
             aim, prediction, reason = computeGunAim(
                 target,
                 origin :: CFrame,
-                silent and {ignoreVisibility = true} or nil
+                {ignoreVisibility = silent, allowUncertain = opts.whenReady == true}
             )
         end
 
@@ -2898,7 +2914,7 @@ function Module.init(runtime: any): any
             silent = false,
             settings = {mode = "Normal", wallCheck = mm2Settings.shootWallCheck,
                 motionHz = mm2Settings.motionSampleHz, leadBias = mm2Settings.gunLeadBias,
-                strictWallCheck = true, leadSeconds = resolved.leadSeconds, errorRadius = resolved.errorRadius,
+                wallCheckPolicy = "recovered-client-filter", leadSeconds = resolved.leadSeconds, errorRadius = resolved.errorRadius,
                 predictedPoint = {resolved.endpoint.X, resolved.endpoint.Y, resolved.endpoint.Z},
                 sampledVelocity = {resolved.velocity.X, resolved.velocity.Y, resolved.velocity.Z}},
         })
@@ -2957,34 +2973,14 @@ function Module.init(runtime: any): any
 
     local autoSettings = {
         mode = "Normal" :: string,
-        maxError = 0.6,
-        fireDelay = 0.5,
+        fireDelay = 0.1,
     }
     local lastAutoShot: number = -math.huge
-    local lastGunCheck: number = -math.huge
     local lastAutoReject: {message: string, at: number}? = nil
 
-    local function equipSheriffGun(): ()
-        local backpack: Backpack? = LocalPlayer:FindFirstChildOfClass("Backpack")
-        if not backpack then
-            return
-        end
-        local gun: Tool? = getPlayerWeapon(LocalPlayer, "Gun")
-        if gun and gun.Parent == backpack then
-            local humanoid: Humanoid? = LocalPlayer.Character
-                and LocalPlayer.Character:FindFirstChildOfClass("Humanoid")
-                :: Humanoid?
-            if humanoid then
-                humanoid:EquipTool(gun)
-            end
-        end
-    end
-
     local function autoShootTick(): ()
-        if os.clock() - lastGunCheck >= 0.5 then
-            lastGunCheck = os.clock()
-            equipSheriffGun()
-        end
+        local gun: Tool? = getPlayerWeapon(LocalPlayer, "Gun", true)
+        if not gun or gun.Parent ~= LocalPlayer.Character then return end
 
         if os.clock() - lastAutoShot < autoSettings.fireDelay then
             return
@@ -2996,7 +2992,7 @@ function Module.init(runtime: any): any
         lastRejectReason = ""
         local fired: boolean = fireGunAtTarget(target, {
             silent = autoSettings.mode == "Silent",
-            maxError = autoSettings.maxError,
+            whenReady = true,
             quiet = true,
         })
         if fired then
@@ -3259,9 +3255,8 @@ function Module.init(runtime: any): any
 
     local AutoShootFeature = createUniversalFeature(
         "Auto Shoot",
-        "Fires by itself when a high-probability shot exists. Normal holds for line"
-            .. " of sight and answers peeks; Silent shoots the murderer from any"
-            .. " distance, through walls.",
+        "Fires when cooldown and target permit, only while YOU hold the gun. "
+            .. "Normal respects Shoot WallCheck. Never auto-equips or waits for a confidence threshold.",
         5,
         toggleAutoShoot,
         {
@@ -3278,21 +3273,6 @@ function Module.init(runtime: any): any
         function(value: string): ()
             autoSettings.mode = value
         end
-    )
-    addNumberOption(
-        AutoShootFeature,
-        "Max error",
-        autoSettings.maxError,
-        0.35,
-        1,
-        function(value: number): ()
-            autoSettings.maxError = value
-        end,
-        "Only fire when predicted error is within this many studs. Applies "
-            .. "to both Normal and Silent; extra sweep never overrides this "
-            .. "gate. The solver never reports below 0.35, so the slider "
-            .. "starts there.",
-        0.05
     )
     addNumberOption(
         AutoShootFeature,
@@ -4710,9 +4690,7 @@ function Module.init(runtime: any): any
         enabled = false,
         doubleGun = false,
         doubleKnife = false,
-        electricKnife = false,
         color = Color3.fromRGB(100, 185, 255),
-        intensity = 1,
         trailEsp = false,
         tracerData = false,
     }
@@ -4721,8 +4699,6 @@ function Module.init(runtime: any): any
     local visualFolder: Folder? = nil
     local trailFolder: Folder? = nil
     local gunFiredConnection: any = nil
-    local electricTask: any = nil
-    local arcs: {any} = {}
     local queued = false
     local generation = 0
     local activeDouble = false
@@ -4869,11 +4845,6 @@ function Module.init(runtime: any): any
     -- ------------------------------------------------------------------
 
     local function clearVisuals(): ()
-        if electricTask then
-            electricTask:Disconnect()
-            electricTask = nil
-        end
-        table.clear(arcs)
         table.clear(doubleBindings)
         if visualFolder then
             visualFolder:Destroy()
@@ -4955,71 +4926,6 @@ function Module.init(runtime: any): any
             end
         end
         return copy
-    end
-
-    local function attach(part: BasePart, limb: BasePart, pose: CFrame): ()
-        part.CFrame = pose
-        local joint = Instance.new("WeldConstraint")
-        joint.Part0 = limb
-        joint.Part1 = part
-        joint.Parent = part
-        part.Parent = visualFolder
-    end
-
-    local function addElectric(part: BasePart): ()
-        -- Own invisible carrier: the real weapon receives no children/changes.
-        local carrier = Instance.new("Part")
-        carrier.Name = "LocalElectricCarrier"
-        carrier.Size = Vector3.new(0.05, 0.05, 0.05)
-        carrier.Transparency = 1
-        carrier.Anchored = false
-        carrier.CanCollide = false
-        carrier.CanTouch = false
-        carrier.CanQuery = false
-        carrier.Massless = true
-        attach(carrier, part, part.CFrame)
-        local size: Vector3 = part.Size
-        local length: number = math.max(size.X, size.Y, size.Z, 0.5)
-        local axis: Vector3 = size.X >= size.Y and size.X >= size.Z and Vector3.xAxis
-            or (size.Y >= size.Z and Vector3.yAxis or Vector3.zAxis)
-        local nodes: {Attachment} = {}
-        for i = 1, 6 do
-            local node = Instance.new("Attachment")
-            node.Position = axis * length * ((i - 1) / 5 - 0.5)
-            node.Parent = carrier
-            table.insert(nodes, node)
-            if i > 1 then
-                local beam = Instance.new("Beam")
-                beam.Attachment0 = nodes[i - 1]
-                beam.Attachment1 = node
-                beam.FaceCamera = true
-                beam.Color = ColorSequence.new(options.color)
-                beam.LightEmission = 1
-                beam.Width0 = 0.02 + 0.025 * options.intensity
-                beam.Width1 = beam.Width0
-                beam.Transparency = NumberSequence.new(0.1)
-                beam.Parent = carrier
-            end
-        end
-        table.insert(arcs, {nodes = nodes, axis = axis, length = length})
-    end
-
-    local function visualBlade(tool: Tool): BasePart?
-        local vh: Instance? = tool:FindFirstChild("VH", true)
-        if vh then
-            if vh:IsA("BasePart") then
-                return vh :: BasePart
-            end
-            local geometry: Instance? = vh:FindFirstChildWhichIsA("BasePart", true)
-            if geometry then
-                return geometry :: BasePart
-            end
-        end
-        local handle: Instance? = tool:FindFirstChild("Handle")
-        if handle and handle:IsA("BasePart") then
-            return handle :: BasePart
-        end
-        return (tool:FindFirstChildWhichIsA("BasePart", true) :: BasePart?)
     end
 
     local function equippedWeapon(kind: string): Tool?
@@ -5252,10 +5158,6 @@ function Module.init(runtime: any): any
             end
             local double: boolean = kind == "Gun" and options.doubleGun
                 or kind == "Knife" and options.doubleKnife
-            local blade: BasePart? = visualBlade(tool)
-            if kind == "Knife" and options.electricKnife and blade then
-                addElectric(blade)
-            end
             if not double
                 or not left
                 or not right
@@ -5276,17 +5178,12 @@ function Module.init(runtime: any): any
                     local joint: Weld = Instance.new("Weld")
                     joint.Part0 = left
                     joint.Part1 = part
-                    joint.C0 = mirrorAcross(CFrame.new(), right.CFrame:ToObjectSpace((source :: BasePart).CFrame))
+                    joint.C0 = right.CFrame:ToObjectSpace((source :: BasePart).CFrame)
                     joint.C1 = CFrame.new()
                     part.CFrame = left.CFrame * joint.C0
                     joint.Parent = part
                     part.Parent = visualFolder
                     table.insert(doubleBindings, {source = source, joint = joint, right = right})
-                    if kind == "Knife"
-                        and options.electricKnife
-                        and source == blade then
-                        addElectric(part)
-                    end
                     copied += 1
                     if copied >= 64 then
                         break -- bounded cost for complex skins
@@ -5333,35 +5230,8 @@ function Module.init(runtime: any): any
                 if options.doubleKnife and copiedByKind.Knife > 0 then
                     table.insert(parts, "2x" .. copiedByKind.Knife .. " knife")
                 end
-                if options.electricKnife and #arcs > 0 then
-                    table.insert(parts, "arc x" .. #arcs)
-                end
                 feature:SetStatus(#parts > 0 and table.concat(parts, " · ") or nil)
             end
-        end
-        if #arcs > 0 then
-            local elapsed: number = 0
-            electricTask = TaskManager:Connect(function(dt: number): ()
-                elapsed += dt
-                if elapsed < 0.125 then
-                    return -- 8 Hz only while electric is visible
-                end
-                elapsed = 0
-                for _, arc: any in ipairs(arcs) do
-                    for i, node: Attachment in ipairs(arc.nodes) do
-                        local jitter: Vector3 = (i == 1 or i == #arc.nodes)
-                                and Vector3.zero
-                            or Vector3.new(
-                                math.random() - 0.5,
-                                math.random() - 0.5,
-                                math.random() - 0.5
-                            ) * 0.22 * options.intensity
-                        node.Position = arc.axis * arc.length
-                            * ((i - 1) / 5 - 0.5)
-                            + jitter
-                    end
-                end
-            end)
         end
     end
 
@@ -5425,8 +5295,7 @@ function Module.init(runtime: any): any
                 if character then
                     for _, binding: any in ipairs(doubleBindings) do
                         if binding.source.Parent and binding.joint.Parent and binding.right.Parent then
-                            binding.joint.C0 = mirrorAcross(CFrame.new(),
-                                binding.right.CFrame:ToObjectSpace(binding.source.CFrame))
+                            binding.joint.C0 = binding.right.CFrame:ToObjectSpace(binding.source.CFrame)
                         end
                     end
                     mirrorArms(character)
@@ -5460,8 +5329,7 @@ function Module.init(runtime: any): any
 
     feature = createUniversalFeature(
         "Weapon Visuals",
-        "Local cosmetics only: double weapons raise both arms, electric "
-            .. "knife arcs. No extra damage or replication.",
+        "Local double-weapon cosmetics and shot feedback. No extra damage or replication.",
         15,
         setEnabled,
         {categoryName = "Render", parent = MM2Scroll, registry = mm2Features}
@@ -5474,17 +5342,8 @@ function Module.init(runtime: any): any
         options.doubleKnife = value
         queueRebuild()
     end)
-    addToggleOption(feature, "Electric Knife", false, function(value: boolean): ()
-        options.electricKnife = value
-        queueRebuild()
-    end, "Original local beam effect, not the official inventory effect.")
-    addColorOption(feature, "Electric color", options.color, function(value: Color3): ()
+    addColorOption(feature, "Trail color", options.color, function(value: Color3): ()
         options.color = value
-        queueRebuild()
-    end)
-    addNumberOption(feature, "Electric intensity", 1, 0.25, 3, function(value: number): ()
-        options.intensity = math.clamp(value, 0.25, 3)
-        queueRebuild()
     end)
     addToggleOption(feature, "TrailESP", false, function(value: boolean): ()
         options.trailEsp = value
@@ -17414,14 +17273,35 @@ function Module.init(context: Runtime): any
     local emoteIds: {[string]: boolean} = {}
     local managedEmotes: {[any]: any} = {}
     local ownedEmotes: {[any]: boolean} = setmetatable({}, {__mode = "k"})
+    local isEmoteTrack: (any) -> boolean
     local lastGlitch: number = -math.huge
 
     local function clearStickyEmoteTracks(): ()
         if emoteConnection then emoteConnection:Disconnect() end
         emoteConnection = nil
+        local previousHumanoid: any = watchedHumanoid
         watchedHumanoid = nil
+        local stopped: {[any]: boolean} = {}
+        local function stopOnce(track: any): ()
+            if track and not stopped[track] then
+                stopped[track] = true
+                pcall(function(): () track:Stop(0.1) end)
+            end
+        end
+        -- The original Animate track can still be playing even if we never
+        -- had to hand it off. OFF must release that source as well as ours.
+        for _, source: any in ipairs(stickyEmoteTracks) do stopOnce(source) end
+        local animator: any = getAnimator(previousHumanoid)
+        if animator then
+            pcall(function(): ()
+                for _, track: any in ipairs(animator:GetPlayingAnimationTracks()) do
+                    if track.IsPlaying and not ownedEmotes[track] and isEmoteTrack(track) then stopOnce(track) end
+                end
+            end)
+        end
         for _, track: any in pairs(managedEmotes) do
-            pcall(function(): () track:Stop(0.15); track:Destroy() end)
+            stopOnce(track)
+            pcall(function(): () track:Destroy() end)
         end
         managedEmotes = {}
         ownedEmotes = setmetatable({}, {__mode = "k"})
@@ -17436,7 +17316,7 @@ function Module.init(context: Runtime): any
         wave = true, point = true, cheer = true, laugh = true,
     }
 
-    local function isEmoteTrack(track: any): boolean
+    isEmoteTrack = function(track: any): boolean
         -- Action priority is also used by weapon attacks; it is NOT an
         -- emote identifier. Avoid substring matches such as SpinAttack.
         local function knownName(name: string): boolean
@@ -17465,7 +17345,8 @@ function Module.init(context: Runtime): any
         -- A newly selected emote replaces the previous held emote. Never
         -- layer a whole history of dances on the same joints.
         for source: any, managed: any in pairs(managedEmotes) do
-            pcall(function(): () managed:Stop(0.15); managed:Destroy() end)
+            pcall(function(): () managed:Stop(0.1) end)
+            pcall(function(): () managed:Destroy() end)
             ownedEmotes[managed] = nil
             managedEmotes[source] = nil
         end
@@ -17578,7 +17459,8 @@ function Module.init(context: Runtime): any
                 elseif now - lastSeen > 0.5 then
                     local managed: any = managedEmotes[track]
                     if managed then
-                        pcall(function(): () managed:Stop(0.15); managed:Destroy() end)
+                        pcall(function(): () managed:Stop(0.1) end)
+                        pcall(function(): () managed:Destroy() end)
                         managedEmotes[track] = nil
                         ownedEmotes[managed] = nil
                     end
