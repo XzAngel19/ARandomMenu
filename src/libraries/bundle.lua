@@ -1,5 +1,5 @@
 return {
-    stamp = "v30-20261016-flight-item-templates",
+    stamp = "v31-20261016-tracer-emote-double",
     files = {
         ["src/Profile/142823291.lua"] = [[
 --!strict
@@ -4719,6 +4719,7 @@ function Module.init(runtime: any): any
     local queued = false
     local generation = 0
     local activeDouble = false
+    local doubleBindings: {any} = {}
     local rebuild: () -> ()
     local feature: any = nil
     local warnedEmptyGeometry = false
@@ -4825,22 +4826,32 @@ function Module.init(runtime: any): any
             return
         end
         local frame: CFrame = (torso :: BasePart).CFrame
-        local desiredUpper: CFrame =
-            mirrorAcross(frame, (rUpper :: BasePart).CFrame)
+        local function animatedFrame(part: BasePart, joint: Motor6D?, parent: CFrame): CFrame
+            if joint and joint.Part0 and joint.Part1 == part then
+                return parent * joint.C0 * joint.Transform * joint.C1:Inverse()
+            end
+            return part.CFrame
+        end
+        local rightShoulder: Motor6D? = findJoint(rUpper, {"RightShoulder", "Right Shoulder"})
+            or findJoint(torso, {"Right Shoulder", "RightShoulder"})
+        local rightUpperFrame: CFrame = animatedFrame(rUpper, rightShoulder, frame)
+        local desiredUpper: CFrame = mirrorAcross(frame, rightUpperFrame)
         mirrorJoint(leftShoulder :: Motor6D, frame, desiredUpper)
 
         if rLower and lLower then
             local leftElbow: Motor6D? = findJoint(lLower, {"LeftElbow"})
             if leftElbow then
-                local desiredLower: CFrame =
-                    mirrorAcross(frame, (rLower :: BasePart).CFrame)
+                local rightLowerFrame: CFrame = animatedFrame(rLower,
+                    findJoint(rLower, {"RightElbow"}) or findJoint(rUpper, {"RightElbow"}), rightUpperFrame)
+                local desiredLower: CFrame = mirrorAcross(frame, rightLowerFrame)
                 mirrorJoint(leftElbow :: Motor6D, desiredUpper, desiredLower)
                 if rHand and lHand then
                     local leftWrist: Motor6D? =
                         findJoint(lHand, {"LeftWrist"})
                     if leftWrist then
-                        local desiredHand: CFrame =
-                            mirrorAcross(frame, (rHand :: BasePart).CFrame)
+                        local rightHandFrame: CFrame = animatedFrame(rHand,
+                            findJoint(rHand, {"RightWrist"}) or findJoint(rLower, {"RightWrist"}), rightLowerFrame)
+                        local desiredHand: CFrame = mirrorAcross(frame, rightHandFrame)
                         mirrorJoint(
                             leftWrist :: Motor6D,
                             desiredLower,
@@ -4860,6 +4871,7 @@ function Module.init(runtime: any): any
             electricTask = nil
         end
         table.clear(arcs)
+        table.clear(doubleBindings)
         if visualFolder then
             visualFolder:Destroy()
             visualFolder = nil
@@ -4919,6 +4931,7 @@ function Module.init(runtime: any): any
         copy.CanTouch = false
         copy.CanQuery = false
         copy.Massless = true
+        copy.LocalTransparencyModifier = 0
         copy.AssemblyLinearVelocity = Vector3.zero
         copy.AssemblyAngularVelocity = Vector3.zero
         -- Recreate only visual children; no nested scripts, references or tags.
@@ -5033,8 +5046,8 @@ function Module.init(runtime: any): any
     -- ------------------------------------------------------------------
     -- TrailESP + Tracer Data. The server replicates every accepted shot
     -- through WeaponService.GunFired(gunHandle, origin, hitPosition,
-    -- hitPart): that is the ground truth of where the bullet actually
-    -- landed, for everyone's shots including our own.
+    -- hitPart): the reported endpoint, not proof of damage/death or an
+    -- authoritative target pose at the time the server processed the shot.
     -- ------------------------------------------------------------------
 
     local function ensureTrailFolder(): Folder
@@ -5042,6 +5055,12 @@ function Module.init(runtime: any): any
             trailFolder = Instance.new("Folder")
             trailFolder.Name = "MM2TrailESP"
             trailFolder.Parent = workspace
+        end
+        -- Bound transient visuals even if many players fire together.
+        local children: {Instance} = trailFolder:GetChildren()
+        while #children >= 64 do
+            children[1]:Destroy()
+            table.remove(children, 1)
         end
         return trailFolder :: Folder
     end
@@ -5057,7 +5076,7 @@ function Module.init(runtime: any): any
         local folder: Folder = ensureTrailFolder()
         local segment: Vector3 = hit - origin
         local length: number = segment.Magnitude
-        if length > 0.5 then
+        if options.trailEsp and length > 0.5 then
             local beam: Part = Instance.new("Part")
             beam.Name = "TrailSegment"
             beam.Anchored = true
@@ -5084,68 +5103,53 @@ function Module.init(runtime: any): any
                 end
             end)
         end
-        local marker: Part = Instance.new("Part")
-        marker.Name = "TrailLanding"
-        marker.Shape = Enum.PartType.Ball
-        marker.Anchored = true
-        marker.CanCollide = false
-        marker.CanQuery = false
-        marker.CanTouch = false
-        marker.CastShadow = false
-        marker.Material = Enum.Material.Neon
-        marker.Color = options.color
-        marker.Size = Vector3.new(0.5, 0.5, 0.5)
-        marker.Position = hit
-        marker.Parent = folder
-        if typeof(hitPart) == "Instance" and hitPart:IsA("BasePart") then
-            local highlight: Highlight = Instance.new("Highlight")
-            highlight.Name = "TrailHitESP"
-            highlight.FillColor = options.color
-            highlight.OutlineColor = options.color
-            highlight.FillTransparency = 0.55
-            highlight.OutlineTransparency = 0.1
-            highlight.Adornee = hitPart
-            highlight.Parent = folder
-            task.delay(1.55, function(): ()
-                if highlight.Parent then
-                    pcall(function(): () highlight:Destroy() end)
-                end
-            end)
-        end
-        pcall(function(): ()
-            TweenService:Create(
-                marker,
-                TweenInfo.new(1.4, Enum.EasingStyle.Linear),
-                { Size = Vector3.new(0.05, 0.05, 0.05), Transparency = 1 }
-            ):Play()
-        end)
+        -- Pixel-sized ring at the reported endpoint; never highlight the
+        -- entire hitPart (a single hitPart can be a whole wall).
+        local anchor: Part = Instance.new("Part")
+        anchor.Name = "TrailLanding"
+        anchor.Size = Vector3.new(0.02, 0.02, 0.02)
+        anchor.Transparency = 1
+        anchor.Anchored = true
+        anchor.CanCollide = false
+        anchor.CanQuery = false
+        anchor.CanTouch = false
+        anchor.Position = hit
+        anchor.Parent = folder
+        local billboard: BillboardGui = Instance.new("BillboardGui")
+        billboard.Name = "LandingCircle"
+        billboard.Adornee = anchor
+        billboard.AlwaysOnTop = true
+        billboard.Size = UDim2.fromOffset(12, 12)
+        billboard.Parent = anchor
+        local ring: Frame = Instance.new("Frame")
+        ring.Size = UDim2.fromScale(1, 1)
+        ring.BackgroundTransparency = 1
+        ring.Parent = billboard
+        local corner: UICorner = Instance.new("UICorner")
+        corner.CornerRadius = UDim.new(1, 0)
+        corner.Parent = ring
+        local stroke: UIStroke = Instance.new("UIStroke")
+        stroke.Color = options.color
+        stroke.Thickness = 2
+        stroke.Parent = ring
         task.delay(1.55, function(): ()
-            if marker.Parent then
-                pcall(function(): () marker:Destroy() end)
-            end
+            if anchor.Parent then anchor:Destroy() end
         end)
     end
 
-    local function reportTracerData(origin: Vector3, hit: Vector3): ()
-        -- Where OUR bullet landed vs where the murderer actually was when
-        -- the server processed the shot: the honest miss distance.
+    local function reportTracerData(origin: Vector3, hit: Vector3, hitPart: any): ()
         local murderer: Player? = core.findMurderer()
-        if not murderer or not murderer.Character then
-            return
+        local root: BasePart? = murderer and murderer.Character
+            and murderer.Character:FindFirstChild("HumanoidRootPart") :: BasePart?
+        local calibration: any = core.trajectoryCalibration
+        if calibration and type(calibration.noteTracerData) == "function" then
+            calibration:noteTracerData({origin = origin, endpoint = hit,
+                hitPart = hitPart, target = murderer, targetPosition = root and root.Position})
         end
-        local root: BasePart? = murderer.Character:FindFirstChild("HumanoidRootPart")
-            :: BasePart?
-        if not root then
-            return
+        if root and murderer then
+            notify(string.format("Tracer: endpoint %.1f studs from observed %s (range %.0f)",
+                (hit - root.Position).Magnitude, murderer.DisplayName, (hit - origin).Magnitude))
         end
-        local missStuds: number = (hit - root.Position).Magnitude
-        local shotRange: number = (hit - origin).Magnitude
-        notify(string.format(
-            "Tracer: landed %.1f studs from %s (shot range %.0f)",
-            missStuds,
-            murderer.DisplayName,
-            shotRange
-        ))
     end
 
     local function connectGunFired(): ()
@@ -5153,6 +5157,9 @@ function Module.init(runtime: any): any
             return
         end
         local ok: boolean, weaponService: any = pcall(function(): any
+            if type(core.getWeaponServiceModule) == "function" then
+                return core.getWeaponServiceModule()
+            end
             local replicatedStorage: any = game:GetService("ReplicatedStorage")
             local clientServices: any = replicatedStorage:FindFirstChild("ClientServices")
             return clientServices and clientServices:FindFirstChild("WeaponService") or nil
@@ -5160,6 +5167,12 @@ function Module.init(runtime: any): any
         if not ok or type(weaponService) ~= "table" and typeof(weaponService) ~= "Instance" then
             return
         end
+        if typeof(weaponService) == "Instance" and weaponService:IsA("ModuleScript") then
+            local loaded: boolean, result: any = pcall(state.requireModule, weaponService)
+            if not loaded then return end
+            weaponService = result
+        end
+        if type(weaponService) ~= "table" and typeof(weaponService) ~= "Instance" then return end
         local gunFired: any = typeof(weaponService) == "table"
             and weaponService.GunFired
             or weaponService:FindFirstChild("GunFired")
@@ -5173,27 +5186,30 @@ function Module.init(runtime: any): any
                 hitValue: any,
                 hitPart: any
             ): ()
-                local origin: Vector3? = typeof(originValue) == "Vector3"
-                    and originValue or nil
-                local hit: Vector3? = typeof(hitValue) == "Vector3"
-                    and hitValue or nil
+                local function position(value: any): Vector3?
+                    local vector: Vector3? = typeof(value) == "Vector3" and value
+                        or typeof(value) == "CFrame" and value.Position or nil
+                    if vector and vector.X == vector.X and vector.Y == vector.Y
+                        and vector.Z == vector.Z and vector.Magnitude < 1e7 then
+                        return vector
+                    end
+                    return nil
+                end
+                local origin: Vector3? = position(originValue)
+                local hit: Vector3? = position(hitValue)
                 if not origin or not hit then
                     return
                 end
-                if options.trailEsp then
-                    drawShotTrail(origin :: Vector3, hit :: Vector3, hitPart)
+                local character: Model? = LocalPlayer.Character
+                local backpack: Instance? = LocalPlayer:FindFirstChildOfClass("Backpack")
+                local isOurGun: boolean = typeof(gunHandle) == "Instance"
+                    and ((character ~= nil and gunHandle:IsDescendantOf(character))
+                        or (backpack ~= nil and gunHandle:IsDescendantOf(backpack)))
+                if options.trailEsp or (options.tracerData and isOurGun) then
+                    drawShotTrail(origin, hit, hitPart)
                 end
-                if options.tracerData then
-                    local character: Model? = LocalPlayer.Character
-                    local isOurGun: boolean = typeof(gunHandle) == "Instance"
-                        and character ~= nil
-                        and gunHandle:IsDescendantOf(character)
-                    if isOurGun then
-                        reportTracerData(
-                            origin :: Vector3,
-                            hit :: Vector3
-                        )
-                    end
+                if options.tracerData and isOurGun then
+                    reportTracerData(origin, hit, hitPart)
                 end
             end)
         end)
@@ -5252,14 +5268,17 @@ function Module.init(runtime: any): any
                 local part: BasePart? =
                     geometryClone(source :: BasePart)
                 if part then
-                    attach(
-                        part,
-                        left :: BasePart,
-                        (left :: BasePart).CFrame
-                            * (right :: BasePart).CFrame:ToObjectSpace(
-                                (source :: BasePart).CFrame
-                            )
-                    )
+                    -- A live weld offset, not a snapshot made while the
+                    -- skin may still be at its spawn/default position.
+                    local joint: Weld = Instance.new("Weld")
+                    joint.Part0 = left
+                    joint.Part1 = part
+                    joint.C0 = mirrorAcross(CFrame.new(), right.CFrame:ToObjectSpace((source :: BasePart).CFrame))
+                    joint.C1 = CFrame.new()
+                    part.CFrame = left.CFrame * joint.C0
+                    joint.Parent = part
+                    part.Parent = visualFolder
+                    table.insert(doubleBindings, {source = source, joint = joint, right = right})
                     if kind == "Knife"
                         and options.electricKnife
                         and source == blade then
@@ -5401,6 +5420,12 @@ function Module.init(runtime: any): any
             table.insert(connections, RunService.PreSimulation:Connect(function(): ()
                 local character: Model? = LocalPlayer.Character
                 if character then
+                    for _, binding: any in ipairs(doubleBindings) do
+                        if binding.source.Parent and binding.joint.Parent and binding.right.Parent then
+                            binding.joint.C0 = mirrorAcross(CFrame.new(),
+                                binding.right.CFrame:ToObjectSpace(binding.source.CFrame))
+                        end
+                    end
                     mirrorArms(character)
                 end
             end))
@@ -5466,7 +5491,9 @@ function Module.init(runtime: any): any
     end, "Draws every replicated bullet's path and landing point, from the server's GunFired signal.")
     addToggleOption(feature, "Tracer Data", false, function(value: boolean): ()
         options.tracerData = value
-    end, "Reports how many studs your shots landed from the murderer.")
+        if not value and not options.trailEsp then clearTrails() end
+    end, "Saves your GunFired endpoint and hit part with Calibration, draws a landing circle, "
+        .. "and compares to the target's client-observed position (not a server miss measurement).")
 
     activeCleanup = function(): ()
         setEnabled(false)
@@ -7230,6 +7257,13 @@ local function createTrajectoryCalibration(): any
         horizontalLeadSeconds: number?,
         verticalLeadSeconds: number?,
         endpoint: {number}?,
+        origin: {number}?,
+        observedTargetPosition: {number}?,
+        endpointToObservedTarget: number?,
+        shotRange: number?,
+        hitPartPath: string?,
+        evidence: string?,
+        targetPositionScope: string?,
         hitTarget: boolean?,
         pingBucket: string?,
         bestMotionModel: string?,
@@ -7255,6 +7289,7 @@ local function createTrajectoryCalibration(): any
         status: (self: Controller) -> string,
         getEstimates: (self: Controller) -> Estimates,
         noteAuthoredShot: (self: Controller, info: any) -> (),
+        noteTracerData: (self: Controller, info: any) -> (),
     }
 
     local OUTPUT_ROOT: string = host.PRODUCT.storageFolder
@@ -8611,6 +8646,52 @@ local function createTrajectoryCalibration(): any
 
     function controller:getEstimates(): Estimates
         return estimates()
+    end
+
+    -- Separate feedback event: never count an echo as another authored shot
+    -- or use endpoint-to-client-position distance as proof of a server miss.
+    function controller:noteTracerData(info: any): ()
+        if not runtime.active or type(info) ~= "table" then return end
+        local function validVector(value: any): boolean
+            return typeof(value) == "Vector3"
+                and predictionMath.finite(value.X) and predictionMath.finite(value.Y)
+                and predictionMath.finite(value.Z) and value.Magnitude < 1e7
+        end
+        if not validVector(info.origin) or not validVector(info.endpoint) then return end
+        local function pack(value: Vector3): {number}
+            return {value.X, value.Y, value.Z}
+        end
+        local shotId: string? = nil
+        local now: number = os.clock()
+        for index: number = #runtime.pendingGuns, 1, -1 do
+            local pending: PendingGun = runtime.pendingGuns[index]
+            if now - pending.activatedAt <= 2.5 and pending.origin
+                and (pending.origin - info.origin).Magnitude <= 8 then
+                shotId = pending.shotId
+                break
+            end
+        end
+        local target: any = info.target
+        local targetPosition: Vector3? = validVector(info.targetPosition) and info.targetPosition or nil
+        local path: string? = nil
+        local hitTarget: boolean? = nil
+        if typeof(info.hitPart) == "Instance" then
+            pcall(function(): () path = string.sub(info.hitPart:GetFullName(), 1, 512) end)
+            if target and target.Character then
+                hitTarget = info.hitPart:IsDescendantOf(target.Character)
+            end
+        end
+        appendEvent({kind = "gun", phase = "tracer-data", shotId = shotId,
+            serverTime = workspace:GetServerTimeNow(), pingMs = getPingMilliseconds(),
+            origin = pack(info.origin), endpoint = pack(info.endpoint),
+            shotRange = (info.endpoint - info.origin).Magnitude,
+            targetUserId = target and target.UserId or nil,
+            targetName = target and target.Name or nil,
+            observedTargetPosition = targetPosition and pack(targetPosition) or nil,
+            endpointToObservedTarget = targetPosition and (info.endpoint - targetPosition).Magnitude or nil,
+            targetPositionScope = "client-observed-at-GunFired-receipt; not server impact-time position",
+            hitPartPath = path, hitTarget = hitTarget, evidence = "GunFired endpoint/hitPart",
+        })
     end
 
     function controller:noteAuthoredShot(info: any): ()
@@ -17328,17 +17409,19 @@ function Module.init(context: Runtime): any
     local watchedHumanoid: any = nil
     local emoteNames: {[string]: boolean} = {}
     local emoteIds: {[string]: boolean} = {}
-    local restarted: {[any]: boolean} = setmetatable({}, {__mode = "k"})
+    local managedEmotes: {[any]: any} = {}
+    local ownedEmotes: {[any]: boolean} = setmetatable({}, {__mode = "k"})
     local lastGlitch: number = -math.huge
 
     local function clearStickyEmoteTracks(): ()
         if emoteConnection then emoteConnection:Disconnect() end
         emoteConnection = nil
         watchedHumanoid = nil
-        for track in pairs(restarted) do
-            pcall(function(): () track:Stop(0.15) end)
+        for _, track: any in pairs(managedEmotes) do
+            pcall(function(): () track:Stop(0.15); track:Destroy() end)
         end
-        restarted = setmetatable({}, {__mode = "k"})
+        managedEmotes = {}
+        ownedEmotes = setmetatable({}, {__mode = "k"})
         emoteNames = {}
         emoteIds = {}
         stickyEmoteTracks = {}
@@ -17363,19 +17446,40 @@ function Module.init(context: Runtime): any
         local animation: any = track.Animation
         if typeof(animation) == "Instance" then
             if knownName(animation.Name) then return true end
+            local node: any = animation.Parent
+            for _depth: number = 1, 6 do
+                if not node then break end
+                if knownName(node.Name) then return true end
+                node = node.Parent
+            end
             local id: string? = string.match(animation.AnimationId, "%d+")
             if id and emoteIds[id] then return true end
         end
         return false
     end
 
+    local function rememberEmote(track: any): ()
+        -- A newly selected emote replaces the previous held emote. Never
+        -- layer a whole history of dances on the same joints.
+        for source: any, managed: any in pairs(managedEmotes) do
+            pcall(function(): () managed:Stop(0.15); managed:Destroy() end)
+            ownedEmotes[managed] = nil
+            managedEmotes[source] = nil
+        end
+        stickyEmoteTracks = {track}
+        emoteLastSeen = setmetatable({}, {__mode = "k"})
+        emoteLastSeen[track] = os.clock()
+    end
+
     local function freezeEmotesTick(humanoid: any, root: any): ()
-        -- Walk while an emote plays: the default Animate script STOPS the
-        -- emote track the moment the character starts moving. Remembered
-        -- emote tracks are replayed while moving, so the dance keeps
-        -- playing while you walk. A track the game actually ended (you
-        -- stopped it from the menu, or jumped it away) is forgotten after
-        -- a short grace period instead of being resurrected forever.
+        -- Hold the selected emote while walking with a track Animate does
+        -- not own. Release on jump, a new selection, mode change or disable.
+        local okState: boolean, state: any = pcall(function(): any return humanoid:GetState() end)
+        if okState and (state == Enum.HumanoidStateType.Jumping
+            or state == Enum.HumanoidStateType.Dead) then
+            clearStickyEmoteTracks()
+            return
+        end
         local animator: any = getAnimator(humanoid)
         if not animator then
             return
@@ -17391,11 +17495,31 @@ function Module.init(context: Runtime): any
                 end
                 description:Destroy()
             end)
+            -- R6 /e dance2 commonly plays Animation1/2/3, not a track
+            -- named dance2. Read IDs under Animate's named emote folders.
+            pcall(function(): ()
+                local animate: any = humanoid.Parent:FindFirstChild("Animate")
+                if animate then
+                    for _, animation: any in ipairs(animate:GetDescendants()) do
+                        if animation:IsA("Animation") then
+                            local node: any = animation
+                            while node and node ~= animate do
+                                local name: string = string.lower(node.Name):gsub("anim$", "")
+                                if CLASSIC_EMOTES[name] or emoteNames[name] then
+                                    local id: string? = string.match(animation.AnimationId, "%d+")
+                                    if id then emoteIds[id] = true end
+                                    break
+                                end
+                                node = node.Parent
+                            end
+                        end
+                    end
+                end
+            end)
             -- Catch tracks at start, before Animate can cancel them on movement.
             emoteConnection = animator.AnimationPlayed:Connect(function(track: any): ()
-                if isEmoteTrack(track) and not emoteLastSeen[track] then
-                    emoteLastSeen[track] = os.clock()
-                    table.insert(stickyEmoteTracks, track)
+                if not ownedEmotes[track] and isEmoteTrack(track) and not emoteLastSeen[track] then
+                    rememberEmote(track)
                 end
             end)
         end
@@ -17409,9 +17533,8 @@ function Module.init(context: Runtime): any
         for _, track: any in ipairs(tracks) do
             if track and track.IsPlaying then
                 playing[track] = true
-                if not emoteLastSeen[track] and isEmoteTrack(track) then
-                    table.insert(stickyEmoteTracks, track)
-                    emoteLastSeen[track] = os.clock()
+                if not ownedEmotes[track] and not emoteLastSeen[track] and isEmoteTrack(track) then
+                    rememberEmote(track)
                 end
                 if emoteLastSeen[track] then
                     emoteLastSeen[track] = os.clock()
@@ -17425,7 +17548,7 @@ function Module.init(context: Runtime): any
             local track: any = stickyEmoteTracks[index]
             if not track then
                 table.remove(stickyEmoteTracks, index)
-            elseif playing[track] then
+            elseif playing[track] or (managedEmotes[track] and managedEmotes[track].IsPlaying) then
                 emoteLastSeen[track] = now
             else
                 local lastSeen: number = emoteLastSeen[track]
@@ -17433,17 +17556,29 @@ function Module.init(context: Runtime): any
                     lastSeen = now
                     emoteLastSeen[track] = now
                 end
-                -- Absent from the playing list: the game stopped it. While
-                -- you are moving that is the Animate script cancelling the
-                -- emote - restart it. Standing still means it really ended.
+                -- Only hand off after a recent, recognized source was
+                -- cancelled while moving; do not guess from Action priority.
                 if moving and now - lastSeen < 1.5 then
                     pcall(function(): ()
-                        if track.Looped then
-                            track:Play(0.1)
-                            restarted[track] = true
+                        -- A separate track is essential: Animate owns the
+                        -- original and will keep cancelling it when walking.
+                        local managed: any = managedEmotes[track]
+                        if not managed then
+                            managed = animator:LoadAnimation(track.Animation)
+                            ownedEmotes[managed] = true
+                            managedEmotes[track] = managed
+                            managed.Looped = true
+                            managed.Priority = Enum.AnimationPriority.Action
                         end
+                        if not managed.IsPlaying then managed:Play(0.1) end
                     end)
                 elseif now - lastSeen > 0.5 then
+                    local managed: any = managedEmotes[track]
+                    if managed then
+                        pcall(function(): () managed:Stop(0.15); managed:Destroy() end)
+                        managedEmotes[track] = nil
+                        ownedEmotes[managed] = nil
+                    end
                     table.remove(stickyEmoteTracks, index)
                     emoteLastSeen[track] = nil
                 end

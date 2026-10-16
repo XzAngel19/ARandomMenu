@@ -11,7 +11,7 @@ PRELUDE = r'''
 local now = 0
 local os = {clock=function() return now end}
 local Vector3 = {zero={Magnitude=0}}
-local Enum = {AnimationPriority={Core='Core',Movement='Movement',Action='Action',Idle='Idle'}}
+local Enum = {HumanoidStateType={Jumping='Jumping',Dead='Dead'},AnimationPriority={Core='Core',Movement='Movement',Action='Action',Idle='Idle'}}
 local function typeof(v) return type(v)=='table' and v.instance and 'Instance' or type(v) end
 local function signal()
     local s={listeners={}}
@@ -29,7 +29,12 @@ end
 local tracks={}
 local animator={AnimationPlayed=signal(),GetPlayingAnimationTracks=function() return tracks end}
 local root={Parent=true,Anchored=false,AssemblyLinearVelocity={Magnitude=0}}
-local humanoid={Parent=true,WalkSpeed=16,JumpPower=50,JumpHeight=7.2,AutoRotate=true,
+local danceFolder={Name='dance2'}
+local danceAnimation={instance=true,Name='Animation1',AnimationId='rbxassetid://182436842',Parent=danceFolder,IsA=function(_,class) return class=='Animation' end}
+local animate={Name='Animate',GetDescendants=function() return {danceAnimation} end}
+danceFolder.Parent=animate
+local character={FindFirstChild=function(_,name) if name=='Animate' then return animate end end}
+local humanoid={Parent=character,WalkSpeed=16,JumpPower=50,JumpHeight=7.2,AutoRotate=true,
     FindFirstChildOfClass=function() return animator end,
     GetAppliedDescription=function() return {GetEmotes=function() return {Salute={12345}} end,Destroy=function() end} end}
 local tick,mode,toggle,feature
@@ -50,6 +55,14 @@ local function track(name,id,priority)
         Priority=priority,IsPlaying=true,Looped=true,plays=0,stops=0,TimePosition=1}
     function t:Play() self.plays+=1;self.IsPlaying=true;animator.AnimationPlayed:Fire(self) end
     function t:Stop() self.stops+=1;self.IsPlaying=false end
+    function t:Destroy() self.destroyed=true end
+    return t
+end
+local loaded={}
+function animator:LoadAnimation(animation)
+    local t=track(animation.Name,0,'Core')
+    t.Animation=animation;t.IsPlaying=false
+    table.insert(loaded,t)
     return t
 end
 '''
@@ -63,17 +76,28 @@ tick() -- binds AnimationPlayed and reads avatar emotes
 local custom=track('Salute',999,'Idle')
 local attack=track('Stab',222,'Action')
 local idOnly=track('Animation',12345,'Core')
-animator.AnimationPlayed:Fire(custom)
-animator.AnimationPlayed:Fire(attack)
-animator.AnimationPlayed:Fire(idOnly)
 root.AssemblyLinearVelocity={Magnitude=16}
-custom.IsPlaying=false;attack.IsPlaying=false;idOnly.IsPlaying=false
-tracks={};now=0.1;tick()
-assert(custom.plays==1 and idOnly.plays==1 and attack.plays==0,'named/catalog emotes only; never attacks')
-tracks={custom,idOnly};tick();tick()
+tracks={}
+animator.AnimationPlayed:Fire(custom);custom.IsPlaying=false;tick()
+assert(#loaded==1 and loaded[1].IsPlaying)
+animator.AnimationPlayed:Fire(attack);attack.IsPlaying=false;tick()
+assert(#loaded==1,'attack must not replace the held emote')
+animator.AnimationPlayed:Fire(idOnly);idOnly.IsPlaying=false;tick()
+assert(#loaded==2 and loaded[1].destroyed and loaded[2].IsPlaying)
+local dance=track('Animation1',182436842,'Core');dance.Looped=false
+animator.AnimationPlayed:Fire(dance);dance.IsPlaying=false;tick()
+assert(#loaded==3 and loaded[2].destroyed and loaded[3].IsPlaying)
+assert(custom.plays==0 and idOnly.plays==0 and attack.plays==0 and dance.plays==0)
+assert(loaded[3].Looped and loaded[3].Priority=='Action')
+tracks=loaded;now=2;tick();tick()
+assert(#loaded==3,'Animate cancellation must not recreate tracks or capture managed tracks')
+humanoid.GetState=function() return 'Jumping' end
+tick();assert(loaded[3].destroyed,'jump releases the held emote')
+humanoid.GetState=function() return 'Running' end
 -- Disable must release revived tracks and the event connection.
 feature.enabled=false;toggle(false)
-assert(custom.stops==1 and idOnly.stops==1 and attack.stops==0)
+assert(custom.stops==0 and idOnly.stops==0 and attack.stops==0)
+for _,t in ipairs(loaded) do assert(t.stops==1 and t.destroyed) end
 for _,c in ipairs(animator.AnimationPlayed.listeners) do assert(not c.Connected) end
 assert(not tick)
 mode('Glitch Animations');feature.enabled=true;toggle(true)

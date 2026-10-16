@@ -34,6 +34,7 @@ function Module.init(runtime: any): any
     local queued = false
     local generation = 0
     local activeDouble = false
+    local doubleBindings: {any} = {}
     local rebuild: () -> ()
     local feature: any = nil
     local warnedEmptyGeometry = false
@@ -140,22 +141,32 @@ function Module.init(runtime: any): any
             return
         end
         local frame: CFrame = (torso :: BasePart).CFrame
-        local desiredUpper: CFrame =
-            mirrorAcross(frame, (rUpper :: BasePart).CFrame)
+        local function animatedFrame(part: BasePart, joint: Motor6D?, parent: CFrame): CFrame
+            if joint and joint.Part0 and joint.Part1 == part then
+                return parent * joint.C0 * joint.Transform * joint.C1:Inverse()
+            end
+            return part.CFrame
+        end
+        local rightShoulder: Motor6D? = findJoint(rUpper, {"RightShoulder", "Right Shoulder"})
+            or findJoint(torso, {"Right Shoulder", "RightShoulder"})
+        local rightUpperFrame: CFrame = animatedFrame(rUpper, rightShoulder, frame)
+        local desiredUpper: CFrame = mirrorAcross(frame, rightUpperFrame)
         mirrorJoint(leftShoulder :: Motor6D, frame, desiredUpper)
 
         if rLower and lLower then
             local leftElbow: Motor6D? = findJoint(lLower, {"LeftElbow"})
             if leftElbow then
-                local desiredLower: CFrame =
-                    mirrorAcross(frame, (rLower :: BasePart).CFrame)
+                local rightLowerFrame: CFrame = animatedFrame(rLower,
+                    findJoint(rLower, {"RightElbow"}) or findJoint(rUpper, {"RightElbow"}), rightUpperFrame)
+                local desiredLower: CFrame = mirrorAcross(frame, rightLowerFrame)
                 mirrorJoint(leftElbow :: Motor6D, desiredUpper, desiredLower)
                 if rHand and lHand then
                     local leftWrist: Motor6D? =
                         findJoint(lHand, {"LeftWrist"})
                     if leftWrist then
-                        local desiredHand: CFrame =
-                            mirrorAcross(frame, (rHand :: BasePart).CFrame)
+                        local rightHandFrame: CFrame = animatedFrame(rHand,
+                            findJoint(rHand, {"RightWrist"}) or findJoint(rLower, {"RightWrist"}), rightLowerFrame)
+                        local desiredHand: CFrame = mirrorAcross(frame, rightHandFrame)
                         mirrorJoint(
                             leftWrist :: Motor6D,
                             desiredLower,
@@ -175,6 +186,7 @@ function Module.init(runtime: any): any
             electricTask = nil
         end
         table.clear(arcs)
+        table.clear(doubleBindings)
         if visualFolder then
             visualFolder:Destroy()
             visualFolder = nil
@@ -234,6 +246,7 @@ function Module.init(runtime: any): any
         copy.CanTouch = false
         copy.CanQuery = false
         copy.Massless = true
+        copy.LocalTransparencyModifier = 0
         copy.AssemblyLinearVelocity = Vector3.zero
         copy.AssemblyAngularVelocity = Vector3.zero
         -- Recreate only visual children; no nested scripts, references or tags.
@@ -348,8 +361,8 @@ function Module.init(runtime: any): any
     -- ------------------------------------------------------------------
     -- TrailESP + Tracer Data. The server replicates every accepted shot
     -- through WeaponService.GunFired(gunHandle, origin, hitPosition,
-    -- hitPart): that is the ground truth of where the bullet actually
-    -- landed, for everyone's shots including our own.
+    -- hitPart): the reported endpoint, not proof of damage/death or an
+    -- authoritative target pose at the time the server processed the shot.
     -- ------------------------------------------------------------------
 
     local function ensureTrailFolder(): Folder
@@ -357,6 +370,12 @@ function Module.init(runtime: any): any
             trailFolder = Instance.new("Folder")
             trailFolder.Name = "MM2TrailESP"
             trailFolder.Parent = workspace
+        end
+        -- Bound transient visuals even if many players fire together.
+        local children: {Instance} = trailFolder:GetChildren()
+        while #children >= 64 do
+            children[1]:Destroy()
+            table.remove(children, 1)
         end
         return trailFolder :: Folder
     end
@@ -372,7 +391,7 @@ function Module.init(runtime: any): any
         local folder: Folder = ensureTrailFolder()
         local segment: Vector3 = hit - origin
         local length: number = segment.Magnitude
-        if length > 0.5 then
+        if options.trailEsp and length > 0.5 then
             local beam: Part = Instance.new("Part")
             beam.Name = "TrailSegment"
             beam.Anchored = true
@@ -399,68 +418,53 @@ function Module.init(runtime: any): any
                 end
             end)
         end
-        local marker: Part = Instance.new("Part")
-        marker.Name = "TrailLanding"
-        marker.Shape = Enum.PartType.Ball
-        marker.Anchored = true
-        marker.CanCollide = false
-        marker.CanQuery = false
-        marker.CanTouch = false
-        marker.CastShadow = false
-        marker.Material = Enum.Material.Neon
-        marker.Color = options.color
-        marker.Size = Vector3.new(0.5, 0.5, 0.5)
-        marker.Position = hit
-        marker.Parent = folder
-        if typeof(hitPart) == "Instance" and hitPart:IsA("BasePart") then
-            local highlight: Highlight = Instance.new("Highlight")
-            highlight.Name = "TrailHitESP"
-            highlight.FillColor = options.color
-            highlight.OutlineColor = options.color
-            highlight.FillTransparency = 0.55
-            highlight.OutlineTransparency = 0.1
-            highlight.Adornee = hitPart
-            highlight.Parent = folder
-            task.delay(1.55, function(): ()
-                if highlight.Parent then
-                    pcall(function(): () highlight:Destroy() end)
-                end
-            end)
-        end
-        pcall(function(): ()
-            TweenService:Create(
-                marker,
-                TweenInfo.new(1.4, Enum.EasingStyle.Linear),
-                { Size = Vector3.new(0.05, 0.05, 0.05), Transparency = 1 }
-            ):Play()
-        end)
+        -- Pixel-sized ring at the reported endpoint; never highlight the
+        -- entire hitPart (a single hitPart can be a whole wall).
+        local anchor: Part = Instance.new("Part")
+        anchor.Name = "TrailLanding"
+        anchor.Size = Vector3.new(0.02, 0.02, 0.02)
+        anchor.Transparency = 1
+        anchor.Anchored = true
+        anchor.CanCollide = false
+        anchor.CanQuery = false
+        anchor.CanTouch = false
+        anchor.Position = hit
+        anchor.Parent = folder
+        local billboard: BillboardGui = Instance.new("BillboardGui")
+        billboard.Name = "LandingCircle"
+        billboard.Adornee = anchor
+        billboard.AlwaysOnTop = true
+        billboard.Size = UDim2.fromOffset(12, 12)
+        billboard.Parent = anchor
+        local ring: Frame = Instance.new("Frame")
+        ring.Size = UDim2.fromScale(1, 1)
+        ring.BackgroundTransparency = 1
+        ring.Parent = billboard
+        local corner: UICorner = Instance.new("UICorner")
+        corner.CornerRadius = UDim.new(1, 0)
+        corner.Parent = ring
+        local stroke: UIStroke = Instance.new("UIStroke")
+        stroke.Color = options.color
+        stroke.Thickness = 2
+        stroke.Parent = ring
         task.delay(1.55, function(): ()
-            if marker.Parent then
-                pcall(function(): () marker:Destroy() end)
-            end
+            if anchor.Parent then anchor:Destroy() end
         end)
     end
 
-    local function reportTracerData(origin: Vector3, hit: Vector3): ()
-        -- Where OUR bullet landed vs where the murderer actually was when
-        -- the server processed the shot: the honest miss distance.
+    local function reportTracerData(origin: Vector3, hit: Vector3, hitPart: any): ()
         local murderer: Player? = core.findMurderer()
-        if not murderer or not murderer.Character then
-            return
+        local root: BasePart? = murderer and murderer.Character
+            and murderer.Character:FindFirstChild("HumanoidRootPart") :: BasePart?
+        local calibration: any = core.trajectoryCalibration
+        if calibration and type(calibration.noteTracerData) == "function" then
+            calibration:noteTracerData({origin = origin, endpoint = hit,
+                hitPart = hitPart, target = murderer, targetPosition = root and root.Position})
         end
-        local root: BasePart? = murderer.Character:FindFirstChild("HumanoidRootPart")
-            :: BasePart?
-        if not root then
-            return
+        if root and murderer then
+            notify(string.format("Tracer: endpoint %.1f studs from observed %s (range %.0f)",
+                (hit - root.Position).Magnitude, murderer.DisplayName, (hit - origin).Magnitude))
         end
-        local missStuds: number = (hit - root.Position).Magnitude
-        local shotRange: number = (hit - origin).Magnitude
-        notify(string.format(
-            "Tracer: landed %.1f studs from %s (shot range %.0f)",
-            missStuds,
-            murderer.DisplayName,
-            shotRange
-        ))
     end
 
     local function connectGunFired(): ()
@@ -468,6 +472,9 @@ function Module.init(runtime: any): any
             return
         end
         local ok: boolean, weaponService: any = pcall(function(): any
+            if type(core.getWeaponServiceModule) == "function" then
+                return core.getWeaponServiceModule()
+            end
             local replicatedStorage: any = game:GetService("ReplicatedStorage")
             local clientServices: any = replicatedStorage:FindFirstChild("ClientServices")
             return clientServices and clientServices:FindFirstChild("WeaponService") or nil
@@ -475,6 +482,12 @@ function Module.init(runtime: any): any
         if not ok or type(weaponService) ~= "table" and typeof(weaponService) ~= "Instance" then
             return
         end
+        if typeof(weaponService) == "Instance" and weaponService:IsA("ModuleScript") then
+            local loaded: boolean, result: any = pcall(state.requireModule, weaponService)
+            if not loaded then return end
+            weaponService = result
+        end
+        if type(weaponService) ~= "table" and typeof(weaponService) ~= "Instance" then return end
         local gunFired: any = typeof(weaponService) == "table"
             and weaponService.GunFired
             or weaponService:FindFirstChild("GunFired")
@@ -488,27 +501,30 @@ function Module.init(runtime: any): any
                 hitValue: any,
                 hitPart: any
             ): ()
-                local origin: Vector3? = typeof(originValue) == "Vector3"
-                    and originValue or nil
-                local hit: Vector3? = typeof(hitValue) == "Vector3"
-                    and hitValue or nil
+                local function position(value: any): Vector3?
+                    local vector: Vector3? = typeof(value) == "Vector3" and value
+                        or typeof(value) == "CFrame" and value.Position or nil
+                    if vector and vector.X == vector.X and vector.Y == vector.Y
+                        and vector.Z == vector.Z and vector.Magnitude < 1e7 then
+                        return vector
+                    end
+                    return nil
+                end
+                local origin: Vector3? = position(originValue)
+                local hit: Vector3? = position(hitValue)
                 if not origin or not hit then
                     return
                 end
-                if options.trailEsp then
-                    drawShotTrail(origin :: Vector3, hit :: Vector3, hitPart)
+                local character: Model? = LocalPlayer.Character
+                local backpack: Instance? = LocalPlayer:FindFirstChildOfClass("Backpack")
+                local isOurGun: boolean = typeof(gunHandle) == "Instance"
+                    and ((character ~= nil and gunHandle:IsDescendantOf(character))
+                        or (backpack ~= nil and gunHandle:IsDescendantOf(backpack)))
+                if options.trailEsp or (options.tracerData and isOurGun) then
+                    drawShotTrail(origin, hit, hitPart)
                 end
-                if options.tracerData then
-                    local character: Model? = LocalPlayer.Character
-                    local isOurGun: boolean = typeof(gunHandle) == "Instance"
-                        and character ~= nil
-                        and gunHandle:IsDescendantOf(character)
-                    if isOurGun then
-                        reportTracerData(
-                            origin :: Vector3,
-                            hit :: Vector3
-                        )
-                    end
+                if options.tracerData and isOurGun then
+                    reportTracerData(origin, hit, hitPart)
                 end
             end)
         end)
@@ -567,14 +583,17 @@ function Module.init(runtime: any): any
                 local part: BasePart? =
                     geometryClone(source :: BasePart)
                 if part then
-                    attach(
-                        part,
-                        left :: BasePart,
-                        (left :: BasePart).CFrame
-                            * (right :: BasePart).CFrame:ToObjectSpace(
-                                (source :: BasePart).CFrame
-                            )
-                    )
+                    -- A live weld offset, not a snapshot made while the
+                    -- skin may still be at its spawn/default position.
+                    local joint: Weld = Instance.new("Weld")
+                    joint.Part0 = left
+                    joint.Part1 = part
+                    joint.C0 = mirrorAcross(CFrame.new(), right.CFrame:ToObjectSpace((source :: BasePart).CFrame))
+                    joint.C1 = CFrame.new()
+                    part.CFrame = left.CFrame * joint.C0
+                    joint.Parent = part
+                    part.Parent = visualFolder
+                    table.insert(doubleBindings, {source = source, joint = joint, right = right})
                     if kind == "Knife"
                         and options.electricKnife
                         and source == blade then
@@ -716,6 +735,12 @@ function Module.init(runtime: any): any
             table.insert(connections, RunService.PreSimulation:Connect(function(): ()
                 local character: Model? = LocalPlayer.Character
                 if character then
+                    for _, binding: any in ipairs(doubleBindings) do
+                        if binding.source.Parent and binding.joint.Parent and binding.right.Parent then
+                            binding.joint.C0 = mirrorAcross(CFrame.new(),
+                                binding.right.CFrame:ToObjectSpace(binding.source.CFrame))
+                        end
+                    end
                     mirrorArms(character)
                 end
             end))
@@ -781,7 +806,9 @@ function Module.init(runtime: any): any
     end, "Draws every replicated bullet's path and landing point, from the server's GunFired signal.")
     addToggleOption(feature, "Tracer Data", false, function(value: boolean): ()
         options.tracerData = value
-    end, "Reports how many studs your shots landed from the murderer.")
+        if not value and not options.trailEsp then clearTrails() end
+    end, "Saves your GunFired endpoint and hit part with Calibration, draws a landing circle, "
+        .. "and compares to the target's client-observed position (not a server miss measurement).")
 
     activeCleanup = function(): ()
         setEnabled(false)

@@ -44,17 +44,19 @@ function Module.init(context: Runtime): any
     local watchedHumanoid: any = nil
     local emoteNames: {[string]: boolean} = {}
     local emoteIds: {[string]: boolean} = {}
-    local restarted: {[any]: boolean} = setmetatable({}, {__mode = "k"})
+    local managedEmotes: {[any]: any} = {}
+    local ownedEmotes: {[any]: boolean} = setmetatable({}, {__mode = "k"})
     local lastGlitch: number = -math.huge
 
     local function clearStickyEmoteTracks(): ()
         if emoteConnection then emoteConnection:Disconnect() end
         emoteConnection = nil
         watchedHumanoid = nil
-        for track in pairs(restarted) do
-            pcall(function(): () track:Stop(0.15) end)
+        for _, track: any in pairs(managedEmotes) do
+            pcall(function(): () track:Stop(0.15); track:Destroy() end)
         end
-        restarted = setmetatable({}, {__mode = "k"})
+        managedEmotes = {}
+        ownedEmotes = setmetatable({}, {__mode = "k"})
         emoteNames = {}
         emoteIds = {}
         stickyEmoteTracks = {}
@@ -79,19 +81,40 @@ function Module.init(context: Runtime): any
         local animation: any = track.Animation
         if typeof(animation) == "Instance" then
             if knownName(animation.Name) then return true end
+            local node: any = animation.Parent
+            for _depth: number = 1, 6 do
+                if not node then break end
+                if knownName(node.Name) then return true end
+                node = node.Parent
+            end
             local id: string? = string.match(animation.AnimationId, "%d+")
             if id and emoteIds[id] then return true end
         end
         return false
     end
 
+    local function rememberEmote(track: any): ()
+        -- A newly selected emote replaces the previous held emote. Never
+        -- layer a whole history of dances on the same joints.
+        for source: any, managed: any in pairs(managedEmotes) do
+            pcall(function(): () managed:Stop(0.15); managed:Destroy() end)
+            ownedEmotes[managed] = nil
+            managedEmotes[source] = nil
+        end
+        stickyEmoteTracks = {track}
+        emoteLastSeen = setmetatable({}, {__mode = "k"})
+        emoteLastSeen[track] = os.clock()
+    end
+
     local function freezeEmotesTick(humanoid: any, root: any): ()
-        -- Walk while an emote plays: the default Animate script STOPS the
-        -- emote track the moment the character starts moving. Remembered
-        -- emote tracks are replayed while moving, so the dance keeps
-        -- playing while you walk. A track the game actually ended (you
-        -- stopped it from the menu, or jumped it away) is forgotten after
-        -- a short grace period instead of being resurrected forever.
+        -- Hold the selected emote while walking with a track Animate does
+        -- not own. Release on jump, a new selection, mode change or disable.
+        local okState: boolean, state: any = pcall(function(): any return humanoid:GetState() end)
+        if okState and (state == Enum.HumanoidStateType.Jumping
+            or state == Enum.HumanoidStateType.Dead) then
+            clearStickyEmoteTracks()
+            return
+        end
         local animator: any = getAnimator(humanoid)
         if not animator then
             return
@@ -107,11 +130,31 @@ function Module.init(context: Runtime): any
                 end
                 description:Destroy()
             end)
+            -- R6 /e dance2 commonly plays Animation1/2/3, not a track
+            -- named dance2. Read IDs under Animate's named emote folders.
+            pcall(function(): ()
+                local animate: any = humanoid.Parent:FindFirstChild("Animate")
+                if animate then
+                    for _, animation: any in ipairs(animate:GetDescendants()) do
+                        if animation:IsA("Animation") then
+                            local node: any = animation
+                            while node and node ~= animate do
+                                local name: string = string.lower(node.Name):gsub("anim$", "")
+                                if CLASSIC_EMOTES[name] or emoteNames[name] then
+                                    local id: string? = string.match(animation.AnimationId, "%d+")
+                                    if id then emoteIds[id] = true end
+                                    break
+                                end
+                                node = node.Parent
+                            end
+                        end
+                    end
+                end
+            end)
             -- Catch tracks at start, before Animate can cancel them on movement.
             emoteConnection = animator.AnimationPlayed:Connect(function(track: any): ()
-                if isEmoteTrack(track) and not emoteLastSeen[track] then
-                    emoteLastSeen[track] = os.clock()
-                    table.insert(stickyEmoteTracks, track)
+                if not ownedEmotes[track] and isEmoteTrack(track) and not emoteLastSeen[track] then
+                    rememberEmote(track)
                 end
             end)
         end
@@ -125,9 +168,8 @@ function Module.init(context: Runtime): any
         for _, track: any in ipairs(tracks) do
             if track and track.IsPlaying then
                 playing[track] = true
-                if not emoteLastSeen[track] and isEmoteTrack(track) then
-                    table.insert(stickyEmoteTracks, track)
-                    emoteLastSeen[track] = os.clock()
+                if not ownedEmotes[track] and not emoteLastSeen[track] and isEmoteTrack(track) then
+                    rememberEmote(track)
                 end
                 if emoteLastSeen[track] then
                     emoteLastSeen[track] = os.clock()
@@ -141,7 +183,7 @@ function Module.init(context: Runtime): any
             local track: any = stickyEmoteTracks[index]
             if not track then
                 table.remove(stickyEmoteTracks, index)
-            elseif playing[track] then
+            elseif playing[track] or (managedEmotes[track] and managedEmotes[track].IsPlaying) then
                 emoteLastSeen[track] = now
             else
                 local lastSeen: number = emoteLastSeen[track]
@@ -149,17 +191,29 @@ function Module.init(context: Runtime): any
                     lastSeen = now
                     emoteLastSeen[track] = now
                 end
-                -- Absent from the playing list: the game stopped it. While
-                -- you are moving that is the Animate script cancelling the
-                -- emote - restart it. Standing still means it really ended.
+                -- Only hand off after a recent, recognized source was
+                -- cancelled while moving; do not guess from Action priority.
                 if moving and now - lastSeen < 1.5 then
                     pcall(function(): ()
-                        if track.Looped then
-                            track:Play(0.1)
-                            restarted[track] = true
+                        -- A separate track is essential: Animate owns the
+                        -- original and will keep cancelling it when walking.
+                        local managed: any = managedEmotes[track]
+                        if not managed then
+                            managed = animator:LoadAnimation(track.Animation)
+                            ownedEmotes[managed] = true
+                            managedEmotes[track] = managed
+                            managed.Looped = true
+                            managed.Priority = Enum.AnimationPriority.Action
                         end
+                        if not managed.IsPlaying then managed:Play(0.1) end
                     end)
                 elseif now - lastSeen > 0.5 then
+                    local managed: any = managedEmotes[track]
+                    if managed then
+                        pcall(function(): () managed:Stop(0.15); managed:Destroy() end)
+                        managedEmotes[track] = nil
+                        ownedEmotes[managed] = nil
+                    end
                     table.remove(stickyEmoteTracks, index)
                     emoteLastSeen[track] = nil
                 end

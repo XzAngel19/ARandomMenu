@@ -487,6 +487,41 @@ local saveSnapshot
                section(BASE, "    local function restoreMotionBucket(", "    local function loadSavedHistory"),
                section(BASE, "    local function motionModelPayload(", "    local function median("),
                section(BASE, "    saveSnapshot = function", "    local function normalizeGun"), r'''
+local MAX_EVENTS=2400
+local workspace={GetServerTimeNow=function() return 123 end}
+local function getPingMilliseconds() return 80 end
+local function typeof(v)
+    if getmetatable(v)==mt then return "Vector3" end
+    if type(v)=="table" and v.instance then return "Instance" end
+    return type(v)
+end
+local scheduled={}
+local task={delay=function(_,fn) table.insert(scheduled,fn) end}
+local controller={}
+runtime.sessionId="trace-test";runtime.buildStamp="v31"
+runtime.pendingGuns={{shotId="shot-1",activatedAt=now,origin=Vector3.zero}}
+''', section(BASE, "    local function appendEvent(", "    local function trackConnection"),
+section(BASE, "    function controller:noteTracerData(", "    function controller:noteAuthoredShot"), r'''
+local targetChar={}
+local part={instance=true,GetFullName=function() return "Workspace.Map.Wall" end,
+    IsDescendantOf=function(_,c) return c==targetChar end}
+controller:noteTracerData({origin=Vector3.zero,endpoint=Vector3.new(10,2,3),hitPart=part,
+    target={Character=targetChar,Name="Target",UserId=12},targetPosition=Vector3.new(9,2,3)})
+assert(#runtime.events==1 and runtime.events[1].phase=="tracer-data")
+assert(runtime.events[1].shotId=="shot-1" and runtime.events[1].hitPartPath=="Workspace.Map.Wall")
+near(runtime.events[1].endpointToObservedTarget,1)
+controller:noteTracerData({origin=Vector3.zero,endpoint=Vector3.new(0/0,0,0)})
+assert(#runtime.events==1,"invalid endpoints must not poison JSON")
+local attempts,confirmed=runtime.sessionGunAttempts,runtime.sessionGunConfirmed
+assert(saveSnapshot("tracer-feedback"))
+local trace=payloads[#payloads].session.events[1]
+assert(trace.origin[1]==0 and trace.endpoint[1]==10 and trace.observedTargetPosition[1]==9)
+assert(trace.targetPositionScope:find("client%-observed"))
+assert(runtime.sessionGunAttempts==attempts and runtime.sessionGunConfirmed==confirmed)
+assert(#scheduled==1,"feedback uses existing batched autosave")
+pass("Tracer Data survives real calibration writer; finite JSON; scope; correlation; no shot-count inflation")
+-- Keep the existing writer test's payload indexing stable.
+table.clear(payloads)
 local legacy={count=2,meanDurationSeconds=0.2,meanHorizontalLeadSeconds=0.1,meanVerticalLeadSeconds=0.03,meanConstantVelocityResidual={1,2,3},meanModelError={constantVelocity=2,observedAcceleration=3,airborneBallistic=4}}
 runtime.motionBuckets.test=restoreMotionBucket(legacy)
 assert(saveSnapshot("one")); assert(saveSnapshot("two"))

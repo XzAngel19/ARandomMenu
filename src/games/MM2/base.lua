@@ -1740,6 +1740,13 @@ local function createTrajectoryCalibration(): any
         horizontalLeadSeconds: number?,
         verticalLeadSeconds: number?,
         endpoint: {number}?,
+        origin: {number}?,
+        observedTargetPosition: {number}?,
+        endpointToObservedTarget: number?,
+        shotRange: number?,
+        hitPartPath: string?,
+        evidence: string?,
+        targetPositionScope: string?,
         hitTarget: boolean?,
         pingBucket: string?,
         bestMotionModel: string?,
@@ -1765,6 +1772,7 @@ local function createTrajectoryCalibration(): any
         status: (self: Controller) -> string,
         getEstimates: (self: Controller) -> Estimates,
         noteAuthoredShot: (self: Controller, info: any) -> (),
+        noteTracerData: (self: Controller, info: any) -> (),
     }
 
     local OUTPUT_ROOT: string = host.PRODUCT.storageFolder
@@ -3121,6 +3129,52 @@ local function createTrajectoryCalibration(): any
 
     function controller:getEstimates(): Estimates
         return estimates()
+    end
+
+    -- Separate feedback event: never count an echo as another authored shot
+    -- or use endpoint-to-client-position distance as proof of a server miss.
+    function controller:noteTracerData(info: any): ()
+        if not runtime.active or type(info) ~= "table" then return end
+        local function validVector(value: any): boolean
+            return typeof(value) == "Vector3"
+                and predictionMath.finite(value.X) and predictionMath.finite(value.Y)
+                and predictionMath.finite(value.Z) and value.Magnitude < 1e7
+        end
+        if not validVector(info.origin) or not validVector(info.endpoint) then return end
+        local function pack(value: Vector3): {number}
+            return {value.X, value.Y, value.Z}
+        end
+        local shotId: string? = nil
+        local now: number = os.clock()
+        for index: number = #runtime.pendingGuns, 1, -1 do
+            local pending: PendingGun = runtime.pendingGuns[index]
+            if now - pending.activatedAt <= 2.5 and pending.origin
+                and (pending.origin - info.origin).Magnitude <= 8 then
+                shotId = pending.shotId
+                break
+            end
+        end
+        local target: any = info.target
+        local targetPosition: Vector3? = validVector(info.targetPosition) and info.targetPosition or nil
+        local path: string? = nil
+        local hitTarget: boolean? = nil
+        if typeof(info.hitPart) == "Instance" then
+            pcall(function(): () path = string.sub(info.hitPart:GetFullName(), 1, 512) end)
+            if target and target.Character then
+                hitTarget = info.hitPart:IsDescendantOf(target.Character)
+            end
+        end
+        appendEvent({kind = "gun", phase = "tracer-data", shotId = shotId,
+            serverTime = workspace:GetServerTimeNow(), pingMs = getPingMilliseconds(),
+            origin = pack(info.origin), endpoint = pack(info.endpoint),
+            shotRange = (info.endpoint - info.origin).Magnitude,
+            targetUserId = target and target.UserId or nil,
+            targetName = target and target.Name or nil,
+            observedTargetPosition = targetPosition and pack(targetPosition) or nil,
+            endpointToObservedTarget = targetPosition and (info.endpoint - targetPosition).Magnitude or nil,
+            targetPositionScope = "client-observed-at-GunFired-receipt; not server impact-time position",
+            hitPartPath = path, hitTarget = hitTarget, evidence = "GunFired endpoint/hitPart",
+        })
     end
 
     function controller:noteAuthoredShot(info: any): ()

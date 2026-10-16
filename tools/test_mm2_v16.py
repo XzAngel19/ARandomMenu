@@ -188,7 +188,8 @@ cfMt.__index.UpVector=Vector3.yAxis
 local workspace=Instance.new("Folder")
 local LocalPlayer={CharacterAdded=signal(),CharacterRemoving=signal()}
 local deferred={}
-local task={defer=function(fn) table.insert(deferred,fn) end}
+local timers={}
+local task={defer=function(fn) table.insert(deferred,fn) end,delay=function(_,fn) table.insert(timers,fn) end}
 local function flush() local q=deferred; deferred={}; for _,fn in ipairs(q) do fn() end end
 local tasks={}
 local TaskManager={Connect=function(_,fn) local c={Connected=true,fn=fn}; function c:Disconnect() self.Connected=false end; table.insert(tasks,c); return c end}
@@ -199,6 +200,23 @@ local function addToggleOption(_,name,default,cb) assert(default==false); option
 local function addColorOption(_,name,default,cb) options[name]=cb end
 local function addNumberOption(_,name,default,low,high,cb) options[name]=cb end
 local state={mm2Core={getPlayerWeapon=function(_,name) return LocalPlayer.Character:FindFirstChild(name) end}}
+local gunSignal=signal()
+local tracerCalls={}
+state.mm2Core.getWeaponServiceModule=function() return {GunFired={OnClientEvent=gunSignal}} end
+state.mm2Core.findMurderer=function() return nil end
+state.mm2Core.trajectoryCalibration={noteTracerData=function(_,info) table.insert(tracerCalls,info) end}
+function LocalPlayer:FindFirstChildOfClass() return nil end
+function methods:IsDescendantOf(parent)
+    local p=self.Parent;while p do if p==parent then return true end;p=p.Parent end;return false
+end
+local function typeof(v)
+    if getmetatable(v)==instanceMt then return "Instance" end
+    if getmetatable(v)==mt then return "Vector3" end
+    if getmetatable(v)==cfMt then return "CFrame" end
+    return type(v)
+end
+local UDim2={fromOffset=function(x,y) return {x=x,y=y} end,fromScale=function(x,y) return {x=x,y=y} end}
+local UDim={new=function(a,b) return {a,b} end}
 local MM2Scroll,mm2Features={},{}
 local function child(parent,class,name)
     local c=Instance.new(class); c.Name=name or class; c.Parent=parent; return c
@@ -239,7 +257,7 @@ master(true); flush()
 local folder=workspace.children[1]; assert(folder and #folder.children==2)
 for _,copy in ipairs(folder.children) do
     assert(copy:IsA("BasePart") and not copy.Anchored and copy.Massless and not copy.CanTouch and not copy.CanQuery and not copy.CanCollide)
-    assert(#copy.tags==0 and next(copy.attributes)==nil)
+    assert(#copy.tags==0 and next(copy.attributes)==nil and copy.LocalTransparencyModifier==0)
     for _,desc in ipairs(copy:GetDescendants()) do assert(not desc:IsA("Script") and not desc:IsA("RemoteEvent")) end
 end
 assert(handle.Anchored and #handle.tags==1 and handle.attributes.Damage==100 and #handle.children==4)
@@ -259,6 +277,18 @@ do
     RunService.PreSimulation:Fire()
     p=lJoint.Transform.Position
     near(p.Z,0)
+    -- Animator has changed the right shoulder but physics still exposes
+    -- the OLD arm CFrame. Mirror the evaluated Motor6D pose, not that stale part.
+    local rJoint=torso:FindFirstChild("Right Shoulder")
+    rJoint.Part0=torso;rJoint.Part1=rArm
+    rJoint.Transform=CFrame.new(Vector3.new(2,3,-4))
+    RunService.PreSimulation:Fire()
+    p=lJoint.Transform.Position;near(p.X,-2);near(p.Y,3);near(p.Z,-4)
+    rJoint.Part0=nil
+    handle.CFrame=CFrame.new(Vector3.new(8,2,1))
+    RunService.PreSimulation:Fire()
+    local liveWeld=folder.children[1]:FindFirstChildWhichIsA("Weld")
+    assert(liveWeld and liveWeld.C0.Position.X==-7,"skin offsets refresh after delayed placement")
 end
 gun.Parent=nil; LocalPlayer.Character.DescendantRemoving:Fire(gun); flush()
 assert(folder.destroyed and #workspace.children[1].children==0)
@@ -293,6 +323,26 @@ master(false); flush(); assert(#workspace.children==0 and taskCount()==0)
 for _,sig in ipairs({newChar.DescendantAdded,newChar.DescendantRemoving,LocalPlayer.CharacterAdded,LocalPlayer.CharacterRemoving,RunService.PreSimulation}) do
     for _,c in ipairs(sig.connections) do assert(not c.Connected) end
 end
+-- Tracer-only mode must resolve WeaponService through the core and save
+-- even with no murderer. Landing feedback must not highlight an entire wall.
+options["Tracer Data"](true);master(true);flush()
+local ownHandle=knife:FindFirstChild("Handle")
+gunSignal:Fire(ownHandle,Vector3.zero,Vector3.new(10,2,0),newChar:FindFirstChild("UpperTorso"))
+assert(#tracerCalls==1 and tracerCalls[1].endpoint.X==10)
+local trails=workspace:FindFirstChild("MM2TrailESP")
+assert(trails and trails:FindFirstChild("TrailLanding"):FindFirstChild("LandingCircle"))
+assert(not trails:FindFirstChildWhichIsA("Highlight",true),"never highlight a whole wall")
+gunSignal:Fire(ownHandle,CFrame.new(Vector3.zero),CFrame.new(Vector3.new(20,2,0)))
+assert(#tracerCalls==2 and tracerCalls[2].endpoint.X==20,"CFrame signal positions supported")
+local markerCount=#trails.children
+local foreign=Instance.new("Part");foreign.Parent=workspace
+gunSignal:Fire(foreign,Vector3.zero,Vector3.new(30,2,0))
+assert(#tracerCalls==2 and #trails.children==markerCount,"Tracer Data only records/marks owned shots")
+foreign:Destroy()
+gunSignal:Fire(ownHandle,Vector3.zero,Vector3.new(0/0,0,0))
+assert(#tracerCalls==2,"invalid visual endpoint rejected")
+master(false);flush()
+for _,c in ipairs(gunSignal.connections) do assert(not c.Connected) end
 master(true); options["Electric Knife"](true); Module.destroy(); flush()
 assert(#workspace.children==0 and taskCount()==0 and not Module.Initialized,"deferred rebuild after destroy")
 pass("full Weapon Visuals lifecycle: OFF, R6/R15, nested VH, safe geometry, unequip, respawn, electric-only 8 Hz, destroy")
