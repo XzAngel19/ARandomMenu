@@ -41,6 +41,8 @@ function Module.init(context: Runtime): any
     end
 
     local emoteConnection: any = nil
+    local catalogEmoteConnection: any = nil
+    local emoteGeneration: number = 0
     local watchedHumanoid: any = nil
     local emoteNames: {[string]: boolean} = {}
     local emoteIds: {[string]: boolean} = {}
@@ -50,8 +52,11 @@ function Module.init(context: Runtime): any
     local lastGlitch: number = -math.huge
 
     local function clearStickyEmoteTracks(): ()
+        emoteGeneration += 1
         if emoteConnection then emoteConnection:Disconnect() end
+        if catalogEmoteConnection then catalogEmoteConnection:Disconnect() end
         emoteConnection = nil
+        catalogEmoteConnection = nil
         local previousHumanoid: any = watchedHumanoid
         watchedHumanoid = nil
         local stopped: {[any]: boolean} = {}
@@ -144,14 +149,69 @@ function Module.init(context: Runtime): any
         if watchedHumanoid ~= humanoid then
             clearStickyEmoteTracks()
             watchedHumanoid = humanoid
+            -- Catalog asset IDs are NOT necessarily the AnimationId played
+            -- by Animate. Prefer the actual track reported by the engine.
+            -- This event requires executor permissions on some client builds;
+            -- a denied connection must not prevent the metadata fallback.
+            pcall(function(): ()
+                catalogEmoteConnection = humanoid.EmoteTriggered:Connect(function(success: boolean, track: any): ()
+                    if success and track and watchedHumanoid == humanoid and not ownedEmotes[track] then
+                        local animation: any = track.Animation
+                        if animation then
+                            local id: string? = string.match(animation.AnimationId, "%d+")
+                            if id then emoteIds[id] = true end
+                        end
+                        rememberEmote(track)
+                    end
+                end)
+            end)
+            local catalogAssets: {number} = {}
             pcall(function(): ()
                 local description: any = humanoid:GetAppliedDescription()
-                for name: string, ids: any in pairs(description:GetEmotes()) do
-                    emoteNames[string.lower(name)] = true
-                    for _, id: any in ipairs(ids) do emoteIds[tostring(id)] = true end
-                end
+                local ok: boolean, emotes: any = pcall(description.GetEmotes, description)
                 description:Destroy()
+                if not ok then return end
+                local seen: {[number]: boolean} = {}
+                for name: string, ids: any in pairs(emotes) do
+                    emoteNames[string.lower(name)] = true
+                    for _, id: any in ipairs(ids) do
+                        emoteIds[tostring(id)] = true
+                        local numberId: number? = tonumber(id)
+                        if numberId and not seen[numberId] and #catalogAssets < 48 then
+                            seen[numberId] = true
+                            table.insert(catalogAssets, numberId)
+                        end
+                    end
+                end
             end)
+            -- Resolve catalog containers without playing an emote to discover
+            -- its ID. Never run downloaded scripts; only inspect Animation data.
+            local generation: number = emoteGeneration
+            if #catalogAssets > 0 and task and game then
+                task.spawn(function(): ()
+                    for _, assetId: number in ipairs(catalogAssets) do
+                        if generation ~= emoteGeneration then return end
+                        local ok: boolean, objects: any = pcall(function(): any
+                            return game:GetObjects("rbxassetid://" .. tostring(assetId))
+                        end)
+                        if ok and type(objects) == "table" then
+                            for _, object: any in ipairs(objects) do
+                                pcall(function(): ()
+                                    local nodes: {any} = object:GetDescendants()
+                                    table.insert(nodes, object)
+                                    for _, node: any in ipairs(nodes) do
+                                        if generation == emoteGeneration and node:IsA("Animation") then
+                                            local id: string? = string.match(node.AnimationId, "%d+")
+                                            if id then emoteIds[id] = true end
+                                        end
+                                    end
+                                end)
+                                pcall(function(): () object:Destroy() end)
+                            end
+                        end
+                    end
+                end)
+            end
             -- R6 /e dance2 commonly plays Animation1/2/3, not a track
             -- named dance2. Read IDs under Animate's named emote folders.
             pcall(function(): ()

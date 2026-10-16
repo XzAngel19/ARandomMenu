@@ -1212,7 +1212,7 @@ function Module.init(context: any): any
         local screen: Vector2 = viewport()
         local keybindRows: {{any}} = {
             {"Reset keybinds", nil, 26},
-            {"Open menu", "RightControl", 12},
+            {"Open menu", keyLabel(state.toggleKey.Name), 12},
         }
         for _, binding: any in pairs(state.shortcutBindings) do
             if binding.key and binding.key ~= Enum.KeyCode.Unknown then

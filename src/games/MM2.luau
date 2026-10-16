@@ -68,12 +68,12 @@ end)
 local mm2Settings = {
     autoGetGunDelay = 0.25,
     shootMode = "Manual",
-    shootKey = Enum.KeyCode.Q,
+    shootKey = Enum.KeyCode.Unknown,
     shootTarget = "",
     showMissCooldown = true,
     predictionRtt = 0.08,
     gunLeadBias = 0,
-    getGunKey = Enum.KeyCode.G,
+    getGunKey = Enum.KeyCode.Unknown,
     instantRoleNotify = false,
     roleEspAll = false,
     roleEspInnocent = false,
@@ -4547,6 +4547,8 @@ local function toggleShootMurderer(enabled: boolean): ()
             and not UserInputService:GetFocusedTextBox()
             and (mm2Settings.shootMode == "Manual"
                 or mm2Settings.shootMode == "Custom")
+            and input.UserInputType == Enum.UserInputType.Keyboard
+            and mm2Settings.shootKey ~= Enum.KeyCode.Unknown
             and input.KeyCode == mm2Settings.shootKey then
             triggerManualShot()
         end

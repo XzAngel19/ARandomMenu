@@ -21,12 +21,20 @@ local function signal()
         table.insert(self.listeners,c)
         return c
     end
-    function s:Fire(v)
-        for _,c in ipairs(self.listeners) do if c.Connected then c.fn(v) end end
+    function s:Fire(...)
+        for _,c in ipairs(self.listeners) do if c.Connected then c.fn(...) end end
     end
     return s
 end
 local tracks={}
+local resolvedDestroyed=0
+local delayedJobs=nil
+local task={spawn=function(fn) if delayedJobs then table.insert(delayedJobs,fn) else fn() end end}
+local game={GetObjects=function(_,url)
+    assert(url=='rbxassetid://12345')
+    return {{AnimationId='rbxassetid://777777',IsA=function(_,class) return class=='Animation' end,
+        GetDescendants=function() return {} end,Destroy=function() resolvedDestroyed+=1 end}}
+end}
 local animator={AnimationPlayed=signal(),GetPlayingAnimationTracks=function() return tracks end}
 local root={Parent=true,Anchored=false,AssemblyLinearVelocity={Magnitude=0}}
 local danceFolder={Name='dance2'}
@@ -34,7 +42,7 @@ local danceAnimation={instance=true,Name='Animation1',AnimationId='rbxassetid://
 local animate={Name='Animate',GetDescendants=function() return {danceAnimation} end}
 danceFolder.Parent=animate
 local character={FindFirstChild=function(_,name) if name=='Animate' then return animate end end}
-local humanoid={Parent=character,WalkSpeed=16,JumpPower=50,JumpHeight=7.2,AutoRotate=true,
+local humanoid={EmoteTriggered=signal(),Parent=character,WalkSpeed=16,JumpPower=50,JumpHeight=7.2,AutoRotate=true,
     FindFirstChildOfClass=function() return animator end,
     GetAppliedDescription=function() return {GetEmotes=function() return {Salute={12345}} end,Destroy=function() end} end}
 local tick,mode,toggle,feature
@@ -109,6 +117,38 @@ tracks={source,lateSource,attack} -- recognized source arriving before the next 
 feature.enabled=false;toggle(false)
 assert(source.stops==1 and not source.IsPlaying,'OFF must stop an original still-playing dance')
 assert(lateSource.stops==1 and attack.stops==0,'OFF must also scan the watched Animator')
+-- Catalog item 12345 resolves to a different animation, 777777.
+local catalog=track('Animation',777777,'Action')
+tracks={catalog};feature.enabled=true;toggle(true);tick()
+local before=#loaded
+catalog.IsPlaying=false;tick()
+assert(#loaded==before+1 and loaded[#loaded].IsPlaying,'resolved UGC animation must survive walking')
+feature.enabled=false;toggle(false)
+assert(catalog.stops==1 and loaded[#loaded].destroyed)
+assert(resolvedDestroyed>0,'catalog inspection must destroy its temporary containers')
+-- A new UGC emote not present in the initial description is identified by
+-- the actual engine track, NOT its name/priority or catalog asset ID.
+tracks={};feature.enabled=true;toggle(true);tick()
+local ugc=track('Animation',888888,'Action')
+local count=#loaded
+humanoid.EmoteTriggered:Fire(true,ugc);ugc.IsPlaying=false;tick()
+assert(#loaded==count+1 and loaded[#loaded].IsPlaying,'engine-reported UGC must be retained')
+feature.enabled=false;toggle(false)
+assert(ugc.stops==1 and loaded[#loaded].destroyed,'UGC OFF stops source and replacement')
+for _,connection in ipairs(humanoid.EmoteTriggered.listeners) do assert(not connection.Connected) end
+-- An engine-denied event must not break catalog resolution or cleanup.
+local engineEvent=humanoid.EmoteTriggered;humanoid.EmoteTriggered=nil
+local fallback=track('Animation',777777,'Action')
+tracks={fallback};feature.enabled=true;toggle(true);tick()
+feature.enabled=false;toggle(false);assert(fallback.stops==1)
+humanoid.EmoteTriggered=engineEvent
+delayedJobs={};tracks={};feature.enabled=true;toggle(true);tick()
+assert(#delayedJobs==1)
+feature.enabled=false;toggle(false)
+local destroyedBefore=resolvedDestroyed
+for _,job in ipairs(delayedJobs) do job() end
+assert(resolvedDestroyed==destroyedBefore,'stale catalog job must not load assets after OFF')
+delayedJobs=nil
 mode('Glitch Animations');feature.enabled=true;toggle(true)
 local walk=track('Walk',444,'Movement')
 local stab=track('Stab',222,'Action')
@@ -119,7 +159,7 @@ assert(walk.TimePosition==0.09 and walk.plays==0,'fixed cadence, no frame-by-fra
 now+=0.12;tick();assert(walk.TimePosition==0)
 mode('Humanoid');tick();assert(not root.Anchored and humanoid.JumpHeight==0)
 Module.destroy();assert(humanoid.JumpHeight==7.2 and humanoid.WalkSpeed==16 and not tick)
-print('PASS FreezeMovements: mode restoration, avatar names/IDs, immediate tracks, attack exclusion, duplicate prevention, disable cleanup, glitch cadence, JumpHeight, destroy')
+print('PASS FreezeMovements: UGC engine tracks, catalog-to-animation resolution, denied-event fallback, mode restoration, avatar names/IDs, immediate tracks, attack exclusion, duplicate prevention, disable cleanup, glitch cadence, JumpHeight, destroy')
 '''
 
 

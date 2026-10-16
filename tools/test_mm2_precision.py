@@ -143,44 +143,6 @@ assert(motionSamples[player]==nil)
 pass("actual motion sampler: 120 Hz supported; teleport/respawn reset; NaN reset")
 end
 ''']
-    chunks += [r'''
-do
-local knifeThrowSettings={animation=true}
-local loaded,stopped,destroyed,played=0,0,0,0
-local animator={LoadAnimation=function(self,anim)
-    loaded+=1
-    return {Stop=function() stopped+=1; error("already stopped") end,
-        Destroy=function() destroyed+=1 end,Play=function() played+=1 end}
-end}
-local h={FindFirstChildOfClass=function() return animator end}
-local LocalPlayer={Character={FindFirstChildOfClass=function() return h end,FindFirstChild=function() return nil end}}
-local featureConnections={}
-local TaskManager={Connect=function(_,fn) return {Disconnect=function() end} end}
-local function disconnectFeatureConnection(key)
-    if featureConnections[key] then featureConnections[key]:Disconnect();featureConnections[key]=nil end
-end
-local function anim(name,id) return {Name=name,AnimationId=id,IsA=function() return true end} end
-local throw=anim("Throw","1")
-local knife={GetDescendants=function() return {anim("Equip","0"),throw} end}
-''', section(KNIFE, "    local throwTrack:", "    local function throwKnife"), r'''
-playThrowAnimation(knife); playThrowAnimation(knife)
-assert(loaded==1 and played==2)
-throw.AnimationId="2"
-playThrowAnimation(knife)
-assert(loaded==2 and destroyed==1 and stopped==1)
-local other={GetDescendants=function() return {anim("Throw","2")} end}
-playThrowAnimation(other)
-assert(loaded==3 and destroyed==2)
-playThrowAnimation({FindFirstChild=function() return {} end,GetDescendants=function() return {anim("Equip","0")} end})
-assert(destroyed==3 and loaded==3)
-stopThrowAnimation(); stopThrowAnimation()
-assert(destroyed==3)
-knifeThrowSettings.animation=false
-playThrowAnimation(other)
-assert(loaded==3)
-pass("actual animation lifecycle: not Equip; cache by knife/id; cleanup even if Stop errors; OFF")
-end
-''']
     chunks += ["do\nlocal mm2Settings={predictionRtt=0.08,autoTuneLead=false,gunLeadBias=0}\n"
                "local GUN_LEAD={replicationRate=20,serverFrame=1/60,minimumHorizon=0,maximumHorizon=0.25,"
                "maximumManualBias=0.15,maximumAutoCorrection=0.1,defaultTurnRate=math.pi*0.5,maxTurnRate=math.pi*1.5}\n"
@@ -242,10 +204,12 @@ local velocity=Vector3.new(16,0,0)
 local root={Position=Vector3.new(120,0,0)}
 local target={Character={FindFirstChild=function() return root end}}
 local speed=96
+local liveSpeed=nil
+local function getReadyKnife() return liveSpeed and {GetAttribute=function() return liveSpeed end} or nil end
 local trajectoryCalibration={getEstimates=function() return {knifeSpeed=speed} end}
 local function getFilteredVelocity() return velocity end
 local function getEstimatedLatency() return 0.2 end
-''', section(KNIFE, "    local function predictAim", "    local throwTrack:"), r'''
+''', section(KNIFE, "    local function predictAim", "    type ThrowJoint"), r'''
 for _,origin in ipairs({Vector3.zero,Vector3.new(115,0,0)}) do
     local aim=predictAim(target,origin)
     local t=(aim-origin).Magnitude/96
@@ -257,7 +221,17 @@ speed=0/0
 assert(predictAim(target,Vector3.zero)~=nil,"invalid learned speed must use 96")
 velocity=Vector3.new(110,0,0)
 assert(predictAim(target,Vector3.zero)==nil)
-pass("actual Knife predictor: full-RTT packet window plus intercept; measured spawn delay preferred")
+velocity=Vector3.zero
+near(predictAim(target,Vector3.zero).X,120)
+velocity=Vector3.new(-96,0,0)
+local linear=predictAim(target,Vector3.zero)
+assert(linear and linear.X>0,'equal-speed approaching target uses linear limit')
+velocity=Vector3.new(16,0,0);liveSpeed=120
+local faster=predictAim(target,Vector3.zero)
+near(faster.X,root.Position.X+velocity.X*(.2+faster.Magnitude/120))
+velocity=Vector3.new(0/0,0,0)
+assert(predictAim(target,Vector3.zero)==nil,'nonfinite input must fail closed')
+pass("rebuilt Knife predictor: stable linear intercept plus live latency; ignores historical spawn-delay tuning")
 end
 ''']
     chunks += [r'''
@@ -416,23 +390,25 @@ do
 local knob={enabled=false,mode="Normal",fireDelay=1,range=120,spawnOffset=5,throwHz=60,animation=true}
 local knifeThrowSettings=knob
 local lastThrow=-math.huge
+local throwPending=false
+local function isValidTarget() return true end
 local root={Position=Vector3.new(30,0,0)}
 local target={Character={FindFirstChild=function() return root end}}
-local thrower={Position=Vector3.zero}
+local thrower={Position=Vector3.zero,CFrame=CFrame.new(Vector3.zero)}
 local LocalPlayer={Character={FindFirstChild=function() return thrower end}}
 local sends,notes,animations=0,0,0
 local remote={IsA=function() return true end,FireServer=function() sends+=1 end}
-local knife={Name="Knife",FindFirstChild=function() return {FindFirstChild=function() return remote end} end}
+local knife={Name="Knife",FindFirstChild=function(_,name) if name=="Events" then return {FindFirstChild=function() return remote end} end end}
 local function getReadyKnife() return knife end
 local function findNearestTarget() return target end
 local function predictAim() return root.Position end
 local visibility=true
 local function isWeaponPathClear() return visibility end
-local function playThrowAnimation()
+local function playThrowAnimation(_,release)
     animations+=1
-    assert(notes==sends,"telemetry must be queued before cosmetic work")
+    release()
+    assert(notes==sends,"telemetry must follow the release packet")
     near(lastThrow,now)
-    error("unavailable animator")
 end
 local stops=0
 local function stopThrowAnimation() stops+=1 end
@@ -460,7 +436,7 @@ visibility=false; sends=0; notes=0; now=100
 knob.mode="Normal"; toggleKnifeThrow(true); throwKnife(); assert(sends==0)
 knob.mode="Silent"; throwKnife(); assert(sends==1 and notes==1)
 toggleKnifeThrow(false)
-pass("actual Knife loop: live frequency, 1s cooldown, cosmetic failure isolation, disable cleanup")
+pass("actual Knife loop: live frequency, 1s cooldown, release packet, disable cleanup")
 end
 ''']
     chunks += [r'''

@@ -721,12 +721,33 @@ function Module.init(runtime: any): any
         state.mm2ShotFeedback.hide()
     end
 
+    local manualShotPending: boolean = false
     local function triggerManualShot(): ()
         if not shootFeatureActive then
             notify("Enable Shoot first.")
             return
         end
-        fireGunAtTarget(getSelectedShootTarget())
+        if manualShotPending then return end
+        local character, humanoid = getCharacterParts()
+        local gun: Tool? = getPlayerWeapon(LocalPlayer, "Gun")
+        if not character or not humanoid or not gun then
+            notify("No sheriff gun is available.")
+            return
+        end
+        manualShotPending = true
+        local ok: boolean, message: any = pcall(function(): ()
+            if gun.Parent ~= character then
+                humanoid:EquipTool(gun)
+                -- Let the grip/muzzle update before sampling its origin.
+                RunService.Heartbeat:Wait()
+            end
+            -- Never re-equip if the user switched away during that frame.
+            if shootFeatureActive and LocalPlayer.Character == character and gun.Parent == character then
+                fireGunAtTarget(getSelectedShootTarget())
+            end
+        end)
+        manualShotPending = false
+        if not ok then notify("Shoot failed: " .. tostring(message)) end
     end
 
     local function toggleShootMurderer(enabled: boolean): ()
@@ -799,6 +820,8 @@ function Module.init(runtime: any): any
             registry = mm2Features,
         }
     )
+    addActionOption(ShootFeature, "Shoot now", triggerManualShot,
+        "Equips your sheriff gun and fires once. Auto Shoot never equips it.")
     local ShootTargetBox
     local silentSweepRow: GuiObject? = nil
     local silentSpawnRow: GuiObject? = nil

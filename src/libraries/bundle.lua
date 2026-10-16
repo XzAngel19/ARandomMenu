@@ -1,5 +1,5 @@
 return {
-    stamp = "v33-20261016-equipped-actions",
+    stamp = "v34-20261016-knife-rebuild",
     files = {
         ["src/Profile/142823291.lua"] = [[
 --!strict
@@ -1862,225 +1862,185 @@ function Module.init(runtime: any): any
     end
 
     local function predictAim(target: Player, originPos: Vector3): Vector3?
-        local root: BasePart =
-            target.Character:FindFirstChild("HumanoidRootPart") :: BasePart
-        local knifeSpeed: number = 96
-        local estimates: any = nil
-        local ok: boolean, estimatesValue: any = pcall(function(): any
-            return trajectoryCalibration:getEstimates()
-        end)
-        if ok and type(estimatesValue) == "table" then
-            estimates = estimatesValue
-        end
-        if estimates and predictionMath.finite(estimates.knifeSpeed)
-            and estimates.knifeSpeed >= 24 and estimates.knifeSpeed <= 300 then
-            knifeSpeed = estimates.knifeSpeed
-        end
+        -- Rebuilt from the recovered ThrowingKnifeVisuals integrator:
+        -- position += Direction * ThrowSpeed * dt (96 studs/s by default).
+        -- There is no projectile gravity term in that client model.
+        local root: BasePart? = target.Character
+            and target.Character:FindFirstChild("HumanoidRootPart") :: BasePart?
+        if not root then return nil end
         local velocity: Vector3 = getFilteredVelocity(target, root)
-        -- Packet-flight lead: the blade spawns on the server a full round
-        -- trip after we author the throw, and our observation of the target
-        -- is a round trip old, so the target keeps moving for that whole
-        -- window. The calibration measures exactly that window (observed
-        -- spawn delay, ~240 ms on record); use it when enough throws
-        -- confirmed it, otherwise fall back to the live RTT estimate.
-        local packetTime: number = getEstimatedLatency()
-        if estimates
-            and predictionMath.finite(estimates.knifeSpawnDelayMs)
-            and (estimates.confirmedSpawnDelays or 0) >= 3 then
-            packetTime = math.clamp(
-                estimates.knifeSpawnDelayMs / 1000,
-                0.05,
-                0.6
-            )
+        local speed: number = 96
+        local knife: Tool? = getReadyKnife()
+        if knife then
+            local measured: any = knife:GetAttribute("ThrowSpeed")
+            if predictionMath.finite(measured) and measured >= 24 and measured <= 300 then speed = measured end
         end
-        local positionAtSpawn: Vector3 = root.Position + velocity * packetTime
-        -- Solve the remaining moving-target flight instead of using
-        -- distance-to-the-old-position / blade speed.
-        local flightTime: number? = predictionMath.interceptTime(
-            positionAtSpawn - originPos, velocity, knifeSpeed
-        )
-        if flightTime == nil then return nil end
-        return positionAtSpawn + velocity * flightTime
+        local latency: number = getEstimatedLatency()
+        if not predictionMath.finite(latency) then latency = 0 end
+        latency = math.clamp(latency, 0, 0.6)
+        local observed: Vector3 = root.Position + velocity * latency
+        local relative: Vector3 = observed - originPos
+        if not predictionMath.finite(relative.Magnitude) or not predictionMath.finite(velocity.Magnitude) then return nil end
+        -- |relative + velocity*t| = speed*t. Stable quadratic roots avoid
+        -- cancellation for approaching targets and handle the linear limit.
+        local a: number = velocity:Dot(velocity) - speed * speed
+        local b: number = 2 * relative:Dot(velocity)
+        local c: number = relative:Dot(relative)
+        local flight: number? = nil
+        if c < 0.0025 then return observed end
+        if math.abs(a) < 1e-6 then
+            if b < -1e-6 then flight = -c / b end
+        else
+            local discriminant: number = b*b - 4*a*c
+            if discriminant >= 0 then
+                local q: number = -0.5 * (b + (b >= 0 and 1 or -1) * math.sqrt(discriminant))
+                local t1: number = q / a
+                local t2: number = math.abs(q) > 1e-9 and c / q or -1
+                if t1 > 0 then flight = t1 end
+                if t2 > 0 and (not flight or t2 < flight) then flight = t2 end
+            end
+        end
+        if not flight or not predictionMath.finite(flight) or flight > 4 then return nil end
+        return observed + velocity * flight
     end
 
-    local throwTrack: any = nil
-    local throwTrackHumanoid: Humanoid? = nil
-    local throwTrackKnife: Tool? = nil
-    local throwTrackId: string? = nil
-    local reconstructedJoint: Motor6D? = nil
-    local reconstructedC0: CFrame? = nil
-    local reconstructedTransform: CFrame? = nil
+    type ThrowJoint = {
+        joint: Motor6D, c0: CFrame, transform: CFrame,
+        initial: CFrame, raised: CFrame, forward: CFrame,
+    }
+    local throwPose: {ThrowJoint} = {}
+    local throwPending: boolean = false
     local function stopThrowAnimation(): ()
         disconnectFeatureConnection("MM2KnifeAnimation")
-        if reconstructedJoint and reconstructedJoint.Parent and reconstructedC0 then
-            reconstructedJoint.C0 = reconstructedC0
-            if reconstructedTransform then reconstructedJoint.Transform = reconstructedTransform end
+        throwPending = false
+        for _, entry: ThrowJoint in ipairs(throwPose) do
+            pcall(function(): ()
+                if entry.joint.Parent then
+                    entry.joint.C0 = entry.c0
+                    entry.joint.Transform = entry.transform
+                end
+            end)
         end
-        reconstructedJoint = nil
-        reconstructedC0 = nil
-        reconstructedTransform = nil
-        if throwTrack then
-            pcall(function(): () throwTrack:Stop(0.2) end)
-            pcall(function(): () throwTrack:Destroy() end)
-        end
-        throwTrack = nil
-        throwTrackHumanoid = nil
-        throwTrackKnife = nil
-        throwTrackId = nil
+        table.clear(throwPose)
     end
 
-    local function playThrowAnimation(knife: Tool): ()
-        if not knifeThrowSettings.animation then return end
-        -- Prefer the weapon's own throw track. Do not layer a generic
-        -- tool lunge over it: both write the same shoulder at once.
+    local function playThrowAnimation(knife: Tool, onRelease: (() -> ())?): ()
+        stopThrowAnimation()
         local character: Model? = LocalPlayer.Character
-        local humanoid: Humanoid? = character
-            and character:FindFirstChildOfClass("Humanoid") :: Humanoid?
-        if not humanoid then return end
-        local anim: Animation? = nil
-        for _, descendant: Instance in ipairs(knife:GetDescendants()) do
-            local label: string = string.lower(descendant.Name):gsub("[%s_%-]", "")
-            if descendant:IsA("Animation")
-                and (label == "throw" or label == "throwanim" or label == "knifethrow" or label == "throwanimation") then
-                anim = descendant :: Animation
-                break
-            end
+        if not character or knife.Parent ~= character then return end
+        local function release(): ()
+            throwPending = false
+            if onRelease then onRelease() end
         end
-        if not anim then
-            stopThrowAnimation()
-            -- Local reconstruction: wind-up, forward release, recovery.
-            -- No guessed animation asset or generic ToolLunge marker.
-            local upper: Instance? = character:FindFirstChild("RightUpperArm")
-            local torso: Instance? = character:FindFirstChild("Torso")
-                or character:FindFirstChild("UpperTorso")
-            local joint: Instance? = upper and upper:FindFirstChild("RightShoulder")
-                or torso and (torso:FindFirstChild("Right Shoulder") or torso:FindFirstChild("RightShoulder"))
+        if not knifeThrowSettings.animation then release(); return end
+        -- Parent-space rotation is deliberate. R6 shoulders have a rotated
+        -- bind frame: post-multiplying an X rotation swings sideways, not up.
+        local function addJoint(partName: string, jointName: string, lift: number, forward: number, roll: number): ()
+            local part: Instance? = character:FindFirstChild(partName)
+            local joint: any = part and part:FindFirstChild(jointName)
             if not joint or not joint:IsA("Motor6D") then return end
-            reconstructedJoint = joint :: Motor6D
-            reconstructedC0 = (joint :: Motor6D).C0
-            reconstructedTransform = (joint :: Motor6D).Transform
-            local base: CFrame = (reconstructedC0 :: CFrame) * (reconstructedTransform :: CFrame)
-            local windup: CFrame = base * CFrame.Angles(math.rad(-65), 0, math.rad(12))
-            local release: CFrame = base * CFrame.Angles(math.rad(85), 0, math.rad(-8))
-            local elapsed: number = 0
-            featureConnections.MM2KnifeAnimation = TaskManager:Connect(function(dt: number): ()
-                elapsed += dt
-                if knife.Parent ~= LocalPlayer.Character or not joint.Parent or elapsed >= 0.48 then
-                    stopThrowAnimation()
-                    return
-                end
-                local from: CFrame, to: CFrame, alpha: number
-                if elapsed < 0.12 then
-                    from, to, alpha = base, windup, elapsed / 0.12
-                elseif elapsed < 0.25 then
-                    from, to, alpha = windup, release, (elapsed - 0.12) / 0.13
-                else
-                    from, to, alpha = release, base, (elapsed - 0.25) / 0.23
-                end
-                alpha = alpha * alpha * (3 - 2 * alpha)
-                local posedJoint: Motor6D = joint :: Motor6D
-                posedJoint.Transform = CFrame.new()
-                posedJoint.C0 = from:Lerp(to, alpha)
-            end)
-            return
+            local c0: CFrame = joint.C0
+            local pivot: CFrame = CFrame.new(c0.Position)
+            local basis: CFrame = c0 - c0.Position
+            table.insert(throwPose, {
+                joint = joint, c0 = c0, transform = joint.Transform,
+                initial = c0 * joint.Transform,
+                raised = pivot * CFrame.Angles(math.rad(lift), 0, math.rad(roll)) * basis,
+                forward = pivot * CFrame.Angles(math.rad(forward), 0, 0) * basis,
+            })
         end
-        if throwTrackHumanoid ~= humanoid or throwTrackKnife ~= knife
-            or throwTrackId ~= anim.AnimationId then
-            stopThrowAnimation()
-            local animator: Animator? = humanoid:FindFirstChildOfClass("Animator") :: Animator?
-            if not animator then return end
-            local ok: boolean, track: any = pcall(function(): any
-                return animator:LoadAnimation(anim :: Animation)
-            end)
-            if ok then
-                throwTrack = track
-                throwTrackHumanoid = humanoid
-                throwTrackKnife = knife
-                throwTrackId = anim.AnimationId
+        if character:FindFirstChild("RightUpperArm") then
+            addJoint("RightUpperArm", "RightShoulder", 155, 85, -12)
+            addJoint("RightLowerArm", "RightElbow", -85, -8, 0)
+            addJoint("RightHand", "RightWrist", -15, 10, 0)
+        else
+            addJoint("Torso", "Right Shoulder", 155, 85, -12)
+        end
+        if #throwPose == 0 then release(); return end
+        local elapsed: number = 0
+        local released: boolean = false
+        throwPending = onRelease ~= nil
+        featureConnections.MM2KnifeAnimation = TaskManager:Connect(function(dt: number): ()
+            if LocalPlayer.Character ~= character or knife.Parent ~= character then
+                stopThrowAnimation()
+                return
             end
-        end
-        if throwTrack then
-            pcall(function(): ()
-                throwTrack.Looped = false
-                if throwTrack.IsPlaying then throwTrack:Stop(0.05) end
-                throwTrack:Play(0.1, 1, 1)
-                throwTrack.TimePosition = 0
-                disconnectFeatureConnection("MM2KnifeAnimation")
-                local elapsed: number = 0
-                featureConnections.MM2KnifeAnimation = TaskManager:Connect(function(dt: number): ()
-                    elapsed += dt
-                    if knife.Parent ~= LocalPlayer.Character or elapsed > 2 then
-                        stopThrowAnimation()
-                    end
-                end)
-            end)
-        end
+            elapsed += math.max(0, dt)
+            local phase: number = elapsed < 0.2 and 1 or (elapsed < 0.3 and 2 or 3)
+            local alpha: number = phase == 1 and elapsed / 0.2
+                or (phase == 2 and (elapsed - 0.2) / 0.1 or (elapsed - 0.3) / 0.25)
+            alpha = math.clamp(alpha, 0, 1)
+            alpha = alpha * alpha * (3 - 2 * alpha)
+            for _, entry: ThrowJoint in ipairs(throwPose) do
+                if not entry.joint.Parent then stopThrowAnimation(); return end
+                local from: CFrame = phase == 1 and entry.initial or (phase == 2 and entry.raised or entry.forward)
+                local to: CFrame = phase == 1 and entry.raised or (phase == 2 and entry.forward or entry.initial)
+                entry.joint.Transform = CFrame.new()
+                entry.joint.C0 = from:Lerp(to, alpha)
+            end
+            -- Apply the forward pose before authoring exactly one packet.
+            if elapsed >= 0.3 and not released then
+                released = true
+                pcall(release)
+            end
+            if elapsed >= 0.55 then stopThrowAnimation() end
+        end, "render")
     end
 
     local function throwKnife(): ()
-        if os.clock() - lastThrow < knifeThrowSettings.fireDelay then
-            return
-        end
-        local silent: boolean = knifeThrowSettings.mode == "Silent"
+        if throwPending or os.clock() - lastThrow < knifeThrowSettings.fireDelay then return end
         local knife: Tool? = getReadyKnife()
-        if not knife then
-            stopThrowAnimation()
-            return
-        end
+        if not knife then stopThrowAnimation(); return end
         local events: Instance? = knife:FindFirstChild("Events")
         local remote: Instance? = events and events:FindFirstChild("KnifeThrown")
-        if not remote or not remote:IsA("RemoteEvent") then
-            return
-        end
+        if not remote or not remote:IsA("RemoteEvent") then return end
         local character: Model? = LocalPlayer.Character
-        local throwerPart: BasePart? = character
-            and (character:FindFirstChild("RightHand")
-                or character:FindFirstChild("HumanoidRootPart")) :: BasePart?
-        if not throwerPart then
-            return
-        end
-
-        local target: Player? =
-            findNearestTarget(silent and 100000 or knifeThrowSettings.range,
-                not silent and throwerPart.Position or nil)
-        if not target then
-            return
-        end
-        local targetRoot: BasePart =
-            target.Character:FindFirstChild("HumanoidRootPart") :: BasePart
-
-        local originPos: Vector3
-        if silent then
-
-            local toThrower: Vector3 = throwerPart.Position - targetRoot.Position
-            if toThrower.Magnitude > 0.1 then
-                toThrower = toThrower.Unit
-            else
-                toThrower = Vector3.new(0, 0, 1)
+        local silent: boolean = knifeThrowSettings.mode == "Silent"
+        local function getOrigin(target: Player?): CFrame?
+            if not character or character ~= LocalPlayer.Character then return nil end
+            local handle: any = knife:FindFirstChild("Handle")
+            local hand: any = character:FindFirstChild("RightHand")
+                or character:FindFirstChild("Right Arm") or character:FindFirstChild("HumanoidRootPart")
+            local source: any = handle and handle:IsA("BasePart") and handle or hand
+            if not source then return nil end
+            local frame: CFrame = source.CFrame
+            if silent and target and target.Character then
+                local root: any = target.Character:FindFirstChild("HumanoidRootPart")
+                if not root then return nil end
+                local direction: Vector3 = frame.Position - root.Position
+                direction = direction.Magnitude > 0.1 and direction.Unit or Vector3.new(0, 0, 1)
+                return CFrame.new(root.Position + direction * knifeThrowSettings.spawnOffset)
             end
-            originPos = targetRoot.Position + toThrower * knifeThrowSettings.spawnOffset
-        else
-            originPos = throwerPart.Position
+            return frame
         end
-
-        local aimPos: Vector3? = predictAim(target, originPos)
-        if not aimPos or (aimPos - originPos).Magnitude < 0.05 then return end
-        if not silent and not isWeaponPathClear(originPos, aimPos, target.Character) then return end
-        remote:FireServer(CFrame.new(originPos), CFrame.new(aimPos))
-        lastThrow = os.clock()
-        pcall(trajectoryCalibration.noteAuthoredShot, trajectoryCalibration, {
-            kind = "knife",
-            tool = knife,
-            toolName = knife.Name,
-            originPos = originPos,
-            aimPos = aimPos,
-            target = target,
-            silent = silent,
-            settings = {mode = knifeThrowSettings.mode, throwHz = knifeThrowSettings.throwHz,
-                fireDelay = knifeThrowSettings.fireDelay, spawnOffset = knifeThrowSettings.spawnOffset},
-        })
-        -- Nothing cosmetic may delay the packet, cooldown, or telemetry timestamp.
-        pcall(playThrowAnimation, knife)
+        local initialOrigin: CFrame? = getOrigin(nil)
+        if not initialOrigin then return end
+        local target: Player? = findNearestTarget(silent and 100000 or knifeThrowSettings.range,
+            not silent and initialOrigin.Position or nil)
+        if not target then return end
+        local function sendAtRelease(): ()
+            -- Re-read the held weapon, target, muzzle and prediction AFTER the
+            -- wind-up. No frozen 300ms-old aim and no automatic re-equipping.
+            if getReadyKnife() ~= knife or not isValidTarget(target :: Player) then return end
+            local origin: CFrame? = getOrigin(target)
+            if not origin then return end
+            local root: any = target.Character:FindFirstChild("HumanoidRootPart")
+            if not silent and (root.Position - origin.Position).Magnitude > knifeThrowSettings.range then return end
+            local aim: Vector3? = predictAim(target :: Player, origin.Position)
+            if not aim or (aim - origin.Position).Magnitude < 0.05 then return end
+            if not silent and not isWeaponPathClear(origin.Position, aim, target.Character) then return end
+            lastThrow = os.clock()
+            remote:FireServer(origin, CFrame.new(aim))
+            pcall(trajectoryCalibration.noteAuthoredShot, trajectoryCalibration, {
+                kind = "knife", tool = knife, toolName = knife.Name,
+                originPos = origin.Position, aimPos = aim, target = target, silent = silent,
+                settings = {mode = knifeThrowSettings.mode, throwHz = knifeThrowSettings.throwHz,
+                    fireDelay = knifeThrowSettings.fireDelay, spawnOffset = knifeThrowSettings.spawnOffset,
+                    model = "linear-intercept-v34", windupSeconds = knifeThrowSettings.animation and 0.3 or 0},
+            })
+        end
+        local ok: boolean = pcall(playThrowAnimation, knife, sendAtRelease)
+        if not ok then stopThrowAnimation() end
     end
 
     local function toggleKnifeThrow(enabled: boolean): ()
@@ -2191,8 +2151,8 @@ function Module.init(runtime: any): any
             knifeThrowSettings.animation = value
             if not value then stopThrowAnimation() end
         end,
-        "Uses the weapon's throw clip when available; otherwise a local wind-up/release/recovery. "
-            .. "Never sends an extra remote; OFF and unequip restore the pose."
+        "Raises the knife, releases once, then recovers. R6 shoulder / R15 shoulder-elbow-wrist. "
+            .. "OFF or unequip cancels the pending throw and restores the pose."
     )
     addNumberOption(
         KnifeThrowFeature,
@@ -2958,12 +2918,33 @@ function Module.init(runtime: any): any
         state.mm2ShotFeedback.hide()
     end
 
+    local manualShotPending: boolean = false
     local function triggerManualShot(): ()
         if not shootFeatureActive then
             notify("Enable Shoot first.")
             return
         end
-        fireGunAtTarget(getSelectedShootTarget())
+        if manualShotPending then return end
+        local character, humanoid = getCharacterParts()
+        local gun: Tool? = getPlayerWeapon(LocalPlayer, "Gun")
+        if not character or not humanoid or not gun then
+            notify("No sheriff gun is available.")
+            return
+        end
+        manualShotPending = true
+        local ok: boolean, message: any = pcall(function(): ()
+            if gun.Parent ~= character then
+                humanoid:EquipTool(gun)
+                -- Let the grip/muzzle update before sampling its origin.
+                RunService.Heartbeat:Wait()
+            end
+            -- Never re-equip if the user switched away during that frame.
+            if shootFeatureActive and LocalPlayer.Character == character and gun.Parent == character then
+                fireGunAtTarget(getSelectedShootTarget())
+            end
+        end)
+        manualShotPending = false
+        if not ok then notify("Shoot failed: " .. tostring(message)) end
     end
 
     local function toggleShootMurderer(enabled: boolean): ()
@@ -3036,6 +3017,8 @@ function Module.init(runtime: any): any
             registry = mm2Features,
         }
     )
+    addActionOption(ShootFeature, "Shoot now", triggerManualShot,
+        "Equips your sheriff gun and fires once. Auto Shoot never equips it.")
     local ShootTargetBox
     local silentSweepRow: GuiObject? = nil
     local silentSpawnRow: GuiObject? = nil
@@ -5440,7 +5423,7 @@ local mm2Settings = {
     shootMode = "Manual",
     shootWallCheck = true,
     silentAim = false,
-    shootKey = Enum.KeyCode.Q,
+    shootKey = Enum.KeyCode.Unknown,
     shootTarget = "",
     showMissCooldown = false,
     predictionRtt = 0.08,
@@ -5451,7 +5434,7 @@ local mm2Settings = {
     silentSweep = 0.5,
 
     silentSpawn = "Through",
-    getGunKey = Enum.KeyCode.G,
+    getGunKey = Enum.KeyCode.Unknown,
     instantRoleNotify = false,
     roleEspAll = false,
 
@@ -9479,9 +9462,9 @@ local function buildTRSFeatures()
         dribbleStyle = "Normal",
         power = false,
         powerValue = 1,
-        shootKey = Enum.KeyCode.G,
-        powerShotKey = Enum.KeyCode.T,
-        longShotKey = Enum.KeyCode.R,
+        shootKey = Enum.KeyCode.Unknown,
+        powerShotKey = Enum.KeyCode.Unknown,
+        longShotKey = Enum.KeyCode.Unknown,
         shootGoalRange = 120,
         powerShotRange = 120,
         shootTargetHeight = 4,
@@ -9490,14 +9473,14 @@ local function buildTRSFeatures()
         goalVisualCurve = 5,
         goalVisualLine = true,
         pickupMode = "Automatic",
-        pickupKey = Enum.KeyCode.H,
+        pickupKey = Enum.KeyCode.Unknown,
         pickupReach = 18,
         pickupMaxHeight = 12,
         pickupReportedDistance = 2.8,
         pickupDelay = 0.1,
         pickupDeke = true,
         passMode = "Manual",
-        passKey = Enum.KeyCode.V,
+        passKey = Enum.KeyCode.Unknown,
         passRange = 150,
         passPressureRange = 9,
         passForwardOnly = true,
@@ -17268,6 +17251,8 @@ function Module.init(context: Runtime): any
     end
 
     local emoteConnection: any = nil
+    local catalogEmoteConnection: any = nil
+    local emoteGeneration: number = 0
     local watchedHumanoid: any = nil
     local emoteNames: {[string]: boolean} = {}
     local emoteIds: {[string]: boolean} = {}
@@ -17277,8 +17262,11 @@ function Module.init(context: Runtime): any
     local lastGlitch: number = -math.huge
 
     local function clearStickyEmoteTracks(): ()
+        emoteGeneration += 1
         if emoteConnection then emoteConnection:Disconnect() end
+        if catalogEmoteConnection then catalogEmoteConnection:Disconnect() end
         emoteConnection = nil
+        catalogEmoteConnection = nil
         local previousHumanoid: any = watchedHumanoid
         watchedHumanoid = nil
         local stopped: {[any]: boolean} = {}
@@ -17371,14 +17359,69 @@ function Module.init(context: Runtime): any
         if watchedHumanoid ~= humanoid then
             clearStickyEmoteTracks()
             watchedHumanoid = humanoid
+            -- Catalog asset IDs are NOT necessarily the AnimationId played
+            -- by Animate. Prefer the actual track reported by the engine.
+            -- This event requires executor permissions on some client builds;
+            -- a denied connection must not prevent the metadata fallback.
+            pcall(function(): ()
+                catalogEmoteConnection = humanoid.EmoteTriggered:Connect(function(success: boolean, track: any): ()
+                    if success and track and watchedHumanoid == humanoid and not ownedEmotes[track] then
+                        local animation: any = track.Animation
+                        if animation then
+                            local id: string? = string.match(animation.AnimationId, "%d+")
+                            if id then emoteIds[id] = true end
+                        end
+                        rememberEmote(track)
+                    end
+                end)
+            end)
+            local catalogAssets: {number} = {}
             pcall(function(): ()
                 local description: any = humanoid:GetAppliedDescription()
-                for name: string, ids: any in pairs(description:GetEmotes()) do
-                    emoteNames[string.lower(name)] = true
-                    for _, id: any in ipairs(ids) do emoteIds[tostring(id)] = true end
-                end
+                local ok: boolean, emotes: any = pcall(description.GetEmotes, description)
                 description:Destroy()
+                if not ok then return end
+                local seen: {[number]: boolean} = {}
+                for name: string, ids: any in pairs(emotes) do
+                    emoteNames[string.lower(name)] = true
+                    for _, id: any in ipairs(ids) do
+                        emoteIds[tostring(id)] = true
+                        local numberId: number? = tonumber(id)
+                        if numberId and not seen[numberId] and #catalogAssets < 48 then
+                            seen[numberId] = true
+                            table.insert(catalogAssets, numberId)
+                        end
+                    end
+                end
             end)
+            -- Resolve catalog containers without playing an emote to discover
+            -- its ID. Never run downloaded scripts; only inspect Animation data.
+            local generation: number = emoteGeneration
+            if #catalogAssets > 0 and task and game then
+                task.spawn(function(): ()
+                    for _, assetId: number in ipairs(catalogAssets) do
+                        if generation ~= emoteGeneration then return end
+                        local ok: boolean, objects: any = pcall(function(): any
+                            return game:GetObjects("rbxassetid://" .. tostring(assetId))
+                        end)
+                        if ok and type(objects) == "table" then
+                            for _, object: any in ipairs(objects) do
+                                pcall(function(): ()
+                                    local nodes: {any} = object:GetDescendants()
+                                    table.insert(nodes, object)
+                                    for _, node: any in ipairs(nodes) do
+                                        if generation == emoteGeneration and node:IsA("Animation") then
+                                            local id: string? = string.match(node.AnimationId, "%d+")
+                                            if id then emoteIds[id] = true end
+                                        end
+                                    end
+                                end)
+                                pcall(function(): () object:Destroy() end)
+                            end
+                        end
+                    end
+                end)
+            end
             -- R6 /e dance2 commonly plays Animation1/2/3, not a track
             -- named dance2. Read IDs under Animate's named emote folders.
             pcall(function(): ()
@@ -28422,7 +28465,7 @@ function Gui.new(options: GuiOptions?): GuiController
     )
     blurSetting:setEnabled(true)
 
-    local menuKey: Enum.KeyCode = Enum.KeyCode.RightShift
+    local menuKey: Enum.KeyCode = Enum.KeyCode.Unknown
     local menuKeySetting: FeatureController = settings:addAction(
         "MenuKey",
         "Menu key",
@@ -28593,7 +28636,7 @@ function Gui.new(options: GuiOptions?): GuiController
         end
     end))
 
-    if isMobile then
+    if isMobile or menuKey == Enum.KeyCode.Unknown then
         local menuButton: ImageButton = create("ImageButton", {
             Name = "MobileMenuButton",
             AnchorPoint = Vector2.new(1, 0),
@@ -34964,7 +35007,7 @@ function Module.init(context: any): any
         local screen: Vector2 = viewport()
         local keybindRows: {{any}} = {
             {"Reset keybinds", nil, 26},
-            {"Open menu", "RightControl", 12},
+            {"Open menu", keyLabel(state.toggleKey.Name), 12},
         }
         for _, binding: any in pairs(state.shortcutBindings) do
             if binding.key and binding.key ~= Enum.KeyCode.Unknown then

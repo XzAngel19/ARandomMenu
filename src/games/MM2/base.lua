@@ -61,7 +61,7 @@ local mm2Settings = {
     shootMode = "Manual",
     shootWallCheck = true,
     silentAim = false,
-    shootKey = Enum.KeyCode.Q,
+    shootKey = Enum.KeyCode.Unknown,
     shootTarget = "",
     showMissCooldown = false,
     predictionRtt = 0.08,
@@ -72,7 +72,7 @@ local mm2Settings = {
     silentSweep = 0.5,
 
     silentSpawn = "Through",
-    getGunKey = Enum.KeyCode.G,
+    getGunKey = Enum.KeyCode.Unknown,
     instantRoleNotify = false,
     roleEspAll = false,
 

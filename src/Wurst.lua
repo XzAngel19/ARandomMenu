@@ -225,7 +225,7 @@ local RUNTIME_RAW_BASE: string =
         .. RUNTIME_BRANCH
         .. "/"
 
-local SOURCE_STAMP: string = "v33-20261016-equipped-actions"
+local SOURCE_STAMP: string = "v34-20261016-knife-rebuild"
 
 local BOOT_STARTED_AT: number = os.clock()
 local BOOT_FINGERPRINT_SECONDS: number = 0
@@ -984,11 +984,23 @@ PopupLayer.Size = UDim2.fromScale(1, 1)
 PopupLayer.ZIndex = 150
 PopupLayer.Parent = ScreenGui
 
-local savedToggleKey = Enum.KeyCode.RightShift
+-- One-time reset of old automatic key defaults. Future explicit assignments
+-- remain persisted; movement controls such as Fly's up/down are not shortcuts.
+if configData.ui.unboundKeyDefaultsVersion ~= 1 then
+    for key: string, value: any in pairs(configData.values) do
+        if string.sub(key, 1, 9) == "Shortcut."
+            or (type(value) == "string" and string.match(string.lower(key), "%.%w*key$")) then
+            configData.values[key] = "Unknown"
+        end
+    end
+    configData.ui.toggleKey = "Unknown"
+    configData.ui.unboundKeyDefaultsVersion = 1
+end
+local savedToggleKey = Enum.KeyCode.Unknown
 if type(configData.ui.toggleKey) == "string" then
     pcall(function()
         savedToggleKey = Enum.KeyCode[configData.ui.toggleKey]
-            or Enum.KeyCode.RightShift
+            or Enum.KeyCode.Unknown
     end)
 end
 
@@ -3655,7 +3667,7 @@ end
 
 local function refreshLauncherVisibility(): ()
 
-    MobileMenuButton.Visible = state.isMobile
+    MobileMenuButton.Visible = (state.isMobile or state.toggleKey == Enum.KeyCode.Unknown)
         and state.pill == nil
         and not state.visible
 end
@@ -4227,11 +4239,7 @@ state.bindFeatureActivationKey = function(
     binding.onPress = onPress
     binding.onRelease = onRelease
     binding.hold = onRelease ~= nil
-    if binding.key == Enum.KeyCode.Unknown
-        and defaultKey ~= nil
-        and defaultKey ~= Enum.KeyCode.Unknown then
-        binding.key = defaultKey
-    end
+    -- Activation registration never assigns a key. Only user key capture does.
     if binding.refresh then
         binding.refresh()
     end

@@ -89,40 +89,32 @@ pass('actual firing gate: no EquipTool path; high-error auto allowed; cooldown a
 end
 
 do
-local cfMt={}
-CFrame.new=function(p) return setmetatable({Position=p or Vector3.zero},cfMt) end
-CFrame.Angles=function(a,b,c) return CFrame.new(Vector3.new(a,b,c)) end
-cfMt.__mul=function(a,b) return CFrame.new(a.Position+b.Position) end
-cfMt.__index={Lerp=function(a,b,t) return CFrame.new(a.Position+(b.Position-a.Position)*t) end}
-local joint={Parent=true,C0=CFrame.new(Vector3.new(.2,.3,.4)),Transform=CFrame.new(),IsA=function(_,c) return c=='Motor6D' end}
-local torso={FindFirstChild=function(_,name) if name=='Right Shoulder' then return joint end end}
-local humanoid={}
-local character={FindFirstChildOfClass=function() return humanoid end,FindFirstChild=function(_,name) if name=='Torso' then return torso end end}
+local character={}
+local gun={Parent={},Enabled=true}
+local equips,shots=0,0
+local cancel=false
+local humanoid={EquipTool=function(_,tool) equips+=1;tool.Parent=character end}
 local LocalPlayer={Character=character}
-local knife={Parent=character,GetDescendants=function() return {} end}
-local knifeThrowSettings={animation=true}
-local featureConnections={}
-local tick=nil
-local TaskManager={Connect=function(_,fn) tick=fn;return {Disconnect=function() tick=nil end} end}
-local function disconnectFeatureConnection(key)
-    if featureConnections[key] then featureConnections[key]:Disconnect();featureConnections[key]=nil end
+local function getCharacterParts() return character,humanoid end
+local function getPlayerWeapon(_,_,equipped) assert(not equipped);return gun end
+local RunService={Heartbeat={Wait=function() if cancel then gun.Parent={} end end}}
+local function getSelectedShootTarget() return {} end
+local function fireGunAtTarget() shots+=1 end
+local shootFeatureActive=true
+local function notify() end
+'''+section(S,'    local manualShotPending:','    local function toggleShootMurderer')+r'''
+triggerManualShot();assert(equips==1 and shots==1)
+triggerManualShot();assert(equips==1 and shots==2,'held manual gun must not re-equip')
+gun.Parent={};cancel=true;triggerManualShot()
+assert(equips==2 and shots==2,'manual action must respect an unequip during the equip frame')
+shootFeatureActive=false;triggerManualShot();assert(equips==2)
+pass('actual manual Shoot: equips once, fires; respects unequip and OFF; Auto route stays held-only')
 end
-'''+section(K,'    local throwTrack:','    local function throwKnife')+r'''
-local base=joint.C0
-playThrowAnimation(knife);assert(tick)
-tick(.06);assert((joint.C0.Position-base.Position).Magnitude>.1,'wind-up changes real joint')
-for i=1,12 do if tick then tick(.04) end end
-assert(joint.C0==base and not tick,'recovery restores exact baseline')
-playThrowAnimation(knife);tick(.06);knife.Parent={};tick(.02)
-assert(joint.C0==base and not tick,'unequip releases reconstruction immediately')
-knife.Parent=character;playThrowAnimation(knife);tick(.06)
-stopThrowAnimation();stopThrowAnimation()
-assert(joint.C0==base and not tick,'disable cleanup idempotent')
-pass('actual reconstructed throw: wind-up/release/recovery; no marker or extra remote; unequip and OFF restore pose')
-end
+
 '''
 
-assert 'EquipTool' not in K and 'EquipTool' not in S
+assert 'EquipTool' not in K
+assert 'EquipTool' not in section(S,'    local function fireGunAtTarget','    local shootFeatureActive:')
 assert '"Auto Range"' not in A and 'autoRange' not in A
 assert '"Throw now"' in K
 assert '"Max error"' not in S
