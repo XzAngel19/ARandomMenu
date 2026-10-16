@@ -45,6 +45,9 @@ end
 ''', section(BASE, 'local function isWeaponPathClear(', 'local function getWeaponFromContainer('), r'''
 local a,b=Vector3.zero,Vector3.new(10,0,0)
 assert(isWeaponPathClear(a,b,target))
+assert(not isWeaponPathClear(a,b,target,nil,{requireTarget=true}),"empty air is not a visible body")
+layers={part(0,target)};assert(isWeaponPathClear(a,b,target,nil,{requireTarget=true}))
+layers={part(0)};assert(not isWeaponPathClear(a,b,target,nil,{requireTarget=true}))
 layers={part(1),part(0,target)}; assert(isWeaponPathClear(a,b,target))
 assert(not isWeaponPathClear(a,b,target,true),"Shoot must not ignore untagged invisible blockers")
 layers={part(0,target)};assert(isWeaponPathClear(a,b,target,true))

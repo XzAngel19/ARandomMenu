@@ -114,7 +114,6 @@ local FEATURE_CATEGORIES: {[string]: string} = {
     ["VD Fullbright"] = "Render",
 
     ["Silent Aim"] = "Combat",
-    ["Auto Shoot"] = "Combat",
     ["TriggerBot"] = "Combat",
     ["Role Tags"] = "Render",
     ["Weapon Visuals"] = "Render",
@@ -222,7 +221,7 @@ local RUNTIME_RAW_BASE: string =
         .. RUNTIME_BRANCH
         .. "/"
 
-local SOURCE_STAMP: string = "v36-20261016-combat-controls"
+local SOURCE_STAMP: string = "v37-20261016-live-shoot-jump"
 
 local BOOT_STARTED_AT: number = os.clock()
 local BOOT_FINGERPRINT_SECONDS: number = 0

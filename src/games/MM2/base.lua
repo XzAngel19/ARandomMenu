@@ -121,7 +121,7 @@ local function clearEffects(folder)
 end
 
 -- Match the recovered client's cursor filters, not an assertion about server rules.
-local function isWeaponPathClear(origin: Vector3, endpoint: Vector3, target: Model?, strict: boolean?, options: {ignoreTarget: boolean?}?): boolean
+local function isWeaponPathClear(origin: Vector3, endpoint: Vector3, target: Model?, strict: boolean?, options: {ignoreTarget: boolean?, requireTarget: boolean?}?): boolean
     local direction: Vector3 = endpoint - origin
     if direction.Magnitude < 0.05 then return true end
     local excluded: {Instance} = {}
@@ -138,7 +138,7 @@ local function isWeaponPathClear(origin: Vector3, endpoint: Vector3, target: Mod
     for _ = 1, 32 do
         params.FilterDescendantsInstances = excluded
         local hit: RaycastResult? = workspace:Raycast(origin, direction, params)
-        if not hit then return true end
+        if not hit then return not (options and options.requireTarget == true) end
         if target and hit.Instance:IsDescendantOf(target) then return true end
         if not strict and hit.Instance:IsA("BasePart") and hit.Instance.Transparency == 1 then
             table.insert(excluded, hit.Instance)

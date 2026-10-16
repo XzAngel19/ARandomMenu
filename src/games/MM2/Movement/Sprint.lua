@@ -75,11 +75,11 @@ function Module.init(runtime: any): any
         ensureSprintTrail(root).Enabled = humanoid ~= nil and humanoid.MoveDirection.Magnitude > 0.05
     end
     speed:CreateToggle({
-        Name = "Sprint", Default = false,
+        Name = "Sprint", Default = false, Bindable = true,
         Function = function(value: boolean): ()
             if not value then clearSprintTrail() end
         end,
-        Tooltip = "MM2: 30 WalkSpeed with a trail while Speed is enabled. Overrides the on-foot Speed method; no separate module or key required.",
+        Tooltip = "MM2: 30 WalkSpeed with a trail while Speed is enabled. Overrides the on-foot Speed method; use the KEY slot to assign a Sprint toggle key (unassigned by default).",
     })
     activeCleanup = function(): ()
         clearSprintTrail()

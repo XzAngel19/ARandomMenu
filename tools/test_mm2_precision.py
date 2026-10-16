@@ -241,7 +241,7 @@ local mm2Settings={shootWallCheck=false}
 local velocity=Vector3.new(16,0,0)
 local humanoid={Health=100,FloorMaterial="Ground",MoveDirection=Vector3.zero,WalkSpeed=16,GetState=function() return "Running" end}
 local root={Position=Vector3.zero}
-local part={Position=Vector3.new(0,0.8,0),IsA=function() return true end}
+local part={Position=Vector3.new(0,0.8,0),CFrame=rootCF,Size=Vector3.new(2,2,2),IsA=function() return true end}
 local character={FindFirstChild=function(self,name) if name=="HumanoidRootPart" then return root end; return part end,FindFirstChildOfClass=function() return humanoid end}
 local target={Character=character}
 local sample={character=character,sampledAt=now,acceleration=Vector3.zero,stability=1,grounded=true}
@@ -321,10 +321,10 @@ local mm2Settings={shootWallCheck=true}
 local velocity=Vector3.new(16,0,0)
 local humanoid={Health=100,FloorMaterial="Ground",MoveDirection=Vector3.zero,WalkSpeed=16,GetState=function() return "Running" end}
 local rootCF={RightVector=Vector3.new(0,0,1),UpVector=Vector3.new(0,1,0)}
-local root={Position=Vector3.zero,CFrame=rootCF,IsA=function() return true end}
-local torso={Position=Vector3.new(0,0.8,0),IsA=function() return true end}
-local head={Position=Vector3.new(0,1.6,0),IsA=function() return true end}
-local leg={Position=Vector3.new(0,-0.6,0),IsA=function() return true end}
+local root={Position=Vector3.zero,CFrame=rootCF,Size=Vector3.new(2,2,2),IsA=function() return true end}
+local torso={Position=Vector3.new(0,0.8,0),CFrame=rootCF,Size=Vector3.new(2,2,2),IsA=function() return true end}
+local head={Position=Vector3.new(0,1.6,0),CFrame=rootCF,Size=Vector3.new(2,2,2),IsA=function() return true end}
+local leg={Position=Vector3.new(0,-0.6,0),CFrame=rootCF,Size=Vector3.new(2,2,2),IsA=function() return true end}
 local parts={UpperTorso=torso,HumanoidRootPart=root,Head=head,RightLowerLeg=leg}
 local character={FindFirstChild=function(_,name) return parts[name] end,FindFirstChildOfClass=function() return humanoid end}
 local target={Character=character}
@@ -345,6 +345,7 @@ end
 ''', section(SHOOT, "    local BODY_HALF_WIDTH:", "    local function getSelectedShootTarget"), r'''
 local origin=CFrame.new(Vector3.new(0,0,-20))
 -- Case 1: only the leg is visible -> the leg is still the correct last resort.
+markClear(Vector3.new(0,-0.6,0))
 markClear(Vector3.new(1.6,-0.6,0))
 local legAim,legPred=computeGunAim(target,origin)
 assert(legPred,"leg-only visibility must still produce a shot")
@@ -352,6 +353,7 @@ near(legPred.endpoint.X,1.6); near(legPred.endpoint.Y,-0.6)
 -- Case 2: the right half of the torso box is exposed -> the probe point must
 -- beat the leg (v27: "detectando la pierna cuando no era necesario").
 clearList={}
+markClear(Vector3.new(0,0.8,0.55))
 markClear(Vector3.new(1.6,0.8,0.55))
 local torsoAim,torsoPred=computeGunAim(target,origin)
 assert(torsoPred,"exposed torso probe must produce a shot")
@@ -361,7 +363,18 @@ assert(torsoPred.endpoint.Y > 0,"torso probe must outrank the leg")
 clearList={}
 local noneAim,nonePred=computeGunAim(target,origin)
 assert(noneAim==nil and nonePred==nil,"fully blocked shot must be rejected")
-pass("wallcheck rescue: torso probe beats the leg; leg-only still fires; fully blocked rejects")
+-- A clear future/old peek point is NOT evidence that the current body is exposed.
+markClear(Vector3.new(1.6,0.8,0))
+assert(computeGunAim(target,origin)==nil,"open-air lead must not rescue a currently hidden target")
+clearList={};velocity=Vector3.zero;now+=1
+root.Position=Vector3.new(1000,0,0);torso.Position=Vector3.new(1000,.8,0)
+markClear(torso.Position)
+local _,distant=computeGunAim(target,origin,{allowUncertain=true})
+assert(distant);near(distant.endpoint.X,1000)
+-- Move the target back behind cover; the previously visible position stays clear.
+root.Position=Vector3.new(999,0,0);torso.Position=Vector3.new(999,.8,0)
+assert(computeGunAim(target,origin,{allowUncertain=true})==nil,"no retained visibility/aim after cover closes")
+pass("live WallCheck: torso/limbs, hidden-current-body rejects clear lead, 1000 studs, no stale peek")
 end
 ''']
     chunks += [r'''
@@ -552,18 +565,15 @@ def main() -> None:
     # Integration contracts not requiring a simulated Roblox scene.
     assert 'silentSpawn = "Through"' in BASE
     assert 'bodyHalfWidth' not in SHOOT and 'WurstHitbox' not in BASE
-    assert 'predictionMath.sampleDue(autoElapsed, deltaTime, 60)' in SHOOT
+    assert 'TaskManager:Connect(autoShootTick)' in SHOOT
     assert 'predictionMath.sampleDue(elapsed, deltaTime, 30)' in BASE
     assert 'task.delay(10, function()' in BASE
     assert 'if directHit then tuneFromConfirmedShot(candidate) end' in BASE
     assert 'or candidate.silentSpawn then' in BASE
     assert 'candidate.aimRootOffset' in BASE and 'aimRootOffset = part.Position' in SHOOT
     assert 'GUN_PIERCE_STUDS' not in SHOOT, 'v27 pierce removed: the server rejects endpoints past the target (real log evidence)'
-    assert 'GUN_SERVER_COOLDOWN' in SHOOT and 'Gun is cooling down' in SHOOT
-    # one shared gate before the silent/normal split, and both fire paths
-    # stamp lastGunFireServer so AutoShoot + manual share the window
-    assert SHOOT.count('lastGunFireServer = os.clock()') == 2, 'both fire paths must stamp the server cooldown'
-    assert SHOOT.index('GUN_SERVER_COOLDOWN then') < SHOOT.index('if silent'), 'gate must run before the silent/normal split'
+    assert 'GUN_SERVER_COOLDOWN' not in SHOOT and 'lastGunFireServer' not in SHOOT
+    assert 'autoSettings.fireDelay' not in SHOOT
     assert 'probeOffsets' in SHOOT and 'getEstimatedLatency() * 1.0' in BASE
     with tempfile.TemporaryDirectory(prefix="mm2-precision-") as directory:
         script = Path(directory) / "regressions.luau"

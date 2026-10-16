@@ -1,5 +1,5 @@
 return {
-    stamp = "v36-20261016-combat-controls",
+    stamp = "v37-20261016-live-shoot-jump",
     files = {
         ["src/Profile/142823291.lua"] = [[
 --!strict
@@ -2275,10 +2275,11 @@ function Module.init(runtime: any): any
     local motionSamples: any = core.motionSamples
     local predictionMath: any = core.predictionMath
     local isMotionGrounded: any = core.isMotionGrounded
-    local function isWeaponPathClear(origin: Vector3, endpoint: Vector3, target: Model?): boolean
+    local LIVE_TARGET_PATH = {requireTarget = true}
+    local function isWeaponPathClear(origin: Vector3, endpoint: Vector3, target: Model?, requireTarget: boolean?): boolean
         -- Use the recovered WeaponService cursor filter (including its
         -- transparent-part handling), not v32's speculative strict mode.
-        return core.isWeaponPathClear(origin, endpoint, target)
+        return core.isWeaponPathClear(origin, endpoint, target, nil, requireTarget and LIVE_TARGET_PATH or nil)
     end
 
     local shootMacro: boolean = false
@@ -2318,15 +2319,6 @@ function Module.init(runtime: any): any
     local BODY_HALF_WIDTH: number = 1.0
 
     local MINIMUM_ERROR_RADIUS: number = 0.35
-
-    -- Server-side gun cooldown, measured from real MM2 remote logs
-    -- (TestingStuff 2026-10-15): accepted shots were never closer than
-    -- ~3.13 s apart, and every rapid follow-up (< ~3 s) was silently
-    -- dropped by the server - no GunFired echo, no damage, nothing. The
-    -- client kept "shooting" and the user kept seeing the same miss,
-    -- because the correction shots never actually left the building.
-    local GUN_SERVER_COOLDOWN: number = 3.1
-    local lastGunFireServer: number = -math.huge
 
     local AIM_PARTS: {string} = {
         "UpperTorso",
@@ -2501,97 +2493,43 @@ function Module.init(runtime: any): any
         end
 
         if not ignoreVisibility and mm2Settings.shootWallCheck then
-            if not isWeaponPathClear(origin.Position, predicted, character) then
-                -- Partial visibility: when the target hugs a wall and only a
-                -- sliver sticks out (a hand with the knife, an arm, a corner
-                -- of the torso), aim the shot at that visible part instead of
-                -- rejecting it. The whole character shares the same lead
-                -- displacement, so each candidate is simply its part position
-                -- moved by the same prediction.
-                local rescued: boolean = false
-                -- The rewind window accepts the RAW observed position, and
-                -- during a peek the raw torso is usually exposed while the
-                -- LED point still sits inside the wall. Try the raw position
-                -- of the current aim part first (biggest part, no lead).
-                do
-                    local rawPoint: Vector3 = (part :: BasePart).Position
-                    local rawDelta: Vector3 = rawPoint - origin.Position
-                    if rawDelta.Magnitude > 0.05
-                        and isWeaponPathClear(
-                            origin.Position,
-                            rawPoint,
-                            character
-                        ) then
-                        predicted = rawPoint
-                        delta = rawDelta
-                        rescued = true
+            -- Visibility is a CURRENT-body test, never proof supplied by a
+            -- predicted point in empty space. A closed peek must fail even
+            -- when an old/future lead position has an unobstructed ray.
+            local visible: Vector3? = nil
+            local visiblePart: BasePart? = nil
+            for _, partName: string in ipairs(VISIBILITY_PARTS) do
+                local candidate: Instance? = character:FindFirstChild(partName)
+                if candidate and candidate:IsA("BasePart") then
+                    local body: BasePart = candidate :: BasePart
+                    local points: {Vector3} = {body.Position}
+                    local right: Vector3 = body.CFrame.RightVector * math.min(body.Size.X * 0.35, 0.55)
+                    local up: Vector3 = body.CFrame.UpVector * math.min(body.Size.Y * 0.25, 0.35)
+                    local probeOffsets: {Vector3} = {right, -right}
+                    if table.find(AIM_PARTS, partName) then
+                        table.insert(probeOffsets, up)
+                        table.insert(probeOffsets, right * 0.64 + up * 0.71)
+                        table.insert(probeOffsets, -right * 0.64 + up * 0.71)
                     end
-                end
-                if not rescued then
-                    local rootCFrame: CFrame = (root :: BasePart).CFrame
-                    -- Probe points across the torso box before falling back
-                    -- to limbs: a corner that hides the CENTRE of the torso
-                    -- usually still leaves half of the box exposed, and that
-                    -- sliver is a far better shot than a leg ("detectando la
-                    -- pierna cuando no era necesario"). The ray origin is the
-                    -- gun, not the eye, so what looks fully exposed on screen
-                    -- can be centre-blocked from the muzzle.
-                    local probeOffsets: {Vector3} = {
-                        rootCFrame.RightVector * 0.55,
-                        rootCFrame.RightVector * -0.55,
-                        rootCFrame.UpVector * 0.35,
-                        rootCFrame.RightVector * 0.35 + rootCFrame.UpVector * 0.25,
-                        rootCFrame.RightVector * -0.35 + rootCFrame.UpVector * 0.25,
-                    }
-                    for _, partName: string in ipairs(VISIBILITY_PARTS) do
-                        local candidate: Instance? =
-                            (character :: Model):FindFirstChild(partName)
-                        if candidate
-                            and candidate:IsA("BasePart") then
-                            local candidatePart: BasePart =
-                                candidate :: BasePart
-                            local variants: {Vector3} = {
-                                candidatePart.Position + displacement,
-                                candidatePart.Position,
-                            }
-                            if table.find(AIM_PARTS, partName) ~= nil then
-                                for _, offset: Vector3 in ipairs(probeOffsets) do
-                                    table.insert(
-                                        variants,
-                                        candidatePart.Position + offset + displacement
-                                    )
-                                    table.insert(
-                                        variants,
-                                        candidatePart.Position + offset
-                                    )
-                                end
-                            end
-                            for _, basePoint: Vector3 in ipairs(variants) do
-                                local candidatePoint: Vector3 = basePoint
-                                local candidateDelta: Vector3 =
-                                    candidatePoint - origin.Position
-                                if candidateDelta.Magnitude > 0.05
-                                    and isWeaponPathClear(
-                                        origin.Position,
-                                        candidatePoint,
-                                        character
-                                    ) then
-                                    predicted = candidatePoint
-                                    delta = candidateDelta
-                                    rescued = true
-                                    break
-                                end
-                            end
-                            if rescued then
-                                break
-                            end
+                    for _, offset: Vector3 in ipairs(probeOffsets) do table.insert(points, body.Position + offset) end
+                    for _, point: Vector3 in ipairs(points) do
+                        if (point - origin.Position).Magnitude > 0.05
+                            and isWeaponPathClear(origin.Position, point, character, true) then
+                            visible = point
+                            visiblePart = body
+                            break
                         end
                     end
                 end
-                if not rescued then
-                    return nil, nil, "obstructed"
-                end
+                if visible then break end
             end
+            if not visible or not visiblePart then return nil, nil, "obstructed" end
+            -- Keep the solver's lead, anchored to the visible part NOW. If
+            -- cover blocks that lead, the currently exposed sliver wins.
+            part = visiblePart
+            local ledPoint: Vector3 = visible + displacement
+            predicted = isWeaponPathClear(origin.Position, ledPoint, character) and ledPoint or visible
+            delta = predicted - origin.Position
         end
 
         local turnError: number = displacement.Magnitude
@@ -2797,7 +2735,8 @@ function Module.init(runtime: any): any
         if not gun or gun.Parent ~= character then
             return reject("Equip the sheriff gun yourself to shoot.")
         end
-        if gun.Enabled == false or gun:GetAttribute("Disabled") == true then
+        if gun.Enabled == false or gun:GetAttribute("Disabled") == true
+            or gun:GetAttribute("Reloading") == true or gun:GetAttribute("IsReloading") == true then
             return reject("The gun is disabled or reloading.")
         end
 
@@ -2842,15 +2781,9 @@ function Module.init(runtime: any): any
             return reject("Shot accuracy is too low to fire.")
         end
 
-        -- One packet per server cooldown window, for BOTH modes: the real
-        -- logs show the server silently drops any shot fired less than
-        -- ~3.1 s after the previous one (no echo, no damage), so a rapid
-        -- re-fire never tests a correction - it just looks like the same
-        -- miss again.
-        if os.clock() - lastGunFireServer < GUN_SERVER_COOLDOWN then
-            return reject("Gun is cooling down - the server drops rapid shots.")
-        end
-
+        -- Do not infer a reload from our last REQUEST: a rejected packet
+        -- never proves the server fired. Native Tool/attribute readiness is
+        -- checked above; no speculative 3.1-second local lockout.
         if silent then
 
             local variant: string = mm2Settings.silentSpawn
@@ -2869,7 +2802,6 @@ function Module.init(runtime: any): any
                 at = os.clock(),
                 offset = math.floor(offset * 10) / 10,
             }
-            lastGunFireServer = os.clock()
             remote:FireServer(shotOrigin, shotEnd)
 
             pcall(trajectoryCalibration.noteAuthoredShot, trajectoryCalibration, {
@@ -2901,7 +2833,6 @@ function Module.init(runtime: any): any
         -- session) - the shot died mid-air exactly like the bug it tried
         -- to fix. The server's own acceptance window (~277 ms rewind) is
         -- what forgives a slightly short lead.
-        lastGunFireServer = os.clock()
         remote:FireServer(
             CFrame.lookAt(origin.Position, resolved.endpoint),
             CFrame.new(resolved.endpoint)
@@ -2916,7 +2847,7 @@ function Module.init(runtime: any): any
             silent = false,
             settings = {mode = "Normal", wallCheck = mm2Settings.shootWallCheck,
                 motionHz = mm2Settings.motionSampleHz, leadBias = mm2Settings.gunLeadBias,
-                wallCheckPolicy = "recovered-client-filter", leadSeconds = resolved.leadSeconds, errorRadius = resolved.errorRadius,
+                wallCheckPolicy = "live-body-first-hit", leadSeconds = resolved.leadSeconds, errorRadius = resolved.errorRadius,
                 predictedPoint = {resolved.endpoint.X, resolved.endpoint.Y, resolved.endpoint.Z},
                 sampledVelocity = {resolved.velocity.X, resolved.velocity.Y, resolved.velocity.Z}},
         })
@@ -2926,6 +2857,9 @@ function Module.init(runtime: any): any
 
     local shootFeatureActive: boolean = false
     local autoShootActive: boolean = false
+    local autoShootWanted: boolean = false
+    local ShootFeature: any = nil
+    local updateAutoShootConnection: (() -> ())? = nil
 
     local function refreshShootInfrastructure(): ()
         local wantActive: boolean = shootFeatureActive or autoShootActive
@@ -2983,7 +2917,7 @@ function Module.init(runtime: any): any
             -- Never re-equip if the user switched away during that frame.
             if shootFeatureActive and LocalPlayer.Character == character and gun.Parent == character then
                 -- An explicit action never waits for a low prediction error.
-                -- This flag skips only that gate, not reload, cooldown or LOS.
+                -- This flag skips only that gate, not native reload/readiness or LOS.
                 fireGunAtTarget(getSelectedShootTarget(), {whenReady = true})
             end
         end)
@@ -2993,64 +2927,73 @@ function Module.init(runtime: any): any
 
     local function toggleShootMurderer(enabled: boolean): ()
         shootFeatureActive = enabled
+        autoShootActive = shootFeatureActive and autoShootWanted
         refreshShootInfrastructure()
+        if updateAutoShootConnection then updateAutoShootConnection() end
     end
 
-    local autoSettings = {
-        mode = "Normal" :: string,
-        fireDelay = 0.1,
-    }
-    local lastAutoShot: number = -math.huge
-    local lastAutoReject: {message: string, at: number}? = nil
+    local lastAutoStatus: string? = nil
+    local function autoStatus(message: string): ()
+        if ShootFeature and lastAutoStatus ~= message then
+            lastAutoStatus = message
+            ShootFeature:SetStatus(message)
+        end
+    end
 
     local function autoShootTick(): ()
+        if not shootFeatureActive or not autoShootActive then return end
         local gun: Tool? = getPlayerWeapon(LocalPlayer, "Gun", true)
-        if not gun or gun.Parent ~= LocalPlayer.Character then return end
-
-        if os.clock() - lastAutoShot < autoSettings.fireDelay then
+        if not gun or gun.Parent ~= LocalPlayer.Character then
+            autoStatus("Equip gun")
             return
         end
         local target: Player? = getSelectedShootTarget()
-        if not target then
+        if not target then autoStatus("No target"); return end
+        lastRejectReason = ""
+        local sent: boolean = fireGunAtTarget(target, {whenReady = true, quiet = true})
+        autoStatus(sent and "Auto: request sent" or lastRejectReason)
+    end
+
+    updateAutoShootConnection = function(): ()
+        disconnectFeatureConnection("MM2AutoShoot")
+        autoShootActive = shootFeatureActive and autoShootWanted
+        if not autoShootActive then
+            lastAutoStatus = nil
+            if ShootFeature then ShootFeature:SetStatus(nil) end
             return
         end
-        lastRejectReason = ""
-        local fired: boolean = fireGunAtTarget(target, {
-            silent = autoSettings.mode == "Silent",
-            whenReady = true,
-            quiet = true,
-        })
-        if fired then
-            lastAutoShot = os.clock()
-            lastAutoReject = nil
-        elseif lastRejectReason ~= "" then
-
-            if lastAutoReject == nil or lastAutoReject.message ~= lastRejectReason then
-                lastAutoReject = {message = lastRejectReason, at = os.clock()}
-                notify("Auto Shoot waiting: " .. lastRejectReason)
-            end
-        end
+        -- One attempt per current frame, with no range/confidence/fire-delay
+        -- timer. No cached aim or visibility survives into the next attempt.
+        featureConnections.MM2AutoShoot = TaskManager:Connect(autoShootTick)
+        autoShootTick()
     end
 
     local function toggleAutoShoot(enabled: boolean): ()
-        autoShootActive = enabled
-        disconnectFeatureConnection("MM2AutoShoot")
+        autoShootWanted = enabled
+        autoShootActive = shootFeatureActive and autoShootWanted
         refreshShootInfrastructure()
-        if not enabled then
-            return
-        end
-        lastAutoShot = -math.huge
-        local autoElapsed: number = 0
-        featureConnections.MM2AutoShoot = TaskManager:Connect(function(
-            deltaTime: number
-        ): ()
-            local due: boolean
-            due, autoElapsed = predictionMath.sampleDue(autoElapsed, deltaTime, 60)
-            if due then autoShootTick() end
-        end)
+        if updateAutoShootConnection then updateAutoShootConnection() end
     end
 
-    local ShootFeature = createUniversalFeature(
+    -- Preserve explicit bindings and enabled state when the old card becomes
+    -- a child option. Never overwrite a setting already saved for the child.
+    if type(configData) == "table" then
+        local changed: boolean = false
+        if configData.states["MM2.Shoot.AutoShoot"] == nil and configData.states["MM2.AutoShoot"] ~= nil then
+            local enabled: boolean = configData.states["MM2.AutoShoot"] == true
+            configData.states["MM2.Shoot.AutoShoot"] = enabled
+            if enabled then configData.states["MM2.Shoot"] = true end
+            changed = true
+        end
+        local oldKey: any = configData.values["Shortcut.MM2AutoShoot"]
+        if configData.values["Shortcut.MM2ShootAutoShoot"] == nil and type(oldKey) == "string" then
+            configData.values["Shortcut.MM2ShootAutoShoot"] = oldKey
+            changed = true
+        end
+        if changed and type(queueConfigSave) == "function" then queueConfigSave() end
+    end
+
+    ShootFeature = createUniversalFeature(
         "Shoot",
         "Hitscan aim with filtered motion, RTT compensation, and miss feedback",
         4,
@@ -3280,39 +3223,8 @@ function Module.init(runtime: any): any
     end, false)
     refreshShootOptions()
 
-    local AutoShootFeature = createUniversalFeature(
-        "Auto Shoot",
-        "Fires when cooldown and target permit, only while YOU hold the gun. "
-            .. "Normal respects Shoot WallCheck. Never auto-equips or waits for a confidence threshold.",
-        5,
-        toggleAutoShoot,
-        {
-            categoryName = "Combat",
-            parent = MM2Scroll,
-            registry = mm2Features,
-        }
-    )
-    addCycleOption(
-        AutoShootFeature,
-        "Mode",
-        {"Normal", "Silent"},
-        1,
-        function(value: string): ()
-            autoSettings.mode = value
-        end
-    )
-    addNumberOption(
-        AutoShootFeature,
-        "Fire delay",
-        autoSettings.fireDelay,
-        0.1,
-        2,
-        function(value: number): ()
-            autoSettings.fireDelay = value
-        end,
-        "Seconds between automatic shots.",
-        0.05
-    )
+    addToggleOption(ShootFeature, "Auto Shoot", false, toggleAutoShoot,
+        "While Shoot is ON and you hold the gun: try every frame as soon as the current target is visible. No distance or prediction-confidence gate. Uses Shoot's mode.", true)
 
     activeCleanup = function(): ()
         toggleShootMurderer(false)
@@ -3681,11 +3593,11 @@ function Module.init(runtime: any): any
         ensureSprintTrail(root).Enabled = humanoid ~= nil and humanoid.MoveDirection.Magnitude > 0.05
     end
     speed:CreateToggle({
-        Name = "Sprint", Default = false,
+        Name = "Sprint", Default = false, Bindable = true,
         Function = function(value: boolean): ()
             if not value then clearSprintTrail() end
         end,
-        Tooltip = "MM2: 30 WalkSpeed with a trail while Speed is enabled. Overrides the on-foot Speed method; no separate module or key required.",
+        Tooltip = "MM2: 30 WalkSpeed with a trail while Speed is enabled. Overrides the on-foot Speed method; use the KEY slot to assign a Sprint toggle key (unassigned by default).",
     })
     activeCleanup = function(): ()
         clearSprintTrail()
@@ -5378,7 +5290,7 @@ local function clearEffects(folder)
 end
 
 -- Match the recovered client's cursor filters, not an assertion about server rules.
-local function isWeaponPathClear(origin: Vector3, endpoint: Vector3, target: Model?, strict: boolean?, options: {ignoreTarget: boolean?}?): boolean
+local function isWeaponPathClear(origin: Vector3, endpoint: Vector3, target: Model?, strict: boolean?, options: {ignoreTarget: boolean?, requireTarget: boolean?}?): boolean
     local direction: Vector3 = endpoint - origin
     if direction.Magnitude < 0.05 then return true end
     local excluded: {Instance} = {}
@@ -5395,7 +5307,7 @@ local function isWeaponPathClear(origin: Vector3, endpoint: Vector3, target: Mod
     for _ = 1, 32 do
         params.FilterDescendantsInstances = excluded
         local hit: RaycastResult? = workspace:Raycast(origin, direction, params)
-        if not hit then return true end
+        if not hit then return not (options and options.requireTarget == true) end
         if target and hit.Instance:IsDescendantOf(target) then return true end
         if not strict and hit.Instance:IsA("BasePart") and hit.Instance.Transparency == 1 then
             table.insert(excluded, hit.Instance)
@@ -17591,6 +17503,101 @@ function Module.init(context: Runtime): any
         originalJumpPower = setmetatable({}, {__mode = "k"}) :: any
     end
 
+    local fallHumanoid: Humanoid? = nil
+    local fallConnection: RBXScriptConnection? = nil
+    local fallTrack: AnimationTrack? = nil
+    local fallLoadAttempted: boolean = false
+    local fallJumpPower: number = 50
+    local jumpAnimationIds: {[string]: boolean} = {}
+
+    local function stopFallTrack(): ()
+        if fallTrack then fallTrack:Stop(0) end
+    end
+
+    local function clearFallController(): ()
+        if fallConnection then fallConnection:Disconnect(); fallConnection = nil end
+        if fallTrack then
+            fallTrack:Stop(0)
+            fallTrack:Destroy()
+            fallTrack = nil
+        end
+        fallHumanoid = nil
+        fallLoadAttempted = false
+        table.clear(jumpAnimationIds)
+    end
+
+    local function playNativeFall(humanoid: Humanoid): ()
+        local animator: Animator? = humanoid:FindFirstChildOfClass("Animator") :: Animator?
+        if not animator then return end
+        -- Stop only the rig's jump clips, not arbitrary emotes/other modules.
+        -- Freefall alone leaves Animate's jumpAnimTime running for ~0.3s.
+        if not fallLoadAttempted then
+            local character: Model? = LocalPlayer.Character
+            local animate: Instance? = character and character:FindFirstChild("Animate")
+            local folder: Instance? = animate and animate:FindFirstChild("fall")
+            local animation: Animation? = folder and folder:FindFirstChildOfClass("Animation") :: Animation?
+            if animation then
+                fallLoadAttempted = true
+                local jumpFolder: Instance? = animate and animate:FindFirstChild("jump")
+                if jumpFolder then
+                    for _, child: Instance in ipairs(jumpFolder:GetChildren()) do
+                        if child:IsA("Animation") then jumpAnimationIds[(child :: Animation).AnimationId] = true end
+                    end
+                end
+                local ok: boolean, loaded: any = pcall(function(): AnimationTrack
+                    return animator:LoadAnimation(animation)
+                end)
+                if ok and loaded then
+                    fallTrack = loaded
+                    loaded.Priority = Enum.AnimationPriority.Movement
+                    loaded.Looped = true
+                end
+            end
+        end
+        for _, track: AnimationTrack in ipairs(animator:GetPlayingAnimationTracks()) do
+            local animation: Animation? = track.Animation
+            if animation and jumpAnimationIds[animation.AnimationId] then track:Stop(0) end
+        end
+        if fallTrack and not fallTrack.IsPlaying then fallTrack:Play(0, 1, 1) end
+    end
+
+    local function syncFallController(humanoid: Humanoid?, enabled: boolean): ()
+        if not enabled or not humanoid then
+            if fallHumanoid then clearFallController() end
+            return
+        end
+        if fallHumanoid == humanoid then return end
+        clearFallController()
+        fallHumanoid = humanoid
+        local character: Model? = LocalPlayer.Character
+        local animate: Instance? = character and character:FindFirstChild("Animate")
+        local jumpFolder: Instance? = animate and animate:FindFirstChild("jump")
+        if jumpFolder then
+            for _, child: Instance in ipairs(jumpFolder:GetChildren()) do
+                if child:IsA("Animation") then jumpAnimationIds[(child :: Animation).AnimationId] = true end
+            end
+        end
+        fallConnection = humanoid.StateChanged:Connect(function(_, nextState: Enum.HumanoidStateType): ()
+            if nextState == Enum.HumanoidStateType.Jumping then
+                -- Switching state before physics applies the ground jump
+                -- must not cancel its takeoff (including native mobile jumps).
+                local _, _, root: BasePart? = characterParts()
+                if root then
+                    local velocity: Vector3 = root.AssemblyLinearVelocity
+                    if velocity.Y <= 0 then
+                        root.AssemblyLinearVelocity = Vector3.new(velocity.X, fallJumpPower, velocity.Z)
+                    end
+                end
+                humanoid:ChangeState(Enum.HumanoidStateType.Freefall)
+                playNativeFall(humanoid)
+            elseif nextState == Enum.HumanoidStateType.Freefall then
+                playNativeFall(humanoid)
+            else
+                stopFallTrack()
+            end
+        end)
+    end
+
     local function performHighJump(velocityOverride: number?): ()
         local _, humanoid: Humanoid?, root: BasePart? = characterParts()
         if not humanoid or not root or humanoid.Health <= 0 then
@@ -17608,7 +17615,7 @@ function Module.init(context: Runtime): any
         end
     end
 
-    local function performInfiniteJump(mode: string, strength: number, interval: number, stackCeiling: number): ()
+    local function performInfiniteJump(mode: string, strength: number, interval: number): ()
         local _, humanoid: Humanoid?, root: BasePart? = characterParts()
         if not humanoid or not root or humanoid.Health <= 0 then
             return
@@ -17626,26 +17633,13 @@ function Module.init(context: Runtime): any
         lastInfiniteJumpAt = now
 
         local velocity: Vector3 = (root :: BasePart).AssemblyLinearVelocity
-        local vertical: number
-        if mode == "Stack" then
-            vertical = math.min(velocity.Y + strength, stackCeiling)
-        elseif mode == "Impulse" then
-            humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
-            ;(root :: BasePart):ApplyImpulse(
-                Vector3.new(0, strength - velocity.Y, 0) * (root :: BasePart).AssemblyMass
-            )
-            return
-        elseif mode == "Fall" then
-            if velocity.Y >= 0 then
-                return
-            end
-            vertical = 0
-        else
-            vertical = strength
-        end
-
-        humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
-        ;(root :: BasePart).AssemblyLinearVelocity = Vector3.new(velocity.X, vertical, velocity.Z)
+        -- Fall is a jump with the falling state/animation, not a brake
+        -- that only works after Y turns negative. X/Z momentum is unchanged.
+        fallJumpPower = strength
+        syncFallController(humanoid, mode == "Fall")
+        humanoid:ChangeState(mode == "Fall" and Enum.HumanoidStateType.Freefall or Enum.HumanoidStateType.Jumping)
+        ;(root :: BasePart).AssemblyLinearVelocity = Vector3.new(velocity.X, strength, velocity.Z)
+        if mode == "Fall" then playNativeFall(humanoid) end
     end
 
     local jump: any
@@ -17657,6 +17651,7 @@ function Module.init(context: Runtime): any
         Tooltip = "Consolidated jump controls: adjust Jump Power, execute High Jump, enable Infinite Jump and Auto Jump.",
         Function = function(enabled: boolean): ()
             restoreJumpPower()
+            clearFallController()
             lastInfiniteJumpAt = -math.huge
             if not enabled then
                 jump:SetStatus(nil)
@@ -17664,7 +17659,7 @@ function Module.init(context: Runtime): any
             end
 
             jump:SetStatus("active")
-            jump:Clean(restoreJumpPower)
+            jump:Clean(function(): () restoreJumpPower(); clearFallController() end)
 
             if movementInput and type(movementInput.onJumpRequest) == "function" then
                 jump:Clean(movementInput.onJumpRequest(function(): ()
@@ -17678,7 +17673,7 @@ function Module.init(context: Runtime): any
                     end
                     local strength: number = opts["Infinite jump power"] and opts["Infinite jump power"].Value or 50
                     local interval: number = opts["Jump interval"] and opts["Jump interval"].Value or 0.18
-                    performInfiniteJump(mode, strength, interval, 160)
+                    performInfiniteJump(mode, strength, interval)
                 end))
             end
 
@@ -17686,7 +17681,24 @@ function Module.init(context: Runtime): any
                 local opts = jump.Options
                 local _, humanoid: Humanoid?, root: BasePart? = characterParts()
                 if not humanoid or not root or humanoid.Health <= 0 then
+                    clearFallController()
                     return
+                end
+
+                local fallMode: boolean = opts["Infinite jump"] and opts["Infinite jump"].Value
+                    and opts["Infinite jump mode"].Value == "Fall"
+                fallJumpPower = opts["Infinite jump power"].Value
+                syncFallController(humanoid, fallMode)
+                if fallMode then
+                    local currentState: Enum.HumanoidStateType = humanoid:GetState()
+                    if currentState == Enum.HumanoidStateType.Jumping then
+                        humanoid:ChangeState(Enum.HumanoidStateType.Freefall)
+                        playNativeFall(humanoid)
+                    elseif currentState == Enum.HumanoidStateType.Freefall then
+                        playNativeFall(humanoid)
+                    else
+                        stopFallTrack()
+                    end
                 end
 
                 if opts["Custom jump power"] and opts["Custom jump power"].Value then
@@ -17706,7 +17718,11 @@ function Module.init(context: Runtime): any
                 if opts["Auto jump"] and opts["Auto jump"].Value then
                     local moveDir: Vector3 = humanoid.MoveDirection
                     if moveDir.Magnitude > 0.05 and humanoid.FloorMaterial ~= Enum.Material.Air then
-                        humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
+                        if fallMode then
+                            performInfiniteJump("Fall", fallJumpPower, opts["Jump interval"].Value)
+                        else
+                            humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
+                        end
                     end
                 end
 
@@ -17769,14 +17785,17 @@ function Module.init(context: Runtime): any
     jump:CreateDropdown({
         Name = "Infinite jump mode",
         Show = {Option = "Infinite jump", Values = {true}},
-        List = {"Normal", "Impulse", "Stack", "Rise", "Fall"},
+        List = {"Normal", "Rise", "Fall"},
         Index = 1,
-        Tooltip = "Normal = fixed mid-air jump; Impulse = physical thrust; Stack = accumulative upward velocity; Rise = hold to float up; Fall = cancels downward fall speed.",
+        Tooltip = "Normal = mid-air jump; Rise = hold to rise; Fall = jump using Freefall and your rig's falling animation, including while ascending.",
     })
 
     jump:CreateSlider({
         Name = "Infinite jump power",
-        Show = {Option = "Infinite jump", Values = {true}},
+        Show = {
+            {Option = "Infinite jump", Values = {true}},
+            {Option = "Infinite jump mode", Values = {"Normal", "Fall"}},
+        },
         Min = 10,
         Max = 250,
         Default = 50,
@@ -17785,7 +17804,10 @@ function Module.init(context: Runtime): any
 
     jump:CreateSlider({
         Name = "Rise speed",
-        Show = {Option = "Infinite jump", Values = {true}},
+        Show = {
+            {Option = "Infinite jump", Values = {true}},
+            {Option = "Infinite jump mode", Values = {"Rise"}},
+        },
         Min = 10,
         Max = 350,
         Default = 75,
@@ -17794,7 +17816,10 @@ function Module.init(context: Runtime): any
 
     jump:CreateSlider({
         Name = "Jump interval",
-        Show = {Option = "Infinite jump", Values = {true}},
+        Show = {
+            {Option = "Infinite jump", Values = {true}},
+            {Option = "Infinite jump mode", Values = {"Normal", "Fall"}},
+        },
         Min = 0.05,
         Max = 0.6,
         Default = 0.18,
@@ -17808,7 +17833,9 @@ function Module.init(context: Runtime): any
     })
 
     activeCleanup = function(): ()
+        if jump.Enabled then jump:Toggle(false) end
         restoreJumpPower()
+        clearFallController()
     end
     Module.Initialized = true
     return jump
@@ -25733,9 +25760,8 @@ function Module.init(context: any): any
             ["Aim Assist"] = 1,
             ["KillAura"] = 2,
             ["TriggerBot"] = 3,
-            ["Auto Shoot"] = 4,
-            ["Knife"] = 5,
-            ["Shoot"] = 6,
+            ["Knife"] = 4,
+            ["Shoot"] = 5,
             ["Fly"] = 1,
             ["Fling"] = 2,
             ["Noclip"] = 3,
@@ -32991,7 +33017,8 @@ function Module.init(context: any): WidgetLibrary
         labelText: string,
         defaultValue: boolean,
         callback: (boolean) -> (),
-        hintText: string?
+        hintText: string?,
+        bindable: boolean?
     ): TextButton
         local optionKey: string =
             feature.configKey .. "." .. labelText:gsub("%W", "")
@@ -33090,6 +33117,24 @@ function Module.init(context: any): WidgetLibrary
             callback(enabled :: boolean)
             queueConfigSave()
             notify(labelText .. ((enabled :: boolean) and " enabled" or " disabled"))
+        end
+        if bindable then
+            -- Use the same persisted/capture-aware shortcut path as actions.
+            -- Keyboard and touch toggle the checkbox, callback and saved value
+            -- together; a key slot must not be swallowed by the row hit target.
+            button.Size = UDim2.new(0.72, 0, 1, 0)
+            if optionLabel then
+                optionLabel.Size = UDim2.new(0.72, -(CHILD_INSET + 22 + CHILD_GAP), 1, 0)
+            end
+            local keyButton: TextButton = makeButton(option, "KEY", 9)
+            keyButton.Name = "OptionKeybind"
+            state.layoutOptionControl(option, keyButton, 0.24)
+            keyButton.Position = UDim2.new(0.74, -16, keyButton.Position.Y.Scale, keyButton.Position.Y.Offset)
+            keyButton.ZIndex = option.ZIndex + 5
+            applyKeySlotStyle(keyButton)
+            keyButton.TextScaled = true
+            create("UITextSizeConstraint", {Parent = keyButton, MaxTextSize = 14, MinTextSize = 8})
+            bindActionShortcut(keyButton, feature.configKey .. labelText, labelText, toggleOption)
         end
         trackUiConnection(button.MouseButton1Click:Connect(toggleOption))
 
@@ -37702,7 +37747,8 @@ function Module.init(context: any): Framework
                 definition2.Name,
                 definition2.Default == true,
                 valueCallback(option, definition2),
-                definition2.Tooltip
+                definition2.Tooltip,
+                definition2.Bindable == true
             )
             return register(option, definition2)
         end

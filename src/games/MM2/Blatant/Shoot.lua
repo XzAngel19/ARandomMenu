@@ -36,10 +36,11 @@ function Module.init(runtime: any): any
     local motionSamples: any = core.motionSamples
     local predictionMath: any = core.predictionMath
     local isMotionGrounded: any = core.isMotionGrounded
-    local function isWeaponPathClear(origin: Vector3, endpoint: Vector3, target: Model?): boolean
+    local LIVE_TARGET_PATH = {requireTarget = true}
+    local function isWeaponPathClear(origin: Vector3, endpoint: Vector3, target: Model?, requireTarget: boolean?): boolean
         -- Use the recovered WeaponService cursor filter (including its
         -- transparent-part handling), not v32's speculative strict mode.
-        return core.isWeaponPathClear(origin, endpoint, target)
+        return core.isWeaponPathClear(origin, endpoint, target, nil, requireTarget and LIVE_TARGET_PATH or nil)
     end
 
     local shootMacro: boolean = false
@@ -79,15 +80,6 @@ function Module.init(runtime: any): any
     local BODY_HALF_WIDTH: number = 1.0
 
     local MINIMUM_ERROR_RADIUS: number = 0.35
-
-    -- Server-side gun cooldown, measured from real MM2 remote logs
-    -- (TestingStuff 2026-10-15): accepted shots were never closer than
-    -- ~3.13 s apart, and every rapid follow-up (< ~3 s) was silently
-    -- dropped by the server - no GunFired echo, no damage, nothing. The
-    -- client kept "shooting" and the user kept seeing the same miss,
-    -- because the correction shots never actually left the building.
-    local GUN_SERVER_COOLDOWN: number = 3.1
-    local lastGunFireServer: number = -math.huge
 
     local AIM_PARTS: {string} = {
         "UpperTorso",
@@ -262,97 +254,43 @@ function Module.init(runtime: any): any
         end
 
         if not ignoreVisibility and mm2Settings.shootWallCheck then
-            if not isWeaponPathClear(origin.Position, predicted, character) then
-                -- Partial visibility: when the target hugs a wall and only a
-                -- sliver sticks out (a hand with the knife, an arm, a corner
-                -- of the torso), aim the shot at that visible part instead of
-                -- rejecting it. The whole character shares the same lead
-                -- displacement, so each candidate is simply its part position
-                -- moved by the same prediction.
-                local rescued: boolean = false
-                -- The rewind window accepts the RAW observed position, and
-                -- during a peek the raw torso is usually exposed while the
-                -- LED point still sits inside the wall. Try the raw position
-                -- of the current aim part first (biggest part, no lead).
-                do
-                    local rawPoint: Vector3 = (part :: BasePart).Position
-                    local rawDelta: Vector3 = rawPoint - origin.Position
-                    if rawDelta.Magnitude > 0.05
-                        and isWeaponPathClear(
-                            origin.Position,
-                            rawPoint,
-                            character
-                        ) then
-                        predicted = rawPoint
-                        delta = rawDelta
-                        rescued = true
+            -- Visibility is a CURRENT-body test, never proof supplied by a
+            -- predicted point in empty space. A closed peek must fail even
+            -- when an old/future lead position has an unobstructed ray.
+            local visible: Vector3? = nil
+            local visiblePart: BasePart? = nil
+            for _, partName: string in ipairs(VISIBILITY_PARTS) do
+                local candidate: Instance? = character:FindFirstChild(partName)
+                if candidate and candidate:IsA("BasePart") then
+                    local body: BasePart = candidate :: BasePart
+                    local points: {Vector3} = {body.Position}
+                    local right: Vector3 = body.CFrame.RightVector * math.min(body.Size.X * 0.35, 0.55)
+                    local up: Vector3 = body.CFrame.UpVector * math.min(body.Size.Y * 0.25, 0.35)
+                    local probeOffsets: {Vector3} = {right, -right}
+                    if table.find(AIM_PARTS, partName) then
+                        table.insert(probeOffsets, up)
+                        table.insert(probeOffsets, right * 0.64 + up * 0.71)
+                        table.insert(probeOffsets, -right * 0.64 + up * 0.71)
                     end
-                end
-                if not rescued then
-                    local rootCFrame: CFrame = (root :: BasePart).CFrame
-                    -- Probe points across the torso box before falling back
-                    -- to limbs: a corner that hides the CENTRE of the torso
-                    -- usually still leaves half of the box exposed, and that
-                    -- sliver is a far better shot than a leg ("detectando la
-                    -- pierna cuando no era necesario"). The ray origin is the
-                    -- gun, not the eye, so what looks fully exposed on screen
-                    -- can be centre-blocked from the muzzle.
-                    local probeOffsets: {Vector3} = {
-                        rootCFrame.RightVector * 0.55,
-                        rootCFrame.RightVector * -0.55,
-                        rootCFrame.UpVector * 0.35,
-                        rootCFrame.RightVector * 0.35 + rootCFrame.UpVector * 0.25,
-                        rootCFrame.RightVector * -0.35 + rootCFrame.UpVector * 0.25,
-                    }
-                    for _, partName: string in ipairs(VISIBILITY_PARTS) do
-                        local candidate: Instance? =
-                            (character :: Model):FindFirstChild(partName)
-                        if candidate
-                            and candidate:IsA("BasePart") then
-                            local candidatePart: BasePart =
-                                candidate :: BasePart
-                            local variants: {Vector3} = {
-                                candidatePart.Position + displacement,
-                                candidatePart.Position,
-                            }
-                            if table.find(AIM_PARTS, partName) ~= nil then
-                                for _, offset: Vector3 in ipairs(probeOffsets) do
-                                    table.insert(
-                                        variants,
-                                        candidatePart.Position + offset + displacement
-                                    )
-                                    table.insert(
-                                        variants,
-                                        candidatePart.Position + offset
-                                    )
-                                end
-                            end
-                            for _, basePoint: Vector3 in ipairs(variants) do
-                                local candidatePoint: Vector3 = basePoint
-                                local candidateDelta: Vector3 =
-                                    candidatePoint - origin.Position
-                                if candidateDelta.Magnitude > 0.05
-                                    and isWeaponPathClear(
-                                        origin.Position,
-                                        candidatePoint,
-                                        character
-                                    ) then
-                                    predicted = candidatePoint
-                                    delta = candidateDelta
-                                    rescued = true
-                                    break
-                                end
-                            end
-                            if rescued then
-                                break
-                            end
+                    for _, offset: Vector3 in ipairs(probeOffsets) do table.insert(points, body.Position + offset) end
+                    for _, point: Vector3 in ipairs(points) do
+                        if (point - origin.Position).Magnitude > 0.05
+                            and isWeaponPathClear(origin.Position, point, character, true) then
+                            visible = point
+                            visiblePart = body
+                            break
                         end
                     end
                 end
-                if not rescued then
-                    return nil, nil, "obstructed"
-                end
+                if visible then break end
             end
+            if not visible or not visiblePart then return nil, nil, "obstructed" end
+            -- Keep the solver's lead, anchored to the visible part NOW. If
+            -- cover blocks that lead, the currently exposed sliver wins.
+            part = visiblePart
+            local ledPoint: Vector3 = visible + displacement
+            predicted = isWeaponPathClear(origin.Position, ledPoint, character) and ledPoint or visible
+            delta = predicted - origin.Position
         end
 
         local turnError: number = displacement.Magnitude
@@ -558,7 +496,8 @@ function Module.init(runtime: any): any
         if not gun or gun.Parent ~= character then
             return reject("Equip the sheriff gun yourself to shoot.")
         end
-        if gun.Enabled == false or gun:GetAttribute("Disabled") == true then
+        if gun.Enabled == false or gun:GetAttribute("Disabled") == true
+            or gun:GetAttribute("Reloading") == true or gun:GetAttribute("IsReloading") == true then
             return reject("The gun is disabled or reloading.")
         end
 
@@ -603,15 +542,9 @@ function Module.init(runtime: any): any
             return reject("Shot accuracy is too low to fire.")
         end
 
-        -- One packet per server cooldown window, for BOTH modes: the real
-        -- logs show the server silently drops any shot fired less than
-        -- ~3.1 s after the previous one (no echo, no damage), so a rapid
-        -- re-fire never tests a correction - it just looks like the same
-        -- miss again.
-        if os.clock() - lastGunFireServer < GUN_SERVER_COOLDOWN then
-            return reject("Gun is cooling down - the server drops rapid shots.")
-        end
-
+        -- Do not infer a reload from our last REQUEST: a rejected packet
+        -- never proves the server fired. Native Tool/attribute readiness is
+        -- checked above; no speculative 3.1-second local lockout.
         if silent then
 
             local variant: string = mm2Settings.silentSpawn
@@ -630,7 +563,6 @@ function Module.init(runtime: any): any
                 at = os.clock(),
                 offset = math.floor(offset * 10) / 10,
             }
-            lastGunFireServer = os.clock()
             remote:FireServer(shotOrigin, shotEnd)
 
             pcall(trajectoryCalibration.noteAuthoredShot, trajectoryCalibration, {
@@ -662,7 +594,6 @@ function Module.init(runtime: any): any
         -- session) - the shot died mid-air exactly like the bug it tried
         -- to fix. The server's own acceptance window (~277 ms rewind) is
         -- what forgives a slightly short lead.
-        lastGunFireServer = os.clock()
         remote:FireServer(
             CFrame.lookAt(origin.Position, resolved.endpoint),
             CFrame.new(resolved.endpoint)
@@ -677,7 +608,7 @@ function Module.init(runtime: any): any
             silent = false,
             settings = {mode = "Normal", wallCheck = mm2Settings.shootWallCheck,
                 motionHz = mm2Settings.motionSampleHz, leadBias = mm2Settings.gunLeadBias,
-                wallCheckPolicy = "recovered-client-filter", leadSeconds = resolved.leadSeconds, errorRadius = resolved.errorRadius,
+                wallCheckPolicy = "live-body-first-hit", leadSeconds = resolved.leadSeconds, errorRadius = resolved.errorRadius,
                 predictedPoint = {resolved.endpoint.X, resolved.endpoint.Y, resolved.endpoint.Z},
                 sampledVelocity = {resolved.velocity.X, resolved.velocity.Y, resolved.velocity.Z}},
         })
@@ -687,6 +618,9 @@ function Module.init(runtime: any): any
 
     local shootFeatureActive: boolean = false
     local autoShootActive: boolean = false
+    local autoShootWanted: boolean = false
+    local ShootFeature: any = nil
+    local updateAutoShootConnection: (() -> ())? = nil
 
     local function refreshShootInfrastructure(): ()
         local wantActive: boolean = shootFeatureActive or autoShootActive
@@ -744,7 +678,7 @@ function Module.init(runtime: any): any
             -- Never re-equip if the user switched away during that frame.
             if shootFeatureActive and LocalPlayer.Character == character and gun.Parent == character then
                 -- An explicit action never waits for a low prediction error.
-                -- This flag skips only that gate, not reload, cooldown or LOS.
+                -- This flag skips only that gate, not native reload/readiness or LOS.
                 fireGunAtTarget(getSelectedShootTarget(), {whenReady = true})
             end
         end)
@@ -754,64 +688,73 @@ function Module.init(runtime: any): any
 
     local function toggleShootMurderer(enabled: boolean): ()
         shootFeatureActive = enabled
+        autoShootActive = shootFeatureActive and autoShootWanted
         refreshShootInfrastructure()
+        if updateAutoShootConnection then updateAutoShootConnection() end
     end
 
-    local autoSettings = {
-        mode = "Normal" :: string,
-        fireDelay = 0.1,
-    }
-    local lastAutoShot: number = -math.huge
-    local lastAutoReject: {message: string, at: number}? = nil
+    local lastAutoStatus: string? = nil
+    local function autoStatus(message: string): ()
+        if ShootFeature and lastAutoStatus ~= message then
+            lastAutoStatus = message
+            ShootFeature:SetStatus(message)
+        end
+    end
 
     local function autoShootTick(): ()
+        if not shootFeatureActive or not autoShootActive then return end
         local gun: Tool? = getPlayerWeapon(LocalPlayer, "Gun", true)
-        if not gun or gun.Parent ~= LocalPlayer.Character then return end
-
-        if os.clock() - lastAutoShot < autoSettings.fireDelay then
+        if not gun or gun.Parent ~= LocalPlayer.Character then
+            autoStatus("Equip gun")
             return
         end
         local target: Player? = getSelectedShootTarget()
-        if not target then
+        if not target then autoStatus("No target"); return end
+        lastRejectReason = ""
+        local sent: boolean = fireGunAtTarget(target, {whenReady = true, quiet = true})
+        autoStatus(sent and "Auto: request sent" or lastRejectReason)
+    end
+
+    updateAutoShootConnection = function(): ()
+        disconnectFeatureConnection("MM2AutoShoot")
+        autoShootActive = shootFeatureActive and autoShootWanted
+        if not autoShootActive then
+            lastAutoStatus = nil
+            if ShootFeature then ShootFeature:SetStatus(nil) end
             return
         end
-        lastRejectReason = ""
-        local fired: boolean = fireGunAtTarget(target, {
-            silent = autoSettings.mode == "Silent",
-            whenReady = true,
-            quiet = true,
-        })
-        if fired then
-            lastAutoShot = os.clock()
-            lastAutoReject = nil
-        elseif lastRejectReason ~= "" then
-
-            if lastAutoReject == nil or lastAutoReject.message ~= lastRejectReason then
-                lastAutoReject = {message = lastRejectReason, at = os.clock()}
-                notify("Auto Shoot waiting: " .. lastRejectReason)
-            end
-        end
+        -- One attempt per current frame, with no range/confidence/fire-delay
+        -- timer. No cached aim or visibility survives into the next attempt.
+        featureConnections.MM2AutoShoot = TaskManager:Connect(autoShootTick)
+        autoShootTick()
     end
 
     local function toggleAutoShoot(enabled: boolean): ()
-        autoShootActive = enabled
-        disconnectFeatureConnection("MM2AutoShoot")
+        autoShootWanted = enabled
+        autoShootActive = shootFeatureActive and autoShootWanted
         refreshShootInfrastructure()
-        if not enabled then
-            return
-        end
-        lastAutoShot = -math.huge
-        local autoElapsed: number = 0
-        featureConnections.MM2AutoShoot = TaskManager:Connect(function(
-            deltaTime: number
-        ): ()
-            local due: boolean
-            due, autoElapsed = predictionMath.sampleDue(autoElapsed, deltaTime, 60)
-            if due then autoShootTick() end
-        end)
+        if updateAutoShootConnection then updateAutoShootConnection() end
     end
 
-    local ShootFeature = createUniversalFeature(
+    -- Preserve explicit bindings and enabled state when the old card becomes
+    -- a child option. Never overwrite a setting already saved for the child.
+    if type(configData) == "table" then
+        local changed: boolean = false
+        if configData.states["MM2.Shoot.AutoShoot"] == nil and configData.states["MM2.AutoShoot"] ~= nil then
+            local enabled: boolean = configData.states["MM2.AutoShoot"] == true
+            configData.states["MM2.Shoot.AutoShoot"] = enabled
+            if enabled then configData.states["MM2.Shoot"] = true end
+            changed = true
+        end
+        local oldKey: any = configData.values["Shortcut.MM2AutoShoot"]
+        if configData.values["Shortcut.MM2ShootAutoShoot"] == nil and type(oldKey) == "string" then
+            configData.values["Shortcut.MM2ShootAutoShoot"] = oldKey
+            changed = true
+        end
+        if changed and type(queueConfigSave) == "function" then queueConfigSave() end
+    end
+
+    ShootFeature = createUniversalFeature(
         "Shoot",
         "Hitscan aim with filtered motion, RTT compensation, and miss feedback",
         4,
@@ -1041,39 +984,8 @@ function Module.init(runtime: any): any
     end, false)
     refreshShootOptions()
 
-    local AutoShootFeature = createUniversalFeature(
-        "Auto Shoot",
-        "Fires when cooldown and target permit, only while YOU hold the gun. "
-            .. "Normal respects Shoot WallCheck. Never auto-equips or waits for a confidence threshold.",
-        5,
-        toggleAutoShoot,
-        {
-            categoryName = "Combat",
-            parent = MM2Scroll,
-            registry = mm2Features,
-        }
-    )
-    addCycleOption(
-        AutoShootFeature,
-        "Mode",
-        {"Normal", "Silent"},
-        1,
-        function(value: string): ()
-            autoSettings.mode = value
-        end
-    )
-    addNumberOption(
-        AutoShootFeature,
-        "Fire delay",
-        autoSettings.fireDelay,
-        0.1,
-        2,
-        function(value: number): ()
-            autoSettings.fireDelay = value
-        end,
-        "Seconds between automatic shots.",
-        0.05
-    )
+    addToggleOption(ShootFeature, "Auto Shoot", false, toggleAutoShoot,
+        "While Shoot is ON and you hold the gun: try every frame as soon as the current target is visible. No distance or prediction-confidence gate. Uses Shoot's mode.", true)
 
     activeCleanup = function(): ()
         toggleShootMurderer(false)

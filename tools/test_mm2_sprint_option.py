@@ -32,6 +32,7 @@ local speed,loop,handler
 local function option(self,d)
  local value=d.Default
  if d.List then value=d.List[d.Index or 1] end
+ if d.Name=='Sprint' then assert(d.Bindable==true) end
  local o={Value=value,fn=d.Function}
  function o:Set(v) self.Value=v;if self.fn then self.fn(v) end end
  self.Options[d.Name]=o;return o

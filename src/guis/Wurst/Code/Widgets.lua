@@ -269,7 +269,8 @@ function Module.init(context: any): WidgetLibrary
         labelText: string,
         defaultValue: boolean,
         callback: (boolean) -> (),
-        hintText: string?
+        hintText: string?,
+        bindable: boolean?
     ): TextButton
         local optionKey: string =
             feature.configKey .. "." .. labelText:gsub("%W", "")
@@ -368,6 +369,24 @@ function Module.init(context: any): WidgetLibrary
             callback(enabled :: boolean)
             queueConfigSave()
             notify(labelText .. ((enabled :: boolean) and " enabled" or " disabled"))
+        end
+        if bindable then
+            -- Use the same persisted/capture-aware shortcut path as actions.
+            -- Keyboard and touch toggle the checkbox, callback and saved value
+            -- together; a key slot must not be swallowed by the row hit target.
+            button.Size = UDim2.new(0.72, 0, 1, 0)
+            if optionLabel then
+                optionLabel.Size = UDim2.new(0.72, -(CHILD_INSET + 22 + CHILD_GAP), 1, 0)
+            end
+            local keyButton: TextButton = makeButton(option, "KEY", 9)
+            keyButton.Name = "OptionKeybind"
+            state.layoutOptionControl(option, keyButton, 0.24)
+            keyButton.Position = UDim2.new(0.74, -16, keyButton.Position.Y.Scale, keyButton.Position.Y.Offset)
+            keyButton.ZIndex = option.ZIndex + 5
+            applyKeySlotStyle(keyButton)
+            keyButton.TextScaled = true
+            create("UITextSizeConstraint", {Parent = keyButton, MaxTextSize = 14, MinTextSize = 8})
+            bindActionShortcut(keyButton, feature.configKey .. labelText, labelText, toggleOption)
         end
         trackUiConnection(button.MouseButton1Click:Connect(toggleOption))
 

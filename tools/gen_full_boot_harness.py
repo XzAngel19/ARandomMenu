@@ -798,7 +798,7 @@ do
     end
     print("[HARNESS] FREEZE MOVEMENTS TOGGLE CYCLES CLEAN")
     local expected = {
-      Combat = {"Aim Assist", "KillAura", "TriggerBot", "Auto Shoot", "Knife", "Shoot"},
+      Combat = {"Aim Assist", "KillAura", "TriggerBot", "Knife", "Shoot"},
       Exploits = {"Fly", "Fling", "Noclip", "Spider", "Speed", "Jump", "Interact Extender"},
       Utilities = {"Anti Fling", "Anti Void", "Click Teleport", "Freeze Movements", "Ghost", "Teleport"},
       World = {"Improve FPS", "Gravity", "Anti AFK", "Safe Walk", "Blurt Roles"},
@@ -811,11 +811,26 @@ do
         assert(feature.row.LayoutOrder == index, name .. " in wrong display order")
       end
     end
-    for _, name in ipairs({"Metrics", "Learning", "Game Learning", "HookPart", "Flight", "Invisible", "SpinBot", "Sprint", "Instant Role Notify"}) do
+    for _, name in ipairs({"Metrics", "Learning", "Game Learning", "HookPart", "Flight", "Invisible", "SpinBot", "Sprint", "Instant Role Notify", "Auto Shoot"}) do
       assert(not findFeature(name), "Removed module still present: " .. name)
     end
     local speed = ex.state.framework:GetModule("Speed")
     assert(speed and speed.Options.Sprint, "Sprint must be an option of Speed")
+    local sprintBinding = ex.state.shortcutBindings["Universal.SpeedSprint"]
+    assert(sprintBinding and sprintBinding.key == Enum.KeyCode.Unknown, "Sprint needs an unassigned configurable key slot")
+    sprintBinding.onPress();assert(speed.Options.Sprint.Value == true)
+    sprintBinding.onPress();assert(speed.Options.Sprint.Value == false)
+    local shootAuto = ex.state.toggleControls["MM2.Shoot.AutoShoot"]
+    assert(shootAuto, "Auto Shoot must be inside Shoot")
+    local jump = ex.state.framework:GetModule("Jump")
+    jump.Options["Infinite jump"].Metadata.callback(true)
+    jump.Options["Infinite jump mode"].Metadata.callback("Normal")
+    assert(not jump.Options["Rise speed"].Visible and jump.Options["Infinite jump power"].Visible)
+    jump.Options["Infinite jump mode"].Metadata.callback("Rise")
+    assert(jump.Options["Rise speed"].Visible and not jump.Options["Infinite jump power"].Visible and not jump.Options["Jump interval"].Visible)
+    jump.Options["Infinite jump mode"].Metadata.callback("Fall")
+    assert(not jump.Options["Rise speed"].Visible and jump.Options["Infinite jump power"].Visible)
+    jump.Options["Infinite jump"].Metadata.callback(false)
     local blurt = findFeature("Blurt Roles")
     -- Option identity is also persisted in the widget toggle registry.
     assert(ex.state.toggleControls["MM2.BlurtRoles.InstantRoles"], "Instant Roles must be a Blurt Roles option")
