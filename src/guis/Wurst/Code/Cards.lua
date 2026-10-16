@@ -349,6 +349,20 @@ function Module.init(context: any): any
 
             local windows: any = state.windows
             if windows and type(windows.OpenFeatureSettings) == "function" then
+                -- Pressing the arrow again closes the options window (the
+                -- same path as the window's X button), so the arrows are a
+                -- real open/close toggle.
+                local window: any = feature.settingsWindow
+                if window
+                    and window.root
+                    and window.root.Visible == true then
+                    window.root.Visible = false
+                    feature.expanded = false
+                    if feature.syncArrow then
+                        feature.syncArrow()
+                    end
+                    return
+                end
                 windows.OpenFeatureSettings(feature)
             end
         end
@@ -423,7 +437,11 @@ function Module.init(context: any): any
                 warn("[Random Testing Menu] " .. name .. ": " .. tostring(errorMessage))
                 feature.enabled = false
                 pcall(feature.onToggle, false)
-                notify("Could not toggle " .. name)
+                local reason: string = tostring(errorMessage)
+                if #reason > 90 then
+                    reason = string.sub(reason, 1, 90)
+                end
+                notify("Could not toggle " .. name .. ": " .. reason)
             end
             refreshFeatureToggle(feature)
         end

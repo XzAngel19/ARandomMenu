@@ -1,5 +1,5 @@
 return {
-    stamp = "v28-20261015-shoot-cadence-knife-visuals",
+    stamp = "v28-20261015-emotes-arrows-toggle-errors",
     files = {
         ["src/games/BedFight/Combat/AutoSwing.lua"] = [[
 local Module = {Name = "BedFight Auto Swing", Initialized = false, Connection = nil}
@@ -5287,54 +5287,81 @@ function Module.init(runtime: any): any
     end
 
     local function setEnabled(enabled: boolean): ()
-        generation += 1
-        queued = false
-        options.enabled = enabled
-        disconnectAll(connections)
-        disconnectAll(characterConnections)
-        clearVisuals()
-        disconnectGunFired()
-        if not enabled then
-            return
-        end
-        table.insert(
-            connections,
-            LocalPlayer.CharacterAdded:Connect(watchCharacter)
-        )
-        connectGunFired()
-        table.insert(
-            connections,
-            LocalPlayer.CharacterRemoving:Connect(function(): ()
-                generation += 1
-                queued = false
-                disconnectAll(characterConnections)
-                clearVisuals()
-            end)
-        )
-        -- Mirror the animated right arm onto the left arm every frame while a
-        -- double weapon is on screen. The write must land AFTER the Animator
-        -- applies its poses (otherwise it is overwritten): PostAnimation fires
-        -- exactly there; PreSimulation is the fallback (also post-animator).
-        local mirrorSignals: {any} = {}
-        if RunService.PostAnimation then
-            table.insert(mirrorSignals, RunService.PostAnimation)
-        end
-        if RunService.PreSimulation then
-            table.insert(mirrorSignals, RunService.PreSimulation)
-        end
-        for _, signal: any in ipairs(mirrorSignals) do
+        -- Every toggle step is defensive, but executors differ: if anything
+        -- in the enable path still throws, run the full disable cleanup and
+        -- re-throw with a traceback so the console (and the "Could not
+        -- toggle" notification, which now carries the reason) shows exactly
+        -- what failed instead of a silent half-enabled state.
+        local ok: boolean, failure: any = pcall(function(): ()
+            generation += 1
+            queued = false
+            options.enabled = enabled
+            disconnectAll(connections)
+            disconnectAll(characterConnections)
+            clearVisuals()
+            disconnectGunFired()
+            if not enabled then
+                return
+            end
             table.insert(
                 connections,
-                signal:Connect(function(): ()
-                    local character: Model? = LocalPlayer.Character
-                    if character then
-                        pcall(mirrorArms, character :: Model)
-                    end
+                LocalPlayer.CharacterAdded:Connect(watchCharacter)
+            )
+            connectGunFired()
+            table.insert(
+                connections,
+                LocalPlayer.CharacterRemoving:Connect(function(): ()
+                    generation += 1
+                    queued = false
+                    disconnectAll(characterConnections)
+                    clearVisuals()
                 end)
             )
-        end
-        if LocalPlayer.Character then
-            watchCharacter(LocalPlayer.Character)
+            -- Mirror the animated right arm onto the left arm every frame while a
+            -- double weapon is on screen. The write must land AFTER the Animator
+            -- applies its poses (otherwise it is overwritten): PostAnimation fires
+            -- exactly there; PreSimulation is the fallback (also post-animator).
+            local mirrorSignals: {any} = {}
+            if RunService.PostAnimation then
+                table.insert(mirrorSignals, RunService.PostAnimation)
+            end
+            if RunService.PreSimulation then
+                table.insert(mirrorSignals, RunService.PreSimulation)
+            end
+            for _, signal: any in ipairs(mirrorSignals) do
+                table.insert(
+                    connections,
+                    signal:Connect(function(): ()
+                        local character: Model? = LocalPlayer.Character
+                        if character then
+                            pcall(mirrorArms, character :: Model)
+                        end
+                    end)
+                )
+            end
+            if LocalPlayer.Character then
+                watchCharacter(LocalPlayer.Character)
+            end
+        end)
+        if not ok then
+            local trace: string = tostring(failure)
+            if debug and type(debug.traceback) == "function" then
+                pcall(function(): ()
+                    trace = debug.traceback(failure, 2)
+                end)
+            end
+            warn("[Wurst] Weapon Visuals toggle ("
+                .. tostring(enabled) .. ") failed: " .. trace)
+            pcall(function(): ()
+                generation += 1
+                queued = false
+                options.enabled = false
+                disconnectAll(connections)
+                disconnectAll(characterConnections)
+                clearVisuals()
+                disconnectGunFired()
+            end)
+            error(failure, 0)
         end
     end
 
@@ -17182,9 +17209,10 @@ function Module.init(context: Runtime): any
     local FreezeFeature: any = nil
     local originalFreezeState = setmetatable({}, {__mode = "k"})
     -- Animation modes (Freeze Emotes / Glitch Animations) never touch
-    -- WalkSpeed; they only drive the local Animator, which replicates to
-    -- everyone else automatically because we own the character.
+    -- WalkSpeed or the root; they only drive the local Animator, which
+    -- replicates to everyone else automatically because we own the rig.
     local stickyEmoteTracks: {any} = {}
+    local emoteLastSeen: {[any]: number} = setmetatable({}, {__mode = "k"})
 
     local function getAnimator(humanoid: any): any
         local animator: any = humanoid and humanoid:FindFirstChildOfClass("Animator")
@@ -17197,13 +17225,48 @@ function Module.init(context: Runtime): any
 
     local function clearStickyEmoteTracks(): ()
         stickyEmoteTracks = {}
+        emoteLastSeen = setmetatable({}, {__mode = "k"})
     end
 
-    local function freezeEmotesTick(humanoid: any): ()
-        -- Walk while an emote plays: the default Animate script stops an
-        -- emote track the moment the character moves - here every emote
-        -- (Action priority) track is remembered and replayed, so dances
-        -- and poses keep playing while the player walks around freely.
+    local EMOTE_NAME_KEYWORDS = {
+        "dance", "wave", "point", "cheer", "laugh", "emote", "spin", "tutorial",
+    }
+
+    local function isEmoteTrack(track: any): boolean
+        -- The Roblox emote menu (the dancing emotes) plays its animations
+        -- through the local Animate script at Action priority. Some games
+        -- leave them at Core/Idle, so also accept the classic emote names
+        -- (Dance1..3, Wave, Point, Cheer, Laugh...).
+        local priority: any = nil
+        pcall(function(): ()
+            priority = track.Priority
+        end)
+        if priority == Enum.AnimationPriority.Action
+            or priority == Enum.AnimationPriority.Action2
+            or priority == Enum.AnimationPriority.Action3
+            or priority == Enum.AnimationPriority.Action4 then
+            return true
+        end
+        local label: string = string.lower(tostring(track.Name or ""))
+        local animation: any = track.Animation
+        if typeof(animation) == "Instance" then
+            label = label .. " " .. string.lower(tostring(animation.Name or ""))
+        end
+        for _, keyword: string in ipairs(EMOTE_NAME_KEYWORDS) do
+            if string.find(label, keyword, 1, true) then
+                return true
+            end
+        end
+        return false
+    end
+
+    local function freezeEmotesTick(humanoid: any, root: any): ()
+        -- Walk while an emote plays: the default Animate script STOPS the
+        -- emote track the moment the character starts moving. Remembered
+        -- emote tracks are replayed while moving, so the dance keeps
+        -- playing while you walk. A track the game actually ended (you
+        -- stopped it from the menu, or jumped it away) is forgotten after
+        -- a short grace period instead of being resurrected forever.
         local animator: any = getAnimator(humanoid)
         if not animator then
             return
@@ -17214,35 +17277,43 @@ function Module.init(context: Runtime): any
         if not okTracks or type(tracks) ~= "table" then
             return
         end
-        local seen: {[any]: boolean} = {}
+        local playing: {[any]: boolean} = {}
         for _, track: any in ipairs(tracks) do
-            if track
-                and track.IsPlaying
-                and track.Priority == Enum.AnimationPriority.Action then
-                seen[track] = true
-                if #stickyEmoteTracks == 0 or stickyEmoteTracks[1] ~= track then
-                    stickyEmoteTracks = {track}
+            if track and track.IsPlaying then
+                playing[track] = true
+                if not emoteLastSeen[track] and isEmoteTrack(track) then
+                    table.insert(stickyEmoteTracks, track)
+                end
+                if emoteLastSeen[track] then
+                    emoteLastSeen[track] = os.clock()
                 end
             end
         end
+        local moving: boolean = root ~= nil
+            and root.AssemblyLinearVelocity.Magnitude > 1
+        local now: number = os.clock()
         for index: number = #stickyEmoteTracks, 1, -1 do
             local track: any = stickyEmoteTracks[index]
-            if not track or seen[track] then
+            if not track then
                 table.remove(stickyEmoteTracks, index)
-            end
-        end
-        if #stickyEmoteTracks > 0 then
-            local character: any = humanoid.Parent
-            local moving: boolean = character ~= nil
-                and character.PrimaryPart ~= nil
-                and character.PrimaryPart.AssemblyLinearVelocity.Magnitude > 1
-            if moving then
-                for _, track: any in ipairs(stickyEmoteTracks) do
+            elseif playing[track] then
+                emoteLastSeen[track] = now
+            else
+                local lastSeen: number = emoteLastSeen[track]
+                if lastSeen == nil then
+                    lastSeen = now
+                    emoteLastSeen[track] = now
+                end
+                -- Absent from the playing list: the game stopped it. While
+                -- you are moving that is the Animate script cancelling the
+                -- emote - restart it. Standing still means it really ended.
+                if moving and now - lastSeen < 1.5 then
                     pcall(function(): ()
-                        if not track.IsPlaying then
-                            track:Play(0.1)
-                        end
+                        track:Play(0.1)
                     end)
+                elseif now - lastSeen > 0.5 then
+                    table.remove(stickyEmoteTracks, index)
+                    emoteLastSeen[track] = nil
                 end
             end
         end
@@ -17305,7 +17376,7 @@ function Module.init(context: Runtime): any
             end
 
             if freezeSettings.mode == "Freeze Emotes" then
-                freezeEmotesTick(humanoid)
+                freezeEmotesTick(humanoid, root)
                 return
             elseif freezeSettings.mode == "Glitch Animations" then
                 glitchAnimationsTick(humanoid)
@@ -17355,8 +17426,13 @@ function Module.init(context: Runtime): any
         1,
         function(value)
             freezeSettings.mode = value
-            if FreezeFeature.enabled then
-                FreezeFeature:SetStatus(value)
+            if FreezeFeature and FreezeFeature.enabled then
+                -- Switching modes re-applies the feature: the previous
+                -- mode is fully undone first (Anchor had left the root
+                -- anchored with WalkSpeed 0 - "no puedo caminar") and the
+                -- new mode starts clean.
+                toggleFreezeMovements(false)
+                toggleFreezeMovements(true)
             end
         end
     )
@@ -27187,6 +27263,20 @@ function Module.init(context: any): any
 
             local windows: any = state.windows
             if windows and type(windows.OpenFeatureSettings) == "function" then
+                -- Pressing the arrow again closes the options window (the
+                -- same path as the window's X button), so the arrows are a
+                -- real open/close toggle.
+                local window: any = feature.settingsWindow
+                if window
+                    and window.root
+                    and window.root.Visible == true then
+                    window.root.Visible = false
+                    feature.expanded = false
+                    if feature.syncArrow then
+                        feature.syncArrow()
+                    end
+                    return
+                end
                 windows.OpenFeatureSettings(feature)
             end
         end
@@ -27261,7 +27351,11 @@ function Module.init(context: any): any
                 warn("[Random Testing Menu] " .. name .. ": " .. tostring(errorMessage))
                 feature.enabled = false
                 pcall(feature.onToggle, false)
-                notify("Could not toggle " .. name)
+                local reason: string = tostring(errorMessage)
+                if #reason > 90 then
+                    reason = string.sub(reason, 1, 90)
+                end
+                notify("Could not toggle " .. name .. ": " .. reason)
             end
             refreshFeatureToggle(feature)
         end

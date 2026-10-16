@@ -681,54 +681,81 @@ function Module.init(runtime: any): any
     end
 
     local function setEnabled(enabled: boolean): ()
-        generation += 1
-        queued = false
-        options.enabled = enabled
-        disconnectAll(connections)
-        disconnectAll(characterConnections)
-        clearVisuals()
-        disconnectGunFired()
-        if not enabled then
-            return
-        end
-        table.insert(
-            connections,
-            LocalPlayer.CharacterAdded:Connect(watchCharacter)
-        )
-        connectGunFired()
-        table.insert(
-            connections,
-            LocalPlayer.CharacterRemoving:Connect(function(): ()
-                generation += 1
-                queued = false
-                disconnectAll(characterConnections)
-                clearVisuals()
-            end)
-        )
-        -- Mirror the animated right arm onto the left arm every frame while a
-        -- double weapon is on screen. The write must land AFTER the Animator
-        -- applies its poses (otherwise it is overwritten): PostAnimation fires
-        -- exactly there; PreSimulation is the fallback (also post-animator).
-        local mirrorSignals: {any} = {}
-        if RunService.PostAnimation then
-            table.insert(mirrorSignals, RunService.PostAnimation)
-        end
-        if RunService.PreSimulation then
-            table.insert(mirrorSignals, RunService.PreSimulation)
-        end
-        for _, signal: any in ipairs(mirrorSignals) do
+        -- Every toggle step is defensive, but executors differ: if anything
+        -- in the enable path still throws, run the full disable cleanup and
+        -- re-throw with a traceback so the console (and the "Could not
+        -- toggle" notification, which now carries the reason) shows exactly
+        -- what failed instead of a silent half-enabled state.
+        local ok: boolean, failure: any = pcall(function(): ()
+            generation += 1
+            queued = false
+            options.enabled = enabled
+            disconnectAll(connections)
+            disconnectAll(characterConnections)
+            clearVisuals()
+            disconnectGunFired()
+            if not enabled then
+                return
+            end
             table.insert(
                 connections,
-                signal:Connect(function(): ()
-                    local character: Model? = LocalPlayer.Character
-                    if character then
-                        pcall(mirrorArms, character :: Model)
-                    end
+                LocalPlayer.CharacterAdded:Connect(watchCharacter)
+            )
+            connectGunFired()
+            table.insert(
+                connections,
+                LocalPlayer.CharacterRemoving:Connect(function(): ()
+                    generation += 1
+                    queued = false
+                    disconnectAll(characterConnections)
+                    clearVisuals()
                 end)
             )
-        end
-        if LocalPlayer.Character then
-            watchCharacter(LocalPlayer.Character)
+            -- Mirror the animated right arm onto the left arm every frame while a
+            -- double weapon is on screen. The write must land AFTER the Animator
+            -- applies its poses (otherwise it is overwritten): PostAnimation fires
+            -- exactly there; PreSimulation is the fallback (also post-animator).
+            local mirrorSignals: {any} = {}
+            if RunService.PostAnimation then
+                table.insert(mirrorSignals, RunService.PostAnimation)
+            end
+            if RunService.PreSimulation then
+                table.insert(mirrorSignals, RunService.PreSimulation)
+            end
+            for _, signal: any in ipairs(mirrorSignals) do
+                table.insert(
+                    connections,
+                    signal:Connect(function(): ()
+                        local character: Model? = LocalPlayer.Character
+                        if character then
+                            pcall(mirrorArms, character :: Model)
+                        end
+                    end)
+                )
+            end
+            if LocalPlayer.Character then
+                watchCharacter(LocalPlayer.Character)
+            end
+        end)
+        if not ok then
+            local trace: string = tostring(failure)
+            if debug and type(debug.traceback) == "function" then
+                pcall(function(): ()
+                    trace = debug.traceback(failure, 2)
+                end)
+            end
+            warn("[Wurst] Weapon Visuals toggle ("
+                .. tostring(enabled) .. ") failed: " .. trace)
+            pcall(function(): ()
+                generation += 1
+                queued = false
+                options.enabled = false
+                disconnectAll(connections)
+                disconnectAll(characterConnections)
+                clearVisuals()
+                disconnectGunFired()
+            end)
+            error(failure, 0)
         end
     end
 

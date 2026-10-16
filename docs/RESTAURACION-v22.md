@@ -781,3 +781,57 @@ TestingStuff), que demostraron por qué "shoot seguía igual":
   sellos de `lastGunFireServer`), v16 4/4, teams 14 checks.
 - 71/71 archivos compilan; bundle 70 archivos, sello
   `v28-20261015-shoot-cadence-knife-visuals`.
+
+## v28 (Parte 2.1) — 2026-10-15 — Hotfix: Freeze Emotes, flechas que cierran, errores visibles
+
+Sello `v28-20261015-emotes-arrows-toggle-errors`. Responde al test de campo
+con screenshots (menú de emotes de Roblox + burbuja de chat):
+
+### Freeze Emotes — reparado de raíz
+
+Reporte: "No los detecta y no puedo caminar ni moverme en sí". Dos causas:
+
+1. **Quedarse congelado al cambiar de modo**: cambiar el selector de
+   "Anchor" (modo por defecto) a "Freeze Emotes" con el módulo activo no
+   restauraba el WalkSpeed=0 y el root anclado del modo anterior → no
+   podías caminar. Ahora cambiar de modo re-aplica el feature completo
+   (deshace el modo anterior y arranca el nuevo limpio).
+2. **Detección rota**: la versión anterior BORRABA el track recordado
+   justamente cuando el juego lo detenía (al empezar a moverte), o sea en
+   el único momento en que hacía falta. Ahora:
+   - Los emotes (tracks con prioridad Action/Action2/3/4, o nombres
+     dance/wave/point/cheer/laugh/emote — los del menú de emotes de Roblox,
+     con o sin Action priority) se recuerdan mientras suenan.
+   - Si el juego los detiene mientras te mueves → se re-reproducen (el
+     baile sigue mientras caminas).
+   - Parado y terminado de verdad → se olvida tras 0.5 s (no resucita
+     para siempre).
+   - Lógica validada con test de máquina de estados (recordar /
+     resucitar×2 / olvidar / nunca recordar tracks de movimiento /
+     detección por nombre con prioridad Core).
+
+### Flechas: volver a presionar cierra la ventana de opciones
+
+`toggleExpansion` solo abría la ventana; ahora, si la ventana del módulo ya
+está visible, el mismo click la CIERRA (mismo camino que la X) — las
+flechas son un toggle real de abrir/cerrar.
+
+### "Could not toggle Weapon Visuals" — ahora autodiagnóstico
+
+El pcall del framework tragaba el error real (solo iba al warn de consola).
+Ahora:
+- La notificación incluye la RAZÓN: "Could not toggle X: <error>".
+- `setEnabled` de Weapon Visuals se envuelve en pcall interno: si algo
+  falla, imprime el traceback completo en consola, corre la limpieza
+  completa (nada queda mitad activado) y relanza el error para que la
+  tarjeta lo reporte.
+- El harness ahora prueba ciclos ON/OFF de Weapon Visuals y Freeze
+  Movements (incluida la re-aplicación por cambio de modo) en cada build:
+  `WEAPON VISUALS TOGGLE CYCLE CLEAN` / `FREEZE MOVEMENTS TOGGLE CYCLES
+  CLEAN`.
+
+### Verificación
+
+- Harness: failures=0, HERO + paleta + dock + ciclos de toggle verificados.
+- Suites 15/15 + 4 + 14 checks; 71/71 compilan; bundle 70 archivos, sello
+  `v28-20261015-emotes-arrows-toggle-errors`.

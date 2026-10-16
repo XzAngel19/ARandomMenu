@@ -760,6 +760,48 @@ do
     print("[HARNESS] mm2Core missing - cannot probe roles")
   end
 end
+-- feature toggle probe: clean on/off cycles for the modules that broke in
+-- the field ("Could not toggle Weapon Visuals", "Freeze Emotes no detecta /
+-- no puedo caminar"). The harness must never let those regress silently.
+do
+  local ex = GENV.__expose
+  if ex and type(ex.allFeatures) == "table" then
+    local function findFeature(name)
+      for _, feature in ipairs(ex.allFeatures) do
+        if type(feature) == "table"
+          and feature.name == name
+          and type(feature.onToggle) == "function" then
+          return feature
+        end
+      end
+      return nil
+    end
+    local visual = findFeature("Weapon Visuals")
+    assert(visual, "Weapon Visuals feature must exist after boot")
+    local okOn, errOn = pcall(visual.onToggle, true)
+    assert(okOn, "Weapon Visuals ON must not error: " .. tostring(errOn))
+    local okOff, errOff = pcall(visual.onToggle, false)
+    assert(okOff, "Weapon Visuals OFF must not error: " .. tostring(errOff))
+    print("[HARNESS] WEAPON VISUALS TOGGLE CYCLE CLEAN")
+    local freeze = findFeature("Freeze Movements")
+    assert(freeze, "Freeze Movements feature must exist after boot")
+    for cycle = 1, 2 do
+      local okF, errF = pcall(freeze.onToggle, true)
+      assert(okF, "Freeze Movements ON must not error: " .. tostring(errF))
+      -- mode switches while enabled re-apply the feature (the stuck-anchor
+      -- bug); exercise it like the cycle option does
+      local okR1 = pcall(freeze.onToggle, false)
+      local okR2 = pcall(freeze.onToggle, true)
+      assert(okR1 and okR2, "Freeze Movements re-apply must not error")
+      local okFOff, errFOff = pcall(freeze.onToggle, false)
+      assert(okFOff, "Freeze Movements OFF must not error: " .. tostring(errFOff))
+    end
+    print("[HARNESS] FREEZE MOVEMENTS TOGGLE CYCLES CLEAN")
+  else
+    print("[HARNESS] allFeatures not exposed - toggle probe skipped")
+  end
+end
+
 do
   local ex = GENV.__expose
   if ex then
@@ -796,7 +838,8 @@ def main() -> None:
     expose = (
         'do local __g = getgenv() if type(__g) == "table" '
         "then __g.__expose = {ThemeEngine = ThemeEngine, Theme = Theme, "
-        "state = state, configData = configData} end end\n"
+        "state = state, configData = configData, "
+        "allFeatures = allFeatures} end end\n"
     )
     wurst = wurst.replace(anchor, expose + anchor)
 
