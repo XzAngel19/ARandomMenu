@@ -21,13 +21,28 @@ function Module.init(context: Runtime): any
     local getCharacterParts: any = host.getCharacterParts
     local createUniversalFeature: any = host.createUniversalFeature
     local addCycleOption: any = host.addCycleOption
-    local addInformationOption: any = host.addInformationOption
-    local freezeSettings = {mode = "Anchor"}
+    local addToggleOption: any = host.addToggleOption
+    local freezeSettings = {mode = "Anchor", emotes = true, animation = false}
+    -- An old saved emote mode must not silently become Anchor on upgrade.
+    local config: any = host.configData
+    if config and config.values and config.states then
+        local key: string = "Movement.FreezeMovements.Freezemode"
+        local legacy: any = config.values[key]
+        if legacy == "Freeze Emotes" or legacy == "Glitch Animations" then
+            config.values[key] = "Motion"
+            local prefix: string = "Movement.FreezeMovements."
+            if config.states[prefix .. "FreezeEmotes"] == nil then
+                config.states[prefix .. "FreezeEmotes"] = legacy == "Freeze Emotes"
+            end
+            if config.states[prefix .. "FreezeAnimation"] == nil then
+                config.states[prefix .. "FreezeAnimation"] = legacy == "Glitch Animations"
+            end
+        end
+    end
     local FreezeFeature: any = nil
     local originalFreezeState = setmetatable({}, {__mode = "k"})
-    -- Animation modes (Freeze Emotes / Glitch Animations) never touch
-    -- WalkSpeed or the root; they only drive the local Animator, which
-    -- replicates to everyone else automatically because we own the rig.
+    -- Motion never changes movement physics. Managed tracks are local;
+    -- cross-client visibility depends on the game's animation replication.
     local stickyEmoteTracks: {any} = {}
     local emoteLastSeen: {[any]: number} = setmetatable({}, {__mode = "k"})
 
@@ -49,7 +64,6 @@ function Module.init(context: Runtime): any
     local managedEmotes: {[any]: any} = {}
     local ownedEmotes: {[any]: boolean} = setmetatable({}, {__mode = "k"})
     local isEmoteTrack: (any) -> boolean
-    local lastGlitch: number = -math.huge
 
     local function clearStickyEmoteTracks(): ()
         emoteGeneration += 1
@@ -304,146 +318,175 @@ function Module.init(context: Runtime): any
         end
     end
 
-    local function glitchAnimationsTick(humanoid: any): ()
-        -- Seek locomotion at a fixed cadence instead of calling Play every
-        -- frame (which continually resets fades and also interrupts tools).
-        local now: number = os.clock()
-        if now - lastGlitch < 0.12 then return end
-        lastGlitch = now
-        local animator: any = getAnimator(humanoid)
-        if not animator then
-            return
+    local motionSource: any = nil
+    local motionTrack: any = nil
+    local motionHumanoid: any = nil
+    local function clearMotionTrack(): ()
+        if motionTrack then
+            pcall(function(): () motionTrack:Stop(0.1) end)
+            pcall(function(): () motionTrack:Destroy() end)
         end
-        local okTracks: boolean, tracks: any = pcall(function(): any
-            return animator:GetPlayingAnimationTracks()
-        end)
-        if not okTracks or type(tracks) ~= "table" then
-            return
-        end
-        for _, track: any in ipairs(tracks) do
-            if track and track.IsPlaying
-                and (track.Priority == Enum.AnimationPriority.Movement
-                    or track.Priority == Enum.AnimationPriority.Core) then
-                pcall(function(): ()
-                    track.TimePosition = 0
-                end)
-            end
-        end
+        motionSource, motionTrack, motionHumanoid = nil, nil, nil
     end
 
-    local function restoreFreezeMovements()
-        for humanoid, original in pairs(originalFreezeState) do
-            if humanoid and humanoid.Parent then
-                humanoid.WalkSpeed = original.walkSpeed
-                humanoid.JumpPower = original.jumpPower
-                humanoid.JumpHeight = original.jumpHeight
-                humanoid.AutoRotate = original.autoRotate
-                if original.root and original.root.Parent then
-                    original.root.Anchored = original.rootAnchored
+    local LOCOMOTION = {walk=true, run=true, idle=true, jump=true, fall=true,
+        climb=true, swim=true, swimidle=true}
+    local function isLocomotion(track: any): boolean
+        if not track or ownedEmotes[track] or isEmoteTrack(track) then return false end
+        if track.Priority == Enum.AnimationPriority.Movement then return true end
+        if track.Priority ~= Enum.AnimationPriority.Core and track.Priority ~= Enum.AnimationPriority.Idle then return false end
+        local function known(name: any): boolean
+            local key: string = string.lower(tostring(name or "")):gsub("anim$", "")
+            return LOCOMOTION[key] == true
+        end
+        if known(track.Name) then return true end
+        local node: any = track.Animation
+        for _index: number = 1, 5 do
+            if not node then break end
+            if known(node.Name) then return true end
+            node = node.Parent
+        end
+        return false
+    end
+
+    local function freezeAnimationTick(humanoid: any): ()
+        if motionHumanoid ~= humanoid then
+            clearMotionTrack()
+            motionHumanoid = humanoid
+        end
+        local animator: any = getAnimator(humanoid)
+        if not animator then return end
+        if not motionSource then
+            local ok: boolean, tracks: any = pcall(function(): any return animator:GetPlayingAnimationTracks() end)
+            if not ok or type(tracks) ~= "table" then return end
+            local weight: number = -1
+            for _, track: any in ipairs(tracks) do
+                if track.IsPlaying and isLocomotion(track) then
+                    local current: number = tonumber(track.WeightCurrent) or 1
+                    if current > weight then motionSource, weight = track, current end
                 end
             end
+        end
+        if not motionSource then return end
+        -- Lock the selected clip, NOT its TimePosition. Walking continues
+        -- looping even while the native controller switches to jump/fall.
+        pcall(function(): ()
+            if not motionTrack then
+                motionTrack = animator:LoadAnimation(motionSource.Animation)
+                motionTrack.Looped = true
+                motionTrack.Priority = Enum.AnimationPriority.Action
+                motionTrack:Play(0.1)
+                motionTrack.TimePosition = motionSource.TimePosition
+                motionTrack:AdjustSpeed(motionSource.Speed or 1)
+            end
+            -- Explicit emotes take precedence when both Motion boxes are on.
+            local emotePlaying: boolean = false
+            if freezeSettings.emotes then
+                for _, source: any in ipairs(stickyEmoteTracks) do
+                    if source.IsPlaying or (managedEmotes[source] and managedEmotes[source].IsPlaying) then
+                        emotePlaying = true
+                        break
+                    end
+                end
+            end
+            if emotePlaying then
+                if motionTrack.IsPlaying then motionTrack:Stop(0.1) end
+            elseif not motionTrack.IsPlaying then
+                motionTrack:Play(0.1)
+            end
+        end)
+    end
+
+    local function restoreFreezeMovements(): ()
+        for root: any, original: any in pairs(originalFreezeState) do
+            pcall(function(): () root.Anchored = original.anchored end)
         end
         originalFreezeState = setmetatable({}, {__mode = "k"})
     end
 
-    local function toggleFreezeMovements(enabled)
+    local function toggleFreezeMovements(enabled: boolean): ()
         disconnectFeatureConnection("FreezeMovements")
         restoreFreezeMovements()
+        clearMotionTrack()
         clearStickyEmoteTracks()
-        lastGlitch = -math.huge
-
         if not enabled then
-            if FreezeFeature then
-                FreezeFeature:SetStatus(nil)
-            end
+            if FreezeFeature then FreezeFeature:SetStatus(nil) end
             return
         end
-
-        clearStickyEmoteTracks()
         FreezeFeature:SetStatus(freezeSettings.mode)
-        featureConnections.FreezeMovements = TaskManager:Connect(function()
+        local previousRoot: any = nil
+        featureConnections.FreezeMovements = TaskManager:Connect(function(): ()
             local _, humanoid, root = getCharacterParts()
+            if root ~= previousRoot then
+                restoreFreezeMovements()
+                clearMotionTrack()
+                clearStickyEmoteTracks()
+                previousRoot = root
+            end
             if not humanoid then
+                clearMotionTrack()
+                clearStickyEmoteTracks()
                 return
             end
-
-            if freezeSettings.mode == "Freeze Emotes" then
-                freezeEmotesTick(humanoid, root)
-                return
-            elseif freezeSettings.mode == "Glitch Animations" then
-                glitchAnimationsTick(humanoid)
-                return
-            end
-
-            if not root then
+            local ok: boolean, state: any = pcall(function(): any return humanoid:GetState() end)
+            if ok and state == Enum.HumanoidStateType.Dead then
+                restoreFreezeMovements()
+                clearMotionTrack()
+                clearStickyEmoteTracks()
                 return
             end
-
-            if not originalFreezeState[humanoid] then
-                originalFreezeState[humanoid] = {
-                    walkSpeed = humanoid.WalkSpeed,
-                    jumpPower = humanoid.JumpPower,
-                    jumpHeight = humanoid.JumpHeight,
-                    autoRotate = humanoid.AutoRotate,
-                    root = root,
-                    rootAnchored = root.Anchored,
-                }
+            if freezeSettings.mode == "Motion" then
+                if freezeSettings.emotes then freezeEmotesTick(humanoid, root) end
+                if freezeSettings.animation then freezeAnimationTick(humanoid) end
+            elseif root then
+                if not originalFreezeState[root] then originalFreezeState[root] = {anchored = root.Anchored} end
+                root.Anchored = true
+                root.AssemblyLinearVelocity = Vector3.zero
+                root.AssemblyAngularVelocity = Vector3.zero
             end
-
-            local original = originalFreezeState[humanoid]
-            humanoid.WalkSpeed = 0
-            humanoid.JumpPower = 0
-            humanoid.JumpHeight = 0
-            humanoid.AutoRotate = false
-            root.AssemblyLinearVelocity = Vector3.zero
-            root.AssemblyAngularVelocity = Vector3.zero
-            root.Anchored = freezeSettings.mode == "Anchor"
-                and true
-                or original.rootAnchored
         end)
     end
 
     FreezeFeature = createUniversalFeature(
-        "Freeze Movements",
-        "Prevent the local character from moving",
-        1,
+        "Freeze Movements", "Anchor physics or keep selected animations while moving", 4,
         toggleFreezeMovements,
-        {
-            categoryName = "Movement",
-            configKey = "Movement.FreezeMovements",
-        }
+        {categoryName = "Utilities", configKey = "Movement.FreezeMovements"}
     )
-    addCycleOption(
-        FreezeFeature,
-        "Freeze mode",
-        {"Anchor", "Humanoid", "Freeze Emotes", "Glitch Animations"},
-        1,
-        function(value)
-            freezeSettings.mode = value
-            if FreezeFeature and FreezeFeature.enabled then
-                -- Switching modes re-applies the feature: the previous
-                -- mode is fully undone first (Anchor had left the root
-                -- anchored with WalkSpeed 0 - "no puedo caminar") and the
-                -- new mode starts clean.
-                toggleFreezeMovements(false)
-                toggleFreezeMovements(true)
-            end
+    local motionRows: {any} = {}
+    local function refreshMotionOptions(): ()
+        for _, row: any in ipairs(motionRows) do
+            if host.setOptionVisible then
+                host.setOptionVisible(FreezeFeature, row, freezeSettings.mode == "Motion")
+            else row.Visible = freezeSettings.mode == "Motion" end
         end
-    )
-    addInformationOption(
-        FreezeFeature,
-        "Anchor stops all physics; Humanoid only blocks character controls."
-    )
-    addInformationOption(
-        FreezeFeature,
-        "Freeze Emotes keeps emotes playing while you walk; Glitch Animations makes your character stutter."
-    )
-
-    activeCleanup = function(): ()
-        disconnectFeatureConnection("FreezeMovements")
-        restoreFreezeMovements()
-        clearStickyEmoteTracks()
     end
+    addCycleOption(FreezeFeature, "Freeze mode", {"Anchor", "Motion"}, 1, function(value: string): ()
+        freezeSettings.mode = value
+        refreshMotionOptions()
+        if FreezeFeature and FreezeFeature.enabled then toggleFreezeMovements(true) end
+    end)
+    local heading: any = host.addSectionOption and host.addSectionOption(FreezeFeature, "Motion settings")
+    if heading then
+        if host.makeTextLabel then
+            heading.Size = UDim2.new(1, 0, 0, 20)
+            local title: any = host.makeTextLabel(heading, "Motion settings", 10)
+            title.Size = UDim2.fromScale(1, 1)
+            title.TextXAlignment = Enum.TextXAlignment.Left
+        end
+        table.insert(motionRows, heading)
+    end
+    local emotes: any = addToggleOption(FreezeFeature, "Freeze Emotes", true, function(value: boolean): ()
+        freezeSettings.emotes = value
+        if not value then clearStickyEmoteTracks() end
+    end, "Keep classic and UGC emotes playing while moving. Takes precedence over the locked locomotion clip.")
+    if emotes then table.insert(motionRows, emotes.Parent) end
+    local animation: any = addToggleOption(FreezeFeature, "Freeze Animation", false, function(value: boolean): ()
+        freezeSettings.animation = value
+        clearMotionTrack()
+    end, "Keep the current locomotion clip looping through jumps and other movement. Does not freeze a single frame.")
+    if animation then table.insert(motionRows, animation.Parent) end
+    refreshMotionOptions()
+    activeCleanup = function(): () toggleFreezeMovements(false) end
     Module.Initialized = true
     return FreezeFeature
 end

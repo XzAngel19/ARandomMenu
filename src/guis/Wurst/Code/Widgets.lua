@@ -2470,7 +2470,7 @@ function Module.init(context: any): WidgetLibrary
         return false
     end
 
-    -- Panel switching for shared cards (Metrics, Learning). Each producer
+    -- Panel switching for calibration cards. Each producer
     -- calls begin with its panel name and gets a finish closure; a "Mode"
     -- cycle at the top of the card selects which panel's rows are visible.
     -- Switching views never changes any recorded preference. `pinToFront`

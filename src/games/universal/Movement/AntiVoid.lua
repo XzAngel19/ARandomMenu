@@ -106,11 +106,11 @@ function Module.init(context: Runtime): any
     end
 
     local AntiVoidFeature = createUniversalFeature(
-        "Anti-Void",
+        "Anti Void",
         "Create an invisible rescue platform only when death is imminent",
         4,
         toggleAntiVoid,
-        {noOptions = true, categoryName = "Movement"}
+        {noOptions = true, categoryName = "Utilities"}
     )
     addFeatureTooltip(
         AntiVoidFeature,

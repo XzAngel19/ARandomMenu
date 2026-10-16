@@ -241,7 +241,7 @@ function Module.init(context: Runtime): any
     end
 
     aura = framework.Categories.Combat:CreateModule({
-        Name = "Killaura",
+        Name = "KillAura",
         Category = "Combat",
         ConfigKey = "Universal.KillAura",
         Order = 1,

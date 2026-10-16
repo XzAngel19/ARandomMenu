@@ -39,14 +39,14 @@ function Module.init(context: Runtime): any
     end
 
     local AntiAfkFeature = createUniversalFeature(
-        "AntiAFK",
+        "Anti AFK",
         "Prevent the local idle event from disconnecting",
         13,
         toggleAntiAfk,
         {
             noOptions = true,
             configKey = "Universal.AntiAFK",
-            categoryName = "Other",
+            categoryName = "World",
         }
     )
     addFeatureTooltip(AntiAfkFeature, "Responds only to Roblox's local idle event and "

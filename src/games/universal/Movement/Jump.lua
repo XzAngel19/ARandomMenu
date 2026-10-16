@@ -102,9 +102,9 @@ function Module.init(context: Runtime): any
     end
 
     local jump: any
-    jump = framework.Categories.Movement:CreateModule({
+    jump = framework.Categories.Exploits:CreateModule({
         Name = "Jump",
-        Category = "Movement",
+        Category = "Exploits",
         ConfigKey = "Universal.Jump",
         Order = 6,
         Tooltip = "Consolidated jump controls: adjust Jump Power, execute High Jump, enable Infinite Jump and Auto Jump.",

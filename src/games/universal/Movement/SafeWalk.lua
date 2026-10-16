@@ -5,7 +5,7 @@ export type Runtime = {
 }
 
 local Module = {
-    Name = "SafeWalk",
+    Name = "Safe Walk",
     PlaceId = 0,
     Events = {} :: {[string]: any},
     Initialized = false,
@@ -156,13 +156,13 @@ function Module.init(context: Runtime): any
     end
 
     SafeWalkFeature = createUniversalFeature(
-        "SafeWalk",
+        "Safe Walk",
         "Place an invisible barrier at edges so you cannot walk off ledges",
         21,
         toggleSafeWalk,
         {
             configKey = "Universal.SafeWalk",
-            categoryName = "Movement",
+            categoryName = "World",
         }
     )
     addNumberOption(

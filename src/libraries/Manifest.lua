@@ -94,7 +94,7 @@ local Manifest: Manifest = {
 
         {
             path = "src/games/universal/Combat/KillAura.lua",
-            name = "Killaura",
+            name = "KillAura",
             category = "Combat",
         },
         {
@@ -110,136 +110,86 @@ local Manifest: Manifest = {
 
         {
             path = "src/games/universal/Blatant/Invisible.lua",
-            name = "Invisible",
-            category = "Blatant",
+            name = "Ghost",
+            category = "Utilities",
         },
 
         {
             path = "src/games/universal/Movement/Speed.lua",
             name = "Speed",
-            category = "Movement",
+            category = "Exploits",
         },
         {
             path = "src/games/universal/Movement/Jump.lua",
             name = "Jump",
-            category = "Movement",
+            category = "Exploits",
         },
         {
             path = "src/games/universal/Movement/ClickTeleport.lua",
             name = "Click Teleport",
-            category = "Movement",
+            category = "Utilities",
         },
         {
             path = "src/games/universal/Blatant/Spider.lua",
             name = "Spider",
-            category = "Movement",
-        },
-        {
-            path = "src/games/universal/Blatant/WallHop.lua",
-            name = "WallHop",
-            category = "Movement",
-        },
-        {
-            path = "src/games/universal/Movement/HookPart.lua",
-            name = "HookPart",
-            category = "Movement",
+            category = "Exploits",
         },
         {
             path = "src/games/universal/Blatant/Fly.lua",
-            name = "Flight",
-            category = "Movement",
+            name = "Fly",
+            category = "Exploits",
         },
         {
             path = "src/games/universal/Blatant/Noclip.lua",
             name = "Noclip",
-            category = "Movement",
+            category = "Exploits",
         },
         {
             path = "src/games/universal/Movement/AntiVoid.lua",
-            name = "Anti-Void",
-            category = "Movement",
+            name = "Anti Void",
+            category = "Utilities",
         },
         {
             path = "src/games/universal/Movement/AntiFling.lua",
-            name = "Anti-Fling",
-            category = "Movement",
+            name = "Anti Fling",
+            category = "Utilities",
         },
         {
             path = "src/games/universal/Movement/FreezeMovements.lua",
             name = "Freeze Movements",
-            category = "Movement",
+            category = "Utilities",
         },
         {
             path = "src/games/universal/Movement/Gravity.lua",
             name = "Gravity",
-            category = "Movement",
+            category = "World",
         },
         {
             path = "src/games/universal/Movement/SafeWalk.lua",
-            name = "SafeWalk",
-            category = "Movement",
+            name = "Safe Walk",
+            category = "World",
         },
 
-        {
-            path = "src/games/universal/Fun/SpinBot.lua",
-            name = "SpinBot",
-            category = "Fun",
-        },
 
-        {
-            path = "src/games/universal/Other/Disguise.lua",
-            name = "Disguise",
-            category = "Other",
-        },
         {
             path = "src/games/universal/Other/AntiAfk.lua",
-            name = "AntiAFK",
-            category = "Other",
+            name = "Anti AFK",
+            category = "World",
         },
         {
             path = "src/games/universal/Other/InteractExtender.lua",
             name = "Interact Extender",
-            category = "Other",
-        },
-        {
-            path = "src/games/universal/Other/RejoinServer.lua",
-            name = "Rejoin Server",
-            category = "Other",
-        },
-        {
-            path = "src/games/universal/Other/LagSwitch.lua",
-            name = "Lag Switch",
-            category = "Other",
+            category = "Exploits",
         },
         {
             path = "src/games/universal/Other/ImproveFps.lua",
             name = "Improve FPS",
-            category = "Other",
+            category = "World",
         },
         {
             path = "src/games/universal/Blatant/Fling.lua",
             name = "Fling",
-            category = "Other",
-        },
-        {
-            path = "src/games/universal/Other/RemoteLogger.lua",
-            name = "Remote Logger",
-            category = "Other",
-        },
-        {
-            path = "src/games/universal/Other/Learning.lua",
-            name = "Learning",
-            category = "Other",
-        },
-        {
-            path = "src/games/universal/Other/GameLearning.lua",
-            name = "Game Learning",
-            category = "Other",
-        },
-        {
-            path = "src/games/universal/Render/ProjectileCalibration.lua",
-            name = "Projectile Calibration",
-            category = "Other",
+            category = "Exploits",
         },
     },
 }

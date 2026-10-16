@@ -8,12 +8,11 @@ local DEFAULT_FEATURE_CATEGORY: string = "Utilities"
 local OFFICIAL_CATEGORIES: {string} = {
     "Combat",
     "Exploits",
+    "Utilities",
+    "World",
     "Render",
     "Blocks",
-    "World",
-    "Fun",
     "Items",
-    "Utilities",
 }
 
 local CATEGORY_ALIASES: {[string]: string} = {
@@ -21,9 +20,10 @@ local CATEGORY_ALIASES: {[string]: string} = {
     ["Movement"] = "World",
     ["Other"] = "Utilities",
     ["Visuals"] = "Render",
-    ["Protection"] = "World",
+    ["Protection"] = "Utilities",
     ["Utility"] = "Utilities",
-    ["Spoof"] = "Fun",
+    ["Spoof"] = "Utilities",
+    ["Fun"] = "Utilities",
     ["General"] = "Utilities",
     ["Player"] = "World",
 }
@@ -37,9 +37,14 @@ local function normalizeFeatureCategory(name: any): string
 end
 
 local FEATURE_CATEGORIES: {[string]: string} = {
+    ["Anti AFK"] = "World",
+    ["Ghost"] = "Utilities",
+    ["Anti Fling"] = "Utilities",
+    ["KillAura"] = "Combat",
+    ["Aim Assist"] = "Combat",
 
     ["Fly"] = "Exploits",
-    ["Jump"] = "World",
+    ["Jump"] = "Exploits",
     ["Noclip"] = "Exploits",
     ["Speed"] = "Exploits",
     ["Spider"] = "Exploits",
@@ -48,18 +53,14 @@ local FEATURE_CATEGORIES: {[string]: string} = {
 
     ["Knife"] = "Exploits",
 
-    ["Click Teleport"] = "Movement",
-    ["Freeze Movements"] = "Movement",
-    ["HookPart"] = "Movement",
+    ["Click Teleport"] = "Utilities",
+    ["Freeze Movements"] = "Utilities",
     ["Anti-Fling"] = "Movement",
     ["Anti-Void"] = "Movement",
-    ["Safe Walk"] = "Movement",
+    ["Safe Walk"] = "World",
     ["SafeWalk"] = "Movement",
-    ["Gravity"] = "Movement",
+    ["Gravity"] = "World",
 
-    ["Projectile Calibration"] = "Other",
-    ["Game Learning"] = "Other",
-    ["Metrics"] = "Other",
 
     ["FOV"] = "Render",
     ["Fullbright"] = "Render",
@@ -72,16 +73,14 @@ local FEATURE_CATEGORIES: {[string]: string} = {
     ["AntiAFK"] = "Other",
     ["Disguise"] = "Other",
     ["Fling"] = "Exploits",
-    ["Improve FPS"] = "Other",
-    ["Interact Extender"] = "Other",
+    ["Improve FPS"] = "World",
+    ["Interact Extender"] = "Exploits",
     ["Lag Switch"] = "Exploits",
     ["Rejoin Server"] = "Other",
-    ["Learning"] = "Other",
     ["Remote Logger"] = "Other",
-    ["SpinBot"] = "Fun",
 
-    ["Instant Role Notify"] = "Fun",
-    ["Blurt Roles"] = "Fun",
+    ["Instant Role Notify"] = "Utilities",
+    ["Blurt Roles"] = "Utilities",
     ["Shoot"] = "Exploits",
     ["Trajectory Calibration"] = "Other",
     ["Sprint"] = "Movement",
@@ -126,7 +125,7 @@ local FEATURE_CATEGORIES: {[string]: string} = {
     ["Auto Swing"] = "Combat",
     ["Bed Nuker"] = "Combat",
     ["Scaffold"] = "Movement",
-    ["Anti Void"] = "Movement",
+    ["Anti Void"] = "Utilities",
     ["Server Aura"] = "Combat",
     ["Server Scaffold"] = "Movement",
     ["Server Miner"] = "Other",
@@ -225,7 +224,7 @@ local RUNTIME_RAW_BASE: string =
         .. RUNTIME_BRANCH
         .. "/"
 
-local SOURCE_STAMP: string = "v34-20261016-knife-rebuild"
+local SOURCE_STAMP: string = "v35-20261016-menu-motion"
 
 local BOOT_STARTED_AT: number = os.clock()
 local BOOT_FINGERPRINT_SECONDS: number = 0
@@ -993,14 +992,20 @@ if configData.ui.unboundKeyDefaultsVersion ~= 1 then
             configData.values[key] = "Unknown"
         end
     end
-    configData.ui.toggleKey = "Unknown"
     configData.ui.unboundKeyDefaultsVersion = 1
 end
-local savedToggleKey = Enum.KeyCode.Unknown
+-- Restore the menu-only default removed in v34; module shortcuts stay unbound.
+if configData.ui.menuKeyRestoreVersion ~= 1 then
+    if not configData.ui.toggleKey or configData.ui.toggleKey == "Unknown" then
+        configData.ui.toggleKey = "RightShift"
+    end
+    configData.ui.menuKeyRestoreVersion = 1
+end
+local savedToggleKey = Enum.KeyCode.RightShift
 if type(configData.ui.toggleKey) == "string" then
     pcall(function()
         savedToggleKey = Enum.KeyCode[configData.ui.toggleKey]
-            or Enum.KeyCode.Unknown
+            or Enum.KeyCode.RightShift
     end)
 end
 
@@ -5753,40 +5758,30 @@ local fallbackManifest: any = {
         {path = "src/games/universal/Render/Chams.lua", name = "Chams", category = "Render"},
         {path = "src/games/universal/Render/Arrows.lua", name = "Arrows", category = "Render"},
         {path = "src/games/universal/Render/NPCESP.lua", name = "NPCESP", category = "Render"},
-        {path = "src/games/universal/Combat/KillAura.lua", name = "Killaura", category = "Combat"},
-        {path = "src/games/universal/Other/Learning.lua", name = "Learning", category = "Other"},
-        {path = "src/games/universal/Movement/ClickTeleport.lua", name = "Click Teleport", category = "Movement"},
+        {path = "src/games/universal/Combat/KillAura.lua", name = "KillAura", category = "Combat"},
+        {path = "src/games/universal/Movement/ClickTeleport.lua", name = "Click Teleport", category = "Utilities"},
         {path = "src/games/universal/Combat/AimAssist.lua", name = "Aim Assist", category = "Combat"},
         {path = "src/games/universal/Combat/TriggerBot.lua", name = "TriggerBot", category = "Combat"},
         {path = "src/games/universal/Render/XRay.lua", name = "X-Ray", category = "Render"},
-        {path = "src/games/universal/Movement/Jump.lua", name = "Jump", category = "Movement"},
-        {path = "src/games/universal/Blatant/Spider.lua", name = "Spider", category = "Movement"},
-        {path = "src/games/universal/Blatant/WallHop.lua", name = "WallHop", category = "Movement"},
-        {path = "src/games/universal/Movement/HookPart.lua", name = "HookPart", category = "Movement"},
-        {path = "src/games/universal/Blatant/Invisible.lua", name = "Invisible", category = "Blatant"},
-        {path = "src/games/universal/Movement/SafeWalk.lua", name = "SafeWalk", category = "Movement"},
-        {path = "src/games/universal/Other/RejoinServer.lua", name = "Rejoin Server", category = "Other"},
+        {path = "src/games/universal/Movement/Jump.lua", name = "Jump", category = "Exploits"},
+        {path = "src/games/universal/Blatant/Spider.lua", name = "Spider", category = "Exploits"},
+        {path = "src/games/universal/Blatant/Invisible.lua", name = "Ghost", category = "Utilities"},
+        {path = "src/games/universal/Movement/SafeWalk.lua", name = "Safe Walk", category = "World"},
         {path = "src/games/universal/Render/ZoomUnlocker.lua", name = "Zoom", category = "Render"},
-        {path = "src/games/universal/Other/InteractExtender.lua", name = "Interact Extender", category = "Other"},
-        {path = "src/games/universal/Blatant/Fly.lua", name = "Flight", category = "Movement"},
-        {path = "src/games/universal/Movement/AntiVoid.lua", name = "Anti-Void", category = "Movement"},
-        {path = "src/games/universal/Movement/Gravity.lua", name = "Gravity", category = "Movement"},
+        {path = "src/games/universal/Other/InteractExtender.lua", name = "Interact Extender", category = "Exploits"},
+        {path = "src/games/universal/Blatant/Fly.lua", name = "Fly", category = "Exploits"},
+        {path = "src/games/universal/Movement/AntiVoid.lua", name = "Anti Void", category = "Utilities"},
+        {path = "src/games/universal/Movement/Gravity.lua", name = "Gravity", category = "World"},
         {path = "src/games/universal/Render/FieldOfView.lua", name = "FOV", category = "Render"},
-        {path = "src/games/universal/Blatant/Noclip.lua", name = "Noclip", category = "Movement"},
-        {path = "src/games/universal/Other/AntiAfk.lua", name = "AntiAFK", category = "Other"},
-        {path = "src/games/universal/Movement/AntiFling.lua", name = "Anti-Fling", category = "Movement"},
-        {path = "src/games/universal/Other/LagSwitch.lua", name = "Lag Switch", category = "Other"},
-        {path = "src/games/universal/Blatant/Fling.lua", name = "Fling", category = "Other"},
-        {path = "src/games/universal/Other/ImproveFps.lua", name = "Improve FPS", category = "Other"},
+        {path = "src/games/universal/Blatant/Noclip.lua", name = "Noclip", category = "Exploits"},
+        {path = "src/games/universal/Other/AntiAfk.lua", name = "Anti AFK", category = "World"},
+        {path = "src/games/universal/Movement/AntiFling.lua", name = "Anti Fling", category = "Utilities"},
+        {path = "src/games/universal/Blatant/Fling.lua", name = "Fling", category = "Exploits"},
+        {path = "src/games/universal/Other/ImproveFps.lua", name = "Improve FPS", category = "World"},
         {path = "src/games/universal/Render/Fullbright.lua", name = "Fullbright", category = "Render"},
         {path = "src/games/universal/Render/TimeChanger.lua", name = "Time Changer", category = "Render"},
-        {path = "src/games/universal/Other/Disguise.lua", name = "Disguise", category = "Other"},
-        {path = "src/games/universal/Movement/FreezeMovements.lua", name = "Freeze Movements", category = "Movement"},
-        {path = "src/games/universal/Movement/Speed.lua", name = "Speed", category = "Movement"},
-        {path = "src/games/universal/Render/ProjectileCalibration.lua", name = "Projectile Calibration", category = "Other"},
-        {path = "src/games/universal/Other/GameLearning.lua", name = "Game Learning", category = "Other"},
-        {path = "src/games/universal/Other/RemoteLogger.lua", name = "Remote Logger", category = "Other"},
-        {path = "src/games/universal/Fun/SpinBot.lua", name = "SpinBot", category = "Fun"},
+        {path = "src/games/universal/Movement/FreezeMovements.lua", name = "Freeze Movements", category = "Utilities"},
+        {path = "src/games/universal/Movement/Speed.lua", name = "Speed", category = "Exploits"},
     },
 }
 

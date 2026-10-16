@@ -18,7 +18,6 @@ function Module.init(context: Runtime): any
     local host: any = context.host
     local framework: any = context.framework
     local movementInput: any = context.services.movementInput
-    local platformStand: any = context.services.platformStandOwnership
     local mobileActions: any = context.services.mobileActions
     local getCharacterParts: any = host.getCharacterParts
     local UserInputService: any = host.UserInputService
@@ -32,7 +31,6 @@ function Module.init(context: Runtime): any
         response: number,
         burstInterval: number,
         wallCheck: boolean,
-        platformStand: boolean,
         faceCamera: boolean,
         upKey: Enum.KeyCode,
         downKey: Enum.KeyCode,
@@ -46,7 +44,6 @@ function Module.init(context: Runtime): any
         response = 1,
         burstInterval = 0.2,
         wallCheck = true,
-        platformStand = true,
         faceCamera = true,
         upKey = Enum.KeyCode.Space,
         downKey = Enum.KeyCode.LeftControl,
@@ -381,9 +378,9 @@ function Module.init(context: Runtime): any
     end
 
     local fly: any
-    fly = framework.Categories.Blatant:CreateModule({
-        Name = "Flight",
-        Category = "Blatant",
+    fly = framework.Categories.Exploits:CreateModule({
+        Name = "Fly",
+        Category = "Exploits",
         ConfigKey = "Universal.Fly",
         Tooltip = "Use WASD to move, Space to rise and LeftControl to descend. "
             .. "Method picks how you travel sideways and Float picks what "
@@ -401,17 +398,12 @@ function Module.init(context: Runtime): any
             flyRuntime.root = nil
             flyRuntime.method = nil
             flyRuntime.floatMethod = nil
-            platformStand.set("Fly", nil)
 
             if not enabled then
                 fly:SetStatus(nil)
                 local _, humanoid: Humanoid?, root: BasePart? = getCharacterParts()
                 if root then
                     (root :: BasePart).AssemblyLinearVelocity = Vector3.zero
-                end
-                if humanoid then
-                    platformStand.set("Fly", nil)
-                    platformStand.apply(humanoid :: Humanoid)
                 end
                 return
             end
@@ -424,8 +416,6 @@ function Module.init(context: Runtime): any
                     removeFlyObjects()
                     clearPlatform()
                     restoreWalkSpeed()
-                    platformStand.set("Fly", nil)
-                    if humanoid then platformStand.apply(humanoid) end
                     flyRuntime.root = nil
                     flyRuntime.yLevel = nil
                     return
@@ -446,15 +436,6 @@ function Module.init(context: Runtime): any
                     flyRuntime.method = method
                     flyRuntime.floatMethod = floatMethod
                 end
-
-                local canRagdoll: boolean = method ~= "WalkSpeed"
-                    and floatMethod ~= "Floor"
-                    and floatMethod ~= "Jump"
-                platformStand.set(
-                    "Fly",
-                    canRagdoll and (flySettings.platformStand or method == "CFrame")
-                )
-                platformStand.apply(humanoid)
 
                 local moveDirection, vertical, cameraForward = getFlyDirection(camera)
                 if flySettings.wallCheck and moveDirection.Magnitude > 0.001 then
@@ -581,14 +562,6 @@ function Module.init(context: Runtime): any
         Tooltip = "Stop against solid geometry instead of flying through it.",
     })
     fly:CreateToggle({
-        Name = "PlatformStand",
-        Default = flySettings.platformStand,
-        Function = function(value: boolean): ()
-            flySettings.platformStand = value
-        end,
-        Tooltip = "Ragdoll the character while flying. Smoother, but no animations.",
-    })
-    fly:CreateToggle({
         Name = "Face camera",
         Default = flySettings.faceCamera,
         Function = function(value: boolean): ()
@@ -653,9 +626,6 @@ function Module.init(context: Runtime): any
         removeFlyObjects()
         clearPlatform()
         restoreWalkSpeed()
-        platformStand.set("Fly", nil)
-        local _, humanoid: Humanoid? = getCharacterParts()
-        if humanoid then platformStand.apply(humanoid) end
     end
     Module.Initialized = true
     return fly

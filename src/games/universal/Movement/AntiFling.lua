@@ -79,11 +79,11 @@ function Module.init(context: Runtime): any
     end
 
     AntiFlingFeature = createUniversalFeature(
-        "Anti-Fling",
+        "Anti Fling",
         "Stop extreme local velocity and return to safety",
         14,
         toggleAntiFling,
-        {categoryName = "Movement"}
+        {categoryName = "Utilities"}
     )
     addNumberOption(
         AntiFlingFeature,

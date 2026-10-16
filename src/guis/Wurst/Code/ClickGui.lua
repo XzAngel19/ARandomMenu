@@ -29,30 +29,20 @@ local GRID_GAP: number = 10
 local TITLE_HEIGHT: number = 26
 
 local CATEGORY_ORDER: {string} = {
-    "Combat",
-    "Render",
-    "Blocks",
-    "Movement",
-    "Fun",
-    "Items",
-    "Other",
+    "Combat", "Exploits", "Utilities", "World", "Render", "Blocks", "Items",
 }
-
 local CATEGORY_ALIASES: {[string]: string} = {
-    ["Visuals"] = "Render",
-    ["Protection"] = "Movement",
-    ["Utility"] = "Other",
-    ["Spoof"] = "Fun",
-    ["General"] = "Other",
-    ["Player"] = "Movement",
+    Blatant = "Exploits", Movement = "World", Other = "Utilities",
+    Fun = "Utilities", Visuals = "Render", Protection = "Utilities",
+    Utility = "Utilities", Spoof = "Utilities", General = "Utilities", Player = "World",
 }
 
 local function fallbackNormalize(raw: any): string
-    local name: string = tostring(raw or "Other")
+    local name: string = tostring(raw or "Utilities")
     if table.find(CATEGORY_ORDER, name) ~= nil then
         return name
     end
-    return CATEGORY_ALIASES[name] or "Other"
+    return CATEGORY_ALIASES[name] or "Utilities"
 end
 
 function Module.init(context: any): any
@@ -225,6 +215,9 @@ function Module.init(context: any): any
             end
         end
         table.sort(rows, function(left: GuiObject, right: GuiObject): boolean
+            local leftOrder: number = tonumber(left:GetAttribute("FeatureSortOrder")) or math.huge
+            local rightOrder: number = tonumber(right:GetAttribute("FeatureSortOrder")) or math.huge
+            if leftOrder ~= rightOrder then return leftOrder < rightOrder end
             local leftKey: string = tostring(left:GetAttribute("FeatureSortName") or "")
             local rightKey: string = tostring(right:GetAttribute("FeatureSortName") or "")
             if leftKey == rightKey then

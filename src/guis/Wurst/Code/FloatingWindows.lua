@@ -760,7 +760,7 @@ function Module.init(context: any): any
         local _sessionSettingsWindow: FloatingWindowRecord
         _sessionSettingsWindow, sessionSettingsScroll = createOverlaySettingsWindow(
             "SessionInfo",
-            "Session Metrics",
+            "Session Info settings",
             310,
             Vector2.new(960, 70)
         )

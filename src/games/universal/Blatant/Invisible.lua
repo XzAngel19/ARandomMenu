@@ -6,7 +6,7 @@ export type Runtime = {
 }
 
 local Module = {
-    Name = "Invisible",
+    Name = "Ghost",
     PlaceId = 0,
     Events = {} :: {[string]: any},
     Initialized = false,
@@ -253,9 +253,9 @@ function Module.init(context: Runtime): any
         )
     end
 
-    local invisibleCard: any = framework.Categories.Blatant:CreateModule({
-        Name = "Invisible",
-        Category = "Blatant",
+    local invisibleCard: any = framework.Categories.Utilities:CreateModule({
+        Name = "Ghost",
+        Category = "Utilities",
         Order = 8,
         Tooltip = "Shows your ghost on the map while your real character is hidden in the void. Turning it off teleports your real character to the ghost.",
         Function = toggleInvisible,

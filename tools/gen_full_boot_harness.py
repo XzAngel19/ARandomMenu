@@ -797,6 +797,32 @@ do
       assert(okFOff, "Freeze Movements OFF must not error: " .. tostring(errFOff))
     end
     print("[HARNESS] FREEZE MOVEMENTS TOGGLE CYCLES CLEAN")
+    local expected = {
+      Combat = {"Aim Assist", "KillAura", "TriggerBot"},
+      Exploits = {"Fly", "Fling", "Noclip", "Spider", "Speed", "Jump", "Interact Extender"},
+      Utilities = {"Anti Fling", "Anti Void", "Click Teleport", "Freeze Movements", "Ghost"},
+      World = {"Improve FPS", "Gravity", "Anti AFK", "Safe Walk"},
+    }
+    for category, names in pairs(expected) do
+      for index, name in ipairs(names) do
+        local feature = findFeature(name)
+        assert(feature, "Missing requested menu module: " .. name)
+        assert(feature.categoryName == category, name .. " in wrong window: " .. tostring(feature.categoryName))
+        assert(feature.row.LayoutOrder == index, name .. " in wrong display order")
+      end
+    end
+    for _, name in ipairs({"Metrics", "Learning", "Game Learning", "HookPart", "Flight", "Invisible", "SpinBot"}) do
+      assert(not findFeature(name), "Removed module still present: " .. name)
+    end
+    local calibration = findFeature("Calibration")
+    assert(calibration and string.find(calibration.configKey, "MM2", 1, true), "MM2 Calibration must remain separate")
+    assert(ex.state.clickGui and not ex.state.clickGui.categories.Fun, "Fun window must be removed")
+    assert(ex.state.toggleKey == Enum.KeyCode.RightShift, "menu-only default must be RShift")
+    for _, binding in pairs(ex.state.shortcutBindings) do
+      assert(binding.key == Enum.KeyCode.Unknown, "module shortcuts must remain unbound")
+    end
+    print("[HARNESS] MENU WINDOWS, ORDER, REMOVALS, RSHIFT AND MM2 CALIBRATION CLEAN")
+
   else
     print("[HARNESS] allFeatures not exposed - toggle probe skipped")
   end

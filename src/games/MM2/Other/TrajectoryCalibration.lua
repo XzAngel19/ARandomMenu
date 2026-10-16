@@ -17,12 +17,11 @@ function Module.init(runtime: any): any
     Module.Runtime = runtime
     local trajectoryCalibration: any = core.trajectoryCalibration
 
-    local TrajectoryFeature: any = state.metricsFeature
+    local TrajectoryFeature: any = state.mm2CalibrationFeature
     if not TrajectoryFeature then
         TrajectoryFeature = createUniversalFeature(
-            "Metrics",
-            "Calibration and game-learning telemetry in one card: projectile "
-                .. "analytics, passive server learning, motion calibration.",
+            "Calibration",
+            "MM2 shot and knife trajectory calibration; isolated from universal modules.",
             5,
             function(): () end,
             {
@@ -32,10 +31,10 @@ function Module.init(runtime: any): any
                 registry = mm2Features,
             }
         )
-        state.metricsFeature = TrajectoryFeature
+        state.mm2CalibrationFeature = TrajectoryFeature
     end
     local finishPanel = state.beginCardPanel(TrajectoryFeature, "Calibration", true)
-    addActionOption(TrajectoryFeature, "Show learned profile", function(): ()
+    addActionOption(TrajectoryFeature, "Calibration status", function(): ()
         notify(trajectoryCalibration:status())
     end)
     addActionOption(TrajectoryFeature, "Save calibration", function(): ()
@@ -51,7 +50,7 @@ function Module.init(runtime: any): any
     end)
     addInformationOption(
         TrajectoryFeature,
-        "Schema 2 records 30 Hz target windows only around your shots/throws. It stays isolated from Universal analytics and never changes weapon arguments."
+        "Records target windows around your shots and throws. MM2-only calibration; no universal learning observer."
     )
     finishPanel()
 

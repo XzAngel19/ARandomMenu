@@ -61,6 +61,28 @@ function Module.init(context: any): any
         configuration: any?
     ): any
         configuration = configuration or {}
+        local ordered: {[string]: number} = {
+            ["Aim Assist"] = 1,
+            ["KillAura"] = 2,
+            ["TriggerBot"] = 3,
+            ["Fly"] = 1,
+            ["Fling"] = 2,
+            ["Noclip"] = 3,
+            ["Spider"] = 4,
+            ["Speed"] = 5,
+            ["Jump"] = 6,
+            ["Interact Extender"] = 7,
+            ["Anti Fling"] = 1,
+            ["Anti Void"] = 2,
+            ["Click Teleport"] = 3,
+            ["Freeze Movements"] = 4,
+            ["Ghost"] = 5,
+            ["Improve FPS"] = 1,
+            ["Gravity"] = 2,
+            ["Anti AFK"] = 3,
+            ["Safe Walk"] = 4,
+        }
+        layoutOrder = ordered[name] or (100 + layoutOrder)
         local registry: any = configuration.registry or universalFeatures
         local sectionName: string = configuration.section
             or (registry == mm2Features and "MM2")
@@ -145,6 +167,7 @@ function Module.init(context: any): any
         feature.row = row
 
         row:SetAttribute("FeatureCategory", categoryName)
+        row:SetAttribute("FeatureSortOrder", ordered[name])
         row:SetAttribute("FeatureSortName", string.lower(name))
 
         local bitmapText: any = state.bitmapText

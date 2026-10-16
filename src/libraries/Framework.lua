@@ -115,36 +115,23 @@ local Module = {
 }
 
 local KNOWN_CATEGORIES: {string} = {
-    "Combat",
-    "Blatant",
-    "Render",
-    "Blocks",
-    "Movement",
-    "Fun",
-    "Items",
-    "Other",
+    "Combat", "Exploits", "Utilities", "World", "Render", "Blocks", "Items",
 }
-
 local activeFramework: Framework? = nil
-
 local function isKnownCategory(name: string): boolean
     return table.find(KNOWN_CATEGORIES, name) ~= nil
 end
-
 local CATEGORY_ALIASES: {[string]: string} = {
-    ["Visuals"] = "Render",
-    ["Protection"] = "Movement",
-    ["Utility"] = "Other",
-    ["Spoof"] = "Fun",
-    ["General"] = "Other",
-    ["Player"] = "Movement",
+    Blatant = "Exploits", Movement = "World", Other = "Utilities",
+    Fun = "Utilities", Visuals = "Render", Protection = "Utilities",
+    Utility = "Utilities", Spoof = "Utilities", General = "Utilities", Player = "World",
 }
 
 local function canonicalCategory(name: string): string
     if isKnownCategory(name) then
         return name
     end
-    return CATEGORY_ALIASES[name] or "Other"
+    return CATEGORY_ALIASES[name] or "Utilities"
 end
 
 local function disposeItem(item: CleanupItem): ()

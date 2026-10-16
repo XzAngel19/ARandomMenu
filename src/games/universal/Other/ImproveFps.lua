@@ -27,6 +27,7 @@ function Module.init(context: Runtime): any
         materials = false,
     }
     local fpsModeEnabled: boolean = false
+    local generation: number = 0
     local ImproveFpsFeature: any = nil
     local function selectedEffectCount(): number
         local count: number = 0
@@ -36,7 +37,7 @@ function Module.init(context: Runtime): any
         return count
     end
 
-    local fpsVisualCache: any = setmetatable({}, {__mode = "k"})
+    local fpsVisualCache: any = {}
 
     local function cacheFpsProperty(object: any, property: string): ()
         local data: any = fpsVisualCache[object]
@@ -86,7 +87,7 @@ function Module.init(context: Runtime): any
 
     local function restoreFpsObjects(): ()
         for object: any, properties: any in pairs(fpsVisualCache) do
-            if object and object.Parent then
+            if object then
                 for property: string, value: any in pairs(properties) do
                     pcall(function(): ()
                         object[property] = value
@@ -94,10 +95,12 @@ function Module.init(context: Runtime): any
                 end
             end
         end
-        fpsVisualCache = setmetatable({}, {__mode = "k"})
+        fpsVisualCache = {}
     end
 
     local function toggleImproveFps(enabled: boolean): ()
+        generation += 1
+        local token: number = generation
         fpsModeEnabled = enabled
         disconnectFeatureConnection("ImproveFPS")
         restoreFpsObjects()
@@ -108,24 +111,20 @@ function Module.init(context: Runtime): any
         end
         ImproveFpsFeature:SetStatus(tostring(selectedEffectCount()) .. " effects")
 
-        task.spawn(function(): ()
-            for index: number, object: Instance in ipairs(workspace:GetDescendants()) do
-                if not fpsModeEnabled then
-                    return
-                end
-                pcall(applyFpsObject, object)
-                if index % 250 == 0 then
-                    task.wait()
-                end
-            end
-        end)
+        -- Subscribe first: descendants arriving during the initial scan are
+        -- covered too. Old workers cannot resume into a newer enable session.
         featureConnections.ImproveFPS = workspace.DescendantAdded:Connect(
             function(object: Instance): ()
-                if fpsModeEnabled then
-                    pcall(applyFpsObject, object)
-                end
+                if fpsModeEnabled and token == generation then pcall(applyFpsObject, object) end
             end
         )
+        task.spawn(function(): ()
+            for index: number, object: Instance in ipairs(workspace:GetDescendants()) do
+                if not fpsModeEnabled or token ~= generation then return end
+                pcall(applyFpsObject, object)
+                if index % 250 == 0 then task.wait() end
+            end
+        end)
     end
 
     local function refreshFps(): ()
@@ -139,7 +138,7 @@ function Module.init(context: Runtime): any
         "Apply only the selected reversible optimizations",
         26,
         toggleImproveFps,
-        {categoryName = "Other"}
+        {categoryName = "World"}
     )
     addToggleOption(ImproveFpsFeature, "Remove textures", true, function(value: boolean): ()
         fpsSettings.textures = value

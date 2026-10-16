@@ -216,7 +216,7 @@ function Module.init(context: Runtime): any
         "Role-based fling actions (murderer, sheriff, all innocents)",
         2,
         function() end,
-        {category = true, categoryName = "Blatant"}
+        {category = true, categoryName = "Exploits"}
     )
     addActionOption(FlingFeature, "Fling Murderer", function(): ()
         local target: Player? = findPlayerByRole(function(role: string): boolean

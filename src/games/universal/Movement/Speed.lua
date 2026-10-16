@@ -253,9 +253,9 @@ function Module.init(context: Runtime): any
     end
 
     local speed: any
-    speed = framework.Categories.Movement:CreateModule({
+    speed = framework.Categories.Exploits:CreateModule({
         Name = "Speed",
-        Category = "Movement",
+        Category = "Exploits",
         ConfigKey = "Universal.Speed",
         Order = 1,
         Tooltip = "Move faster on foot or in vehicles, by whichever method works best.",

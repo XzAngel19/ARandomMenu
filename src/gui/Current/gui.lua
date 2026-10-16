@@ -1258,7 +1258,7 @@ function Gui.new(options: GuiOptions?): GuiController
     )
     blurSetting:setEnabled(true)
 
-    local menuKey: Enum.KeyCode = Enum.KeyCode.Unknown
+    local menuKey: Enum.KeyCode = Enum.KeyCode.RightShift
     local menuKeySetting: FeatureController = settings:addAction(
         "MenuKey",
         "Menu key",

@@ -11,14 +11,14 @@ W = (ROOT / 'src/Wurst.lua').read_text()
 migration = section(W, '-- One-time reset of old automatic key defaults.', 'local state: any =')
 registration = section(W, 'state.bindFeatureActivationKey = function(', '\ndo\nlocal function shortcutInputAllowed')
 script = r'''
-local Enum={KeyCode={Unknown='Unknown',Q='Q',G='G',J='J'}}
-local configData={ui={toggleKey='Q'},values={['Shortcut.MM2Shoot']='Q',['MM2Teleport.GetGunkey']='G',
+local Enum={KeyCode={Unknown='Unknown',RightShift='RightShift',Q='Q',G='G',J='J'}}
+local configData={ui={toggleKey='Unknown'},values={['Shortcut.MM2Shoot']='Q',['MM2Teleport.GetGunkey']='G',
     ['TRSShoot.Shotkey']='G',['Options.Target']='PlayerName',['Options.Amount']=4}}
 local function loadDefaults()
 ''' + migration + r'''
 return savedToggleKey
 end
-assert(loadDefaults()=='Unknown')
+assert(loadDefaults()=='RightShift')
 assert(configData.values['Shortcut.MM2Shoot']=='Unknown')
 assert(configData.values['MM2Teleport.GetGunkey']=='Unknown')
 assert(configData.values['TRSShoot.Shotkey']=='Unknown')

@@ -51,7 +51,7 @@ local owner,applied=nil,nil
 local platform={set=function(_,v) owner=v end,apply=function() applied=owner end}
 local callbacks={}
 local handler,loop,feature
-local framework={Categories={Blatant={CreateModule=function(_,definition)
+local framework={Categories={Exploits={CreateModule=function(_,definition)
     handler=definition.Function
     feature={Enabled=false}
     function feature:SetStatus() end
@@ -71,9 +71,10 @@ local context={framework=framework,host=host,services={platformStandOwnership=pl
 Module.init(context)
 callbacks['Face camera'](false)
 feature:Toggle(true);loop(1/60)
-assert(owner==true and applied==true,'Velocity must retain PlatformStand ownership after removing constraints')
+assert(owner==nil and applied==nil,'Fly must never request PlatformStand')
+assert(callbacks.PlatformStand==nil,'no PlatformStand option')
 callbacks.Method('WalkSpeed');loop(1/60)
-assert(humanoid.WalkSpeed==70 and owner==false)
+assert(humanoid.WalkSpeed==70 and owner==nil)
 callbacks.Method('Velocity');loop(1/60)
 assert(humanoid.WalkSpeed==16,'switching out of WalkSpeed restores it immediately')
 callbacks.Method('WalkSpeed');loop(1/60)
@@ -94,7 +95,7 @@ callbacks.Float('Floor');loop(1/60);floor=allocated[#allocated]
 Module.destroy()
 assert(not feature.Enabled and loop==nil and owner==nil and floor.destroyed)
 for _,o in ipairs(allocated) do assert(not o.Parent,'no leaked flight objects') end
-print('PASS Flight: PlatformStand ownership, WalkSpeed transitions/respawn, Floor to Constraint, Bypass altitude, destroy')
+print('PASS Fly: no PlatformStand ownership or option, WalkSpeed transitions/respawn, Floor to Constraint, Bypass altitude, destroy')
 '''
 with tempfile.TemporaryDirectory(prefix='flight-') as tmp:
     p=Path(tmp)/'flight.luau';p.write_text(script)

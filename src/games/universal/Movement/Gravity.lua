@@ -48,7 +48,7 @@ function Module.init(context: Runtime): any
         "Keep workspace gravity at a custom value",
         5,
         toggleGravity,
-        {categoryName = "Movement"}
+        {categoryName = "World"}
     )
     addNumberOption(GravityFeature, "Gravity value", gravitySettings.value, 0, 500, function(value)
         gravitySettings.value = value

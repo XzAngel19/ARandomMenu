@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Execute v16 visibility, migration, evidence and cosmetic code in mocked Luau.
+"""Execute v16 visibility, migration and cosmetic code in mocked Luau.
 LUAU=/path/to/luau python3 tools/test_mm2_v16.py
 These are deterministic regression tests, not a Roblox runtime/physics test.
 """
@@ -13,7 +13,6 @@ from test_mm2_precision import PRELUDE, section
 
 ROOT = Path(__file__).resolve().parents[1]
 BASE = (ROOT / 'src/games/MM2/base.lua').read_text()
-LEARNING = (ROOT / 'src/games/universal/Other/GameLearning.lua').read_text()
 VISUALS = (ROOT / 'src/games/MM2/Render/WeaponVisuals.lua').read_text()
 
 
@@ -82,42 +81,6 @@ files.out=nil; runtime.persistenceBlocked=false; loadSavedHistory(); assert(not 
 pass("migration: byte-exact backup; poisoned totals/events quarantined; valid stats kept; failures protected")
 end
 
-do
-local runtime={sessionId="GL-session",buildStamp="v16",shots={},spawnShots={},hits={},revision=0,aggregates={
-    shots=0,unconfirmed=0,confirmations=0,targetHits=0,projectileObservations=0,deathAssociations=0,unattributedDeaths=0},shotCounter=0}
-local timers={}
-local task={delay=function(_,fn) table.insert(timers,fn) end}
-local tuning={killWindowSeconds=4,maxEvents=300}
-local isMM2=true
-local function clampTrim() end
-local function vectorArray(v) return {v.X,v.Y,v.Z} end
-local function getPingMilliseconds() return 180 end
-local function buildScene() return {} end
-local LocalPlayer={Character={FindFirstChild=function() return {Position=Vector3.zero} end}}
-local mouse={Hit={Position=Vector3.new(10,0,0)}}
-local typeof=function(v) if type(v)=="table" and v.X then return "Vector3" end; return type(v) end
-local os={clock=function() return 10 end,time=function() return 123 end}
-''', section(LEARNING, '        local function finalizeShot(', '        local function recordShot('),
-              section(LEARNING, '        local function recordAuthoredShot(', '        local function watchPlayer('), r'''
-recordAuthoredShot({kind="knifeActivation",shotId="activation"})
-assert(runtime.aggregates.shots==0)
-local function shoot(id,kind) recordAuthoredShot({kind=kind or "gun",shotId=id,targetName="Target",sessionId="core-session",buildStamp="v16",toolName="Gun",originPos=Vector3.zero,aimPos=Vector3.new(10,0,0)}) end
-shoot("one"); shoot("one"); assert(runtime.aggregates.shots==1 and runtime.shots[1].target=="Target")
-recordConfirmation({shotId="one",kind="gun",hitTarget=true,evidence="GunFired.hitPart"})
-recordConfirmation({shotId="one",kind="gun",hitTarget=true})
-timers[1]()
-assert(runtime.aggregates.targetHits==1 and runtime.aggregates.confirmations==1)
-assert(runtime.shots[1].outcome.verdict=="target-hit" and runtime.aggregates.unconfirmed==0)
-shoot("two"); timers[2](); assert(runtime.shots[2].outcome.verdict=="unconfirmed")
-recordConfirmation({shotId="two",kind="gun",hitTarget=true}); assert(runtime.aggregates.unconfirmed==0)
-shoot("three","knife"); recordConfirmation({shotId="three",kind="knife",evidence="projectile-observed"})
-assert(runtime.shots[3].outcome.verdict=="projectile-observed" and runtime.aggregates.targetHits==2)
-recordDeath({Name="Bystander"}); assert(runtime.aggregates.unattributedDeaths==1)
-recordDeath({Name="Target"}); assert(runtime.aggregates.deathAssociations==1)
-assert(runtime.shots[3].outcome.verdict=="projectile-observed")
-shoot("four"); runtime.sessionId="reset"; timers[4](); assert(runtime.aggregates.unconfirmed==0)
-pass("evidence: no activation/author duplicate; targetName bridge; late hit replaces unknown; no invented miss/kill")
-end
 ''']
     chunks += [r'''
 do

@@ -243,7 +243,7 @@ function Module.init(context: Runtime): any
         "Climb or run on walls and ceilings like Spider-Man",
         20,
         toggleSpider,
-        {categoryName = "Blatant"}
+        {categoryName = "Exploits"}
     )
     addCycleOption(
         SpiderFeature,

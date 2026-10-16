@@ -46,8 +46,12 @@ local humanoid={EmoteTriggered=signal(),Parent=character,WalkSpeed=16,JumpPower=
     FindFirstChildOfClass=function() return animator end,
     GetAppliedDescription=function() return {GetEmotes=function() return {Salute={12345}} end,Destroy=function() end} end}
 local tick,mode,toggle,feature
+local checkboxes={}
+local motionHeading=nil
 local connections={}
+local stored={values={["Movement.FreezeMovements.Freezemode"]="Freeze Emotes"},states={}}
 local host={
+    configData=stored,
     TaskManager={Connect=function(_,fn) tick=fn; return {Disconnect=function() tick=nil end} end},
     featureConnections=connections,
     disconnectFeatureConnection=function(key) if connections[key] then connections[key]:Disconnect(); connections[key]=nil end end,
@@ -55,7 +59,9 @@ local host={
     createUniversalFeature=function(_,_,_,fn)
         toggle=fn; feature={enabled=false,SetStatus=function(self,s) self.status=s end};return feature
     end,
-    addCycleOption=function(_,_,_,_,fn) mode=fn;fn('Anchor') end,
+    addCycleOption=function(_,_,values,_,fn) assert(#values==2 and values[1]=='Anchor' and values[2]=='Motion');mode=fn;fn(stored.values['Movement.FreezeMovements.Freezemode'] or 'Anchor') end,
+    addToggleOption=function(_,name,default,fn) checkboxes[name]=fn;fn(default);return {Parent={Visible=true}} end,
+    addSectionOption=function(_,name) assert(name=='Motion settings');motionHeading={Visible=true};return motionHeading end,
     addInformationOption=function() end,
 }
 local function track(name,id,priority)
@@ -64,6 +70,7 @@ local function track(name,id,priority)
     function t:Play() self.plays+=1;self.IsPlaying=true;animator.AnimationPlayed:Fire(self) end
     function t:Stop() self.stops+=1;self.IsPlaying=false end
     function t:Destroy() self.destroyed=true end
+    function t:AdjustSpeed(speed) self.Speed=speed end
     return t
 end
 local loaded={}
@@ -76,9 +83,14 @@ end
 '''
 TESTS = r'''
 Module.init({host=host})
+assert(stored.values['Movement.FreezeMovements.Freezemode']=='Motion','legacy emote mode must not anchor the player on upgrade')
+assert(stored.states['Movement.FreezeMovements.FreezeEmotes']==true)
+mode('Anchor')
 feature.enabled=true;toggle(true);tick()
-assert(root.Anchored and humanoid.WalkSpeed==0 and humanoid.JumpHeight==0)
-mode('Freeze Emotes')
+assert(root.Anchored and humanoid.WalkSpeed==16 and humanoid.JumpHeight==7.2)
+assert(not motionHeading.Visible)
+mode('Motion')
+assert(motionHeading.Visible)
 assert(not root.Anchored and humanoid.WalkSpeed==16 and humanoid.JumpHeight==7.2)
 tick() -- binds AnimationPlayed and reads avatar emotes
 local custom=track('Salute',999,'Idle')
@@ -149,17 +161,41 @@ local destroyedBefore=resolvedDestroyed
 for _,job in ipairs(delayedJobs) do job() end
 assert(resolvedDestroyed==destroyedBefore,'stale catalog job must not load assets after OFF')
 delayedJobs=nil
-mode('Glitch Animations');feature.enabled=true;toggle(true)
-local walk=track('Walk',444,'Movement')
+-- The two Motion checkboxes are independent of movement physics.
+mode('Motion');checkboxes['Freeze Emotes'](false);checkboxes['Freeze Animation'](true)
+feature.enabled=true;toggle(true)
+local walk=track('Walk',444,'Movement');walk.Speed=.8;walk.TimePosition=.7
 local stab=track('Stab',222,'Action')
 tracks={walk,stab};tick()
-assert(walk.TimePosition==0 and stab.TimePosition==1)
-walk.TimePosition=0.09;now+=0.01;tick()
-assert(walk.TimePosition==0.09 and walk.plays==0,'fixed cadence, no frame-by-frame Play')
-now+=0.12;tick();assert(walk.TimePosition==0)
-mode('Humanoid');tick();assert(not root.Anchored and humanoid.JumpHeight==0)
+local held=loaded[#loaded]
+assert(held.Animation==walk.Animation and held.Looped and held.Priority=='Action')
+assert(held.Speed==.8 and held.TimePosition==.7 and held.IsPlaying)
+local jump=track('Jump',555,'Core');walk.IsPlaying=false;tracks={jump,stab}
+humanoid.GetState=function() return 'Jumping' end
+tick();tick()
+assert(loaded[#loaded]==held and held.IsPlaying,'walking clip must survive a jump without recapture')
+assert(held.TimePosition==.7 and held.plays==1,'do not seek/reset Play every frame')
+assert(not root.Anchored and humanoid.WalkSpeed==16 and humanoid.JumpHeight==7.2)
+checkboxes['Freeze Animation'](false)
+assert(held.destroyed and not held.IsPlaying and stab.stops==0 and jump.stops==0)
+checkboxes['Freeze Animation'](true);tracks={walk};walk.IsPlaying=true;tick();held=loaded[#loaded]
+mode('Anchor');tick()
+assert(held.destroyed and root.Anchored and not motionHeading.Visible,'mode switch releases motion before anchoring')
+mode('Motion');tick()
+assert(not root.Anchored and motionHeading.Visible,'Motion must restore Anchor ownership')
+local oldMotion=loaded[#loaded]
+local oldRoot=root
+root={Parent=true,Anchored=false,AssemblyLinearVelocity={Magnitude=0}}
+local run=track('Run',666,'Movement');tracks={run};tick()
+assert(oldMotion.destroyed and loaded[#loaded].Animation==run.Animation,'new root must release and recapture motion')
+feature.enabled=false;toggle(false)
+assert(not root.Anchored and not oldRoot.Anchored)
+root.Anchored=true;mode('Anchor');feature.enabled=true;toggle(true);tick()
+feature.enabled=false;toggle(false)
+assert(root.Anchored,'pre-existing anchored state must be restored, not forced false')
+root.Anchored=false
 Module.destroy();assert(humanoid.JumpHeight==7.2 and humanoid.WalkSpeed==16 and not tick)
-print('PASS FreezeMovements: UGC engine tracks, catalog-to-animation resolution, denied-event fallback, mode restoration, avatar names/IDs, immediate tracks, attack exclusion, duplicate prevention, disable cleanup, glitch cadence, JumpHeight, destroy')
+print('PASS FreezeMovements: UGC engine tracks, catalog-to-animation resolution, denied-event fallback, mode restoration, avatar names/IDs, immediate tracks, attack exclusion, duplicate prevention, disable cleanup, Anchor/Motion, independent checkboxes, locomotion lock through jump, JumpHeight, destroy')
 '''
 
 
