@@ -765,9 +765,8 @@ function Module.init(runtime: any): any
             registry = mm2Features,
         }
     )
-    addActionOption(ShootFeature, "Shoot now", triggerManualShot,
-        "Equips your sheriff gun and fires once. Auto Shoot never equips it.")
     local ShootTargetBox
+    local wallCheckRow: GuiObject? = nil
     local silentSweepRow: GuiObject? = nil
     local silentSpawnRow: GuiObject? = nil
     local spawnStatsRow: GuiObject? = nil
@@ -781,6 +780,7 @@ function Module.init(runtime: any): any
         end
         -- Silent-only controls stay hidden while the mode is Prediction.
         local silent: boolean = mm2Settings.silentAim == true
+        if wallCheckRow then setOptionVisible(ShootFeature, wallCheckRow, not silent) end
         if silentSweepRow then
             setOptionVisible(ShootFeature, silentSweepRow :: GuiObject, silent)
         end
@@ -822,7 +822,7 @@ function Module.init(runtime: any): any
             triggerManualShot
         )
     end
-    addToggleOption(
+    local wallButton = addToggleOption(
         ShootFeature,
         "WallCheck",
         mm2Settings.shootWallCheck,
@@ -834,6 +834,7 @@ function Module.init(runtime: any): any
             .. "aims at that visible part. Silent AIM skips it: it authors "
             .. "the shot at the target."
     )
+    wallCheckRow = wallButton and wallButton.Parent
     addToggleOption(
         ShootFeature,
         "Macro",

@@ -119,7 +119,7 @@ end
 assert 'EquipTool' not in K
 assert 'EquipTool' not in section(S,'    local function fireGunAtTarget','    local shootFeatureActive:')
 assert '"Auto Range"' not in A and 'autoRange' not in A
-assert '"Throw now"' in K
+assert '"Throw now"' not in K
 assert '"Max error"' not in S
 assert 'allowUncertain' in S
 with tempfile.TemporaryDirectory(prefix='equipped-actions-') as tmp:

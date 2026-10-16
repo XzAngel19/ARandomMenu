@@ -82,7 +82,7 @@ for _,rig in ipairs({'R6','R15'}) do
     tick(.101)
     down=rotate(shoulder.C0,Vector3.new(0,-1,0))
     assert(down.Z<-.9,rig..' release arm must point forward')
-    assert(sends==1 and not throwPending)
+    assert(sends==1 and throwPending,'recovery must remain busy after release')
     tick(.26)
     assert(sends==1 and not tick and shoulder.C0==c0 and shoulder.Transform==transform)
     for _,j in pairs(joints) do assert(j.Transform~=nil) end
@@ -92,22 +92,22 @@ for _,rig in ipairs({'R6','R15'}) do
     assert(not tick and sends==1 and shoulder.C0==c0,'OFF is idempotent and cannot fire pending packet')
     playThrowAnimation(knife,release);tick(.1);LocalPlayer.Character={};tick(.01)
     assert(not tick and sends==1 and shoulder.C0==c0,'respawn cancels')
-    LocalPlayer.Character=character;knifeThrowSettings.animation=false
-    playThrowAnimation(knife,release);assert(sends==2 and not tick,'animation OFF fires immediately')
-    knifeThrowSettings.animation=true
-    playThrowAnimation(knife,release);tick(1)
-    assert(sends==3 and not tick,'a stalled frame emits at most one packet')
+    LocalPlayer.Character=character
+    playThrowAnimation(knife,release);assert(tick and sends==1,'animation is always enabled')
+    tick(1)
+    assert(sends==2 and not tick and not throwPending,'a stalled frame emits at most one packet')
     pass('actual '..rig..' throw: raised arm, forward release, render phase, cancellation, exact restore')
 end
 '''
 script += r'''
 do
-local knifeThrowSettings={animation=true,mode='Normal',range=120,spawnOffset=5,fireDelay=1,throwHz=60}
+local knifeThrowSettings={enabled=true}
 local lastThrow=-math.huge
 local throwPending=false
 local root={Position=Vector3.new(30,0,0)}
 local target={Character={FindFirstChild=function() return root end}}
 local valid=true
+local visible=true
 local function isValidTarget() return valid end
 local LocalPlayer={Character={FindFirstChild=function() return nil end}}
 local sends,notes=0,0
@@ -121,10 +121,9 @@ end}
 local events={FindFirstChild=function() return remote end}
 local knife={Name='Knife',Parent=LocalPlayer.Character,FindFirstChild=function(_,n) return n=='Handle' and handle or events end}
 local function getReadyKnife() return knife.Parent==LocalPlayer.Character and knife or nil end
-local function findNearestTarget() return target end
+local function findNearestTarget() return valid and visible~=false and target or nil end
 local predictionCalls=0
 local function predictAim() predictionCalls+=1;return root.Position end
-local visible=true
 local function resolveKnifeAim() return visible and predictAim() or nil end
 local function isWeaponPathClear() return visible end
 local pending=nil
@@ -140,12 +139,12 @@ now=10;throwKnife();assert(pending and sends==0 and predictionCalls==0)
 root.Position=Vector3.new(40,0,0)
 local release=pending;throwPending=false;pending=nil;release()
 assert(sends==1 and notes==1 and predictionCalls==1)
-throwKnife();assert(not pending,'server interval starts at release')
-now+=2;throwKnife();assert(pending)
+throwKnife();assert(pending,'no artificial delay after completed animation')
+throwKnife();assert(pending and sends==1,'in-flight animation is not restarted')
 valid=false;release=pending;throwPending=false;pending=nil;release();assert(sends==1,'invalidated target cancels release')
 valid=true;throwKnife();knife.Parent={};release=pending;throwPending=false;pending=nil;release();assert(sends==1,'unequip cancels packet')
 knife.Parent=LocalPlayer.Character;throwKnife();visible=false;release=pending;throwPending=false;pending=nil;release();assert(sends==1,'WallCheck rechecked at release')
-pass('actual throw packet: deferred, fresh target prediction, oriented handle frame, cooldown and cancellation')
+pass('actual throw packet: deferred, fresh target prediction, oriented handle frame, animation busy guard and cancellation')
 end
 '''
 with tempfile.TemporaryDirectory(prefix='knife-rebuild-') as tmp:

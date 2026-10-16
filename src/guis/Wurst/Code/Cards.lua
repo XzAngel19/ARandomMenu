@@ -80,6 +80,7 @@ function Module.init(context: any): any
             ["Freeze Movements"] = 4,
             ["Ghost"] = 5,
             ["Teleport"] = 6,
+            ["Disguise"] = 7,
             ["Improve FPS"] = 1,
             ["Gravity"] = 2,
             ["Anti AFK"] = 3,

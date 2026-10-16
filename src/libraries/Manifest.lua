@@ -172,6 +172,11 @@ local Manifest: Manifest = {
 
 
         {
+            path = "src/games/universal/Other/Disguise.lua",
+            name = "Disguise",
+            category = "Utilities",
+        },
+        {
             path = "src/games/universal/Other/AntiAfk.lua",
             name = "Anti AFK",
             category = "World",

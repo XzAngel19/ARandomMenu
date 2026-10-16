@@ -262,12 +262,12 @@ function Module.init(context: Runtime): any
     )
     local modeRows: {[string]: any} = {}
     local function refreshModeRows(): ()
-        for name: string, button: any in pairs(modeRows) do
+        for name: string, row: any in pairs(modeRows) do
             local visible: boolean = name == "Ceiling Walk" and spiderSettings.mode == "Spiderman"
                 or name == "Climb state" and spiderSettings.mode ~= "Spiderman"
                 or name == "Impulse interval" and spiderSettings.mode == "Impulse"
-            if host.setOptionVisible then host.setOptionVisible(SpiderFeature, button.Parent, visible)
-            elseif button.Parent then button.Parent.Visible = visible end
+            if host.setOptionVisible then host.setOptionVisible(SpiderFeature, row, visible)
+            elseif row then row.Visible = visible end
         end
     end
     addCycleOption(
@@ -314,8 +314,8 @@ function Module.init(context: Runtime): any
         end,
         "Uses climbing state in classic modes (Velocity, Impulse, CFrame)."
     )
-    if ceilingRow then modeRows["Ceiling Walk"] = ceilingRow end
-    if climbRow then modeRows["Climb state"] = climbRow end
+    if ceilingRow then modeRows["Ceiling Walk"] = ceilingRow.Parent end
+    if climbRow then modeRows["Climb state"] = climbRow.Parent end
     local impulseRow: any = addNumberOption(SpiderFeature, "Impulse interval", spiderSettings.impulseInterval,
         0.05, 0.5, function(value: number): () spiderSettings.impulseInterval = value end,
         "Seconds between bounded upward impulses. Only used by Impulse mode.", 0.05)

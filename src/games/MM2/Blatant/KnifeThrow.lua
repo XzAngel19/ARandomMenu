@@ -26,17 +26,9 @@ function Module.init(runtime: any): any
     local isWeaponPathClear: any = core.isWeaponPathClear
     local trajectoryCalibration: any = core.trajectoryCalibration
 
-    local knifeThrowSettings = {
-        enabled = false,
-        mode = "Normal",
-        fireDelay = 1,
-        range = 120,
-        spawnOffset = 5,
-        throwHz = 60,
-        animation = true,
-        wallCheck = true,
-    }
-    local lastThrow = -math.huge
+    -- One preset: held knife, nearest visible target, normal origin,
+    -- always-on animation/LOS. The animation owns the throw cadence.
+    local knifeThrowSettings = {enabled = false}
 
     local function isValidTarget(player: Player): boolean
         if player == LocalPlayer
@@ -50,14 +42,14 @@ function Module.init(runtime: any): any
     end
 
     local resolveKnifeAim: (Player, Vector3) -> Vector3?
-    local function findNearestTarget(maxDistance: number, origin: Vector3?): Player?
+    local function findNearestTarget(origin: Vector3): Player?
         local localRoot: BasePart? = LocalPlayer.Character
             and LocalPlayer.Character:FindFirstChild("HumanoidRootPart") :: BasePart?
         if not localRoot then
             return nil
         end
         local closest: Player? = nil
-        local closestDistance: number = maxDistance
+        local closestDistance: number = math.huge
         for _, player: Player in ipairs(Players:GetPlayers()) do
             if isValidTarget(player) then
                 local targetRoot: BasePart? = player.Character
@@ -65,8 +57,7 @@ function Module.init(runtime: any): any
                 if targetRoot then
                     local distance: number =
                         (targetRoot.Position - localRoot.Position).Magnitude
-                    if distance <= closestDistance and (not origin
-                        or resolveKnifeAim(player, origin) ~= nil) then
+                    if distance < closestDistance and resolveKnifeAim(player, origin) ~= nil then
                         closest = player
                         closestDistance = distance
                     end
@@ -77,6 +68,8 @@ function Module.init(runtime: any): any
     end
 
     local function getReadyKnife(): Tool?
+        local knifeRuntime: any = state and state.mm2KnifeRuntime
+        if knifeRuntime and knifeRuntime.masterEnabled == false then return nil end
         if findMurderer() ~= LocalPlayer then
             return nil
         end
@@ -86,7 +79,7 @@ function Module.init(runtime: any): any
         end
 
         local knife: Tool? = getPlayerWeapon(LocalPlayer, "Knife", true)
-        if not knife or knife.Parent ~= character or knife:GetAttribute("Disabled") == true then
+        if not knife or knife.Parent ~= character or knife.Enabled == false or knife:GetAttribute("Disabled") == true then
             return nil
         end
         return knife
@@ -131,7 +124,7 @@ function Module.init(runtime: any): any
                 if t2 > 0 and (not flight or t2 < flight) then flight = t2 end
             end
         end
-        if not flight or not predictionMath.finite(flight) or flight > 4 then return nil end
+        if not flight or not predictionMath.finite(flight) then return nil end
         return observed + velocity * flight
     end
 
@@ -141,14 +134,15 @@ function Module.init(runtime: any): any
         "Right Arm", "Left Arm", "RightLowerLeg", "LeftLowerLeg", "RightFoot", "LeftFoot", "Right Leg", "Left Leg",
     }
     local KNIFE_PATH_OPTIONS = {ignoreTarget = true}
+    local KNIFE_VISIBLE_OPTIONS = {requireTarget = true}
     resolveKnifeAim = function(target: Player, origin: Vector3): Vector3?
         local predicted: Vector3? = predictAim(target, origin)
         if not predicted then return nil end
-        if not knifeThrowSettings.wallCheck then return predicted end
         local character: Model? = target.Character
         local root: BasePart? = character and character:FindFirstChild("HumanoidRootPart") :: BasePart?
         if not character or not root then return nil end
-        if isWeaponPathClear(origin, predicted, character, nil, KNIFE_PATH_OPTIONS) then return predicted end
+        if isWeaponPathClear(origin, root.Position, character, nil, KNIFE_VISIBLE_OPTIONS)
+            and isWeaponPathClear(origin, predicted, character, nil, KNIFE_PATH_OPTIONS) then return predicted end
         -- Same recovered ray filter and torso-first visibility strategy as
         -- Shoot, but keep projectile lead: no hitscan/raw-position rewind here.
         local lead: Vector3 = predicted - root.Position
@@ -165,7 +159,9 @@ function Module.init(runtime: any): any
                     end
                 end
                 for _, point: Vector3 in ipairs(points) do
-                    if (point - origin).Magnitude > 0.05 and isWeaponPathClear(origin, point, character, nil, KNIFE_PATH_OPTIONS) then return point end
+                    if (point - origin).Magnitude > 0.05
+                        and isWeaponPathClear(origin, point - lead, character, nil, KNIFE_VISIBLE_OPTIONS)
+                        and isWeaponPathClear(origin, point, character, nil, KNIFE_PATH_OPTIONS) then return point end
                 end
             end
         end
@@ -197,10 +193,8 @@ function Module.init(runtime: any): any
         local character: Model? = LocalPlayer.Character
         if not character or knife.Parent ~= character then return end
         local function release(): ()
-            throwPending = false
             if onRelease then onRelease() end
         end
-        if not knifeThrowSettings.animation then release(); return end
         -- Parent-space rotation is deliberate. R6 shoulders have a rotated
         -- bind frame: post-multiplying an X rotation swings sideways, not up.
         local function addJoint(partName: string, jointName: string, lift: number, forward: number, roll: number): ()
@@ -256,55 +250,40 @@ function Module.init(runtime: any): any
     end
 
     local function throwKnife(): ()
-        if throwPending or os.clock() - lastThrow < knifeThrowSettings.fireDelay then return end
+        if not knifeThrowSettings.enabled or throwPending then return end
         local knife: Tool? = getReadyKnife()
         if not knife then stopThrowAnimation(); return end
         local events: Instance? = knife:FindFirstChild("Events")
         local remote: Instance? = events and events:FindFirstChild("KnifeThrown")
         if not remote or not remote:IsA("RemoteEvent") then return end
         local character: Model? = LocalPlayer.Character
-        local silent: boolean = knifeThrowSettings.mode == "Silent"
-        local function getOrigin(target: Player?): CFrame?
+        local function getOrigin(): CFrame?
             if not character or character ~= LocalPlayer.Character then return nil end
-            local handle: any = knife:FindFirstChild("Handle")
-            local hand: any = character:FindFirstChild("RightHand")
+            local handle: Instance? = knife:FindFirstChild("Handle")
+            local hand: Instance? = character:FindFirstChild("RightHand")
                 or character:FindFirstChild("Right Arm") or character:FindFirstChild("HumanoidRootPart")
-            local source: any = handle and handle:IsA("BasePart") and handle or hand
-            if not source then return nil end
-            local frame: CFrame = source.CFrame
-            if silent and target and target.Character then
-                local root: any = target.Character:FindFirstChild("HumanoidRootPart")
-                if not root then return nil end
-                local direction: Vector3 = frame.Position - root.Position
-                direction = direction.Magnitude > 0.1 and direction.Unit or Vector3.new(0, 0, 1)
-                return CFrame.new(root.Position + direction * knifeThrowSettings.spawnOffset)
-            end
-            return frame
+            local source: Instance? = handle and handle:IsA("BasePart") and handle or hand
+            if not source or not source:IsA("BasePart") then return nil end
+            return (source :: BasePart).CFrame
         end
-        local initialOrigin: CFrame? = getOrigin(nil)
-        if not initialOrigin then return end
-        local target: Player? = findNearestTarget(silent and 100000 or knifeThrowSettings.range,
-            not silent and initialOrigin.Position or nil)
-        if not target then return end
+        local initialOrigin: CFrame? = getOrigin()
+        if not initialOrigin or not findNearestTarget(initialOrigin.Position) then return end
         local function sendAtRelease(): ()
-            -- Re-read the held weapon, target, muzzle and prediction AFTER the
-            -- wind-up. No frozen 300ms-old aim and no automatic re-equipping.
-            if getReadyKnife() ~= knife or not isValidTarget(target :: Player) then return end
-            local origin: CFrame? = getOrigin(target)
+            if not knifeThrowSettings.enabled or getReadyKnife() ~= knife then return end
+            local origin: CFrame? = getOrigin()
             if not origin then return end
-            local root: any = target.Character:FindFirstChild("HumanoidRootPart")
-            if not silent and (root.Position - origin.Position).Magnitude > knifeThrowSettings.range then return end
-            local aim: Vector3? = silent and predictAim(target :: Player, origin.Position)
-                or resolveKnifeAim(target :: Player, origin.Position)
+            -- Select again at release: do not cling to a target that closed
+            -- its peek during windup when another player is now visible.
+            local target: Player? = findNearestTarget(origin.Position)
+            if not target then return end
+            local aim: Vector3? = resolveKnifeAim(target, origin.Position)
             if not aim or (aim - origin.Position).Magnitude < 0.05 then return end
-            lastThrow = os.clock()
             remote:FireServer(origin, CFrame.new(aim))
             pcall(trajectoryCalibration.noteAuthoredShot, trajectoryCalibration, {
                 kind = "knife", tool = knife, toolName = knife.Name,
-                originPos = origin.Position, aimPos = aim, target = target, silent = silent,
-                settings = {mode = knifeThrowSettings.mode, throwHz = knifeThrowSettings.throwHz,
-                    fireDelay = knifeThrowSettings.fireDelay, spawnOffset = knifeThrowSettings.spawnOffset,
-                    model = "linear-intercept-v34", wallCheck = knifeThrowSettings.wallCheck, windupSeconds = knifeThrowSettings.animation and 0.3 or 0},
+                originPos = origin.Position, aimPos = aim, target = target, silent = false,
+                settings = {mode = "Normal", animation = true, wallCheck = true,
+                    cadence = "animation-cycle", model = "linear-intercept-v34", windupSeconds = 0.3},
             })
         end
         local ok: boolean = pcall(playThrowAnimation, knife, sendAtRelease)
@@ -313,22 +292,12 @@ function Module.init(runtime: any): any
 
     local function toggleKnifeThrow(enabled: boolean): ()
         knifeThrowSettings.enabled = enabled
-        if state.mm2KnifeRuntime then
-            state.mm2KnifeRuntime.throwWanted = enabled
-        end
+        if state.mm2KnifeRuntime then state.mm2KnifeRuntime.throwWanted = enabled end
         disconnectFeatureConnection("MM2KnifeThrow")
-        if not enabled then
-            stopThrowAnimation()
-            return
-        end
-        lastThrow = -math.huge
-        local elapsed: number = 0
-        featureConnections.MM2KnifeThrow =
-            TaskManager:Connect(function(deltaTime: number): ()
-                local due: boolean
-                due, elapsed = predictionMath.sampleDue(elapsed, deltaTime, knifeThrowSettings.throwHz)
-                if due then throwKnife() end
-            end)
+        if not enabled then stopThrowAnimation(); return end
+        -- A new throw can start as soon as the previous recovery ends.
+        -- No user timer, range slider, catch-up burst or animation interruption.
+        featureConnections.MM2KnifeThrow = TaskManager:Connect(throwKnife)
     end
 
     local KnifeThrowFeature: any = state.mm2KnifeFeature
@@ -355,90 +324,8 @@ function Module.init(runtime: any): any
         toggleKnifeThrow(false)
     end
 
-    addToggleOption(
-        KnifeThrowFeature,
-        "Knife Throw",
-        false,
-        toggleKnifeThrow,
-        "Auto-throws only while YOU hold the knife; never equips it. Targets the nearest player. Silent spawns the blade"
-            .. " beside the target so it connects at any distance or through walls."
-    )
-    addActionOption(KnifeThrowFeature, "Throw now", function(): ()
-        throwKnife()
-    end)
-    addCycleOption(
-        KnifeThrowFeature,
-        "Mode",
-        {"Normal", "Silent"},
-        1,
-        function(value: string): ()
-            knifeThrowSettings.mode = value
-        end
-    )
-    addNumberOption(
-        KnifeThrowFeature,
-        "Fire delay",
-        knifeThrowSettings.fireDelay,
-        0.5,
-        3,
-        function(value: number): ()
-            knifeThrowSettings.fireDelay = math.clamp(value, 0.5, 3)
-        end,
-        "Seconds between automatic throws.",
-        0.1
-    )
-    addNumberOption(
-        KnifeThrowFeature,
-        "Throw Range",
-        knifeThrowSettings.range,
-        10,
-        400,
-        function(value: number): ()
-            knifeThrowSettings.range = value
-        end,
-        "Maximum target distance for normal throws. Silent ignores this.",
-        5
-    )
-    addNumberOption(
-        KnifeThrowFeature,
-        "Spawn offset",
-        knifeThrowSettings.spawnOffset,
-        1,
-        15,
-        function(value: number): ()
-            knifeThrowSettings.spawnOffset = value
-        end,
-        "Silent only: how far beside the target the blade spawns.",
-        1
-    )
-    addToggleOption(KnifeThrowFeature, "WallCheck", true, function(value: boolean): ()
-        knifeThrowSettings.wallCheck = value
-    end, "Normal: probe torso/head/limbs from the knife, then recheck at release. Silent intentionally bypasses walls.")
-    addToggleOption(
-        KnifeThrowFeature,
-        "Throw animation",
-        knifeThrowSettings.animation,
-        function(value: boolean): ()
-            knifeThrowSettings.animation = value
-            if not value then stopThrowAnimation() end
-        end,
-        "Raises the knife, releases once, then recovers. R6 shoulder / R15 shoulder-elbow-wrist. "
-            .. "OFF or unequip cancels the pending throw and restores the pose."
-    )
-    addNumberOption(
-        KnifeThrowFeature,
-        "Throw Hz",
-        knifeThrowSettings.throwHz,
-        20,
-        120,
-        function(value: number): ()
-            knifeThrowSettings.throwHz = math.clamp(math.round(value), 20, 120)
-        end,
-        "Target checks per second, not throws per second. Default 60; 120 only "
-            .. "helps response granularity on high-FPS clients. Fire delay is "
-            .. "always respected.",
-        5
-    )
+    addToggleOption(KnifeThrowFeature, "Knife Throw", false, toggleKnifeThrow,
+        "Hold the knife: repeatedly throw at the nearest visible player. Normal origin, wall checks and full animation are automatic. No range or delay to configure.", true)
 
     featureConnections.MM2KnifeThrowCharacter = LocalPlayer.CharacterAdded:Connect(stopThrowAnimation)
     activeCleanup = function(): ()

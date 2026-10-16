@@ -192,8 +192,10 @@ function Module.init(runtime: any): any
             end)
     end
 
+    local auraRangeRow: any = nil
     local function toggleKnifeAura(enabled: boolean): ()
         knifeSettings.aura = enabled
+        if auraRangeRow then setOptionVisible(state.mm2KnifeFeature, auraRangeRow, enabled) end
         state.mm2KnifeRuntime.auraWanted = enabled
         state.mm2KnifeRuntime.lastAuraSwing = -math.huge
         refreshKnifeController()
@@ -235,11 +237,13 @@ function Module.init(runtime: any): any
         toggleKnifeAura,
         "Stabs the nearest valid target in range through the game's own HandleTouched"
     )
-    addNumberOption(KnifeFeature, "Aura Range", 14, 7, 30, function(
+    auraRangeRow = addNumberOption(KnifeFeature, "Aura Range", 14, 7, 30, function(
         value: number
     ): ()
         knifeSettings.auraRange = value
     end, "Manual stab reach in studs.")
+
+    if auraRangeRow then setOptionVisible(KnifeFeature, auraRangeRow, knifeSettings.aura) end
 
     activeCleanup = function(): ()
         toggleKnifeAura(false)

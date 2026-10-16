@@ -71,7 +71,7 @@ local FEATURE_CATEGORIES: {[string]: string} = {
 
     ["Anti-AFK"] = "Other",
     ["AntiAFK"] = "Other",
-    ["Disguise"] = "Other",
+    ["Disguise"] = "Utilities",
     ["Fling"] = "Exploits",
     ["Improve FPS"] = "World",
     ["Interact Extender"] = "Exploits",
@@ -221,7 +221,7 @@ local RUNTIME_RAW_BASE: string =
         .. RUNTIME_BRANCH
         .. "/"
 
-local SOURCE_STAMP: string = "v37-20261016-live-shoot-jump"
+local SOURCE_STAMP: string = "v38-20261016-simple-presets"
 
 local BOOT_STARTED_AT: number = os.clock()
 local BOOT_FINGERPRINT_SECONDS: number = 0

@@ -38,7 +38,7 @@ local host={workspace=world,Players={GetPlayers=function() return {} end},LocalP
     disconnectFeatureConnection=function(key) if connections[key] then connections[key]:Disconnect();connections[key]=nil end end,
     createUniversalFeature=function(_,_,_,fn) handler=fn;feature={enabled=false,SetStatus=function() end};return feature end,
     addCycleOption=function(_,_,values,_,fn) mode=fn;assert(#values==4);fn(values[1]) end,
-    addNumberOption=function(_,name,_,_,_,fn) options[name]=fn;local r={Parent={Visible=true}};rows[name]=r.Parent;return r end,
+    addNumberOption=function(_,name,_,_,_,fn) options[name]=fn;local r={Visible=true};rows[name]=r;return r end,
     addToggleOption=function(_,name,_,fn) options[name]=fn;local r={Parent={Visible=true}};rows[name]=r.Parent;return r end,
     addFeatureTooltip=function() end,
 }

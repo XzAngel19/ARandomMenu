@@ -25,7 +25,7 @@ local function predictAim(t) return t.Character:FindFirstChild('HumanoidRootPart
 local visibility='head'
 local calls=0
 local function isWeaponPathClear(_,point,target,strict,opts)
- assert(strict==nil and opts.ignoreTarget)
+ assert(strict==nil and (opts.ignoreTarget or opts.requireTarget))
  calls+=1
  if target==farTarget.Character then return true end
  if visibility=='head' then return point.Y>3 end
@@ -36,15 +36,13 @@ end
 local origin=Vector3.zero
 local aim=resolveKnifeAim(nearTarget,origin)
 near(aim.X,20);near(aim.Y,4)
-assert(findNearestTarget(100,origin)==nearTarget,'partially visible target must not be rejected by a center-only prefilter')
+assert(findNearestTarget(origin)==nearTarget,'partially visible target must not be rejected by a center-only prefilter')
 visibility='torso';aim=resolveKnifeAim(nearTarget,origin)
 near(aim.X,20);near(aim.Y,2);near(aim.Z,.55)
 visibility='blocked';calls=0
-assert(resolveKnifeAim(nearTarget,origin)==nil and calls<=40,'fully blocked fails closed with bounded probes')
-assert(findNearestTarget(100,origin)==farTarget,'blocked nearest player must not starve visible farther player')
-knifeThrowSettings.wallCheck=false;calls=0
-aim=resolveKnifeAim(nearTarget,origin);near(aim.X,20);assert(calls==0)
-print('PASS Knife WallCheck: predicted head/torso rescue, preserved projectile lead, full obstruction, bounded probes, visible-target selection, explicit OFF')
+assert(resolveKnifeAim(nearTarget,origin)==nil and calls<=60,'fully blocked fails closed with bounded probes')
+assert(findNearestTarget(origin)==farTarget,'blocked nearest player must not starve visible farther player')
+print('PASS Knife WallCheck: predicted head/torso rescue, preserved projectile lead, full obstruction, bounded probes, visible-target selection, always-on LOS')
 '''
 with tempfile.TemporaryDirectory(prefix='knife-wallcheck-') as tmp:
  p=Path(tmp)/'test.luau';p.write_text(script)

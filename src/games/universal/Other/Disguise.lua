@@ -1427,9 +1427,9 @@ function Module.init(context: Runtime): any
     end
 
     local card: any
-    card = framework.Categories.Other:CreateModule({
+    card = framework.Categories.Utilities:CreateModule({
         Name = "Disguise",
-        Category = "Other",
+        Category = "Utilities",
         ConfigKey = "Universal.Disguise",
         Order = 26,
         Tooltip = "Copies a target avatar's cosmetics and emotes; optionally copies its movement animations. Animation mode changes local motion IDs only, not the visible avatar.",
@@ -1481,7 +1481,12 @@ function Module.init(context: Runtime): any
 
     card:CreateButton({
         Name = "Use target movement animations",
+        Show = {Option = "Mode", Values = {"Character"}},
         Function = function(): ()
+            if not card.Enabled or settings.mode ~= "Character" then
+                notify("Enable Disguise in Character mode first.")
+                return
+            end
             local numericId: number?, idError: string? = parseId()
             if not numericId then
                 notify(tostring(idError))
@@ -1514,6 +1519,7 @@ function Module.init(context: Runtime): any
 
     card:CreateButton({
         Name = "Show target emotes",
+        Show = {Option = "Mode", Values = {"Character"}},
         Function = function(): ()
             if type(targetEmotes) ~= "table" then
                 notify("Load a user ID in Character mode before listing emotes.")

@@ -407,7 +407,7 @@ local throwPending=false
 local function isValidTarget() return true end
 local root={Position=Vector3.new(30,0,0)}
 local target={Character={FindFirstChild=function() return root end}}
-local thrower={Position=Vector3.zero,CFrame=CFrame.new(Vector3.zero)}
+local thrower={Position=Vector3.zero,CFrame=CFrame.new(Vector3.zero),IsA=function() return true end}
 local LocalPlayer={Character={FindFirstChild=function() return thrower end}}
 local sends,notes,animations=0,0,0
 local remote={IsA=function() return true end,FireServer=function() sends+=1 end}
@@ -422,7 +422,6 @@ local function playThrowAnimation(_,release)
     animations+=1
     release()
     assert(notes==sends,"telemetry must follow the release packet")
-    near(lastThrow,now)
 end
 local stops=0
 local function stopThrowAnimation() stops+=1 end
@@ -435,22 +434,19 @@ local function disconnectFeatureConnection(key)
     if featureConnections[key] then featureConnections[key]:Disconnect(); featureConnections[key]=nil end
 end
 ''', section(KNIFE, "    local function throwKnife", "    local KnifeThrowFeature:"), r'''
-for _,hz in ipairs({20,60,120}) do
+for _,fps in ipairs({20,60,120}) do
     now=0; sends=0; notes=0
-    knob.throwHz=hz
     toggleKnifeThrow(true)
-    for i=1,1200 do now=i/120; callbacks[1](1/120) end
-    assert(sends==10,`cooldown violation at {hz} Hz: {sends}`)
-    assert(notes==10)
+    for i=1,fps do now=i/fps; callbacks[1](1/fps) end
+    assert(sends==fps and notes==fps,"one attempt per frame when the animation mock is ready")
     toggleKnifeThrow(false)
     assert(callbacks[1]==nil)
 end
 assert(stops==3)
 visibility=false; sends=0; notes=0; now=100
-knob.mode="Normal"; toggleKnifeThrow(true); throwKnife(); assert(sends==0)
-knob.mode="Silent"; throwKnife(); assert(sends==1 and notes==1)
-toggleKnifeThrow(false)
-pass("actual Knife loop: live frequency, 1s cooldown, release packet, disable cleanup")
+toggleKnifeThrow(true);throwKnife();assert(sends==0 and notes==0,"no Silent bypass exists")
+toggleKnifeThrow(false);visibility=true;throwKnife();assert(sends==0,"OFF blocks even direct stale callbacks")
+pass("actual Knife loop: automatic frame attempts, no artificial delay, mandatory LOS, OFF cleanup")
 end
 ''']
     chunks += [r'''

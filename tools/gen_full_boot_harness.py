@@ -800,7 +800,7 @@ do
     local expected = {
       Combat = {"Aim Assist", "KillAura", "TriggerBot", "Knife", "Shoot"},
       Exploits = {"Fly", "Fling", "Noclip", "Spider", "Speed", "Jump", "Interact Extender"},
-      Utilities = {"Anti Fling", "Anti Void", "Click Teleport", "Freeze Movements", "Ghost", "Teleport"},
+      Utilities = {"Anti Fling", "Anti Void", "Click Teleport", "Freeze Movements", "Ghost", "Teleport", "Disguise"},
       World = {"Improve FPS", "Gravity", "Anti AFK", "Safe Walk", "Blurt Roles"},
     }
     for category, names in pairs(expected) do
@@ -834,6 +834,38 @@ do
     local blurt = findFeature("Blurt Roles")
     -- Option identity is also persisted in the widget toggle registry.
     assert(ex.state.toggleControls["MM2.BlurtRoles.InstantRoles"], "Instant Roles must be a Blurt Roles option")
+    local shoot = findFeature("Shoot")
+    assert(ex.state.shortcutBindings["MM2.Shoot"], "Shoot keeps its main activation shortcut")
+    assert(not shoot.options:FindFirstChild("Option_Shootnow"), "Shoot now duplicates its main keybind")
+    assert(not ex.state.shortcutBindings["MM2.ShootShoot now"], "duplicate Shoot now shortcut must not register")
+    local knife = findFeature("Knife")
+    for _, name in ipairs({"Mode", "ThrowRange", "Firedelay", "Spawnoffset", "WallCheck", "Throwanimation", "ThrowHz", "Thrownow"}) do
+      assert(not knife.options:FindFirstChild("Option_" .. name), "redundant Knife setting: " .. name)
+    end
+    local auraRange = knife.options:FindFirstChild("Option_AuraRange")
+    assert(auraRange and not auraRange.Visible, "Aura-only range hidden while Aura is off")
+    ex.state.toggleControls["MM2.Knife.KnifeAura"].setChecked(true)
+    assert(auraRange.Visible)
+    ex.state.toggleControls["MM2.Knife.KnifeAura"].setChecked(false)
+    local spider = findFeature("Spider")
+    assert(spider.options:FindFirstChild("Option_CeilingWalk").Visible)
+    assert(not spider.options:FindFirstChild("Option_Climbstate").Visible)
+    assert(not spider.options:FindFirstChild("Option_Impulseinterval").Visible)
+    local disguise = ex.state.framework:GetModule("Disguise")
+    assert(disguise and disguise.Category == "Utilities", "Disguise must actually load in Utilities")
+    disguise.Options.Mode.Metadata.callback("Animation")
+    assert(not disguise.Options["Use target movement animations"].Visible and not disguise.Options["Show target emotes"].Visible)
+    disguise.Options.Mode.Metadata.callback("Character")
+    assert(disguise.Options["Use target movement animations"].Visible and disguise.Options["Show target emotes"].Visible)
+    for _, feature in ipairs(ex.allFeatures) do
+      local seen = {}
+      for _, row in ipairs(feature.optionRows or {}) do
+        if string.sub(row.Name, 1, 7) == "Option_" then
+          assert(not seen[row.Name], "duplicate setting in " .. feature.name .. ": " .. row.Name)
+          seen[row.Name] = true
+        end
+      end
+    end
     local calibration = findFeature("Calibration")
     assert(calibration and string.find(calibration.configKey, "MM2", 1, true), "MM2 Calibration must remain separate")
     assert(ex.state.clickGui and not ex.state.clickGui.categories.Fun, "Fun window must be removed")
