@@ -268,7 +268,8 @@ local target={Character=character}
 local sample={character=character,sampledAt=now,acceleration=Vector3.zero,stability=1,grounded=true}
 local motionSamples={[target]=sample}
 local function getFilteredVelocity() return velocity end
-local function getGunHorizonSeconds() return 0.2+1/40+1/120 end
+local gunHorizon=0.2+1/40+1/120
+local function getGunHorizonSeconds() return gunHorizon end
 local function getGunTurnDiscount() return 1 end
 local function getGunTurnRate() return 0 end
 ''', section(SHOOT, "    local BODY_HALF_WIDTH:", "    local function getSelectedShootTarget"), r'''
@@ -309,7 +310,20 @@ humanoid.GetState=function() return "Freefall" end
 velocity=Vector3.new(16,0,0)
 local _,apex=computeGunAim(target,origin)
 near(apex.endpoint.Y,0.8+math.clamp(-0.5*196.2*jumpH*jumpH,-3,3))
+-- Replay the rising velocity from supplied v31 shot :40: the former
+-- 3-stud upward cap discarded more than a stud of legitimate movement.
+gunHorizon=0.15
+velocity=Vector3.new(-4.025160789489746,42.64503860473633,16.26344108581543)
+humanoid.FloorMaterial="Air"
+local _,rising=computeGunAim(target,origin)
+near(rising.endpoint.Y,0.8+velocity.Y*0.15-0.5*196.2*0.15^2)
+assert(rising.endpoint.Y>3.8)
 humanoid.GetState=function() return "Running" end
+humanoid.FloorMaterial="Ground";humanoid.MoveDirection=Vector3.new(1,0,0)
+velocity=Vector3.zero
+local _,stationary=computeGunAim(target,origin)
+near(stationary.endpoint.X,0)
+near(stationary.endpoint.Y,0.8)
 pass("actual Shoot solver: linear lead; torso offset; jump; stale sample; no phantom drop; stop damping; jump state")
 end
 ''']

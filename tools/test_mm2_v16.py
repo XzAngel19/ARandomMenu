@@ -43,6 +43,8 @@ end
 local a,b=Vector3.zero,Vector3.new(10,0,0)
 assert(isWeaponPathClear(a,b,target))
 layers={part(1),part(0,target)}; assert(isWeaponPathClear(a,b,target))
+assert(not isWeaponPathClear(a,b,target,true),"Shoot must not ignore untagged invisible blockers")
+layers={part(0,target)};assert(isWeaponPathClear(a,b,target,true))
 layers={part(1),part(0)}; assert(not isWeaponPathClear(a,b,target))
 layers={part(0.99)}; assert(not isWeaponPathClear(a,b,target))
 layers={}; for i=1,40 do table.insert(layers,part(1)) end
@@ -244,6 +246,8 @@ local function character(r15)
     return c
 end
 LocalPlayer.Character=character(false)
+local initialLeft=LocalPlayer.Character:FindFirstChild("Torso"):FindFirstChild("Left Shoulder")
+initialLeft.C0=CFrame.new(Vector3.new(0.2,0.3,0.4))
 local gun=child(LocalPlayer.Character,"Tool","Gun")
 local handle=child(gun,"Part","Handle"); handle.tags={"Weapon_Gun"}; handle.attributes={Damage=100}; handle.Anchored=true
 child(handle,"Script"); child(handle,"RemoteEvent"); child(handle,"WeldConstraint")
@@ -271,11 +275,11 @@ do
     torso.CFrame=CFrame.new(Vector3.zero)
     rArm.CFrame=CFrame.new(Vector3.new(1,0.5,-1.4))
     RunService.PreSimulation:Fire()
-    local p=lJoint.Transform.Position
+    local p=lJoint.C0.Position
     near(p.X,-1); near(p.Y,0.5); near(p.Z,-1.4)
     rArm.CFrame=CFrame.new(Vector3.new(1,0.5,0))
     RunService.PreSimulation:Fire()
-    p=lJoint.Transform.Position
+    p=lJoint.C0.Position
     near(p.Z,0)
     -- Animator has changed the right shoulder but physics still exposes
     -- the OLD arm CFrame. Mirror the evaluated Motor6D pose, not that stale part.
@@ -283,14 +287,16 @@ do
     rJoint.Part0=torso;rJoint.Part1=rArm
     rJoint.Transform=CFrame.new(Vector3.new(2,3,-4))
     RunService.PreSimulation:Fire()
-    p=lJoint.Transform.Position;near(p.X,-2);near(p.Y,3);near(p.Z,-4)
+    p=lJoint.C0.Position;near(p.X,-2);near(p.Y,3);near(p.Z,-4)
     rJoint.Part0=nil
     handle.CFrame=CFrame.new(Vector3.new(8,2,1))
     RunService.PreSimulation:Fire()
     local liveWeld=folder.children[1]:FindFirstChildWhichIsA("Weld")
     assert(liveWeld and liveWeld.C0.Position.X==-7,"skin offsets refresh after delayed placement")
 end
+local oldLeftJoint=LocalPlayer.Character:FindFirstChild("Torso"):FindFirstChild("Left Shoulder")
 gun.Parent=nil; LocalPlayer.Character.DescendantRemoving:Fire(gun); flush()
+near(oldLeftJoint.C0.Position.X,0.2);near(oldLeftJoint.C0.Position.Y,0.3);near(oldLeftJoint.C0.Position.Z,0.4)
 assert(folder.destroyed and #workspace.children[1].children==0)
 local newChar=character(true)
 local knife=child(newChar,"Tool","Knife"); child(knife,"Part","Handle")
@@ -310,11 +316,11 @@ do
     rLower.CFrame=CFrame.new(Vector3.new(1,0.9,-0.9))
     rHand.CFrame=CFrame.new(Vector3.new(1,0.8,-1.2))
     RunService.PreSimulation:Fire()
-    local ps=lShoulder.Transform.Position
+    local ps=lShoulder.C0.Position
     near(ps.X,-1); near(ps.Y,1.3); near(ps.Z,-0.4)
-    local pe=lElbow.Transform.Position
+    local pe=lElbow.C0.Position
     near(pe.X,0); near(pe.Y,-0.4); near(pe.Z,-0.5)
-    local pw=lWrist.Transform.Position
+    local pw=lWrist.C0.Position
     near(pw.X,0); near(pw.Y,-0.1); near(pw.Z,-0.3)
 end
 for _,t in ipairs(tasks) do if t.Connected then t.fn(0.125) end end

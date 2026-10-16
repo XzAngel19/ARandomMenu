@@ -108,10 +108,10 @@ function Module.init(context: Runtime): any
 
     local function freezeEmotesTick(humanoid: any, root: any): ()
         -- Hold the selected emote while walking with a track Animate does
-        -- not own. Release on jump, a new selection, mode change or disable.
+        -- not own. Keep it through jumps; release on death, replacement,
+        -- mode change or disable.
         local okState: boolean, state: any = pcall(function(): any return humanoid:GetState() end)
-        if okState and (state == Enum.HumanoidStateType.Jumping
-            or state == Enum.HumanoidStateType.Dead) then
+        if okState and state == Enum.HumanoidStateType.Dead then
             clearStickyEmoteTracks()
             return
         end

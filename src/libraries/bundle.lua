@@ -1,5 +1,5 @@
 return {
-    stamp = "v31-20261016-tracer-emote-double",
+    stamp = "v32-20261016-arm-jump-shoot",
     files = {
         ["src/Profile/142823291.lua"] = [[
 --!strict
@@ -2251,7 +2251,12 @@ function Module.init(runtime: any): any
     local motionSamples: any = core.motionSamples
     local predictionMath: any = core.predictionMath
     local isMotionGrounded: any = core.isMotionGrounded
-    local isWeaponPathClear: any = core.isWeaponPathClear
+    local function isWeaponPathClear(origin: Vector3, endpoint: Vector3, target: Model?): boolean
+        -- Tracer feedback includes stationary shots stopped by teleporter
+        -- triggers / spawn volumes. Invisible is not necessarily bullet-proof
+        -- passthrough: only explicit WeaponPassthrough tags are excluded.
+        return core.isWeaponPathClear(origin, endpoint, target, true)
+    end
 
     local shootMacro: boolean = false
     local function macroUnequip(gun: Tool?): ()
@@ -2376,14 +2381,10 @@ function Module.init(runtime: any): any
             sample and sample.character == character and sample or nil
         )
 
-        local moveDirection: Vector3 = humanoid.MoveDirection
+        -- Remote MoveDirection is not authoritative velocity (the supplied
+        -- traces contain opposing direction/velocity samples). Do not invent
+        -- WalkSpeed motion for a target whose measured velocity is zero.
         local horizontalVelocity: Vector3 = Vector3.new(velocity.X, 0, velocity.Z)
-        if horizontalVelocity.Magnitude < 1.5
-            and moveDirection.Magnitude > 0.05 then
-            local desired: Vector3 = moveDirection.Unit * humanoid.WalkSpeed
-            velocity = Vector3.new(desired.X, velocity.Y, desired.Z)
-            horizontalVelocity = Vector3.new(desired.X, 0, desired.Z)
-        end
 
         local horizon: number = getGunHorizonSeconds()
         local discount: number = getGunTurnDiscount(horizon, turnRate)
@@ -2458,7 +2459,7 @@ function Module.init(runtime: any): any
                 verticalVelocity * lead
                     - 0.5 * workspace.Gravity * lead * lead,
                 -3,
-                3
+                6 -- v31 shot :40: +4.16 observed, +4.18 ballistic; old +3 clipped it
             )
         elseif grounded then
             verticalDisplacement = math.clamp(velocity.Y, -2.5, 2.5) * lead
@@ -2864,7 +2865,10 @@ function Module.init(runtime: any): any
                 variant = variant,
                 offset = offset,
                 settings = {mode = "Silent", spawn = mm2Settings.silentSpawn,
-                    sweep = mm2Settings.silentSweep, motionHz = mm2Settings.motionSampleHz},
+                    sweep = mm2Settings.silentSweep, motionHz = mm2Settings.motionSampleHz,
+                    leadSeconds = resolved.leadSeconds, errorRadius = resolved.errorRadius,
+                    predictedPoint = {resolved.endpoint.X, resolved.endpoint.Y, resolved.endpoint.Z},
+                    sampledVelocity = {resolved.velocity.X, resolved.velocity.Y, resolved.velocity.Z}},
             })
             macroUnequip(gun)
             return true
@@ -2893,7 +2897,10 @@ function Module.init(runtime: any): any
             target = target,
             silent = false,
             settings = {mode = "Normal", wallCheck = mm2Settings.shootWallCheck,
-                motionHz = mm2Settings.motionSampleHz, leadBias = mm2Settings.gunLeadBias},
+                motionHz = mm2Settings.motionSampleHz, leadBias = mm2Settings.gunLeadBias,
+                strictWallCheck = true, leadSeconds = resolved.leadSeconds, errorRadius = resolved.errorRadius,
+                predictedPoint = {resolved.endpoint.X, resolved.endpoint.Y, resolved.endpoint.Z},
+                sampledVelocity = {resolved.velocity.X, resolved.velocity.Y, resolved.velocity.Z}},
         })
         macroUnequip(gun)
         return true
@@ -4720,6 +4727,7 @@ function Module.init(runtime: any): any
     local generation = 0
     local activeDouble = false
     local doubleBindings: {any} = {}
+    local originalMirrorJoints: {[Motor6D]: any} = setmetatable({}, {__mode = "k"})
     local rebuild: () -> ()
     local feature: any = nil
     local warnedEmptyGeometry = false
@@ -4754,7 +4762,14 @@ function Module.init(runtime: any): any
         parentFrame: CFrame,
         desired: CFrame
     ): ()
-        joint.Transform = (parentFrame * joint.C0):Inverse() * desired * joint.C1
+        if not originalMirrorJoints[joint] then
+            originalMirrorJoints[joint] = {c0 = joint.C0, transform = joint.Transform}
+        end
+        -- Drive the real limb joint, not the duplicate weapon. C0 is not
+        -- the Animator's per-frame pose channel. Neutralize that channel
+        -- while applying the complete desired pose through the joint basis.
+        joint.C0 = parentFrame:Inverse() * desired * joint.C1
+        joint.Transform = CFrame.new()
     end
 
     local function findJoint(parent: Instance, names: {string}): Motor6D?
@@ -4768,30 +4783,12 @@ function Module.init(runtime: any): any
     end
 
     local function resetMirror(character: Model): ()
-        -- Rigs differ: R15 keeps its joints inside the limb parts, R6 keeps
-        -- them inside the Torso. Collect whichever exist (a plain list with
-        -- possible nil holes would stop ipairs early and leave the R6
-        -- shoulder frozen in its last mirrored pose).
-        local candidates: {Instance} = {}
-        local function consider(name: string): ()
-            local found: Instance? = character:FindFirstChild(name)
-            if found then
-                table.insert(candidates, found)
+        for joint: Motor6D, original: any in pairs(originalMirrorJoints) do
+            if joint.Parent then
+                joint.C0 = original.c0
+                joint.Transform = original.transform
             end
-        end
-        consider("LeftUpperArm")
-        consider("Left Arm")
-        consider("LeftLowerArm")
-        consider("LeftHand")
-        consider("UpperTorso")
-        consider("Torso")
-        for _, holder: Instance in ipairs(candidates) do
-            for _, child: Instance in ipairs(holder:GetChildren()) do
-                if child:IsA("Motor6D")
-                    and string.find(child.Name, "Left") then
-                    (child :: Motor6D).Transform = CFrame.new()
-                end
-            end
+            originalMirrorJoints[joint] = nil
         end
     end
 
@@ -4823,8 +4820,14 @@ function Module.init(runtime: any): any
             findJoint(lUpper, {"LeftShoulder", "Left Shoulder"})
                 or findJoint(torso, {"Left Shoulder", "LeftShoulder"})
         if not leftShoulder then
-            return
+            for _, candidate: Instance in ipairs(character:GetDescendants()) do
+                if candidate:IsA("Motor6D") and candidate.Part1 == lUpper then
+                    leftShoulder = candidate :: Motor6D
+                    break
+                end
+            end
         end
+        if not leftShoulder then return end
         local frame: CFrame = (torso :: BasePart).CFrame
         local function animatedFrame(part: BasePart, joint: Motor6D?, parent: CFrame): CFrame
             if joint and joint.Part0 and joint.Part1 == part then
@@ -5638,7 +5641,7 @@ local function clearEffects(folder)
 end
 
 -- Match the recovered client's cursor filters, not an assertion about server rules.
-local function isWeaponPathClear(origin: Vector3, endpoint: Vector3, target: Model?): boolean
+local function isWeaponPathClear(origin: Vector3, endpoint: Vector3, target: Model?, strict: boolean?): boolean
     local direction: Vector3 = endpoint - origin
     if direction.Magnitude < 0.05 then return true end
     local excluded: {Instance} = {}
@@ -5654,7 +5657,7 @@ local function isWeaponPathClear(origin: Vector3, endpoint: Vector3, target: Mod
         local hit: RaycastResult? = workspace:Raycast(origin, direction, params)
         if not hit then return true end
         if target and hit.Instance:IsDescendantOf(target) then return true end
-        if hit.Instance:IsA("BasePart") and hit.Instance.Transparency == 1 then
+        if not strict and hit.Instance:IsA("BasePart") and hit.Instance.Transparency == 1 then
             table.insert(excluded, hit.Instance)
         else
             return false
@@ -17473,10 +17476,10 @@ function Module.init(context: Runtime): any
 
     local function freezeEmotesTick(humanoid: any, root: any): ()
         -- Hold the selected emote while walking with a track Animate does
-        -- not own. Release on jump, a new selection, mode change or disable.
+        -- not own. Keep it through jumps; release on death, replacement,
+        -- mode change or disable.
         local okState: boolean, state: any = pcall(function(): any return humanoid:GetState() end)
-        if okState and (state == Enum.HumanoidStateType.Jumping
-            or state == Enum.HumanoidStateType.Dead) then
+        if okState and state == Enum.HumanoidStateType.Dead then
             clearStickyEmoteTracks()
             return
         end

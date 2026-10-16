@@ -36,7 +36,12 @@ function Module.init(runtime: any): any
     local motionSamples: any = core.motionSamples
     local predictionMath: any = core.predictionMath
     local isMotionGrounded: any = core.isMotionGrounded
-    local isWeaponPathClear: any = core.isWeaponPathClear
+    local function isWeaponPathClear(origin: Vector3, endpoint: Vector3, target: Model?): boolean
+        -- Tracer feedback includes stationary shots stopped by teleporter
+        -- triggers / spawn volumes. Invisible is not necessarily bullet-proof
+        -- passthrough: only explicit WeaponPassthrough tags are excluded.
+        return core.isWeaponPathClear(origin, endpoint, target, true)
+    end
 
     local shootMacro: boolean = false
     local function macroUnequip(gun: Tool?): ()
@@ -161,14 +166,10 @@ function Module.init(runtime: any): any
             sample and sample.character == character and sample or nil
         )
 
-        local moveDirection: Vector3 = humanoid.MoveDirection
+        -- Remote MoveDirection is not authoritative velocity (the supplied
+        -- traces contain opposing direction/velocity samples). Do not invent
+        -- WalkSpeed motion for a target whose measured velocity is zero.
         local horizontalVelocity: Vector3 = Vector3.new(velocity.X, 0, velocity.Z)
-        if horizontalVelocity.Magnitude < 1.5
-            and moveDirection.Magnitude > 0.05 then
-            local desired: Vector3 = moveDirection.Unit * humanoid.WalkSpeed
-            velocity = Vector3.new(desired.X, velocity.Y, desired.Z)
-            horizontalVelocity = Vector3.new(desired.X, 0, desired.Z)
-        end
 
         local horizon: number = getGunHorizonSeconds()
         local discount: number = getGunTurnDiscount(horizon, turnRate)
@@ -243,7 +244,7 @@ function Module.init(runtime: any): any
                 verticalVelocity * lead
                     - 0.5 * workspace.Gravity * lead * lead,
                 -3,
-                3
+                6 -- v31 shot :40: +4.16 observed, +4.18 ballistic; old +3 clipped it
             )
         elseif grounded then
             verticalDisplacement = math.clamp(velocity.Y, -2.5, 2.5) * lead
@@ -649,7 +650,10 @@ function Module.init(runtime: any): any
                 variant = variant,
                 offset = offset,
                 settings = {mode = "Silent", spawn = mm2Settings.silentSpawn,
-                    sweep = mm2Settings.silentSweep, motionHz = mm2Settings.motionSampleHz},
+                    sweep = mm2Settings.silentSweep, motionHz = mm2Settings.motionSampleHz,
+                    leadSeconds = resolved.leadSeconds, errorRadius = resolved.errorRadius,
+                    predictedPoint = {resolved.endpoint.X, resolved.endpoint.Y, resolved.endpoint.Z},
+                    sampledVelocity = {resolved.velocity.X, resolved.velocity.Y, resolved.velocity.Z}},
             })
             macroUnequip(gun)
             return true
@@ -678,7 +682,10 @@ function Module.init(runtime: any): any
             target = target,
             silent = false,
             settings = {mode = "Normal", wallCheck = mm2Settings.shootWallCheck,
-                motionHz = mm2Settings.motionSampleHz, leadBias = mm2Settings.gunLeadBias},
+                motionHz = mm2Settings.motionSampleHz, leadBias = mm2Settings.gunLeadBias,
+                strictWallCheck = true, leadSeconds = resolved.leadSeconds, errorRadius = resolved.errorRadius,
+                predictedPoint = {resolved.endpoint.X, resolved.endpoint.Y, resolved.endpoint.Z},
+                sampledVelocity = {resolved.velocity.X, resolved.velocity.Y, resolved.velocity.Z}},
         })
         macroUnequip(gun)
         return true

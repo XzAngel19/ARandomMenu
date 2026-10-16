@@ -35,6 +35,7 @@ function Module.init(runtime: any): any
     local generation = 0
     local activeDouble = false
     local doubleBindings: {any} = {}
+    local originalMirrorJoints: {[Motor6D]: any} = setmetatable({}, {__mode = "k"})
     local rebuild: () -> ()
     local feature: any = nil
     local warnedEmptyGeometry = false
@@ -69,7 +70,14 @@ function Module.init(runtime: any): any
         parentFrame: CFrame,
         desired: CFrame
     ): ()
-        joint.Transform = (parentFrame * joint.C0):Inverse() * desired * joint.C1
+        if not originalMirrorJoints[joint] then
+            originalMirrorJoints[joint] = {c0 = joint.C0, transform = joint.Transform}
+        end
+        -- Drive the real limb joint, not the duplicate weapon. C0 is not
+        -- the Animator's per-frame pose channel. Neutralize that channel
+        -- while applying the complete desired pose through the joint basis.
+        joint.C0 = parentFrame:Inverse() * desired * joint.C1
+        joint.Transform = CFrame.new()
     end
 
     local function findJoint(parent: Instance, names: {string}): Motor6D?
@@ -83,30 +91,12 @@ function Module.init(runtime: any): any
     end
 
     local function resetMirror(character: Model): ()
-        -- Rigs differ: R15 keeps its joints inside the limb parts, R6 keeps
-        -- them inside the Torso. Collect whichever exist (a plain list with
-        -- possible nil holes would stop ipairs early and leave the R6
-        -- shoulder frozen in its last mirrored pose).
-        local candidates: {Instance} = {}
-        local function consider(name: string): ()
-            local found: Instance? = character:FindFirstChild(name)
-            if found then
-                table.insert(candidates, found)
+        for joint: Motor6D, original: any in pairs(originalMirrorJoints) do
+            if joint.Parent then
+                joint.C0 = original.c0
+                joint.Transform = original.transform
             end
-        end
-        consider("LeftUpperArm")
-        consider("Left Arm")
-        consider("LeftLowerArm")
-        consider("LeftHand")
-        consider("UpperTorso")
-        consider("Torso")
-        for _, holder: Instance in ipairs(candidates) do
-            for _, child: Instance in ipairs(holder:GetChildren()) do
-                if child:IsA("Motor6D")
-                    and string.find(child.Name, "Left") then
-                    (child :: Motor6D).Transform = CFrame.new()
-                end
-            end
+            originalMirrorJoints[joint] = nil
         end
     end
 
@@ -138,8 +128,14 @@ function Module.init(runtime: any): any
             findJoint(lUpper, {"LeftShoulder", "Left Shoulder"})
                 or findJoint(torso, {"Left Shoulder", "LeftShoulder"})
         if not leftShoulder then
-            return
+            for _, candidate: Instance in ipairs(character:GetDescendants()) do
+                if candidate:IsA("Motor6D") and candidate.Part1 == lUpper then
+                    leftShoulder = candidate :: Motor6D
+                    break
+                end
+            end
         end
+        if not leftShoulder then return end
         local frame: CFrame = (torso :: BasePart).CFrame
         local function animatedFrame(part: BasePart, joint: Motor6D?, parent: CFrame): CFrame
             if joint and joint.Part0 and joint.Part1 == part then

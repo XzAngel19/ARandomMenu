@@ -92,7 +92,7 @@ assert(loaded[3].Looped and loaded[3].Priority=='Action')
 tracks=loaded;now=2;tick();tick()
 assert(#loaded==3,'Animate cancellation must not recreate tracks or capture managed tracks')
 humanoid.GetState=function() return 'Jumping' end
-tick();assert(loaded[3].destroyed,'jump releases the held emote')
+tick();assert(not loaded[3].destroyed and loaded[3].IsPlaying,'jump must retain the held emote')
 humanoid.GetState=function() return 'Running' end
 -- Disable must release revived tracks and the event connection.
 feature.enabled=false;toggle(false)
