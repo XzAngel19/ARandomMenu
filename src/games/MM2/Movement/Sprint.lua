@@ -18,7 +18,6 @@ function Module.init(runtime: any): any
 
     local sprintTrailObjects: {Instance} = {}
 
-    local MM2_SPRINT_SPEED: number = 30
 
     local function clearSprintTrail(): ()
         for _, object: Instance in ipairs(sprintTrailObjects) do
@@ -67,93 +66,25 @@ function Module.init(runtime: any): any
         return trail
     end
 
-    local sprintActive: boolean = false
-    local sprintBaseSpeed: number? = nil
-
-    local function applySprintSpeed(active: boolean): ()
-        local _, humanoid: Humanoid?, root: BasePart? = getCharacterParts()
-        if not humanoid or not root then
-            return
-        end
-        if active then
-            if sprintBaseSpeed == nil and humanoid.WalkSpeed ~= MM2_SPRINT_SPEED then
-                sprintBaseSpeed = humanoid.WalkSpeed
-            end
-            humanoid.WalkSpeed = MM2_SPRINT_SPEED
-        else
-            humanoid.WalkSpeed = sprintBaseSpeed or 16
-            sprintBaseSpeed = nil
-        end
+    local speed: any = state.framework and state.framework:GetModule("Speed")
+    assert(speed, "Sprint option requires the Speed module")
+    speed.ClearSprint = clearSprintTrail
+    speed.SprintFrame = function(active: boolean, root: BasePart): ()
+        if not active then clearSprintTrail(); return end
+        local _, humanoid: Humanoid? = getCharacterParts()
+        ensureSprintTrail(root).Enabled = humanoid ~= nil and humanoid.MoveDirection.Magnitude > 0.05
     end
-
-    local function toggleSprint(enabled: boolean): ()
-        disconnectFeatureConnection("MM2Sprint")
-
-        if not enabled then
-            sprintActive = false
-            clearSprintTrail()
-            applySprintSpeed(false)
-            return
-        end
-
-        featureConnections.MM2Sprint = TaskManager:Connect(function(): ()
-            local _, humanoid: Humanoid?, root: BasePart? = getCharacterParts()
-            if not humanoid or not root then
-                return
-            end
-            if not sprintActive then
-                if sprintBaseSpeed ~= nil then
-
-                    applySprintSpeed(false)
-                end
-                return
-            end
-
-            if humanoid.WalkSpeed ~= MM2_SPRINT_SPEED then
-                if sprintBaseSpeed == nil then
-                    sprintBaseSpeed = humanoid.WalkSpeed
-                end
-                humanoid.WalkSpeed = MM2_SPRINT_SPEED
-            end
-            ensureSprintTrail(root).Enabled = humanoid.MoveDirection.Magnitude > 0.05
-        end)
-    end
-
-    local function setSprintActive(active: boolean): ()
-        if sprintActive == active then
-            return
-        end
-        sprintActive = active
-        applySprintSpeed(active)
-        if not active then
-            local trail: Instance? = nil
-            local _, _, root: BasePart? = getCharacterParts()
-            if root then
-                trail = root:FindFirstChild("Wurst_SprintTail")
-            end
-            if trail and trail:IsA("Trail") then
-                trail.Enabled = false
-            end
-        end
-    end
-
-    createUniversalFeature(
-        "Sprint",
-        "Hold your key to run at 30 speed with a trail",
-        10,
-        toggleSprint,
-        {
-            kind = "hold",
-            onHold = setSprintActive,
-            noOptions = true,
-            categoryName = "Movement",
-            parent = MM2Scroll,
-            registry = mm2Features,
-        }
-    )
-
+    speed:CreateToggle({
+        Name = "Sprint", Default = false,
+        Function = function(value: boolean): ()
+            if not value then clearSprintTrail() end
+        end,
+        Tooltip = "MM2: 30 WalkSpeed with a trail while Speed is enabled. Overrides the on-foot Speed method; no separate module or key required.",
+    })
     activeCleanup = function(): ()
-        toggleSprint(false)
+        clearSprintTrail()
+        speed.ClearSprint = nil
+        speed.SprintFrame = nil
     end
     Module.Events = featureConnections
     Module.Initialized = true

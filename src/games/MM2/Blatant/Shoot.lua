@@ -743,7 +743,9 @@ function Module.init(runtime: any): any
             end
             -- Never re-equip if the user switched away during that frame.
             if shootFeatureActive and LocalPlayer.Character == character and gun.Parent == character then
-                fireGunAtTarget(getSelectedShootTarget())
+                -- An explicit action never waits for a low prediction error.
+                -- This flag skips only that gate, not reload, cooldown or LOS.
+                fireGunAtTarget(getSelectedShootTarget(), {whenReady = true})
             end
         end)
         manualShotPending = false
@@ -815,7 +817,7 @@ function Module.init(runtime: any): any
         4,
         toggleShootMurderer,
         {
-            categoryName = "Blatant",
+            categoryName = "Combat",
             parent = MM2Scroll,
             registry = mm2Features,
         }
@@ -1046,7 +1048,7 @@ function Module.init(runtime: any): any
         5,
         toggleAutoShoot,
         {
-            categoryName = "Blatant",
+            categoryName = "Combat",
             parent = MM2Scroll,
             registry = mm2Features,
         }

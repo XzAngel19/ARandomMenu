@@ -403,6 +403,7 @@ local function getReadyKnife() return knife end
 local function findNearestTarget() return target end
 local function predictAim() return root.Position end
 local visibility=true
+local function resolveKnifeAim() return visibility and predictAim() or nil end
 local function isWeaponPathClear() return visibility end
 local function playThrowAnimation(_,release)
     animations+=1

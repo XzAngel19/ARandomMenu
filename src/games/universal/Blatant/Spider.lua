@@ -33,12 +33,14 @@ function Module.init(context: Runtime): any
         speed: number,
         climbState: boolean,
         ceilingWalk: boolean,
+        impulseInterval: number,
     }
     local spiderSettings: SpiderSettings = {
         mode = "Spiderman",
         speed = 30,
         climbState = false,
         ceilingWalk = true,
+        impulseInterval = 0.15,
     }
     local SpiderFeature: any = nil
 
@@ -62,8 +64,10 @@ function Module.init(context: Runtime): any
         SpiderFeature:SetStatus(spiderSettings.mode)
 
         local onSurface: boolean = false
+        local impulseElapsed: number = math.huge
 
         featureConnections.Spider = TaskManager:Connect(function(deltaTime: number): ()
+            impulseElapsed += math.max(0, deltaTime)
             local character: Model?, humanoidOrNil: Humanoid?, rootOrNil: BasePart? =
                 getCharacterParts()
             if not character or not humanoidOrNil or not rootOrNil then
@@ -147,7 +151,12 @@ function Module.init(context: Runtime): any
                     if wallUpVector.Magnitude > 0.01 then
                         wallUpVector = wallUpVector.Unit
                     else
-                        wallUpVector = (root.CFrame.LookVector - surfNormal * root.CFrame.LookVector:Dot(surfNormal)).Unit
+                        wallUpVector = root.CFrame.LookVector - surfNormal * root.CFrame.LookVector:Dot(surfNormal)
+                        if wallUpVector.Magnitude <= 0.01 then
+                            wallUpVector = root.CFrame.RightVector - surfNormal * root.CFrame.RightVector:Dot(surfNormal)
+                        end
+                        if wallUpVector.Magnitude <= 0.01 then return end
+                        wallUpVector = wallUpVector.Unit
                     end
 
                     local surfaceMove: Vector3 = Vector3.zero
@@ -231,7 +240,13 @@ function Module.init(context: Runtime): any
                 root.AssemblyLinearVelocity = Vector3.new(velocity.X, 0, velocity.Z)
                 root.CFrame = root.CFrame + Vector3.new(0, spiderSettings.speed * deltaTime, 0)
             elseif spiderSettings.mode == "Impulse" then
-                root:ApplyImpulse(Vector3.new(0, spiderSettings.speed, 0) * root.AssemblyMass)
+                -- Pulsed, mass-independent boost, not +speed every frame.
+                -- The old integration accelerated indefinitely and depended on FPS.
+                if impulseElapsed >= spiderSettings.impulseInterval then
+                    impulseElapsed = 0
+                    local deltaVelocity: number = math.max(0, spiderSettings.speed - velocity.Y)
+                    if deltaVelocity > 0 then root:ApplyImpulse(Vector3.new(0, deltaVelocity, 0) * root.AssemblyMass) end
+                end
             else
                 root.AssemblyLinearVelocity = Vector3.new(velocity.X, spiderSettings.speed, velocity.Z)
             end
@@ -245,6 +260,16 @@ function Module.init(context: Runtime): any
         toggleSpider,
         {categoryName = "Exploits"}
     )
+    local modeRows: {[string]: any} = {}
+    local function refreshModeRows(): ()
+        for name: string, button: any in pairs(modeRows) do
+            local visible: boolean = name == "Ceiling Walk" and spiderSettings.mode == "Spiderman"
+                or name == "Climb state" and spiderSettings.mode ~= "Spiderman"
+                or name == "Impulse interval" and spiderSettings.mode == "Impulse"
+            if host.setOptionVisible then host.setOptionVisible(SpiderFeature, button.Parent, visible)
+            elseif button.Parent then button.Parent.Visible = visible end
+        end
+    end
     addCycleOption(
         SpiderFeature,
         "Mode",
@@ -252,8 +277,11 @@ function Module.init(context: Runtime): any
         1,
         function(value: string): ()
             spiderSettings.mode = value
+            refreshModeRows()
             if SpiderFeature.enabled then
-                SpiderFeature:SetStatus(value)
+                -- Do not carry a ceiling pose or pulse timer into a new mode.
+                toggleSpider(false)
+                toggleSpider(true)
             end
         end,
         "Spiderman: Walks on walls/ceilings using your feet with realistic surface physics.\nVelocity/Impulse/CFrame: Classic upward vertical climbing modes."
@@ -268,7 +296,7 @@ function Module.init(context: Runtime): any
             spiderSettings.speed = value
         end
     )
-    addToggleOption(
+    local ceilingRow: any = addToggleOption(
         SpiderFeature,
         "Ceiling Walk",
         spiderSettings.ceilingWalk,
@@ -277,7 +305,7 @@ function Module.init(context: Runtime): any
         end,
         "Allows running upside-down on ceilings with your feet in Spiderman mode."
     )
-    addToggleOption(
+    local climbRow: any = addToggleOption(
         SpiderFeature,
         "Climb state",
         spiderSettings.climbState,
@@ -286,13 +314,20 @@ function Module.init(context: Runtime): any
         end,
         "Uses climbing state in classic modes (Velocity, Impulse, CFrame)."
     )
+    if ceilingRow then modeRows["Ceiling Walk"] = ceilingRow end
+    if climbRow then modeRows["Climb state"] = climbRow end
+    local impulseRow: any = addNumberOption(SpiderFeature, "Impulse interval", spiderSettings.impulseInterval,
+        0.05, 0.5, function(value: number): () spiderSettings.impulseInterval = value end,
+        "Seconds between bounded upward impulses. Only used by Impulse mode.", 0.05)
+    if impulseRow then modeRows["Impulse interval"] = impulseRow end
+    refreshModeRows()
     addFeatureTooltip(
         SpiderFeature,
         "Spiderman mode plants your feet on walls and ceilings to run like Spider-Man. Classic modes pull you vertically up walls."
     )
 
     activeCleanup = function(): ()
-        disconnectFeatureConnection("Spider")
+        toggleSpider(false)
     end
     Module.Initialized = true
     return SpiderFeature

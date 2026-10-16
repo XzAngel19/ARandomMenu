@@ -51,7 +51,7 @@ local FEATURE_CATEGORIES: {[string]: string} = {
     ["Walk Speed"] = "World",
     ["Invisible"] = "Exploits",
 
-    ["Knife"] = "Exploits",
+    ["Knife"] = "Combat",
 
     ["Click Teleport"] = "Utilities",
     ["Freeze Movements"] = "Utilities",
@@ -79,12 +79,10 @@ local FEATURE_CATEGORIES: {[string]: string} = {
     ["Rejoin Server"] = "Other",
     ["Remote Logger"] = "Other",
 
-    ["Instant Role Notify"] = "Utilities",
-    ["Blurt Roles"] = "Utilities",
-    ["Shoot"] = "Exploits",
+    ["Blurt Roles"] = "World",
+    ["Shoot"] = "Combat",
     ["Trajectory Calibration"] = "Other",
-    ["Sprint"] = "Movement",
-    ["Teleport"] = "Movement",
+    ["Teleport"] = "Utilities",
 
     ["Auto Tackle"] = "Combat",
     ["Auto Dribble"] = "Combat",
@@ -224,7 +222,7 @@ local RUNTIME_RAW_BASE: string =
         .. RUNTIME_BRANCH
         .. "/"
 
-local SOURCE_STAMP: string = "v35-20261016-menu-motion"
+local SOURCE_STAMP: string = "v36-20261016-combat-controls"
 
 local BOOT_STARTED_AT: number = os.clock()
 local BOOT_FINGERPRINT_SECONDS: number = 0
@@ -4938,7 +4936,6 @@ local function loadGameModule(
         "src/games/MM2/Render/WeaponVisuals.lua",
         "src/games/MM2/Movement/Sprint.lua",
         "src/games/MM2/Movement/Teleport.lua",
-        "src/games/MM2/Fun/InstantRoleNotify.lua",
         "src/games/MM2/Fun/BlurtRoles.lua",
         "src/games/MM2/Other/TrajectoryCalibration.lua",
     } elseif moduleName == "VD" then {

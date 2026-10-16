@@ -263,6 +263,7 @@ function Module.init(context: Runtime): any
             runtime.nextTeleportAt = 0
             restoreWalkSpeed()
             restoreVehicle()
+            if speed.ClearSprint then speed.ClearSprint() end
             if not enabled then
                 -- Even when the weak capture map was lost, the live humanoid
                 -- must return to its normal speed the moment the card goes
@@ -288,18 +289,23 @@ function Module.init(context: Runtime): any
             speed:Clean(function(): ()
                 restoreWalkSpeed()
                 restoreVehicle()
+                if speed.ClearSprint then speed.ClearSprint() end
             end)
             speed:Loop(function(deltaTime: number): ()
                 local options: any = speed.Options
                 local _, humanoid: Humanoid?, root: BasePart? = characterParts()
                 if not humanoid or not root then
+                    if speed.ClearSprint then speed.ClearSprint() end
                     return
                 end
+                local sprint: boolean = speed.SprintFrame ~= nil and options.Sprint ~= nil and options.Sprint.Value == true
                 local resolvedHumanoid: Humanoid = humanoid :: Humanoid
                 local resolvedRoot: BasePart = root :: BasePart
                 if resolvedHumanoid.Health <= 0 then
+                    if speed.ClearSprint then speed.ClearSprint() end
                     return
                 end
+                if speed.SprintFrame then speed.SprintFrame(sprint and not humanoid.Sit, root) end
 
                 if options["Vehicle speed"] and options["Vehicle speed"].Value then
                     local assembly: BasePart?, model: Model?, seat: VehicleSeat? =
@@ -325,8 +331,8 @@ function Module.init(context: Runtime): any
                     end
                 end
 
-                local mode: string = options["Mode"].Value
-                local target: number = options["Speed"].Value
+                local mode: string = sprint and "WalkSpeed" or options["Mode"].Value
+                local target: number = sprint and 30 or options["Speed"].Value
 
                 if mode == "WalkSpeed" then
                     if runtime.originalWalkSpeed[resolvedHumanoid] == nil then
@@ -496,6 +502,7 @@ function Module.init(context: Runtime): any
     activeCleanup = function(): ()
         restoreWalkSpeed()
         restoreVehicle()
+        if speed.ClearSprint then speed.ClearSprint() end
     end
     Module.Initialized = true
     return speed

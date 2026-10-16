@@ -99,7 +99,7 @@ local function getCharacterParts() return character,humanoid end
 local function getPlayerWeapon(_,_,equipped) assert(not equipped);return gun end
 local RunService={Heartbeat={Wait=function() if cancel then gun.Parent={} end end}}
 local function getSelectedShootTarget() return {} end
-local function fireGunAtTarget() shots+=1 end
+local function fireGunAtTarget(_,opts) assert(opts.whenReady==true and opts.maxError==nil);shots+=1 end
 local shootFeatureActive=true
 local function notify() end
 '''+section(S,'    local manualShotPending:','    local function toggleShootMurderer')+r'''

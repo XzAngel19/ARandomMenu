@@ -141,11 +141,23 @@ function Module.init(runtime: any): any
         end)
     end
 
+    local instantSent: boolean = false
+    local function notifyInstantRoles(): ()
+        if not mm2Settings.instantRoleNotify or instantSent or not hasActiveRoundRoles() then return end
+        local murderer: Player? = findMurderer()
+        local sheriff: Player? = findSheriff()
+        if not murderer or not sheriff then return end
+        instantSent = true
+        notify("Roles ready - Murderer: " .. murderer.Name .. " | Sheriff/Hero: " .. sheriff.Name)
+    end
+
     local unsubscribe: () -> () = core.onRoundRoles(function(active: boolean): ()
         if not active then
             blurtSignature = ""
+            instantSent = false
             return
         end
+        notifyInstantRoles()
         scheduleBlurt()
     end)
 
@@ -177,11 +189,15 @@ function Module.init(runtime: any): any
         3,
         toggleBlurtRoles,
         {
-            categoryName = "Fun",
+            categoryName = "World",
             parent = MM2Scroll,
             registry = mm2Features,
         }
     )
+    addToggleOption(BlurtFeature, "Instant Roles", mm2Settings.instantRoleNotify, function(value: boolean): ()
+        mm2Settings.instantRoleNotify = value
+        if value then notifyInstantRoles() end
+    end, "Private notification once per round, independent of public chat announcements.")
     addNumberOption(
         BlurtFeature,
         "Delay",
@@ -224,6 +240,7 @@ function Module.init(runtime: any): any
 
     activeCleanup = function(): ()
         pcall(unsubscribe)
+        mm2Settings.instantRoleNotify = false
         toggleBlurtRoles(false)
     end
     Module.Events = featureConnections

@@ -150,7 +150,7 @@ function Module.init(runtime: any): any
         function() end,
         {
             category = true,
-            categoryName = "Movement",
+            categoryName = "Utilities",
             parent = MM2Scroll,
             registry = mm2Features,
         }

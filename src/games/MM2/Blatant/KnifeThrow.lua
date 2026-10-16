@@ -34,6 +34,7 @@ function Module.init(runtime: any): any
         spawnOffset = 5,
         throwHz = 60,
         animation = true,
+        wallCheck = true,
     }
     local lastThrow = -math.huge
 
@@ -48,6 +49,7 @@ function Module.init(runtime: any): any
             and player.Character:FindFirstChild("HumanoidRootPart") ~= nil
     end
 
+    local resolveKnifeAim: (Player, Vector3) -> Vector3?
     local function findNearestTarget(maxDistance: number, origin: Vector3?): Player?
         local localRoot: BasePart? = LocalPlayer.Character
             and LocalPlayer.Character:FindFirstChild("HumanoidRootPart") :: BasePart?
@@ -64,7 +66,7 @@ function Module.init(runtime: any): any
                     local distance: number =
                         (targetRoot.Position - localRoot.Position).Magnitude
                     if distance <= closestDistance and (not origin
-                        or isWeaponPathClear(origin, targetRoot.Position, player.Character)) then
+                        or resolveKnifeAim(player, origin) ~= nil) then
                         closest = player
                         closestDistance = distance
                     end
@@ -131,6 +133,43 @@ function Module.init(runtime: any): any
         end
         if not flight or not predictionMath.finite(flight) or flight > 4 then return nil end
         return observed + velocity * flight
+    end
+
+    local KNIFE_VISIBILITY_PARTS: {string} = {
+        "UpperTorso", "Torso", "HumanoidRootPart", "Head",
+        "RightHand", "LeftHand", "RightLowerArm", "LeftLowerArm", "RightUpperArm", "LeftUpperArm",
+        "Right Arm", "Left Arm", "RightLowerLeg", "LeftLowerLeg", "RightFoot", "LeftFoot", "Right Leg", "Left Leg",
+    }
+    local KNIFE_PATH_OPTIONS = {ignoreTarget = true}
+    resolveKnifeAim = function(target: Player, origin: Vector3): Vector3?
+        local predicted: Vector3? = predictAim(target, origin)
+        if not predicted then return nil end
+        if not knifeThrowSettings.wallCheck then return predicted end
+        local character: Model? = target.Character
+        local root: BasePart? = character and character:FindFirstChild("HumanoidRootPart") :: BasePart?
+        if not character or not root then return nil end
+        if isWeaponPathClear(origin, predicted, character, nil, KNIFE_PATH_OPTIONS) then return predicted end
+        -- Same recovered ray filter and torso-first visibility strategy as
+        -- Shoot, but keep projectile lead: no hitscan/raw-position rewind here.
+        local lead: Vector3 = predicted - root.Position
+        for _, name: string in ipairs(KNIFE_VISIBILITY_PARTS) do
+            local part: Instance? = character:FindFirstChild(name)
+            if part and part:IsA("BasePart") then
+                local body: BasePart = part :: BasePart
+                local points: {Vector3} = {body.Position + lead}
+                if name == "UpperTorso" or name == "Torso" or name == "HumanoidRootPart" then
+                    local right: Vector3 = body.CFrame.RightVector * math.min(body.Size.X * 0.4, 0.55)
+                    local up: Vector3 = body.CFrame.UpVector * math.min(body.Size.Y * 0.3, 0.35)
+                    for _, offset: Vector3 in ipairs({right, -right, up, -up}) do
+                        table.insert(points, body.Position + offset + lead)
+                    end
+                end
+                for _, point: Vector3 in ipairs(points) do
+                    if (point - origin).Magnitude > 0.05 and isWeaponPathClear(origin, point, character, nil, KNIFE_PATH_OPTIONS) then return point end
+                end
+            end
+        end
+        return nil
     end
 
     type ThrowJoint = {
@@ -255,9 +294,9 @@ function Module.init(runtime: any): any
             if not origin then return end
             local root: any = target.Character:FindFirstChild("HumanoidRootPart")
             if not silent and (root.Position - origin.Position).Magnitude > knifeThrowSettings.range then return end
-            local aim: Vector3? = predictAim(target :: Player, origin.Position)
+            local aim: Vector3? = silent and predictAim(target :: Player, origin.Position)
+                or resolveKnifeAim(target :: Player, origin.Position)
             if not aim or (aim - origin.Position).Magnitude < 0.05 then return end
-            if not silent and not isWeaponPathClear(origin.Position, aim, target.Character) then return end
             lastThrow = os.clock()
             remote:FireServer(origin, CFrame.new(aim))
             pcall(trajectoryCalibration.noteAuthoredShot, trajectoryCalibration, {
@@ -265,7 +304,7 @@ function Module.init(runtime: any): any
                 originPos = origin.Position, aimPos = aim, target = target, silent = silent,
                 settings = {mode = knifeThrowSettings.mode, throwHz = knifeThrowSettings.throwHz,
                     fireDelay = knifeThrowSettings.fireDelay, spawnOffset = knifeThrowSettings.spawnOffset,
-                    model = "linear-intercept-v34", windupSeconds = knifeThrowSettings.animation and 0.3 or 0},
+                    model = "linear-intercept-v34", wallCheck = knifeThrowSettings.wallCheck, windupSeconds = knifeThrowSettings.animation and 0.3 or 0},
             })
         end
         local ok: boolean = pcall(playThrowAnimation, knife, sendAtRelease)
@@ -304,7 +343,7 @@ function Module.init(runtime: any): any
                 end
             end,
             {
-                categoryName = "Exploits",
+                categoryName = "Combat",
                 parent = MM2Scroll,
                 registry = mm2Features,
             }
@@ -372,6 +411,9 @@ function Module.init(runtime: any): any
         "Silent only: how far beside the target the blade spawns.",
         1
     )
+    addToggleOption(KnifeThrowFeature, "WallCheck", true, function(value: boolean): ()
+        knifeThrowSettings.wallCheck = value
+    end, "Normal: probe torso/head/limbs from the knife, then recheck at release. Silent intentionally bypasses walls.")
     addToggleOption(
         KnifeThrowFeature,
         "Throw animation",

@@ -221,7 +221,7 @@ function Module.init(runtime: any): any
             end
         end,
         {
-            categoryName = "Exploits",
+            categoryName = "Combat",
             parent = MM2Scroll,
             registry = mm2Features,
         }

@@ -798,10 +798,10 @@ do
     end
     print("[HARNESS] FREEZE MOVEMENTS TOGGLE CYCLES CLEAN")
     local expected = {
-      Combat = {"Aim Assist", "KillAura", "TriggerBot"},
+      Combat = {"Aim Assist", "KillAura", "TriggerBot", "Auto Shoot", "Knife", "Shoot"},
       Exploits = {"Fly", "Fling", "Noclip", "Spider", "Speed", "Jump", "Interact Extender"},
-      Utilities = {"Anti Fling", "Anti Void", "Click Teleport", "Freeze Movements", "Ghost"},
-      World = {"Improve FPS", "Gravity", "Anti AFK", "Safe Walk"},
+      Utilities = {"Anti Fling", "Anti Void", "Click Teleport", "Freeze Movements", "Ghost", "Teleport"},
+      World = {"Improve FPS", "Gravity", "Anti AFK", "Safe Walk", "Blurt Roles"},
     }
     for category, names in pairs(expected) do
       for index, name in ipairs(names) do
@@ -811,9 +811,14 @@ do
         assert(feature.row.LayoutOrder == index, name .. " in wrong display order")
       end
     end
-    for _, name in ipairs({"Metrics", "Learning", "Game Learning", "HookPart", "Flight", "Invisible", "SpinBot"}) do
+    for _, name in ipairs({"Metrics", "Learning", "Game Learning", "HookPart", "Flight", "Invisible", "SpinBot", "Sprint", "Instant Role Notify"}) do
       assert(not findFeature(name), "Removed module still present: " .. name)
     end
+    local speed = ex.state.framework:GetModule("Speed")
+    assert(speed and speed.Options.Sprint, "Sprint must be an option of Speed")
+    local blurt = findFeature("Blurt Roles")
+    -- Option identity is also persisted in the widget toggle registry.
+    assert(ex.state.toggleControls["MM2.BlurtRoles.InstantRoles"], "Instant Roles must be a Blurt Roles option")
     local calibration = findFeature("Calibration")
     assert(calibration and string.find(calibration.configKey, "MM2", 1, true), "MM2 Calibration must remain separate")
     assert(ex.state.clickGui and not ex.state.clickGui.categories.Fun, "Fun window must be removed")

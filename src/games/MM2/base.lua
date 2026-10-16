@@ -121,11 +121,14 @@ local function clearEffects(folder)
 end
 
 -- Match the recovered client's cursor filters, not an assertion about server rules.
-local function isWeaponPathClear(origin: Vector3, endpoint: Vector3, target: Model?, strict: boolean?): boolean
+local function isWeaponPathClear(origin: Vector3, endpoint: Vector3, target: Model?, strict: boolean?, options: {ignoreTarget: boolean?}?): boolean
     local direction: Vector3 = endpoint - origin
     if direction.Magnitude < 0.05 then return true end
     local excluded: {Instance} = {}
     if LocalPlayer.Character then table.insert(excluded, LocalPlayer.Character) end
+    -- Projectile endpoints are future poses: the target's present body must
+    -- not hide a wall farther along the predicted segment. Hitscan is unchanged.
+    if options and options.ignoreTarget and target then table.insert(excluded, target) end
     for _, object: Instance in ipairs(CollectionService:GetTagged("WeaponPassthrough")) do
         table.insert(excluded, object)
     end

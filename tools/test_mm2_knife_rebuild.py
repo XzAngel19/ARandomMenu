@@ -125,6 +125,7 @@ local function findNearestTarget() return target end
 local predictionCalls=0
 local function predictAim() predictionCalls+=1;return root.Position end
 local visible=true
+local function resolveKnifeAim() return visible and predictAim() or nil end
 local function isWeaponPathClear() return visible end
 local pending=nil
 local function playThrowAnimation(_,fn) pending=fn;throwPending=true end

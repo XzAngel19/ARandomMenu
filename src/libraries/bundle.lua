@@ -1,5 +1,5 @@
 return {
-    stamp = "v35-20261016-menu-motion",
+    stamp = "v36-20261016-combat-controls",
     files = {
         ["src/Profile/142823291.lua"] = [[
 --!strict
@@ -1723,7 +1723,7 @@ function Module.init(runtime: any): any
             end
         end,
         {
-            categoryName = "Exploits",
+            categoryName = "Combat",
             parent = MM2Scroll,
             registry = mm2Features,
         }
@@ -1805,6 +1805,7 @@ function Module.init(runtime: any): any
         spawnOffset = 5,
         throwHz = 60,
         animation = true,
+        wallCheck = true,
     }
     local lastThrow = -math.huge
 
@@ -1819,6 +1820,7 @@ function Module.init(runtime: any): any
             and player.Character:FindFirstChild("HumanoidRootPart") ~= nil
     end
 
+    local resolveKnifeAim: (Player, Vector3) -> Vector3?
     local function findNearestTarget(maxDistance: number, origin: Vector3?): Player?
         local localRoot: BasePart? = LocalPlayer.Character
             and LocalPlayer.Character:FindFirstChild("HumanoidRootPart") :: BasePart?
@@ -1835,7 +1837,7 @@ function Module.init(runtime: any): any
                     local distance: number =
                         (targetRoot.Position - localRoot.Position).Magnitude
                     if distance <= closestDistance and (not origin
-                        or isWeaponPathClear(origin, targetRoot.Position, player.Character)) then
+                        or resolveKnifeAim(player, origin) ~= nil) then
                         closest = player
                         closestDistance = distance
                     end
@@ -1902,6 +1904,43 @@ function Module.init(runtime: any): any
         end
         if not flight or not predictionMath.finite(flight) or flight > 4 then return nil end
         return observed + velocity * flight
+    end
+
+    local KNIFE_VISIBILITY_PARTS: {string} = {
+        "UpperTorso", "Torso", "HumanoidRootPart", "Head",
+        "RightHand", "LeftHand", "RightLowerArm", "LeftLowerArm", "RightUpperArm", "LeftUpperArm",
+        "Right Arm", "Left Arm", "RightLowerLeg", "LeftLowerLeg", "RightFoot", "LeftFoot", "Right Leg", "Left Leg",
+    }
+    local KNIFE_PATH_OPTIONS = {ignoreTarget = true}
+    resolveKnifeAim = function(target: Player, origin: Vector3): Vector3?
+        local predicted: Vector3? = predictAim(target, origin)
+        if not predicted then return nil end
+        if not knifeThrowSettings.wallCheck then return predicted end
+        local character: Model? = target.Character
+        local root: BasePart? = character and character:FindFirstChild("HumanoidRootPart") :: BasePart?
+        if not character or not root then return nil end
+        if isWeaponPathClear(origin, predicted, character, nil, KNIFE_PATH_OPTIONS) then return predicted end
+        -- Same recovered ray filter and torso-first visibility strategy as
+        -- Shoot, but keep projectile lead: no hitscan/raw-position rewind here.
+        local lead: Vector3 = predicted - root.Position
+        for _, name: string in ipairs(KNIFE_VISIBILITY_PARTS) do
+            local part: Instance? = character:FindFirstChild(name)
+            if part and part:IsA("BasePart") then
+                local body: BasePart = part :: BasePart
+                local points: {Vector3} = {body.Position + lead}
+                if name == "UpperTorso" or name == "Torso" or name == "HumanoidRootPart" then
+                    local right: Vector3 = body.CFrame.RightVector * math.min(body.Size.X * 0.4, 0.55)
+                    local up: Vector3 = body.CFrame.UpVector * math.min(body.Size.Y * 0.3, 0.35)
+                    for _, offset: Vector3 in ipairs({right, -right, up, -up}) do
+                        table.insert(points, body.Position + offset + lead)
+                    end
+                end
+                for _, point: Vector3 in ipairs(points) do
+                    if (point - origin).Magnitude > 0.05 and isWeaponPathClear(origin, point, character, nil, KNIFE_PATH_OPTIONS) then return point end
+                end
+            end
+        end
+        return nil
     end
 
     type ThrowJoint = {
@@ -2026,9 +2065,9 @@ function Module.init(runtime: any): any
             if not origin then return end
             local root: any = target.Character:FindFirstChild("HumanoidRootPart")
             if not silent and (root.Position - origin.Position).Magnitude > knifeThrowSettings.range then return end
-            local aim: Vector3? = predictAim(target :: Player, origin.Position)
+            local aim: Vector3? = silent and predictAim(target :: Player, origin.Position)
+                or resolveKnifeAim(target :: Player, origin.Position)
             if not aim or (aim - origin.Position).Magnitude < 0.05 then return end
-            if not silent and not isWeaponPathClear(origin.Position, aim, target.Character) then return end
             lastThrow = os.clock()
             remote:FireServer(origin, CFrame.new(aim))
             pcall(trajectoryCalibration.noteAuthoredShot, trajectoryCalibration, {
@@ -2036,7 +2075,7 @@ function Module.init(runtime: any): any
                 originPos = origin.Position, aimPos = aim, target = target, silent = silent,
                 settings = {mode = knifeThrowSettings.mode, throwHz = knifeThrowSettings.throwHz,
                     fireDelay = knifeThrowSettings.fireDelay, spawnOffset = knifeThrowSettings.spawnOffset,
-                    model = "linear-intercept-v34", windupSeconds = knifeThrowSettings.animation and 0.3 or 0},
+                    model = "linear-intercept-v34", wallCheck = knifeThrowSettings.wallCheck, windupSeconds = knifeThrowSettings.animation and 0.3 or 0},
             })
         end
         local ok: boolean = pcall(playThrowAnimation, knife, sendAtRelease)
@@ -2075,7 +2114,7 @@ function Module.init(runtime: any): any
                 end
             end,
             {
-                categoryName = "Exploits",
+                categoryName = "Combat",
                 parent = MM2Scroll,
                 registry = mm2Features,
             }
@@ -2143,6 +2182,9 @@ function Module.init(runtime: any): any
         "Silent only: how far beside the target the blade spawns.",
         1
     )
+    addToggleOption(KnifeThrowFeature, "WallCheck", true, function(value: boolean): ()
+        knifeThrowSettings.wallCheck = value
+    end, "Normal: probe torso/head/limbs from the knife, then recheck at release. Silent intentionally bypasses walls.")
     addToggleOption(
         KnifeThrowFeature,
         "Throw animation",
@@ -2940,7 +2982,9 @@ function Module.init(runtime: any): any
             end
             -- Never re-equip if the user switched away during that frame.
             if shootFeatureActive and LocalPlayer.Character == character and gun.Parent == character then
-                fireGunAtTarget(getSelectedShootTarget())
+                -- An explicit action never waits for a low prediction error.
+                -- This flag skips only that gate, not reload, cooldown or LOS.
+                fireGunAtTarget(getSelectedShootTarget(), {whenReady = true})
             end
         end)
         manualShotPending = false
@@ -3012,7 +3056,7 @@ function Module.init(runtime: any): any
         4,
         toggleShootMurderer,
         {
-            categoryName = "Blatant",
+            categoryName = "Combat",
             parent = MM2Scroll,
             registry = mm2Features,
         }
@@ -3243,7 +3287,7 @@ function Module.init(runtime: any): any
         5,
         toggleAutoShoot,
         {
-            categoryName = "Blatant",
+            categoryName = "Combat",
             parent = MM2Scroll,
             registry = mm2Features,
         }
@@ -3438,11 +3482,23 @@ function Module.init(runtime: any): any
         end)
     end
 
+    local instantSent: boolean = false
+    local function notifyInstantRoles(): ()
+        if not mm2Settings.instantRoleNotify or instantSent or not hasActiveRoundRoles() then return end
+        local murderer: Player? = findMurderer()
+        local sheriff: Player? = findSheriff()
+        if not murderer or not sheriff then return end
+        instantSent = true
+        notify("Roles ready - Murderer: " .. murderer.Name .. " | Sheriff/Hero: " .. sheriff.Name)
+    end
+
     local unsubscribe: () -> () = core.onRoundRoles(function(active: boolean): ()
         if not active then
             blurtSignature = ""
+            instantSent = false
             return
         end
+        notifyInstantRoles()
         scheduleBlurt()
     end)
 
@@ -3474,11 +3530,15 @@ function Module.init(runtime: any): any
         3,
         toggleBlurtRoles,
         {
-            categoryName = "Fun",
+            categoryName = "World",
             parent = MM2Scroll,
             registry = mm2Features,
         }
     )
+    addToggleOption(BlurtFeature, "Instant Roles", mm2Settings.instantRoleNotify, function(value: boolean): ()
+        mm2Settings.instantRoleNotify = value
+        if value then notifyInstantRoles() end
+    end, "Private notification once per round, independent of public chat announcements.")
     addNumberOption(
         BlurtFeature,
         "Delay",
@@ -3521,103 +3581,8 @@ function Module.init(runtime: any): any
 
     activeCleanup = function(): ()
         pcall(unsubscribe)
-        toggleBlurtRoles(false)
-    end
-    Module.Events = featureConnections
-    Module.Initialized = true
-    return Module
-end
-
-function Module.destroy(): ()
-    if not Module.Initialized then
-        return
-    end
-    Module.Initialized = false
-    pcall(activeCleanup)
-    activeCleanup = function(): () end
-    Module.Events = {}
-    Module.Runtime = nil
-end
-
-return Module
-
-]],
-        ["src/games/MM2/Fun/InstantRoleNotify.lua"] = [[
-local Module = {
-    Name = "MM2 Instant Role Notify",
-    PlaceId = 142823291,
-    Events = {} :: {[string]: any},
-    Initialized = false,
-    Runtime = nil :: any,
-}
-
-local activeCleanup: () -> () = function(): () end
-
-function Module.init(runtime: any): any
-    if Module.Initialized then
-        return Module
-    end
-    local core: any = state.mm2Core
-    assert(type(core) == "table", "MM2 Instant Role Notify requires the MM2 core module")
-    Module.Runtime = runtime
-    local findMurderer: any = core.findMurderer
-    local findSheriff: any = core.findSheriff
-    local mm2Settings: any = core.mm2Settings
-
-    local roleNotificationSent: boolean = false
-
-    local function announceRoles(): ()
-        local murderer: Player? = findMurderer()
-        local sheriff: Player? = findSheriff()
-        if not murderer or not sheriff then
-            return
-        end
-        roleNotificationSent = true
-        notify(
-            "Roles ready - Murderer: "
-                .. murderer.Name
-                .. " | Sheriff/Hero: "
-                .. sheriff.Name
-        )
-    end
-
-    local unsubscribe: () -> () = core.onRoundRoles(function(roundActive: boolean): ()
-        if not roundActive then
-            roleNotificationSent = false
-            return
-        end
-        if mm2Settings.instantRoleNotify and not roleNotificationSent then
-            announceRoles()
-        end
-    end)
-
-    local function toggleInstantRoleNotify(enabled: boolean): ()
-        mm2Settings.instantRoleNotify = enabled
-        if not enabled then
-            return
-        end
-
-        if not roleNotificationSent and findMurderer() and findSheriff() then
-            announceRoles()
-        end
-    end
-
-    createUniversalFeature(
-        "Instant Role Notify",
-        "Notify roles once at the beginning of each round",
-        1,
-        toggleInstantRoleNotify,
-        {
-            noOptions = true,
-            categoryName = "Fun",
-            parent = MM2Scroll,
-            registry = mm2Features,
-        }
-    )
-
-    activeCleanup = function(): ()
-        pcall(unsubscribe)
         mm2Settings.instantRoleNotify = false
+        toggleBlurtRoles(false)
     end
     Module.Events = featureConnections
     Module.Initialized = true
@@ -3659,7 +3624,6 @@ function Module.init(runtime: any): any
 
     local sprintTrailObjects: {Instance} = {}
 
-    local MM2_SPRINT_SPEED: number = 30
 
     local function clearSprintTrail(): ()
         for _, object: Instance in ipairs(sprintTrailObjects) do
@@ -3708,93 +3672,25 @@ function Module.init(runtime: any): any
         return trail
     end
 
-    local sprintActive: boolean = false
-    local sprintBaseSpeed: number? = nil
-
-    local function applySprintSpeed(active: boolean): ()
-        local _, humanoid: Humanoid?, root: BasePart? = getCharacterParts()
-        if not humanoid or not root then
-            return
-        end
-        if active then
-            if sprintBaseSpeed == nil and humanoid.WalkSpeed ~= MM2_SPRINT_SPEED then
-                sprintBaseSpeed = humanoid.WalkSpeed
-            end
-            humanoid.WalkSpeed = MM2_SPRINT_SPEED
-        else
-            humanoid.WalkSpeed = sprintBaseSpeed or 16
-            sprintBaseSpeed = nil
-        end
+    local speed: any = state.framework and state.framework:GetModule("Speed")
+    assert(speed, "Sprint option requires the Speed module")
+    speed.ClearSprint = clearSprintTrail
+    speed.SprintFrame = function(active: boolean, root: BasePart): ()
+        if not active then clearSprintTrail(); return end
+        local _, humanoid: Humanoid? = getCharacterParts()
+        ensureSprintTrail(root).Enabled = humanoid ~= nil and humanoid.MoveDirection.Magnitude > 0.05
     end
-
-    local function toggleSprint(enabled: boolean): ()
-        disconnectFeatureConnection("MM2Sprint")
-
-        if not enabled then
-            sprintActive = false
-            clearSprintTrail()
-            applySprintSpeed(false)
-            return
-        end
-
-        featureConnections.MM2Sprint = TaskManager:Connect(function(): ()
-            local _, humanoid: Humanoid?, root: BasePart? = getCharacterParts()
-            if not humanoid or not root then
-                return
-            end
-            if not sprintActive then
-                if sprintBaseSpeed ~= nil then
-
-                    applySprintSpeed(false)
-                end
-                return
-            end
-
-            if humanoid.WalkSpeed ~= MM2_SPRINT_SPEED then
-                if sprintBaseSpeed == nil then
-                    sprintBaseSpeed = humanoid.WalkSpeed
-                end
-                humanoid.WalkSpeed = MM2_SPRINT_SPEED
-            end
-            ensureSprintTrail(root).Enabled = humanoid.MoveDirection.Magnitude > 0.05
-        end)
-    end
-
-    local function setSprintActive(active: boolean): ()
-        if sprintActive == active then
-            return
-        end
-        sprintActive = active
-        applySprintSpeed(active)
-        if not active then
-            local trail: Instance? = nil
-            local _, _, root: BasePart? = getCharacterParts()
-            if root then
-                trail = root:FindFirstChild("Wurst_SprintTail")
-            end
-            if trail and trail:IsA("Trail") then
-                trail.Enabled = false
-            end
-        end
-    end
-
-    createUniversalFeature(
-        "Sprint",
-        "Hold your key to run at 30 speed with a trail",
-        10,
-        toggleSprint,
-        {
-            kind = "hold",
-            onHold = setSprintActive,
-            noOptions = true,
-            categoryName = "Movement",
-            parent = MM2Scroll,
-            registry = mm2Features,
-        }
-    )
-
+    speed:CreateToggle({
+        Name = "Sprint", Default = false,
+        Function = function(value: boolean): ()
+            if not value then clearSprintTrail() end
+        end,
+        Tooltip = "MM2: 30 WalkSpeed with a trail while Speed is enabled. Overrides the on-foot Speed method; no separate module or key required.",
+    })
     activeCleanup = function(): ()
-        toggleSprint(false)
+        clearSprintTrail()
+        speed.ClearSprint = nil
+        speed.SprintFrame = nil
     end
     Module.Events = featureConnections
     Module.Initialized = true
@@ -3968,7 +3864,7 @@ function Module.init(runtime: any): any
         function() end,
         {
             category = true,
-            categoryName = "Movement",
+            categoryName = "Utilities",
             parent = MM2Scroll,
             registry = mm2Features,
         }
@@ -5482,11 +5378,14 @@ local function clearEffects(folder)
 end
 
 -- Match the recovered client's cursor filters, not an assertion about server rules.
-local function isWeaponPathClear(origin: Vector3, endpoint: Vector3, target: Model?, strict: boolean?): boolean
+local function isWeaponPathClear(origin: Vector3, endpoint: Vector3, target: Model?, strict: boolean?, options: {ignoreTarget: boolean?}?): boolean
     local direction: Vector3 = endpoint - origin
     if direction.Magnitude < 0.05 then return true end
     local excluded: {Instance} = {}
     if LocalPlayer.Character then table.insert(excluded, LocalPlayer.Character) end
+    -- Projectile endpoints are future poses: the target's present body must
+    -- not hide a wall farther along the predicted segment. Hitscan is unchanged.
+    if options and options.ignoreTarget and target then table.insert(excluded, target) end
     for _, object: Instance in ipairs(CollectionService:GetTagged("WeaponPassthrough")) do
         table.insert(excluded, object)
     end
@@ -14670,12 +14569,14 @@ function Module.init(context: Runtime): any
         speed: number,
         climbState: boolean,
         ceilingWalk: boolean,
+        impulseInterval: number,
     }
     local spiderSettings: SpiderSettings = {
         mode = "Spiderman",
         speed = 30,
         climbState = false,
         ceilingWalk = true,
+        impulseInterval = 0.15,
     }
     local SpiderFeature: any = nil
 
@@ -14699,8 +14600,10 @@ function Module.init(context: Runtime): any
         SpiderFeature:SetStatus(spiderSettings.mode)
 
         local onSurface: boolean = false
+        local impulseElapsed: number = math.huge
 
         featureConnections.Spider = TaskManager:Connect(function(deltaTime: number): ()
+            impulseElapsed += math.max(0, deltaTime)
             local character: Model?, humanoidOrNil: Humanoid?, rootOrNil: BasePart? =
                 getCharacterParts()
             if not character or not humanoidOrNil or not rootOrNil then
@@ -14784,7 +14687,12 @@ function Module.init(context: Runtime): any
                     if wallUpVector.Magnitude > 0.01 then
                         wallUpVector = wallUpVector.Unit
                     else
-                        wallUpVector = (root.CFrame.LookVector - surfNormal * root.CFrame.LookVector:Dot(surfNormal)).Unit
+                        wallUpVector = root.CFrame.LookVector - surfNormal * root.CFrame.LookVector:Dot(surfNormal)
+                        if wallUpVector.Magnitude <= 0.01 then
+                            wallUpVector = root.CFrame.RightVector - surfNormal * root.CFrame.RightVector:Dot(surfNormal)
+                        end
+                        if wallUpVector.Magnitude <= 0.01 then return end
+                        wallUpVector = wallUpVector.Unit
                     end
 
                     local surfaceMove: Vector3 = Vector3.zero
@@ -14868,7 +14776,13 @@ function Module.init(context: Runtime): any
                 root.AssemblyLinearVelocity = Vector3.new(velocity.X, 0, velocity.Z)
                 root.CFrame = root.CFrame + Vector3.new(0, spiderSettings.speed * deltaTime, 0)
             elseif spiderSettings.mode == "Impulse" then
-                root:ApplyImpulse(Vector3.new(0, spiderSettings.speed, 0) * root.AssemblyMass)
+                -- Pulsed, mass-independent boost, not +speed every frame.
+                -- The old integration accelerated indefinitely and depended on FPS.
+                if impulseElapsed >= spiderSettings.impulseInterval then
+                    impulseElapsed = 0
+                    local deltaVelocity: number = math.max(0, spiderSettings.speed - velocity.Y)
+                    if deltaVelocity > 0 then root:ApplyImpulse(Vector3.new(0, deltaVelocity, 0) * root.AssemblyMass) end
+                end
             else
                 root.AssemblyLinearVelocity = Vector3.new(velocity.X, spiderSettings.speed, velocity.Z)
             end
@@ -14882,6 +14796,16 @@ function Module.init(context: Runtime): any
         toggleSpider,
         {categoryName = "Exploits"}
     )
+    local modeRows: {[string]: any} = {}
+    local function refreshModeRows(): ()
+        for name: string, button: any in pairs(modeRows) do
+            local visible: boolean = name == "Ceiling Walk" and spiderSettings.mode == "Spiderman"
+                or name == "Climb state" and spiderSettings.mode ~= "Spiderman"
+                or name == "Impulse interval" and spiderSettings.mode == "Impulse"
+            if host.setOptionVisible then host.setOptionVisible(SpiderFeature, button.Parent, visible)
+            elseif button.Parent then button.Parent.Visible = visible end
+        end
+    end
     addCycleOption(
         SpiderFeature,
         "Mode",
@@ -14889,8 +14813,11 @@ function Module.init(context: Runtime): any
         1,
         function(value: string): ()
             spiderSettings.mode = value
+            refreshModeRows()
             if SpiderFeature.enabled then
-                SpiderFeature:SetStatus(value)
+                -- Do not carry a ceiling pose or pulse timer into a new mode.
+                toggleSpider(false)
+                toggleSpider(true)
             end
         end,
         "Spiderman: Walks on walls/ceilings using your feet with realistic surface physics.\nVelocity/Impulse/CFrame: Classic upward vertical climbing modes."
@@ -14905,7 +14832,7 @@ function Module.init(context: Runtime): any
             spiderSettings.speed = value
         end
     )
-    addToggleOption(
+    local ceilingRow: any = addToggleOption(
         SpiderFeature,
         "Ceiling Walk",
         spiderSettings.ceilingWalk,
@@ -14914,7 +14841,7 @@ function Module.init(context: Runtime): any
         end,
         "Allows running upside-down on ceilings with your feet in Spiderman mode."
     )
-    addToggleOption(
+    local climbRow: any = addToggleOption(
         SpiderFeature,
         "Climb state",
         spiderSettings.climbState,
@@ -14923,13 +14850,20 @@ function Module.init(context: Runtime): any
         end,
         "Uses climbing state in classic modes (Velocity, Impulse, CFrame)."
     )
+    if ceilingRow then modeRows["Ceiling Walk"] = ceilingRow end
+    if climbRow then modeRows["Climb state"] = climbRow end
+    local impulseRow: any = addNumberOption(SpiderFeature, "Impulse interval", spiderSettings.impulseInterval,
+        0.05, 0.5, function(value: number): () spiderSettings.impulseInterval = value end,
+        "Seconds between bounded upward impulses. Only used by Impulse mode.", 0.05)
+    if impulseRow then modeRows["Impulse interval"] = impulseRow end
+    refreshModeRows()
     addFeatureTooltip(
         SpiderFeature,
         "Spiderman mode plants your feet on walls and ceilings to run like Spider-Man. Classic modes pull you vertically up walls."
     )
 
     activeCleanup = function(): ()
-        disconnectFeatureConnection("Spider")
+        toggleSpider(false)
     end
     Module.Initialized = true
     return SpiderFeature
@@ -18365,6 +18299,7 @@ function Module.init(context: Runtime): any
             runtime.nextTeleportAt = 0
             restoreWalkSpeed()
             restoreVehicle()
+            if speed.ClearSprint then speed.ClearSprint() end
             if not enabled then
                 -- Even when the weak capture map was lost, the live humanoid
                 -- must return to its normal speed the moment the card goes
@@ -18390,18 +18325,23 @@ function Module.init(context: Runtime): any
             speed:Clean(function(): ()
                 restoreWalkSpeed()
                 restoreVehicle()
+                if speed.ClearSprint then speed.ClearSprint() end
             end)
             speed:Loop(function(deltaTime: number): ()
                 local options: any = speed.Options
                 local _, humanoid: Humanoid?, root: BasePart? = characterParts()
                 if not humanoid or not root then
+                    if speed.ClearSprint then speed.ClearSprint() end
                     return
                 end
+                local sprint: boolean = speed.SprintFrame ~= nil and options.Sprint ~= nil and options.Sprint.Value == true
                 local resolvedHumanoid: Humanoid = humanoid :: Humanoid
                 local resolvedRoot: BasePart = root :: BasePart
                 if resolvedHumanoid.Health <= 0 then
+                    if speed.ClearSprint then speed.ClearSprint() end
                     return
                 end
+                if speed.SprintFrame then speed.SprintFrame(sprint and not humanoid.Sit, root) end
 
                 if options["Vehicle speed"] and options["Vehicle speed"].Value then
                     local assembly: BasePart?, model: Model?, seat: VehicleSeat? =
@@ -18427,8 +18367,8 @@ function Module.init(context: Runtime): any
                     end
                 end
 
-                local mode: string = options["Mode"].Value
-                local target: number = options["Speed"].Value
+                local mode: string = sprint and "WalkSpeed" or options["Mode"].Value
+                local target: number = sprint and 30 or options["Speed"].Value
 
                 if mode == "WalkSpeed" then
                     if runtime.originalWalkSpeed[resolvedHumanoid] == nil then
@@ -18598,6 +18538,7 @@ function Module.init(context: Runtime): any
     activeCleanup = function(): ()
         restoreWalkSpeed()
         restoreVehicle()
+        if speed.ClearSprint then speed.ClearSprint() end
     end
     Module.Initialized = true
     return speed
@@ -25792,6 +25733,9 @@ function Module.init(context: any): any
             ["Aim Assist"] = 1,
             ["KillAura"] = 2,
             ["TriggerBot"] = 3,
+            ["Auto Shoot"] = 4,
+            ["Knife"] = 5,
+            ["Shoot"] = 6,
             ["Fly"] = 1,
             ["Fling"] = 2,
             ["Noclip"] = 3,
@@ -25804,10 +25748,12 @@ function Module.init(context: any): any
             ["Click Teleport"] = 3,
             ["Freeze Movements"] = 4,
             ["Ghost"] = 5,
+            ["Teleport"] = 6,
             ["Improve FPS"] = 1,
             ["Gravity"] = 2,
             ["Anti AFK"] = 3,
             ["Safe Walk"] = 4,
+            ["Blurt Roles"] = 5,
         }
         layoutOrder = ordered[name] or (100 + layoutOrder)
         local registry: any = configuration.registry or universalFeatures

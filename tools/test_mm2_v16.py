@@ -30,7 +30,11 @@ local workspace={Raycast=function(_,origin,direction,params)
     assert(table.find(params.FilterDescendantsInstances,localChar))
     assert(table.find(params.FilterDescendantsInstances,tagged))
     for _,part in ipairs(layers) do
-        if not table.find(params.FilterDescendantsInstances,part) then return {Instance=part} end
+        local ignored=table.find(params.FilterDescendantsInstances,part)~=nil
+        for _,excluded in ipairs(params.FilterDescendantsInstances) do
+            if part:IsDescendantOf(excluded) then ignored=true end
+        end
+        if not ignored then return {Instance=part} end
     end
     return nil
 end}
@@ -46,6 +50,11 @@ assert(not isWeaponPathClear(a,b,target,true),"Shoot must not ignore untagged in
 layers={part(0,target)};assert(isWeaponPathClear(a,b,target,true))
 layers={part(1),part(0)}; assert(not isWeaponPathClear(a,b,target))
 layers={part(0.99)}; assert(not isWeaponPathClear(a,b,target))
+layers={part(0,target),part(0)}
+assert(isWeaponPathClear(a,b,target),"hitscan accepts current body")
+assert(not isWeaponPathClear(a,b,target,nil,{ignoreTarget=true}),"present body must not mask future projectile wall")
+layers={part(0,target)}
+assert(isWeaponPathClear(a,b,target,nil,{ignoreTarget=true}),"projectile ignores current target pose, not world")
 layers={}; for i=1,40 do table.insert(layers,part(1)) end
 calls=0; assert(not isWeaponPathClear(a,b,target) and calls==32)
 pass("native LOS filters: local/tagged excluded; transparent skipped; opaque blocked; bounded fail-closed")

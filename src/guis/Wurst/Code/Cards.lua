@@ -65,6 +65,9 @@ function Module.init(context: any): any
             ["Aim Assist"] = 1,
             ["KillAura"] = 2,
             ["TriggerBot"] = 3,
+            ["Auto Shoot"] = 4,
+            ["Knife"] = 5,
+            ["Shoot"] = 6,
             ["Fly"] = 1,
             ["Fling"] = 2,
             ["Noclip"] = 3,
@@ -77,10 +80,12 @@ function Module.init(context: any): any
             ["Click Teleport"] = 3,
             ["Freeze Movements"] = 4,
             ["Ghost"] = 5,
+            ["Teleport"] = 6,
             ["Improve FPS"] = 1,
             ["Gravity"] = 2,
             ["Anti AFK"] = 3,
             ["Safe Walk"] = 4,
+            ["Blurt Roles"] = 5,
         }
         layoutOrder = ordered[name] or (100 + layoutOrder)
         local registry: any = configuration.registry or universalFeatures
