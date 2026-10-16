@@ -696,10 +696,88 @@ verifica de punta a punta:
 - 72/72 compilan; suites 14/14 + 4 + 15; bundle 70 archivos, sello
   `v28-20261015-theme-roles-chams`.
 
-### Pendiente (Parte 2)
+### Parte 2 completada en el mismo sello
 
-- TrailESP (línea/destino de la bala) + Tracer Data (studs de fallo vs el
-  murder) bajo Weapon Visuals.
-- Verificación de física de AutoShoot y Flight.
-- Freeze Movements: "Freeze Emotes" (caminar durante un emote) y "Glitch
-  Animations".
+Ver `## v28 (Parte 2)` abajo.
+
+## v28 (Parte 2) — 2026-10-15 — Cadencia del servidor, animación del cuchillo, TrailESP/Tracer Data
+
+Sello `v28-20261015-shoot-cadence-knife-visuals`. La Parte 2 se armó contra
+los **logs reales** (`Shoot..txt` + `2026-10-15T23_30_07Z.log` de
+TestingStuff), que demostraron por qué "shoot seguía igual":
+
+### Shoot — cadencia del servidor (causa raíz #1)
+
+- La telemetría v18 y el log del día muestran que el servidor **descarta en
+  silencio** todo disparo que llegue <3.1 s después del anterior (los 18
+  confirmados tuvieron brechas ≥3.6 s; todos los rápidos de 0.11–0.33 s
+  murieron sin eco). El 2026-10-15, 2 de nuestros 5 disparos estaban a
+  0.08 s → rechazados por cadencia.
+- `GUN_SERVER_COOLDOWN = 3.1` en Shoot.lua: **una única compuerta** antes de
+  la bifurcación silencioso/normal cubre ambos caminos (el gate viejo estaba
+  solo en el camino normal), y ambos `FireServer` sellan
+  `lastGunFireServer`. AutoShoot comparte la ventana: reintenta cada
+  `Fire delay` y dispara apenas la ventana se libera (notificación
+  "Auto Shoot waiting: Gun is cooling down…" deduplicada).
+
+### Shoot — fin del pierce (causa raíz #2)
+
+- Los otros 3 disparos del día tenían brechas legales (5.8 s / 4.3 s) y aun
+  así 0/5 ecos: el servidor valida el endpoint contra la posición
+  *rebobinada* del objetivo y el +4 studs del v27 mataba el disparo. El
+  endpoint ahora es el punto predicho exacto; `GUN_PIERCE_STUDS` eliminado y
+  el test de precisión lo prohíbe explícitamente.
+
+### Knife Throw — animación reparada
+
+- Causa: los cuchillos de MM2 **no traen ninguna Animation con "throw" en el
+  nombre** (Animaciones genéricas Animation1/2/3), así que la búsqueda
+  manual no encontraba nada → cero animación; y cuando encontraba algo, el
+  Stop(0)/Destroy por lanzamiento rompía el rig.
+- Ahora: **`toolanim` clásico** (StringValue "Lunge" dentro del tool) — el
+  propio Animate del juego lo reproduce con prioridad y blending correctos y
+  nunca deja el rig pegado; encima, si el cuchillo sí trae Animation
+  "throw", se layer con track cacheado (restart por lanzamiento, fade suave
+  al cambiar de arma). El test de ciclo de vida de animación sigue verde.
+
+### Weapon Visuals — TrailESP + Tracer Data
+
+- `GunFired(gunHandle, origin, hitPosition, hitPart)` es la verdad del
+  servidor sobre dónde cayó cada bala (de todos, incluida la nuestra).
+- **TrailESP**: haz neón origin→hit (color del módulo), esfera de aterrizaje
+  y Highlight sobre la parte golpeada, con fade 1.4 s y limpieza por
+  `task.delay`.
+- **Tracer Data**: cuando el eco es de NUESTRA arma (handle descendiente de
+  nuestro personaje), calcula la distancia studs entre el hit del servidor y
+  la posición actual del Murderer → "Tracer: landed X.X studs from <name>
+  (shot range Y)".
+
+### Freeze Movements — modos nuevos
+
+- **Freeze Emotes**: los tracks de prioridad Action (emotes) se recuerdan y
+  se re-reproducen mientras te mueves → caminas mientras el emote sigue
+  sonando.
+- **Glitch Animations**: reinicia los tracks vivos con fade 0.05 cada frame
+  → el personaje tiembla/glitchea para todos (el Animator local replica).
+- Ambos modos no tocan WalkSpeed; Anchor/Humanoid siguen igual y la
+  restauración completa al desactivar se mantiene.
+
+### Flight y AutoShoot — verificación
+
+- **Flight** (universal/Blatant/Fly.lua) auditado: suavizado exponencial
+  independiente del framerate (`1-exp(-12·response·dt)`), LinearVelocity con
+  `VectorVelocity` asignado cada tick, wallchecks con sobrepaso, Hover con
+  nivel mantenido + chequeo de techo, plataforma Floor parentada a
+  CurrentCamera (no replicada), PlatformStand con ownership y restauración
+  completa al apagar. Sin cambios necesarios.
+- **AutoShoot** verificado contra la compuerta de cadencia: reintentos
+  silenciosos con dedupe, dispara apenas se libera la ventana del servidor.
+
+### Verificación
+
+- Harness full_boot: `failures=0`, HERO + paleta + dock verificados, y las
+  etiquetas nuevas (TrailESP, Tracer Data, Throw animation) presentes.
+- Suites: precisión 15/15 (con pins nuevos: sin pierce, gate compartido, 2
+  sellos de `lastGunFireServer`), v16 4/4, teams 14 checks.
+- 71/71 archivos compilan; bundle 70 archivos, sello
+  `v28-20261015-shoot-cadence-knife-visuals`.

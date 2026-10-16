@@ -517,7 +517,12 @@ def main() -> None:
     assert 'if directHit then tuneFromConfirmedShot(candidate) end' in BASE
     assert 'or candidate.silentSpawn then' in BASE
     assert 'candidate.aimRootOffset' in BASE and 'aimRootOffset = part.Position' in SHOOT
-    assert 'GUN_PIERCE_STUDS' in SHOOT and 'bystanderOnSegment(target, fireEndpoint, pierced)' in SHOOT
+    assert 'GUN_PIERCE_STUDS' not in SHOOT, 'v27 pierce removed: the server rejects endpoints past the target (real log evidence)'
+    assert 'GUN_SERVER_COOLDOWN' in SHOOT and 'Gun is cooling down' in SHOOT
+    # one shared gate before the silent/normal split, and both fire paths
+    # stamp lastGunFireServer so AutoShoot + manual share the window
+    assert SHOOT.count('lastGunFireServer = os.clock()') == 2, 'both fire paths must stamp the server cooldown'
+    assert SHOOT.index('GUN_SERVER_COOLDOWN then') < SHOOT.index('if silent'), 'gate must run before the silent/normal split'
     assert 'probeOffsets' in SHOOT and 'getEstimatedLatency() * 1.0' in BASE
     with tempfile.TemporaryDirectory(prefix="mm2-precision-") as directory:
         script = Path(directory) / "regressions.luau"

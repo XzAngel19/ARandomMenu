@@ -1,5 +1,5 @@
 return {
-    stamp = "v28-20261015-theme-roles-chams",
+    stamp = "v28-20261015-shoot-cadence-knife-visuals",
     files = {
         ["src/games/BedFight/Combat/AutoSwing.lua"] = [[
 local Module = {Name = "BedFight Auto Swing", Initialized = false, Connection = nil}
@@ -1843,7 +1843,7 @@ function Module.init(runtime: any): any
     local throwTrackId: string? = nil
     local function stopThrowAnimation(): ()
         if throwTrack then
-            pcall(function(): () throwTrack:Stop(0) end)
+            pcall(function(): () throwTrack:Stop(0.2) end)
             pcall(function(): () throwTrack:Destroy() end)
         end
         throwTrack = nil
@@ -1854,12 +1854,39 @@ function Module.init(runtime: any): any
 
     local function playThrowAnimation(knife: Tool): ()
         if not knifeThrowSettings.animation then return end
+        -- Primary: the CLASSIC tool animation. The game's own Animate
+        -- script listens for a "toolanim" StringValue inside the equipped
+        -- tool and plays ToolSlashAnim/ToolLungeAnim itself - correct
+        -- priority, correct blending, auto-cleanup, and it can never leave
+        -- the rig stuck halfway. Firing the remote directly (as this
+        -- module does, to keep the predicted aim) bypasses the game's
+        -- throw path entirely, which is why throws had no animation at
+        -- all; and the old manual pick of ANY Animation named "throw"
+        -- restarted tracks on every throw and visibly broke the character
+        -- ("no tiene animacion... la hace muy mal").
+        pcall(function(): ()
+            local existing: Instance? = knife:FindFirstChild("toolanim")
+            if existing then
+                pcall(function(): () existing:Destroy() end)
+            end
+            local toolAnim: StringValue = Instance.new("StringValue")
+            toolAnim.Name = "toolanim"
+            toolAnim.Value = "Lunge"
+            toolAnim.Parent = knife
+            task.delay(0.25, function(): ()
+                if toolAnim.Parent == knife then
+                    pcall(function(): () toolAnim:Destroy() end)
+                end
+            end)
+        end)
+        -- Secondary: knives that ship their OWN throw Animation layer it
+        -- on top through a cached track; every throw restarts it (each
+        -- throw is one swing), and a weapon change stops the old track
+        -- with a soft fade instead of an instant freeze.
         local character: Model? = LocalPlayer.Character
         local humanoid: Humanoid? = character
             and character:FindFirstChildOfClass("Humanoid") :: Humanoid?
-        if not humanoid then stopThrowAnimation(); return end
-        -- A random first Animation can be Equip or Stab. Unknown tools simply
-        -- skip this cosmetic operation; they never delay/block the packet.
+        if not humanoid then return end
         local anim: Animation? = nil
         for _, descendant: Instance in ipairs(knife:GetDescendants()) do
             if descendant:IsA("Animation")
@@ -1868,7 +1895,10 @@ function Module.init(runtime: any): any
                 break
             end
         end
-        if not anim then stopThrowAnimation(); return end
+        if not anim then
+            stopThrowAnimation()
+            return
+        end
         if throwTrackHumanoid ~= humanoid or throwTrackKnife ~= knife
             or throwTrackId ~= anim.AnimationId then
             stopThrowAnimation()
@@ -2183,15 +2213,14 @@ function Module.init(runtime: any): any
 
     local MINIMUM_ERROR_RADIUS: number = 0.35
 
-    -- The gun remote casts a SEGMENT from the passed origin to the passed
-    -- endpoint, not an infinite ray: a near miss visibly stops mid-air right
-    -- where we predicted the target would be ("el disparo choca con el aire")
-    -- instead of flying on to the wall behind. Extending the endpoint a few
-    -- studs BEYOND the predicted point makes the segment pass through the
-    -- target even when the lead is slightly short, turning half-stud misses
-    -- into hits. The extension is only added when no bystander stands in the
-    -- extra tail (the sheriff dies for shooting innocents).
-    local GUN_PIERCE_STUDS: number = 4.0
+    -- Server-side gun cooldown, measured from real MM2 remote logs
+    -- (TestingStuff 2026-10-15): accepted shots were never closer than
+    -- ~3.13 s apart, and every rapid follow-up (< ~3 s) was silently
+    -- dropped by the server - no GunFired echo, no damage, nothing. The
+    -- client kept "shooting" and the user kept seeing the same miss,
+    -- because the correction shots never actually left the building.
+    local GUN_SERVER_COOLDOWN: number = 3.1
+    local lastGunFireServer: number = -math.huge
 
     local AIM_PARTS: {string} = {
         "UpperTorso",
@@ -2715,6 +2744,15 @@ function Module.init(runtime: any): any
             return reject("Shot accuracy is too low to fire.")
         end
 
+        -- One packet per server cooldown window, for BOTH modes: the real
+        -- logs show the server silently drops any shot fired less than
+        -- ~3.1 s after the previous one (no echo, no damage), so a rapid
+        -- re-fire never tests a correction - it just looks like the same
+        -- miss again.
+        if os.clock() - lastGunFireServer < GUN_SERVER_COOLDOWN then
+            return reject("Gun is cooling down - the server drops rapid shots.")
+        end
+
         if silent then
 
             local variant: string = mm2Settings.silentSpawn
@@ -2733,6 +2771,7 @@ function Module.init(runtime: any): any
                 at = os.clock(),
                 offset = math.floor(offset * 10) / 10,
             }
+            lastGunFireServer = os.clock()
             remote:FireServer(shotOrigin, shotEnd)
 
             pcall(trajectoryCalibration.noteAuthoredShot, trajectoryCalibration, {
@@ -2753,18 +2792,18 @@ function Module.init(runtime: any): any
         end
 
         state.mm2ShotFeedback.queue(target, gun, origin, aim, resolved)
-        local fireEndpoint: Vector3 = resolved.endpoint
-        local fireDirection: Vector3 = fireEndpoint - origin.Position
-        if fireDirection.Magnitude > 0.05 then
-            local pierced: Vector3 =
-                fireEndpoint + fireDirection.Unit * GUN_PIERCE_STUDS
-            if not bystanderOnSegment(target, fireEndpoint, pierced) then
-                fireEndpoint = pierced
-            end
-        end
+        -- The endpoint must be the PREDICTED TARGET POINT itself. Real MM2
+        -- logs (2026-10-15) show the server validates it against the
+        -- target's rewound position: v27 extended it 4 studs past the
+        -- target to "pierce" the hitbox segment, and every single extended
+        -- shot was rejected outright (0 GunFired echoes in a 5-shot
+        -- session) - the shot died mid-air exactly like the bug it tried
+        -- to fix. The server's own acceptance window (~277 ms rewind) is
+        -- what forgives a slightly short lead.
+        lastGunFireServer = os.clock()
         remote:FireServer(
-            CFrame.lookAt(origin.Position, fireEndpoint),
-            CFrame.new(fireEndpoint)
+            CFrame.lookAt(origin.Position, resolved.endpoint),
+            CFrame.new(resolved.endpoint)
         )
         pcall(trajectoryCalibration.noteAuthoredShot, trajectoryCalibration, {
             kind = "gun",
@@ -4588,10 +4627,14 @@ function Module.init(runtime: any): any
         electricKnife = false,
         color = Color3.fromRGB(100, 185, 255),
         intensity = 1,
+        trailEsp = false,
+        tracerData = false,
     }
     local connections: {RBXScriptConnection} = {}
     local characterConnections: {RBXScriptConnection} = {}
     local visualFolder: Folder? = nil
+    local trailFolder: Folder? = nil
+    local gunFiredConnection: any = nil
     local electricTask: any = nil
     local arcs: {any} = {}
     local queued = false
@@ -4908,6 +4951,186 @@ function Module.init(runtime: any): any
         end
         return nil
     end
+    -- ------------------------------------------------------------------
+    -- TrailESP + Tracer Data. The server replicates every accepted shot
+    -- through WeaponService.GunFired(gunHandle, origin, hitPosition,
+    -- hitPart): that is the ground truth of where the bullet actually
+    -- landed, for everyone's shots including our own.
+    -- ------------------------------------------------------------------
+
+    local function ensureTrailFolder(): Folder
+        if not trailFolder or not trailFolder.Parent then
+            trailFolder = Instance.new("Folder")
+            trailFolder.Name = "MM2TrailESP"
+            trailFolder.Parent = workspace
+        end
+        return trailFolder :: Folder
+    end
+
+    local function clearTrails(): ()
+        if trailFolder then
+            pcall(function(): () trailFolder:Destroy() end)
+            trailFolder = nil
+        end
+    end
+
+    local function drawShotTrail(origin: Vector3, hit: Vector3, hitPart: any): ()
+        local folder: Folder = ensureTrailFolder()
+        local segment: Vector3 = hit - origin
+        local length: number = segment.Magnitude
+        if length > 0.5 then
+            local beam: Part = Instance.new("Part")
+            beam.Name = "TrailSegment"
+            beam.Anchored = true
+            beam.CanCollide = false
+            beam.CanQuery = false
+            beam.CanTouch = false
+            beam.CastShadow = false
+            beam.Material = Enum.Material.Neon
+            beam.Color = options.color
+            beam.Transparency = 0.25
+            beam.Size = Vector3.new(0.07, 0.07, length)
+            beam.CFrame = CFrame.lookAt(origin + segment * 0.5, hit)
+            beam.Parent = folder
+            pcall(function(): ()
+                TweenService:Create(
+                    beam,
+                    TweenInfo.new(1.4, Enum.EasingStyle.Linear),
+                    { Transparency = 1 }
+                ):Play()
+            end)
+            task.delay(1.55, function(): ()
+                if beam.Parent then
+                    pcall(function(): () beam:Destroy() end)
+                end
+            end)
+        end
+        local marker: Part = Instance.new("Part")
+        marker.Name = "TrailLanding"
+        marker.Shape = Enum.PartType.Ball
+        marker.Anchored = true
+        marker.CanCollide = false
+        marker.CanQuery = false
+        marker.CanTouch = false
+        marker.CastShadow = false
+        marker.Material = Enum.Material.Neon
+        marker.Color = options.color
+        marker.Size = Vector3.new(0.5, 0.5, 0.5)
+        marker.Position = hit
+        marker.Parent = folder
+        if typeof(hitPart) == "Instance" and hitPart:IsA("BasePart") then
+            local highlight: Highlight = Instance.new("Highlight")
+            highlight.Name = "TrailHitESP"
+            highlight.FillColor = options.color
+            highlight.OutlineColor = options.color
+            highlight.FillTransparency = 0.55
+            highlight.OutlineTransparency = 0.1
+            highlight.Adornee = hitPart
+            highlight.Parent = folder
+            task.delay(1.55, function(): ()
+                if highlight.Parent then
+                    pcall(function(): () highlight:Destroy() end)
+                end
+            end)
+        end
+        pcall(function(): ()
+            TweenService:Create(
+                marker,
+                TweenInfo.new(1.4, Enum.EasingStyle.Linear),
+                { Size = Vector3.new(0.05, 0.05, 0.05), Transparency = 1 }
+            ):Play()
+        end)
+        task.delay(1.55, function(): ()
+            if marker.Parent then
+                pcall(function(): () marker:Destroy() end)
+            end
+        end)
+    end
+
+    local function reportTracerData(origin: Vector3, hit: Vector3): ()
+        -- Where OUR bullet landed vs where the murderer actually was when
+        -- the server processed the shot: the honest miss distance.
+        local murderer: Player? = core.findMurderer()
+        if not murderer or not murderer.Character then
+            return
+        end
+        local root: BasePart? = murderer.Character:FindFirstChild("HumanoidRootPart")
+            :: BasePart?
+        if not root then
+            return
+        end
+        local missStuds: number = (hit - root.Position).Magnitude
+        local shotRange: number = (hit - origin).Magnitude
+        notify(string.format(
+            "Tracer: landed %.1f studs from %s (shot range %.0f)",
+            missStuds,
+            murderer.DisplayName,
+            shotRange
+        ))
+    end
+
+    local function connectGunFired(): ()
+        if gunFiredConnection then
+            return
+        end
+        local ok: boolean, weaponService: any = pcall(function(): any
+            local replicatedStorage: any = game:GetService("ReplicatedStorage")
+            local clientServices: any = replicatedStorage:FindFirstChild("ClientServices")
+            return clientServices and clientServices:FindFirstChild("WeaponService") or nil
+        end)
+        if not ok or type(weaponService) ~= "table" and typeof(weaponService) ~= "Instance" then
+            return
+        end
+        local gunFired: any = typeof(weaponService) == "table"
+            and weaponService.GunFired
+            or weaponService:FindFirstChild("GunFired")
+        if not gunFired then
+            return
+        end
+        local okConnect: boolean, connection: any = pcall(function(): any
+            return gunFired.OnClientEvent:Connect(function(
+                gunHandle: any,
+                originValue: any,
+                hitValue: any,
+                hitPart: any
+            ): ()
+                local origin: Vector3? = typeof(originValue) == "Vector3"
+                    and originValue or nil
+                local hit: Vector3? = typeof(hitValue) == "Vector3"
+                    and hitValue or nil
+                if not origin or not hit then
+                    return
+                end
+                if options.trailEsp then
+                    drawShotTrail(origin :: Vector3, hit :: Vector3, hitPart)
+                end
+                if options.tracerData then
+                    local character: Model? = LocalPlayer.Character
+                    local isOurGun: boolean = typeof(gunHandle) == "Instance"
+                        and character ~= nil
+                        and gunHandle:IsDescendantOf(character)
+                    if isOurGun then
+                        reportTracerData(
+                            origin :: Vector3,
+                            hit :: Vector3
+                        )
+                    end
+                end
+            end)
+        end)
+        if okConnect and connection then
+            gunFiredConnection = connection
+        end
+    end
+
+    local function disconnectGunFired(): ()
+        if gunFiredConnection then
+            pcall(function(): () gunFiredConnection:Disconnect() end)
+            gunFiredConnection = nil
+        end
+        clearTrails()
+    end
+
     rebuild = function(): ()
         clearVisuals()
         local character: Model? = LocalPlayer.Character
@@ -5070,6 +5293,7 @@ function Module.init(runtime: any): any
         disconnectAll(connections)
         disconnectAll(characterConnections)
         clearVisuals()
+        disconnectGunFired()
         if not enabled then
             return
         end
@@ -5077,6 +5301,7 @@ function Module.init(runtime: any): any
             connections,
             LocalPlayer.CharacterAdded:Connect(watchCharacter)
         )
+        connectGunFired()
         table.insert(
             connections,
             LocalPlayer.CharacterRemoving:Connect(function(): ()
@@ -5141,6 +5366,15 @@ function Module.init(runtime: any): any
         options.intensity = math.clamp(value, 0.25, 3)
         queueRebuild()
     end)
+    addToggleOption(feature, "TrailESP", false, function(value: boolean): ()
+        options.trailEsp = value
+        if not value then
+            clearTrails()
+        end
+    end, "Draws every replicated bullet's path and landing point, from the server's GunFired signal.")
+    addToggleOption(feature, "Tracer Data", false, function(value: boolean): ()
+        options.tracerData = value
+    end, "Reports how many studs your shots landed from the murderer.")
 
     activeCleanup = function(): ()
         setEnabled(false)
@@ -16947,6 +17181,95 @@ function Module.init(context: Runtime): any
     local freezeSettings = {mode = "Anchor"}
     local FreezeFeature: any = nil
     local originalFreezeState = setmetatable({}, {__mode = "k"})
+    -- Animation modes (Freeze Emotes / Glitch Animations) never touch
+    -- WalkSpeed; they only drive the local Animator, which replicates to
+    -- everyone else automatically because we own the character.
+    local stickyEmoteTracks: {any} = {}
+
+    local function getAnimator(humanoid: any): any
+        local animator: any = humanoid and humanoid:FindFirstChildOfClass("Animator")
+        if not animator and humanoid and humanoid.Parent then
+            local character: any = humanoid.Parent
+            animator = character and character:FindFirstChildOfClass("Animator", true)
+        end
+        return animator
+    end
+
+    local function clearStickyEmoteTracks(): ()
+        stickyEmoteTracks = {}
+    end
+
+    local function freezeEmotesTick(humanoid: any): ()
+        -- Walk while an emote plays: the default Animate script stops an
+        -- emote track the moment the character moves - here every emote
+        -- (Action priority) track is remembered and replayed, so dances
+        -- and poses keep playing while the player walks around freely.
+        local animator: any = getAnimator(humanoid)
+        if not animator then
+            return
+        end
+        local okTracks: boolean, tracks: any = pcall(function(): any
+            return animator:GetPlayingAnimationTracks()
+        end)
+        if not okTracks or type(tracks) ~= "table" then
+            return
+        end
+        local seen: {[any]: boolean} = {}
+        for _, track: any in ipairs(tracks) do
+            if track
+                and track.IsPlaying
+                and track.Priority == Enum.AnimationPriority.Action then
+                seen[track] = true
+                if #stickyEmoteTracks == 0 or stickyEmoteTracks[1] ~= track then
+                    stickyEmoteTracks = {track}
+                end
+            end
+        end
+        for index: number = #stickyEmoteTracks, 1, -1 do
+            local track: any = stickyEmoteTracks[index]
+            if not track or seen[track] then
+                table.remove(stickyEmoteTracks, index)
+            end
+        end
+        if #stickyEmoteTracks > 0 then
+            local character: any = humanoid.Parent
+            local moving: boolean = character ~= nil
+                and character.PrimaryPart ~= nil
+                and character.PrimaryPart.AssemblyLinearVelocity.Magnitude > 1
+            if moving then
+                for _, track: any in ipairs(stickyEmoteTracks) do
+                    pcall(function(): ()
+                        if not track.IsPlaying then
+                            track:Play(0.1)
+                        end
+                    end)
+                end
+            end
+        end
+    end
+
+    local function glitchAnimationsTick(humanoid: any): ()
+        -- Glitch Animations: restarting the live movement tracks every
+        -- frame makes the character visibly twitch/jitter - onlookers see
+        -- the rig stutter in place while it keeps moving.
+        local animator: any = getAnimator(humanoid)
+        if not animator then
+            return
+        end
+        local okTracks: boolean, tracks: any = pcall(function(): any
+            return animator:GetPlayingAnimationTracks()
+        end)
+        if not okTracks or type(tracks) ~= "table" then
+            return
+        end
+        for _, track: any in ipairs(tracks) do
+            if track and track.IsPlaying then
+                pcall(function(): ()
+                    track:Play(0.05)
+                end)
+            end
+        end
+    end
 
     local function restoreFreezeMovements()
         for humanoid, original in pairs(originalFreezeState) do
@@ -16973,10 +17296,23 @@ function Module.init(context: Runtime): any
             return
         end
 
+        clearStickyEmoteTracks()
         FreezeFeature:SetStatus(freezeSettings.mode)
         featureConnections.FreezeMovements = TaskManager:Connect(function()
             local _, humanoid, root = getCharacterParts()
-            if not humanoid or not root then
+            if not humanoid then
+                return
+            end
+
+            if freezeSettings.mode == "Freeze Emotes" then
+                freezeEmotesTick(humanoid)
+                return
+            elseif freezeSettings.mode == "Glitch Animations" then
+                glitchAnimationsTick(humanoid)
+                return
+            end
+
+            if not root then
                 return
             end
 
@@ -17015,7 +17351,7 @@ function Module.init(context: Runtime): any
     addCycleOption(
         FreezeFeature,
         "Freeze mode",
-        {"Anchor", "Humanoid"},
+        {"Anchor", "Humanoid", "Freeze Emotes", "Glitch Animations"},
         1,
         function(value)
             freezeSettings.mode = value
@@ -17028,10 +17364,15 @@ function Module.init(context: Runtime): any
         FreezeFeature,
         "Anchor stops all physics; Humanoid only blocks character controls."
     )
+    addInformationOption(
+        FreezeFeature,
+        "Freeze Emotes keeps emotes playing while you walk; Glitch Animations makes your character stutter."
+    )
 
     activeCleanup = function(): ()
         disconnectFeatureConnection("FreezeMovements")
         restoreFreezeMovements()
+        clearStickyEmoteTracks()
     end
     Module.Initialized = true
     return FreezeFeature

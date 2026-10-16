@@ -75,15 +75,14 @@ function Module.init(runtime: any): any
 
     local MINIMUM_ERROR_RADIUS: number = 0.35
 
-    -- The gun remote casts a SEGMENT from the passed origin to the passed
-    -- endpoint, not an infinite ray: a near miss visibly stops mid-air right
-    -- where we predicted the target would be ("el disparo choca con el aire")
-    -- instead of flying on to the wall behind. Extending the endpoint a few
-    -- studs BEYOND the predicted point makes the segment pass through the
-    -- target even when the lead is slightly short, turning half-stud misses
-    -- into hits. The extension is only added when no bystander stands in the
-    -- extra tail (the sheriff dies for shooting innocents).
-    local GUN_PIERCE_STUDS: number = 4.0
+    -- Server-side gun cooldown, measured from real MM2 remote logs
+    -- (TestingStuff 2026-10-15): accepted shots were never closer than
+    -- ~3.13 s apart, and every rapid follow-up (< ~3 s) was silently
+    -- dropped by the server - no GunFired echo, no damage, nothing. The
+    -- client kept "shooting" and the user kept seeing the same miss,
+    -- because the correction shots never actually left the building.
+    local GUN_SERVER_COOLDOWN: number = 3.1
+    local lastGunFireServer: number = -math.huge
 
     local AIM_PARTS: {string} = {
         "UpperTorso",
@@ -607,6 +606,15 @@ function Module.init(runtime: any): any
             return reject("Shot accuracy is too low to fire.")
         end
 
+        -- One packet per server cooldown window, for BOTH modes: the real
+        -- logs show the server silently drops any shot fired less than
+        -- ~3.1 s after the previous one (no echo, no damage), so a rapid
+        -- re-fire never tests a correction - it just looks like the same
+        -- miss again.
+        if os.clock() - lastGunFireServer < GUN_SERVER_COOLDOWN then
+            return reject("Gun is cooling down - the server drops rapid shots.")
+        end
+
         if silent then
 
             local variant: string = mm2Settings.silentSpawn
@@ -625,6 +633,7 @@ function Module.init(runtime: any): any
                 at = os.clock(),
                 offset = math.floor(offset * 10) / 10,
             }
+            lastGunFireServer = os.clock()
             remote:FireServer(shotOrigin, shotEnd)
 
             pcall(trajectoryCalibration.noteAuthoredShot, trajectoryCalibration, {
@@ -645,18 +654,18 @@ function Module.init(runtime: any): any
         end
 
         state.mm2ShotFeedback.queue(target, gun, origin, aim, resolved)
-        local fireEndpoint: Vector3 = resolved.endpoint
-        local fireDirection: Vector3 = fireEndpoint - origin.Position
-        if fireDirection.Magnitude > 0.05 then
-            local pierced: Vector3 =
-                fireEndpoint + fireDirection.Unit * GUN_PIERCE_STUDS
-            if not bystanderOnSegment(target, fireEndpoint, pierced) then
-                fireEndpoint = pierced
-            end
-        end
+        -- The endpoint must be the PREDICTED TARGET POINT itself. Real MM2
+        -- logs (2026-10-15) show the server validates it against the
+        -- target's rewound position: v27 extended it 4 studs past the
+        -- target to "pierce" the hitbox segment, and every single extended
+        -- shot was rejected outright (0 GunFired echoes in a 5-shot
+        -- session) - the shot died mid-air exactly like the bug it tried
+        -- to fix. The server's own acceptance window (~277 ms rewind) is
+        -- what forgives a slightly short lead.
+        lastGunFireServer = os.clock()
         remote:FireServer(
-            CFrame.lookAt(origin.Position, fireEndpoint),
-            CFrame.new(fireEndpoint)
+            CFrame.lookAt(origin.Position, resolved.endpoint),
+            CFrame.new(resolved.endpoint)
         )
         pcall(trajectoryCalibration.noteAuthoredShot, trajectoryCalibration, {
             kind = "gun",

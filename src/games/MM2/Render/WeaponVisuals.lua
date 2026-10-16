@@ -21,10 +21,14 @@ function Module.init(runtime: any): any
         electricKnife = false,
         color = Color3.fromRGB(100, 185, 255),
         intensity = 1,
+        trailEsp = false,
+        tracerData = false,
     }
     local connections: {RBXScriptConnection} = {}
     local characterConnections: {RBXScriptConnection} = {}
     local visualFolder: Folder? = nil
+    local trailFolder: Folder? = nil
+    local gunFiredConnection: any = nil
     local electricTask: any = nil
     local arcs: {any} = {}
     local queued = false
@@ -341,6 +345,186 @@ function Module.init(runtime: any): any
         end
         return nil
     end
+    -- ------------------------------------------------------------------
+    -- TrailESP + Tracer Data. The server replicates every accepted shot
+    -- through WeaponService.GunFired(gunHandle, origin, hitPosition,
+    -- hitPart): that is the ground truth of where the bullet actually
+    -- landed, for everyone's shots including our own.
+    -- ------------------------------------------------------------------
+
+    local function ensureTrailFolder(): Folder
+        if not trailFolder or not trailFolder.Parent then
+            trailFolder = Instance.new("Folder")
+            trailFolder.Name = "MM2TrailESP"
+            trailFolder.Parent = workspace
+        end
+        return trailFolder :: Folder
+    end
+
+    local function clearTrails(): ()
+        if trailFolder then
+            pcall(function(): () trailFolder:Destroy() end)
+            trailFolder = nil
+        end
+    end
+
+    local function drawShotTrail(origin: Vector3, hit: Vector3, hitPart: any): ()
+        local folder: Folder = ensureTrailFolder()
+        local segment: Vector3 = hit - origin
+        local length: number = segment.Magnitude
+        if length > 0.5 then
+            local beam: Part = Instance.new("Part")
+            beam.Name = "TrailSegment"
+            beam.Anchored = true
+            beam.CanCollide = false
+            beam.CanQuery = false
+            beam.CanTouch = false
+            beam.CastShadow = false
+            beam.Material = Enum.Material.Neon
+            beam.Color = options.color
+            beam.Transparency = 0.25
+            beam.Size = Vector3.new(0.07, 0.07, length)
+            beam.CFrame = CFrame.lookAt(origin + segment * 0.5, hit)
+            beam.Parent = folder
+            pcall(function(): ()
+                TweenService:Create(
+                    beam,
+                    TweenInfo.new(1.4, Enum.EasingStyle.Linear),
+                    { Transparency = 1 }
+                ):Play()
+            end)
+            task.delay(1.55, function(): ()
+                if beam.Parent then
+                    pcall(function(): () beam:Destroy() end)
+                end
+            end)
+        end
+        local marker: Part = Instance.new("Part")
+        marker.Name = "TrailLanding"
+        marker.Shape = Enum.PartType.Ball
+        marker.Anchored = true
+        marker.CanCollide = false
+        marker.CanQuery = false
+        marker.CanTouch = false
+        marker.CastShadow = false
+        marker.Material = Enum.Material.Neon
+        marker.Color = options.color
+        marker.Size = Vector3.new(0.5, 0.5, 0.5)
+        marker.Position = hit
+        marker.Parent = folder
+        if typeof(hitPart) == "Instance" and hitPart:IsA("BasePart") then
+            local highlight: Highlight = Instance.new("Highlight")
+            highlight.Name = "TrailHitESP"
+            highlight.FillColor = options.color
+            highlight.OutlineColor = options.color
+            highlight.FillTransparency = 0.55
+            highlight.OutlineTransparency = 0.1
+            highlight.Adornee = hitPart
+            highlight.Parent = folder
+            task.delay(1.55, function(): ()
+                if highlight.Parent then
+                    pcall(function(): () highlight:Destroy() end)
+                end
+            end)
+        end
+        pcall(function(): ()
+            TweenService:Create(
+                marker,
+                TweenInfo.new(1.4, Enum.EasingStyle.Linear),
+                { Size = Vector3.new(0.05, 0.05, 0.05), Transparency = 1 }
+            ):Play()
+        end)
+        task.delay(1.55, function(): ()
+            if marker.Parent then
+                pcall(function(): () marker:Destroy() end)
+            end
+        end)
+    end
+
+    local function reportTracerData(origin: Vector3, hit: Vector3): ()
+        -- Where OUR bullet landed vs where the murderer actually was when
+        -- the server processed the shot: the honest miss distance.
+        local murderer: Player? = core.findMurderer()
+        if not murderer or not murderer.Character then
+            return
+        end
+        local root: BasePart? = murderer.Character:FindFirstChild("HumanoidRootPart")
+            :: BasePart?
+        if not root then
+            return
+        end
+        local missStuds: number = (hit - root.Position).Magnitude
+        local shotRange: number = (hit - origin).Magnitude
+        notify(string.format(
+            "Tracer: landed %.1f studs from %s (shot range %.0f)",
+            missStuds,
+            murderer.DisplayName,
+            shotRange
+        ))
+    end
+
+    local function connectGunFired(): ()
+        if gunFiredConnection then
+            return
+        end
+        local ok: boolean, weaponService: any = pcall(function(): any
+            local replicatedStorage: any = game:GetService("ReplicatedStorage")
+            local clientServices: any = replicatedStorage:FindFirstChild("ClientServices")
+            return clientServices and clientServices:FindFirstChild("WeaponService") or nil
+        end)
+        if not ok or type(weaponService) ~= "table" and typeof(weaponService) ~= "Instance" then
+            return
+        end
+        local gunFired: any = typeof(weaponService) == "table"
+            and weaponService.GunFired
+            or weaponService:FindFirstChild("GunFired")
+        if not gunFired then
+            return
+        end
+        local okConnect: boolean, connection: any = pcall(function(): any
+            return gunFired.OnClientEvent:Connect(function(
+                gunHandle: any,
+                originValue: any,
+                hitValue: any,
+                hitPart: any
+            ): ()
+                local origin: Vector3? = typeof(originValue) == "Vector3"
+                    and originValue or nil
+                local hit: Vector3? = typeof(hitValue) == "Vector3"
+                    and hitValue or nil
+                if not origin or not hit then
+                    return
+                end
+                if options.trailEsp then
+                    drawShotTrail(origin :: Vector3, hit :: Vector3, hitPart)
+                end
+                if options.tracerData then
+                    local character: Model? = LocalPlayer.Character
+                    local isOurGun: boolean = typeof(gunHandle) == "Instance"
+                        and character ~= nil
+                        and gunHandle:IsDescendantOf(character)
+                    if isOurGun then
+                        reportTracerData(
+                            origin :: Vector3,
+                            hit :: Vector3
+                        )
+                    end
+                end
+            end)
+        end)
+        if okConnect and connection then
+            gunFiredConnection = connection
+        end
+    end
+
+    local function disconnectGunFired(): ()
+        if gunFiredConnection then
+            pcall(function(): () gunFiredConnection:Disconnect() end)
+            gunFiredConnection = nil
+        end
+        clearTrails()
+    end
+
     rebuild = function(): ()
         clearVisuals()
         local character: Model? = LocalPlayer.Character
@@ -503,6 +687,7 @@ function Module.init(runtime: any): any
         disconnectAll(connections)
         disconnectAll(characterConnections)
         clearVisuals()
+        disconnectGunFired()
         if not enabled then
             return
         end
@@ -510,6 +695,7 @@ function Module.init(runtime: any): any
             connections,
             LocalPlayer.CharacterAdded:Connect(watchCharacter)
         )
+        connectGunFired()
         table.insert(
             connections,
             LocalPlayer.CharacterRemoving:Connect(function(): ()
@@ -574,6 +760,15 @@ function Module.init(runtime: any): any
         options.intensity = math.clamp(value, 0.25, 3)
         queueRebuild()
     end)
+    addToggleOption(feature, "TrailESP", false, function(value: boolean): ()
+        options.trailEsp = value
+        if not value then
+            clearTrails()
+        end
+    end, "Draws every replicated bullet's path and landing point, from the server's GunFired signal.")
+    addToggleOption(feature, "Tracer Data", false, function(value: boolean): ()
+        options.tracerData = value
+    end, "Reports how many studs your shots landed from the murderer.")
 
     activeCleanup = function(): ()
         setEnabled(false)

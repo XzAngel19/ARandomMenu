@@ -146,7 +146,7 @@ function Module.init(runtime: any): any
     local throwTrackId: string? = nil
     local function stopThrowAnimation(): ()
         if throwTrack then
-            pcall(function(): () throwTrack:Stop(0) end)
+            pcall(function(): () throwTrack:Stop(0.2) end)
             pcall(function(): () throwTrack:Destroy() end)
         end
         throwTrack = nil
@@ -157,12 +157,39 @@ function Module.init(runtime: any): any
 
     local function playThrowAnimation(knife: Tool): ()
         if not knifeThrowSettings.animation then return end
+        -- Primary: the CLASSIC tool animation. The game's own Animate
+        -- script listens for a "toolanim" StringValue inside the equipped
+        -- tool and plays ToolSlashAnim/ToolLungeAnim itself - correct
+        -- priority, correct blending, auto-cleanup, and it can never leave
+        -- the rig stuck halfway. Firing the remote directly (as this
+        -- module does, to keep the predicted aim) bypasses the game's
+        -- throw path entirely, which is why throws had no animation at
+        -- all; and the old manual pick of ANY Animation named "throw"
+        -- restarted tracks on every throw and visibly broke the character
+        -- ("no tiene animacion... la hace muy mal").
+        pcall(function(): ()
+            local existing: Instance? = knife:FindFirstChild("toolanim")
+            if existing then
+                pcall(function(): () existing:Destroy() end)
+            end
+            local toolAnim: StringValue = Instance.new("StringValue")
+            toolAnim.Name = "toolanim"
+            toolAnim.Value = "Lunge"
+            toolAnim.Parent = knife
+            task.delay(0.25, function(): ()
+                if toolAnim.Parent == knife then
+                    pcall(function(): () toolAnim:Destroy() end)
+                end
+            end)
+        end)
+        -- Secondary: knives that ship their OWN throw Animation layer it
+        -- on top through a cached track; every throw restarts it (each
+        -- throw is one swing), and a weapon change stops the old track
+        -- with a soft fade instead of an instant freeze.
         local character: Model? = LocalPlayer.Character
         local humanoid: Humanoid? = character
             and character:FindFirstChildOfClass("Humanoid") :: Humanoid?
-        if not humanoid then stopThrowAnimation(); return end
-        -- A random first Animation can be Equip or Stab. Unknown tools simply
-        -- skip this cosmetic operation; they never delay/block the packet.
+        if not humanoid then return end
         local anim: Animation? = nil
         for _, descendant: Instance in ipairs(knife:GetDescendants()) do
             if descendant:IsA("Animation")
@@ -171,7 +198,10 @@ function Module.init(runtime: any): any
                 break
             end
         end
-        if not anim then stopThrowAnimation(); return end
+        if not anim then
+            stopThrowAnimation()
+            return
+        end
         if throwTrackHumanoid ~= humanoid or throwTrackKnife ~= knife
             or throwTrackId ~= anim.AnimationId then
             stopThrowAnimation()

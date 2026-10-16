@@ -1,3 +1,6 @@
 loadstring.lua
 * - dev
 * - dev.lua
+build/
+__pycache__/
+*.pyc
