@@ -105,7 +105,7 @@ function Module.init(context: Runtime): any
                     local tip: Vector2 = centre + direction * radius
                     local back: Vector2 = tip - direction * 16
                     -- Colour priority: the game's role colour when roles are
-                    -- known (white by default otherwise), then teammates in
+                    -- known (green by default otherwise), then teammates in
                     -- their team colour while the team-colour option is on.
                     local roleColourForTarget: Color3? = roleColour(player)
                     local colour: Color3 = roleColourForTarget
@@ -120,7 +120,7 @@ function Module.init(context: Runtime): any
                     if card.Options["Distance"].Value then
                         drawing:Label(
                             "Distance",
-                            tostring(math.round(target.Distance)) .. "m",
+                            "[" .. tostring(math.round(target.Distance)) .. "]",
                             tip - direction * 26,
                             0.5,
                             12,

@@ -9,7 +9,7 @@ local function healthValues(health, maximum)
     return health, maximum, math.clamp(health / maximum, 0, 1)
 end
 local function healthColour(fraction)
-    local low, mid, high = Color3.fromRGB(244,78,95), Color3.fromRGB(246,193,76), Color3.fromRGB(89,218,151)
+    local low, mid, high = Color3.fromRGB(255,70,70), Color3.fromRGB(255,220,60), Color3.fromRGB(85,255,85)
     return fraction < 0.5 and low:Lerp(mid, fraction * 2) or mid:Lerp(high, (fraction - 0.5) * 2)
 end
 
@@ -22,29 +22,16 @@ function Module.init(context: any): any
         store.states["Universal.HP"] = store.states["Universal.PlayerESP"] == true
             and (store.states["Universal.PlayerESP.Healthbar"] ~= false or store.states["Universal.PlayerESP.Healthtext"] == true)
     end
-    -- Native text supports Unicode heart glyphs, unlike the menu's bitmap font.
-    hud = create("Frame", {Name = "SelfHP", Parent = host.ScreenGui, AnchorPoint = Vector2.new(0.5,1),
-        Position = UDim2.new(0.5,0,1,-110), Size = UDim2.fromOffset(156,36),
-        BackgroundColor3 = Color3.fromRGB(24,24,24), BackgroundTransparency = 0.35, BorderSizePixel = 0, Visible = false, ZIndex = 20})
-    if host.ThemeEngine then host.ThemeEngine.Bind(hud,"BackgroundColor3","background") end
-    local scale = create("UIScale", {Parent = hud, Scale = 1})
-    local function label(name, text, position, size, font, textSize)
-        return create("TextLabel", {Name = name, Parent = hud, Position = position, Size = size, BackgroundTransparency = 1,
-            Text = text, Font = font, TextSize = textSize, TextColor3 = Color3.fromRGB(241,245,250), TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 22})
-    end
-    local heart = label("Heart", "❤️", UDim2.fromOffset(8,4), UDim2.fromOffset(24,24), Enum.Font.Gotham, 18)
-    local value = label("Value", "", UDim2.fromOffset(37,4), UDim2.fromOffset(110,24), Enum.Font.Code, 16)
-    value.TextScaled = true
-    create("UITextSizeConstraint", {Parent = value, MinTextSize = 12, MaxTextSize = 16})
-    local track = create("Frame", {Name = "Track", Parent = hud, Position = UDim2.fromOffset(8,31), Size = UDim2.new(1,-16,0,2),
-        BackgroundColor3 = Color3.fromRGB(43,49,62), BorderSizePixel = 0, ClipsDescendants = true, ZIndex = 21})
-    local trail = create("Frame", {Name = "Damage", Parent = track, Size = UDim2.fromScale(1,1), BackgroundColor3 = Color3.fromRGB(247,186,103), BorderSizePixel = 0, ZIndex = 22})
-    local fill = create("Frame", {Name = "Fill", Parent = track, Size = UDim2.fromScale(1,1), BackgroundColor3 = healthColour(1), BorderSizePixel = 0, ZIndex = 23})
-    local lastCharacter, delayed = nil, 1
+    -- Vape Health is a simple number + heart near the crosshair, not a card.
+    hud = create("TextLabel", {Name="SelfHP",Parent=host.ScreenGui,
+        AnchorPoint=Vector2.new(0.5,0),Position=UDim2.new(0.5,6,0.5,30),Size=UDim2.fromOffset(140,24),
+        BackgroundTransparency=1,BorderSizePixel=0,Visible=false,ZIndex=20,
+        Text="",Font=Enum.Font.Arial,TextSize=18,TextStrokeTransparency=1,TextColor3=healthColour(1)})
+    local scale = create("UIScale", {Parent=hud,Scale=1})
     local card
     local function clear()
         render:ReleaseAll(layer); table.clear(tracked); layer.Visible = false
-        hud.Visible = false; lastCharacter = nil; delayed = 1
+        hud.Visible = false; hud.Text = ""
     end
     card = context.framework.Categories.Visuals:CreateModule({Name = "HP", Category = "Render", ConfigKey = "Universal.HP", Order = 4,
         Tooltip = "Independent player health bars and optional heart-style Self HP display.", Function = function(enabled)
@@ -64,9 +51,9 @@ function Module.init(context: any): any
                         if not rect or not options["Through walls"].Value and not entity:VisibleFrom(target) then continue end
                         local health, maximum, fraction = healthValues(target.Health,target.MaxHealth)
                         local drawing = render:Set(layer,target.Player)
-                        drawing:Show(true); drawing:Bar(Vector2.new(rect.left-5,rect.top), rect.height, fraction)
+                        drawing:Show(true); drawing:Bar(Vector2.new(rect.left-2,rect.top), rect.height, fraction)
                         if options["Health text"].Value then
-                            drawing:Label("HP", tostring(math.ceil(health)), Vector2.new(rect.left-24,rect.top), 0, 12, healthColour(fraction), true)
+                            drawing:Label("HP", tostring(math.ceil(health)), Vector2.new(rect.left-14,rect.top+(1-fraction)*rect.height), 0.5, 12, healthColour(fraction), false)
                         else drawing:HideLabel("HP") end
                         tracked[target.Player] = true; seen[target.Player] = true; count += 1
                     end
@@ -77,26 +64,24 @@ function Module.init(context: any): any
                     local character = host.LocalPlayer.Character
                     local humanoid = character and character:FindFirstChildOfClass("Humanoid")
                     local health, maximum, fraction = healthValues(humanoid and humanoid.Health, humanoid and humanoid.MaxHealth)
-                    if character ~= lastCharacter then delayed = fraction; lastCharacter = character end
-                    delayed = math.max(fraction, delayed + (fraction - delayed) * (1-math.exp(-4*math.clamp(dt or 1/60,0,0.1))))
-                    local colour = healthColour(fraction)
-                    local wanted = tostring(math.ceil(health)) .. " / " .. tostring(math.ceil(maximum))
-                    if value.Text ~= wanted then value.Text = wanted end
-                    heart.TextColor3 = colour; fill.BackgroundColor3 = colour
-                    fill.Size = UDim2.fromScale(fraction,1); trail.Size = UDim2.fromScale(delayed,1)
+                    local wanted = humanoid and humanoid.Health > 0 and tostring(math.ceil(health)) .. " ❤️" or ""
+                    if hud.Text ~= wanted then hud.Text = wanted end
+                    hud.TextColor3 = healthColour(fraction)
+                    hud.Position = options["Self HP position"].Value == "Bottom" and UDim2.new(0.5,0,1,-110) or UDim2.new(0.5,6,0.5,30)
                     local wantedScale = options["Self HP scale"].Value
-                    if camera then wantedScale = math.min(wantedScale, math.max(0.5, (camera.ViewportSize.X - 24) / 156)) end
+                    if camera then wantedScale = math.min(wantedScale, math.max(0.5, (camera.ViewportSize.X - 24) / 140)) end
                     scale.Scale = wantedScale
                 end
                 card:SetStatus(options["Self HP"].Value and tostring(count) .. " + self" or tostring(count))
             end)
         end})
     card:CreateToggle({Name = "Players", Default = true})
-    card:CreateToggle({Name = "Health text", Default = true, Show = {Option = "Players"}})
+    card:CreateToggle({Name = "Health text", Default = false, Show = {Option = "Players"}})
     card:CreateSlider({Name = "Max distance", Min = 50, Max = 5000, Default = 2000, Show = {Option = "Players"}})
     card:CreateToggle({Name = "Teammates", Default = true, Show = {Option = "Players"}})
     card:CreateToggle({Name = "Through walls", Default = true, Show = {Option = "Players"}})
     card:CreateToggle({Name = "Self HP", Default = false})
+    card:CreateDropdown({Name="Self HP position",List={"Center","Bottom"},Index=1,Show={Option="Self HP"}})
     card:CreateSlider({Name = "Self HP scale", Min = 0.8, Max = 1.6, Decimal = 1, Default = 1, Show = {Option = "Self HP"}})
     roleBinding = context.services.gameRoles:Bind(card, {palette = false})
     card.OptionFilter = function(name)

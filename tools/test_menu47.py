@@ -9,6 +9,11 @@ script=PRELUDE+r'''
 local Color3={fromRGB=function(r,g,b) return {r,g,b} end}
 local Vector2={new=function(x,y) return {X=x,Y=y} end}
 local game={PlaceId=123}
+Enum.KeyCode={Escape='Escape'};Enum.UserInputType={MouseButton1='MouseButton1',Touch='Touch'}
+local RaycastParams={new=function() return {} end}
+local inputCallback
+local input={InputBegan={Connect=function(_,fn) inputCallback=fn;return {Disconnect=function() inputCallback=nil end} end},GetFocusedTextBox=function() return nil end}
+
 local cards={}
 local function option(self,d)
  local o={Value=d.Default,definition=d}
@@ -54,7 +59,7 @@ local player={Character={FindFirstChild=function() return root end}}
 local config={values={}}
 local saves=0
 local world={CurrentCamera={ViewportSize={X=1000,Y=1000},CFrame={Position=Vector3.zero}}}
-local host={LocalPlayer=player,workspace=world,configData=config,queueConfigSave=function() saves+=1 end}
+local host={UserInputService=input,LocalPlayer=player,workspace=world,configData=config,queueConfigSave=function() saves+=1 end}
 local context={host=host,framework=framework,render=render}
 '''+ '\nlocal Markers='+source('src/games/universal/Render/Markers.lua')+r'''
 local markers=Markers.init(context)
@@ -63,8 +68,15 @@ press(markers,'Save here');assert(#markers.notifications==1)
 markers.Options.Name:Set('Home');press(markers,'Save here');assert(saves==1 and markers.Options.Places:IsSelected('Home'))
 local data=config.values['Universal.Markers.Places.123'];assert(data.Home[1]==10 and data.Home[2]==20 and data.Home[3]==30)
 markers:Toggle(true);markers.frame();assert(markers.Options.Places.names[1]=='Home')
-markers.Options['Manual coordinates']:Set(true);markers.Options.Coordinates:Set('1, 2, 3');markers.Options.Name:Set('Exit');press(markers,'Save here');assert(data.Exit[3]==3)
-markers.Options.Coordinates:Set('NaN, 1, 2');press(markers,'Save here');assert(data.Exit[1]==1 and #markers.notifications==2)
+markers.Options['Manual coordinates']:Set(true);markers.Options.Coordinates:Set('1, 2, 3');markers.Options.Name:Set('Exit');press(markers,'Save coordinates');assert(data.Exit[3]==3)
+markers.Options.Coordinates:Set('NaN, 1, 2');press(markers,'Save coordinates');assert(data.Exit[1]==1 and #markers.notifications==2)
+local raycasts=0
+world.CurrentCamera.ScreenPointToRay=function(_,x,y) return {Origin=Vector3.zero,Direction=Vector3.new(0,0,1)} end
+world.Raycast=function(_,origin,delta,params) raycasts+=1;assert(params.RespectCanCollide);return {Position=Vector3.new(7,8,9)} end
+markers.Options.Name:Set('Touch spot');press(markers,'Touch')
+inputCallback({UserInputType='MouseButton1',Position=Vector3.new(30,40,0)},true);assert(raycasts==0,'UI input must not place a marker')
+inputCallback({UserInputType='Touch',Position=Vector3.new(30,40,0)},false);assert(data['Touch spot'][3]==9)
+press(markers,'Touch');inputCallback({KeyCode='Escape'},false);assert(raycasts==1)
 markers:Toggle(false);Markers.destroy()
 markers=Markers.init(context);assert(markers.Options.Places:IsSelected('Home'),'points/selection survive reload')
 markers.Options.Name:Set('Home');press(markers,'Remove named place');data=config.values['Universal.Markers.Places.123'];assert(not data.Home and data.Exit)

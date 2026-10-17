@@ -239,14 +239,14 @@ function Module.init(context: any): RenderLibrary
                     Name = slot,
                     AnchorPoint = Vector2.new(0.5, anchorY),
                     AutomaticSize = Enum.AutomaticSize.X,
-                    BackgroundColor3 = Color3.fromRGB(10, 10, 12),
+                    BackgroundColor3 = Color3.fromRGB(0, 0, 0),
                     BackgroundTransparency = 1,
                     BorderSizePixel = 0,
                     Text = "",
-                    Font = Enum.Font.GothamMedium,
+                    Font = Enum.Font.Arial,
                     RichText = false,
                     TextStrokeColor3 = Color3.fromRGB(0,0,0),
-                    TextStrokeTransparency = 0.45,
+                    TextStrokeTransparency = 1,
                     TextColor3 = Color3.fromRGB(236, 236, 240),
                     TextSize = size,
 
@@ -258,12 +258,9 @@ function Module.init(context: any): RenderLibrary
                 }) :: TextLabel
                 create("UIPadding", {
                     Parent = label,
-                    PaddingLeft = UDim.new(0, 5),
-                    PaddingRight = UDim.new(0, 5),
+                    PaddingLeft = UDim.new(0, 4),
+                    PaddingRight = UDim.new(0, 4),
                 })
-                create("UICorner", {Parent = label, CornerRadius = UDim.new(0, 3)})
-                create("UIStroke", {Parent = label, ApplyStrokeMode = Enum.ApplyStrokeMode.Border,
-                    Color = Color3.fromRGB(111,126,150), Transparency = 0.7, Thickness = 1})
                 set.labels[slot] = label
             end
             local resolved: TextLabel = label :: TextLabel
@@ -271,9 +268,7 @@ function Module.init(context: any): RenderLibrary
             if resolved.Text ~= text then resolved.Text = text end
             if resolved.TextColor3 ~= colour then resolved.TextColor3 = colour end
             if resolved.TextSize ~= size then resolved.TextSize = size end
-            resolved.BackgroundTransparency = plate and 0.18 or 1
-            local border = resolved:FindFirstChildOfClass("UIStroke")
-            if border then border.Transparency = plate and 0.7 or 1 end
+            resolved.BackgroundTransparency = plate and 0.5 or 1
             resolved.Position = UDim2.fromOffset(math.round(at.X), math.round(at.Y))
             resolved.Size = UDim2.fromOffset(0, size + 6)
         end
@@ -291,7 +286,7 @@ function Module.init(context: any): RenderLibrary
                     Parent = root,
                     Name = "HealthTrack",
                     AnchorPoint = Vector2.new(1, 0),
-                    BackgroundColor3 = Color3.fromRGB(12, 12, 14),
+                    BackgroundColor3 = Color3.fromRGB(0, 0, 0),
                     BackgroundTransparency = 0.35,
                     BorderSizePixel = 0,
                     Visible = false,
@@ -303,8 +298,8 @@ function Module.init(context: any): RenderLibrary
                     AnchorPoint = Vector2.new(0, 1),
                     BackgroundColor3 = Color3.fromRGB(120, 220, 140),
                     BorderSizePixel = 0,
-                    Position = UDim2.fromScale(0, 1),
-                    Size = UDim2.fromScale(1, 1),
+                    Position = UDim2.new(0, 1, 1, 0),
+                    Size = UDim2.new(0, 1, 1, 0),
                     ZIndex = 2,
                 }) :: Frame
             end
@@ -313,9 +308,9 @@ function Module.init(context: any): RenderLibrary
             local clamped: number = fraction == fraction and math.clamp(fraction, 0, 1) or 0
             track.Visible = true
             track.Position = UDim2.fromOffset(math.round(at.X), math.round(at.Y))
-            track.Size = UDim2.fromOffset(4, math.max(1, math.round(height)))
-            fill.Size = UDim2.fromScale(1, clamped)
-            local low, mid, high = Color3.fromRGB(244,78,95), Color3.fromRGB(246,193,76), Color3.fromRGB(89,218,151)
+            track.Size = UDim2.fromOffset(3, math.max(1, math.round(height)))
+            fill.Size = UDim2.new(0, 1, clamped, 0)
+            local low, mid, high = Color3.fromRGB(255,70,70), Color3.fromRGB(255,220,60), Color3.fromRGB(85,255,85)
             fill.BackgroundColor3 = clamped < 0.5 and low:Lerp(mid, clamped * 2) or mid:Lerp(high, (clamped - 0.5) * 2)
         end
 

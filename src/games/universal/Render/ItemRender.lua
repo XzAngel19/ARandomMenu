@@ -626,7 +626,7 @@ function Module.render(
         drawings:Label(
             "NameTag",
             options["Show distance"].Value
-                    and (descendant.Name .. "  " .. tostring(math.round(distance)) .. "m")
+                    and ("[" .. tostring(math.round(distance)) .. "] " .. descendant.Name)
                 or descendant.Name,
             projected :: Vector2,
             0.5,

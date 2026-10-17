@@ -217,7 +217,7 @@ local RUNTIME_RAW_BASE: string =
         .. RUNTIME_BRANCH
         .. "/"
 
-local SOURCE_STAMP: string = "v47-20261017-menu"
+local SOURCE_STAMP: string = "v48-20261017-render"
 
 local BOOT_STARTED_AT: number = os.clock()
 local BOOT_FINGERPRINT_SECONDS: number = 0
@@ -1360,6 +1360,16 @@ pcall(function(): ()
     end))
 end)
 
+-- Roblox blurs the 3D scene, not GUI text; share the existing effect rather
+-- than allocating a new BlurEffect every time a selector opens.
+state.setChoiceBlur = function(active: boolean): ()
+    state.choiceBlur = active
+    if MenuBlur then
+        MenuBlur.Size = active and 6 or 14
+        MenuBlur.Enabled = state.visible == true or active
+    end
+end
+
 local menuVisibilityListeners: {(boolean) -> ()} = {}
 state.addMenuVisibilityListener = function(listener: (boolean) -> ()): ()
     table.insert(menuVisibilityListeners, listener)
@@ -1370,7 +1380,7 @@ local function setMenuVisibleCore(visible: boolean): ()
     setMenuCursorUnlocked(visible)
     if MenuBlur then
         pcall(function(): ()
-            MenuBlur.Enabled = visible == true
+            MenuBlur.Enabled = visible == true or state.choiceBlur == true
         end)
     end
     for _, listener: (boolean) -> () in ipairs(menuVisibilityListeners) do

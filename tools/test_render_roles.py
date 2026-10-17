@@ -173,19 +173,18 @@ releaseFuture();assert(provider==nil and not chams.Options['Medic colour'].Visib
 -- HP can show only self, independently of Chams/Nametags/ESP.
 chams:Toggle(false);names:Toggle(false);hp:Toggle(true)
 hp.Options.Players.Value=false;hp.Options['Self HP'].Value=true;hp.render(1/60)
-local hud=screen:FindFirstChild('SelfHP');assert(hud.Visible and hud:FindFirstChild('Heart').Text=='❤️')
-assert(hud:FindFirstChild('Value').Text=='100 / 100')
-self.Humanoid.Health=23;hp.render(.1)
-assert(hud:FindFirstChild('Value').Text=='23 / 100')
-local track=hud:FindFirstChild('Track');near(track:FindFirstChild('Fill').Size.X.Scale,.23)
-assert(track:FindFirstChild('Damage').Size.X.Scale>.23)
-localPlayer.Character=nil;hp.render(.1)
-assert(hud:FindFirstChild('State')==nil and hud.Size.X.Offset==156);near(track:FindFirstChild('Fill').Size.X.Scale,0)
+local hud=screen:FindFirstChild('SelfHP');assert(hud.Visible and hud.Text=='100 ❤️')
+assert(hud.ClassName=='TextLabel' and hud.BackgroundTransparency==1 and hud.Font=='Arial' and hud.TextSize==18)
+assert(not hud:FindFirstChild('Track') and not hud:FindFirstChild('Heart'),'Self HP is text, not a decorated dashboard')
+self.Humanoid.Health=23;hp.render(.1);assert(hud.Text=='23 ❤️')
+localPlayer.Character=nil;hp.render(.1);assert(hud.Text=='')
 localPlayer,self=makePlayer('Respawn');host.LocalPlayer=localPlayer;self.Humanoid.MaxHealth=200;self.Humanoid.Health=150
-hp.render(.1);near(track:FindFirstChild('Fill').Size.X.Scale,.75);near(track:FindFirstChild('Damage').Size.X.Scale,.75)
-self.Humanoid.Health=0/0;self.Humanoid.MaxHealth=0;hp.render(.1);near(track:FindFirstChild('Fill').Size.X.Scale,0)
+hp.render(.1);assert(hud.Text=='150 ❤️')
+self.Humanoid.Health=0/0;self.Humanoid.MaxHealth=0;hp.render(.1);assert(hud.Text=='')
+hp.Options['Self HP position'].Value='Bottom';hp.render(.1);assert(hud.Position.Y.Scale==1)
 hp.Options.Players.Value=true;hp.render(.1)
 local hpLayer=screen:FindFirstChild('HPLayer');assert(#hpLayer.children==1)
+local healthTrack=hpLayer.children[1]:FindFirstChild('HealthTrack');assert(healthTrack.Size.X.Offset==3 and healthTrack:FindFirstChild('HealthFill').Size.X.Offset==1)
 -- Real Render box/outline segments, mode switches, and lazy fill.
 local layer=render:Layer('Geometry');local set=render:Set(layer,'test')
 local rect={left=10,right=70,top=10,bottom=110,width=60,height=100}

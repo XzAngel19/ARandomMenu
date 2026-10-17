@@ -1852,7 +1852,7 @@ function Module.init(context: any): any
 
     local touchPrimary: boolean = state.isMobile == true
     if not touchPrimary then
-        addToggleOption(uiPanel, "Show dock", true, function(value: boolean): ()
+        addToggleOption(uiPanel, "Show dock", false, function(value: boolean): ()
             uiSettingsValues["Show dock"] = value
             state.uiShowDock = value
             if state.dock and type(state.dock.SetVisible) == "function" then
@@ -1860,6 +1860,10 @@ function Module.init(context: any): any
             end
         end)
     end
+
+    host.addActionOption(uiPanel, "Move dock", function(): ()
+        if state.dock and state.dock.BeginMove then state.dock.BeginMove() end
+    end, "Temporarily show the dock. Drag and release to save its position; Escape cancels. Show dock still controls visibility.")
 
     uiRecord.placed = true
     if windows.ReflowWindow then

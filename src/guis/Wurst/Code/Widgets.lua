@@ -1215,7 +1215,7 @@ function Module.init(context: any): WidgetLibrary
             Parent = ScreenGui,
             Name = "ChoiceList",
             BackgroundColor3 = Theme.surfaceRaised,
-            BackgroundTransparency = 0,
+            BackgroundTransparency = 0.22,
             BorderSizePixel = 0,
             Position = UDim2.fromOffset(
                 math.round(anchorPosition.X),
@@ -1229,7 +1229,7 @@ function Module.init(context: any): WidgetLibrary
         create("UIStroke", {
             Parent = list,
             Color = Theme.outline,
-            Transparency = 0.15,
+            Transparency = 0.6,
             Thickness = 1,
         })
 
@@ -1317,10 +1317,12 @@ function Module.init(context: any): WidgetLibrary
             if state.choiceListAnchor == anchor then
                 state.choiceListAnchor = nil
             end
+            if state.setChoiceBlur then state.setChoiceBlur(false) end
             state.closeChoiceList = function(): () end
         end
         state.closeChoiceList = close
         state.choiceListAnchor = anchor
+        if state.setChoiceBlur then state.setChoiceBlur(true) end
 
         ownerConnections = watchPopupOwner(anchor, close)
 
@@ -1468,7 +1470,7 @@ function Module.init(context: any): WidgetLibrary
             Parent = ScreenGui,
             Name = "MultiList",
             BackgroundColor3 = Theme.surface,
-            BackgroundTransparency = 0.04,
+            BackgroundTransparency = 0.22,
             BorderSizePixel = 0,
             Position = UDim2.fromOffset(
                 math.round(anchorPosition.X),
@@ -1482,7 +1484,7 @@ function Module.init(context: any): WidgetLibrary
         create("UIStroke", {
             Parent = list,
             Color = Theme.outline,
-            Transparency = 0.4,
+            Transparency = 0.6,
             Thickness = 1,
         })
 
@@ -1528,10 +1530,12 @@ function Module.init(context: any): WidgetLibrary
             if state.choiceListAnchor == anchor then
                 state.choiceListAnchor = nil
             end
+            if state.setChoiceBlur then state.setChoiceBlur(false) end
             state.closeChoiceList = function(): () end
         end
         state.closeChoiceList = close
         state.choiceListAnchor = anchor
+        if state.setChoiceBlur then state.setChoiceBlur(true) end
 
         ownerConnections = watchPopupOwner(anchor, close)
 

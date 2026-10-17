@@ -606,6 +606,9 @@ function Module.init(context: any): Framework
                 definition2.Persist ~= false,
                 definition2.Tooltip
             )
+            if option.Object and definition2.Placeholder then
+                option.Object.PlaceholderText = definition2.Placeholder
+            end
             option.Set = function(self: any, value: string): ()
                 self.Metadata.callback(value)
                 if self.Object then

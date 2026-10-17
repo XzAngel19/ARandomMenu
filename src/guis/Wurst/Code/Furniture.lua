@@ -1445,12 +1445,90 @@ function Module.init(context: any): any
         end
         pillFrame.Visible = value ~= false
     end
-    setDockVisible(state.uiShowDock ~= false)
+    if state.uiShowDock == nil then state.uiShowDock = touchPrimary end
+    setDockVisible(state.uiShowDock == true)
     Furniture.SetDockVisible = setDockVisible
     state.dock = {
         root = pillFrame,
         SetVisible = setDockVisible,
     }
+
+    local moving = false
+    local moveConnections, moveHandle, moveHint = {}, nil, nil
+    local moveOrigin, dragInput, dragStart, dragAnchor
+    local function dockAt(x,y)
+        local viewport, size = ScreenGui.AbsoluteSize, pillFrame.AbsoluteSize
+        if viewport.X<1 or viewport.Y<1 then return end
+        if size.X<1 or size.Y<1 then size=Vector2.new(pillWidth,PILL_BUTTON+PILL_PADDING_Y*2) end
+        x=math.clamp(x,size.X*0.5,math.max(size.X*0.5,viewport.X-size.X*0.5))
+        y=math.clamp(y,size.Y,math.max(size.Y,viewport.Y))
+        pillFrame.Position=UDim2.fromScale(x/math.max(1,viewport.X),y/math.max(1,viewport.Y))
+    end
+    local savedDock = configData.ui.dockPosition
+    if type(savedDock)=="table" and type(savedDock.x)=="number" and type(savedDock.y)=="number"
+        and savedDock.x==savedDock.x and savedDock.y==savedDock.y then
+        dockAt(math.clamp(savedDock.x,0,1)*ScreenGui.AbsoluteSize.X,math.clamp(savedDock.y,0,1)*ScreenGui.AbsoluteSize.Y)
+    end
+    if type(savedDock)=="table" and type(savedDock.x)=="number" and type(savedDock.y)=="number"
+        and savedDock.x==savedDock.x and savedDock.y==savedDock.y then
+        task.defer(function()
+            if pillFrame.Parent then dockAt(math.clamp(savedDock.x,0,1)*ScreenGui.AbsoluteSize.X,math.clamp(savedDock.y,0,1)*ScreenGui.AbsoluteSize.Y) end
+        end)
+    end
+    local function finishDockMove(save)
+        if not moving then return end
+        moving=false;dragInput=nil
+        for _,connection in ipairs(moveConnections) do connection:Disconnect() end
+        table.clear(moveConnections)
+        if moveHandle then moveHandle:Destroy();moveHandle=nil end
+        if moveHint then moveHint:Destroy();moveHint=nil end
+        if save then
+            configData.ui.dockPosition={x=pillFrame.Position.X.Scale,y=pillFrame.Position.Y.Scale}
+            queueConfigSave()
+        else pillFrame.Position=moveOrigin end
+        setDockVisible(state.uiShowDock==true)
+    end
+    local function beginDockMove()
+        if moving then finishDockMove(true);return end
+        moving=true;moveOrigin=pillFrame.Position;setDockVisible(true)
+        moveHandle=create("TextButton",{Name="DockMoveHandle",Parent=pillFrame,Size=UDim2.fromScale(1,1),
+            Text="Drag dock",FontFace=CONTROL_FONT,TextSize=14,TextColor3=Theme.text,
+            BackgroundColor3=Theme.surface,BackgroundTransparency=0.15,BorderSizePixel=0,Active=true,ZIndex=450})
+        moveHint=create("TextLabel",{Name="DockMoveHint",Parent=ScreenGui,AnchorPoint=Vector2.new(0.5,0),
+            Position=UDim2.new(0.5,0,0,48),Size=UDim2.fromOffset(330,26),Text="Drag and release · Enter saves · Esc cancels",
+            FontFace=CONTROL_FONT,TextSize=13,TextColor3=Theme.text,BackgroundColor3=Theme.surface,
+            BackgroundTransparency=0.22,BorderSizePixel=0,ZIndex=450})
+        local function connect(signal,fn) table.insert(moveConnections,signal:Connect(fn)) end
+        connect(moveHandle.InputBegan,function(input)
+            if input.UserInputType~=Enum.UserInputType.MouseButton1 and input.UserInputType~=Enum.UserInputType.Touch then return end
+            dragInput=input;dragStart=Vector2.new(input.Position.X,input.Position.Y)
+            dragAnchor=pillFrame.AbsolutePosition+Vector2.new(pillFrame.AbsoluteSize.X*0.5,pillFrame.AbsoluteSize.Y)
+        end)
+        connect(UserInputService.InputChanged,function(input)
+            if not dragInput then return end
+            if input~=dragInput and not (dragInput.UserInputType==Enum.UserInputType.MouseButton1 and input.UserInputType==Enum.UserInputType.MouseMovement) then return end
+            local delta=Vector2.new(input.Position.X,input.Position.Y)-dragStart
+            dockAt(dragAnchor.X+delta.X,dragAnchor.Y+delta.Y)
+        end)
+        connect(UserInputService.InputEnded,function(input)
+            if input==dragInput or dragInput and dragInput.UserInputType==Enum.UserInputType.MouseButton1 and input.UserInputType==Enum.UserInputType.MouseButton1 then
+                finishDockMove(true)
+            end
+        end)
+        connect(UserInputService.InputBegan,function(input)
+            if input.KeyCode==Enum.KeyCode.Escape then finishDockMove(false)
+            elseif input.KeyCode==Enum.KeyCode.Return then finishDockMove(true) end
+        end)
+        connect(UserInputService.WindowFocusReleased,function() finishDockMove(false) end)
+    end
+    Furniture.BeginDockMove=beginDockMove
+    state.dock.BeginMove=beginDockMove
+    state.dock.CancelMove=function() finishDockMove(false) end
+    table.insert(Furniture.connections,ScreenGui:GetPropertyChangedSignal("AbsoluteSize"):Connect(function()
+        dockAt(pillFrame.Position.X.Scale*ScreenGui.AbsoluteSize.X+pillFrame.Position.X.Offset,
+            pillFrame.Position.Y.Scale*ScreenGui.AbsoluteSize.Y+pillFrame.Position.Y.Offset)
+    end))
+    state.addMenuVisibilityListener(function(visible) if not visible then finishDockMove(false) end end)
 
     local function restyleMenuButton(): ()
         if not pillFrame.Parent then
@@ -1509,6 +1587,8 @@ function Module.init(context: any): any
     end
 
     activeCleanup = function(): ()
+        finishDockMove(false)
+        state.dock = nil
         for _, handle: any in ipairs(Furniture.handles) do
             pcall(function(): ()
                 handle:Disconnect()

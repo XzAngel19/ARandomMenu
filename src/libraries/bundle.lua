@@ -1,5 +1,5 @@
 return {
-    stamp = "v47-20261017-menu",
+    stamp = "v48-20261017-render",
     files = {
         ["src/Profile/142823291.lua"] = [[
 --!strict
@@ -20254,7 +20254,7 @@ function Module.init(context: Runtime): any
                     local tip: Vector2 = centre + direction * radius
                     local back: Vector2 = tip - direction * 16
                     -- Colour priority: the game's role colour when roles are
-                    -- known (white by default otherwise), then teammates in
+                    -- known (green by default otherwise), then teammates in
                     -- their team colour while the team-colour option is on.
                     local roleColourForTarget: Color3? = roleColour(player)
                     local colour: Color3 = roleColourForTarget
@@ -20269,7 +20269,7 @@ function Module.init(context: Runtime): any
                     if card.Options["Distance"].Value then
                         drawing:Label(
                             "Distance",
-                            tostring(math.round(target.Distance)) .. "m",
+                            "[" .. tostring(math.round(target.Distance)) .. "]",
                             tip - direction * 26,
                             0.5,
                             12,
@@ -21073,7 +21073,7 @@ local function healthValues(health, maximum)
     return health, maximum, math.clamp(health / maximum, 0, 1)
 end
 local function healthColour(fraction)
-    local low, mid, high = Color3.fromRGB(244,78,95), Color3.fromRGB(246,193,76), Color3.fromRGB(89,218,151)
+    local low, mid, high = Color3.fromRGB(255,70,70), Color3.fromRGB(255,220,60), Color3.fromRGB(85,255,85)
     return fraction < 0.5 and low:Lerp(mid, fraction * 2) or mid:Lerp(high, (fraction - 0.5) * 2)
 end
 
@@ -21086,29 +21086,16 @@ function Module.init(context: any): any
         store.states["Universal.HP"] = store.states["Universal.PlayerESP"] == true
             and (store.states["Universal.PlayerESP.Healthbar"] ~= false or store.states["Universal.PlayerESP.Healthtext"] == true)
     end
-    -- Native text supports Unicode heart glyphs, unlike the menu's bitmap font.
-    hud = create("Frame", {Name = "SelfHP", Parent = host.ScreenGui, AnchorPoint = Vector2.new(0.5,1),
-        Position = UDim2.new(0.5,0,1,-110), Size = UDim2.fromOffset(156,36),
-        BackgroundColor3 = Color3.fromRGB(24,24,24), BackgroundTransparency = 0.35, BorderSizePixel = 0, Visible = false, ZIndex = 20})
-    if host.ThemeEngine then host.ThemeEngine.Bind(hud,"BackgroundColor3","background") end
-    local scale = create("UIScale", {Parent = hud, Scale = 1})
-    local function label(name, text, position, size, font, textSize)
-        return create("TextLabel", {Name = name, Parent = hud, Position = position, Size = size, BackgroundTransparency = 1,
-            Text = text, Font = font, TextSize = textSize, TextColor3 = Color3.fromRGB(241,245,250), TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 22})
-    end
-    local heart = label("Heart", "❤️", UDim2.fromOffset(8,4), UDim2.fromOffset(24,24), Enum.Font.Gotham, 18)
-    local value = label("Value", "", UDim2.fromOffset(37,4), UDim2.fromOffset(110,24), Enum.Font.Code, 16)
-    value.TextScaled = true
-    create("UITextSizeConstraint", {Parent = value, MinTextSize = 12, MaxTextSize = 16})
-    local track = create("Frame", {Name = "Track", Parent = hud, Position = UDim2.fromOffset(8,31), Size = UDim2.new(1,-16,0,2),
-        BackgroundColor3 = Color3.fromRGB(43,49,62), BorderSizePixel = 0, ClipsDescendants = true, ZIndex = 21})
-    local trail = create("Frame", {Name = "Damage", Parent = track, Size = UDim2.fromScale(1,1), BackgroundColor3 = Color3.fromRGB(247,186,103), BorderSizePixel = 0, ZIndex = 22})
-    local fill = create("Frame", {Name = "Fill", Parent = track, Size = UDim2.fromScale(1,1), BackgroundColor3 = healthColour(1), BorderSizePixel = 0, ZIndex = 23})
-    local lastCharacter, delayed = nil, 1
+    -- Vape Health is a simple number + heart near the crosshair, not a card.
+    hud = create("TextLabel", {Name="SelfHP",Parent=host.ScreenGui,
+        AnchorPoint=Vector2.new(0.5,0),Position=UDim2.new(0.5,6,0.5,30),Size=UDim2.fromOffset(140,24),
+        BackgroundTransparency=1,BorderSizePixel=0,Visible=false,ZIndex=20,
+        Text="",Font=Enum.Font.Arial,TextSize=18,TextStrokeTransparency=1,TextColor3=healthColour(1)})
+    local scale = create("UIScale", {Parent=hud,Scale=1})
     local card
     local function clear()
         render:ReleaseAll(layer); table.clear(tracked); layer.Visible = false
-        hud.Visible = false; lastCharacter = nil; delayed = 1
+        hud.Visible = false; hud.Text = ""
     end
     card = context.framework.Categories.Visuals:CreateModule({Name = "HP", Category = "Render", ConfigKey = "Universal.HP", Order = 4,
         Tooltip = "Independent player health bars and optional heart-style Self HP display.", Function = function(enabled)
@@ -21128,9 +21115,9 @@ function Module.init(context: any): any
                         if not rect or not options["Through walls"].Value and not entity:VisibleFrom(target) then continue end
                         local health, maximum, fraction = healthValues(target.Health,target.MaxHealth)
                         local drawing = render:Set(layer,target.Player)
-                        drawing:Show(true); drawing:Bar(Vector2.new(rect.left-5,rect.top), rect.height, fraction)
+                        drawing:Show(true); drawing:Bar(Vector2.new(rect.left-2,rect.top), rect.height, fraction)
                         if options["Health text"].Value then
-                            drawing:Label("HP", tostring(math.ceil(health)), Vector2.new(rect.left-24,rect.top), 0, 12, healthColour(fraction), true)
+                            drawing:Label("HP", tostring(math.ceil(health)), Vector2.new(rect.left-14,rect.top+(1-fraction)*rect.height), 0.5, 12, healthColour(fraction), false)
                         else drawing:HideLabel("HP") end
                         tracked[target.Player] = true; seen[target.Player] = true; count += 1
                     end
@@ -21141,26 +21128,24 @@ function Module.init(context: any): any
                     local character = host.LocalPlayer.Character
                     local humanoid = character and character:FindFirstChildOfClass("Humanoid")
                     local health, maximum, fraction = healthValues(humanoid and humanoid.Health, humanoid and humanoid.MaxHealth)
-                    if character ~= lastCharacter then delayed = fraction; lastCharacter = character end
-                    delayed = math.max(fraction, delayed + (fraction - delayed) * (1-math.exp(-4*math.clamp(dt or 1/60,0,0.1))))
-                    local colour = healthColour(fraction)
-                    local wanted = tostring(math.ceil(health)) .. " / " .. tostring(math.ceil(maximum))
-                    if value.Text ~= wanted then value.Text = wanted end
-                    heart.TextColor3 = colour; fill.BackgroundColor3 = colour
-                    fill.Size = UDim2.fromScale(fraction,1); trail.Size = UDim2.fromScale(delayed,1)
+                    local wanted = humanoid and humanoid.Health > 0 and tostring(math.ceil(health)) .. " ❤️" or ""
+                    if hud.Text ~= wanted then hud.Text = wanted end
+                    hud.TextColor3 = healthColour(fraction)
+                    hud.Position = options["Self HP position"].Value == "Bottom" and UDim2.new(0.5,0,1,-110) or UDim2.new(0.5,6,0.5,30)
                     local wantedScale = options["Self HP scale"].Value
-                    if camera then wantedScale = math.min(wantedScale, math.max(0.5, (camera.ViewportSize.X - 24) / 156)) end
+                    if camera then wantedScale = math.min(wantedScale, math.max(0.5, (camera.ViewportSize.X - 24) / 140)) end
                     scale.Scale = wantedScale
                 end
                 card:SetStatus(options["Self HP"].Value and tostring(count) .. " + self" or tostring(count))
             end)
         end})
     card:CreateToggle({Name = "Players", Default = true})
-    card:CreateToggle({Name = "Health text", Default = true, Show = {Option = "Players"}})
+    card:CreateToggle({Name = "Health text", Default = false, Show = {Option = "Players"}})
     card:CreateSlider({Name = "Max distance", Min = 50, Max = 5000, Default = 2000, Show = {Option = "Players"}})
     card:CreateToggle({Name = "Teammates", Default = true, Show = {Option = "Players"}})
     card:CreateToggle({Name = "Through walls", Default = true, Show = {Option = "Players"}})
     card:CreateToggle({Name = "Self HP", Default = false})
+    card:CreateDropdown({Name="Self HP position",List={"Center","Bottom"},Index=1,Show={Option="Self HP"}})
     card:CreateSlider({Name = "Self HP scale", Min = 0.8, Max = 1.6, Decimal = 1, Default = 1, Show = {Option = "Self HP"}})
     roleBinding = context.services.gameRoles:Bind(card, {palette = false})
     card.OptionFilter = function(name)
@@ -21811,7 +21796,7 @@ function Module.render(
         drawings:Label(
             "NameTag",
             options["Show distance"].Value
-                    and (descendant.Name .. "  " .. tostring(math.round(distance)) .. "m")
+                    and ("[" .. tostring(math.round(distance)) .. "] " .. descendant.Name)
                 or descendant.Name,
             projected :: Vector2,
             0.5,
@@ -21856,7 +21841,7 @@ return Module
         ["src/games/universal/Render/Markers.lua"] = [[
 -- Vape-style world waypoints, with names / Save here instead of encoded coordinates.
 local Module = {Name="Markers",Initialized=false}
-local card, clear
+local card, clear, inputConnection
 function Module.init(context)
     local host, render = context.host, context.render
     local layer = render:Layer("MarkersLayer")
@@ -21875,10 +21860,11 @@ function Module.init(context)
         end
     end
     local list, tracked = nil, {}
+    local picking, pickName, pickDeadline = false, nil, 0
     local function save()
         if config then config.values[key]=points;if host.queueConfigSave then host.queueConfigSave() end end
     end
-    clear=function() render:ReleaseAll(layer);table.clear(tracked);layer.Visible=false end
+    clear=function() render:ReleaseAll(layer);table.clear(tracked);layer.Visible=false;picking=false end
     card=context.framework.Categories.Render:CreateModule({Name="Markers",Category="Render",ConfigKey="Universal.Markers",
         Tooltip="Name a place and save your current position. Points are kept separately for each game.",Function=function(enabled)
             if not enabled then clear();return end
@@ -21903,25 +21889,38 @@ function Module.init(context)
                 for name in pairs(tracked) do if not seen[name] then render:Release(layer,name);tracked[name]=nil end end
             end)
         end})
+    local function pointName()
+        return string.sub(string.match(card.Options.Name.Value or "","^%s*(.-)%s*$") or "",1,48)
+    end
+    local function storePoint(position,name)
+        if name=="" then card:Notify("Enter a name for this place.");return false end
+        if not position or position.X~=position.X or position.Y~=position.Y or position.Z~=position.Z
+            or math.max(math.abs(position.X),math.abs(position.Y),math.abs(position.Z))>=1e7 then
+            card:Notify("Position unavailable. Use coordinates in the form x, y, z.");return false
+        end
+        local count=0;for _ in pairs(points) do count+=1 end
+        if count>=128 and not points[name] then card:Notify("Marker limit reached (128). Remove a place first.");return false end
+        points[name]={position.X,position.Y,position.Z};save();list:Refresh();list:Set(name,true)
+        card:SetStatus(name);return true
+    end
     card:CreateTextBox({Name="Name",Default="",Placeholder="Home, exit, meeting spot..."})
     card:CreateButton({Name="Save here",Function=function()
-        local name=string.sub(string.match(card.Options.Name.Value or "","^%s*(.-)%s*$") or "",1,48)
-        if name=="" then card:Notify("Enter a name for this place.");return end
         local character=host.LocalPlayer.Character
         local root=character and character:FindFirstChild("HumanoidRootPart")
-        local position=root and root.Position
-        if card.Options["Manual coordinates"].Value then
-            local x,y,z=string.match(card.Options.Coordinates.Value or "","^%s*([%+%-%.%deE]+)%s*,%s*([%+%-%.%deE]+)%s*,%s*([%+%-%.%deE]+)%s*$")
-            x,y,z=tonumber(x),tonumber(y),tonumber(z)
-            position=x and y and z and x==x and y==y and z==z and math.max(math.abs(x),math.abs(y),math.abs(z))<1e7 and Vector3.new(x,y,z) or nil
+        storePoint(root and root.Position,pointName())
+    end})
+    card:CreateButton({Name="Touch",Tooltip="Click or tap any surface to place a marker. Escape cancels. Works with Markers OFF too.",Function=function()
+        if picking then picking=false;card:SetStatus(nil);return end
+        pickName=pointName()
+        if pickName=="" then
+            local index=1;while points["Point "..index] do index+=1 end
+            pickName="Point "..index;card.Options.Name:Set(pickName)
         end
-        if not position then card:Notify("Position unavailable. Check your character or coordinates (x, y, z).");return end
-        local count=0;for _ in pairs(points) do count+=1 end
-        if count>=128 and not points[name] then card:Notify("Marker limit reached (128). Remove a place first.");return end
-        points[name]={position.X,position.Y,position.Z};save();list:Refresh();list:Set(name,true)
+        picking,pickDeadline=true,os.clock()+20
+        card:SetStatus("Click/tap a surface · Esc cancels")
     end})
     card:CreateButton({Name="Remove named place",Function=function()
-        local name=string.match(card.Options.Name.Value or "","^%s*(.-)%s*$")
+        local name=pointName()
         if not points[name] then card:Notify("No saved place has that name.");return end
         list:Set(name,false);points[name]=nil;save();list:Refresh()
     end})
@@ -21929,16 +21928,40 @@ function Module.init(context)
     list=card:CreateList({Name="Places",Items=function()
         local names={};for name in pairs(points) do table.insert(names,name) end;table.sort(names);return names
     end,Default=defaults,EmptyText="No places saved. Name a place, then Save here."})
-    card:CreateToggle({Name="Distance",Default=true})
-    card:CreateColor({Name="Colour",Default=Color3.fromRGB(85,255,85)})
     card:CreateToggle({Name="Manual coordinates",Default=false})
     card:CreateTextBox({Name="Coordinates",Default="",Placeholder="x, y, z",Show={Option="Manual coordinates",Values={true}}})
+    card:CreateButton({Name="Save coordinates",Show={Option="Manual coordinates",Values={true}},Function=function()
+        local x,y,z=string.match(card.Options.Coordinates.Value or "","^%s*([%+%-%.%deE]+)%s*,%s*([%+%-%.%deE]+)%s*,%s*([%+%-%.%deE]+)%s*$")
+        x,y,z=tonumber(x),tonumber(y),tonumber(z)
+        storePoint(x and y and z and Vector3.new(x,y,z) or nil,pointName())
+    end})
+    card:CreateToggle({Name="Distance",Default=true})
+    card:CreateColor({Name="Colour",Default=Color3.fromRGB(85,255,85)})
+    inputConnection=host.UserInputService.InputBegan:Connect(function(event,processed)
+        if not picking then return end
+        if event.KeyCode==Enum.KeyCode.Escape or os.clock()>pickDeadline then
+            picking=false;card:SetStatus(nil);return
+        end
+        if processed or host.UserInputService:GetFocusedTextBox() then return end
+        if event.UserInputType~=Enum.UserInputType.MouseButton1 and event.UserInputType~=Enum.UserInputType.Touch then return end
+        local camera=(host.workspace or workspace).CurrentCamera
+        if not camera then return end
+        local params=RaycastParams.new()
+        params.FilterType=Enum.RaycastFilterType.Exclude
+        params.FilterDescendantsInstances=host.LocalPlayer.Character and {host.LocalPlayer.Character} or {}
+        params.RespectCanCollide=true;params.IgnoreWater=true
+        local ray=camera:ScreenPointToRay(event.Position.X,event.Position.Y)
+        local hit=(host.workspace or workspace):Raycast(ray.Origin,ray.Direction*5000,params)
+        if hit and storePoint(hit.Position,pickName) then picking=false
+        else card:SetStatus("No surface · tap again") end
+    end)
     Module.Initialized=true
     return card
 end
 function Module.destroy()
     if card and card.Enabled then card:Toggle(false) end
     if clear then clear() end
+    if inputConnection then inputConnection:Disconnect();inputConnection=nil end
     card,clear=nil,nil;Module.Initialized=false
 end
 return Module
@@ -22930,141 +22953,119 @@ return Module
 
 ]],
         ["src/games/universal/Render/XRay.lua"] = [[
-export type Runtime = {
-    framework: any,
-    entity: any,
-    host: any,
-}
-
-local Module = {
-    Name = "XRay",
-    PlaceId = 0,
-    Events = {} :: {[string]: any},
-    Initialized = false,
-}
-
-local activeCleanup: (() -> ())? = nil
-
-function Module.init(context: Runtime): any
-    local host: any = context.host
-    local LocalPlayer: any = host.LocalPlayer
-    local featureConnections: any = host.featureConnections
-    local disconnectFeatureConnection: any = host.disconnectFeatureConnection
-    local createUniversalFeature: any = host.createUniversalFeature
-    local originalXrayTransparency: {[BasePart]: number} =
-        setmetatable({}, {__mode = "k"}) :: any
-    local xrayEnabled: boolean = false
-    local feature: any = nil
-
-    local function restoreXray(): ()
-        for part: BasePart, transparency: number in pairs(originalXrayTransparency) do
-            if part.Parent then
-                part.LocalTransparencyModifier = transparency
-            end
+-- Vape Xray's kept-part list, with bounded updates and owned-only restoration.
+local Module = {Name="XRay",PlaceId=0,Initialized=false}
+local card
+function Module.init(context)
+    local host, world = context.host, context.host.workspace or workspace
+    local records = setmetatable({}, {__mode="k"})
+    local indexed = setmetatable({}, {__mode="k"})
+    local candidates, cursor, pause = {}, 1, 0
+    local named, kept = {}, {}
+    local function names(text)
+        local result={}
+        for name in string.gmatch(string.lower(text or ""),"[^,]+") do
+            name=string.match(name,"^%s*(.-)%s*$")
+            if name~="" then result[name]=true end
         end
-        originalXrayTransparency = setmetatable({}, {__mode = "k"}) :: any
+        return result
     end
-
-    -- Safety net: a previous session that died without restoring (crash,
-    -- executor kill, older build) leaves the map translucent forever. Sweep
-    -- every map part and clear the modifier. LocalTransparencyModifier is
-    -- only used by us here; the local character is excluded because Roblox
-    -- itself fades it in first person.
-    local function sweepStuckTransparency(): ()
-        local localCharacter: Model? = LocalPlayer.Character
-        for _, descendant: Instance in ipairs(workspace:GetDescendants()) do
-            if descendant:IsA("BasePart")
-                and (descendant :: BasePart).LocalTransparencyModifier ~= 0 then
-                local part: BasePart = descendant :: BasePart
-                if (localCharacter and part:IsDescendantOf(localCharacter :: Model))
-                    or part:FindFirstAncestorOfClass("Tool") then
-                    continue
-                end
-                local ancestorModel: Model? =
-                    part:FindFirstAncestorOfClass("Model")
-                if ancestorModel and ancestorModel:FindFirstChildOfClass("Humanoid") then
-                    continue
-                end
-                part.LocalTransparencyModifier = 0
-            end
-        end
-    end
-
-    -- Clear anything a previous, unloaded session left translucent.
-    task.spawn(sweepStuckTransparency)
-
-    local function toggleXray(enabled: boolean): ()
-        disconnectFeatureConnection("Xray")
-        xrayEnabled = false
-        restoreXray()
-        if not enabled then
-            -- Also sweep: if the capture table ever lost an entry, the map
-            -- would stay translucent. Cheap and idempotent.
-            task.spawn(sweepStuckTransparency)
-            if feature then feature:SetStatus(nil) end
-            return
-        end
-
-        feature:SetStatus("72%")
-        xrayEnabled = true
-        local function applyToInstance(descendant: Instance): ()
-            if not xrayEnabled or not descendant:IsA("BasePart") then
-                return
-            end
-            local localCharacter: Model? = LocalPlayer.Character
-            local ancestorModel: Model? = descendant:FindFirstAncestorOfClass("Model")
-            if (localCharacter and descendant:IsDescendantOf(localCharacter))
-                or descendant:FindFirstAncestorOfClass("Tool")
-                or (ancestorModel and ancestorModel:FindFirstChildOfClass("Humanoid")) then
-                return
-            end
-            if originalXrayTransparency[descendant] == nil then
-                originalXrayTransparency[descendant] = descendant.LocalTransparencyModifier
-            end
-            descendant.LocalTransparencyModifier = math.max(
-                descendant.LocalTransparencyModifier,
-                0.72
-            )
-        end
-
-        featureConnections.Xray = workspace.DescendantAdded:Connect(applyToInstance)
-        task.spawn(function(): ()
-            for index: number, descendant: Instance in ipairs(workspace:GetDescendants()) do
-                if not xrayEnabled then
-                    return
-                end
-                applyToInstance(descendant)
-                if index % 240 == 0 then
-                    task.wait()
-                end
-            end
+    local function restore(part)
+        local record=records[part]
+        if not record then return end
+        pcall(function()
+            if part.LocalTransparencyModifier==record.applied then part.LocalTransparencyModifier=record.base end
         end)
+        records[part]=nil
     end
-
-    feature = createUniversalFeature(
-        "X-Ray",
-        "Fade map geometry locally while keeping your character clear",
-        18,
-        toggleXray,
-        {noOptions = true, categoryName = "Render"}
-    )
-
-    activeCleanup = function(): ()
-        disconnectFeatureConnection("Xray")
-        restoreXray()
+    local function restoreAll()
+        for part in pairs(records) do restore(part) end
     end
-    Module.Initialized = true
-    return feature
+    local function changed()
+        restoreAll();cursor=1;pause=0
+        if card and card.Options["Part names"] and card.Options["Keep visible"] then
+            named=names(card.Options["Part names"].Value)
+            kept=names(card.Options["Keep visible"].Value)
+        end
+    end
+    local function add(part)
+        if part:IsA("BasePart") and not indexed[part] then
+            indexed[part]=true;table.insert(candidates,part)
+        end
+    end
+    local function eligible(part,origin,root)
+        local opts=card.Options
+        if part.Transparency>=0.98 or kept[string.lower(part.Name)] then return false end
+        if not opts["Include unanchored"].Value and not part.Anchored then return false end
+        if opts["Collidable only"].Value and not part.CanCollide then return false end
+        if opts["Limit range"].Value and origin and (part.Position-origin).Magnitude>opts.Range.Value+part.Size.Magnitude*0.5 then return false end
+        if part.Name=="Wurst_AntiVoidPlatform" or host.isMenuOwned and host.isMenuOwned(part) then return false end
+        local ancestor=part.Parent
+        while ancestor and ancestor~=world do
+            if ancestor:IsA("Tool") or ancestor:IsA("Model") and ancestor:FindFirstChildOfClass("Humanoid") then return false end
+            ancestor=ancestor.Parent
+        end
+        local thinFloor=part.Size.Y<=math.min(part.Size.X,part.Size.Z)*0.35
+        if opts["Keep floors"].Value and thinFloor and root and part.Position.Y<=root.Position.Y then return false end
+        local mode=opts.Scope.Value
+        if mode=="Named parts" then return named[string.lower(part.Name)]==true end
+        if mode=="Walls" then return not thinFloor and part.Size.Y>math.min(part.Size.X,part.Size.Z)*1.5 end
+        return true
+    end
+    local function step(dt)
+        pause=math.max(0,pause-(dt or 0))
+        if pause>0 or #candidates==0 then return end
+        local camera=world.CurrentCamera
+        local character=host.LocalPlayer.Character
+        local root=character and character:FindFirstChild("HumanoidRootPart")
+        local origin=camera and camera.CFrame.Position or root and root.Position
+        for _=1,200 do
+            local part=candidates[cursor]
+            if not part then cursor=1;pause=0.2;break end
+            if not part.Parent or not part:IsDescendantOf(world) then
+                restore(part);indexed[part]=nil
+                candidates[cursor]=candidates[#candidates];candidates[#candidates]=nil
+            else
+                if eligible(part,origin,root) then
+                    local current=part.LocalTransparencyModifier
+                    local record=records[part]
+                    if not record then record={base=current};records[part]=record
+                    elseif current~=record.applied then record.base=current end
+                    record.applied=math.max(record.base,card.Options.Transparency.Value)
+                    part.LocalTransparencyModifier=record.applied
+                else restore(part) end
+                cursor+=1
+            end
+        end
+    end
+    card=context.framework.Categories.Render:CreateModule({Name="X-Ray",Category="Render",ConfigKey="Universal.XRay",
+        Tooltip="Fade map parts locally. Keep named objects visible; never fade characters or held tools.",Function=function(enabled)
+            restoreAll();table.clear(candidates);table.clear(indexed);cursor=1;pause=0
+            if not enabled then card:SetStatus(nil);return end
+            changed()
+            for _,part in ipairs(world:GetDescendants()) do add(part) end
+            card:Clean(restoreAll)
+            card:Clean(world.DescendantAdded:Connect(add))
+            card:Loop(step);step(0)
+        end})
+    card:CreateDropdown({Name="Scope",List={"All map","Walls","Named parts"},Index=1,Function=changed})
+    card:CreateSlider({Name="Transparency",Min=0,Max=1,Default=0.5,Step=0.05,Decimal=2,Function=changed})
+    card:CreateTextBox({Name="Part names",Default="",Placeholder="Wall, Window",Show={Option="Scope",Values={"Named parts"}},Function=changed,
+        Tooltip="Exact part names, separated by commas. Only these names fade in Named parts scope."})
+    card:CreateTextBox({Name="Keep visible",Default="",Placeholder="Spawn, Objective",Function=changed,
+        Tooltip="Vape-style kept-part list. Exact names separated by commas; these parts never fade."})
+    card:CreateToggle({Name="Keep floors",Default=true,Function=changed})
+    card:CreateToggle({Name="Collidable only",Default=true,Function=changed})
+    card:CreateToggle({Name="Include unanchored",Default=false,Function=changed})
+    card:CreateToggle({Name="Limit range",Default=true,Function=changed})
+    card:CreateSlider({Name="Range",Min=25,Max=5000,Default=250,Show={Option="Limit range",Values={true}},Function=changed})
+    Module.Initialized=true
+    return card
 end
-
-function Module.destroy(): ()
-    if activeCleanup then
-        pcall(activeCleanup)
-    end
-    activeCleanup = nil
-    Module.Initialized = false
+function Module.destroy()
+    if card and card.Enabled then card:Toggle(false) end
+    card=nil;Module.Initialized=false
 end
-
 return Module
 
 ]],
@@ -28899,12 +28900,90 @@ function Module.init(context: any): any
         end
         pillFrame.Visible = value ~= false
     end
-    setDockVisible(state.uiShowDock ~= false)
+    if state.uiShowDock == nil then state.uiShowDock = touchPrimary end
+    setDockVisible(state.uiShowDock == true)
     Furniture.SetDockVisible = setDockVisible
     state.dock = {
         root = pillFrame,
         SetVisible = setDockVisible,
     }
+
+    local moving = false
+    local moveConnections, moveHandle, moveHint = {}, nil, nil
+    local moveOrigin, dragInput, dragStart, dragAnchor
+    local function dockAt(x,y)
+        local viewport, size = ScreenGui.AbsoluteSize, pillFrame.AbsoluteSize
+        if viewport.X<1 or viewport.Y<1 then return end
+        if size.X<1 or size.Y<1 then size=Vector2.new(pillWidth,PILL_BUTTON+PILL_PADDING_Y*2) end
+        x=math.clamp(x,size.X*0.5,math.max(size.X*0.5,viewport.X-size.X*0.5))
+        y=math.clamp(y,size.Y,math.max(size.Y,viewport.Y))
+        pillFrame.Position=UDim2.fromScale(x/math.max(1,viewport.X),y/math.max(1,viewport.Y))
+    end
+    local savedDock = configData.ui.dockPosition
+    if type(savedDock)=="table" and type(savedDock.x)=="number" and type(savedDock.y)=="number"
+        and savedDock.x==savedDock.x and savedDock.y==savedDock.y then
+        dockAt(math.clamp(savedDock.x,0,1)*ScreenGui.AbsoluteSize.X,math.clamp(savedDock.y,0,1)*ScreenGui.AbsoluteSize.Y)
+    end
+    if type(savedDock)=="table" and type(savedDock.x)=="number" and type(savedDock.y)=="number"
+        and savedDock.x==savedDock.x and savedDock.y==savedDock.y then
+        task.defer(function()
+            if pillFrame.Parent then dockAt(math.clamp(savedDock.x,0,1)*ScreenGui.AbsoluteSize.X,math.clamp(savedDock.y,0,1)*ScreenGui.AbsoluteSize.Y) end
+        end)
+    end
+    local function finishDockMove(save)
+        if not moving then return end
+        moving=false;dragInput=nil
+        for _,connection in ipairs(moveConnections) do connection:Disconnect() end
+        table.clear(moveConnections)
+        if moveHandle then moveHandle:Destroy();moveHandle=nil end
+        if moveHint then moveHint:Destroy();moveHint=nil end
+        if save then
+            configData.ui.dockPosition={x=pillFrame.Position.X.Scale,y=pillFrame.Position.Y.Scale}
+            queueConfigSave()
+        else pillFrame.Position=moveOrigin end
+        setDockVisible(state.uiShowDock==true)
+    end
+    local function beginDockMove()
+        if moving then finishDockMove(true);return end
+        moving=true;moveOrigin=pillFrame.Position;setDockVisible(true)
+        moveHandle=create("TextButton",{Name="DockMoveHandle",Parent=pillFrame,Size=UDim2.fromScale(1,1),
+            Text="Drag dock",FontFace=CONTROL_FONT,TextSize=14,TextColor3=Theme.text,
+            BackgroundColor3=Theme.surface,BackgroundTransparency=0.15,BorderSizePixel=0,Active=true,ZIndex=450})
+        moveHint=create("TextLabel",{Name="DockMoveHint",Parent=ScreenGui,AnchorPoint=Vector2.new(0.5,0),
+            Position=UDim2.new(0.5,0,0,48),Size=UDim2.fromOffset(330,26),Text="Drag and release · Enter saves · Esc cancels",
+            FontFace=CONTROL_FONT,TextSize=13,TextColor3=Theme.text,BackgroundColor3=Theme.surface,
+            BackgroundTransparency=0.22,BorderSizePixel=0,ZIndex=450})
+        local function connect(signal,fn) table.insert(moveConnections,signal:Connect(fn)) end
+        connect(moveHandle.InputBegan,function(input)
+            if input.UserInputType~=Enum.UserInputType.MouseButton1 and input.UserInputType~=Enum.UserInputType.Touch then return end
+            dragInput=input;dragStart=Vector2.new(input.Position.X,input.Position.Y)
+            dragAnchor=pillFrame.AbsolutePosition+Vector2.new(pillFrame.AbsoluteSize.X*0.5,pillFrame.AbsoluteSize.Y)
+        end)
+        connect(UserInputService.InputChanged,function(input)
+            if not dragInput then return end
+            if input~=dragInput and not (dragInput.UserInputType==Enum.UserInputType.MouseButton1 and input.UserInputType==Enum.UserInputType.MouseMovement) then return end
+            local delta=Vector2.new(input.Position.X,input.Position.Y)-dragStart
+            dockAt(dragAnchor.X+delta.X,dragAnchor.Y+delta.Y)
+        end)
+        connect(UserInputService.InputEnded,function(input)
+            if input==dragInput or dragInput and dragInput.UserInputType==Enum.UserInputType.MouseButton1 and input.UserInputType==Enum.UserInputType.MouseButton1 then
+                finishDockMove(true)
+            end
+        end)
+        connect(UserInputService.InputBegan,function(input)
+            if input.KeyCode==Enum.KeyCode.Escape then finishDockMove(false)
+            elseif input.KeyCode==Enum.KeyCode.Return then finishDockMove(true) end
+        end)
+        connect(UserInputService.WindowFocusReleased,function() finishDockMove(false) end)
+    end
+    Furniture.BeginDockMove=beginDockMove
+    state.dock.BeginMove=beginDockMove
+    state.dock.CancelMove=function() finishDockMove(false) end
+    table.insert(Furniture.connections,ScreenGui:GetPropertyChangedSignal("AbsoluteSize"):Connect(function()
+        dockAt(pillFrame.Position.X.Scale*ScreenGui.AbsoluteSize.X+pillFrame.Position.X.Offset,
+            pillFrame.Position.Y.Scale*ScreenGui.AbsoluteSize.Y+pillFrame.Position.Y.Offset)
+    end))
+    state.addMenuVisibilityListener(function(visible) if not visible then finishDockMove(false) end end)
 
     local function restyleMenuButton(): ()
         if not pillFrame.Parent then
@@ -28963,6 +29042,8 @@ function Module.init(context: any): any
     end
 
     activeCleanup = function(): ()
+        finishDockMove(false)
+        state.dock = nil
         for _, handle: any in ipairs(Furniture.handles) do
             pcall(function(): ()
                 handle:Disconnect()
@@ -31585,7 +31666,7 @@ function Module.init(context: any): any
 
     local touchPrimary: boolean = state.isMobile == true
     if not touchPrimary then
-        addToggleOption(uiPanel, "Show dock", true, function(value: boolean): ()
+        addToggleOption(uiPanel, "Show dock", false, function(value: boolean): ()
             uiSettingsValues["Show dock"] = value
             state.uiShowDock = value
             if state.dock and type(state.dock.SetVisible) == "function" then
@@ -31593,6 +31674,10 @@ function Module.init(context: any): any
             end
         end)
     end
+
+    host.addActionOption(uiPanel, "Move dock", function(): ()
+        if state.dock and state.dock.BeginMove then state.dock.BeginMove() end
+    end, "Temporarily show the dock. Drag and release to save its position; Escape cancels. Show dock still controls visibility.")
 
     uiRecord.placed = true
     if windows.ReflowWindow then
@@ -32881,7 +32966,7 @@ function Module.init(context: any): WidgetLibrary
             Parent = ScreenGui,
             Name = "ChoiceList",
             BackgroundColor3 = Theme.surfaceRaised,
-            BackgroundTransparency = 0,
+            BackgroundTransparency = 0.22,
             BorderSizePixel = 0,
             Position = UDim2.fromOffset(
                 math.round(anchorPosition.X),
@@ -32895,7 +32980,7 @@ function Module.init(context: any): WidgetLibrary
         create("UIStroke", {
             Parent = list,
             Color = Theme.outline,
-            Transparency = 0.15,
+            Transparency = 0.6,
             Thickness = 1,
         })
 
@@ -32983,10 +33068,12 @@ function Module.init(context: any): WidgetLibrary
             if state.choiceListAnchor == anchor then
                 state.choiceListAnchor = nil
             end
+            if state.setChoiceBlur then state.setChoiceBlur(false) end
             state.closeChoiceList = function(): () end
         end
         state.closeChoiceList = close
         state.choiceListAnchor = anchor
+        if state.setChoiceBlur then state.setChoiceBlur(true) end
 
         ownerConnections = watchPopupOwner(anchor, close)
 
@@ -33134,7 +33221,7 @@ function Module.init(context: any): WidgetLibrary
             Parent = ScreenGui,
             Name = "MultiList",
             BackgroundColor3 = Theme.surface,
-            BackgroundTransparency = 0.04,
+            BackgroundTransparency = 0.22,
             BorderSizePixel = 0,
             Position = UDim2.fromOffset(
                 math.round(anchorPosition.X),
@@ -33148,7 +33235,7 @@ function Module.init(context: any): WidgetLibrary
         create("UIStroke", {
             Parent = list,
             Color = Theme.outline,
-            Transparency = 0.4,
+            Transparency = 0.6,
             Thickness = 1,
         })
 
@@ -33194,10 +33281,12 @@ function Module.init(context: any): WidgetLibrary
             if state.choiceListAnchor == anchor then
                 state.choiceListAnchor = nil
             end
+            if state.setChoiceBlur then state.setChoiceBlur(false) end
             state.closeChoiceList = function(): () end
         end
         state.closeChoiceList = close
         state.choiceListAnchor = anchor
+        if state.setChoiceBlur then state.setChoiceBlur(true) end
 
         ownerConnections = watchPopupOwner(anchor, close)
 
@@ -36925,6 +37014,9 @@ function Module.init(context: any): Framework
                 definition2.Persist ~= false,
                 definition2.Tooltip
             )
+            if option.Object and definition2.Placeholder then
+                option.Object.PlaceholderText = definition2.Placeholder
+            end
             option.Set = function(self: any, value: string): ()
                 self.Metadata.callback(value)
                 if self.Object then
@@ -37732,14 +37824,14 @@ function Module.init(context: any): RenderLibrary
                     Name = slot,
                     AnchorPoint = Vector2.new(0.5, anchorY),
                     AutomaticSize = Enum.AutomaticSize.X,
-                    BackgroundColor3 = Color3.fromRGB(10, 10, 12),
+                    BackgroundColor3 = Color3.fromRGB(0, 0, 0),
                     BackgroundTransparency = 1,
                     BorderSizePixel = 0,
                     Text = "",
-                    Font = Enum.Font.GothamMedium,
+                    Font = Enum.Font.Arial,
                     RichText = false,
                     TextStrokeColor3 = Color3.fromRGB(0,0,0),
-                    TextStrokeTransparency = 0.45,
+                    TextStrokeTransparency = 1,
                     TextColor3 = Color3.fromRGB(236, 236, 240),
                     TextSize = size,
 
@@ -37751,12 +37843,9 @@ function Module.init(context: any): RenderLibrary
                 }) :: TextLabel
                 create("UIPadding", {
                     Parent = label,
-                    PaddingLeft = UDim.new(0, 5),
-                    PaddingRight = UDim.new(0, 5),
+                    PaddingLeft = UDim.new(0, 4),
+                    PaddingRight = UDim.new(0, 4),
                 })
-                create("UICorner", {Parent = label, CornerRadius = UDim.new(0, 3)})
-                create("UIStroke", {Parent = label, ApplyStrokeMode = Enum.ApplyStrokeMode.Border,
-                    Color = Color3.fromRGB(111,126,150), Transparency = 0.7, Thickness = 1})
                 set.labels[slot] = label
             end
             local resolved: TextLabel = label :: TextLabel
@@ -37764,9 +37853,7 @@ function Module.init(context: any): RenderLibrary
             if resolved.Text ~= text then resolved.Text = text end
             if resolved.TextColor3 ~= colour then resolved.TextColor3 = colour end
             if resolved.TextSize ~= size then resolved.TextSize = size end
-            resolved.BackgroundTransparency = plate and 0.18 or 1
-            local border = resolved:FindFirstChildOfClass("UIStroke")
-            if border then border.Transparency = plate and 0.7 or 1 end
+            resolved.BackgroundTransparency = plate and 0.5 or 1
             resolved.Position = UDim2.fromOffset(math.round(at.X), math.round(at.Y))
             resolved.Size = UDim2.fromOffset(0, size + 6)
         end
@@ -37784,7 +37871,7 @@ function Module.init(context: any): RenderLibrary
                     Parent = root,
                     Name = "HealthTrack",
                     AnchorPoint = Vector2.new(1, 0),
-                    BackgroundColor3 = Color3.fromRGB(12, 12, 14),
+                    BackgroundColor3 = Color3.fromRGB(0, 0, 0),
                     BackgroundTransparency = 0.35,
                     BorderSizePixel = 0,
                     Visible = false,
@@ -37796,8 +37883,8 @@ function Module.init(context: any): RenderLibrary
                     AnchorPoint = Vector2.new(0, 1),
                     BackgroundColor3 = Color3.fromRGB(120, 220, 140),
                     BorderSizePixel = 0,
-                    Position = UDim2.fromScale(0, 1),
-                    Size = UDim2.fromScale(1, 1),
+                    Position = UDim2.new(0, 1, 1, 0),
+                    Size = UDim2.new(0, 1, 1, 0),
                     ZIndex = 2,
                 }) :: Frame
             end
@@ -37806,9 +37893,9 @@ function Module.init(context: any): RenderLibrary
             local clamped: number = fraction == fraction and math.clamp(fraction, 0, 1) or 0
             track.Visible = true
             track.Position = UDim2.fromOffset(math.round(at.X), math.round(at.Y))
-            track.Size = UDim2.fromOffset(4, math.max(1, math.round(height)))
-            fill.Size = UDim2.fromScale(1, clamped)
-            local low, mid, high = Color3.fromRGB(244,78,95), Color3.fromRGB(246,193,76), Color3.fromRGB(89,218,151)
+            track.Size = UDim2.fromOffset(3, math.max(1, math.round(height)))
+            fill.Size = UDim2.new(0, 1, clamped, 0)
+            local low, mid, high = Color3.fromRGB(255,70,70), Color3.fromRGB(255,220,60), Color3.fromRGB(85,255,85)
             fill.BackgroundColor3 = clamped < 0.5 and low:Lerp(mid, clamped * 2) or mid:Lerp(high, (clamped - 0.5) * 2)
         end
 

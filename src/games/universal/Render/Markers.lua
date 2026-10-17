@@ -1,6 +1,6 @@
 -- Vape-style world waypoints, with names / Save here instead of encoded coordinates.
 local Module = {Name="Markers",Initialized=false}
-local card, clear
+local card, clear, inputConnection
 function Module.init(context)
     local host, render = context.host, context.render
     local layer = render:Layer("MarkersLayer")
@@ -19,10 +19,11 @@ function Module.init(context)
         end
     end
     local list, tracked = nil, {}
+    local picking, pickName, pickDeadline = false, nil, 0
     local function save()
         if config then config.values[key]=points;if host.queueConfigSave then host.queueConfigSave() end end
     end
-    clear=function() render:ReleaseAll(layer);table.clear(tracked);layer.Visible=false end
+    clear=function() render:ReleaseAll(layer);table.clear(tracked);layer.Visible=false;picking=false end
     card=context.framework.Categories.Render:CreateModule({Name="Markers",Category="Render",ConfigKey="Universal.Markers",
         Tooltip="Name a place and save your current position. Points are kept separately for each game.",Function=function(enabled)
             if not enabled then clear();return end
@@ -47,25 +48,38 @@ function Module.init(context)
                 for name in pairs(tracked) do if not seen[name] then render:Release(layer,name);tracked[name]=nil end end
             end)
         end})
+    local function pointName()
+        return string.sub(string.match(card.Options.Name.Value or "","^%s*(.-)%s*$") or "",1,48)
+    end
+    local function storePoint(position,name)
+        if name=="" then card:Notify("Enter a name for this place.");return false end
+        if not position or position.X~=position.X or position.Y~=position.Y or position.Z~=position.Z
+            or math.max(math.abs(position.X),math.abs(position.Y),math.abs(position.Z))>=1e7 then
+            card:Notify("Position unavailable. Use coordinates in the form x, y, z.");return false
+        end
+        local count=0;for _ in pairs(points) do count+=1 end
+        if count>=128 and not points[name] then card:Notify("Marker limit reached (128). Remove a place first.");return false end
+        points[name]={position.X,position.Y,position.Z};save();list:Refresh();list:Set(name,true)
+        card:SetStatus(name);return true
+    end
     card:CreateTextBox({Name="Name",Default="",Placeholder="Home, exit, meeting spot..."})
     card:CreateButton({Name="Save here",Function=function()
-        local name=string.sub(string.match(card.Options.Name.Value or "","^%s*(.-)%s*$") or "",1,48)
-        if name=="" then card:Notify("Enter a name for this place.");return end
         local character=host.LocalPlayer.Character
         local root=character and character:FindFirstChild("HumanoidRootPart")
-        local position=root and root.Position
-        if card.Options["Manual coordinates"].Value then
-            local x,y,z=string.match(card.Options.Coordinates.Value or "","^%s*([%+%-%.%deE]+)%s*,%s*([%+%-%.%deE]+)%s*,%s*([%+%-%.%deE]+)%s*$")
-            x,y,z=tonumber(x),tonumber(y),tonumber(z)
-            position=x and y and z and x==x and y==y and z==z and math.max(math.abs(x),math.abs(y),math.abs(z))<1e7 and Vector3.new(x,y,z) or nil
+        storePoint(root and root.Position,pointName())
+    end})
+    card:CreateButton({Name="Touch",Tooltip="Click or tap any surface to place a marker. Escape cancels. Works with Markers OFF too.",Function=function()
+        if picking then picking=false;card:SetStatus(nil);return end
+        pickName=pointName()
+        if pickName=="" then
+            local index=1;while points["Point "..index] do index+=1 end
+            pickName="Point "..index;card.Options.Name:Set(pickName)
         end
-        if not position then card:Notify("Position unavailable. Check your character or coordinates (x, y, z).");return end
-        local count=0;for _ in pairs(points) do count+=1 end
-        if count>=128 and not points[name] then card:Notify("Marker limit reached (128). Remove a place first.");return end
-        points[name]={position.X,position.Y,position.Z};save();list:Refresh();list:Set(name,true)
+        picking,pickDeadline=true,os.clock()+20
+        card:SetStatus("Click/tap a surface · Esc cancels")
     end})
     card:CreateButton({Name="Remove named place",Function=function()
-        local name=string.match(card.Options.Name.Value or "","^%s*(.-)%s*$")
+        local name=pointName()
         if not points[name] then card:Notify("No saved place has that name.");return end
         list:Set(name,false);points[name]=nil;save();list:Refresh()
     end})
@@ -73,16 +87,40 @@ function Module.init(context)
     list=card:CreateList({Name="Places",Items=function()
         local names={};for name in pairs(points) do table.insert(names,name) end;table.sort(names);return names
     end,Default=defaults,EmptyText="No places saved. Name a place, then Save here."})
-    card:CreateToggle({Name="Distance",Default=true})
-    card:CreateColor({Name="Colour",Default=Color3.fromRGB(85,255,85)})
     card:CreateToggle({Name="Manual coordinates",Default=false})
     card:CreateTextBox({Name="Coordinates",Default="",Placeholder="x, y, z",Show={Option="Manual coordinates",Values={true}}})
+    card:CreateButton({Name="Save coordinates",Show={Option="Manual coordinates",Values={true}},Function=function()
+        local x,y,z=string.match(card.Options.Coordinates.Value or "","^%s*([%+%-%.%deE]+)%s*,%s*([%+%-%.%deE]+)%s*,%s*([%+%-%.%deE]+)%s*$")
+        x,y,z=tonumber(x),tonumber(y),tonumber(z)
+        storePoint(x and y and z and Vector3.new(x,y,z) or nil,pointName())
+    end})
+    card:CreateToggle({Name="Distance",Default=true})
+    card:CreateColor({Name="Colour",Default=Color3.fromRGB(85,255,85)})
+    inputConnection=host.UserInputService.InputBegan:Connect(function(event,processed)
+        if not picking then return end
+        if event.KeyCode==Enum.KeyCode.Escape or os.clock()>pickDeadline then
+            picking=false;card:SetStatus(nil);return
+        end
+        if processed or host.UserInputService:GetFocusedTextBox() then return end
+        if event.UserInputType~=Enum.UserInputType.MouseButton1 and event.UserInputType~=Enum.UserInputType.Touch then return end
+        local camera=(host.workspace or workspace).CurrentCamera
+        if not camera then return end
+        local params=RaycastParams.new()
+        params.FilterType=Enum.RaycastFilterType.Exclude
+        params.FilterDescendantsInstances=host.LocalPlayer.Character and {host.LocalPlayer.Character} or {}
+        params.RespectCanCollide=true;params.IgnoreWater=true
+        local ray=camera:ScreenPointToRay(event.Position.X,event.Position.Y)
+        local hit=(host.workspace or workspace):Raycast(ray.Origin,ray.Direction*5000,params)
+        if hit and storePoint(hit.Position,pickName) then picking=false
+        else card:SetStatus("No surface · tap again") end
+    end)
     Module.Initialized=true
     return card
 end
 function Module.destroy()
     if card and card.Enabled then card:Toggle(false) end
     if clear then clear() end
+    if inputConnection then inputConnection:Disconnect();inputConnection=nil end
     card,clear=nil,nil;Module.Initialized=false
 end
 return Module
