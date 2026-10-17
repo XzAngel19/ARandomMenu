@@ -72,9 +72,11 @@ local function isPlayerAlive() return true end
 local function isProtectedTarget() return false end
 local function getPlayerRole() return 'Murderer' end
 local core={validateGunShot=function() return true end}
-local prediction={endpoint=endpoint,targetPosition=endpoint,capturedPosition=endpoint,velocity=Vector3.zero,errorRadius=5,leadSeconds=.1}
+local prediction={endpoint=endpoint,targetPosition=endpoint,capturedPosition=endpoint,velocity=Vector3.zero,errorRadius=.5,leadSeconds=.1}
 local function computeGunAim(_,_,options)
-    assert(options.allowUncertain and not options.ignoreVisibility)
+    assert(not options.allowUncertain and not options.ignoreVisibility)
+    -- Same budget as the real solver: a prediction wider than the body is refused.
+    if prediction.errorRadius > 1 then return nil,nil,'turning too hard' end
     return CFrame.new(endpoint),prediction
 end
 local queued,notes=0,0
@@ -93,7 +95,8 @@ reloading=true;assert(not fireGunAtTarget(target,{whenReady=true,quiet=true}))
 reloading=false;gun.Enabled=false
 assert(not fireGunAtTarget(target,{whenReady=true,quiet=true}))
 gun.Enabled=true;assert(fireGunAtTarget(target,{whenReady=true,quiet=true}),'fires immediately when native readiness returns')
-pass('actual firing gate: 1000-stud endpoint, no invented cooldown, no error gate; native reloading/disabled respected')
+prediction.errorRadius=5;assert(not fireGunAtTarget(target,{whenReady=true,quiet=true}),'a 5-stud error must not fire');prediction.errorRadius=.5
+pass('actual firing gate: 1000-stud endpoint, no invented cooldown, error budget enforced; native reloading/disabled respected')
 end
 
 do
@@ -126,7 +129,7 @@ assert 'EquipTool' not in section(S,'    local function fireGunAtTarget','    lo
 assert '"Auto Range"' not in A and 'autoRange' not in A
 assert '"Throw now"' not in K
 assert '"Max error"' not in S
-assert 'allowUncertain' in S
+assert 'allowUncertain = opts.whenReady' not in S, 'the fire path must enforce the error budget'
 with tempfile.TemporaryDirectory(prefix='equipped-actions-') as tmp:
     path=Path(tmp)/'actions.luau';path.write_text(script)
     subprocess.run([os.environ.get('LUAU','luau'),str(path)],check=True)

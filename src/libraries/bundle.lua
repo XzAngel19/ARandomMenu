@@ -1,5 +1,5 @@
 return {
-    stamp = "v50-20261017-points",
+    stamp = "v52-20261017-body-gates",
     files = {
         ["src/Profile/142823291.lua"] = [[
 --!strict
@@ -2989,7 +2989,7 @@ function Module.init(runtime: any): any
         if origin then
             local ok
             ok, aim, prediction, reason = pcall(computeGunAim,
-                target, origin :: CFrame, {allowUncertain = opts.whenReady == true})
+                target, origin :: CFrame, {})
             if not ok then return reject("Aim or visibility check failed.") end
         end
 
@@ -8490,6 +8490,19 @@ local function validateGunShot(target: Player, character: Model, targetCharacter
             or ((origin-muzzle).Magnitude > 0.05 and not isGunPathClear(origin,endpoint,targetCharacter,true)) then
             return false,"A wall or another body blocks the shot."
         end
+        -- Every body part we can see must be reachable from the muzzle, not just
+        -- the predicted point: a wall or an innocent covering one side is a block.
+        local bodyPoints = 0
+        for _, name in ipairs({"Head","UpperTorso","Torso","HumanoidRootPart"}) do
+            local bodyPart = targetCharacter:FindFirstChild(name)
+            if bodyPart and bodyPart:IsA("BasePart") then
+                bodyPoints += 1
+                if not isGunPathClear(muzzle,bodyPart.Position,targetCharacter,true) then
+                    return false,"A wall or another body blocks the murderer's "..name.."."
+                end
+            end
+        end
+        if bodyPoints == 0 then return false,"The murderer has no body to hit." end
     else
         -- OFF permits map penetration, not shooting toward empty space/innocents.
         local params = RaycastParams.new()

@@ -65,7 +65,19 @@ local function check(walls,origin,finish)
  return validateGunShot(target,own,victim,muzzle,origin or muzzle,finish or endpoint,walls~=false,.1)
 end
 local function move(part,pos) part.Position=pos;part.CFrame=cf(pos) end
-assert(check());assert(rays==1)
+assert(check());assert(rays==2,'muzzle-to-endpoint ray + one ray to the visible HumanoidRootPart')
+do -- whole-body rule: a cover that blocks only the head must block the shot
+ local head={Position=Vector3.new(20,4,0),Size=Vector3.new(2,2,2),CFrame=cf(Vector3.new(20,4,0)),CanQuery=true,Transparency=0}
+ function head:IsA(k) return k=='BasePart' end
+ function head:IsDescendantOf(o) return o==victim or o==head end
+ local oldFind=victim.FindFirstChild
+ victim.FindFirstChild=function(self,k) if k=='Head' then return head end return oldFind(self,k) end
+ table.insert(scene,head)
+ local cover,coverPart=model(Vector3.new(10,2,0));table.insert(scene,coverPart)
+ assert(not check(),'cover over the head must block though the root is clear')
+ coverPart.CanQuery=false;assert(check(),'root and head clear: shot allowed')
+ head.CanQuery=false;victim.FindFirstChild=oldFind
+end
 local wall,wallPart=model(Vector3.new(10,0,0));table.insert(scene,wallPart)
 assert(not check());wallPart.Transparency=1;assert(not check(),'invisible geometry must not become permission to shoot')
 assert(check(false),'WallCheck OFF only relaxes map geometry')
@@ -95,7 +107,7 @@ assert(not check(true,nil,Vector3.new(0/0,0,0)))
 near(gunBoxEntry(Vector3.zero,Vector3.new(1,0,0),cf(Vector3.new(10,0,0),math.pi/4),Vector3.new(2,2,2),0),10-math.sqrt(2))
 assert(gunBoxEntry(Vector3.zero,Vector3.new(1,0,0),cf(Vector3.new(10,5,0)),Vector3.new(2,2,2),0)==nil)
 pass('actual core guard: dynamic walls, transparent/query-disabled players, beyond-endpoint innocents, latency buffer, both origins, roles/protection/death/respawn, empty air and rotated OBB')
--- Actual solver plus actual final guard: an open primary shot uses two rays,
+-- Actual solver plus actual final guard: an open primary shot uses three rays,
 -- and closing/reopening cover is seen by the very next attempt, without a cache.
 do
  local mm2Settings={predictionModel='66d',shootWallCheck=true}
@@ -114,7 +126,7 @@ do
 
  local before=rays
  local _,prediction=computeGunAim(target,CFrame.new(muzzle),{allowUncertain=true})
- assert(prediction and check());assert(rays-before==2,'common clear normal path: 1 solve ray + 1 final ray')
+ assert(prediction and check());assert(rays-before==3,'common clear normal path: 1 solve ray + 1 final ray + 1 body-point ray')
  wallPart.CanQuery=true;before=rays
  assert(computeGunAim(target,CFrame.new(muzzle),{allowUncertain=true})==nil)
  assert(rays-before<=64,'blocked probe work must remain bounded')

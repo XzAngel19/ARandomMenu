@@ -517,7 +517,7 @@ function Module.init(runtime: any): any
         if origin then
             local ok
             ok, aim, prediction, reason = pcall(computeGunAim,
-                target, origin :: CFrame, {allowUncertain = opts.whenReady == true})
+                target, origin :: CFrame, {})
             if not ok then return reject("Aim or visibility check failed.") end
         end
 
