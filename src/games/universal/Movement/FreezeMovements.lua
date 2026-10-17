@@ -50,7 +50,7 @@ function Module.init(context: Runtime): any
         local animator: any = humanoid and humanoid:FindFirstChildOfClass("Animator")
         if not animator and humanoid and humanoid.Parent then
             local character: any = humanoid.Parent
-            animator = character and character:FindFirstChildOfClass("Animator", true)
+            animator = character and character:FindFirstChildWhichIsA("Animator", true)
         end
         return animator
     end
@@ -59,6 +59,14 @@ function Module.init(context: Runtime): any
     local catalogEmoteConnection: any = nil
     local emoteGeneration: number = 0
     local watchedHumanoid: any = nil
+    local watchedAnimator: any = nil
+    local watchedAnimate: any = nil
+    local nextMetadataRefresh: number = 0
+    local freezeEnabled: boolean = false
+    local resolvedAssets: {[number]: boolean} = {}
+    local assetAttempts: {[number]: number} = {}
+    local pendingEmoteTracks: {any} = {}
+    local lastMetadataRefresh: number = -math.huge
     local emoteNames: {[string]: boolean} = {}
     local emoteIds: {[string]: boolean} = {}
     local managedEmotes: {[any]: any} = {}
@@ -73,6 +81,11 @@ function Module.init(context: Runtime): any
         catalogEmoteConnection = nil
         local previousHumanoid: any = watchedHumanoid
         watchedHumanoid = nil
+        watchedAnimator = nil
+        watchedAnimate = nil
+        resolvedAssets = {}
+        assetAttempts = {}
+        pendingEmoteTracks = {}
         local stopped: {[any]: boolean} = {}
         local function stopOnce(track: any): ()
             if track and not stopped[track] then
@@ -158,11 +171,25 @@ function Module.init(context: Runtime): any
         end
         local animator: any = getAnimator(humanoid)
         if not animator then
+            if watchedAnimator then clearStickyEmoteTracks() end
             return
         end
-        if watchedHumanoid ~= humanoid then
-            clearStickyEmoteTracks()
+        local animate = humanoid.Parent and humanoid.Parent:FindFirstChild("Animate")
+        -- Avatar descriptions/Animate are often installed AFTER respawn.
+        -- Retry metadata at a bounded rate, and immediately on replacement.
+        if watchedHumanoid ~= humanoid or watchedAnimator ~= animator
+            or watchedAnimate ~= animate or os.clock() >= nextMetadataRefresh then
+            if watchedHumanoid ~= humanoid or watchedAnimator ~= animator then
+                clearStickyEmoteTracks()
+            else
+                if emoteConnection then emoteConnection:Disconnect(); emoteConnection = nil end
+                if catalogEmoteConnection then catalogEmoteConnection:Disconnect(); catalogEmoteConnection = nil end
+            end
             watchedHumanoid = humanoid
+            watchedAnimator = animator
+            watchedAnimate = animate
+            lastMetadataRefresh = os.clock()
+            nextMetadataRefresh = lastMetadataRefresh + 2
             -- Catalog asset IDs are NOT necessarily the AnimationId played
             -- by Animate. Prefer the actual track reported by the engine.
             -- This event requires executor permissions on some client builds;
@@ -191,8 +218,10 @@ function Module.init(context: Runtime): any
                     for _, id: any in ipairs(ids) do
                         emoteIds[tostring(id)] = true
                         local numberId: number? = tonumber(id)
-                        if numberId and not seen[numberId] and #catalogAssets < 48 then
+                        if numberId and not seen[numberId] and not resolvedAssets[numberId] and #catalogAssets < 48 then
                             seen[numberId] = true
+                            resolvedAssets[numberId] = true
+                            assetAttempts[numberId] = (assetAttempts[numberId] or 0) + 1
                             table.insert(catalogAssets, numberId)
                         end
                     end
@@ -208,6 +237,9 @@ function Module.init(context: Runtime): any
                         local ok: boolean, objects: any = pcall(function(): any
                             return game:GetObjects("rbxassetid://" .. tostring(assetId))
                         end)
+                        if not ok and generation == emoteGeneration and (assetAttempts[assetId] or 0) < 3 then
+                            resolvedAssets[assetId] = nil -- bounded retry after transient load failure
+                        end
                         if ok and type(objects) == "table" then
                             for _, object: any in ipairs(objects) do
                                 pcall(function(): ()
@@ -251,8 +283,21 @@ function Module.init(context: Runtime): any
             emoteConnection = animator.AnimationPlayed:Connect(function(track: any): ()
                 if not ownedEmotes[track] and isEmoteTrack(track) and not emoteLastSeen[track] then
                     rememberEmote(track)
+                elseif not ownedEmotes[track] then
+                    if #pendingEmoteTracks >= 8 then table.remove(pendingEmoteTracks, 1) end
+                    table.insert(pendingEmoteTracks, {track = track, at = os.clock()})
+                    if os.clock() - lastMetadataRefresh >= 0.25 then nextMetadataRefresh = 0 end
                 end
             end)
+        end
+        for index = #pendingEmoteTracks, 1, -1 do
+            local candidate = pendingEmoteTracks[index]
+            if isEmoteTrack(candidate.track) then
+                rememberEmote(candidate.track)
+                table.remove(pendingEmoteTracks, index)
+            elseif os.clock() - candidate.at > 5 then
+                table.remove(pendingEmoteTracks, index)
+            end
         end
         local okTracks: boolean, tracks: any = pcall(function(): any
             return animator:GetPlayingAnimationTracks()
@@ -321,12 +366,13 @@ function Module.init(context: Runtime): any
     local motionSource: any = nil
     local motionTrack: any = nil
     local motionHumanoid: any = nil
+    local motionAnimator: any = nil
     local function clearMotionTrack(): ()
         if motionTrack then
             pcall(function(): () motionTrack:Stop(0.1) end)
             pcall(function(): () motionTrack:Destroy() end)
         end
-        motionSource, motionTrack, motionHumanoid = nil, nil, nil
+        motionSource, motionTrack, motionHumanoid, motionAnimator = nil, nil, nil, nil
     end
 
     local LOCOMOTION = {walk=true, run=true, idle=true, jump=true, fall=true,
@@ -350,12 +396,16 @@ function Module.init(context: Runtime): any
     end
 
     local function freezeAnimationTick(humanoid: any): ()
-        if motionHumanoid ~= humanoid then
+        local animator: any = getAnimator(humanoid)
+        if not animator then
+            if motionAnimator then clearMotionTrack() end
+            return
+        end
+        if motionHumanoid ~= humanoid or motionAnimator ~= animator then
             clearMotionTrack()
             motionHumanoid = humanoid
+            motionAnimator = animator
         end
-        local animator: any = getAnimator(humanoid)
-        if not animator then return end
         if not motionSource then
             local ok: boolean, tracks: any = pcall(function(): any return animator:GetPlayingAnimationTracks() end)
             if not ok or type(tracks) ~= "table" then return end
@@ -404,14 +454,33 @@ function Module.init(context: Runtime): any
         originalFreezeState = setmetatable({}, {__mode = "k"})
     end
 
-    local function toggleFreezeMovements(enabled: boolean): ()
+    local toggleFreezeMovements: (boolean) -> ()
+    toggleFreezeMovements = function(enabled: boolean): ()
+        freezeEnabled = enabled
         disconnectFeatureConnection("FreezeMovements")
+        if not enabled then
+            disconnectFeatureConnection("FreezeCharacterAdded")
+            disconnectFeatureConnection("FreezeCharacterRemoving")
+        end
         restoreFreezeMovements()
         clearMotionTrack()
         clearStickyEmoteTracks()
         if not enabled then
             if FreezeFeature then FreezeFeature:SetStatus(nil) end
             return
+        end
+        local player = host.LocalPlayer
+        if player and player.CharacterAdded and not featureConnections.FreezeCharacterAdded then
+            featureConnections.FreezeCharacterAdded = player.CharacterAdded:Connect(function()
+                if freezeEnabled then toggleFreezeMovements(true) end
+            end)
+        end
+        if player and player.CharacterRemoving and not featureConnections.FreezeCharacterRemoving then
+            featureConnections.FreezeCharacterRemoving = player.CharacterRemoving:Connect(function()
+                restoreFreezeMovements()
+                clearMotionTrack()
+                clearStickyEmoteTracks()
+            end)
         end
         FreezeFeature:SetStatus(freezeSettings.mode)
         local previousRoot: any = nil

@@ -150,10 +150,8 @@ end
                "local function getActiveAutoLeadCorrection() return mm2Settings.autoTuneLead and autoLeadCorrection or 0 end\n"
                "local Stats={FindFirstChild=function() return nil end}\n",
                section(BASE, "local lastLatencyReadAt:", "local function getGunOriginCFrame"), r'''
-    -- Staleness lead: our view trails the server by ~1 RTT (0.08 -> 0.08).
-    -- v26's 0.6xRTT still undershot fast movers ("le da como en el centro"):
-    -- the victim replicates victim->server->us, so the full staleness is the
-    -- round trip itself.
+    -- Preserve the bounded reference timing hypothesis; this numerical
+    -- regression does NOT establish measured observation age/rewind.
     near(getGunHorizonSeconds(),0.08)
     mm2Settings.gunLeadBias=0.1
     near(getGunHorizonSeconds(),0.18)
@@ -177,7 +175,7 @@ end
     -- Stale calibration data must never push the horizon again.
     trajectoryCalibration={getEstimates=function() return {liveGunAcceptanceMs=400,liveGunSamples=50} end}
     near(getGunHorizonSeconds(),0.08)
-    pass("gun horizon: 1.0xRTT staleness lead; auto capped at 0.1; huge ping capped")
+    pass("gun horizon: bounded reference RTT timing hypothesis; auto capped at 0.1; huge ping capped")
 end
 ''']
     chunks += [r'''
@@ -565,7 +563,7 @@ def main() -> None:
     assert 'predictionMath.sampleDue(elapsed, deltaTime, 30)' in BASE
     assert 'task.delay(10, function()' in BASE
     assert 'if directHit then tuneFromConfirmedShot(candidate) end' in BASE
-    assert 'or candidate.silentSpawn then' in BASE
+    assert 'or candidate.silentSpawn' in BASE and 'or candidate.ambiguous' in BASE
     assert 'candidate.aimRootOffset' in BASE and 'aimRootOffset = part.Position' in SHOOT
     assert 'GUN_PIERCE_STUDS' not in SHOOT, 'v27 pierce removed: the server rejects endpoints past the target (real log evidence)'
     assert 'GUN_SERVER_COOLDOWN' not in SHOOT and 'lastGunFireServer' not in SHOOT

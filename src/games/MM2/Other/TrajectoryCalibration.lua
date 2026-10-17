@@ -33,6 +33,12 @@ function Module.init(runtime: any): any
         )
         state.mm2CalibrationFeature = TrajectoryFeature
     end
+    addCycleOption(TrajectoryFeature, "Prediction model", {"Adaptive", "Reference v41"},
+        core.mm2Settings.predictionModel == "Reference v41" and 2 or 1, function(value)
+            core.mm2Settings.predictionModel = value
+            -- A correction learned under A must not silently bias B.
+            core.resetAutoLeadCorrection()
+        end)
     addActionOption(TrajectoryFeature, "Calibration status", function(): ()
         notify(trajectoryCalibration:status())
     end)

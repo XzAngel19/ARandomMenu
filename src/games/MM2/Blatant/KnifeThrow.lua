@@ -23,6 +23,8 @@ function Module.init(runtime: any): any
     local getFilteredVelocity: any = core.getFilteredVelocity
     local getEstimatedLatency: any = core.getEstimatedLatency
     local predictionMath: any = core.predictionMath
+    local mm2Settings: any = core.mm2Settings
+    local lastKnifePrediction: any = nil
     local isWeaponPathClear: any = core.isWeaponPathClear
     local trajectoryCalibration: any = core.trajectoryCalibration
 
@@ -85,6 +87,7 @@ function Module.init(runtime: any): any
     end
 
     local function predictAim(target: Player, originPos: Vector3): Vector3?
+        lastKnifePrediction = nil
         -- Rebuilt from the recovered ThrowingKnifeVisuals integrator:
         -- position += Direction * ThrowSpeed * dt (96 studs/s by default).
         -- There is no projectile gravity term in that client model.
@@ -124,7 +127,35 @@ function Module.init(runtime: any): any
             end
         end
         if not flight or not predictionMath.finite(flight) then return nil end
-        return observed + velocity * flight
+        local reference = observed + velocity * flight
+        local predicted = reference
+        if mm2Settings and mm2Settings.predictionModel == "Adaptive" then
+            local humanoid = target.Character:FindFirstChildOfClass("Humanoid")
+            local stateName = humanoid and humanoid:GetState()
+            local airborne = stateName == Enum.HumanoidStateType.Jumping or stateName == Enum.HumanoidStateType.Freefall
+            local supported = humanoid and humanoid.FloorMaterial ~= Enum.Material.Air and math.abs(velocity.Y) <= 6
+            if airborne and not supported then
+                local floorDelta = nil
+                pcall(function()
+                    local params = RaycastParams.new()
+                    params.FilterType = Enum.RaycastFilterType.Exclude
+                    params.FilterDescendantsInstances = {target.Character, LocalPlayer.Character}
+                    params.RespectCanCollide = true
+                    params.IgnoreWater = true
+                    local projected = root.Position + Vector3.new(velocity.X, 0, velocity.Z) * (latency + flight)
+                    local hit = workspace:Raycast(projected, Vector3.new(0, -128, 0), params)
+                    if hit then
+                        local delta = hit.Position.Y + humanoid.HipHeight + root.Size.Y * 0.5 - root.Position.Y
+                        if delta <= 0.25 then floorDelta = delta end
+                    end
+                end)
+                local relativeAim = predictionMath.knifeBallisticIntercept(root.Position - originPos,
+                    velocity, speed, latency, workspace.Gravity, floorDelta)
+                if relativeAim then predicted = originPos + relativeAim end
+            end
+        end
+        lastKnifePrediction = {model = mm2Settings and mm2Settings.predictionModel == "Adaptive" and "adaptive-v42" or "reference-v41", referenceEndpoint = reference}
+        return predicted
     end
 
     local KNIFE_VISIBILITY_PARTS: {string} = {
@@ -282,7 +313,8 @@ function Module.init(runtime: any): any
                 kind = "knife", tool = knife, toolName = knife.Name,
                 originPos = origin.Position, aimPos = aim, target = target, silent = false,
                 settings = {mode = "Normal", animation = true, wallCheck = true,
-                    cadence = "animation-cycle", model = "linear-intercept-v34", windupSeconds = 0.3},
+                    cadence = "animation-cycle", model = lastKnifePrediction and lastKnifePrediction.model or "reference-v41",
+                    referencePoint = lastKnifePrediction and {lastKnifePrediction.referenceEndpoint.X, lastKnifePrediction.referenceEndpoint.Y, lastKnifePrediction.referenceEndpoint.Z}, windupSeconds = 0.3},
             })
         end
         local ok: boolean = pcall(playThrowAnimation, knife, sendAtRelease)

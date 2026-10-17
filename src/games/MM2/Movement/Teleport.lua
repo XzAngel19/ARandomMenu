@@ -151,16 +151,13 @@ function Module.init(runtime: any): any
     end
     local autoKey = "Universal.ClickTeleport.AutoGetGun"
     if configData.states[autoKey] == nil then configData.states[autoKey] = configData.states["MM2.Teleport.AutoGetGun"] end
-    local show = {Option = "Destination", Values = {"MM2 Map", "MM2 Lobby", "MM2 Player", "MM2 Gun"}}
-    teleport:CreateTextBox({Name = "Player name", Default = "", Show = {Option = "Destination", Values = {"MM2 Player"}},
+    local show = {Option = "Destination", Values = {"MM2"}}
+    teleport:CreateButton({Name = "Teleport to Map", Show = show, Function = teleportToMap})
+    teleport:CreateButton({Name = "Teleport to Lobby", Show = show, Function = teleportToLobby})
+    teleport:CreateTextBox({Name = "Player name", Default = "", Show = show,
         Function = function(value) teleportTargetName = value end})
-    state.mm2TeleportRun = function()
-        local target = teleport.Options.Destination.Value
-        if target == "MM2 Map" then teleportToMap()
-        elseif target == "MM2 Lobby" then teleportToLobby()
-        elseif target == "MM2 Player" then teleportToPlayer()
-        elseif target == "MM2 Gun" then teleportToDroppedGun() end
-    end
+    teleport:CreateButton({Name = "Teleport to Player", Show = show, Function = teleportToPlayer})
+    teleport:CreateButton({Name = "Get Gun", Show = show, Function = teleportToDroppedGun})
     local key = teleport:CreateBind({Name = "Get Gun key", Default = mm2Settings.getGunKey, Show = show,
         Function = function(value) mm2Settings.getGunKey = value end})
     if state.bindMobileActionPlacement and key.Object then
@@ -187,7 +184,6 @@ function Module.init(runtime: any): any
 
     activeCleanup = function(): ()
         toggleAutoGetGun(false)
-        state.mm2TeleportRun = nil
         disconnectFeatureConnection("MM2GetGunKey")
     end
     Module.Events = featureConnections

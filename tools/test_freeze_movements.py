@@ -41,7 +41,7 @@ local danceFolder={Name='dance2'}
 local danceAnimation={instance=true,Name='Animation1',AnimationId='rbxassetid://182436842',Parent=danceFolder,IsA=function(_,class) return class=='Animation' end}
 local animate={Name='Animate',GetDescendants=function() return {danceAnimation} end}
 danceFolder.Parent=animate
-local character={FindFirstChild=function(_,name) if name=='Animate' then return animate end end}
+local character={FindFirstChild=function(_,name) if name=='Animate' then return animate end end,FindFirstChildWhichIsA=function() return nil end}
 local humanoid={EmoteTriggered=signal(),Parent=character,WalkSpeed=16,JumpPower=50,JumpHeight=7.2,AutoRotate=true,
     FindFirstChildOfClass=function() return animator end,
     GetAppliedDescription=function() return {GetEmotes=function() return {Salute={12345}} end,Destroy=function() end} end}
@@ -50,7 +50,9 @@ local checkboxes={}
 local motionHeading=nil
 local connections={}
 local stored={values={["Movement.FreezeMovements.Freezemode"]="Freeze Emotes"},states={}}
+local localPlayer={CharacterAdded=signal(),CharacterRemoving=signal()}
 local host={
+    LocalPlayer=localPlayer,
     configData=stored,
     TaskManager={Connect=function(_,fn) tick=fn; return {Disconnect=function() tick=nil end} end},
     featureConnections=connections,
@@ -194,8 +196,59 @@ root.Anchored=true;mode('Anchor');feature.enabled=true;toggle(true);tick()
 feature.enabled=false;toggle(false)
 assert(root.Anchored,'pre-existing anchored state must be restored, not forced false')
 root.Anchored=false
+-- Real respawn: no character, different Humanoid AND Animator; keep ON.
+mode('Motion');checkboxes['Freeze Emotes'](true);checkboxes['Freeze Animation'](true)
+feature.enabled=true;toggle(true);tracks={run};tick()
+local beforeDeath=loaded[#loaded]
+local previousAnimator=animator
+humanoid.GetState=function() return 'Dead' end
+tick();assert(beforeDeath.destroyed,'death releases the held clip')
+localPlayer.CharacterRemoving:Fire(character)
+humanoid=nil;root=nil
+for _=1,5 do now+=.04;tick() end
+local animateAfterRespawn=animate;animate=nil
+character={FindFirstChild=function(_,name) if name=='Animate' then return animate end end,FindFirstChildWhichIsA=function() return nil end}
+local newAnimator={AnimationPlayed=signal(),GetPlayingAnimationTracks=function() return tracks end,LoadAnimation=previousAnimator.LoadAnimation}
+local availableAnimator=nil
+local described=false
+humanoid={Parent=character,Health=100,WalkSpeed=16,JumpPower=50,JumpHeight=7.2,AutoRotate=true,
+    GetState=function() return 'Running' end,
+    FindFirstChildOfClass=function() return availableAnimator end,
+    GetAppliedDescription=function() return {GetEmotes=function() return described and {Salute={12345}} or {} end,Destroy=function() end} end}
+root={Parent=true,Anchored=false,AssemblyLinearVelocity={Magnitude=16}}
+tracks={};localPlayer.CharacterAdded:Fire(character);assert(tick,'respawn rearms scheduler without toggling checkbox')
+tick() -- Animator/Animate may not exist at CharacterAdded
+availableAnimator=newAnimator;animator=newAnimator
+tick()
+local newWalk=track('Walk',444,'Movement');tracks={newWalk};tick()
+local newHeld=loaded[#loaded];assert(newHeld.Animation==newWalk.Animation and newHeld.IsPlaying)
+-- Denied EmoteTriggered, late avatar description and immediately cancelled UGC.
+now+=.3;described=true
+local newEmote=track('Animation',777777,'Action')
+newAnimator.AnimationPlayed:Fire(newEmote);newEmote:Stop();tracks={};tick()
+local newEmoteHeld=loaded[#loaded]
+assert(newEmoteHeld.Animation==newEmote.Animation and newEmoteHeld.IsPlaying,'new-character UGC must be recovered even when movement cancelled the original track')
+local resolvedBefore=resolvedDestroyed
+now+=3;tick();now+=3;tick()
+assert(resolvedDestroyed==resolvedBefore,'periodic metadata retry must not download the same catalog asset repeatedly')
+animate=animateAfterRespawn;tick();assert(newEmoteHeld.IsPlaying,'late Animate must not drop held tracks')
+local liveAdded=0
+for _,c in ipairs(localPlayer.CharacterAdded.listeners) do if c.Connected then liveAdded+=1 end end
+assert(liveAdded==1,'rearm must not accumulate character listeners')
+for _,c in ipairs(previousAnimator.AnimationPlayed.listeners) do assert(not c.Connected,'old Animator is detached') end
+-- Animator replacement without a character event must also release/rebind.
+availableAnimator=nil;tick()
+assert(newHeld.destroyed and newEmoteHeld.destroyed)
+local finalAnimator={AnimationPlayed=signal(),GetPlayingAnimationTracks=function() return tracks end,LoadAnimation=previousAnimator.LoadAnimation}
+availableAnimator=finalAnimator;animator=finalAnimator
+local finalWalk=track('Walk',444,'Movement');tracks={finalWalk};tick()
+local finalHeld=loaded[#loaded];assert(finalHeld.Animation==finalWalk.Animation and finalHeld.IsPlaying)
+feature.enabled=false;toggle(false)
+assert(finalHeld.destroyed)
+assert(newHeld.destroyed and newEmoteHeld.destroyed and not tick,'OFF releases all new-character ownership')
+for _,c in ipairs(localPlayer.CharacterAdded.listeners) do assert(not c.Connected) end
 Module.destroy();assert(humanoid.JumpHeight==7.2 and humanoid.WalkSpeed==16 and not tick)
-print('PASS FreezeMovements: UGC engine tracks, catalog-to-animation resolution, denied-event fallback, mode restoration, avatar names/IDs, immediate tracks, attack exclusion, duplicate prevention, disable cleanup, Anchor/Motion, independent checkboxes, locomotion lock through jump, JumpHeight, destroy')
+print('PASS FreezeMovements: UGC engine tracks, catalog-to-animation resolution, denied-event fallback, mode restoration, avatar names/IDs, immediate tracks, attack exclusion, duplicate prevention, death/no-character/new Humanoid/new Animator/late Animate, cached catalog, disable cleanup, Anchor/Motion, independent checkboxes, locomotion lock through jump, JumpHeight, destroy')
 '''
 
 

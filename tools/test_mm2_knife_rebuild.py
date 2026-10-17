@@ -131,7 +131,7 @@ local function playThrowAnimation(_,fn) pending=fn;throwPending=true end
 local function stopThrowAnimation() pending=nil;throwPending=false end
 local trajectoryCalibration={noteAuthoredShot=function(_,shot)
     near(shot.aimPos.X,root.Position.X)
-    assert(shot.settings.model=='linear-intercept-v34')
+    assert(shot.settings.model=='reference-v41')
     notes+=1
 end}
 '''+section(SOURCE,'    local function throwKnife','    local function toggleKnifeThrow')+r'''

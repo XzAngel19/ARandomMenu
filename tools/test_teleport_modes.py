@@ -40,7 +40,7 @@ local UserInputService={GetFocusedTextBox=function() end,InputBegan={Connect=fun
  keyHandler=fn;return {Disconnect=function() keyHandler=nil end}
 end}}
 local configData={values={['MM2.Teleport.GetGunkey']='J',['MM2.Teleport.Gunpickupdelay']=.2},states={}}
-local tp={Options={Destination={Value='MM2 Map'}},Notify=function(_,m) notify(m) end}
+local tp={Options={Destination={Value='MM2'}},Notify=function(_,m) notify(m) end}
 local defs={}
 local function option(_,d)
  local id=d.Name:gsub('%W','')
@@ -50,6 +50,7 @@ local function option(_,d)
  if d.Function then d.Function(value) end
  return o
 end
+tp.CreateButton=function(_,d) defs[d.Name]=d;tp.Options[d.Name]={Value=nil} end
 tp.CreateDropdown=option;tp.CreateTextBox=option;tp.CreateBind=option;tp.CreateToggle=option;tp.CreateSlider=option
 local settings={getGunKey='Unknown',autoGetGunDelay=.1}
 local state={framework={GetModule=function(_,name) assert(name=='Teleport');return tp end},mm2Core={
@@ -60,12 +61,13 @@ local state={framework={GetModule=function(_,name) assert(name=='Teleport');retu
 MM2.init({})
 assert(settings.getGunKey=='J' and settings.autoGetGunDelay==.2,'preserve old custom binding and delay')
 assert(not tp.Options['MM2 target'])
-state.mm2TeleportRun();near(pivots[#pivots].X,10);near(pivots[#pivots].Y,3)
-tp.Options.Destination.Value='MM2 Lobby';state.mm2TeleportRun();near(pivots[#pivots].X,20)
-defs['Player name'].Function('target');tp.Options.Destination.Value='MM2 Player'
-state.mm2TeleportRun();near(pivots[#pivots].X,30)
-tp.Options.Destination.Value='MM2 Gun';local before=#pivots;state.mm2TeleportRun()
+assert(not state.mm2TeleportRun, 'no second MM2 dispatcher')
+defs['Teleport to Map'].Function();near(pivots[#pivots].X,10);near(pivots[#pivots].Y,3)
+defs['Teleport to Lobby'].Function();near(pivots[#pivots].X,20)
+defs['Player name'].Function('target');defs['Teleport to Player'].Function();near(pivots[#pivots].X,30)
+local before=#pivots;defs['Get Gun'].Function()
 assert(#pivots==before+2);near(pivots[before+1].X,40);near(pivots[before+1].Y,2);near(pivots[#pivots].X,0)
+for name,d in pairs(defs) do assert(d.Show.Option=='Destination' and #d.Show.Values==1 and d.Show.Values[1]=='MM2',name..' is grouped under the sole MM2 entry') end
 defs['Auto Get Gun'].Function(true);assert(callbacks.auto)
 callbacks.auto(.5);near(pivots[#pivots-1].X,40)
 defs['Auto Get Gun'].Function(false);assert(not callbacks.auto)
@@ -74,9 +76,9 @@ local Module={}
 '''+section(UNIVERSAL,'function Module.run(', 'function Module.destroy(')+r'''
 local context={host={state=state}}
 local previous=#pivots;Module.run(context,tp,{})
-assert(#pivots==previous+2,'universal action dispatches to the selected MM2 destination')
+assert(#pivots==previous and notices[#notices]=='Choose a MM2 teleport button below','MM2 actions belong together, not in another selector')
 MM2.destroy();assert(not state.mm2TeleportRun and not keyHandler and not callbacks.auto)
-Module.run(context,tp,{});assert(notices[#notices]=='MM2 destinations are not ready')
+Module.run(context,tp,{});assert(notices[#notices]=='Choose a MM2 teleport button below')
 print('PASS Teleport: one dispatcher; Map/Lobby/Player/Gun, auto pickup, custom key/delay migration, unload')
 '''
 with tempfile.TemporaryDirectory(prefix='teleport-') as tmp:

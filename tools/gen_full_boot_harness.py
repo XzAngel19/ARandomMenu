@@ -888,12 +888,15 @@ do
 
     assert(not findFeature("Role Tags") and not findFeature("Click Teleport"))
     local tp = ex.state.framework:GetModule("Teleport")
-    assert(tp.Options.Destination.Value == "MM2 Map", "MM2 Map is the default Teleport destination")
+    assert(tp.Options.Destination.Value == "MM2", "MM2 is the default Teleport destination")
     assert(not tp.Options["MM2 target"], "no second destination selector")
+    for _,name in ipairs({"Teleport to Map", "Teleport to Lobby", "Teleport to Player", "Get Gun"}) do
+        assert(tp.Options[name] and tp.Options[name].Visible, name .. " must be visible in the single MM2 destination")
+    end
     assert(tp.Options["Auto Get Gun"].Visible and not tp.Options.Movement.Visible)
     tp.Options.Destination.Metadata.callback("Tap point")
     assert(not tp.Options["Auto Get Gun"].Visible and tp.Options.Movement.Visible)
-    tp.Options.Destination.Metadata.callback("MM2 Map")
+    tp.Options.Destination.Metadata.callback("MM2")
     assert(tp.Options["Auto Get Gun"].Visible and not tp.Options.Movement.Visible)
 
     local auraRange = knife.options:FindFirstChild("Option_AuraRange")

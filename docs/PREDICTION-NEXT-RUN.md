@@ -1,3 +1,8 @@
+> **Actualización v42:** el trabajo de predicción ya está implementado en esta
+> run, no pospuesto. Este documento conserva el plan histórico y sus límites.
+> Ver [implementación y pruebas](FIXES-v42.md) y
+> [evidencia reproducible](prediction-baselines/v42/README.md).
+
 # Nueva predicción: plan de la siguiente run
 
 ## Qué queda guardado

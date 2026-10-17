@@ -69,6 +69,8 @@ function Module.init(runtime: any): any
 
         capturedPosition: Vector3,
         aimRootOffset: Vector3,
+        model: string?,
+        referenceEndpoint: Vector3?,
     }
 
     type GunAimOptions = {
@@ -247,6 +249,76 @@ function Module.init(runtime: any): any
             displacement.Z
         )
 
+        local referenceEndpoint = part.Position + displacement
+        local adaptive = mm2Settings.predictionModel == "Adaptive"
+        local adaptiveError = MINIMUM_ERROR_RADIUS
+        if adaptive then
+            local history = sample and sample.history
+            local measuredAcceleration = Vector3.zero
+            local measuredTurn = 0
+            if history and #history >= 3 then
+                local current, previous, earlier = history[#history], history[#history - 1], history[#history - 2]
+                local dt = current.at - previous.at
+                if dt >= 1 / 240 and dt < 0.25 and os.clock() - current.at < 0.25 then
+                    local beforeDt = previous.at - earlier.at
+                    local cv = Vector3.new(current.velocity.X, 0, current.velocity.Z)
+                    local pv = Vector3.new(previous.velocity.X, 0, previous.velocity.Z)
+                    local ev = Vector3.new(earlier.velocity.X, 0, earlier.velocity.Z)
+                    if beforeDt >= 1 / 240 and cv.Magnitude > 1 and pv.Magnitude > 1 and ev.Magnitude > 1 then
+                        local currentAngle = math.atan2(pv.X * cv.Z - pv.Z * cv.X, pv:Dot(cv))
+                        local beforeAngle = math.atan2(ev.X * pv.Z - ev.Z * pv.X, ev:Dot(pv))
+                        local rate, beforeRate = currentAngle / dt, beforeAngle / beforeDt
+                        if rate * beforeRate > 0 and math.abs(currentAngle) < math.pi / 3
+                            and math.abs(rate) >= math.abs(beforeRate) * 0.5
+                            and math.abs(rate) <= math.abs(beforeRate) * 2 then measuredTurn = rate end
+                        if cv.Magnitude < pv.Magnitude - 0.1 and pv.Magnitude < ev.Magnitude - 0.1
+                            and cv.Unit:Dot(pv.Unit) > 0.9 then
+                            measuredAcceleration = (cv - pv) / dt
+                        end
+                    end
+                end
+            end
+            -- Ignore curvature/deceleration smaller than the existing body
+            -- uncertainty floor; tiny replicated heading jitter is not a turn.
+            if math.abs(measuredTurn) * horizontalVelocity.Magnitude * horizon * horizon * 0.5 < MINIMUM_ERROR_RADIUS then measuredTurn = 0 end
+            if measuredAcceleration.Magnitude * horizon * horizon * 0.5 < MINIMUM_ERROR_RADIUS then measuredAcceleration = Vector3.zero end
+            local sensitivity
+            displacement, adaptiveError, sensitivity = predictionMath.gunAdaptive(
+                velocity, measuredAcceleration, horizon, workspace.Gravity, grounded, jumpState, measuredTurn)
+            if measuredTurn == 0 and measuredAcceleration.Magnitude == 0 and horizontalVelocity.Magnitude >= 0.05 then
+                -- No supported curve/brake: retain A's horizontal estimate,
+                -- not an unvalidated CV replacement of every trajectory.
+                displacement = Vector3.new(referenceEndpoint.X - part.Position.X, displacement.Y, referenceEndpoint.Z - part.Position.Z)
+            end
+            local correctedJump = grounded and jumpState and math.abs(velocity.Y) <= 6
+                or risingJumpState and math.abs(velocity.Y) < 8
+            -- Preserve the proven vertical estimate except the two identified
+            -- state/velocity disagreement cases; floor geometry still wins.
+            local vertical = correctedJump and displacement.Y or verticalDisplacement
+            displacement = Vector3.new(displacement.X, math.clamp(vertical, -3, 6), displacement.Z)
+            if measuredTurn ~= 0 or measuredAcceleration.Magnitude > 0 then
+                lead = horizon
+                leadSensitivity = sensitivity
+            end
+            -- Only a real collidable floor under the predicted landing point
+            -- can clamp a fall. No invented jump velocity or bullet gravity.
+            if displacement.Y < 0 then
+                pcall(function()
+                    local params = RaycastParams.new()
+                    params.FilterType = Enum.RaycastFilterType.Exclude
+                    params.FilterDescendantsInstances = {character, LocalPlayer.Character}
+                    params.RespectCanCollide = true
+                    params.IgnoreWater = true
+                    local start = root.Position + Vector3.new(displacement.X, 0, displacement.Z)
+                    local distance = math.min(64, math.abs(displacement.Y) + humanoid.HipHeight + root.Size.Y * 0.5 + 2)
+                    local hit = workspace:Raycast(start, Vector3.new(0, -distance, 0), params)
+                    if hit then
+                        local floorDelta = hit.Position.Y + humanoid.HipHeight + root.Size.Y * 0.5 - root.Position.Y
+                        if floorDelta <= 0.25 then displacement = Vector3.new(displacement.X, math.max(displacement.Y, floorDelta), displacement.Z) end
+                    end
+                end)
+            end
+        end
         local predicted: Vector3 = part.Position + displacement
         local delta: Vector3 = predicted - origin.Position
         if delta.Magnitude <= 0.05 then
@@ -301,7 +373,8 @@ function Module.init(runtime: any): any
             turnError + jitter
         )
         local allowedErrorBudget: number = ignoreVisibility and (BODY_HALF_WIDTH * 1.75) or BODY_HALF_WIDTH
-        if errorRadius > allowedErrorBudget and not resolvedOptions.allowUncertain then
+        if adaptive then errorRadius = math.max(errorRadius, adaptiveError) end
+        if not adaptive and errorRadius > allowedErrorBudget and not resolvedOptions.allowUncertain then
             return nil, nil, "turning too hard"
         end
 
@@ -315,6 +388,8 @@ function Module.init(runtime: any): any
             leadSensitivity = leadSensitivity,
             capturedPosition = part.Position,
             aimRootOffset = part.Position - (root :: BasePart).Position,
+            model = adaptive and "adaptive-v42" or "reference-v41",
+            referenceEndpoint = referenceEndpoint,
         }, nil
     end
 
@@ -553,7 +628,7 @@ function Module.init(runtime: any): any
             if not shotOrigin or not shotEnd then
                 return reject("Another player blocks the silent shot.")
             end
-            state.mm2ShotFeedback.queue(target, gun, shotOrigin, aim, resolved)
+            state.mm2ShotFeedback.queue(target, gun, shotOrigin, shotEnd, resolved)
             if state.mm2ShotFeedback.pending then
                 state.mm2ShotFeedback.pending.silentSpawn = variant
             end
@@ -578,6 +653,8 @@ function Module.init(runtime: any): any
                 settings = {mode = "Silent", spawn = mm2Settings.silentSpawn,
                     sweep = mm2Settings.silentSweep, motionHz = mm2Settings.motionSampleHz,
                     leadSeconds = resolved.leadSeconds, errorRadius = resolved.errorRadius,
+                    predictionModel = resolved.model,
+                    referencePoint = resolved.referenceEndpoint and {resolved.referenceEndpoint.X, resolved.referenceEndpoint.Y, resolved.referenceEndpoint.Z},
                     predictedPoint = {resolved.endpoint.X, resolved.endpoint.Y, resolved.endpoint.Z},
                     sampledVelocity = {resolved.velocity.X, resolved.velocity.Y, resolved.velocity.Z}},
             })
@@ -586,14 +663,9 @@ function Module.init(runtime: any): any
         end
 
         state.mm2ShotFeedback.queue(target, gun, origin, aim, resolved)
-        -- The endpoint must be the PREDICTED TARGET POINT itself. Real MM2
-        -- logs (2026-10-15) show the server validates it against the
-        -- target's rewound position: v27 extended it 4 studs past the
-        -- target to "pierce" the hitbox segment, and every single extended
-        -- shot was rejected outright (0 GunFired echoes in a 5-shot
-        -- session) - the shot died mid-air exactly like the bug it tried
-        -- to fix. The server's own acceptance window (~277 ms rewind) is
-        -- what forgives a slightly short lead.
+        -- Author one endpoint, without speculative "piercing" past it.
+        -- Echo timing documents transport/visual confirmation, NOT rewind
+        -- duration or an authoritative hit-rate denominator.
         remote:FireServer(
             CFrame.lookAt(origin.Position, resolved.endpoint),
             CFrame.new(resolved.endpoint)
@@ -609,6 +681,8 @@ function Module.init(runtime: any): any
             settings = {mode = "Normal", wallCheck = mm2Settings.shootWallCheck,
                 motionHz = mm2Settings.motionSampleHz, leadBias = mm2Settings.gunLeadBias,
                 wallCheckPolicy = "live-body-first-hit", leadSeconds = resolved.leadSeconds, errorRadius = resolved.errorRadius,
+                predictionModel = resolved.model,
+                referencePoint = resolved.referenceEndpoint and {resolved.referenceEndpoint.X, resolved.referenceEndpoint.Y, resolved.referenceEndpoint.Z},
                 predictedPoint = {resolved.endpoint.X, resolved.endpoint.Y, resolved.endpoint.Z},
                 sampledVelocity = {resolved.velocity.X, resolved.velocity.Y, resolved.velocity.Z}},
         })
