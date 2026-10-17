@@ -25,7 +25,6 @@ local function model(pos)
  return m,part
 end
 local own=model(Vector3.new(-3,0,0));local victim,body=model(Vector3.new(20,0,0));local friendly,friend=model(Vector3.new(10,10,0))
-local CollectionService={GetTagged=function() return {} end}
 local LocalPlayer={Character=own};local target={Character=victim,role='Murderer',alive=true};local innocent={Character=friendly,role='Innocent',alive=true}
 local roster={LocalPlayer,target,innocent};local Players={GetPlayers=function() return roster end}
 local function isPlayerAlive(p) return p.alive end
@@ -68,7 +67,7 @@ end
 local function move(part,pos) part.Position=pos;part.CFrame=cf(pos) end
 assert(check());assert(rays==1)
 local wall,wallPart=model(Vector3.new(10,0,0));table.insert(scene,wallPart)
-assert(not check());wallPart.Transparency=1;assert(check(),'game WeaponService filter skips Transparency==1 geometry')
+assert(not check());wallPart.Transparency=1;assert(not check(),'invisible geometry must not become permission to shoot')
 assert(check(false),'WallCheck OFF only relaxes map geometry')
 wallPart.CanQuery=false
 move(friend,Vector3.new(10,0,0));assert(not check(),'normal path must reject an innocent before the murderer')
@@ -81,7 +80,7 @@ move(friend,Vector3.new(10,8,0));friend.AssemblyLinearVelocity=Vector3.new(0,-10
 friend.AssemblyLinearVelocity=Vector3.zero;move(friend,Vector3.new(10,10,0));assert(check(),'next fresh check immediately sees clear geometry')
 assert(not check(true,nil,Vector3.new(20,0,10)),'empty-air lead is not a target hit')
 assert(check(true,Vector3.new(18,0,0)))
-wallPart.Transparency=0;wallPart.CanQuery=true;assert(not check(true,Vector3.new(18,0,0)),'Silent cannot bypass WallCheck at the muzzle')
+wallPart.CanQuery=true;assert(not check(true,Vector3.new(18,0,0)),'Silent cannot bypass WallCheck at the muzzle')
 wallPart.CanQuery=false
 assert(not check(true,Vector3.new(20,0,0),Vector3.new(20.2,0,0)),'inside-body silent origins are not proof of intersection')
 roundLifecycleActive=false;assert(not check());roundLifecycleActive=true

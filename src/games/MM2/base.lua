@@ -3937,34 +3937,19 @@ moduleCleanup = function(): ()
     end
 end
 
--- Gun rays deliberately use the game's own WeaponService filter (recovered from
--- TestingStuff "place, source.rbxlx"): own character and WeaponPassthrough are
--- excluded, and parts with Transparency == 1 are skipped. The first other hit
--- blocks. A tagged or invisible player is still a player in front of the gun
--- (bystanders are checked separately by gunBystanderOnRay).
+-- Gun rays deliberately do not share Knife's transparent/passthrough filters.
+-- A tagged or invisible player is still a player in front of the gun.
 local function isGunPathClear(origin: Vector3, endpoint: Vector3, target: Model?, requireTarget: boolean?): boolean
-    local direction = endpoint - origin
+    local direction = endpoint-origin
     if not predictionMath.finite(direction.Magnitude) or direction.Magnitude < 0.05 then return false end
-    local excluded: {Instance} = {}
-    if LocalPlayer.Character then table.insert(excluded, LocalPlayer.Character) end
-    for _, object: Instance in ipairs(CollectionService:GetTagged("WeaponPassthrough")) do
-        table.insert(excluded, object)
-    end
     local params = RaycastParams.new()
     params.FilterType = Enum.RaycastFilterType.Exclude
+    params.FilterDescendantsInstances = LocalPlayer.Character and {LocalPlayer.Character} or {}
     params.IgnoreWater = true
-    for _ = 1, 32 do
-        params.FilterDescendantsInstances = excluded
-        local hit = workspace:Raycast(origin, direction + direction.Unit * 0.05, params)
-        if not hit then return requireTarget ~= true end
-        if target and hit.Instance:IsDescendantOf(target) then return true end
-        if hit.Instance:IsA("BasePart") and hit.Instance.Transparency == 1 then
-            table.insert(excluded, hit.Instance)
-        else
-            return false
-        end
-    end
-    return false -- bounded work; conservative if the map stacks many transparent layers
+    params.RespectCanCollide = false
+    local hit = workspace:Raycast(origin,direction+direction.Unit*0.05,params)
+    if not hit then return requireTarget ~= true end
+    return target ~= nil and hit.Instance:IsDescendantOf(target)
 end
 
 -- Ray/OBB slab intersection, including CanQuery=false and transparent body parts.
