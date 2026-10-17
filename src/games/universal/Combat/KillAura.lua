@@ -535,7 +535,7 @@ function Module.init(context: Runtime): any
                 return
             end
             learnedWeapon = (tool :: Tool).Name
-            aura:Notify((tool :: Tool).Name .. " bound")
+            aura:SetStatus((tool :: Tool).Name .. " bound")
         end,
     })
     aura:CreateToggle({

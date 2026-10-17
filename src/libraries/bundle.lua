@@ -1,5 +1,5 @@
 return {
-    stamp = "v46-20261017-movement",
+    stamp = "v47-20261017-menu",
     files = {
         ["src/Profile/142823291.lua"] = [[
 --!strict
@@ -1499,6 +1499,324 @@ end
 return Module
 
 ]],
+        ["src/games/MM2/Blatant/Fling.lua"] = [[
+export type Runtime = {
+    framework: any,
+    entity: any,
+    host: any,
+    services: any,
+}
+
+local Module = {
+    Name = "MM2 Fling",
+    PlaceId = 142823291,
+    Events = {} :: {[string]: any},
+    Initialized = false,
+}
+
+local activeCleanup: (() -> ())? = nil
+
+function Module.init(runtime: any): any
+    local host: any = state.frameworkEnvironment
+    assert(state.mm2Core, "MM2 Fling requires the MM2 core")
+    local Players: any = host.Players
+    local LocalPlayer: any = host.LocalPlayer
+    local getCharacterParts: any = host.getCharacterParts
+    local notify: any = host.notify
+    local activity: any = services.activity
+    local protectedTargets: any = services.protectedTargets
+    local gameBridge: any = services.gameBridge
+    local createUniversalFeature: any = host.createUniversalFeature
+    local addActionOption: any = host.addActionOption
+    local addTextOption: any = host.addTextOption
+    local addInformationOption: any = host.addInformationOption
+
+    local workspace: any = host.workspace
+    local RunService: any = host.RunService
+
+    local flingRunning: boolean = false
+
+    local flingTargetName: string = ""
+
+    local function setFlingRunning(running: boolean): ()
+        flingRunning = running
+        activity.set("fling", running)
+    end
+
+    local performFling: (Player) -> ()
+
+    local FLING_DURATION: number = 6
+    local FLING_POWER: number = 1
+
+    performFling = function(targetPlayer: Player): ()
+        if not Module.Initialized then return end
+        if protectedTargets.isProtected(targetPlayer) then
+            notify("player protected")
+            return
+        end
+        if flingRunning then
+            notify("fling already running")
+            return
+        end
+
+        setFlingRunning(true)
+        task.spawn(function(): ()
+            local _, humanoid: Humanoid?, root: BasePart? = getCharacterParts()
+            if not humanoid or not root then
+                setFlingRunning(false)
+                notify("character not ready")
+                return
+            end
+
+            local savedCFrame: CFrame = root.CFrame
+            local savedAutoRotate: boolean = humanoid.AutoRotate
+            local touchedTarget: boolean = false
+            local reason: string = "timeout"
+
+            local power: number = 9e4 * math.clamp(FLING_POWER, 0.25, 4)
+            local duration: number = math.clamp(FLING_DURATION, 1, 20)
+
+            local success: boolean, errorMessage: any = pcall(function(): ()
+                local startedAt: number = os.clock()
+                local step: number = 0
+                local destroyHeight: number = workspace.FallenPartsDestroyHeight
+                if destroyHeight ~= destroyHeight then
+                    destroyHeight = -500
+                end
+                local voidThreshold: number = destroyHeight + 35
+
+                humanoid.AutoRotate = false
+                if humanoid.Sit then
+                    humanoid.Sit = false
+                end
+
+                while flingRunning and os.clock() - startedAt < duration do
+
+                    if targetPlayer.Parent == nil then
+                        reason = "left"
+                        break
+                    end
+
+                    local targetCharacter: Model? = targetPlayer.Character
+                    local targetRoot: BasePart? = targetCharacter
+                        and targetCharacter:FindFirstChild("HumanoidRootPart")
+                        :: BasePart?
+                    local targetHumanoid: Humanoid? = targetCharacter
+                        and targetCharacter:FindFirstChildOfClass("Humanoid")
+                        :: Humanoid?
+                    if not targetRoot or not targetRoot.Parent then
+                        reason = "gone"
+                        break
+                    end
+                    if targetHumanoid and targetHumanoid.Health <= 0 then
+                        touchedTarget = true
+                        reason = "killed"
+                        break
+                    end
+                    if targetRoot.Position.Y <= voidThreshold then
+                        touchedTarget = true
+                        reason = "void"
+                        break
+                    end
+
+                    local _, liveHumanoid: Humanoid?, liveRoot: BasePart? =
+                        getCharacterParts()
+                    if not liveHumanoid or not liveRoot then
+                        reason = "died"
+                        break
+                    end
+                    if liveHumanoid.Health <= 0 then
+                        reason = "died"
+                        break
+                    end
+                    if liveRoot ~= root or liveHumanoid ~= humanoid or liveRoot.Anchored then
+                        reason = "died"
+                        break
+                    end
+                    humanoid = liveHumanoid
+                    root = liveRoot
+
+                    step += 1
+
+                    local phase: number = (step % 6) / 6 * math.pi * 2
+                    local vertical: number = (step % 2 == 0) and 1.1 or -1.1
+                    liveRoot.CFrame = targetRoot.CFrame
+                        * CFrame.new(math.cos(phase) * 1.6, vertical, math.sin(phase) * 1.6)
+                    local sign: number = (step % 2 == 0) and 1 or -1
+                    liveRoot.AssemblyLinearVelocity =
+                        Vector3.new(power * sign, power, power * -sign)
+                    liveRoot.AssemblyAngularVelocity =
+                        Vector3.new(power, power, power)
+
+                    RunService.Stepped:Wait()
+                    if flingRunning and liveRoot.Parent then
+                        liveRoot.AssemblyLinearVelocity =
+                            Vector3.new(power * -sign, power, power * sign)
+                    end
+                    RunService.Heartbeat:Wait()
+                end
+            end)
+
+            local _, finalHumanoid: Humanoid?, finalRoot: BasePart? = getCharacterParts()
+            if finalRoot == root and finalRoot and finalRoot.Parent then
+                finalRoot.AssemblyLinearVelocity = Vector3.zero
+                finalRoot.AssemblyAngularVelocity = Vector3.zero
+                finalRoot.CFrame = savedCFrame + Vector3.new(0, 2, 0)
+            end
+            if finalHumanoid == humanoid and finalHumanoid then
+                finalHumanoid.AutoRotate = savedAutoRotate
+            end
+
+            setFlingRunning(false)
+            if not Module.Initialized then return end
+            if not success then
+                notify("fling failed: " .. tostring(errorMessage))
+            elseif touchedTarget then
+                notify("fling complete: " .. targetPlayer.Name .. " went down.")
+            elseif reason == "left" then
+                notify("fling stopped: " .. targetPlayer.Name .. " left the game.")
+            elseif reason == "gone" then
+                notify("Fling stopped: the target character disappeared.")
+            elseif reason == "died" then
+                notify("Fling stopped: your character died.")
+            else
+                notify(
+                    "Fling stopped after "
+                        .. string.format("%.0f", FLING_DURATION)
+                        .. "s of flight."
+                )
+            end
+        end)
+    end
+
+    local function findPlayerByRole(match: (string) -> boolean): Player?
+        if type(gameBridge.playerRole) ~= "function" then
+            return nil
+        end
+        for _, player: Player in ipairs(Players:GetPlayers()) do
+            if player ~= LocalPlayer then
+                local ok: boolean, role: any = pcall(gameBridge.playerRole, player)
+                if ok and type(role) == "string" and match(role) then
+                    local alive: boolean = player.Character
+                        and player.Character:FindFirstChildOfClass("Humanoid")
+                            and (player.Character:FindFirstChildOfClass("Humanoid") :: Humanoid).Health > 0
+                    if alive then
+                        return player
+                    end
+                end
+            end
+        end
+        return nil
+    end
+
+    local FlingFeature: any = createUniversalFeature(
+        "Fling",
+        "MM2 only: fling the murderer, sheriff or innocents",
+        2,
+        function() end,
+        {category = true, categoryName = "Exploits", registry = mm2Features, configKey = "MM2.Fling"}
+    )
+    addActionOption(FlingFeature, "Fling Murderer", function(): ()
+        local target: Player? = findPlayerByRole(function(role: string): boolean
+            return role == "Murderer"
+        end)
+        if target then
+            performFling(target)
+        else
+            notify("No murderer was found.")
+        end
+    end)
+    addActionOption(FlingFeature, "Fling Sheriff", function(): ()
+        local target: Player? = findPlayerByRole(function(role: string): boolean
+            return role == "Sheriff" or role == "Hero"
+        end)
+        if target then
+            performFling(target)
+        else
+            notify("No sheriff or hero was found.")
+        end
+    end)
+    addActionOption(FlingFeature, "Fling All Innocents", function(): ()
+        if type(gameBridge.playerRole) ~= "function" then
+            notify("No roles available in this game.")
+            return
+        end
+        task.spawn(function(): ()
+            for _, player: Player in ipairs(Players:GetPlayers()) do
+                if player ~= LocalPlayer then
+                    local ok: boolean, role: any = pcall(gameBridge.playerRole, player)
+                    if ok and role == "Innocent" then
+                        performFling(player)
+                        repeat
+                            task.wait(0.05)
+                        until not activity.isActive("fling")
+                    end
+                end
+            end
+        end)
+    end)
+    addTextOption(
+        FlingFeature,
+        "Target player",
+        "",
+        function(value: string): ()
+            flingTargetName = value
+        end,
+        false,
+        "Exact or partial name"
+    )
+    addActionOption(FlingFeature, "Fling", function(): ()
+        local needle: string = string.lower(
+            string.gsub(flingTargetName or "", "%s+", "")
+        )
+        if needle == "" then
+            notify("Type a player name in the Target player box first.")
+            return
+        end
+        local exact: Player? = nil
+        local partial: Player? = nil
+        for _, player: Player in ipairs(Players:GetPlayers()) do
+            if player ~= LocalPlayer then
+                local name: string = string.lower(player.Name)
+                if string.gsub(name, "%s+", "") == needle then
+                    exact = player
+                    break
+                end
+                if not partial and string.find(name, needle, 1, true) then
+                    partial = player
+                end
+            end
+        end
+        local target: Player? = exact or partial
+        if target then
+            performFling(target)
+        else
+            notify("No player named \"" .. flingTargetName .. "\" was found.")
+        end
+    end)
+    addInformationOption(
+        FlingFeature,
+        "MM2 only. Choose a role action, or enter a player name and press Fling."
+    )
+
+    activeCleanup = function(): ()
+        setFlingRunning(false)
+    end
+    Module.Initialized = true
+    return FlingFeature
+end
+
+function Module.destroy(): ()
+    if activeCleanup then
+        pcall(activeCleanup)
+    end
+    activeCleanup = nil
+    Module.Initialized = false
+end
+
+return Module
+
+]],
         ["src/games/MM2/Blatant/KnifeAura.lua"] = [=[
 local Module = {
     Name = "MM2 Knife Aura",
@@ -2627,6 +2945,7 @@ function Module.init(runtime: any): any
         whenReady: boolean?,
     }
 
+    local ShootFeature: any = nil
     local lastRejectReason: string = ""
 
     local function fireGunAtTarget(
@@ -2641,9 +2960,7 @@ function Module.init(runtime: any): any
         local quiet: boolean = opts.quiet == true
         local function reject(message: string): boolean
             lastRejectReason = message
-            if not quiet then
-                notify(message)
-            end
+            if not quiet and ShootFeature then ShootFeature:SetStatus(message) end
             return false
         end
 
@@ -2764,6 +3081,7 @@ function Module.init(runtime: any): any
                     predictedPoint = {resolved.endpoint.X, resolved.endpoint.Y, resolved.endpoint.Z},
                     sampledVelocity = {resolved.velocity.X, resolved.velocity.Y, resolved.velocity.Z}},
             })
+            if not quiet and ShootFeature then ShootFeature:SetStatus(nil) end
             macroUnequip(gun)
             return true
         end
@@ -2793,6 +3111,7 @@ function Module.init(runtime: any): any
                 predictedPoint = {resolved.endpoint.X, resolved.endpoint.Y, resolved.endpoint.Z},
                 sampledVelocity = {resolved.velocity.X, resolved.velocity.Y, resolved.velocity.Z}},
         })
+        if not quiet and ShootFeature then ShootFeature:SetStatus(nil) end
         macroUnequip(gun)
         return true
     end
@@ -2801,7 +3120,6 @@ function Module.init(runtime: any): any
     local shootFeatureActive: boolean = false
     local autoShootActive: boolean = false
     local autoShootWanted: boolean = false
-    local ShootFeature: any = nil
     local updateAutoShootConnection: (() -> ())? = nil
 
     local function refreshShootInfrastructure(): ()
@@ -12152,330 +12470,6 @@ end
 return Module
 
 ]],
-        ["src/games/universal/Blatant/Fling.lua"] = [[
-export type Runtime = {
-    framework: any,
-    entity: any,
-    host: any,
-    services: any,
-}
-
-local Module = {
-    Name = "Fling",
-    PlaceId = 0,
-    Events = {} :: {[string]: any},
-    Initialized = false,
-}
-
-local activeCleanup: (() -> ())? = nil
-
-function Module.init(context: Runtime): any
-    local host: any = context.host
-    local Players: any = host.Players
-    local LocalPlayer: any = host.LocalPlayer
-    local getCharacterParts: any = host.getCharacterParts
-    local notify: any = host.notify
-    local activity: any = context.services.activity
-    local protectedTargets: any = context.services.protectedTargets
-    local gameBridge: any = context.services.gameBridge
-    local createUniversalFeature: any = host.createUniversalFeature
-    local addActionOption: any = host.addActionOption
-    local addTextOption: any = host.addTextOption
-    local addInformationOption: any = host.addInformationOption
-
-    local workspace: any = host.workspace
-    local RunService: any = host.RunService
-
-    local flingRunning: boolean = false
-
-    local flingTargetName: string = ""
-
-    local function setFlingRunning(running: boolean): ()
-        flingRunning = running
-        activity.set("fling", running)
-    end
-
-    local performFling: (Player) -> ()
-
-    local FLING_DURATION: number = 6
-    local FLING_POWER: number = 1
-
-    performFling = function(targetPlayer: Player): ()
-        if protectedTargets.isProtected(targetPlayer) then
-            notify("player protected")
-            return
-        end
-        if flingRunning then
-            notify("fling already running")
-            return
-        end
-
-        setFlingRunning(true)
-        task.spawn(function(): ()
-            local _, humanoid: Humanoid?, root: BasePart? = getCharacterParts()
-            if not humanoid or not root then
-                setFlingRunning(false)
-                notify("character not ready")
-                return
-            end
-
-            local savedCFrame: CFrame = root.CFrame
-            local savedAutoRotate: boolean = humanoid.AutoRotate
-            local savedCameraSubject: (Humanoid | BasePart)? = workspace.CurrentCamera
-                and workspace.CurrentCamera.CameraSubject
-                :: (Humanoid | BasePart)?
-            local touchedTarget: boolean = false
-            local reason: string = "timeout"
-
-            local power: number = 9e4 * math.clamp(FLING_POWER, 0.25, 4)
-            local duration: number = math.clamp(FLING_DURATION, 1, 20)
-
-            local success: boolean, errorMessage: any = pcall(function(): ()
-                local startedAt: number = os.clock()
-                local step: number = 0
-                local destroyHeight: number = workspace.FallenPartsDestroyHeight
-                if destroyHeight ~= destroyHeight then
-                    destroyHeight = -500
-                end
-                local voidThreshold: number = destroyHeight + 35
-
-                humanoid.AutoRotate = false
-                if humanoid.Sit then
-                    humanoid.Sit = false
-                end
-
-                while os.clock() - startedAt < duration do
-
-                    if targetPlayer.Parent == nil then
-                        reason = "left"
-                        break
-                    end
-
-                    local targetCharacter: Model? = targetPlayer.Character
-                    local targetRoot: BasePart? = targetCharacter
-                        and targetCharacter:FindFirstChild("HumanoidRootPart")
-                        :: BasePart?
-                    local targetHumanoid: Humanoid? = targetCharacter
-                        and targetCharacter:FindFirstChildOfClass("Humanoid")
-                        :: Humanoid?
-                    if not targetRoot or not targetRoot.Parent then
-                        reason = "gone"
-                        break
-                    end
-                    if targetHumanoid and targetHumanoid.Health <= 0 then
-                        touchedTarget = true
-                        reason = "killed"
-                        break
-                    end
-                    if targetRoot.Position.Y <= voidThreshold then
-                        touchedTarget = true
-                        reason = "void"
-                        break
-                    end
-
-                    local _, liveHumanoid: Humanoid?, liveRoot: BasePart? =
-                        getCharacterParts()
-                    if not liveHumanoid or not liveRoot then
-                        reason = "died"
-                        break
-                    end
-                    if liveHumanoid.Health <= 0 then
-                        reason = "died"
-                        break
-                    end
-                    if liveRoot.Anchored then
-                        liveRoot.Anchored = false
-                    end
-                    humanoid = liveHumanoid
-                    root = liveRoot
-
-                    step += 1
-
-                    local phase: number = (step % 6) / 6 * math.pi * 2
-                    local vertical: number = (step % 2 == 0) and 1.1 or -1.1
-                    liveRoot.CFrame = targetRoot.CFrame
-                        * CFrame.new(math.cos(phase) * 1.6, vertical, math.sin(phase) * 1.6)
-                    local sign: number = (step % 2 == 0) and 1 or -1
-                    liveRoot.AssemblyLinearVelocity =
-                        Vector3.new(power * sign, power, power * -sign)
-                    liveRoot.AssemblyAngularVelocity =
-                        Vector3.new(power, power, power)
-
-                    RunService.Stepped:Wait()
-                    if liveRoot.Parent then
-                        liveRoot.AssemblyLinearVelocity =
-                            Vector3.new(power * -sign, power, power * sign)
-                    end
-                    RunService.Heartbeat:Wait()
-                end
-            end)
-
-            local _, finalHumanoid: Humanoid?, finalRoot: BasePart? = getCharacterParts()
-            if finalRoot and finalRoot.Parent then
-                finalRoot.AssemblyLinearVelocity = Vector3.zero
-                finalRoot.AssemblyAngularVelocity = Vector3.zero
-                finalRoot.CFrame = savedCFrame + Vector3.new(0, 2, 0)
-            end
-            if finalHumanoid then
-                finalHumanoid.AutoRotate = savedAutoRotate
-                finalHumanoid.PlatformStand = false
-            end
-            if workspace.CurrentCamera then
-                workspace.CurrentCamera.CameraSubject =
-                    savedCameraSubject or finalHumanoid or humanoid
-            end
-
-            setFlingRunning(false)
-            if not success then
-                notify("fling failed: " .. tostring(errorMessage))
-            elseif touchedTarget then
-                notify("fling complete: " .. targetPlayer.Name .. " went down.")
-            elseif reason == "left" then
-                notify("fling stopped: " .. targetPlayer.Name .. " left the game.")
-            elseif reason == "gone" then
-                notify("Fling stopped: the target character disappeared.")
-            elseif reason == "died" then
-                notify("Fling stopped: your character died.")
-            else
-                notify(
-                    "Fling stopped after "
-                        .. string.format("%.0f", FLING_DURATION)
-                        .. "s of flight."
-                )
-            end
-        end)
-    end
-
-    local function findPlayerByRole(match: (string) -> boolean): Player?
-        if type(gameBridge.playerRole) ~= "function" then
-            return nil
-        end
-        for _, player: Player in ipairs(Players:GetPlayers()) do
-            if player ~= LocalPlayer then
-                local ok: boolean, role: any = pcall(gameBridge.playerRole, player)
-                if ok and type(role) == "string" and match(role) then
-                    local alive: boolean = player.Character
-                        and player.Character:FindFirstChildOfClass("Humanoid")
-                            and (player.Character:FindFirstChildOfClass("Humanoid") :: Humanoid).Health > 0
-                    if alive then
-                        return player
-                    end
-                end
-            end
-        end
-        return nil
-    end
-
-    local FlingFeature: any = createUniversalFeature(
-        "Fling",
-        "Role-based fling actions (murderer, sheriff, all innocents)",
-        2,
-        function() end,
-        {category = true, categoryName = "Exploits"}
-    )
-    addActionOption(FlingFeature, "Fling Murderer", function(): ()
-        local target: Player? = findPlayerByRole(function(role: string): boolean
-            return role == "Murderer"
-        end)
-        if target then
-            performFling(target)
-        else
-            notify("No murderer was found.")
-        end
-    end)
-    addActionOption(FlingFeature, "Fling Sheriff", function(): ()
-        local target: Player? = findPlayerByRole(function(role: string): boolean
-            return role == "Sheriff" or role == "Hero"
-        end)
-        if target then
-            performFling(target)
-        else
-            notify("No sheriff or hero was found.")
-        end
-    end)
-    addActionOption(FlingFeature, "Fling All Innocents", function(): ()
-        if type(gameBridge.playerRole) ~= "function" then
-            notify("No roles available in this game.")
-            return
-        end
-        task.spawn(function(): ()
-            for _, player: Player in ipairs(Players:GetPlayers()) do
-                if player ~= LocalPlayer then
-                    local ok: boolean, role: any = pcall(gameBridge.playerRole, player)
-                    if ok and role == "Innocent" then
-                        performFling(player)
-                        repeat
-                            task.wait(0.05)
-                        until not activity.isActive("fling")
-                    end
-                end
-            end
-        end)
-    end)
-    addTextOption(
-        FlingFeature,
-        "Target player",
-        "",
-        function(value: string): ()
-            flingTargetName = value
-        end,
-        false,
-        "Exact or partial name"
-    )
-    addActionOption(FlingFeature, "Fling", function(): ()
-        local needle: string = string.lower(
-            string.gsub(flingTargetName or "", "%s+", "")
-        )
-        if needle == "" then
-            notify("Type a player name in the Target player box first.")
-            return
-        end
-        local exact: Player? = nil
-        local partial: Player? = nil
-        for _, player: Player in ipairs(Players:GetPlayers()) do
-            if player ~= LocalPlayer then
-                local name: string = string.lower(player.Name)
-                if string.gsub(name, "%s+", "") == needle then
-                    exact = player
-                    break
-                end
-                if not partial and string.find(name, needle, 1, true) then
-                    partial = player
-                end
-            end
-        end
-        local target: Player? = exact or partial
-        if target then
-            performFling(target)
-        else
-            notify("No player named \"" .. flingTargetName .. "\" was found.")
-        end
-    end)
-    addInformationOption(
-        FlingFeature,
-        "Role names come from the game (MM2: Murderer / Sheriff / Innocent). "
-            .. "Target player + Fling works in any game: type a name (partial "
-            .. "is fine) and press Fling."
-    )
-
-    activeCleanup = function(): ()
-        setFlingRunning(false)
-    end
-    Module.Initialized = true
-    return FlingFeature
-end
-
-function Module.destroy(): ()
-    if activeCleanup then
-        pcall(activeCleanup)
-    end
-    activeCleanup = nil
-    Module.Initialized = false
-end
-
-return Module
-
-]],
         ["src/games/universal/Blatant/Fly.lua"] = [[
 export type Runtime = {
     framework: any,
@@ -13580,55 +13574,57 @@ function Module.init(context: Runtime): any
         mode: string,
         speed: number,
         climbState: boolean,
-        ceilingWalk: boolean,
         impulseInterval: number,
     }
     local spiderSettings: SpiderSettings = {
-        mode = "Spiderman",
+        mode = "Velocity",
         speed = 30,
         climbState = false,
-        ceilingWalk = true,
         impulseInterval = 0.15,
     }
     local SpiderFeature: any = nil
+    local climbingHumanoid: Humanoid? = nil
+    local function releaseClimbState()
+        local humanoid = climbingHumanoid
+        climbingHumanoid = nil
+        if humanoid and humanoid.Parent and humanoid.Health > 0 and humanoid:GetState() == Enum.HumanoidStateType.Climbing then
+            humanoid:ChangeState(humanoid.FloorMaterial == Enum.Material.Air
+                and Enum.HumanoidStateType.Freefall or Enum.HumanoidStateType.Running)
+        end
+    end
 
     local function toggleSpider(enabled: boolean): ()
         disconnectFeatureConnection("Spider")
+        releaseClimbState()
         if not enabled then
             if SpiderFeature then
                 SpiderFeature:SetStatus(nil)
             end
-            local _, _, rootOrNil: BasePart? = getCharacterParts()
-            if rootOrNil then
-                local curPos: Vector3 = rootOrNil.Position
-                local flatForward: Vector3 = Vector3.new(rootOrNil.CFrame.LookVector.X, 0, rootOrNil.CFrame.LookVector.Z)
-                if flatForward.Magnitude > 0.01 then
-                    rootOrNil.CFrame = CFrame.lookAt(curPos, curPos + flatForward.Unit, Vector3.new(0, 1, 0))
-                end
-            end
+
             return
         end
 
         SpiderFeature:SetStatus(spiderSettings.mode)
 
-        local onSurface: boolean = false
         local impulseElapsed: number = math.huge
 
         featureConnections.Spider = TaskManager:Connect(function(deltaTime: number): ()
             impulseElapsed += math.max(0, deltaTime)
             local character: Model?, humanoidOrNil: Humanoid?, rootOrNil: BasePart? =
                 getCharacterParts()
-            if not character or not humanoidOrNil or not rootOrNil then
-                onSurface = false
+            if not character or not humanoidOrNil or not rootOrNil or humanoidOrNil.Health <= 0
+                or humanoidOrNil.Sit or rootOrNil.Anchored then
+                releaseClimbState()
                 return
             end
+            if climbingHumanoid and climbingHumanoid ~= humanoidOrNil then releaseClimbState() end
             local humanoid: Humanoid = humanoidOrNil :: Humanoid
             local root: BasePart = rootOrNil :: BasePart
-            local cam: Camera? = workspace.CurrentCamera
 
             local raycastParams: RaycastParams = RaycastParams.new()
             raycastParams.FilterType = Enum.RaycastFilterType.Exclude
             raycastParams.RespectCanCollide = true
+            raycastParams.CollisionGroup = root.CollisionGroup
             local ignored: {Instance} = {character :: Instance}
             for _, player: Player in ipairs(Players:GetPlayers()) do
                 if player ~= LocalPlayer and player.Character then
@@ -13640,132 +13636,9 @@ function Module.init(context: Runtime): any
             local hipHeight: number = humanoid.HipHeight > 0 and humanoid.HipHeight or 2.0
             local rootPos: Vector3 = root.Position
             local moveDir: Vector3 = humanoid.MoveDirection
-            local isGrounded: boolean = humanoid.FloorMaterial ~= Enum.Material.Air
-
-            if spiderSettings.mode == "Spiderman" then
-
-                local feetRay: RaycastResult? = workspace:Raycast(
-                    rootPos,
-                    -root.CFrame.UpVector * (hipHeight + 2.2),
-                    raycastParams
-                )
-
-                local wallRay: RaycastResult? = nil
-                if moveDir.Magnitude > 0.05 then
-                    wallRay = workspace:Raycast(
-                        rootPos - root.CFrame.UpVector * (hipHeight * 0.4),
-                        moveDir.Unit * 1.6,
-                        raycastParams
-                    )
-                end
-
-                local ceilingRay: RaycastResult? = nil
-                if spiderSettings.ceilingWalk then
-                    ceilingRay = workspace:Raycast(
-                        rootPos,
-                        Vector3.new(0, 3.5, 0),
-                        raycastParams
-                    )
-                end
-
-                local activeSurface: RaycastResult? = nil
-
-                if onSurface then
-
-                    if feetRay and feetRay.Instance and feetRay.Instance:IsA("BasePart") then
-                        activeSurface = feetRay
-                    elseif wallRay and wallRay.Instance and wallRay.Instance:IsA("BasePart") then
-                        activeSurface = wallRay
-                    elseif ceilingRay and ceilingRay.Instance and ceilingRay.Instance:IsA("BasePart") and ceilingRay.Normal.Y < -0.5 then
-                        activeSurface = ceilingRay
-                    end
-                else
-
-                    if wallRay and wallRay.Instance and wallRay.Instance:IsA("BasePart") and math.abs(wallRay.Normal.Y) <= 0.35 then
-                        activeSurface = wallRay
-                    elseif ceilingRay and ceilingRay.Instance and ceilingRay.Instance:IsA("BasePart") and ceilingRay.Normal.Y < -0.5 and not isGrounded then
-                        activeSurface = ceilingRay
-                    end
-                end
-
-                if activeSurface and activeSurface.Instance and activeSurface.Instance:IsA("BasePart") then
-                    local surfNormal: Vector3 = activeSurface.Normal.Unit
-                    onSurface = true
-
-                    humanoid.PlatformStand = false
-                    humanoid:ChangeState(Enum.HumanoidStateType.Running)
-
-                    local wallUpVector: Vector3 = Vector3.new(0, 1, 0) - surfNormal * surfNormal.Y
-                    if wallUpVector.Magnitude > 0.01 then
-                        wallUpVector = wallUpVector.Unit
-                    else
-                        wallUpVector = root.CFrame.LookVector - surfNormal * root.CFrame.LookVector:Dot(surfNormal)
-                        if wallUpVector.Magnitude <= 0.01 then
-                            wallUpVector = root.CFrame.RightVector - surfNormal * root.CFrame.RightVector:Dot(surfNormal)
-                        end
-                        if wallUpVector.Magnitude <= 0.01 then return end
-                        wallUpVector = wallUpVector.Unit
-                    end
-
-                    local surfaceMove: Vector3 = Vector3.zero
-                    if cam then
-                        local camLook: Vector3 = cam.CFrame.LookVector
-                        local projLook: Vector3 = camLook - surfNormal * camLook:Dot(surfNormal)
-                        if projLook.Magnitude > 0.01 then
-                            projLook = projLook.Unit
-                        else
-                            projLook = wallUpVector
-                        end
-
-                        if moveDir.Magnitude > 0.05 then
-                            local projMove: Vector3 = moveDir - surfNormal * moveDir:Dot(surfNormal)
-                            if projMove.Magnitude > 0.01 then
-                                surfaceMove = projMove.Unit
-                            else
-                                surfaceMove = projLook
-                            end
-                        end
-                    end
-
-                    local standDistance: number = hipHeight + 1.1
-                    local wallHitPos: Vector3 = activeSurface.Position
-                    local currentDistFromWall: number = (rootPos - wallHitPos):Dot(surfNormal)
-                    local adjustedRootPos: Vector3 = rootPos
-
-                    if currentDistFromWall < standDistance then
-
-                        adjustedRootPos = wallHitPos + surfNormal * standDistance
-                    end
-
-                    local lookRef: Vector3 = surfaceMove.Magnitude > 0.05 and surfaceMove or wallUpVector
-                    local targetCF: CFrame = CFrame.lookAt(adjustedRootPos, adjustedRootPos + lookRef, surfNormal)
-                    root.CFrame = root.CFrame:Lerp(targetCF, math.clamp(deltaTime * 12, 0, 1))
-
-                    local walkVelocity: Vector3 = (surfaceMove.Magnitude > 0.05) and (surfaceMove * spiderSettings.speed) or Vector3.zero
-                    local gentleAdhesion: Vector3 = -surfNormal * 5
-
-                    root.AssemblyLinearVelocity = walkVelocity + gentleAdhesion
-                    return
-                else
-                    if onSurface then
-
-                        local curPos: Vector3 = root.Position
-                        local flatForward: Vector3 = Vector3.new(root.CFrame.LookVector.X, 0, root.CFrame.LookVector.Z)
-                        if flatForward.Magnitude > 0.01 then
-                            local uprightCF: CFrame = CFrame.lookAt(curPos, curPos + flatForward.Unit, Vector3.new(0, 1, 0))
-                            root.CFrame = root.CFrame:Lerp(uprightCF, math.clamp(deltaTime * 10, 0, 1))
-                            if math.abs(root.CFrame.UpVector.Y - 1) < 0.08 then
-                                onSurface = false
-                            end
-                        else
-                            onSurface = false
-                        end
-                    end
-                end
-                return
-            end
 
             if moveDir.Magnitude < 0.05 then
+                releaseClimbState()
                 return
             end
 
@@ -13777,16 +13650,23 @@ function Module.init(context: Runtime): any
             )
             local velocity: Vector3 = root.AssemblyLinearVelocity
             if not wall or math.abs((wall :: RaycastResult).Normal.Y) >= 0.35 then
+                releaseClimbState()
                 return
             end
 
+            if moveDir:Dot(wall.Normal) > -0.1 then releaseClimbState();return end
+
             if spiderSettings.climbState then
+                climbingHumanoid = humanoid
                 humanoid:ChangeState(Enum.HumanoidStateType.Climbing)
             end
 
             if spiderSettings.mode == "CFrame" then
                 root.AssemblyLinearVelocity = Vector3.new(velocity.X, 0, velocity.Z)
-                root.CFrame = root.CFrame + Vector3.new(0, spiderSettings.speed * deltaTime, 0)
+                local rise = Vector3.new(0, spiderSettings.speed * math.clamp(deltaTime, 0, 0.1), 0)
+                local ceiling = workspace:Raycast(rootPos, rise + Vector3.new(0, hipHeight + 1, 0), raycastParams)
+                if ceiling then rise = Vector3.new(0, math.max(0, ceiling.Distance - hipHeight - 1), 0) end
+                root.CFrame = root.CFrame + rise
             elseif spiderSettings.mode == "Impulse" then
                 -- Pulsed, mass-independent boost, not +speed every frame.
                 -- The old integration accelerated indefinitely and depended on FPS.
@@ -13803,7 +13683,7 @@ function Module.init(context: Runtime): any
 
     SpiderFeature = createUniversalFeature(
         "Spider",
-        "Climb or run on walls and ceilings like Spider-Man",
+        "Climb a wall while moving toward it",
         20,
         toggleSpider,
         {categoryName = "Exploits"}
@@ -13811,9 +13691,7 @@ function Module.init(context: Runtime): any
     local modeRows: {[string]: any} = {}
     local function refreshModeRows(): ()
         for name: string, row: any in pairs(modeRows) do
-            local visible: boolean = name == "Ceiling Walk" and spiderSettings.mode == "Spiderman"
-                or name == "Climb state" and spiderSettings.mode ~= "Spiderman"
-                or name == "Impulse interval" and spiderSettings.mode == "Impulse"
+            local visible: boolean = name == "Impulse interval" and spiderSettings.mode == "Impulse"
             if host.setOptionVisible then host.setOptionVisible(SpiderFeature, row, visible)
             elseif row then row.Visible = visible end
         end
@@ -13821,18 +13699,18 @@ function Module.init(context: Runtime): any
     addCycleOption(
         SpiderFeature,
         "Mode",
-        {"Spiderman", "Velocity", "Impulse", "CFrame"},
+        {"Velocity", "Impulse", "CFrame"},
         1,
         function(value: string): ()
             spiderSettings.mode = value
             refreshModeRows()
             if SpiderFeature.enabled then
-                -- Do not carry a ceiling pose or pulse timer into a new mode.
+                -- Restart the pulse timer on a mode change.
                 toggleSpider(false)
                 toggleSpider(true)
             end
         end,
-        "Spiderman: Walks on walls/ceilings using your feet with realistic surface physics.\nVelocity/Impulse/CFrame: Classic upward vertical climbing modes."
+        "Velocity: continuous climb. Impulse: timed upward boosts. CFrame: bounded vertical steps."
     )
     addNumberOption(
         SpiderFeature,
@@ -13844,26 +13722,16 @@ function Module.init(context: Runtime): any
             spiderSettings.speed = value
         end
     )
-    local ceilingRow: any = addToggleOption(
-        SpiderFeature,
-        "Ceiling Walk",
-        spiderSettings.ceilingWalk,
-        function(value: boolean): ()
-            spiderSettings.ceilingWalk = value
-        end,
-        "Allows running upside-down on ceilings with your feet in Spiderman mode."
-    )
-    local climbRow: any = addToggleOption(
+    addToggleOption(
         SpiderFeature,
         "Climb state",
         spiderSettings.climbState,
         function(value: boolean): ()
             spiderSettings.climbState = value
+            if not value then releaseClimbState() end
         end,
         "Uses climbing state in classic modes (Velocity, Impulse, CFrame)."
     )
-    if ceilingRow then modeRows["Ceiling Walk"] = ceilingRow.Parent end
-    if climbRow then modeRows["Climb state"] = climbRow.Parent end
     local impulseRow: any = addNumberOption(SpiderFeature, "Impulse interval", spiderSettings.impulseInterval,
         0.05, 0.5, function(value: number): () spiderSettings.impulseInterval = value end,
         "Seconds between bounded upward impulses. Only used by Impulse mode.", 0.05)
@@ -13871,7 +13739,7 @@ function Module.init(context: Runtime): any
     refreshModeRows()
     addFeatureTooltip(
         SpiderFeature,
-        "Spiderman mode plants your feet on walls and ceilings to run like Spider-Man. Classic modes pull you vertically up walls."
+        "Climb only when pushing into a nearby vertical wall. No wall rotation or ceiling walking."
     )
 
     activeCleanup = function(): ()
@@ -14970,7 +14838,7 @@ function Module.init(context: Runtime): any
                 return
             end
             learnedWeapon = (tool :: Tool).Name
-            aura:Notify((tool :: Tool).Name .. " bound")
+            aura:SetStatus((tool :: Tool).Name .. " bound")
         end,
     })
     aura:CreateToggle({
@@ -15277,123 +15145,6 @@ end
 return Module
 
 ]],
-        ["src/games/universal/Movement/AntiFling.lua"] = [[
-export type Runtime = {
-    framework: any,
-    entity: any,
-    host: any,
-    services: any,
-}
-
-local Module = {
-    Name = "AntiFling",
-    PlaceId = 0,
-    Events = {} :: {[string]: any},
-    Initialized = false,
-}
-
-local activeCleanup: (() -> ())? = nil
-
-function Module.init(context: Runtime): any
-    local host: any = context.host
-    local TaskManager: any = host.TaskManager
-    local featureConnections: any = host.featureConnections
-    local disconnectFeatureConnection: any = host.disconnectFeatureConnection
-    local getCharacterParts: any = host.getCharacterParts
-    local activity: any = context.services.activity
-    local createUniversalFeature: any = host.createUniversalFeature
-    local addNumberOption: any = host.addNumberOption
-    local antiFlingSettings = {velocityLimit = 120}
-    local antiFlingSafeCFrame = nil
-    local AntiFlingFeature: any = nil
-    local antiFlingStatus: string? = nil
-
-    local function setAntiFlingStatus(status: string?): ()
-        if antiFlingStatus == status then
-            return
-        end
-        antiFlingStatus = status
-        if AntiFlingFeature then
-            AntiFlingFeature:SetStatus(status)
-        end
-    end
-
-    local function toggleAntiFling(enabled)
-        disconnectFeatureConnection("AntiFling")
-        antiFlingSafeCFrame = nil
-
-        if not enabled then
-            setAntiFlingStatus(nil)
-            return
-        end
-
-        setAntiFlingStatus("standing by")
-        featureConnections.AntiFling = TaskManager:Connect(function()
-
-            if activity.isActive("fling") then
-                return
-            end
-
-            local _, humanoid, root = getCharacterParts()
-            if not humanoid or not root then
-                return
-            end
-
-            local linearSpeed = root.AssemblyLinearVelocity.Magnitude
-            local angularSpeed = root.AssemblyAngularVelocity.Magnitude
-
-            if linearSpeed > antiFlingSettings.velocityLimit
-                or angularSpeed > antiFlingSettings.velocityLimit then
-                setAntiFlingStatus("blocking")
-                root.AssemblyLinearVelocity = Vector3.zero
-                root.AssemblyAngularVelocity = Vector3.zero
-                if antiFlingSafeCFrame then
-                    root.CFrame = antiFlingSafeCFrame
-                end
-            elseif humanoid.FloorMaterial ~= Enum.Material.Air
-                and linearSpeed < antiFlingSettings.velocityLimit * 0.45 then
-                setAntiFlingStatus("standing by")
-                antiFlingSafeCFrame = root.CFrame
-            end
-        end)
-    end
-
-    AntiFlingFeature = createUniversalFeature(
-        "Anti Fling",
-        "Stop extreme local velocity and return to safety",
-        14,
-        toggleAntiFling,
-        {categoryName = "Utilities"}
-    )
-    addNumberOption(
-        AntiFlingFeature,
-        "Velocity limit",
-        antiFlingSettings.velocityLimit,
-        40,
-        1000,
-        function(value)
-            antiFlingSettings.velocityLimit = value
-        end
-    )
-
-    activeCleanup = function(): ()
-        disconnectFeatureConnection("AntiFling")
-    end
-    Module.Initialized = true
-    return AntiFlingFeature
-end
-
-function Module.destroy(): ()
-    if activeCleanup then
-        pcall(activeCleanup)
-    end
-    activeCleanup = nil
-    Module.Initialized = false
-end
-
-return Module
-
-]],
         ["src/games/universal/Movement/AntiVoid.lua"] = [[
 export type Runtime = {
     framework: any,
@@ -15419,6 +15170,7 @@ function Module.init(context: Runtime): any
     local createUniversalFeature: any = host.createUniversalFeature
     local addFeatureTooltip: any = host.addFeatureTooltip
     local workspace: any = host.workspace
+    local antiFling, velocityLimit, safeCFrame, safeCharacter = false, 120, nil, nil
     local antiVoidPlatform: Part? = nil
     local antiVoidLastGroundY: number? = nil
     local antiVoidFreefallSeconds: number = 0
@@ -15464,6 +15216,7 @@ function Module.init(context: Runtime): any
     local function toggleAntiVoid(enabled: boolean): ()
         disconnectFeatureConnection("AntiVoid")
         removeAntiVoidPlatform()
+        safeCFrame, safeCharacter = nil, nil
         antiVoidLastGroundY = nil
         antiVoidFreefallSeconds = 0
 
@@ -15472,11 +15225,21 @@ function Module.init(context: Runtime): any
         end
 
         featureConnections.AntiVoid = TaskManager:Connect(function(deltaTime: number): ()
-            local _, humanoid, root = getCharacterParts()
-            if not humanoid or not root then
+            local character, humanoid, root = getCharacterParts()
+            if not humanoid or not root or humanoid.Health <= 0 then
                 return
             end
 
+            if safeCharacter ~= character then safeCharacter, safeCFrame = character, nil end
+            if antiFling and not context.services.activity.isActive("fling") then
+                local linear, angular = root.AssemblyLinearVelocity.Magnitude, root.AssemblyAngularVelocity.Magnitude
+                if linear > velocityLimit or angular > velocityLimit then
+                    root.AssemblyLinearVelocity, root.AssemblyAngularVelocity = Vector3.zero, Vector3.zero
+                    if safeCFrame then root.CFrame = safeCFrame end
+                elseif humanoid.FloorMaterial ~= Enum.Material.Air and linear < velocityLimit * 0.45 then
+                    safeCFrame = root.CFrame
+                end
+            end
             if humanoid.FloorMaterial ~= Enum.Material.Air then
                 antiVoidLastGroundY = root.Position.Y
                 antiVoidFreefallSeconds = 0
@@ -15507,8 +15270,20 @@ function Module.init(context: Runtime): any
         "Create an invisible rescue platform only when death is imminent",
         4,
         toggleAntiVoid,
-        {noOptions = true, categoryName = "Utilities"}
+        {categoryName = "Utilities"}
     )
+    local velocityRow
+    local function showVelocityLimit()
+        if not velocityRow then return end
+        if host.setOptionVisible then host.setOptionVisible(AntiVoidFeature,velocityRow,antiFling)
+        else velocityRow.Visible = antiFling end
+    end
+    host.addToggleOption(AntiVoidFeature, "Anti fling", false, function(value)
+        antiFling, safeCFrame = value, nil
+        showVelocityLimit()
+    end, "Block extreme velocity while Anti Void is enabled.")
+    velocityRow = host.addNumberOption(AntiVoidFeature, "Velocity limit", 120, 40, 1000, function(value) velocityLimit = value end)
+    showVelocityLimit()
     addFeatureTooltip(
         AntiVoidFeature,
         "Detects a deep lethal fall and creates a temporary invisible platform beneath you."
@@ -15634,7 +15409,7 @@ function Module.init(context: Runtime): any
                 return
             end
             runtime.waypoint = (root :: BasePart).Position
-            teleport:Notify("waypoint saved")
+            teleport:SetStatus("waypoint saved")
         end,
     })
     teleport:CreateSlider({
@@ -16693,6 +16468,9 @@ function Module.init(context: Runtime): any
     local fallConnection: RBXScriptConnection? = nil
     local originalStates = nil
     local redirecting = false
+    local fallBoosted: Humanoid? = nil
+    local pressHeld = false
+    local jumpTouch: InputObject? = nil
 
     local function clearFallController(): ()
         if fallConnection then fallConnection:Disconnect(); fallConnection = nil end
@@ -16700,7 +16478,7 @@ function Module.init(context: Runtime): any
             fallHumanoid:SetStateEnabled(Enum.HumanoidStateType.Jumping,originalStates.jumping)
             fallHumanoid:SetStateEnabled(Enum.HumanoidStateType.Freefall,originalStates.freefall)
         end
-        fallHumanoid, originalStates = nil, nil
+        fallHumanoid, originalStates, fallBoosted = nil, nil, nil
     end
     local function enforceFall(humanoid: Humanoid): ()
         humanoid.Jump = false
@@ -16723,7 +16501,7 @@ function Module.init(context: Runtime): any
             originalStates = {jumping=humanoid:GetStateEnabled(Enum.HumanoidStateType.Jumping),
                 freefall=humanoid:GetStateEnabled(Enum.HumanoidStateType.Freefall)}
             fallConnection = humanoid.StateChanged:Connect(function(_,nextState)
-                if not canControlJump(humanoid) then clearFallController()
+                if not canControlJump(humanoid) or nextState == Enum.HumanoidStateType.Landed then clearFallController()
                 elseif nextState == Enum.HumanoidStateType.Jumping then enforceFall(humanoid) end
             end)
         end
@@ -16764,6 +16542,7 @@ function Module.init(context: Runtime): any
         -- not the trajectory into downward motion or a manual animation.
         -- X/Z momentum is unchanged; this makes no server-state guarantee.
         syncFallController(humanoid, mode == "Fall")
+        fallBoosted = mode == "Fall" and humanoid or nil
         ;(root :: BasePart).AssemblyLinearVelocity = Vector3.new(velocity.X, strength, velocity.Z)
         humanoid:ChangeState(mode == "Fall" and Enum.HumanoidStateType.Freefall or Enum.HumanoidStateType.Jumping)
     end
@@ -16771,7 +16550,7 @@ function Module.init(context: Runtime): any
     local jump: any
     local function refreshFall(): ()
         local _, humanoid, root = characterParts()
-        syncFallController(humanoid,root ~= nil and not root.Anchored and jump.Enabled and jump.Options["Infinite jump"].Value
+        syncFallController(humanoid,fallBoosted == humanoid and root ~= nil and not root.Anchored and jump.Enabled and jump.Options["Infinite jump"].Value
             and jump.Options["Infinite jump mode"].Value == "Fall")
     end
     jump = framework.Categories.Exploits:CreateModule({
@@ -16784,6 +16563,7 @@ function Module.init(context: Runtime): any
             restoreJumpPower()
             clearFallController()
             lastInfiniteJumpAt = -math.huge
+            pressHeld, jumpTouch = false, nil
             if not enabled then
                 jump:SetStatus(nil)
                 return
@@ -16793,6 +16573,29 @@ function Module.init(context: Runtime): any
             jump:Clean(function(): () restoreJumpPower(); clearFallController() end)
 
             local function requestJump(): ()
+                if pressHeld then return end
+                pressHeld = true
+                if UserInputService.TouchEnabled then
+                    local touches = UserInputService:GetTouches()
+                    if #touches == 1 then jumpTouch = touches[1]
+                    else
+                        local gui = LocalPlayer:FindFirstChildOfClass("PlayerGui")
+                        local touchGui = gui and gui:FindFirstChild("TouchGui")
+                        local button = touchGui and touchGui:FindFirstChild("JumpButton",true)
+                        if button then
+                            local at, size = button.AbsolutePosition, button.AbsoluteSize
+                            for _, touch in ipairs(touches) do
+                                local p = touch.Position
+                                if p.X >= at.X and p.Y >= at.Y and p.X <= at.X+size.X and p.Y <= at.Y+size.Y then jumpTouch = touch;break end
+                            end
+                        end
+                    end
+                end
+                local _, humanoid, root = characterParts()
+                -- Ground takeoff belongs to Roblox: ordinary Jumping/animation.
+                -- Only a new press in midair is an extra jump.
+                if not humanoid or not root then return end
+                if humanoid.FloorMaterial ~= Enum.Material.Air then return end
                 local opts = jump.Options
                 if not opts["Infinite jump"] or not opts["Infinite jump"].Value then
                     return
@@ -16811,6 +16614,13 @@ function Module.init(context: Runtime): any
                 jump:Clean(UserInputService.JumpRequest:Connect(requestJump))
             end
 
+            jump:Clean(UserInputService.InputEnded:Connect(function(event)
+                if event.KeyCode == Enum.KeyCode.Space or event.KeyCode == Enum.KeyCode.ButtonA
+                    or event.UserInputType == Enum.UserInputType.Touch and (not jumpTouch or event == jumpTouch) then
+                    pressHeld, jumpTouch = false, nil
+                end
+            end))
+            jump:Clean(UserInputService.WindowFocusReleased:Connect(function() pressHeld, jumpTouch = false, nil end))
             refreshFall()
             jump:Clean(host.RunService.PreSimulation:Connect(function(): ()
                 local opts = jump.Options
@@ -16823,7 +16633,11 @@ function Module.init(context: Runtime): any
                 local canMove = canControlJump(humanoid) and not root.Anchored
                 local fallMode: boolean = canMove and opts["Infinite jump"] and opts["Infinite jump"].Value
                     and opts["Infinite jump mode"].Value == "Fall"
-                syncFallController(humanoid, fallMode)
+                local state = humanoid:GetState()
+                local grounded = humanoid.FloorMaterial ~= Enum.Material.Air
+                    and state ~= Enum.HumanoidStateType.Jumping and state ~= Enum.HumanoidStateType.Freefall
+                if grounded or fallBoosted ~= humanoid then clearFallController() end
+                syncFallController(humanoid, fallMode and fallBoosted == humanoid)
 
                 if opts["Custom jump power"] and opts["Custom jump power"].Value then
                     local wantedPower: number = opts["Jump power"] and opts["Jump power"].Value or 80
@@ -16842,11 +16656,7 @@ function Module.init(context: Runtime): any
                 if canMove and opts["Auto jump"] and opts["Auto jump"].Value then
                     local moveDir: Vector3 = humanoid.MoveDirection
                     if moveDir.Magnitude > 0.05 and humanoid.FloorMaterial ~= Enum.Material.Air then
-                        if fallMode then
-                            performInfiniteJump("Fall", opts["Infinite jump power"].Value, opts["Jump interval"].Value)
-                        else
-                            humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
-                        end
+                        humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
                     end
                 end
 
@@ -16913,7 +16723,7 @@ function Module.init(context: Runtime): any
         List = {"Normal", "Rise", "Fall"},
         Function = refreshFall,
         Index = 1,
-        Tooltip = "Normal = mid-air jump; Rise = hold to rise; Fall = upward impulses while Jumping is disabled and the local Humanoid uses Freefall. Server behavior is not guaranteed.",
+        Tooltip = "Normal = mid-air jump; Rise = hold to rise; Fall = normal ground jump, then Freefall for each extra mid-air press. Release jump between presses; holding does not repeat. Server behavior is not guaranteed.",
     })
 
     jump:CreateSlider({
@@ -17631,11 +17441,12 @@ function Module.init(context: Runtime): any
         useTargetMovementAnimations = false,
     }
 
+    local function status(message: string): ()
+        if activeCard then activeCard:SetStatus(message) end
+    end
     local function notify(message: string): ()
         pcall(print, "[Wurst:Disguise] " .. message)
-        if activeCard then
-            pcall(activeCard.Notify, activeCard, message)
-        end
+        if activeCard then pcall(activeCard.Notify, activeCard, message) end
     end
 
     local function isAppearanceItem(obj: Instance): boolean
@@ -18072,7 +17883,7 @@ function Module.init(context: Runtime): any
         end
 
         ensureSnapshot(character, humanoid)
-        notify("Downloading target movement animations...")
+        status("Downloading target movement animations...")
 
         task.spawn(function(): ()
             local changedCount: number = 0
@@ -18156,9 +17967,9 @@ function Module.init(context: Runtime): any
             end
 
             if changedCount > 0 then
-                notify("Applied " .. tostring(changedCount) .. " target movement animation slot(s); Animate restarted.")
+                status("Applied " .. tostring(changedCount) .. " target movement animation slot(s); Animate restarted.")
             else
-                notify("No custom movement animations found for ID " .. tostring(numericId) .. " (target may use default animations).")
+                status("No custom movement animations found for ID " .. tostring(numericId) .. " (target may use default animations).")
             end
         end)
     end
@@ -18560,9 +18371,8 @@ function Module.init(context: Runtime): any
             return
         end
 
-        local movementAnimationCount: number = 0
         if settings.useTargetMovementAnimations then
-            movementAnimationCount = copyTargetMovementAnimations(
+            copyTargetMovementAnimations(
                 character,
                 humanoid,
                 description
@@ -18599,30 +18409,10 @@ function Module.init(context: Runtime): any
         end
         if stillCurrent(token, character) then
             activeCard:SetStatus("Character")
-            local emoteCount: number = 0
-            if type(targetEmotes) == "table" then
-                for _ in pairs(targetEmotes) do
-                    emoteCount += 1
-                end
+            if emoteWarning and targetEmotes and targetEquippedEmotes then
+                notify("Disguise emotes could not be applied: " .. emoteWarning)
             end
-            local message: string = "Avatar disguise applied; live body-part dimensions were left unchanged. "
-            if emoteWarning then
-                message ..= "Emotes could not be applied: " .. emoteWarning
-            elseif emoteCount > 0 then
-                message ..= tostring(emoteCount)
-                    .. " target emote(s) copied; open the Roblox emote menu."
-            else
-                message ..= "The target description returned no emotes."
-            end
-            if settings.useTargetMovementAnimations then
-                if movementAnimationCount > 0 then
-                    message ..= " Copied " .. tostring(movementAnimationCount)
-                        .. " target movement animation slot(s)."
-                else
-                    message ..= " No target movement animation IDs were available."
-                end
-            end
-            notify(message)
+            status("Ready")
         end
     end
 
@@ -18839,7 +18629,7 @@ function Module.init(context: Runtime): any
         restartAnimateScript(animate)
         if current.character == character and stillCurrent(token, character) then
             activeCard:SetStatus("Animation")
-            notify("Animation bundle applied to " .. tostring(changedCount)
+            status("Animation bundle applied to " .. tostring(changedCount)
                 .. " slots; Animate restarted. Original IDs return when disabled.")
         end
     end
@@ -20505,7 +20295,7 @@ function Module.init(context: Runtime): any
         end,
     })
 
-    card:CreateColor({Name = "Colour", Default = Color3.fromRGB(255, 255, 255), Tooltip = "Base arrow colour. Arrows use role colours instead whenever the game knows roles."})
+    card:CreateColor({Name = "Colour", Default = Color3.fromRGB(85, 255, 85), Tooltip = "Base arrow colour. Arrows use role colours instead whenever the game knows roles."})
     card:CreateToggle({Name = "Distance", Default = true})
     card:CreateSlider({Name = "Max distance", Min = 25, Max = 2000, Step = 25, Default = 500})
     card:CreateToggle({Name = "Teammates", Default = false, Tooltip = "Also point at teammates. The advanced team check decides who counts."})
@@ -20830,8 +20620,8 @@ function Module.init(context: Runtime): any
         end,
     })
 
-    card:CreateColor({Name = "Fill colour", Default = Color3.fromRGB(255, 255, 255)})
-    card:CreateColor({Name = "Outline colour", Default = Color3.fromRGB(235, 250, 255)})
+    card:CreateColor({Name = "Fill colour", Default = Color3.fromRGB(85, 255, 85)})
+    card:CreateColor({Name = "Outline colour", Default = Color3.fromRGB(85, 255, 85)})
     card:CreateSlider({Name = "Fill transparency", Min = 0, Max = 1, Step = 0.05, Default = 0.55})
     card:CreateSlider({Name = "Outline transparency", Min = 0, Max = 1, Step = 0.05, Default = 0})
     card:CreateToggle({Name = "Through walls", Default = true})
@@ -20958,6 +20748,7 @@ function Module.init(context)
     local world = host.workspace or workspace
     local create = host.create
     local id = "ARandomMenu.FreeCam." .. tostring({})
+    local spectateTarget
 
     card = context.framework.Categories.Visuals:CreateModule({
         Name = "FreeCam", Category = "World", ConfigKey = "Universal.FreeCam", Order = 6,
@@ -21150,8 +20941,25 @@ function Module.init(context)
                     local humanoid = character and character:FindFirstChildOfClass("Humanoid")
                     if humanoid then humanoid:Move(Vector3.zero, false) end
                 end
+                local spectating = false
+                local selected = card.Options["Spectate Player"]
+                if selected then
+                    for _, player in ipairs(host.Players:GetPlayers()) do
+                        if player ~= host.LocalPlayer and selected:IsSelected(player.Name) then
+                            local character = player.Character
+                            local root = character and character:FindFirstChild("HumanoidRootPart")
+                            local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+                            if root and humanoid and humanoid.Health > 0 then
+                                local orbit = CFrame.fromOrientation(pitch,yaw,0)
+                                position = root.Position - orbit.LookVector * 12 + Vector3.new(0,3,0)
+                                spectating = true
+                                break
+                            end
+                        end
+                    end
+                end
                 local rotation = CFrame.fromOrientation(pitch,yaw,0)
-                if not input:GetFocusedTextBox() then
+                if not spectating and not input:GetFocusedTextBox() then
                     local move = Vector3.new((keys.Right and 1 or 0)-(keys.Left and 1 or 0)+stick.X,
                         (keys.Up and 1 or 0)-(keys.Down and 1 or 0), (keys.Back and 1 or 0)-(keys.Forward and 1 or 0)+stick.Y)
                     local direction = rotation:VectorToWorldSpace(Vector3.new(move.X,0,move.Z)) + Vector3.yAxis * move.Y
@@ -21168,6 +20976,23 @@ function Module.init(context)
     })
     card:CreateSlider({Name="Speed", Min=1, Max=150, Default=48})
     card:CreateSlider({Name="Sensitivity", Min=0.05, Max=0.6, Default=0.2})
+    card:CreateList({Name="Spectate Player",Items=function()
+        local names = {}
+        for _, player in ipairs(host.Players:GetPlayers()) do
+            if player ~= host.LocalPlayer then table.insert(names,player.Name) end
+        end
+        table.sort(names);return names
+    end,Tooltip="Select one player to follow while FreeCam is ON. Right-drag/touch rotates the view; deselect to fly freely.",Function=function(selected,names)
+        local option = card.Options["Spectate Player"]
+        local chosen = names[1]
+        if #names > 1 then
+            for _, name in ipairs(names) do if name ~= spectateTarget then chosen = name; break end end
+        end
+        spectateTarget = chosen
+        if option then
+            for _, name in ipairs(names) do if name ~= chosen then option:Set(name,false) end end
+        end
+    end})
     Module.Initialized = true
     return card
 end
@@ -21180,113 +21005,59 @@ return Module
 
 ]],
         ["src/games/universal/Render/Fullbright.lua"] = [[
-export type Runtime = {
-    framework: any,
-    entity: any,
-    host: any,
-}
+local Module = {Name = "Fullbright", PlaceId = 0, Initialized = false}
+local card
 
-local Module = {
-    Name = "Fullbright",
-    PlaceId = 0,
-    Events = {} :: {[string]: any},
-    Initialized = false,
-}
-
-local activeCleanup: (() -> ())? = nil
-
-function Module.init(context: Runtime): any
-    local host: any = context.host
-    local createUniversalFeature: any = host.createUniversalFeature
-    local addNumberOption: any = host.addNumberOption
-    local Lighting: any = host.Lighting
-    local disconnectFeatureConnection: any = host.disconnectFeatureConnection
-    local featureConnections: any = host.featureConnections
-    local TaskManager: any = host.TaskManager
-
-    local fullbrightSettings = {
-        brightness = 3,
-        clockTime = 14,
-    }
-    local originalLighting: any = nil
-
-    local function toggleFullbright(enabled: boolean): ()
-        disconnectFeatureConnection("Fullbright")
-
-        if not enabled then
-            if originalLighting then
-                Lighting.Brightness = originalLighting.brightness
-                Lighting.ClockTime = originalLighting.clockTime
-                Lighting.GlobalShadows = originalLighting.globalShadows
-                Lighting.FogEnd = originalLighting.fogEnd
-                Lighting.Ambient = originalLighting.ambient
-                Lighting.OutdoorAmbient = originalLighting.outdoorAmbient
-            end
-            return
-        end
-
-        originalLighting = {
-            brightness = Lighting.Brightness,
-            clockTime = Lighting.ClockTime,
-            globalShadows = Lighting.GlobalShadows,
-            fogEnd = Lighting.FogEnd,
-            ambient = Lighting.Ambient,
-            outdoorAmbient = Lighting.OutdoorAmbient,
-        }
-
-        featureConnections.Fullbright = TaskManager:Connect(function()
-            Lighting.Brightness = fullbrightSettings.brightness
-            Lighting.ClockTime = fullbrightSettings.clockTime
-            Lighting.GlobalShadows = false
-            Lighting.FogEnd = 100000
-            Lighting.Ambient = Color3.fromRGB(178, 178, 178)
-            Lighting.OutdoorAmbient = Color3.fromRGB(178, 178, 178)
-        end)
+function Module.init(context)
+    local lighting = context.host.Lighting
+    local original, applied = {}, {}
+    local originalTime, appliedTime, elapsed
+    local function write(key, value)
+        if applied[key] ~= nil and lighting[key] ~= applied[key] then original[key] = lighting[key] end
+        if original[key] == nil then original[key] = lighting[key] end
+        lighting[key], applied[key] = value, value
     end
-
-    local FullbrightFeature = createUniversalFeature(
-        "Fullbright",
-        "Keep the scene bright and remove global shadows",
-        15,
-        toggleFullbright,
-        {categoryName = "Render"}
-    )
-    addNumberOption(
-        FullbrightFeature,
-        "Brightness",
-        fullbrightSettings.brightness,
-        0,
-        10,
-        function(value)
-            fullbrightSettings.brightness = value
-        end
-    )
-    addNumberOption(
-        FullbrightFeature,
-        "Clock time",
-        fullbrightSettings.clockTime,
-        0,
-        24,
-        function(value)
-            fullbrightSettings.clockTime = value
-        end
-    )
-
-    activeCleanup = function(): ()
-        toggleFullbright(false)
+    local function restoreTime()
+        if appliedTime ~= nil and lighting.ClockTime == appliedTime then lighting.ClockTime = originalTime end
+        originalTime, appliedTime = nil, nil
     end
-    Module.Initialized = true
-    return FullbrightFeature
+    local function restore()
+        restoreTime()
+        for key, value in pairs(original) do if lighting[key] == applied[key] then lighting[key] = value end end
+        table.clear(original); table.clear(applied)
+    end
+    local function tick(dt)
+        write("Brightness",card.Options.Brightness.Value)
+        write("GlobalShadows",false)
+        write("FogEnd",100000)
+        write("Ambient",Color3.fromRGB(178,178,178))
+        write("OutdoorAmbient",Color3.fromRGB(178,178,178))
+        if card.Options["Time Changer"].Value then
+            if appliedTime ~= nil and lighting.ClockTime ~= appliedTime then originalTime = lighting.ClockTime end
+            if originalTime == nil then originalTime = lighting.ClockTime end
+            elapsed = (elapsed + math.max(0,dt or 0)) % 4
+            appliedTime = (card.Options["Fast time"].Value and elapsed * 6 or card.Options.Time.Value) % 24
+            lighting.ClockTime = appliedTime
+        else restoreTime() end
+    end
+    card = context.framework.Categories.Render:CreateModule({Name="Fullbright",Category="Render",ConfigKey="Universal.Fullbright",
+        Tooltip="Bright lighting; optionally control the time of day.",Function=function(enabled)
+            if not enabled then restore(); return end
+            elapsed = 0
+            card:Clean(restore)
+            tick(0);card:Loop(tick)
+        end})
+    card:CreateSlider({Name="Brightness",Min=0,Max=10,Default=3})
+    card:CreateToggle({Name="Time Changer",Default=false,Function=function(value) if not value then restoreTime() end end})
+    card:CreateSlider({Name="Time",Min=0,Max=24,Default=14,Show={Option="Time Changer",Values={true}}})
+    card:CreateToggle({Name="Fast time",Default=false,Show={Option="Time Changer",Values={true}},Tooltip="Loop a full day every four seconds."})
+    Module.Initialized=true
+    return card
 end
-
-function Module.destroy(): ()
-    if activeCleanup then
-        pcall(activeCleanup)
-    end
-    activeCleanup = nil
-    Module.Initialized = false
+function Module.destroy()
+    if card and card.Enabled then card:Toggle(false) end
+    card=nil;Module.Initialized=false
 end
-
 return Module
 
 ]],
@@ -21714,7 +21485,7 @@ function Module.init(context: Runtime): any
         end
         local best: string = findBestMatchingName(trimmed) or trimmed
         learn(best)
-        render:Notify("Added: " .. best)
+        render:SetStatus("Added: " .. best)
         pendingInput = ""
         if addBox and addBox.Object and typeof(addBox.Object) == "Instance" and addBox.Object:IsA("TextBox") then
             addBox.Object.Text = ""
@@ -21785,7 +21556,7 @@ function Module.init(context: Runtime): any
         Function = function(): ()
             if picking then
                 picking = false
-                render:Notify("cancelled")
+                render:SetStatus("cancelled")
                 return
             end
             picking = true
@@ -21807,7 +21578,7 @@ function Module.init(context: Runtime): any
             wanted = {}
             objectList:Refresh()
             releaseAll()
-            render:Notify("list cleared")
+            render:SetStatus("list cleared")
         end,
     })
 
@@ -21834,7 +21605,7 @@ function Module.init(context: Runtime): any
     })
     render:CreateColor({
         Name = "Colour",
-        Default = Color3.fromRGB(232, 232, 236),
+        Default = Color3.fromRGB(85, 255, 85),
     })
 
     local pickConnection: RBXScriptConnection = userInput.InputBegan:Connect(
@@ -21895,7 +21666,7 @@ function Module.init(context: Runtime): any
             end
             learn(name)
             menu.setVisible(true)
-            render:Notify(name .. " added")
+            render:SetStatus(name .. " added")
         end
     )
 
@@ -22079,6 +21850,97 @@ function Module.destroy(): ()
     Module.Initialized = false
 end
 
+return Module
+
+]],
+        ["src/games/universal/Render/Markers.lua"] = [[
+-- Vape-style world waypoints, with names / Save here instead of encoded coordinates.
+local Module = {Name="Markers",Initialized=false}
+local card, clear
+function Module.init(context)
+    local host, render = context.host, context.render
+    local layer = render:Layer("MarkersLayer")
+    local key = "Universal.Markers.Places." .. tostring(game.PlaceId)
+    local config = host.configData
+    local points = {}
+    local stored = config and config.values[key]
+    if type(stored) ~= "table" then stored = {} end
+    local loaded = 0
+    for name, position in pairs(stored) do
+        if type(name)=="string" and type(position)=="table" and loaded < 128 then
+            local x,y,z=tonumber(position[1]),tonumber(position[2]),tonumber(position[3])
+            if x and y and z and x==x and y==y and z==z and math.max(math.abs(x),math.abs(y),math.abs(z)) < 1e7 then
+                points[name]={x,y,z}; loaded += 1
+            end
+        end
+    end
+    local list, tracked = nil, {}
+    local function save()
+        if config then config.values[key]=points;if host.queueConfigSave then host.queueConfigSave() end end
+    end
+    clear=function() render:ReleaseAll(layer);table.clear(tracked);layer.Visible=false end
+    card=context.framework.Categories.Render:CreateModule({Name="Markers",Category="Render",ConfigKey="Universal.Markers",
+        Tooltip="Name a place and save your current position. Points are kept separately for each game.",Function=function(enabled)
+            if not enabled then clear();return end
+            layer.Visible=true;card:Clean(clear)
+            card:Render(function()
+                local camera=(host.workspace or workspace).CurrentCamera
+                if not camera then clear();return end
+                layer.Visible=true
+                local seen={}
+                for name, data in pairs(points) do
+                    if not list:IsSelected(name) then continue end
+                    local position=Vector3.new(data[1],data[2],data[3])
+                    local at=render:Project(camera,position)
+                    if not at or at.X<0 or at.Y<0 or at.X>camera.ViewportSize.X or at.Y>camera.ViewportSize.Y then continue end
+                    local text=name
+                    if card.Options.Distance.Value then text ..= " [" .. math.round((camera.CFrame.Position-position).Magnitude) .. "]" end
+                    local drawing=render:Set(layer,name)
+                    drawing:Show(true)
+                    drawing:Label("Marker",text,Vector2.new(at.X,at.Y),1,14,card.Options.Colour.Value,true)
+                    seen[name],tracked[name]=true,true
+                end
+                for name in pairs(tracked) do if not seen[name] then render:Release(layer,name);tracked[name]=nil end end
+            end)
+        end})
+    card:CreateTextBox({Name="Name",Default="",Placeholder="Home, exit, meeting spot..."})
+    card:CreateButton({Name="Save here",Function=function()
+        local name=string.sub(string.match(card.Options.Name.Value or "","^%s*(.-)%s*$") or "",1,48)
+        if name=="" then card:Notify("Enter a name for this place.");return end
+        local character=host.LocalPlayer.Character
+        local root=character and character:FindFirstChild("HumanoidRootPart")
+        local position=root and root.Position
+        if card.Options["Manual coordinates"].Value then
+            local x,y,z=string.match(card.Options.Coordinates.Value or "","^%s*([%+%-%.%deE]+)%s*,%s*([%+%-%.%deE]+)%s*,%s*([%+%-%.%deE]+)%s*$")
+            x,y,z=tonumber(x),tonumber(y),tonumber(z)
+            position=x and y and z and x==x and y==y and z==z and math.max(math.abs(x),math.abs(y),math.abs(z))<1e7 and Vector3.new(x,y,z) or nil
+        end
+        if not position then card:Notify("Position unavailable. Check your character or coordinates (x, y, z).");return end
+        local count=0;for _ in pairs(points) do count+=1 end
+        if count>=128 and not points[name] then card:Notify("Marker limit reached (128). Remove a place first.");return end
+        points[name]={position.X,position.Y,position.Z};save();list:Refresh();list:Set(name,true)
+    end})
+    card:CreateButton({Name="Remove named place",Function=function()
+        local name=string.match(card.Options.Name.Value or "","^%s*(.-)%s*$")
+        if not points[name] then card:Notify("No saved place has that name.");return end
+        list:Set(name,false);points[name]=nil;save();list:Refresh()
+    end})
+    local defaults={};for name in pairs(points) do defaults[name]=true end
+    list=card:CreateList({Name="Places",Items=function()
+        local names={};for name in pairs(points) do table.insert(names,name) end;table.sort(names);return names
+    end,Default=defaults,EmptyText="No places saved. Name a place, then Save here."})
+    card:CreateToggle({Name="Distance",Default=true})
+    card:CreateColor({Name="Colour",Default=Color3.fromRGB(85,255,85)})
+    card:CreateToggle({Name="Manual coordinates",Default=false})
+    card:CreateTextBox({Name="Coordinates",Default="",Placeholder="x, y, z",Show={Option="Manual coordinates",Values={true}}})
+    Module.Initialized=true
+    return card
+end
+function Module.destroy()
+    if card and card.Enabled then card:Toggle(false) end
+    if clear then clear() end
+    card,clear=nil,nil;Module.Initialized=false
+end
 return Module
 
 ]],
@@ -22494,7 +22356,7 @@ function Module.init(context: Runtime): any
             .. "Humanoid (creatures, monsters). Off by default: NPCESP tracks "
             .. "character-shaped rigs.",
     })
-    card:CreateColor({Name = "Colour", Default = Color3.new(1, 1, 1)})
+    card:CreateColor({Name = "Colour", Default = Color3.fromRGB(85, 255, 85)})
     card:CreateSlider({Name = "Max distance", Min = 25, Max = 2000, Step = 25, Default = 500})
 
     local addBox: any
@@ -22565,7 +22427,7 @@ function Module.init(context: any): any
         states["Universal.Nametags"] = states["Universal.Chams"] == true and states["Universal.Chams.Nametags"] == true
             or states["Universal.PlayerESP"] == true and states["Universal.PlayerESP.Nametags"] ~= false
         if values["Universal.Nametags.Textsize"] == nil then values["Universal.Nametags.Textsize"] = values["Universal.PlayerESP.Textsize"] end
-        for new, old in pairs({Background="Nameplate",Displayname="Displayname",Distance="Distance",Heldtool="Heldtool",Showrole="Showrole",Rolecolours="Rolecolours"}) do
+        for new, old in pairs({Background="Nameplate",Displayname="Displayname",Heldtool="Heldtool",Showrole="Showrole",Rolecolours="Rolecolours"}) do
             local key = "Universal.Nametags." .. new
             if states[key] == nil then states[key] = states["Universal.PlayerESP." .. old] end
         end
@@ -22587,13 +22449,13 @@ function Module.init(context: any): any
         local key = text .. ":" .. tostring(size) .. ":" .. tostring(viewport.X)
         drawing.textMetrics = drawing.textMetrics or {}
         if not drawing.textMetrics[slot] or drawing.textMetrics[slot].key ~= key then
-            local width = #text * size * 0.65 + 16
-            pcall(function() width = textService:GetTextSize(text, size, Enum.Font.GothamMedium, Vector2.new(10000,100)).X + 16 end)
+            local width = #text * size * 0.65 + 8
+            pcall(function() width = textService:GetTextSize(text, size, Enum.Font.Arial, Vector2.new(10000,100)).X + 8 end)
             width = math.max(1, math.min(width, viewport.X - 24))
             drawing.textMetrics[slot] = {key = key, width = width}
         end
         label.AutomaticSize = Enum.AutomaticSize.None
-        label.Size = UDim2.fromOffset(drawing.textMetrics[slot].width, size + 8)
+        label.Size = UDim2.fromOffset(drawing.textMetrics[slot].width, size + 7)
         label.TextTruncate = Enum.TextTruncate.AtEnd
         -- Clamped to screen independently of target position, not a clipped name.
         local half = label.Size.X.Offset * 0.5
@@ -22625,7 +22487,7 @@ function Module.init(context: any): any
                     local details = {}
                     if options["Account name"].Value and shown ~= player.Name then table.insert(details, "@" .. player.Name) end
                     if options["Show role"].Value and role then table.insert(details, role) end
-                    if options.Distance.Value then table.insert(details, tostring(math.round(target.Distance)) .. " studs") end
+
                     if options["Held tool"].Value then
                         local tool = target.Character:FindFirstChildOfClass("Tool")
                         if tool then table.insert(details, tool.Name) end
@@ -22634,15 +22496,28 @@ function Module.init(context: any): any
                     local drawing = render:Set(layer, player)
                     drawing:Show(true)
                     local size = math.round(options["Text size"].Value)
-                    local y = math.max(point.Y, size * 2 + 24)
-                    local lower = #details > 0 and size + 7 or 0
-                    drawing:Label("Name", shown, Vector2.new(point.X, y - lower), 1, size, colour, options.Background.Value)
+                    if #details > 0 then shown ..= " [" .. table.concat(details, "] [") .. "]" end
+                    if options.Distance.Value then shown = "[" .. tostring(math.round(target.Distance)) .. "] " .. shown end
+                    local y = math.max(point.Y, size + 16)
+                    drawing:Label("Name", shown, Vector2.new(point.X, y), 1, size, colour, options.Background.Value)
+                    local label = drawing.labels.Name
+                    if label then
+                        if not drawing.flatNametag then
+                            for _, child in ipairs(label:GetChildren()) do
+                                if child:IsA("UICorner") or child:IsA("UIStroke") then child:Destroy()
+                                elseif child:IsA("UIPadding") then
+                                    child.PaddingLeft, child.PaddingRight = UDim.new(0,4), UDim.new(0,4)
+                                end
+                            end
+                            drawing.flatNametag = true
+                        end
+                        label.Font = Enum.Font.Arial
+                        label.BackgroundColor3 = Color3.new(0,0,0)
+                        label.BackgroundTransparency = options.Background.Value and 0.5 or 1
+                        label.TextStrokeTransparency = 1
+                    end
                     fit(drawing, "Name", shown, size, camera.ViewportSize)
-                    if #details > 0 then
-                        local text = table.concat(details, "  ·  ")
-                        drawing:Label("Details", text, Vector2.new(point.X, y), 1, math.max(10, size - 2), colour:Lerp(Color3.new(1,1,1), 0.5), options.Background.Value)
-                        fit(drawing, "Details", text, math.max(10,size-2), camera.ViewportSize)
-                    else drawing:HideLabel("Details") end
+                    drawing:HideLabel("Details")
                 end
                 for player in pairs(tracked) do
                     if not seen[player] then render:Release(layer,player); tracked[player] = nil end
@@ -22652,12 +22527,12 @@ function Module.init(context: any): any
         end})
     card:CreateToggle({Name = "Display name", Default = true})
     card:CreateToggle({Name = "Account name", Default = false, Show = {Option = "Display name"}})
-    card:CreateToggle({Name = "Distance", Default = true})
-    card:CreateToggle({Name = "Show role", Default = true})
+    card:CreateToggle({Name = "Distance", Default = false})
+    card:CreateToggle({Name = "Show role", Default = false})
     card:CreateToggle({Name = "Held tool", Default = false})
     card:CreateToggle({Name = "Background", Default = true})
-    card:CreateSlider({Name = "Text size", Min = 10, Max = 24, Default = 15})
-    card:CreateColor({Name = "Colour", Default = Color3.fromRGB(240,244,250)})
+    card:CreateSlider({Name = "Text size", Min = 10, Max = 24, Default = 14})
+    card:CreateColor({Name = "Colour", Default = Color3.fromRGB(85, 255, 85)})
     card:CreateSlider({Name = "Max distance", Min = 50, Max = 5000, Default = 1000})
     card:CreateToggle({Name = "Through walls", Default = true})
     card:CreateToggle({Name = "Teammates", Default = true})
@@ -22802,7 +22677,7 @@ function Module.init(context: Runtime): any
 
     esp:CreateColor({
         Name = "Colour",
-        Default = Color3.fromRGB(255, 255, 255),
+        Default = Color3.fromRGB(85, 255, 85),
         Tooltip = "Used for every target the game gives no colour of its own.",
     })
     esp:CreateToggle({
@@ -23047,131 +22922,6 @@ function Module.destroy(): ()
     if Module.roles then Module.roles:Destroy(); Module.roles = nil end
     if Module.bridgeCleanup then Module.bridgeCleanup(); Module.bridgeCleanup = nil end
     activeCleanup = nil
-    activeCard = nil
-    Module.Initialized = false
-end
-
-return Module
-
-]],
-        ["src/games/universal/Render/TimeChanger.lua"] = [[
---!strict
-export type Runtime = {
-    framework: any,
-    host: any,
-    services: any,
-}
-
-local Module = {
-    Name = "TimeChanger",
-    PlaceId = 0,
-    Events = {} :: {[string]: any},
-    Initialized = false,
-}
-
-local activeCard: any = nil
-
-function Module.init(context: Runtime): any
-    local framework: any = context.framework
-    local host: any = context.host
-    local Lighting: Lighting = host.Lighting or (game :: any):GetService("Lighting")
-
-    local originalTime: string? = nil
-    local customTime: number = 14
-    local fastTime: boolean = false
-    local fastElapsed: number = 0
-
-    -- Full 00:00 -> 24:00 sweep in under five seconds, looping while on.
-    local FAST_CYCLE_SECONDS: number = 4
-
-    local function applyTime(hour: number): ()
-        local timeString: string = string.format("%02d:00:00", math.floor(hour))
-        pcall(function()
-            Lighting.TimeOfDay = timeString
-        end)
-    end
-
-    local card: any
-    card = framework.Categories.Render:CreateModule({
-        Name = "Time Changer",
-        Category = "Render",
-        ConfigKey = "Universal.TimeChanger",
-        Order = 25,
-        Tooltip = "Changes the client time of day in the current world.",
-        Function = function(enabled: boolean): ()
-            if enabled then
-                originalTime = Lighting.TimeOfDay
-                applyTime(customTime)
-                card:SetStatus(string.format("%02d:00", customTime))
-
-                card:Loop(function(deltaTime: number): ()
-                    if not originalTime then
-                        return
-                    end
-                    if fastTime then
-                        fastElapsed += deltaTime
-                        if fastElapsed >= FAST_CYCLE_SECONDS then
-                            fastElapsed -= FAST_CYCLE_SECONDS
-                        end
-                        local hour: number =
-                            (fastElapsed / FAST_CYCLE_SECONDS) * 24 % 24
-                        applyTime(hour)
-                        card:SetStatus(string.format("%02d:00", hour))
-                    else
-                        applyTime(customTime)
-                    end
-                end)
-            else
-                if originalTime then
-                    pcall(function()
-                        Lighting.TimeOfDay = originalTime
-                    end)
-                    originalTime = nil
-                end
-                card:SetStatus(nil)
-            end
-        end,
-    })
-
-    card:CreateSlider({
-        Name = "Time",
-        Min = 0,
-        Max = 24,
-        Default = 14,
-        Step = 1,
-        Function = function(value: number): ()
-            customTime = value
-            if card.Enabled and not fastTime then
-                applyTime(value)
-                card:SetStatus(string.format("%02d:00", value))
-            end
-        end,
-        Tooltip = "Hour of day (0 = midnight, 12 = noon, 18 = sunset).",
-    })
-    card:CreateToggle({
-        Name = "Fast time",
-        Default = false,
-        Function = function(value: boolean): ()
-            fastTime = value
-            fastElapsed = 0
-            if card.Enabled and not fastTime then
-                applyTime(customTime)
-                card:SetStatus(string.format("%02d:00", customTime))
-            end
-        end,
-        Tooltip = "Sweeps the whole day from 00:00 to 24:00 in about "
-            .. "four seconds, on repeat, while the module is on.",
-    })
-
-    activeCard = card
-    Module.Initialized = true
-    return card
-end
-
-function Module.destroy(): ()
-    if activeCard and activeCard.Enabled then
-        pcall(activeCard.Toggle, false)
-    end
     activeCard = nil
     Module.Initialized = false
 end
@@ -24928,25 +24678,24 @@ function Module.init(context: any): any
         local ordered: {[string]: number} = {
             ["ItemESP"] = 1, ["PlayerESP"] = 2, ["Chams"] = 3,
             ["Nametags"] = 4, ["HP"] = 5, ["Arrows"] = 6, ["NPCESP"] = 7,
-            ["FOV"] = 8, ["Fullbright"] = 9, ["Time Changer"] = 10,
-            ["X-Ray"] = 11, ["Zoom"] = 12,
+            ["FOV"] = 8, ["Fullbright"] = 9,
+            ["X-Ray"] = 10, ["Zoom"] = 11, ["Markers"] = 12,
             ["Aim Assist"] = 1,
             ["KillAura"] = 2,
             ["TriggerBot"] = 3,
             ["SilentAIM"] = 4,
             ["Fly"] = 1,
-            ["Fling"] = 2,
-            ["Noclip"] = 3,
-            ["Spider"] = 4,
-            ["Speed"] = 5,
-            ["Jump"] = 6,
-            ["Interact Extender"] = 7,
-            ["Anti Fling"] = 1,
-            ["Anti Void"] = 2,
-            ["Teleport"] = 3,
-            ["Freeze Movements"] = 4,
-            ["Ghost"] = 5,
-            ["Disguise"] = 7,
+            ["Fling"] = 7,
+            ["Noclip"] = 2,
+            ["Spider"] = 3,
+            ["Speed"] = 4,
+            ["Jump"] = 5,
+            ["Interact Extender"] = 6,
+            ["Anti Void"] = 1,
+            ["Teleport"] = 2,
+            ["Freeze Movements"] = 3,
+            ["Ghost"] = 4,
+            ["Disguise"] = 5,
             ["Improve FPS"] = 1,
             ["Gravity"] = 2,
             ["Anti AFK"] = 3,
@@ -25301,12 +25050,7 @@ function Module.init(context: any): any
                 task.spawn(function(): ()
                     local success: boolean, errorMessage: any = pcall(feature.onToggle)
                     feature.actionRunning = false
-                    if success then
-
-                        if not feature.silentAction then
-                            notify(name .. " ran")
-                        end
-                    else
+                    if not success then
                         warn("[Random Testing Menu] " .. name .. ": " .. tostring(errorMessage))
                         notify("Could not run " .. name)
                     end
@@ -25326,7 +25070,6 @@ function Module.init(context: any): any
                 end
                 configData.states[feature.configKey] = requestedState
                 flushConfigSave()
-                notify(name .. (requestedState and " enabled" or " disabled"))
             else
                 warn("[Random Testing Menu] " .. name .. ": " .. tostring(errorMessage))
                 feature.enabled = false
@@ -37597,6 +37340,7 @@ local Manifest: Manifest = {
     },
     modules = {
         {path = "src/games/universal/Render/FreeCam.lua", name = "FreeCam", category = "World"},
+        {path = "src/games/universal/Render/Markers.lua", name = "Markers", category = "Render"},
 
         {
             path = "src/games/universal/Render/ItemRender.lua",
@@ -37633,11 +37377,6 @@ local Manifest: Manifest = {
         {
             path = "src/games/universal/Render/Fullbright.lua",
             name = "Fullbright",
-            category = "Render",
-        },
-        {
-            path = "src/games/universal/Render/TimeChanger.lua",
-            name = "Time Changer",
             category = "Render",
         },
         {
@@ -37709,11 +37448,6 @@ local Manifest: Manifest = {
             category = "Utilities",
         },
         {
-            path = "src/games/universal/Movement/AntiFling.lua",
-            name = "Anti Fling",
-            category = "Utilities",
-        },
-        {
             path = "src/games/universal/Movement/FreezeMovements.lua",
             name = "Freeze Movements",
             category = "Utilities",
@@ -37749,11 +37483,6 @@ local Manifest: Manifest = {
             path = "src/games/universal/Other/ImproveFps.lua",
             name = "Improve FPS",
             category = "World",
-        },
-        {
-            path = "src/games/universal/Blatant/Fling.lua",
-            name = "Fling",
-            category = "Exploits",
         },
     },
 }

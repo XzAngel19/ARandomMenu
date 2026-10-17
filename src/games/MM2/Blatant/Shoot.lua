@@ -473,6 +473,7 @@ function Module.init(runtime: any): any
         whenReady: boolean?,
     }
 
+    local ShootFeature: any = nil
     local lastRejectReason: string = ""
 
     local function fireGunAtTarget(
@@ -487,9 +488,7 @@ function Module.init(runtime: any): any
         local quiet: boolean = opts.quiet == true
         local function reject(message: string): boolean
             lastRejectReason = message
-            if not quiet then
-                notify(message)
-            end
+            if not quiet and ShootFeature then ShootFeature:SetStatus(message) end
             return false
         end
 
@@ -610,6 +609,7 @@ function Module.init(runtime: any): any
                     predictedPoint = {resolved.endpoint.X, resolved.endpoint.Y, resolved.endpoint.Z},
                     sampledVelocity = {resolved.velocity.X, resolved.velocity.Y, resolved.velocity.Z}},
             })
+            if not quiet and ShootFeature then ShootFeature:SetStatus(nil) end
             macroUnequip(gun)
             return true
         end
@@ -639,6 +639,7 @@ function Module.init(runtime: any): any
                 predictedPoint = {resolved.endpoint.X, resolved.endpoint.Y, resolved.endpoint.Z},
                 sampledVelocity = {resolved.velocity.X, resolved.velocity.Y, resolved.velocity.Z}},
         })
+        if not quiet and ShootFeature then ShootFeature:SetStatus(nil) end
         macroUnequip(gun)
         return true
     end
@@ -647,7 +648,6 @@ function Module.init(runtime: any): any
     local shootFeatureActive: boolean = false
     local autoShootActive: boolean = false
     local autoShootWanted: boolean = false
-    local ShootFeature: any = nil
     local updateAutoShootConnection: (() -> ())? = nil
 
     local function refreshShootInfrastructure(): ()

@@ -22,6 +22,7 @@ function Module.init(context: Runtime): any
     local createUniversalFeature: any = host.createUniversalFeature
     local addFeatureTooltip: any = host.addFeatureTooltip
     local workspace: any = host.workspace
+    local antiFling, velocityLimit, safeCFrame, safeCharacter = false, 120, nil, nil
     local antiVoidPlatform: Part? = nil
     local antiVoidLastGroundY: number? = nil
     local antiVoidFreefallSeconds: number = 0
@@ -67,6 +68,7 @@ function Module.init(context: Runtime): any
     local function toggleAntiVoid(enabled: boolean): ()
         disconnectFeatureConnection("AntiVoid")
         removeAntiVoidPlatform()
+        safeCFrame, safeCharacter = nil, nil
         antiVoidLastGroundY = nil
         antiVoidFreefallSeconds = 0
 
@@ -75,11 +77,21 @@ function Module.init(context: Runtime): any
         end
 
         featureConnections.AntiVoid = TaskManager:Connect(function(deltaTime: number): ()
-            local _, humanoid, root = getCharacterParts()
-            if not humanoid or not root then
+            local character, humanoid, root = getCharacterParts()
+            if not humanoid or not root or humanoid.Health <= 0 then
                 return
             end
 
+            if safeCharacter ~= character then safeCharacter, safeCFrame = character, nil end
+            if antiFling and not context.services.activity.isActive("fling") then
+                local linear, angular = root.AssemblyLinearVelocity.Magnitude, root.AssemblyAngularVelocity.Magnitude
+                if linear > velocityLimit or angular > velocityLimit then
+                    root.AssemblyLinearVelocity, root.AssemblyAngularVelocity = Vector3.zero, Vector3.zero
+                    if safeCFrame then root.CFrame = safeCFrame end
+                elseif humanoid.FloorMaterial ~= Enum.Material.Air and linear < velocityLimit * 0.45 then
+                    safeCFrame = root.CFrame
+                end
+            end
             if humanoid.FloorMaterial ~= Enum.Material.Air then
                 antiVoidLastGroundY = root.Position.Y
                 antiVoidFreefallSeconds = 0
@@ -110,8 +122,20 @@ function Module.init(context: Runtime): any
         "Create an invisible rescue platform only when death is imminent",
         4,
         toggleAntiVoid,
-        {noOptions = true, categoryName = "Utilities"}
+        {categoryName = "Utilities"}
     )
+    local velocityRow
+    local function showVelocityLimit()
+        if not velocityRow then return end
+        if host.setOptionVisible then host.setOptionVisible(AntiVoidFeature,velocityRow,antiFling)
+        else velocityRow.Visible = antiFling end
+    end
+    host.addToggleOption(AntiVoidFeature, "Anti fling", false, function(value)
+        antiFling, safeCFrame = value, nil
+        showVelocityLimit()
+    end, "Block extreme velocity while Anti Void is enabled.")
+    velocityRow = host.addNumberOption(AntiVoidFeature, "Velocity limit", 120, 40, 1000, function(value) velocityLimit = value end)
+    showVelocityLimit()
     addFeatureTooltip(
         AntiVoidFeature,
         "Detects a deep lethal fall and creates a temporary invisible platform beneath you."

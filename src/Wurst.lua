@@ -217,7 +217,7 @@ local RUNTIME_RAW_BASE: string =
         .. RUNTIME_BRANCH
         .. "/"
 
-local SOURCE_STAMP: string = "v46-20261017-movement"
+local SOURCE_STAMP: string = "v47-20261017-menu"
 
 local BOOT_STARTED_AT: number = os.clock()
 local BOOT_FINGERPRINT_SECONDS: number = 0
@@ -3412,9 +3412,14 @@ create("UIListLayout", {
 })
 
 local toastSequence: number = 0
+local lastToastText: string = ""
+local lastToastAt: number = -math.huge
 
 local function notify(message: any): ()
     local text: string = tostring(message)
+    local now = os.clock()
+    if text == lastToastText and now - lastToastAt < 3 then return end
+    lastToastText, lastToastAt = text, now
     print("[" .. PRODUCT.name .. "] " .. text)
     toastSequence += 1
 
@@ -4981,6 +4986,7 @@ local function loadGameModule(
         "src/games/MM2/Blatant/KnifeThrow.lua",
         "src/games/MM2/Render/RoundEsp.lua",
         "src/games/MM2/Movement/Sprint.lua",
+        "src/games/MM2/Blatant/Fling.lua",
         "src/games/MM2/Movement/Teleport.lua",
         "src/games/MM2/Fun/BlurtRoles.lua",
         "src/games/MM2/Other/TrajectoryCalibration.lua",
@@ -5817,6 +5823,7 @@ local fallbackManifest: any = {
         {path = "src/games/universal/Blatant/Invisible.lua", name = "Ghost", category = "Utilities"},
         {path = "src/games/universal/Movement/SafeWalk.lua", name = "Safe Walk", category = "World"},
         {path = "src/games/universal/Render/FreeCam.lua", name = "FreeCam", category = "World"},
+        {path = "src/games/universal/Render/Markers.lua", name = "Markers", category = "Render"},
         {path = "src/games/universal/Render/ZoomUnlocker.lua", name = "Zoom", category = "Render"},
         {path = "src/games/universal/Other/InteractExtender.lua", name = "Interact Extender", category = "Exploits"},
         {path = "src/games/universal/Blatant/Fly.lua", name = "Fly", category = "Exploits"},
@@ -5825,11 +5832,8 @@ local fallbackManifest: any = {
         {path = "src/games/universal/Render/FieldOfView.lua", name = "FOV", category = "Render"},
         {path = "src/games/universal/Blatant/Noclip.lua", name = "Noclip", category = "Exploits"},
         {path = "src/games/universal/Other/AntiAfk.lua", name = "Anti AFK", category = "World"},
-        {path = "src/games/universal/Movement/AntiFling.lua", name = "Anti Fling", category = "Utilities"},
-        {path = "src/games/universal/Blatant/Fling.lua", name = "Fling", category = "Exploits"},
         {path = "src/games/universal/Other/ImproveFps.lua", name = "Improve FPS", category = "World"},
         {path = "src/games/universal/Render/Fullbright.lua", name = "Fullbright", category = "Render"},
-        {path = "src/games/universal/Render/TimeChanger.lua", name = "Time Changer", category = "Render"},
         {path = "src/games/universal/Movement/FreezeMovements.lua", name = "Freeze Movements", category = "Utilities"},
         {path = "src/games/universal/Movement/Speed.lua", name = "Speed", category = "Exploits"},
     },

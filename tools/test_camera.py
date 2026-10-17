@@ -81,12 +81,13 @@ local humanoid=object('Humanoid',{Parent=character,Move=function(self,v) self.mo
 local input=object('UserInputService',{TouchEnabled=true,MouseBehavior='Default',MouseIconEnabled=true})
 function input:GetFocusedTextBox() return self.focused end
 function input:IsKeyDown(key) return self.shift and key=='LeftShift' end
-local host={LocalPlayer=player,UserInputService=input,RunService=run,workspace=world,services={},ScreenGui=object('ScreenGui'),create=object}
+local host={Players={GetPlayers=function() return {player} end},LocalPlayer=player,UserInputService=input,RunService=run,workspace=world,services={},ScreenGui=object('ScreenGui'),create=object}
 local card
 local framework={Categories={Visuals={CreateModule=function(_,metadata)
  card={Options={},Enabled=false,cleaners={},Feature={enabled=false},SetStatus=function(self,v) self.status=v end}
  function card:Clean(fn) table.insert(self.cleaners,fn) end
  function card:CreateSlider(def) self.Options[def.Name]={Value=def.Default} end
+ function card:CreateList(def) self.Options[def.Name]={Selected={},Set=function() end,IsSelected=function(self,name) return table.find(self.Selected,name)~=nil end} end
  function card:Toggle(v)
   if self.Enabled==v then return end
   self.Enabled=v;self.Feature.enabled=v
@@ -98,10 +99,16 @@ local framework={Categories={Visuals={CreateModule=function(_,metadata)
 end}}}
 '''+ '\nlocal CameraAccess='+module('src/libraries/CameraAccess.lua')+'\nlocal access=CameraAccess.init(host)\nlocal FreeCam='+module('src/games/universal/Render/FreeCam.lua')+r'''
 local free=FreeCam.init({host=host,services=host.services,framework=framework})
+local spectateRoot={Position=Vector3.new(100,20,30)}
+local spectateHumanoid={Health=100}
+local spectator={Name='Target',Character={FindFirstChild=function() return spectateRoot end,FindFirstChildOfClass=function() return spectateHumanoid end}}
+host.Players.GetPlayers=function() return {player,spectator} end
 local initialFrame,initialFocus=camera.CFrame,camera.Focus
 free:Toggle(true);step(.02);assert(humanoid.move.Magnitude==0 and not nativeTouch.Enabled)
 flush();step(.02);assert(not controls.controlsEnabled and camera.CameraType=='Scriptable')
 assert(camera.CameraSubject=='subject' and camera.FieldOfView==80)
+free.Options['Spectate Player'].Selected={'Target'};step(.02);near((camera.CFrame.Position-spectateRoot.Position).Magnitude,math.sqrt(153))
+free.Options['Spectate Player'].Selected={};
 action('Forward','Begin','W');local start=camera.CFrame.Position;step(.05);near((camera.CFrame.Position-start).Magnitude,2.4)
 action('Right','Begin','D');start=camera.CFrame.Position;step(.05);near((camera.CFrame.Position-start).Magnitude,2.4)
 action('Forward','End','W');action('Right','End','D')

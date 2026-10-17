@@ -64,25 +64,24 @@ function Module.init(context: any): any
         local ordered: {[string]: number} = {
             ["ItemESP"] = 1, ["PlayerESP"] = 2, ["Chams"] = 3,
             ["Nametags"] = 4, ["HP"] = 5, ["Arrows"] = 6, ["NPCESP"] = 7,
-            ["FOV"] = 8, ["Fullbright"] = 9, ["Time Changer"] = 10,
-            ["X-Ray"] = 11, ["Zoom"] = 12,
+            ["FOV"] = 8, ["Fullbright"] = 9,
+            ["X-Ray"] = 10, ["Zoom"] = 11, ["Markers"] = 12,
             ["Aim Assist"] = 1,
             ["KillAura"] = 2,
             ["TriggerBot"] = 3,
             ["SilentAIM"] = 4,
             ["Fly"] = 1,
-            ["Fling"] = 2,
-            ["Noclip"] = 3,
-            ["Spider"] = 4,
-            ["Speed"] = 5,
-            ["Jump"] = 6,
-            ["Interact Extender"] = 7,
-            ["Anti Fling"] = 1,
-            ["Anti Void"] = 2,
-            ["Teleport"] = 3,
-            ["Freeze Movements"] = 4,
-            ["Ghost"] = 5,
-            ["Disguise"] = 7,
+            ["Fling"] = 7,
+            ["Noclip"] = 2,
+            ["Spider"] = 3,
+            ["Speed"] = 4,
+            ["Jump"] = 5,
+            ["Interact Extender"] = 6,
+            ["Anti Void"] = 1,
+            ["Teleport"] = 2,
+            ["Freeze Movements"] = 3,
+            ["Ghost"] = 4,
+            ["Disguise"] = 5,
             ["Improve FPS"] = 1,
             ["Gravity"] = 2,
             ["Anti AFK"] = 3,
@@ -437,12 +436,7 @@ function Module.init(context: any): any
                 task.spawn(function(): ()
                     local success: boolean, errorMessage: any = pcall(feature.onToggle)
                     feature.actionRunning = false
-                    if success then
-
-                        if not feature.silentAction then
-                            notify(name .. " ran")
-                        end
-                    else
+                    if not success then
                         warn("[Random Testing Menu] " .. name .. ": " .. tostring(errorMessage))
                         notify("Could not run " .. name)
                     end
@@ -462,7 +456,6 @@ function Module.init(context: any): any
                 end
                 configData.states[feature.configKey] = requestedState
                 flushConfigSave()
-                notify(name .. (requestedState and " enabled" or " disabled"))
             else
                 warn("[Random Testing Menu] " .. name .. ": " .. tostring(errorMessage))
                 feature.enabled = false

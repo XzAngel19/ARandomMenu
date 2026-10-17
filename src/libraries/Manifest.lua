@@ -43,6 +43,7 @@ local Manifest: Manifest = {
     },
     modules = {
         {path = "src/games/universal/Render/FreeCam.lua", name = "FreeCam", category = "World"},
+        {path = "src/games/universal/Render/Markers.lua", name = "Markers", category = "Render"},
 
         {
             path = "src/games/universal/Render/ItemRender.lua",
@@ -79,11 +80,6 @@ local Manifest: Manifest = {
         {
             path = "src/games/universal/Render/Fullbright.lua",
             name = "Fullbright",
-            category = "Render",
-        },
-        {
-            path = "src/games/universal/Render/TimeChanger.lua",
-            name = "Time Changer",
             category = "Render",
         },
         {
@@ -155,11 +151,6 @@ local Manifest: Manifest = {
             category = "Utilities",
         },
         {
-            path = "src/games/universal/Movement/AntiFling.lua",
-            name = "Anti Fling",
-            category = "Utilities",
-        },
-        {
             path = "src/games/universal/Movement/FreezeMovements.lua",
             name = "Freeze Movements",
             category = "Utilities",
@@ -195,11 +186,6 @@ local Manifest: Manifest = {
             path = "src/games/universal/Other/ImproveFps.lua",
             name = "Improve FPS",
             category = "World",
-        },
-        {
-            path = "src/games/universal/Blatant/Fling.lua",
-            name = "Fling",
-            category = "Exploits",
         },
     },
 }

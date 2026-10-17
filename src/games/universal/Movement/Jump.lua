@@ -57,6 +57,9 @@ function Module.init(context: Runtime): any
     local fallConnection: RBXScriptConnection? = nil
     local originalStates = nil
     local redirecting = false
+    local fallBoosted: Humanoid? = nil
+    local pressHeld = false
+    local jumpTouch: InputObject? = nil
 
     local function clearFallController(): ()
         if fallConnection then fallConnection:Disconnect(); fallConnection = nil end
@@ -64,7 +67,7 @@ function Module.init(context: Runtime): any
             fallHumanoid:SetStateEnabled(Enum.HumanoidStateType.Jumping,originalStates.jumping)
             fallHumanoid:SetStateEnabled(Enum.HumanoidStateType.Freefall,originalStates.freefall)
         end
-        fallHumanoid, originalStates = nil, nil
+        fallHumanoid, originalStates, fallBoosted = nil, nil, nil
     end
     local function enforceFall(humanoid: Humanoid): ()
         humanoid.Jump = false
@@ -87,7 +90,7 @@ function Module.init(context: Runtime): any
             originalStates = {jumping=humanoid:GetStateEnabled(Enum.HumanoidStateType.Jumping),
                 freefall=humanoid:GetStateEnabled(Enum.HumanoidStateType.Freefall)}
             fallConnection = humanoid.StateChanged:Connect(function(_,nextState)
-                if not canControlJump(humanoid) then clearFallController()
+                if not canControlJump(humanoid) or nextState == Enum.HumanoidStateType.Landed then clearFallController()
                 elseif nextState == Enum.HumanoidStateType.Jumping then enforceFall(humanoid) end
             end)
         end
@@ -128,6 +131,7 @@ function Module.init(context: Runtime): any
         -- not the trajectory into downward motion or a manual animation.
         -- X/Z momentum is unchanged; this makes no server-state guarantee.
         syncFallController(humanoid, mode == "Fall")
+        fallBoosted = mode == "Fall" and humanoid or nil
         ;(root :: BasePart).AssemblyLinearVelocity = Vector3.new(velocity.X, strength, velocity.Z)
         humanoid:ChangeState(mode == "Fall" and Enum.HumanoidStateType.Freefall or Enum.HumanoidStateType.Jumping)
     end
@@ -135,7 +139,7 @@ function Module.init(context: Runtime): any
     local jump: any
     local function refreshFall(): ()
         local _, humanoid, root = characterParts()
-        syncFallController(humanoid,root ~= nil and not root.Anchored and jump.Enabled and jump.Options["Infinite jump"].Value
+        syncFallController(humanoid,fallBoosted == humanoid and root ~= nil and not root.Anchored and jump.Enabled and jump.Options["Infinite jump"].Value
             and jump.Options["Infinite jump mode"].Value == "Fall")
     end
     jump = framework.Categories.Exploits:CreateModule({
@@ -148,6 +152,7 @@ function Module.init(context: Runtime): any
             restoreJumpPower()
             clearFallController()
             lastInfiniteJumpAt = -math.huge
+            pressHeld, jumpTouch = false, nil
             if not enabled then
                 jump:SetStatus(nil)
                 return
@@ -157,6 +162,29 @@ function Module.init(context: Runtime): any
             jump:Clean(function(): () restoreJumpPower(); clearFallController() end)
 
             local function requestJump(): ()
+                if pressHeld then return end
+                pressHeld = true
+                if UserInputService.TouchEnabled then
+                    local touches = UserInputService:GetTouches()
+                    if #touches == 1 then jumpTouch = touches[1]
+                    else
+                        local gui = LocalPlayer:FindFirstChildOfClass("PlayerGui")
+                        local touchGui = gui and gui:FindFirstChild("TouchGui")
+                        local button = touchGui and touchGui:FindFirstChild("JumpButton",true)
+                        if button then
+                            local at, size = button.AbsolutePosition, button.AbsoluteSize
+                            for _, touch in ipairs(touches) do
+                                local p = touch.Position
+                                if p.X >= at.X and p.Y >= at.Y and p.X <= at.X+size.X and p.Y <= at.Y+size.Y then jumpTouch = touch;break end
+                            end
+                        end
+                    end
+                end
+                local _, humanoid, root = characterParts()
+                -- Ground takeoff belongs to Roblox: ordinary Jumping/animation.
+                -- Only a new press in midair is an extra jump.
+                if not humanoid or not root then return end
+                if humanoid.FloorMaterial ~= Enum.Material.Air then return end
                 local opts = jump.Options
                 if not opts["Infinite jump"] or not opts["Infinite jump"].Value then
                     return
@@ -175,6 +203,13 @@ function Module.init(context: Runtime): any
                 jump:Clean(UserInputService.JumpRequest:Connect(requestJump))
             end
 
+            jump:Clean(UserInputService.InputEnded:Connect(function(event)
+                if event.KeyCode == Enum.KeyCode.Space or event.KeyCode == Enum.KeyCode.ButtonA
+                    or event.UserInputType == Enum.UserInputType.Touch and (not jumpTouch or event == jumpTouch) then
+                    pressHeld, jumpTouch = false, nil
+                end
+            end))
+            jump:Clean(UserInputService.WindowFocusReleased:Connect(function() pressHeld, jumpTouch = false, nil end))
             refreshFall()
             jump:Clean(host.RunService.PreSimulation:Connect(function(): ()
                 local opts = jump.Options
@@ -187,7 +222,11 @@ function Module.init(context: Runtime): any
                 local canMove = canControlJump(humanoid) and not root.Anchored
                 local fallMode: boolean = canMove and opts["Infinite jump"] and opts["Infinite jump"].Value
                     and opts["Infinite jump mode"].Value == "Fall"
-                syncFallController(humanoid, fallMode)
+                local state = humanoid:GetState()
+                local grounded = humanoid.FloorMaterial ~= Enum.Material.Air
+                    and state ~= Enum.HumanoidStateType.Jumping and state ~= Enum.HumanoidStateType.Freefall
+                if grounded or fallBoosted ~= humanoid then clearFallController() end
+                syncFallController(humanoid, fallMode and fallBoosted == humanoid)
 
                 if opts["Custom jump power"] and opts["Custom jump power"].Value then
                     local wantedPower: number = opts["Jump power"] and opts["Jump power"].Value or 80
@@ -206,11 +245,7 @@ function Module.init(context: Runtime): any
                 if canMove and opts["Auto jump"] and opts["Auto jump"].Value then
                     local moveDir: Vector3 = humanoid.MoveDirection
                     if moveDir.Magnitude > 0.05 and humanoid.FloorMaterial ~= Enum.Material.Air then
-                        if fallMode then
-                            performInfiniteJump("Fall", opts["Infinite jump power"].Value, opts["Jump interval"].Value)
-                        else
-                            humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
-                        end
+                        humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
                     end
                 end
 
@@ -277,7 +312,7 @@ function Module.init(context: Runtime): any
         List = {"Normal", "Rise", "Fall"},
         Function = refreshFall,
         Index = 1,
-        Tooltip = "Normal = mid-air jump; Rise = hold to rise; Fall = upward impulses while Jumping is disabled and the local Humanoid uses Freefall. Server behavior is not guaranteed.",
+        Tooltip = "Normal = mid-air jump; Rise = hold to rise; Fall = normal ground jump, then Freefall for each extra mid-air press. Release jump between presses; holding does not repeat. Server behavior is not guaranteed.",
     })
 
     jump:CreateSlider({

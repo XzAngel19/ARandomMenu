@@ -409,7 +409,7 @@ function Module.init(context: Runtime): any
             .. "Humanoid (creatures, monsters). Off by default: NPCESP tracks "
             .. "character-shaped rigs.",
     })
-    card:CreateColor({Name = "Colour", Default = Color3.new(1, 1, 1)})
+    card:CreateColor({Name = "Colour", Default = Color3.fromRGB(85, 255, 85)})
     card:CreateSlider({Name = "Max distance", Min = 25, Max = 2000, Step = 25, Default = 500})
 
     local addBox: any

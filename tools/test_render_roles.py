@@ -146,7 +146,11 @@ local width=nameLabel.Size.X.Offset;assert(width>0 and width<=336)
 local m=measureCalls
 for _=1,30 do names.render();assert(nameLabel.Size.X.Offset==width) end
 assert(measureCalls==m,'cache text bounds; keep explicit width on later frames')
-assert(nameLabel.Font=='GothamMedium' and nameLabel.TextStrokeTransparency<1)
+assert(nameLabel.Font=='Arial' and nameLabel.TextStrokeTransparency==1 and nameLabel.BackgroundTransparency==.5)
+assert(not names.Options.Distance.Value and not names.Options['Show role'].Value)
+assert(not nameLabel:FindFirstChildOfClass('UICorner') and not nameLabel:FindFirstChildOfClass('UIStroke'))
+names.Options.Distance.Value=true;names.render();assert(string.sub(nameLabel.Text,1,1)=='[' and not string.find(nameLabel.Text,'studs'))
+names.Options.Distance.Value=false;names.render()
 local project=camera.WorldToViewportPoint
 camera.WorldToViewportPoint=function() return Vector3.new(-100,200,10),false end
 names.render();assert(#nameLayer.children==0,'offscreen tags do not get pinned to screen edges')

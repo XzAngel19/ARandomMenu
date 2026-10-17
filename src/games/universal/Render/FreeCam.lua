@@ -9,6 +9,7 @@ function Module.init(context)
     local world = host.workspace or workspace
     local create = host.create
     local id = "ARandomMenu.FreeCam." .. tostring({})
+    local spectateTarget
 
     card = context.framework.Categories.Visuals:CreateModule({
         Name = "FreeCam", Category = "World", ConfigKey = "Universal.FreeCam", Order = 6,
@@ -201,8 +202,25 @@ function Module.init(context)
                     local humanoid = character and character:FindFirstChildOfClass("Humanoid")
                     if humanoid then humanoid:Move(Vector3.zero, false) end
                 end
+                local spectating = false
+                local selected = card.Options["Spectate Player"]
+                if selected then
+                    for _, player in ipairs(host.Players:GetPlayers()) do
+                        if player ~= host.LocalPlayer and selected:IsSelected(player.Name) then
+                            local character = player.Character
+                            local root = character and character:FindFirstChild("HumanoidRootPart")
+                            local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+                            if root and humanoid and humanoid.Health > 0 then
+                                local orbit = CFrame.fromOrientation(pitch,yaw,0)
+                                position = root.Position - orbit.LookVector * 12 + Vector3.new(0,3,0)
+                                spectating = true
+                                break
+                            end
+                        end
+                    end
+                end
                 local rotation = CFrame.fromOrientation(pitch,yaw,0)
-                if not input:GetFocusedTextBox() then
+                if not spectating and not input:GetFocusedTextBox() then
                     local move = Vector3.new((keys.Right and 1 or 0)-(keys.Left and 1 or 0)+stick.X,
                         (keys.Up and 1 or 0)-(keys.Down and 1 or 0), (keys.Back and 1 or 0)-(keys.Forward and 1 or 0)+stick.Y)
                     local direction = rotation:VectorToWorldSpace(Vector3.new(move.X,0,move.Z)) + Vector3.yAxis * move.Y
@@ -219,6 +237,23 @@ function Module.init(context)
     })
     card:CreateSlider({Name="Speed", Min=1, Max=150, Default=48})
     card:CreateSlider({Name="Sensitivity", Min=0.05, Max=0.6, Default=0.2})
+    card:CreateList({Name="Spectate Player",Items=function()
+        local names = {}
+        for _, player in ipairs(host.Players:GetPlayers()) do
+            if player ~= host.LocalPlayer then table.insert(names,player.Name) end
+        end
+        table.sort(names);return names
+    end,Tooltip="Select one player to follow while FreeCam is ON. Right-drag/touch rotates the view; deselect to fly freely.",Function=function(selected,names)
+        local option = card.Options["Spectate Player"]
+        local chosen = names[1]
+        if #names > 1 then
+            for _, name in ipairs(names) do if name ~= spectateTarget then chosen = name; break end end
+        end
+        spectateTarget = chosen
+        if option then
+            for _, name in ipairs(names) do if name ~= chosen then option:Set(name,false) end end
+        end
+    end})
     Module.Initialized = true
     return card
 end

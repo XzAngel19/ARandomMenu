@@ -109,11 +109,12 @@ function Module.init(context: Runtime): any
         useTargetMovementAnimations = false,
     }
 
+    local function status(message: string): ()
+        if activeCard then activeCard:SetStatus(message) end
+    end
     local function notify(message: string): ()
         pcall(print, "[Wurst:Disguise] " .. message)
-        if activeCard then
-            pcall(activeCard.Notify, activeCard, message)
-        end
+        if activeCard then pcall(activeCard.Notify, activeCard, message) end
     end
 
     local function isAppearanceItem(obj: Instance): boolean
@@ -550,7 +551,7 @@ function Module.init(context: Runtime): any
         end
 
         ensureSnapshot(character, humanoid)
-        notify("Downloading target movement animations...")
+        status("Downloading target movement animations...")
 
         task.spawn(function(): ()
             local changedCount: number = 0
@@ -634,9 +635,9 @@ function Module.init(context: Runtime): any
             end
 
             if changedCount > 0 then
-                notify("Applied " .. tostring(changedCount) .. " target movement animation slot(s); Animate restarted.")
+                status("Applied " .. tostring(changedCount) .. " target movement animation slot(s); Animate restarted.")
             else
-                notify("No custom movement animations found for ID " .. tostring(numericId) .. " (target may use default animations).")
+                status("No custom movement animations found for ID " .. tostring(numericId) .. " (target may use default animations).")
             end
         end)
     end
@@ -1038,9 +1039,8 @@ function Module.init(context: Runtime): any
             return
         end
 
-        local movementAnimationCount: number = 0
         if settings.useTargetMovementAnimations then
-            movementAnimationCount = copyTargetMovementAnimations(
+            copyTargetMovementAnimations(
                 character,
                 humanoid,
                 description
@@ -1077,30 +1077,10 @@ function Module.init(context: Runtime): any
         end
         if stillCurrent(token, character) then
             activeCard:SetStatus("Character")
-            local emoteCount: number = 0
-            if type(targetEmotes) == "table" then
-                for _ in pairs(targetEmotes) do
-                    emoteCount += 1
-                end
+            if emoteWarning and targetEmotes and targetEquippedEmotes then
+                notify("Disguise emotes could not be applied: " .. emoteWarning)
             end
-            local message: string = "Avatar disguise applied; live body-part dimensions were left unchanged. "
-            if emoteWarning then
-                message ..= "Emotes could not be applied: " .. emoteWarning
-            elseif emoteCount > 0 then
-                message ..= tostring(emoteCount)
-                    .. " target emote(s) copied; open the Roblox emote menu."
-            else
-                message ..= "The target description returned no emotes."
-            end
-            if settings.useTargetMovementAnimations then
-                if movementAnimationCount > 0 then
-                    message ..= " Copied " .. tostring(movementAnimationCount)
-                        .. " target movement animation slot(s)."
-                else
-                    message ..= " No target movement animation IDs were available."
-                end
-            end
-            notify(message)
+            status("Ready")
         end
     end
 
@@ -1317,7 +1297,7 @@ function Module.init(context: Runtime): any
         restartAnimateScript(animate)
         if current.character == character and stillCurrent(token, character) then
             activeCard:SetStatus("Animation")
-            notify("Animation bundle applied to " .. tostring(changedCount)
+            status("Animation bundle applied to " .. tostring(changedCount)
                 .. " slots; Animate restarted. Original IDs return when disabled.")
         end
     end

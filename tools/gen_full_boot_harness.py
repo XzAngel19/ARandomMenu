@@ -812,10 +812,10 @@ do
     end
     print("[HARNESS] FREEZE MOVEMENTS TOGGLE CYCLES CLEAN")
     local expected = {
-      Render = {"ItemESP", "PlayerESP", "Chams", "Nametags", "HP", "Arrows", "NPCESP", "FOV", "Fullbright", "Time Changer", "X-Ray", "Zoom"},
+      Render = {"ItemESP", "PlayerESP", "Chams", "Nametags", "HP", "Arrows", "NPCESP", "FOV", "Fullbright", "X-Ray", "Zoom", "Markers"},
       Combat = {"Aim Assist", "KillAura", "TriggerBot", "SilentAIM"},
-      Exploits = {"Fly", "Fling", "Noclip", "Spider", "Speed", "Jump", "Interact Extender"},
-      Utilities = {"Anti Fling", "Anti Void", "Teleport", "Freeze Movements", "Ghost", "Disguise"},
+      Exploits = {"Fly", "Noclip", "Spider", "Speed", "Jump", "Interact Extender", "Fling"},
+      Utilities = {"Anti Void", "Teleport", "Freeze Movements", "Ghost", "Disguise"},
       World = {"Improve FPS", "Gravity", "Anti AFK", "Safe Walk", "Blurt Roles"},
     }
     for category, names in pairs(expected) do
@@ -829,6 +829,22 @@ do
     for _, name in ipairs({"Metrics", "Learning", "Game Learning", "HookPart", "Flight", "Invisible", "SpinBot", "Sprint", "Instant Role Notify", "Auto Shoot", "Knife", "Shoot"}) do
       assert(not findFeature(name), "Removed module still present: " .. name)
     end
+    assert(not findFeature("Time Changer") and not findFeature("Anti Fling"))
+    local fling = findFeature("Fling")
+    assert(fling and fling.configKey == "MM2.Fling", "only MM2 owns role Fling")
+    assert(findFeature("Anti Void").options:FindFirstChild("Option_Antifling"))
+    local fullbright=ex.state.framework:GetModule("Fullbright")
+    assert(fullbright.Options["Time Changer"] and not fullbright.Options.Time.Visible)
+    fullbright.Options["Time Changer"].Metadata.callback(true);assert(fullbright.Options.Time.Visible)
+    fullbright.Options["Time Changer"].Metadata.callback(false)
+    assert(ex.state.framework:GetModule("FreeCam").Options["Spectate Player"])
+    local markers=ex.state.framework:GetModule("Markers")
+    assert(markers and markers.Options["Save here"] and not markers.Options.Coordinates.Visible)
+    markers.Options.Name.Metadata.callback("Harness place")
+    markers.Options["Save here"].Metadata.callback()
+    assert(markers.Options.Places:IsSelected("Harness place"), "Save here updates actual list controls")
+    markers.Options["Remove named place"].Metadata.callback()
+    assert(not markers.Options.Places:IsSelected("Harness place"))
     local speed = ex.state.framework:GetModule("Speed")
     assert(speed and speed.Options.Sprint, "Sprint must be an option of Speed")
     assert(not speed.Options["Vehicle speed value"].Visible and not speed.Options["Motor torque"].Visible)
@@ -950,8 +966,8 @@ do
     ex.state.toggleControls["Universal.KillAura.KnifeAura"].setChecked(true)
     assert(auraRange.Visible)
     local spider = findFeature("Spider")
-    assert(spider.options:FindFirstChild("Option_CeilingWalk").Visible)
-    assert(not spider.options:FindFirstChild("Option_Climbstate").Visible)
+    assert(not spider.options:FindFirstChild("Option_CeilingWalk"))
+    assert(spider.options:FindFirstChild("Option_Climbstate").Visible)
     assert(not spider.options:FindFirstChild("Option_Impulseinterval").Visible)
     local disguise = ex.state.framework:GetModule("Disguise")
     assert(disguise and disguise.Category == "Utilities", "Disguise must actually load in Utilities")

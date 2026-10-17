@@ -6,23 +6,24 @@ export type Runtime = {
 }
 
 local Module = {
-    Name = "Fling",
-    PlaceId = 0,
+    Name = "MM2 Fling",
+    PlaceId = 142823291,
     Events = {} :: {[string]: any},
     Initialized = false,
 }
 
 local activeCleanup: (() -> ())? = nil
 
-function Module.init(context: Runtime): any
-    local host: any = context.host
+function Module.init(runtime: any): any
+    local host: any = state.frameworkEnvironment
+    assert(state.mm2Core, "MM2 Fling requires the MM2 core")
     local Players: any = host.Players
     local LocalPlayer: any = host.LocalPlayer
     local getCharacterParts: any = host.getCharacterParts
     local notify: any = host.notify
-    local activity: any = context.services.activity
-    local protectedTargets: any = context.services.protectedTargets
-    local gameBridge: any = context.services.gameBridge
+    local activity: any = services.activity
+    local protectedTargets: any = services.protectedTargets
+    local gameBridge: any = services.gameBridge
     local createUniversalFeature: any = host.createUniversalFeature
     local addActionOption: any = host.addActionOption
     local addTextOption: any = host.addTextOption
@@ -46,6 +47,7 @@ function Module.init(context: Runtime): any
     local FLING_POWER: number = 1
 
     performFling = function(targetPlayer: Player): ()
+        if not Module.Initialized then return end
         if protectedTargets.isProtected(targetPlayer) then
             notify("player protected")
             return
@@ -66,9 +68,6 @@ function Module.init(context: Runtime): any
 
             local savedCFrame: CFrame = root.CFrame
             local savedAutoRotate: boolean = humanoid.AutoRotate
-            local savedCameraSubject: (Humanoid | BasePart)? = workspace.CurrentCamera
-                and workspace.CurrentCamera.CameraSubject
-                :: (Humanoid | BasePart)?
             local touchedTarget: boolean = false
             local reason: string = "timeout"
 
@@ -89,7 +88,7 @@ function Module.init(context: Runtime): any
                     humanoid.Sit = false
                 end
 
-                while os.clock() - startedAt < duration do
+                while flingRunning and os.clock() - startedAt < duration do
 
                     if targetPlayer.Parent == nil then
                         reason = "left"
@@ -128,8 +127,9 @@ function Module.init(context: Runtime): any
                         reason = "died"
                         break
                     end
-                    if liveRoot.Anchored then
-                        liveRoot.Anchored = false
+                    if liveRoot ~= root or liveHumanoid ~= humanoid or liveRoot.Anchored then
+                        reason = "died"
+                        break
                     end
                     humanoid = liveHumanoid
                     root = liveRoot
@@ -147,7 +147,7 @@ function Module.init(context: Runtime): any
                         Vector3.new(power, power, power)
 
                     RunService.Stepped:Wait()
-                    if liveRoot.Parent then
+                    if flingRunning and liveRoot.Parent then
                         liveRoot.AssemblyLinearVelocity =
                             Vector3.new(power * -sign, power, power * sign)
                     end
@@ -156,21 +156,17 @@ function Module.init(context: Runtime): any
             end)
 
             local _, finalHumanoid: Humanoid?, finalRoot: BasePart? = getCharacterParts()
-            if finalRoot and finalRoot.Parent then
+            if finalRoot == root and finalRoot and finalRoot.Parent then
                 finalRoot.AssemblyLinearVelocity = Vector3.zero
                 finalRoot.AssemblyAngularVelocity = Vector3.zero
                 finalRoot.CFrame = savedCFrame + Vector3.new(0, 2, 0)
             end
-            if finalHumanoid then
+            if finalHumanoid == humanoid and finalHumanoid then
                 finalHumanoid.AutoRotate = savedAutoRotate
-                finalHumanoid.PlatformStand = false
-            end
-            if workspace.CurrentCamera then
-                workspace.CurrentCamera.CameraSubject =
-                    savedCameraSubject or finalHumanoid or humanoid
             end
 
             setFlingRunning(false)
+            if not Module.Initialized then return end
             if not success then
                 notify("fling failed: " .. tostring(errorMessage))
             elseif touchedTarget then
@@ -213,10 +209,10 @@ function Module.init(context: Runtime): any
 
     local FlingFeature: any = createUniversalFeature(
         "Fling",
-        "Role-based fling actions (murderer, sheriff, all innocents)",
+        "MM2 only: fling the murderer, sheriff or innocents",
         2,
         function() end,
-        {category = true, categoryName = "Exploits"}
+        {category = true, categoryName = "Exploits", registry = mm2Features, configKey = "MM2.Fling"}
     )
     addActionOption(FlingFeature, "Fling Murderer", function(): ()
         local target: Player? = findPlayerByRole(function(role: string): boolean
@@ -298,9 +294,7 @@ function Module.init(context: Runtime): any
     end)
     addInformationOption(
         FlingFeature,
-        "Role names come from the game (MM2: Murderer / Sheriff / Innocent). "
-            .. "Target player + Fling works in any game: type a name (partial "
-            .. "is fine) and press Fling."
+        "MM2 only. Choose a role action, or enter a player name and press Fling."
     )
 
     activeCleanup = function(): ()

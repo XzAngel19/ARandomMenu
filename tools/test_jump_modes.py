@@ -48,47 +48,62 @@ local framework={Categories={Exploits={CreateModule=function(_,d)
  return jump
 end}}}
 '''+'\nlocal Module=(function()\n'+SOURCE+'\nend)()\n'+r'''
-Module.init({host={LocalPlayer=LocalPlayer,UserInputService={TouchEnabled=true,KeyboardEnabled=false},RunService=run},framework=framework,services={movementInput=movement}})
-jump.Options['Infinite jump']:Set(true);jump:Toggle(true)
-inputRequest();assert(h.current=='Jumping' and root.AssemblyLinearVelocity.Y==50)
-now+=1;jump.Options['Infinite jump mode']:Set('Fall')
-assert(not h:GetStateEnabled('Jumping') and h:GetStateEnabled('Freefall') and h.current=='Freefall','state lock must apply immediately, not on the next animation/frame')
-root.AssemblyLinearVelocity=Vector3.new(3,20,4);inputRequest()
-assert(h.current=='Freefall' and root.AssemblyLinearVelocity.Y==50)
+local ended,focused
+local input={InputEnded={Connect=function(_,fn) ended=fn;return {Disconnect=function() ended=nil end} end},
+ WindowFocusReleased={Connect=function(_,fn) focused=fn;return {Disconnect=function() focused=nil end} end}}
+Enum.KeyCode={Space='Space',ButtonA='ButtonA'};Enum.UserInputType={Touch='Touch',Keyboard='Keyboard'}
+local function release(touch) ended({KeyCode=touch and 'Unknown' or 'Space',UserInputType=touch and 'Touch' or 'Keyboard'}) end
+Module.init({host={LocalPlayer=LocalPlayer,UserInputService=input,RunService=run},framework=framework,services={movementInput=movement}})
+jump.Options['Infinite jump']:Set(true);jump.Options['Infinite jump mode']:Set('Fall');jump:Toggle(true)
+h.FloorMaterial='Ground';root.AssemblyLinearVelocity=Vector3.new(3,0,4)
+inputRequest();assert(h.current=='Running' and root.AssemblyLinearVelocity.Y==0 and h:GetStateEnabled('Jumping'),'first ground press is left to Roblox, not a synthetic Fall')
+h:ChangeState('Jumping');h.FloorMaterial='Air';root.AssemblyLinearVelocity=Vector3.new(3,50,4);loop()
+assert(h.current=='Jumping' and h:GetStateEnabled('Jumping'),'ordinary first jump keeps its normal state/animation')
+root.AssemblyLinearVelocity=Vector3.new(3,-5,4)
+for _=1,60 do now+=.02;inputRequest();loop() end
+assert(root.AssemblyLinearVelocity.Y==-5 and h.current=='Jumping','holding Space must not create extra jumps')
+release();inputRequest();assert(h.current=='Freefall' and root.AssemblyLinearVelocity.Y==50 and not h:GetStateEnabled('Jumping'))
 assert(root.AssemblyLinearVelocity.X==3 and root.AssemblyLinearVelocity.Z==4)
-local changes=h.changes
-for _=1,60 do loop() end
-assert(h.changes==changes,'do not spam ChangeState when already in Freefall')
-h:ChangeState('Landed');assert(h.current=='Landed','Fall does not force the standing/walking state into midair')
-h.Jump=true;h:ChangeState('Jumping');loop();assert(h.current=='Landed' and not h.Jump,'native Jumping is disabled, not merely hidden by a fall clip')
-now+=1;inputRequest();assert(h.current=='Freefall' and root.AssemblyLinearVelocity.Y==50)
-h:ForceState('Jumping');assert(h.current=='Freefall','redirect a forced Jumping transition without an animation workaround')
-jump.Options['Jump interval']:Set(.05);now+=.06;root.AssemblyLinearVelocity=Vector3.new(3,-5,4);inputRequest();assert(root.AssemblyLinearVelocity.Y==50,'mobile respects configured interval')
+local changes=h.changes;root.AssemblyLinearVelocity=Vector3.new(3,-9,4)
+for _=1,60 do now+=.02;inputRequest();loop() end
+assert(h.changes==changes and root.AssemblyLinearVelocity.Y==-9,'no state/animation or impulse spam while held')
+h:ForceState('Jumping');assert(h.current=='Freefall','forced Jumping is corrected only after an extra Fall jump')
+jump.Options['Jump interval']:Set(.05);now+=.06;release(true);inputRequest();assert(root.AssemblyLinearVelocity.Y==50,'touch release rearms one jump at configured interval')
+input.TouchEnabled=true
+local jumpFinger={UserInputType='Touch',Position=Vector3.new(100,100,0)}
+input.GetTouches=function() return {jumpFinger} end
+release();now+=1;inputRequest();root.AssemblyLinearVelocity=Vector3.new(3,-9,4)
+ended({UserInputType='Touch'});now+=1;inputRequest();assert(root.AssemblyLinearVelocity.Y==-9,'unrelated finger release must not rearm a held jump')
+ended(jumpFinger);inputRequest();assert(root.AssemblyLinearVelocity.Y==50)
+input.TouchEnabled=false
+h.FloorMaterial='Ground';h:ChangeState('Landed');loop()
+assert(h:GetStateEnabled('Jumping') and not h.listener,'landing restores native ground jumps')
+release();h:ChangeState('Running');root.AssemblyLinearVelocity=Vector3.new(3,0,4);inputRequest();assert(root.AssemblyLinearVelocity.Y==0)
+h.FloorMaterial='Air';h:ChangeState('Jumping');release();now+=1;inputRequest();assert(h.current=='Freefall')
 for _,state in ipairs({'Seated','Swimming','Climbing','Physics','PlatformStanding','Ragdoll','FallingDown'}) do
- h:ForceState(state);assert(h:GetStateEnabled('Jumping') and not h.listener,'release state ownership in incompatible states')
- now+=1;root.AssemblyLinearVelocity=Vector3.new(3,-5,4);inputRequest();loop()
- assert(root.AssemblyLinearVelocity.Y==-5 and h.current==state,'no airborne impulse or forced Fall while seated/swimming/ragdolled')
- h:ForceState('Running');loop();assert(not h:GetStateEnabled('Jumping'))
+ h:ForceState(state);assert(h:GetStateEnabled('Jumping') and not h.listener)
+ release();now+=1;root.AssemblyLinearVelocity=Vector3.new(3,-5,4);inputRequest();loop()
+ assert(root.AssemblyLinearVelocity.Y==-5 and h.current==state,'no boost in incompatible states')
+ h:ForceState('Freefall');release();now+=1;inputRequest();assert(not h:GetStateEnabled('Jumping'))
 end
-root.Anchored=true;loop();assert(h:GetStateEnabled('Jumping'))
-now+=1;inputRequest();assert(root.AssemblyLinearVelocity.Y==-5)
-root.Anchored=false;loop();assert(not h:GetStateEnabled('Jumping'))
-jump.Options['Infinite jump mode']:Set('Normal');assert(h:GetStateEnabled('Jumping') and not h.listener)
-now+=1;inputRequest();assert(h.current=='Jumping')
+root.Anchored=true;loop();assert(h:GetStateEnabled('Jumping'));release();now+=1;inputRequest();assert(root.AssemblyLinearVelocity.Y==50)
+root.Anchored=false;jump.Options['Infinite jump mode']:Set('Normal');assert(h:GetStateEnabled('Jumping') and not h.listener)
+release();now+=1;inputRequest();assert(h.current=='Jumping')
 jump.Options['Infinite jump mode']:Set('Rise');held=true;loop();assert(h.current=='Freefall' and root.AssemblyLinearVelocity.Y==75)
 held=false;root.AssemblyLinearVelocity=Vector3.new(3,-5,4);loop();assert(root.AssemblyLinearVelocity.Y==-5)
 h:SetStateEnabled('Jumping',false);h:SetStateEnabled('Freefall',false)
-jump.Options['Infinite jump mode']:Set('Fall');assert(h:GetStateEnabled('Freefall') and not h:GetStateEnabled('Jumping'))
-jump.Options['Infinite jump']:Set(false);assert(not h:GetStateEnabled('Freefall') and not h:GetStateEnabled('Jumping'),'restore initially disabled states too')
+jump.Options['Infinite jump mode']:Set('Fall');release();now+=1;inputRequest();assert(h:GetStateEnabled('Freefall'))
+jump.Options['Infinite jump']:Set(false);assert(not h:GetStateEnabled('Freefall') and not h:GetStateEnabled('Jumping'),'restore initially false flags')
 h:SetStateEnabled('Jumping',true);h:SetStateEnabled('Freefall',true);jump.Options['Infinite jump']:Set(true)
-local old=h;h=humanoid();loop();assert(old:GetStateEnabled('Jumping') and not old.listener and not h:GetStateEnabled('Jumping'))
-Module.destroy();assert(not jump.Enabled and not loop and not inputRequest and not h.listener and h:GetStateEnabled('Jumping'))
+release();now+=1;inputRequest();local old=h;h=humanoid();loop();assert(old:GetStateEnabled('Jumping') and not old.listener and h:GetStateEnabled('Jumping'),'new character starts with ordinary native jumps')
+Module.destroy();assert(not jump.Enabled and not loop and not inputRequest and not ended and not focused)
 local nativeRequest
-Module.init({host={LocalPlayer=LocalPlayer,UserInputService={JumpRequest={Connect=function(_,fn) nativeRequest=fn;return {Disconnect=function() nativeRequest=nil end} end}},RunService=run},framework=framework,services={}})
+input.JumpRequest={Connect=function(_,fn) nativeRequest=fn;return {Disconnect=function() nativeRequest=nil end} end}
+Module.init({host={LocalPlayer=LocalPlayer,UserInputService=input,RunService=run},framework=framework,services={}})
 jump.Options['Infinite jump']:Set(true);jump.Options['Infinite jump mode']:Set('Fall');jump:Toggle(true)
 assert(nativeRequest);nativeRequest();assert(h.current=='Freefall' and root.AssemblyLinearVelocity.Y==50)
-Module.destroy();assert(not nativeRequest and not loop and h:GetStateEnabled('Jumping'))
-print('PASS Jump actual source: state lock before physics, positive-Y Freefall, no animation spam, landing, force-state correction, touch timing, Normal/Rise, respawn and exact flag restoration')
+Module.destroy();assert(not nativeRequest and not loop and not ended and h:GetStateEnabled('Jumping'))
+print('PASS Jump actual source: native first ground jump, one boost per release/press, upward Freefall, no animation/state spam, landing, PC/touch, Normal/Rise, incompatible states, respawn and exact flag cleanup')
 '''
 assert 'LoadAnimation' not in SOURCE and ':Play(' not in SOURCE
 with tempfile.TemporaryDirectory() as d:

@@ -98,7 +98,7 @@ function Module.init(context: Runtime): any
                 return
             end
             runtime.waypoint = (root :: BasePart).Position
-            teleport:Notify("waypoint saved")
+            teleport:SetStatus("waypoint saved")
         end,
     })
     teleport:CreateSlider({

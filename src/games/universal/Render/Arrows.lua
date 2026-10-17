@@ -146,7 +146,7 @@ function Module.init(context: Runtime): any
         end,
     })
 
-    card:CreateColor({Name = "Colour", Default = Color3.fromRGB(255, 255, 255), Tooltip = "Base arrow colour. Arrows use role colours instead whenever the game knows roles."})
+    card:CreateColor({Name = "Colour", Default = Color3.fromRGB(85, 255, 85), Tooltip = "Base arrow colour. Arrows use role colours instead whenever the game knows roles."})
     card:CreateToggle({Name = "Distance", Default = true})
     card:CreateSlider({Name = "Max distance", Min = 25, Max = 2000, Step = 25, Default = 500})
     card:CreateToggle({Name = "Teammates", Default = false, Tooltip = "Also point at teammates. The advanced team check decides who counts."})

@@ -300,7 +300,7 @@ function Module.init(context: Runtime): any
         end
         local best: string = findBestMatchingName(trimmed) or trimmed
         learn(best)
-        render:Notify("Added: " .. best)
+        render:SetStatus("Added: " .. best)
         pendingInput = ""
         if addBox and addBox.Object and typeof(addBox.Object) == "Instance" and addBox.Object:IsA("TextBox") then
             addBox.Object.Text = ""
@@ -371,7 +371,7 @@ function Module.init(context: Runtime): any
         Function = function(): ()
             if picking then
                 picking = false
-                render:Notify("cancelled")
+                render:SetStatus("cancelled")
                 return
             end
             picking = true
@@ -393,7 +393,7 @@ function Module.init(context: Runtime): any
             wanted = {}
             objectList:Refresh()
             releaseAll()
-            render:Notify("list cleared")
+            render:SetStatus("list cleared")
         end,
     })
 
@@ -420,7 +420,7 @@ function Module.init(context: Runtime): any
     })
     render:CreateColor({
         Name = "Colour",
-        Default = Color3.fromRGB(232, 232, 236),
+        Default = Color3.fromRGB(85, 255, 85),
     })
 
     local pickConnection: RBXScriptConnection = userInput.InputBegan:Connect(
@@ -481,7 +481,7 @@ function Module.init(context: Runtime): any
             end
             learn(name)
             menu.setVisible(true)
-            render:Notify(name .. " added")
+            render:SetStatus(name .. " added")
         end
     )
 

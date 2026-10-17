@@ -12,7 +12,7 @@ function Module.init(context: any): any
         states["Universal.Nametags"] = states["Universal.Chams"] == true and states["Universal.Chams.Nametags"] == true
             or states["Universal.PlayerESP"] == true and states["Universal.PlayerESP.Nametags"] ~= false
         if values["Universal.Nametags.Textsize"] == nil then values["Universal.Nametags.Textsize"] = values["Universal.PlayerESP.Textsize"] end
-        for new, old in pairs({Background="Nameplate",Displayname="Displayname",Distance="Distance",Heldtool="Heldtool",Showrole="Showrole",Rolecolours="Rolecolours"}) do
+        for new, old in pairs({Background="Nameplate",Displayname="Displayname",Heldtool="Heldtool",Showrole="Showrole",Rolecolours="Rolecolours"}) do
             local key = "Universal.Nametags." .. new
             if states[key] == nil then states[key] = states["Universal.PlayerESP." .. old] end
         end
@@ -34,13 +34,13 @@ function Module.init(context: any): any
         local key = text .. ":" .. tostring(size) .. ":" .. tostring(viewport.X)
         drawing.textMetrics = drawing.textMetrics or {}
         if not drawing.textMetrics[slot] or drawing.textMetrics[slot].key ~= key then
-            local width = #text * size * 0.65 + 16
-            pcall(function() width = textService:GetTextSize(text, size, Enum.Font.GothamMedium, Vector2.new(10000,100)).X + 16 end)
+            local width = #text * size * 0.65 + 8
+            pcall(function() width = textService:GetTextSize(text, size, Enum.Font.Arial, Vector2.new(10000,100)).X + 8 end)
             width = math.max(1, math.min(width, viewport.X - 24))
             drawing.textMetrics[slot] = {key = key, width = width}
         end
         label.AutomaticSize = Enum.AutomaticSize.None
-        label.Size = UDim2.fromOffset(drawing.textMetrics[slot].width, size + 8)
+        label.Size = UDim2.fromOffset(drawing.textMetrics[slot].width, size + 7)
         label.TextTruncate = Enum.TextTruncate.AtEnd
         -- Clamped to screen independently of target position, not a clipped name.
         local half = label.Size.X.Offset * 0.5
@@ -72,7 +72,7 @@ function Module.init(context: any): any
                     local details = {}
                     if options["Account name"].Value and shown ~= player.Name then table.insert(details, "@" .. player.Name) end
                     if options["Show role"].Value and role then table.insert(details, role) end
-                    if options.Distance.Value then table.insert(details, tostring(math.round(target.Distance)) .. " studs") end
+
                     if options["Held tool"].Value then
                         local tool = target.Character:FindFirstChildOfClass("Tool")
                         if tool then table.insert(details, tool.Name) end
@@ -81,15 +81,28 @@ function Module.init(context: any): any
                     local drawing = render:Set(layer, player)
                     drawing:Show(true)
                     local size = math.round(options["Text size"].Value)
-                    local y = math.max(point.Y, size * 2 + 24)
-                    local lower = #details > 0 and size + 7 or 0
-                    drawing:Label("Name", shown, Vector2.new(point.X, y - lower), 1, size, colour, options.Background.Value)
+                    if #details > 0 then shown ..= " [" .. table.concat(details, "] [") .. "]" end
+                    if options.Distance.Value then shown = "[" .. tostring(math.round(target.Distance)) .. "] " .. shown end
+                    local y = math.max(point.Y, size + 16)
+                    drawing:Label("Name", shown, Vector2.new(point.X, y), 1, size, colour, options.Background.Value)
+                    local label = drawing.labels.Name
+                    if label then
+                        if not drawing.flatNametag then
+                            for _, child in ipairs(label:GetChildren()) do
+                                if child:IsA("UICorner") or child:IsA("UIStroke") then child:Destroy()
+                                elseif child:IsA("UIPadding") then
+                                    child.PaddingLeft, child.PaddingRight = UDim.new(0,4), UDim.new(0,4)
+                                end
+                            end
+                            drawing.flatNametag = true
+                        end
+                        label.Font = Enum.Font.Arial
+                        label.BackgroundColor3 = Color3.new(0,0,0)
+                        label.BackgroundTransparency = options.Background.Value and 0.5 or 1
+                        label.TextStrokeTransparency = 1
+                    end
                     fit(drawing, "Name", shown, size, camera.ViewportSize)
-                    if #details > 0 then
-                        local text = table.concat(details, "  ·  ")
-                        drawing:Label("Details", text, Vector2.new(point.X, y), 1, math.max(10, size - 2), colour:Lerp(Color3.new(1,1,1), 0.5), options.Background.Value)
-                        fit(drawing, "Details", text, math.max(10,size-2), camera.ViewportSize)
-                    else drawing:HideLabel("Details") end
+                    drawing:HideLabel("Details")
                 end
                 for player in pairs(tracked) do
                     if not seen[player] then render:Release(layer,player); tracked[player] = nil end
@@ -99,12 +112,12 @@ function Module.init(context: any): any
         end})
     card:CreateToggle({Name = "Display name", Default = true})
     card:CreateToggle({Name = "Account name", Default = false, Show = {Option = "Display name"}})
-    card:CreateToggle({Name = "Distance", Default = true})
-    card:CreateToggle({Name = "Show role", Default = true})
+    card:CreateToggle({Name = "Distance", Default = false})
+    card:CreateToggle({Name = "Show role", Default = false})
     card:CreateToggle({Name = "Held tool", Default = false})
     card:CreateToggle({Name = "Background", Default = true})
-    card:CreateSlider({Name = "Text size", Min = 10, Max = 24, Default = 15})
-    card:CreateColor({Name = "Colour", Default = Color3.fromRGB(240,244,250)})
+    card:CreateSlider({Name = "Text size", Min = 10, Max = 24, Default = 14})
+    card:CreateColor({Name = "Colour", Default = Color3.fromRGB(85, 255, 85)})
     card:CreateSlider({Name = "Max distance", Min = 50, Max = 5000, Default = 1000})
     card:CreateToggle({Name = "Through walls", Default = true})
     card:CreateToggle({Name = "Teammates", Default = true})
