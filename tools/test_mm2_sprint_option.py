@@ -19,7 +19,7 @@ local Color3={fromRGB=function() return {} end}
 local ColorSequence={new=function() return {} end}
 local NumberSequence={new=function() return {} end}
 local NumberSequenceKeypoint={new=function() return {} end}
-local humanoid={Parent=true,Health=100,WalkSpeed=16,Sit=false,MoveDirection=Vector3.new(1,0,0),FloorMaterial='Air'}
+local humanoid={Parent=true,Health=100,WalkSpeed=16,Sit=false,MoveDirection=Vector3.new(1,0,0),FloorMaterial='Air',GetState=function() return 'Running' end}
 local function makeRoot()
  local r={Parent=true,Position=Vector3.zero,AssemblyLinearVelocity=Vector3.zero}
  function r:FindFirstChild(name) for _,o in ipairs(objects) do if o.Parent==self and o.Name==name then return o end end end
@@ -41,21 +41,22 @@ local framework={Categories={Exploits={CreateModule=function(_,d)
  handler=d.Function;speed={Options={},Enabled=false}
  speed.CreateDropdown=option;speed.CreateSlider=option;speed.CreateToggle=option;speed.CreateButton=option
  function speed:SetStatus() end
- function speed:Clean(fn) self.cleanup=fn end
+ function speed:Clean(fn) self.cleanups=self.cleanups or {};table.insert(self.cleanups,fn) end
+ function speed:RefreshVisibility() end
  function speed:Loop(fn) loop=fn end
  function speed:Toggle(v)
-  if not v then if self.cleanup then self.cleanup() end;loop=nil end
+  if not v then for _,item in ipairs(self.cleanups or {}) do if type(item)=="function" then item() else item:Disconnect() end end;self.cleanups={};loop=nil end
   self.Enabled=v;handler(v)
  end
  return speed
 end}}}
-function framework:GetModule(n) assert(n=='Speed');return speed end
+function framework:GetModule(n) return n=='Speed' and speed or nil end
 local standalone
 local TaskManager={Connect=function(_,fn) standalone=fn;return {Disconnect=function() standalone=nil end} end}
 local featureConnections={}
 local function disconnectFeatureConnection(k) if featureConnections[k] then featureConnections[k]:Disconnect();featureConnections[k]=nil end end
 local state={framework=framework,mm2Core={}}
-local host={LocalPlayer=LocalPlayer,state=state,workspace={}}
+local host={LocalPlayer=LocalPlayer,state=state,workspace={},RunService={PreSimulation={Connect=function(_,fn) loop=fn;return {Disconnect=function() loop=nil end} end}}}
 local context={framework=framework,host=host,services={movementInput={getVector=function() return 0,0 end}}}
 local function getCharacterParts() return character,humanoid,root end
 '''+'\nlocal Speed=(function()\n'+S+'\nend)()\nlocal Sprint=(function()\n'+K+'\nend)()\n'+r'''
@@ -65,10 +66,10 @@ local press,release=speed.Options.Sprint.fn,speed.Options.Sprint.release
 press();assert(not speed.Enabled and speed.SprintHeld and humanoid.WalkSpeed==30 and standalone)
 release();assert(not standalone and humanoid.WalkSpeed==16 and not speed.SprintHeld)
 speed:Toggle(true);loop(1/60);assert(humanoid.WalkSpeed==32)
-press();assert(humanoid.WalkSpeed==30 and root:FindFirstChild('Wurst_SprintTail').Enabled)
+press();assert(humanoid.WalkSpeed==32 and root:FindFirstChild('Wurst_SprintTail').Enabled)
 local oldHumanoid=humanoid;local oldRoot=root
-humanoid={Parent=true,Health=100,WalkSpeed=22,Sit=false,MoveDirection=Vector3.zero,FloorMaterial='Air'};root=makeRoot();loop(1/60)
-assert(humanoid.WalkSpeed==30 and not root:FindFirstChild('Wurst_SprintTail').Enabled)
+humanoid={Parent=true,Health=100,WalkSpeed=22,Sit=false,MoveDirection=Vector3.zero,FloorMaterial='Air',GetState=function() return 'Running' end};root=makeRoot();loop(1/60)
+assert(humanoid.WalkSpeed==32 and not root:FindFirstChild('Wurst_SprintTail').Enabled)
 for _,o in ipairs(objects) do assert(o.Parent~=oldRoot,'old trail must be released on respawn') end
 release();assert(humanoid.WalkSpeed==32)
 press();speed:Toggle(false);assert(humanoid.WalkSpeed==30,'Sprint continues with Speed OFF')

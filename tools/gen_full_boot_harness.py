@@ -257,7 +257,7 @@ function newInst(class)
             if rawget(p, k) ~= nil or p[k] ~= nil then return p[k] end
             -- Property names that must read as nil, not as a lazy signal.
             if k == "Team" or k == "PrimaryPart" or k == "Character"
-                or k == "Backpack" or k == "Humanoid" or k == "Player" then
+                or k == "Backpack" or k == "Humanoid" or k == "Player" or k == "SeatPart" then
                 return nil
             end
             if not self.events[k] then self.events[k] = signal() end
@@ -311,6 +311,8 @@ do
     character.props.Name = "HarnessCharacter"
     local humanoid = newInst("Humanoid")
     humanoid.props.Health = 100
+    humanoid.props.MoveDirection = Vector3.zero
+    humanoid.props.Sit = false
     humanoid.props.WalkSpeed = 16
     humanoid.props.FloorMaterial = Enum.FloorMaterial.Grass
     humanoid.props.GetState = function() return Enum.HumanoidStateType.Running end
@@ -321,6 +323,7 @@ do
         part.props.Position = pos or Vector3.zero
         part.props.CFrame = CFrame.new(pos or Vector3.zero)
         part.props.AssemblyLinearVelocity = Vector3.zero
+        part.props.Anchored = false
         part.props.Transparency = 0
         part.Parent = character
         return part
@@ -828,6 +831,15 @@ do
     end
     local speed = ex.state.framework:GetModule("Speed")
     assert(speed and speed.Options.Sprint, "Sprint must be an option of Speed")
+    assert(not speed.Options["Vehicle speed value"].Visible and not speed.Options["Motor torque"].Visible)
+    speed.Options["Vehicle speed"].Metadata.callback(true)
+    assert(speed.Options["Vehicle multiplier"].Visible and not speed.Options["Vehicle speed value"].Visible)
+    speed.Options["Vehicle mode"].Metadata.callback("Velocity")
+    assert(speed.Options["Vehicle speed value"].Visible and not speed.Options["Vehicle multiplier"].Visible)
+    speed.Options["Vehicle mode"].Metadata.callback("Motors")
+    assert(speed.Options["Motor torque"].Visible and speed.Options["Vehicle multiplier"].Visible and not speed.Options["Vehicle speed value"].Visible)
+    speed.Options["Vehicle mode"].Metadata.callback("Multiplier")
+    speed.Options["Vehicle speed"].Metadata.callback(false)
     local sprintBinding = ex.state.shortcutBindings["Universal.SpeedSprint"]
     assert(sprintBinding and sprintBinding.key == Enum.KeyCode.Unknown, "Sprint needs an unassigned configurable key slot")
     assert(sprintBinding.hold and speed.Options.Sprint.Metadata.type == "action", "Sprint must be a held action, not toggle")

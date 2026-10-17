@@ -1,5 +1,5 @@
 return {
-    stamp = "v45-20261017-shot-safety",
+    stamp = "v46-20261017-movement",
     files = {
         ["src/Profile/142823291.lua"] = [[
 --!strict
@@ -16680,104 +16680,59 @@ function Module.init(context: Runtime): any
         originalJumpPower = setmetatable({}, {__mode = "k"}) :: any
     end
 
+    local function canControlJump(humanoid: Humanoid): boolean
+        if humanoid.Health <= 0 or humanoid.Sit or humanoid.SeatPart then return false end
+        local state = humanoid:GetState()
+        return state ~= Enum.HumanoidStateType.Seated and state ~= Enum.HumanoidStateType.Swimming
+            and state ~= Enum.HumanoidStateType.Climbing and state ~= Enum.HumanoidStateType.Physics
+            and state ~= Enum.HumanoidStateType.PlatformStanding and state ~= Enum.HumanoidStateType.Ragdoll
+            and state ~= Enum.HumanoidStateType.FallingDown and state ~= Enum.HumanoidStateType.Dead
+    end
+
     local fallHumanoid: Humanoid? = nil
     local fallConnection: RBXScriptConnection? = nil
-    local fallTrack: AnimationTrack? = nil
-    local fallLoadAttempted: boolean = false
-    local fallJumpPower: number = 50
-    local jumpAnimationIds: {[string]: boolean} = {}
-
-    local function stopFallTrack(): ()
-        if fallTrack then fallTrack:Stop(0) end
-    end
+    local originalStates = nil
+    local redirecting = false
 
     local function clearFallController(): ()
         if fallConnection then fallConnection:Disconnect(); fallConnection = nil end
-        if fallTrack then
-            fallTrack:Stop(0)
-            fallTrack:Destroy()
-            fallTrack = nil
+        if fallHumanoid and fallHumanoid.Parent and originalStates then
+            fallHumanoid:SetStateEnabled(Enum.HumanoidStateType.Jumping,originalStates.jumping)
+            fallHumanoid:SetStateEnabled(Enum.HumanoidStateType.Freefall,originalStates.freefall)
         end
-        fallHumanoid = nil
-        fallLoadAttempted = false
-        table.clear(jumpAnimationIds)
+        fallHumanoid, originalStates = nil, nil
     end
-
-    local function playNativeFall(humanoid: Humanoid): ()
-        local animator: Animator? = humanoid:FindFirstChildOfClass("Animator") :: Animator?
-        if not animator then return end
-        -- Stop only the rig's jump clips, not arbitrary emotes/other modules.
-        -- Freefall alone leaves Animate's jumpAnimTime running for ~0.3s.
-        if not fallLoadAttempted then
-            local character: Model? = LocalPlayer.Character
-            local animate: Instance? = character and character:FindFirstChild("Animate")
-            local folder: Instance? = animate and animate:FindFirstChild("fall")
-            local animation: Animation? = folder and folder:FindFirstChildOfClass("Animation") :: Animation?
-            if animation then
-                fallLoadAttempted = true
-                local jumpFolder: Instance? = animate and animate:FindFirstChild("jump")
-                if jumpFolder then
-                    for _, child: Instance in ipairs(jumpFolder:GetChildren()) do
-                        if child:IsA("Animation") then jumpAnimationIds[(child :: Animation).AnimationId] = true end
-                    end
-                end
-                local ok: boolean, loaded: any = pcall(function(): AnimationTrack
-                    return animator:LoadAnimation(animation)
-                end)
-                if ok and loaded then
-                    fallTrack = loaded
-                    loaded.Priority = Enum.AnimationPriority.Movement
-                    loaded.Looped = true
-                end
-            end
+    local function enforceFall(humanoid: Humanoid): ()
+        humanoid.Jump = false
+        if humanoid:GetStateEnabled(Enum.HumanoidStateType.Jumping) then humanoid:SetStateEnabled(Enum.HumanoidStateType.Jumping,false) end
+        if not humanoid:GetStateEnabled(Enum.HumanoidStateType.Freefall) then humanoid:SetStateEnabled(Enum.HumanoidStateType.Freefall,true) end
+        if humanoid:GetState() == Enum.HumanoidStateType.Jumping and not redirecting then
+            redirecting = true
+            humanoid:ChangeState(Enum.HumanoidStateType.Freefall)
+            redirecting = false
         end
-        for _, track: AnimationTrack in ipairs(animator:GetPlayingAnimationTracks()) do
-            local animation: Animation? = track.Animation
-            if animation and jumpAnimationIds[animation.AnimationId] then track:Stop(0) end
-        end
-        if fallTrack and not fallTrack.IsPlaying then fallTrack:Play(0, 1, 1) end
     end
-
     local function syncFallController(humanoid: Humanoid?, enabled: boolean): ()
-        if not enabled or not humanoid then
+        if not enabled or not humanoid or not canControlJump(humanoid) then
             if fallHumanoid then clearFallController() end
             return
         end
-        if fallHumanoid == humanoid then return end
-        clearFallController()
-        fallHumanoid = humanoid
-        local character: Model? = LocalPlayer.Character
-        local animate: Instance? = character and character:FindFirstChild("Animate")
-        local jumpFolder: Instance? = animate and animate:FindFirstChild("jump")
-        if jumpFolder then
-            for _, child: Instance in ipairs(jumpFolder:GetChildren()) do
-                if child:IsA("Animation") then jumpAnimationIds[(child :: Animation).AnimationId] = true end
-            end
+        if fallHumanoid ~= humanoid then
+            clearFallController()
+            fallHumanoid = humanoid
+            originalStates = {jumping=humanoid:GetStateEnabled(Enum.HumanoidStateType.Jumping),
+                freefall=humanoid:GetStateEnabled(Enum.HumanoidStateType.Freefall)}
+            fallConnection = humanoid.StateChanged:Connect(function(_,nextState)
+                if not canControlJump(humanoid) then clearFallController()
+                elseif nextState == Enum.HumanoidStateType.Jumping then enforceFall(humanoid) end
+            end)
         end
-        fallConnection = humanoid.StateChanged:Connect(function(_, nextState: Enum.HumanoidStateType): ()
-            if nextState == Enum.HumanoidStateType.Jumping then
-                -- Switching state before physics applies the ground jump
-                -- must not cancel its takeoff (including native mobile jumps).
-                local _, _, root: BasePart? = characterParts()
-                if root then
-                    local velocity: Vector3 = root.AssemblyLinearVelocity
-                    if velocity.Y <= 0 then
-                        root.AssemblyLinearVelocity = Vector3.new(velocity.X, fallJumpPower, velocity.Z)
-                    end
-                end
-                humanoid:ChangeState(Enum.HumanoidStateType.Freefall)
-                playNativeFall(humanoid)
-            elseif nextState == Enum.HumanoidStateType.Freefall then
-                playNativeFall(humanoid)
-            else
-                stopFallTrack()
-            end
-        end)
+        enforceFall(humanoid)
     end
 
     local function performHighJump(velocityOverride: number?): ()
         local _, humanoid: Humanoid?, root: BasePart? = characterParts()
-        if not humanoid or not root or humanoid.Health <= 0 then
+        if not humanoid or not root or root.Anchored or not canControlJump(humanoid) then
             return
         end
         local velocityVal: number = velocityOverride or 72
@@ -16794,32 +16749,31 @@ function Module.init(context: Runtime): any
 
     local function performInfiniteJump(mode: string, strength: number, interval: number): ()
         local _, humanoid: Humanoid?, root: BasePart? = characterParts()
-        if not humanoid or not root or humanoid.Health <= 0 then
+        if not humanoid or not root or root.Anchored or not canControlJump(humanoid) then
             return
         end
 
-        local spacing: number = interval
-        if UserInputService.TouchEnabled and not UserInputService.KeyboardEnabled then
-            spacing = math.max(spacing, 0.25)
-        end
-
         local now: number = os.clock()
-        if now - lastInfiniteJumpAt < spacing then
+        if now - lastInfiniteJumpAt < interval then
             return
         end
         lastInfiniteJumpAt = now
 
         local velocity: Vector3 = (root :: BasePart).AssemblyLinearVelocity
-        -- Fall is a jump with the falling state/animation, not a brake
-        -- that only works after Y turns negative. X/Z momentum is unchanged.
-        fallJumpPower = strength
+        -- Positive Y is intentional: Fall changes the actual local state,
+        -- not the trajectory into downward motion or a manual animation.
+        -- X/Z momentum is unchanged; this makes no server-state guarantee.
         syncFallController(humanoid, mode == "Fall")
-        humanoid:ChangeState(mode == "Fall" and Enum.HumanoidStateType.Freefall or Enum.HumanoidStateType.Jumping)
         ;(root :: BasePart).AssemblyLinearVelocity = Vector3.new(velocity.X, strength, velocity.Z)
-        if mode == "Fall" then playNativeFall(humanoid) end
+        humanoid:ChangeState(mode == "Fall" and Enum.HumanoidStateType.Freefall or Enum.HumanoidStateType.Jumping)
     end
 
     local jump: any
+    local function refreshFall(): ()
+        local _, humanoid, root = characterParts()
+        syncFallController(humanoid,root ~= nil and not root.Anchored and jump.Enabled and jump.Options["Infinite jump"].Value
+            and jump.Options["Infinite jump mode"].Value == "Fall")
+    end
     jump = framework.Categories.Exploits:CreateModule({
         Name = "Jump",
         Category = "Exploits",
@@ -16838,23 +16792,27 @@ function Module.init(context: Runtime): any
             jump:SetStatus("active")
             jump:Clean(function(): () restoreJumpPower(); clearFallController() end)
 
+            local function requestJump(): ()
+                local opts = jump.Options
+                if not opts["Infinite jump"] or not opts["Infinite jump"].Value then
+                    return
+                end
+                local mode: string = opts["Infinite jump mode"] and opts["Infinite jump mode"].Value or "Normal"
+                if mode == "Rise" then
+                    return
+                end
+                local strength: number = opts["Infinite jump power"] and opts["Infinite jump power"].Value or 50
+                local interval: number = opts["Jump interval"] and opts["Jump interval"].Value or 0.18
+                performInfiniteJump(mode, strength, interval)
+            end
             if movementInput and type(movementInput.onJumpRequest) == "function" then
-                jump:Clean(movementInput.onJumpRequest(function(): ()
-                    local opts = jump.Options
-                    if not opts["Infinite jump"] or not opts["Infinite jump"].Value then
-                        return
-                    end
-                    local mode: string = opts["Infinite jump mode"] and opts["Infinite jump mode"].Value or "Normal"
-                    if mode == "Rise" then
-                        return
-                    end
-                    local strength: number = opts["Infinite jump power"] and opts["Infinite jump power"].Value or 50
-                    local interval: number = opts["Jump interval"] and opts["Jump interval"].Value or 0.18
-                    performInfiniteJump(mode, strength, interval)
-                end))
+                jump:Clean(movementInput.onJumpRequest(requestJump))
+            else
+                jump:Clean(UserInputService.JumpRequest:Connect(requestJump))
             end
 
-            jump:Loop(function(): ()
+            refreshFall()
+            jump:Clean(host.RunService.PreSimulation:Connect(function(): ()
                 local opts = jump.Options
                 local _, humanoid: Humanoid?, root: BasePart? = characterParts()
                 if not humanoid or not root or humanoid.Health <= 0 then
@@ -16862,21 +16820,10 @@ function Module.init(context: Runtime): any
                     return
                 end
 
-                local fallMode: boolean = opts["Infinite jump"] and opts["Infinite jump"].Value
+                local canMove = canControlJump(humanoid) and not root.Anchored
+                local fallMode: boolean = canMove and opts["Infinite jump"] and opts["Infinite jump"].Value
                     and opts["Infinite jump mode"].Value == "Fall"
-                fallJumpPower = opts["Infinite jump power"].Value
                 syncFallController(humanoid, fallMode)
-                if fallMode then
-                    local currentState: Enum.HumanoidStateType = humanoid:GetState()
-                    if currentState == Enum.HumanoidStateType.Jumping then
-                        humanoid:ChangeState(Enum.HumanoidStateType.Freefall)
-                        playNativeFall(humanoid)
-                    elseif currentState == Enum.HumanoidStateType.Freefall then
-                        playNativeFall(humanoid)
-                    else
-                        stopFallTrack()
-                    end
-                end
 
                 if opts["Custom jump power"] and opts["Custom jump power"].Value then
                     local wantedPower: number = opts["Jump power"] and opts["Jump power"].Value or 80
@@ -16892,18 +16839,18 @@ function Module.init(context: Runtime): any
                     restoreJumpPower()
                 end
 
-                if opts["Auto jump"] and opts["Auto jump"].Value then
+                if canMove and opts["Auto jump"] and opts["Auto jump"].Value then
                     local moveDir: Vector3 = humanoid.MoveDirection
                     if moveDir.Magnitude > 0.05 and humanoid.FloorMaterial ~= Enum.Material.Air then
                         if fallMode then
-                            performInfiniteJump("Fall", fallJumpPower, opts["Jump interval"].Value)
+                            performInfiniteJump("Fall", opts["Infinite jump power"].Value, opts["Jump interval"].Value)
                         else
                             humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
                         end
                     end
                 end
 
-                if opts["Infinite jump"] and opts["Infinite jump"].Value then
+                if canMove and opts["Infinite jump"] and opts["Infinite jump"].Value then
                     local mode: string = opts["Infinite jump mode"] and opts["Infinite jump mode"].Value or "Normal"
                     if mode == "Rise" and movementInput and type(movementInput.isJumpHeld) == "function" and movementInput.isJumpHeld() then
                         humanoid:ChangeState(Enum.HumanoidStateType.Freefall)
@@ -16912,7 +16859,7 @@ function Module.init(context: Runtime): any
                         ;(root :: BasePart).AssemblyLinearVelocity = Vector3.new(curVel.X, riseSpd, curVel.Z)
                     end
                 end
-            end)
+            end))
         end,
     })
 
@@ -16956,6 +16903,7 @@ function Module.init(context: Runtime): any
     jump:CreateToggle({
         Name = "Infinite jump",
         Default = false,
+        Function = refreshFall,
         Tooltip = "Allows jumping repeatedly in mid-air.",
     })
 
@@ -16963,8 +16911,9 @@ function Module.init(context: Runtime): any
         Name = "Infinite jump mode",
         Show = {Option = "Infinite jump", Values = {true}},
         List = {"Normal", "Rise", "Fall"},
+        Function = refreshFall,
         Index = 1,
-        Tooltip = "Normal = mid-air jump; Rise = hold to rise; Fall = jump using Freefall and your rig's falling animation, including while ascending.",
+        Tooltip = "Normal = mid-air jump; Rise = hold to rise; Fall = upward impulses while Jumping is disabled and the local Humanoid uses Freefall. Server behavior is not guaranteed.",
     })
 
     jump:CreateSlider({
@@ -17238,542 +17187,261 @@ return Module
 
 ]],
         ["src/games/universal/Movement/Speed.lua"] = [[
-export type Runtime = {
-    framework: any,
-    entity: any,
-    host: any,
-    services: any,
-}
+export type Runtime = {framework: any, entity: any, host: any, services: any}
 
-local Module = {
-    Name = "Speed",
-    PlaceId = 0,
-    Events = {} :: {[string]: any},
-    Initialized = false,
-}
-
-local activeCleanup: (() -> ())? = nil
+local Module = {Name = "Speed", PlaceId = 0, Events = {} :: {[string]: any}, Initialized = false}
+local activeCleanup
 
 function Module.init(context: Runtime): any
-    local host: any = context.host
-    local movementInput: any = context.services.movementInput
-    local framework: any = context.framework
-    local LocalPlayer: Player = host.LocalPlayer
-    local currentWorkspace: Workspace = host.workspace or workspace
+    local host, framework = context.host, context.framework
+    local player, world = host.LocalPlayer, host.workspace or workspace
+    local walk, vehicle, speed
+    local teleportElapsed, lastMode = 0, nil
 
-    type VehicleSeatState = {
-        maxSpeed: number,
-        torque: number,
-        turnSpeed: number,
-    }
-    type HingeState = {
-        angularVelocity: number,
-        motorMaxTorque: number,
-    }
-
-    local runtime: any = {
-        originalWalkSpeed = setmetatable({}, {__mode = "k"}) :: any,
-        nextTeleportAt = 0,
-        originalVehicleSeats = setmetatable({}, {__mode = "k"}) :: {[VehicleSeat]: VehicleSeatState},
-        originalMotorHinges = setmetatable({}, {__mode = "k"}) :: {[HingeConstraint]: HingeState},
-        velocityExcess = setmetatable({}, {__mode = "k"}) :: {[BasePart]: number},
-        motorExcess = setmetatable({}, {__mode = "k"}) :: {[HingeConstraint]: number},
-        -- Belt and suspenders for disable: the capture map is weak-keyed, so
-        -- a respawn or a stale session could lose it while the humanoid still
-        -- runs at the boosted value. Remember the base and the last applied
-        -- value so "off" always returns the character to normal speed.
-        baseWalkSpeed = nil :: number?,
-        lastAppliedWalkSpeed = nil :: number?,
-    }
-
-    local function characterParts(): (Model?, Humanoid?, BasePart?)
-        local character: Model? = LocalPlayer.Character
-        if not character then
-            return nil, nil, nil
-        end
-        local humanoid: Humanoid? =
-            character:FindFirstChildOfClass("Humanoid") :: Humanoid?
-        local root: BasePart? =
-            character:FindFirstChild("HumanoidRootPart") :: BasePart?
-        return character, humanoid, root
+    local function parts()
+        local character = player.Character
+        return character, character and character:FindFirstChildOfClass("Humanoid"),
+            character and character:FindFirstChild("HumanoidRootPart")
     end
-
-    local function restoreWalkSpeed(): ()
-        for humanoid: Humanoid, value: number in pairs(runtime.originalWalkSpeed) do
-            if humanoid and humanoid.Parent then
-                humanoid.WalkSpeed = value
+    local function restoreWalk()
+        if walk then
+            if walk.humanoid.Parent and walk.humanoid.WalkSpeed == walk.applied then walk.humanoid.WalkSpeed = walk.base end
+            walk = nil
+        end
+    end
+    local function applyWalk(humanoid, value)
+        if walk and walk.humanoid ~= humanoid then restoreWalk() end
+        if not walk then walk = {humanoid=humanoid,base=humanoid.WalkSpeed} end
+        if walk.applied and humanoid.WalkSpeed ~= walk.applied then walk.base = humanoid.WalkSpeed end
+        humanoid.WalkSpeed = value
+        walk.applied = value
+    end
+    local function write(record, object, property, value)
+        local field = record[property]
+        if not field then field = {base=object[property]}; record[property] = field end
+        if field.applied ~= nil and object[property] ~= field.applied then field.base = object[property] end
+        object[property], field.applied = value, value
+    end
+    local function restoreRecord(object, record)
+        if not object.Parent then return end
+        for property, field in pairs(record) do
+            if object[property] == field.applied then object[property] = field.base end
+        end
+    end
+    local function restoreVehicle()
+        if not vehicle then return end
+        if vehicle.connection then vehicle.connection:Disconnect() end
+        for object, record in pairs(vehicle.properties) do restoreRecord(object,record) end
+        vehicle = nil
+    end
+    local function resolveVehicle(humanoid, character)
+        local seat = humanoid.SeatPart
+        -- Passengers and characters standing on an assembly are not drivers.
+        if not seat or not seat:IsA("VehicleSeat") or seat.Occupant ~= humanoid then return end
+        local assembly = seat.AssemblyRootPart or seat
+        if assembly:IsDescendantOf(character) then assembly = seat end
+        if assembly.Anchored then return end
+        local model = seat:FindFirstAncestorOfClass("Model")
+        while model and not assembly:IsDescendantOf(model) do model = model:FindFirstAncestorOfClass("Model") end
+        return seat, assembly, model
+    end
+    local function vehicleStep(humanoid, character)
+        local seat, assembly, model = resolveVehicle(humanoid,character)
+        if not seat then restoreVehicle(); return false end
+        local opts, mode = speed.Options, speed.Options["Vehicle mode"].Value
+        if vehicle and (vehicle.seat ~= seat or vehicle.model ~= model or vehicle.mode ~= mode or vehicle.assembly ~= assembly) then restoreVehicle() end
+        if not vehicle then vehicle = {seat=seat,assembly=assembly,model=model,mode=mode,properties={}} end
+        local function record(object)
+            vehicle.properties[object] = vehicle.properties[object] or {}
+            return vehicle.properties[object]
+        end
+        local multiplier = opts["Vehicle multiplier"].Value
+        if mode == "Multiplier" then
+            local captured = record(seat)
+            local baseSpeed = captured.MaxSpeed and captured.MaxSpeed.base or seat.MaxSpeed
+            local baseTorque = captured.Torque and captured.Torque.base or seat.Torque
+            if captured.MaxSpeed and seat.MaxSpeed ~= captured.MaxSpeed.applied then baseSpeed = seat.MaxSpeed end
+            if captured.Torque and seat.Torque ~= captured.Torque.applied then baseTorque = seat.Torque end
+            write(captured,seat,"MaxSpeed",baseSpeed*multiplier)
+            write(captured,seat,"Torque",baseTorque*multiplier)
+        elseif mode == "Seat" then
+            write(record(seat),seat,"MaxSpeed",opts["Vehicle speed value"].Value)
+        elseif mode == "Velocity" then
+            local throttle = math.clamp(seat.ThrottleFloat,-1,1)
+            if math.abs(throttle) > 0.01 then
+                local look = seat.CFrame.LookVector
+                local flat = Vector3.new(look.X,0,look.Z)
+                if flat.Magnitude > 0.001 then
+                    local current = assembly.AssemblyLinearVelocity
+                    local horizontal = flat.Unit * (opts["Vehicle speed value"].Value*throttle)
+                    assembly.AssemblyLinearVelocity = Vector3.new(horizontal.X,current.Y,horizontal.Z)
+                end
+            end
+        elseif mode == "Motors" and model then
+            -- Discover once per vehicle. Newly added wheel motors are picked up
+            -- by DescendantAdded, not by scanning the whole car every frame.
+            if not vehicle.motors then
+                vehicle.motors = {}
+                local owner = vehicle
+                local function discover(object)
+                    if object:IsA("HingeConstraint") and object.ActuatorType == Enum.ActuatorType.Motor then owner.motors[object] = true end
+                end
+                for _, object in ipairs(model:GetDescendants()) do discover(object) end
+                owner.connection = model.DescendantAdded:Connect(discover)
+            end
+            for motor in pairs(vehicle.motors) do
+                if not motor.Parent or not motor:IsDescendantOf(model) or motor.ActuatorType ~= Enum.ActuatorType.Motor then
+                    if vehicle.properties[motor] then restoreRecord(motor,vehicle.properties[motor]) end
+                    vehicle.properties[motor], vehicle.motors[motor] = nil, nil
+                    continue
+                end
+                local captured = record(motor)
+                local angular = captured.AngularVelocity
+                local base = angular and angular.base or motor.AngularVelocity
+                if angular and motor.AngularVelocity ~= angular.applied then base = motor.AngularVelocity end
+                if math.abs(seat.ThrottleFloat) < 0.01 then base = 0 end
+                -- Store the controller's latest command, never multiply our
+                -- previous write. Zero and reverse commands remain meaningful.
+                if angular then angular.base = base end
+                write(captured,motor,"AngularVelocity",base*multiplier)
+                captured.AngularVelocity.base = base
+                local torque = captured.MotorMaxTorque
+                local baseTorque = torque and torque.base or motor.MotorMaxTorque
+                if torque and motor.MotorMaxTorque ~= torque.applied then baseTorque = motor.MotorMaxTorque end
+                write(captured,motor,"MotorMaxTorque",math.max(baseTorque,opts["Motor torque"].Value))
             end
         end
-        runtime.originalWalkSpeed = setmetatable({}, {__mode = "k"}) :: any
+        return true
     end
-
-    local function clearVehicleBoostHistory(): ()
-        runtime.velocityExcess = setmetatable({}, {__mode = "k"}) :: any
-        runtime.motorExcess = setmetatable({}, {__mode = "k"}) :: any
+    local function direction(humanoid)
+        local move = humanoid.MoveDirection
+        local flat = Vector3.new(move.X,0,move.Z)
+        return flat.Magnitude > 1 and flat.Unit or flat
     end
-
-    local function restoreVehicle(): ()
-        for seat: VehicleSeat, original: VehicleSeatState in pairs(runtime.originalVehicleSeats) do
-            if seat.Parent then
-                seat.MaxSpeed = original.maxSpeed
-                seat.Torque = original.torque
-                seat.TurnSpeed = original.turnSpeed
-            end
+    local function blocked(root, step)
+        if step.Magnitude < 0.001 then return step end
+        local params = RaycastParams.new()
+        params.FilterType = Enum.RaycastFilterType.Exclude
+        params.FilterDescendantsInstances = {player.Character}
+        params.RespectCanCollide, params.IgnoreWater = true, true
+        params.CollisionGroup = root.CollisionGroup
+        if world.Blockcast then
+            local hit = world:Blockcast(root.CFrame,root.Size*0.9,step,params)
+            return hit and step.Unit*math.max(0,hit.Distance-0.1) or step
         end
-        runtime.originalVehicleSeats = setmetatable({}, {__mode = "k"}) :: any
-        for hinge: HingeConstraint, original: HingeState in pairs(runtime.originalMotorHinges) do
-            if hinge.Parent then
-                hinge.AngularVelocity = original.angularVelocity
-                hinge.MotorMaxTorque = original.motorMaxTorque
-            end
-        end
-        runtime.originalMotorHinges = setmetatable({}, {__mode = "k"}) :: any
-        clearVehicleBoostHistory()
+        local hit = world:Raycast(root.Position,step,params)
+        return hit and step.Unit*math.max(0,(hit.Position-root.Position).Magnitude-root.Size.Magnitude*0.5-0.1) or step
     end
-
-    local function resolveVehicle(): (BasePart?, Model?, VehicleSeat?)
-        local character: Model?, humanoid: Humanoid?, root: BasePart? =
-            characterParts()
-        if not character or not humanoid or not root then
-            return nil, nil, nil
-        end
-        local seatPart: BasePart? = humanoid.SeatPart
-        local assembly: BasePart? = nil
-        if seatPart then
-            assembly = seatPart.AssemblyRootPart or seatPart
-        else
-            assembly = root.AssemblyRootPart
-            if not assembly or assembly:IsDescendantOf(character) then
-                return nil, nil, nil
-            end
-        end
-        local resolvedAssembly: BasePart = assembly :: BasePart
-        local model: Model? = (seatPart or resolvedAssembly):FindFirstAncestorOfClass("Model")
-        local vehicleSeat: VehicleSeat? = seatPart
-                and seatPart:IsA("VehicleSeat")
-                and seatPart :: VehicleSeat
-            or nil
-        return resolvedAssembly, model, vehicleSeat
-    end
-
-    local function rememberVehicleParts(model: Model?): ()
-        if not model then
-            return
-        end
-        for _, descendant: Instance in ipairs(model:GetDescendants()) do
-            if descendant:IsA("VehicleSeat")
-                and runtime.originalVehicleSeats[descendant] == nil then
-                runtime.originalVehicleSeats[descendant] = {
-                    maxSpeed = descendant.MaxSpeed,
-                    torque = descendant.Torque,
-                    turnSpeed = descendant.TurnSpeed,
-                }
-            elseif descendant:IsA("HingeConstraint")
-                and descendant.ActuatorType == Enum.ActuatorType.Motor
-                and runtime.originalMotorHinges[descendant] == nil then
-                runtime.originalMotorHinges[descendant] = {
-                    angularVelocity = descendant.AngularVelocity,
-                    motorMaxTorque = descendant.MotorMaxTorque,
-                }
-            end
-        end
-    end
-
-    local function boostedVehicleBase(current: number, previousExcess: number, multiplier: number): number
-        local base: number = math.max(current - previousExcess, 0)
-        if base < 0.01 and current > 0.01 then
-            base = current / math.max(multiplier, 1)
-        end
-        return base
-    end
-
-    local function boostVehicleVelocity(assembly: BasePart, forcedDirection: Vector3?, multiplier: number): ()
-        local current: Vector3 = assembly.AssemblyLinearVelocity
-        local horizontal: Vector3 = Vector3.new(current.X, 0, current.Z)
-        local curSpeed: number = horizontal.Magnitude
-        if curSpeed < 0.01 then
-            runtime.velocityExcess[assembly] = 0
-            return
-        end
-        local base: number = boostedVehicleBase(curSpeed, runtime.velocityExcess[assembly] or 0, multiplier)
-        local target: number = base * multiplier
-        local direction: Vector3 = forcedDirection or horizontal.Unit
-        direction = Vector3.new(direction.X, 0, direction.Z)
-        if direction.Magnitude < 0.01 then
-            return
-        end
-        direction = direction.Unit
-        assembly.AssemblyLinearVelocity = direction * target + Vector3.new(0, current.Y, 0)
-        runtime.velocityExcess[assembly] = math.max(target - base, 0)
-    end
-
-    local function boostVehicleMotors(model: Model?, multiplier: number, motorTorque: number): ()
-        rememberVehicleParts(model)
-        for hinge: HingeConstraint, original: HingeState in pairs(runtime.originalMotorHinges) do
-            if not hinge.Parent or (model and not hinge:IsDescendantOf(model)) then
-                continue
-            end
-            local current: number = hinge.AngularVelocity
-            local sign: number = current < 0 and -1 or 1
-            local magnitude: number = math.abs(current)
-            local base: number = boostedVehicleBase(magnitude, runtime.motorExcess[hinge] or 0, multiplier)
-            local target: number = base * multiplier
-            hinge.AngularVelocity = sign * target
-            hinge.MotorMaxTorque = math.max(
-                original.motorMaxTorque * multiplier,
-                motorTorque
-            )
-            runtime.motorExcess[hinge] = math.max(target - base, 0)
-        end
-    end
-
-    local function boostVehicleSeatProperties(model: Model?, seat: VehicleSeat?, multiplier: number): ()
-        rememberVehicleParts(model)
-        if seat and runtime.originalVehicleSeats[seat] == nil then
-            runtime.originalVehicleSeats[seat] = {
-                maxSpeed = seat.MaxSpeed,
-                torque = seat.Torque,
-                turnSpeed = seat.TurnSpeed,
-            }
-        end
-        for candidate: VehicleSeat, original: VehicleSeatState in pairs(runtime.originalVehicleSeats) do
-            if not candidate.Parent or (model and not candidate:IsDescendantOf(model)) then
-                continue
-            end
-            candidate.MaxSpeed = original.maxSpeed * multiplier
-            candidate.Torque = original.torque * multiplier
-            candidate.TurnSpeed = original.turnSpeed * multiplier
-        end
-    end
-
-    local function moveDirection(): Vector3
-        local camera: Camera? = currentWorkspace.CurrentCamera
-        local forward: number, right: number = 0, 0
-        if movementInput.getVector then
-            forward, right = movementInput.getVector()
-        end
-        if forward == 0 and right == 0 then
-            local _, humanoid: Humanoid? = characterParts()
-            local move: Vector3 = humanoid and humanoid.MoveDirection or Vector3.zero
-            return move.Magnitude > 0.05 and move.Unit or Vector3.zero
-        end
-        if not camera then
-            return Vector3.zero
-        end
-        local look: Vector3 = (camera :: Camera).CFrame.LookVector
-        local side: Vector3 = (camera :: Camera).CFrame.RightVector
-        local flatLook: Vector3 = Vector3.new(look.X, 0, look.Z)
-        local flatSide: Vector3 = Vector3.new(side.X, 0, side.Z)
-        if flatLook.Magnitude < 0.001 then
-            return Vector3.zero
-        end
-        local direction: Vector3 =
-            flatLook.Unit * forward + flatSide.Unit * right
-        return direction.Magnitude > 0.05 and direction.Unit or Vector3.zero
-    end
-
-    local function blocked(root: BasePart, step: Vector3): Vector3
-        local parameters: RaycastParams = RaycastParams.new()
-        parameters.FilterType = Enum.RaycastFilterType.Exclude
-        parameters.RespectCanCollide = true
-        local ignore: {Instance} = {LocalPlayer.Character :: Instance}
-        for _, player: Player in ipairs(host.Players:GetPlayers()) do
-            if player ~= LocalPlayer and player.Character then
-                table.insert(ignore, player.Character :: Instance)
-            end
-        end
-        parameters.FilterDescendantsInstances = ignore
-        local hit: RaycastResult? =
-            currentWorkspace:Raycast(root.Position, step, parameters)
-        if not hit then
-            return step
-        end
-        return ((hit :: RaycastResult).Position + (hit :: RaycastResult).Normal)
-            - root.Position
-    end
-
-    local speed: any
-    local function stepSpeed(deltaTime: number): ()
-        local options: any = speed.Options
-        local _, humanoid: Humanoid?, root: BasePart? = characterParts()
-        if not humanoid or not root then
+    local function stepSpeed(dt)
+        local character, humanoid, root = parts()
+        if not humanoid or not root or humanoid.Health <= 0 then
+            restoreWalk(); restoreVehicle()
             if speed.ClearSprint then speed.ClearSprint() end
             return
         end
-        local sprint: boolean = speed.SprintHeld == true and not humanoid.Sit
-        local resolvedHumanoid: Humanoid = humanoid :: Humanoid
-        local resolvedRoot: BasePart = root :: BasePart
-        if resolvedHumanoid.Health <= 0 then
-            if speed.ClearSprint then speed.ClearSprint() end
+        if not speed.Enabled and not speed.SprintHeld then restoreWalk(); restoreVehicle(); return end
+        local seated = humanoid.SeatPart ~= nil or humanoid.Sit
+        if speed.SprintFrame then speed.SprintFrame(speed.SprintHeld and not seated,root) end
+        if seated then
+            restoreWalk()
+            if speed.Enabled and speed.Options["Vehicle speed"].Value then vehicleStep(humanoid,character) else restoreVehicle() end
             return
         end
-        if speed.SprintFrame then speed.SprintFrame(sprint and not humanoid.Sit, root) end
-
-        if not speed.Enabled and not sprint then restoreWalkSpeed(); return end
-        if speed.Enabled and options["Vehicle speed"] and options["Vehicle speed"].Value then
-            local assembly: BasePart?, model: Model?, seat: VehicleSeat? =
-                resolveVehicle()
-            if assembly then
-                local vehMode: string = options["Vehicle mode"] and options["Vehicle mode"].Value or "Multiplier"
-                local vehMultiplier: number = options["Vehicle multiplier"] and options["Vehicle multiplier"].Value or 2
-                local motorTorque: number = options["Motor torque"] and options["Motor torque"].Value or 50000
-                if vehMode == "Multiplier" then
-                    boostVehicleVelocity(assembly :: BasePart, nil, vehMultiplier)
-                elseif vehMode == "Motors" then
-                    boostVehicleMotors(model, vehMultiplier, motorTorque)
-                elseif vehMode == "Velocity" then
-                    local direction: Vector3? = seat
-                        and (seat :: VehicleSeat).CFrame.LookVector
-                            * (seat :: VehicleSeat).ThrottleFloat
-                        or nil
-                    boostVehicleVelocity(assembly :: BasePart, direction, vehMultiplier)
-                else
-                    boostVehicleSeatProperties(model, seat, vehMultiplier)
-                end
-                return
-            end
+        restoreVehicle()
+        local fly = framework.GetModule and framework:GetModule("Fly")
+        local state = humanoid:GetState()
+        if root.Anchored or (fly and fly.Enabled) or state == Enum.HumanoidStateType.Climbing
+            or state == Enum.HumanoidStateType.Swimming or state == Enum.HumanoidStateType.Physics
+            or state == Enum.HumanoidStateType.PlatformStanding then restoreWalk(); return end
+        local opts = speed.Options
+        local mode = speed.Enabled and opts.Mode.Value or "WalkSpeed"
+        local target = speed.Enabled and opts.Speed.Value or 0
+        if speed.SprintHeld then target = math.max(target,30) end
+        if mode ~= lastMode then restoreWalk(); teleportElapsed = 0; lastMode = mode end
+        if mode == "WalkSpeed" then applyWalk(humanoid,target) else restoreWalk() end
+        local move = direction(humanoid)
+        if speed.Enabled and opts["Auto jump"].Value and move.Magnitude > 0.05 and humanoid.FloorMaterial ~= Enum.Material.Air then
+            humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
         end
-
-        local mode: string = sprint and "WalkSpeed" or options["Mode"].Value
-        local target: number = sprint and 30 or options["Speed"].Value
-
-        if mode == "WalkSpeed" then
-            if runtime.originalWalkSpeed[resolvedHumanoid] == nil then
-                runtime.originalWalkSpeed[resolvedHumanoid] =
-                    resolvedHumanoid.WalkSpeed
-                if runtime.baseWalkSpeed == nil
-                    or resolvedHumanoid.WalkSpeed < runtime.baseWalkSpeed then
-                    runtime.baseWalkSpeed = resolvedHumanoid.WalkSpeed
-                end
-            end
-            resolvedHumanoid.WalkSpeed = target
-            runtime.lastAppliedWalkSpeed = target
-            return
-        end
-        restoreWalkSpeed()
-
-        local direction: Vector3 = moveDirection()
-        if direction.Magnitude < 0.05 then
-            return
-        end
-
-        if options["Auto jump"].Value
-            and resolvedHumanoid.FloorMaterial ~= Enum.Material.Air then
-            resolvedHumanoid:ChangeState(Enum.HumanoidStateType.Jumping)
-        end
-
-        local velocity: Vector3 = resolvedRoot.AssemblyLinearVelocity
+        if mode == "WalkSpeed" then return end
+        local velocity = root.AssemblyLinearVelocity
         if mode == "Velocity" then
-            resolvedRoot.AssemblyLinearVelocity = Vector3.new(
-                direction.X * target,
-                velocity.Y,
-                direction.Z * target
-            )
-            return
-        end
-        if mode == "Impulse" then
-            local wanted: Vector3 = direction * target
-            local difference: Vector3 = Vector3.new(
-                wanted.X - velocity.X,
-                0,
-                wanted.Z - velocity.Z
-            )
-            if difference.Magnitude > 2 then
-                resolvedRoot:ApplyImpulse(
-                    difference * resolvedRoot.AssemblyMass
-                )
+            root.AssemblyLinearVelocity = Vector3.new(move.X*target,velocity.Y,move.Z*target)
+        elseif mode == "Impulse" then
+            local difference = Vector3.new(move.X*target-velocity.X,0,move.Z*target-velocity.Z)
+            if difference.Magnitude > 0.001 then root:ApplyImpulse(difference*root.AssemblyMass) end
+        elseif move.Magnitude > 0.001 then
+            local elapsed = math.clamp(dt or 0,0,0.1)
+            if mode == "Teleport" then
+                teleportElapsed += elapsed
+                local interval = opts["Burst delay"].Value
+                if teleportElapsed < interval then return end
+                teleportElapsed %= interval
+                elapsed = interval
             end
-            return
-        end
-
-        local extra: number =
-            math.max(target - resolvedHumanoid.WalkSpeed, 0)
-        if mode == "Teleport" then
-            local now: number = os.clock()
-            if now < runtime.nextTeleportAt then
-                return
-            end
-            runtime.nextTeleportAt = now + options["Burst delay"].Value
-            local step: Vector3 = direction * extra
-                * options["Burst delay"].Value
-            if options["Wall check"].Value then
-                step = blocked(resolvedRoot, step)
-            end
-            resolvedRoot.CFrame = resolvedRoot.CFrame + step
-            return
-        end
-
-        local step: Vector3 = direction * extra * deltaTime
-        if options["Wall check"].Value then
-            step = blocked(resolvedRoot, step)
-        end
-        resolvedRoot.CFrame = resolvedRoot.CFrame + step
+            local step = move * math.max(0,target-humanoid.WalkSpeed) * elapsed
+            if opts["Wall check"].Value then step = blocked(root,step) end
+            root.CFrame += step
+        else teleportElapsed = 0 end
     end
     speed = framework.Categories.Exploits:CreateModule({
-        Name = "Speed",
-        Category = "Exploits",
-        ConfigKey = "Universal.Speed",
-        Order = 1,
-        Tooltip = "Move faster on foot or in vehicles, by whichever method works best.",
-        Function = function(enabled: boolean): ()
-            runtime.nextTeleportAt = 0
-            restoreWalkSpeed()
-            restoreVehicle()
-            if speed.ClearSprint then speed.ClearSprint() end
+        Name="Speed",Category="Exploits",ConfigKey="Universal.Speed",Order=1,
+        Tooltip="On-foot movement and driver-only vehicle controls.",
+        Function=function(enabled)
+            restoreWalk(); restoreVehicle(); teleportElapsed, lastMode = 0, nil
             if not enabled then
-                -- Even when the weak capture map was lost, the live humanoid
-                -- must return to its normal speed the moment the card goes
-                -- off - not "whenever the game next touches WalkSpeed".
-                if runtime.baseWalkSpeed and runtime.lastAppliedWalkSpeed then
-                    local _, humanoid: Humanoid? = characterParts()
-                    if humanoid
-                        and (humanoid :: Humanoid).WalkSpeed
-                            == runtime.lastAppliedWalkSpeed then
-                        (humanoid :: Humanoid).WalkSpeed =
-                            runtime.baseWalkSpeed
-                    end
-                end
-                runtime.lastAppliedWalkSpeed = nil
+                if speed.ClearSprint then speed.ClearSprint() end
                 speed:SetStatus(nil)
                 if speed.SprintHeld then stepSpeed(0) end
                 return
             end
-            speed:SetStatus(
-                tostring(speed.Options["Mode"].Value)
-                    .. " "
-                    .. tostring(math.round(speed.Options["Speed"].Value))
-            )
-            speed:Clean(function(): ()
-                restoreWalkSpeed()
-                restoreVehicle()
-                if speed.ClearSprint then speed.ClearSprint() end
-            end)
-            speed:Loop(stepSpeed)
+            speed:Clean(function() restoreWalk(); restoreVehicle(); if speed.ClearSprint then speed.ClearSprint() end end)
+            speed:Clean(host.RunService.PreSimulation:Connect(stepSpeed))
+            speed:SetStatus(speed.Options.Mode.Value)
         end,
     })
-
     speed.SprintHeld = false
-    speed.SetSprintHeld = function(held: boolean): ()
+    speed.SetSprintHeld = function(held)
         speed.SprintHeld = held
-        if held or speed.Enabled then stepSpeed(0)
-        else
-            restoreWalkSpeed()
-            runtime.lastAppliedWalkSpeed = nil
-            if speed.ClearSprint then speed.ClearSprint() end
-        end
+        stepSpeed(0)
+        if not held and speed.ClearSprint then speed.ClearSprint() end
     end
-    speed.StepSprint = function(deltaTime: number): ()
-        if speed.SprintHeld and not speed.Enabled then stepSpeed(deltaTime) end
+    speed.StepSprint = function(dt) if speed.SprintHeld and not speed.Enabled then stepSpeed(dt) end end
+    local function changed()
+        restoreWalk(); restoreVehicle(); teleportElapsed, lastMode = 0, nil
+        if speed.Enabled then speed:SetStatus(speed.Options.Mode.Value) end
     end
-
-    speed:CreateDropdown({
-        Name = "Mode",
-        List = {"WalkSpeed", "Velocity", "Impulse", "CFrame", "Teleport"},
-        Index = 1,
-        Function = function(value: string): ()
-            if speed.Enabled then
-                speed:SetStatus(
-                    value .. " " .. tostring(math.round(speed.Options["Speed"].Value))
-                )
-            end
-        end,
-        Tooltip = "WalkSpeed is the quietest; Velocity and Impulse are smooth physics; CFrame and Teleport step directly.",
-    })
-    speed:CreateSlider({
-        Name = "Speed",
-        Min = 16,
-        Max = 200,
-        Default = 32,
-        Function = function(value: number): ()
-            if speed.Enabled then
-                speed:SetStatus(
-                    tostring(speed.Options["Mode"].Value)
-                        .. " "
-                        .. tostring(math.round(value))
-                )
-            end
-        end,
-        Tooltip = "Studs per second for on-foot movement.",
-    })
-    speed:CreateToggle({
-        Name = "Wall check",
-        Show = {Option = "Mode", Values = {"CFrame", "Teleport"}},
-        Default = true,
-        Tooltip = "Stop at geometry instead of stepping through it.",
-    })
-    speed:CreateSlider({
-        Name = "Burst delay",
-        Show = {Option = "Mode", Values = {"Teleport"}},
-        Min = 0.05,
-        Max = 1,
-        Default = 0.2,
-        Tooltip = "Seconds between teleport steps.",
-    })
-    speed:CreateToggle({
-        Name = "Auto jump",
-        Show = {Option = "Mode", Values = {"Velocity", "Impulse", "CFrame", "Teleport"}},
-        Default = false,
-        Tooltip = "Hop continuously while moving.",
-    })
-
-    speed:CreateToggle({
-        Name = "Vehicle speed",
-        Default = false,
-        Function = function(enabled: boolean): ()
-            if not enabled then
-                restoreVehicle()
-            end
-        end,
-        Tooltip = "Boosts any vehicle or mount you are currently driving.",
-    })
-    speed:CreateDropdown({
-        Name = "Vehicle mode",
-        Show = {Option = "Vehicle speed", Values = {true}},
-        List = {"Multiplier", "Motors", "Velocity", "Seat"},
-        Index = 1,
-        Function = function(): ()
-            restoreVehicle()
-        end,
-        Tooltip = "Multiplier preserves vehicle steering; Motors powers wheel constraints; Velocity pushes the chassis; Seat boosts VehicleSeat properties.",
-    })
-    speed:CreateSlider({
-        Name = "Vehicle multiplier",
-        Show = {Option = "Vehicle speed", Values = {true}},
-        Min = 1,
-        Max = 10,
-        Default = 2,
-        Function = function(): ()
-            clearVehicleBoostHistory()
-        end,
-        Tooltip = "Speed multiplier applied to vehicle driving speed.",
-    })
-    speed:CreateSlider({
-        Name = "Motor torque",
-        Show = {Option = "Vehicle speed", Values = {true}},
-        Min = 1000,
-        Max = 250000,
-        Default = 50000,
-        Tooltip = "Torque limit for motor hinges.",
-    })
-
-    activeCleanup = function(): ()
+    speed:CreateDropdown({Name="Mode",List={"WalkSpeed","Velocity","Impulse","CFrame","Teleport"},Index=1,Function=changed})
+    speed:CreateSlider({Name="Speed",Min=16,Max=200,Default=32})
+    speed:CreateToggle({Name="Wall check",Default=true,Show={Option="Mode",Values={"CFrame","Teleport"}}})
+    speed:CreateSlider({Name="Burst delay",Min=0.05,Max=1,Default=0.2,Show={Option="Mode",Values={"Teleport"}}})
+    speed:CreateToggle({Name="Auto jump",Default=false})
+    speed:CreateToggle({Name="Vehicle speed",Default=false,Function=changed,
+        Tooltip="Only the occupied driver VehicleSeat; never passengers or platforms."})
+    speed:CreateDropdown({Name="Vehicle mode",List={"Multiplier","Motors","Velocity","Seat"},Index=1,Function=changed,
+        Show={Option="Vehicle speed",Values={true}},
+        Tooltip="Multiplier: native seat engine. Motors: active hinge controller. Velocity: throttle-directed chassis speed. Seat: absolute native speed limit."})
+    speed:CreateSlider({Name="Vehicle multiplier",Min=1,Max=10,Default=2,Function=changed,
+        Show={{Option="Vehicle speed",Values={true}},{Option="Vehicle mode",Values={"Multiplier","Motors"}}}})
+    speed:CreateSlider({Name="Vehicle speed value",Min=1,Max=300,Default=80,
+        Show={{Option="Vehicle speed",Values={true}},{Option="Vehicle mode",Values={"Velocity","Seat"}}},
+        Tooltip="Vehicle speed in studs per second, independent of on-foot Speed."})
+    speed:CreateSlider({Name="Motor torque",Min=1000,Max=250000,Default=50000,
+        Show={{Option="Vehicle speed",Values={true}},{Option="Vehicle mode",Values={"Motors"}}}})
+    speed:RefreshVisibility()
+    activeCleanup = function()
         speed.SprintHeld = false
-        restoreWalkSpeed()
-        restoreVehicle()
+        if speed.Enabled then speed:Toggle(false) end
+        restoreWalk(); restoreVehicle()
         if speed.ClearSprint then speed.ClearSprint() end
     end
     Module.Initialized = true
     return speed
 end
-
-function Module.destroy(): ()
-    if activeCleanup then
-        pcall(activeCleanup)
-    end
-    activeCleanup = nil
+function Module.destroy()
+    if activeCleanup then activeCleanup(); activeCleanup = nil end
     Module.Initialized = false
 end
-
 return Module
 
 ]],

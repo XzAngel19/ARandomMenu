@@ -44,104 +44,59 @@ function Module.init(context: Runtime): any
         originalJumpPower = setmetatable({}, {__mode = "k"}) :: any
     end
 
+    local function canControlJump(humanoid: Humanoid): boolean
+        if humanoid.Health <= 0 or humanoid.Sit or humanoid.SeatPart then return false end
+        local state = humanoid:GetState()
+        return state ~= Enum.HumanoidStateType.Seated and state ~= Enum.HumanoidStateType.Swimming
+            and state ~= Enum.HumanoidStateType.Climbing and state ~= Enum.HumanoidStateType.Physics
+            and state ~= Enum.HumanoidStateType.PlatformStanding and state ~= Enum.HumanoidStateType.Ragdoll
+            and state ~= Enum.HumanoidStateType.FallingDown and state ~= Enum.HumanoidStateType.Dead
+    end
+
     local fallHumanoid: Humanoid? = nil
     local fallConnection: RBXScriptConnection? = nil
-    local fallTrack: AnimationTrack? = nil
-    local fallLoadAttempted: boolean = false
-    local fallJumpPower: number = 50
-    local jumpAnimationIds: {[string]: boolean} = {}
-
-    local function stopFallTrack(): ()
-        if fallTrack then fallTrack:Stop(0) end
-    end
+    local originalStates = nil
+    local redirecting = false
 
     local function clearFallController(): ()
         if fallConnection then fallConnection:Disconnect(); fallConnection = nil end
-        if fallTrack then
-            fallTrack:Stop(0)
-            fallTrack:Destroy()
-            fallTrack = nil
+        if fallHumanoid and fallHumanoid.Parent and originalStates then
+            fallHumanoid:SetStateEnabled(Enum.HumanoidStateType.Jumping,originalStates.jumping)
+            fallHumanoid:SetStateEnabled(Enum.HumanoidStateType.Freefall,originalStates.freefall)
         end
-        fallHumanoid = nil
-        fallLoadAttempted = false
-        table.clear(jumpAnimationIds)
+        fallHumanoid, originalStates = nil, nil
     end
-
-    local function playNativeFall(humanoid: Humanoid): ()
-        local animator: Animator? = humanoid:FindFirstChildOfClass("Animator") :: Animator?
-        if not animator then return end
-        -- Stop only the rig's jump clips, not arbitrary emotes/other modules.
-        -- Freefall alone leaves Animate's jumpAnimTime running for ~0.3s.
-        if not fallLoadAttempted then
-            local character: Model? = LocalPlayer.Character
-            local animate: Instance? = character and character:FindFirstChild("Animate")
-            local folder: Instance? = animate and animate:FindFirstChild("fall")
-            local animation: Animation? = folder and folder:FindFirstChildOfClass("Animation") :: Animation?
-            if animation then
-                fallLoadAttempted = true
-                local jumpFolder: Instance? = animate and animate:FindFirstChild("jump")
-                if jumpFolder then
-                    for _, child: Instance in ipairs(jumpFolder:GetChildren()) do
-                        if child:IsA("Animation") then jumpAnimationIds[(child :: Animation).AnimationId] = true end
-                    end
-                end
-                local ok: boolean, loaded: any = pcall(function(): AnimationTrack
-                    return animator:LoadAnimation(animation)
-                end)
-                if ok and loaded then
-                    fallTrack = loaded
-                    loaded.Priority = Enum.AnimationPriority.Movement
-                    loaded.Looped = true
-                end
-            end
+    local function enforceFall(humanoid: Humanoid): ()
+        humanoid.Jump = false
+        if humanoid:GetStateEnabled(Enum.HumanoidStateType.Jumping) then humanoid:SetStateEnabled(Enum.HumanoidStateType.Jumping,false) end
+        if not humanoid:GetStateEnabled(Enum.HumanoidStateType.Freefall) then humanoid:SetStateEnabled(Enum.HumanoidStateType.Freefall,true) end
+        if humanoid:GetState() == Enum.HumanoidStateType.Jumping and not redirecting then
+            redirecting = true
+            humanoid:ChangeState(Enum.HumanoidStateType.Freefall)
+            redirecting = false
         end
-        for _, track: AnimationTrack in ipairs(animator:GetPlayingAnimationTracks()) do
-            local animation: Animation? = track.Animation
-            if animation and jumpAnimationIds[animation.AnimationId] then track:Stop(0) end
-        end
-        if fallTrack and not fallTrack.IsPlaying then fallTrack:Play(0, 1, 1) end
     end
-
     local function syncFallController(humanoid: Humanoid?, enabled: boolean): ()
-        if not enabled or not humanoid then
+        if not enabled or not humanoid or not canControlJump(humanoid) then
             if fallHumanoid then clearFallController() end
             return
         end
-        if fallHumanoid == humanoid then return end
-        clearFallController()
-        fallHumanoid = humanoid
-        local character: Model? = LocalPlayer.Character
-        local animate: Instance? = character and character:FindFirstChild("Animate")
-        local jumpFolder: Instance? = animate and animate:FindFirstChild("jump")
-        if jumpFolder then
-            for _, child: Instance in ipairs(jumpFolder:GetChildren()) do
-                if child:IsA("Animation") then jumpAnimationIds[(child :: Animation).AnimationId] = true end
-            end
+        if fallHumanoid ~= humanoid then
+            clearFallController()
+            fallHumanoid = humanoid
+            originalStates = {jumping=humanoid:GetStateEnabled(Enum.HumanoidStateType.Jumping),
+                freefall=humanoid:GetStateEnabled(Enum.HumanoidStateType.Freefall)}
+            fallConnection = humanoid.StateChanged:Connect(function(_,nextState)
+                if not canControlJump(humanoid) then clearFallController()
+                elseif nextState == Enum.HumanoidStateType.Jumping then enforceFall(humanoid) end
+            end)
         end
-        fallConnection = humanoid.StateChanged:Connect(function(_, nextState: Enum.HumanoidStateType): ()
-            if nextState == Enum.HumanoidStateType.Jumping then
-                -- Switching state before physics applies the ground jump
-                -- must not cancel its takeoff (including native mobile jumps).
-                local _, _, root: BasePart? = characterParts()
-                if root then
-                    local velocity: Vector3 = root.AssemblyLinearVelocity
-                    if velocity.Y <= 0 then
-                        root.AssemblyLinearVelocity = Vector3.new(velocity.X, fallJumpPower, velocity.Z)
-                    end
-                end
-                humanoid:ChangeState(Enum.HumanoidStateType.Freefall)
-                playNativeFall(humanoid)
-            elseif nextState == Enum.HumanoidStateType.Freefall then
-                playNativeFall(humanoid)
-            else
-                stopFallTrack()
-            end
-        end)
+        enforceFall(humanoid)
     end
 
     local function performHighJump(velocityOverride: number?): ()
         local _, humanoid: Humanoid?, root: BasePart? = characterParts()
-        if not humanoid or not root or humanoid.Health <= 0 then
+        if not humanoid or not root or root.Anchored or not canControlJump(humanoid) then
             return
         end
         local velocityVal: number = velocityOverride or 72
@@ -158,32 +113,31 @@ function Module.init(context: Runtime): any
 
     local function performInfiniteJump(mode: string, strength: number, interval: number): ()
         local _, humanoid: Humanoid?, root: BasePart? = characterParts()
-        if not humanoid or not root or humanoid.Health <= 0 then
+        if not humanoid or not root or root.Anchored or not canControlJump(humanoid) then
             return
         end
 
-        local spacing: number = interval
-        if UserInputService.TouchEnabled and not UserInputService.KeyboardEnabled then
-            spacing = math.max(spacing, 0.25)
-        end
-
         local now: number = os.clock()
-        if now - lastInfiniteJumpAt < spacing then
+        if now - lastInfiniteJumpAt < interval then
             return
         end
         lastInfiniteJumpAt = now
 
         local velocity: Vector3 = (root :: BasePart).AssemblyLinearVelocity
-        -- Fall is a jump with the falling state/animation, not a brake
-        -- that only works after Y turns negative. X/Z momentum is unchanged.
-        fallJumpPower = strength
+        -- Positive Y is intentional: Fall changes the actual local state,
+        -- not the trajectory into downward motion or a manual animation.
+        -- X/Z momentum is unchanged; this makes no server-state guarantee.
         syncFallController(humanoid, mode == "Fall")
-        humanoid:ChangeState(mode == "Fall" and Enum.HumanoidStateType.Freefall or Enum.HumanoidStateType.Jumping)
         ;(root :: BasePart).AssemblyLinearVelocity = Vector3.new(velocity.X, strength, velocity.Z)
-        if mode == "Fall" then playNativeFall(humanoid) end
+        humanoid:ChangeState(mode == "Fall" and Enum.HumanoidStateType.Freefall or Enum.HumanoidStateType.Jumping)
     end
 
     local jump: any
+    local function refreshFall(): ()
+        local _, humanoid, root = characterParts()
+        syncFallController(humanoid,root ~= nil and not root.Anchored and jump.Enabled and jump.Options["Infinite jump"].Value
+            and jump.Options["Infinite jump mode"].Value == "Fall")
+    end
     jump = framework.Categories.Exploits:CreateModule({
         Name = "Jump",
         Category = "Exploits",
@@ -202,23 +156,27 @@ function Module.init(context: Runtime): any
             jump:SetStatus("active")
             jump:Clean(function(): () restoreJumpPower(); clearFallController() end)
 
+            local function requestJump(): ()
+                local opts = jump.Options
+                if not opts["Infinite jump"] or not opts["Infinite jump"].Value then
+                    return
+                end
+                local mode: string = opts["Infinite jump mode"] and opts["Infinite jump mode"].Value or "Normal"
+                if mode == "Rise" then
+                    return
+                end
+                local strength: number = opts["Infinite jump power"] and opts["Infinite jump power"].Value or 50
+                local interval: number = opts["Jump interval"] and opts["Jump interval"].Value or 0.18
+                performInfiniteJump(mode, strength, interval)
+            end
             if movementInput and type(movementInput.onJumpRequest) == "function" then
-                jump:Clean(movementInput.onJumpRequest(function(): ()
-                    local opts = jump.Options
-                    if not opts["Infinite jump"] or not opts["Infinite jump"].Value then
-                        return
-                    end
-                    local mode: string = opts["Infinite jump mode"] and opts["Infinite jump mode"].Value or "Normal"
-                    if mode == "Rise" then
-                        return
-                    end
-                    local strength: number = opts["Infinite jump power"] and opts["Infinite jump power"].Value or 50
-                    local interval: number = opts["Jump interval"] and opts["Jump interval"].Value or 0.18
-                    performInfiniteJump(mode, strength, interval)
-                end))
+                jump:Clean(movementInput.onJumpRequest(requestJump))
+            else
+                jump:Clean(UserInputService.JumpRequest:Connect(requestJump))
             end
 
-            jump:Loop(function(): ()
+            refreshFall()
+            jump:Clean(host.RunService.PreSimulation:Connect(function(): ()
                 local opts = jump.Options
                 local _, humanoid: Humanoid?, root: BasePart? = characterParts()
                 if not humanoid or not root or humanoid.Health <= 0 then
@@ -226,21 +184,10 @@ function Module.init(context: Runtime): any
                     return
                 end
 
-                local fallMode: boolean = opts["Infinite jump"] and opts["Infinite jump"].Value
+                local canMove = canControlJump(humanoid) and not root.Anchored
+                local fallMode: boolean = canMove and opts["Infinite jump"] and opts["Infinite jump"].Value
                     and opts["Infinite jump mode"].Value == "Fall"
-                fallJumpPower = opts["Infinite jump power"].Value
                 syncFallController(humanoid, fallMode)
-                if fallMode then
-                    local currentState: Enum.HumanoidStateType = humanoid:GetState()
-                    if currentState == Enum.HumanoidStateType.Jumping then
-                        humanoid:ChangeState(Enum.HumanoidStateType.Freefall)
-                        playNativeFall(humanoid)
-                    elseif currentState == Enum.HumanoidStateType.Freefall then
-                        playNativeFall(humanoid)
-                    else
-                        stopFallTrack()
-                    end
-                end
 
                 if opts["Custom jump power"] and opts["Custom jump power"].Value then
                     local wantedPower: number = opts["Jump power"] and opts["Jump power"].Value or 80
@@ -256,18 +203,18 @@ function Module.init(context: Runtime): any
                     restoreJumpPower()
                 end
 
-                if opts["Auto jump"] and opts["Auto jump"].Value then
+                if canMove and opts["Auto jump"] and opts["Auto jump"].Value then
                     local moveDir: Vector3 = humanoid.MoveDirection
                     if moveDir.Magnitude > 0.05 and humanoid.FloorMaterial ~= Enum.Material.Air then
                         if fallMode then
-                            performInfiniteJump("Fall", fallJumpPower, opts["Jump interval"].Value)
+                            performInfiniteJump("Fall", opts["Infinite jump power"].Value, opts["Jump interval"].Value)
                         else
                             humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
                         end
                     end
                 end
 
-                if opts["Infinite jump"] and opts["Infinite jump"].Value then
+                if canMove and opts["Infinite jump"] and opts["Infinite jump"].Value then
                     local mode: string = opts["Infinite jump mode"] and opts["Infinite jump mode"].Value or "Normal"
                     if mode == "Rise" and movementInput and type(movementInput.isJumpHeld) == "function" and movementInput.isJumpHeld() then
                         humanoid:ChangeState(Enum.HumanoidStateType.Freefall)
@@ -276,7 +223,7 @@ function Module.init(context: Runtime): any
                         ;(root :: BasePart).AssemblyLinearVelocity = Vector3.new(curVel.X, riseSpd, curVel.Z)
                     end
                 end
-            end)
+            end))
         end,
     })
 
@@ -320,6 +267,7 @@ function Module.init(context: Runtime): any
     jump:CreateToggle({
         Name = "Infinite jump",
         Default = false,
+        Function = refreshFall,
         Tooltip = "Allows jumping repeatedly in mid-air.",
     })
 
@@ -327,8 +275,9 @@ function Module.init(context: Runtime): any
         Name = "Infinite jump mode",
         Show = {Option = "Infinite jump", Values = {true}},
         List = {"Normal", "Rise", "Fall"},
+        Function = refreshFall,
         Index = 1,
-        Tooltip = "Normal = mid-air jump; Rise = hold to rise; Fall = jump using Freefall and your rig's falling animation, including while ascending.",
+        Tooltip = "Normal = mid-air jump; Rise = hold to rise; Fall = upward impulses while Jumping is disabled and the local Humanoid uses Freefall. Server behavior is not guaranteed.",
     })
 
     jump:CreateSlider({
