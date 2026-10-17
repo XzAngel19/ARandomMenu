@@ -835,3 +835,56 @@ Ahora:
 - Harness: failures=0, HERO + paleta + dock + ciclos de toggle verificados.
 - Suites 15/15 + 4 + 14 checks; 71/71 compilan; bundle 70 archivos, sello
   `v28-20261015-emotes-arrows-toggle-errors`.
+
+## v28 (Parte 2.2) — 2026-10-16 — Lead de arco + feedback de hit, con los logs del 16 como verdad
+
+Sello `v28-20261016-arc-lead-hit-feedback`.
+
+### Lo que dicen los logs reales del 2026-10-16 (TestingStuff)
+
+- `2026-10-16T22_14_51Z.log` y `22_18_17Z.log`: los DOS disparos del
+  módulo fueron **aceptados por el servidor** (GunFired con nuestro handle y
+  origen exacto) y **mataron al murderer** (sabinita130 DeadTime=88;
+  Snowflakes12370 DeadTime=82 + `VictoryScreen` inmediato). El viejo
+  "GunFired nunca se ecoa al tirador" era FALSO: sí hay eco.
+- `MM2_Trajectory_Calibration.json` (sesión E16D1B0E, build v35 del otro
+  branch): **9/9 disparos aceptados, 7/9 impactaron el cuerpo** del
+  objetivo. El gate de cadencia de 3.1 s eliminó los rechazos por completo.
+- Los 2 fallos: objetivos **girando bruscamente** al momento del disparo
+  (velocidad rotada ~65-70° en la ventana de observación).
+
+### Lead de arco (la corrección de los giros)
+
+El turn-discount anterior solo escalaba la magnitud del lead (con
+horizons de ~0.1 s quedaba en 97-99% = nada) y jamás corregía la
+DIRECCIÓN. Ahora:
+
+- `getFilteredVelocity` mide el giro **con signo** (componente Y del
+  producto cruz velocidad_previa × velocity_actual; +1 izquierda, -1
+  derecha, decae a 0 tras 0.2 s en línea recta).
+- `getGunLeadChordRotation`: el objetivo que sigue girando se mueve por
+  una CURVA, no por la tangente vieja; la cuerda hasta el punto medio del
+  arco es la tangente rotada por MEDIO ángulo barrido, en la dirección del
+  giro (máx 45°). El displacement del lead se rota con
+  `CFrame.fromEulerAnglesYXZ(0, chord, 0)`.
+- Convención verificada contra el miss real (north→west, crossY=+0.907)
+  y contra la matriz R_y(θ) de Roblox; el suite de precisión ahora trae
+  mini-Vector3 con Cross + mini-CFrame con rotación Y real, y un grupo
+  nuevo "gun arc lead" (16/16).
+
+### Feedback: el Shoot nunca más se ve "muerto"
+
+- **Hit confirmado**: cuando el eco de GunFired trae un hitPart dentro del
+  personaje objetivo → notificación "Hit <nombre> (<parte>) - server
+  confirmed" (evidencia del servidor, no heurística).
+- **Cooldown visible**: si disparas dentro de la ventana de 3.1 s del
+  servidor, la notificación ahora dice "Gun ready in X.Xs (the server
+  drops faster shots)" en vez de parecer que no pasa nada.
+
+### Verificación
+
+- Harness: failures=0, HERO + paleta + ciclos de toggle verificados
+  (mocks extendidos con Vector3:Cross y CFrame.fromEulerAnglesYXZ).
+- Suites: precisión 16/16 (grupo nuevo de arc lead), v16 4/4, teams 14.
+- 71/71 compilan; bundle 70 archivos, sello
+  `v28-20261016-arc-lead-hit-feedback`.

@@ -44,6 +44,13 @@ Vector3.__mul = function(a, b)
 end
 Vector3.__div = function(a, b) return a * (1 / b) end
 function Vector3.new(x, y, z) return setmetatable({X = x or 0, Y = y or 0, Z = z or 0, Magnitude = 0}, Vector3) end
+function Vector3:Cross(other)
+    return Vector3.new(
+        self.Y * other.Z - self.Z * other.Y,
+        self.Z * other.X - self.X * other.Z,
+        self.X * other.Y - self.Y * other.X
+    )
+end
 setmetatable(Vector3, {__call = function(cls, x, y, z) return Vector3.new(x, y, z) end})
 Vector3.zero = Vector3.new(0, 0, 0)
 Vector3.xAxis = Vector3.new(1, 0, 0)
@@ -51,7 +58,17 @@ Vector3.yAxis = Vector3.new(0, 1, 0)
 Vector3.zAxis = Vector3.new(0, 0, 1)
 CFrame = {}
 CFrame.__index = CFrame
-CFrame.__mul = function(a, b) return CFrame.new((a.Position or a[1]) + (b.Position or b[1])) end
+CFrame.__mul = function(a, b)
+    if a.y ~= nil and b.X ~= nil then
+        local c, s = math.cos(a.y), math.sin(a.y)
+        return Vector3.new(b.X * c + b.Z * s, b.Y, -b.X * s + b.Z * c)
+    end
+    return CFrame.new((a.Position or a[1]) + (b.Position or b[1]))
+end
+CFrame.fromEulerAnglesYXZ = function(rx, ry, rz)
+    assert(rx == 0 and rz == 0, "harness CFrame: only pure Y rotations")
+    return setmetatable({y = ry}, CFrame)
+end
 function CFrame.new(pos, look)
     return setmetatable({Position = pos or Vector3.zero, LookVector = Vector3.new(0, 0, -1), RightVector = Vector3.xAxis, UpVector = Vector3.yAxis}, CFrame)
 end

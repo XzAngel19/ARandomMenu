@@ -1,5 +1,5 @@
 return {
-    stamp = "v28-20261015-emotes-arrows-toggle-errors",
+    stamp = "v28-20261016-arc-lead-hit-feedback",
     files = {
         ["src/games/BedFight/Combat/AutoSwing.lua"] = [[
 local Module = {Name = "BedFight Auto Swing", Initialized = false, Connection = nil}
@@ -2161,6 +2161,8 @@ function Module.init(runtime: any): any
     local getGunHorizonSeconds: any = core.getGunHorizonSeconds
     local getGunTurnDiscount: any = core.getGunTurnDiscount
     local getGunTurnRate: any = core.getGunTurnRate
+    local getGunTurnSign: any = core.getGunTurnSign
+    local getGunLeadChordRotation: any = core.getGunLeadChordRotation
     local getGunLeadSensitivity: any = core.getGunLeadSensitivity
     local getGunLeadStatus: any = core.getGunLeadStatus
     local resetAutoLeadCorrection: any = core.resetAutoLeadCorrection
@@ -2344,6 +2346,21 @@ function Module.init(runtime: any): any
             0,
             velocity.Z * lead
         ) + horizontalAcceleration * (0.25 * lead * lead)
+        -- Arc lead: while the target keeps turning, their path curves; the
+        -- chord to the arc midpoint is the tangent rotated by half the
+        -- swept angle, in the turn's direction (sign from previous x
+        -- current). This is what the 2026-10-16 telemetry asked for: every
+        -- accepted shot that missed hit a target mid-turn.
+        if type(getGunLeadChordRotation) == "function" then
+            local chordRotation: number = getGunLeadChordRotation(
+                lead,
+                sample and sample.character == character and sample or nil
+            )
+            if chordRotation ~= 0 then
+                displacement = CFrame.fromEulerAnglesYXZ(0, chordRotation, 0)
+                    * displacement
+            end
+        end
 
         -- Vertical safety. Remote characters often read FloorMaterial = Air
         -- on our client, so a player walking flat ground can be misclassified
@@ -2750,7 +2767,19 @@ function Module.init(runtime: any): any
         -- re-fire never tests a correction - it just looks like the same
         -- miss again.
         if os.clock() - lastGunFireServer < GUN_SERVER_COOLDOWN then
-            return reject("Gun is cooling down - the server drops rapid shots.")
+            -- The server silently drops faster shots, so clicking during the
+            -- window does nothing in-game. Say WHEN the gun is ready so it
+            -- never looks dead ("sigue sin funcionar" was this).
+            local remaining: number =
+                GUN_SERVER_COOLDOWN - (os.clock() - lastGunFireServer)
+            if not quiet then
+                notify(string.format(
+                    "Gun ready in %.1fs (the server drops faster shots)",
+                    remaining
+                ))
+            end
+            lastRejectReason = "Gun is cooling down - the server drops rapid shots."
+            return false
         end
 
         if silent then
@@ -6797,6 +6826,7 @@ type MotionSample = {
 
     turnRate: number?,
     turnReferenceAt: number?,
+    turnSign: number?,
 }
 
 local motionSamples: {[Player]: MotionSample} =
@@ -6841,6 +6871,7 @@ local function getFilteredVelocity(player: Player, root: BasePart): Vector3
     local stability: number = 1
     local turnRate: number? = nil
     local turnReferenceAt: number? = nil
+    local turnSign: number? = nil
     local character: Model? = player.Character
     local humanoid: Humanoid? = character
         and character:FindFirstChildOfClass("Humanoid")
@@ -6892,14 +6923,26 @@ local function getFilteredVelocity(player: Player, root: BasePart): Vector3
                         0,
                         GUN_LEAD.maxTurnRate
                     )
+                    -- Signed turn: the Y component of previous x current
+                    -- tells LEFT from RIGHT, which is what lets the lead
+                    -- rotate along the target's curve instead of riding a
+                    -- stale tangent (real misses: targets turning hard
+                    -- while the shot is in flight).
+                    local crossY: number =
+                        previousHorizontal:Cross(currentHorizontal).Y
+                    if math.abs(crossY) > 1e-4 then
+                        turnSign = crossY > 0 and 1 or -1
+                    end
                 end
                 turnReferenceAt = now
             else
                 turnRate = sample.turnRate
                 turnReferenceAt = referenceAt
+                turnSign = sample.turnSign
                 -- Straight-line motion decays any stale turn estimate.
                 if now - referenceAt > 0.2 then
                     turnRate = 0
+                    turnSign = 0
                 end
             end
         end
@@ -6915,6 +6958,7 @@ local function getFilteredVelocity(player: Player, root: BasePart): Vector3
         grounded = grounded,
         turnRate = turnRate,
         turnReferenceAt = turnReferenceAt,
+        turnSign = turnSign,
     }
     return velocity
 end
@@ -7004,6 +7048,46 @@ local function getGunTurnRate(sample: MotionSample?): number
         return GUN_LEAD.defaultTurnRate
     end
     return math.clamp(measured, 0, GUN_LEAD.maxTurnRate)
+end
+
+local function getGunTurnSign(sample: MotionSample?): number
+    if type(sample) ~= "table" then
+        return 0
+    end
+    local sign: any = (sample :: any).turnSign
+    if type(sign) ~= "number" then
+        return 0
+    end
+    if sign >= 1 then
+        return 1
+    elseif sign <= -1 then
+        return -1
+    end
+    return 0
+end
+
+local function getGunLeadChordRotation(
+    horizon: number,
+    sample: MotionSample?
+): number
+    -- Arc extrapolation. A target that keeps turning does not move along
+    -- the last measured tangent: it moves along a curve. The chord from the
+    -- current position to the arc midpoint is the tangent rotated by HALF
+    -- the angle swept during the lead window, in the turn's direction. The
+    -- field data (2026-10-16 telemetry: 9/9 accepted, misses only on hard
+    -- turns) shows direction, not magnitude, is what a turn breaks.
+    if horizon <= 0 then
+        return 0
+    end
+    local rate: number = getGunTurnRate(sample)
+    if rate <= 0 then
+        return 0
+    end
+    local sign: number = getGunTurnSign(sample)
+    if sign == 0 then
+        return 0
+    end
+    return sign * math.clamp(rate * horizon * 0.5, 0, math.pi * 0.45)
 end
 
 local function getGunTurnDiscount(horizon: number, turnRate: number?): number
@@ -9077,6 +9161,15 @@ state.mm2ShotFeedback.resolve = function(
             -- Disconnection/role changes are UI heuristics, not tuning evidence.
             if directHit then tuneFromConfirmedShot(candidate) end
             state.mm2ShotFeedback.hide()
+            if directHit and type(notify) == "function" then
+                pcall(function(): ()
+                    notify("Hit "
+                        .. tostring(candidate.target.DisplayName)
+                        .. " ("
+                        .. tostring((candidate :: any).serverHitPart or "body")
+                        .. ") - server confirmed")
+                end)
+            end
         end
 
         local variant: string? = candidate.silentSpawn
@@ -9165,6 +9258,11 @@ state.mm2ShotFeedback.handleGunFired = function(
     local hitTarget: boolean = typeof(hitPart) == "Instance"
         and targetCharacter ~= nil
         and hitPart:IsDescendantOf(targetCharacter)
+    if hitTarget and typeof(hitPart) == "Instance" then
+        -- The server's own evidence of WHERE the bullet landed: shown by the
+        -- resolve feedback below ("Hit <name> (<part>)").
+        (candidate :: any).serverHitPart = hitPart.Name
+    end
     state.mm2ShotFeedback.resolve(candidate, hitTarget)
 end
 
@@ -9357,6 +9455,8 @@ state.mm2Core = {
     getGunHorizonSeconds = getGunHorizonSeconds,
     getGunTurnDiscount = getGunTurnDiscount,
     getGunTurnRate = getGunTurnRate,
+    getGunTurnSign = getGunTurnSign,
+    getGunLeadChordRotation = getGunLeadChordRotation,
     getGunLeadSensitivity = getGunLeadSensitivity,
     getGunLeadStatus = getGunLeadStatus,
     resetAutoLeadCorrection = resetAutoLeadCorrection,

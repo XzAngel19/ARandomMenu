@@ -225,7 +225,7 @@ local RUNTIME_RAW_BASE: string =
         .. RUNTIME_BRANCH
         .. "/"
 
-local SOURCE_STAMP: string = "v28-20261015-emotes-arrows-toggle-errors"
+local SOURCE_STAMP: string = "v28-20261016-arc-lead-hit-feedback"
 
 local BOOT_STARTED_AT: number = os.clock()
 local BOOT_FINGERPRINT_SECONDS: number = 0

@@ -41,11 +41,24 @@ mt.__index=function(a,k)
     if k=="Magnitude" then return math.sqrt(a.X*a.X+a.Y*a.Y+a.Z*a.Z) end
     if k=="Unit" then return a/a.Magnitude end
     if k=="Dot" then return function(a,b) return a.X*b.X+a.Y*b.Y+a.Z*b.Z end end
+    if k=="Cross" then return function(a,b)
+        return Vector3.new(a.Y*b.Z-a.Z*b.Y, a.Z*b.X-a.X*b.Z, a.X*b.Y-a.Y*b.X)
+    end end
 end
 local CFrame={new=function(p) return {Position=p} end,lookAt=function(p,q)
     assert((q-p).Magnitude>0.00001,"degenerate CFrame")
     return {Position=p,Endpoint=q}
 end}
+-- Right-handed Y rotation, Roblox convention: R_y(t)=[[c,0,s],[0,1,0],[-s,0,c]]
+local cfmt={}
+CFrame.fromEulerAnglesYXZ=function(rx,ry,rz)
+    assert(rx==0 and rz==0,"mini CFrame: only pure Y rotations")
+    return setmetatable({y=ry},cfmt)
+end
+function cfmt.__mul(self,v)
+    local c,s=math.cos(self.y),math.sin(self.y)
+    return Vector3.new(v.X*c+v.Z*s, v.Y, -v.X*s+v.Z*c)
+end
 local Enum={Material={Air="Air"},HumanoidStateType={Jumping="Jumping"},
     RaycastFilterType={Exclude="Exclude",Include="Include"}}
 local now=0
@@ -211,6 +224,27 @@ end
     trajectoryCalibration={getEstimates=function() return {liveGunAcceptanceMs=400,liveGunSamples=50} end}
     near(getGunHorizonSeconds(),0.08)
     pass("gun horizon: 1.0xRTT staleness lead; auto capped at 0.1; huge ping capped")
+    -- Signed turn + chord rotation (2026-10-16 field data: accepted shots
+    -- that missed were targets turning hard; direction, not magnitude).
+    local turningSample={turnRate=2.4,turnSign=1}
+    assert(getGunTurnSign(turningSample)==1)
+    assert(getGunTurnSign({turnRate=2.4,turnSign=-1})==-1)
+    assert(getGunTurnSign({turnRate=2.4})==0,"missing sign is unknown, not left")
+    assert(getGunTurnSign(nil)==0)
+    near(getGunLeadChordRotation(0.1,turningSample),0.12)
+    near(getGunLeadChordRotation(0.1,{turnRate=2.4,turnSign=-1}),-0.12)
+    assert(getGunLeadChordRotation(0.1,{turnRate=0,turnSign=1})==0)
+    assert(getGunLeadChordRotation(0.1,{turnRate=50,turnSign=1})<=math.pi*0.45+1e-9)
+    assert(getGunLeadChordRotation(0.1,{turnRate=2.4})==0,"no sign: no rotation")
+    -- a left turn (cross Y > 0) must rotate the lead counter-clockwise,
+    -- i.e. +Y angle: north lead (0,0,-1) bends toward west (-X)
+    local frame=CFrame.fromEulerAnglesYXZ(0,getGunLeadChordRotation(0.5,{turnRate=1,turnSign=1}),0)
+    local bent=frame*Vector3.new(0,0,-1)
+    assert(bent.X<-0.2 and bent.Z<-0.9,"left turn must bend the lead toward -X")
+    local frameR=CFrame.fromEulerAnglesYXZ(0,getGunLeadChordRotation(0.5,{turnRate=1,turnSign=-1}),0)
+    local bentR=frameR*Vector3.new(0,0,-1)
+    assert(bentR.X>0.2 and bentR.Z<-0.9,"right turn must bend the lead toward +X")
+    pass("gun arc lead: signed turn rate; chord rotation bends into the turn")
 end
 ''']
     chunks += [r'''

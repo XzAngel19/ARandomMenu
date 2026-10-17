@@ -23,6 +23,8 @@ function Module.init(runtime: any): any
     local getGunHorizonSeconds: any = core.getGunHorizonSeconds
     local getGunTurnDiscount: any = core.getGunTurnDiscount
     local getGunTurnRate: any = core.getGunTurnRate
+    local getGunTurnSign: any = core.getGunTurnSign
+    local getGunLeadChordRotation: any = core.getGunLeadChordRotation
     local getGunLeadSensitivity: any = core.getGunLeadSensitivity
     local getGunLeadStatus: any = core.getGunLeadStatus
     local resetAutoLeadCorrection: any = core.resetAutoLeadCorrection
@@ -206,6 +208,21 @@ function Module.init(runtime: any): any
             0,
             velocity.Z * lead
         ) + horizontalAcceleration * (0.25 * lead * lead)
+        -- Arc lead: while the target keeps turning, their path curves; the
+        -- chord to the arc midpoint is the tangent rotated by half the
+        -- swept angle, in the turn's direction (sign from previous x
+        -- current). This is what the 2026-10-16 telemetry asked for: every
+        -- accepted shot that missed hit a target mid-turn.
+        if type(getGunLeadChordRotation) == "function" then
+            local chordRotation: number = getGunLeadChordRotation(
+                lead,
+                sample and sample.character == character and sample or nil
+            )
+            if chordRotation ~= 0 then
+                displacement = CFrame.fromEulerAnglesYXZ(0, chordRotation, 0)
+                    * displacement
+            end
+        end
 
         -- Vertical safety. Remote characters often read FloorMaterial = Air
         -- on our client, so a player walking flat ground can be misclassified
@@ -612,7 +629,19 @@ function Module.init(runtime: any): any
         -- re-fire never tests a correction - it just looks like the same
         -- miss again.
         if os.clock() - lastGunFireServer < GUN_SERVER_COOLDOWN then
-            return reject("Gun is cooling down - the server drops rapid shots.")
+            -- The server silently drops faster shots, so clicking during the
+            -- window does nothing in-game. Say WHEN the gun is ready so it
+            -- never looks dead ("sigue sin funcionar" was this).
+            local remaining: number =
+                GUN_SERVER_COOLDOWN - (os.clock() - lastGunFireServer)
+            if not quiet then
+                notify(string.format(
+                    "Gun ready in %.1fs (the server drops faster shots)",
+                    remaining
+                ))
+            end
+            lastRejectReason = "Gun is cooling down - the server drops rapid shots."
+            return false
         end
 
         if silent then
