@@ -8,6 +8,9 @@ def module(path):
  return '(function()\n'+(ROOT/path).read_text()+'\nend)()'
 script=PRELUDE+r'''
 Vector3.yAxis=Vector3.new(0,1,0)
+local nativeTypeof=typeof
+local deadSubject
+local function typeof(value) return deadSubject~=nil and value==deadSubject and 'Instance' or nativeTypeof(value) end
 local Vector2={new=function(x,y) return Vector3.new(x,y,0) end,zero=Vector3.zero}
 local cf={}
 local function frame(p,pitch,yaw) return setmetatable({Position=p,pitch=pitch or 0,yaw=yaw or 0},cf) end
@@ -87,10 +90,16 @@ local input=object('UserInputService',{TouchEnabled=true,MouseBehavior='Default'
 function input:GetFocusedTextBox() return self.focused end
 function input:IsKeyDown(key) return self.shift and key=='LeftShift' end
 local host={Players={GetPlayers=function() return {player} end},LocalPlayer=player,UserInputService=input,RunService=run,workspace=world,services={},ScreenGui=object('ScreenGui'),create=object}
+local cards={}
 local framework={Categories={Visuals={CreateModule=function(_,metadata)
  local card={Options={},Enabled=false,cleaners={},Feature={enabled=false},SetStatus=function(self,v) self.status=v end}
  function card:Clean(fn) table.insert(self.cleaners,fn) end
  function card:CreateSlider(def) self.Options[def.Name]={Value=def.Default} end
+ function card:CreateToggle(def)
+  local option={Value=def.Default}
+  function option:Set(value) self.Value=value;def.Function(value) end
+  self.Options[def.Name]=option;return option
+ end
  function card:CreateList(def)
   local option={selected={}}
   function option:Set(name,on)
@@ -109,13 +118,14 @@ local framework={Categories={Visuals={CreateModule=function(_,metadata)
   metadata.Function(v)
  end
  card.Feature.activate=function() card:Toggle(not card.Enabled) end
- return card
-end}}}
+ cards[metadata.Name]=card;return card
+end}},GetModule=function(_,name) return cards[name] end}
 '''+ '\nlocal CameraAccess='+module('src/libraries/CameraAccess.lua')+'\nlocal access=CameraAccess.init(host)\nlocal FreeCam='+module('src/games/universal/Render/FreeCam.lua')+r'''
 local free=FreeCam.init({host=host,services=host.services,framework=framework})
 local Spectate='''+module('src/games/universal/Render/Spectate.lua')+r'''
-local spectate=Spectate.init({host=host,services=host.services,framework=framework})
-assert(not free.Options['Spectate Player'],'spectating is independent')
+Spectate.init({host=host,services=host.services,framework=framework})
+assert(free.Options.Spectate and free.Options['Spectate Player'] and not cards.Spectate)
+local spectate={Options={Player=free.Options['Spectate Player']},Toggle=function(_,v) free.Options.Spectate:Set(v) end}
 local spectateRoot={Position=Vector3.new(100,20,30)}
 local spectateHumanoid={Health=100}
 local spectator={Name='Target',Character={FindFirstChild=function() return spectateRoot end,FindFirstChildOfClass=function() return spectateHumanoid end}}
@@ -232,6 +242,9 @@ free:Toggle(false);assert(newCamera.CameraType=='Custom' and newCamera.CameraSub
 spectate:Toggle(true);step(.02)
 local nextCharacter=object('Model');local nextHumanoid=object('Humanoid',{Parent=nextCharacter})
 player.Character=nextCharacter;spectate:Toggle(false);assert(newCamera.CameraSubject==nextHumanoid)
+-- A deleted previous subject (e.g. Ghost switched off) falls back to the current character.
+deadSubject={Parent=nil};newCamera.CameraSubject=deadSubject
+spectate:Toggle(true);step(.02);spectate:Toggle(false);assert(newCamera.CameraSubject==nextHumanoid)
 -- A later camera owner is not overwritten on disable.
 spectate:Toggle(true);step(.02);newCamera.CameraType='Track';newCamera.CameraSubject='external'
 spectate:Toggle(false);assert(newCamera.CameraType=='Track' and newCamera.CameraSubject=='external')

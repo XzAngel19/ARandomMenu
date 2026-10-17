@@ -217,7 +217,7 @@ local RUNTIME_RAW_BASE: string =
         .. RUNTIME_BRANCH
         .. "/"
 
-local SOURCE_STAMP: string = "v49-20261017-controls"
+local SOURCE_STAMP: string = "v50-20261017-points"
 
 local BOOT_STARTED_AT: number = os.clock()
 local BOOT_FINGERPRINT_SECONDS: number = 0
@@ -1985,6 +1985,10 @@ function SectionManager.initializeAllAsync(): ()
                 SectionManager.initialize(sectionName)
             if not success then
                 failures += 1
+                local environment=state.frameworkEnvironment
+                if environment and type(environment.notify)=="function" then
+                    environment.notify("Could not load "..sectionName.." — check the console")
+                end
                 warn(
                     "[" .. PRODUCT.logPrefix .. ":Bootstrap] Section "
                         .. sectionName
@@ -6386,16 +6390,6 @@ print(
         .. RUNTIME_BRANCH
 )
 
-if not state.isMobile then
-    notify(
-        "Menu ready — build "
-            .. SOURCE_STAMP
-            .. " · "
-            .. RUNTIME_BRANCH
-            .. " · press "
-            .. state.toggleKey.Name
-    )
-end
 end
 
 local initialized: boolean, bootstrapError: any = xpcall(bootstrap, function(message: any): string

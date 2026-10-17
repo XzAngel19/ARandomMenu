@@ -24,7 +24,8 @@ local function makeCard(d)
  local c={Options={},cleanups={},Enabled=false,notifications={}}
  c.CreateToggle=option;c.CreateSlider=option;c.CreateTextBox=option;c.CreateColor=option;c.CreateButton=option
  function c:CreateList(d)
-  local o={selected=table.clone(d.Default or {})}
+  local o={selected={},definition=d}
+  for _,name in ipairs(d.Default or {}) do o.selected[name]=true end
   function o:Refresh() self.names=d.Items() end
   function o:Set(name,on) self.selected[name]=on end
   function o:IsSelected(name) return self.selected[name]==true end
@@ -66,12 +67,12 @@ local context={host=host,framework=framework,render=render,services={menu=menu}}
 '''+ '\nlocal Markers='+source('src/games/universal/Render/Markers.lua')+r'''
 local markers=Markers.init(context)
 local function press(card,name) card.Options[name].definition.Function() end
-press(markers,'Save here');assert(#markers.notifications==1)
-markers.Options.Name:Set('Home');press(markers,'Save here');assert(saves==1 and markers.Options.Places:IsSelected('Home'))
-local data=config.values['Universal.Markers.Places.123'];assert(data.Home[1]==10 and data.Home[2]==20 and data.Home[3]==30)
-markers:Toggle(true);markers.frame();assert(markers.Options.Places.names[1]=='Home')
-markers.Options['Manual coordinates']:Set(true);markers.Options.Coordinates:Set('1, 2, 3');markers.Options.Name:Set('Exit');press(markers,'Save coordinates');assert(data.Exit[3]==3)
-markers.Options.Coordinates:Set('NaN, 1, 2');press(markers,'Save coordinates');assert(data.Exit[1]==1 and #markers.notifications==2)
+press(markers,'Save here');assert(#markers.notifications==0)
+markers.Options.Name:Set('Home');press(markers,'Save here');assert(saves==2 and markers.Options.Point:IsSelected('Home'))
+local data=config.values['Universal.Markers.Places.123'];assert(data['Home'][1]==10 and data['Home'][2]==20 and data['Home'][3]==30)
+markers:Toggle(true);markers.frame();assert(markers.Options.Point.names[1]=='Home')
+markers.Options['Manual coordinates']:Set(true);markers.Options.Coordinates:Set('1, 2, 3');markers.Options.Name:Set('Exit');press(markers,'Save coordinates');assert(data['Exit'][3]==3)
+markers.Options.Coordinates:Set('NaN, 1, 2');press(markers,'Save coordinates');assert(data['Exit'][1]==1 and #markers.notifications==1)
 local raycasts=0
 world.CurrentCamera.ScreenPointToRay=function(_,x,y) return {Origin=Vector3.zero,Direction=Vector3.new(0,0,1)} end
 world.Raycast=function(_,origin,delta,params) raycasts+=1;assert(params.RespectCanCollide);return {Position=Vector3.new(7,8,9)} end
@@ -88,10 +89,10 @@ press(markers,'Touch');inputCallback({KeyCode='Escape'},false);assert(raycasts==
 menuVisible=false;press(markers,'Touch');inputCallback({KeyCode='Escape'},false);assert(not menuVisible)
 menuVisible=true
 markers:Toggle(false);Markers.destroy()
-markers=Markers.init(context);assert(markers.Options.Places:IsSelected('Home'),'points/selection survive reload')
-markers.Options.Name:Set('Home');press(markers,'Remove named place');data=config.values['Universal.Markers.Places.123'];assert(not data.Home and data.Exit)
-Markers.destroy();game.PlaceId=456;markers=Markers.init(context);assert(#markers.Options.Places.names==0,'no cross-game coordinate leakage');Markers.destroy()
-config.values['Universal.Markers.Places.456']='bad data';markers=Markers.init(context);assert(#markers.Options.Places.names==0);Markers.destroy()
+markers=Markers.init(context);assert(markers.Options.Point:IsSelected('Home'),'points/selection survive reload')
+markers.Options.Point.definition.OnRemove('Home');data=config.values['Universal.Markers.Places.123'];assert(not data['Home'] and data['Exit'])
+Markers.destroy();game.PlaceId=456;markers=Markers.init(context);assert(#markers.Options.Point.names==0,'no cross-game coordinate leakage');Markers.destroy()
+config.values['Universal.Markers.Places.456']='bad data';markers=Markers.init(context);assert(#markers.Options.Point.names==0);Markers.destroy()
 pass('Markers: save by name/current position, optional parsed coordinates, invalid inputs, persistence, remove, per-place separation and malformed config')
 local lighting={Brightness=2,ClockTime=7,GlobalShadows=true,FogEnd=900,Ambient='original',OutdoorAmbient='outside'}
 host.Lighting=lighting
@@ -107,9 +108,10 @@ lighting.Brightness=4;bright:Toggle(false)
 assert(lighting.ClockTime==18 and lighting.Brightness==4 and lighting.GlobalShadows and lighting.Ambient=='original' and lighting.FogEnd==900)
 Fullbright.destroy();pass('Fullbright: optional time, fast cycle, immediate suboption restoration, external updates and owned-only cleanup')
 local antiTick, feature, character='placeholder',nil,{}
-local humanoid={Health=100,FloorMaterial='Ground'}
+local humanoid={Health=100,FloorMaterial='Ground',WalkSpeed=16,MoveDirection=Vector3.zero}
 root={Position=Vector3.new(0,10,0),CFrame='safe',AssemblyLinearVelocity=Vector3.zero,AssemblyAngularVelocity=Vector3.zero}
 local flingActive=false
+host.Players={GetPlayers=function() return {{Character={FindFirstChild=function() return {Position=Vector3.new(1,10,0)} end}}} end}
 host.workspace.FallenPartsDestroyHeight=-500
 host.TaskManager={Connect=function(_,fn) antiTick=fn;return {Disconnect=function() antiTick=nil end} end}
 host.featureConnections={}
@@ -124,10 +126,10 @@ context.services={activity={isActive=function() return flingActive end}}
 AntiVoid.init(context);feature.fn(true);root.AssemblyLinearVelocity=Vector3.new(999,0,0);antiTick(.02);assert(root.AssemblyLinearVelocity.X==999)
 root.AssemblyLinearVelocity=Vector3.zero;feature.options['Anti fling'](true);antiTick(.02)
 root.CFrame='unsafe';root.AssemblyLinearVelocity=Vector3.new(999,0,0);humanoid.FloorMaterial='Air';antiTick(.02)
-assert(root.AssemblyLinearVelocity.Magnitude==0 and root.CFrame=='safe')
+assert(root.AssemblyLinearVelocity.Magnitude==0 and root.CFrame=='unsafe')
 character={};root.CFrame='new character';root.AssemblyLinearVelocity=Vector3.new(999,0,0);antiTick(.02);assert(root.CFrame=='new character','no stale rescue across respawn')
 flingActive=true;root.AssemblyLinearVelocity=Vector3.new(999,0,0);antiTick(.02);assert(root.AssemblyLinearVelocity.X==999,'do not fight explicit MM2 Fling')
-feature.fn(false);assert(not antiTick);AntiVoid.destroy();pass('Anti Void: anti-fling opt-in, safe position, respawn ownership, explicit-fling exclusion and shared cleanup')
+feature.fn(false);assert(not antiTick);AntiVoid.destroy();pass('Anti Void: anti-fling opt-in, no rollback, respawn ownership, explicit-fling exclusion and shared cleanup')
 '''
 # Exercise the actual notification helper, not a copy of the filter.
 disguise=(ROOT/'src/games/universal/Other/Disguise.lua').read_text()

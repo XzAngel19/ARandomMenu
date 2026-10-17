@@ -1,160 +1,109 @@
-export type Runtime = {
-    framework: any,
-    entity: any,
-    host: any,
-}
-
-local Module = {
-    Name = "AntiVoid",
-    PlaceId = 0,
-    Events = {} :: {[string]: any},
-    Initialized = false,
-}
-
-local activeCleanup: (() -> ())? = nil
-
-function Module.init(context: Runtime): any
-    local host: any = context.host
-    local TaskManager: any = host.TaskManager
-    local featureConnections: any = host.featureConnections
-    local disconnectFeatureConnection: any = host.disconnectFeatureConnection
-    local getCharacterParts: any = host.getCharacterParts
-    local createUniversalFeature: any = host.createUniversalFeature
-    local addFeatureTooltip: any = host.addFeatureTooltip
-    local workspace: any = host.workspace
-    local antiFling, velocityLimit, safeCFrame, safeCharacter = false, 120, nil, nil
-    local antiVoidPlatform: Part? = nil
-    local antiVoidLastGroundY: number? = nil
-    local antiVoidFreefallSeconds: number = 0
-    local antiVoidPlatformToken: number = 0
-
-    local function removeAntiVoidPlatform(): ()
-        antiVoidPlatformToken = antiVoidPlatformToken + 1
-        if antiVoidPlatform then
-            antiVoidPlatform:Destroy()
-            antiVoidPlatform = nil
+-- Rescue actual void falls, not ordinary jumps or long drops onto lower ground.
+local Module={Name="AntiVoid",PlaceId=0,Initialized=false}
+local cleanup
+function Module.init(context)
+    local host, world = context.host, context.host.workspace
+    local antiFling, velocityLimit, platform, token = false,120,nil,0
+    local previousCharacter, previousRoot, previousPlanar
+    local function removePlatform()
+        token+=1
+        if platform then platform:Destroy();platform=nil end
+    end
+    local function active(name)
+        return context.services.activity and context.services.activity.isActive(name)
+    end
+    local function module(name)
+        return context.framework and context.framework.GetModule and context.framework:GetModule(name)
+    end
+    local function expectedSpeed(humanoid)
+        local speed=math.max(16,humanoid.WalkSpeed)
+        local feature=module("Speed")
+        if feature and feature.Enabled then speed=math.max(speed,feature.Options.Speed.Value) end
+        return speed
+    end
+    local function nearOtherCharacter(root,character)
+        if not host.Players then return false end
+        for _,player in ipairs(host.Players:GetPlayers()) do
+            local other=player.Character
+            local otherRoot=other and other~=character and other:FindFirstChild("HumanoidRootPart")
+            if otherRoot and (otherRoot.Position-root.Position).Magnitude<=10 then return true end
         end
+        return false
     end
-
-    local function createAntiVoidPlatform(root: BasePart, humanoid: Humanoid): ()
-        removeAntiVoidPlatform()
-
-        local platform: Part = Instance.new("Part")
-        platform.Name = "Wurst_AntiVoidPlatform"
-        platform.Anchored = true
-        platform.CanCollide = true
-        platform.CanQuery = false
-        platform.CanTouch = false
-        platform.CastShadow = false
-        platform.Size = Vector3.new(42, 1, 42)
-        platform.Transparency = 1
-        platform.CFrame = CFrame.new(root.Position - Vector3.new(0, 4.25, 0))
-        platform.Parent = workspace
-        antiVoidPlatform = platform
-
-        local velocity: Vector3 = root.AssemblyLinearVelocity
-        root.AssemblyLinearVelocity = Vector3.new(velocity.X * 0.25, 0, velocity.Z * 0.25)
-        root.AssemblyAngularVelocity = Vector3.zero
-        humanoid:ChangeState(Enum.HumanoidStateType.Landed)
-
-        local token: number = antiVoidPlatformToken
-        task.delay(3, function(): ()
-            if antiVoidPlatformToken == token then
-                removeAntiVoidPlatform()
-            end
-        end)
-    end
-
-    local function toggleAntiVoid(enabled: boolean): ()
-        disconnectFeatureConnection("AntiVoid")
-        removeAntiVoidPlatform()
-        safeCFrame, safeCharacter = nil, nil
-        antiVoidLastGroundY = nil
-        antiVoidFreefallSeconds = 0
-
-        if not enabled then
-            return
+    local function step(dt)
+        local character,humanoid,root=host.getCharacterParts()
+        if not humanoid or not root or humanoid.Health<=0 then return end
+        local velocity=root.AssemblyLinearVelocity
+        local planar=Vector3.new(velocity.X,0,velocity.Z)
+        if previousCharacter~=character or previousRoot~=root then
+            previousCharacter,previousRoot,previousPlanar=character,root,planar
+            removePlatform()
         end
-
-        featureConnections.AntiVoid = TaskManager:Connect(function(deltaTime: number): ()
-            local character, humanoid, root = getCharacterParts()
-            if not humanoid or not root or humanoid.Health <= 0 then
-                return
+        local fly=module("Fly")
+        if root.Anchored or humanoid.Sit or humanoid.SeatPart or active("fling") or active("ghost")
+            or active("teleport") or fly and fly.Enabled then
+            previousPlanar=planar;return
+        end
+        if antiFling then
+            local speed=expectedSpeed(humanoid)
+            local limit=math.max(velocityLimit,speed*1.75)
+            local spin=root.AssemblyAngularVelocity.Magnitude>velocityLimit
+            local impulse=planar.Magnitude>limit and previousPlanar
+                and (planar-previousPlanar).Magnitude>limit*0.65
+            if (spin or impulse) and nearOtherCharacter(root,character) then
+                -- Remove the contact impulse, not the player's position/input.
+                -- Ordinary downward velocity is never treated as a fling.
+                local desired=humanoid.MoveDirection*speed
+                root.AssemblyLinearVelocity=Vector3.new(desired.X,spin and math.min(velocity.Y,math.max(0,humanoid.JumpPower or 50)) or velocity.Y,desired.Z)
+                root.AssemblyAngularVelocity=Vector3.zero
+                planar=Vector3.new(desired.X,0,desired.Z)
             end
-
-            if safeCharacter ~= character then safeCharacter, safeCFrame = character, nil end
-            if antiFling and not context.services.activity.isActive("fling") then
-                local linear, angular = root.AssemblyLinearVelocity.Magnitude, root.AssemblyAngularVelocity.Magnitude
-                if linear > velocityLimit or angular > velocityLimit then
-                    root.AssemblyLinearVelocity, root.AssemblyAngularVelocity = Vector3.zero, Vector3.zero
-                    if safeCFrame then root.CFrame = safeCFrame end
-                elseif humanoid.FloorMaterial ~= Enum.Material.Air and linear < velocityLimit * 0.45 then
-                    safeCFrame = root.CFrame
-                end
-            end
-            if humanoid.FloorMaterial ~= Enum.Material.Air then
-                antiVoidLastGroundY = root.Position.Y
-                antiVoidFreefallSeconds = 0
-                return
-            end
-
-            antiVoidFreefallSeconds = antiVoidFreefallSeconds + deltaTime
-            local destroyHeight: number = workspace.FallenPartsDestroyHeight
-            if destroyHeight ~= destroyHeight then
-                destroyHeight = -500
-            end
-
-            local nearDestroyLayer: boolean = root.Position.Y <= destroyHeight + 45
-            local fellFarFromGround: boolean = antiVoidLastGroundY ~= nil
-                and root.Position.Y <= (antiVoidLastGroundY :: number) - 120
-                and antiVoidFreefallSeconds >= 1.1
-                and root.AssemblyLinearVelocity.Y < -45
-
-            if nearDestroyLayer or fellFarFromGround then
-                createAntiVoidPlatform(root, humanoid)
-                antiVoidFreefallSeconds = 0
-            end
-        end)
+        end
+        previousPlanar=planar
+        if humanoid.FloorMaterial~=Enum.Material.Air or velocity.Y>=0 or platform then return end
+        local destroyHeight=world.FallenPartsDestroyHeight
+        if destroyHeight~=destroyHeight or math.abs(destroyHeight)==math.huge then destroyHeight=-500 end
+        local distance=root.Position.Y-destroyHeight
+        if distance>math.max(20,-velocity.Y*0.25) then return end
+        local params=RaycastParams.new()
+        params.FilterType=Enum.RaycastFilterType.Exclude
+        params.FilterDescendantsInstances={character}
+        params.RespectCanCollide=true;params.IgnoreWater=false
+        if root.CollisionGroup then params.CollisionGroup=root.CollisionGroup end
+        -- A real floor before the destroy layer means this is a legitimate drop.
+        local hit=world:Raycast(root.Position,Vector3.new(0,-math.clamp(distance,1,15000),0),params)
+        if hit and hit.Position.Y>destroyHeight+2 then return end
+        local rescue=Instance.new("Part")
+        rescue.Name="Wurst_AntiVoidPlatform";rescue.Anchored=true;rescue.CanCollide=true
+        rescue.CanQuery=false;rescue.CanTouch=false;rescue.CastShadow=false
+        rescue.Size=Vector3.new(42,1,42);rescue.Transparency=1
+        rescue.CFrame=CFrame.new(root.Position-Vector3.new(0,4.25,0));rescue.Parent=world
+        platform=rescue
+        root.AssemblyLinearVelocity=Vector3.new(velocity.X,0,velocity.Z)
+        root.AssemblyAngularVelocity=Vector3.zero
+        token+=1;local mine=token
+        task.delay(3,function() if mine==token then removePlatform() end end)
     end
-
-    local AntiVoidFeature = createUniversalFeature(
-        "Anti Void",
-        "Create an invisible rescue platform only when death is imminent",
-        4,
-        toggleAntiVoid,
-        {categoryName = "Utilities"}
-    )
+    local feature=host.createUniversalFeature("Anti Void","Rescue imminent falls into the destroy layer, not normal drops",4,function(enabled)
+        host.disconnectFeatureConnection("AntiVoid");removePlatform()
+        previousCharacter,previousRoot,previousPlanar=nil,nil,nil
+        if enabled then host.featureConnections.AntiVoid=host.TaskManager:Connect(step) end
+    end,{categoryName="Utilities"})
     local velocityRow
-    local function showVelocityLimit()
+    local function showLimit()
         if not velocityRow then return end
-        if host.setOptionVisible then host.setOptionVisible(AntiVoidFeature,velocityRow,antiFling)
-        else velocityRow.Visible = antiFling end
+        if host.setOptionVisible then host.setOptionVisible(feature,velocityRow,antiFling) else velocityRow.Visible=antiFling end
     end
-    host.addToggleOption(AntiVoidFeature, "Anti fling", false, function(value)
-        antiFling, safeCFrame = value, nil
-        showVelocityLimit()
-    end, "Block extreme velocity while Anti Void is enabled.")
-    velocityRow = host.addNumberOption(AntiVoidFeature, "Velocity limit", 120, 40, 1000, function(value) velocityLimit = value end)
-    showVelocityLimit()
-    addFeatureTooltip(
-        AntiVoidFeature,
-        "Detects a deep lethal fall and creates a temporary invisible platform beneath you."
-    )
-
-    activeCleanup = function(): ()
-        disconnectFeatureConnection("AntiVoid")
-        removeAntiVoidPlatform()
-    end
-    Module.Initialized = true
-    return AntiVoidFeature
+    host.addToggleOption(feature,"Anti fling",false,function(value) antiFling=value;showLimit() end,
+        "Damp sudden sideways/spin impulses near other players. Never rolls you back or blocks normal falling.")
+    velocityRow=host.addNumberOption(feature,"Velocity limit",120,40,1000,function(value) velocityLimit=math.max(1,value) end)
+    showLimit()
+    host.addFeatureTooltip(feature,"Only rescues a falling character near the void when there is no collidable floor below. Anti fling respects movement speed and never teleports you back.")
+    cleanup=function() host.disconnectFeatureConnection("AntiVoid");removePlatform() end
+    Module.Initialized=true;return feature
 end
-
-function Module.destroy(): ()
-    if activeCleanup then
-        pcall(activeCleanup)
-    end
-    activeCleanup = nil
-    Module.Initialized = false
+function Module.destroy()
+    if cleanup then cleanup() end
+    cleanup=nil;Module.Initialized=false
 end
-
 return Module

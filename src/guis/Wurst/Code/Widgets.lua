@@ -1467,7 +1467,8 @@ function Module.init(context: any): WidgetLibrary
         items: {string},
         selected: {[string]: boolean},
         onToggle: (string, boolean) -> (),
-        onBulk: ((boolean) -> ())?
+        onBulk: ((boolean) -> ())?,
+        onRemove: ((string) -> ())?
     ): ()
         if state.choiceListAnchor == anchor then
             state.closeChoiceList()
@@ -1593,6 +1594,19 @@ function Module.init(context: any): WidgetLibrary
 
         for index: number, item: string in ipairs(items) do
             local row: TextButton = makeRow(item, index)
+
+            if onRemove then
+                -- Sibling buttons: delete must never toggle selection.
+                local wrapper=create("Frame",{Name="Row"..index,Parent=scroller,BackgroundTransparency=1,
+                    Size=UDim2.new(1,0,0,rowHeight-1),LayoutOrder=index,ZIndex=402})
+                row.Name="Select";row.Parent=wrapper;row.Size=UDim2.new(1,-24,1,0)
+                row.TextTruncate=Enum.TextTruncate.AtEnd
+                local remove=create("TextButton",{Name="Remove",Parent=wrapper,AnchorPoint=Vector2.new(1,0),
+                    Position=UDim2.fromScale(1,0),Size=UDim2.new(0,24,1,0),BackgroundTransparency=1,
+                    BorderSizePixel=0,Text="×",FontFace=CONTROL_FONT,TextSize=16,TextColor3=Theme.textMuted,
+                    AutoButtonColor=false,ZIndex=403})
+                remove.MouseButton1Click:Connect(function() close();onRemove(item) end)
+            end
 
             local mark: Frame = create("Frame", {
                 Parent = row,
@@ -1757,7 +1771,7 @@ function Module.init(context: any): WidgetLibrary
             selected[item] = on or nil
             publish()
         end
-        button.MouseButton1Click:Connect(function(): ()
+        local function openItems(): ()
             local items: {string} = currentItems()
             local bulk = nil
             if not definition.single then
@@ -1769,8 +1783,14 @@ function Module.init(context: any): WidgetLibrary
             state.openMultiList(button, items, selected, function(item, on)
                 setItem(item, on)
                 if definition.single then state.closeChoiceList() end
-            end, bulk)
-        end)
+            end, bulk, definition.onRemove and function(item)
+                selected[item]=nil
+                definition.onRemove(item)
+                publish()
+                if #currentItems()>0 then openItems() end
+            end or nil)
+        end
+        button.MouseButton1Click:Connect(openItems)
 
         local initialNames = {}
         if definition.single then

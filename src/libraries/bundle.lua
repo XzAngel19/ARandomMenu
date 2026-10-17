@@ -1,5 +1,5 @@
 return {
-    stamp = "v49-20261017-controls",
+    stamp = "v50-20261017-points",
     files = {
         ["src/Profile/142823291.lua"] = [[
 --!strict
@@ -13116,335 +13116,205 @@ return Module
 
 ]],
         ["src/games/universal/Blatant/Invisible.lua"] = [[
-export type Runtime = {
-    framework: any,
-    entity: any,
-    host: any,
-    services: any,
-}
+-- Local ghost: a real, unanchored Humanoid walks under native gravity.
+-- Only explicit Ghost Fly uses CFrame motion; the real character stays hidden.
+local Module = {Name="Ghost",PlaceId=0,Initialized=false}
+local cleanup
 
-local Module = {
-    Name = "Ghost",
-    PlaceId = 0,
-    Events = {} :: {[string]: any},
-    Initialized = false,
-}
-
-local activeCleanup: (() -> ())? = nil
-
-function Module.init(context: Runtime): any
-    local host: any = context.host
-    local framework: any = context.framework
-    local LocalPlayer: any = host.LocalPlayer
-    local UserInputService: any = host.UserInputService or (game :: any):GetService("UserInputService")
-    local RunService: RunService = host.RunService or (game :: any):GetService("RunService")
-    local currentWorkspace: Workspace = host.workspace or workspace
-
-    type InvisibleSettings = {
-        voidDepth: number,
-        ghostTransparency: number,
-        fly: boolean,
-        flySpeed: number,
-    }
-
-    local invisibleSettings: InvisibleSettings = {
-        voidDepth = 120,
-        ghostTransparency = 0.5,
-        fly = false,
-        flySpeed = 55,
-    }
-
-    local invisibleRuntime = {
-        active = false,
-        ghostModel = nil :: Model?,
-        surfacePosition = nil :: CFrame?,
-        connections = {} :: {RBXScriptConnection},
-    }
-
-    local function destroyGhost(): ()
-        if invisibleRuntime.ghostModel then
-            pcall(function()
-                invisibleRuntime.ghostModel:Destroy()
-            end)
-            invisibleRuntime.ghostModel = nil
-        end
+function Module.init(context)
+    local host, services = context.host, context.services
+    local player, input, run = host.LocalPlayer, host.UserInputService, host.RunService
+    local world = host.workspace or workspace
+    local settings = {fly=false,speed=55,depth=120,transparency=0.5}
+    local state = {connections={},tracks={}}
+    local card
+    local function parts(character)
+        return character and character:FindFirstChildOfClass("Humanoid"),
+            character and character:FindFirstChild("HumanoidRootPart")
     end
-
-    local function createGhost(character: Model): Model?
+    local function activity(active)
+        if services.activity then services.activity.set("ghost",active) end
+    end
+    local function cameraBusy()
+        return services.freeCam and services.freeCam.IsActive()
+            or services.spectate and services.spectate.IsActive()
+    end
+    local function clearGhost()
+        local camera = world.CurrentCamera
+        if camera and camera.CameraSubject == state.humanoid then
+            camera.CameraSubject = parts(player.Character)
+        end
+        for _,track in pairs(state.tracks) do pcall(function() track:Stop(0) end) end
+        table.clear(state.tracks)
+        if state.model then state.model:Destroy() end
+        state.model,state.humanoid,state.root,state.animation,state.flyMode = nil,nil,nil,nil,nil
+    end
+    local function stop()
+        for _,connection in ipairs(state.connections) do connection:Disconnect() end
+        table.clear(state.connections)
+        if state.character == player.Character and state.root then
+            local humanoid, root = parts(player.Character)
+            if root and humanoid and humanoid.Health > 0 then
+                root.CFrame = state.root.CFrame
+                root.AssemblyLinearVelocity,root.AssemblyAngularVelocity = Vector3.zero,Vector3.zero
+            end
+        end
+        clearGhost();state.character=nil;activity(false)
+    end
+    local function spawnGhost(character,root)
+        clearGhost()
+        local archivable = character.Archivable
         character.Archivable = true
-        local clone: Instance? = character:Clone()
-        character.Archivable = false
-        if not clone or not clone:IsA("Model") then
-            return nil
-        end
-        local ghost: Model = clone :: Model
-        ghost.Name = "Wurst_Ghost"
-
-        local ghostHumanoid: Humanoid? = ghost:FindFirstChildOfClass("Humanoid")
-        if ghostHumanoid then
-            ghostHumanoid.DisplayDistanceType = Enum.HumanoidDisplayDistanceType.None
-            ghostHumanoid.NameDisplayDistance = 0
-            ghostHumanoid.HealthDisplayDistance = 0
-        end
-
-        for _, desc: Instance in ipairs(ghost:GetDescendants()) do
-            if desc:IsA("Script") or desc:IsA("LocalScript") then
-                desc:Destroy()
-            elseif desc:IsA("BasePart") then
-                desc.CanCollide = false
-                desc.CanTouch = false
-                desc.CanQuery = false
-                desc.Anchored = true
-                desc.Transparency = math.clamp(invisibleSettings.ghostTransparency, 0.1, 0.9)
-                desc.CastShadow = false
+        local ok, clone = pcall(function() return character:Clone() end)
+        character.Archivable = archivable
+        if not ok or not clone then return false end
+        local humanoid, ghostRoot = parts(clone)
+        if not humanoid or not ghostRoot then clone:Destroy();return false end
+        for _,object in ipairs(clone:GetDescendants()) do
+            if object:IsA("Script") or object:IsA("LocalScript") or object:IsA("Tool") then
+                object:Destroy()
+            elseif object:IsA("BasePart") then
+                object.Anchored = false
+                object.CanTouch,object.CanQuery,object.CastShadow = false,false,false
+                object.Transparency = math.clamp(settings.transparency,0,1)
+                object.CanCollide = object.Name=="Head" or object.Name=="Torso"
+                    or object.Name=="UpperTorso" or object.Name=="LowerTorso"
             end
         end
-
-        local highlight: Highlight = Instance.new("Highlight")
-        highlight.Name = "GhostHighlight"
-        highlight.FillColor = Color3.fromRGB(120, 210, 255)
-        highlight.OutlineColor = Color3.fromRGB(220, 245, 255)
-        highlight.FillTransparency = 0.6
-        highlight.OutlineTransparency = 0.15
-        highlight.Adornee = ghost
-        highlight.Parent = ghost
-
-        ghost.Parent = currentWorkspace
-        return ghost
+        clone.Name="Wurst_Ghost"
+        humanoid.AutoRotate=true;humanoid.PlatformStand=false;humanoid.Sit=false
+        humanoid.DisplayDistanceType=Enum.HumanoidDisplayDistanceType.None
+        humanoid.WalkSpeed=16
+        clone:PivotTo(root.CFrame)
+        clone.Parent=world
+        state.character,state.model,state.humanoid,state.root = character,clone,humanoid,ghostRoot
+        state.camera=nil
+        local highlight=Instance.new("Highlight")
+        highlight.Name="GhostHighlight";highlight.FillColor=Color3.fromRGB(120,210,255)
+        highlight.OutlineColor=Color3.fromRGB(220,245,255)
+        highlight.FillTransparency=0.6;highlight.OutlineTransparency=0.15
+        highlight.Adornee=clone;highlight.Parent=clone
+        return true
     end
-
-    local function toggleInvisible(enabled: boolean): ()
-        for _, c: RBXScriptConnection in ipairs(invisibleRuntime.connections) do
-            pcall(function()
-                c:Disconnect()
-            end)
-        end
-        table.clear(invisibleRuntime.connections)
-
-        local character: Model? = LocalPlayer.Character
-        local root: BasePart? = character and character:FindFirstChild("HumanoidRootPart") :: BasePart?
-        local humanoid: Humanoid? = character and character:FindFirstChildOfClass("Humanoid") :: Humanoid?
-        local camera: Camera? = currentWorkspace.CurrentCamera
-
-        if not enabled then
-            if invisibleRuntime.active and root and invisibleRuntime.surfacePosition then
-
-                root.CFrame = invisibleRuntime.surfacePosition
-                root.AssemblyLinearVelocity = Vector3.zero
+    local function animate()
+        local humanoid=state.humanoid
+        local kind=humanoid:GetState()
+        local name=kind==Enum.HumanoidStateType.Jumping and "jump"
+            or humanoid.FloorMaterial==Enum.Material.Air and "fall"
+            or humanoid.MoveDirection.Magnitude>0.05 and (humanoid.WalkSpeed>16 and "run" or "walk") or "idle"
+        if settings.fly then name="idle" end
+        if state.animation==name then return end
+        if state.animation and state.tracks[state.animation] then state.tracks[state.animation]:Stop(0.15) end
+        state.animation=name
+        if state.tracks[name]==false then return end
+        if not state.tracks[name] then
+            local source=state.character:FindFirstChild("Animate")
+            local folder=source and source:FindFirstChild(name)
+            local animation=folder and folder:FindFirstChildWhichIsA("Animation",true)
+            local temporary
+            if not animation then
+                local r6=humanoid.RigType==Enum.HumanoidRigType.R6
+                local ids=r6 and {idle=180435571,walk=180426354,run=180426354,jump=125750702,fall=180436148}
+                    or {idle=507766666,walk=507777826,run=507767714,jump=507765000,fall=507767968}
+                temporary=Instance.new("Animation");temporary.AnimationId="rbxassetid://"..ids[name];animation=temporary
             end
-            if camera and humanoid then
-                pcall(function()
-                    camera.CameraSubject = humanoid
-                end)
-            end
-            destroyGhost()
-            invisibleRuntime.active = false
-            invisibleRuntime.surfacePosition = nil
-            return
-        end
-
-        if not character or not root or not humanoid or humanoid.Health <= 0 then
-            destroyGhost()
-            return
-        end
-
-        invisibleRuntime.active = true
-        invisibleRuntime.surfacePosition = root.CFrame
-
-        local ghost: Model? = createGhost(character)
-        invisibleRuntime.ghostModel = ghost
-
-        local ghostRoot: BasePart? = ghost and ghost:FindFirstChild("HumanoidRootPart") :: BasePart?
-        local ghostHumanoid: Humanoid? = ghost and ghost:FindFirstChildOfClass("Humanoid") :: Humanoid?
-        if ghostRoot and invisibleRuntime.surfacePosition then
-            ghostRoot.CFrame = invisibleRuntime.surfacePosition
-        end
-
-        if camera and ghostHumanoid then
-            pcall(function()
-                camera.CameraSubject = ghostHumanoid
+            local ok,track=pcall(function()
+                local animator=humanoid:FindFirstChildOfClass("Animator")
+                if not animator then animator=Instance.new("Animator");animator.Parent=humanoid end
+                return animator:LoadAnimation(animation)
             end)
+            if temporary then temporary:Destroy() end
+            state.tracks[name]=ok and track or false
         end
-
-        table.insert(
-            invisibleRuntime.connections,
-            RunService.RenderStepped:Connect(function(deltaTime: number): ()
-                if not invisibleRuntime.active then
-                    return
-                end
-                local currentCharacter: Model? = LocalPlayer.Character
-                local currentRoot: BasePart? = currentCharacter and currentCharacter:FindFirstChild("HumanoidRootPart") :: BasePart?
-                local currentHumanoid: Humanoid? = currentCharacter and currentCharacter:FindFirstChildOfClass("Humanoid") :: Humanoid?
-                if not currentCharacter or not currentRoot or not currentHumanoid or currentHumanoid.Health <= 0 then
-                    return
-                end
-
-                local activeGhost: Model? = invisibleRuntime.ghostModel
-                if not activeGhost or not activeGhost.Parent then
-                    activeGhost = createGhost(currentCharacter)
-                    invisibleRuntime.ghostModel = activeGhost
-                    if camera and activeGhost then
-                        local newGhostHumanoid: Humanoid? = activeGhost:FindFirstChildOfClass("Humanoid")
-                        if newGhostHumanoid then
-                            camera.CameraSubject = newGhostHumanoid
-                        end
-                    end
-                end
-                local activeGhostRoot: BasePart? = activeGhost and activeGhost:FindFirstChild("HumanoidRootPart") :: BasePart?
-                local activeCam: Camera? = currentWorkspace.CurrentCamera
-
-                local surfaceCF: CFrame = invisibleRuntime.surfacePosition or currentRoot.CFrame
-
-                if invisibleSettings.fly and activeCam then
-
-                    local flyVelocity: Vector3 = Vector3.zero
-                    local camCF: CFrame = activeCam.CFrame
-                    local look: Vector3 = camCF.LookVector
-                    local right: Vector3 = camCF.RightVector
-
-                    if UserInputService:IsKeyDown(Enum.KeyCode.W) then
-                        flyVelocity += look
-                    end
-                    if UserInputService:IsKeyDown(Enum.KeyCode.S) then
-                        flyVelocity -= look
-                    end
-                    if UserInputService:IsKeyDown(Enum.KeyCode.D) then
-                        flyVelocity += right
-                    end
-                    if UserInputService:IsKeyDown(Enum.KeyCode.A) then
-                        flyVelocity -= right
-                    end
-                    if UserInputService:IsKeyDown(Enum.KeyCode.Space) then
-                        flyVelocity += Vector3.new(0, 1, 0)
-                    end
-                    if UserInputService:IsKeyDown(Enum.KeyCode.LeftShift) or UserInputService:IsKeyDown(Enum.KeyCode.LeftControl) then
-                        flyVelocity -= Vector3.new(0, 1, 0)
-                    end
-
-                    if flyVelocity.Magnitude > 0.05 then
-                        local nextPos: Vector3 = surfaceCF.Position + (flyVelocity.Unit * (invisibleSettings.flySpeed * deltaTime))
-                        local flatLook: Vector3 = Vector3.new(look.X, 0, look.Z)
-                        if flatLook.Magnitude > 0.01 then
-                            surfaceCF = CFrame.lookAt(nextPos, nextPos + flatLook.Unit)
-                        else
-                            surfaceCF = CFrame.new(nextPos) * surfaceCF.Rotation
-                        end
-                        invisibleRuntime.surfacePosition = surfaceCF
-                    end
-                else
-
-                    local moveDir: Vector3 = currentHumanoid.MoveDirection
-                    local walkSpeed: number = currentHumanoid.WalkSpeed
-                    if moveDir.Magnitude > 0.05 then
-                        local newPos: Vector3 = surfaceCF.Position + (moveDir.Unit * (walkSpeed * deltaTime))
-                        local rayDown: RaycastResult? = currentWorkspace:Raycast(
-                            newPos + Vector3.new(0, 3, 0),
-                            Vector3.new(0, -12, 0)
-                        )
-                        if rayDown then
-                            newPos = Vector3.new(newPos.X, rayDown.Position.Y + (currentHumanoid.HipHeight or 2), newPos.Z)
-                        end
-                        surfaceCF = CFrame.lookAt(newPos, newPos + moveDir)
-                        invisibleRuntime.surfacePosition = surfaceCF
-                    end
-                end
-
-                if activeGhostRoot and surfaceCF then
-                    activeGhostRoot.CFrame = surfaceCF
-
-                    for _, child: Instance in ipairs(currentCharacter:GetChildren()) do
-                        if child:IsA("BasePart") and child.Name ~= "HumanoidRootPart" then
-                            local ghostPart: Instance? = activeGhost:FindFirstChild(child.Name)
-                            if ghostPart and ghostPart:IsA("BasePart") then
-                                local relCF: CFrame = currentRoot.CFrame:ToObjectSpace(child.CFrame)
-                                local ghostBasePart: BasePart = ghostPart :: BasePart
-                                ghostBasePart.CFrame = surfaceCF:ToWorldSpace(relCF)
-                            end
-                        end
-                    end
-                end
-
-                local voidPos: Vector3 = surfaceCF.Position - Vector3.new(0, invisibleSettings.voidDepth, 0)
-                currentRoot.CFrame = CFrame.new(voidPos)
-                currentRoot.AssemblyLinearVelocity = Vector3.zero
-            end)
-        )
+        local track=state.tracks[name]
+        if track then
+            track.Looped=name~="jump"
+            track.Priority=name=="idle" and Enum.AnimationPriority.Idle or Enum.AnimationPriority.Movement
+            track:Play(0.15)
+        end
     end
-
-    local invisibleCard: any = framework.Categories.Utilities:CreateModule({
-        Name = "Ghost",
-        Category = "Utilities",
-        Order = 8,
-        Tooltip = "Shows your ghost on the map while your real character is hidden in the void. Turning it off teleports your real character to the ghost.",
-        Function = toggleInvisible,
-    })
-
-    invisibleCard:CreateToggle({
-        Name = "Ghost Fly",
-        Default = invisibleSettings.fly,
-        Function = function(value: boolean): ()
-            invisibleSettings.fly = value
-        end,
-        Tooltip = "Fly freely across the map as a ghost using WASD, Space and Shift/Ctrl.",
-    })
-
-    invisibleCard:CreateSlider({
-        Name = "Fly speed",
-        Show = {Option = "Ghost Fly"},
-        Min = 16,
-        Max = 200,
-        Default = invisibleSettings.flySpeed,
-        Function = function(value: number): ()
-            invisibleSettings.flySpeed = value
-        end,
-        Tooltip = "Speed of the ghost while flying.",
-    })
-
-    invisibleCard:CreateSlider({
-        Name = "Void depth",
-        Min = 50,
-        Max = 350,
-        Default = invisibleSettings.voidDepth,
-        Function = function(value: number): ()
-            invisibleSettings.voidDepth = value
-        end,
-        Tooltip = "Studs below the ground your real character sits.",
-    })
-
-    invisibleCard:CreateSlider({
-        Name = "Ghost transparency",
-        Min = 0.1,
-        Max = 0.9,
-        Step = 0.05,
-        Default = invisibleSettings.ghostTransparency,
-        Function = function(value: number): ()
-            invisibleSettings.ghostTransparency = value
-            if invisibleRuntime.ghostModel then
-                for _, desc: Instance in ipairs(invisibleRuntime.ghostModel:GetDescendants()) do
-                    if desc:IsA("BasePart") then
-                        desc.Transparency = value
-                    end
+    local function step(dt)
+        local character=player.Character
+        local humanoid, root=parts(character)
+        if not humanoid or not root or humanoid.Health<=0 then return end
+        if state.character~=character then
+            if not spawnGhost(character,root) then return end
+        end
+        if not state.model.Parent or not state.root.Parent or state.humanoid.Health<=0 then card:Toggle(false);return end
+        local ghostRoot, ghostHumanoid=state.root,state.humanoid
+        if state.flyMode~=settings.fly then
+            state.flyMode=settings.fly
+            for _,part in ipairs(state.model:GetDescendants()) do
+                if part:IsA("BasePart") then
+                    part.Anchored=settings.fly and part==ghostRoot
+                    part.CanCollide=not settings.fly and (part.Name=="Head" or part.Name=="Torso"
+                        or part.Name=="UpperTorso" or part.Name=="LowerTorso")
                 end
             end
-        end,
-        Tooltip = "Transparency of your local ghost representation.",
-    })
-
-    activeCleanup = function(): ()
-        toggleInvisible(false)
+            ghostHumanoid.PlatformStand=settings.fly
+            ghostRoot.AssemblyLinearVelocity,ghostRoot.AssemblyAngularVelocity=Vector3.zero,Vector3.zero
+        end
+        local camera=world.CurrentCamera
+        if camera and not cameraBusy() and (state.camera~=camera or camera.CameraSubject==humanoid) then
+            camera.CameraSubject=ghostHumanoid;state.camera=camera
+        end
+        if settings.fly then
+            if camera and not input:GetFocusedTextBox() then
+                local direction=Vector3.zero
+                for _,control in ipairs({{Enum.KeyCode.W,camera.CFrame.LookVector},{Enum.KeyCode.S,-camera.CFrame.LookVector},
+                    {Enum.KeyCode.D,camera.CFrame.RightVector},{Enum.KeyCode.A,-camera.CFrame.RightVector},
+                    {Enum.KeyCode.Space,Vector3.yAxis},{Enum.KeyCode.LeftControl,-Vector3.yAxis}}) do
+                    if input:IsKeyDown(control[1]) then direction+=control[2] end
+                end
+                if direction.Magnitude>0 then ghostRoot.CFrame+=direction.Unit*settings.speed*math.clamp(dt,0,0.1) end
+            end
+        else
+            -- No CFrame assignment, floor-snapping or fixed-height plane here.
+            -- Roblox resolves gravity, ground, walls, slopes and jumping.
+            local focused=input:GetFocusedTextBox()
+            ghostHumanoid.WalkSpeed=not focused and input:IsKeyDown(Enum.KeyCode.LeftShift) and 32 or 16
+            ghostHumanoid:Move(focused and Vector3.zero or humanoid.MoveDirection,false)
+        end
+        animate()
+        local destroyHeight=world.FallenPartsDestroyHeight
+        if destroyHeight~=destroyHeight or math.abs(destroyHeight)==math.huge then destroyHeight=-500 end
+        local position=ghostRoot.Position
+        root.CFrame=CFrame.new(position.X,math.max(position.Y-settings.depth,destroyHeight+12),position.Z)
+        root.AssemblyLinearVelocity,root.AssemblyAngularVelocity=Vector3.zero,Vector3.zero
     end
-    Module.Initialized = true
-    return invisibleCard
+    card=context.framework.Categories.Utilities:CreateModule({Name="Ghost",Category="Utilities",Order=8,
+        Tooltip="Your local ghost walks under gravity; Left Shift runs at 32. Ghost Fly explicitly enables flight.",Function=function(enabled)
+            stop()
+            if not enabled then return end
+            local character=player.Character
+            local humanoid,root=parts(character)
+            if not humanoid or not root or humanoid.Health<=0 or not spawnGhost(character,root) then
+                card:Notify("Ghost could not create a live character.");return
+            end
+            activity(true)
+            table.insert(state.connections,run.PreSimulation:Connect(step))
+            table.insert(state.connections,input.JumpRequest:Connect(function()
+                if not settings.fly and state.humanoid and not input:GetFocusedTextBox()
+                    and state.humanoid.FloorMaterial~=Enum.Material.Air then state.humanoid.Jump=true end
+            end))
+            step(0)
+        end})
+    card:CreateToggle({Name="Ghost Fly",Default=false,Function=function(value) settings.fly=value end,
+        Tooltip="OFF: native walking, falling and jumping; Left Shift runs at 32. ON: WASD, Space up, Ctrl down."})
+    card:CreateSlider({Name="Fly speed",Show={Option="Ghost Fly"},Min=16,Max=200,Default=55,Function=function(value) settings.speed=math.max(0,value) end})
+    card:CreateSlider({Name="Void depth",Min=50,Max=350,Default=120,Function=function(value) settings.depth=math.max(0,value) end})
+    card:CreateSlider({Name="Ghost transparency",Min=0.1,Max=0.9,Step=0.05,Default=0.5,Function=function(value)
+        settings.transparency=math.clamp(value,0,1)
+        if state.model then for _,part in ipairs(state.model:GetDescendants()) do
+            if part:IsA("BasePart") then part.Transparency=settings.transparency end
+        end end
+    end})
+    cleanup=stop;Module.Initialized=true;return card
 end
-
-function Module.destroy(): ()
-    if activeCleanup then
-        pcall(activeCleanup)
-    end
-    activeCleanup = nil
-    Module.Initialized = false
+function Module.destroy()
+    if cleanup then cleanup() end
+    cleanup=nil;Module.Initialized=false
 end
-
 return Module
 
 ]],
@@ -15156,165 +15026,114 @@ return Module
 
 ]],
         ["src/games/universal/Movement/AntiVoid.lua"] = [[
-export type Runtime = {
-    framework: any,
-    entity: any,
-    host: any,
-}
-
-local Module = {
-    Name = "AntiVoid",
-    PlaceId = 0,
-    Events = {} :: {[string]: any},
-    Initialized = false,
-}
-
-local activeCleanup: (() -> ())? = nil
-
-function Module.init(context: Runtime): any
-    local host: any = context.host
-    local TaskManager: any = host.TaskManager
-    local featureConnections: any = host.featureConnections
-    local disconnectFeatureConnection: any = host.disconnectFeatureConnection
-    local getCharacterParts: any = host.getCharacterParts
-    local createUniversalFeature: any = host.createUniversalFeature
-    local addFeatureTooltip: any = host.addFeatureTooltip
-    local workspace: any = host.workspace
-    local antiFling, velocityLimit, safeCFrame, safeCharacter = false, 120, nil, nil
-    local antiVoidPlatform: Part? = nil
-    local antiVoidLastGroundY: number? = nil
-    local antiVoidFreefallSeconds: number = 0
-    local antiVoidPlatformToken: number = 0
-
-    local function removeAntiVoidPlatform(): ()
-        antiVoidPlatformToken = antiVoidPlatformToken + 1
-        if antiVoidPlatform then
-            antiVoidPlatform:Destroy()
-            antiVoidPlatform = nil
+-- Rescue actual void falls, not ordinary jumps or long drops onto lower ground.
+local Module={Name="AntiVoid",PlaceId=0,Initialized=false}
+local cleanup
+function Module.init(context)
+    local host, world = context.host, context.host.workspace
+    local antiFling, velocityLimit, platform, token = false,120,nil,0
+    local previousCharacter, previousRoot, previousPlanar
+    local function removePlatform()
+        token+=1
+        if platform then platform:Destroy();platform=nil end
+    end
+    local function active(name)
+        return context.services.activity and context.services.activity.isActive(name)
+    end
+    local function module(name)
+        return context.framework and context.framework.GetModule and context.framework:GetModule(name)
+    end
+    local function expectedSpeed(humanoid)
+        local speed=math.max(16,humanoid.WalkSpeed)
+        local feature=module("Speed")
+        if feature and feature.Enabled then speed=math.max(speed,feature.Options.Speed.Value) end
+        return speed
+    end
+    local function nearOtherCharacter(root,character)
+        if not host.Players then return false end
+        for _,player in ipairs(host.Players:GetPlayers()) do
+            local other=player.Character
+            local otherRoot=other and other~=character and other:FindFirstChild("HumanoidRootPart")
+            if otherRoot and (otherRoot.Position-root.Position).Magnitude<=10 then return true end
         end
+        return false
     end
-
-    local function createAntiVoidPlatform(root: BasePart, humanoid: Humanoid): ()
-        removeAntiVoidPlatform()
-
-        local platform: Part = Instance.new("Part")
-        platform.Name = "Wurst_AntiVoidPlatform"
-        platform.Anchored = true
-        platform.CanCollide = true
-        platform.CanQuery = false
-        platform.CanTouch = false
-        platform.CastShadow = false
-        platform.Size = Vector3.new(42, 1, 42)
-        platform.Transparency = 1
-        platform.CFrame = CFrame.new(root.Position - Vector3.new(0, 4.25, 0))
-        platform.Parent = workspace
-        antiVoidPlatform = platform
-
-        local velocity: Vector3 = root.AssemblyLinearVelocity
-        root.AssemblyLinearVelocity = Vector3.new(velocity.X * 0.25, 0, velocity.Z * 0.25)
-        root.AssemblyAngularVelocity = Vector3.zero
-        humanoid:ChangeState(Enum.HumanoidStateType.Landed)
-
-        local token: number = antiVoidPlatformToken
-        task.delay(3, function(): ()
-            if antiVoidPlatformToken == token then
-                removeAntiVoidPlatform()
-            end
-        end)
-    end
-
-    local function toggleAntiVoid(enabled: boolean): ()
-        disconnectFeatureConnection("AntiVoid")
-        removeAntiVoidPlatform()
-        safeCFrame, safeCharacter = nil, nil
-        antiVoidLastGroundY = nil
-        antiVoidFreefallSeconds = 0
-
-        if not enabled then
-            return
+    local function step(dt)
+        local character,humanoid,root=host.getCharacterParts()
+        if not humanoid or not root or humanoid.Health<=0 then return end
+        local velocity=root.AssemblyLinearVelocity
+        local planar=Vector3.new(velocity.X,0,velocity.Z)
+        if previousCharacter~=character or previousRoot~=root then
+            previousCharacter,previousRoot,previousPlanar=character,root,planar
+            removePlatform()
         end
-
-        featureConnections.AntiVoid = TaskManager:Connect(function(deltaTime: number): ()
-            local character, humanoid, root = getCharacterParts()
-            if not humanoid or not root or humanoid.Health <= 0 then
-                return
+        local fly=module("Fly")
+        if root.Anchored or humanoid.Sit or humanoid.SeatPart or active("fling") or active("ghost")
+            or active("teleport") or fly and fly.Enabled then
+            previousPlanar=planar;return
+        end
+        if antiFling then
+            local speed=expectedSpeed(humanoid)
+            local limit=math.max(velocityLimit,speed*1.75)
+            local spin=root.AssemblyAngularVelocity.Magnitude>velocityLimit
+            local impulse=planar.Magnitude>limit and previousPlanar
+                and (planar-previousPlanar).Magnitude>limit*0.65
+            if (spin or impulse) and nearOtherCharacter(root,character) then
+                -- Remove the contact impulse, not the player's position/input.
+                -- Ordinary downward velocity is never treated as a fling.
+                local desired=humanoid.MoveDirection*speed
+                root.AssemblyLinearVelocity=Vector3.new(desired.X,spin and math.min(velocity.Y,math.max(0,humanoid.JumpPower or 50)) or velocity.Y,desired.Z)
+                root.AssemblyAngularVelocity=Vector3.zero
+                planar=Vector3.new(desired.X,0,desired.Z)
             end
-
-            if safeCharacter ~= character then safeCharacter, safeCFrame = character, nil end
-            if antiFling and not context.services.activity.isActive("fling") then
-                local linear, angular = root.AssemblyLinearVelocity.Magnitude, root.AssemblyAngularVelocity.Magnitude
-                if linear > velocityLimit or angular > velocityLimit then
-                    root.AssemblyLinearVelocity, root.AssemblyAngularVelocity = Vector3.zero, Vector3.zero
-                    if safeCFrame then root.CFrame = safeCFrame end
-                elseif humanoid.FloorMaterial ~= Enum.Material.Air and linear < velocityLimit * 0.45 then
-                    safeCFrame = root.CFrame
-                end
-            end
-            if humanoid.FloorMaterial ~= Enum.Material.Air then
-                antiVoidLastGroundY = root.Position.Y
-                antiVoidFreefallSeconds = 0
-                return
-            end
-
-            antiVoidFreefallSeconds = antiVoidFreefallSeconds + deltaTime
-            local destroyHeight: number = workspace.FallenPartsDestroyHeight
-            if destroyHeight ~= destroyHeight then
-                destroyHeight = -500
-            end
-
-            local nearDestroyLayer: boolean = root.Position.Y <= destroyHeight + 45
-            local fellFarFromGround: boolean = antiVoidLastGroundY ~= nil
-                and root.Position.Y <= (antiVoidLastGroundY :: number) - 120
-                and antiVoidFreefallSeconds >= 1.1
-                and root.AssemblyLinearVelocity.Y < -45
-
-            if nearDestroyLayer or fellFarFromGround then
-                createAntiVoidPlatform(root, humanoid)
-                antiVoidFreefallSeconds = 0
-            end
-        end)
+        end
+        previousPlanar=planar
+        if humanoid.FloorMaterial~=Enum.Material.Air or velocity.Y>=0 or platform then return end
+        local destroyHeight=world.FallenPartsDestroyHeight
+        if destroyHeight~=destroyHeight or math.abs(destroyHeight)==math.huge then destroyHeight=-500 end
+        local distance=root.Position.Y-destroyHeight
+        if distance>math.max(20,-velocity.Y*0.25) then return end
+        local params=RaycastParams.new()
+        params.FilterType=Enum.RaycastFilterType.Exclude
+        params.FilterDescendantsInstances={character}
+        params.RespectCanCollide=true;params.IgnoreWater=false
+        if root.CollisionGroup then params.CollisionGroup=root.CollisionGroup end
+        -- A real floor before the destroy layer means this is a legitimate drop.
+        local hit=world:Raycast(root.Position,Vector3.new(0,-math.clamp(distance,1,15000),0),params)
+        if hit and hit.Position.Y>destroyHeight+2 then return end
+        local rescue=Instance.new("Part")
+        rescue.Name="Wurst_AntiVoidPlatform";rescue.Anchored=true;rescue.CanCollide=true
+        rescue.CanQuery=false;rescue.CanTouch=false;rescue.CastShadow=false
+        rescue.Size=Vector3.new(42,1,42);rescue.Transparency=1
+        rescue.CFrame=CFrame.new(root.Position-Vector3.new(0,4.25,0));rescue.Parent=world
+        platform=rescue
+        root.AssemblyLinearVelocity=Vector3.new(velocity.X,0,velocity.Z)
+        root.AssemblyAngularVelocity=Vector3.zero
+        token+=1;local mine=token
+        task.delay(3,function() if mine==token then removePlatform() end end)
     end
-
-    local AntiVoidFeature = createUniversalFeature(
-        "Anti Void",
-        "Create an invisible rescue platform only when death is imminent",
-        4,
-        toggleAntiVoid,
-        {categoryName = "Utilities"}
-    )
+    local feature=host.createUniversalFeature("Anti Void","Rescue imminent falls into the destroy layer, not normal drops",4,function(enabled)
+        host.disconnectFeatureConnection("AntiVoid");removePlatform()
+        previousCharacter,previousRoot,previousPlanar=nil,nil,nil
+        if enabled then host.featureConnections.AntiVoid=host.TaskManager:Connect(step) end
+    end,{categoryName="Utilities"})
     local velocityRow
-    local function showVelocityLimit()
+    local function showLimit()
         if not velocityRow then return end
-        if host.setOptionVisible then host.setOptionVisible(AntiVoidFeature,velocityRow,antiFling)
-        else velocityRow.Visible = antiFling end
+        if host.setOptionVisible then host.setOptionVisible(feature,velocityRow,antiFling) else velocityRow.Visible=antiFling end
     end
-    host.addToggleOption(AntiVoidFeature, "Anti fling", false, function(value)
-        antiFling, safeCFrame = value, nil
-        showVelocityLimit()
-    end, "Block extreme velocity while Anti Void is enabled.")
-    velocityRow = host.addNumberOption(AntiVoidFeature, "Velocity limit", 120, 40, 1000, function(value) velocityLimit = value end)
-    showVelocityLimit()
-    addFeatureTooltip(
-        AntiVoidFeature,
-        "Detects a deep lethal fall and creates a temporary invisible platform beneath you."
-    )
-
-    activeCleanup = function(): ()
-        disconnectFeatureConnection("AntiVoid")
-        removeAntiVoidPlatform()
-    end
-    Module.Initialized = true
-    return AntiVoidFeature
+    host.addToggleOption(feature,"Anti fling",false,function(value) antiFling=value;showLimit() end,
+        "Damp sudden sideways/spin impulses near other players. Never rolls you back or blocks normal falling.")
+    velocityRow=host.addNumberOption(feature,"Velocity limit",120,40,1000,function(value) velocityLimit=math.max(1,value) end)
+    showLimit()
+    host.addFeatureTooltip(feature,"Only rescues a falling character near the void when there is no collidable floor below. Anti fling respects movement speed and never teleports you back.")
+    cleanup=function() host.disconnectFeatureConnection("AntiVoid");removePlatform() end
+    Module.Initialized=true;return feature
 end
-
-function Module.destroy(): ()
-    if activeCleanup then
-        pcall(activeCleanup)
-    end
-    activeCleanup = nil
-    Module.Initialized = false
+function Module.destroy()
+    if cleanup then cleanup() end
+    cleanup=nil;Module.Initialized=false
 end
-
 return Module
 
 ]],
@@ -15353,7 +15172,7 @@ function Module.init(context: Runtime): any
 
     local runtime: any = {
         armedUntil = 0,
-        waypoint = nil :: Vector3?,
+        point = nil :: string?,
         lastOrigin = nil :: Vector3?,
     }
 
@@ -15387,6 +15206,7 @@ function Module.init(context: Runtime): any
         Tooltip = "MM2 shows all game teleport buttons together. Other destinations use the main action.",
         Function = function(value)
             runtime.armedUntil = 0
+            if runtime.cancelTravel then runtime.cancelTravel() end
             local mm2Controls = { ["Teleport to Map"] = true, ["Teleport to Lobby"] = true,
                 ["Teleport to Player"] = true, ["Get Gun"] = true, ["Player name"] = true,
                 ["Get Gun key"] = true, ["Auto Get Gun"] = true, ["Gun pickup delay"] = true }
@@ -15409,19 +15229,25 @@ function Module.init(context: Runtime): any
         Tooltip = "Part or model name to look for, for Item. Partial names "
             .. "match, so \"chest\" finds \"GoldChest\".",
     })
-    teleport:CreateButton({
-        Name = "Save waypoint",
-        Show = {Option = "Destination", Values = {"Waypoint"}},
-        Tooltip = "Stores where you are standing right now.",
-        Function = function(): ()
-            local root: BasePart? = characterRoot(localPlayer)
-            if not root then
-                return
+    local pointList=teleport:CreateList({Name="Point",Single=true,
+        Show={Option="Destination",Values={"Waypoint"}},
+        EmptyText="No points. Save one in Markers.",Items=function()
+            local points=context.services.points
+            return points and points.Names() or {}
+        end,Function=function(_,names) runtime.point=names[1] end,
+        Tooltip="The same saved points as Markers. Choose one, then Teleport to point."})
+    teleport:CreateButton({Name="Teleport to point",Show={Option="Destination",Values={"Waypoint"}},
+        Function=function() Module.run(context,teleport,runtime) end})
+    local unsubscribe
+    if context.services.points then
+        unsubscribe=context.services.points.Subscribe(function()
+            if runtime.point and not context.services.points.Get(runtime.point) then
+                if runtime.cancelTravel then runtime.cancelTravel() end
+                pointList:Set(runtime.point,false)
             end
-            runtime.waypoint = (root :: BasePart).Position
-            teleport:SetStatus("waypoint saved")
-        end,
-    })
+            pointList:Refresh()
+        end)
+    end
     teleport:CreateSlider({
         Name = "Arm window",
         Show = {Option = "Destination", Values = {"Tap point"}},
@@ -15457,15 +15283,15 @@ function Module.init(context: Runtime): any
         Name = "Movement",
         List = {"Instant", "Glide"},
         Index = 1,
-        Tooltip = "Glide steps the character across, which some games accept "
-            .. "when a single jump is rejected.",
+        Tooltip = "Instant jumps to the destination. Glide moves continuously at Glide speed (studs/sec), regardless of frame rate. A new trip cancels the previous one.",
     })
     teleport:CreateSlider({
-        Name = "Glide step",
+        Name = "Glide speed",
         Show = {Option = "Movement", Values = {"Glide"}},
-        Min = 4,
-        Max = 60,
-        Default = 18,
+        Min = 1,
+        Max = 500,
+        Default = 60,
+        Tooltip = "Travel speed in studs per second, not distance per frame. Higher = faster.",
     })
     teleport:CreateSlider({
         Name = "Height offset",
@@ -15510,6 +15336,8 @@ function Module.init(context: Runtime): any
             tapConnection:Disconnect()
         end)
         runtime.armedUntil = 0
+        if runtime.cancelTravel then runtime.cancelTravel() end
+        if unsubscribe then unsubscribe() end
     end
     Module.Initialized = true
     return teleport
@@ -15589,6 +15417,7 @@ function Module.findItem(
 end
 
 function Module.run(context: Runtime, teleport: any, runtime: any): ()
+    if runtime.cancelTravel then runtime.cancelTravel() end
     if teleport.Options.Destination.Value == "MM2" then
         teleport:Notify("Choose a MM2 teleport button below")
         return
@@ -15614,11 +15443,11 @@ function Module.run(context: Runtime, teleport: any, runtime: any): ()
     end
 
     if destination == "Waypoint" then
-        if not runtime.waypoint then
-            teleport:Notify("no waypoint saved")
-            return
-        end
-        Module.travel(context, teleport, runtime, runtime.waypoint, false)
+        local points=context.services.points
+        local position,surface
+        if points and runtime.point then position,surface=points.Get(runtime.point) end
+        if not position then teleport:Notify("Choose a saved point from Markers first.");return end
+        Module.travel(context,teleport,runtime,position,surface==true)
         return
     end
 
@@ -15698,6 +15527,7 @@ function Module.travel(
 ): ()
     local host: any = context.host
     local localPlayer: Player = host.LocalPlayer
+    if runtime.cancelTravel then runtime.cancelTravel() end
     if not destination then
         teleport:Notify("nothing there")
         return
@@ -15722,34 +15552,41 @@ function Module.travel(
 
     local keepMomentum: boolean = options["Keep momentum"].Value
     if options["Movement"].Value == "Instant" then
-        resolvedRoot.CFrame = CFrame.new(target)
+        resolvedRoot.CFrame = resolvedRoot.CFrame + (target - resolvedRoot.Position)
         if not keepMomentum then
             resolvedRoot.AssemblyLinearVelocity = Vector3.zero
+            resolvedRoot.AssemblyAngularVelocity = Vector3.zero
         end
         return
     end
 
-    local step: number = options["Glide step"].Value
-    task.spawn(function(): ()
-        for _ = 1, 360 do
-            if not resolvedRoot.Parent then
-                return
-            end
-            local offset: Vector3 = target - resolvedRoot.Position
-            if offset.Magnitude < 3 then
-                resolvedRoot.CFrame = CFrame.new(target)
-                if not keepMomentum then
-                    resolvedRoot.AssemblyLinearVelocity = Vector3.zero
-                end
-                return
-            end
-            resolvedRoot.CFrame = resolvedRoot.CFrame
-                + offset.Unit * math.min(offset.Magnitude, step)
-            if not keepMomentum then
-                resolvedRoot.AssemblyLinearVelocity = Vector3.zero
-            end
-            task.wait()
+    local speed=math.max(0,options["Glide speed"].Value)
+    if speed==0 then teleport:Notify("Glide speed must be greater than zero.");return end
+    local character=localPlayer.Character
+    local connection
+    local function finish()
+        if connection then connection:Disconnect();connection=nil end
+        runtime.cancelTravel=nil
+        if context.services.activity then context.services.activity.set("teleport",false) end
+        teleport:SetStatus(nil)
+    end
+    if runtime.cancelTravel then runtime.cancelTravel() end
+    runtime.cancelTravel=finish
+    if context.services.activity then context.services.activity.set("teleport",true) end
+    teleport:SetStatus("Gliding")
+    connection=host.RunService.Heartbeat:Connect(function(dt)
+        if localPlayer.Character~=character or not resolvedRoot.Parent
+            or characterRoot(localPlayer)~=resolvedRoot or humanoid and humanoid.Health<=0 then finish();return end
+        local offset=target-resolvedRoot.Position
+        local distance=offset.Magnitude
+        local amount=math.min(distance,speed*math.clamp(dt,0,0.1))
+        if distance<=amount+0.001 then
+            resolvedRoot.CFrame=resolvedRoot.CFrame+(target-resolvedRoot.Position)
+            if not keepMomentum then resolvedRoot.AssemblyLinearVelocity=Vector3.zero;resolvedRoot.AssemblyAngularVelocity=Vector3.zero end
+            finish();return
         end
+        if distance>0 then resolvedRoot.CFrame+=offset.Unit*amount end
+        if not keepMomentum then resolvedRoot.AssemblyLinearVelocity=Vector3.zero;resolvedRoot.AssemblyAngularVelocity=Vector3.zero end
     end)
 end
 
@@ -21831,10 +21668,11 @@ return Module
         ["src/games/universal/Render/Markers.lua"] = [[
 -- Vape-style world waypoints, with names / Save here instead of encoded coordinates.
 local Module = {Name="Markers",Initialized=false}
-local card, clear, inputConnection
+local card, clear, inputConnection, services
 function Module.init(context)
     local host, render = context.host, context.render
-    local menu = context.services.menu
+    services = context.services
+    local menu = services.menu
     local layer = render:Layer("MarkersLayer")
     local key = "Universal.Markers.Places." .. tostring(game.PlaceId)
     local config = host.configData
@@ -21846,10 +21684,25 @@ function Module.init(context)
         if type(name)=="string" and type(position)=="table" and loaded < 128 then
             local x,y,z=tonumber(position[1]),tonumber(position[2]),tonumber(position[3])
             if x and y and z and x==x and y==y and z==z and math.max(math.abs(x),math.abs(y),math.abs(z)) < 1e7 then
-                points[name]={x,y,z}; loaded += 1
+                points[name]={x,y,z,position[4]=="surface" and "surface" or nil}; loaded += 1
             end
         end
     end
+    local listeners = {}
+    local function pointNames()
+        local names={};for name in pairs(points) do table.insert(names,name) end;table.sort(names);return names
+    end
+    services.points = {
+        Names=pointNames,
+        Get=function(name)
+            local data=points[name]
+            if data then return Vector3.new(data[1],data[2],data[3]),data[4]=="surface" end
+        end,
+        Subscribe=function(callback)
+            listeners[callback]=true
+            return function() listeners[callback]=nil end
+        end,
+    }
     local list, tracked = nil, {}
     local picking, pickName, pickMenuVisible = false, nil, false
     local function finishPick(status, reopen)
@@ -21861,10 +21714,11 @@ function Module.init(context)
     end
     local function save()
         if config then config.values[key]=points;if host.queueConfigSave then host.queueConfigSave() end end
+        for callback in pairs(listeners) do callback() end
     end
     clear=function(reopen) render:ReleaseAll(layer);table.clear(tracked);layer.Visible=false;finishPick(nil,reopen) end
     card=context.framework.Categories.Render:CreateModule({Name="Markers",Category="Render",ConfigKey="Universal.Markers",
-        Tooltip="Name a place and save your current position. Points are kept separately for each game.",Function=function(enabled)
+        Tooltip="Save your standing coordinates or mark a surface. Points are shared with Teleport and kept per game.",Function=function(enabled)
             if not enabled then clear();return end
             layer.Visible=true;card:Clean(clear)
             card:Render(function()
@@ -21890,52 +21744,60 @@ function Module.init(context)
     local function pointName()
         return string.sub(string.match(card.Options.Name.Value or "","^%s*(.-)%s*$") or "",1,48)
     end
-    local function storePoint(position,name)
-        if name=="" then card:Notify("Enter a name for this place.");return false end
+    local function nextPointName()
+        local base=pointName()
+        local index=1
+        while true do
+            local suffix=base=="" and tostring(index) or " #"..index
+            local name=(base=="" and "Point " or string.sub(base,1,48-#suffix))..suffix
+            if not points[name] then return name end
+            index+=1
+        end
+    end
+    local function savedName()
+        local name=pointName()
+        return name~="" and name or nextPointName()
+    end
+    local function storePoint(position,name,surface)
+        if name=="" then card:Notify("Enter a point name.");return false end
         if not position or position.X~=position.X or position.Y~=position.Y or position.Z~=position.Z
             or math.max(math.abs(position.X),math.abs(position.Y),math.abs(position.Z))>=1e7 then
             card:Notify("Position unavailable. Use coordinates in the form x, y, z.");return false
         end
         local count=0;for _ in pairs(points) do count+=1 end
-        if count>=128 and not points[name] then card:Notify("Marker limit reached (128). Remove a place first.");return false end
-        points[name]={position.X,position.Y,position.Z};save();list:Refresh();list:Set(name,true)
+        if count>=128 and not points[name] then card:Notify("Marker limit reached (128). Delete a point first.");return false end
+        points[name]={position.X,position.Y,position.Z,surface and "surface" or nil};save();list:Refresh();list:Set(name,true)
         card:SetStatus(name);return true
     end
     card:CreateTextBox({Name="Name",Default="",Placeholder="Home, exit, meeting spot..."})
-    card:CreateButton({Name="Save here",Function=function()
+    card:CreateButton({Name="Save here",Tooltip="Save your character standing x, y, z here, not the camera position.",Function=function()
         local character=host.LocalPlayer.Character
         local root=character and character:FindFirstChild("HumanoidRootPart")
-        storePoint(root and root.Position,pointName())
+        storePoint(root and root.Position,savedName())
     end})
     card:CreateButton({Name="Touch",Tooltip="Hides the menu to pick a surface. Escape cancels; new points are numbered, never overwritten. Works while OFF too.",Function=function()
         if picking then finishPick();return end
-        local base=pointName()
-        local index=1
-        repeat
-            local suffix=base=="" and tostring(index) or " #"..index
-            pickName=(base=="" and "Point " or string.sub(base,1,48-#suffix))..suffix
-            index+=1
-        until not points[pickName]
+        pickName=nextPointName()
         picking=true
         pickMenuVisible=menu.isVisible()
         card:SetStatus("Click/tap a surface · Esc cancels")
         menu.setVisible(false)
     end})
-    card:CreateButton({Name="Remove named place",Function=function()
-        local name=pointName()
-        if not points[name] then card:Notify("No saved place has that name.");return end
-        list:Set(name,false);points[name]=nil;save();list:Refresh()
-    end})
-    local defaults={};for name in pairs(points) do defaults[name]=true end
-    list=card:CreateList({Name="Places",Items=function()
-        local names={};for name in pairs(points) do table.insert(names,name) end;table.sort(names);return names
-    end,Default=defaults,EmptyText="No places saved. Name a place, then Save here."})
+    if config and config.values["Universal.Markers.Point"]==nil then
+        config.values["Universal.Markers.Point"]=config.values["Universal.Markers.Places"]
+    end
+    list=card:CreateList({Name="Point",Items=pointNames,Default=pointNames(),
+        EmptyText="No points. Use Save here or Touch.",OnRemove=function(name)
+            if not points[name] then return end
+            list:Set(name,false);points[name]=nil;save();list:Refresh()
+            render:Release(layer,name);tracked[name]=nil
+        end})
     card:CreateToggle({Name="Manual coordinates",Default=false})
     card:CreateTextBox({Name="Coordinates",Default="",Placeholder="x, y, z",Show={Option="Manual coordinates",Values={true}}})
     card:CreateButton({Name="Save coordinates",Show={Option="Manual coordinates",Values={true}},Function=function()
         local x,y,z=string.match(card.Options.Coordinates.Value or "","^%s*([%+%-%.%deE]+)%s*,%s*([%+%-%.%deE]+)%s*,%s*([%+%-%.%deE]+)%s*$")
         x,y,z=tonumber(x),tonumber(y),tonumber(z)
-        storePoint(x and y and z and Vector3.new(x,y,z) or nil,pointName())
+        storePoint(x and y and z and Vector3.new(x,y,z) or nil,savedName())
     end})
     card:CreateToggle({Name="Distance",Default=true})
     card:CreateColor({Name="Colour",Default=Color3.fromRGB(85,255,85)})
@@ -21954,7 +21816,7 @@ function Module.init(context)
         params.RespectCanCollide=true;params.IgnoreWater=true
         local ray=camera:ScreenPointToRay(event.Position.X,event.Position.Y)
         local hit=(host.workspace or workspace):Raycast(ray.Origin,ray.Direction*5000,params)
-        if hit and storePoint(hit.Position,pickName) then finishPick(pickName)
+        if hit and storePoint(hit.Position,pickName,true) then finishPick(pickName)
         else card:SetStatus("No surface · tap again") end
     end)
     Module.Initialized=true
@@ -21964,7 +21826,8 @@ function Module.destroy()
     if clear then clear(false) end
     if card and card.Enabled then card:Toggle(false) end
     if inputConnection then inputConnection:Disconnect();inputConnection=nil end
-    card,clear=nil,nil;Module.Initialized=false
+    if services then services.points=nil end
+    card,clear,services=nil,nil,nil;Module.Initialized=false
 end
 return Module
 
@@ -22957,13 +22820,20 @@ return Module
         ["src/games/universal/Render/Spectate.lua"] = [[
 -- Native player spectating; FreeCam pauses without losing its position.
 local Module = {Name="Spectate", Initialized=false}
-local card, services
+local card, services, stop
 
 function Module.init(context)
     local host = context.host
     services = context.services
     local world = host.workspace or workspace
     local chosen, camera, saved, writtenSubject
+    local enabled=false
+    local config=host.configData
+    if config then
+        if config.states["Universal.FreeCam.Spectate"]==nil then config.states["Universal.FreeCam.Spectate"]=config.states["Universal.Spectate"] end
+        if config.values["Universal.FreeCam.SpectatePlayer"]==nil then config.values["Universal.FreeCam.SpectatePlayer"]=config.values["Universal.Spectate.Player"] end
+    end
+    card=assert(context.framework:GetModule("FreeCam"),"Spectate requires FreeCam options")
     local playerList
     local id = "ARandomMenu.Spectate." .. tostring({})
     local function localHumanoid()
@@ -22985,7 +22855,9 @@ function Module.init(context)
                     camera.CameraSubject = localHumanoid()
                 else
                     camera.CameraType = saved.kind
-                    camera.CameraSubject = saved.subject == saved.localHumanoid and localHumanoid() or saved.subject
+                    local subject=saved.subject
+                    if subject==saved.localHumanoid or typeof(subject)=="Instance" and subject.Parent==nil then subject=localHumanoid() end
+                    camera.CameraSubject=subject
                     camera.CFrame, camera.Focus = saved.frame, saved.focus
                 end
             end)
@@ -23032,21 +22904,26 @@ function Module.init(context)
         card:SetStatus(chosen)
     end
     local state = {IsActive=function()
-        if not card or not card.Enabled or not chosen then return false end
+        if not enabled or not chosen then return false end
         local humanoid = targetHumanoid()
         return humanoid ~= nil
     end}
     services.spectate = state
-    card = context.framework.Categories.Visuals:CreateModule({Name="Spectate",Category="World",ConfigKey="Universal.Spectate",Order=7,
-        Tooltip="Follow one player independently of FreeCam. Deselect or switch OFF to return to your previous camera.",
-        Function=function(enabled)
-            if not enabled then restore();card:SetStatus(nil);return end
-            card:Clean(function() host.RunService:UnbindFromRenderStep(id);restore() end)
-            -- Set the subject before Roblox updates its native camera.
-            host.RunService:BindToRenderStep(id,Enum.RenderPriority.Camera.Value-1,step)
-            step()
+    stop=function()
+        enabled=false
+        host.RunService:UnbindFromRenderStep(id)
+        restore()
+    end
+    card:CreateToggle({Name="Spectate",Default=false,
+        Tooltip="Follow a player independently: FreeCam may stay OFF. Turn this off or deselect to return.",
+        Function=function(value)
+            stop();enabled=value
+            if enabled then
+                host.RunService:BindToRenderStep(id,Enum.RenderPriority.Camera.Value-1,step)
+                step()
+            end
         end})
-    playerList = card:CreateList({Name="Player",Single=true,Items=function()
+    playerList = card:CreateList({Name="Spectate Player",Single=true,Show={Option="Spectate"},Items=function()
         local names={}
         for _,player in ipairs(host.Players:GetPlayers()) do
             if player ~= host.LocalPlayer then table.insert(names,player.Name) end
@@ -23055,16 +22932,16 @@ function Module.init(context)
     end,EmptyText="No other players",Tooltip="Select one player; click the selected player again to stop spectating.",Function=function(_,names)
         local nextName = names[1]
         if chosen ~= nextName then restore();chosen=nextName end
-        if card and card.Enabled then step() end
+        if enabled then step() end
     end})
     Module.Initialized=true
-    return card
+    return Module
 end
 
 function Module.destroy()
-    if card and card.Enabled then card:Toggle(false) end
+    if stop then stop() end
     if services then services.spectate=nil end
-    card,services=nil,nil
+    card,services,stop=nil,nil,nil
     Module.Initialized=false
 end
 return Module
@@ -24821,7 +24698,6 @@ function Module.init(context: any): any
             ["Safe Walk"] = 4,
             ["Blurt Roles"] = 5,
             ["FreeCam"] = 6,
-            ["Spectate"] = 7,
         }
         layoutOrder = ordered[name] or (100 + layoutOrder)
         local registry: any = configuration.registry or universalFeatures
@@ -33338,7 +33214,8 @@ function Module.init(context: any): WidgetLibrary
         items: {string},
         selected: {[string]: boolean},
         onToggle: (string, boolean) -> (),
-        onBulk: ((boolean) -> ())?
+        onBulk: ((boolean) -> ())?,
+        onRemove: ((string) -> ())?
     ): ()
         if state.choiceListAnchor == anchor then
             state.closeChoiceList()
@@ -33464,6 +33341,19 @@ function Module.init(context: any): WidgetLibrary
 
         for index: number, item: string in ipairs(items) do
             local row: TextButton = makeRow(item, index)
+
+            if onRemove then
+                -- Sibling buttons: delete must never toggle selection.
+                local wrapper=create("Frame",{Name="Row"..index,Parent=scroller,BackgroundTransparency=1,
+                    Size=UDim2.new(1,0,0,rowHeight-1),LayoutOrder=index,ZIndex=402})
+                row.Name="Select";row.Parent=wrapper;row.Size=UDim2.new(1,-24,1,0)
+                row.TextTruncate=Enum.TextTruncate.AtEnd
+                local remove=create("TextButton",{Name="Remove",Parent=wrapper,AnchorPoint=Vector2.new(1,0),
+                    Position=UDim2.fromScale(1,0),Size=UDim2.new(0,24,1,0),BackgroundTransparency=1,
+                    BorderSizePixel=0,Text="×",FontFace=CONTROL_FONT,TextSize=16,TextColor3=Theme.textMuted,
+                    AutoButtonColor=false,ZIndex=403})
+                remove.MouseButton1Click:Connect(function() close();onRemove(item) end)
+            end
 
             local mark: Frame = create("Frame", {
                 Parent = row,
@@ -33628,7 +33518,7 @@ function Module.init(context: any): WidgetLibrary
             selected[item] = on or nil
             publish()
         end
-        button.MouseButton1Click:Connect(function(): ()
+        local function openItems(): ()
             local items: {string} = currentItems()
             local bulk = nil
             if not definition.single then
@@ -33640,8 +33530,14 @@ function Module.init(context: any): WidgetLibrary
             state.openMultiList(button, items, selected, function(item, on)
                 setItem(item, on)
                 if definition.single then state.closeChoiceList() end
-            end, bulk)
-        end)
+            end, bulk, definition.onRemove and function(item)
+                selected[item]=nil
+                definition.onRemove(item)
+                publish()
+                if #currentItems()>0 then openItems() end
+            end or nil)
+        end
+        button.MouseButton1Click:Connect(openItems)
 
         local initialNames = {}
         if definition.single then
@@ -37206,6 +37102,7 @@ function Module.init(context: any): Framework
             option.Object = builder(feature, definition2.Name, {
                 items = definition2.Items,
                 single = definition2.Single == true,
+                onRemove = definition2.OnRemove,
                 default = definition2.Default,
                 hint = definition2.Tooltip,
                 emptyText = definition2.EmptyText,

@@ -32,7 +32,7 @@ function Module.init(context: Runtime): any
 
     local runtime: any = {
         armedUntil = 0,
-        waypoint = nil :: Vector3?,
+        point = nil :: string?,
         lastOrigin = nil :: Vector3?,
     }
 
@@ -66,6 +66,7 @@ function Module.init(context: Runtime): any
         Tooltip = "MM2 shows all game teleport buttons together. Other destinations use the main action.",
         Function = function(value)
             runtime.armedUntil = 0
+            if runtime.cancelTravel then runtime.cancelTravel() end
             local mm2Controls = { ["Teleport to Map"] = true, ["Teleport to Lobby"] = true,
                 ["Teleport to Player"] = true, ["Get Gun"] = true, ["Player name"] = true,
                 ["Get Gun key"] = true, ["Auto Get Gun"] = true, ["Gun pickup delay"] = true }
@@ -88,19 +89,25 @@ function Module.init(context: Runtime): any
         Tooltip = "Part or model name to look for, for Item. Partial names "
             .. "match, so \"chest\" finds \"GoldChest\".",
     })
-    teleport:CreateButton({
-        Name = "Save waypoint",
-        Show = {Option = "Destination", Values = {"Waypoint"}},
-        Tooltip = "Stores where you are standing right now.",
-        Function = function(): ()
-            local root: BasePart? = characterRoot(localPlayer)
-            if not root then
-                return
+    local pointList=teleport:CreateList({Name="Point",Single=true,
+        Show={Option="Destination",Values={"Waypoint"}},
+        EmptyText="No points. Save one in Markers.",Items=function()
+            local points=context.services.points
+            return points and points.Names() or {}
+        end,Function=function(_,names) runtime.point=names[1] end,
+        Tooltip="The same saved points as Markers. Choose one, then Teleport to point."})
+    teleport:CreateButton({Name="Teleport to point",Show={Option="Destination",Values={"Waypoint"}},
+        Function=function() Module.run(context,teleport,runtime) end})
+    local unsubscribe
+    if context.services.points then
+        unsubscribe=context.services.points.Subscribe(function()
+            if runtime.point and not context.services.points.Get(runtime.point) then
+                if runtime.cancelTravel then runtime.cancelTravel() end
+                pointList:Set(runtime.point,false)
             end
-            runtime.waypoint = (root :: BasePart).Position
-            teleport:SetStatus("waypoint saved")
-        end,
-    })
+            pointList:Refresh()
+        end)
+    end
     teleport:CreateSlider({
         Name = "Arm window",
         Show = {Option = "Destination", Values = {"Tap point"}},
@@ -136,15 +143,15 @@ function Module.init(context: Runtime): any
         Name = "Movement",
         List = {"Instant", "Glide"},
         Index = 1,
-        Tooltip = "Glide steps the character across, which some games accept "
-            .. "when a single jump is rejected.",
+        Tooltip = "Instant jumps to the destination. Glide moves continuously at Glide speed (studs/sec), regardless of frame rate. A new trip cancels the previous one.",
     })
     teleport:CreateSlider({
-        Name = "Glide step",
+        Name = "Glide speed",
         Show = {Option = "Movement", Values = {"Glide"}},
-        Min = 4,
-        Max = 60,
-        Default = 18,
+        Min = 1,
+        Max = 500,
+        Default = 60,
+        Tooltip = "Travel speed in studs per second, not distance per frame. Higher = faster.",
     })
     teleport:CreateSlider({
         Name = "Height offset",
@@ -189,6 +196,8 @@ function Module.init(context: Runtime): any
             tapConnection:Disconnect()
         end)
         runtime.armedUntil = 0
+        if runtime.cancelTravel then runtime.cancelTravel() end
+        if unsubscribe then unsubscribe() end
     end
     Module.Initialized = true
     return teleport
@@ -268,6 +277,7 @@ function Module.findItem(
 end
 
 function Module.run(context: Runtime, teleport: any, runtime: any): ()
+    if runtime.cancelTravel then runtime.cancelTravel() end
     if teleport.Options.Destination.Value == "MM2" then
         teleport:Notify("Choose a MM2 teleport button below")
         return
@@ -293,11 +303,11 @@ function Module.run(context: Runtime, teleport: any, runtime: any): ()
     end
 
     if destination == "Waypoint" then
-        if not runtime.waypoint then
-            teleport:Notify("no waypoint saved")
-            return
-        end
-        Module.travel(context, teleport, runtime, runtime.waypoint, false)
+        local points=context.services.points
+        local position,surface
+        if points and runtime.point then position,surface=points.Get(runtime.point) end
+        if not position then teleport:Notify("Choose a saved point from Markers first.");return end
+        Module.travel(context,teleport,runtime,position,surface==true)
         return
     end
 
@@ -377,6 +387,7 @@ function Module.travel(
 ): ()
     local host: any = context.host
     local localPlayer: Player = host.LocalPlayer
+    if runtime.cancelTravel then runtime.cancelTravel() end
     if not destination then
         teleport:Notify("nothing there")
         return
@@ -401,34 +412,41 @@ function Module.travel(
 
     local keepMomentum: boolean = options["Keep momentum"].Value
     if options["Movement"].Value == "Instant" then
-        resolvedRoot.CFrame = CFrame.new(target)
+        resolvedRoot.CFrame = resolvedRoot.CFrame + (target - resolvedRoot.Position)
         if not keepMomentum then
             resolvedRoot.AssemblyLinearVelocity = Vector3.zero
+            resolvedRoot.AssemblyAngularVelocity = Vector3.zero
         end
         return
     end
 
-    local step: number = options["Glide step"].Value
-    task.spawn(function(): ()
-        for _ = 1, 360 do
-            if not resolvedRoot.Parent then
-                return
-            end
-            local offset: Vector3 = target - resolvedRoot.Position
-            if offset.Magnitude < 3 then
-                resolvedRoot.CFrame = CFrame.new(target)
-                if not keepMomentum then
-                    resolvedRoot.AssemblyLinearVelocity = Vector3.zero
-                end
-                return
-            end
-            resolvedRoot.CFrame = resolvedRoot.CFrame
-                + offset.Unit * math.min(offset.Magnitude, step)
-            if not keepMomentum then
-                resolvedRoot.AssemblyLinearVelocity = Vector3.zero
-            end
-            task.wait()
+    local speed=math.max(0,options["Glide speed"].Value)
+    if speed==0 then teleport:Notify("Glide speed must be greater than zero.");return end
+    local character=localPlayer.Character
+    local connection
+    local function finish()
+        if connection then connection:Disconnect();connection=nil end
+        runtime.cancelTravel=nil
+        if context.services.activity then context.services.activity.set("teleport",false) end
+        teleport:SetStatus(nil)
+    end
+    if runtime.cancelTravel then runtime.cancelTravel() end
+    runtime.cancelTravel=finish
+    if context.services.activity then context.services.activity.set("teleport",true) end
+    teleport:SetStatus("Gliding")
+    connection=host.RunService.Heartbeat:Connect(function(dt)
+        if localPlayer.Character~=character or not resolvedRoot.Parent
+            or characterRoot(localPlayer)~=resolvedRoot or humanoid and humanoid.Health<=0 then finish();return end
+        local offset=target-resolvedRoot.Position
+        local distance=offset.Magnitude
+        local amount=math.min(distance,speed*math.clamp(dt,0,0.1))
+        if distance<=amount+0.001 then
+            resolvedRoot.CFrame=resolvedRoot.CFrame+(target-resolvedRoot.Position)
+            if not keepMomentum then resolvedRoot.AssemblyLinearVelocity=Vector3.zero;resolvedRoot.AssemblyAngularVelocity=Vector3.zero end
+            finish();return
         end
+        if distance>0 then resolvedRoot.CFrame+=offset.Unit*amount end
+        if not keepMomentum then resolvedRoot.AssemblyLinearVelocity=Vector3.zero;resolvedRoot.AssemblyAngularVelocity=Vector3.zero end
     end)
 end
 

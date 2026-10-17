@@ -1,12 +1,19 @@
 -- Native player spectating; FreeCam pauses without losing its position.
 local Module = {Name="Spectate", Initialized=false}
-local card, services
+local card, services, stop
 
 function Module.init(context)
     local host = context.host
     services = context.services
     local world = host.workspace or workspace
     local chosen, camera, saved, writtenSubject
+    local enabled=false
+    local config=host.configData
+    if config then
+        if config.states["Universal.FreeCam.Spectate"]==nil then config.states["Universal.FreeCam.Spectate"]=config.states["Universal.Spectate"] end
+        if config.values["Universal.FreeCam.SpectatePlayer"]==nil then config.values["Universal.FreeCam.SpectatePlayer"]=config.values["Universal.Spectate.Player"] end
+    end
+    card=assert(context.framework:GetModule("FreeCam"),"Spectate requires FreeCam options")
     local playerList
     local id = "ARandomMenu.Spectate." .. tostring({})
     local function localHumanoid()
@@ -28,7 +35,9 @@ function Module.init(context)
                     camera.CameraSubject = localHumanoid()
                 else
                     camera.CameraType = saved.kind
-                    camera.CameraSubject = saved.subject == saved.localHumanoid and localHumanoid() or saved.subject
+                    local subject=saved.subject
+                    if subject==saved.localHumanoid or typeof(subject)=="Instance" and subject.Parent==nil then subject=localHumanoid() end
+                    camera.CameraSubject=subject
                     camera.CFrame, camera.Focus = saved.frame, saved.focus
                 end
             end)
@@ -75,21 +84,26 @@ function Module.init(context)
         card:SetStatus(chosen)
     end
     local state = {IsActive=function()
-        if not card or not card.Enabled or not chosen then return false end
+        if not enabled or not chosen then return false end
         local humanoid = targetHumanoid()
         return humanoid ~= nil
     end}
     services.spectate = state
-    card = context.framework.Categories.Visuals:CreateModule({Name="Spectate",Category="World",ConfigKey="Universal.Spectate",Order=7,
-        Tooltip="Follow one player independently of FreeCam. Deselect or switch OFF to return to your previous camera.",
-        Function=function(enabled)
-            if not enabled then restore();card:SetStatus(nil);return end
-            card:Clean(function() host.RunService:UnbindFromRenderStep(id);restore() end)
-            -- Set the subject before Roblox updates its native camera.
-            host.RunService:BindToRenderStep(id,Enum.RenderPriority.Camera.Value-1,step)
-            step()
+    stop=function()
+        enabled=false
+        host.RunService:UnbindFromRenderStep(id)
+        restore()
+    end
+    card:CreateToggle({Name="Spectate",Default=false,
+        Tooltip="Follow a player independently: FreeCam may stay OFF. Turn this off or deselect to return.",
+        Function=function(value)
+            stop();enabled=value
+            if enabled then
+                host.RunService:BindToRenderStep(id,Enum.RenderPriority.Camera.Value-1,step)
+                step()
+            end
         end})
-    playerList = card:CreateList({Name="Player",Single=true,Items=function()
+    playerList = card:CreateList({Name="Spectate Player",Single=true,Show={Option="Spectate"},Items=function()
         local names={}
         for _,player in ipairs(host.Players:GetPlayers()) do
             if player ~= host.LocalPlayer then table.insert(names,player.Name) end
@@ -98,16 +112,16 @@ function Module.init(context)
     end,EmptyText="No other players",Tooltip="Select one player; click the selected player again to stop spectating.",Function=function(_,names)
         local nextName = names[1]
         if chosen ~= nextName then restore();chosen=nextName end
-        if card and card.Enabled then step() end
+        if enabled then step() end
     end})
     Module.Initialized=true
-    return card
+    return Module
 end
 
 function Module.destroy()
-    if card and card.Enabled then card:Toggle(false) end
+    if stop then stop() end
     if services then services.spectate=nil end
-    card,services=nil,nil
+    card,services,stop=nil,nil,nil
     Module.Initialized=false
 end
 return Module

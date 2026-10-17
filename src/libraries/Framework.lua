@@ -656,6 +656,7 @@ function Module.init(context: any): Framework
             option.Object = builder(feature, definition2.Name, {
                 items = definition2.Items,
                 single = definition2.Single == true,
+                onRemove = definition2.OnRemove,
                 default = definition2.Default,
                 hint = definition2.Tooltip,
                 emptyText = definition2.EmptyText,

@@ -84,6 +84,8 @@ Enum = setmetatable({}, {__index = function(t, k)
     rawset(t, k, v)
     return v
 end})
+Enum.RenderPriority.Camera.Value = 200
+Enum.ContextActionPriority.High.Value = 3000
 TweenInfo = {new = function(...) return {Name = "TweenInfo"} end}
 ColorSequence = {new = function(...) return {Name = "ColorSequence"} end}
 ColorSequenceKeypoint = {new = function(t, c) return {Time = t, Value = c} end}
@@ -405,6 +407,9 @@ end
 function PlayersService:GetChildren() return {LocalPlayer} end
 
 RunService = newInst("RunService")
+local renderBindings={}
+function RunService:BindToRenderStep(name,priority,callback) renderBindings[name]={priority=priority,callback=callback} end
+function RunService:UnbindFromRenderStep(name) renderBindings[name]=nil end
 function RunService:IsStudio() return false end
 
 UserInputService = newInst("UserInputService")
@@ -816,7 +821,7 @@ do
       Combat = {"Aim Assist", "KillAura", "TriggerBot", "SilentAIM"},
       Exploits = {"Fly", "Noclip", "Spider", "Speed", "Jump", "Interact Extender", "Fling"},
       Utilities = {"Anti Void", "Teleport", "Freeze Movements", "Ghost", "Disguise"},
-      World = {"Improve FPS", "Gravity", "Anti AFK", "Safe Walk", "Blurt Roles", "FreeCam", "Spectate"},
+      World = {"Improve FPS", "Gravity", "Anti AFK", "Safe Walk", "Blurt Roles", "FreeCam"},
     }
     for category, names in pairs(expected) do
       for index, name in ipairs(names) do
@@ -837,15 +842,21 @@ do
     assert(fullbright.Options["Time Changer"] and not fullbright.Options.Time.Visible)
     fullbright.Options["Time Changer"].Metadata.callback(true);assert(fullbright.Options.Time.Visible)
     fullbright.Options["Time Changer"].Metadata.callback(false)
-    assert(not ex.state.framework:GetModule("FreeCam").Options["Spectate Player"])
-    assert(ex.state.framework:GetModule("Spectate").Options.Player)
+    assert(ex.state.framework:GetModule("FreeCam").Options["Spectate Player"])
+    assert(ex.state.framework:GetModule("FreeCam").Options.Spectate)
+    assert(not ex.state.framework:GetModule("Spectate"))
     local markers=ex.state.framework:GetModule("Markers")
     assert(markers and markers.Options["Save here"] and not markers.Options.Coordinates.Visible)
     markers.Options.Name.Metadata.callback("Harness place")
     markers.Options["Save here"].Metadata.callback()
-    assert(markers.Options.Places:IsSelected("Harness place"), "Save here updates actual list controls")
-    markers.Options["Remove named place"].Metadata.callback()
-    assert(not markers.Options.Places:IsSelected("Harness place"))
+    assert(markers.Options.Point:IsSelected("Harness place"), "Save here updates actual list controls")
+    assert(not markers.Options["Remove named place"])
+    markers.Options.Point.Object.MouseButton1Click:Fire()
+    local pointPopup=CoreGui:FindFirstChild("Wurst"):FindFirstChild("MultiList")
+    pointPopup:FindFirstChild("Items"):FindFirstChild("Row1"):FindFirstChild("Remove").MouseButton1Click:Fire()
+    assert(not markers.Options.Point:IsSelected("Harness place"))
+    assert(not ex.state.framework:GetModule("Teleport").Options["Save waypoint"])
+    assert(ex.state.framework:GetModule("Teleport").Options.Point)
     assert(markers.Options.Touch and markers.Options["Save coordinates"])
     assert(markers.Options.Coordinates.Object.PlaceholderText=="x, y, z", "framework must apply the actual textbox placeholder")
     local xray=ex.state.framework:GetModule("X-Ray")
@@ -858,17 +869,18 @@ do
     UserInputService.InputBegan:Fire({KeyCode=Enum.KeyCode.Escape,UserInputType=Enum.UserInputType.Keyboard},false)
     assert(not ex.state.choiceBlur and chooser.destroyed==true)
     assert(Lighting:FindFirstChild("WurstBlur").Enabled==(ex.state.visible==true))
+    ex.state.framework:GetModule("FreeCam").Options.Spectate.Metadata.callback(true)
     local originalPlayers=PlayersService.GetPlayers
     local extraPlayer=newInst("Player");extraPlayer.props.Name="ZebraGuest";extraPlayer.props.UserId=3
     PlayersService.GetPlayers=function(self)
         local players=originalPlayers(self);table.insert(players,extraPlayer);return players
     end
-    ex.state.framework:GetModule("Spectate").Options.Player.Object.MouseButton1Click:Fire()
+    ex.state.framework:GetModule("FreeCam").Options["Spectate Player"].Object.MouseButton1Click:Fire()
     local multi=CoreGui:FindFirstChild("Wurst"):FindFirstChild("MultiList")
     assert(multi and multi.BackgroundTransparency==0.22 and ex.state.choiceBlur)
     assert(not multi:FindFirstChild("Items"):FindFirstChild("Row0"), "single-player selector must not have All / none")
     multi:FindFirstChild("Items"):FindFirstChild("Row1").MouseButton1Click:Fire()
-    local playerOption=ex.state.framework:GetModule("Spectate").Options.Player
+    local playerOption=ex.state.framework:GetModule("FreeCam").Options["Spectate Player"]
     assert(#playerOption.Selected==1 and not ex.state.choiceBlur and multi.destroyed)
     local firstPlayer=playerOption.Selected[1]
     playerOption.Object.MouseButton1Click:Fire()
@@ -878,6 +890,7 @@ do
     playerOption:Set(playerOption.Selected[1],false)
     assert(#playerOption.Selected==0)
     PlayersService.GetPlayers=originalPlayers
+    ex.state.framework:GetModule("FreeCam").Options.Spectate.Metadata.callback(false)
     assert(type(ex.state.dock.BeginMove)=="function")
     local aim=ex.state.framework:GetModule("Aim Assist")
     assert(aim.Options.Speed and aim.Options.Strength and not aim.Options.Smoothing)
@@ -1103,7 +1116,7 @@ def main() -> None:
         "\nlocal ok, err = pcall(function()\n",
         wurst,
         "\nend)\n",
-        'if not ok then\n  print("[HARNESS] WURST TOP-LEVEL CRASH:", tostring(err))\nelse\n  print("[HARNESS] Wurst boot completed")\nend\n',
+        'if not ok then\n  error("[HARNESS] WURST TOP-LEVEL CRASH: "..tostring(err))\nelse\n  print("[HARNESS] Wurst boot completed")\n  local toasts=CoreGui:FindFirstChild("Wurst"):FindFirstChild("ToastContainer")\n  for _,child in ipairs(toasts:GetChildren()) do assert(child.Name~="Toast","successful injection must be silent") end\nend\n',
         EPILOGUE,
     ]
     OUT.write_text("".join(parts), encoding="utf-8")
