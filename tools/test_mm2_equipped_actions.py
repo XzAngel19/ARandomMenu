@@ -12,6 +12,7 @@ A=(ROOT/'src/games/MM2/Blatant/KnifeAura.lua').read_text()
 
 script=PRELUDE+r'''
 do
+local state={mm2SilentAimEnabled=true}
 local character={}
 local LocalPlayer={Character=character}
 local function findMurderer() return LocalPlayer end

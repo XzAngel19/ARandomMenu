@@ -9,6 +9,7 @@ ROOT = Path(__file__).resolve().parents[1]
 S = (ROOT / 'src/games/MM2/Blatant/Shoot.lua').read_text()
 script = PRELUDE + r'''
 local configData={states={['MM2.AutoShoot']=true},values={['Shortcut.MM2AutoShoot']='J'}}
+local state={}
 local shootOptionsReady=true
 local shootFeatureActive=false
 local autoShootActive=false

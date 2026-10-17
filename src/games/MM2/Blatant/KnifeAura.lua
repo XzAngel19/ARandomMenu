@@ -203,14 +203,13 @@ function Module.init(runtime: any): any
     assert(aura, "MM2 Knife requires the existing KillAura module")
     local wasEnabled: boolean = aura.Enabled
     if type(configData) == "table" and not configData.values["MM2.Knife.MigratedToKillAura"] then
-        for _, label: string in ipairs({"KnifeAura", "KnifeThrow"}) do
+        for _, label: string in ipairs({"KnifeAura"}) do
             local old: any = configData.states["MM2.Knife." .. label]
             local key: string = "Universal.KillAura." .. label
             if configData.states[key] == nil and old ~= nil then configData.states[key] = old end
         end
         for _, pair in ipairs({
             {"MM2.Knife.AuraRange", "Universal.KillAura.AuraRange"},
-            {"Shortcut.MM2KnifeKnifeThrow", "Shortcut.UniversalKillAuraKnifeThrow"},
             {"Shortcut.MM2Knife", "Shortcut.UniversalKillAura"},
         }) do
             if configData.values[pair[2]] == nil then configData.values[pair[2]] = configData.values[pair[1]] end
@@ -223,18 +222,17 @@ function Module.init(runtime: any): any
     local KnifeFeature: any = aura.Feature
     local originalDescription: string = KnifeFeature.description
     local originalSearch: string = KnifeFeature.searchText
-    KnifeFeature.description = "MM2 knife combat: Knife Aura stabs, Knife Throw repeats full throws. KillAura is the shared master; both use your held knife."
+    KnifeFeature.description = "MM2 melee combat: Knife Aura stabs with your held knife. Knife Throw belongs to SilentAIM."
     KnifeFeature.tooltipText = KnifeFeature.description
-    KnifeFeature.searchText = "killaura combat mm2 knife aura throw range"
+    KnifeFeature.searchText = "killaura combat mm2 knife aura range"
     aura.CombatAdapter = function(enabled: boolean): ()
         state.mm2KnifeRuntime.masterEnabled = enabled
         refreshKnifeController()
-        if state.mm2KnifeThrowRefresh then state.mm2KnifeThrowRefresh() end
         aura:SetStatus(enabled and "Knife" or nil)
     end
     -- Generic melee controls do not describe the MM2 remote-based controller.
     aura.OptionFilter = function(name: string): boolean
-        return name == "Knife Aura" or name == "Aura Range" or name == "Knife Throw"
+        return name == "Knife Aura" or name == "Aura Range"
     end
     aura:RefreshVisibility()
     state.mm2KnifeAuraModule = aura
@@ -251,7 +249,6 @@ function Module.init(runtime: any): any
         if aura.Enabled then aura:Toggle(false) end
         toggleKnifeAura(false)
         state.mm2KnifeRuntime.masterEnabled = false
-        state.mm2KnifeRuntime.throwWanted = false
         state.mm2KnifeFeature = nil
         state.mm2KnifeAuraModule = nil
         aura.CombatAdapter = nil
@@ -261,7 +258,7 @@ function Module.init(runtime: any): any
         -- If the adapter is detached before the whole UI is destroyed, do
         -- not expose stale MM2 actions beside the generic controls.
         aura.OptionFilter = function(name: string): boolean
-            return name ~= "Knife Aura" and name ~= "Knife Throw" and name ~= "Aura Range"
+            return name ~= "Knife Aura" and name ~= "Aura Range"
         end
         aura:RefreshVisibility()
     end

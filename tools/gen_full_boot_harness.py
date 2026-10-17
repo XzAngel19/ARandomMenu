@@ -800,7 +800,7 @@ do
     local expected = {
       Combat = {"Aim Assist", "KillAura", "TriggerBot", "SilentAIM"},
       Exploits = {"Fly", "Fling", "Noclip", "Spider", "Speed", "Jump", "Interact Extender"},
-      Utilities = {"Anti Fling", "Anti Void", "Click Teleport", "Freeze Movements", "Ghost", "Teleport", "Disguise"},
+      Utilities = {"Anti Fling", "Anti Void", "Teleport", "Freeze Movements", "Ghost", "Disguise"},
       World = {"Improve FPS", "Gravity", "Anti AFK", "Safe Walk", "Blurt Roles"},
     }
     for category, names in pairs(expected) do
@@ -866,11 +866,24 @@ do
     assert(#auraModule.Cleanup == 0, "generic attack loop/watchers must not start alongside MM2 adapter")
     auraModule:Toggle(false);assert(not ex.state.mm2KnifeRuntime.masterEnabled)
     assert(ex.state.mm2KnifeRuntime.auraWanted, "master OFF retains the selected attack")
-    ex.state.toggleControls["Universal.KillAura.KnifeThrow"].setChecked(true)
+    ex.state.toggleControls["MM2.Shoot.KnifeThrow"].setChecked(true)
     assert(not ex.state.mm2KnifeRuntime.masterEnabled, "child does not bypass master")
+    assert(shoot.options:FindFirstChild("Option_KnifeThrow").LayoutOrder == 2, "Knife Throw must be the second visible attack, not buried below Gun tuning")
+    assert(not knife.options:FindFirstChild("Option_KnifeThrow"), "Knife Throw must not be in KillAura")
+    shoot.activationTarget.MouseButton1Click:Fire();assert(ex.state.mm2SilentAimEnabled)
     auraModule:Toggle(true);assert(ex.state.mm2KnifeRuntime.masterEnabled and ex.state.mm2KnifeRuntime.throwWanted)
+    shoot.activationTarget.MouseButton1Click:Fire();assert(not ex.state.mm2SilentAimEnabled and ex.state.mm2KnifeRuntime.throwWanted)
     auraModule:Toggle(false);assert(ex.state.mm2KnifeRuntime.throwWanted, "stop does not erase Throw preference")
-    ex.state.toggleControls["Universal.KillAura.KnifeThrow"].setChecked(false)
+    ex.state.toggleControls["MM2.Shoot.KnifeThrow"].setChecked(false)
+
+    assert(not findFeature("Role Tags") and not findFeature("Click Teleport"))
+    local tp = ex.state.framework:GetModule("Teleport")
+    assert(tp.Options.Destination.Value == "MM2", "MM2 is the default Teleport destination")
+    assert(tp.Options["MM2 target"].Visible and not tp.Options.Movement.Visible)
+    tp.Options.Destination.Metadata.callback("Tap point")
+    assert(not tp.Options["MM2 target"].Visible and tp.Options.Movement.Visible)
+    tp.Options.Destination.Metadata.callback("MM2")
+    assert(tp.Options["MM2 target"].Visible and not tp.Options.Movement.Visible)
 
     local auraRange = knife.options:FindFirstChild("Option_AuraRange")
     assert(auraRange and auraRange.Visible, "Knife Aura is the default MM2 KillAura attack")

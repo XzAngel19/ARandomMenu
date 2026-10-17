@@ -43,7 +43,9 @@ end}
 local function disconnectFeatureConnection(k)
  if featureConnections[k] then featureConnections[k]:Disconnect();featureConnections[k]=nil end
 end
-local state={mm2KnifeFeature={},mm2KnifeRuntime={masterEnabled=true}}
+local state={mm2SilentAimEnabled=true,mm2SilentAimFeature={},mm2KnifeRuntime={masterEnabled=false}}
+local configData={states={},values={}}
+local function addInformationOption() end
 state.mm2Core={findMurderer=function() return LocalPlayer end,getPlayerRole=function() return 'Innocent' end,
  getPlayerWeapon=function(_,_,held) assert(held);return knife end,isPlayerAlive=function() return true end,
  isProtectedTarget=function() return false end,getFilteredVelocity=function() return Vector3.zero end,
@@ -73,9 +75,9 @@ render(.26);assert(not loops.render)
 loops.heartbeat();assert(loops.render and sends==1,'next cycle starts without extra Fire delay')
 toggle(false);assert(not loops.render and not loops.heartbeat)
 toggle(true);knife.Enabled=false;loops.heartbeat();assert(not loops.render and sends==1)
-knife.Enabled=true;state.mm2KnifeRuntime.masterEnabled=false;state.mm2KnifeThrowRefresh()
+knife.Enabled=true;state.mm2SilentAimEnabled=false;state.mm2KnifeThrowRefresh()
 assert(not loops.heartbeat and not loops.render and state.mm2KnifeRuntime.throwWanted,'master stops but retains selection')
-state.mm2KnifeRuntime.masterEnabled=true;state.mm2KnifeThrowRefresh()
+state.mm2SilentAimEnabled=true;state.mm2KnifeThrowRefresh()
 assert(loops.heartbeat,'master ON resumes selected Throw')
 far.visible=false;loops.heartbeat();assert(not loops.render,'fully hidden targets are not selected')
 close.visible=true;loops.heartbeat();assert(loops.render)

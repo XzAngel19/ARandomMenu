@@ -126,7 +126,7 @@ local Manifest: Manifest = {
         },
         {
             path = "src/games/universal/Movement/ClickTeleport.lua",
-            name = "Click Teleport",
+            name = "Teleport",
             category = "Utilities",
         },
         {

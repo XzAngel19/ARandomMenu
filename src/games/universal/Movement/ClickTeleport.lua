@@ -38,7 +38,8 @@ function Module.init(context: Runtime): any
 
     local teleport: any
     teleport = framework.Categories.Utilities:CreateModule({
-        Name = "Click Teleport",
+        Name = "Teleport",
+        ConfigKey = "Universal.ClickTeleport",
         Category = "Utilities",
         Order = 1,
 
@@ -50,19 +51,28 @@ function Module.init(context: Runtime): any
         end,
     })
 
-    teleport:CreateDropdown({
-        Name = "Destination",
-        List = {
-            "Tap point",
-            "Nearest player",
-            "Named player",
-            "Item",
-            "Waypoint",
-            "Last position",
-        },
-        Index = 1,
-        Tooltip = "What the button travels to.",
-    })
+    local destinations = {"Tap point", "Nearest player", "Named player", "Item", "Waypoint", "Last position"}
+    if host.GAME_CHECK and host.GAME_CHECK.MM2Active then
+        table.insert(destinations, 1, "MM2")
+        local config = host.configData
+        if config and not config.values["Teleport.MM2DefaultV40"] then
+            config.values["Universal.ClickTeleport.Destination"] = "MM2"
+            config.values["Teleport.MM2DefaultV40"] = true
+        end
+    end
+    teleport:CreateDropdown({Name = "Destination", List = destinations, Index = 1,
+        Tooltip = "MM2 opens the game destinations; other modes retain universal travel.",
+        Function = function(value)
+            runtime.armedUntil = 0
+            local mm2Controls = { ["MM2 target"] = true, ["Player name"] = true,
+                ["Get Gun key"] = true, ["Auto Get Gun"] = true, ["Gun pickup delay"] = true }
+            teleport.OptionFilter = function(name)
+                if name == "Destination" then return true end
+                return value == "MM2" and mm2Controls[name] == true
+                    or value ~= "MM2" and not mm2Controls[name]
+            end
+            teleport:RefreshVisibility()
+        end})
     teleport:CreateTextBox({
         Name = "Player",
         Show = {Option = "Destination", Values = {"Named player"}},
@@ -269,6 +279,11 @@ function Module.findItem(
 end
 
 function Module.run(context: Runtime, teleport: any, runtime: any): ()
+    if teleport.Options.Destination.Value == "MM2" then
+        local run = context.host.state and context.host.state.mm2TeleportRun
+        if run then run() else teleport:Notify("MM2 destinations are not ready") end
+        return
+    end
     local host: any = context.host
     local entityLibrary: any = context.entity
     local localPlayer: Player = host.LocalPlayer

@@ -143,47 +143,31 @@ function Module.init(runtime: any): any
         end
     end
 
-    local TeleportFeature = createUniversalFeature(
-        "Teleport",
-        "Map, lobby, and temporary gun pickup",
-        14,
-        function() end,
-        {
-            category = true,
-            categoryName = "Utilities",
-            parent = MM2Scroll,
-            registry = mm2Features,
-        }
-    )
-    addActionOption(TeleportFeature, "Teleport to Map", teleportToMap)
-    addActionOption(TeleportFeature, "Teleport to Lobby", teleportToLobby)
-    addTextOption(
-        TeleportFeature,
-        "Player name",
-        "",
-        function(value)
-            teleportTargetName = value
-        end,
-        false,
-        "Exact or partial name"
-    )
-    addActionOption(TeleportFeature, "Teleport to Player", teleportToPlayer)
-    addActionOption(TeleportFeature, "Get Gun", teleportToDroppedGun)
-    local GetGunKeyButton: TextButton = addKeyOption(
-        TeleportFeature,
-        "Get Gun key",
-        mm2Settings.getGunKey,
-        function(value: Enum.KeyCode): ()
-            mm2Settings.getGunKey = value
-        end
-    )
-    if state.bindMobileActionPlacement then
-        state.bindMobileActionPlacement(
-            GetGunKeyButton,
-            "MM2GetGun",
-            "GUN",
-            teleportToDroppedGun
-        )
+    local teleport = state.framework:GetModule("Teleport")
+    assert(teleport, "MM2 extends the universal Teleport module")
+    for _, id in ipairs({"GetGunkey", "Gunpickupdelay", "Playername"}) do
+        local key = "Universal.ClickTeleport." .. id
+        if configData.values[key] == nil then configData.values[key] = configData.values["MM2.Teleport." .. id] end
+    end
+    local autoKey = "Universal.ClickTeleport.AutoGetGun"
+    if configData.states[autoKey] == nil then configData.states[autoKey] = configData.states["MM2.Teleport.AutoGetGun"] end
+    local show = {Option = "Destination", Values = {"MM2"}}
+    local playerShow = {{Option = "Destination", Values = {"MM2"}},
+        {Option = "MM2 target", Values = {"Player"}}}
+    teleport:CreateDropdown({Name = "MM2 target", List = {"Map", "Lobby", "Player", "Gun"}, Index = 1, Show = show})
+    teleport:CreateTextBox({Name = "Player name", Default = "", Show = playerShow,
+        Function = function(value) teleportTargetName = value end})
+    state.mm2TeleportRun = function()
+        local target = teleport.Options["MM2 target"].Value
+        if target == "Map" then teleportToMap()
+        elseif target == "Lobby" then teleportToLobby()
+        elseif target == "Player" then teleportToPlayer()
+        elseif target == "Gun" then teleportToDroppedGun() end
+    end
+    local key = teleport:CreateBind({Name = "Get Gun key", Default = mm2Settings.getGunKey, Show = show,
+        Function = function(value) mm2Settings.getGunKey = value end})
+    if state.bindMobileActionPlacement and key.Object then
+        state.bindMobileActionPlacement(key.Object, "MM2GetGun", "GUN", teleportToDroppedGun)
     end
     featureConnections.MM2GetGunKey = UserInputService.InputBegan:Connect(
         function(input, gameProcessed)
@@ -199,21 +183,15 @@ function Module.init(runtime: any): any
             end
         end
     )
-    addToggleOption(TeleportFeature, "Auto Get Gun", false, toggleAutoGetGun)
-    addNumberOption(
-        TeleportFeature,
-        "Gun pickup delay",
-        mm2Settings.autoGetGunDelay,
-        0.05,
-        2,
-        function(value)
-            mm2Settings.autoGetGunDelay = value
-        end
-    )
+    teleport:CreateToggle({Name = "Auto Get Gun", Default = false, Show = show, Function = toggleAutoGetGun})
+    teleport:CreateSlider({Name = "Gun pickup delay", Default = mm2Settings.autoGetGunDelay,
+        Min = 0.05, Max = 2, Decimal = 2, Show = show,
+        Function = function(value) mm2Settings.autoGetGunDelay = value end})
 
     activeCleanup = function(): ()
         toggleAutoGetGun(false)
-                disconnectFeatureConnection("MM2GetGunKey")
+        state.mm2TeleportRun = nil
+        disconnectFeatureConnection("MM2GetGunKey")
     end
     Module.Events = featureConnections
     Module.Initialized = true

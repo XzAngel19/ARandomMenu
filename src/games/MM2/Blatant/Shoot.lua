@@ -689,6 +689,8 @@ function Module.init(runtime: any): any
 
     local function toggleShootMurderer(enabled: boolean): ()
         shootFeatureActive = enabled
+        state.mm2SilentAimEnabled = enabled
+        if state.mm2KnifeThrowRefresh then state.mm2KnifeThrowRefresh() end
         autoShootActive = shootFeatureActive and autoShootWanted
         refreshShootInfrastructure()
         if updateAutoShootConnection then updateAutoShootConnection() end
@@ -760,7 +762,7 @@ function Module.init(runtime: any): any
     end
     ShootFeature = createUniversalFeature(
         "SilentAIM",
-        "Gun: use the assigned key for one shot, or enable Auto Shoot below. Aim method selects Prediction or Silent AIM; Auto uses your held gun only.",
+        "Gun aim and Knife Throw. The main assigned key fires/equips Gun; Auto Shoot and Knife Throw use your held weapon. Aim method and lead controls below apply to Gun.",
         4,
         toggleShootMurderer,
         {
@@ -770,9 +772,9 @@ function Module.init(runtime: any): any
             registry = mm2Features,
         }
     )
-    addInformationOption(ShootFeature, "Weapon: Gun")
+    state.mm2SilentAimFeature = ShootFeature
     addToggleOption(ShootFeature, "Auto Shoot", false, toggleAutoShoot,
-        "While Shoot is ON and you hold the gun: try every frame as soon as the current target is visible. No distance or prediction-confidence gate. Uses Shoot's mode.", true)
+        "While SilentAIM is ON and you hold the gun: try every frame as soon as the current target is visible. No distance or prediction-confidence gate. Uses the Gun aim method.", true)
     local ShootTargetBox
     local wallCheckRow: GuiObject? = nil
     local silentSweepRow: GuiObject? = nil
@@ -1002,6 +1004,7 @@ function Module.init(runtime: any): any
 
     activeCleanup = function(): ()
         toggleShootMurderer(false)
+        state.mm2SilentAimFeature = nil
         toggleAutoShoot(false)
         state.mm2ShotFeedback.hide()
     end

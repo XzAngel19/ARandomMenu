@@ -68,8 +68,7 @@ function Module.init(runtime: any): any
     end
 
     local function getReadyKnife(): Tool?
-        local knifeRuntime: any = state and state.mm2KnifeRuntime
-        if knifeRuntime and knifeRuntime.masterEnabled == false then return nil end
+        if state.mm2SilentAimEnabled ~= true then return nil end
         if findMurderer() ~= LocalPlayer then
             return nil
         end
@@ -292,7 +291,7 @@ function Module.init(runtime: any): any
 
     local function refreshKnifeThrow(): ()
         disconnectFeatureConnection("MM2KnifeThrow")
-        if not knifeThrowSettings.enabled or (state.mm2KnifeRuntime and state.mm2KnifeRuntime.masterEnabled == false) then
+        if not knifeThrowSettings.enabled or state.mm2SilentAimEnabled ~= true then
             stopThrowAnimation()
             return
         end
@@ -304,13 +303,34 @@ function Module.init(runtime: any): any
         refreshKnifeThrow()
     end
 
-    local aura: any = state.mm2KnifeAuraModule
-    assert(aura, "Knife Throw requires the MM2 KillAura adapter")
+    local feature: any = state.mm2SilentAimFeature
+    assert(feature, "Knife Throw requires SilentAIM")
+    local key = "MM2.Shoot.KnifeThrow"
+    if configData.states[key] == nil then
+        local previous = configData.states["Universal.KillAura.KnifeThrow"]
+        if previous == nil then previous = configData.states["MM2.Knife.KnifeThrow"] end
+        configData.states[key] = previous
+    end
+    local bind = "Shortcut.MM2ShootKnifeThrow"
+    if configData.values[bind] == nil then
+        configData.values[bind] = configData.values["Shortcut.UniversalKillAuraKnifeThrow"]
+            or configData.values["Shortcut.MM2KnifeKnifeThrow"]
+    end
     state.mm2KnifeThrowRefresh = refreshKnifeThrow
     state.mm2KnifeThrowOff = function(): () toggleKnifeThrow(false) end
-    aura:CreateToggle({Name = "Knife Throw", Default = false, Bindable = true,
-        Function = toggleKnifeThrow,
-        Tooltip = "KillAura ON + held knife: repeatedly throw at the nearest visible target. Normal origin, full animation and WallCheck are automatic."})
+    local button = addToggleOption(feature, "Knife Throw", false, toggleKnifeThrow,
+        "SilentAIM ON + held knife: repeats throws at visible targets. Full animation and WallCheck are automatic.", true)
+    -- Both automatic attacks belong at the top, ahead of Gun tuning. The
+    -- option is created by a later module, so move its real row, not only its
+    -- registry entry. The compact UI has no visible information headings.
+    local row = button and button.Parent
+    local index = row and table.find(feature.optionRows, row)
+    if index then
+        table.remove(feature.optionRows, index)
+        table.insert(feature.optionRows, 2, row)
+        for order, optionRow in ipairs(feature.optionRows) do optionRow.LayoutOrder = order end
+    end
+    if type(queueConfigSave) == "function" then queueConfigSave() end
 
     featureConnections.MM2KnifeThrowCharacter = LocalPlayer.CharacterAdded:Connect(stopThrowAnimation)
     activeCleanup = function(): ()

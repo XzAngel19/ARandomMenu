@@ -1,5 +1,5 @@
 return {
-    stamp = "v39-20261016-combat-ownership",
+    stamp = "v40-20261016-visual-controls",
     files = {
         ["src/Profile/142823291.lua"] = [[
 --!strict
@@ -1705,14 +1705,13 @@ function Module.init(runtime: any): any
     assert(aura, "MM2 Knife requires the existing KillAura module")
     local wasEnabled: boolean = aura.Enabled
     if type(configData) == "table" and not configData.values["MM2.Knife.MigratedToKillAura"] then
-        for _, label: string in ipairs({"KnifeAura", "KnifeThrow"}) do
+        for _, label: string in ipairs({"KnifeAura"}) do
             local old: any = configData.states["MM2.Knife." .. label]
             local key: string = "Universal.KillAura." .. label
             if configData.states[key] == nil and old ~= nil then configData.states[key] = old end
         end
         for _, pair in ipairs({
             {"MM2.Knife.AuraRange", "Universal.KillAura.AuraRange"},
-            {"Shortcut.MM2KnifeKnifeThrow", "Shortcut.UniversalKillAuraKnifeThrow"},
             {"Shortcut.MM2Knife", "Shortcut.UniversalKillAura"},
         }) do
             if configData.values[pair[2]] == nil then configData.values[pair[2]] = configData.values[pair[1]] end
@@ -1725,18 +1724,17 @@ function Module.init(runtime: any): any
     local KnifeFeature: any = aura.Feature
     local originalDescription: string = KnifeFeature.description
     local originalSearch: string = KnifeFeature.searchText
-    KnifeFeature.description = "MM2 knife combat: Knife Aura stabs, Knife Throw repeats full throws. KillAura is the shared master; both use your held knife."
+    KnifeFeature.description = "MM2 melee combat: Knife Aura stabs with your held knife. Knife Throw belongs to SilentAIM."
     KnifeFeature.tooltipText = KnifeFeature.description
-    KnifeFeature.searchText = "killaura combat mm2 knife aura throw range"
+    KnifeFeature.searchText = "killaura combat mm2 knife aura range"
     aura.CombatAdapter = function(enabled: boolean): ()
         state.mm2KnifeRuntime.masterEnabled = enabled
         refreshKnifeController()
-        if state.mm2KnifeThrowRefresh then state.mm2KnifeThrowRefresh() end
         aura:SetStatus(enabled and "Knife" or nil)
     end
     -- Generic melee controls do not describe the MM2 remote-based controller.
     aura.OptionFilter = function(name: string): boolean
-        return name == "Knife Aura" or name == "Aura Range" or name == "Knife Throw"
+        return name == "Knife Aura" or name == "Aura Range"
     end
     aura:RefreshVisibility()
     state.mm2KnifeAuraModule = aura
@@ -1753,7 +1751,6 @@ function Module.init(runtime: any): any
         if aura.Enabled then aura:Toggle(false) end
         toggleKnifeAura(false)
         state.mm2KnifeRuntime.masterEnabled = false
-        state.mm2KnifeRuntime.throwWanted = false
         state.mm2KnifeFeature = nil
         state.mm2KnifeAuraModule = nil
         aura.CombatAdapter = nil
@@ -1763,7 +1760,7 @@ function Module.init(runtime: any): any
         -- If the adapter is detached before the whole UI is destroyed, do
         -- not expose stale MM2 actions beside the generic controls.
         aura.OptionFilter = function(name: string): boolean
-            return name ~= "Knife Aura" and name ~= "Knife Throw" and name ~= "Aura Range"
+            return name ~= "Knife Aura" and name ~= "Aura Range"
         end
         aura:RefreshVisibility()
     end
@@ -1857,8 +1854,7 @@ function Module.init(runtime: any): any
     end
 
     local function getReadyKnife(): Tool?
-        local knifeRuntime: any = state and state.mm2KnifeRuntime
-        if knifeRuntime and knifeRuntime.masterEnabled == false then return nil end
+        if state.mm2SilentAimEnabled ~= true then return nil end
         if findMurderer() ~= LocalPlayer then
             return nil
         end
@@ -2081,7 +2077,7 @@ function Module.init(runtime: any): any
 
     local function refreshKnifeThrow(): ()
         disconnectFeatureConnection("MM2KnifeThrow")
-        if not knifeThrowSettings.enabled or (state.mm2KnifeRuntime and state.mm2KnifeRuntime.masterEnabled == false) then
+        if not knifeThrowSettings.enabled or state.mm2SilentAimEnabled ~= true then
             stopThrowAnimation()
             return
         end
@@ -2093,13 +2089,34 @@ function Module.init(runtime: any): any
         refreshKnifeThrow()
     end
 
-    local aura: any = state.mm2KnifeAuraModule
-    assert(aura, "Knife Throw requires the MM2 KillAura adapter")
+    local feature: any = state.mm2SilentAimFeature
+    assert(feature, "Knife Throw requires SilentAIM")
+    local key = "MM2.Shoot.KnifeThrow"
+    if configData.states[key] == nil then
+        local previous = configData.states["Universal.KillAura.KnifeThrow"]
+        if previous == nil then previous = configData.states["MM2.Knife.KnifeThrow"] end
+        configData.states[key] = previous
+    end
+    local bind = "Shortcut.MM2ShootKnifeThrow"
+    if configData.values[bind] == nil then
+        configData.values[bind] = configData.values["Shortcut.UniversalKillAuraKnifeThrow"]
+            or configData.values["Shortcut.MM2KnifeKnifeThrow"]
+    end
     state.mm2KnifeThrowRefresh = refreshKnifeThrow
     state.mm2KnifeThrowOff = function(): () toggleKnifeThrow(false) end
-    aura:CreateToggle({Name = "Knife Throw", Default = false, Bindable = true,
-        Function = toggleKnifeThrow,
-        Tooltip = "KillAura ON + held knife: repeatedly throw at the nearest visible target. Normal origin, full animation and WallCheck are automatic."})
+    local button = addToggleOption(feature, "Knife Throw", false, toggleKnifeThrow,
+        "SilentAIM ON + held knife: repeats throws at visible targets. Full animation and WallCheck are automatic.", true)
+    -- Both automatic attacks belong at the top, ahead of Gun tuning. The
+    -- option is created by a later module, so move its real row, not only its
+    -- registry entry. The compact UI has no visible information headings.
+    local row = button and button.Parent
+    local index = row and table.find(feature.optionRows, row)
+    if index then
+        table.remove(feature.optionRows, index)
+        table.insert(feature.optionRows, 2, row)
+        for order, optionRow in ipairs(feature.optionRows) do optionRow.LayoutOrder = order end
+    end
+    if type(queueConfigSave) == "function" then queueConfigSave() end
 
     featureConnections.MM2KnifeThrowCharacter = LocalPlayer.CharacterAdded:Connect(stopThrowAnimation)
     activeCleanup = function(): ()
@@ -2819,6 +2836,8 @@ function Module.init(runtime: any): any
 
     local function toggleShootMurderer(enabled: boolean): ()
         shootFeatureActive = enabled
+        state.mm2SilentAimEnabled = enabled
+        if state.mm2KnifeThrowRefresh then state.mm2KnifeThrowRefresh() end
         autoShootActive = shootFeatureActive and autoShootWanted
         refreshShootInfrastructure()
         if updateAutoShootConnection then updateAutoShootConnection() end
@@ -2890,7 +2909,7 @@ function Module.init(runtime: any): any
     end
     ShootFeature = createUniversalFeature(
         "SilentAIM",
-        "Gun: use the assigned key for one shot, or enable Auto Shoot below. Aim method selects Prediction or Silent AIM; Auto uses your held gun only.",
+        "Gun aim and Knife Throw. The main assigned key fires/equips Gun; Auto Shoot and Knife Throw use your held weapon. Aim method and lead controls below apply to Gun.",
         4,
         toggleShootMurderer,
         {
@@ -2900,9 +2919,9 @@ function Module.init(runtime: any): any
             registry = mm2Features,
         }
     )
-    addInformationOption(ShootFeature, "Weapon: Gun")
+    state.mm2SilentAimFeature = ShootFeature
     addToggleOption(ShootFeature, "Auto Shoot", false, toggleAutoShoot,
-        "While Shoot is ON and you hold the gun: try every frame as soon as the current target is visible. No distance or prediction-confidence gate. Uses Shoot's mode.", true)
+        "While SilentAIM is ON and you hold the gun: try every frame as soon as the current target is visible. No distance or prediction-confidence gate. Uses the Gun aim method.", true)
     local ShootTargetBox
     local wallCheckRow: GuiObject? = nil
     local silentSweepRow: GuiObject? = nil
@@ -3132,6 +3151,7 @@ function Module.init(runtime: any): any
 
     activeCleanup = function(): ()
         toggleShootMurderer(false)
+        state.mm2SilentAimFeature = nil
         toggleAutoShoot(false)
         state.mm2ShotFeedback.hide()
     end
@@ -3682,47 +3702,31 @@ function Module.init(runtime: any): any
         end
     end
 
-    local TeleportFeature = createUniversalFeature(
-        "Teleport",
-        "Map, lobby, and temporary gun pickup",
-        14,
-        function() end,
-        {
-            category = true,
-            categoryName = "Utilities",
-            parent = MM2Scroll,
-            registry = mm2Features,
-        }
-    )
-    addActionOption(TeleportFeature, "Teleport to Map", teleportToMap)
-    addActionOption(TeleportFeature, "Teleport to Lobby", teleportToLobby)
-    addTextOption(
-        TeleportFeature,
-        "Player name",
-        "",
-        function(value)
-            teleportTargetName = value
-        end,
-        false,
-        "Exact or partial name"
-    )
-    addActionOption(TeleportFeature, "Teleport to Player", teleportToPlayer)
-    addActionOption(TeleportFeature, "Get Gun", teleportToDroppedGun)
-    local GetGunKeyButton: TextButton = addKeyOption(
-        TeleportFeature,
-        "Get Gun key",
-        mm2Settings.getGunKey,
-        function(value: Enum.KeyCode): ()
-            mm2Settings.getGunKey = value
-        end
-    )
-    if state.bindMobileActionPlacement then
-        state.bindMobileActionPlacement(
-            GetGunKeyButton,
-            "MM2GetGun",
-            "GUN",
-            teleportToDroppedGun
-        )
+    local teleport = state.framework:GetModule("Teleport")
+    assert(teleport, "MM2 extends the universal Teleport module")
+    for _, id in ipairs({"GetGunkey", "Gunpickupdelay", "Playername"}) do
+        local key = "Universal.ClickTeleport." .. id
+        if configData.values[key] == nil then configData.values[key] = configData.values["MM2.Teleport." .. id] end
+    end
+    local autoKey = "Universal.ClickTeleport.AutoGetGun"
+    if configData.states[autoKey] == nil then configData.states[autoKey] = configData.states["MM2.Teleport.AutoGetGun"] end
+    local show = {Option = "Destination", Values = {"MM2"}}
+    local playerShow = {{Option = "Destination", Values = {"MM2"}},
+        {Option = "MM2 target", Values = {"Player"}}}
+    teleport:CreateDropdown({Name = "MM2 target", List = {"Map", "Lobby", "Player", "Gun"}, Index = 1, Show = show})
+    teleport:CreateTextBox({Name = "Player name", Default = "", Show = playerShow,
+        Function = function(value) teleportTargetName = value end})
+    state.mm2TeleportRun = function()
+        local target = teleport.Options["MM2 target"].Value
+        if target == "Map" then teleportToMap()
+        elseif target == "Lobby" then teleportToLobby()
+        elseif target == "Player" then teleportToPlayer()
+        elseif target == "Gun" then teleportToDroppedGun() end
+    end
+    local key = teleport:CreateBind({Name = "Get Gun key", Default = mm2Settings.getGunKey, Show = show,
+        Function = function(value) mm2Settings.getGunKey = value end})
+    if state.bindMobileActionPlacement and key.Object then
+        state.bindMobileActionPlacement(key.Object, "MM2GetGun", "GUN", teleportToDroppedGun)
     end
     featureConnections.MM2GetGunKey = UserInputService.InputBegan:Connect(
         function(input, gameProcessed)
@@ -3738,21 +3742,15 @@ function Module.init(runtime: any): any
             end
         end
     )
-    addToggleOption(TeleportFeature, "Auto Get Gun", false, toggleAutoGetGun)
-    addNumberOption(
-        TeleportFeature,
-        "Gun pickup delay",
-        mm2Settings.autoGetGunDelay,
-        0.05,
-        2,
-        function(value)
-            mm2Settings.autoGetGunDelay = value
-        end
-    )
+    teleport:CreateToggle({Name = "Auto Get Gun", Default = false, Show = show, Function = toggleAutoGetGun})
+    teleport:CreateSlider({Name = "Gun pickup delay", Default = mm2Settings.autoGetGunDelay,
+        Min = 0.05, Max = 2, Decimal = 2, Show = show,
+        Function = function(value) mm2Settings.autoGetGunDelay = value end})
 
     activeCleanup = function(): ()
         toggleAutoGetGun(false)
-                disconnectFeatureConnection("MM2GetGunKey")
+        state.mm2TeleportRun = nil
+        disconnectFeatureConnection("MM2GetGunKey")
     end
     Module.Events = featureConnections
     Module.Initialized = true
@@ -3832,406 +3830,6 @@ function Module.init(runtime: any): any
 
     activeCleanup = function(): ()
 
-    end
-    Module.Events = featureConnections
-    Module.Initialized = true
-    return Module
-end
-
-function Module.destroy(): ()
-    if not Module.Initialized then
-        return
-    end
-    Module.Initialized = false
-    pcall(activeCleanup)
-    activeCleanup = function(): () end
-    Module.Events = {}
-    Module.Runtime = nil
-end
-
-return Module
-
-]],
-        ["src/games/MM2/Render/RoleTags.lua"] = [[
-local Module = {
-    Name = "MM2 Role Tags",
-    PlaceId = 142823291,
-    Events = {} :: {[string]: any},
-    Initialized = false,
-    Runtime = nil :: any,
-}
-
-local activeCleanup: () -> () = function(): () end
-
-local PERK_ICONS: {[string]: string} = {
-    ["Footsteps"] = "rbxassetid://336404773",
-    ["Sleight"] = "rbxassetid://340309581",
-    ["Ninja"] = "rbxassetid://416832054",
-    ["Haste"] = "rbxassetid://416942717",
-    ["FakeGun"] = "rbxassetid://17899774181",
-    ["Fake Gun"] = "rbxassetid://17899774181",
-    ["Ghost"] = "rbxassetid://335206856",
-    ["Xray"] = "rbxassetid://340313896",
-    ["X-Ray"] = "rbxassetid://340313896",
-    ["Trap"] = "rbxassetid://4966828196",
-    ["Sprint"] = "rbxassetid://4970219155",
-    ["VampireBat"] = "rbxassetid://129078122681639",
-    ["Bat Form"] = "rbxassetid://129078122681639",
-    ["Decoy"] = "rbxassetid://113722008817201",
-}
-
-function Module.init(runtime: any): any
-    if Module.Initialized then
-        return Module
-    end
-    local core: any = state.mm2Core
-    assert(type(core) == "table", "MM2 Role Tags requires the MM2 core module")
-    Module.Runtime = runtime
-
-    local settings = {
-        enabled = false,
-        murderTag = true,
-        roleTags = true,
-        showPerk = true,
-        gunEsp = true,
-        trapEsp = true,
-    }
-
-    local murderTag: BillboardGui? = nil
-    local roleTags: {[Player]: BillboardGui} = {}
-    local lastUpdate: number = -math.huge
-
-    local function destroyMurderTag(): ()
-        if murderTag then
-            pcall(murderTag.Destroy, murderTag)
-            murderTag = nil
-        end
-    end
-
-    local function clearRoleTags(): ()
-        for player: Player, tag: BillboardGui in pairs(roleTags) do
-            roleTags[player] = nil
-            pcall(tag.Destroy, tag)
-        end
-    end
-
-    local function syncEspToggles(): ()
-        if type(core.toggleGunEsp) == "function" then
-            pcall(core.toggleGunEsp, settings.gunEsp)
-        end
-        if type(core.toggleTrapEsp) == "function" then
-            pcall(core.toggleTrapEsp, settings.trapEsp)
-        end
-    end
-
-    local bridge: any = services.gameBridge
-
-    local function playerRole(player: Player): string?
-        if bridge and type(bridge.playerRole) == "function" then
-            local ok: boolean, role: any = pcall(bridge.playerRole, player)
-            if ok and type(role) == "string" then
-                return role
-            end
-        end
-        return nil
-    end
-
-    local function playerRoleColor(player: Player): Color3?
-        if bridge and type(bridge.playerRoleColor) == "function" then
-            local ok: boolean, colour: any =
-                pcall(bridge.playerRoleColor, player)
-            if ok and typeof(colour) == "Color3" then
-                return colour
-            end
-        end
-        return nil
-    end
-
-    local function playerPerk(player: Player): string?
-        if type(core.getPlayerPerk) == "function" then
-            local ok: boolean, perk: any = pcall(core.getPlayerPerk, player)
-            if ok and type(perk) == "string" then
-                return perk
-            end
-        end
-        return nil
-    end
-
-    local function headOf(character: Model): BasePart?
-        local head: Instance? = character:FindFirstChild("Head")
-            or character:FindFirstChild("HumanoidRootPart")
-        if head and head:IsA("BasePart") then
-            return head :: BasePart
-        end
-        return nil
-    end
-
-    local function update(): ()
-        local now: number = os.clock()
-        if now - lastUpdate < 0.2 then
-            return
-        end
-        lastUpdate = now
-
-        -- Murder tag: one billboard over the murderer.
-        local tagTarget: Player? = nil
-        if settings.murderTag then
-            for _, player: Player in ipairs(Players:GetPlayers()) do
-                if player ~= LocalPlayer
-                    and player.Character
-                    and player.Character:FindFirstChildOfClass("Humanoid")
-                    and (player.Character:FindFirstChildOfClass("Humanoid")
-                        :: Humanoid).Health > 0
-                    and playerRole(player) == "Murderer" then
-                    tagTarget = player
-                    break
-                end
-            end
-        end
-        if not tagTarget then
-            destroyMurderTag()
-        else
-            local head: BasePart? = headOf(tagTarget.Character :: Model)
-            if not head then
-                destroyMurderTag()
-            else
-                if not murderTag
-                    or not murderTag.Parent
-                    or murderTag.Adornee ~= head then
-                    destroyMurderTag()
-                    local billboard: BillboardGui = Instance.new("BillboardGui")
-                    billboard.Name = "Wurst_MurderTag"
-                    billboard.AlwaysOnTop = true
-                    billboard.LightInfluence = 0
-                    billboard.Size = UDim2.fromOffset(150, 22)
-                    billboard.StudsOffset = Vector3.new(0, 3.5, 0)
-                    billboard.MaxDistance = 1500
-                    billboard.Adornee = head
-                    billboard.Parent = head
-                    local label: TextLabel = Instance.new("TextLabel")
-                    label.Name = "Murder"
-                    label.BackgroundTransparency = 1
-                    label.Size = UDim2.fromScale(1, 1)
-                    label.Font = Enum.Font.GothamBold
-                    label.TextSize = 14
-                    label.Text = "Murder"
-                    label.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
-                    label.TextStrokeTransparency = 0.3
-                    label.Parent = billboard
-                    local icon: ImageLabel = Instance.new("ImageLabel")
-                    icon.Name = "PerkIcon"
-                    icon.BackgroundTransparency = 1
-                    icon.ImageTransparency = 1
-                    icon.Visible = false
-                    icon.Size = UDim2.fromOffset(20, 20)
-                    icon.Position = UDim2.new(0, 3, 0.5, 0)
-                    icon.AnchorPoint = Vector2.new(0, 0.5)
-                    icon.Parent = billboard
-                    murderTag = billboard
-                end
-                local colour: Color3? = playerRoleColor(tagTarget)
-                if colour then
-                    local label: any =
-                        murderTag and murderTag:FindFirstChild("Murder")
-                    if label and label.TextColor3 ~= colour then
-                        label.TextColor3 = colour
-                    end
-                end
-            end
-        end
-
-        -- Perk icon on the murder tag.
-        local perkIcon: any = murderTag
-            and murderTag:FindFirstChild("PerkIcon")
-        if settings.showPerk and perkIcon and tagTarget then
-            local perk: string? = playerPerk(tagTarget)
-            local iconId: string? = perk
-                and (PERK_ICONS[perk]
-                    or PERK_ICONS[string.gsub(perk, "%s+", "")])
-                or nil
-            if iconId then
-                if perkIcon.Image ~= iconId then
-                    perkIcon.Image = iconId
-                end
-                perkIcon.Visible = true
-                perkIcon.ImageTransparency = 0
-            else
-                perkIcon.Visible = false
-            end
-        elseif perkIcon and perkIcon.Visible then
-            perkIcon.Visible = false
-        end
-
-        -- Role tags for every player with a known living role.
-        if not settings.roleTags then
-            clearRoleTags()
-            return
-        end
-        local seen: {[Player]: boolean} = {}
-        for _, player: Player in ipairs(Players:GetPlayers()) do
-            if player ~= LocalPlayer then
-                local character: Model? = player.Character
-                local humanoid: Humanoid? = character
-                    and character:FindFirstChildOfClass("Humanoid")
-                    :: Humanoid?
-                local role: string? = playerRole(player)
-                if character
-                    and humanoid
-                    and (humanoid :: Humanoid).Health > 0
-                    and role
-                    and role ~= "Dead"
-                    and not (settings.murderTag and role == "Murderer") then
-                    local head: BasePart? = headOf(character :: Model)
-                    if head then
-                        seen[player] = true
-                        local tag: BillboardGui? = roleTags[player]
-                        if not tag
-                            or not tag.Parent
-                            or tag.Adornee ~= head then
-                            if tag then
-                                pcall(tag.Destroy, tag)
-                            end
-                            local billboard: BillboardGui =
-                                Instance.new("BillboardGui")
-                            billboard.Name = "Wurst_RoleTag"
-                            billboard.AlwaysOnTop = true
-                            billboard.LightInfluence = 0
-                            billboard.Size = UDim2.fromOffset(170, 24)
-                            billboard.StudsOffset = Vector3.new(0, 2.7, 0)
-                            billboard.MaxDistance = 1500
-                            billboard.Adornee = head
-                            billboard.Parent = head
-                            local label: TextLabel = Instance.new("TextLabel")
-                            label.Name = "Role"
-                            label.BackgroundTransparency = 1
-                            label.Size = UDim2.fromScale(1, 1)
-                            label.Font = Enum.Font.GothamBold
-                            label.TextSize = 14
-                            label.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
-                            label.TextStrokeTransparency = 0.2
-                            label.Parent = billboard
-                            roleTags[player] = billboard
-                            tag = billboard
-                        end
-                        local label: any = tag and tag:FindFirstChild("Role")
-                        if label then
-                            local roleUpper: string = string.upper(role :: string)
-                            if label.Text ~= roleUpper then
-                                label.Text = roleUpper
-                            end
-                            local colour: Color3? = playerRoleColor(player)
-                            if colour and label.TextColor3 ~= colour then
-                                label.TextColor3 = colour
-                            end
-                        end
-                    end
-                end
-            end
-        end
-        for player: Player, tag: BillboardGui in pairs(roleTags) do
-            if not seen[player] then
-                roleTags[player] = nil
-                pcall(tag.Destroy, tag)
-            end
-        end
-    end
-
-    local function setEnabled(enabled: boolean): ()
-        settings.enabled = enabled
-        disconnectFeatureConnection("MM2RoleTags")
-        destroyMurderTag()
-        clearRoleTags()
-        if not enabled then
-            if feature then
-                feature:SetStatus(nil)
-            end
-            return
-        end
-        lastUpdate = -math.huge
-        featureConnections.MM2RoleTags = TaskManager:Connect(function(
-            deltaTime: number
-        ): ()
-            update()
-        end)
-    end
-
-    local feature = createUniversalFeature(
-        "Role Tags",
-        "MM2 role billboards: role tags, the Murder tag with perk icon, and "
-            .. "gun/trap ESP",
-        16,
-        setEnabled,
-        {
-            categoryName = "Render",
-            parent = MM2Scroll,
-            registry = mm2Features,
-        }
-    )
-
-    addToggleOption(
-        feature,
-        "Murder tag",
-        settings.murderTag,
-        function(value: boolean): ()
-            settings.murderTag = value
-        end,
-        "A billboard reading MURDER over the murderer, in their role colour."
-    )
-    addToggleOption(
-        feature,
-        "Role tags",
-        settings.roleTags,
-        function(value: boolean): ()
-            settings.roleTags = value
-        end,
-        "Every player's role above their head once the round reveals it."
-    )
-    addToggleOption(
-        feature,
-        "Show Perk",
-        settings.showPerk,
-        function(value: boolean): ()
-            settings.showPerk = value
-        end,
-        "Perk icon beside the Murder tag."
-    )
-    -- Gun ESP and Trap ESP live in the universal ItemESP card now (the user
-    -- asked for them there): they are registered as item providers, so the
-    -- universal card keeps no MM2 knowledge of its own.
-    local unregisterProviders: {() -> ()} = {}
-    local itemEspService: any = services and services.itemEsp
-    if itemEspService and type(itemEspService.register) == "function" then
-        local function registerEsp(name: string, tooltip: string, key: string): ()
-            local unregister: any = itemEspService.register({
-                name = name,
-                tooltip = tooltip,
-                setEnabled = function(on: boolean): ()
-                    settings[key] = on
-                    syncEspToggles()
-                end,
-            })
-            if type(unregister) == "function" then
-                table.insert(unregisterProviders, unregister)
-            end
-        end
-        registerEsp(
-            "Gun ESP",
-            "Highlights dropped and carried guns.",
-            "gunEsp"
-        )
-        registerEsp(
-            "Trap ESP",
-            "Highlights murderer traps.",
-            "trapEsp"
-        )
-    end
-
-    activeCleanup = function(): ()
-        setEnabled(false)
-        for _, unregister: () -> () in ipairs(unregisterProviders) do
-            pcall(unregister)
-        end
-        table.clear(unregisterProviders)
     end
     Module.Events = featureConnections
     Module.Initialized = true
@@ -16387,7 +15985,8 @@ function Module.init(context: Runtime): any
 
     local teleport: any
     teleport = framework.Categories.Utilities:CreateModule({
-        Name = "Click Teleport",
+        Name = "Teleport",
+        ConfigKey = "Universal.ClickTeleport",
         Category = "Utilities",
         Order = 1,
 
@@ -16399,19 +15998,28 @@ function Module.init(context: Runtime): any
         end,
     })
 
-    teleport:CreateDropdown({
-        Name = "Destination",
-        List = {
-            "Tap point",
-            "Nearest player",
-            "Named player",
-            "Item",
-            "Waypoint",
-            "Last position",
-        },
-        Index = 1,
-        Tooltip = "What the button travels to.",
-    })
+    local destinations = {"Tap point", "Nearest player", "Named player", "Item", "Waypoint", "Last position"}
+    if host.GAME_CHECK and host.GAME_CHECK.MM2Active then
+        table.insert(destinations, 1, "MM2")
+        local config = host.configData
+        if config and not config.values["Teleport.MM2DefaultV40"] then
+            config.values["Universal.ClickTeleport.Destination"] = "MM2"
+            config.values["Teleport.MM2DefaultV40"] = true
+        end
+    end
+    teleport:CreateDropdown({Name = "Destination", List = destinations, Index = 1,
+        Tooltip = "MM2 opens the game destinations; other modes retain universal travel.",
+        Function = function(value)
+            runtime.armedUntil = 0
+            local mm2Controls = { ["MM2 target"] = true, ["Player name"] = true,
+                ["Get Gun key"] = true, ["Auto Get Gun"] = true, ["Gun pickup delay"] = true }
+            teleport.OptionFilter = function(name)
+                if name == "Destination" then return true end
+                return value == "MM2" and mm2Controls[name] == true
+                    or value ~= "MM2" and not mm2Controls[name]
+            end
+            teleport:RefreshVisibility()
+        end})
     teleport:CreateTextBox({
         Name = "Player",
         Show = {Option = "Destination", Values = {"Named player"}},
@@ -16618,6 +16226,11 @@ function Module.findItem(
 end
 
 function Module.run(context: Runtime, teleport: any, runtime: any): ()
+    if teleport.Options.Destination.Value == "MM2" then
+        local run = context.host.state and context.host.state.mm2TeleportRun
+        if run then run() else teleport:Notify("MM2 destinations are not ready") end
+        return
+    end
     local host: any = context.host
     local entityLibrary: any = context.entity
     local localPlayer: Player = host.LocalPlayer
@@ -20179,6 +19792,17 @@ function Module.init(context: Runtime): any
         particles = true,
         shadows = true,
         materials = false,
+        lighting = false,
+        post = false,
+        guiEffects = false,
+        worldGui = false,
+        gameGui = false,
+        coreGui = false,
+        geometry = false,
+        scenery = false,
+        quality = false,
+        terrain = false,
+        lights = false,
     }
     local fpsModeEnabled: boolean = false
     local generation: number = 0
@@ -20192,26 +19816,124 @@ function Module.init(context: Runtime): any
     end
 
     local fpsVisualCache: any = {}
+    local propertyWatches: {[any]: any} = {}
 
     local function cacheFpsProperty(object: any, property: string): ()
         local data: any = fpsVisualCache[object]
         if not data then
             data = {}
             fpsVisualCache[object] = data
+            -- Keep snapshots strongly until OFF (even detached objects).
+            -- Destroyed objects cannot be restored and must not accumulate.
+            local ok, connection = pcall(function()
+                return object.Destroying:Connect(function()
+                    fpsVisualCache[object] = nil
+                    local watch = propertyWatches[object]
+                    propertyWatches[object] = nil
+                    if watch then watch:Disconnect() end
+                end)
+            end)
+            if ok then propertyWatches[object] = connection end
         end
         if data[property] == nil then
             data[property] = object[property]
         end
     end
 
+    local lighting: any = host.Lighting
+    local playerGui: any = host.PlayerGui
+    local scenery: {[any]: boolean} = setmetatable({}, {__mode = "k"})
+    local coreGuiCache: {[any]: boolean} = {}
+    local function setProperty(object: any, property: string, value: any): ()
+        -- Individual protected writes: an unsupported property must not
+        -- prevent the remaining optimizations on that object.
+        pcall(function()
+            cacheFpsProperty(object, property)
+            object[property] = value
+        end)
+    end
+    local function protectedGui(object: any): boolean
+        local current = object
+        while current do
+            if current == host.ScreenGui or current.Name == "TouchGui"
+                or current.Name == "Chat" or current.Name == "BubbleChat" then return true end
+            current = current.Parent
+            if type(current) ~= "table" and typeof(current) ~= "Instance" then break end
+        end
+        return false
+    end
+    local function updateScenery(part: any): ()
+        local character = host.LocalPlayer and host.LocalPlayer.Character
+        local root = character and character:FindFirstChild("HumanoidRootPart")
+        local cached = fpsVisualCache[part]
+        local function restorePart()
+            if cached and cached.LocalTransparencyModifier ~= nil then
+                pcall(function() part.LocalTransparencyModifier = cached.LocalTransparencyModifier end)
+            end
+        end
+        if not root or not part.Parent or not part.Anchored or not part.CanCollide then restorePart(); return end
+        -- Static map only. Never cull characters, tools, or physics objects.
+        local current = part.Parent
+        while current and current ~= workspace do
+            if current:IsA("Tool") or current:IsA("Accessory")
+                or current:FindFirstChildOfClass("Humanoid") then restorePart(); return end
+            current = current.Parent
+        end
+        local far = (part.Position - root.Position).Magnitude > 350
+        if far then setProperty(part, "LocalTransparencyModifier", 1)
+        elseif cached and cached.LocalTransparencyModifier ~= nil then
+            pcall(function() part.LocalTransparencyModifier = cached.LocalTransparencyModifier end)
+        end
+    end
+
     local function applyFpsObject(object: Instance): ()
+        -- A deferred DescendantAdded callback can arrive after destruction.
+        -- Keep existing detached snapshots for restoration, but never acquire
+        -- new ownership of an object already outside the scene.
+        if object ~= workspace and object ~= lighting and object ~= playerGui and object.Parent == nil then return end
         local target: any = object
+        if lighting and object == lighting and fpsSettings.lighting then
+            setProperty(object, "EnvironmentDiffuseScale", 0)
+            setProperty(object, "EnvironmentSpecularScale", 0)
+        end
+        if fpsSettings.shadows and object == lighting then setProperty(object, "GlobalShadows", false) end
+        if fpsSettings.lights and object:IsA("Light") then setProperty(object, "Enabled", false) end
+        if fpsSettings.terrain and object:IsA("Terrain") then
+            setProperty(object, "Decoration", false)
+            setProperty(object, "WaterWaveSize", 0)
+            setProperty(object, "WaterWaveSpeed", 0)
+            setProperty(object, "WaterReflectance", 0)
+        end
+        if fpsSettings.post and object:IsA("PostEffect") then
+            setProperty(object, "Enabled", false)
+        end
+        if not protectedGui(object) then
+            if fpsSettings.guiEffects and (object:IsA("UIStroke") or object:IsA("UIGradient")) then
+                setProperty(object, "Enabled", false)
+            elseif fpsSettings.guiEffects and object:IsA("ViewportFrame") then
+                setProperty(object, "Visible", false)
+            end
+            if fpsSettings.worldGui and (object:IsA("BillboardGui") or object:IsA("SurfaceGui")) then
+                setProperty(object, "Enabled", false)
+            end
+            if fpsSettings.gameGui and object:IsA("ScreenGui") then
+                setProperty(object, "Enabled", false)
+            end
+        end
+        if fpsSettings.geometry and (object:IsA("MeshPart") or object:IsA("PartOperation")) then
+            setProperty(object, "RenderFidelity", Enum.RenderFidelity.Performance)
+        end
+        if fpsSettings.scenery and object:IsA("BasePart") and object.Anchored and object.CanCollide then
+            scenery[object] = true
+            updateScenery(object)
+        end
         if fpsSettings.textures and (object:IsA("Decal") or object:IsA("Texture")) then
             cacheFpsProperty(object, "Transparency")
             target.Transparency = 1
         elseif fpsSettings.textures and object:IsA("MeshPart") then
-            cacheFpsProperty(object, "TextureID")
-            target.TextureID = ""
+            setProperty(object, "TextureID", "")
+        elseif fpsSettings.textures and object:IsA("SpecialMesh") then
+            setProperty(object, "TextureId", "")
         end
 
         if fpsSettings.particles
@@ -20240,6 +19962,8 @@ function Module.init(context: Runtime): any
     end
 
     local function restoreFpsObjects(): ()
+        for _, connection in pairs(propertyWatches) do pcall(function() connection:Disconnect() end) end
+        propertyWatches = {}
         for object: any, properties: any in pairs(fpsVisualCache) do
             if object then
                 for property: string, value: any in pairs(properties) do
@@ -20250,33 +19974,91 @@ function Module.init(context: Runtime): any
             end
         end
         fpsVisualCache = {}
+        scenery = setmetatable({}, {__mode = "k"})
+        local starterGui = host.StarterGui
+        if starterGui then
+            for kind, value in pairs(coreGuiCache) do
+                pcall(function() starterGui:SetCoreGuiEnabled(kind, value) end)
+            end
+        end
+        coreGuiCache = {}
     end
 
     local function toggleImproveFps(enabled: boolean): ()
         generation += 1
         local token: number = generation
         fpsModeEnabled = enabled
-        disconnectFeatureConnection("ImproveFPS")
+        for _, name in ipairs({"ImproveFPS", "ImproveFPSLighting", "ImproveFPSGui", "ImproveFPSDistance"}) do
+            disconnectFeatureConnection(name)
+        end
         restoreFpsObjects()
 
         if not enabled then
             if ImproveFpsFeature then ImproveFpsFeature:SetStatus(nil) end
             return
         end
-        ImproveFpsFeature:SetStatus(tostring(selectedEffectCount()) .. " effects")
+        ImproveFpsFeature:SetStatus(tostring(selectedEffectCount()) .. " options")
+        if fpsSettings.quality then
+            pcall(function() setProperty(settings().Rendering, "QualityLevel", Enum.QualityLevel.Level01) end)
+        end
 
-        -- Subscribe first: descendants arriving during the initial scan are
-        -- covered too. Old workers cannot resume into a newer enable session.
-        featureConnections.ImproveFPS = workspace.DescendantAdded:Connect(
-            function(object: Instance): ()
+        local containers = {workspace}
+        if lighting then table.insert(containers, lighting) end
+        if playerGui then table.insert(containers, playerGui) end
+        for index, container in ipairs(containers) do
+            local name = ({"ImproveFPS", "ImproveFPSLighting", "ImproveFPSGui"})[index]
+            featureConnections[name] = container.DescendantAdded:Connect(function(object)
                 if fpsModeEnabled and token == generation then pcall(applyFpsObject, object) end
+            end)
+        end
+        if fpsSettings.coreGui and host.StarterGui then
+            -- Do not disable All, Health or the mobile touch controls.
+            for _, kind in ipairs({Enum.CoreGuiType.PlayerList, Enum.CoreGuiType.Backpack,
+                Enum.CoreGuiType.Chat, Enum.CoreGuiType.EmotesMenu}) do
+                pcall(function()
+                    local value = host.StarterGui:GetCoreGuiEnabled(kind)
+                    if type(value) == "boolean" then
+                        coreGuiCache[kind] = value
+                        host.StarterGui:SetCoreGuiEnabled(kind, false)
+                    end
+                end)
             end
-        )
+        end
+        if fpsSettings.scenery and host.TaskManager then
+            local elapsed, cursor = 0, 1
+            local pending = {}
+            featureConnections.ImproveFPSDistance = host.TaskManager:Connect(function(dt)
+                elapsed += dt
+                if cursor > #pending then
+                    if elapsed < 1 then return end
+                    elapsed = 0
+                    pending = {}
+                    for part in pairs(scenery) do
+                        if part.Parent then table.insert(pending, part) else scenery[part] = nil end
+                    end
+                    cursor = 1
+                end
+                -- Bound work per frame instead of rescanning a huge map in
+                -- one callback, which would defeat an FPS optimization.
+                local last = math.min(#pending, cursor + 199)
+                while cursor <= last do
+                    if not fpsModeEnabled or token ~= generation then return end
+                    pcall(updateScenery, pending[cursor])
+                    cursor += 1
+                end
+            end)
+        end
         task.spawn(function(): ()
-            for index: number, object: Instance in ipairs(workspace:GetDescendants()) do
+            local scanned = 0
+            for _, container in ipairs(containers) do
                 if not fpsModeEnabled or token ~= generation then return end
-                pcall(applyFpsObject, object)
-                if index % 250 == 0 then task.wait() end
+                pcall(applyFpsObject, container)
+                for _, object in ipairs(container:GetDescendants()) do
+                    if not fpsModeEnabled or token ~= generation then return end
+                    pcall(applyFpsObject, object)
+                    scanned += 1
+                    if scanned % 250 == 0 then task.wait() end
+                end
             end
         end)
     end
@@ -20310,6 +20092,26 @@ function Module.init(context: Runtime): any
         fpsSettings.materials = value
         refreshFps()
     end)
+
+    for _, definition in ipairs({
+        {"Lowest render quality", "quality", "Requests render quality Level01 where the client permits it; restores the original level when OFF."},
+        {"Simple lighting", "lighting", "Disables environment diffuse/specular reflections."},
+        {"Disable local lights", "lights", "Turns off PointLight, SpotLight and SurfaceLight instances. May darken the map."},
+        {"Simplify terrain", "terrain", "Disables terrain decoration, water waves and water reflections where writable. Physics is unchanged."},
+        {"Disable post effects", "post", "Disables bloom, blur (including menu blur), depth of field, color correction and sun rays."},
+        {"Simplify game UI", "guiEffects", "Disables game UI strokes, gradients and 3D viewport previews. Menu and touch controls are protected."},
+        {"Hide world UI", "worldGui", "Hides floating labels and SurfaceGui displays; may hide game information."},
+        {"Hide game UI", "gameGui", "Aggressive: hides game ScreenGuis, including HUD/objectives. Keeps this menu, chat and TouchGui."},
+        {"Hide Roblox panels", "coreGui", "Hides player list, backpack, chat and emotes panel. Health and mobile movement remain available."},
+        {"Low detail meshes", "geometry", "Requests Performance render fidelity for meshes/unions; does not change collisions."},
+        {"Hide distant scenery", "scenery", "Aggressive: locally hides static map parts beyond 350 studs, updating periodically. May hide distant objectives; collisions remain."},
+    }) do
+        local key: string = definition[2]
+        addToggleOption(ImproveFpsFeature, definition[1], false, function(value: boolean)
+            fpsSettings[key] = value
+            refreshFps()
+        end, definition[3])
+    end
 
     activeCleanup = function(): ()
         toggleImproveFps(false)
@@ -25712,10 +25514,9 @@ function Module.init(context: any): any
             ["Interact Extender"] = 7,
             ["Anti Fling"] = 1,
             ["Anti Void"] = 2,
-            ["Click Teleport"] = 3,
+            ["Teleport"] = 3,
             ["Freeze Movements"] = 4,
             ["Ghost"] = 5,
-            ["Teleport"] = 6,
             ["Disguise"] = 7,
             ["Improve FPS"] = 1,
             ["Gravity"] = 2,
@@ -38214,7 +38015,7 @@ local Manifest: Manifest = {
         },
         {
             path = "src/games/universal/Movement/ClickTeleport.lua",
-            name = "Click Teleport",
+            name = "Teleport",
             category = "Utilities",
         },
         {

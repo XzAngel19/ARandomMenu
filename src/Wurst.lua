@@ -52,7 +52,7 @@ local FEATURE_CATEGORIES: {[string]: string} = {
     ["Invisible"] = "Exploits",
 
 
-    ["Click Teleport"] = "Utilities",
+    ["Teleport"] = "Utilities",
     ["Freeze Movements"] = "Utilities",
     ["Anti-Fling"] = "Movement",
     ["Anti-Void"] = "Movement",
@@ -81,7 +81,6 @@ local FEATURE_CATEGORIES: {[string]: string} = {
     ["Blurt Roles"] = "World",
     ["SilentAIM"] = "Combat",
     ["Trajectory Calibration"] = "Other",
-    ["Teleport"] = "Utilities",
 
     ["Auto Tackle"] = "Combat",
     ["Auto Dribble"] = "Combat",
@@ -114,7 +113,6 @@ local FEATURE_CATEGORIES: {[string]: string} = {
 
     ["Silent Aim"] = "Combat",
     ["TriggerBot"] = "Combat",
-    ["Role Tags"] = "Render",
     ["Weapon Visuals"] = "Render",
 
     ["Round Info"] = "Render",
@@ -220,7 +218,7 @@ local RUNTIME_RAW_BASE: string =
         .. RUNTIME_BRANCH
         .. "/"
 
-local SOURCE_STAMP: string = "v39-20261016-combat-ownership"
+local SOURCE_STAMP: string = "v40-20261016-visual-controls"
 
 local BOOT_STARTED_AT: number = os.clock()
 local BOOT_FINGERPRINT_SECONDS: number = 0
@@ -4796,6 +4794,7 @@ local function createGameModuleEnvironment(
         UserInputService = UserInputService,
         TweenService = TweenService,
         Lighting = Lighting,
+        StarterGui = game:GetService("StarterGui"),
         RunService = RunService,
         HttpService = HttpService,
         CollectionService = CollectionService,
@@ -4930,7 +4929,6 @@ local function loadGameModule(
         "src/games/MM2/Blatant/KnifeAura.lua",
         "src/games/MM2/Blatant/KnifeThrow.lua",
         "src/games/MM2/Render/RoundEsp.lua",
-        "src/games/MM2/Render/RoleTags.lua",
         "src/games/MM2/Render/WeaponVisuals.lua",
         "src/games/MM2/Movement/Sprint.lua",
         "src/games/MM2/Movement/Teleport.lua",
@@ -4945,8 +4943,7 @@ local function loadGameModule(
     } else {"src/games/" .. moduleName .. "/base.lua"}
     local moduleEnvironment: any = createGameModuleEnvironment(diagnostics)
     -- Game modules get the same services facade the framework environment
-    -- uses. Without this, any module touching `services` (RoleTags reads
-    -- services.gameBridge) fails to load and its options vanish from the UI.
+    -- uses, so game modules can access services.gameBridge consistently.
     moduleEnvironment.services = state.moduleServices
     local loadedModules: {GameModule} = {}
     local skipped: {string} = {}
@@ -5754,7 +5751,7 @@ local fallbackManifest: any = {
         {path = "src/games/universal/Render/Arrows.lua", name = "Arrows", category = "Render"},
         {path = "src/games/universal/Render/NPCESP.lua", name = "NPCESP", category = "Render"},
         {path = "src/games/universal/Combat/KillAura.lua", name = "KillAura", category = "Combat"},
-        {path = "src/games/universal/Movement/ClickTeleport.lua", name = "Click Teleport", category = "Utilities"},
+        {path = "src/games/universal/Movement/ClickTeleport.lua", name = "Teleport", category = "Utilities"},
         {path = "src/games/universal/Combat/AimAssist.lua", name = "Aim Assist", category = "Combat"},
         {path = "src/games/universal/Combat/TriggerBot.lua", name = "TriggerBot", category = "Combat"},
         {path = "src/games/universal/Render/XRay.lua", name = "X-Ray", category = "Render"},

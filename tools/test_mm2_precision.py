@@ -426,14 +426,14 @@ end
 local stops=0
 local function stopThrowAnimation() stops+=1 end
 local trajectoryCalibration={noteAuthoredShot=function() notes+=1 end}
-local state={mm2KnifeRuntime={}}
+local state={mm2SilentAimEnabled=true,mm2KnifeRuntime={}}
 local callbacks={}
 local featureConnections={}
 local TaskManager={Connect=function(self,cb) callbacks[1]=cb; return {Disconnect=function() callbacks[1]=nil end} end}
 local function disconnectFeatureConnection(key)
     if featureConnections[key] then featureConnections[key]:Disconnect(); featureConnections[key]=nil end
 end
-''', section(KNIFE, "    local function throwKnife", "    local aura: any = state.mm2KnifeAuraModule"), r'''
+''', section(KNIFE, "    local function throwKnife", "    local feature: any = state.mm2SilentAimFeature"), r'''
 for _,fps in ipairs({20,60,120}) do
     now=0; sends=0; notes=0
     toggleKnifeThrow(true)
