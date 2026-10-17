@@ -157,9 +157,16 @@ function Module.init(context: any): RenderLibrary
             thickness: number,
             colour: Color3
         ): ()
-            if mode == "Off" then
+            if mode == "Off" or rect.width <= 0 or rect.height <= 0 then
                 set:HideLines("Box", 1, 8)
+                set:HideLines("BoxOutline", 1, 8)
                 return
+            end
+            local function edge(index, from, to)
+                set:Line("BoxOutline", index, from, to, thickness + 2, Color3.fromRGB(8,10,15))
+                set:Line("Box", index, from, to, thickness, colour)
+                set.lines.BoxOutline[index].ZIndex = 1
+                set.lines.Box[index].ZIndex = 2
             end
             local corners: {Vector2} = {
                 Vector2.new(rect.left, rect.top),
@@ -169,46 +176,27 @@ function Module.init(context: any): RenderLibrary
             }
             if mode == "Full" then
                 for index: number = 1, 4 do
-                    set:Line(
-                        "Box",
-                        index,
-                        corners[index],
-                        corners[index % 4 + 1],
-                        thickness,
-                        colour
-                    )
+                    edge(index, corners[index], corners[index % 4 + 1])
                 end
                 set:HideLines("Box", 5, 8)
+                set:HideLines("BoxOutline", 5, 8)
                 return
             end
             local segment: number =
-                math.max(math.min(rect.width, rect.height) * 0.28, 3)
+                math.min(math.max(math.min(rect.width, rect.height) * 0.28, 2), rect.width * 0.5, rect.height * 0.5, 18)
             local index: number = 1
             for corner: number = 1, 4 do
                 local from: Vector2 = corners[corner]
                 local nextCorner: Vector2 = corners[corner % 4 + 1]
                 local previousCorner: Vector2 = corners[(corner + 2) % 4 + 1]
-                set:Line(
-                    "Box",
-                    index,
-                    from,
-                    from + (nextCorner - from).Unit * segment,
-                    thickness,
-                    colour
-                )
-                set:Line(
-                    "Box",
-                    index + 1,
-                    from,
-                    from + (previousCorner - from).Unit * segment,
-                    thickness,
-                    colour
-                )
+                edge(index, from, from + (nextCorner - from).Unit * segment)
+                edge(index + 1, from, from + (previousCorner - from).Unit * segment)
                 index += 2
             end
         end
 
         function set:Fill(rect: Rect?, colour: Color3, transparency: number): ()
+            if not rect and not set.fill then return end
             if not set.fill then
                 set.fill = create("Frame", {
                     Parent = root,
@@ -255,6 +243,10 @@ function Module.init(context: any): RenderLibrary
                     BackgroundTransparency = 1,
                     BorderSizePixel = 0,
                     Text = "",
+                    Font = Enum.Font.GothamMedium,
+                    RichText = false,
+                    TextStrokeColor3 = Color3.fromRGB(0,0,0),
+                    TextStrokeTransparency = 0.45,
                     TextColor3 = Color3.fromRGB(236, 236, 240),
                     TextSize = size,
 
@@ -270,14 +262,18 @@ function Module.init(context: any): RenderLibrary
                     PaddingRight = UDim.new(0, 5),
                 })
                 create("UICorner", {Parent = label, CornerRadius = UDim.new(0, 3)})
+                create("UIStroke", {Parent = label, ApplyStrokeMode = Enum.ApplyStrokeMode.Border,
+                    Color = Color3.fromRGB(111,126,150), Transparency = 0.7, Thickness = 1})
                 set.labels[slot] = label
             end
             local resolved: TextLabel = label :: TextLabel
             resolved.Visible = true
-            resolved.Text = text
-            resolved.TextColor3 = colour
-            resolved.TextSize = size
-            resolved.BackgroundTransparency = plate and 0.35 or 1
+            if resolved.Text ~= text then resolved.Text = text end
+            if resolved.TextColor3 ~= colour then resolved.TextColor3 = colour end
+            if resolved.TextSize ~= size then resolved.TextSize = size end
+            resolved.BackgroundTransparency = plate and 0.18 or 1
+            local border = resolved:FindFirstChildOfClass("UIStroke")
+            if border then border.Transparency = plate and 0.7 or 1 end
             resolved.Position = UDim2.fromOffset(math.round(at.X), math.round(at.Y))
             resolved.Size = UDim2.fromOffset(0, size + 6)
         end
@@ -314,16 +310,13 @@ function Module.init(context: any): RenderLibrary
             end
             local track: Frame = set.barTrack :: Frame
             local fill: Frame = set.barFill :: Frame
-            local clamped: number = math.clamp(fraction, 0, 1)
+            local clamped: number = fraction == fraction and math.clamp(fraction, 0, 1) or 0
             track.Visible = true
             track.Position = UDim2.fromOffset(math.round(at.X), math.round(at.Y))
-            track.Size = UDim2.fromOffset(2, math.round(height))
+            track.Size = UDim2.fromOffset(4, math.max(1, math.round(height)))
             fill.Size = UDim2.fromScale(1, clamped)
-            fill.BackgroundColor3 = Color3.fromRGB(
-                math.round(255 * (1 - clamped)),
-                math.round(200 * clamped + 40),
-                math.round(120 * clamped)
-            )
+            local low, mid, high = Color3.fromRGB(244,78,95), Color3.fromRGB(246,193,76), Color3.fromRGB(89,218,151)
+            fill.BackgroundColor3 = clamped < 0.5 and low:Lerp(mid, clamped * 2) or mid:Lerp(high, (clamped - 0.5) * 2)
         end
 
         function set:HideBar(): ()

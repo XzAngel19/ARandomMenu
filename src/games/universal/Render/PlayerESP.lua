@@ -13,6 +13,7 @@ local Module = {
 }
 
 local activeCleanup: (() -> ())? = nil
+local activeCard: any = nil
 
 function Module.init(context: Runtime): any
     local host: any = context.host
@@ -32,8 +33,7 @@ function Module.init(context: Runtime): any
         Category = "Render",
         ConfigKey = "Universal.PlayerESP",
         Order = 1,
-        Tooltip = "Boxes, skeletons, name tags, health, tracers and chams, "
-            .. "each independently switchable.",
+        Tooltip = "Outlined boxes, skeletons and tracers. Nametags and HP are independent modules.",
         Function = function(enabled: boolean): ()
             container.Visible = enabled
             if not enabled then
@@ -93,37 +93,6 @@ function Module.init(context: Runtime): any
         Default = false,
         Tooltip = "Draw the rig's bones. Works on both R6 and R15.",
     })
-    esp:CreateToggle({
-        Name = "Name tags",
-        Default = true,
-        Tooltip = "The player's name above the box.",
-    })
-    esp:CreateToggle({
-        Name = "Display name",
-        Show = {Option = "Name tags"},
-        Default = true,
-        Tooltip = "Show the display name rather than the account name.",
-    })
-    esp:CreateToggle({
-        Name = "Health bar",
-        Default = true,
-        Tooltip = "Vertical bar on the left edge of the box.",
-    })
-    esp:CreateToggle({
-        Name = "Health text",
-        Default = false,
-        Tooltip = "Print the exact hit points next to the name.",
-    })
-    esp:CreateToggle({
-        Name = "Distance",
-        Default = true,
-        Tooltip = "Studs between you and the target.",
-    })
-    esp:CreateToggle({
-        Name = "Held tool",
-        Default = false,
-        Tooltip = "Name of whatever the target currently has equipped.",
-    })
     esp:CreateDropdown({
         Name = "Tracers",
         List = {"Off", "Bottom", "Centre", "Cursor"},
@@ -158,73 +127,14 @@ function Module.init(context: Runtime): any
         Tooltip = "Draw each player in their own team's colour where the game "
             .. "has teams.",
     })
-    esp:CreateToggle({
-        Name = "Name plate",
-        Default = true,
-        Tooltip = "Put the name on a dark plate so it stays readable against "
-            .. "a bright map.",
-    })
-    esp:CreateSlider({
-        Name = "Text size",
-        Min = 8,
-        Max = 24,
-        Default = 13,
-    })
-
-    local extraRuntime: any = {
-        roles = nil :: any,
-        extras = {} :: {any},
-    }
-    Module.bridge = extraRuntime
-
-    local function addRoleRows(provider: any): ()
-        if extraRuntime.roles then
-            return
-        end
-        extraRuntime.roles = provider
-
-        for _, redundant: string in
-            ipairs({"Team check", "Visibility check", "Team colours", "Colour"})
-        do
-            local row: any = esp.Options[redundant]
-            if row then
-
-                row.Show = {Option = "__roles", Values = {true}}
-                pcall(function(): ()
-                    row:SetVisible(false)
-                    row.Visible = false
-                end)
-            end
-        end
-        esp:CreateToggle({
-            Name = "Role colours",
-            Default = true,
-            Tooltip = "Colour every drawing by what the player is in this "
-                .. "game instead of by team.",
-        })
-        esp:CreateToggle({
-            Name = "Show role",
-            Show = {Option = "Name tags"},
-            Default = true,
-            Tooltip = "Print the role next to the name.",
-        })
-        for _, roleName: string in ipairs(provider.Roles or {}) do
-            esp:CreateColor({
-                Name = roleName .. " colour",
-                Default = (provider.Colors or {})[roleName]
-                    or Color3.fromRGB(236, 236, 240),
-                Function = function(value: Color3): ()
-
-                    if type(provider.SetColor) == "function" then
-                        pcall(provider.SetColor, roleName, value)
-                    end
-                end,
-            })
-        end
+    local roles = context.services.gameRoles:Bind(esp)
+    Module.roles = roles
+    esp.OptionFilter = function(name)
+        return not (roles.provider and roles.provider.ReplacesTeams and (name == "Team check" or name == "Team colours"))
     end
-
+    esp:RefreshVisibility()
     local function addExtraRows(extra: any): ()
-        table.insert(extraRuntime.extras, extra)
+        if type(extra) ~= "table" or type(extra.Name) ~= "string" or esp.Options[extra.Name] then return end
         esp:CreateToggle({
             Name = extra.Name,
             Default = extra.Default == true,
@@ -282,10 +192,8 @@ function Module.init(context: Runtime): any
 
     local gameBridge: any = context.services.gameBridge
     if type(gameBridge.onEvent) == "function" then
-        gameBridge.onEvent(function(kind: string, payload: any): ()
-            if kind == "roles" then
-                addRoleRows(payload)
-            elseif kind == "extra" then
+        Module.bridgeCleanup = gameBridge.onEvent(function(kind: string, payload: any): ()
+            if kind == "extra" then
                 addExtraRows(payload)
             end
         end)
@@ -296,6 +204,7 @@ function Module.init(context: Runtime): any
         table.clear(pool)
         container.Visible = false
     end
+    activeCard = esp
     Module.Initialized = true
     return esp
 end
@@ -314,8 +223,10 @@ function Module.render(
     local currentWorkspace: Workspace = host.workspace or workspace
     local camera: Camera? = currentWorkspace.CurrentCamera
     if not camera then
+        container.Visible = false
         return
     end
+    container.Visible = true
     local resolvedCamera: Camera = camera :: Camera
     local options: any = esp.Options
     local viewport: Vector2 = resolvedCamera.ViewportSize
@@ -325,7 +236,8 @@ function Module.render(
 
     for _, entity: any in ipairs(entityLibrary.List) do
         local player: Player = entity.Player
-        if options["Team check"].Value and entity.IsFriendly then
+        if not (Module.roles and Module.roles.provider and Module.roles.provider.ReplacesTeams)
+            and options["Team check"].Value and entity.IsFriendly then
             continue
         end
         if entity.Distance > options["Max distance"].Value then
@@ -355,29 +267,14 @@ function Module.render(
             end
             visible = cache.value
         end
-        local colour: Color3 = options["Colour"].Value
-
-        local role: string? = nil
-        if type(gameBridge.playerRole) == "function" then
-            role = gameBridge.playerRole(player)
-        end
-        local roleOption: any = role and options[role .. " colour"] or nil
-        local useRoleColour: boolean = roleOption ~= nil
-            and options["Role colours"] ~= nil
-            and options["Role colours"].Value == true
-        if useRoleColour then
-            colour = roleOption.Value
-        end
-
-        if not useRoleColour and options["Team colours"].Value then
-            local isTeammate: boolean = entity.IsFriendly
-                or (LocalPlayer and player.Team and LocalPlayer.Team and player.Team == LocalPlayer.Team)
-                or (LocalPlayer and player:GetAttribute("Team") ~= nil and player:GetAttribute("Team") == LocalPlayer:GetAttribute("Team"))
-            if isTeammate then
-                colour = Color3.fromRGB(255, 255, 255)
-            else
-                colour = Color3.fromRGB(255, 0, 0)
-            end
+        local colour = options["Colour"].Value
+        local roles = Module.roles
+        local roleColour = roles and roles:Resolve(player, nil)
+        if roleColour then
+            colour = roleColour
+        elseif not (roles and roles.provider and roles.provider.ReplacesTeams)
+            and options["Team colours"].Value and player.Team then
+            colour = player.Team.TeamColor.Color
         end
 
         if not visible then
@@ -426,70 +323,6 @@ function Module.render(
             drawings:HideLines("Bone", 1, 14)
         end
 
-        if options["Health bar"].Value then
-            drawings:Bar(
-                Vector2.new(left - 4, top),
-                height,
-                entity.Health / math.max(entity.MaxHealth, 1)
-            )
-        else
-            drawings:HideBar()
-        end
-
-        local textSize: number = math.round(options["Text size"].Value)
-        if options["Name tags"].Value then
-            local shown: string = options["Display name"].Value
-                and player.DisplayName
-                or player.Name
-            drawings:Label(
-                "NameTag",
-                (role
-                        and options["Show role"] ~= nil
-                        and options["Show role"].Value)
-                    and (shown .. "  [" .. (role :: string) .. "]")
-                    or shown,
-                Vector2.new(centreX, top - 3),
-                1,
-                textSize,
-                colour,
-                options["Name plate"].Value
-            )
-        else
-            drawings:HideLabel("NameTag")
-        end
-
-        local details: {string} = {}
-        if options["Distance"].Value then
-            table.insert(details, tostring(math.round(entity.Distance)) .. "m")
-        end
-        if options["Health text"].Value then
-            table.insert(
-                details,
-                tostring(math.round(entity.Health))
-                    .. "/"
-                    .. tostring(math.round(entity.MaxHealth))
-            )
-        end
-        if options["Held tool"].Value then
-            local tool: Instance? = entity.Character:FindFirstChildOfClass("Tool")
-            if tool then
-                table.insert(details, tool.Name)
-            end
-        end
-        if #details > 0 then
-            drawings:Label(
-                "Details",
-                table.concat(details, "  "),
-                Vector2.new(centreX, bottom + 2),
-                0,
-                math.max(textSize - 2, 8),
-                colour,
-                options["Name plate"].Value
-            )
-        else
-            drawings:HideLabel("Details")
-        end
-
         local tracerMode: string = options["Tracers"].Value
         if tracerMode == "Off" then
             drawings:HideLines("Tracer", 1, 1)
@@ -523,10 +356,14 @@ function Module.render(
 end
 
 function Module.destroy(): ()
+    if activeCard and activeCard.Enabled then activeCard:Toggle(false) end
     if activeCleanup then
         pcall(activeCleanup)
     end
+    if Module.roles then Module.roles:Destroy(); Module.roles = nil end
+    if Module.bridgeCleanup then Module.bridgeCleanup(); Module.bridgeCleanup = nil end
     activeCleanup = nil
+    activeCard = nil
     Module.Initialized = false
 end
 

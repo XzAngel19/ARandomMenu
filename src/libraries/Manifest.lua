@@ -24,6 +24,7 @@ local Manifest: Manifest = {
         "src/libraries/Targeting.lua",
         "src/libraries/Weapons.lua",
         "src/libraries/Render.lua",
+        "src/libraries/GameRoles.lua",
 
         "src/guis/Wurst/Code/Cards.lua",
 
@@ -56,6 +57,8 @@ local Manifest: Manifest = {
             name = "Chams",
             category = "Render",
         },
+        {path = "src/games/universal/Render/Nametags.lua", name = "Nametags", category = "Render"},
+        {path = "src/games/universal/Render/HP.lua", name = "HP", category = "Render"},
         {
             path = "src/games/universal/Render/Arrows.lua",
             name = "Arrows",

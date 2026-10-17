@@ -24,48 +24,8 @@ function Module.init(context: Runtime): any
     local teamCheck: any = host.state and host.state.teamCheck
     local currentWorkspace: Workspace = host.workspace or workspace
     local highlights: {[Player]: Highlight} = {}
-    local nameTags: {[Player]: BillboardGui} = {}
     local lastUpdate: number = -math.huge
-
-    local function roleNameColour(player: Player): Color3?
-        if type(gameBridge) == "table"
-            and type(gameBridge.playerRoleColor) == "function" then
-            local ok: boolean, colour: any =
-                pcall(gameBridge.playerRoleColor, player)
-            if ok and typeof(colour) == "Color3" then
-                return colour
-            end
-        end
-        return nil
-    end
-
-    local function clearNameTags(): ()
-        for player: Player, tag: BillboardGui in pairs(nameTags) do
-            nameTags[player] = nil
-            pcall(tag.Destroy, tag)
-        end
-    end
-
-    -- Role-aware games (MM2) know every player's role, so the universal
-    -- teammate/team-colour options are meaningless there ("esa opcion es
-    -- dedicadamente a Universal"): instead the card grows per-role ESP
-    -- toggles and the fill colour follows the role colour. The active game
-    -- is known when modules initialize, so the option set is fixed then.
-    local roleMode: boolean = host.state ~= nil
-        and host.state.activeGameName == "MM2"
-
-    local function playerRole(player: Player): string?
-        if type(gameBridge) ~= "table"
-            or type(gameBridge.playerRole) ~= "function" then
-            return nil
-        end
-        local ok: boolean, role: any = pcall(gameBridge.playerRole, player)
-        if ok and type(role) == "string" then
-            return role
-        end
-        return nil
-    end
-
+    local roles: any = nil
     local function playerPerk(player: Player): string?
         if type(gameBridge) ~= "table"
             or type(gameBridge.playerPerk) ~= "function" then
@@ -78,7 +38,7 @@ function Module.init(context: Runtime): any
         return nil
     end
 
-    -- Same icon map the MM2 Role Tags module draws beside the murder tag.
+    -- MM2 perk assets; this module owns only the icon, not text labels.
     local PERK_ICONS: {[string]: string} = {
         ["Footsteps"] = "rbxassetid://336404773",
         ["Sleight"] = "rbxassetid://340309581",
@@ -110,7 +70,6 @@ function Module.init(context: Runtime): any
             highlights[player] = nil
             highlight:Destroy()
         end
-        clearNameTags()
         destroyPerkTag()
     end
 
@@ -158,8 +117,7 @@ function Module.init(context: Runtime): any
         Category = "Render",
         ConfigKey = "Universal.Chams",
         Order = 2,
-        Tooltip = "Highlights live players, optionally through walls, with "
-            .. "optional name tags.",
+        Tooltip = "Player highlights with independent role palettes and filters. Names and health have their own modules.",
         Function = function(enabled: boolean): ()
             if not enabled then
                 clear()
@@ -176,29 +134,30 @@ function Module.init(context: Runtime): any
                 lastUpdate = now
                 local seen: {[Player]: boolean} = {}
                 local count: number = 0
-                local showNames: boolean = card.Options["Nametags"].Value
-                local nameMaxDistance: number =
-                    card.Options["Nametag distance"].Value
-                local useTeamColours: boolean =
-                    not roleMode and card.Options["Team colours"].Value
-                local allowTeammates: boolean =
-                    not roleMode and card.Options["Teammates"].Value
-                local showRoleEsp: {[string]: boolean} = {}
-                if roleMode then
-                    showRoleEsp["Murderer"] =
-                        card.Options["Murderer ESP"].Value ~= false
-                    showRoleEsp["Sheriff"] =
-                        card.Options["Sheriff ESP"].Value ~= false
-                    showRoleEsp["Hero"] =
-                        card.Options["Hero ESP"].Value ~= false
-                    showRoleEsp["Innocent"] =
-                        card.Options["Innocent ESP"].Value ~= false
-                end
-                local showPerk: boolean = roleMode
-                    and card.Options["Show Perk"].Value ~= false
+                local roleMode = roles and roles.provider ~= nil
+                local teamsReplaced = roleMode and roles.provider.ReplacesTeams == true
+                local useTeamColours = not teamsReplaced and card.Options["Team colours"].Value
+                local allowTeammates = not teamsReplaced and card.Options["Teammates"].Value
+                local showPerk = card.Options["Show Perk"] and card.Options["Show Perk"].Value
                 local perkTarget: Player? = nil
-
                 local targets: any = entity:Refresh()
+                -- Dead is a real MM2 role, not an inert colour row. Include
+                -- existing corpse models only when the provider declares it.
+                if roleMode and type(roles.provider.DeadRoles) == "table" and host.Players then
+                    targets = table.clone(targets)
+                    local included = {}
+                    for _, target in ipairs(targets) do included[target.Player] = true end
+                    for _, player in ipairs(host.Players:GetPlayers()) do
+                        if player == host.LocalPlayer or included[player] then continue end
+                        local character = player.Character
+                        local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+                        if character and character.Parent and humanoid and humanoid.Health <= 0
+                            and table.find(roles.provider.DeadRoles, roles:Role(player)) then
+                            table.insert(targets, {Player = player, Character = character, Humanoid = humanoid,
+                                IsFriendly = entity.IsFriendly and entity:IsFriendly(player) or false})
+                        end
+                    end
+                end
                 for _, target: any in ipairs(targets) do
                     local player: Player = target.Player
 
@@ -206,7 +165,7 @@ function Module.init(context: Runtime): any
                     -- highlighted. Role games: every role is known, per-role
                     -- toggles decide, and role colours always win.
                     local allowedTeam: boolean = true
-                    if not roleMode then
+                    if not teamsReplaced then
                         local friendly: boolean = target.IsFriendly
                         if not friendly and teamCheck
                             and type(teamCheck.isSameTeam) == "function" then
@@ -218,25 +177,17 @@ function Module.init(context: Runtime): any
                         and not protectedTargets.isProtected(player)
                         and target.Character
                         and target.Humanoid
-                        and target.Humanoid.Health > 0) then
+                        and (target.Humanoid.Health > 0 or roleMode and type(roles.provider.DeadRoles) == "table"
+                            and table.find(roles.provider.DeadRoles, roles:Role(player)))) then
                         continue
                     end
 
                     local roleColour: Color3? = nil
                     if roleMode then
-                        local role: string? = playerRole(player)
-                        if role == "Dead" then
-                            continue
-                        end
-                        if role ~= nil then
-                            if not showRoleEsp[role] then
-                                continue
-                            end
-                            if role == "Murderer" then
-                                perkTarget = player
-                            end
-                        end
-                        roleColour = roleNameColour(player)
+                        if not roles:Allows(player) then continue end
+                        local role
+                        roleColour, role = roles:Resolve(player, nil)
+                        if role == "Murderer" then perkTarget = player end
                     end
                     local teamColour: Color3? = nil
                     if not roleColour and useTeamColours and target.IsFriendly then
@@ -290,71 +241,6 @@ function Module.init(context: Runtime): any
                         resolved.DepthMode = depthMode
                     end
 
-                    if showNames and target.Distance <= nameMaxDistance then
-                        local head: BasePart? =
-                            target.Character:FindFirstChild("Head")
-                                or target.Character
-                                    :FindFirstChild("HumanoidRootPart")
-                                :: BasePart?
-                        if head then
-                            local tag: BillboardGui? = nameTags[player]
-                            if not tag
-                                or not tag.Parent
-                                or tag.Adornee ~= head then
-                                if tag then
-                                    pcall(tag.Destroy, tag)
-                                end
-                                local billboard: BillboardGui =
-                                    Instance.new("BillboardGui")
-                                billboard.Name = "Wurst_NameTag"
-                                billboard.AlwaysOnTop = true
-                                billboard.LightInfluence = 0
-                                billboard.Size = UDim2.fromOffset(200, 20)
-                                billboard.StudsOffset =
-                                    Vector3.new(0, 2.2, 0)
-                                billboard.MaxDistance = nameMaxDistance
-                                billboard.Adornee = head
-                                billboard.Parent = head
-                                local label: TextLabel =
-                                    Instance.new("TextLabel")
-                                label.Name = "Name"
-                                label.BackgroundTransparency = 1
-                                label.Size = UDim2.fromScale(1, 1)
-                                label.Font = Enum.Font.GothamBold
-                                label.TextSize = 13
-                                label.TextStrokeColor3 =
-                                    Color3.fromRGB(0, 0, 0)
-                                label.TextStrokeTransparency = 0.3
-                                label.Parent = billboard
-                                nameTags[player] = billboard
-                                tag = billboard
-                            end
-                            local label: any =
-                                tag and tag:FindFirstChild("Name")
-                            if label then
-                                local wanted: string = player.DisplayName
-                                if player.DisplayName ~= player.Name then
-                                    wanted = wanted .. " ("
-                                        .. player.Name .. ")"
-                                end
-                                if target.Distance > 15 then
-                                    wanted = wanted .. " · "
-                                        .. tostring(
-                                            math.round(target.Distance)
-                                        ) .. "m"
-                                end
-                                if label.Text ~= wanted then
-                                    label.Text = wanted
-                                end
-                                local nameColour: Color3 = roleColour
-                                    or teamColour
-                                    or Color3.fromRGB(255, 255, 255)
-                                if label.TextColor3 ~= nameColour then
-                                    label.TextColor3 = nameColour
-                                end
-                            end
-                        end
-                    end
                 end
 
                 for player: Player, highlight: Highlight in pairs(highlights) do
@@ -363,13 +249,6 @@ function Module.init(context: Runtime): any
                         highlight:Destroy()
                     end
                 end
-                for player: Player, tag: BillboardGui in pairs(nameTags) do
-                    if not seen[player] or not showNames then
-                        nameTags[player] = nil
-                        pcall(tag.Destroy, tag)
-                    end
-                end
-
                 -- Perk icon above the murderer (role games only).
                 if roleMode and showPerk and perkTarget and perkTarget.Character then
                     local head: BasePart? = perkTarget.Character:FindFirstChild("Head")
@@ -405,6 +284,8 @@ function Module.init(context: Runtime): any
                             if icon and icon.Image ~= iconId then
                                 icon.Image = iconId
                             end
+                        else
+                            destroyPerkTag()
                         end
                     else
                         destroyPerkTag()
@@ -424,21 +305,19 @@ function Module.init(context: Runtime): any
     card:CreateSlider({Name = "Fill transparency", Min = 0, Max = 1, Step = 0.05, Default = 0.55})
     card:CreateSlider({Name = "Outline transparency", Min = 0, Max = 1, Step = 0.05, Default = 0})
     card:CreateToggle({Name = "Through walls", Default = true})
-    card:CreateToggle({Name = "Nametags", Default = false, Tooltip = "Shows each player's name and distance above the highlight, coloured by role or team when known."})
-    card:CreateSlider({Name = "Nametag distance", Min = 100, Max = 2000, Step = 100, Default = 1000, Tooltip = "How far name tags stay visible."})
-    if roleMode then
-        -- Role games (MM2): every role is known, so per-role ESP toggles
-        -- replace the universal teammate options.
-        card:CreateToggle({Name = "Murderer ESP", Default = true, Tooltip = "Highlight the murderer in their role colour."})
-        card:CreateToggle({Name = "Sheriff ESP", Default = true, Tooltip = "Highlight the sheriff in their role colour."})
-        card:CreateToggle({Name = "Hero ESP", Default = true, Tooltip = "Highlight the hero (gun picked up mid-round) in their role colour."})
-        card:CreateToggle({Name = "Innocent ESP", Default = true, Tooltip = "Highlight innocents in their role colour."})
+    card:CreateToggle({Name = "Teammates", Default = false})
+    card:CreateToggle({Name = "Team colours", Default = false})
+    if host.state and host.state.activeGameName == "MM2" then
         card:CreateToggle({Name = "Show Perk", Default = true, Tooltip = "Perk icon above the murderer."})
-    else
-        card:CreateToggle({Name = "Teammates", Default = false, Tooltip = "Also highlight teammates. The advanced team check decides who counts."})
-        card:CreateToggle({Name = "Team colours", Default = false, Tooltip = "Teammates get their Roblox team colour; everyone else keeps the fill colour. Role colours (when the game knows roles) always win."})
     end
-
+    roles = context.services.gameRoles:Bind(card, {filters = true})
+    card.OptionFilter = function(name)
+        if roles.provider and roles.provider.ReplacesTeams and (name == "Teammates" or name == "Team colours") then return false end
+        if name == "Show Perk" then return roles.provider ~= nil and roles.provider.Name == "MM2" end
+        return true
+    end
+    card:RefreshVisibility()
+    Module.roles = roles
     activeCard = card
     Module.Initialized = true
     return card
@@ -452,6 +331,7 @@ function Module.destroy(): ()
         pcall(activeBridgeCleanup)
         activeBridgeCleanup = nil
     end
+    if Module.roles then Module.roles:Destroy(); Module.roles = nil end
     activeCard = nil
     Module.Initialized = false
 end

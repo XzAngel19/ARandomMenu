@@ -946,6 +946,8 @@ end
 local function registerMM2Roles(): ()
     registerRoleProvider({
         Name = "MM2",
+        ReplacesTeams = true,
+        DeadRoles = {"Dead"},
         Roles = {"Murderer", "Sheriff", "Hero", "Innocent", "Dead"},
         Colors = {
             Murderer = mm2Settings.murdererColor,

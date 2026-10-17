@@ -62,6 +62,10 @@ function Module.init(context: any): any
     ): any
         configuration = configuration or {}
         local ordered: {[string]: number} = {
+            ["ItemESP"] = 1, ["PlayerESP"] = 2, ["Chams"] = 3,
+            ["Nametags"] = 4, ["HP"] = 5, ["Arrows"] = 6, ["NPCESP"] = 7,
+            ["FOV"] = 8, ["Fullbright"] = 9, ["Time Changer"] = 10,
+            ["X-Ray"] = 11, ["Zoom"] = 12,
             ["Aim Assist"] = 1,
             ["KillAura"] = 2,
             ["TriggerBot"] = 3,

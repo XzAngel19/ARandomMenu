@@ -217,7 +217,7 @@ local RUNTIME_RAW_BASE: string =
         .. RUNTIME_BRANCH
         .. "/"
 
-local SOURCE_STAMP: string = "v42-20261016-teleport-respawn-prediction"
+local SOURCE_STAMP: string = "v43-20261016-render-roles"
 
 local BOOT_STARTED_AT: number = os.clock()
 local BOOT_FINGERPRINT_SECONDS: number = 0
@@ -4398,6 +4398,14 @@ state.registerRoleProvider = function(provider: any): ()
     end
 end
 
+-- Ownership-aware removal: an old game's cleanup cannot erase a newer provider.
+state.unregisterRoleProvider = function(provider: any): ()
+    if state.gameBridge.roleProvider ~= provider then return end
+    state.gameBridge.roleProvider = nil
+    if state.clearRoleMemo then state.clearRoleMemo() end
+    for _, listener in ipairs(state.gameBridge.listeners) do pcall(listener, "roles", nil) end
+end
+
 state.registerEspExtra = function(extra: any): ()
     if type(extra) ~= "table" or type(extra.Name) ~= "string" then
         return
@@ -5756,6 +5764,8 @@ local moduleServices: ModuleServices = {
         playerRole = state.playerRole,
         playerRoleColor = state.playerRoleColor,
         playerPerk = state.playerPerk,
+        registerRoles = state.registerRoleProvider,
+        unregisterRoles = state.unregisterRoleProvider,
 
         silentShot = function(): any
             return state.lastSilentShotInfo
@@ -5779,6 +5789,7 @@ local fallbackManifest: any = {
         "src/libraries/Targeting.lua",
         "src/libraries/Weapons.lua",
         "src/libraries/Render.lua",
+        "src/libraries/GameRoles.lua",
         "src/guis/Wurst/Code/Cards.lua",
         "src/guis/Wurst/Code/WindowManager.lua",
         "src/guis/Wurst/Code/ClickGui.lua",
@@ -5791,6 +5802,8 @@ local fallbackManifest: any = {
         {path = "src/games/universal/Render/ItemRender.lua", name = "ItemESP", category = "Render"},
         {path = "src/games/universal/Render/PlayerESP.lua", name = "PlayerESP", category = "Render"},
         {path = "src/games/universal/Render/Chams.lua", name = "Chams", category = "Render"},
+        {path = "src/games/universal/Render/Nametags.lua", name = "Nametags", category = "Render"},
+        {path = "src/games/universal/Render/HP.lua", name = "HP", category = "Render"},
         {path = "src/games/universal/Render/Arrows.lua", name = "Arrows", category = "Render"},
         {path = "src/games/universal/Render/NPCESP.lua", name = "NPCESP", category = "Render"},
         {path = "src/games/universal/Combat/KillAura.lua", name = "KillAura", category = "Combat"},

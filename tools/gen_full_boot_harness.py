@@ -71,6 +71,7 @@ function Color3.new(r, g, b) return setmetatable({R = r or 0, G = g or 0, B = b 
 function Color3.fromRGB(r, g, b) return Color3.new((r or 0) / 255, (g or 0) / 255, (b or 0) / 255) end
 function Color3.fromHSV(...) return Color3.new(0, 0, 0) end
 function Color3.toHSV(...) return 0, 0, 0 end
+function Color3:Lerp(other, alpha) return Color3.new(self.R+(other.R-self.R)*alpha,self.G+(other.G-self.G)*alpha,self.B+(other.B-self.B)*alpha) end
 function autoEnum()
     return setmetatable({}, {__index = function(t, k)
         local v = {Name = k}
@@ -808,6 +809,7 @@ do
     end
     print("[HARNESS] FREEZE MOVEMENTS TOGGLE CYCLES CLEAN")
     local expected = {
+      Render = {"ItemESP", "PlayerESP", "Chams", "Nametags", "HP", "Arrows", "NPCESP", "FOV", "Fullbright", "Time Changer", "X-Ray", "Zoom"},
       Combat = {"Aim Assist", "KillAura", "TriggerBot", "SilentAIM"},
       Exploits = {"Fly", "Fling", "Noclip", "Spider", "Speed", "Jump", "Interact Extender"},
       Utilities = {"Anti Fling", "Anti Void", "Teleport", "Freeze Movements", "Ghost", "Disguise"},
@@ -886,6 +888,29 @@ do
     auraModule:Toggle(false);assert(ex.state.mm2KnifeRuntime.throwWanted, "stop does not erase Throw preference")
     ex.state.toggleControls["MM2.Shoot.KnifeThrow"].setChecked(false)
 
+    local chams = ex.state.framework:GetModule("Chams")
+    local esp = ex.state.framework:GetModule("PlayerESP")
+    local names = ex.state.framework:GetModule("Nametags")
+    local hp = ex.state.framework:GetModule("HP")
+    assert(chams and esp and names and hp)
+    assert(not chams.Options.Nametags and not chams.Options["Nametag distance"])
+    assert(not esp.Options["Name tags"] and not esp.Options["Health bar"] and not esp.Options["Health text"])
+    assert(hp.Options["Self HP"] and not findFeature("Health Indicators"))
+    for _,role in ipairs({"Murderer", "Sheriff", "Hero", "Innocent", "Dead"}) do
+        assert(chams.Options[role .. " ESP"] and chams.Options[role .. " colour"].Visible)
+        assert(esp.Options[role .. " colour"] and names.Options[role .. " colour"])
+    end
+    assert(not chams.Options.Teammates.Visible and not esp.Options["Team check"].Visible)
+    local oldRoleProvider = ex.state.gameBridge.roleProvider
+    local gameRoles = ex.state.moduleServices.gameRoles
+    local releaseFuture = gameRoles:Register({Name="Future", Roles={"Medic","Guard"},
+        Colors={Medic=Color3.new(0,1,0)}, Get=function() return "Medic" end})
+    assert(chams.Options["Medic colour"].Visible and not chams.Options["Murderer colour"].Visible)
+    assert(chams.Options.Teammates.Visible)
+    releaseFuture()
+    ex.state.registerRoleProvider(oldRoleProvider)
+    assert(chams.Options["Murderer colour"].Visible and not chams.Options["Medic colour"].Visible)
+    print("[HARNESS] CHAMS ROLES + GAME ROLES + SEPARATE NAMETAGS/HP CLEAN")
     assert(not findFeature("Role Tags") and not findFeature("Click Teleport"))
     local tp = ex.state.framework:GetModule("Teleport")
     assert(tp.Options.Destination.Value == "MM2", "MM2 is the default Teleport destination")
