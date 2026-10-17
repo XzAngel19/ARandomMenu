@@ -1429,7 +1429,7 @@ function Gui.new(options: GuiOptions?): GuiController
         end
     end))
 
-    if isMobile then
+    if isMobile or menuKey == Enum.KeyCode.Unknown then
         local menuButton: ImageButton = create("ImageButton", {
             Name = "MobileMenuButton",
             AnchorPoint = Vector2.new(1, 0),
