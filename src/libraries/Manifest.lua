@@ -43,6 +43,7 @@ local Manifest: Manifest = {
     },
     modules = {
         {path = "src/games/universal/Render/FreeCam.lua", name = "FreeCam", category = "World"},
+        {path = "src/games/universal/Render/Spectate.lua", name = "Spectate", category = "World"},
         {path = "src/games/universal/Render/Markers.lua", name = "Markers", category = "Render"},
 
         {

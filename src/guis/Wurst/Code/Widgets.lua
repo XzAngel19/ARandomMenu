@@ -578,10 +578,9 @@ function Module.init(context: any): WidgetLibrary
             feature.configKey .. "." .. labelText:gsub("%W", "")
         local storedValue: number? = tonumber(configData.values[optionKey])
 
-        -- A restored profile may predate a narrower interval; clamp it so the
-        -- control never starts outside its advertised range.
+        -- The interval is a drag guide, not a limit on typed/profile values.
         local value: number = isFiniteNumber(storedValue)
-            and math.clamp(storedValue :: number, minimum, maximum)
+            and (storedValue :: number)
             or defaultValue
         local integerOnly: boolean = defaultValue % 1 == 0
             and minimum % 1 == 0
@@ -730,19 +729,13 @@ function Module.init(context: any): WidgetLibrary
             (valueStroke :: UIStroke).Transparency = 1
         end
 
-        valueInput.PlaceholderText = formatCompactNumber(minimum)
-            .. " – "
-            .. formatCompactNumber(maximum)
+        valueInput.PlaceholderText = "Any finite number"
 
         local editing: boolean = false
 
         local function quantize(raw: number, fromSlider: boolean): number
-            -- Manual entry and restored profiles both pass through here;
-            -- values are always clamped to the advertised interval.
+            if not fromSlider then return raw end
             raw = math.clamp(raw, minimum, maximum)
-            if not fromSlider then
-                return raw
-            end
             local stepped: number = minimum
                 + math.round((raw - minimum) / step) * step
             stepped = math.round(stepped * precisionFactor) / precisionFactor
@@ -1152,6 +1145,9 @@ function Module.init(context: any): WidgetLibrary
                 )
             end)
         end
+        watch(owner, "AbsolutePosition", function() return true end)
+        watch(owner, "AbsoluteSize", function() return true end)
+        watch(ScreenGui, "AbsoluteSize", function() return true end)
         if windowRoot then
             watch(windowRoot, "Visible", function(): boolean
                 return windowRoot.Visible ~= true
@@ -1186,6 +1182,37 @@ function Module.init(context: any): WidgetLibrary
         return connections
     end
 
+    local function selectorGeometry(anchor, wantedHeight)
+        local viewport = ScreenGui.AbsoluteSize
+        local camera = workspace.CurrentCamera
+        if (viewport.X < 1 or viewport.Y < 1) and camera then viewport = camera.ViewportSize end
+        local row = anchor.Parent
+        local owner = row
+        while owner and owner ~= ScreenGui do
+            if owner:GetAttribute("SelectorOwner") then break end
+            owner = owner.Parent
+        end
+        if not owner or owner == ScreenGui then owner = row end
+        local width = math.min(math.max(anchor.AbsoluteSize.X, 160), math.max(1, viewport.X - 16))
+        local height = math.min(wantedHeight, math.max(24, viewport.Y - 16))
+        local bottom = math.max(anchor.AbsolutePosition.Y + anchor.AbsoluteSize.Y,
+            owner.AbsolutePosition.Y + owner.AbsoluteSize.Y)
+        local x = math.clamp(anchor.AbsolutePosition.X, 8, math.max(8, viewport.X - width - 8))
+        local y = bottom + 6
+        -- Prefer below. At the screen edge use a bounded side placement before
+        -- falling back above, so a long settings window stays usable.
+        if y + height > viewport.Y - 8 then
+            local right = owner.AbsolutePosition.X + owner.AbsoluteSize.X + 6
+            local left = owner.AbsolutePosition.X - width - 6
+            if right + width <= viewport.X - 8 then x = right
+            elseif left >= 8 then x = left
+            else y = owner.AbsolutePosition.Y - height - 6 end
+            if x == right or x == left then y = anchor.AbsolutePosition.Y end
+        end
+        y = math.clamp(y, 8, math.max(8, viewport.Y - height - 8))
+        return UDim2.fromOffset(math.round(x), math.round(y)), UDim2.fromOffset(math.round(width), math.round(height))
+    end
+
     local function openChoiceList(
         anchor: TextButton,
         values: {string},
@@ -1204,12 +1231,7 @@ function Module.init(context: any): WidgetLibrary
         local searchHeight: number = searchable and 24 or 0
         local visibleRows: number = math.min(#values, 6)
         local listHeight: number = visibleRows * rowHeight + 8 + searchHeight
-        local anchorPosition: Vector2 = anchor.AbsolutePosition
-        local anchorSize: Vector2 = anchor.AbsoluteSize
-
-        local viewport: Vector2 = ScreenGui.AbsoluteSize
-        local below: boolean = anchorPosition.Y + anchorSize.Y + listHeight
-            < viewport.Y - 8
+        local listPosition, listSize = selectorGeometry(anchor, listHeight)
 
         local list: Frame = create("Frame", {
             Parent = ScreenGui,
@@ -1217,13 +1239,8 @@ function Module.init(context: any): WidgetLibrary
             BackgroundColor3 = Theme.surfaceRaised,
             BackgroundTransparency = 0.22,
             BorderSizePixel = 0,
-            Position = UDim2.fromOffset(
-                math.round(anchorPosition.X),
-                math.round(below
-                    and (anchorPosition.Y + anchorSize.Y + 4)
-                    or (anchorPosition.Y - listHeight - 4))
-            ),
-            Size = UDim2.fromOffset(math.round(anchorSize.X), listHeight),
+            Position = listPosition,
+            Size = listSize,
             ZIndex = 400,
         }) :: Frame
         create("UIStroke", {
@@ -1413,6 +1430,7 @@ function Module.init(context: any): WidgetLibrary
         outsideConnection = UserInputService.InputBegan:Connect(function(
             input: InputObject
         ): ()
+            if input.KeyCode == Enum.KeyCode.Escape then close();return end
             if input.UserInputType ~= Enum.UserInputType.MouseButton1
                 and input.UserInputType ~= Enum.UserInputType.Touch then
                 return
@@ -1460,11 +1478,7 @@ function Module.init(context: any): WidgetLibrary
         local rowHeight: number = 24
         local rows: number = math.min(#items + (onBulk and 1 or 0), 7)
         local listHeight: number = math.max(rows, 1) * rowHeight + 8
-        local anchorPosition: Vector2 = anchor.AbsolutePosition
-        local anchorSize: Vector2 = anchor.AbsoluteSize
-        local viewport: Vector2 = ScreenGui.AbsoluteSize
-        local below: boolean = anchorPosition.Y + anchorSize.Y + listHeight
-            < viewport.Y - 8
+        local listPosition, listSize = selectorGeometry(anchor, listHeight)
 
         local list: Frame = create("Frame", {
             Parent = ScreenGui,
@@ -1472,13 +1486,8 @@ function Module.init(context: any): WidgetLibrary
             BackgroundColor3 = Theme.surface,
             BackgroundTransparency = 0.22,
             BorderSizePixel = 0,
-            Position = UDim2.fromOffset(
-                math.round(anchorPosition.X),
-                math.round(below
-                    and (anchorPosition.Y + anchorSize.Y + 4)
-                    or (anchorPosition.Y - listHeight - 4))
-            ),
-            Size = UDim2.fromOffset(math.round(anchorSize.X), listHeight),
+            Position = listPosition,
+            Size = listSize,
             ZIndex = 400,
         }) :: Frame
         create("UIStroke", {
@@ -1639,6 +1648,7 @@ function Module.init(context: any): WidgetLibrary
         outsideConnection = UserInputService.InputBegan:Connect(function(
             input: InputObject
         ): ()
+            if input.KeyCode == Enum.KeyCode.Escape then close();return end
             if input.UserInputType ~= Enum.UserInputType.MouseButton1
                 and input.UserInputType ~= Enum.UserInputType.Touch then
                 return
@@ -1716,7 +1726,7 @@ function Module.init(context: any): WidgetLibrary
 
                 button.Text = definition.emptyText or ""
             elseif count == 0 then
-                button.Text = ""
+                button.Text = definition.single and "Choose..." or ""
             elseif count == 1 then
                 button.Text = last
             elseif count == total then
@@ -1742,28 +1752,37 @@ function Module.init(context: any): WidgetLibrary
             end
         end
 
+        local function setItem(item: string, on: boolean): ()
+            if definition.single and on then table.clear(selected) end
+            selected[item] = on or nil
+            publish()
+        end
         button.MouseButton1Click:Connect(function(): ()
             local items: {string} = currentItems()
-            state.openMultiList(
-                button,
-                items,
-                selected,
-                function(): ()
-                    publish()
-                end,
-                function(enableAll: boolean): ()
-                    for _, item: string in ipairs(items) do
-                        selected[item] = enableAll or nil
-                    end
+            local bulk = nil
+            if not definition.single then
+                bulk = function(enableAll: boolean): ()
+                    for _, item: string in ipairs(items) do selected[item] = enableAll or nil end
                     publish()
                 end
-            )
+            end
+            state.openMultiList(button, items, selected, function(item, on)
+                setItem(item, on)
+                if definition.single then state.closeChoiceList() end
+            end, bulk)
         end)
 
-        describe()
-        if type(definition.onChanged) == "function" then
-            definition.onChanged(selected, {})
+        local initialNames = {}
+        if definition.single then
+            for name, on in pairs(selected) do if on then table.insert(initialNames,name) end end
+            table.sort(initialNames)
+            if #initialNames > 1 then
+                local first = initialNames[1]
+                table.clear(selected);selected[first]=true;initialNames={first}
+            end
         end
+        describe()
+        if type(definition.onChanged) == "function" then definition.onChanged(selected, initialNames) end
 
         button:SetAttribute("ListOption", optionKey)
         state.listSelections = state.listSelections or {}
@@ -1771,10 +1790,12 @@ function Module.init(context: any): WidgetLibrary
         state.listControls = state.listControls or {}
         state.listControls[optionKey] = {
             set = function(item: string, on: boolean): ()
-                selected[item] = on or nil
+                setItem(item, on)
+            end,
+            refresh = function()
+                if state.choiceListAnchor == button then state.closeChoiceList() end
                 publish()
             end,
-            refresh = publish,
             selected = selected,
         }
         button:SetAttribute("ListKey", optionKey)

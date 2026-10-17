@@ -56,10 +56,15 @@ local actions={}
 function actions:BindActionAtPriority(name,callback) bindings[name]=callback end
 function actions:UnbindAction(name) bindings[name]=nil end
 local run={}
-function run:BindToRenderStep(name,priority,fn) steps[name]=fn end
+local priorities={}
+function run:BindToRenderStep(name,priority,fn) steps[name]=fn;priorities[name]=priority end
 function run:UnbindFromRenderStep(name) steps[name]=nil end
 local game={GetService=function(_,n) assert(n=='ContextActionService');return actions end}
-local function step(dt) now+=dt;for _,fn in pairs(steps) do fn(dt) end end
+local function step(dt)
+ now+=dt;local names={};for name in pairs(steps) do table.insert(names,name) end
+ table.sort(names,function(a,b) return priorities[a]<priorities[b] end)
+ for _,name in ipairs(names) do if steps[name] then steps[name](dt) end end
+end
 local function action(name,state,key)
  for n,fn in pairs(bindings) do if string.sub(n,-#name)==name then return fn(n,state,{KeyCode=key or name}) end end
  error('missing action '..name)
@@ -82,12 +87,21 @@ local input=object('UserInputService',{TouchEnabled=true,MouseBehavior='Default'
 function input:GetFocusedTextBox() return self.focused end
 function input:IsKeyDown(key) return self.shift and key=='LeftShift' end
 local host={Players={GetPlayers=function() return {player} end},LocalPlayer=player,UserInputService=input,RunService=run,workspace=world,services={},ScreenGui=object('ScreenGui'),create=object}
-local card
 local framework={Categories={Visuals={CreateModule=function(_,metadata)
- card={Options={},Enabled=false,cleaners={},Feature={enabled=false},SetStatus=function(self,v) self.status=v end}
+ local card={Options={},Enabled=false,cleaners={},Feature={enabled=false},SetStatus=function(self,v) self.status=v end}
  function card:Clean(fn) table.insert(self.cleaners,fn) end
  function card:CreateSlider(def) self.Options[def.Name]={Value=def.Default} end
- function card:CreateList(def) self.Options[def.Name]={Selected={},Set=function() end,IsSelected=function(self,name) return table.find(self.Selected,name)~=nil end} end
+ function card:CreateList(def)
+  local option={selected={}}
+  function option:Set(name,on)
+   if def.Single and on then table.clear(self.selected) end
+   self.selected[name]=on or nil
+   local names={};for n in pairs(self.selected) do table.insert(names,n) end;table.sort(names)
+   def.Function(self.selected,names)
+  end
+  function option:Refresh() self.names=def.Items() end
+  self.Options[def.Name]=option;return option
+ end
  function card:Toggle(v)
   if self.Enabled==v then return end
   self.Enabled=v;self.Feature.enabled=v
@@ -99,6 +113,9 @@ local framework={Categories={Visuals={CreateModule=function(_,metadata)
 end}}}
 '''+ '\nlocal CameraAccess='+module('src/libraries/CameraAccess.lua')+'\nlocal access=CameraAccess.init(host)\nlocal FreeCam='+module('src/games/universal/Render/FreeCam.lua')+r'''
 local free=FreeCam.init({host=host,services=host.services,framework=framework})
+local Spectate='''+module('src/games/universal/Render/Spectate.lua')+r'''
+local spectate=Spectate.init({host=host,services=host.services,framework=framework})
+assert(not free.Options['Spectate Player'],'spectating is independent')
 local spectateRoot={Position=Vector3.new(100,20,30)}
 local spectateHumanoid={Health=100}
 local spectator={Name='Target',Character={FindFirstChild=function() return spectateRoot end,FindFirstChildOfClass=function() return spectateHumanoid end}}
@@ -107,8 +124,18 @@ local initialFrame,initialFocus=camera.CFrame,camera.Focus
 free:Toggle(true);step(.02);assert(humanoid.move.Magnitude==0 and not nativeTouch.Enabled)
 flush();step(.02);assert(not controls.controlsEnabled and camera.CameraType=='Scriptable')
 assert(camera.CameraSubject=='subject' and camera.FieldOfView==80)
-free.Options['Spectate Player'].Selected={'Target'};step(.02);near((camera.CFrame.Position-spectateRoot.Position).Magnitude,math.sqrt(153))
-free.Options['Spectate Player'].Selected={};
+local freeFrame,freeFocus=camera.CFrame,camera.Focus
+spectate.Options.Player:Set('Target',true);spectate:Toggle(true);step(.02)
+assert(camera.CameraSubject==spectateHumanoid and camera.CameraType=='Custom' and host.services.spectate.IsActive())
+assert(not host.ScreenGui:FindFirstChild('FreeCamControls').Visible)
+assert(action('Forward','Begin','W')=='Pass','native spectate must not consume FreeCam keys')
+input.InputBegan:Fire({UserInputType='MouseButton2'},false)
+assert(input.MouseBehavior=='Default' and input.MouseIconEnabled,'FreeCam must not steal native spectate mouse rotation')
+camera.CFrame=CFrame.new(spectateRoot.Position);camera.Focus=CFrame.new(spectateRoot.Position)
+step(.02);assert(camera.CFrame.Position==spectateRoot.Position,'FreeCam must not write while spectating')
+spectate.Options.Player:Set('Target',false);step(.02)
+near((camera.CFrame.Position-freeFrame.Position).Magnitude,0);near((camera.Focus.Position-freeFocus.Position).Magnitude,0)
+spectate:Toggle(false)
 action('Forward','Begin','W');local start=camera.CFrame.Position;step(.05);near((camera.CFrame.Position-start).Magnitude,2.4)
 action('Right','Begin','D');start=camera.CFrame.Position;step(.05);near((camera.CFrame.Position-start).Magnitude,2.4)
 action('Forward','End','W');action('Right','End','D')
@@ -181,7 +208,36 @@ local tick=host.featureConnections.ZoomUnlocker;tick.fn();zoom:Toggle(false)
 assert(tick.disconnected and occlusion.Update==originalUpdate and player.CameraMinZoomDistance==60 and player.CameraMaxZoomDistance==128 and player.CameraMode=='LockFirstPerson')
 zoom:Toggle(true);options['Through walls'](true);Zoom.destroy();assert(occlusion.Update==originalUpdate and player.CameraMinZoomDistance==60)
 source.fail=true;source.exports=nil;access.playerModule=nil;now+=1;assert(access:GetControls()==nil);flush();assert(access:GetControls()==nil)
-FreeCam.destroy();CameraAccess.destroy();assert(access.destroyed)
+-- Native spectate with FreeCam OFF, deselect, death/respawn, departure, camera replacement.
+player.Character=character
+replacement.CameraType='Custom';replacement.CameraSubject=humanoid
+local originalFrame=replacement.CFrame
+spectate.Options.Player:Set('Target',true);spectate:Toggle(true);step(.02)
+assert(not free.Enabled and replacement.CameraSubject==spectateHumanoid)
+spectateHumanoid.Health=0;step(.02);assert(replacement.CameraSubject==humanoid and not host.services.spectate.IsActive())
+local respawnHumanoid={Health=100};spectateHumanoid=respawnHumanoid;step(.02);assert(replacement.CameraSubject==respawnHumanoid)
+local newCamera={CameraType='Custom',CameraSubject=humanoid,CFrame=CFrame.new(30,6,0),Focus=CFrame.new(30,6,-16),ViewportSize=Vector2.new(800,600)}
+world.CurrentCamera=newCamera;step(.02);assert(replacement.CameraSubject==humanoid and newCamera.CameraSubject==respawnHumanoid)
+host.Players.GetPlayers=function() return {player} end;step(.02)
+assert(newCamera.CameraSubject==humanoid and not next(spectate.Options.Player.selected) and not host.services.spectate.IsActive())
+-- FreeCam can be disabled during spectate without leaving a Scriptable camera behind.
+host.Players.GetPlayers=function() return {player,spectator} end
+free:Toggle(true);step(.02);spectate.Options.Player:Set('Target',true);step(.02)
+free:Toggle(false);spectate:Toggle(false);assert(newCamera.CameraType=='Custom' and newCamera.CameraSubject==humanoid)
+-- Turning FreeCam OFF and back ON during spectate creates a new owner session.
+free:Toggle(true);step(.02);spectate:Toggle(true);step(.02)
+free:Toggle(false);free:Toggle(true);spectate:Toggle(false);step(.02)
+free:Toggle(false);assert(newCamera.CameraType=='Custom' and newCamera.CameraSubject==humanoid)
+-- Returning after a local respawn follows the current local humanoid, not a dead one.
+spectate:Toggle(true);step(.02)
+local nextCharacter=object('Model');local nextHumanoid=object('Humanoid',{Parent=nextCharacter})
+player.Character=nextCharacter;spectate:Toggle(false);assert(newCamera.CameraSubject==nextHumanoid)
+-- A later camera owner is not overwritten on disable.
+spectate:Toggle(true);step(.02);newCamera.CameraType='Track';newCamera.CameraSubject='external'
+spectate:Toggle(false);assert(newCamera.CameraType=='Track' and newCamera.CameraSubject=='external')
+Spectate.destroy();FreeCam.destroy();CameraAccess.destroy();assert(access.destroyed)
+assert(not next(bindings) and not next(steps) and not host.services.spectate and not host.services.freeCam)
+pass('Spectate actual module: standalone, FreeCam pause/return, deselect, death/respawn, leaving, camera replacement, external ownership and cleanup')
 pass('FreeCam real source: PC, diagonal speed, overlapping holds, touch move/look/up/release, focus loss, camera replacement/respawn, exact cleanup; Zoom occlusion identity and unavailable fallback')
 '''
 with tempfile.TemporaryDirectory() as t:

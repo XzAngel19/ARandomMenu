@@ -47,15 +47,25 @@ function Module.init(context: Runtime): any
         local mode: string = card.Options["Mode"].Value
         local alpha: number = 1
         if mode ~= "Aimbot" then
-            local smoothing: number = card.Options["Smoothing"].Value
-            if smoothing > 0 then
-                local timeConstant: number = 0.02 + smoothing * 0.01
-                alpha = 1 - math.exp(-math.max(deltaTime, 1 / 240) / timeConstant)
-                alpha = math.clamp(alpha, 0, 1)
-            end
+            -- Speed caps turn rate; Strength controls the pull near the target.
+            -- Both are time-based, rather than a frame-count smoothing factor.
+            local dt = math.max(deltaTime, 0)
+            local speed = math.max(0, card.Options.Speed.Value)
+            local strength = math.max(0, card.Options.Strength.Value) / 100
+            if speed == 0 or strength == 0 or dt == 0 then return false end
+            local angle = math.acos(math.clamp(current.LookVector:Dot(offset.Unit), -1, 1))
+            alpha = math.min(1 - math.exp(-strength * 10 * dt),
+                angle > 1e-6 and math.rad(speed) * dt / angle or 1)
         end
         local currentLook: Vector3 = current.LookVector
-        local blended: Vector3 = currentLook:Lerp(offset.Unit, alpha)
+        local blended: Vector3 = offset.Unit
+        if alpha < 1 then
+            local dot = math.clamp(currentLook:Dot(offset.Unit), -1, 1)
+            local tangent = offset.Unit - currentLook * dot
+            if tangent.Magnitude < 1e-6 then tangent = current.RightVector end
+            local turn = math.acos(dot) * alpha
+            blended = currentLook * math.cos(turn) + tangent.Unit * math.sin(turn)
+        end
         if blended.Magnitude <= 0.001 then
             return false
         end
@@ -68,6 +78,9 @@ function Module.init(context: Runtime): any
 
     local function anotherAimAdapterIsActive(): boolean
         local activity: any = services and services.activity
+        local free = services and services.freeCam
+        local spectate = services and services.spectate
+        if free and free.IsActive() or spectate and spectate.IsActive() then return true end
         return activity ~= nil
             and type(activity.isActive) == "function"
             and activity.isActive("mvsdSilentAim") == true
@@ -172,8 +185,8 @@ function Module.init(context: Runtime): any
         Function = function(): ()
             runtime.lockedTarget = nil
         end,
-        Tooltip = "Aim Assist respects FOV; Aimbot keeps a smooth lock on the "
-            .. "best valid character on screen.",
+        Tooltip = "Aim Assist uses Speed and Strength inside FOV. Aimbot snaps "
+            .. "to a valid target and can keep a sticky lock.",
     })
     card:CreateSlider({
         Name = "FOV",
@@ -184,16 +197,12 @@ function Module.init(context: Runtime): any
         Default = 180,
         Tooltip = "Pixels around the cursor in which a target may be selected.",
     })
-    card:CreateSlider({
-        Name = "Smoothing",
-        Show = {Option = "Mode", Values = {"Aim Assist"}},
-        Min = 0,
-        Max = 100,
-        Step = 5,
-        Default = 35,
-        Tooltip = "0 snaps to the target; higher values make the camera settle "
-            .. "more slowly. Aimbot always uses zero smoothing.",
-    })
+    card:CreateSlider({Name="Speed",Min=0,Max=360,Default=180,Step=5,
+        Show={Option="Mode",Values={"Aim Assist"}},
+        Tooltip="Maximum camera turn in degrees per second. Higher = faster. 0 = no assist."})
+    card:CreateSlider({Name="Strength",Min=0,Max=100,Default=75,Step=5,
+        Show={Option="Mode",Values={"Aim Assist"}},
+        Tooltip="Pull toward the target, in percent. Higher = firmer tracking; 0 = no assist. Aimbot snaps instead."})
     card:CreateDropdown({
         Name = "Target part",
         List = {"Closest", "Head", "Torso"},

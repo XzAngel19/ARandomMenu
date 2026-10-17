@@ -592,7 +592,7 @@ function writefile(_, _) end
 HarnessSavedConfig = [[return {
     version = 1,
     states = { ["ClickGUI.Showdock"] = false },
-    values = { ["ClickGUI.Arrows"] = {255, 255, 255} },
+    values = { ["ClickGUI.Arrows"] = {255, 255, 255}, ["Universal.Speed.Speed"] = 5000 },
     ui = {},
 }]]
 function readfile(path)
@@ -816,7 +816,7 @@ do
       Combat = {"Aim Assist", "KillAura", "TriggerBot", "SilentAIM"},
       Exploits = {"Fly", "Noclip", "Spider", "Speed", "Jump", "Interact Extender", "Fling"},
       Utilities = {"Anti Void", "Teleport", "Freeze Movements", "Ghost", "Disguise"},
-      World = {"Improve FPS", "Gravity", "Anti AFK", "Safe Walk", "Blurt Roles"},
+      World = {"Improve FPS", "Gravity", "Anti AFK", "Safe Walk", "Blurt Roles", "FreeCam", "Spectate"},
     }
     for category, names in pairs(expected) do
       for index, name in ipairs(names) do
@@ -837,7 +837,8 @@ do
     assert(fullbright.Options["Time Changer"] and not fullbright.Options.Time.Visible)
     fullbright.Options["Time Changer"].Metadata.callback(true);assert(fullbright.Options.Time.Visible)
     fullbright.Options["Time Changer"].Metadata.callback(false)
-    assert(ex.state.framework:GetModule("FreeCam").Options["Spectate Player"])
+    assert(not ex.state.framework:GetModule("FreeCam").Options["Spectate Player"])
+    assert(ex.state.framework:GetModule("Spectate").Options.Player)
     local markers=ex.state.framework:GetModule("Markers")
     assert(markers and markers.Options["Save here"] and not markers.Options.Coordinates.Visible)
     markers.Options.Name.Metadata.callback("Harness place")
@@ -852,13 +853,47 @@ do
     xray.Options.Scope.Object.MouseButton1Click:Fire()
     local chooser=CoreGui:FindFirstChild("Wurst"):FindFirstChild("ChoiceList")
     assert(chooser and chooser.BackgroundTransparency==0.22 and ex.state.choiceBlur)
-    assert(Lighting:FindFirstChild("WurstBlur").Size==6)
-    ex.state.closeChoiceList();assert(not ex.state.choiceBlur and chooser.destroyed==true)
-    ex.state.framework:GetModule("FreeCam").Options["Spectate Player"].Object.MouseButton1Click:Fire()
+    assert(Lighting:FindFirstChild("WurstBlur").Size==14, "opening a selector must preserve menu blur")
+    assert(Lighting:FindFirstChild("WurstBlur").Enabled)
+    UserInputService.InputBegan:Fire({KeyCode=Enum.KeyCode.Escape,UserInputType=Enum.UserInputType.Keyboard},false)
+    assert(not ex.state.choiceBlur and chooser.destroyed==true)
+    assert(Lighting:FindFirstChild("WurstBlur").Enabled==(ex.state.visible==true))
+    local originalPlayers=PlayersService.GetPlayers
+    local extraPlayer=newInst("Player");extraPlayer.props.Name="ZebraGuest";extraPlayer.props.UserId=3
+    PlayersService.GetPlayers=function(self)
+        local players=originalPlayers(self);table.insert(players,extraPlayer);return players
+    end
+    ex.state.framework:GetModule("Spectate").Options.Player.Object.MouseButton1Click:Fire()
     local multi=CoreGui:FindFirstChild("Wurst"):FindFirstChild("MultiList")
     assert(multi and multi.BackgroundTransparency==0.22 and ex.state.choiceBlur)
-    ex.state.closeChoiceList();assert(not ex.state.choiceBlur)
+    assert(not multi:FindFirstChild("Items"):FindFirstChild("Row0"), "single-player selector must not have All / none")
+    multi:FindFirstChild("Items"):FindFirstChild("Row1").MouseButton1Click:Fire()
+    local playerOption=ex.state.framework:GetModule("Spectate").Options.Player
+    assert(#playerOption.Selected==1 and not ex.state.choiceBlur and multi.destroyed)
+    local firstPlayer=playerOption.Selected[1]
+    playerOption.Object.MouseButton1Click:Fire()
+    multi=CoreGui:FindFirstChild("Wurst"):FindFirstChild("MultiList")
+    multi:FindFirstChild("Items"):FindFirstChild("Row2").MouseButton1Click:Fire()
+    assert(#playerOption.Selected==1 and playerOption.Selected[1]~=firstPlayer,"selecting another player replaces, not adds")
+    playerOption:Set(playerOption.Selected[1],false)
+    assert(#playerOption.Selected==0)
+    PlayersService.GetPlayers=originalPlayers
     assert(type(ex.state.dock.BeginMove)=="function")
+    local aim=ex.state.framework:GetModule("Aim Assist")
+    assert(aim.Options.Speed and aim.Options.Strength and not aim.Options.Smoothing)
+    local ghost=ex.state.framework:GetModule("Ghost")
+    assert(ghost.Options["Ghost Fly"].Value==false and not ghost.Options["Fly speed"].Visible)
+    assert(ex.state.framework:GetModule("Speed").Options.Speed.Value==5000,"restoring a profile must not clamp to the drag range")
+    local speedInput=ex.state.framework:GetModule("Speed").Options.Speed.Object:FindFirstChild("Slider"):FindFirstChild("NumericValue")
+    for _,value in ipairs({"1000","5000","1e12"}) do
+        speedInput.Focused:Fire();speedInput.Text=value;speedInput.FocusLost:Fire()
+        assert(ex.state.framework:GetModule("Speed").Options.Speed.Value==tonumber(value))
+    end
+    ex.state.valueControls["Universal.Speed.Speed"].apply(5000)
+    assert(ex.state.framework:GetModule("Speed").Options.Speed.Value==5000)
+    speedInput.Focused:Fire();speedInput.Text="1e999";speedInput.FocusLost:Fire()
+    assert(ex.state.framework:GetModule("Speed").Options.Speed.Value==5000,"reject infinity without corrupting the previous value")
+    ex.state.valueControls["Universal.Speed.Speed"].apply(32)
     local speed = ex.state.framework:GetModule("Speed")
     assert(speed and speed.Options.Sprint, "Sprint must be an option of Speed")
     assert(not speed.Options["Vehicle speed value"].Visible and not speed.Options["Motor torque"].Visible)

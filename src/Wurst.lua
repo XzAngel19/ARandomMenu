@@ -217,7 +217,7 @@ local RUNTIME_RAW_BASE: string =
         .. RUNTIME_BRANCH
         .. "/"
 
-local SOURCE_STAMP: string = "v48-20261017-render"
+local SOURCE_STAMP: string = "v49-20261017-controls"
 
 local BOOT_STARTED_AT: number = os.clock()
 local BOOT_FINGERPRINT_SECONDS: number = 0
@@ -1365,7 +1365,6 @@ end)
 state.setChoiceBlur = function(active: boolean): ()
     state.choiceBlur = active
     if MenuBlur then
-        MenuBlur.Size = active and 6 or 14
         MenuBlur.Enabled = state.visible == true or active
     end
 end
@@ -5833,6 +5832,7 @@ local fallbackManifest: any = {
         {path = "src/games/universal/Blatant/Invisible.lua", name = "Ghost", category = "Utilities"},
         {path = "src/games/universal/Movement/SafeWalk.lua", name = "Safe Walk", category = "World"},
         {path = "src/games/universal/Render/FreeCam.lua", name = "FreeCam", category = "World"},
+        {path = "src/games/universal/Render/Spectate.lua", name = "Spectate", category = "World"},
         {path = "src/games/universal/Render/Markers.lua", name = "Markers", category = "Render"},
         {path = "src/games/universal/Render/ZoomUnlocker.lua", name = "Zoom", category = "Render"},
         {path = "src/games/universal/Other/InteractExtender.lua", name = "Interact Extender", category = "Exploits"},

@@ -64,6 +64,8 @@ local function set(name,value) module.Options[name]:Set(value) end
 ''' + '\nlocal Module=(function()\n' + SOURCE + '\nend)()\n' + r'''
 Module.init({host={LocalPlayer={Character=character},workspace=world,RunService=run},framework=framework})
 module:Toggle(true);tick();near(h.WalkSpeed,32);assert(run.PreSimulation:Count()==1)
+for _,value in ipairs({1000,5000,1e12}) do set('Speed',value);tick();near(h.WalkSpeed,value) end
+set('Speed',32);tick();near(h.WalkSpeed,32)
 for _=1,120 do tick() end;module:Toggle(false);near(h.WalkSpeed,16);assert(run.PreSimulation:Count()==0)
 module:Toggle(true);tick();h.WalkSpeed=24;tick();near(h.WalkSpeed,32);module:Toggle(false);near(h.WalkSpeed,24)
 h.WalkSpeed=16;module:Toggle(true);tick();h.WalkSpeed=70;module:Toggle(false);near(h.WalkSpeed,70)

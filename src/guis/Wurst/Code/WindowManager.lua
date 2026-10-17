@@ -253,6 +253,7 @@ function Module.init(context: any): any
     end
 
     function manager.Adopt(root: Frame, definition: any): any
+        root:SetAttribute("SelectorOwner", true)
         local id: string = definition.id
         local saved: any = configData.ui.windows[id]
         if type(saved) ~= "table" then

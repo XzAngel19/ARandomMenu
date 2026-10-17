@@ -87,6 +87,8 @@ function Module.init(context: any): any
             ["Anti AFK"] = 3,
             ["Safe Walk"] = 4,
             ["Blurt Roles"] = 5,
+            ["FreeCam"] = 6,
+            ["Spectate"] = 7,
         }
         layoutOrder = ordered[name] or (100 + layoutOrder)
         local registry: any = configuration.registry or universalFeatures

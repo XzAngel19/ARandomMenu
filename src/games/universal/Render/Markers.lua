@@ -3,6 +3,7 @@ local Module = {Name="Markers",Initialized=false}
 local card, clear, inputConnection
 function Module.init(context)
     local host, render = context.host, context.render
+    local menu = context.services.menu
     local layer = render:Layer("MarkersLayer")
     local key = "Universal.Markers.Places." .. tostring(game.PlaceId)
     local config = host.configData
@@ -19,11 +20,18 @@ function Module.init(context)
         end
     end
     local list, tracked = nil, {}
-    local picking, pickName, pickDeadline = false, nil, 0
+    local picking, pickName, pickMenuVisible = false, nil, false
+    local function finishPick(status, reopen)
+        local wasPicking = picking
+        picking = false
+        if card then card:SetStatus(status) end
+        if wasPicking and pickMenuVisible and reopen ~= false then menu.setVisible(true) end
+        pickMenuVisible = false
+    end
     local function save()
         if config then config.values[key]=points;if host.queueConfigSave then host.queueConfigSave() end end
     end
-    clear=function() render:ReleaseAll(layer);table.clear(tracked);layer.Visible=false;picking=false end
+    clear=function(reopen) render:ReleaseAll(layer);table.clear(tracked);layer.Visible=false;finishPick(nil,reopen) end
     card=context.framework.Categories.Render:CreateModule({Name="Markers",Category="Render",ConfigKey="Universal.Markers",
         Tooltip="Name a place and save your current position. Points are kept separately for each game.",Function=function(enabled)
             if not enabled then clear();return end
@@ -68,15 +76,19 @@ function Module.init(context)
         local root=character and character:FindFirstChild("HumanoidRootPart")
         storePoint(root and root.Position,pointName())
     end})
-    card:CreateButton({Name="Touch",Tooltip="Click or tap any surface to place a marker. Escape cancels. Works with Markers OFF too.",Function=function()
-        if picking then picking=false;card:SetStatus(nil);return end
-        pickName=pointName()
-        if pickName=="" then
-            local index=1;while points["Point "..index] do index+=1 end
-            pickName="Point "..index;card.Options.Name:Set(pickName)
-        end
-        picking,pickDeadline=true,os.clock()+20
+    card:CreateButton({Name="Touch",Tooltip="Hides the menu to pick a surface. Escape cancels; new points are numbered, never overwritten. Works while OFF too.",Function=function()
+        if picking then finishPick();return end
+        local base=pointName()
+        local index=1
+        repeat
+            local suffix=base=="" and tostring(index) or " #"..index
+            pickName=(base=="" and "Point " or string.sub(base,1,48-#suffix))..suffix
+            index+=1
+        until not points[pickName]
+        picking=true
+        pickMenuVisible=menu.isVisible()
         card:SetStatus("Click/tap a surface · Esc cancels")
+        menu.setVisible(false)
     end})
     card:CreateButton({Name="Remove named place",Function=function()
         local name=pointName()
@@ -98,8 +110,8 @@ function Module.init(context)
     card:CreateColor({Name="Colour",Default=Color3.fromRGB(85,255,85)})
     inputConnection=host.UserInputService.InputBegan:Connect(function(event,processed)
         if not picking then return end
-        if event.KeyCode==Enum.KeyCode.Escape or os.clock()>pickDeadline then
-            picking=false;card:SetStatus(nil);return
+        if event.KeyCode==Enum.KeyCode.Escape then
+            finishPick();return
         end
         if processed or host.UserInputService:GetFocusedTextBox() then return end
         if event.UserInputType~=Enum.UserInputType.MouseButton1 and event.UserInputType~=Enum.UserInputType.Touch then return end
@@ -111,15 +123,15 @@ function Module.init(context)
         params.RespectCanCollide=true;params.IgnoreWater=true
         local ray=camera:ScreenPointToRay(event.Position.X,event.Position.Y)
         local hit=(host.workspace or workspace):Raycast(ray.Origin,ray.Direction*5000,params)
-        if hit and storePoint(hit.Position,pickName) then picking=false
+        if hit and storePoint(hit.Position,pickName) then finishPick(pickName)
         else card:SetStatus("No surface · tap again") end
     end)
     Module.Initialized=true
     return card
 end
 function Module.destroy()
+    if clear then clear(false) end
     if card and card.Enabled then card:Toggle(false) end
-    if clear then clear() end
     if inputConnection then inputConnection:Disconnect();inputConnection=nil end
     card,clear=nil,nil;Module.Initialized=false
 end

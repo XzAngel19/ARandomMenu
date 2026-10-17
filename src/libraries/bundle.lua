@@ -1,5 +1,5 @@
 return {
-    stamp = "v48-20261017-render",
+    stamp = "v49-20261017-controls",
     files = {
         ["src/Profile/142823291.lua"] = [[
 --!strict
@@ -13150,7 +13150,7 @@ function Module.init(context: Runtime): any
     local invisibleSettings: InvisibleSettings = {
         voidDepth = 120,
         ghostTransparency = 0.5,
-        fly = true,
+        fly = false,
         flySpeed = 55,
     }
 
@@ -13390,6 +13390,7 @@ function Module.init(context: Runtime): any
 
     invisibleCard:CreateSlider({
         Name = "Fly speed",
+        Show = {Option = "Ghost Fly"},
         Min = 16,
         Max = 200,
         Default = invisibleSettings.flySpeed,
@@ -14078,15 +14079,25 @@ function Module.init(context: Runtime): any
         local mode: string = card.Options["Mode"].Value
         local alpha: number = 1
         if mode ~= "Aimbot" then
-            local smoothing: number = card.Options["Smoothing"].Value
-            if smoothing > 0 then
-                local timeConstant: number = 0.02 + smoothing * 0.01
-                alpha = 1 - math.exp(-math.max(deltaTime, 1 / 240) / timeConstant)
-                alpha = math.clamp(alpha, 0, 1)
-            end
+            -- Speed caps turn rate; Strength controls the pull near the target.
+            -- Both are time-based, rather than a frame-count smoothing factor.
+            local dt = math.max(deltaTime, 0)
+            local speed = math.max(0, card.Options.Speed.Value)
+            local strength = math.max(0, card.Options.Strength.Value) / 100
+            if speed == 0 or strength == 0 or dt == 0 then return false end
+            local angle = math.acos(math.clamp(current.LookVector:Dot(offset.Unit), -1, 1))
+            alpha = math.min(1 - math.exp(-strength * 10 * dt),
+                angle > 1e-6 and math.rad(speed) * dt / angle or 1)
         end
         local currentLook: Vector3 = current.LookVector
-        local blended: Vector3 = currentLook:Lerp(offset.Unit, alpha)
+        local blended: Vector3 = offset.Unit
+        if alpha < 1 then
+            local dot = math.clamp(currentLook:Dot(offset.Unit), -1, 1)
+            local tangent = offset.Unit - currentLook * dot
+            if tangent.Magnitude < 1e-6 then tangent = current.RightVector end
+            local turn = math.acos(dot) * alpha
+            blended = currentLook * math.cos(turn) + tangent.Unit * math.sin(turn)
+        end
         if blended.Magnitude <= 0.001 then
             return false
         end
@@ -14099,6 +14110,9 @@ function Module.init(context: Runtime): any
 
     local function anotherAimAdapterIsActive(): boolean
         local activity: any = services and services.activity
+        local free = services and services.freeCam
+        local spectate = services and services.spectate
+        if free and free.IsActive() or spectate and spectate.IsActive() then return true end
         return activity ~= nil
             and type(activity.isActive) == "function"
             and activity.isActive("mvsdSilentAim") == true
@@ -14203,8 +14217,8 @@ function Module.init(context: Runtime): any
         Function = function(): ()
             runtime.lockedTarget = nil
         end,
-        Tooltip = "Aim Assist respects FOV; Aimbot keeps a smooth lock on the "
-            .. "best valid character on screen.",
+        Tooltip = "Aim Assist uses Speed and Strength inside FOV. Aimbot snaps "
+            .. "to a valid target and can keep a sticky lock.",
     })
     card:CreateSlider({
         Name = "FOV",
@@ -14215,16 +14229,12 @@ function Module.init(context: Runtime): any
         Default = 180,
         Tooltip = "Pixels around the cursor in which a target may be selected.",
     })
-    card:CreateSlider({
-        Name = "Smoothing",
-        Show = {Option = "Mode", Values = {"Aim Assist"}},
-        Min = 0,
-        Max = 100,
-        Step = 5,
-        Default = 35,
-        Tooltip = "0 snaps to the target; higher values make the camera settle "
-            .. "more slowly. Aimbot always uses zero smoothing.",
-    })
+    card:CreateSlider({Name="Speed",Min=0,Max=360,Default=180,Step=5,
+        Show={Option="Mode",Values={"Aim Assist"}},
+        Tooltip="Maximum camera turn in degrees per second. Higher = faster. 0 = no assist."})
+    card:CreateSlider({Name="Strength",Min=0,Max=100,Default=75,Step=5,
+        Show={Option="Mode",Values={"Aim Assist"}},
+        Tooltip="Pull toward the target, in percent. Higher = firmer tracking; 0 = no assist. Aimbot snaps instead."})
     card:CreateDropdown({
         Name = "Target part",
         List = {"Closest", "Head", "Torso"},
@@ -20738,22 +20748,28 @@ return Module
 ]],
         ["src/games/universal/Render/FreeCam.lua"] = [[
 local Module = {Name = "FreeCam", Initialized = false}
-local card
+local card, services
 
 function Module.init(context)
     local host = context.host
+    services = context.services
     local input, run = host.UserInputService, host.RunService
     local actions = game:GetService("ContextActionService")
     local access = context.services.cameraAccess
     local world = host.workspace or workspace
     local create = host.create
     local id = "ARandomMenu.FreeCam." .. tostring({})
-    local spectateTarget
+    local cameraState = {IsActive=function() return card ~= nil and card.Enabled end}
+    context.services.freeCam = cameraState
+    local function spectating()
+        return context.services.spectate and context.services.spectate.IsActive()
+    end
 
     card = context.framework.Categories.Visuals:CreateModule({
         Name = "FreeCam", Category = "World", ConfigKey = "Universal.FreeCam", Order = 6,
         Tooltip = "Move the camera without moving your character. WASD, Q/E, right-drag; touch controls on mobile.",
         Function = function(enabled)
+            cameraState.Session = enabled and {} or nil
             if not enabled then card:SetStatus(nil); return end
             local keys, held, connections = {}, {}, {}
             local camera, saved, position, pitch, yaw
@@ -20818,19 +20834,20 @@ function Module.init(context)
             }) do
                 local name = definition[1]
                 actions:BindActionAtPriority(id .. name, function(_, state, event)
-                    if input:GetFocusedTextBox() then held[name] = nil; keys[name] = false; return Enum.ContextActionResult.Pass end
+                    if spectating() or input:GetFocusedTextBox() then held[name] = nil; keys[name] = false; return Enum.ContextActionResult.Pass end
                     if state == Enum.UserInputState.Cancel then held[name] = nil; keys[name] = false
                     else hold(name,event.KeyCode,state == Enum.UserInputState.Begin or state == Enum.UserInputState.Change) end
                     return Enum.ContextActionResult.Sink
                 end, false, Enum.ContextActionPriority.High.Value + 1, definition[2], definition[3])
             end
             local function pan(delta)
+                if spectating() then return end
                 local sensitivity = math.rad(card.Options.Sensitivity.Value)
                 yaw -= delta.X * sensitivity
                 pitch = math.clamp(pitch - delta.Y * sensitivity, -math.rad(89), math.rad(89))
             end
             connect(input.InputBegan, function(event, processed)
-                if processed or input:GetFocusedTextBox() or not position then return end
+                if processed or spectating() or input:GetFocusedTextBox() or not position then return end
                 if event.UserInputType == Enum.UserInputType.MouseButton2 then
                     mouseMode, mouseIcon = input.MouseBehavior, input.MouseIconEnabled
                     dragging = true
@@ -20883,7 +20900,7 @@ function Module.init(context)
                 end)
                 connect(input.TouchStarted, function(event, processed)
                     local current = world.CurrentCamera
-                    if not processed and not lookTouch and event ~= moveTouch and current
+                    if not processed and not spectating() and not lookTouch and event ~= moveTouch and current
                         and event.Position.X > current.ViewportSize.X * 0.45 and not input:GetFocusedTextBox() then lookTouch = event end
                 end)
                 connect(input.TouchMoved, function(event)
@@ -20899,6 +20916,12 @@ function Module.init(context)
             end
             card:SetStatus("WASD / touch")
             run:BindToRenderStep(id, Enum.RenderPriority.Camera.Value + 1, function(dt)
+                if spectating() then
+                    resetInput()
+                    if gui then gui.Visible = false end
+                    return
+                end
+                if gui then gui.Visible = true end
                 local nextCamera = world.CurrentCamera
                 if camera ~= nextCamera then
                     restoreCamera()
@@ -20941,25 +20964,8 @@ function Module.init(context)
                     local humanoid = character and character:FindFirstChildOfClass("Humanoid")
                     if humanoid then humanoid:Move(Vector3.zero, false) end
                 end
-                local spectating = false
-                local selected = card.Options["Spectate Player"]
-                if selected then
-                    for _, player in ipairs(host.Players:GetPlayers()) do
-                        if player ~= host.LocalPlayer and selected:IsSelected(player.Name) then
-                            local character = player.Character
-                            local root = character and character:FindFirstChild("HumanoidRootPart")
-                            local humanoid = character and character:FindFirstChildOfClass("Humanoid")
-                            if root and humanoid and humanoid.Health > 0 then
-                                local orbit = CFrame.fromOrientation(pitch,yaw,0)
-                                position = root.Position - orbit.LookVector * 12 + Vector3.new(0,3,0)
-                                spectating = true
-                                break
-                            end
-                        end
-                    end
-                end
                 local rotation = CFrame.fromOrientation(pitch,yaw,0)
-                if not spectating and not input:GetFocusedTextBox() then
+                if not input:GetFocusedTextBox() then
                     local move = Vector3.new((keys.Right and 1 or 0)-(keys.Left and 1 or 0)+stick.X,
                         (keys.Up and 1 or 0)-(keys.Down and 1 or 0), (keys.Back and 1 or 0)-(keys.Forward and 1 or 0)+stick.Y)
                     local direction = rotation:VectorToWorldSpace(Vector3.new(move.X,0,move.Z)) + Vector3.yAxis * move.Y
@@ -20976,29 +20982,13 @@ function Module.init(context)
     })
     card:CreateSlider({Name="Speed", Min=1, Max=150, Default=48})
     card:CreateSlider({Name="Sensitivity", Min=0.05, Max=0.6, Default=0.2})
-    card:CreateList({Name="Spectate Player",Items=function()
-        local names = {}
-        for _, player in ipairs(host.Players:GetPlayers()) do
-            if player ~= host.LocalPlayer then table.insert(names,player.Name) end
-        end
-        table.sort(names);return names
-    end,Tooltip="Select one player to follow while FreeCam is ON. Right-drag/touch rotates the view; deselect to fly freely.",Function=function(selected,names)
-        local option = card.Options["Spectate Player"]
-        local chosen = names[1]
-        if #names > 1 then
-            for _, name in ipairs(names) do if name ~= spectateTarget then chosen = name; break end end
-        end
-        spectateTarget = chosen
-        if option then
-            for _, name in ipairs(names) do if name ~= chosen then option:Set(name,false) end end
-        end
-    end})
     Module.Initialized = true
     return card
 end
 function Module.destroy()
     if card and card.Enabled then card:Toggle(false) end
-    card = nil
+    if services then services.freeCam = nil end
+    card, services = nil, nil
     Module.Initialized = false
 end
 return Module
@@ -21844,6 +21834,7 @@ local Module = {Name="Markers",Initialized=false}
 local card, clear, inputConnection
 function Module.init(context)
     local host, render = context.host, context.render
+    local menu = context.services.menu
     local layer = render:Layer("MarkersLayer")
     local key = "Universal.Markers.Places." .. tostring(game.PlaceId)
     local config = host.configData
@@ -21860,11 +21851,18 @@ function Module.init(context)
         end
     end
     local list, tracked = nil, {}
-    local picking, pickName, pickDeadline = false, nil, 0
+    local picking, pickName, pickMenuVisible = false, nil, false
+    local function finishPick(status, reopen)
+        local wasPicking = picking
+        picking = false
+        if card then card:SetStatus(status) end
+        if wasPicking and pickMenuVisible and reopen ~= false then menu.setVisible(true) end
+        pickMenuVisible = false
+    end
     local function save()
         if config then config.values[key]=points;if host.queueConfigSave then host.queueConfigSave() end end
     end
-    clear=function() render:ReleaseAll(layer);table.clear(tracked);layer.Visible=false;picking=false end
+    clear=function(reopen) render:ReleaseAll(layer);table.clear(tracked);layer.Visible=false;finishPick(nil,reopen) end
     card=context.framework.Categories.Render:CreateModule({Name="Markers",Category="Render",ConfigKey="Universal.Markers",
         Tooltip="Name a place and save your current position. Points are kept separately for each game.",Function=function(enabled)
             if not enabled then clear();return end
@@ -21909,15 +21907,19 @@ function Module.init(context)
         local root=character and character:FindFirstChild("HumanoidRootPart")
         storePoint(root and root.Position,pointName())
     end})
-    card:CreateButton({Name="Touch",Tooltip="Click or tap any surface to place a marker. Escape cancels. Works with Markers OFF too.",Function=function()
-        if picking then picking=false;card:SetStatus(nil);return end
-        pickName=pointName()
-        if pickName=="" then
-            local index=1;while points["Point "..index] do index+=1 end
-            pickName="Point "..index;card.Options.Name:Set(pickName)
-        end
-        picking,pickDeadline=true,os.clock()+20
+    card:CreateButton({Name="Touch",Tooltip="Hides the menu to pick a surface. Escape cancels; new points are numbered, never overwritten. Works while OFF too.",Function=function()
+        if picking then finishPick();return end
+        local base=pointName()
+        local index=1
+        repeat
+            local suffix=base=="" and tostring(index) or " #"..index
+            pickName=(base=="" and "Point " or string.sub(base,1,48-#suffix))..suffix
+            index+=1
+        until not points[pickName]
+        picking=true
+        pickMenuVisible=menu.isVisible()
         card:SetStatus("Click/tap a surface · Esc cancels")
+        menu.setVisible(false)
     end})
     card:CreateButton({Name="Remove named place",Function=function()
         local name=pointName()
@@ -21939,8 +21941,8 @@ function Module.init(context)
     card:CreateColor({Name="Colour",Default=Color3.fromRGB(85,255,85)})
     inputConnection=host.UserInputService.InputBegan:Connect(function(event,processed)
         if not picking then return end
-        if event.KeyCode==Enum.KeyCode.Escape or os.clock()>pickDeadline then
-            picking=false;card:SetStatus(nil);return
+        if event.KeyCode==Enum.KeyCode.Escape then
+            finishPick();return
         end
         if processed or host.UserInputService:GetFocusedTextBox() then return end
         if event.UserInputType~=Enum.UserInputType.MouseButton1 and event.UserInputType~=Enum.UserInputType.Touch then return end
@@ -21952,15 +21954,15 @@ function Module.init(context)
         params.RespectCanCollide=true;params.IgnoreWater=true
         local ray=camera:ScreenPointToRay(event.Position.X,event.Position.Y)
         local hit=(host.workspace or workspace):Raycast(ray.Origin,ray.Direction*5000,params)
-        if hit and storePoint(hit.Position,pickName) then picking=false
+        if hit and storePoint(hit.Position,pickName) then finishPick(pickName)
         else card:SetStatus("No surface · tap again") end
     end)
     Module.Initialized=true
     return card
 end
 function Module.destroy()
+    if clear then clear(false) end
     if card and card.Enabled then card:Toggle(false) end
-    if clear then clear() end
     if inputConnection then inputConnection:Disconnect();inputConnection=nil end
     card,clear=nil,nil;Module.Initialized=false
 end
@@ -22949,6 +22951,122 @@ function Module.destroy(): ()
     Module.Initialized = false
 end
 
+return Module
+
+]],
+        ["src/games/universal/Render/Spectate.lua"] = [[
+-- Native player spectating; FreeCam pauses without losing its position.
+local Module = {Name="Spectate", Initialized=false}
+local card, services
+
+function Module.init(context)
+    local host = context.host
+    services = context.services
+    local world = host.workspace or workspace
+    local chosen, camera, saved, writtenSubject
+    local playerList
+    local id = "ARandomMenu.Spectate." .. tostring({})
+    local function localHumanoid()
+        local character = host.LocalPlayer.Character
+        return character and character:FindFirstChildOfClass("Humanoid")
+    end
+    local function freeCamSession()
+        local free = services.freeCam
+        return free and free.IsActive() and free.Session or nil
+    end
+    local function restore()
+        if camera and saved then
+            pcall(function()
+                -- Do not take the camera back from a later owner.
+                if camera.CameraType ~= Enum.CameraType.Custom or camera.CameraSubject ~= writtenSubject then return end
+                local returnedToFreeCam = saved.freeCam and saved.freeCam == freeCamSession()
+                if saved.freeCam and not returnedToFreeCam then
+                    camera.CameraType = Enum.CameraType.Custom
+                    camera.CameraSubject = localHumanoid()
+                else
+                    camera.CameraType = saved.kind
+                    camera.CameraSubject = saved.subject == saved.localHumanoid and localHumanoid() or saved.subject
+                    camera.CFrame, camera.Focus = saved.frame, saved.focus
+                end
+            end)
+        end
+        camera, saved, writtenSubject = nil, nil, nil
+    end
+    local function targetHumanoid()
+        for _, player in ipairs(host.Players:GetPlayers()) do
+            if player ~= host.LocalPlayer and player.Name == chosen then
+                local character = player.Character
+                local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+                return humanoid and humanoid.Health > 0 and humanoid or nil, true
+            end
+        end
+        return nil, false
+    end
+    local function step()
+        local humanoid, present = targetHumanoid()
+        if chosen and not present then
+            local departed = chosen
+            chosen = nil
+            if playerList then playerList:Set(departed,false);playerList:Refresh() end
+        end
+        if not humanoid then
+            restore()
+            card:SetStatus(chosen and "Waiting for respawn" or "Choose a player")
+            return
+        end
+        local nextCamera = world.CurrentCamera
+        if camera ~= nextCamera then restore() end
+        if not nextCamera then return end
+        if not camera then
+            camera = nextCamera
+            saved = {kind=camera.CameraType,subject=camera.CameraSubject,frame=camera.CFrame,focus=camera.Focus,
+                freeCam=freeCamSession(),localHumanoid=localHumanoid()}
+        elseif camera.CameraType ~= Enum.CameraType.Custom or camera.CameraSubject ~= writtenSubject then
+            -- Adopt a newer camera baseline rather than restoring over it later.
+            saved = {kind=camera.CameraType,subject=camera.CameraSubject,frame=camera.CFrame,focus=camera.Focus,
+                freeCam=false,localHumanoid=localHumanoid()}
+        end
+        camera.CameraType = Enum.CameraType.Custom
+        camera.CameraSubject = humanoid
+        writtenSubject = humanoid
+        card:SetStatus(chosen)
+    end
+    local state = {IsActive=function()
+        if not card or not card.Enabled or not chosen then return false end
+        local humanoid = targetHumanoid()
+        return humanoid ~= nil
+    end}
+    services.spectate = state
+    card = context.framework.Categories.Visuals:CreateModule({Name="Spectate",Category="World",ConfigKey="Universal.Spectate",Order=7,
+        Tooltip="Follow one player independently of FreeCam. Deselect or switch OFF to return to your previous camera.",
+        Function=function(enabled)
+            if not enabled then restore();card:SetStatus(nil);return end
+            card:Clean(function() host.RunService:UnbindFromRenderStep(id);restore() end)
+            -- Set the subject before Roblox updates its native camera.
+            host.RunService:BindToRenderStep(id,Enum.RenderPriority.Camera.Value-1,step)
+            step()
+        end})
+    playerList = card:CreateList({Name="Player",Single=true,Items=function()
+        local names={}
+        for _,player in ipairs(host.Players:GetPlayers()) do
+            if player ~= host.LocalPlayer then table.insert(names,player.Name) end
+        end
+        table.sort(names);return names
+    end,EmptyText="No other players",Tooltip="Select one player; click the selected player again to stop spectating.",Function=function(_,names)
+        local nextName = names[1]
+        if chosen ~= nextName then restore();chosen=nextName end
+        if card and card.Enabled then step() end
+    end})
+    Module.Initialized=true
+    return card
+end
+
+function Module.destroy()
+    if card and card.Enabled then card:Toggle(false) end
+    if services then services.spectate=nil end
+    card,services=nil,nil
+    Module.Initialized=false
+end
 return Module
 
 ]],
@@ -24702,6 +24820,8 @@ function Module.init(context: any): any
             ["Anti AFK"] = 3,
             ["Safe Walk"] = 4,
             ["Blurt Roles"] = 5,
+            ["FreeCam"] = 6,
+            ["Spectate"] = 7,
         }
         layoutOrder = ordered[name] or (100 + layoutOrder)
         local registry: any = configuration.registry or universalFeatures
@@ -32329,10 +32449,9 @@ function Module.init(context: any): WidgetLibrary
             feature.configKey .. "." .. labelText:gsub("%W", "")
         local storedValue: number? = tonumber(configData.values[optionKey])
 
-        -- A restored profile may predate a narrower interval; clamp it so the
-        -- control never starts outside its advertised range.
+        -- The interval is a drag guide, not a limit on typed/profile values.
         local value: number = isFiniteNumber(storedValue)
-            and math.clamp(storedValue :: number, minimum, maximum)
+            and (storedValue :: number)
             or defaultValue
         local integerOnly: boolean = defaultValue % 1 == 0
             and minimum % 1 == 0
@@ -32481,19 +32600,13 @@ function Module.init(context: any): WidgetLibrary
             (valueStroke :: UIStroke).Transparency = 1
         end
 
-        valueInput.PlaceholderText = formatCompactNumber(minimum)
-            .. " – "
-            .. formatCompactNumber(maximum)
+        valueInput.PlaceholderText = "Any finite number"
 
         local editing: boolean = false
 
         local function quantize(raw: number, fromSlider: boolean): number
-            -- Manual entry and restored profiles both pass through here;
-            -- values are always clamped to the advertised interval.
+            if not fromSlider then return raw end
             raw = math.clamp(raw, minimum, maximum)
-            if not fromSlider then
-                return raw
-            end
             local stepped: number = minimum
                 + math.round((raw - minimum) / step) * step
             stepped = math.round(stepped * precisionFactor) / precisionFactor
@@ -32903,6 +33016,9 @@ function Module.init(context: any): WidgetLibrary
                 )
             end)
         end
+        watch(owner, "AbsolutePosition", function() return true end)
+        watch(owner, "AbsoluteSize", function() return true end)
+        watch(ScreenGui, "AbsoluteSize", function() return true end)
         if windowRoot then
             watch(windowRoot, "Visible", function(): boolean
                 return windowRoot.Visible ~= true
@@ -32937,6 +33053,37 @@ function Module.init(context: any): WidgetLibrary
         return connections
     end
 
+    local function selectorGeometry(anchor, wantedHeight)
+        local viewport = ScreenGui.AbsoluteSize
+        local camera = workspace.CurrentCamera
+        if (viewport.X < 1 or viewport.Y < 1) and camera then viewport = camera.ViewportSize end
+        local row = anchor.Parent
+        local owner = row
+        while owner and owner ~= ScreenGui do
+            if owner:GetAttribute("SelectorOwner") then break end
+            owner = owner.Parent
+        end
+        if not owner or owner == ScreenGui then owner = row end
+        local width = math.min(math.max(anchor.AbsoluteSize.X, 160), math.max(1, viewport.X - 16))
+        local height = math.min(wantedHeight, math.max(24, viewport.Y - 16))
+        local bottom = math.max(anchor.AbsolutePosition.Y + anchor.AbsoluteSize.Y,
+            owner.AbsolutePosition.Y + owner.AbsoluteSize.Y)
+        local x = math.clamp(anchor.AbsolutePosition.X, 8, math.max(8, viewport.X - width - 8))
+        local y = bottom + 6
+        -- Prefer below. At the screen edge use a bounded side placement before
+        -- falling back above, so a long settings window stays usable.
+        if y + height > viewport.Y - 8 then
+            local right = owner.AbsolutePosition.X + owner.AbsoluteSize.X + 6
+            local left = owner.AbsolutePosition.X - width - 6
+            if right + width <= viewport.X - 8 then x = right
+            elseif left >= 8 then x = left
+            else y = owner.AbsolutePosition.Y - height - 6 end
+            if x == right or x == left then y = anchor.AbsolutePosition.Y end
+        end
+        y = math.clamp(y, 8, math.max(8, viewport.Y - height - 8))
+        return UDim2.fromOffset(math.round(x), math.round(y)), UDim2.fromOffset(math.round(width), math.round(height))
+    end
+
     local function openChoiceList(
         anchor: TextButton,
         values: {string},
@@ -32955,12 +33102,7 @@ function Module.init(context: any): WidgetLibrary
         local searchHeight: number = searchable and 24 or 0
         local visibleRows: number = math.min(#values, 6)
         local listHeight: number = visibleRows * rowHeight + 8 + searchHeight
-        local anchorPosition: Vector2 = anchor.AbsolutePosition
-        local anchorSize: Vector2 = anchor.AbsoluteSize
-
-        local viewport: Vector2 = ScreenGui.AbsoluteSize
-        local below: boolean = anchorPosition.Y + anchorSize.Y + listHeight
-            < viewport.Y - 8
+        local listPosition, listSize = selectorGeometry(anchor, listHeight)
 
         local list: Frame = create("Frame", {
             Parent = ScreenGui,
@@ -32968,13 +33110,8 @@ function Module.init(context: any): WidgetLibrary
             BackgroundColor3 = Theme.surfaceRaised,
             BackgroundTransparency = 0.22,
             BorderSizePixel = 0,
-            Position = UDim2.fromOffset(
-                math.round(anchorPosition.X),
-                math.round(below
-                    and (anchorPosition.Y + anchorSize.Y + 4)
-                    or (anchorPosition.Y - listHeight - 4))
-            ),
-            Size = UDim2.fromOffset(math.round(anchorSize.X), listHeight),
+            Position = listPosition,
+            Size = listSize,
             ZIndex = 400,
         }) :: Frame
         create("UIStroke", {
@@ -33164,6 +33301,7 @@ function Module.init(context: any): WidgetLibrary
         outsideConnection = UserInputService.InputBegan:Connect(function(
             input: InputObject
         ): ()
+            if input.KeyCode == Enum.KeyCode.Escape then close();return end
             if input.UserInputType ~= Enum.UserInputType.MouseButton1
                 and input.UserInputType ~= Enum.UserInputType.Touch then
                 return
@@ -33211,11 +33349,7 @@ function Module.init(context: any): WidgetLibrary
         local rowHeight: number = 24
         local rows: number = math.min(#items + (onBulk and 1 or 0), 7)
         local listHeight: number = math.max(rows, 1) * rowHeight + 8
-        local anchorPosition: Vector2 = anchor.AbsolutePosition
-        local anchorSize: Vector2 = anchor.AbsoluteSize
-        local viewport: Vector2 = ScreenGui.AbsoluteSize
-        local below: boolean = anchorPosition.Y + anchorSize.Y + listHeight
-            < viewport.Y - 8
+        local listPosition, listSize = selectorGeometry(anchor, listHeight)
 
         local list: Frame = create("Frame", {
             Parent = ScreenGui,
@@ -33223,13 +33357,8 @@ function Module.init(context: any): WidgetLibrary
             BackgroundColor3 = Theme.surface,
             BackgroundTransparency = 0.22,
             BorderSizePixel = 0,
-            Position = UDim2.fromOffset(
-                math.round(anchorPosition.X),
-                math.round(below
-                    and (anchorPosition.Y + anchorSize.Y + 4)
-                    or (anchorPosition.Y - listHeight - 4))
-            ),
-            Size = UDim2.fromOffset(math.round(anchorSize.X), listHeight),
+            Position = listPosition,
+            Size = listSize,
             ZIndex = 400,
         }) :: Frame
         create("UIStroke", {
@@ -33390,6 +33519,7 @@ function Module.init(context: any): WidgetLibrary
         outsideConnection = UserInputService.InputBegan:Connect(function(
             input: InputObject
         ): ()
+            if input.KeyCode == Enum.KeyCode.Escape then close();return end
             if input.UserInputType ~= Enum.UserInputType.MouseButton1
                 and input.UserInputType ~= Enum.UserInputType.Touch then
                 return
@@ -33467,7 +33597,7 @@ function Module.init(context: any): WidgetLibrary
 
                 button.Text = definition.emptyText or ""
             elseif count == 0 then
-                button.Text = ""
+                button.Text = definition.single and "Choose..." or ""
             elseif count == 1 then
                 button.Text = last
             elseif count == total then
@@ -33493,28 +33623,37 @@ function Module.init(context: any): WidgetLibrary
             end
         end
 
+        local function setItem(item: string, on: boolean): ()
+            if definition.single and on then table.clear(selected) end
+            selected[item] = on or nil
+            publish()
+        end
         button.MouseButton1Click:Connect(function(): ()
             local items: {string} = currentItems()
-            state.openMultiList(
-                button,
-                items,
-                selected,
-                function(): ()
-                    publish()
-                end,
-                function(enableAll: boolean): ()
-                    for _, item: string in ipairs(items) do
-                        selected[item] = enableAll or nil
-                    end
+            local bulk = nil
+            if not definition.single then
+                bulk = function(enableAll: boolean): ()
+                    for _, item: string in ipairs(items) do selected[item] = enableAll or nil end
                     publish()
                 end
-            )
+            end
+            state.openMultiList(button, items, selected, function(item, on)
+                setItem(item, on)
+                if definition.single then state.closeChoiceList() end
+            end, bulk)
         end)
 
-        describe()
-        if type(definition.onChanged) == "function" then
-            definition.onChanged(selected, {})
+        local initialNames = {}
+        if definition.single then
+            for name, on in pairs(selected) do if on then table.insert(initialNames,name) end end
+            table.sort(initialNames)
+            if #initialNames > 1 then
+                local first = initialNames[1]
+                table.clear(selected);selected[first]=true;initialNames={first}
+            end
         end
+        describe()
+        if type(definition.onChanged) == "function" then definition.onChanged(selected, initialNames) end
 
         button:SetAttribute("ListOption", optionKey)
         state.listSelections = state.listSelections or {}
@@ -33522,10 +33661,12 @@ function Module.init(context: any): WidgetLibrary
         state.listControls = state.listControls or {}
         state.listControls[optionKey] = {
             set = function(item: string, on: boolean): ()
-                selected[item] = on or nil
+                setItem(item, on)
+            end,
+            refresh = function()
+                if state.choiceListAnchor == button then state.closeChoiceList() end
                 publish()
             end,
-            refresh = publish,
             selected = selected,
         }
         button:SetAttribute("ListKey", optionKey)
@@ -34667,6 +34808,7 @@ function Module.init(context: any): any
     end
 
     function manager.Adopt(root: Frame, definition: any): any
+        root:SetAttribute("SelectorOwner", true)
         local id: string = definition.id
         local saved: any = configData.ui.windows[id]
         if type(saved) ~= "table" then
@@ -37063,6 +37205,7 @@ function Module.init(context: any): Framework
             option.Metadata.callback = listChanged
             option.Object = builder(feature, definition2.Name, {
                 items = definition2.Items,
+                single = definition2.Single == true,
                 default = definition2.Default,
                 hint = definition2.Tooltip,
                 emptyText = definition2.EmptyText,
@@ -37432,6 +37575,7 @@ local Manifest: Manifest = {
     },
     modules = {
         {path = "src/games/universal/Render/FreeCam.lua", name = "FreeCam", category = "World"},
+        {path = "src/games/universal/Render/Spectate.lua", name = "Spectate", category = "World"},
         {path = "src/games/universal/Render/Markers.lua", name = "Markers", category = "Render"},
 
         {

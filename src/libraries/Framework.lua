@@ -655,6 +655,7 @@ function Module.init(context: any): Framework
             option.Metadata.callback = listChanged
             option.Object = builder(feature, definition2.Name, {
                 items = definition2.Items,
+                single = definition2.Single == true,
                 default = definition2.Default,
                 hint = definition2.Tooltip,
                 emptyText = definition2.EmptyText,

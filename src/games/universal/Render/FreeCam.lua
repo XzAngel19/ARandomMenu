@@ -1,20 +1,26 @@
 local Module = {Name = "FreeCam", Initialized = false}
-local card
+local card, services
 
 function Module.init(context)
     local host = context.host
+    services = context.services
     local input, run = host.UserInputService, host.RunService
     local actions = game:GetService("ContextActionService")
     local access = context.services.cameraAccess
     local world = host.workspace or workspace
     local create = host.create
     local id = "ARandomMenu.FreeCam." .. tostring({})
-    local spectateTarget
+    local cameraState = {IsActive=function() return card ~= nil and card.Enabled end}
+    context.services.freeCam = cameraState
+    local function spectating()
+        return context.services.spectate and context.services.spectate.IsActive()
+    end
 
     card = context.framework.Categories.Visuals:CreateModule({
         Name = "FreeCam", Category = "World", ConfigKey = "Universal.FreeCam", Order = 6,
         Tooltip = "Move the camera without moving your character. WASD, Q/E, right-drag; touch controls on mobile.",
         Function = function(enabled)
+            cameraState.Session = enabled and {} or nil
             if not enabled then card:SetStatus(nil); return end
             local keys, held, connections = {}, {}, {}
             local camera, saved, position, pitch, yaw
@@ -79,19 +85,20 @@ function Module.init(context)
             }) do
                 local name = definition[1]
                 actions:BindActionAtPriority(id .. name, function(_, state, event)
-                    if input:GetFocusedTextBox() then held[name] = nil; keys[name] = false; return Enum.ContextActionResult.Pass end
+                    if spectating() or input:GetFocusedTextBox() then held[name] = nil; keys[name] = false; return Enum.ContextActionResult.Pass end
                     if state == Enum.UserInputState.Cancel then held[name] = nil; keys[name] = false
                     else hold(name,event.KeyCode,state == Enum.UserInputState.Begin or state == Enum.UserInputState.Change) end
                     return Enum.ContextActionResult.Sink
                 end, false, Enum.ContextActionPriority.High.Value + 1, definition[2], definition[3])
             end
             local function pan(delta)
+                if spectating() then return end
                 local sensitivity = math.rad(card.Options.Sensitivity.Value)
                 yaw -= delta.X * sensitivity
                 pitch = math.clamp(pitch - delta.Y * sensitivity, -math.rad(89), math.rad(89))
             end
             connect(input.InputBegan, function(event, processed)
-                if processed or input:GetFocusedTextBox() or not position then return end
+                if processed or spectating() or input:GetFocusedTextBox() or not position then return end
                 if event.UserInputType == Enum.UserInputType.MouseButton2 then
                     mouseMode, mouseIcon = input.MouseBehavior, input.MouseIconEnabled
                     dragging = true
@@ -144,7 +151,7 @@ function Module.init(context)
                 end)
                 connect(input.TouchStarted, function(event, processed)
                     local current = world.CurrentCamera
-                    if not processed and not lookTouch and event ~= moveTouch and current
+                    if not processed and not spectating() and not lookTouch and event ~= moveTouch and current
                         and event.Position.X > current.ViewportSize.X * 0.45 and not input:GetFocusedTextBox() then lookTouch = event end
                 end)
                 connect(input.TouchMoved, function(event)
@@ -160,6 +167,12 @@ function Module.init(context)
             end
             card:SetStatus("WASD / touch")
             run:BindToRenderStep(id, Enum.RenderPriority.Camera.Value + 1, function(dt)
+                if spectating() then
+                    resetInput()
+                    if gui then gui.Visible = false end
+                    return
+                end
+                if gui then gui.Visible = true end
                 local nextCamera = world.CurrentCamera
                 if camera ~= nextCamera then
                     restoreCamera()
@@ -202,25 +215,8 @@ function Module.init(context)
                     local humanoid = character and character:FindFirstChildOfClass("Humanoid")
                     if humanoid then humanoid:Move(Vector3.zero, false) end
                 end
-                local spectating = false
-                local selected = card.Options["Spectate Player"]
-                if selected then
-                    for _, player in ipairs(host.Players:GetPlayers()) do
-                        if player ~= host.LocalPlayer and selected:IsSelected(player.Name) then
-                            local character = player.Character
-                            local root = character and character:FindFirstChild("HumanoidRootPart")
-                            local humanoid = character and character:FindFirstChildOfClass("Humanoid")
-                            if root and humanoid and humanoid.Health > 0 then
-                                local orbit = CFrame.fromOrientation(pitch,yaw,0)
-                                position = root.Position - orbit.LookVector * 12 + Vector3.new(0,3,0)
-                                spectating = true
-                                break
-                            end
-                        end
-                    end
-                end
                 local rotation = CFrame.fromOrientation(pitch,yaw,0)
-                if not spectating and not input:GetFocusedTextBox() then
+                if not input:GetFocusedTextBox() then
                     local move = Vector3.new((keys.Right and 1 or 0)-(keys.Left and 1 or 0)+stick.X,
                         (keys.Up and 1 or 0)-(keys.Down and 1 or 0), (keys.Back and 1 or 0)-(keys.Forward and 1 or 0)+stick.Y)
                     local direction = rotation:VectorToWorldSpace(Vector3.new(move.X,0,move.Z)) + Vector3.yAxis * move.Y
@@ -237,29 +233,13 @@ function Module.init(context)
     })
     card:CreateSlider({Name="Speed", Min=1, Max=150, Default=48})
     card:CreateSlider({Name="Sensitivity", Min=0.05, Max=0.6, Default=0.2})
-    card:CreateList({Name="Spectate Player",Items=function()
-        local names = {}
-        for _, player in ipairs(host.Players:GetPlayers()) do
-            if player ~= host.LocalPlayer then table.insert(names,player.Name) end
-        end
-        table.sort(names);return names
-    end,Tooltip="Select one player to follow while FreeCam is ON. Right-drag/touch rotates the view; deselect to fly freely.",Function=function(selected,names)
-        local option = card.Options["Spectate Player"]
-        local chosen = names[1]
-        if #names > 1 then
-            for _, name in ipairs(names) do if name ~= spectateTarget then chosen = name; break end end
-        end
-        spectateTarget = chosen
-        if option then
-            for _, name in ipairs(names) do if name ~= chosen then option:Set(name,false) end end
-        end
-    end})
     Module.Initialized = true
     return card
 end
 function Module.destroy()
     if card and card.Enabled then card:Toggle(false) end
-    card = nil
+    if services then services.freeCam = nil end
+    card, services = nil, nil
     Module.Initialized = false
 end
 return Module

@@ -32,7 +32,7 @@ function Module.init(context: Runtime): any
     local invisibleSettings: InvisibleSettings = {
         voidDepth = 120,
         ghostTransparency = 0.5,
-        fly = true,
+        fly = false,
         flySpeed = 55,
     }
 
@@ -272,6 +272,7 @@ function Module.init(context: Runtime): any
 
     invisibleCard:CreateSlider({
         Name = "Fly speed",
+        Show = {Option = "Ghost Fly"},
         Min = 16,
         Max = 200,
         Default = invisibleSettings.flySpeed,

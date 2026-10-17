@@ -60,7 +60,9 @@ local config={values={}}
 local saves=0
 local world={CurrentCamera={ViewportSize={X=1000,Y=1000},CFrame={Position=Vector3.zero}}}
 local host={UserInputService=input,LocalPlayer=player,workspace=world,configData=config,queueConfigSave=function() saves+=1 end}
-local context={host=host,framework=framework,render=render}
+local menuVisible=true
+local menu={isVisible=function() return menuVisible end,setVisible=function(v) menuVisible=v end}
+local context={host=host,framework=framework,render=render,services={menu=menu}}
 '''+ '\nlocal Markers='+source('src/games/universal/Render/Markers.lua')+r'''
 local markers=Markers.init(context)
 local function press(card,name) card.Options[name].definition.Function() end
@@ -73,10 +75,18 @@ markers.Options.Coordinates:Set('NaN, 1, 2');press(markers,'Save coordinates');a
 local raycasts=0
 world.CurrentCamera.ScreenPointToRay=function(_,x,y) return {Origin=Vector3.zero,Direction=Vector3.new(0,0,1)} end
 world.Raycast=function(_,origin,delta,params) raycasts+=1;assert(params.RespectCanCollide);return {Position=Vector3.new(7,8,9)} end
-markers.Options.Name:Set('Touch spot');press(markers,'Touch')
+markers.Options.Name:Set('Touch spot');press(markers,'Touch');assert(not menuVisible)
 inputCallback({UserInputType='MouseButton1',Position=Vector3.new(30,40,0)},true);assert(raycasts==0,'UI input must not place a marker')
-inputCallback({UserInputType='Touch',Position=Vector3.new(30,40,0)},false);assert(data['Touch spot'][3]==9)
-press(markers,'Touch');inputCallback({KeyCode='Escape'},false);assert(raycasts==1)
+inputCallback({UserInputType='Touch',Position=Vector3.new(30,40,0)},false);assert(data['Touch spot #1'][3]==9 and menuVisible)
+press(markers,'Touch');inputCallback({UserInputType='MouseButton1',Position=Vector3.zero},false)
+assert(data['Touch spot #2'] and data['Touch spot #1'])
+markers.Options.Name:Set('');press(markers,'Touch');inputCallback({UserInputType='Touch',Position=Vector3.zero},false)
+press(markers,'Touch');inputCallback({UserInputType='Touch',Position=Vector3.zero},false)
+assert(data['Point 1'] and data['Point 2'] and markers.Options.Name.Value=='')
+press(markers,'Touch');inputCallback({KeyCode='Escape'},false);assert(raycasts==4 and menuVisible)
+-- Starting while already hidden must not reopen the menu.
+menuVisible=false;press(markers,'Touch');inputCallback({KeyCode='Escape'},false);assert(not menuVisible)
+menuVisible=true
 markers:Toggle(false);Markers.destroy()
 markers=Markers.init(context);assert(markers.Options.Places:IsSelected('Home'),'points/selection survive reload')
 markers.Options.Name:Set('Home');press(markers,'Remove named place');data=config.values['Universal.Markers.Places.123'];assert(not data.Home and data.Exit)
