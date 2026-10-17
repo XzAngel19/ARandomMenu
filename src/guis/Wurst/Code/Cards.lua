@@ -277,7 +277,7 @@ function Module.init(context: any): any
                 if row.Parent and arrow then
                     syncArrow()
                 end
-            end)
+            end, {"arrows"})
         end
 
         local activationTarget: TextButton = create("TextButton", {
@@ -665,7 +665,7 @@ function Module.init(context: any): any
                     if square.Parent then
                         syncSquare()
                     end
-                end)
+                end, {"enabled", "outline"})
             end
             local refreshBinding: any = binding.refresh
             binding.refresh = function(): ()

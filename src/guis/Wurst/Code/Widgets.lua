@@ -43,9 +43,9 @@ local Module = {
 local boundState: any = nil
 local toggleThemeRefreshers: {() -> ()} = {}
 
-local function runToggleThemeRefreshers(): ()
-    for _, refresh: () -> () in ipairs(toggleThemeRefreshers) do
-        pcall(refresh)
+local function runToggleThemeRefreshers(changed: any): ()
+    for _, refresh: any in ipairs(toggleThemeRefreshers) do
+        pcall(refresh, changed)
     end
 end
 
@@ -70,8 +70,15 @@ function Module.init(context: any): WidgetLibrary
         state.optionThemeRefresh = runToggleThemeRefreshers
         -- Other UI modules (card bind squares, window chrome) register their
         -- repainters here so palette changes reach everything on screen.
-        state.registerThemeRefresh = function(refresh: () -> ()): ()
-            table.insert(toggleThemeRefreshers, refresh)
+        state.registerThemeRefresh = function(refresh: any, tokens: {string}?): ()
+            table.insert(toggleThemeRefreshers, function(changed)
+                if tokens and changed then
+                    local relevant = false
+                    for _, token in ipairs(tokens) do if changed[token] then relevant = true; break end end
+                    if not relevant then return end
+                end
+                refresh()
+            end)
         end
         -- Live-apply registry for option VALUES (sliders, colours, cycles,
         -- text). Profiles and the panic reset drive the whole UI through it
@@ -121,9 +128,16 @@ function Module.init(context: any): WidgetLibrary
             or color
             or WURST_GREEN
         local existing: Instance? = (parent :: any):FindFirstChild("PixelIcon")
-        if existing then
-            existing:Destroy()
+        if existing and existing:GetAttribute("PixelKind") == kind
+            and existing:GetAttribute("PixelToken") == (token or "") then
+            if not themed then
+                for _, pixel in ipairs(existing:GetChildren()) do
+                    if pixel:IsA("Frame") then pixel.BackgroundColor3 = paint end
+                end
+            end
+            return existing :: Frame
         end
+        if existing then existing:Destroy() end
         local sizes: {[string]: {number}} = {
             down = {14, 8},
             up = {14, 8},
@@ -153,11 +167,12 @@ function Module.init(context: any): WidgetLibrary
                 ZIndex = container.ZIndex + 1,
             })
             if themed then
-                -- Weak binding: destroyed icons drop out of the registry
-                -- automatically and ThemeEngine.SetMany repaints the rest.
+                -- Token binding; Destroying removes obsolete pixels from the registry.
                 ThemeEngine.Bind(pixel, "BackgroundColor3", token :: string)
             end
         end
+        container:SetAttribute("PixelKind", kind)
+        container:SetAttribute("PixelToken", token or "")
         if kind == "down" then
             px(0, 0, 7, 1); px(1, 1, 5, 1); px(2, 2, 3, 1); px(3, 3, 1, 1)
         elseif kind == "up" then
@@ -351,7 +366,7 @@ function Module.init(context: any): WidgetLibrary
 
         local function refreshOptionState(): ()
             local on: boolean = enabled :: boolean
-            box.BackgroundColor3 = on and Theme.enabled or Color3.fromRGB(0, 0, 0)
+            box.BackgroundColor3 = on and Theme.enabled or Theme.surface
             box.BackgroundTransparency = on and 0 or 0.5
             boxStroke.Color = on and Theme.enabled or Theme.outline
             paintMark()
@@ -1822,7 +1837,7 @@ function Module.init(context: any): WidgetLibrary
                 if arrowBox.Parent then
                     drawPixelIcon(arrowBox, "down", nil, "arrows")
                 end
-            end)
+            end, {"arrows"})
         end
 
         local function refreshChoiceVisual(): ()

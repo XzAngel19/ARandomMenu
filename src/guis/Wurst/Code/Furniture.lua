@@ -683,11 +683,14 @@ function Module.init(context: any): any
         if hudVisible and (hudRainbow or animationsOn()) then
             hudRainbowClock += deltaTime
             hudRainbowSince += deltaTime
-            if hudRainbowSince >= 0.033 then
-                hudRainbowSince = 0
+            if hudRainbowSince >= 0.05 then
+                hudRainbowSince %= 0.05
                 for _, row: any in pairs(hudRows) do
                     if row.name then
-                        drawHudEntry(row, row.name, row.status)
+                        local bitmap = state.bitmapText
+                        if not bitmap or not bitmap.recolor or not bitmap.recolor(row.holder, {hudEntryColor(row.order), Theme.textMuted}) then
+                            drawHudEntry(row, row.name, row.status)
+                        end
                     end
                 end
             end

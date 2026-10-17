@@ -1,5 +1,5 @@
 return {
-    stamp = "v40-20261016-visual-controls",
+    stamp = "v41-20261016-menu-theme",
     files = {
         ["src/Profile/142823291.lua"] = [[
 --!strict
@@ -3710,18 +3710,15 @@ function Module.init(runtime: any): any
     end
     local autoKey = "Universal.ClickTeleport.AutoGetGun"
     if configData.states[autoKey] == nil then configData.states[autoKey] = configData.states["MM2.Teleport.AutoGetGun"] end
-    local show = {Option = "Destination", Values = {"MM2"}}
-    local playerShow = {{Option = "Destination", Values = {"MM2"}},
-        {Option = "MM2 target", Values = {"Player"}}}
-    teleport:CreateDropdown({Name = "MM2 target", List = {"Map", "Lobby", "Player", "Gun"}, Index = 1, Show = show})
-    teleport:CreateTextBox({Name = "Player name", Default = "", Show = playerShow,
+    local show = {Option = "Destination", Values = {"MM2 Map", "MM2 Lobby", "MM2 Player", "MM2 Gun"}}
+    teleport:CreateTextBox({Name = "Player name", Default = "", Show = {Option = "Destination", Values = {"MM2 Player"}},
         Function = function(value) teleportTargetName = value end})
     state.mm2TeleportRun = function()
-        local target = teleport.Options["MM2 target"].Value
-        if target == "Map" then teleportToMap()
-        elseif target == "Lobby" then teleportToLobby()
-        elseif target == "Player" then teleportToPlayer()
-        elseif target == "Gun" then teleportToDroppedGun() end
+        local target = teleport.Options.Destination.Value
+        if target == "MM2 Map" then teleportToMap()
+        elseif target == "MM2 Lobby" then teleportToLobby()
+        elseif target == "MM2 Player" then teleportToPlayer()
+        elseif target == "MM2 Gun" then teleportToDroppedGun() end
     end
     local key = teleport:CreateBind({Name = "Get Gun key", Default = mm2Settings.getGunKey, Show = show,
         Function = function(value) mm2Settings.getGunKey = value end})
@@ -3771,6 +3768,148 @@ end
 return Module
 
 ]],
+        ["src/games/MM2/Other/CalibrationTrails.lua"] = [[
+local Module = {Name = "MM2 Calibration Trails", Initialized = false}
+local activeCleanup = function() end
+
+function Module.init(runtime: any): any
+    if Module.Initialized then return Module end
+    local core = state.mm2Core
+    assert(core and state.mm2CalibrationFeature, "TrailESP requires Calibration")
+    local options = {trailEsp = false, color = Color3.fromRGB(100, 185, 255)}
+    local trailFolder: Folder? = nil
+    local connection: any = nil
+    local function ensureTrailFolder(): Folder
+        if not trailFolder or not trailFolder.Parent then
+            trailFolder = Instance.new("Folder")
+            trailFolder.Name = "MM2TrailESP"
+            trailFolder.Parent = workspace
+        end
+        -- Bound transient visuals even if many players fire together.
+        local children: {Instance} = trailFolder:GetChildren()
+        while #children >= 64 do
+            children[1]:Destroy()
+            table.remove(children, 1)
+        end
+        return trailFolder :: Folder
+    end
+
+    local function clearTrails(): ()
+        if trailFolder then
+            pcall(function(): () trailFolder:Destroy() end)
+            trailFolder = nil
+        end
+    end
+
+    local function drawShotTrail(origin: Vector3, hit: Vector3, hitPart: any): ()
+        local folder: Folder = ensureTrailFolder()
+        local segment: Vector3 = hit - origin
+        local length: number = segment.Magnitude
+        if options.trailEsp and length > 0.5 then
+            local beam: Part = Instance.new("Part")
+            beam.Name = "TrailSegment"
+            beam.Anchored = true
+            beam.CanCollide = false
+            beam.CanQuery = false
+            beam.CanTouch = false
+            beam.CastShadow = false
+            beam.Material = Enum.Material.Neon
+            beam.Color = options.color
+            beam.Transparency = 0.25
+            beam.Size = Vector3.new(0.07, 0.07, length)
+            beam.CFrame = CFrame.lookAt(origin + segment * 0.5, hit)
+            beam.Parent = folder
+            pcall(function(): ()
+                TweenService:Create(
+                    beam,
+                    TweenInfo.new(1.4, Enum.EasingStyle.Linear),
+                    { Transparency = 1 }
+                ):Play()
+            end)
+            task.delay(1.55, function(): ()
+                if beam.Parent then
+                    pcall(function(): () beam:Destroy() end)
+                end
+            end)
+        end
+        -- Pixel-sized ring at the reported endpoint; never highlight the
+        -- entire hitPart (a single hitPart can be a whole wall).
+        local anchor: Part = Instance.new("Part")
+        anchor.Name = "TrailLanding"
+        anchor.Size = Vector3.new(0.02, 0.02, 0.02)
+        anchor.Transparency = 1
+        anchor.Anchored = true
+        anchor.CanCollide = false
+        anchor.CanQuery = false
+        anchor.CanTouch = false
+        anchor.Position = hit
+        anchor.Parent = folder
+        local billboard: BillboardGui = Instance.new("BillboardGui")
+        billboard.Name = "LandingCircle"
+        billboard.Adornee = anchor
+        billboard.AlwaysOnTop = true
+        billboard.Size = UDim2.fromOffset(12, 12)
+        billboard.Parent = anchor
+        local ring: Frame = Instance.new("Frame")
+        ring.Size = UDim2.fromScale(1, 1)
+        ring.BackgroundTransparency = 1
+        ring.Parent = billboard
+        local corner: UICorner = Instance.new("UICorner")
+        corner.CornerRadius = UDim.new(1, 0)
+        corner.Parent = ring
+        local stroke: UIStroke = Instance.new("UIStroke")
+        stroke.Color = options.color
+        stroke.Thickness = 2
+        stroke.Parent = ring
+        task.delay(1.55, function(): ()
+            if anchor.Parent then anchor:Destroy() end
+        end)
+    end
+
+
+    local function toggle(enabled: boolean)
+        options.trailEsp = enabled
+        if connection then connection:Disconnect(); connection = nil end
+        clearTrails()
+        if not enabled then return end
+        local ok, service = pcall(core.getWeaponServiceModule)
+        if not ok or type(service) ~= "table" or not service.GunFired then return end
+        local connected, result = pcall(function()
+            return service.GunFired.OnClientEvent:Connect(function(_handle, origin, hit, hitPart)
+                if not options.trailEsp then return end
+                local function position(value)
+                    local v = typeof(value) == "Vector3" and value
+                        or typeof(value) == "CFrame" and value.Position or nil
+                    if v and v.X == v.X and v.Y == v.Y and v.Z == v.Z and v.Magnitude < 1e7 then return v end
+                    return nil
+                end
+                local a, b = position(origin), position(hit)
+                if a and b then drawShotTrail(a, b, hitPart) end
+            end)
+        end)
+        if connected then connection = result end
+    end
+    local config = configData
+    local key = "MM2.Calibration.TrailESP"
+    if config.states[key] == nil then config.states[key] = config.states["MM2.WeaponVisuals.TrailESP"] end
+    if config.values["MM2.Calibration.Trailcolor"] == nil then
+        config.values["MM2.Calibration.Trailcolor"] = config.values["MM2.WeaponVisuals.Trailcolor"]
+    end
+    addToggleOption(state.mm2CalibrationFeature, "TrailESP", false, toggle,
+        "Visualizes replicated GunFired paths/endpoints. Calibration already records shot data; this adds no duplicate recorder.")
+    addColorOption(state.mm2CalibrationFeature, "Trail color", options.color, function(color) options.color = color end)
+    activeCleanup = function() toggle(false) end
+    Module.Initialized = true
+    return Module
+end
+function Module.destroy()
+    if not Module.Initialized then return end
+    Module.Initialized = false
+    activeCleanup()
+end
+return Module
+
+]],
         ["src/games/MM2/Other/TrajectoryCalibration.lua"] = [[
 local Module = {
     Name = "MM2 Trajectory Calibration",
@@ -3807,7 +3946,6 @@ function Module.init(runtime: any): any
         )
         state.mm2CalibrationFeature = TrajectoryFeature
     end
-    local finishPanel = state.beginCardPanel(TrajectoryFeature, "Calibration", true)
     addActionOption(TrajectoryFeature, "Calibration status", function(): ()
         notify(trajectoryCalibration:status())
     end)
@@ -3826,7 +3964,6 @@ function Module.init(runtime: any): any
         TrajectoryFeature,
         "Records target windows around your shots and throws. MM2-only calibration; no universal learning observer."
     )
-    finishPanel()
 
     activeCleanup = function(): ()
 
@@ -3946,7 +4083,20 @@ function Module.init(runtime: any): any
     core.toggleGunEsp = toggleGunEsp
     core.toggleTrapEsp = toggleTrapEsp
 
+    local unregister = {}
+    local itemEsp = services and services.itemEsp
+    assert(itemEsp and type(itemEsp.register) == "function", "MM2 item ESP requires the provider service")
+    for _, provider in ipairs({
+        {name = "Gun ESP", tooltip = "Highlights the dropped MM2 gun while ItemESP is ON.", setEnabled = toggleGunEsp},
+        {name = "Trap ESP", tooltip = "Highlights existing and newly placed MM2 traps while ItemESP is ON.", setEnabled = toggleTrapEsp},
+    }) do
+        local release = itemEsp.register(provider)
+        if release then table.insert(unregister, release) end
+    end
+
     activeCleanup = function(): ()
+        for _, release in ipairs(unregister) do pcall(release) end
+        table.clear(unregister)
         toggleGunEsp(false)
         toggleTrapEsp(false)
     end
@@ -3967,713 +4117,6 @@ function Module.destroy(): ()
     Module.Runtime = nil
 end
 
-return Module
-
-]],
-        ["src/games/MM2/Render/WeaponVisuals.lua"] = [[
-local Module = {
-    Name = "MM2 Weapon Visuals",
-    PlaceId = 142823291,
-    Events = {} :: {[string]: any},
-    Initialized = false,
-    Runtime = nil :: any,
-}
-local activeCleanup: () -> () = function(): () end
-
-function Module.init(runtime: any): any
-    if Module.Initialized then
-        return Module
-    end
-    local core: any = state.mm2Core
-    assert(type(core) == "table", "Weapon Visuals requires the MM2 core")
-    Module.Runtime = runtime
-    local options = {
-        enabled = false,
-        doubleGun = false,
-        doubleKnife = false,
-        color = Color3.fromRGB(100, 185, 255),
-        trailEsp = false,
-        tracerData = false,
-    }
-    local connections: {RBXScriptConnection} = {}
-    local characterConnections: {RBXScriptConnection} = {}
-    local visualFolder: Folder? = nil
-    local trailFolder: Folder? = nil
-    local gunFiredConnection: any = nil
-    local queued = false
-    local generation = 0
-    local activeDouble = false
-    local doubleBindings: {any} = {}
-    local originalMirrorJoints: {[Motor6D]: any} = setmetatable({}, {__mode = "k"})
-    local rebuild: () -> ()
-    local feature: any = nil
-    local warnedEmptyGeometry = false
-
-    local function disconnectAll(list: {RBXScriptConnection}): ()
-        for _, connection in ipairs(list) do
-            connection:Disconnect()
-        end
-        table.clear(list)
-    end
-
-    -- ------------------------------------------------------------------
-    -- Arm mirroring: while a double weapon is shown, the left arm chain
-    -- copies the right arm's animated pose mirrored across the torso, so
-    -- BOTH arms raise together (R15 shoulder/elbow/wrist and R6 shoulder).
-    -- ------------------------------------------------------------------
-
-    local function mirrorAcross(frame: CFrame, source: CFrame): CFrame
-        local offset: CFrame = frame:ToObjectSpace(source)
-        local position: Vector3 = offset.Position
-        local right: Vector3 = offset.RightVector
-        local up: Vector3 = offset.UpVector
-        return frame * CFrame.fromMatrix(
-            Vector3.new(-position.X, position.Y, position.Z),
-            Vector3.new(right.X, -right.Y, -right.Z),
-            Vector3.new(-up.X, up.Y, up.Z)
-        )
-    end
-
-    local function mirrorJoint(
-        joint: Motor6D,
-        parentFrame: CFrame,
-        desired: CFrame
-    ): ()
-        if not originalMirrorJoints[joint] then
-            originalMirrorJoints[joint] = {c0 = joint.C0, transform = joint.Transform}
-        end
-        -- Drive the real limb joint, not the duplicate weapon. C0 is not
-        -- the Animator's per-frame pose channel. Neutralize that channel
-        -- while applying the complete desired pose through the joint basis.
-        joint.C0 = parentFrame:Inverse() * desired * joint.C1
-        joint.Transform = CFrame.new()
-    end
-
-    local function findJoint(parent: Instance, names: {string}): Motor6D?
-        for _, name: string in ipairs(names) do
-            local joint: Instance? = parent:FindFirstChild(name)
-            if joint and joint:IsA("Motor6D") then
-                return joint :: Motor6D
-            end
-        end
-        return nil
-    end
-
-    local function resetMirror(character: Model): ()
-        for joint: Motor6D, original: any in pairs(originalMirrorJoints) do
-            if joint.Parent then
-                joint.C0 = original.c0
-                joint.Transform = original.transform
-            end
-            originalMirrorJoints[joint] = nil
-        end
-    end
-
-    local function mirrorArms(character: Model): ()
-        if not activeDouble then
-            return
-        end
-        local torso: BasePart? = (character:FindFirstChild("UpperTorso")
-            or character:FindFirstChild("Torso")) :: BasePart?
-        if not torso then
-            return
-        end
-        local rUpper: BasePart? = (character:FindFirstChild("RightUpperArm")
-            or character:FindFirstChild("Right Arm")) :: BasePart?
-        local lUpper: BasePart? = (character:FindFirstChild("LeftUpperArm")
-            or character:FindFirstChild("Left Arm")) :: BasePart?
-        if not rUpper or not lUpper then
-            return
-        end
-        local rLower: BasePart? =
-            character:FindFirstChild("RightLowerArm") :: BasePart?
-        local lLower: BasePart? =
-            character:FindFirstChild("LeftLowerArm") :: BasePart?
-        local rHand: BasePart? =
-            character:FindFirstChild("RightHand") :: BasePart?
-        local lHand: BasePart? = character:FindFirstChild("LeftHand") :: BasePart?
-
-        local leftShoulder: Motor6D? =
-            findJoint(lUpper, {"LeftShoulder", "Left Shoulder"})
-                or findJoint(torso, {"Left Shoulder", "LeftShoulder"})
-        if not leftShoulder then
-            for _, candidate: Instance in ipairs(character:GetDescendants()) do
-                if candidate:IsA("Motor6D") and candidate.Part1 == lUpper then
-                    leftShoulder = candidate :: Motor6D
-                    break
-                end
-            end
-        end
-        if not leftShoulder then return end
-        local frame: CFrame = (torso :: BasePart).CFrame
-        local function animatedFrame(part: BasePart, joint: Motor6D?, parent: CFrame): CFrame
-            if joint and joint.Part0 and joint.Part1 == part then
-                return parent * joint.C0 * joint.Transform * joint.C1:Inverse()
-            end
-            return part.CFrame
-        end
-        local rightShoulder: Motor6D? = findJoint(rUpper, {"RightShoulder", "Right Shoulder"})
-            or findJoint(torso, {"Right Shoulder", "RightShoulder"})
-        local rightUpperFrame: CFrame = animatedFrame(rUpper, rightShoulder, frame)
-        local desiredUpper: CFrame = mirrorAcross(frame, rightUpperFrame)
-        mirrorJoint(leftShoulder :: Motor6D, frame, desiredUpper)
-
-        if rLower and lLower then
-            local leftElbow: Motor6D? = findJoint(lLower, {"LeftElbow"})
-            if leftElbow then
-                local rightLowerFrame: CFrame = animatedFrame(rLower,
-                    findJoint(rLower, {"RightElbow"}) or findJoint(rUpper, {"RightElbow"}), rightUpperFrame)
-                local desiredLower: CFrame = mirrorAcross(frame, rightLowerFrame)
-                mirrorJoint(leftElbow :: Motor6D, desiredUpper, desiredLower)
-                if rHand and lHand then
-                    local leftWrist: Motor6D? =
-                        findJoint(lHand, {"LeftWrist"})
-                    if leftWrist then
-                        local rightHandFrame: CFrame = animatedFrame(rHand,
-                            findJoint(rHand, {"RightWrist"}) or findJoint(rLower, {"RightWrist"}), rightLowerFrame)
-                        local desiredHand: CFrame = mirrorAcross(frame, rightHandFrame)
-                        mirrorJoint(
-                            leftWrist :: Motor6D,
-                            desiredLower,
-                            desiredHand
-                        )
-                    end
-                end
-            end
-        end
-    end
-
-    -- ------------------------------------------------------------------
-
-    local function clearVisuals(): ()
-        table.clear(doubleBindings)
-        if visualFolder then
-            visualFolder:Destroy()
-            visualFolder = nil
-        end
-        if activeDouble then
-            activeDouble = false
-            local character: Model? = LocalPlayer.Character
-            if character then
-                pcall(resetMirror, character :: Model)
-            end
-        end
-    end
-
-    local function queueRebuild(): ()
-        if not options.enabled or queued then
-            return
-        end
-        queued = true
-        local version: number = generation
-        task.defer(function(): ()
-            if version ~= generation then
-                return
-            end
-            queued = false
-            if not options.enabled then
-                return
-            end
-            local ok: boolean, failure: any = pcall(rebuild)
-            if not ok then
-                warn("[Wurst] Weapon Visuals rebuild failed: "
-                    .. tostring(failure))
-            end
-        end)
-    end
-
-    -- Clone geometry only, never a Tool/model or functional descendants. All
-    -- sanitization happens detached, before anything enters the DataModel.
-    local function geometryClone(source: BasePart): BasePart?
-        if not (source:IsA("Part") or source:IsA("MeshPart") or source:IsA("UnionOperation")
-            or source:IsA("WedgePart") or source:IsA("CornerWedgePart")) then
-            return nil
-        end
-        local ok: boolean, copy: any = pcall(source.Clone, source)
-        if not ok or not copy then
-            return nil
-        end
-        copy:ClearAllChildren()
-        for _, tag: string in ipairs(CollectionService:GetTags(copy)) do
-            CollectionService:RemoveTag(copy, tag)
-        end
-        for key: string in pairs(copy:GetAttributes()) do
-            copy:SetAttribute(key, nil)
-        end
-        copy.Name = "LocalWeaponGeometry"
-        copy.Anchored = false
-        copy.CanCollide = false
-        copy.CanTouch = false
-        copy.CanQuery = false
-        copy.Massless = true
-        copy.LocalTransparencyModifier = 0
-        copy.AssemblyLinearVelocity = Vector3.zero
-        copy.AssemblyAngularVelocity = Vector3.zero
-        -- Recreate only visual children; no nested scripts, references or tags.
-        for _, child: Instance in ipairs(source:GetChildren()) do
-            if child:IsA("DataModelMesh") or child:IsA("Decal")
-                or child:IsA("Texture") or child:IsA("SurfaceAppearance") then
-                local childOk: boolean, visual: any = pcall(child.Clone, child)
-                if childOk and visual then
-                    visual:ClearAllChildren()
-                    for _, tag: string in ipairs(CollectionService:GetTags(visual)) do
-                        CollectionService:RemoveTag(visual, tag)
-                    end
-                    for key: string in pairs(visual:GetAttributes()) do
-                        visual:SetAttribute(key, nil)
-                    end
-                    visual.Parent = copy
-                end
-            end
-        end
-        return copy
-    end
-
-    local function equippedWeapon(kind: string): Tool?
-        local weapon: Tool? = core.getPlayerWeapon(LocalPlayer, kind, true)
-        if weapon then
-            return weapon
-        end
-        -- Fall back to a plain name match: visual-only, and it keeps the
-        -- module working if the game renames or drops its weapon tags.
-        local character: Model? = LocalPlayer.Character
-        if not character then
-            return nil
-        end
-        for _, child: Instance in ipairs(character:GetChildren()) do
-            if child:IsA("Tool")
-                and string.find(
-                    string.lower(child.Name),
-                    string.lower(kind),
-                    1,
-                    true
-                ) then
-                return child :: Tool
-            end
-        end
-        return nil
-    end
-    -- ------------------------------------------------------------------
-    -- TrailESP + Tracer Data. The server replicates every accepted shot
-    -- through WeaponService.GunFired(gunHandle, origin, hitPosition,
-    -- hitPart): the reported endpoint, not proof of damage/death or an
-    -- authoritative target pose at the time the server processed the shot.
-    -- ------------------------------------------------------------------
-
-    local function ensureTrailFolder(): Folder
-        if not trailFolder or not trailFolder.Parent then
-            trailFolder = Instance.new("Folder")
-            trailFolder.Name = "MM2TrailESP"
-            trailFolder.Parent = workspace
-        end
-        -- Bound transient visuals even if many players fire together.
-        local children: {Instance} = trailFolder:GetChildren()
-        while #children >= 64 do
-            children[1]:Destroy()
-            table.remove(children, 1)
-        end
-        return trailFolder :: Folder
-    end
-
-    local function clearTrails(): ()
-        if trailFolder then
-            pcall(function(): () trailFolder:Destroy() end)
-            trailFolder = nil
-        end
-    end
-
-    local function drawShotTrail(origin: Vector3, hit: Vector3, hitPart: any): ()
-        local folder: Folder = ensureTrailFolder()
-        local segment: Vector3 = hit - origin
-        local length: number = segment.Magnitude
-        if options.trailEsp and length > 0.5 then
-            local beam: Part = Instance.new("Part")
-            beam.Name = "TrailSegment"
-            beam.Anchored = true
-            beam.CanCollide = false
-            beam.CanQuery = false
-            beam.CanTouch = false
-            beam.CastShadow = false
-            beam.Material = Enum.Material.Neon
-            beam.Color = options.color
-            beam.Transparency = 0.25
-            beam.Size = Vector3.new(0.07, 0.07, length)
-            beam.CFrame = CFrame.lookAt(origin + segment * 0.5, hit)
-            beam.Parent = folder
-            pcall(function(): ()
-                TweenService:Create(
-                    beam,
-                    TweenInfo.new(1.4, Enum.EasingStyle.Linear),
-                    { Transparency = 1 }
-                ):Play()
-            end)
-            task.delay(1.55, function(): ()
-                if beam.Parent then
-                    pcall(function(): () beam:Destroy() end)
-                end
-            end)
-        end
-        -- Pixel-sized ring at the reported endpoint; never highlight the
-        -- entire hitPart (a single hitPart can be a whole wall).
-        local anchor: Part = Instance.new("Part")
-        anchor.Name = "TrailLanding"
-        anchor.Size = Vector3.new(0.02, 0.02, 0.02)
-        anchor.Transparency = 1
-        anchor.Anchored = true
-        anchor.CanCollide = false
-        anchor.CanQuery = false
-        anchor.CanTouch = false
-        anchor.Position = hit
-        anchor.Parent = folder
-        local billboard: BillboardGui = Instance.new("BillboardGui")
-        billboard.Name = "LandingCircle"
-        billboard.Adornee = anchor
-        billboard.AlwaysOnTop = true
-        billboard.Size = UDim2.fromOffset(12, 12)
-        billboard.Parent = anchor
-        local ring: Frame = Instance.new("Frame")
-        ring.Size = UDim2.fromScale(1, 1)
-        ring.BackgroundTransparency = 1
-        ring.Parent = billboard
-        local corner: UICorner = Instance.new("UICorner")
-        corner.CornerRadius = UDim.new(1, 0)
-        corner.Parent = ring
-        local stroke: UIStroke = Instance.new("UIStroke")
-        stroke.Color = options.color
-        stroke.Thickness = 2
-        stroke.Parent = ring
-        task.delay(1.55, function(): ()
-            if anchor.Parent then anchor:Destroy() end
-        end)
-    end
-
-    local function reportTracerData(origin: Vector3, hit: Vector3, hitPart: any): ()
-        local murderer: Player? = core.findMurderer()
-        local root: BasePart? = murderer and murderer.Character
-            and murderer.Character:FindFirstChild("HumanoidRootPart") :: BasePart?
-        local calibration: any = core.trajectoryCalibration
-        if calibration and type(calibration.noteTracerData) == "function" then
-            calibration:noteTracerData({origin = origin, endpoint = hit,
-                hitPart = hitPart, target = murderer, targetPosition = root and root.Position})
-        end
-        if root and murderer then
-            notify(string.format("Tracer: endpoint %.1f studs from observed %s (range %.0f)",
-                (hit - root.Position).Magnitude, murderer.DisplayName, (hit - origin).Magnitude))
-        end
-    end
-
-    local function connectGunFired(): ()
-        if gunFiredConnection then
-            return
-        end
-        local ok: boolean, weaponService: any = pcall(function(): any
-            if type(core.getWeaponServiceModule) == "function" then
-                return core.getWeaponServiceModule()
-            end
-            local replicatedStorage: any = game:GetService("ReplicatedStorage")
-            local clientServices: any = replicatedStorage:FindFirstChild("ClientServices")
-            return clientServices and clientServices:FindFirstChild("WeaponService") or nil
-        end)
-        if not ok or type(weaponService) ~= "table" and typeof(weaponService) ~= "Instance" then
-            return
-        end
-        if typeof(weaponService) == "Instance" and weaponService:IsA("ModuleScript") then
-            local loaded: boolean, result: any = pcall(state.requireModule, weaponService)
-            if not loaded then return end
-            weaponService = result
-        end
-        if type(weaponService) ~= "table" and typeof(weaponService) ~= "Instance" then return end
-        local gunFired: any = typeof(weaponService) == "table"
-            and weaponService.GunFired
-            or weaponService:FindFirstChild("GunFired")
-        if not gunFired then
-            return
-        end
-        local okConnect: boolean, connection: any = pcall(function(): any
-            return gunFired.OnClientEvent:Connect(function(
-                gunHandle: any,
-                originValue: any,
-                hitValue: any,
-                hitPart: any
-            ): ()
-                local function position(value: any): Vector3?
-                    local vector: Vector3? = typeof(value) == "Vector3" and value
-                        or typeof(value) == "CFrame" and value.Position or nil
-                    if vector and vector.X == vector.X and vector.Y == vector.Y
-                        and vector.Z == vector.Z and vector.Magnitude < 1e7 then
-                        return vector
-                    end
-                    return nil
-                end
-                local origin: Vector3? = position(originValue)
-                local hit: Vector3? = position(hitValue)
-                if not origin or not hit then
-                    return
-                end
-                local character: Model? = LocalPlayer.Character
-                local backpack: Instance? = LocalPlayer:FindFirstChildOfClass("Backpack")
-                local isOurGun: boolean = typeof(gunHandle) == "Instance"
-                    and ((character ~= nil and gunHandle:IsDescendantOf(character))
-                        or (backpack ~= nil and gunHandle:IsDescendantOf(backpack)))
-                if options.trailEsp or (options.tracerData and isOurGun) then
-                    drawShotTrail(origin, hit, hitPart)
-                end
-                if options.tracerData and isOurGun then
-                    reportTracerData(origin, hit, hitPart)
-                end
-            end)
-        end)
-        if okConnect and connection then
-            gunFiredConnection = connection
-        end
-    end
-
-    local function disconnectGunFired(): ()
-        if gunFiredConnection then
-            pcall(function(): () gunFiredConnection:Disconnect() end)
-            gunFiredConnection = nil
-        end
-        clearTrails()
-    end
-
-    rebuild = function(): ()
-        clearVisuals()
-        local character: Model? = LocalPlayer.Character
-        if not options.enabled or not character then
-            return
-        end
-        local left: BasePart? = (character:FindFirstChild("LeftHand")
-            or character:FindFirstChild("Left Arm")) :: BasePart?
-        local right: BasePart? = (character:FindFirstChild("RightHand")
-            or character:FindFirstChild("Right Arm")) :: BasePart?
-        visualFolder = Instance.new("Folder")
-        visualFolder.Name = "MM2LocalWeaponVisuals"
-        visualFolder.Parent = workspace
-        local copiedByKind: {[string]: number} = {Gun = 0, Knife = 0}
-        local equippedByKind: {[string]: boolean} = {}
-        for _, kind: string in ipairs({"Gun", "Knife"}) do
-            local tool: Tool? = equippedWeapon(kind)
-            equippedByKind[kind] = tool ~= nil and tool.Parent == character
-            if not tool or tool.Parent ~= character then
-                continue
-            end
-            local double: boolean = kind == "Gun" and options.doubleGun
-                or kind == "Knife" and options.doubleKnife
-            if not double
-                or not left
-                or not right
-                or not left:IsA("BasePart")
-                or not right:IsA("BasePart") then
-                continue
-            end
-            local copied: number = 0
-            for _, source: Instance in ipairs(tool:GetDescendants()) do
-                if not source:IsA("BasePart") then
-                    continue
-                end
-                local part: BasePart? =
-                    geometryClone(source :: BasePart)
-                if part then
-                    -- A live weld offset, not a snapshot made while the
-                    -- skin may still be at its spawn/default position.
-                    local joint: Weld = Instance.new("Weld")
-                    joint.Part0 = left
-                    joint.Part1 = part
-                    joint.C0 = right.CFrame:ToObjectSpace((source :: BasePart).CFrame)
-                    joint.C1 = CFrame.new()
-                    part.CFrame = left.CFrame * joint.C0
-                    joint.Parent = part
-                    part.Parent = visualFolder
-                    table.insert(doubleBindings, {source = source, joint = joint, right = right})
-                    copied += 1
-                    if copied >= 64 then
-                        break -- bounded cost for complex skins
-                    end
-                end
-            end
-            copiedByKind[kind] = copied
-            if copied > 0 then
-                -- A mirrored left arm keeps the cloned weapon raised next to
-                -- the real one instead of hanging from a dead limb.
-                activeDouble = true
-            end
-        end
-        -- Visible diagnostics: what the last rebuild produced. If a double
-        -- was requested for an equipped weapon but nothing was copied, say
-        -- so instead of failing silently ("Gun Visual no funciona").
-        do
-            local missing: {string} = {}
-            if options.doubleGun
-                and equippedByKind.Gun
-                and copiedByKind.Gun == 0 then
-                table.insert(missing, "Double Gun found no gun geometry - report the skin name")
-            end
-            if options.doubleKnife
-                and equippedByKind.Knife
-                and copiedByKind.Knife == 0 then
-                table.insert(missing, "Double Knife found no knife geometry - report the skin name")
-            end
-            if #missing > 0 then
-                if not warnedEmptyGeometry then
-                    warnedEmptyGeometry = true
-                    if type(notify) == "function" then
-                        notify(table.concat(missing, " · "))
-                    end
-                end
-            else
-                warnedEmptyGeometry = false
-            end
-            if feature and type(feature.SetStatus) == "function" then
-                local parts: {string} = {}
-                if options.doubleGun and copiedByKind.Gun > 0 then
-                    table.insert(parts, "2x" .. copiedByKind.Gun .. " gun")
-                end
-                if options.doubleKnife and copiedByKind.Knife > 0 then
-                    table.insert(parts, "2x" .. copiedByKind.Knife .. " knife")
-                end
-                feature:SetStatus(#parts > 0 and table.concat(parts, " · ") or nil)
-            end
-        end
-    end
-
-    local function watchCharacter(character: Model): ()
-        disconnectAll(characterConnections)
-        clearVisuals()
-        table.insert(
-            characterConnections,
-            character.DescendantAdded:Connect(function(object: Instance): ()
-                if object:IsA("Tool") or object:IsA("BasePart") then
-                    queueRebuild()
-                end
-            end)
-        )
-        table.insert(
-            characterConnections,
-            character.DescendantRemoving:Connect(function(object: Instance): ()
-                if object:IsA("Tool") or object:IsA("BasePart") then
-                    queueRebuild()
-                end
-            end)
-        )
-        queueRebuild()
-    end
-
-    local function setEnabled(enabled: boolean): ()
-        -- Every toggle step is defensive, but executors differ: if anything
-        -- in the enable path still throws, run the full disable cleanup and
-        -- re-throw with a traceback so the console (and the "Could not
-        -- toggle" notification, which now carries the reason) shows exactly
-        -- what failed instead of a silent half-enabled state.
-        local ok: boolean, failure: any = pcall(function(): ()
-            generation += 1
-            queued = false
-            options.enabled = enabled
-            disconnectAll(connections)
-            disconnectAll(characterConnections)
-            clearVisuals()
-            disconnectGunFired()
-            if not enabled then
-                return
-            end
-            table.insert(
-                connections,
-                LocalPlayer.CharacterAdded:Connect(watchCharacter)
-            )
-            connectGunFired()
-            table.insert(
-                connections,
-                LocalPlayer.CharacterRemoving:Connect(function(): ()
-                    generation += 1
-                    queued = false
-                    disconnectAll(characterConnections)
-                    clearVisuals()
-                end)
-            )
-            -- PreSimulation runs after Animator evaluation and before Motor6D
-            -- transforms are applied. RunService has no PostAnimation event.
-            table.insert(connections, RunService.PreSimulation:Connect(function(): ()
-                local character: Model? = LocalPlayer.Character
-                if character then
-                    for _, binding: any in ipairs(doubleBindings) do
-                        if binding.source.Parent and binding.joint.Parent and binding.right.Parent then
-                            binding.joint.C0 = binding.right.CFrame:ToObjectSpace(binding.source.CFrame)
-                        end
-                    end
-                    mirrorArms(character)
-                end
-            end))
-            if LocalPlayer.Character then
-                watchCharacter(LocalPlayer.Character)
-            end
-        end)
-        if not ok then
-            local trace: string = tostring(failure)
-            if debug and type(debug.traceback) == "function" then
-                pcall(function(): ()
-                    trace = debug.traceback(failure, 2)
-                end)
-            end
-            warn("[Wurst] Weapon Visuals toggle ("
-                .. tostring(enabled) .. ") failed: " .. trace)
-            pcall(function(): ()
-                generation += 1
-                queued = false
-                options.enabled = false
-                disconnectAll(connections)
-                disconnectAll(characterConnections)
-                clearVisuals()
-                disconnectGunFired()
-            end)
-            error(failure, 0)
-        end
-    end
-
-    feature = createUniversalFeature(
-        "Weapon Visuals",
-        "Local double-weapon cosmetics and shot feedback. No extra damage or replication.",
-        15,
-        setEnabled,
-        {categoryName = "Render", parent = MM2Scroll, registry = mm2Features}
-    )
-    addToggleOption(feature, "Double Gun", false, function(value: boolean): ()
-        options.doubleGun = value
-        queueRebuild()
-    end)
-    addToggleOption(feature, "Double Knife", false, function(value: boolean): ()
-        options.doubleKnife = value
-        queueRebuild()
-    end)
-    addColorOption(feature, "Trail color", options.color, function(value: Color3): ()
-        options.color = value
-    end)
-    addToggleOption(feature, "TrailESP", false, function(value: boolean): ()
-        options.trailEsp = value
-        if not value then
-            clearTrails()
-        end
-    end, "Draws every replicated bullet's path and landing point, from the server's GunFired signal.")
-    addToggleOption(feature, "Tracer Data", false, function(value: boolean): ()
-        options.tracerData = value
-        if not value and not options.trailEsp then clearTrails() end
-    end, "Saves your GunFired endpoint and hit part with Calibration, draws a landing circle, "
-        .. "and compares to the target's client-observed position (not a server miss measurement).")
-
-    activeCleanup = function(): ()
-        setEnabled(false)
-    end
-    Module.Initialized = true
-    return Module
-end
-
-function Module.destroy(): ()
-    if not Module.Initialized then
-        return
-    end
-    Module.Initialized = false
-    pcall(activeCleanup)
-    activeCleanup = function(): () end
-    Module.Runtime = nil
-end
 return Module
 
 ]],
@@ -16000,23 +15443,28 @@ function Module.init(context: Runtime): any
 
     local destinations = {"Tap point", "Nearest player", "Named player", "Item", "Waypoint", "Last position"}
     if host.GAME_CHECK and host.GAME_CHECK.MM2Active then
-        table.insert(destinations, 1, "MM2")
+        for index, destination in ipairs({"MM2 Map", "MM2 Lobby", "MM2 Player", "MM2 Gun"}) do
+            table.insert(destinations, index, destination)
+        end
         local config = host.configData
-        if config and not config.values["Teleport.MM2DefaultV40"] then
-            config.values["Universal.ClickTeleport.Destination"] = "MM2"
-            config.values["Teleport.MM2DefaultV40"] = true
+        if config then
+            local key = "Universal.ClickTeleport.Destination"
+            if config.values[key] == nil or config.values[key] == "MM2" then
+                local old = config.values["Universal.ClickTeleport.MM2target"] or "Map"
+                config.values[key] = "MM2 " .. old
+            end
         end
     end
     teleport:CreateDropdown({Name = "Destination", List = destinations, Index = 1,
-        Tooltip = "MM2 opens the game destinations; other modes retain universal travel.",
+        Tooltip = "All destinations in one list, including MM2 map, lobby, player and dropped gun.",
         Function = function(value)
             runtime.armedUntil = 0
-            local mm2Controls = { ["MM2 target"] = true, ["Player name"] = true,
-                ["Get Gun key"] = true, ["Auto Get Gun"] = true, ["Gun pickup delay"] = true }
+            local mm2Controls = { ["Player name"] = true, ["Get Gun key"] = true,
+                ["Auto Get Gun"] = true, ["Gun pickup delay"] = true }
+            local mm2 = string.sub(value, 1, 4) == "MM2 "
             teleport.OptionFilter = function(name)
                 if name == "Destination" then return true end
-                return value == "MM2" and mm2Controls[name] == true
-                    or value ~= "MM2" and not mm2Controls[name]
+                return mm2 and mm2Controls[name] == true or not mm2 and not mm2Controls[name]
             end
             teleport:RefreshVisibility()
         end})
@@ -16046,19 +15494,6 @@ function Module.init(context: Runtime): any
             teleport:Notify("waypoint saved")
         end,
     })
-    teleport:CreateButton({
-        Name = "Go back",
-        Show = {Option = "Destination", Values = {"Last position"}},
-        Tooltip = "Returns to where the last teleport started.",
-        Function = function(): ()
-            if not runtime.lastOrigin then
-                teleport:Notify("nowhere to go back to")
-                return
-            end
-            Module.travel(context, teleport, runtime, runtime.lastOrigin, false)
-        end,
-    })
-
     teleport:CreateSlider({
         Name = "Arm window",
         Show = {Option = "Destination", Values = {"Tap point"}},
@@ -16226,7 +15661,7 @@ function Module.findItem(
 end
 
 function Module.run(context: Runtime, teleport: any, runtime: any): ()
-    if teleport.Options.Destination.Value == "MM2" then
+    if string.sub(teleport.Options.Destination.Value, 1, 4) == "MM2 " then
         local run = context.host.state and context.host.state.mm2TeleportRun
         if run then run() else teleport:Notify("MM2 destinations are not ready") end
         return
@@ -25716,7 +25151,7 @@ function Module.init(context: any): any
                 if row.Parent and arrow then
                     syncArrow()
                 end
-            end)
+            end, {"arrows"})
         end
 
         local activationTarget: TextButton = create("TextButton", {
@@ -26104,7 +25539,7 @@ function Module.init(context: any): any
                     if square.Parent then
                         syncSquare()
                     end
-                end)
+                end, {"enabled", "outline"})
             end
             local refreshBinding: any = binding.refresh
             binding.refresh = function(): ()
@@ -28965,11 +28400,14 @@ function Module.init(context: any): any
         if hudVisible and (hudRainbow or animationsOn()) then
             hudRainbowClock += deltaTime
             hudRainbowSince += deltaTime
-            if hudRainbowSince >= 0.033 then
-                hudRainbowSince = 0
+            if hudRainbowSince >= 0.05 then
+                hudRainbowSince %= 0.05
                 for _, row: any in pairs(hudRows) do
                     if row.name then
-                        drawHudEntry(row, row.name, row.status)
+                        local bitmap = state.bitmapText
+                        if not bitmap or not bitmap.recolor or not bitmap.recolor(row.holder, {hudEntryColor(row.order), Theme.textMuted}) then
+                            drawHudEntry(row, row.name, row.status)
+                        end
                     end
                 end
             end
@@ -30577,9 +30015,6 @@ function Module.init(context: any): any
     local TOOLTIP_OPACITY: number = 0.75
     local MAX_HEIGHT: number = 200
     local MAX_SETTINGS_HEIGHT: number = 200
-    local CLICKGUI_BACKGROUND: Color3 = Color3.fromRGB(24, 24, 26)
-    local CLICKGUI_ACCENT: Color3 = Color3.fromRGB(236, 236, 238)
-    local CLICKGUI_TEXT: Color3 = Color3.fromRGB(245, 245, 247)
     local HACKLIST_MODE: string = "Auto"
     local HACKLIST_POSITION: string = "Left"
     local HACKLIST_COLOR: Color3 = Color3.fromRGB(255, 255, 255)
@@ -32360,7 +31795,10 @@ function Module.init(context: any): any
             if rainbowSince < 0.05 then
                 return
             end
-            rainbowSince = 0
+            rainbowSince %= 0.05
+            -- The ClickGUI is hidden: do not repaint thousands of menu
+            -- pixels. The independent HUD rainbow has its own controller.
+            if not state.visible then return end
             local color: Color3 = Color3.fromHSV(rainbowElapsed * 0.25 % 1, 0.85, 1)
             paintPalette("Accent", color)
             paintPalette("Enabled", color)
@@ -32534,9 +31972,9 @@ local Module = {
 local boundState: any = nil
 local toggleThemeRefreshers: {() -> ()} = {}
 
-local function runToggleThemeRefreshers(): ()
-    for _, refresh: () -> () in ipairs(toggleThemeRefreshers) do
-        pcall(refresh)
+local function runToggleThemeRefreshers(changed: any): ()
+    for _, refresh: any in ipairs(toggleThemeRefreshers) do
+        pcall(refresh, changed)
     end
 end
 
@@ -32561,8 +31999,15 @@ function Module.init(context: any): WidgetLibrary
         state.optionThemeRefresh = runToggleThemeRefreshers
         -- Other UI modules (card bind squares, window chrome) register their
         -- repainters here so palette changes reach everything on screen.
-        state.registerThemeRefresh = function(refresh: () -> ()): ()
-            table.insert(toggleThemeRefreshers, refresh)
+        state.registerThemeRefresh = function(refresh: any, tokens: {string}?): ()
+            table.insert(toggleThemeRefreshers, function(changed)
+                if tokens and changed then
+                    local relevant = false
+                    for _, token in ipairs(tokens) do if changed[token] then relevant = true; break end end
+                    if not relevant then return end
+                end
+                refresh()
+            end)
         end
         -- Live-apply registry for option VALUES (sliders, colours, cycles,
         -- text). Profiles and the panic reset drive the whole UI through it
@@ -32612,9 +32057,16 @@ function Module.init(context: any): WidgetLibrary
             or color
             or WURST_GREEN
         local existing: Instance? = (parent :: any):FindFirstChild("PixelIcon")
-        if existing then
-            existing:Destroy()
+        if existing and existing:GetAttribute("PixelKind") == kind
+            and existing:GetAttribute("PixelToken") == (token or "") then
+            if not themed then
+                for _, pixel in ipairs(existing:GetChildren()) do
+                    if pixel:IsA("Frame") then pixel.BackgroundColor3 = paint end
+                end
+            end
+            return existing :: Frame
         end
+        if existing then existing:Destroy() end
         local sizes: {[string]: {number}} = {
             down = {14, 8},
             up = {14, 8},
@@ -32644,11 +32096,12 @@ function Module.init(context: any): WidgetLibrary
                 ZIndex = container.ZIndex + 1,
             })
             if themed then
-                -- Weak binding: destroyed icons drop out of the registry
-                -- automatically and ThemeEngine.SetMany repaints the rest.
+                -- Token binding; Destroying removes obsolete pixels from the registry.
                 ThemeEngine.Bind(pixel, "BackgroundColor3", token :: string)
             end
         end
+        container:SetAttribute("PixelKind", kind)
+        container:SetAttribute("PixelToken", token or "")
         if kind == "down" then
             px(0, 0, 7, 1); px(1, 1, 5, 1); px(2, 2, 3, 1); px(3, 3, 1, 1)
         elseif kind == "up" then
@@ -32842,7 +32295,7 @@ function Module.init(context: any): WidgetLibrary
 
         local function refreshOptionState(): ()
             local on: boolean = enabled :: boolean
-            box.BackgroundColor3 = on and Theme.enabled or Color3.fromRGB(0, 0, 0)
+            box.BackgroundColor3 = on and Theme.enabled or Theme.surface
             box.BackgroundTransparency = on and 0 or 0.5
             boxStroke.Color = on and Theme.enabled or Theme.outline
             paintMark()
@@ -34313,7 +33766,7 @@ function Module.init(context: any): WidgetLibrary
                 if arrowBox.Parent then
                     drawPixelIcon(arrowBox, "down", nil, "arrows")
                 end
-            end)
+            end, {"arrows"})
         end
 
         local function refreshChoiceVisual(): ()
@@ -35668,7 +35121,7 @@ function Module.init(context: any): any
                 end
                 paintTitle()
                 if ThemeEngine and type(ThemeEngine.OnChange) == "function" then
-                    ThemeEngine.OnChange(paintTitle)
+                    ThemeEngine.OnChange(paintTitle, {"accentText"})
                 end
 
                 pcall(function(): ()
@@ -35703,19 +35156,21 @@ function Module.init(context: any): any
                     Parent = bar,
                     Active = true,
                     AutoButtonColor = false,
-                    BackgroundColor3 = Color3.fromRGB(0, 0, 0),
+                    BackgroundColor3 = Theme.surface,
                     BackgroundTransparency = 0.72,
                     BorderSizePixel = 0,
                     FontFace = CONTROL_FONT,
                     Text = "",
                     TextSize = 11,
                 }) :: any) :: TextButton
-                create("UIStroke", {
+                local stroke = create("UIStroke", {
                     Parent = button,
-                    Color = Color3.fromRGB(0, 0, 0),
+                    Color = Theme.outline,
                     Thickness = 1,
                     Transparency = 0.55,
                 })
+                bind(button, "BackgroundColor3", "surface")
+                bind(stroke, "Color", "outline")
                 button.AnchorPoint = Vector2.new(1, 0.5)
                 button.Position = UDim2.new(1, buttonX, 0.5, 0)
                 button.Size = UDim2.fromOffset(22, 22)
@@ -35742,7 +35197,7 @@ function Module.init(context: any): any
                     pin.BackgroundTransparency = window.pinned and 0.2 or 0.72
                     pin.BackgroundColor3 = window.pinned
                         and Theme.enabled
-                        or Color3.fromRGB(0, 0, 0)
+                        or Theme.surface
                 end
                 table.insert(paintChrome, paintPin)
                 table.insert(chromeConnections, pin.MouseButton1Click:Connect(function(): ()
@@ -35826,7 +35281,7 @@ function Module.init(context: any): any
                 for _, paint: () -> () in ipairs(paintChrome) do
                     paint()
                 end
-            end)
+            end, {"arrows", "enabled", "surface"})
         end
 
         if window.collapsed then

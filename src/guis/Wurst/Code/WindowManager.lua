@@ -533,7 +533,7 @@ function Module.init(context: any): any
                 end
                 paintTitle()
                 if ThemeEngine and type(ThemeEngine.OnChange) == "function" then
-                    ThemeEngine.OnChange(paintTitle)
+                    ThemeEngine.OnChange(paintTitle, {"accentText"})
                 end
 
                 pcall(function(): ()
@@ -568,19 +568,21 @@ function Module.init(context: any): any
                     Parent = bar,
                     Active = true,
                     AutoButtonColor = false,
-                    BackgroundColor3 = Color3.fromRGB(0, 0, 0),
+                    BackgroundColor3 = Theme.surface,
                     BackgroundTransparency = 0.72,
                     BorderSizePixel = 0,
                     FontFace = CONTROL_FONT,
                     Text = "",
                     TextSize = 11,
                 }) :: any) :: TextButton
-                create("UIStroke", {
+                local stroke = create("UIStroke", {
                     Parent = button,
-                    Color = Color3.fromRGB(0, 0, 0),
+                    Color = Theme.outline,
                     Thickness = 1,
                     Transparency = 0.55,
                 })
+                bind(button, "BackgroundColor3", "surface")
+                bind(stroke, "Color", "outline")
                 button.AnchorPoint = Vector2.new(1, 0.5)
                 button.Position = UDim2.new(1, buttonX, 0.5, 0)
                 button.Size = UDim2.fromOffset(22, 22)
@@ -607,7 +609,7 @@ function Module.init(context: any): any
                     pin.BackgroundTransparency = window.pinned and 0.2 or 0.72
                     pin.BackgroundColor3 = window.pinned
                         and Theme.enabled
-                        or Color3.fromRGB(0, 0, 0)
+                        or Theme.surface
                 end
                 table.insert(paintChrome, paintPin)
                 table.insert(chromeConnections, pin.MouseButton1Click:Connect(function(): ()
@@ -691,7 +693,7 @@ function Module.init(context: any): any
                 for _, paint: () -> () in ipairs(paintChrome) do
                     paint()
                 end
-            end)
+            end, {"arrows", "enabled", "surface"})
         end
 
         if window.collapsed then

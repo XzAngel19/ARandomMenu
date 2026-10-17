@@ -151,18 +151,15 @@ function Module.init(runtime: any): any
     end
     local autoKey = "Universal.ClickTeleport.AutoGetGun"
     if configData.states[autoKey] == nil then configData.states[autoKey] = configData.states["MM2.Teleport.AutoGetGun"] end
-    local show = {Option = "Destination", Values = {"MM2"}}
-    local playerShow = {{Option = "Destination", Values = {"MM2"}},
-        {Option = "MM2 target", Values = {"Player"}}}
-    teleport:CreateDropdown({Name = "MM2 target", List = {"Map", "Lobby", "Player", "Gun"}, Index = 1, Show = show})
-    teleport:CreateTextBox({Name = "Player name", Default = "", Show = playerShow,
+    local show = {Option = "Destination", Values = {"MM2 Map", "MM2 Lobby", "MM2 Player", "MM2 Gun"}}
+    teleport:CreateTextBox({Name = "Player name", Default = "", Show = {Option = "Destination", Values = {"MM2 Player"}},
         Function = function(value) teleportTargetName = value end})
     state.mm2TeleportRun = function()
-        local target = teleport.Options["MM2 target"].Value
-        if target == "Map" then teleportToMap()
-        elseif target == "Lobby" then teleportToLobby()
-        elseif target == "Player" then teleportToPlayer()
-        elseif target == "Gun" then teleportToDroppedGun() end
+        local target = teleport.Options.Destination.Value
+        if target == "MM2 Map" then teleportToMap()
+        elseif target == "MM2 Lobby" then teleportToLobby()
+        elseif target == "MM2 Player" then teleportToPlayer()
+        elseif target == "MM2 Gun" then teleportToDroppedGun() end
     end
     local key = teleport:CreateBind({Name = "Get Gun key", Default = mm2Settings.getGunKey, Show = show,
         Function = function(value) mm2Settings.getGunKey = value end})

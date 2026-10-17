@@ -664,6 +664,7 @@ do
               if col then
                 table.insert(records, {
                   owner = owner,
+                  instance = px,
                   color = string.format("%d,%d,%d",
                     math.floor(col.R * 255 + 0.5),
                     math.floor(col.G * 255 + 0.5),
@@ -706,7 +707,12 @@ do
     print("[HARNESS] pixels repainted after SetMany(arrows=white): " .. totalChanged .. "/" .. #after)
     print("[HARNESS] repainted owners: " .. (#changedList > 0 and table.concat(changedList, ", ") or "NONE"))
     if ex.state and type(ex.state.optionThemeRefresh) == "function" then
+      local livePixels = {}
+      for _, record in ipairs(after) do livePixels[record.instance] = true end
       pcall(ex.state.optionThemeRefresh)
+      for _, record in ipairs(collectPixels()) do
+        assert(livePixels[record.instance], "palette refresh must reuse icon topology, not recreate pixel Frames")
+      end
       local after2 = collectPixels()
       local changed2 = 0
       for i, r in ipairs(after2) do
@@ -776,13 +782,17 @@ do
       end
       return nil
     end
-    local visual = findFeature("Weapon Visuals")
-    assert(visual, "Weapon Visuals feature must exist after boot")
-    local okOn, errOn = pcall(visual.onToggle, true)
-    assert(okOn, "Weapon Visuals ON must not error: " .. tostring(errOn))
-    local okOff, errOff = pcall(visual.onToggle, false)
-    assert(okOff, "Weapon Visuals OFF must not error: " .. tostring(errOff))
-    print("[HARNESS] WEAPON VISUALS TOGGLE CYCLE CLEAN")
+    assert(not findFeature("Weapon Visuals"), "removed cosmetics must not load")
+    local calibration = findFeature("Calibration")
+    assert(calibration.options:FindFirstChild("Option_TrailESP"), "TrailESP belongs in Calibration")
+    assert(not calibration.options:FindFirstChild("Option_TracerData"), "no duplicate tracer recorder")
+    assert(not calibration.options:FindFirstChild("Option_Mode"), "no one-choice Calibration mode")
+    local items = ex.state.framework:GetModule("ItemESP")
+    assert(items.Options["Gun ESP"] and items.Options["Trap ESP"], "MM2 item providers must actually register")
+    items:Toggle(true)
+    items.Options["Gun ESP"].Metadata.callback(true)
+    items.Options["Trap ESP"].Metadata.callback(true)
+    items:Toggle(false)
     local freeze = findFeature("Freeze Movements")
     assert(freeze, "Freeze Movements feature must exist after boot")
     for cycle = 1, 2 do
@@ -878,12 +888,13 @@ do
 
     assert(not findFeature("Role Tags") and not findFeature("Click Teleport"))
     local tp = ex.state.framework:GetModule("Teleport")
-    assert(tp.Options.Destination.Value == "MM2", "MM2 is the default Teleport destination")
-    assert(tp.Options["MM2 target"].Visible and not tp.Options.Movement.Visible)
+    assert(tp.Options.Destination.Value == "MM2 Map", "MM2 Map is the default Teleport destination")
+    assert(not tp.Options["MM2 target"], "no second destination selector")
+    assert(tp.Options["Auto Get Gun"].Visible and not tp.Options.Movement.Visible)
     tp.Options.Destination.Metadata.callback("Tap point")
-    assert(not tp.Options["MM2 target"].Visible and tp.Options.Movement.Visible)
-    tp.Options.Destination.Metadata.callback("MM2")
-    assert(tp.Options["MM2 target"].Visible and not tp.Options.Movement.Visible)
+    assert(not tp.Options["Auto Get Gun"].Visible and tp.Options.Movement.Visible)
+    tp.Options.Destination.Metadata.callback("MM2 Map")
+    assert(tp.Options["Auto Get Gun"].Visible and not tp.Options.Movement.Visible)
 
     local auraRange = knife.options:FindFirstChild("Option_AuraRange")
     assert(auraRange and auraRange.Visible, "Knife Aura is the default MM2 KillAura attack")

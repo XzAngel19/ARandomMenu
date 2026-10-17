@@ -53,23 +53,28 @@ function Module.init(context: Runtime): any
 
     local destinations = {"Tap point", "Nearest player", "Named player", "Item", "Waypoint", "Last position"}
     if host.GAME_CHECK and host.GAME_CHECK.MM2Active then
-        table.insert(destinations, 1, "MM2")
+        for index, destination in ipairs({"MM2 Map", "MM2 Lobby", "MM2 Player", "MM2 Gun"}) do
+            table.insert(destinations, index, destination)
+        end
         local config = host.configData
-        if config and not config.values["Teleport.MM2DefaultV40"] then
-            config.values["Universal.ClickTeleport.Destination"] = "MM2"
-            config.values["Teleport.MM2DefaultV40"] = true
+        if config then
+            local key = "Universal.ClickTeleport.Destination"
+            if config.values[key] == nil or config.values[key] == "MM2" then
+                local old = config.values["Universal.ClickTeleport.MM2target"] or "Map"
+                config.values[key] = "MM2 " .. old
+            end
         end
     end
     teleport:CreateDropdown({Name = "Destination", List = destinations, Index = 1,
-        Tooltip = "MM2 opens the game destinations; other modes retain universal travel.",
+        Tooltip = "All destinations in one list, including MM2 map, lobby, player and dropped gun.",
         Function = function(value)
             runtime.armedUntil = 0
-            local mm2Controls = { ["MM2 target"] = true, ["Player name"] = true,
-                ["Get Gun key"] = true, ["Auto Get Gun"] = true, ["Gun pickup delay"] = true }
+            local mm2Controls = { ["Player name"] = true, ["Get Gun key"] = true,
+                ["Auto Get Gun"] = true, ["Gun pickup delay"] = true }
+            local mm2 = string.sub(value, 1, 4) == "MM2 "
             teleport.OptionFilter = function(name)
                 if name == "Destination" then return true end
-                return value == "MM2" and mm2Controls[name] == true
-                    or value ~= "MM2" and not mm2Controls[name]
+                return mm2 and mm2Controls[name] == true or not mm2 and not mm2Controls[name]
             end
             teleport:RefreshVisibility()
         end})
@@ -99,19 +104,6 @@ function Module.init(context: Runtime): any
             teleport:Notify("waypoint saved")
         end,
     })
-    teleport:CreateButton({
-        Name = "Go back",
-        Show = {Option = "Destination", Values = {"Last position"}},
-        Tooltip = "Returns to where the last teleport started.",
-        Function = function(): ()
-            if not runtime.lastOrigin then
-                teleport:Notify("nowhere to go back to")
-                return
-            end
-            Module.travel(context, teleport, runtime, runtime.lastOrigin, false)
-        end,
-    })
-
     teleport:CreateSlider({
         Name = "Arm window",
         Show = {Option = "Destination", Values = {"Tap point"}},
@@ -279,7 +271,7 @@ function Module.findItem(
 end
 
 function Module.run(context: Runtime, teleport: any, runtime: any): ()
-    if teleport.Options.Destination.Value == "MM2" then
+    if string.sub(teleport.Options.Destination.Value, 1, 4) == "MM2 " then
         local run = context.host.state and context.host.state.mm2TeleportRun
         if run then run() else teleport:Notify("MM2 destinations are not ready") end
         return

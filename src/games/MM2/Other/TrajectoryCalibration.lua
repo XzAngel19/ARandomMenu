@@ -33,7 +33,6 @@ function Module.init(runtime: any): any
         )
         state.mm2CalibrationFeature = TrajectoryFeature
     end
-    local finishPanel = state.beginCardPanel(TrajectoryFeature, "Calibration", true)
     addActionOption(TrajectoryFeature, "Calibration status", function(): ()
         notify(trajectoryCalibration:status())
     end)
@@ -52,7 +51,6 @@ function Module.init(runtime: any): any
         TrajectoryFeature,
         "Records target windows around your shots and throws. MM2-only calibration; no universal learning observer."
     )
-    finishPanel()
 
     activeCleanup = function(): ()
 

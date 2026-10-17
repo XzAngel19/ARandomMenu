@@ -19,9 +19,6 @@ function Module.init(context: any): any
     local TOOLTIP_OPACITY: number = 0.75
     local MAX_HEIGHT: number = 200
     local MAX_SETTINGS_HEIGHT: number = 200
-    local CLICKGUI_BACKGROUND: Color3 = Color3.fromRGB(24, 24, 26)
-    local CLICKGUI_ACCENT: Color3 = Color3.fromRGB(236, 236, 238)
-    local CLICKGUI_TEXT: Color3 = Color3.fromRGB(245, 245, 247)
     local HACKLIST_MODE: string = "Auto"
     local HACKLIST_POSITION: string = "Left"
     local HACKLIST_COLOR: Color3 = Color3.fromRGB(255, 255, 255)
@@ -1802,7 +1799,10 @@ function Module.init(context: any): any
             if rainbowSince < 0.05 then
                 return
             end
-            rainbowSince = 0
+            rainbowSince %= 0.05
+            -- The ClickGUI is hidden: do not repaint thousands of menu
+            -- pixels. The independent HUD rainbow has its own controller.
+            if not state.visible then return end
             local color: Color3 = Color3.fromHSV(rainbowElapsed * 0.25 % 1, 0.85, 1)
             paintPalette("Accent", color)
             paintPalette("Enabled", color)

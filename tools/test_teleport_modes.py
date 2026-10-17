@@ -40,7 +40,7 @@ local UserInputService={GetFocusedTextBox=function() end,InputBegan={Connect=fun
  keyHandler=fn;return {Disconnect=function() keyHandler=nil end}
 end}}
 local configData={values={['MM2.Teleport.GetGunkey']='J',['MM2.Teleport.Gunpickupdelay']=.2},states={}}
-local tp={Options={Destination={Value='MM2'}},Notify=function(_,m) notify(m) end}
+local tp={Options={Destination={Value='MM2 Map'}},Notify=function(_,m) notify(m) end}
 local defs={}
 local function option(_,d)
  local id=d.Name:gsub('%W','')
@@ -59,12 +59,12 @@ local state={framework={GetModule=function(_,name) assert(name=='Teleport');retu
 '''+ '\nlocal MM2=(function()\n'+MM2+'\nend)()\n'+r'''
 MM2.init({})
 assert(settings.getGunKey=='J' and settings.autoGetGunDelay==.2,'preserve old custom binding and delay')
-assert(tp.Options['MM2 target'].Value=='Map')
+assert(not tp.Options['MM2 target'])
 state.mm2TeleportRun();near(pivots[#pivots].X,10);near(pivots[#pivots].Y,3)
-tp.Options['MM2 target'].Value='Lobby';state.mm2TeleportRun();near(pivots[#pivots].X,20)
-defs['Player name'].Function('target');tp.Options['MM2 target'].Value='Player'
+tp.Options.Destination.Value='MM2 Lobby';state.mm2TeleportRun();near(pivots[#pivots].X,20)
+defs['Player name'].Function('target');tp.Options.Destination.Value='MM2 Player'
 state.mm2TeleportRun();near(pivots[#pivots].X,30)
-tp.Options['MM2 target'].Value='Gun';local before=#pivots;state.mm2TeleportRun()
+tp.Options.Destination.Value='MM2 Gun';local before=#pivots;state.mm2TeleportRun()
 assert(#pivots==before+2);near(pivots[before+1].X,40);near(pivots[before+1].Y,2);near(pivots[#pivots].X,0)
 defs['Auto Get Gun'].Function(true);assert(callbacks.auto)
 callbacks.auto(.5);near(pivots[#pivots-1].X,40)

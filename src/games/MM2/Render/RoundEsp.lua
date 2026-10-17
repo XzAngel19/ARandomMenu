@@ -93,7 +93,20 @@ function Module.init(runtime: any): any
     core.toggleGunEsp = toggleGunEsp
     core.toggleTrapEsp = toggleTrapEsp
 
+    local unregister = {}
+    local itemEsp = services and services.itemEsp
+    assert(itemEsp and type(itemEsp.register) == "function", "MM2 item ESP requires the provider service")
+    for _, provider in ipairs({
+        {name = "Gun ESP", tooltip = "Highlights the dropped MM2 gun while ItemESP is ON.", setEnabled = toggleGunEsp},
+        {name = "Trap ESP", tooltip = "Highlights existing and newly placed MM2 traps while ItemESP is ON.", setEnabled = toggleTrapEsp},
+    }) do
+        local release = itemEsp.register(provider)
+        if release then table.insert(unregister, release) end
+    end
+
     activeCleanup = function(): ()
+        for _, release in ipairs(unregister) do pcall(release) end
+        table.clear(unregister)
         toggleGunEsp(false)
         toggleTrapEsp(false)
     end

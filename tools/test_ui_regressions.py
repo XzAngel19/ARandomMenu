@@ -8,7 +8,7 @@ import tempfile
 ROOT = Path(__file__).resolve().parents[1]
 s = (ROOT / 'src/Wurst.lua').read_text()
 setup = s.split('        local truncated: boolean = false', 1)[1].split('        local function blit(', 1)[0]
-start = s.index('        for _, segment: any in ipairs(segments) do', s.index('        local function blit('))
+start = s.index('        for segmentIndex, segment: any in ipairs(segments) do', s.index('        local function blit('))
 layout = s[start:s.index('        height = glyphHeight', start)]
 script = r'''
 local Color3={new=function() return {} end}

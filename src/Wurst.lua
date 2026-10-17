@@ -113,7 +113,6 @@ local FEATURE_CATEGORIES: {[string]: string} = {
 
     ["Silent Aim"] = "Combat",
     ["TriggerBot"] = "Combat",
-    ["Weapon Visuals"] = "Render",
 
     ["Round Info"] = "Render",
     ["Auto Swing"] = "Combat",
@@ -218,7 +217,7 @@ local RUNTIME_RAW_BASE: string =
         .. RUNTIME_BRANCH
         .. "/"
 
-local SOURCE_STAMP: string = "v40-20261016-visual-controls"
+local SOURCE_STAMP: string = "v41-20261016-menu-theme"
 
 local BOOT_STARTED_AT: number = os.clock()
 local BOOT_FINGERPRINT_SECONDS: number = 0
@@ -534,88 +533,85 @@ local ThemeEngine = {
     } :: ThemeShape,
 }
 
+-- Strong, token-indexed bindings. Destroying releases entries immediately;
+-- changing Accent never walks every text/arrow/pixel binding in the menu.
 local themeBindings: any = {}
--- NOTE: this registry is deliberately STRONG. A weak-keyed table
--- ({__mode = "k"}) silently lost Roblox Instance userdata in production
--- (executors may collect the userdata even while the instance is still
--- parented), so ThemeEngine.SetMany repainted nothing and every bound
--- pixel kept its creation colour until it was manually redrawn - "tengo
--- que tocarlas para que se aplique el color". Dead entries are pruned on
--- each repaint instead of relying on the collector.
-local themeListeners: {(string) -> ()} = {}
-
-local function repaintThemeBindings(values: {[string]: Color3}): ()
-    for instance: any, record: any in pairs(themeBindings) do
-        local alive: boolean = true
-        do
-            local ok: boolean, parent: any =
-                pcall(function(): any return (instance :: any).Parent end)
-            alive = ok and parent ~= nil
+local themeBuckets: any = {}
+local themeWatches: any = {}
+local themeListeners: {any} = {}
+local function unbindTheme(instance: any)
+    local record = themeBindings[instance]
+    if record then
+        for _, token in pairs(record) do
+            if themeBuckets[token] then themeBuckets[token][instance] = nil end
         end
-        if not alive then
-            themeBindings[instance] = nil
-        else
-            for _, binding: any in ipairs(record) do
-                local value: Color3? = values[binding.token]
-                if value then
-                    local applied: boolean = pcall(function(): ()
-                        (instance :: any)[binding.property] = value
-                    end)
-                    if not applied then
-                        themeBindings[instance] = nil
-                        break
-                    end
+    end
+    themeBindings[instance] = nil
+    local watch = themeWatches[instance]
+    themeWatches[instance] = nil
+    if watch then watch:Disconnect() end
+end
+local function repaintThemeBindings(values: {[string]: Color3}): ()
+    for token, value in pairs(values) do
+        for instance in pairs(themeBuckets[token] or {}) do
+            local ok = pcall(function()
+                if instance.Parent == nil then unbindTheme(instance); return end
+                for property, boundToken in pairs(themeBindings[instance] or {}) do
+                    if boundToken == token then instance[property] = value end
                 end
-            end
+            end)
+            if not ok then unbindTheme(instance) end
         end
     end
 end
-
-function ThemeEngine.Bind(
-    instance: Instance,
-    property: string,
-    token: string
-): Instance
-    local record: any = themeBindings[instance]
+function ThemeEngine.Bind(instance: Instance, property: string, token: string): Instance
+    local record = themeBindings[instance]
     if not record then
-        record = {}
-        themeBindings[instance] = record
+        record = {}; themeBindings[instance] = record
+        local ok, watch = pcall(function()
+            return instance.Destroying:Connect(function() unbindTheme(instance) end)
+        end)
+        if ok then themeWatches[instance] = watch end
     end
-    table.insert(record, {property = property, token = token})
-    local value: Color3? = Theme[token]
-    if value then
-        (instance :: any)[property] = value
+    local old = record[property]
+    record[property] = token
+    if old and old ~= token and themeBuckets[old] then
+        local stillUsed = false
+        for _, bound in pairs(record) do if bound == old then stillUsed = true; break end end
+        if not stillUsed then themeBuckets[old][instance] = nil end
     end
+    themeBuckets[token] = themeBuckets[token] or {}
+    themeBuckets[token][instance] = true
+    if Theme[token] then (instance :: any)[property] = Theme[token] end
     return instance
 end
-
-function ThemeEngine.OnChange(callback: (string) -> ()): ()
-    table.insert(themeListeners, callback)
-end
-
-function ThemeEngine.SetMany(values: {[string]: Color3}): ()
-
-    if values.accent ~= nil or values.background ~= nil then
-        local accent: Color3 = values.accent or Theme.accent
-        local background: Color3 = values.background or Theme.background
-        local function mix(amount: number): Color3
-            return Color3.new(
-                background.R + (accent.R - background.R) * amount,
-                background.G + (accent.G - background.G) * amount,
-                background.B + (accent.B - background.B) * amount
-            )
+function ThemeEngine.OnChange(callback: any, tokens: {string}?): ()
+    table.insert(themeListeners, function(name, changed)
+        if tokens and changed then
+            local relevant = false
+            for _, token in ipairs(tokens) do if changed[token] then relevant = true; break end end
+            if not relevant then return end
         end
-        values.accentDim = values.accentDim or mix(0.72)
-        values.accentSoft = values.accentSoft or mix(0.58)
-        values.accentFaint = values.accentFaint or mix(0.42)
+        callback(name, changed)
+    end)
+end
+function ThemeEngine.SetMany(input: {[string]: Color3}): ()
+    local values = table.clone(input)
+    if values.accent ~= nil or values.background ~= nil then
+        local accent = values.accent or Theme.accent
+        local background = values.background or Theme.background
+        for token, amount in pairs({accentDim = 0.72, accentSoft = 0.58, accentFaint = 0.42}) do
+            values[token] = values[token] or Color3.new(background.R + (accent.R - background.R) * amount,
+                background.G + (accent.G - background.G) * amount, background.B + (accent.B - background.B) * amount)
+        end
     end
-    for token: string, value: Color3 in pairs(values) do
-        Theme[token] = value
+    local changed = {}
+    for token, value in pairs(values) do
+        if Theme[token] ~= value then changed[token] = value; Theme[token] = value end
     end
-    repaintThemeBindings(values)
-    for _, listener: (string) -> () in ipairs(themeListeners) do
-        pcall(listener, ThemeEngine.name)
-    end
+    if next(changed) == nil then return end
+    repaintThemeBindings(changed)
+    for _, listener in ipairs(themeListeners) do pcall(listener, ThemeEngine.name, changed) end
 end
 
 function ThemeEngine.Set(token: string, value: Color3): ()
@@ -2319,6 +2315,7 @@ state.bitmapText.draw = function(
         return holder :: Frame
     end
     record.signature = signature
+    record.paintMap = {}
 
     local used: number = 0
     local function nextGlyph(): ImageLabel
@@ -2382,9 +2379,11 @@ state.bitmapText.draw = function(
             contentWidth = math.max(0, maxWidth - 2 * contractAdvanceFor(atlas, 46, scale))
         end
         local lastColor: Color3 = Theme.text
+        local currentSegment = 1
         local function blit(code: number, paint: Color3, dx: number, dy: number, z: number): ()
             local index: number = code - atlas.first
             local glyph: ImageLabel = nextGlyph()
+            record.paintMap[used] = {segment = currentSegment, factor = z == zIndex + 1 and 0.25 or 1}
             glyph.Image = raster.image
             glyph.ImageColor3 = paint
             glyph.ImageTransparency = transparency
@@ -2397,7 +2396,8 @@ state.bitmapText.draw = function(
             glyph.Size = UDim2.fromOffset(glyphWidth, glyphHeight)
             glyph.ZIndex = z
         end
-        for _, segment: any in ipairs(segments) do
+        for segmentIndex, segment: any in ipairs(segments) do
+            currentSegment = segmentIndex
             local color: Color3 = segment.color or Theme.text
 
             local shade: Color3 = Color3.new(
@@ -2504,6 +2504,44 @@ state.bitmapText.draw = function(
     contract.stats.draws += 1
     contract.stats.lastDrawMs = (os.clock() - startedAt) * 1000
     return holder :: Frame
+end
+
+-- Colour-only animation: no measuring, glyph layout, atlas selection or
+-- holder position resets (which would interrupt entry slide tweens).
+state.bitmapText.recolor = function(holder: any, colors: {Color3}): boolean
+    local contract = state.bitmapText
+    local record = holder and contract._live[holder]
+    if not record or not record.request then return false end
+    local segments = record.request.segments
+    local dirty = false
+    for index, segment in ipairs(segments) do
+        if colors[index] and segment.color ~= colors[index] then
+            segment.color = colors[index]
+            dirty = true
+        end
+    end
+    if not dirty then return true end
+    record.signature = nil
+    if record.fallback and record.fallback.Visible then
+        local composed = {}
+        for _, segment in ipairs(segments) do
+            local text = tostring(segment.text or ""):gsub("&", "&amp;"):gsub("<", "&lt;"):gsub(">", "&gt;")
+            local color = segment.color or Theme.text
+            table.insert(composed, string.format('<font color="#%02X%02X%02X">%s</font>',
+                math.floor(color.R * 255 + 0.5), math.floor(color.G * 255 + 0.5), math.floor(color.B * 255 + 0.5), text))
+        end
+        record.fallback.Text = table.concat(composed)
+    else
+        for index, binding in ipairs(record.paintMap or {}) do
+            local glyph = record.glyphs[index]
+            local color = segments[binding.segment].color or Theme.text
+            local factor = binding.factor
+            local paint = factor == 1 and color or Color3.new(color.R * factor, color.G * factor, color.B * factor)
+            if glyph and glyph.Parent and glyph.ImageColor3 ~= paint then glyph.ImageColor3 = paint end
+        end
+    end
+    contract.stats.recolors = (contract.stats.recolors or 0) + 1
+    return true
 end
 
 state.bitmapText.release = function(holder: Instance?): ()
@@ -3996,8 +4034,13 @@ state.applyCardSkin = function(feature: any, hovered: boolean?): ()
     resolvedRow.BackgroundTransparency = surface
 
     if feature.drawTitle then
-
-        feature.drawTitle(titleColor, titleTransparency)
+        -- Rainbow changes fills, not glyph topology. Reuse existing bitmap
+        -- titles unless their actual colour/opacity changed.
+        if feature.lastTitleColor ~= titleColor or feature.lastTitleTransparency ~= titleTransparency then
+            feature.lastTitleColor = titleColor
+            feature.lastTitleTransparency = titleTransparency
+            feature.drawTitle(titleColor, titleTransparency)
+        end
     elseif feature.title then
         local titleLabel: TextLabel = feature.title :: TextLabel
         titleLabel.TextColor3 = titleColor
@@ -4005,7 +4048,7 @@ state.applyCardSkin = function(feature: any, hovered: boolean?): ()
     end
 end
 
-ThemeEngine.OnChange(function(): ()
+ThemeEngine.OnChange(function(_name, changed): ()
     for _, feature: any in ipairs(allFeatures) do
         if feature.row then
             pcall(state.applyCardSkin, feature, false)
@@ -4014,7 +4057,7 @@ ThemeEngine.OnChange(function(): ()
     -- Palette changes (Background/Accent/Text/Enabled) must also repaint the
     -- option checkboxes that were already on screen.
     if type(state.optionThemeRefresh) == "function" then
-        pcall(state.optionThemeRefresh)
+        pcall(state.optionThemeRefresh, changed)
     end
 end)
 
@@ -4929,11 +4972,11 @@ local function loadGameModule(
         "src/games/MM2/Blatant/KnifeAura.lua",
         "src/games/MM2/Blatant/KnifeThrow.lua",
         "src/games/MM2/Render/RoundEsp.lua",
-        "src/games/MM2/Render/WeaponVisuals.lua",
         "src/games/MM2/Movement/Sprint.lua",
         "src/games/MM2/Movement/Teleport.lua",
         "src/games/MM2/Fun/BlurtRoles.lua",
         "src/games/MM2/Other/TrajectoryCalibration.lua",
+        "src/games/MM2/Other/CalibrationTrails.lua",
     } elseif moduleName == "VD" then {
         "src/games/VD/base.lua",
     } elseif moduleName == "BedFight" then {
