@@ -334,9 +334,17 @@ local function getGunTurnDiscount() return 1 end
 local function getGunTurnRate() return 0 end
 local clearList={}
 local function markClear(p) table.insert(clearList,p) end
-local function isWeaponPathClear(_,to)
+local function isWeaponPathClear(_,to,_,requireTarget)
+    local found=false
+    for _,p in ipairs(clearList) do if p.X==to.X and p.Y==to.Y and p.Z==to.Z then found=true end end
+    if not found or not requireTarget then return found end
+    -- These marked rays only prove a body hit if a current exposed body point
+    -- is also marked. The independent geometry engine is in test_gun_safety.
     for _,p in ipairs(clearList) do
-        if p.X==to.X and p.Y==to.Y and p.Z==to.Z then return true end
+        for _,body in pairs(parts) do
+            local d=p-body.Position
+            if math.abs(d.X)<.6 and math.abs(d.Y)<.6 and math.abs(d.Z)<.6 then return true end
+        end
     end
     return false
 end

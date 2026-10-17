@@ -128,46 +128,8 @@ function Module.init(runtime: any): any
         end
         if not flight or not predictionMath.finite(flight) then return nil end
         local reference = observed + velocity * flight
-        local predicted = reference
-        local motionSource = "velocity"
-        if mm2Settings and mm2Settings.predictionModel == "Adaptive" then
-            local sample = motionSamples and motionSamples[target]
-            local horizontal = Vector3.new(velocity.X,0,velocity.Z)
-            local observedVelocity = horizontal.Magnitude < 1 and predictionMath.observedHorizontalVelocity(sample and sample.positionHistory) or nil
-            if observedVelocity then
-                local observedMotion = Vector3.new(observedVelocity.X,velocity.Y,observedVelocity.Z)
-                local relativeAim, observedFlight = predictionMath.knifeBallisticIntercept(root.Position-originPos, observedMotion, speed, latency, 0)
-                if relativeAim then
-                    predicted, flight, velocity = originPos + relativeAim, observedFlight, observedMotion
-                    motionSource = "position"
-                end
-            end
-            local humanoid = target.Character:FindFirstChildOfClass("Humanoid")
-            local stateName = humanoid and humanoid:GetState()
-            local airborne = stateName == Enum.HumanoidStateType.Jumping or stateName == Enum.HumanoidStateType.Freefall
-            local supported = humanoid and humanoid.FloorMaterial ~= Enum.Material.Air and math.abs(velocity.Y) <= 6
-            if airborne and not supported then
-                local floorDelta = nil
-                pcall(function()
-                    local params = RaycastParams.new()
-                    params.FilterType = Enum.RaycastFilterType.Exclude
-                    params.FilterDescendantsInstances = {target.Character, LocalPlayer.Character}
-                    params.RespectCanCollide = true
-                    params.IgnoreWater = true
-                    local projected = root.Position + Vector3.new(velocity.X, 0, velocity.Z) * (latency + flight)
-                    local hit = workspace:Raycast(projected, Vector3.new(0, -128, 0), params)
-                    if hit then
-                        local delta = hit.Position.Y + humanoid.HipHeight + root.Size.Y * 0.5 - root.Position.Y
-                        if delta <= 0.25 then floorDelta = delta end
-                    end
-                end)
-                local relativeAim = predictionMath.knifeBallisticIntercept(root.Position - originPos,
-                    velocity, speed, latency, workspace.Gravity, floorDelta)
-                if relativeAim then predicted = originPos + relativeAim end
-            end
-        end
-        lastKnifePrediction = {motionSource = motionSource, model = mm2Settings and mm2Settings.predictionModel == "Adaptive" and "adaptive-v44" or "reference-v41", referenceEndpoint = reference}
-        return predicted
+        lastKnifePrediction = {motionSource="velocity", model="reference-v41", referenceEndpoint=reference}
+        return reference
     end
 
     local KNIFE_VISIBILITY_PARTS: {string} = {

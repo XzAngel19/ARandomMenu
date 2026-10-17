@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
-"""Real-source Adaptive solver, rollback/shadow, respawn-safe history and echo guards."""
+"""Archived v44 Adaptive regression; the live replacement is tested by test_prediction_66d and test_gun_safety."""
 import os,subprocess,tempfile,json,hashlib
 from pathlib import Path
 from test_mm2_precision import PRELUDE,section
 ROOT=Path(__file__).resolve().parents[1]
-BASE=(ROOT/'src/games/MM2/base.lua').read_text();GUN=(ROOT/'src/games/MM2/Blatant/Shoot.lua').read_text();KNIFE=(ROOT/'src/games/MM2/Blatant/KnifeThrow.lua').read_text()
+print("Historical archived prediction test; live v45 is covered by test_prediction_66d and test_gun_safety",flush=True)
+BASE=(ROOT/'docs/prediction-baselines/v44/base.lua.txt').read_text();GUN=(ROOT/'docs/prediction-baselines/v44/Shoot.lua.txt').read_text();KNIFE=(ROOT/'docs/prediction-baselines/v44/KnifeThrow.lua.txt').read_text()
 for name,sha in json.loads((ROOT/'docs/prediction-baselines/v41/metadata.json').read_text())['files'].items():
  assert hashlib.sha256((ROOT/'docs/prediction-baselines/v41'/name).read_bytes()).hexdigest()==sha
 assert KNIFE.count('remote:FireServer(')==1 and GUN.count(':FireServer(')==2

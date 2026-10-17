@@ -863,7 +863,14 @@ do
     local blurt = findFeature("Blurt Roles")
     -- Option identity is also persisted in the widget toggle registry.
     assert(ex.state.toggleControls["MM2.BlurtRoles.InstantRoles"], "Instant Roles must be a Blurt Roles option")
+    assert(ex.state.mm2Core.mm2Settings.predictionModel == "66d", "66d must replace Adaptive as default")
+    assert(type(ex.state.mm2Core.validateGunShot) == "function" and type(ex.state.mm2Core.isGunPathClear) == "function")
     local shoot = findFeature("SilentAIM")
+    local aimMethod = ex.state.valueControls["MM2.Shoot.Aimmethod"]
+    assert(aimMethod, "Gun method must be configurable")
+    aimMethod.apply("Silent AIM")
+    assert(shoot.options:FindFirstChild("Option_WallCheck").Visible, "WallCheck applies to Silent too")
+    aimMethod.apply("Prediction")
     assert(ex.state.shortcutBindings["MM2.Shoot"], "Shoot keeps its main activation shortcut")
     assert(not shoot.options:FindFirstChild("Option_Shootnow"), "Shoot now duplicates its main keybind")
     assert(not ex.state.shortcutBindings["MM2.ShootShoot now"], "duplicate Shoot now shortcut must not register")

@@ -1,14 +1,16 @@
 #!/usr/bin/env python3
-"""Causal pose-motion fallback + identical-sample v43/v44 regression, not hit-rate."""
+"""Historical v43/v44 replay (archived, not the live v45 solver or hit-rate)."""
 import contextlib, hashlib, io, json, os, subprocess, tempfile
 from pathlib import Path
 from test_mm2_precision import PRELUDE, section
 import replay_gun_prediction as replay
 ROOT=Path(__file__).resolve().parents[1]
+print("Historical archived prediction test; live v45 is covered by test_prediction_66d and test_gun_safety",flush=True)
 archive=ROOT/'docs/prediction-baselines/v43'
-for name,sha in json.loads((archive/'metadata.json').read_text())['files'].items():
- assert hashlib.sha256((archive/name).read_bytes()).hexdigest()==sha
-BASE=replay.BASE;GUN=replay.SHOOT;KNIFE=(ROOT/'src/games/MM2/Blatant/KnifeThrow.lua').read_text()
+for saved in (archive,ROOT/'docs/prediction-baselines/v44'):
+ for name,sha in json.loads((saved/'metadata.json').read_text())['files'].items():
+  assert hashlib.sha256((saved/name).read_bytes()).hexdigest()==sha
+BASE=(ROOT/'docs/prediction-baselines/v44/base.lua.txt').read_text();GUN=(ROOT/'docs/prediction-baselines/v44/Shoot.lua.txt').read_text();KNIFE=(ROOT/'docs/prediction-baselines/v44/KnifeThrow.lua.txt').read_text()
 script=PRELUDE+'\n'+section(BASE,'local predictionMath = {}','local lastLatencyReadAt:')+r'''
 local function points(speed)
  local result={}
@@ -69,8 +71,8 @@ sets['v33']=[ROOT/'tools/fixtures/prediction-v44/v33.json']
 report={}
 for name,paths in sets.items():
  with contextlib.redirect_stdout(io.StringIO()):
-  replay.BASE=(archive/'base.lua.txt').read_text();replay.SHOOT=(archive/'Shoot.lua.txt').read_text();a=replay.run(paths)
-  replay.BASE=BASE;replay.SHOOT=GUN;b=replay.run(paths)
+  replay.BASE=(archive/'base.lua.txt').read_text();replay.SHOOT=(archive/'Shoot.lua.txt').read_text();a=replay.run(paths,candidate="Adaptive")
+  replay.BASE=BASE;replay.SHOOT=GUN;b=replay.run(paths,candidate="Adaptive")
  assert a['all']['samples']==b['all']['samples']
  assert b['all']['adaptiveMAE']<=a['all']['adaptiveMAE']+1e-9,(name,a['all'],b['all'])
  assert abs(a['all']['referenceMAE']-b['all']['referenceMAE'])<1e-9

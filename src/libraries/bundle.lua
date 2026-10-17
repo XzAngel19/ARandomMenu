@@ -1,5 +1,5 @@
 return {
-    stamp = "v44-20261016-camera",
+    stamp = "v45-20261017-shot-safety",
     files = {
         ["src/Profile/142823291.lua"] = [[
 --!strict
@@ -1914,46 +1914,8 @@ function Module.init(runtime: any): any
         end
         if not flight or not predictionMath.finite(flight) then return nil end
         local reference = observed + velocity * flight
-        local predicted = reference
-        local motionSource = "velocity"
-        if mm2Settings and mm2Settings.predictionModel == "Adaptive" then
-            local sample = motionSamples and motionSamples[target]
-            local horizontal = Vector3.new(velocity.X,0,velocity.Z)
-            local observedVelocity = horizontal.Magnitude < 1 and predictionMath.observedHorizontalVelocity(sample and sample.positionHistory) or nil
-            if observedVelocity then
-                local observedMotion = Vector3.new(observedVelocity.X,velocity.Y,observedVelocity.Z)
-                local relativeAim, observedFlight = predictionMath.knifeBallisticIntercept(root.Position-originPos, observedMotion, speed, latency, 0)
-                if relativeAim then
-                    predicted, flight, velocity = originPos + relativeAim, observedFlight, observedMotion
-                    motionSource = "position"
-                end
-            end
-            local humanoid = target.Character:FindFirstChildOfClass("Humanoid")
-            local stateName = humanoid and humanoid:GetState()
-            local airborne = stateName == Enum.HumanoidStateType.Jumping or stateName == Enum.HumanoidStateType.Freefall
-            local supported = humanoid and humanoid.FloorMaterial ~= Enum.Material.Air and math.abs(velocity.Y) <= 6
-            if airborne and not supported then
-                local floorDelta = nil
-                pcall(function()
-                    local params = RaycastParams.new()
-                    params.FilterType = Enum.RaycastFilterType.Exclude
-                    params.FilterDescendantsInstances = {target.Character, LocalPlayer.Character}
-                    params.RespectCanCollide = true
-                    params.IgnoreWater = true
-                    local projected = root.Position + Vector3.new(velocity.X, 0, velocity.Z) * (latency + flight)
-                    local hit = workspace:Raycast(projected, Vector3.new(0, -128, 0), params)
-                    if hit then
-                        local delta = hit.Position.Y + humanoid.HipHeight + root.Size.Y * 0.5 - root.Position.Y
-                        if delta <= 0.25 then floorDelta = delta end
-                    end
-                end)
-                local relativeAim = predictionMath.knifeBallisticIntercept(root.Position - originPos,
-                    velocity, speed, latency, workspace.Gravity, floorDelta)
-                if relativeAim then predicted = originPos + relativeAim end
-            end
-        end
-        lastKnifePrediction = {motionSource = motionSource, model = mm2Settings and mm2Settings.predictionModel == "Adaptive" and "adaptive-v44" or "reference-v41", referenceEndpoint = reference}
-        return predicted
+        lastKnifePrediction = {motionSource="velocity", model="reference-v41", referenceEndpoint=reference}
+        return reference
     end
 
     local KNIFE_VISIBILITY_PARTS: {string} = {
@@ -2228,11 +2190,8 @@ function Module.init(runtime: any): any
     local motionSamples: any = core.motionSamples
     local predictionMath: any = core.predictionMath
     local isMotionGrounded: any = core.isMotionGrounded
-    local LIVE_TARGET_PATH = {requireTarget = true}
     local function isWeaponPathClear(origin: Vector3, endpoint: Vector3, target: Model?, requireTarget: boolean?): boolean
-        -- Use the recovered WeaponService cursor filter (including its
-        -- transparent-part handling), not v32's speculative strict mode.
-        return core.isWeaponPathClear(origin, endpoint, target, nil, requireTarget and LIVE_TARGET_PATH or nil)
+        return core.isGunPathClear(origin,endpoint,target,requireTarget)
     end
 
     local shootMacro: boolean = false
@@ -2287,24 +2246,9 @@ function Module.init(runtime: any): any
     -- order: big center-mass parts first, then the limbs that typically poke
     -- out of cover (a hand holding the knife around a corner).
     local VISIBILITY_PARTS: {string} = {
-        "UpperTorso",
-        "Torso",
-        "HumanoidRootPart",
-        "Head",
-        "RightHand",
-        "LeftHand",
-        "RightLowerArm",
-        "LeftLowerArm",
-        "RightUpperArm",
-        "LeftUpperArm",
-        "RightLowerLeg",
-        "LeftLowerLeg",
-        "RightFoot",
-        "LeftFoot",
-        "Right Arm",
-        "Left Arm",
-        "Right Leg",
-        "Left Leg",
+        "UpperTorso", "Torso", "HumanoidRootPart", "Head",
+        "RightHand", "LeftHand", "Right Arm", "Left Arm", "RightLowerLeg", "LeftLowerLeg",
+        "Right Leg", "Left Leg", "RightFoot", "LeftFoot",
     }
 
     local function findAimPart(character: Model): BasePart?
@@ -2443,85 +2387,24 @@ function Module.init(runtime: any): any
         )
 
         local referenceEndpoint = part.Position + displacement
-        local adaptive = mm2Settings.predictionModel == "Adaptive"
-        local motionSource = "velocity"
-        local adaptiveError = MINIMUM_ERROR_RADIUS
-        if adaptive then
-            local history = sample and sample.history
-            local measuredAcceleration = Vector3.zero
-            local measuredTurn = 0
-            if history and #history >= 3 then
-                local current, previous, earlier = history[#history], history[#history - 1], history[#history - 2]
-                local dt = current.at - previous.at
-                if dt >= 1 / 240 and dt < 0.25 and os.clock() - current.at < 0.25 then
-                    local beforeDt = previous.at - earlier.at
-                    local cv = Vector3.new(current.velocity.X, 0, current.velocity.Z)
-                    local pv = Vector3.new(previous.velocity.X, 0, previous.velocity.Z)
-                    local ev = Vector3.new(earlier.velocity.X, 0, earlier.velocity.Z)
-                    if beforeDt >= 1 / 240 and cv.Magnitude > 1 and pv.Magnitude > 1 and ev.Magnitude > 1 then
-                        local currentAngle = math.atan2(pv.X * cv.Z - pv.Z * cv.X, pv:Dot(cv))
-                        local beforeAngle = math.atan2(ev.X * pv.Z - ev.Z * pv.X, ev:Dot(pv))
-                        local rate, beforeRate = currentAngle / dt, beforeAngle / beforeDt
-                        if rate * beforeRate > 0 and math.abs(currentAngle) < math.pi / 3
-                            and math.abs(rate) >= math.abs(beforeRate) * 0.5
-                            and math.abs(rate) <= math.abs(beforeRate) * 2 then measuredTurn = rate end
-                        if cv.Magnitude < pv.Magnitude - 0.1 and pv.Magnitude < ev.Magnitude - 0.1
-                            and cv.Unit:Dot(pv.Unit) > 0.9 then
-                            measuredAcceleration = (cv - pv) / dt
-                        end
-                    end
-                end
+        local classic = mm2Settings.predictionModel == "66d"
+        if classic then
+            -- 66d's compact motion equation, separate from wall/friendly safety.
+            local movement = humanoid.MoveDirection
+            if horizontalVelocity.Magnitude < 1.5 and movement.Magnitude > 0.05 then
+                local desired = movement.Unit * humanoid.WalkSpeed
+                velocity = Vector3.new(desired.X,velocity.Y,desired.Z)
             end
-            -- Ignore curvature/deceleration smaller than the existing body
-            -- uncertainty floor; tiny replicated heading jitter is not a turn.
-            if math.abs(measuredTurn) * horizontalVelocity.Magnitude * horizon * horizon * 0.5 < MINIMUM_ERROR_RADIUS then measuredTurn = 0 end
-            if measuredAcceleration.Magnitude * horizon * horizon * 0.5 < MINIMUM_ERROR_RADIUS then measuredAcceleration = Vector3.zero end
-            local sensitivity
-            displacement, adaptiveError, sensitivity = predictionMath.gunAdaptive(
-                velocity, measuredAcceleration, horizon, workspace.Gravity, grounded, jumpState, measuredTurn)
-            if measuredTurn == 0 and measuredAcceleration.Magnitude == 0 and horizontalVelocity.Magnitude >= 0.05 then
-                -- No supported curve/brake: retain A's horizontal estimate,
-                -- not an unvalidated CV replacement of every trajectory.
-                displacement = Vector3.new(referenceEndpoint.X - part.Position.X, displacement.Y, referenceEndpoint.Z - part.Position.Z)
-            end
-            local observedVelocity = horizontalVelocity.Magnitude < 1 and predictionMath.observedHorizontalVelocity(sample and sample.positionHistory) or nil
-            if observedVelocity and measuredTurn == 0 and measuredAcceleration.Magnitude == 0 then
-                local observedLead = observedVelocity * horizon
-                local difference = observedLead - Vector3.new(displacement.X,0,displacement.Z)
-                if difference.Magnitude > MINIMUM_ERROR_RADIUS then
-                    displacement = Vector3.new(observedLead.X,displacement.Y,observedLead.Z)
-                    lead, leadSensitivity = horizon, 1
-                    motionSource = "position"
-                end
-            end
-            local correctedJump = grounded and jumpState and math.abs(velocity.Y) <= 6
-                or risingJumpState and math.abs(velocity.Y) < 8
-            -- Preserve the proven vertical estimate except the two identified
-            -- state/velocity disagreement cases; floor geometry still wins.
-            local vertical = correctedJump and displacement.Y or verticalDisplacement
-            displacement = Vector3.new(displacement.X, math.clamp(vertical, -3, 6), displacement.Z)
-            if measuredTurn ~= 0 or measuredAcceleration.Magnitude > 0 then
-                lead = horizon
-                leadSensitivity = sensitivity
-            end
-            -- Only a real collidable floor under the predicted landing point
-            -- can clamp a fall. No invented jump velocity or bullet gravity.
-            if displacement.Y < 0 then
-                pcall(function()
-                    local params = RaycastParams.new()
-                    params.FilterType = Enum.RaycastFilterType.Exclude
-                    params.FilterDescendantsInstances = {character, LocalPlayer.Character}
-                    params.RespectCanCollide = true
-                    params.IgnoreWater = true
-                    local start = root.Position + Vector3.new(displacement.X, 0, displacement.Z)
-                    local distance = math.min(64, math.abs(displacement.Y) + humanoid.HipHeight + root.Size.Y * 0.5 + 2)
-                    local hit = workspace:Raycast(start, Vector3.new(0, -distance, 0), params)
-                    if hit then
-                        local floorDelta = hit.Position.Y + humanoid.HipHeight + root.Size.Y * 0.5 - root.Position.Y
-                        if floorDelta <= 0.25 then displacement = Vector3.new(displacement.X, math.max(displacement.Y, floorDelta), displacement.Z) end
-                    end
-                end)
-            end
+            local stability = sample and sample.character == character and sample.stability
+            turnRate = type(stability) == "number" and math.clamp((1-math.clamp(stability,0,1))*6,0,math.pi*1.5) or math.pi*0.5
+            lead = horizon * getGunTurnDiscount(horizon,turnRate)
+            leadSensitivity = getGunLeadSensitivity(horizon,turnRate)
+            displacement = Vector3.new(velocity.X*lead,0,velocity.Z*lead) + horizontalAcceleration*(0.25*lead*lead)
+            -- Keep this rollback's vertical model explicit, not an adaptive blend.
+            local onGround = sample and sample.grounded or humanoid.FloorMaterial ~= Enum.Material.Air
+            local y = onGround and math.clamp(velocity.Y,-2.5,2.5)*lead
+                or velocity.Y*lead-0.5*workspace.Gravity*lead*lead
+            displacement = Vector3.new(displacement.X,y,displacement.Z)
         end
         local predicted: Vector3 = part.Position + displacement
         local delta: Vector3 = predicted - origin.Position
@@ -2529,7 +2412,8 @@ function Module.init(runtime: any): any
             return nil, nil, "too close"
         end
 
-        if not ignoreVisibility and mm2Settings.shootWallCheck then
+        if not ignoreVisibility and mm2Settings.shootWallCheck
+            and not isWeaponPathClear(origin.Position,predicted,character,true) then
             -- Visibility is a CURRENT-body test, never proof supplied by a
             -- predicted point in empty space. A closed peek must fail even
             -- when an old/future lead position has an unobstructed ray.
@@ -2545,8 +2429,6 @@ function Module.init(runtime: any): any
                     local probeOffsets: {Vector3} = {right, -right}
                     if table.find(AIM_PARTS, partName) then
                         table.insert(probeOffsets, up)
-                        table.insert(probeOffsets, right * 0.64 + up * 0.71)
-                        table.insert(probeOffsets, -right * 0.64 + up * 0.71)
                     end
                     for _, offset: Vector3 in ipairs(probeOffsets) do table.insert(points, body.Position + offset) end
                     for _, point: Vector3 in ipairs(points) do
@@ -2565,7 +2447,9 @@ function Module.init(runtime: any): any
             -- cover blocks that lead, the currently exposed sliver wins.
             part = visiblePart
             local ledPoint: Vector3 = visible + displacement
-            predicted = isWeaponPathClear(origin.Position, ledPoint, character) and ledPoint or visible
+            local ledClear = isWeaponPathClear(origin.Position,ledPoint,character,true)
+            predicted = ledClear and ledPoint or visible
+            if not ledClear then leadSensitivity = 0 end
             delta = predicted - origin.Position
         end
 
@@ -2577,8 +2461,7 @@ function Module.init(runtime: any): any
             turnError + jitter
         )
         local allowedErrorBudget: number = ignoreVisibility and (BODY_HALF_WIDTH * 1.75) or BODY_HALF_WIDTH
-        if adaptive then errorRadius = math.max(errorRadius, adaptiveError) end
-        if not adaptive and errorRadius > allowedErrorBudget and not resolvedOptions.allowUncertain then
+        if errorRadius > allowedErrorBudget and not resolvedOptions.allowUncertain then
             return nil, nil, "turning too hard"
         end
 
@@ -2592,8 +2475,8 @@ function Module.init(runtime: any): any
             leadSensitivity = leadSensitivity,
             capturedPosition = part.Position,
             aimRootOffset = part.Position - (root :: BasePart).Position,
-            motionSource = motionSource,
-            model = adaptive and "adaptive-v44" or "reference-v41",
+            motionSource = "velocity",
+            model = classic and "classic-66d" or "reference-v41",
             referenceEndpoint = referenceEndpoint,
         }, nil
     end
@@ -2612,8 +2495,7 @@ function Module.init(runtime: any): any
             or isProtectedTarget(target) then
             return nil
         end
-        if mm2Settings.shootMode ~= "Custom"
-            and getPlayerRole(target) ~= "Murderer" then
+        if getPlayerRole(target) ~= "Murderer" then
             return nil
         end
         return target
@@ -2766,12 +2648,14 @@ function Module.init(runtime: any): any
         end
 
         local character, humanoid = getCharacterParts()
-        if not target or not target.Character then
+        if not target or not target.Character or target == LocalPlayer
+            or not isPlayerAlive(target) or isProtectedTarget(target) or getPlayerRole(target) ~= "Murderer" then
             return reject("No selected shoot target was found.")
         end
         if not character or not humanoid then
             return reject("Your character is not available.")
         end
+        local targetCharacter = target.Character
         local gun: Tool? = getPlayerWeapon(LocalPlayer, "Gun", true)
         if not gun or gun.Parent ~= character then
             return reject("Equip the sheriff gun yourself to shoot.")
@@ -2786,11 +2670,10 @@ function Module.init(runtime: any): any
 
         local aim: CFrame?, prediction: GunPrediction?, reason: string? = nil
         if origin then
-            aim, prediction, reason = computeGunAim(
-                target,
-                origin :: CFrame,
-                {ignoreVisibility = silent, allowUncertain = opts.whenReady == true}
-            )
+            local ok
+            ok, aim, prediction, reason = pcall(computeGunAim,
+                target, origin :: CFrame, {allowUncertain = opts.whenReady == true})
+            if not ok then return reject("Aim or visibility check failed.") end
         end
 
         local rejectMessages: {[string]: string} = {
@@ -2815,6 +2698,18 @@ function Module.init(runtime: any): any
             return reject(message)
         end
 
+        local function safeToSend(shotOrigin: CFrame, shotEnd: CFrame): boolean
+            if gun.Parent ~= character or gun.Enabled == false or gun:GetAttribute("Disabled") == true
+                or gun:GetAttribute("Reloading") == true or gun:GetAttribute("IsReloading") == true then
+                return reject("The gun is disabled or reloading.")
+            end
+            local muzzle = getGunOriginCFrame(character,gun)
+            if not muzzle then return reject("The gun has no usable origin.") end
+            local ok, allowed, why = pcall(core.validateGunShot,target,character,targetCharacter,muzzle.Position,
+                shotOrigin.Position,shotEnd.Position,mm2Settings.shootWallCheck,prediction.leadSeconds)
+            if not ok or not allowed then return reject(why or "Shot safety check failed.") end
+            return true
+        end
         local resolved: GunPrediction = prediction :: GunPrediction
         if opts.maxError
             and resolved.errorRadius > opts.maxError then
@@ -2833,6 +2728,12 @@ function Module.init(runtime: any): any
             if not shotOrigin or not shotEnd then
                 return reject("Another player blocks the silent shot.")
             end
+            -- A near-target origin inside a body can make the engine miss that
+            -- containing body. Fall back to the real muzzle, never a bypass.
+            if not core.isGunPathClear(shotOrigin.Position,shotEnd.Position,targetCharacter,true) then
+                shotOrigin,shotEnd = origin,CFrame.new(resolved.endpoint)
+            end
+            if not safeToSend(shotOrigin,shotEnd) then return false end
             state.mm2ShotFeedback.queue(target, gun, shotOrigin, shotEnd, resolved)
             if state.mm2ShotFeedback.pending then
                 state.mm2ShotFeedback.pending.silentSpawn = variant
@@ -2867,6 +2768,7 @@ function Module.init(runtime: any): any
             return true
         end
 
+        if not safeToSend(origin,CFrame.new(resolved.endpoint)) then return false end
         state.mm2ShotFeedback.queue(target, gun, origin, aim, resolved)
         -- Author one endpoint, without speculative "piercing" past it.
         -- Echo timing documents transport/visual confirmation, NOT rewind
@@ -2885,7 +2787,7 @@ function Module.init(runtime: any): any
             silent = false,
             settings = {mode = "Normal", wallCheck = mm2Settings.shootWallCheck,
                 motionHz = mm2Settings.motionSampleHz, leadBias = mm2Settings.gunLeadBias,
-                wallCheckPolicy = "live-body-first-hit", leadSeconds = resolved.leadSeconds, errorRadius = resolved.errorRadius,
+                wallCheckPolicy = "strict-final-first-target", leadSeconds = resolved.leadSeconds, errorRadius = resolved.errorRadius,
                 predictionModel = resolved.model, motionSource = resolved.motionSource,
                 referencePoint = resolved.referenceEndpoint and {resolved.referenceEndpoint.X, resolved.referenceEndpoint.Y, resolved.referenceEndpoint.Z},
                 predictedPoint = {resolved.endpoint.X, resolved.endpoint.Y, resolved.endpoint.Z},
@@ -3069,7 +2971,7 @@ function Module.init(runtime: any): any
         end
         -- Silent-only controls stay hidden while the mode is Prediction.
         local silent: boolean = mm2Settings.silentAim == true
-        if wallCheckRow then setOptionVisible(ShootFeature, wallCheckRow, not silent) end
+        if wallCheckRow then setOptionVisible(ShootFeature, wallCheckRow, true) end
         if silentSweepRow then
             setOptionVisible(ShootFeature, silentSweepRow :: GuiObject, silent)
         end
@@ -3089,9 +2991,8 @@ function Module.init(runtime: any): any
             mm2Settings.silentAim = value == "Silent AIM"
             refreshShootOptions()
         end,
-        "Prediction fires from your gun with lead compensation. Silent AIM "
-            .. "authors the shot at the target: same prediction, works through "
-            .. "walls."
+        "Prediction fires from the gun; Silent AIM uses a near-target origin. "
+            .. "Both respect WallCheck and always protect other players."
     )
     addCycleOption(
         ShootFeature,
@@ -3118,10 +3019,8 @@ function Module.init(runtime: any): any
         function(value: boolean): ()
             mm2Settings.shootWallCheck = value
         end,
-        "Holds fire while a wall blocks the muzzle. If only a sliver of the "
-            .. "target is exposed — a hand or arm around a corner — the shot "
-            .. "aims at that visible part. Silent AIM skips it: it authors "
-            .. "the shot at the target."
+        "Check the current muzzle and final shot ray in both aim methods. "
+            .. "Requires the murderer as first hit. Other players always block firing, even with WallCheck OFF."
     )
     wallCheckRow = wallButton and wallButton.Parent
     addToggleOption(
@@ -3253,7 +3152,7 @@ function Module.init(runtime: any): any
             return
         end
         notify(string.format(
-            "Manual %+.3fs | adaptive %+.3fs (%s; stored %+.3fs) | horizon %.3fs",
+            "Manual %+.3fs | auto %+.3fs (%s; stored %+.3fs) | horizon %.3fs",
             status.manualBias or 0,
             status.autoCorrection or 0,
             status.autoTuneEnabled and "on" or "off",
@@ -3265,7 +3164,7 @@ function Module.init(runtime: any): any
         if type(resetAutoLeadCorrection) == "function" then
             resetAutoLeadCorrection()
         end
-        notify("Adaptive lead correction reset to zero.")
+        notify("Auto lead correction reset to zero.")
     end)
     ShootTargetBox = addTextOption(ShootFeature, "Target player", "", function(
         value: string
@@ -4074,7 +3973,7 @@ function Module.init(runtime: any): any
         )
         state.mm2CalibrationFeature = TrajectoryFeature
     end
-    addCycleOption(TrajectoryFeature, "Prediction model", {"Adaptive", "Reference v41"},
+    addCycleOption(TrajectoryFeature, "Prediction model", {"66d", "Reference v41"},
         core.mm2Settings.predictionModel == "Reference v41" and 2 or 1, function(value)
             core.mm2Settings.predictionModel = value
             -- A correction learned under A must not silently bias B.
@@ -4323,7 +4222,7 @@ local mm2Settings = {
     showMissCooldown = false,
     predictionRtt = 0.08,
     gunLeadBias = 0,
-    predictionModel = "Adaptive",
+    predictionModel = "66d",
     autoTuneLead = false,
 
     motionSampleHz = 60,
@@ -5624,101 +5523,6 @@ local function isMotionGrounded(humanoid: Humanoid?, velocity: Vector3): boolean
         and math.abs(velocity.Y) <= 6
 end
 
--- Hitscan target displacement, not projectile flight. Horizon is a bounded
--- timing hypothesis; remote echoes alone do not measure server rewind.
-function predictionMath.gunAdaptive(velocity: Vector3, acceleration: Vector3,
-    horizon: number, gravity: number, grounded: boolean, airborne: boolean, turnRate: number?): (Vector3, number, number)
-    local h = predictionMath.finite(horizon) and math.clamp(horizon, 0, 0.25) or 0
-    local function finiteVector(v)
-        return v and predictionMath.finite(v.X) and predictionMath.finite(v.Y) and predictionMath.finite(v.Z)
-    end
-    if not finiteVector(velocity) then return Vector3.zero, 0.35, 0 end
-    if not finiteVector(acceleration) then acceleration = Vector3.zero end
-    local horizontal = Vector3.new(velocity.X, 0, velocity.Z)
-    local speed = horizontal.Magnitude
-    local displacement = horizontal * h
-    local sensitivity = 1
-    local turn = predictionMath.finite(turnRate) and math.clamp(turnRate, -math.pi * 1.5, math.pi * 1.5) or 0
-    if speed > 1 and math.abs(turn) > 0.05 then
-        local side = Vector3.new(-horizontal.Z, 0, horizontal.X)
-        displacement = horizontal * (math.sin(turn * h) / turn)
-            + side * ((1 - math.cos(turn * h)) / turn)
-        sensitivity = 0 -- nonlinear turns must not train a scalar time bias
-    end
-    if speed < 0.05 then
-        displacement = Vector3.zero -- acceleration never invents motion from rest
-    else
-        local braking = -Vector3.new(acceleration.X, 0, acceleration.Z):Dot(horizontal.Unit)
-        if braking > 1 and math.abs(turn) <= 0.05 then
-            local stop = speed / braking
-            local duration = math.min(h, stop)
-            displacement = horizontal.Unit * math.max(0, speed * duration - 0.5 * braking * duration * duration)
-            sensitivity = h < stop and math.max(0, 1 - braking * h / speed) or 0
-        end
-    end
-    local y = math.abs(velocity.Y) > 0.5 and velocity.Y * h or 0
-    -- Ground/state disagreement at jump startup is not proof of an impulse.
-    -- At a genuine airborne apex, zero vertical speed still has gravity.
-    if airborne and (not grounded or math.abs(velocity.Y) > 6) then
-        y = velocity.Y * h - 0.5 * math.max(0, gravity) * h * h
-    end
-    local uncertainty = math.max(0.35, math.min(acceleration.Magnitude, 250) * h * h * 0.5)
-    return Vector3.new(displacement.X, y, displacement.Z), uncertainty, sensitivity
-end
-
--- Position packets can disagree with AssemblyLinearVelocity. Use an observed
--- straight segment only after two independent, consistent time windows.
-function predictionMath.observedHorizontalVelocity(points: {any}?): Vector3?
-    if not points or #points < 3 then return nil end
-    local last = points[#points]
-    local firstIndex = #points
-    while firstIndex > 1 and last.at - points[firstIndex - 1].at <= 0.15 do firstIndex -= 1 end
-    local first = points[firstIndex]
-    if last.at - first.at < 0.075 then return nil end
-    local middle = points[math.floor((firstIndex + #points) / 2)]
-    local before, after = middle.at - first.at, last.at - middle.at
-    if before < 0.025 or after < 0.025 then return nil end
-    local a = (middle.position - first.position) / before
-    local b = (last.position - middle.position) / after
-    a, b = Vector3.new(a.X,0,a.Z), Vector3.new(b.X,0,b.Z)
-    if not predictionMath.finite(a.Magnitude) or not predictionMath.finite(b.Magnitude)
-        or b.Magnitude < 1 or b.Magnitude > 110 or a.Magnitude < 1 then return nil end
-    if (a-b).Magnitude > math.max(2, b.Magnitude * 0.15) then return nil end
-    return b
-end
-
--- Native blade visual is LINEAR; gravity below belongs to the target.
--- Find the earliest intercept with bounded bracketing + bisection. A floor
--- clamps target landing height, never bends the blade or adds a fake impulse.
-function predictionMath.knifeBallisticIntercept(offset: Vector3, velocity: Vector3,
-    speed: number, latency: number, gravity: number, floorDelta: number?): (Vector3?, number?)
-    if not predictionMath.finite(offset.Magnitude) or not predictionMath.finite(velocity.Magnitude)
-        or not predictionMath.finite(speed) or speed <= 1
-        or not predictionMath.finite(latency) or not predictionMath.finite(gravity) then return nil, nil end
-    local lag = math.clamp(latency, 0, 0.6)
-    local function future(flight)
-        local t = flight + lag
-        local y = velocity.Y * t - 0.5 * math.max(0, gravity) * t * t
-        if predictionMath.finite(floorDelta) then y = math.max(y, floorDelta) end
-        return offset + Vector3.new(velocity.X * t, y, velocity.Z * t)
-    end
-    local lo = 0
-    local hi = math.max(1 / 240, math.min(0.025, offset.Magnitude / speed * 0.25))
-    for _ = 1, 48 do
-        if future(hi).Magnitude <= speed * hi then
-            for _ = 1, 22 do
-                local mid = (lo + hi) * 0.5
-                if future(mid).Magnitude <= speed * mid then hi = mid else lo = mid end
-            end
-            return future(hi), hi
-        end
-        if hi >= 5 then break end
-        lo = hi
-        hi = math.min(5, hi * 1.25)
-    end
-    return nil, nil
-end
-
 type MotionSample = {
     character: Model?,
     position: Vector3,
@@ -5730,8 +5534,6 @@ type MotionSample = {
 
     turnRate: number?,
     turnReferenceAt: number?,
-    history: {any}?,
-    positionHistory: {any}?,
 }
 
 local motionSamples: {[Player]: MotionSample} =
@@ -5840,22 +5642,6 @@ local function getFilteredVelocity(player: Player, root: BasePart): Vector3
         end
     end
 
-    local history, positionHistory = {}, {}
-    if sample and sample.character == character and now - sample.sampledAt < 0.25
-        and (root.Position - sample.position).Magnitude < 32 then
-        history = sample.history or {}
-        positionHistory = sample.positionHistory or {}
-    end
-    table.insert(positionHistory, {at=now, position=root.Position})
-    while #positionHistory > 24 or (#positionHistory > 1 and now-positionHistory[1].at > 0.25) do table.remove(positionHistory,1) end
-    local last = history[#history]
-    -- Interpolated position changes on render frames are NOT a new velocity
-    -- observation. Otherwise a 240-Hz client erases the preceding packet's
-    -- turn/braking history between each pair of replication updates.
-    if not last or (velocity - last.velocity).Magnitude > 0.001 then
-        table.insert(history, {at = now, position = root.Position, velocity = velocity})
-        while #history > 12 or (#history > 1 and now - history[1].at > 0.25) do table.remove(history, 1) end
-    end
     motionSamples[player] = {
         character = character,
         position = root.Position,
@@ -5866,8 +5652,6 @@ local function getFilteredVelocity(player: Player, root: BasePart): Vector3
         grounded = grounded,
         turnRate = turnRate,
         turnReferenceAt = turnReferenceAt,
-        history = history,
-        positionHistory = positionHistory,
     }
     return velocity
 end
@@ -5907,6 +5691,20 @@ end
 local trajectoryCalibration: any = nil
 
 local function getGunHorizonSeconds(): number
+    if mm2Settings.predictionModel == "66d" then
+        -- Legacy 66d timing, a rollback hypothesis, not measured server rewind.
+        local acceptance
+        if trajectoryCalibration and type(trajectoryCalibration.getEstimates) == "function" then
+            local ok, estimates = pcall(trajectoryCalibration.getEstimates,trajectoryCalibration)
+            if ok and type(estimates) == "table" and predictionMath.finite(estimates.confirmedShots) and estimates.confirmedShots >= 2
+                and predictionMath.finite(estimates.gunAcceptanceMs) and estimates.gunAcceptanceMs > 0 then
+                acceptance = estimates.gunAcceptanceMs/1000
+            end
+        end
+        return math.clamp((acceptance or math.max(getEstimatedLatency(),0.2)) + 1/40 + 1/120
+            + math.clamp(mm2Settings.gunLeadBias,-0.1,0.1) + math.clamp(getActiveAutoLeadCorrection(),-0.1,0.1),0.02,0.45)
+    end
+
     -- Retain the reference timing hypothesis until reserved online data
     -- identifies observation age/rewind. RTT is NOT itself proof of either.
     local staleness: number = math.clamp(
@@ -7874,7 +7672,7 @@ end
 
 local function tuneFromConfirmedShot(candidate: PendingShot): ()
     if not mm2Settings.autoTuneLead or not candidate.aimPosition or candidate.silentSpawn
-        or candidate.ambiguous or candidate.model ~= (mm2Settings.predictionModel == "Adaptive" and "adaptive-v42" or "reference-v41") then
+        or candidate.ambiguous or candidate.model ~= (mm2Settings.predictionModel == "66d" and "classic-66d" or "reference-v41") then
         return
     end
     local samples: {{t: number, p: Vector3}}? = candidate.trajectory
@@ -8295,6 +8093,108 @@ moduleCleanup = function(): ()
     end
 end
 
+-- Gun rays deliberately do not share Knife's transparent/passthrough filters.
+-- A tagged or invisible player is still a player in front of the gun.
+local function isGunPathClear(origin: Vector3, endpoint: Vector3, target: Model?, requireTarget: boolean?): boolean
+    local direction = endpoint-origin
+    if not predictionMath.finite(direction.Magnitude) or direction.Magnitude < 0.05 then return false end
+    local params = RaycastParams.new()
+    params.FilterType = Enum.RaycastFilterType.Exclude
+    params.FilterDescendantsInstances = LocalPlayer.Character and {LocalPlayer.Character} or {}
+    params.IgnoreWater = true
+    params.RespectCanCollide = false
+    local hit = workspace:Raycast(origin,direction+direction.Unit*0.05,params)
+    if not hit then return requireTarget ~= true end
+    return target ~= nil and hit.Instance:IsDescendantOf(target)
+end
+
+-- Ray/OBB slab intersection, including CanQuery=false and transparent body parts.
+-- This guard is independent of the engine ray's filtering/collision groups.
+local function gunBoxEntry(origin: Vector3, direction: Vector3, frame: CFrame, size: Vector3, padding: number): number?
+    local p, d = frame:PointToObjectSpace(origin), frame:VectorToObjectSpace(direction)
+    local near, far = 0, math.huge
+    for _, axis in ipairs({"X","Y","Z"}) do
+        local extent = size[axis]*0.5+padding
+        if not predictionMath.finite(p[axis]) or not predictionMath.finite(d[axis])
+            or not predictionMath.finite(extent) then return 0 end -- uncertain geometry blocks
+        if math.abs(d[axis]) < 1e-8 then
+            if math.abs(p[axis]) > extent then return nil end
+        else
+            local a, b = (-extent-p[axis])/d[axis], (extent-p[axis])/d[axis]
+            near, far = math.max(near,math.min(a,b)), math.min(far,math.max(a,b))
+            if near > far then return nil end
+        end
+    end
+    return near
+end
+
+local function gunBystanderOnRay(target: Player, origin: Vector3, endpoint: Vector3, horizon: number): boolean
+    local direction = (endpoint-origin).Unit
+    for _, player in ipairs(Players:GetPlayers()) do
+        local character = player.Character
+        if player == LocalPlayer or player == target or not character then continue end
+        local root = character:FindFirstChild("HumanoidRootPart")
+        local speed = root and root.AssemblyLinearVelocity.Magnitude or 0
+        -- Account conservatively for a bystander entering the line during latency.
+        local padding = 0.15 + (predictionMath.finite(speed) and math.max(0,speed*horizon) or math.huge)
+        local frame, size = character:GetBoundingBox()
+        if gunBoxEntry(origin,direction,frame,size,padding) == nil then continue end
+        for _, part in ipairs(character:GetDescendants()) do
+            if part:IsA("BasePart") and gunBoxEntry(origin,direction,part.CFrame,part.Size,padding) ~= nil then
+                return true
+            end
+        end
+    end
+    return false
+end
+
+local function validateGunShot(target: Player, character: Model, targetCharacter: Model,
+    muzzle: Vector3, origin: Vector3, endpoint: Vector3, walls: boolean, lead: number): (boolean, string?)
+    if LocalPlayer.Character ~= character or not target or target == LocalPlayer
+        or target.Character ~= targetCharacter or not isPlayerAlive(target)
+        or isProtectedTarget(target) or getPlayerRole(target) ~= "Murderer" then
+        return false,"Target changed or is not the murderer."
+    end
+    if roundLifecycleActive == false then return false,"The round is not active." end
+    local roundRole = getRoundRole(target)
+    if roundRole and roundRole ~= "Murderer" then return false,"Conflicting target role." end
+    if not roundRole and not getPlayerWeapon(target,"Knife") and not hasMurdererCollisionGroup(targetCharacter) then
+        return false,"No current murderer evidence."
+    end
+    local ownHumanoid = character:FindFirstChildOfClass("Humanoid")
+    if not ownHumanoid or not predictionMath.finite(ownHumanoid.Health) or ownHumanoid.Health <= 0 then return false,"Your character is not alive." end
+    if not predictionMath.finite(muzzle.Magnitude) or not predictionMath.finite(origin.Magnitude)
+        or not predictionMath.finite(endpoint.Magnitude) or (endpoint-origin).Magnitude < 0.05
+        or (endpoint-muzzle).Magnitude < 0.05 then return false,"Invalid shot geometry." end
+    -- No remembered visibility, transparent-layer skipping, or open-air success.
+    if walls then
+        if not isGunPathClear(muzzle,endpoint,targetCharacter,true)
+            or ((origin-muzzle).Magnitude > 0.05 and not isGunPathClear(origin,endpoint,targetCharacter,true)) then
+            return false,"A wall or another body blocks the shot."
+        end
+    else
+        -- OFF permits map penetration, not shooting toward empty space/innocents.
+        local params = RaycastParams.new()
+        params.FilterType = Enum.RaycastFilterType.Include
+        params.FilterDescendantsInstances = {targetCharacter}
+        params.IgnoreWater = true
+        local delta = endpoint-origin
+        if not workspace:Raycast(origin,delta+delta.Unit*0.05,params) then
+            return false,"The final ray does not intersect the murderer."
+        end
+    end
+    local horizon = predictionMath.finite(lead) and math.clamp(lead,0,0.45) or 0.45
+    local network = getEstimatedLatency()
+    if predictionMath.finite(network) then horizon = math.max(horizon,math.clamp(network,0,0.6)) end
+    -- Check the entire forward ray, including players BEHIND the aim point.
+    -- If the target moves and the shot misses, that player must not be ignored.
+    if gunBystanderOnRay(target,origin,endpoint,horizon)
+        or ((origin-muzzle).Magnitude > 0.05 and gunBystanderOnRay(target,muzzle,endpoint,horizon)) then
+        return false,"Another player is on the shot line."
+    end
+    return true,nil
+end
+
 local function disconnectGunFiredObserver(): ()
     disconnectFeatureConnection("MM2GunFired")
     state.mm2ShotFeedback.gunFiredConnected = false
@@ -8348,6 +8248,8 @@ state.mm2Core = {
     findDroppedGun = findDroppedGun,
 
     isWeaponPathClear = isWeaponPathClear,
+    isGunPathClear = isGunPathClear,
+    validateGunShot = validateGunShot,
     predictionMath = predictionMath,
     isMotionGrounded = isMotionGrounded,
     motionSamples = motionSamples,

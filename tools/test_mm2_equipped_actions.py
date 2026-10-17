@@ -68,6 +68,10 @@ local function notify() end
 local mm2Settings={silentAim=false,shootWallCheck=true,motionSampleHz=60,gunLeadBias=0}
 local function getGunOriginCFrame() return CFrame.new(Vector3.new(0,0,-10)) end
 local endpoint=Vector3.new(1000,1,1)
+local function isPlayerAlive() return true end
+local function isProtectedTarget() return false end
+local function getPlayerRole() return 'Murderer' end
+local core={validateGunShot=function() return true end}
 local prediction={endpoint=endpoint,targetPosition=endpoint,capturedPosition=endpoint,velocity=Vector3.zero,errorRadius=5,leadSeconds=.1}
 local function computeGunAim(_,_,options)
     assert(options.allowUncertain and not options.ignoreVisibility)

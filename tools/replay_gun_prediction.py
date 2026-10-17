@@ -12,7 +12,8 @@ def lua(v):
  if isinstance(v,bool):return 'true' if v else 'false'
  if v is None:return 'nil'
  return str(v)
-def run(paths,output=None):
+def run(paths,output=None,candidate="66d"):
+ if candidate=="Adaptive" and "local adaptive =" not in SHOOT:raise ValueError("Adaptive is archived, not a live model")
  windows={}
  for path in paths:
   data=json.loads(path.read_text())
@@ -25,7 +26,7 @@ def run(paths,output=None):
 local mm2Settings={shootWallCheck=false}
 local workspace={Gravity=196.2}
 local velocity=Vector3.zero
-local humanoid={Health=100,FloorMaterial='Ground',HipHeight=2}
+local humanoid={Health=100,FloorMaterial='Ground',HipHeight=2,MoveDirection=Vector3.zero,WalkSpeed=16}
 local stateName='Running'
 function humanoid:GetState() return stateName end
 local root={Position=Vector3.zero,Size=Vector3.new(2,2,1)}
@@ -34,7 +35,7 @@ local character={FindFirstChild=function(_,n) if n=='HumanoidRootPart' then retu
 local target={Character=character};local LocalPlayer={Character={}}
 local horizon=.1
 local function getGunHorizonSeconds() return horizon end
-'''+section(BASE,'local function getGunTurnRate','local function getGunLeadStatus')+'\n'+section(SHOOT,'    local BODY_HALF_WIDTH:','    local function getSelectedShootTarget')+'\nlocal windows='+lua(list(windows.values()))+r'''
+'''+section(BASE,'local function getGunTurnRate','local function getGunLeadStatus')+'\n'+section(SHOOT,'    local BODY_HALF_WIDTH:','    local function getSelectedShootTarget')+'\nlocal candidate='+lua(candidate)+'\nlocal windows='+lua(list(windows.values()))+r'''
 local count=0
 for wi,window in ipairs(windows) do
  motionSamples={};horizon=math.min(window.ping/1000,.15)
@@ -55,14 +56,14 @@ for wi,window in ipairs(windows) do
   end
   if truth then
    local errors={}
-   for _,model in ipairs({'Reference v41','Adaptive'}) do
+   for _,model in ipairs({'Reference v41',candidate}) do
     mm2Settings.predictionModel=model
     local _,pred=computeGunAim(target,CFrame.new(root.Position+Vector3.new(0,0,-50)),{ignoreVisibility=true,allowUncertain=true})
     assert(pred and pred.endpoint.X==pred.endpoint.X)
     errors[model]=(pred.endpoint-truth).Magnitude
    end
    count+=1
-   print(string.format('ROW\t%d\t%d\t%.9f\t%.9f',wi,i,errors['Reference v41'],errors.Adaptive))
+   print(string.format('ROW\t%d\t%d\t%.9f\t%.9f',wi,i,errors['Reference v41'],errors[candidate]))
   end
  end
 end
@@ -76,9 +77,9 @@ assert(count>0,'no replayable client windows')
    _,w,i,a,b=line.split('\t');rows.append({'window':int(w),'sample':int(i),'reference':float(a),'adaptive':float(b)})
  def summary(rs):
   return {'samples':len(rs),'referenceMAE':sum(r['reference'] for r in rs)/len(rs) if rs else None,'adaptiveMAE':sum(r['adaptive'] for r in rs)/len(rs) if rs else None}
- report={'sources':{p.name:hashlib.sha256(p.read_bytes()).hexdigest() for p in paths},'windows':len(windows),'all':summary(rows),'oddWindows':summary([r for r in rows if r['window']%2]),'evenWindows':summary([r for r in rows if not r['window']%2]),'byRecordedKind':{str(kind):summary([r for r in rows if list(windows.values())[r['window']-1]['kind']==kind]) for kind in sorted(set(w['kind'] for w in windows.values()),key=str)},'rows':rows,'limits':'Client-observed future pose only, same RTT hypothesis for A/B, default gravity, no map floor geometry, no server hit-rate or rewind inference; fixed final model; development variants were inspected, no per-shot fitting.'}
+ report={'candidateModel':candidate,'sources':{p.name:hashlib.sha256(p.read_bytes()).hexdigest() for p in paths},'windows':len(windows),'all':summary(rows),'oddWindows':summary([r for r in rows if r['window']%2]),'evenWindows':summary([r for r in rows if not r['window']%2]),'byRecordedKind':{str(kind):summary([r for r in rows if list(windows.values())[r['window']-1]['kind']==kind]) for kind in sorted(set(w['kind'] for w in windows.values()),key=str)},'rows':rows,'limits':'Client-observed future pose only, same RTT hypothesis for A/B, default gravity, no map floor geometry, no server hit-rate or rewind inference; fixed final model; development variants were inspected, no per-shot fitting. Legacy adaptiveMAE field denotes the selected candidate. MoveDirection unavailable in poses, assumed zero.'}
  if output:output.write_text(json.dumps(report,indent=2)+'\n')
  print(json.dumps({k:v for k,v in report.items() if k!='rows'},indent=2))
  return report
 if __name__=='__main__':
- ap=argparse.ArgumentParser();ap.add_argument('files',nargs='+',type=Path);ap.add_argument('--output',type=Path);a=ap.parse_args();run(a.files,a.output)
+ ap=argparse.ArgumentParser();ap.add_argument('files',nargs='+',type=Path);ap.add_argument('--output',type=Path);ap.add_argument('--candidate',choices=['66d','Reference v41'],default='66d');a=ap.parse_args();run(a.files,a.output,a.candidate)
