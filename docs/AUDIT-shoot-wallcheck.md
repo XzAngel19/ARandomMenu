@@ -3,13 +3,21 @@
 **Base de código:** `arena/7905a47c-arandommenu` (`52bc4f9`), sin cambios de código en esta rama.
 **Fecha:** 2026-10-17
 
-## Estado: no se cambió código de disparo
+## Estado: cambio aplicado — filtro de muros del juego (estampa v51)
 
-Tras revisar las pruebas de 7905, no apliqué cambios de disparo. Motivos:
+**Cambio:** `isGunPathClear` (src/games/MM2/base.lua) ahora usa el mismo filtro que el `WeaponService` del juego: excluye el propio personaje y los `WeaponPassthrough`, **salta partes con `Transparency == 1`**, y cualquier otra parte delante bloquea. Antes era estricto (no saltaba transparentes). El apuntado (`computeGunAim`) y la validación final (`validateGunShot`) ahora usan la misma regla.
 
-1. `tools/test_mm2_precision.py` afirma que **no existe** `GUN_SERVER_COOLDOWN` ni `lastGunFireServer`. Tú indicaste que el enfriamiento no sirve, así que no lo reintrodujimos.
-2. `tools/test_gun_safety.py` / `test_mm2_precision.py` fijan que el rayo del arma es **estricto** (no comparte el filtro de Knife ni salta partes transparentes). Cambiarlo altera una decisión de seguridad que no puedo validar sin jugar. Ver pregunta abajo.
-3. Las suites necesitan el runtime `luau`, que no pude instalar en el sandbox (la descarga de releases de GitHub está bloqueada). Solo pude validar sintaxis con StyLua (parser Luau) y ejecutar las suites Python.
+**Decisión tuya:** copiar el filtro del juego. Consecuencia conocida: un muro invisible (`Transparency = 1`) ya no bloquea el rayo de WallCheck. Los bystanders siguen bloqueando por `gunBystanderOnRay`, que no depende de transparencia.
+
+**Pruebas actualizadas:** `tools/test_gun_safety.py` tenía la aserción contraria ("invisible geometry must not become permission to shoot"). Ahora dice que el filtro del juego salta geometría con `Transparency == 1`, y añadí el mock de `CollectionService`.
+
+**Cadencia:** no se reintrodujo. Lo pidió tu feedback y `test_mm2_precision.py` lo prohíbe explícitamente.
+
+**Verificación real de este cambio:**
+- Sintaxis Luau: StyLua parsea `base.lua`, `Shoot.lua`, `Wurst.lua` y `bundle.lua` sin errores.
+- Bundle: `build_bundle.py --check` dice "current" con la estampa `v51-20261017-game-gun-filter`.
+- Suites Python: las aserciones de contrato sobre el código fuente pasan (`LUAU=true` como sustituto).
+- **No verificado:** la ejecución de `test_gun_safety.py` y `test_mm2_precision.py` dentro de Luau. No hay binario `luau` disponible en el sandbox ni en ninguna rama del repo.
 
 ## Hallazgo crítico: el bundle tiene prioridad
 
@@ -58,10 +66,8 @@ Su `computeGunAim` es más simple: horizonte RTT, lead con descuento, sin tope v
 - Eliminó `validateGunShot` / `isGunPathClear` / `gunBystanderOnRay`: el disparo normal ya no comprueba bystanders ni muros estrictos.
 - Su texto de UI "otros jugadores bloquean aunque WallCheck esté OFF" es falso para el disparo normal.
 
-## Pregunta abierta (decide tú)
+## Pendiente
 
-¿El rayo de WallCheck debe copiar el filtro del juego (saltar `Transparency == 1`) o quedarse estricto?
-- Copiar el juego: menos falsos "muro", coherente con el apuntado, pero podría disparar a través de muros invisibles.
-- Estricto (actual): más conservador, pero bloquea tiros que el propio cliente considera libres.
-
-Hasta tener eso decidido y poder correr `luau` en las pruebas, no cambio la lógica de disparo.
+1. Ejecutar `tools/validate.sh` con un binario `luau` real (la suite completa, incluida `test_gun_safety.py` con el nuevo contrato).
+2. Probar en juego que el WallCheck ya no bloquea tiros que el cliente considera libres, y que no dispara a través de muros sólidos.
+3. Si aparecen tiros a través de muros invisibles en juego, revertir sólo el bloque `Transparency == 1` de `isGunPathClear`.

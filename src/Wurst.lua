@@ -217,7 +217,7 @@ local RUNTIME_RAW_BASE: string =
         .. RUNTIME_BRANCH
         .. "/"
 
-local SOURCE_STAMP: string = "v50-20261017-points"
+local SOURCE_STAMP: string = "v51-20261017-game-gun-filter"
 
 local BOOT_STARTED_AT: number = os.clock()
 local BOOT_FINGERPRINT_SECONDS: number = 0
