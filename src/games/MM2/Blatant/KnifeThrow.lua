@@ -129,7 +129,19 @@ function Module.init(runtime: any): any
         if not flight or not predictionMath.finite(flight) then return nil end
         local reference = observed + velocity * flight
         local predicted = reference
+        local motionSource = "velocity"
         if mm2Settings and mm2Settings.predictionModel == "Adaptive" then
+            local sample = motionSamples and motionSamples[target]
+            local horizontal = Vector3.new(velocity.X,0,velocity.Z)
+            local observedVelocity = horizontal.Magnitude < 1 and predictionMath.observedHorizontalVelocity(sample and sample.positionHistory) or nil
+            if observedVelocity then
+                local observedMotion = Vector3.new(observedVelocity.X,velocity.Y,observedVelocity.Z)
+                local relativeAim, observedFlight = predictionMath.knifeBallisticIntercept(root.Position-originPos, observedMotion, speed, latency, 0)
+                if relativeAim then
+                    predicted, flight, velocity = originPos + relativeAim, observedFlight, observedMotion
+                    motionSource = "position"
+                end
+            end
             local humanoid = target.Character:FindFirstChildOfClass("Humanoid")
             local stateName = humanoid and humanoid:GetState()
             local airborne = stateName == Enum.HumanoidStateType.Jumping or stateName == Enum.HumanoidStateType.Freefall
@@ -154,7 +166,7 @@ function Module.init(runtime: any): any
                 if relativeAim then predicted = originPos + relativeAim end
             end
         end
-        lastKnifePrediction = {model = mm2Settings and mm2Settings.predictionModel == "Adaptive" and "adaptive-v42" or "reference-v41", referenceEndpoint = reference}
+        lastKnifePrediction = {motionSource = motionSource, model = mm2Settings and mm2Settings.predictionModel == "Adaptive" and "adaptive-v44" or "reference-v41", referenceEndpoint = reference}
         return predicted
     end
 
@@ -313,6 +325,7 @@ function Module.init(runtime: any): any
                 kind = "knife", tool = knife, toolName = knife.Name,
                 originPos = origin.Position, aimPos = aim, target = target, silent = false,
                 settings = {mode = "Normal", animation = true, wallCheck = true,
+                    motionSource = lastKnifePrediction and lastKnifePrediction.motionSource,
                     cadence = "animation-cycle", model = lastKnifePrediction and lastKnifePrediction.model or "reference-v41",
                     referencePoint = lastKnifePrediction and {lastKnifePrediction.referenceEndpoint.X, lastKnifePrediction.referenceEndpoint.Y, lastKnifePrediction.referenceEndpoint.Z}, windupSeconds = 0.3},
             })

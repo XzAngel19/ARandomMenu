@@ -1,0 +1,190 @@
+{
+  "sourceRepository": "XzAngel19/TestingStuff",
+  "calibrationBlob": "f5c02e990990f450830452f7afeeb4bb1c9eceee",
+  "sourceSHA256": "baf41f3249f659dcce8d7be849eee70d80de24f2c658553b82efac15d2617e35",
+  "fixture": "tools/fixtures/prediction-v44/v33.json",
+  "final": {
+    "development": {
+      "samples": 176,
+      "v43MAE": 0.45903192459090897,
+      "v44MAE": 0.45903192459090897
+    },
+    "historical-v30": {
+      "samples": 284,
+      "v43MAE": 3.2115811731619717,
+      "v44MAE": 3.2115811731619717
+    },
+    "v33": {
+      "samples": 170,
+      "v43MAE": 0.43787277476470593,
+      "v44MAE": 0.4323034111411766,
+      "changedSamples": 2,
+      "recordedKindOfChangedWindows": "knife"
+    }
+  },
+  "candidateComparisons": {
+    "v43": {
+      "development": {
+        "samples": 176,
+        "referenceMAE": 0.5062155074772727,
+        "adaptiveMAE": 0.45903192459090897
+      },
+      "holdout": {
+        "samples": 284,
+        "referenceMAE": 3.256005803073944,
+        "adaptiveMAE": 3.2115811731619717
+      },
+      "small-v34": {
+        "samples": 16,
+        "referenceMAE": 0.20996356562500001,
+        "adaptiveMAE": 0.20996356562500001
+      },
+      "small-v31": {
+        "samples": 1,
+        "referenceMAE": 0.097605322,
+        "adaptiveMAE": 0.097605322
+      },
+      "backup": {
+        "samples": 170,
+        "referenceMAE": 0.4651681501058824,
+        "adaptiveMAE": 0.43787277476470593
+      }
+    },
+    "vertical-horizon": {
+      "development": {
+        "samples": 176,
+        "referenceMAE": 0.5062155074772727,
+        "adaptiveMAE": 0.45924944938636364
+      },
+      "holdout": {
+        "samples": 284,
+        "referenceMAE": 3.256005803073944,
+        "adaptiveMAE": 3.210580503352113
+      },
+      "small-v34": {
+        "samples": 16,
+        "referenceMAE": 0.20996356562500001,
+        "adaptiveMAE": 0.20996356562500001
+      },
+      "small-v31": {
+        "samples": 1,
+        "referenceMAE": 0.097605322,
+        "adaptiveMAE": 0.097605322
+      },
+      "backup": {
+        "samples": 170,
+        "referenceMAE": 0.4651681501058824,
+        "adaptiveMAE": 0.4279526477352941
+      }
+    },
+    "CV-fallback": {
+      "development": {
+        "samples": 176,
+        "referenceMAE": 0.5062155074772727,
+        "adaptiveMAE": 0.4790704801875
+      },
+      "holdout": {
+        "samples": 284,
+        "referenceMAE": 3.256005803073944,
+        "adaptiveMAE": 3.236514090084506
+      },
+      "small-v34": {
+        "samples": 16,
+        "referenceMAE": 0.20996356562500001,
+        "adaptiveMAE": 0.22383567912500002
+      },
+      "small-v31": {
+        "samples": 1,
+        "referenceMAE": 0.097605322,
+        "adaptiveMAE": 0.072996715
+      },
+      "backup": {
+        "samples": 170,
+        "referenceMAE": 0.4651681501058824,
+        "adaptiveMAE": 0.4608573467882355
+      }
+    },
+    "no-accel-fallback": {
+      "development": {
+        "samples": 176,
+        "referenceMAE": 0.5062155074772727,
+        "adaptiveMAE": 0.477021451778409
+      },
+      "holdout": {
+        "samples": 284,
+        "referenceMAE": 3.256005803073944,
+        "adaptiveMAE": 3.236838128915491
+      },
+      "small-v34": {
+        "samples": 16,
+        "referenceMAE": 0.20996356562500001,
+        "adaptiveMAE": 0.226094951125
+      },
+      "small-v31": {
+        "samples": 1,
+        "referenceMAE": 0.097605322,
+        "adaptiveMAE": 0.097605322
+      },
+      "backup": {
+        "samples": 170,
+        "referenceMAE": 0.4651681501058824,
+        "adaptiveMAE": 0.45791397665294153
+      }
+    },
+    "vertical-velocity": {
+      "development": {
+        "samples": 176,
+        "referenceMAE": 0.5062155074772727,
+        "adaptiveMAE": 0.5416844493863636
+      },
+      "holdout": {
+        "samples": 284,
+        "referenceMAE": 3.256005803073944,
+        "adaptiveMAE": 3.3267007337816885
+      },
+      "small-v34": {
+        "samples": 16,
+        "referenceMAE": 0.20996356562500001,
+        "adaptiveMAE": 0.20996356562500001
+      },
+      "small-v31": {
+        "samples": 1,
+        "referenceMAE": 0.097605322,
+        "adaptiveMAE": 0.097605322
+      },
+      "backup": {
+        "samples": 170,
+        "referenceMAE": 0.4651681501058824,
+        "adaptiveMAE": 0.4503150359588238
+      }
+    },
+    "position-any": {
+      "development": {
+        "samples": 176,
+        "referenceMAE": 0.5062155074772727,
+        "adaptiveMAE": 0.4716241889829544
+      },
+      "holdout": {
+        "samples": 284,
+        "referenceMAE": 3.256005803073944,
+        "adaptiveMAE": 3.237016215683099
+      },
+      "small-v34": {
+        "samples": 16,
+        "referenceMAE": 0.20996356562500001,
+        "adaptiveMAE": 0.20996356562500001
+      },
+      "small-v31": {
+        "samples": 1,
+        "referenceMAE": 0.097605322,
+        "adaptiveMAE": 0.097605322
+      },
+      "backup": {
+        "samples": 170,
+        "referenceMAE": 0.4651681501058824,
+        "adaptiveMAE": 0.45778495577647077
+      }
+    }
+  },
+  "limits": "Retrospective client poses, correlated samples, shared RTT assumption, no live map floor geometry or server hit-rate. Knife intercept tests are controlled geometry, not online validation. Final changes only two v33 samples; previous 477 unchanged. No large improvement demonstrated."
+}

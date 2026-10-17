@@ -714,7 +714,7 @@ function Module.init(context: any): any
         local _textSettingsWindow: FloatingWindowRecord
         _textSettingsWindow, textSettingsScroll = createOverlaySettingsWindow(
             "TextGUI",
-            "Text GUI Studio",
+            "Text GUI settings",
             state.layout.compact and 500 or 540,
             Vector2.new(300, 70)
         )
@@ -738,7 +738,7 @@ function Module.init(context: any): any
         local _radarSettingsWindow: FloatingWindowRecord
         _radarSettingsWindow, radarSettingsScroll = createOverlaySettingsWindow(
             "Radar",
-            "Radar Studio",
+            "Radar settings",
             500,
             Vector2.new(630, 70)
         )

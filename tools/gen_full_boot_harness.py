@@ -952,6 +952,10 @@ do
     local calibration = findFeature("Calibration")
     assert(calibration and string.find(calibration.configKey, "MM2", 1, true), "MM2 Calibration must remain separate")
     assert(ex.state.clickGui and not ex.state.clickGui.categories.Fun, "Fun window must be removed")
+    local freecam = ex.state.framework:GetModule("FreeCam")
+    assert(freecam and freecam.Category == "World" and freecam.Options.Speed and freecam.Options.Sensitivity)
+    local zoom = findFeature("Zoom")
+    assert(zoom and zoom.options:FindFirstChild("Option_Throughwalls"), "Zoom must expose its wall bypass")
     assert(ex.state.toggleKey == Enum.KeyCode.RightShift, "menu-only default must be RShift")
     for _, binding in pairs(ex.state.shortcutBindings) do
       assert(binding.key == Enum.KeyCode.Unknown, "module shortcuts must remain unbound")

@@ -217,7 +217,7 @@ local RUNTIME_RAW_BASE: string =
         .. RUNTIME_BRANCH
         .. "/"
 
-local SOURCE_STAMP: string = "v43-20261016-render-roles"
+local SOURCE_STAMP: string = "v44-20261016-camera"
 
 local BOOT_STARTED_AT: number = os.clock()
 local BOOT_FINGERPRINT_SECONDS: number = 0
@@ -5790,6 +5790,7 @@ local fallbackManifest: any = {
         "src/libraries/Weapons.lua",
         "src/libraries/Render.lua",
         "src/libraries/GameRoles.lua",
+        "src/libraries/CameraAccess.lua",
         "src/guis/Wurst/Code/Cards.lua",
         "src/guis/Wurst/Code/WindowManager.lua",
         "src/guis/Wurst/Code/ClickGui.lua",
@@ -5815,6 +5816,7 @@ local fallbackManifest: any = {
         {path = "src/games/universal/Blatant/Spider.lua", name = "Spider", category = "Exploits"},
         {path = "src/games/universal/Blatant/Invisible.lua", name = "Ghost", category = "Utilities"},
         {path = "src/games/universal/Movement/SafeWalk.lua", name = "Safe Walk", category = "World"},
+        {path = "src/games/universal/Render/FreeCam.lua", name = "FreeCam", category = "World"},
         {path = "src/games/universal/Render/ZoomUnlocker.lua", name = "Zoom", category = "Render"},
         {path = "src/games/universal/Other/InteractExtender.lua", name = "Interact Extender", category = "Exploits"},
         {path = "src/games/universal/Blatant/Fly.lua", name = "Fly", category = "Exploits"},

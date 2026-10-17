@@ -1409,6 +1409,27 @@ function predictionMath.gunAdaptive(velocity: Vector3, acceleration: Vector3,
     return Vector3.new(displacement.X, y, displacement.Z), uncertainty, sensitivity
 end
 
+-- Position packets can disagree with AssemblyLinearVelocity. Use an observed
+-- straight segment only after two independent, consistent time windows.
+function predictionMath.observedHorizontalVelocity(points: {any}?): Vector3?
+    if not points or #points < 3 then return nil end
+    local last = points[#points]
+    local firstIndex = #points
+    while firstIndex > 1 and last.at - points[firstIndex - 1].at <= 0.15 do firstIndex -= 1 end
+    local first = points[firstIndex]
+    if last.at - first.at < 0.075 then return nil end
+    local middle = points[math.floor((firstIndex + #points) / 2)]
+    local before, after = middle.at - first.at, last.at - middle.at
+    if before < 0.025 or after < 0.025 then return nil end
+    local a = (middle.position - first.position) / before
+    local b = (last.position - middle.position) / after
+    a, b = Vector3.new(a.X,0,a.Z), Vector3.new(b.X,0,b.Z)
+    if not predictionMath.finite(a.Magnitude) or not predictionMath.finite(b.Magnitude)
+        or b.Magnitude < 1 or b.Magnitude > 110 or a.Magnitude < 1 then return nil end
+    if (a-b).Magnitude > math.max(2, b.Magnitude * 0.15) then return nil end
+    return b
+end
+
 -- Native blade visual is LINEAR; gravity below belongs to the target.
 -- Find the earliest intercept with bounded bracketing + bisection. A floor
 -- clamps target landing height, never bends the blade or adds a fake impulse.
@@ -1453,6 +1474,7 @@ type MotionSample = {
     turnRate: number?,
     turnReferenceAt: number?,
     history: {any}?,
+    positionHistory: {any}?,
 }
 
 local motionSamples: {[Player]: MotionSample} =
@@ -1561,11 +1583,14 @@ local function getFilteredVelocity(player: Player, root: BasePart): Vector3
         end
     end
 
-    local history = {}
+    local history, positionHistory = {}, {}
     if sample and sample.character == character and now - sample.sampledAt < 0.25
         and (root.Position - sample.position).Magnitude < 32 then
         history = sample.history or {}
+        positionHistory = sample.positionHistory or {}
     end
+    table.insert(positionHistory, {at=now, position=root.Position})
+    while #positionHistory > 24 or (#positionHistory > 1 and now-positionHistory[1].at > 0.25) do table.remove(positionHistory,1) end
     local last = history[#history]
     -- Interpolated position changes on render frames are NOT a new velocity
     -- observation. Otherwise a 240-Hz client erases the preceding packet's
@@ -1585,6 +1610,7 @@ local function getFilteredVelocity(player: Player, root: BasePart): Vector3
         turnRate = turnRate,
         turnReferenceAt = turnReferenceAt,
         history = history,
+        positionHistory = positionHistory,
     }
     return velocity
 end

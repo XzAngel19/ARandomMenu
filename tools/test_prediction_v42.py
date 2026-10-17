@@ -62,7 +62,7 @@ end
 local _,b=aim('Adaptive');local _,a=aim('Reference v41')
 near(b.endpoint.X,.8);near(a.endpoint.X,1.2)
 near((b.referenceEndpoint-a.endpoint).Magnitude,0);near(b.leadSensitivity,0)
-assert(b.model=='adaptive-v42' and a.model=='reference-v41')
+assert(b.model=='adaptive-v44' and a.model=='reference-v41')
 velocity=Vector3.zero;root.AssemblyLinearVelocity=velocity
 sample.velocity=velocity;sample.history={};sample.sampledAt=now
 local _,rest=aim('Adaptive');near(rest.endpoint.X,0)

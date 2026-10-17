@@ -60,6 +60,7 @@ function Module.init(runtime: any): any
     end
 
     type GunPrediction = {
+        motionSource: string?,
         targetPosition: Vector3,
         endpoint: Vector3,
         velocity: Vector3,
@@ -251,6 +252,7 @@ function Module.init(runtime: any): any
 
         local referenceEndpoint = part.Position + displacement
         local adaptive = mm2Settings.predictionModel == "Adaptive"
+        local motionSource = "velocity"
         local adaptiveError = MINIMUM_ERROR_RADIUS
         if adaptive then
             local history = sample and sample.history
@@ -289,6 +291,16 @@ function Module.init(runtime: any): any
                 -- No supported curve/brake: retain A's horizontal estimate,
                 -- not an unvalidated CV replacement of every trajectory.
                 displacement = Vector3.new(referenceEndpoint.X - part.Position.X, displacement.Y, referenceEndpoint.Z - part.Position.Z)
+            end
+            local observedVelocity = horizontalVelocity.Magnitude < 1 and predictionMath.observedHorizontalVelocity(sample and sample.positionHistory) or nil
+            if observedVelocity and measuredTurn == 0 and measuredAcceleration.Magnitude == 0 then
+                local observedLead = observedVelocity * horizon
+                local difference = observedLead - Vector3.new(displacement.X,0,displacement.Z)
+                if difference.Magnitude > MINIMUM_ERROR_RADIUS then
+                    displacement = Vector3.new(observedLead.X,displacement.Y,observedLead.Z)
+                    lead, leadSensitivity = horizon, 1
+                    motionSource = "position"
+                end
             end
             local correctedJump = grounded and jumpState and math.abs(velocity.Y) <= 6
                 or risingJumpState and math.abs(velocity.Y) < 8
@@ -388,7 +400,8 @@ function Module.init(runtime: any): any
             leadSensitivity = leadSensitivity,
             capturedPosition = part.Position,
             aimRootOffset = part.Position - (root :: BasePart).Position,
-            model = adaptive and "adaptive-v42" or "reference-v41",
+            motionSource = motionSource,
+            model = adaptive and "adaptive-v44" or "reference-v41",
             referenceEndpoint = referenceEndpoint,
         }, nil
     end
@@ -653,7 +666,7 @@ function Module.init(runtime: any): any
                 settings = {mode = "Silent", spawn = mm2Settings.silentSpawn,
                     sweep = mm2Settings.silentSweep, motionHz = mm2Settings.motionSampleHz,
                     leadSeconds = resolved.leadSeconds, errorRadius = resolved.errorRadius,
-                    predictionModel = resolved.model,
+                    predictionModel = resolved.model, motionSource = resolved.motionSource,
                     referencePoint = resolved.referenceEndpoint and {resolved.referenceEndpoint.X, resolved.referenceEndpoint.Y, resolved.referenceEndpoint.Z},
                     predictedPoint = {resolved.endpoint.X, resolved.endpoint.Y, resolved.endpoint.Z},
                     sampledVelocity = {resolved.velocity.X, resolved.velocity.Y, resolved.velocity.Z}},
@@ -681,7 +694,7 @@ function Module.init(runtime: any): any
             settings = {mode = "Normal", wallCheck = mm2Settings.shootWallCheck,
                 motionHz = mm2Settings.motionSampleHz, leadBias = mm2Settings.gunLeadBias,
                 wallCheckPolicy = "live-body-first-hit", leadSeconds = resolved.leadSeconds, errorRadius = resolved.errorRadius,
-                predictionModel = resolved.model,
+                predictionModel = resolved.model, motionSource = resolved.motionSource,
                 referencePoint = resolved.referenceEndpoint and {resolved.referenceEndpoint.X, resolved.referenceEndpoint.Y, resolved.referenceEndpoint.Z},
                 predictedPoint = {resolved.endpoint.X, resolved.endpoint.Y, resolved.endpoint.Z},
                 sampledVelocity = {resolved.velocity.X, resolved.velocity.Y, resolved.velocity.Z}},

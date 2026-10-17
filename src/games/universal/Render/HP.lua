@@ -24,26 +24,22 @@ function Module.init(context: any): any
     end
     -- Native text supports Unicode heart glyphs, unlike the menu's bitmap font.
     hud = create("Frame", {Name = "SelfHP", Parent = host.ScreenGui, AnchorPoint = Vector2.new(0.5,1),
-        Position = UDim2.new(0.5,0,1,-110), Size = UDim2.fromOffset(218,66),
-        BackgroundColor3 = Color3.fromRGB(17,20,28), BackgroundTransparency = 0.12, BorderSizePixel = 0, Visible = false, ZIndex = 20})
-    create("UICorner", {Parent = hud, CornerRadius = UDim.new(0,12)})
-    create("UIStroke", {Parent = hud, Color = Color3.fromRGB(122,138,163), Transparency = 0.6, Thickness = 1})
+        Position = UDim2.new(0.5,0,1,-110), Size = UDim2.fromOffset(156,36),
+        BackgroundColor3 = Color3.fromRGB(24,24,24), BackgroundTransparency = 0.35, BorderSizePixel = 0, Visible = false, ZIndex = 20})
+    if host.ThemeEngine then host.ThemeEngine.Bind(hud,"BackgroundColor3","background") end
     local scale = create("UIScale", {Parent = hud, Scale = 1})
     local function label(name, text, position, size, font, textSize)
         return create("TextLabel", {Name = name, Parent = hud, Position = position, Size = size, BackgroundTransparency = 1,
             Text = text, Font = font, TextSize = textSize, TextColor3 = Color3.fromRGB(241,245,250), TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 22})
     end
-    local heart = label("Heart", "❤️", UDim2.fromOffset(13,9), UDim2.fromOffset(32,32), Enum.Font.Gotham, 24)
-    local value = label("Value", "", UDim2.fromOffset(53,7), UDim2.fromOffset(150,25), Enum.Font.GothamBold, 19)
+    local heart = label("Heart", "❤️", UDim2.fromOffset(8,4), UDim2.fromOffset(24,24), Enum.Font.Gotham, 18)
+    local value = label("Value", "", UDim2.fromOffset(37,4), UDim2.fromOffset(110,24), Enum.Font.Code, 16)
     value.TextScaled = true
-    create("UITextSizeConstraint", {Parent = value, MinTextSize = 12, MaxTextSize = 19})
-    local caption = label("State", "SELF HP", UDim2.fromOffset(54,31), UDim2.fromOffset(150,15), Enum.Font.GothamMedium, 10)
-    local track = create("Frame", {Name = "Track", Parent = hud, Position = UDim2.fromOffset(14,53), Size = UDim2.new(1,-28,0,5),
+    create("UITextSizeConstraint", {Parent = value, MinTextSize = 12, MaxTextSize = 16})
+    local track = create("Frame", {Name = "Track", Parent = hud, Position = UDim2.fromOffset(8,31), Size = UDim2.new(1,-16,0,2),
         BackgroundColor3 = Color3.fromRGB(43,49,62), BorderSizePixel = 0, ClipsDescendants = true, ZIndex = 21})
-    create("UICorner", {Parent = track, CornerRadius = UDim.new(0,3)})
     local trail = create("Frame", {Name = "Damage", Parent = track, Size = UDim2.fromScale(1,1), BackgroundColor3 = Color3.fromRGB(247,186,103), BorderSizePixel = 0, ZIndex = 22})
     local fill = create("Frame", {Name = "Fill", Parent = track, Size = UDim2.fromScale(1,1), BackgroundColor3 = healthColour(1), BorderSizePixel = 0, ZIndex = 23})
-    create("UICorner", {Parent = fill, CornerRadius = UDim.new(0,3)})
     local lastCharacter, delayed = nil, 1
     local card
     local function clear()
@@ -86,12 +82,10 @@ function Module.init(context: any): any
                     local colour = healthColour(fraction)
                     local wanted = tostring(math.ceil(health)) .. " / " .. tostring(math.ceil(maximum))
                     if value.Text ~= wanted then value.Text = wanted end
-                    local stateText = not humanoid and "WAITING FOR RESPAWN" or health <= 0 and "RESPAWNING" or fraction <= 0.25 and "CRITICAL" or fraction <= 0.55 and "INJURED" or "HEALTHY"
-                    if caption.Text ~= stateText then caption.Text = stateText end
                     heart.TextColor3 = colour; fill.BackgroundColor3 = colour
                     fill.Size = UDim2.fromScale(fraction,1); trail.Size = UDim2.fromScale(delayed,1)
                     local wantedScale = options["Self HP scale"].Value
-                    if camera then wantedScale = math.min(wantedScale, math.max(0.5, (camera.ViewportSize.X - 24) / 218)) end
+                    if camera then wantedScale = math.min(wantedScale, math.max(0.5, (camera.ViewportSize.X - 24) / 156)) end
                     scale.Scale = wantedScale
                 end
                 card:SetStatus(options["Self HP"].Value and tostring(count) .. " + self" or tostring(count))

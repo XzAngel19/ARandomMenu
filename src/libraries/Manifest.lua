@@ -25,6 +25,7 @@ local Manifest: Manifest = {
         "src/libraries/Weapons.lua",
         "src/libraries/Render.lua",
         "src/libraries/GameRoles.lua",
+        "src/libraries/CameraAccess.lua",
 
         "src/guis/Wurst/Code/Cards.lua",
 
@@ -41,6 +42,7 @@ local Manifest: Manifest = {
         "src/guis/Wurst/Code/Furniture.lua",
     },
     modules = {
+        {path = "src/games/universal/Render/FreeCam.lua", name = "FreeCam", category = "World"},
 
         {
             path = "src/games/universal/Render/ItemRender.lua",

@@ -1,5 +1,5 @@
 return {
-    stamp = "v43-20261016-render-roles",
+    stamp = "v44-20261016-camera",
     files = {
         ["src/Profile/142823291.lua"] = [[
 --!strict
@@ -1915,7 +1915,19 @@ function Module.init(runtime: any): any
         if not flight or not predictionMath.finite(flight) then return nil end
         local reference = observed + velocity * flight
         local predicted = reference
+        local motionSource = "velocity"
         if mm2Settings and mm2Settings.predictionModel == "Adaptive" then
+            local sample = motionSamples and motionSamples[target]
+            local horizontal = Vector3.new(velocity.X,0,velocity.Z)
+            local observedVelocity = horizontal.Magnitude < 1 and predictionMath.observedHorizontalVelocity(sample and sample.positionHistory) or nil
+            if observedVelocity then
+                local observedMotion = Vector3.new(observedVelocity.X,velocity.Y,observedVelocity.Z)
+                local relativeAim, observedFlight = predictionMath.knifeBallisticIntercept(root.Position-originPos, observedMotion, speed, latency, 0)
+                if relativeAim then
+                    predicted, flight, velocity = originPos + relativeAim, observedFlight, observedMotion
+                    motionSource = "position"
+                end
+            end
             local humanoid = target.Character:FindFirstChildOfClass("Humanoid")
             local stateName = humanoid and humanoid:GetState()
             local airborne = stateName == Enum.HumanoidStateType.Jumping or stateName == Enum.HumanoidStateType.Freefall
@@ -1940,7 +1952,7 @@ function Module.init(runtime: any): any
                 if relativeAim then predicted = originPos + relativeAim end
             end
         end
-        lastKnifePrediction = {model = mm2Settings and mm2Settings.predictionModel == "Adaptive" and "adaptive-v42" or "reference-v41", referenceEndpoint = reference}
+        lastKnifePrediction = {motionSource = motionSource, model = mm2Settings and mm2Settings.predictionModel == "Adaptive" and "adaptive-v44" or "reference-v41", referenceEndpoint = reference}
         return predicted
     end
 
@@ -2099,6 +2111,7 @@ function Module.init(runtime: any): any
                 kind = "knife", tool = knife, toolName = knife.Name,
                 originPos = origin.Position, aimPos = aim, target = target, silent = false,
                 settings = {mode = "Normal", animation = true, wallCheck = true,
+                    motionSource = lastKnifePrediction and lastKnifePrediction.motionSource,
                     cadence = "animation-cycle", model = lastKnifePrediction and lastKnifePrediction.model or "reference-v41",
                     referencePoint = lastKnifePrediction and {lastKnifePrediction.referenceEndpoint.X, lastKnifePrediction.referenceEndpoint.Y, lastKnifePrediction.referenceEndpoint.Z}, windupSeconds = 0.3},
             })
@@ -2239,6 +2252,7 @@ function Module.init(runtime: any): any
     end
 
     type GunPrediction = {
+        motionSource: string?,
         targetPosition: Vector3,
         endpoint: Vector3,
         velocity: Vector3,
@@ -2430,6 +2444,7 @@ function Module.init(runtime: any): any
 
         local referenceEndpoint = part.Position + displacement
         local adaptive = mm2Settings.predictionModel == "Adaptive"
+        local motionSource = "velocity"
         local adaptiveError = MINIMUM_ERROR_RADIUS
         if adaptive then
             local history = sample and sample.history
@@ -2468,6 +2483,16 @@ function Module.init(runtime: any): any
                 -- No supported curve/brake: retain A's horizontal estimate,
                 -- not an unvalidated CV replacement of every trajectory.
                 displacement = Vector3.new(referenceEndpoint.X - part.Position.X, displacement.Y, referenceEndpoint.Z - part.Position.Z)
+            end
+            local observedVelocity = horizontalVelocity.Magnitude < 1 and predictionMath.observedHorizontalVelocity(sample and sample.positionHistory) or nil
+            if observedVelocity and measuredTurn == 0 and measuredAcceleration.Magnitude == 0 then
+                local observedLead = observedVelocity * horizon
+                local difference = observedLead - Vector3.new(displacement.X,0,displacement.Z)
+                if difference.Magnitude > MINIMUM_ERROR_RADIUS then
+                    displacement = Vector3.new(observedLead.X,displacement.Y,observedLead.Z)
+                    lead, leadSensitivity = horizon, 1
+                    motionSource = "position"
+                end
             end
             local correctedJump = grounded and jumpState and math.abs(velocity.Y) <= 6
                 or risingJumpState and math.abs(velocity.Y) < 8
@@ -2567,7 +2592,8 @@ function Module.init(runtime: any): any
             leadSensitivity = leadSensitivity,
             capturedPosition = part.Position,
             aimRootOffset = part.Position - (root :: BasePart).Position,
-            model = adaptive and "adaptive-v42" or "reference-v41",
+            motionSource = motionSource,
+            model = adaptive and "adaptive-v44" or "reference-v41",
             referenceEndpoint = referenceEndpoint,
         }, nil
     end
@@ -2832,7 +2858,7 @@ function Module.init(runtime: any): any
                 settings = {mode = "Silent", spawn = mm2Settings.silentSpawn,
                     sweep = mm2Settings.silentSweep, motionHz = mm2Settings.motionSampleHz,
                     leadSeconds = resolved.leadSeconds, errorRadius = resolved.errorRadius,
-                    predictionModel = resolved.model,
+                    predictionModel = resolved.model, motionSource = resolved.motionSource,
                     referencePoint = resolved.referenceEndpoint and {resolved.referenceEndpoint.X, resolved.referenceEndpoint.Y, resolved.referenceEndpoint.Z},
                     predictedPoint = {resolved.endpoint.X, resolved.endpoint.Y, resolved.endpoint.Z},
                     sampledVelocity = {resolved.velocity.X, resolved.velocity.Y, resolved.velocity.Z}},
@@ -2860,7 +2886,7 @@ function Module.init(runtime: any): any
             settings = {mode = "Normal", wallCheck = mm2Settings.shootWallCheck,
                 motionHz = mm2Settings.motionSampleHz, leadBias = mm2Settings.gunLeadBias,
                 wallCheckPolicy = "live-body-first-hit", leadSeconds = resolved.leadSeconds, errorRadius = resolved.errorRadius,
-                predictionModel = resolved.model,
+                predictionModel = resolved.model, motionSource = resolved.motionSource,
                 referencePoint = resolved.referenceEndpoint and {resolved.referenceEndpoint.X, resolved.referenceEndpoint.Y, resolved.referenceEndpoint.Z},
                 predictedPoint = {resolved.endpoint.X, resolved.endpoint.Y, resolved.endpoint.Z},
                 sampledVelocity = {resolved.velocity.X, resolved.velocity.Y, resolved.velocity.Z}},
@@ -5640,6 +5666,27 @@ function predictionMath.gunAdaptive(velocity: Vector3, acceleration: Vector3,
     return Vector3.new(displacement.X, y, displacement.Z), uncertainty, sensitivity
 end
 
+-- Position packets can disagree with AssemblyLinearVelocity. Use an observed
+-- straight segment only after two independent, consistent time windows.
+function predictionMath.observedHorizontalVelocity(points: {any}?): Vector3?
+    if not points or #points < 3 then return nil end
+    local last = points[#points]
+    local firstIndex = #points
+    while firstIndex > 1 and last.at - points[firstIndex - 1].at <= 0.15 do firstIndex -= 1 end
+    local first = points[firstIndex]
+    if last.at - first.at < 0.075 then return nil end
+    local middle = points[math.floor((firstIndex + #points) / 2)]
+    local before, after = middle.at - first.at, last.at - middle.at
+    if before < 0.025 or after < 0.025 then return nil end
+    local a = (middle.position - first.position) / before
+    local b = (last.position - middle.position) / after
+    a, b = Vector3.new(a.X,0,a.Z), Vector3.new(b.X,0,b.Z)
+    if not predictionMath.finite(a.Magnitude) or not predictionMath.finite(b.Magnitude)
+        or b.Magnitude < 1 or b.Magnitude > 110 or a.Magnitude < 1 then return nil end
+    if (a-b).Magnitude > math.max(2, b.Magnitude * 0.15) then return nil end
+    return b
+end
+
 -- Native blade visual is LINEAR; gravity below belongs to the target.
 -- Find the earliest intercept with bounded bracketing + bisection. A floor
 -- clamps target landing height, never bends the blade or adds a fake impulse.
@@ -5684,6 +5731,7 @@ type MotionSample = {
     turnRate: number?,
     turnReferenceAt: number?,
     history: {any}?,
+    positionHistory: {any}?,
 }
 
 local motionSamples: {[Player]: MotionSample} =
@@ -5792,11 +5840,14 @@ local function getFilteredVelocity(player: Player, root: BasePart): Vector3
         end
     end
 
-    local history = {}
+    local history, positionHistory = {}, {}
     if sample and sample.character == character and now - sample.sampledAt < 0.25
         and (root.Position - sample.position).Magnitude < 32 then
         history = sample.history or {}
+        positionHistory = sample.positionHistory or {}
     end
+    table.insert(positionHistory, {at=now, position=root.Position})
+    while #positionHistory > 24 or (#positionHistory > 1 and now-positionHistory[1].at > 0.25) do table.remove(positionHistory,1) end
     local last = history[#history]
     -- Interpolated position changes on render frames are NOT a new velocity
     -- observation. Otherwise a 240-Hz client erases the preceding packet's
@@ -5816,6 +5867,7 @@ local function getFilteredVelocity(player: Player, root: BasePart): Vector3
         turnRate = turnRate,
         turnReferenceAt = turnReferenceAt,
         history = history,
+        positionHistory = positionHistory,
     }
     return velocity
 end
@@ -21324,6 +21376,239 @@ end
 return Module
 
 ]],
+        ["src/games/universal/Render/FreeCam.lua"] = [[
+local Module = {Name = "FreeCam", Initialized = false}
+local card
+
+function Module.init(context)
+    local host = context.host
+    local input, run = host.UserInputService, host.RunService
+    local actions = game:GetService("ContextActionService")
+    local access = context.services.cameraAccess
+    local world = host.workspace or workspace
+    local create = host.create
+    local id = "ARandomMenu.FreeCam." .. tostring({})
+
+    card = context.framework.Categories.Visuals:CreateModule({
+        Name = "FreeCam", Category = "World", ConfigKey = "Universal.FreeCam", Order = 6,
+        Tooltip = "Move the camera without moving your character. WASD, Q/E, right-drag; touch controls on mobile.",
+        Function = function(enabled)
+            if not enabled then card:SetStatus(nil); return end
+            local keys, held, connections = {}, {}, {}
+            local camera, saved, position, pitch, yaw
+            local writtenFrame, writtenFocus
+            local controls, controlsEnabled
+            local touchGui, touchGuiEnabled
+            local moveTouch, lookTouch, dragging
+            local stick = Vector2.zero
+            local mouseMode, mouseIcon
+            local gui, pad, knob
+
+            local function connect(signal, callback)
+                table.insert(connections, signal:Connect(callback))
+            end
+            local function releaseMouse()
+                if not dragging then return end
+                dragging = false
+                if input.MouseBehavior == Enum.MouseBehavior.LockCurrentPosition then input.MouseBehavior = mouseMode end
+                if input.MouseIconEnabled == false then input.MouseIconEnabled = mouseIcon end
+            end
+            local function resetInput()
+                table.clear(keys); table.clear(held)
+                moveTouch, lookTouch = nil, nil
+                stick = Vector2.zero
+                if knob then knob.Position = UDim2.fromScale(0.5,0.5) end
+                releaseMouse()
+            end
+            local function restoreCamera()
+                if camera and saved then
+                    pcall(function()
+                        if camera.CameraType ~= Enum.CameraType.Scriptable then return end
+                        camera.CameraType = saved.kind
+                        if camera.CFrame == writtenFrame then camera.CFrame = saved.frame end
+                        if camera.Focus == writtenFocus then camera.Focus = saved.focus end
+                    end)
+                end
+                camera, saved, writtenFrame, writtenFocus = nil, nil, nil, nil
+            end
+            local function releaseControls()
+                if controls and controlsEnabled then pcall(controls.Enable, controls) end
+                controls, controlsEnabled = nil, nil
+                if touchGui then pcall(function() touchGui.Enabled = touchGuiEnabled end) end
+                touchGui = nil
+            end
+            card:Clean(function()
+                run:UnbindFromRenderStep(id)
+                table.clear(keys); table.clear(held)
+                for _, name in ipairs({"Forward","Back","Left","Right","Up","Down"}) do actions:UnbindAction(id .. name) end
+                for _, connection in ipairs(connections) do connection:Disconnect() end
+                releaseMouse(); restoreCamera(); releaseControls()
+                if gui then gui:Destroy() end
+            end)
+            local function hold(name, source, down)
+                held[name] = held[name] or {}
+                held[name][source] = down and true or nil
+                keys[name] = next(held[name]) ~= nil
+            end
+            for _, definition in ipairs({
+                {"Forward",Enum.KeyCode.W,Enum.KeyCode.Up}, {"Back",Enum.KeyCode.S,Enum.KeyCode.Down},
+                {"Left",Enum.KeyCode.A,Enum.KeyCode.Left}, {"Right",Enum.KeyCode.D,Enum.KeyCode.Right},
+                {"Up",Enum.KeyCode.E,Enum.KeyCode.Space}, {"Down",Enum.KeyCode.Q,Enum.KeyCode.LeftControl},
+            }) do
+                local name = definition[1]
+                actions:BindActionAtPriority(id .. name, function(_, state, event)
+                    if input:GetFocusedTextBox() then held[name] = nil; keys[name] = false; return Enum.ContextActionResult.Pass end
+                    if state == Enum.UserInputState.Cancel then held[name] = nil; keys[name] = false
+                    else hold(name,event.KeyCode,state == Enum.UserInputState.Begin or state == Enum.UserInputState.Change) end
+                    return Enum.ContextActionResult.Sink
+                end, false, Enum.ContextActionPriority.High.Value + 1, definition[2], definition[3])
+            end
+            local function pan(delta)
+                local sensitivity = math.rad(card.Options.Sensitivity.Value)
+                yaw -= delta.X * sensitivity
+                pitch = math.clamp(pitch - delta.Y * sensitivity, -math.rad(89), math.rad(89))
+            end
+            connect(input.InputBegan, function(event, processed)
+                if processed or input:GetFocusedTextBox() or not position then return end
+                if event.UserInputType == Enum.UserInputType.MouseButton2 then
+                    mouseMode, mouseIcon = input.MouseBehavior, input.MouseIconEnabled
+                    dragging = true
+                    input.MouseBehavior = Enum.MouseBehavior.LockCurrentPosition
+                    input.MouseIconEnabled = false
+                end
+            end)
+            connect(input.InputChanged, function(event)
+                if dragging and event.UserInputType == Enum.UserInputType.MouseMovement and not input:GetFocusedTextBox() then pan(event.Delta) end
+            end)
+            connect(input.InputEnded, function(event)
+                if event.UserInputType == Enum.UserInputType.MouseButton2 then releaseMouse() end
+            end)
+            connect(input.WindowFocusReleased, resetInput)
+            connect(input.TextBoxFocused, resetInput)
+
+            if input.TouchEnabled then
+                gui = create("Frame", {Name="FreeCamControls", Parent=host.ScreenGui, Size=UDim2.fromScale(1,1), BackgroundTransparency=1, ZIndex=30})
+                local function button(name, text, at, size)
+                    local object = create("TextButton", {Name=name, Parent=gui, Position=at, Size=size, Text=text, Font=Enum.Font.Code,
+                        TextSize=18, TextColor3=Color3.new(1,1,1), BackgroundColor3=Color3.fromRGB(25,25,25), BackgroundTransparency=0.3,
+                        BorderSizePixel=1, BorderColor3=Color3.fromRGB(120,120,120), AutoButtonColor=true, ZIndex=31})
+                    if host.ThemeEngine then
+                        host.ThemeEngine.Bind(object,"BackgroundColor3","background")
+                        host.ThemeEngine.Bind(object,"TextColor3","text")
+                    end
+                    return object
+                end
+                pad = button("Move", "", UDim2.new(0,22,1,-152), UDim2.fromOffset(104,104))
+                knob = create("Frame", {Parent=pad, Name="Stick", AnchorPoint=Vector2.new(0.5,0.5), Position=UDim2.fromScale(0.5,0.5),
+                    Size=UDim2.fromOffset(26,26), BackgroundColor3=Color3.fromRGB(220,220,220), BorderSizePixel=0, ZIndex=32})
+                local function moveStick(event)
+                    local centre = pad.AbsolutePosition + pad.AbsoluteSize * 0.5
+                    local delta = (Vector2.new(event.Position.X,event.Position.Y) - centre) / 42
+                    stick = delta.Magnitude > 1 and delta.Unit or delta
+                    if stick.Magnitude < 0.12 then stick = Vector2.zero end
+                    knob.Position = UDim2.new(0.5,stick.X*36,0.5,stick.Y*36)
+                end
+                connect(pad.InputBegan, function(event)
+                    if event.UserInputType == Enum.UserInputType.Touch and not moveTouch then moveTouch = event; moveStick(event) end
+                end)
+                for _, name in ipairs({"Up","Down"}) do
+                    local object = button(name, name == "Up" and "+" or "−", UDim2.new(1,-70,1,name == "Up" and -152 or -96), UDim2.fromOffset(48,48))
+                    connect(object.InputBegan, function(event) if event.UserInputType == Enum.UserInputType.Touch then hold(name,event,true) end end)
+                    connect(object.InputEnded, function(event) if event.UserInputType == Enum.UserInputType.Touch then hold(name,event,false) end end)
+                end
+                local exit = button("Exit", "Exit FreeCam", UDim2.new(0.5,-66,0,48), UDim2.fromOffset(132,30))
+                connect(exit.Activated, function()
+                    if card.Feature and card.Feature.enabled and card.Feature.activate then card.Feature.activate() else card:Toggle(false) end
+                end)
+                connect(input.TouchStarted, function(event, processed)
+                    local current = world.CurrentCamera
+                    if not processed and not lookTouch and event ~= moveTouch and current
+                        and event.Position.X > current.ViewportSize.X * 0.45 and not input:GetFocusedTextBox() then lookTouch = event end
+                end)
+                connect(input.TouchMoved, function(event)
+                    if event == moveTouch then
+                        moveStick(event)
+                    elseif event == lookTouch and position then pan(event.Delta) end
+                end)
+                connect(input.TouchEnded, function(event)
+                    hold("Up",event,false); hold("Down",event,false)
+                    if event == moveTouch then moveTouch = nil; stick = Vector2.zero; knob.Position = UDim2.fromScale(0.5,0.5) end
+                    if event == lookTouch then lookTouch = nil end
+                end)
+            end
+            card:SetStatus("WASD / touch")
+            run:BindToRenderStep(id, Enum.RenderPriority.Camera.Value + 1, function(dt)
+                local nextCamera = world.CurrentCamera
+                if camera ~= nextCamera then
+                    restoreCamera()
+                    camera = nextCamera
+                    if camera then
+                        saved = {kind=camera.CameraType, frame=camera.CFrame, focus=camera.Focus}
+                        if not position then
+                            position = camera.CFrame.Position
+                            local look = camera.CFrame.LookVector
+                            pitch, yaw = math.asin(math.clamp(look.Y,-1,1)), math.atan2(-look.X,-look.Z)
+                        end
+                    end
+                end
+                if not camera then return end
+                if writtenFrame and camera.CameraType ~= Enum.CameraType.Scriptable then
+                    saved.kind, saved.frame, saved.focus = camera.CameraType, camera.CFrame, camera.Focus
+                elseif writtenFrame and camera.CFrame ~= writtenFrame then
+                    saved.frame, saved.focus = camera.CFrame, camera.Focus
+                end
+                local nextControls = access:GetControls()
+                if type(nextControls) ~= "table" or type(nextControls.Disable) ~= "function" or type(nextControls.Enable) ~= "function" then nextControls = nil end
+                if nextControls ~= controls then
+                    releaseControls(); controls = nextControls
+                    if controls then
+                        controlsEnabled = controls.controlsEnabled ~= false
+                        local ok = pcall(controls.Disable, controls)
+                        if not ok then controls, controlsEnabled = nil, nil end
+                    end
+                end
+                local playerGui = host.LocalPlayer:FindFirstChildOfClass("PlayerGui")
+                local nativeTouch = playerGui and playerGui:FindFirstChild("TouchGui")
+                if nativeTouch ~= touchGui then
+                    if touchGui then pcall(function() touchGui.Enabled = touchGuiEnabled end) end
+                    touchGui = nativeTouch
+                    if touchGui then touchGuiEnabled = touchGui.Enabled end
+                end
+                if touchGui then touchGui.Enabled = false end
+                if not controls then
+                    local character = host.LocalPlayer.Character
+                    local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+                    if humanoid then humanoid:Move(Vector3.zero, false) end
+                end
+                local rotation = CFrame.fromOrientation(pitch,yaw,0)
+                if not input:GetFocusedTextBox() then
+                    local move = Vector3.new((keys.Right and 1 or 0)-(keys.Left and 1 or 0)+stick.X,
+                        (keys.Up and 1 or 0)-(keys.Down and 1 or 0), (keys.Back and 1 or 0)-(keys.Forward and 1 or 0)+stick.Y)
+                    local direction = rotation:VectorToWorldSpace(Vector3.new(move.X,0,move.Z)) + Vector3.yAxis * move.Y
+                    if direction.Magnitude > 1 then direction = direction.Unit end
+                    local speed = card.Options.Speed.Value * (input:IsKeyDown(Enum.KeyCode.LeftShift) and 3 or 1)
+                    position += direction * speed * math.clamp(dt,0,0.1)
+                end
+                camera.CameraType = Enum.CameraType.Scriptable
+                camera.CFrame = CFrame.new(position) * rotation
+                camera.Focus = camera.CFrame * CFrame.new(0,0,-16)
+                writtenFrame, writtenFocus = camera.CFrame, camera.Focus
+            end)
+        end,
+    })
+    card:CreateSlider({Name="Speed", Min=1, Max=150, Default=48})
+    card:CreateSlider({Name="Sensitivity", Min=0.05, Max=0.6, Default=0.2})
+    Module.Initialized = true
+    return card
+end
+function Module.destroy()
+    if card and card.Enabled then card:Toggle(false) end
+    card = nil
+    Module.Initialized = false
+end
+return Module
+
+]],
         ["src/games/universal/Render/Fullbright.lua"] = [[
 export type Runtime = {
     framework: any,
@@ -21462,26 +21747,22 @@ function Module.init(context: any): any
     end
     -- Native text supports Unicode heart glyphs, unlike the menu's bitmap font.
     hud = create("Frame", {Name = "SelfHP", Parent = host.ScreenGui, AnchorPoint = Vector2.new(0.5,1),
-        Position = UDim2.new(0.5,0,1,-110), Size = UDim2.fromOffset(218,66),
-        BackgroundColor3 = Color3.fromRGB(17,20,28), BackgroundTransparency = 0.12, BorderSizePixel = 0, Visible = false, ZIndex = 20})
-    create("UICorner", {Parent = hud, CornerRadius = UDim.new(0,12)})
-    create("UIStroke", {Parent = hud, Color = Color3.fromRGB(122,138,163), Transparency = 0.6, Thickness = 1})
+        Position = UDim2.new(0.5,0,1,-110), Size = UDim2.fromOffset(156,36),
+        BackgroundColor3 = Color3.fromRGB(24,24,24), BackgroundTransparency = 0.35, BorderSizePixel = 0, Visible = false, ZIndex = 20})
+    if host.ThemeEngine then host.ThemeEngine.Bind(hud,"BackgroundColor3","background") end
     local scale = create("UIScale", {Parent = hud, Scale = 1})
     local function label(name, text, position, size, font, textSize)
         return create("TextLabel", {Name = name, Parent = hud, Position = position, Size = size, BackgroundTransparency = 1,
             Text = text, Font = font, TextSize = textSize, TextColor3 = Color3.fromRGB(241,245,250), TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 22})
     end
-    local heart = label("Heart", "❤️", UDim2.fromOffset(13,9), UDim2.fromOffset(32,32), Enum.Font.Gotham, 24)
-    local value = label("Value", "", UDim2.fromOffset(53,7), UDim2.fromOffset(150,25), Enum.Font.GothamBold, 19)
+    local heart = label("Heart", "❤️", UDim2.fromOffset(8,4), UDim2.fromOffset(24,24), Enum.Font.Gotham, 18)
+    local value = label("Value", "", UDim2.fromOffset(37,4), UDim2.fromOffset(110,24), Enum.Font.Code, 16)
     value.TextScaled = true
-    create("UITextSizeConstraint", {Parent = value, MinTextSize = 12, MaxTextSize = 19})
-    local caption = label("State", "SELF HP", UDim2.fromOffset(54,31), UDim2.fromOffset(150,15), Enum.Font.GothamMedium, 10)
-    local track = create("Frame", {Name = "Track", Parent = hud, Position = UDim2.fromOffset(14,53), Size = UDim2.new(1,-28,0,5),
+    create("UITextSizeConstraint", {Parent = value, MinTextSize = 12, MaxTextSize = 16})
+    local track = create("Frame", {Name = "Track", Parent = hud, Position = UDim2.fromOffset(8,31), Size = UDim2.new(1,-16,0,2),
         BackgroundColor3 = Color3.fromRGB(43,49,62), BorderSizePixel = 0, ClipsDescendants = true, ZIndex = 21})
-    create("UICorner", {Parent = track, CornerRadius = UDim.new(0,3)})
     local trail = create("Frame", {Name = "Damage", Parent = track, Size = UDim2.fromScale(1,1), BackgroundColor3 = Color3.fromRGB(247,186,103), BorderSizePixel = 0, ZIndex = 22})
     local fill = create("Frame", {Name = "Fill", Parent = track, Size = UDim2.fromScale(1,1), BackgroundColor3 = healthColour(1), BorderSizePixel = 0, ZIndex = 23})
-    create("UICorner", {Parent = fill, CornerRadius = UDim.new(0,3)})
     local lastCharacter, delayed = nil, 1
     local card
     local function clear()
@@ -21524,12 +21805,10 @@ function Module.init(context: any): any
                     local colour = healthColour(fraction)
                     local wanted = tostring(math.ceil(health)) .. " / " .. tostring(math.ceil(maximum))
                     if value.Text ~= wanted then value.Text = wanted end
-                    local stateText = not humanoid and "WAITING FOR RESPAWN" or health <= 0 and "RESPAWNING" or fraction <= 0.25 and "CRITICAL" or fraction <= 0.55 and "INJURED" or "HEALTHY"
-                    if caption.Text ~= stateText then caption.Text = stateText end
                     heart.TextColor3 = colour; fill.BackgroundColor3 = colour
                     fill.Size = UDim2.fromScale(fraction,1); trail.Size = UDim2.fromScale(delayed,1)
                     local wantedScale = options["Self HP scale"].Value
-                    if camera then wantedScale = math.min(wantedScale, math.max(0.5, (camera.ViewportSize.X - 24) / 218)) end
+                    if camera then wantedScale = math.min(wantedScale, math.max(0.5, (camera.ViewportSize.X - 24) / 156)) end
                     scale.Scale = wantedScale
                 end
                 card:SetStatus(options["Self HP"].Value and tostring(count) .. " + self" or tostring(count))
@@ -23470,148 +23749,57 @@ return Module
 
 ]],
         ["src/games/universal/Render/ZoomUnlocker.lua"] = [[
-export type Runtime = {
-    framework: any,
-    entity: any,
-    host: any,
-}
+local Module = {Name = "ZoomUnlocker", Initialized = false}
+local cleanup
 
-local Module = {
-    Name = "ZoomUnlocker",
-    PlaceId = 0,
-    Events = {} :: {[string]: any},
-    Initialized = false,
-}
-
-local activeCleanup: (() -> ())? = nil
-
-function Module.init(context: Runtime): any
-    local host: any = context.host
-    local LocalPlayer: any = host.LocalPlayer
-    local TaskManager: any = host.TaskManager
-    local featureConnections: any = host.featureConnections
-    local disconnectFeatureConnection: any = host.disconnectFeatureConnection
-    local createUniversalFeature: any = host.createUniversalFeature
-    local addToggleOption: any = host.addToggleOption
-    local addNumberOption: any = host.addNumberOption
-    type ZoomSettings = {
-        minDistance: number,
-        maxDistance: number,
-        unlockFirstPerson: boolean,
-    }
-    type ZoomState = {
-        minDistance: number,
-        maxDistance: number,
-        cameraMode: Enum.CameraMode,
-    }
-    local zoomSettings: ZoomSettings = {
-        minDistance = 0.5,
-        maxDistance = 400,
-        unlockFirstPerson = true,
-    }
-    local originalZoomState: ZoomState? = nil
-    local ZoomFeature: any = nil
-
-    local function toggleZoomUnlocker(enabled: boolean): ()
-        disconnectFeatureConnection("ZoomUnlocker")
-        if originalZoomState then
-            LocalPlayer.CameraMinZoomDistance = originalZoomState.minDistance
-            LocalPlayer.CameraMaxZoomDistance = originalZoomState.maxDistance
-            LocalPlayer.CameraMode = originalZoomState.cameraMode
-            originalZoomState = nil
-        end
-        if not enabled then
-            if ZoomFeature then ZoomFeature:SetStatus(nil) end
-            return
-        end
-        ZoomFeature:SetStatus(tostring(math.round(zoomSettings.maxDistance)) .. " studs")
-        originalZoomState = {
-            minDistance = LocalPlayer.CameraMinZoomDistance,
-            maxDistance = LocalPlayer.CameraMaxZoomDistance,
-            cameraMode = LocalPlayer.CameraMode,
-        }
-        featureConnections.ZoomUnlocker = TaskManager:Connect(function(): ()
-            LocalPlayer.CameraMinZoomDistance = math.min(
-                zoomSettings.minDistance,
-                zoomSettings.maxDistance
-            )
-            LocalPlayer.CameraMaxZoomDistance = math.max(
-                zoomSettings.minDistance,
-                zoomSettings.maxDistance
-            )
-            if zoomSettings.unlockFirstPerson then
-                LocalPlayer.CameraMode = Enum.CameraMode.Classic
-            elseif originalZoomState then
-                LocalPlayer.CameraMode = originalZoomState.cameraMode
-            end
-        end)
+function Module.init(context)
+    local host, player = context.host, context.host.LocalPlayer
+    local access = context.services.cameraAccess
+    local settings = {minimum=0.5, maximum=400, firstPerson=true, walls=false}
+    local original, feature
+    local function bounds(minimum,maximum)
+        if player.CameraMinZoomDistance > maximum then player.CameraMinZoomDistance = minimum end
+        player.CameraMaxZoomDistance = maximum
+        player.CameraMinZoomDistance = minimum
     end
-
-    ZoomFeature = createUniversalFeature(
-        "Zoom",
-        "Extend camera zoom and optionally leave forced first person",
-        23,
-        toggleZoomUnlocker,
-        {
-            configKey = "Universal.ZoomUnlocker",
-            categoryName = "Render",
-        }
-    )
-    addNumberOption(
-        ZoomFeature,
-        "Maximum distance",
-        zoomSettings.maxDistance,
-        25,
-        2000,
-        function(value: number): ()
-            zoomSettings.maxDistance = value
-            if ZoomFeature.enabled then
-                ZoomFeature:SetStatus(tostring(math.round(value)) .. " studs")
-            end
-        end
-    )
-    addNumberOption(
-        ZoomFeature,
-        "Minimum distance",
-        zoomSettings.minDistance,
-        0.5,
-        50,
-        function(value: number): ()
-            zoomSettings.minDistance = value
-        end
-    )
-    addToggleOption(
-        ZoomFeature,
-        "Unlock forced first person",
-        zoomSettings.unlockFirstPerson,
-        function(value: boolean): ()
-            zoomSettings.unlockFirstPerson = value
-        end
-    )
-
-    activeCleanup = function(): ()
-        disconnectFeatureConnection("ZoomUnlocker")
-        if originalZoomState then
-            pcall(function(): ()
-                LocalPlayer.CameraMinZoomDistance = originalZoomState.minDistance
-                LocalPlayer.CameraMaxZoomDistance = originalZoomState.maxDistance
-                LocalPlayer.CameraMode = originalZoomState.cameraMode
-            end)
-            originalZoomState = nil
+    local function apply()
+        bounds(math.min(settings.minimum,settings.maximum),math.max(settings.minimum,settings.maximum))
+        player.CameraMode = settings.firstPerson and Enum.CameraMode.Classic or original.mode
+        local walls = access:ThroughWalls(settings.walls)
+        feature:SetStatus(settings.walls and (walls and tostring(math.round(settings.maximum)) .. " / walls" or "walls unavailable")
+            or tostring(math.round(settings.maximum)) .. " studs")
+    end
+    cleanup = function()
+        host.disconnectFeatureConnection("ZoomUnlocker")
+        access:ThroughWalls(false)
+        if original then
+            bounds(original.minimum,original.maximum)
+            player.CameraMode = original.mode
+            original = nil
         end
     end
+    feature = host.createUniversalFeature("Zoom", "Extend zoom; optionally let the camera pass through walls.", 23, function(enabled)
+        cleanup()
+        if not enabled then feature:SetStatus(nil); return end
+        original = {minimum=player.CameraMinZoomDistance, maximum=player.CameraMaxZoomDistance, mode=player.CameraMode}
+        apply()
+        host.featureConnections.ZoomUnlocker = host.TaskManager:Connect(apply)
+    end, {configKey="Universal.ZoomUnlocker", categoryName="Render"})
+    local function update(key,value)
+        settings[key] = value
+        if feature.enabled then apply() end
+    end
+    host.addNumberOption(feature,"Maximum distance",settings.maximum,25,2000,function(value) update("maximum",value) end)
+    host.addNumberOption(feature,"Minimum distance",settings.minimum,0.5,50,function(value) update("minimum",value) end)
+    host.addToggleOption(feature,"Unlock forced first person",settings.firstPerson,function(value) update("firstPerson",value) end)
+    host.addToggleOption(feature,"Through walls",settings.walls,function(value) update("walls",value) end)
     Module.Initialized = true
-    return ZoomFeature
+    return feature
 end
-
-function Module.destroy(): ()
-    if activeCleanup then
-        pcall(activeCleanup)
-    end
-    activeCleanup = nil
+function Module.destroy()
+    if cleanup then pcall(cleanup); cleanup = nil end
     Module.Initialized = false
 end
-
 return Module
 
 ]],
@@ -27141,7 +27329,7 @@ function Module.init(context: any): any
         local _textSettingsWindow: FloatingWindowRecord
         _textSettingsWindow, textSettingsScroll = createOverlaySettingsWindow(
             "TextGUI",
-            "Text GUI Studio",
+            "Text GUI settings",
             state.layout.compact and 500 or 540,
             Vector2.new(300, 70)
         )
@@ -27165,7 +27353,7 @@ function Module.init(context: any): any
         local _radarSettingsWindow: FloatingWindowRecord
         _radarSettingsWindow, radarSettingsScroll = createOverlaySettingsWindow(
             "Radar",
-            "Radar Studio",
+            "Radar settings",
             500,
             Vector2.new(630, 70)
         )
@@ -35983,6 +36171,110 @@ end
 return Module
 
 ]],
+        ["src/libraries/CameraAccess.lua"] = [[
+local Module = {Name = "CameraAccess", Initialized = false}
+local active
+
+function Module.init(host)
+    local api = {playerModule = nil, source = nil, pending = false, checkedAt = -math.huge}
+    local patch
+    function api:Refresh()
+        if self.destroyed then return end
+        local scripts = host.LocalPlayer:FindFirstChild("PlayerScripts")
+        local source = scripts and scripts:FindFirstChild("PlayerModule")
+        if source ~= self.source then self.playerModule, self.poppercam = nil, nil end
+        if self.pending or source == self.source and self.playerModule then return end
+        if os.clock() - self.checkedAt < 0.5 then return end
+        self.checkedAt = os.clock()
+        if not source then return end
+        self.source, self.pending = source, true
+        -- require may yield on a newly installed PlayerModule, not in render.
+        task.spawn(function()
+            local ok, result = pcall(require, source)
+            local cameraModule = source:FindFirstChild("CameraModule")
+            local popper = cameraModule and cameraModule:FindFirstChild("Poppercam")
+            local cameraOk, cameraClass
+            if popper then cameraOk, cameraClass = pcall(require, popper) end
+            if not self.destroyed and self.source == source then
+                self.playerModule = ok and type(result) == "table" and result or nil
+                -- Modern CameraModule returns {}, but its Poppercam class still
+                -- supplies the Update method used by the native camera instance.
+                self.poppercam = cameraOk and type(cameraClass) == "table" and cameraClass or nil
+            end
+            self.pending = false
+        end)
+    end
+    local function get(method)
+        api:Refresh()
+        local playerModule = api.playerModule
+        if playerModule and type(playerModule[method]) == "function" then
+            local ok, result = pcall(playerModule[method], playerModule)
+            if ok then return result end
+        end
+    end
+    function api:GetControls() return get("GetControls") end
+    function api:GetCameras()
+        local result = get("GetCameras")
+        return type(result) == "table" and result or nil
+    end
+    local function restore()
+        if not patch then return end
+        local old = patch
+        patch = nil
+        if old.module.Update == old.replacement then
+            local ok = pcall(function() old.module.Update = old.update end)
+            if ok and old.enabled then pcall(old.module.Enable, old.module, true) end
+        end
+    end
+    function api:ThroughWalls(enabled)
+        if not enabled or self.destroyed then restore(); return false end
+        local cameras = self:GetCameras()
+        local occlusion = cameras and cameras.activeOcclusionModule or self.poppercam
+        if patch and patch.module ~= occlusion then restore() end
+        if patch then return patch.module.Update == patch.replacement end
+        if type(occlusion) ~= "table" or type(occlusion.Update) ~= "function" then return false end
+        local wasEnabled = false
+        if type(occlusion.GetEnabled) == "function" and type(occlusion.Enable) == "function" then
+            local ok, value = pcall(occlusion.GetEnabled, occlusion)
+            wasEnabled = ok and value == true
+            if wasEnabled then pcall(occlusion.Enable, occlusion, false) end
+        end
+        local cleaned = setmetatable({}, {__mode="k"})
+        local replacement = function(instance, _, cameraFrame, focus)
+            if not cleaned[instance] then
+                cleaned[instance] = true
+                if type(instance.Cleanup) == "function" then pcall(instance.Cleanup,instance) end
+            end
+            local extrapolator = instance.focusExtrapolator
+            if extrapolator and type(extrapolator.Reset) == "function" then extrapolator:Reset() end
+            return cameraFrame, focus
+        end
+        local update = occlusion.Update
+        local ok = pcall(function() occlusion.Update = replacement end)
+        if not ok then
+            if wasEnabled then pcall(occlusion.Enable, occlusion, true) end
+            return false
+        end
+        patch = {module = occlusion, update = update, replacement = replacement, enabled = wasEnabled}
+        return true
+    end
+    function api:Destroy()
+        restore()
+        self.destroyed = true
+        self.playerModule, self.poppercam = nil, nil
+    end
+    host.services.cameraAccess = api
+    active = api
+    Module.Initialized = true
+    return api
+end
+function Module.destroy()
+    if active then active:Destroy(); active = nil end
+    Module.Initialized = false
+end
+return Module
+
+]],
         ["src/libraries/Entity.lua"] = [[
 export type Entity = {
     Player: Player?,
@@ -37717,6 +38009,7 @@ local Manifest: Manifest = {
         "src/libraries/Weapons.lua",
         "src/libraries/Render.lua",
         "src/libraries/GameRoles.lua",
+        "src/libraries/CameraAccess.lua",
 
         "src/guis/Wurst/Code/Cards.lua",
 
@@ -37733,6 +38026,7 @@ local Manifest: Manifest = {
         "src/guis/Wurst/Code/Furniture.lua",
     },
     modules = {
+        {path = "src/games/universal/Render/FreeCam.lua", name = "FreeCam", category = "World"},
 
         {
             path = "src/games/universal/Render/ItemRender.lua",
