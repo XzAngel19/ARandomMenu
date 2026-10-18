@@ -25,11 +25,12 @@ local Module = {
 
     What this model deliberately does NOT do:
 
-      * No turn-rate "discount", no acceleration extrapolation, no stop-time
-        damping, no auto-tuned lead. Those were chained heuristics that
-        changed each other's output and could overshoot a target that simply
-        stopped. A short weighted least-squares fit over the replicated
-        positions is the least-surprising estimator.
+      * No unmeasured heuristics. The turn (chord) and braking terms are
+        computed from two weighted fits 0.10 s apart, gated on clean residuals
+        and a real speed, and capped at 45 degrees / the stop distance. A
+        straight run leaves both at zero; nothing here guesses.
+      * No auto-tuned lead. The transport is the median of at least six fresh
+        echoes inside sane pairing limits, with the smoothed RTT as fallback.
       * No invented movement when the measured velocity is zero but
         MoveDirection is not. The server only knows replicated motion.
       * No distance/confidence gate before firing. Freshness of the sample,
@@ -58,6 +59,9 @@ type Fit = {
     residual: number,
     count: number,
     span: number,
+    -- Weighted mean sample time. The slope is the chord over the window, so
+    -- this is where the measured velocity actually points.
+    center: number,
 }
 
 type Motion = {
@@ -69,6 +73,16 @@ type Motion = {
     samples: number,
     residual: number,
     source: string,
+    -- Signed yaw rate in rad/s measured between two fits. Zero when the
+    -- measurement is not trustworthy (slow, noisy or too few samples).
+    turnRate: number,
+    -- Longitudinal acceleration along the current direction, clamped. Used
+    -- only to keep the lead length honest while the target speeds up or stops.
+    longitudinalAccel: number,
+    -- Seconds until the target stops when it is braking hard, else nil.
+    brakeSeconds: number?,
+    -- How far behind `now` the fitted direction sits.
+    fitLag: number,
 }
 
 type AimInfo = {
@@ -78,6 +92,8 @@ type AimInfo = {
     rootPosition: Vector3,
     velocity: Vector3,
     leadSeconds: number,
+    turnRate: number,
+    brakeSeconds: number?,
     sampleAge: number,
     samples: number,
     residual: number,
@@ -100,10 +116,33 @@ local SAMPLE_HZ: number = 60
 local MAX_HORIZONTAL_SPEED: number = 60
 local DEFAULT_KNIFE_SPEED: number = 96
 local MAX_ECHOES: number = 8
-local MIN_ECHO_SAMPLES: number = 2
+-- A median of two echoes is just the mean of two mismatches. Six fresh
+-- samples keep the transport estimate stable; before that the smoothed RTT is
+-- the better number.
+local MIN_ECHO_SAMPLES: number = 6
+-- Pairing sanity limits. 3 ms is physically impossible and >800 ms is a late
+-- or mismatched echo, not transport.
+local MIN_ECHO_DELAY: number = 0.05
+local MAX_ECHO_DELAY: number = 0.8
 -- Transport + manual lead. A full second only happens when the session ping
 -- or the manual offset asks for it; the status line shows the real number.
 local MAX_HORIZON: number = 1.0
+-- Automatic lead never exceeds this. At 16 studs/s a 1 s lead is 16 studs of
+-- overshoot; past 0.6 s the sample is stale enough that refusing to invent
+-- more distance is safer. Manual offset is still allowed up to MAX_HORIZON.
+local MAX_AUTO_LEAD: number = 0.6
+-- Turn and braking corrections are measured, never guessed:
+--   * two weighted fits 0.10 s apart give a signed yaw rate;
+--   * the same pair gives longitudinal acceleration for the stop cap.
+local TURN_SPAN: number = 0.10
+local TURN_MIN_SPEED: number = 2.0
+local TURN_MAX_RATE: number = 10.0
+-- Below ~23 deg/s the two fits are mostly replication jitter; a correction
+-- that small only adds noise to the endpoint.
+local TURN_MIN_RATE: number = 0.4
+local TURN_MAX_ANGLE: number = math.rad(45)
+local BRAKE_MIN_ACCEL: number = 6.0
+local BRAKE_MAX_ACCEL: number = 120.0
 
 local settings = {
     -- Automatic lead is the default: the measured FireServer -> GunFired echo
@@ -254,25 +293,35 @@ function Module.init(runtime: any): any
         end
     end
 
-    local function fitVelocity(track: Track, now: number): Fit?
+    local function fitVelocity(track: Track, reference: number): Fit?
         local samples: {Sample} = track.samples
         if #samples < 3 then
             return nil
         end
-        local last: Sample = samples[#samples]
+        -- Collect the window that ends at `reference`, not necessarily at the
+        -- newest sample: the same weights applied to an older window give the
+        -- velocity direction 0.10 s ago, which is what the turn rate needs.
         local collected: {Sample} = {}
+        for index: number = #samples, 1, -1 do
+            local sample: Sample = samples[index]
+            if sample.at <= reference + 1e-4 then
+                if reference - sample.at > FIT_WINDOW then
+                    break
+                end
+                table.insert(collected, 1, sample)
+            end
+        end
+        if #collected < 3 then
+            return nil
+        end
+        local anchor: number = collected[#collected].at
         local sw, st, stt: number = 0, 0, 0
         local sx, sy, sz: number = 0, 0, 0
         local stx, sty, stz: number = 0, 0, 0
-        for index: number = #samples, 1, -1 do
-            local sample: Sample = samples[index]
-            local age: number = now - sample.at
-            if age > FIT_WINDOW then
-                break
-            end
-            table.insert(collected, 1, sample)
-            local dt: number = sample.at - last.at
-            local weight: number = math.exp(-math.max(0, age) / FIT_TAU)
+        for _, sample: Sample in ipairs(collected) do
+            local dt: number = sample.at - anchor
+            local age: number = math.max(0, reference - sample.at)
+            local weight: number = math.exp(-age / FIT_TAU)
             sw += weight
             st += weight * dt
             stt += weight * dt * dt
@@ -283,7 +332,7 @@ function Module.init(runtime: any): any
             sty += weight * dt * sample.position.Y
             stz += weight * dt * sample.position.Z
         end
-        if #collected < 3 or sw <= 0 then
+        if sw <= 0 then
             return nil
         end
         local denominator: number = stt - st * st / sw
@@ -299,7 +348,7 @@ function Module.init(runtime: any): any
         local vz: number = (stz - st * sz / sw) / denominator
         local squared: number = 0
         for _, sample: Sample in ipairs(collected) do
-            local dt: number = sample.at - last.at
+            local dt: number = sample.at - anchor
             local dx: number = sample.position.X - (meanX + vx * (dt - meanT))
             local dy: number = sample.position.Y - (meanY + vy * (dt - meanT))
             local dz: number = sample.position.Z - (meanZ + vz * (dt - meanT))
@@ -310,7 +359,57 @@ function Module.init(runtime: any): any
             residual = math.sqrt(squared / #collected),
             count = #collected,
             span = collected[#collected].at - collected[1].at,
+            center = reference + meanT,
         }
+    end
+
+    -- Two fits 0.10 s apart: their directions give the signed yaw rate, their
+    -- magnitudes give the longitudinal braking. Everything is gated on a clean
+    -- fit and a real speed, so noise and near-stationary targets stay at zero.
+    local function measureTurn(
+        track: Track,
+        now: number,
+        fit: Fit
+    ): (number, number, number?, number)
+        local fitLag: number = math.max(0, now - fit.center)
+        if fit.count < 3 or fit.span < 0.06 or fit.residual > 0.5 then
+            return 0, 0, nil, fitLag
+        end
+        local previous: Fit? = fitVelocity(track, now - TURN_SPAN)
+        if not previous or previous.count < 3 or previous.span < 0.04
+            or previous.residual > 0.5 then
+            return 0, 0, nil, fitLag
+        end
+        local v0: Vector3 = Vector3.new(previous.velocity.X, 0, previous.velocity.Z)
+        local v1: Vector3 = Vector3.new(fit.velocity.X, 0, fit.velocity.Z)
+        if v0.Magnitude < TURN_MIN_SPEED or v1.Magnitude < TURN_MIN_SPEED then
+            return 0, 0, nil, fitLag
+        end
+        local dt: number = math.max(0.04, fit.center - previous.center)
+        local cross: number = v0.Z * v1.X - v0.X * v1.Z
+        local dot: number = v0.X * v1.X + v0.Z * v1.Z
+        local rate: number = math.clamp(
+            math.atan2(cross, dot) / dt,
+            -TURN_MAX_RATE,
+            TURN_MAX_RATE
+        )
+        if math.abs(rate) < TURN_MIN_RATE then
+            rate = 0
+        end
+        local ax: number = (v1.X - v0.X) / dt
+        local az: number = (v1.Z - v0.Z) / dt
+        local speed: number = v1.Magnitude
+        local along: number = math.clamp(
+            (ax * v1.X + az * v1.Z) / speed,
+            -BRAKE_MAX_ACCEL,
+            BRAKE_MAX_ACCEL
+        )
+        local brakeSeconds: number? = nil
+        if along <= -BRAKE_MIN_ACCEL then
+            local currentSpeed: number = math.max(0, speed + along * fitLag)
+            brakeSeconds = currentSpeed / -along
+        end
+        return rate, along, brakeSeconds, fitLag
     end
 
     local function estimateMotion(track: Track, now: number): Motion?
@@ -327,6 +426,10 @@ function Module.init(runtime: any): any
         local reported: Vector3 = last.velocity
         local horizontal: Vector3
         local source: string
+        local turnRate: number = 0
+        local longitudinalAccel: number = 0
+        local brakeSeconds: number? = nil
+        local fitLag: number = 0
         if fit and fit.count >= 3 and fit.span >= 0.06 and fit.residual <= 0.5 then
             -- Clean replicated path: the fit rejects the single-sample spikes
             -- and is not fooled by a zero AssemblyLinearVelocity.
@@ -353,6 +456,10 @@ function Module.init(runtime: any): any
             end
             vertical = math.clamp(vertical, -120, 120)
         end
+        if fit then
+            turnRate, longitudinalAccel, brakeSeconds, fitLag =
+                measureTurn(track, now, fit)
+        end
         return {
             velocity = Vector3.new(horizontal.X, vertical, horizontal.Z),
             horizontal = horizontal,
@@ -362,7 +469,58 @@ function Module.init(runtime: any): any
             samples = #samples,
             residual = fit and fit.residual or math.huge,
             source = source,
+            turnRate = turnRate,
+            longitudinalAccel = longitudinalAccel,
+            brakeSeconds = brakeSeconds,
+            fitLag = fitLag,
         }
+    end
+
+    -- Lead displacement for a horizon, with the measured turn and braking.
+    -- The fitted direction sits `fitLag` behind now, and the chord over the
+    -- horizon points at the tangent halfway through it, so the rotation is
+    -- rate * (horizon/2 + fitLag). Capped at 45 degrees on purpose: a larger
+    -- correction is a turn the samples cannot describe anymore.
+    local function leadHorizontal(motion: Motion, horizon: number): Vector3
+        local speed: number = motion.horizontal.Magnitude
+        if speed < 1e-4 or horizon <= 0 then
+            return Vector3.zero
+        end
+        local direction: Vector3 = motion.horizontal.Unit
+        if math.abs(motion.turnRate) > 1e-3 then
+            local angle: number = math.clamp(
+                motion.turnRate * (horizon * 0.5 + motion.fitLag),
+                -TURN_MAX_ANGLE,
+                TURN_MAX_ANGLE
+            )
+            local cosine: number = math.cos(angle)
+            local sine: number = math.sin(angle)
+            direction = Vector3.new(
+                direction.X * cosine + direction.Z * sine,
+                0,
+                -direction.X * sine + direction.Z * cosine
+            )
+        end
+        -- The fit is a chord over the window, so it lags the current speed.
+        -- Correct it by the measured longitudinal acceleration over that lag,
+        -- and include the acceleration over the horizon itself. Both terms
+        -- are clamped in measureTurn; a clean straight run leaves them at 0.
+        local speedNow: number = math.max(
+            0,
+            speed + motion.longitudinalAccel * motion.fitLag
+        )
+        local length: number = speedNow * horizon
+            + 0.5 * motion.longitudinalAccel * horizon * horizon
+        length = math.max(0, length)
+        if motion.brakeSeconds and horizon > motion.brakeSeconds then
+            -- The target is already stopped by then; extrapolating further
+            -- would aim past it.
+            length = math.min(
+                length,
+                speedNow * motion.brakeSeconds * 0.5
+            )
+        end
+        return direction * length
     end
 
     local function predictedRoot(
@@ -371,8 +529,9 @@ function Module.init(runtime: any): any
         horizon: number
     ): Vector3
         local last: Sample = track.samples[#track.samples]
-        local x: number = last.position.X + motion.horizontal.X * horizon
-        local z: number = last.position.Z + motion.horizontal.Z * horizon
+        local lead: Vector3 = leadHorizontal(motion, horizon)
+        local x: number = last.position.X + lead.X
+        local z: number = last.position.Z + lead.Z
         local y: number = last.position.Y
         if motion.airborne then
             y += motion.vertical * horizon
@@ -413,7 +572,7 @@ function Module.init(runtime: any): any
             return
         end
         local delay: number = receivedAt - sentAt
-        if delay < 0.02 or delay > 1.2 then
+        if delay < MIN_ECHO_DELAY or delay > MAX_ECHO_DELAY then
             return
         end
         table.insert(echoes, delay)
@@ -433,6 +592,9 @@ function Module.init(runtime: any): any
         local horizon: number = pipeline
             + settings.interpolation
             + manualLead()
+        if settings.autoLead then
+            horizon = math.min(horizon, MAX_AUTO_LEAD)
+        end
         return math.clamp(horizon, 0.005, MAX_HORIZON), rtt, echo
     end
 
@@ -441,6 +603,9 @@ function Module.init(runtime: any): any
         local horizon: number = rtt
             + settings.interpolation
             + manualLead()
+        if settings.autoLead then
+            horizon = math.min(horizon, MAX_AUTO_LEAD)
+        end
         return math.clamp(horizon, 0.005, MAX_HORIZON), rtt
     end
 
@@ -481,6 +646,8 @@ function Module.init(runtime: any): any
             model = "kinematic-v51",
             rtt = rtt,
             echoDelay = echo,
+            turnRate = motion.turnRate,
+            brakeSeconds = motion.brakeSeconds,
         }, nil
     end
 
@@ -510,17 +677,45 @@ function Module.init(runtime: any): any
         )
         local last: Sample = track.samples[#track.samples]
         local aimStart: Vector3 = last.position + last.aimOffset
-        local offset: Vector3 = aimStart + motion.velocity * horizon - origin
+        local initial: Vector3 = motion.velocity
         local flight: number? = predictionMath.interceptTime(
-            offset,
-            motion.velocity,
+            aimStart + initial * horizon - origin,
+            initial,
             resolvedSpeed
         )
         if not flight then
             return nil, nil, "unreachable"
         end
-        local endpoint: Vector3 = aimStart
-            + motion.velocity * (horizon + flight)
+        -- One re-solve with the average velocity over the whole flight: a
+        -- turning or braking target does not travel along the instantaneous
+        -- tangent, and the blade needs the chord.
+        local span: number = horizon + flight
+        local lead: Vector3 = leadHorizontal(motion, span)
+        local vertical: number = motion.vertical
+        if motion.airborne then
+            vertical -= 0.5 * workspace.Gravity * span
+        end
+        local effective: Vector3 = Vector3.new(
+            lead.X,
+            vertical * span,
+            lead.Z
+        ) / span
+        local revised: number? = predictionMath.interceptTime(
+            aimStart + effective * horizon - origin,
+            effective,
+            resolvedSpeed
+        )
+        if revised then
+            flight = revised
+            span = horizon + flight
+            lead = leadHorizontal(motion, span)
+            vertical = motion.vertical
+            if motion.airborne then
+                vertical -= 0.5 * workspace.Gravity * span
+            end
+            effective = Vector3.new(lead.X, vertical * span, lead.Z) / span
+        end
+        local endpoint: Vector3 = aimStart + effective * (horizon + flight)
         if motion.airborne then
             -- A straight blade cannot follow a ballistic arc; aim at the
             -- root's projected position at impact instead of a linear Y.
@@ -541,6 +736,8 @@ function Module.init(runtime: any): any
             motionSource = motion.source,
             model = "kinematic-v51",
             rtt = rtt,
+            turnRate = motion.turnRate,
+            brakeSeconds = motion.brakeSeconds,
         }, nil
     end
 
@@ -574,6 +771,9 @@ function Module.init(runtime: any): any
         local horizon: number = (echo or rtt)
             + settings.interpolation
             + manualLead()
+        if settings.autoLead then
+            horizon = math.min(horizon, MAX_AUTO_LEAD)
+        end
         table.insert(
             parts,
             string.format(
@@ -591,6 +791,18 @@ function Module.init(runtime: any): any
                 table.insert(parts, string.format("age %.0f ms", motion.sampleAge * 1000))
                 if motion.airborne then
                     table.insert(parts, "airborne")
+                end
+                if math.abs(motion.turnRate) > 0.05 then
+                    table.insert(
+                        parts,
+                        string.format("turn %+.0f deg/s", math.deg(motion.turnRate))
+                    )
+                end
+                if motion.brakeSeconds then
+                    table.insert(
+                        parts,
+                        string.format("brake %.2f s", motion.brakeSeconds)
+                    )
                 end
             else
                 table.insert(parts, "no fresh samples")

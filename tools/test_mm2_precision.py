@@ -132,6 +132,12 @@ do
     near(aim.Magnitude,96*knife.flightSeconds,1e-3)
     near(aim.X-16*now,16*(knife.leadSeconds+knife.flightSeconds),1e-3)
     for _=1,5 do prediction.noteEcho(0,0.18) end
+    assert(prediction.getEchoDelay()==nil,"five echoes are not a median")
+    assert(prediction.status(target):find("auto lead %(ping%)"),
+        "with few echoes the lead must fall back to ping")
+    prediction.noteEcho(0,0.04)
+    assert(prediction.getEchoDelay()==nil,"an impossible 40 ms echo is a mismatch")
+    prediction.noteEcho(0,0.18)
     local _,echoed=prediction.gunAim(target,Vector3.new(0,0,-30))
     near(echoed.echoDelay,0.18,1e-9)
     near(echoed.leadSeconds,0.205,1e-6)
@@ -193,6 +199,77 @@ do
     assert(blade and bladeInfo.flightSeconds)
     assert(blade.Y<falling.Y,"airborne blade aims at the projected impact, not a straight Y")
     pass("live predictor: weighted fit, echo median, freshness, teleport reset, gravity")
+
+    -- Turn: the chord over the horizon must beat the straight tangent.
+    humanoid.GetState=function() return "Running" end
+    prediction.reset()
+    now=0
+    local radius,omega=20,2.0
+    local function circle(t)
+        local theta=omega*t
+        return Vector3.new(radius*math.sin(theta),0,radius-radius*math.cos(theta)),
+               Vector3.new(radius*omega*math.cos(theta),0,radius*omega*math.sin(theta))
+    end
+    for i=1,30 do
+        now=i/60
+        local position,velocity=circle(now)
+        root.Position=position
+        torso.Position=position+Vector3.new(0,1,0)
+        root.AssemblyLinearVelocity=velocity
+        sampleTick(1/60)
+    end
+    local turnEndpoint,turnInfo=prediction.gunAim(target,Vector3.new(0,0,-30))
+    assert(turnEndpoint,"a turning target must stay aimable")
+    local turnMotion=prediction.getMotion(target)
+    assert(turnMotion and turnMotion.turnRate<-0.5,
+        "counter-clockwise turn must measure a negative rate: "
+            .. tostring(turnMotion and turnMotion.turnRate))
+    local futurePosition=circle(now+turnInfo.leadSeconds)
+    local futureX,futureZ=futurePosition.X,futurePosition.Z
+    local linearX=root.Position.X+turnMotion.horizontal.X*turnInfo.leadSeconds
+    local linearZ=root.Position.Z+turnMotion.horizontal.Z*turnInfo.leadSeconds
+    local linearError=math.sqrt((linearX-futureX)^2+(linearZ-futureZ)^2)
+    local turnError=math.sqrt((turnEndpoint.X-futureX)^2+(turnEndpoint.Z-futureZ)^2)
+    assert(linearError>0.4,"the straight lead must actually be wrong in this setup: "
+        .. tostring(linearError))
+    assert(turnError<linearError*0.5,
+        string.format("chord %.3f must beat tangent %.3f",turnError,linearError))
+    pass("turn correction: measured rate, chord closer than the straight tangent")
+
+    -- Braking: the measured deceleration must remove the overshoot.
+    prediction.reset()
+    now=0
+    local startSpeed,deceleration=32,64
+    local function braking(t)
+        local span=math.min(t,startSpeed/deceleration)
+        return Vector3.new(startSpeed*span-0.5*deceleration*span*span,0,0),
+               Vector3.new(math.max(0,startSpeed-deceleration*t),0,0)
+    end
+    for i=1,18 do
+        now=i/60
+        local position,velocity=braking(now)
+        root.Position=position
+        torso.Position=position+Vector3.new(0,1,0)
+        root.AssemblyLinearVelocity=velocity
+        sampleTick(1/60)
+    end
+    local brakeEndpoint,brakeInfo=prediction.gunAim(target,Vector3.new(0,0,-30))
+    assert(brakeEndpoint,"a braking target must stay aimable")
+    local brakeMotion=prediction.getMotion(target)
+    assert(brakeMotion and brakeMotion.longitudinalAccel<-20,
+        "braking must be measured: "
+            .. tostring(brakeMotion and brakeMotion.longitudinalAccel))
+    local truePosition=braking(now+brakeInfo.leadSeconds)
+    local trueX=truePosition.X
+    local brakeLinear=root.Position.X
+        + brakeMotion.horizontal.X*brakeInfo.leadSeconds
+    local brakeLinearError=math.abs(brakeLinear-trueX)
+    local brakeError=math.abs(brakeEndpoint.X-trueX)
+    assert(brakeLinearError>0.5,"the straight lead must overshoot a braking target: "
+        .. tostring(brakeLinearError))
+    assert(brakeError<brakeLinearError*0.5,
+        string.format("brake %.3f must beat linear %.3f",brakeError,brakeLinearError))
+    pass("stop-time: measured deceleration, lead closer than constant speed")
     Module.destroy()
     assert(state.mm2Prediction==nil and sampleTick==nil)
 end

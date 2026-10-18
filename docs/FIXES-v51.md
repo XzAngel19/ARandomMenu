@@ -247,3 +247,69 @@ distribución va de 3,7 a 631 ms: es una media, no un umbral. Un tope fijo de
   bloques de emotes/animaciones separados.
 - `tools/test_disguise_animation.py`: Animation aplica siempre ambos y no lee
   los checks de Character.
+
+## v59 — Giro y frenado medidos, ecos frescos y tope de lead
+
+### Lo que se corrige de la crítica
+
+- **«Corte» era la palabra equivocada.** El número del lead es la línea de mira,
+  no un filtro: nada rechaza disparos por su valor. Lo que rechaza es la
+  frescura de la muestra, el WallCheck y la disponibilidad del arma. La frase
+  anterior mezclaba la ventana de aceptación del servidor con el lead.
+- **El mínimo/máximo de aceptación no es tolerancia por disparo.** Es ruido de
+  emparejamiento del eco: 3,73 ms es imposible con ping de ~108 ms y 631 ms es
+  un eco tardío. Por eso ahora se filtran los ecos individuales y se exige una
+  mediana de muestras frescas.
+- **El tope de 1 s era del lead**, no del emparejamiento (que tiene su propio
+  rango). Se mantiene solo para el offset manual; el lead automático se corta
+  en 0,6 s.
+
+### Giro medido (cuerda)
+
+- Dos ajustes ponderados separados 0,10 s dan la dirección de la velocidad en
+  dos instantes. El ángulo con signo entre ellos, dividido por la separación,
+  es la velocidad angular `ω` (rad/s), acotada a ±10 rad/s.
+- El lead se rota `ω · (h/2 + retraso_del_ajuste)` en la dirección del giro,
+  con un tope de **45°**. El `retraso_del_ajuste` está medido (el ajuste es una
+  cuerda sobre la ventana, así que su dirección corresponde al centro de esa
+  ventana, no a «ahora»).
+- La corrección se anula si el objetivo va a menos de 2 studs/s, si el ajuste
+  tiene residual >0,5 studs o si no hay suficientes muestras. En línea recta
+  vale exactamente 0.
+
+### Frenado medido (stop-time)
+
+- La misma pareja de ajustes da la aceleración longitudinal. Si se opone a la
+  velocidad, se corrige la longitud del lead por el retraso del ajuste y por
+  `½·a·h²`, y se limita a la distancia de frenado `v²/(2·|a|)` cuando el
+  horizonte supera el tiempo de parada.
+- `|a|` está acotada a 120 studs/s² y el frenado solo se activa por encima de
+  6 studs/s². Caminar o correr recto deja la corrección en 0.
+
+### Cuchillo
+
+- El intercepto se resuelve una vez con la velocidad instantánea y se
+  **re-resuelve** con la velocidad media del vuelo completo (cuerda + frenado),
+  en lugar de asumir la tangente durante todo el trayecto.
+
+### Ecos y horizonte
+
+- La mediana de ecos exige **6 muestras** (antes 2). Con menos, el lead usa el
+  ping suavizado.
+- Se descartan los ecos fuera de **50–800 ms**: por debajo es un emparejamiento
+  imposible; por encima es un eco tardío o cruzado. El rango es más ancho que
+  el [60,250] de la sesión de 108 ms porque este usuario juega con RTT de
+  150–500 ms.
+- Lead automático limitado a **0,6 s**. El offset manual sigue llegando a 1,0 s.
+- «Prediction status» muestra `turn ±X deg/s` y `brake X.XX s` cuando la
+  corrección está activa.
+
+### Pruebas
+
+- `tools/test_mm2_precision.py` añade dos casos sintéticos: un objetivo en
+  círculo (el lead con cuerda debe quedar a menos de la mitad del error del
+  tangente) y un frenado fuerte (el lead con stop-time debe quedar a menos de
+  la mitad del error de velocidad constante).
+- El caso de ecos comprueba que 5 muestras no forman mediana (se usa el ping),
+  que un eco de 40 ms se rechaza por imposible y que con la sexta manda la
+  mediana.

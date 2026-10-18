@@ -104,10 +104,49 @@ en pie como está formulada**, pero tampoco se puede declarar falsa sin matices:
    tenga ese tope.
 
 Consecuencia práctica: el mod **no construye nada sobre un umbral de 200 ms**.
-El horizonte de predicción sale del eco medido y del ping real, con un tope de
-1 s, y el WallCheck no cambia según la latencia. Si en el futuro apareciera un
+El horizonte de predicción sale del eco medido y del ping real (tope de 1 s,
+0,6 s para el lead automático) y el WallCheck no cambia según la latencia. Si en el futuro apareciera un
 límite real, el diseño ya apunta al lado conservador (se apunta al futuro, no
 al pasado), pero no se afirma que exista.
+
+## Giro y frenado: medidos, no supuestos
+
+El corredor recto falla en dos casos medibles: el objetivo dobla y el objetivo
+frena. En vez de inventar constantes de "giro" o "violencia", el predictor hace
+**dos ajustes ponderados separados 0,10 s** sobre las posiciones replicadas:
+
+- La dirección de cada ajuste da una velocidad angular firmada
+  `atan2(cross, dot) / dt`, limitada a ±10 rad/s y puesta a cero por debajo de
+  ~23 °/s (ahí solo hay ruido de replicación).
+- La diferencia de magnitudes a lo largo de la marcha da la aceleración
+  longitudinal, limitada a ±120 studs/s².
+- El lead rota `ω · (h/2 + retraso del ajuste)` y se recorta a **45°**: más que
+  eso ya no lo describen las muestras.
+- Si la aceleración indica frenada (≤ −6 studs/s²) y el horizonte supera el
+  tiempo de parada `v/|a|`, el largo se recorta a media distancia de frenado.
+- La velocidad usada es la del ajuste corregida por el retraso (`v + a·lag`),
+  porque un ajuste es una cuerda y se queda corto al acelerar.
+
+En recta ambos términos quedan exactamente en cero: no hay corrección
+"mágica". El cuchillo re-resuelve el intercepto una vez con la velocidad media
+del vuelo completo (cuerda + frenado + gravedad), no con la tangente.
+
+## Qué significa el número (y qué no)
+
+- El lead **no** es un filtro: no acepta ni rechaza disparos. Es la línea de
+  mira (el punto del corredor de la ventana al que se apunta). Lo que rechaza
+  un disparo es la frescura de la muestra, el WallCheck y el arma; el cooldown
+  es del juego/modo, no del valor del lead.
+- Por eso «usar 123,5 ms como corte» era una frase mala: el riesgo de usar la
+  media de por vida no es rechazar disparos, es **apuntar mal**.
+- El mínimo y el máximo de aceptación **no** son la tolerancia por disparo:
+  son ruido de emparejamiento del eco. 3,73 ms es físicamente imposible con
+  ping ~108 ms y 631 ms es un eco tardío.
+- El **tope de 1 s** (ahora 0,6 s para el lead automático) es del **lead**;
+  el emparejamiento de ecos tiene su propio rango (50–800 ms). Son dos
+  límites distintos y no se deben confundir.
+- Ecos: se exige una mediana de **6 muestras frescas**; si no, se usa el ping
+  suavizado. Un eco aislado de 3 ms nunca mueve el lead.
 
 ## Lo que sí conviene explotar
 
