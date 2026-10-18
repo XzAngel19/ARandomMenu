@@ -114,7 +114,10 @@ local sends,notes=0,0
 local originalFrame=CFrame.new(Vector3.new(1,2,3))*CFrame.Angles(.4,.8,.2)
 local handle={CFrame=originalFrame,IsA=function(_,c) return c=='BasePart' end}
 local remote={IsA=function() return true end,FireServer=function(_,origin,aim)
-    assert(origin==handle.CFrame,'normal packet must retain oriented handle frame')
+    -- Position-only CFrames, the same shape the game's own client sends.
+    assert(origin.Position==handle.CFrame.Position,'the packet carries the handle position')
+    assert(origin.r[1]==1 and origin.r[5]==1 and origin.r[9]==1,
+        'the packet must not carry the handle rotation')
     near(aim.Position.X,root.Position.X)
     sends+=1
 end}
@@ -134,7 +137,7 @@ local trajectoryCalibration={noteAuthoredShot=function(_,shot)
     assert(shot.settings.model=='kinematic-v51')
     notes+=1
 end}
-'''+section(SOURCE,'    local function throwKnife','    local function toggleKnifeThrow')+r'''
+'''+section(SOURCE,'    -- The spawn point: the handle when it exists','    local function toggleKnifeThrow')+r'''
 now=10;throwKnife();assert(pending and sends==0 and predictionCalls==0)
 root.Position=Vector3.new(40,0,0)
 local release=pending;throwPending=false;pending=nil;release()
@@ -144,7 +147,7 @@ throwKnife();assert(pending and sends==1,'in-flight animation is not restarted')
 valid=false;release=pending;throwPending=false;pending=nil;release();assert(sends==1,'invalidated target cancels release')
 valid=true;throwKnife();knife.Parent={};release=pending;throwPending=false;pending=nil;release();assert(sends==1,'unequip cancels packet')
 knife.Parent=LocalPlayer.Character;throwKnife();visible=false;release=pending;throwPending=false;pending=nil;release();assert(sends==1,'WallCheck rechecked at release')
-pass('actual throw packet: deferred, fresh target prediction, oriented handle frame, animation busy guard and cancellation')
+pass('actual throw packet: deferred, fresh target prediction, position-only handle frame, animation busy guard and cancellation')
 end
 '''
 with tempfile.TemporaryDirectory(prefix='knife-rebuild-') as tmp:

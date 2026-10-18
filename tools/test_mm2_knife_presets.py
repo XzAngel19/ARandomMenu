@@ -50,6 +50,27 @@ state.mm2Prediction={knifeAim=function(target)
   model='kinematic-v51',leadSeconds=.1,flightSeconds=.1,sampleAge=0,samples=3,motionSource='fit'}
 end}
 local configData={states={},values={}}
+-- The blade is probed with a swept sphere, so the scene answers for the body
+-- that would be hit: the visible target's part, or a wall in front of it.
+local function targetPart(owner)
+  return {__instance=true,IsDescendantOf=function(_,c) return c==owner.Character end}
+end
+local closePart,farPart=targetPart(close),targetPart(far)
+local wallPart={__instance=true,IsDescendantOf=function() return false end}
+typeof=function(v) if type(v)=='table' and v.__instance then return 'Instance' end return type(v) end
+local CollectionService={GetTagged=function() return {} end}
+local RaycastParams={new=function() return {FilterDescendantsInstances={}} end}
+local spheres=0
+local workspace={Spherecast=function(_,origin,radius,delta,params)
+  spheres+=1
+  local aim=origin+delta
+  if aim.X>=250 then
+    if far.visible then return {Instance=farPart,Position=aim} end
+    return {Instance=wallPart,Position=Vector3.new(150,0,0)}
+  end
+  if close.visible then return {Instance=closePart,Position=aim} end
+  return {Instance=wallPart,Position=Vector3.new(10,0,0)}
+end}
 local function addInformationOption() end
 state.mm2Core={findMurderer=function() return LocalPlayer end,getPlayerRole=function() return 'Innocent' end,
  getPlayerWeapon=function(_,_,held) assert(held);return knife end,isPlayerAlive=function() return true end,
@@ -66,7 +87,12 @@ state.mm2Core={findMurderer=function() return LocalPlayer end,getPlayerRole=func
  end}}
 local toggle
 state.mm2KnifeAuraModule={CreateToggle=function(_,d) assert(d.Name=='Knife Throw' and d.Bindable);toggle=d.Function end}
-local function addToggleOption(_,name,_,fn,_,bindable) assert(name=='Knife Throw' and bindable);toggle=fn end
+local toggles={}
+local function addToggleOption(_,name,_,fn,_,bindable)
+  assert(bindable and (name=='Knife Throw' or name=='Lanzar con el boton'),name)
+  toggles[name]=fn
+  if name=='Knife Throw' then toggle=fn end
+end
 local function addActionOption() error('No redundant action allowed') end
 local function addNumberOption() error('No numeric settings allowed') end
 local function addCycleOption() error('No mode settings allowed') end
@@ -89,8 +115,23 @@ assert(loops.heartbeat,'master ON resumes selected Throw')
 far.visible=false;loops.heartbeat();assert(not loops.render,'fully hidden targets are not selected')
 close.visible=true;loops.heartbeat();assert(loops.render)
 charAdded();assert(not loops.render,'respawn cancels pose and packet')
-Module.destroy();assert(not loops.heartbeat and not charAdded and sends==1)
-print('PASS Knife preset: single toggle, actual whole module, nearest visible/retarget at 300 studs, always animation/LOS, complete recovery, repeat, readiness/master/OFF/respawn')
+assert(toggles['Lanzar con el boton'],'the button trigger is a real checkbox')
+toggles['Lanzar con el boton'](true)
+assert(not loops.render and loops.heartbeat,'manual mode stops the automatic windup')
+close.visible=true;far.visible=true
+local before=sends
+local activated
+knife.Activated={Connect=function(_,fn) activated=fn;return {Disconnect=function() activated=nil end} end}
+loops.heartbeat()
+assert(activated,'the trigger follows the equipped knife')
+activated()
+assert(sends==before+1,'a tap throws immediately, without the windup')
+activated()
+assert(sends==before+1,'a double tap still sends one packet')
+toggles['Lanzar con el boton'](false)
+assert(loops.heartbeat and not activated,'manual mode releases the trigger when off')
+Module.destroy();assert(not loops.heartbeat and not charAdded and sends==before+1)
+print('PASS Knife preset: single toggle, actual whole module, nearest visible/retarget at 300 studs, always animation/LOS, complete recovery, repeat, readiness/master/OFF/respawn, blade probe and button trigger')
 '''
 with tempfile.TemporaryDirectory(prefix='knife-presets-') as tmp:
     path=Path(tmp)/'test.luau'

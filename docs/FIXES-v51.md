@@ -784,3 +784,81 @@ para eso el archivo ahora guarda `aimOffset` en cada muestra del historial y
   ningún sitio llame a `table.insert(runtime.pendingGuns` por fuera.
 
 No cambia ninguna constante del modelo de movimiento.
+
+## v66 — El cuchillo vuela como una hoja, no como un rayo
+
+El cuchillo fallaba donde el arma de fuego no: la puntería se resolvía con un
+rayo de grosor cero. Un rayo atraviesa el hueco entre el pecho y una barandilla
+que la hoja no atraviesa, y el servidor sí colisiona el proyectil. La
+consecuencia práctica es la que se veía en las partidas: la puntería "acertaba"
+en el archivo y el cuchillo se clavaba en la pared o en la reja que estaba
+delante del pecho.
+
+### Lo que cambió
+
+- **La hoja tiene grosor.** `knifeRadius` sale del `Handle.Size`: la mediana de
+  las tres mitades de sus ejes, que es la sección que tiene que pasar por el
+  hueco, acotada entre **0.12 y 0.6** studs (por defecto **0.25** si el modelo
+  no expone un Handle usable). El eje largo corre a lo largo del vuelo, así que
+  el hueco lo limita la mediana y no la mitad mayor.
+- **La prueba es de cuerpo, no de rayo.** `knifeReaches` usa `workspace:Spherecast`
+  con el radio de la hoja: el resultado tiene que ser el objetivo. Donde el motor
+  no tenga Spherecast, un rayo central más un anillo a `radius` demuestra lo
+  mismo, y **falla cerrado**: si un rayo del anillo se topa con algo que no es el
+  objetivo antes de llegar, la puntería no vale.
+- **El filtro es el del juego.** El sondeo excluye el propio `Character` y los
+  objetos con la etiqueta `WeaponPassthrough`, igual que el `WeaponService` del
+  cliente; no se descarta nada por transparencia, porque una parte invisible con
+  colisión también detiene una hoja.
+- **La puntería sube por el mundo.** La escalera de puntería es ahora
+  `pecho → pecho alto (+0.55) → cabeza (+1.05) → sobre la cabeza (+1.5) →
+  piernas (−0.6) → hombros (±0.6)` y **todos los pasos se aplican sobre el eje Y
+  del mundo**. Con el vector perpendicular al vuelo, que era lo anterior, un
+  lanzamiento inclinado movía la puntería de lado y no por encima de una
+  barandilla horizontal.
+- **No se lanza sin destino.** Si ninguna grada alcanza al objetivo porque hay
+  geometría en medio, el lanzamiento se rechaza con `covered` en vez de
+  gastarse. Los otros dos rechazos son `unreachable` (el predictor no cerró el
+  intercepto) y `too far`, que ya no es un alcance artificial: el cuchillo vuela
+  hasta chocar, así que solo se rechaza un lead absurdo de más de **400 studs**
+  (objetivo desaparecido o muestra rota).
+- **Un tiro, un paquete, resuelto al soltar.** `performThrow` vuelve a elegir
+  objetivo visible y resuelve la puntería en el instante del envío, así que la
+  pose del gesto no puede disparar desde una mano vieja, y el paquete es el
+  mismo que manda el cliente del juego: `CFrame.new(orig.Position),
+  CFrame.new(aim)`, **solo posición**, sin la rotación del Handle. El origen se
+  toma del `Handle`, y si no existe del `RightHand`, del brazo o del
+  `HumanoidRootPart`.
+- **Botón para móvil.** Segundo checkbox **"Lanzar con el boton"** (clave
+  `MM2.Shoot.KnifeThrowButton`, apagado por defecto) justo debajo de "Knife
+  Throw". En ese modo no hay gesto de espera: el lanzamiento sale en el
+  `Tool.Activated`, que es el evento que producen tanto un toque como un clic, y
+  se ignora un segundo toque dentro de **0.25 s**. La conexión sigue al cuchillo
+  equipado también después de reaparecer.
+- **La grabación aprende dónde pegó.** Cada lanzamiento anota en la captura
+  `aimHeight` (la grada usada), `aimOffsetStuds`, `knifeRadius`, `throwSource`
+  (`auto`/`manual`) y `windupSeconds`, para poder auditar después por qué una
+  grada funcionó y otra no.
+
+### Pruebas
+
+- `tools/test_mm2_knife_wallcheck.py` (nueva, 6 comprobaciones): un solo sondeo
+  con el pecho despejado; una barandilla sobre el pecho obliga a subir a la
+  cabeza (Y 5.05) en tres sondeos; radio 0.2 / 0.12 / 0.6 desde el tamaño del
+  Handle y el valor por defecto; siete gradas tapadas fallan cerrado; el anillo
+  veta un hueco que el rayo central no ve (14 rayos, no 35); y los rechazos
+  `unreachable` y `too far` (400).
+- `tools/test_mm2_knife_presets.py` amplía el escenario con `Spherecast` y el
+  bloque de disparo manual: un toque lanza una vez, el doble toque no lanza, y
+  apagar la casilla suelta el `Activated`.
+- `tools/test_mm2_knife_rebuild.py` comprueba que el paquete lleva **solo la
+  posición** del Handle y sigue el objetivo reelegido en el momento de soltar.
+
+`bash tools/validate.sh` → **75 fuentes compilan, 41 suites en verde**, arranque
+del bundle con `failures=0`.
+
+### Lo que esta versión NO afirma
+
+Todavía no hay sesión real con el sello v66. El grosor, la escalera y el botón
+están probados en el arnés contra un mundo simulado, no medidos contra el
+servidor de Murder Mystery 2. El lado de `Shoot` no se tocó en esta versión.

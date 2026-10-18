@@ -25,12 +25,18 @@ function Module.init(runtime: any): any
     local mm2Settings: any = core.mm2Settings
     local lastKnifePrediction: any = nil
     local lastKnifeError: string? = nil
+    local lastKnifeAimName: string? = nil
+    local lastKnifeAimHeight: number? = nil
+    local lastKnifeRadius: number? = nil
     local isWeaponPathClear: any = core.isWeaponPathClear
     local trajectoryCalibration: any = core.trajectoryCalibration
 
     -- One preset: held knife, nearest visible target, normal origin,
     -- always-on animation/LOS. The animation owns the throw cadence.
     local knifeThrowSettings = {enabled = false}
+    -- Manual mode: the throw happens when the player presses the tool button
+    -- (tap on mobile, click on desktop) instead of on the automatic cadence.
+    local manualThrowOnly: boolean = false
 
     local function isValidTarget(player: Player): boolean
         if player == LocalPlayer
@@ -110,27 +116,90 @@ function Module.init(runtime: any): any
         return speed
     end
 
-    -- The blade is a physical straight projectile, so graze tolerance matters:
-    -- a single centre ray passes a wall the real knife then clips. STRICT means
-    -- transparent parts are only ignored when they cannot collide; an invisible
-    -- solid wall still stops the blade. The corridor is sampled with a small
-    -- cross of rays around the centre line.
-    local KNIFE_CORRIDOR_RADIUS: number = 0.5
+    -- The blade is a physical projectile, so "clear" is not a ray question.
+    -- Its own thickness decides how much gap it needs, and a rail that covers
+    -- the chest still leaves the head exposed: the aim walks upward until a
+    -- blade-sized body actually reaches a part of the target.
+    local MIN_KNIFE_RADIUS: number = 0.12
+    local MAX_KNIFE_RADIUS: number = 0.6
     -- The blade keeps flying until it hits something, so there is no range
     -- limit: only an absurd lead (a vanished target, a broken sample) is
     -- refused. Ordinary long throws stay available.
     local MAX_KNIFE_DISTANCE: number = 400
 
-    local function knifeCorridorClear(
+    local function finiteNumber(value: any): boolean
+        return type(value) == "number"
+            and value == value
+            and value > -math.huge
+            and value < math.huge
+    end
+
+    local function knifeRadius(knife: Tool?): number
+        local handle: Instance? = knife and knife:FindFirstChild("Handle")
+        if handle and handle:IsA("BasePart") then
+            local size: Vector3 = handle.Size
+            -- The long axis runs along the flight path; the gap the blade has
+            -- to fit through is bounded by the middle of its extents.
+            local extents: {number} = {
+                size.X * 0.5, size.Y * 0.5, size.Z * 0.5,
+            }
+            table.sort(extents)
+            local section: number = extents[2]
+            if finiteNumber(section) then
+                return math.clamp(section, MIN_KNIFE_RADIUS, MAX_KNIFE_RADIUS)
+            end
+        end
+        return 0.25
+    end
+
+    -- The same exclusions the game's own WeaponService uses, and no
+    -- transparency rule: the blade is a solid body, so an invisible part that
+    -- can collide still stops it.
+    local function knifeProbeParams(): RaycastParams
+        local excluded: {Instance} = {}
+        if LocalPlayer.Character then
+            table.insert(excluded, LocalPlayer.Character)
+        end
+        for _, object: Instance in ipairs(
+            CollectionService:GetTagged("WeaponPassthrough")
+        ) do
+            table.insert(excluded, object)
+        end
+        local params: RaycastParams = RaycastParams.new()
+        params.FilterType = Enum.RaycastFilterType.Exclude
+        params.FilterDescendantsInstances = excluded
+        params.IgnoreWater = true
+        return params
+    end
+
+    -- True when a blade of `radius` thrown from `origin` meets the target
+    -- before anything else. Spherecast is exactly that body; where the engine
+    -- has no Spherecast, a centre ray plus a ring at the radius proves the
+    -- same thing: nothing solid is closer than the target.
+    local function knifeReaches(
         origin: Vector3,
-        endpoint: Vector3,
+        aim: Vector3,
+        radius: number,
         targetCharacter: Model
     ): boolean
-        local delta: Vector3 = endpoint - origin
-        local distance: number = delta.Magnitude
-        if distance < 0.05 then
+        local delta: Vector3 = aim - origin
+        if delta.Magnitude < 0.05 then
             return false
         end
+        local params: RaycastParams = knifeProbeParams()
+        local ok: boolean, result: any = pcall(function(): any
+            return (workspace :: any):Spherecast(origin, radius, delta, params)
+        end)
+        if ok then
+            local part: any = result and result.Instance
+            return typeof(part) == "Instance"
+                and part:IsDescendantOf(targetCharacter)
+        end
+        local centre: RaycastResult? = workspace:Raycast(origin, delta, params)
+        if not centre or not centre.Instance:IsDescendantOf(targetCharacter) then
+            return false
+        end
+        local reach: number = (centre.Position - origin).Magnitude
         local direction: Vector3 = delta.Unit
         local right: Vector3 = direction:Cross(Vector3.new(0, 1, 0))
         if right.Magnitude < 1e-3 then
@@ -139,35 +208,43 @@ function Module.init(runtime: any): any
             right = right.Unit
         end
         local up: Vector3 = right:Cross(direction).Unit
-        local offsets: {Vector3} = {
-            Vector3.zero,
-            right * KNIFE_CORRIDOR_RADIUS,
-            right * -KNIFE_CORRIDOR_RADIUS,
-            up * KNIFE_CORRIDOR_RADIUS,
-            up * -KNIFE_CORRIDOR_RADIUS,
-        }
-        for _, offset: Vector3 in ipairs(offsets) do
-            if not isWeaponPathClear(
-                origin + offset,
-                endpoint + offset,
-                targetCharacter,
-                true,
-                {ignoreTarget = true}
-            ) then
+        for _, offset: Vector3 in ipairs({
+            right * radius, right * -radius, up * radius, up * -radius,
+        }) do
+            local side: RaycastResult? =
+                workspace:Raycast(origin + offset, delta, params)
+            if side and not side.Instance:IsDescendantOf(targetCharacter)
+                and (side.Position - origin).Magnitude < reach then
                 return false
             end
         end
         return true
     end
 
+    -- Chest first, then upward: a rail that covers the chest usually leaves
+    -- the head exposed. Below and sideways are the last resorts.
+    local KNIFE_AIM_LADDER: {{height: number, lateral: number, name: string}} = {
+        {height = 0, lateral = 0, name = "chest"},
+        {height = 0.55, lateral = 0, name = "upper chest"},
+        {height = 1.05, lateral = 0, name = "head"},
+        {height = 1.5, lateral = 0, name = "above head"},
+        {height = -0.6, lateral = 0, name = "legs"},
+        {height = 0.5, lateral = 0.6, name = "shoulder"},
+        {height = 0.5, lateral = -0.6, name = "shoulder"},
+    }
+
     -- The blade is a straight projectile. The predictor solves the intercept
-    -- (including the measured transport delay); WallCheck then verifies the
-    -- exact corridor and that the target is not currently behind cover.
+    -- (including the measured transport delay); the probe then proves that a
+    -- blade of this size reaches that point and not a rail in front of it.
     resolveKnifeAim = function(target: Player, origin: Vector3): Vector3?
         lastKnifePrediction = nil
         lastKnifeError = nil
+        lastKnifeAimName = nil
+        lastKnifeAimHeight = nil
+        lastKnifeRadius = nil
+        local knife: Tool? = getReadyKnife()
         local endpoint: Vector3?, info: any, reason: string? =
-            prediction.knifeAim(target, origin, readKnifeSpeed(getReadyKnife()))
+            prediction.knifeAim(target, origin, readKnifeSpeed(knife))
         if not endpoint then
             lastKnifeError = reason
             return nil
@@ -180,20 +257,33 @@ function Module.init(runtime: any): any
             lastKnifeError = "too far"
             return nil
         end
-        -- Cheapest rejection first: if the target is behind cover right now,
-        -- the blade would fly into that wall whatever the future pose says.
-        -- Here the target is NOT excluded, so reaching it proves line of sight.
-        local captured: Vector3 = info and info.capturedPosition or endpoint
-        if not isWeaponPathClear(origin, captured, character, true, nil) then
-            lastKnifeError = "covered"
-            return nil
+        local radius: number = knifeRadius(knife)
+        lastKnifeRadius = radius
+        local direction: Vector3 = (endpoint - origin).Unit
+        local right: Vector3 = direction:Cross(Vector3.new(0, 1, 0))
+        if right.Magnitude < 1e-3 then
+            right = Vector3.new(1, 0, 0)
+        else
+            right = right.Unit
         end
-        if not knifeCorridorClear(origin, endpoint, character) then
-            lastKnifeError = "obstructed"
-            return nil
+        -- Height is world-up on purpose: the ladder exists to clear a
+        -- horizontal rail, so "a bit higher" must mean higher, not merely
+        -- perpendicular to a steep throw.
+        for _, step: any in ipairs(KNIFE_AIM_LADDER) do
+            local aim: Vector3 = endpoint
+                + Vector3.new(0, 1, 0) * step.height
+                + right * step.lateral
+            if knifeReaches(origin, aim, radius, character) then
+                lastKnifePrediction = info
+                lastKnifeAimName = step.name
+                lastKnifeAimHeight = step.height
+                return aim
+            end
         end
-        lastKnifePrediction = info
-        return endpoint
+        -- Every rung was stopped by geometry. The target is behind cover for
+        -- a blade of this size, so the throw is refused instead of wasted.
+        lastKnifeError = "covered"
+        return nil
     end
 
     type ThrowJoint = {
@@ -277,70 +367,174 @@ function Module.init(runtime: any): any
         end, "render")
     end
 
-    local function throwKnife(): ()
-        if not knifeThrowSettings.enabled or throwPending then return end
+    -- The spawn point: the handle when it exists, the hand otherwise. Sent
+    -- as a position-only CFrame, the same shape the game's own client sends.
+    local function knifeOrigin(knife: Tool, character: Model?): CFrame?
+        if not character or character ~= LocalPlayer.Character then
+            return nil
+        end
+        local handle: Instance? = knife:FindFirstChild("Handle")
+        local hand: Instance? = character:FindFirstChild("RightHand")
+            or character:FindFirstChild("Right Arm")
+            or character:FindFirstChild("HumanoidRootPart")
+        local source: Instance? =
+            handle and handle:IsA("BasePart") and handle or hand
+        if not source or not source:IsA("BasePart") then
+            return nil
+        end
+        return (source :: BasePart).CFrame
+    end
+
+    -- One throw, one packet. The origin and the aim are resolved at the
+    -- moment of sending, so a windup cannot fire from a stale hand position.
+    local function performThrow(
+        knife: Tool,
+        remote: Instance,
+        source: string
+    ): boolean
+        if not knifeThrowSettings.enabled or getReadyKnife() ~= knife then
+            return false
+        end
+        local character: Model? = LocalPlayer.Character
+        local origin: CFrame? = knifeOrigin(knife, character)
+        if not origin then
+            return false
+        end
+        -- Select again at release: do not cling to a target that closed its
+        -- peek during windup when another player is now visible.
+        local target: Player? = findNearestTarget(origin.Position)
+        if not target then
+            return false
+        end
+        local aim: Vector3? = resolveKnifeAim(target, origin.Position)
+        if not aim or (aim - origin.Position).Magnitude < 0.05 then
+            return false
+        end
+        -- Position-only CFrames: the server takes the spawn point and the aim
+        -- point, exactly like the game's own client. The handle's rotation is
+        -- not part of the packet.
+        remote:FireServer(CFrame.new(origin.Position), CFrame.new(aim))
+        pcall(trajectoryCalibration.noteAuthoredShot, trajectoryCalibration, {
+            kind = "knife", tool = knife, toolName = knife.Name,
+            originPos = origin.Position, aimPos = aim, target = target,
+            silent = source == "manual",
+            settings = {mode = "Normal", animation = true, wallCheck = true,
+                motionSource = lastKnifePrediction and lastKnifePrediction.motionSource,
+                cadence = source == "manual" and "button" or "animation-cycle",
+                model = lastKnifePrediction and lastKnifePrediction.model or "kinematic-v51",
+                referencePoint = lastKnifePrediction and {lastKnifePrediction.capturedPosition.X, lastKnifePrediction.capturedPosition.Y, lastKnifePrediction.capturedPosition.Z},
+                predictedPoint = lastKnifePrediction and {lastKnifePrediction.endpoint.X, lastKnifePrediction.endpoint.Y, lastKnifePrediction.endpoint.Z},
+                sampledVelocity = lastKnifePrediction and {lastKnifePrediction.velocity.X, lastKnifePrediction.velocity.Y, lastKnifePrediction.velocity.Z},
+                leadSeconds = lastKnifePrediction and lastKnifePrediction.leadSeconds,
+                flightSeconds = lastKnifePrediction and lastKnifePrediction.flightSeconds,
+                sampleAge = lastKnifePrediction and lastKnifePrediction.sampleAge,
+                samples = lastKnifePrediction and lastKnifePrediction.samples,
+                rtt = lastKnifePrediction and lastKnifePrediction.rtt,
+                echoSamples = lastKnifePrediction and lastKnifePrediction.echoSamples,
+                rttEngine = lastKnifePrediction and lastKnifePrediction.rttEngine,
+                rttData = lastKnifePrediction and lastKnifePrediction.rttData,
+                turnRate = lastKnifePrediction and lastKnifePrediction.turnRate,
+                brakeSeconds = lastKnifePrediction and lastKnifePrediction.brakeSeconds,
+                -- Where the blade went: the aim rung it took, how much it had
+                -- to clear and the body size the probe used.
+                aimHeight = lastKnifeAimName,
+                aimOffsetStuds = lastKnifeAimHeight,
+                knifeRadius = lastKnifeRadius,
+                throwSource = source,
+                windupSeconds = source == "manual" and 0 or 0.3},
+        })
+        return true
+    end
+
+    local lastManualThrowAt: number = -math.huge
+    local function throwKnife(manual: boolean?): ()
+        if not knifeThrowSettings.enabled then
+            return
+        end
         local knife: Tool? = getReadyKnife()
-        if not knife then stopThrowAnimation(); return end
+        if not knife then
+            if not manual then stopThrowAnimation() end
+            return
+        end
         local events: Instance? = knife:FindFirstChild("Events")
         local remote: Instance? = events and events:FindFirstChild("KnifeThrown")
-        if not remote or not remote:IsA("RemoteEvent") then return end
+        if not remote or not remote:IsA("RemoteEvent") then
+            return
+        end
+        if manual then
+            -- A tap has to throw now, so the windup is skipped and the packet
+            -- leaves on the spot. The guard only stops a double tap.
+            if os.clock() - lastManualThrowAt < 0.25 then
+                return
+            end
+            lastManualThrowAt = os.clock()
+            if performThrow(knife, remote, "manual") then
+                pcall(playThrowAnimation, knife, nil)
+            end
+            return
+        end
+        if throwPending then
+            return
+        end
         local character: Model? = LocalPlayer.Character
-        local function getOrigin(): CFrame?
-            if not character or character ~= LocalPlayer.Character then return nil end
-            local handle: Instance? = knife:FindFirstChild("Handle")
-            local hand: Instance? = character:FindFirstChild("RightHand")
-                or character:FindFirstChild("Right Arm") or character:FindFirstChild("HumanoidRootPart")
-            local source: Instance? = handle and handle:IsA("BasePart") and handle or hand
-            if not source or not source:IsA("BasePart") then return nil end
-            return (source :: BasePart).CFrame
+        local origin: CFrame? = knifeOrigin(knife, character)
+        if not origin or not findNearestTarget(origin.Position) then
+            return
         end
-        local initialOrigin: CFrame? = getOrigin()
-        if not initialOrigin or not findNearestTarget(initialOrigin.Position) then return end
-        local function sendAtRelease(): ()
-            if not knifeThrowSettings.enabled or getReadyKnife() ~= knife then return end
-            local origin: CFrame? = getOrigin()
-            if not origin then return end
-            -- Select again at release: do not cling to a target that closed
-            -- its peek during windup when another player is now visible.
-            local target: Player? = findNearestTarget(origin.Position)
-            if not target then return end
-            local aim: Vector3? = resolveKnifeAim(target, origin.Position)
-            if not aim or (aim - origin.Position).Magnitude < 0.05 then return end
-            remote:FireServer(origin, CFrame.new(aim))
-            pcall(trajectoryCalibration.noteAuthoredShot, trajectoryCalibration, {
-                kind = "knife", tool = knife, toolName = knife.Name,
-                originPos = origin.Position, aimPos = aim, target = target, silent = false,
-                settings = {mode = "Normal", animation = true, wallCheck = true,
-                    motionSource = lastKnifePrediction and lastKnifePrediction.motionSource,
-                    cadence = "animation-cycle",
-                    model = lastKnifePrediction and lastKnifePrediction.model or "kinematic-v51",
-                    referencePoint = lastKnifePrediction and {lastKnifePrediction.capturedPosition.X, lastKnifePrediction.capturedPosition.Y, lastKnifePrediction.capturedPosition.Z},
-                    predictedPoint = lastKnifePrediction and {lastKnifePrediction.endpoint.X, lastKnifePrediction.endpoint.Y, lastKnifePrediction.endpoint.Z},
-                    sampledVelocity = lastKnifePrediction and {lastKnifePrediction.velocity.X, lastKnifePrediction.velocity.Y, lastKnifePrediction.velocity.Z},
-                    leadSeconds = lastKnifePrediction and lastKnifePrediction.leadSeconds,
-                    flightSeconds = lastKnifePrediction and lastKnifePrediction.flightSeconds,
-                    sampleAge = lastKnifePrediction and lastKnifePrediction.sampleAge,
-                    samples = lastKnifePrediction and lastKnifePrediction.samples,
-                    rtt = lastKnifePrediction and lastKnifePrediction.rtt,
-                    echoSamples = lastKnifePrediction and lastKnifePrediction.echoSamples,
-                    rttEngine = lastKnifePrediction and lastKnifePrediction.rttEngine,
-                    rttData = lastKnifePrediction and lastKnifePrediction.rttData,
-                    turnRate = lastKnifePrediction and lastKnifePrediction.turnRate,
-                    brakeSeconds = lastKnifePrediction and lastKnifePrediction.brakeSeconds,
-                    windupSeconds = 0.3},
-            })
+        local ok: boolean = pcall(
+            playThrowAnimation,
+            knife,
+            function(): ()
+                performThrow(knife, remote, "auto")
+            end
+        )
+        if not ok then
+            stopThrowAnimation()
         end
-        local ok: boolean = pcall(playThrowAnimation, knife, sendAtRelease)
-        if not ok then stopThrowAnimation() end
+    end
+
+    -- Manual mode watches the tool itself, so the throw happens on the same
+    -- event a tap and a click both produce (Tool.Activated) and nothing here
+    -- depends on a keyboard. The connection follows the knife across respawns.
+    local watchedKnife: Tool? = nil
+    local function disconnectManualTrigger(): ()
+        disconnectFeatureConnection("MM2KnifeActivated")
+        watchedKnife = nil
+    end
+    local function watchManualTrigger(): ()
+        local knife: Tool? = getReadyKnife()
+        if knife == watchedKnife then
+            return
+        end
+        disconnectManualTrigger()
+        if not knife then
+            return
+        end
+        watchedKnife = knife
+        featureConnections.MM2KnifeActivated = knife.Activated:Connect(function(): ()
+            if not knifeThrowSettings.enabled or not manualThrowOnly then
+                return
+            end
+            throwKnife(true)
+        end)
     end
 
     local function refreshKnifeThrow(): ()
         disconnectFeatureConnection("MM2KnifeThrow")
+        disconnectManualTrigger()
         if not knifeThrowSettings.enabled or state.mm2SilentAimEnabled ~= true then
             stopThrowAnimation()
             return
         end
-        featureConnections.MM2KnifeThrow = TaskManager:Connect(throwKnife)
+        if manualThrowOnly then
+            featureConnections.MM2KnifeThrow =
+                TaskManager:Connect(watchManualTrigger)
+        else
+            featureConnections.MM2KnifeThrow =
+                TaskManager:Connect(function(): ()
+                    throwKnife(false)
+                end)
+        end
     end
     local function toggleKnifeThrow(enabled: boolean): ()
         knifeThrowSettings.enabled = enabled
@@ -375,6 +569,21 @@ function Module.init(runtime: any): any
         table.insert(feature.optionRows, 2, row)
         for order, optionRow in ipairs(feature.optionRows) do optionRow.LayoutOrder = order end
     end
+    -- Second checkbox: same knob, different trigger. It is created after the
+    -- first so it lands right below it, and it is independent of it.
+    local manualKey = "MM2.Shoot.KnifeThrowButton"
+    if configData.states[manualKey] == nil then
+        configData.states[manualKey] = false
+    end
+    manualThrowOnly = configData.states[manualKey] == true
+    addToggleOption(feature, "Lanzar con el boton", manualThrowOnly,
+        function(enabled: boolean): ()
+            manualThrowOnly = enabled
+            configData.states[manualKey] = enabled
+            refreshKnifeThrow()
+            if type(queueConfigSave) == "function" then queueConfigSave() end
+        end,
+        "Lanza solo cuando tocas el boton de lanzar (movil o PC), con la misma punteria y sin esperar el gesto.", true)
     if type(queueConfigSave) == "function" then queueConfigSave() end
 
     featureConnections.MM2KnifeThrowCharacter = LocalPlayer.CharacterAdded:Connect(stopThrowAnimation)
