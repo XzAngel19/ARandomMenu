@@ -175,6 +175,49 @@ local function isWeaponPathClear(origin: Vector3, endpoint: Vector3, target: Mod
     return false, { name = "raycast budget", skipped = false } -- conservative
 end
 
+-- What the ray meets when nothing is skipped. Recorded on every allowed
+-- shot, not only on refusals: five shots of the v61 session passed every check
+-- and still stopped 24-56 studs short of the aim, and without this there is no
+-- way to tell whether transparent geometry was in the way.
+local function describeRayHit(origin: Vector3, endpoint: Vector3, target: Model?): any
+    local direction: Vector3 = endpoint - origin
+    if direction.Magnitude < 0.05 then
+        return nil
+    end
+    local excluded: {Instance} = {}
+    if LocalPlayer.Character then
+        table.insert(excluded, LocalPlayer.Character)
+    end
+    for _, object: Instance in ipairs(CollectionService:GetTagged("WeaponPassthrough")) do
+        table.insert(excluded, object)
+    end
+    local params: RaycastParams = RaycastParams.new()
+    params.FilterType = Enum.RaycastFilterType.Exclude
+    params.IgnoreWater = true
+    params.FilterDescendantsInstances = excluded
+    local hit: RaycastResult? = workspace:Raycast(origin, direction, params)
+    if not hit then
+        return nil
+    end
+    local part: Instance = hit.Instance
+    local info: any = {
+        onTarget = target ~= nil and part:IsDescendantOf(target),
+    }
+    pcall(function(): ()
+        info.name = string.sub(part:GetFullName(), 1, 160)
+        info.className = part.ClassName
+        local position: any = (hit :: any).Position
+        if position then
+            info.distance = (position - origin).Magnitude
+        end
+    end)
+    if part:IsA("BasePart") then
+        info.transparency = part.Transparency
+        info.canCollide = part.CanCollide
+    end
+    return info
+end
+
 local function getWeaponFromContainer(
     container: Instance?,
     weaponName: string,
@@ -1480,6 +1523,10 @@ local function createTrajectoryCalibration(): any
         velocity: {number},
         humanoidState: string,
         grounded: boolean,
+        -- The replicated control input. It leads the velocity on a turn, so
+        -- recording it lets an offline replay test an input-based turn instead
+        -- of needing another session.
+        moveDirection: {number}?,
     }
     type RunningStats = {
         count: number,
@@ -1505,6 +1552,31 @@ local function createTrajectoryCalibration(): any
         latencyMs: number?,
         confirmedEndpoint: Vector3?,
         confirmedHitTarget: boolean?,
+        -- Everything below exists so a saved session can answer "did the shot
+        -- land, where, and when" without a second session: the server-clock
+        -- round trip, the part that was actually hit and its size, and the
+        -- target's health before and after.
+        serverActivatedAt: number?,
+        serverConfirmedAt: number?,
+        confirmedServerOrigin: Vector3?,
+        confirmedHitPart: string?,
+        confirmedHitPartPosition: Vector3?,
+        confirmedHitPartSize: Vector3?,
+        rootAtConfirmation: {[string]: any}?,
+        lastSeenPosition: Vector3?,
+        targetHealthAtAim: number?,
+        targetHealthAtConfirmation: number?,
+        targetHealthAfter: number?,
+        targetHealthDropAt: number?,
+        targetHealthDropServerTime: number?,
+        targetDiedAt: number?,
+        targetDiedServerTime: number?,
+        healthConnection: RBXScriptConnection?,
+        samplingStoppedAt: number?,
+        samplingStoppedReason: string?,
+        trajectoryCapped: boolean?,
+        rttEngineAtConfirmation: number?,
+        rttDataAtConfirmation: number?,
     }
     type PendingKnife = {
         shotId: string?,
@@ -1519,6 +1591,14 @@ local function createTrajectoryCalibration(): any
         targetTrajectory: {TrajectoryPoint},
         targetHistory: {HistoryPoint},
         lastTrajectorySampleAt: number,
+        serverActivatedAt: number?,
+        samplingStoppedAt: number?,
+        samplingStoppedReason: string?,
+        trajectoryCapped: boolean?,
+        lastSeenPosition: Vector3?,
+        targetHealthAtAim: number?,
+        targetHealthAfter: number?,
+        healthConnection: RBXScriptConnection?,
     }
     type KnifeTrack = {
         shotId: string?,
@@ -1582,6 +1662,7 @@ local function createTrajectoryCalibration(): any
         blockedDistance: number?,
         rttEngine: number?,
         rttData: number?,
+        occluder: any?,
     }
     type Estimates = {
         gunAcceptanceMs: number?,
@@ -1611,6 +1692,12 @@ local function createTrajectoryCalibration(): any
         .. "/MM2_Trajectory_Calibration.json"
     local MAX_EVENTS: number = 2400
     local MAX_PENDING_AGE: number = 2.5
+    -- 30 Hz could not resolve a 0.02 s horizon, and the offline question is
+    -- exactly how the target moved in the last tens of milliseconds.
+    local TRAJECTORY_SAMPLE_HZ: number = 60
+    -- 2.5 s of pending life at 60 Hz needs 150; the margin covers a slow
+    -- frame without silently truncating the tail.
+    local MAX_TRAJECTORY_POINTS: number = 200
     local environment: {[string]: any} = getfenv() :: any
     local playerMouse: Mouse = LocalPlayer:GetMouse()
     local runtime: any = {
@@ -1630,10 +1717,13 @@ local function createTrajectoryCalibration(): any
         sessionStabAttempts = 0,
         sessionGunAttempts = 0,
         sessionGunConfirmed = 0,
+        sessionGunHitTarget = 0,
+        sessionGunKills = 0,
         sessionKnifeAttempts = 0,
         sessionKnifeConfirmed = 0,
         pendingGuns = {} :: {PendingGun},
         lastBlockedAt = 0,
+        evictedEvents = 0,
         pendingKnives = {} :: {PendingKnife},
         tracks = {} :: {[Instance]: KnifeTrack},
         observedTools = setmetatable({}, {__mode = "k"}) :: {[Tool]: boolean},
@@ -1812,6 +1902,48 @@ local function createTrajectoryCalibration(): any
         }
     end
 
+    -- Health is the only client-visible proof that a shot did damage. The
+    -- `hitPart` of GunFired says a ray touched the target; a drop says the
+    -- server applied it. Both are recorded, with both clocks, per shot.
+    local function watchPendingHealth(pending: any, target: Player?): ()
+        pending.targetHealthAtAim = nil
+        pending.targetHealthAfter = nil
+        pending.targetHealthDropAt = nil
+        pending.targetDiedAt = nil
+        local character: Model? = target and target.Character
+        local humanoid: Humanoid? = character
+            and character:FindFirstChildOfClass("Humanoid")
+        if not humanoid then
+            return
+        end
+        pending.targetHealthAtAim = humanoid.Health
+        if pending.healthConnection then
+            pending.healthConnection:Disconnect()
+            pending.healthConnection = nil
+        end
+        pending.healthConnection = humanoid.HealthChanged:Connect(
+            function(health: number): ()
+                if not predictionMath.finite(health) then
+                    return
+                end
+                if pending.targetHealthAfter == nil
+                    or health < pending.targetHealthAfter then
+                    pending.targetHealthAfter = health
+                    if pending.targetHealthDropAt == nil then
+                        pending.targetHealthDropAt = os.clock()
+                        pending.targetHealthDropServerTime =
+                            workspace:GetServerTimeNow()
+                    end
+                    if health <= 0 and pending.targetDiedAt == nil then
+                        pending.targetDiedAt = os.clock()
+                        pending.targetDiedServerTime =
+                            workspace:GetServerTimeNow()
+                    end
+                end
+            end
+        )
+    end
+
     local function findKnifeAnalysisTarget(aimPosition: Vector3?): Player?
         local selected: Player? = nil
         local selectedScore: number = math.huge
@@ -1850,7 +1982,8 @@ local function createTrajectoryCalibration(): any
         local function sampleQueue(queue: {any}): ()
             for _, pending: any in ipairs(queue) do
                 if pending.targetUserId
-                    and now - pending.lastTrajectorySampleAt >= 1 / 30 then
+                    and now - pending.lastTrajectorySampleAt
+                        >= 1 / TRAJECTORY_SAMPLE_HZ then
                     local target: Player? = Players:GetPlayerByUserId(
                         pending.targetUserId
                     )
@@ -1861,8 +1994,27 @@ local function createTrajectoryCalibration(): any
                             pending.pingMs
                         )
                         or nil
-                    if point and #pending.targetTrajectory < 120 then
-                        table.insert(pending.targetTrajectory, point)
+                    if point then
+                        if #pending.targetTrajectory < MAX_TRAJECTORY_POINTS then
+                            table.insert(pending.targetTrajectory, point)
+                        else
+                            pending.trajectoryCapped = true
+                        end
+                    elseif pending.samplingStoppedAt == nil then
+                        -- The only two ways this is nil: the character is gone
+                        -- or the humanoid is dead. Either way it is the reason
+                        -- a saved trajectory ends early, so it gets written
+                        -- down instead of being guessed at later.
+                        pending.samplingStoppedAt = now
+                        pending.samplingStoppedReason = target
+                                and "target-dead-or-missing"
+                            or "target-left"
+                    end
+                    if target then
+                        local root: BasePart? = getTargetRoot(target)
+                        if root then
+                            pending.lastSeenPosition = root.Position
+                        end
                     end
                     pending.lastTrajectorySampleAt = now
                 end
@@ -1973,7 +2125,20 @@ local function createTrajectoryCalibration(): any
         record.sessionId = runtime.sessionId
         record.buildStamp = runtime.buildStamp
         if #runtime.events >= MAX_EVENTS then
-            table.remove(runtime.events, 1)
+            -- A session that spams the knife (158 authored events on
+            -- 2026-10-18) evicted the gun records before their confirmations
+            -- could be matched, so a shot could no longer be scored. The knife
+            -- noise goes first; the gun record carries the settings.
+            local victim: number = 1
+            for index: number = 1, #runtime.events do
+                local candidate: CalibrationEvent = runtime.events[index]
+                if candidate.kind == "knife" and candidate.phase == "authored" then
+                    victim = index
+                    break
+                end
+            end
+            table.remove(runtime.events, victim)
+            runtime.evictedEvents = (runtime.evictedEvents or 0) + 1
         end
         table.insert(runtime.events, record)
         runtime.revision += 1
@@ -2021,12 +2186,16 @@ local function createTrajectoryCalibration(): any
             local position: any = sample.position
             local velocity: any = sample.velocity
             if typeof(position) == "Vector3" and typeof(velocity) == "Vector3" then
+                local move: any = sample.moveDirection
                 table.insert(points, {
                     dt = (sample.at or 0) - sampleAge,
                     position = {position.X, position.Y, position.Z},
                     velocity = {velocity.X, velocity.Y, velocity.Z},
                     humanoidState = tostring(sample.state or "Running"),
                     grounded = sample.grounded == true,
+                    moveDirection = typeof(move) == "Vector3"
+                            and {move.X, move.Y, move.Z}
+                        or nil,
                 })
             end
         end
@@ -2038,11 +2207,21 @@ local function createTrajectoryCalibration(): any
     end
 
     compactPending = function(queue: {any}, now: number): ()
+        local function drop(index: number): ()
+            local entry: any = queue[index]
+            if entry and entry.healthConnection then
+                pcall(function(): ()
+                    (entry.healthConnection :: RBXScriptConnection):Disconnect()
+                end)
+                entry.healthConnection = nil
+            end
+            table.remove(queue, index)
+        end
         while #queue > 0 and now - queue[1].activatedAt > MAX_PENDING_AGE do
-            table.remove(queue, 1)
+            drop(1)
         end
         while #queue > 12 do
-            table.remove(queue, 1)
+            drop(1)
         end
     end
 
@@ -2399,7 +2578,9 @@ local function createTrajectoryCalibration(): any
             session = {
                 startedAt = runtime.startedAtUnix,
                 countersScope = "this-session-only",
-                gunConfirmationMeaning = "matched GunFired signal; not necessarily damage or death",
+                gunConfirmationMeaning = "matched GunFired signal; hitTarget means the ray reached the target, died means the humanoid reached 0 health",
+                evictedEvents = runtime.evictedEvents,
+                healthMeaning = "client-observed Humanoid.Health; healthDropServerTime is GetServerTimeNow at the drop",
                 knifeConfirmationMeaning = "observed projectile with valid speed; not an impact",
                 rawKnifeActivations = runtime.rawKnifeActivations,
                 unmatchedGunSignals = runtime.unmatchedGunSignals,
@@ -2407,6 +2588,8 @@ local function createTrajectoryCalibration(): any
                 elapsedSeconds = os.clock() - runtime.startedAt,
                 gunAttempts = runtime.sessionGunAttempts,
                 gunConfirmed = runtime.sessionGunConfirmed,
+                gunHitTarget = runtime.sessionGunHitTarget,
+                gunKills = runtime.sessionGunKills,
                 knifeAttempts = runtime.sessionKnifeAttempts,
                 knifeConfirmed = runtime.sessionKnifeConfirmed,
                 events = runtime.events,
@@ -2458,6 +2641,15 @@ local function createTrajectoryCalibration(): any
     end
 
     finalizeGunCapture = function(pending: PendingGun): ()
+        if pending.targetDiedAt then
+            runtime.sessionGunKills += 1
+        end
+        if pending.healthConnection then
+            pcall(function(): ()
+                (pending.healthConnection :: RBXScriptConnection):Disconnect()
+            end)
+            pending.healthConnection = nil
+        end
         -- The echo lives here on purpose. The shot-feedback handler that used
         -- to feed it depends on a connection made when the feature toggles;
         -- the v61 log shows it never fired (echoDelay nil on all 13 shots
@@ -2482,6 +2674,7 @@ local function createTrajectoryCalibration(): any
             phase = "confirmation",
             kind = "gun",
             serverTime = workspace:GetServerTimeNow(),
+            clock = os.clock(),
             pingMs = pending.pingMs,
             latencyMs = pending.latencyMs,
             targetUserId = pending.targetUserId,
@@ -2500,6 +2693,54 @@ local function createTrajectoryCalibration(): any
                     and vectorArray(pending.confirmedEndpoint)
                 or nil,
             hitTarget = pending.confirmedHitTarget,
+            -- Server-clock round trip: activation to GunFired, both stamped
+            -- with GetServerTimeNow. Independent of GetNetworkPing and of the
+            -- engine's Data Ping, so it settles which of them the lead needs.
+            serverEchoMs = (pending.serverConfirmedAt
+                    and pending.serverActivatedAt)
+                    and (pending.serverConfirmedAt - pending.serverActivatedAt)
+                        * 1000
+                or nil,
+            -- Anchor for the server-clock axis: every trajectory point carries
+            -- its own serverTime, so serverDt = point.serverTime - this.
+            serverActivatedAt = pending.serverActivatedAt,
+            serverConfirmedAt = pending.serverConfirmedAt,
+            serverOrigin = pending.confirmedServerOrigin
+                    and vectorArray(pending.confirmedServerOrigin)
+                or nil,
+            trajectoryPoints = #pending.targetTrajectory,
+            trajectorySpanSeconds = (
+                    #pending.targetTrajectory > 1
+                    and (pending.targetTrajectory[#pending.targetTrajectory].dt
+                        - pending.targetTrajectory[1].dt)
+                )
+                or 0,
+            trajectoryCapped = pending.trajectoryCapped == true,
+            samplingStoppedReason = pending.samplingStoppedReason,
+            samplingStoppedAt = pending.samplingStoppedAt,
+            rttEngineAtConfirmation = pending.rttEngineAtConfirmation,
+            rttDataAtConfirmation = pending.rttDataAtConfirmation,
+            aim = pending.requestedAim and vectorArray(pending.requestedAim) or nil,
+            origin = pending.origin and vectorArray(pending.origin) or nil,
+            hitPart = pending.confirmedHitPart,
+            hitPartPosition = pending.confirmedHitPartPosition
+                    and vectorArray(pending.confirmedHitPartPosition)
+                or nil,
+            hitPartSize = pending.confirmedHitPartSize
+                    and vectorArray(pending.confirmedHitPartSize)
+                or nil,
+            rootAtConfirmation = pending.rootAtConfirmation,
+            lastSeenPosition = pending.lastSeenPosition
+                    and vectorArray(pending.lastSeenPosition)
+                or nil,
+            healthAtAim = pending.targetHealthAtAim,
+            healthAtConfirmation = pending.targetHealthAtConfirmation,
+            healthAfter = pending.targetHealthAfter,
+            healthDropAt = pending.targetHealthDropAt,
+            healthDropServerTime = pending.targetHealthDropServerTime,
+            diedAt = pending.targetDiedAt,
+            diedServerTime = pending.targetDiedServerTime,
+            died = pending.targetDiedAt ~= nil,
             pingBucket = analysis.pingBucket,
             bestMotionModel = analysis.bestMotionModel,
             motionModelErrors = analysis.motionModelErrors,
@@ -2586,6 +2827,42 @@ local function createTrajectoryCalibration(): any
         local hitTarget: boolean = typeof(hitPartValue) == "Instance"
             and targetCharacter ~= nil
             and hitPartValue:IsDescendantOf(targetCharacter)
+        -- Recorded at the moment the signal arrives, on the server clock, so
+        -- the round trip can be measured without either engine estimate.
+        pending.serverConfirmedAt = workspace:GetServerTimeNow()
+        pending.confirmedServerOrigin = eventOrigin
+        local engineNow: number?, dataNow: number? = readLatencyReadings()
+        pending.rttEngineAtConfirmation = engineNow
+        pending.rttDataAtConfirmation = dataNow
+        if typeof(hitPartValue) == "Instance" then
+            pcall(function(): ()
+                pending.confirmedHitPart = string.sub(hitPartValue.Name, 1, 80)
+                if hitPartValue:IsA("BasePart") then
+                    pending.confirmedHitPartPosition = hitPartValue.Position
+                    pending.confirmedHitPartSize = hitPartValue.Size
+                end
+            end)
+        end
+        if target then
+            local root: BasePart? = getTargetRoot(target)
+            local humanoid: Humanoid? = getTargetHumanoid(target)
+            if root then
+                local stateName: string? = nil
+                if humanoid then
+                    pcall(function(): ()
+                        stateName = humanoid:GetState().Name
+                    end)
+                end
+                pending.rootAtConfirmation = {
+                    position = vectorArray(root.Position),
+                    velocity = vectorArray(root.AssemblyLinearVelocity),
+                    state = stateName,
+                }
+            end
+            if humanoid then
+                pending.targetHealthAtConfirmation = humanoid.Health
+            end
+        end
         if latencyMs >= 30 and latencyMs <= 450 then
             table.insert(runtime.freshGunLatency, {at = now, ms = latencyMs})
             if #runtime.freshGunLatency > 24 then table.remove(runtime.freshGunLatency, 1) end
@@ -2593,6 +2870,9 @@ local function createTrajectoryCalibration(): any
         end
         addSample(runtime.gunAcceptance, latencyMs)
         runtime.sessionGunConfirmed += 1
+        if hitTarget then
+            runtime.sessionGunHitTarget += 1
+        end
         pending.confirmedAt = now
         pending.latencyMs = latencyMs
         pending.confirmedEndpoint = endpoint
@@ -2854,11 +3134,12 @@ local function createTrajectoryCalibration(): any
                 targetName = target and target.Name or nil, eventSource = "tool-activation"})
             if gun then
                 runtime.sessionGunAttempts += 1
-                table.insert(runtime.pendingGuns, {
+                local pendingGun: PendingGun = {
                     shotId = shotId,
                     attemptCounted = gun,
                     tool = tool,
                     activatedAt = now,
+                    serverActivatedAt = workspace:GetServerTimeNow(),
                     origin = toolOrigin(tool),
                     requestedAim = requestedAim,
                     pingMs = pingMs,
@@ -2867,15 +3148,18 @@ local function createTrajectoryCalibration(): any
                     targetTrajectory = targetTrajectory,
                     targetHistory = captureTargetHistory(target, now),
                     lastTrajectorySampleAt = now,
-                })
+                }
+                watchPendingHealth(pendingGun, target)
+                table.insert(runtime.pendingGuns, pendingGun)
                 compactPending(runtime.pendingGuns, now)
             elseif knife then
                 runtime.rawKnifeActivations += 1
-                table.insert(runtime.pendingKnives, {
+                local pendingKnife: PendingKnife = {
                     shotId = shotId,
                     attemptCounted = gun,
                     tool = tool,
                     activatedAt = now,
+                    serverActivatedAt = workspace:GetServerTimeNow(),
                     origin = toolOrigin(tool),
                     requestedAim = requestedAim,
                     pingMs = pingMs,
@@ -2884,7 +3168,9 @@ local function createTrajectoryCalibration(): any
                     targetTrajectory = targetTrajectory,
                     targetHistory = captureTargetHistory(target, now),
                     lastTrajectorySampleAt = now,
-                })
+                }
+                watchPendingHealth(pendingKnife, target)
+                table.insert(runtime.pendingKnives, pendingKnife)
                 compactPending(runtime.pendingKnives, now)
             end
             ensureTrajectorySampler()
@@ -3121,7 +3407,8 @@ local function createTrajectoryCalibration(): any
         local targetHistory: {HistoryPoint} = captureTargetHistory(target, now)
         if kind ~= "stab" then
             appendEvent({kind = kind, shotId = shotId, phase = "authored",
-                serverTime = workspace:GetServerTimeNow(), pingMs = pingMs,
+                serverTime = workspace:GetServerTimeNow(), clock = now,
+                pingMs = pingMs,
                 settings = info.settings, targetName = info.target and info.target.Name or nil,
                 targetHistory = #targetHistory > 0 and targetHistory or nil})
         end
@@ -3752,7 +4039,7 @@ end
 -- following the segment because the aim point is a future pose; seeing the
 -- wall behind it is the point of the check.
 local function validateGunShot(target: Player, character: Model, targetCharacter: Model,
-    muzzle: Vector3, origin: Vector3, endpoint: Vector3, walls: boolean): (boolean, string?, any?)
+    muzzle: Vector3, origin: Vector3, endpoint: Vector3, walls: boolean): (boolean, string?, any?, any?)
     if LocalPlayer.Character ~= character or not target or target == LocalPlayer
         or target.Character ~= targetCharacter or not isPlayerAlive(target)
         or isProtectedTarget(target) or getPlayerRole(target) ~= "Murderer" then
@@ -3795,7 +4082,24 @@ local function validateGunShot(target: Player, character: Model, targetCharacter
             end
         end
     end
-    return true,nil,nil
+    -- Even a clear shot records the first thing the untouched ray meets: if it
+    -- is a transparent solid short of the aim, the server may stop the bullet
+    -- there while every client check passes.
+    local occluder: any = nil
+    if walls then
+        -- Never let the diagnostic decide a shot: it is wrapped, so a failure
+        -- here leaves the shot allowed and only loses the extra field.
+        pcall(function(): ()
+            local first: any = describeRayHit(muzzle, endpoint, targetCharacter)
+            local reach: number = (endpoint - muzzle).Magnitude
+            if first and not first.onTarget
+                and predictionMath.finite(first.distance)
+                and first.distance < reach - 0.5 then
+                occluder = first
+            end
+        end)
+    end
+    return true,nil,nil,occluder
 end
 
 local function disconnectGunFiredObserver(): ()

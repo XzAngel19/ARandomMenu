@@ -584,10 +584,23 @@ v62 mejora 1.09 → 0.84 salvo el disparo 20 (0.97 → 1.16, que igual acertó).
   en el disparo 1). No es evidencia de que el lead deba ser 0.04 s, y no se
   cambia por eso.
 - **`Humanoid.MoveDirection` como dirección de tiro.** Es una señal replicada
-  real (el disparo 1 pulsaba +X mientras la velocidad caía en −Z). Probado
-  sobre los 5 disparos con datos: mejoró 2 (23.6°→8.2°, 26.5°→17.1°), empeoró 3
-  (11.8°→15.9°, 10.5°→17.2°, 18.6°→1.1° sin umbral que lo active). No entra: no
-  hay evidencia de que sea mejor que la velocidad ajustada.
+  real (el disparo 1 pulsaba +X mientras la velocidad caía en −Z), así que se
+  probó como dirección en vez de la velocidad ajustada, sobre los cinco
+  disparos con muestras suficientes:
+
+  | disparo | velocidad ajustada | `MoveDirection` |
+  |---|---|---|
+  | 3 | 18.6° | **1.1°** |
+  | 18 | 1.6° | **0.4°** |
+  | 1 | 23.6° | **8.2°** |
+  | 11 | 11.8° | 15.9° |
+  | 20 | 10.5° | 17.2° |
+
+  Mejora tres y empeora dos, y los dos empeoramientos son aciertos: en el
+  disparo 11 el jugador giraba y `MoveDirection` seguía apuntando al lado
+  anterior. Sin un umbral medido que separe los dos casos, no entra. v64
+  graba también el `MoveDirection` de cada muestra del historial para poder
+  decidir esto sin otra sesión.
 - **`MIN_ECHO_SAMPLES` de 6 a 3.** En esta sesión habría adelantado el eco a los
   disparos 17–19 con efecto neutro (sus objetivos casi no se movían). Sin
   evidencia a favor, no se toca.
@@ -598,3 +611,68 @@ v62 mejora 1.09 → 0.84 salvo el disparo 20 (0.97 → 1.16, que igual acertó).
 `echoSamples`, `turnRate` y `brakeSeconds`. Así la próxima calibración puede
 decidir el horizonte con el eco y las dos lecturas del motor en el mismo
 registro, sin reconstruirlo.
+
+## v64 — Una sola sesión que responda todo
+
+v63 ya no cambia el modelo: cambia lo que la sesión **guarda**. La sesión v62
+dejó tres preguntas abiertas y ninguna se puede cerrar sin volver a jugar, así
+que v64 graba en el mismo `MM2_Trajectory_Calibration.json` lo que hace falta
+para contestarlas después, sin pedir otra calibración.
+
+### Lo que la sesión v62 no permitía contestar
+
+1. **El ida y vuelta de verdad.** `confirmation.serverTime − authored.serverTime`
+   daba 501.5 · 514.6 · 507.4 · 502.7 · 517.9 · 546.6 · 506.4 ms en los siete
+   disparos confirmados: eso no es el viaje, es el viaje **más** los 0.5 s que
+   el capturador espera antes de cerrar el disparo. `finalizeGunCapture` sellaba
+   la hora al finalizar, no al llegar la señal. Con esos números no se puede
+   saber si el lead debe usar `GetNetworkPing` o `Data Ping`.
+2. **Dónde terminó la bala.** El `endpoint` viene del extremo del `CreateBeam`,
+   no del impacto: los fallos 1/3/17/18 terminaron a 35.2 / 15.9 / 31.0 / 14.9
+   studs de cualquier superficie, y el acierto 18 también, a 14.9. Sin el
+   cuerpo y el tamaño de la parte golpeada no se puede distinguir “el rayo
+   pasó por al lado” de “el rayo se detuvo en un muro que el cliente no ve”.
+3. **Por qué la trayectoria se corta.** En los tres disparos enlazados la
+   muestra duraba 0.09–0.14 s aunque el capturador muestrea durante medio
+   segundo más. La causa ya está localizada: `captureTrajectoryPoint` devuelve
+   `nil` si el humanado tiene `Health <= 0`, y los disparos 18, 20 y 186 son
+   justamente los que mataron. La trayectoria no está truncada: termina en la
+   muerte. v64 lo escribe en el registro en vez de dejarlo a la deducción.
+4. **Daño real.** `hitTarget` dice que el rayo tocó el personaje; no dice que
+   el servidor haya aplicado daño. La única prueba del lado del cliente es la
+   caída de `Humanoid.Health`.
+5. **El desvío de dirección.** La tabla de ángulos se calculó comparando la
+   velocidad ajustada contra el desplazamiento real y después, fuera de línea,
+   contra `MoveDirection`, que no estaba guardado.
+
+### Lo que graba v64
+
+| campo | dónde | para qué |
+|---|---|---|
+| `serverActivatedAt`, `serverConfirmedAt`, `serverEchoMs` | confirmación | ida y vuelta real, con el mismo reloj del servidor en los dos extremos |
+| `rttEngineAtConfirmation`, `rttDataAtConfirmation` | confirmación | las dos lecturas del motor **en el momento de llegar**, no solo al disparar |
+| `aim`, `origin` | confirmación | puntuar un disparo sin depender del evento `authored` |
+| `hitPart`, `hitPartPosition`, `hitPartSize` | confirmación | qué tocó el rayo, dónde y de qué tamaño |
+| `rootAtConfirmation` (posición, velocidad, estado) | confirmación | dónde estaba el objetivo cuando llegó la señal |
+| `lastSeenPosition` | confirmación | última posición muestreada, útil si el objetivo murió |
+| `healthAtAim`, `healthAtConfirmation`, `healthAfter`, `healthDropAt`, `healthDropServerTime`, `died`, `diedAt`, `diedServerTime` | confirmación | daño y muerte con los dos relojes |
+| `trajectoryPoints`, `trajectorySpanSeconds`, `trajectoryCapped`, `samplingStoppedReason` | confirmación | cuánta trayectoria hay y por qué termina |
+| `occluder` (nombre, clase, distancia, transparencia, `CanCollide`) | `settings` del disparo | lo primero que encuentra el rayo sin el filtro del juego, **también en los disparos permitidos** |
+| `moveDirection` por muestra | `targetHistory` | decidir velocidad contra `MoveDirection` sin otra sesión |
+| `clock` | `authored` y confirmación | alinear `os.clock` con el reloj del servidor en la misma máquina |
+
+Además:
+
+- La trayectoria se muestrea a **60 Hz** (antes 30 Hz) y el tope sube de 120 a
+  **200 puntos**: a 30 Hz no se puede resolver un horizonte de 0.02 s.
+- El límite de eventos ya no borra el disparo de pistola cuando la sesión llena
+  el registro con cuchillos: primero se descarta el `knife/authored` más viejo
+  y se cuenta en `session.evictedEvents`.
+- Las conexiones de `HealthChanged` se desconectan al cerrar y al compactar la
+  cola; sin eso una sesión larga filtra conexiones.
+- Cada disparo de cuchillo guarda también `rtt`, `echoSamples`, `rttEngine`,
+  `rttData`, `turnRate` y `brakeSeconds`, que antes solo tenía la pistola.
+
+No cambia ninguna constante del modelo: el lead sigue siendo el menor de
+`GetNetworkPing` y `Data Ping`, acotado a 0.02–0.6 s, y el horizonte sigue
+siendo `echo or (rtt + 0.025 + sampleAge)`.

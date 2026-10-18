@@ -32,6 +32,9 @@ function Module.init(runtime: any): any
     local validateGunShot: any = core.validateGunShot
 
     local shootMacro: boolean = false
+    -- First thing the untouched ray meets on an allowed shot (nil if nothing
+    -- short of the aim). Persisted into the shot's settings.
+    local lastGunOccluder: any = nil
     local function macroUnequip(gun: Tool?): ()
         if not shootMacro or not gun then
             return
@@ -269,7 +272,7 @@ function Module.init(runtime: any): any
                 or gun:GetAttribute("Reloading") == true or gun:GetAttribute("IsReloading") == true then
                 return reject("The gun is disabled or reloading.")
             end
-            local ok, allowed, why, blocker = pcall(validateGunShot,target,character,targetCharacter,
+            local ok, allowed, why, blocker, occluder = pcall(validateGunShot,target,character,targetCharacter,
                 shotOrigin.Position,shotOrigin.Position,shotEnd.Position,mm2Settings.shootWallCheck)
             if not ok or not allowed then
                 if type(blocker) == "table" and trajectoryCalibration
@@ -277,6 +280,13 @@ function Module.init(runtime: any): any
                     pcall(trajectoryCalibration.noteBlockedShot, trajectoryCalibration, blocker)
                 end
                 return reject(why or "Shot safety check failed.")
+            end
+            -- Cleared, but keep what the untouched ray met: a transparent solid
+            -- short of the aim is exactly the case the client cannot see.
+            if type(occluder) == "table" then
+                lastGunOccluder = occluder
+            else
+                lastGunOccluder = nil
             end
             return true
         end
@@ -330,6 +340,7 @@ function Module.init(runtime: any): any
                     sampledVelocity = {info.velocity.X, info.velocity.Y, info.velocity.Z},
                     rtt = info.rtt, echoDelay = info.echoDelay,
                     rttEngine = info.rttEngine, rttData = info.rttData,
+                    occluder = lastGunOccluder,
                     echoSamples = info.echoSamples,
                     turnRate = info.turnRate, brakeSeconds = info.brakeSeconds},
             })
@@ -365,6 +376,7 @@ function Module.init(runtime: any): any
                 sampledVelocity = {info.velocity.X, info.velocity.Y, info.velocity.Z},
                 rtt = info.rtt, echoDelay = info.echoDelay,
                 rttEngine = info.rttEngine, rttData = info.rttData,
+                occluder = lastGunOccluder,
                 echoSamples = info.echoSamples,
                 turnRate = info.turnRate, brakeSeconds = info.brakeSeconds},
         })

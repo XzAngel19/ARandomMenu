@@ -45,6 +45,9 @@ type Sample = {
     grounded: boolean,
     aimOffset: Vector3,
     aimPart: string,
+    -- Replicated control input, recorded so an offline replay can weigh an
+    -- input-based turn against the measured velocity turn.
+    moveDirection: Vector3,
 }
 
 type Track = {
@@ -291,6 +294,13 @@ function Module.init(runtime: any): any
         -- on flat ground. The humanoid state is the reliable signal.
         local grounded: boolean = stateName ~= "Jumping"
             and stateName ~= "Freefall"
+        local moveDirection: Vector3 = Vector3.zero
+        pcall(function(): ()
+            local move: any = track.humanoid.MoveDirection
+            if typeof(move) == "Vector3" and finiteVector(move) then
+                moveDirection = move
+            end
+        end)
         local aimPart: BasePart?, aimPartName: string = findAimPart(track.character)
         local aimOffset: Vector3 = aimPart
             and (aimPart.Position - position)
@@ -314,6 +324,7 @@ function Module.init(runtime: any): any
             grounded = grounded,
             aimOffset = aimOffset,
             aimPart = aimPartName,
+            moveDirection = moveDirection,
         })
         while #samples > 2 and now - samples[1].at > HISTORY_SECONDS do
             table.remove(samples, 1)
@@ -934,6 +945,7 @@ function Module.init(runtime: any): any
                         velocity = sample.velocity,
                         state = sample.state,
                         grounded = sample.grounded,
+                        moveDirection = sample.moveDirection,
                     })
                 end
             end

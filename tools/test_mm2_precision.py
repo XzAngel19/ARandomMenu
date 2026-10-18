@@ -420,9 +420,9 @@ r'''
 state.mm2Prediction={getHistory=function(player,seconds)
     assert(player=="target" and seconds==0.6,"history must be requested once per shot")
     return {
-        {at=-0.2,position=Vector3.new(1,2,3),velocity=Vector3.new(0,0,16),state="Running",grounded=true},
-        {at=-0.1,position=Vector3.new(2,2,3),velocity=Vector3.new(0,0,16),state="Running",grounded=true},
-        {at=0,position=Vector3.new(3,2,3),velocity=Vector3.new(0,0,16),state="Running",grounded=true},
+        {at=-0.2,position=Vector3.new(1,2,3),velocity=Vector3.new(0,0,16),state="Running",grounded=true,moveDirection=Vector3.new(1,0,0)},
+        {at=-0.1,position=Vector3.new(2,2,3),velocity=Vector3.new(0,0,16),state="Running",grounded=true,moveDirection=Vector3.new(1,0,0)},
+        {at=0,position=Vector3.new(3,2,3),velocity=Vector3.new(0,0,16),state="Running",grounded=true,moveDirection=Vector3.new(0,0,1)},
         {at=-0.3,position="bad",velocity=Vector3.new(0,0,0)},
     }
 end}
@@ -432,6 +432,11 @@ near(history[1].dt,-0.2)
 near(history[3].dt,0)
 assert(history[1].position[1]==1 and history[3].velocity[3]==16)
 assert(history[1].humanoidState=="Running" and history[1].grounded)
+-- The replicated input travels with the window so an offline replay can test
+-- an input-based turn without another session.
+near(history[1].moveDirection[1],1,1e-9)
+near(history[3].moveDirection[3],1,1e-9)
+assert(history[1].moveDirection[3]==0)
 state.mm2Prediction=nil
 assert(#captureTargetHistory("target",0)==0,"no predictor means no fabricated history")
 assert(#captureTargetHistory(nil,0)==0)
@@ -679,7 +684,67 @@ do
     hits={}
     local clear,empty=isWeaponPathClear(origin,endpoint,nil,true,nil)
     assert(clear and empty==nil)
+    -- 5. Even an allowed shot records what the untouched ray meets, so a
+    -- transparent solid short of the aim cannot hide in a green WallCheck.
+    hits={part("Workspace.Glitch Proof.Wall",1,true,24)}
+    local seen=describeRayHit(origin,endpoint,nil)
+    assert(seen and seen.name=="Workspace.Glitch Proof.Wall"
+        and seen.transparency==1 and seen.canCollide==true and seen.onTarget==false)
+    near(seen.distance,24,1e-9)
+    hits={}
+    assert(describeRayHit(origin,endpoint,nil)==nil)
     pass("invisible wall: transparent solids stop the strict pass and are named")
+end
+""")
+
+
+    # The capture that makes a single session answer everything: the health
+    # drop (proof of damage, not just of a ray), and both clocks on it.
+    chunks.append(r"""
+do
+    type Instance = any
+    type Model = any
+    type RaycastResult = any
+    type RaycastParams = any
+    local workspace={GetServerTimeNow=function() return 1000+now end}
+    local function signal()
+        local handlers={}
+        -- Connect and Fire are called with ':' by the module, so each takes
+        -- the signal table as its first argument.
+        return {Connect=function(_,fn) table.insert(handlers,fn)
+                    return {Disconnect=function() end} end,
+                Fire=function(_,...)
+                    for _,fn in ipairs(handlers) do fn(...) end
+                end}
+    end
+    local humanoid={Health=100,HealthChanged=signal()}
+    local target={Character={FindFirstChildOfClass=function(_,class)
+        return class=="Humanoid" and humanoid or nil end}}
+""")
+    chunks.append(section(BASE, "    local function watchPendingHealth",
+                          "    local function findKnifeAnalysisTarget"))
+    chunks.append(r"""
+    local pending={}
+    watchPendingHealth(pending,target)
+    near(pending.targetHealthAtAim,100,1e-9)
+    assert(pending.targetHealthAfter==nil and pending.targetDiedAt==nil)
+    humanoid.Health=42
+    humanoid.HealthChanged:Fire(42)
+    near(pending.targetHealthAfter,42,1e-9)
+    assert(pending.targetHealthDropAt and pending.targetHealthDropServerTime)
+    assert(pending.targetDiedAt==nil,"a damage drop is not a death")
+    now=5
+    humanoid.Health=0
+    humanoid.HealthChanged:Fire(0)
+    near(pending.targetHealthAfter,0,1e-9)
+    assert(pending.targetDiedAt,"death must be recorded")
+    near(pending.targetDiedServerTime,1005.0,1e-6)
+    -- A heal (or a respawn) must not overwrite the drop we already saw.
+    humanoid.Health=100
+    humanoid.HealthChanged:Fire(100)
+    near(pending.targetHealthAfter,0,1e-9)
+    assert(type(pending.healthConnection)=="table")
+    pass("damage capture: health drop and death with both clocks, never overwritten by a heal")
 end
 """)
 

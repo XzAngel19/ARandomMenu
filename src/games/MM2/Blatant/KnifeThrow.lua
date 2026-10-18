@@ -321,6 +321,12 @@ function Module.init(runtime: any): any
                     flightSeconds = lastKnifePrediction and lastKnifePrediction.flightSeconds,
                     sampleAge = lastKnifePrediction and lastKnifePrediction.sampleAge,
                     samples = lastKnifePrediction and lastKnifePrediction.samples,
+                    rtt = lastKnifePrediction and lastKnifePrediction.rtt,
+                    echoSamples = lastKnifePrediction and lastKnifePrediction.echoSamples,
+                    rttEngine = lastKnifePrediction and lastKnifePrediction.rttEngine,
+                    rttData = lastKnifePrediction and lastKnifePrediction.rttData,
+                    turnRate = lastKnifePrediction and lastKnifePrediction.turnRate,
+                    brakeSeconds = lastKnifePrediction and lastKnifePrediction.brakeSeconds,
                     windupSeconds = 0.3},
             })
         end

@@ -127,7 +127,7 @@ assert(not check(true,muzzle,Vector3.new(0/0,0,0)))
 assert(not check(true,muzzle,Vector3.zero),'zero-length shot is rejected')
 assert(check(true),'WallCheck OFF only relaxes map geometry')
 local before=rays;assert(check())
-assert(rays-before==2,'a clear WallCheck costs one game-rule ray and one strict ray')
+assert(rays-before==3,'a clear WallCheck costs the game-rule ray, the strict ray and the occluder probe')
 local ghost,ghostPart=model(Vector3.new(10,0,0))
 ghostPart.Transparency=1;ghostPart.CanCollide=false
 table.insert(scene,ghostPart)
