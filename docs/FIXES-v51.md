@@ -359,3 +359,41 @@ distribución va de 3,7 a 631 ms: es una media, no un umbral. Un tope fijo de
 - Eco de 1 s aceptado y contado, sin mover la mediana de 180 ms.
 - 6 ecos de 1 s → lead 600 ms y `(capped)` en el estado.
 - Cuchillo contra objetivo en suelo: `aim.Y` no lleva corrección de gravedad.
+
+## v61 — Ventana pre-disparo para puntuar offline
+
+### Lo que se corrige del intercambio
+
+- La telemetría **sí** guardaba `targetTrajectory` (hasta 120 puntos a 30 Hz
+  desde el instante del disparo): `PendingGun.targetTrajectory` se crea en la
+  activación y `finalizeGunCapture` la adjunta al evento de confirmación.
+- Y **sí** guardaba los contadores de sesión `session.gunAttempts` /
+  `session.gunConfirmed` (9/9 en la sesión v35), que salen de
+  `runtime.sessionGunAttempts` / `runtime.sessionGunConfirmed`.
+- La afirmación anterior («no guarda trayectorias» / «el 9/9 no está») salió de
+  inspeccionar solo la primera entrada de `events` y los escalares de nivel
+  superior del JSON. Fue una ausencia no comprobada, no un dato.
+
+### Lo que faltaba de verdad
+
+Un segundo predictor no se puede volver a ejecutar solo con la trayectoria
+posterior al disparo: necesita la **historia anterior**, las muestras que su
+ajuste habría usado. Eso es lo que se añade:
+
+- `Prediction.getHistory(player, 0.6)` expone el ring buffer real del predictor
+  (60 Hz, 0.6 s) con `at` relativo al instante de la llamada (negativo).
+- `captureTargetHistory` lo convierte en `targetHistory`, con `dt` negativo y
+  la misma forma que `targetTrajectory`: `dt`, `position`, `velocity`,
+  `humanoidState`, `grounded`.
+- Se adjunta al evento `authored` (el que lleva `settings`) y a la confirmación
+  de pistola y de cuchillo, con un máximo de 36 muestras. Las muestras que no
+  son `Vector3` se descartan; sin predictor devuelve vacío en vez de inventar.
+- Con `targetHistory` + `targetTrajectory` + `endpoint`, los dos predictores se
+  pueden puntuar sobre los mismos vuelos, sin depender de acertar en vivo.
+
+### Pruebas
+
+- `getHistory` devuelve ≥25 muestras tras 0.5 s de muestreo, en orden
+  cronológico, acotadas a 0.6 s y con la última en `dt ≈ 0`.
+- `captureTargetHistory` filtra muestras inválidas, respeta el límite de 36 y
+  devuelve vacío cuando no hay predictor.

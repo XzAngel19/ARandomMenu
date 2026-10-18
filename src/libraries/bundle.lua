@@ -1,5 +1,5 @@
 return {
-    stamp = "v60-20261017-echo-window",
+    stamp = "v61-20261017-pre-shot-history",
     files = {
         ["src/Profile/142823291.lua"] = [[
 --!strict
@@ -4876,6 +4876,39 @@ function Module.init(runtime: any): any
     local controller: any = {
         settings = settings,
         noteEcho = noteEcho,
+        -- The movement window that ends at the call, oldest first, with `at`
+        -- in seconds relative to now (negative). Telemetry attaches it to each
+        -- shot so an alternative predictor can be replayed offline from the
+        -- same inputs instead of being judged only on live hits.
+        getHistory = function(player: Player, seconds: number?): {any}?
+            local track: Track? = tracks[player]
+            if not track or #track.samples < 2 then
+                return nil
+            end
+            local span: number = math.clamp(
+                seconds or HISTORY_SECONDS,
+                0.05,
+                HISTORY_SECONDS
+            )
+            local now: number = os.clock()
+            local points: {any} = {}
+            for _, sample: Sample in ipairs(track.samples) do
+                local at: number = sample.at - now
+                if at >= -span - 1e-6 then
+                    table.insert(points, {
+                        at = at,
+                        position = sample.position,
+                        velocity = sample.velocity,
+                        state = sample.state,
+                        grounded = sample.grounded,
+                    })
+                end
+            end
+            if #points < 2 then
+                return nil
+            end
+            return points
+        end,
         gunAim = gunAim,
         knifeAim = knifeAim,
         status = playerStatus,
@@ -6510,6 +6543,16 @@ local function createTrajectoryCalibration(): any
         grounded: boolean,
         jumping: boolean,
     }
+    -- The movement window that ended at the shot. `dt` is negative (seconds
+    -- before the shot), unlike TrajectoryPoint's non-negative `dt`, so an
+    -- alternative predictor can be replayed from the same inputs offline.
+    type HistoryPoint = {
+        dt: number,
+        position: {number},
+        velocity: {number},
+        humanoidState: string,
+        grounded: boolean,
+    }
     type RunningStats = {
         count: number,
         mean: number,
@@ -6528,6 +6571,7 @@ local function createTrajectoryCalibration(): any
         targetUserId: number?,
         targetName: string?,
         targetTrajectory: {TrajectoryPoint},
+        targetHistory: {HistoryPoint},
         lastTrajectorySampleAt: number,
         confirmedAt: number?,
         latencyMs: number?,
@@ -6545,6 +6589,7 @@ local function createTrajectoryCalibration(): any
         targetUserId: number?,
         targetName: string?,
         targetTrajectory: {TrajectoryPoint},
+        targetHistory: {HistoryPoint},
         lastTrajectorySampleAt: number,
     }
     type KnifeTrack = {
@@ -6560,6 +6605,7 @@ local function createTrajectoryCalibration(): any
         targetUserId: number?,
         targetName: string?,
         targetTrajectory: {TrajectoryPoint},
+        targetHistory: {HistoryPoint},
         lastTrajectorySampleAt: number,
         destroyConnection: RBXScriptConnection?,
     }
@@ -6583,6 +6629,7 @@ local function createTrajectoryCalibration(): any
         targetState: string?,
         targetJumped: boolean?,
         targetTrajectory: {TrajectoryPoint}?,
+        targetHistory: {HistoryPoint}?,
         observedDisplacement: {number}?,
         constantVelocityResidual: {number}?,
         horizontalLeadSeconds: number?,
@@ -7005,6 +7052,45 @@ local function createTrajectoryCalibration(): any
                 saveSnapshot("autosave")
             end
         end)
+    end
+
+    -- Pre-shot movement window, straight from the predictor's ring buffer.
+    -- Without it a second predictor can only be scored on the shot it took;
+    -- with it the same slot can be replayed from the inputs.
+    local function captureTargetHistory(
+        player: Player?,
+        now: number
+    ): {HistoryPoint}
+        local points: {HistoryPoint} = {}
+        if not player or not state.mm2Prediction
+            or type(state.mm2Prediction.getHistory) ~= "function" then
+            return points
+        end
+        local ok: boolean, history: any = pcall(
+            state.mm2Prediction.getHistory,
+            player,
+            0.6
+        )
+        if not ok or type(history) ~= "table" then
+            return points
+        end
+        for _, sample: any in ipairs(history) do
+            if #points >= 36 then
+                break
+            end
+            local position: any = sample.position
+            local velocity: any = sample.velocity
+            if typeof(position) == "Vector3" and typeof(velocity) == "Vector3" then
+                table.insert(points, {
+                    dt = (sample.at or 0) - now,
+                    position = {position.X, position.Y, position.Z},
+                    velocity = {velocity.X, velocity.Y, velocity.Z},
+                    humanoidState = tostring(sample.state or "Running"),
+                    grounded = sample.grounded == true,
+                })
+            end
+        end
+        return points
     end
 
     local function trackConnection(connection: RBXScriptConnection): ()
@@ -7450,6 +7536,9 @@ local function createTrajectoryCalibration(): any
             targetState = analysis.initialState,
             targetJumped = analysis.jumped,
             targetTrajectory = pending.targetTrajectory,
+            targetHistory = #(pending.targetHistory or {}) > 0
+                    and pending.targetHistory
+                or nil,
             observedDisplacement = analysis.displacement,
             constantVelocityResidual = analysis.constantVelocityResidual,
             horizontalLeadSeconds = analysis.horizontalLeadSeconds,
@@ -7607,6 +7696,9 @@ local function createTrajectoryCalibration(): any
                 targetState = analysis.initialState,
                 targetJumped = analysis.jumped,
                 targetTrajectory = track.targetTrajectory,
+                targetHistory = #track.targetHistory > 0
+                        and track.targetHistory
+                    or nil,
                 observedDisplacement = analysis.displacement,
                 constantVelocityResidual = analysis.constantVelocityResidual,
                 horizontalLeadSeconds = analysis.horizontalLeadSeconds,
@@ -7743,6 +7835,7 @@ local function createTrajectoryCalibration(): any
                 targetUserId = pending.targetUserId,
                 targetName = pending.targetName,
                 targetTrajectory = pending.targetTrajectory,
+                targetHistory = pending.targetHistory or {},
                 lastTrajectorySampleAt = now,
                 destroyConnection = nil,
             }
@@ -7819,6 +7912,7 @@ local function createTrajectoryCalibration(): any
                     targetUserId = target and target.UserId or nil,
                     targetName = target and target.Name or nil,
                     targetTrajectory = targetTrajectory,
+                    targetHistory = captureTargetHistory(target, now),
                     lastTrajectorySampleAt = now,
                 })
                 compactPending(runtime.pendingGuns, now)
@@ -7835,6 +7929,7 @@ local function createTrajectoryCalibration(): any
                     targetUserId = target and target.UserId or nil,
                     targetName = target and target.Name or nil,
                     targetTrajectory = targetTrajectory,
+                    targetHistory = captureTargetHistory(target, now),
                     lastTrajectorySampleAt = now,
                 })
                 compactPending(runtime.pendingKnives, now)
@@ -8037,15 +8132,19 @@ local function createTrajectoryCalibration(): any
         end
         local kind: string = tostring(info.kind or "gun")
         local shotId: string = nextShotId()
-        if kind ~= "stab" then
-            appendEvent({kind = kind, shotId = shotId, phase = "authored",
-                serverTime = workspace:GetServerTimeNow(), pingMs = getPingMilliseconds(),
-                settings = info.settings, targetName = info.target and info.target.Name or nil})
-        end
         local now: number = os.clock()
         local pingMs: number = getPingMilliseconds()
         local target: Player? =
             info.target and info.target.Character ~= nil and info.target or nil
+        -- Captured before the authored event so the record carries the window
+        -- the predictor actually had, not a reconstruction.
+        local targetHistory: {HistoryPoint} = captureTargetHistory(target, now)
+        if kind ~= "stab" then
+            appendEvent({kind = kind, shotId = shotId, phase = "authored",
+                serverTime = workspace:GetServerTimeNow(), pingMs = pingMs,
+                settings = info.settings, targetName = info.target and info.target.Name or nil,
+                targetHistory = #targetHistory > 0 and targetHistory or nil})
+        end
         local targetTrajectory: {TrajectoryPoint} = {}
         if target then
             local initialPoint: TrajectoryPoint? = captureTrajectoryPoint(
@@ -8078,6 +8177,7 @@ local function createTrajectoryCalibration(): any
                     and targetTrajectory[1].humanoidState
                     or nil,
                 targetTrajectory = #targetTrajectory > 0 and targetTrajectory or nil,
+                targetHistory = #targetHistory > 0 and targetHistory or nil,
             })
         else
             local isGun: boolean = kind ~= "knife"
@@ -8105,6 +8205,7 @@ local function createTrajectoryCalibration(): any
                     targetUserId = target and target.UserId or nil,
                     targetName = target and target.Name or nil,
                     targetTrajectory = targetTrajectory,
+                    targetHistory = targetHistory,
                     lastTrajectorySampleAt = now,
                 })
                 compactPending(queue, now)

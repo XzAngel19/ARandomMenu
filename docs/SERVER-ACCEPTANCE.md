@@ -60,6 +60,17 @@ resultado, ordenados por eco:
 | 679.2 | no |
 | 1007.7 | no |
 
+## Qué se puede puntuar con la telemetría
+
+- **El disparo tomado**: `targetTrajectory` (hasta 120 puntos a 30 Hz desde el
+  instante del disparo) + `endpoint` + `hitTarget` permiten medir el error del
+  endpoint contra la posición real del objetivo.
+- **Un predictor alternativo**: desde v61 cada disparo lleva `targetHistory`,
+  la ventana de 0.6 s *anterior* al disparo (36 muestras como máximo, `dt`
+  negativo). Con eso se puede re-correr otro predictor desde los mismos inputs.
+- Lo que sigue sin existir es una etiqueta de impacto del servidor: `hitTarget`
+  sale del `GunFired` que ve el cliente, no de daño confirmado.
+
 ## La «ventana dinámica» del 16 de octubre
 
 `TestingStuff/MM2_Trajectory_Calibration.json` (stamp `v35-20261016-menu-motion`,

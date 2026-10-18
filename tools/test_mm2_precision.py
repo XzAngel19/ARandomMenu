@@ -127,6 +127,18 @@ do
     near(endpoint.Y,1,1e-6)
     assert(info.model=="kinematic-v51")
     assert(info.samples>=3 and info.sampleAge<0.02)
+    -- The pre-shot window is what an alternative predictor needs to be
+    -- replayed offline; it must be the same samples the live predictor used.
+    local history=prediction.getHistory(target,0.6)
+    assert(history and #history>=25,"pre-shot history missing: "..tostring(history and #history))
+    near(history[#history].at,0,1e-6)
+    assert(history[1].at<=-0.4,history[1].at)
+    for i=2,#history do
+        assert(history[i].at>history[i-1].at,"history must be oldest first")
+    end
+    near(history[#history].position.X,16*now,1e-6)
+    near(history[#history].velocity.X,16,0.25)
+    assert(#prediction.getHistory(target,5)<=37,"history is bounded to 0.6 s")
     local aim,knife=prediction.knifeAim(target,Vector3.zero,96)
     assert(aim)
     near(aim.Magnitude,96*knife.flightSeconds,1e-3)
@@ -380,6 +392,27 @@ local controller={}
 runtime.sessionId="trace-test";runtime.buildStamp="v31"
 runtime.pendingGuns={{shotId="shot-1",activatedAt=now,origin=Vector3.zero}}
 ''', section(BASE, "    local function appendEvent(", "    local function trackConnection"),
+r'''
+state.mm2Prediction={getHistory=function(player,seconds)
+    assert(player=="target" and seconds==0.6,"history must be requested once per shot")
+    return {
+        {at=-0.2,position=Vector3.new(1,2,3),velocity=Vector3.new(0,0,16),state="Running",grounded=true},
+        {at=-0.1,position=Vector3.new(2,2,3),velocity=Vector3.new(0,0,16),state="Running",grounded=true},
+        {at=0,position=Vector3.new(3,2,3),velocity=Vector3.new(0,0,16),state="Running",grounded=true},
+        {at=-0.3,position="bad",velocity=Vector3.new(0,0,0)},
+    }
+end}
+local history=captureTargetHistory("target",0)
+assert(#history==3,"non-Vector3 samples must be dropped")
+near(history[1].dt,-0.2)
+near(history[3].dt,0)
+assert(history[1].position[1]==1 and history[3].velocity[3]==16)
+assert(history[1].humanoidState=="Running" and history[1].grounded)
+state.mm2Prediction=nil
+assert(#captureTargetHistory("target",0)==0,"no predictor means no fabricated history")
+assert(#captureTargetHistory(nil,0)==0)
+pass("pre-shot history: real predictor window, validated, bounded, attached per shot")
+''',
 section(BASE, "    function controller:noteTracerData(", "    function controller:noteAuthoredShot"), r'''
 local targetChar={}
 local part={instance=true,GetFullName=function() return "Workspace.Map.Wall" end,

@@ -823,6 +823,39 @@ function Module.init(runtime: any): any
     local controller: any = {
         settings = settings,
         noteEcho = noteEcho,
+        -- The movement window that ends at the call, oldest first, with `at`
+        -- in seconds relative to now (negative). Telemetry attaches it to each
+        -- shot so an alternative predictor can be replayed offline from the
+        -- same inputs instead of being judged only on live hits.
+        getHistory = function(player: Player, seconds: number?): {any}?
+            local track: Track? = tracks[player]
+            if not track or #track.samples < 2 then
+                return nil
+            end
+            local span: number = math.clamp(
+                seconds or HISTORY_SECONDS,
+                0.05,
+                HISTORY_SECONDS
+            )
+            local now: number = os.clock()
+            local points: {any} = {}
+            for _, sample: Sample in ipairs(track.samples) do
+                local at: number = sample.at - now
+                if at >= -span - 1e-6 then
+                    table.insert(points, {
+                        at = at,
+                        position = sample.position,
+                        velocity = sample.velocity,
+                        state = sample.state,
+                        grounded = sample.grounded,
+                    })
+                end
+            end
+            if #points < 2 then
+                return nil
+            end
+            return points
+        end,
         gunAim = gunAim,
         knifeAim = knifeAim,
         status = playerStatus,
