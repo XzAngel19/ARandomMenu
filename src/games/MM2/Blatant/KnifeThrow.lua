@@ -20,11 +20,11 @@ function Module.init(runtime: any): any
     local getPlayerWeapon: any = core.getPlayerWeapon
     local isPlayerAlive: any = core.isPlayerAlive
     local isProtectedTarget: any = core.isProtectedTarget
-    local getFilteredVelocity: any = core.getFilteredVelocity
-    local getEstimatedLatency: any = core.getEstimatedLatency
-    local predictionMath: any = core.predictionMath
+    local prediction: any = state.mm2Prediction
+    assert(type(prediction) == "table", "MM2 Knife Throw requires MM2 Prediction")
     local mm2Settings: any = core.mm2Settings
     local lastKnifePrediction: any = nil
+    local lastKnifeError: string? = nil
     local isWeaponPathClear: any = core.isWeaponPathClear
     local trajectoryCalibration: any = core.trajectoryCalibration
 
@@ -86,90 +86,45 @@ function Module.init(runtime: any): any
         return knife
     end
 
-    local function predictAim(target: Player, originPos: Vector3): Vector3?
-        lastKnifePrediction = nil
-        -- Rebuilt from the recovered ThrowingKnifeVisuals integrator:
-        -- position += Direction * ThrowSpeed * dt (96 studs/s by default).
-        -- There is no projectile gravity term in that client model.
-        local root: BasePart? = target.Character
-            and target.Character:FindFirstChild("HumanoidRootPart") :: BasePart?
-        if not root then return nil end
-        local velocity: Vector3 = getFilteredVelocity(target, root)
+    local function readKnifeSpeed(knife: Tool?): number
+        -- ThrowingKnifeVisuals: position += Direction * ThrowSpeed * dt,
+        -- default 96 studs/s, no gravity term.
         local speed: number = 96
-        local knife: Tool? = getReadyKnife()
         if knife then
             local measured: any = knife:GetAttribute("ThrowSpeed")
-            if predictionMath.finite(measured) and measured >= 24 and measured <= 300 then speed = measured end
-        end
-        local latency: number = getEstimatedLatency()
-        if not predictionMath.finite(latency) then latency = 0 end
-        latency = math.clamp(latency, 0, 0.6)
-        local observed: Vector3 = root.Position + velocity * latency
-        local relative: Vector3 = observed - originPos
-        if not predictionMath.finite(relative.Magnitude) or not predictionMath.finite(velocity.Magnitude) then return nil end
-        -- |relative + velocity*t| = speed*t. Stable quadratic roots avoid
-        -- cancellation for approaching targets and handle the linear limit.
-        local a: number = velocity:Dot(velocity) - speed * speed
-        local b: number = 2 * relative:Dot(velocity)
-        local c: number = relative:Dot(relative)
-        local flight: number? = nil
-        if c < 0.0025 then return observed end
-        if math.abs(a) < 1e-6 then
-            if b < -1e-6 then flight = -c / b end
-        else
-            local discriminant: number = b*b - 4*a*c
-            if discriminant >= 0 then
-                local q: number = -0.5 * (b + (b >= 0 and 1 or -1) * math.sqrt(discriminant))
-                local t1: number = q / a
-                local t2: number = math.abs(q) > 1e-9 and c / q or -1
-                if t1 > 0 then flight = t1 end
-                if t2 > 0 and (not flight or t2 < flight) then flight = t2 end
+            if type(measured) == "number"
+                and measured == measured
+                and measured >= 24
+                and measured <= 300 then
+                speed = measured
             end
         end
-        if not flight or not predictionMath.finite(flight) then return nil end
-        local reference = observed + velocity * flight
-        lastKnifePrediction = {motionSource="velocity", model="reference-v41", referenceEndpoint=reference}
-        return reference
+        return speed
     end
 
-    local KNIFE_VISIBILITY_PARTS: {string} = {
-        "UpperTorso", "Torso", "HumanoidRootPart", "Head",
-        "RightHand", "LeftHand", "RightLowerArm", "LeftLowerArm", "RightUpperArm", "LeftUpperArm",
-        "Right Arm", "Left Arm", "RightLowerLeg", "LeftLowerLeg", "RightFoot", "LeftFoot", "Right Leg", "Left Leg",
-    }
-    local KNIFE_PATH_OPTIONS = {ignoreTarget = true}
-    local KNIFE_VISIBLE_OPTIONS = {requireTarget = true}
+    -- The blade is a straight projectile. The predictor solves the intercept
+    -- (including the measured transport delay); WallCheck then verifies that
+    -- exact segment with the game's WeaponService filter. There is no
+    -- visible-part rescue: a shot that needs one is a shot through cover.
     resolveKnifeAim = function(target: Player, origin: Vector3): Vector3?
-        local predicted: Vector3? = predictAim(target, origin)
-        if not predicted then return nil end
-        local character: Model? = target.Character
-        local root: BasePart? = character and character:FindFirstChild("HumanoidRootPart") :: BasePart?
-        if not character or not root then return nil end
-        if isWeaponPathClear(origin, root.Position, character, nil, KNIFE_VISIBLE_OPTIONS)
-            and isWeaponPathClear(origin, predicted, character, nil, KNIFE_PATH_OPTIONS) then return predicted end
-        -- Same recovered ray filter and torso-first visibility strategy as
-        -- Shoot, but keep projectile lead: no hitscan/raw-position rewind here.
-        local lead: Vector3 = predicted - root.Position
-        for _, name: string in ipairs(KNIFE_VISIBILITY_PARTS) do
-            local part: Instance? = character:FindFirstChild(name)
-            if part and part:IsA("BasePart") then
-                local body: BasePart = part :: BasePart
-                local points: {Vector3} = {body.Position + lead}
-                if name == "UpperTorso" or name == "Torso" or name == "HumanoidRootPart" then
-                    local right: Vector3 = body.CFrame.RightVector * math.min(body.Size.X * 0.4, 0.55)
-                    local up: Vector3 = body.CFrame.UpVector * math.min(body.Size.Y * 0.3, 0.35)
-                    for _, offset: Vector3 in ipairs({right, -right, up, -up}) do
-                        table.insert(points, body.Position + offset + lead)
-                    end
-                end
-                for _, point: Vector3 in ipairs(points) do
-                    if (point - origin).Magnitude > 0.05
-                        and isWeaponPathClear(origin, point - lead, character, nil, KNIFE_VISIBLE_OPTIONS)
-                        and isWeaponPathClear(origin, point, character, nil, KNIFE_PATH_OPTIONS) then return point end
-                end
-            end
+        lastKnifePrediction = nil
+        lastKnifeError = nil
+        local endpoint: Vector3?, info: any, reason: string? =
+            prediction.knifeAim(target, origin, readKnifeSpeed(getReadyKnife()))
+        if not endpoint then
+            lastKnifeError = reason
+            return nil
         end
-        return nil
+        local character: Model? = target.Character
+        if not character then
+            return nil
+        end
+        if not isWeaponPathClear(origin, endpoint, character, nil, {ignoreTarget = true}) then
+            lastKnifeError = "obstructed"
+            return nil
+        end
+        lastKnifePrediction = info
+        return endpoint
     end
 
     type ThrowJoint = {
@@ -288,8 +243,16 @@ function Module.init(runtime: any): any
                 originPos = origin.Position, aimPos = aim, target = target, silent = false,
                 settings = {mode = "Normal", animation = true, wallCheck = true,
                     motionSource = lastKnifePrediction and lastKnifePrediction.motionSource,
-                    cadence = "animation-cycle", model = lastKnifePrediction and lastKnifePrediction.model or "reference-v41",
-                    referencePoint = lastKnifePrediction and {lastKnifePrediction.referenceEndpoint.X, lastKnifePrediction.referenceEndpoint.Y, lastKnifePrediction.referenceEndpoint.Z}, windupSeconds = 0.3},
+                    cadence = "animation-cycle",
+                    model = lastKnifePrediction and lastKnifePrediction.model or "kinematic-v51",
+                    referencePoint = lastKnifePrediction and {lastKnifePrediction.capturedPosition.X, lastKnifePrediction.capturedPosition.Y, lastKnifePrediction.capturedPosition.Z},
+                    predictedPoint = lastKnifePrediction and {lastKnifePrediction.endpoint.X, lastKnifePrediction.endpoint.Y, lastKnifePrediction.endpoint.Z},
+                    sampledVelocity = lastKnifePrediction and {lastKnifePrediction.velocity.X, lastKnifePrediction.velocity.Y, lastKnifePrediction.velocity.Z},
+                    leadSeconds = lastKnifePrediction and lastKnifePrediction.leadSeconds,
+                    flightSeconds = lastKnifePrediction and lastKnifePrediction.flightSeconds,
+                    sampleAge = lastKnifePrediction and lastKnifePrediction.sampleAge,
+                    samples = lastKnifePrediction and lastKnifePrediction.samples,
+                    windupSeconds = 0.3},
             })
         end
         local ok: boolean = pcall(playThrowAnimation, knife, sendAtRelease)

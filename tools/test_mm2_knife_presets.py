@@ -44,6 +44,11 @@ local function disconnectFeatureConnection(k)
  if featureConnections[k] then featureConnections[k]:Disconnect();featureConnections[k]=nil end
 end
 local state={mm2SilentAimEnabled=true,mm2SilentAimFeature={},mm2KnifeRuntime={masterEnabled=false}}
+state.mm2Prediction={knifeAim=function(target)
+ local root=target.Character:FindFirstChild('HumanoidRootPart')
+ return root.Position,{capturedPosition=root.Position,endpoint=root.Position,velocity=Vector3.zero,
+  model='kinematic-v51',leadSeconds=.1,flightSeconds=.1,sampleAge=0,samples=3,motionSource='fit'}
+end}
 local configData={states={},values={}}
 local function addInformationOption() end
 state.mm2Core={findMurderer=function() return LocalPlayer end,getPlayerRole=function() return 'Innocent' end,

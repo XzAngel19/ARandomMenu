@@ -1,49 +1,63 @@
 #!/usr/bin/env python3
-"""Actual Knife visibility resolution and nearest-target selection, without changing prediction."""
+"""Actual knife intercept hand-off and game-filter WallCheck, without visibility rescue."""
 import os, subprocess, tempfile
 from pathlib import Path
 from test_mm2_precision import PRELUDE, section
-ROOT=Path(__file__).resolve().parents[1]
-K=(ROOT/'src/games/MM2/Blatant/KnifeThrow.lua').read_text()
-script=PRELUDE+r'''
-local knifeThrowSettings={wallCheck=true}
-local resolveKnifeAim
-local function body(p)
- return {Position=p,Size=Vector3.new(2,2,1),CFrame={RightVector=Vector3.new(0,0,1),UpVector=Vector3.new(0,1,0)},IsA=function(_,c) return c=='BasePart' end}
+
+ROOT = Path(__file__).resolve().parents[1]
+K = (ROOT / 'src/games/MM2/Blatant/KnifeThrow.lua').read_text()
+
+script = PRELUDE + r'''
+local lastKnifePrediction=nil
+local lastKnifeError=nil
+local targetPlayer={Character={}}
+local readySpeed=nil
+local ready=true
+local function getReadyKnife() return ready and {GetAttribute=function() return readySpeed end} or nil end
+local endpoint=Vector3.new(20,4,0)
+local info={capturedPosition=Vector3.new(18,4,0),endpoint=endpoint,velocity=Vector3.new(16,0,0),
+    model='kinematic-v51',leadSeconds=.12,flightSeconds=.2,sampleAge=0,samples=4,motionSource='fit'}
+local aimResult=endpoint
+local aimReason=nil
+local aimSpeed=nil
+local prediction={knifeAim=function(target,origin,speed)
+    assert(target==targetPlayer)
+    aimSpeed=speed
+    return aimResult,(aimResult and info or nil),aimReason
+end}
+local clear=true
+local clearCalls=0
+local function isWeaponPathClear(origin,finish,character,strict,opts)
+    clearCalls+=1
+    assert(strict==nil and opts and opts.ignoreTarget)
+    return clear
 end
-local function character(x)
- local parts={HumanoidRootPart=body(Vector3.new(x,0,0)),UpperTorso=body(Vector3.new(x,2,0)),Head=body(Vector3.new(x,4,0))}
- return {FindFirstChild=function(_,n) return parts[n] end}
-end
-local nearTarget={Character=character(10)}
-local farTarget={Character=character(25)}
-local LocalPlayer={Character=character(0)}
-local Players={GetPlayers=function() return {nearTarget,farTarget} end}
-local function isValidTarget() return true end
-local lead=Vector3.new(10,0,0)
-local function predictAim(t) return t.Character:FindFirstChild('HumanoidRootPart').Position+lead end
-local visibility='head'
-local calls=0
-local function isWeaponPathClear(_,point,target,strict,opts)
- assert(strict==nil and (opts.ignoreTarget or opts.requireTarget))
- calls+=1
- if target==farTarget.Character then return true end
- if visibility=='head' then return point.Y>3 end
- if visibility=='torso' then return point.Y>1 and point.Y<3 and point.Z>.5 end
- return false
-end
-''' + section(K, '    local KNIFE_VISIBILITY_PARTS', '    type ThrowJoint') + section(K, '    local function findNearestTarget', '    local function getReadyKnife') + r'''
-local origin=Vector3.zero
-local aim=resolveKnifeAim(nearTarget,origin)
-near(aim.X,20);near(aim.Y,4)
-assert(findNearestTarget(origin)==nearTarget,'partially visible target must not be rejected by a center-only prefilter')
-visibility='torso';aim=resolveKnifeAim(nearTarget,origin)
-near(aim.X,20);near(aim.Y,2);near(aim.Z,.55)
-visibility='blocked';calls=0
-assert(resolveKnifeAim(nearTarget,origin)==nil and calls<=60,'fully blocked fails closed with bounded probes')
-assert(findNearestTarget(origin)==farTarget,'blocked nearest player must not starve visible farther player')
-print('PASS Knife WallCheck: predicted head/torso rescue, preserved projectile lead, full obstruction, bounded probes, visible-target selection, always-on LOS')
+''' + section(K, '    local function readKnifeSpeed', '    type ThrowJoint') + r'''
+assert(resolveKnifeAim(targetPlayer,Vector3.zero)==endpoint)
+assert(lastKnifePrediction==info and lastKnifeError==nil)
+near(aimSpeed,96)
+assert(clearCalls==1)
+readySpeed=120;resolveKnifeAim(targetPlayer,Vector3.zero);near(aimSpeed,120)
+readySpeed=10;resolveKnifeAim(targetPlayer,Vector3.zero);near(aimSpeed,96)
+readySpeed=0/0;resolveKnifeAim(targetPlayer,Vector3.zero);near(aimSpeed,96)
+clear=false;clearCalls=0
+assert(resolveKnifeAim(targetPlayer,Vector3.zero)==nil and lastKnifeError=='obstructed')
+assert(lastKnifePrediction==nil and clearCalls==1,'WallCheck runs on the exact authored segment')
+clear=true
+aimResult=nil;aimReason='unreachable'
+assert(resolveKnifeAim(targetPlayer,Vector3.zero)==nil and lastKnifeError=='unreachable')
+assert(clearCalls==1,'an unsolvable intercept is not raycast')
+aimResult=endpoint
+targetPlayer.Character=nil
+assert(resolveKnifeAim(targetPlayer,Vector3.zero)==nil and lastKnifeError==nil)
+ready=false;targetPlayer.Character={}
+assert(resolveKnifeAim(targetPlayer,Vector3.zero)==endpoint and aimSpeed==96)
+pass('actual knife resolve: intercept, speed probe, single game-filter WallCheck, fail-closed obstruction')
 '''
+assert 'KNIFE_VISIBILITY_PARTS' not in K
+assert 'predictAim' not in K
+assert K.count(':FireServer(') == 1
 with tempfile.TemporaryDirectory(prefix='knife-wallcheck-') as tmp:
- p=Path(tmp)/'test.luau';p.write_text(script)
- subprocess.run([os.environ.get('LUAU','luau'),str(p)],check=True)
+    p = Path(tmp) / 'test.luau'
+    p.write_text(script)
+    subprocess.run([os.environ.get('LUAU', 'luau'), str(p)], check=True)
