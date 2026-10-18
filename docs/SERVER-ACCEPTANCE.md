@@ -238,3 +238,36 @@ es el ida y vuelta completo o la mitad. El barrido de horizonte favorece leads
 más cortos, pero ese barrido está confundido por el error de dirección (en un
 objetivo recto el error es plano en `h`), así que no se usa como prueba. La
 próxima sesión graba las dos lecturas y el eco por disparo para poder separarlo.
+
+## Qué agrega v64 a este archivo
+
+v63 dejó dos cosas sin poder decidirse: el **ida y vuelta real** por disparo y
+el **horizonte** (¿el viaje completo o la mitad?). Las dos dependían de cosas
+que el archivo no guardaba. v64 las guarda, y además deja escrito el daño.
+
+- **El ida y vuelta ya no se deduce.** `serverActivatedAt` y
+  `serverConfirmedAt` se sellan al activar y al llegar la señal de `GunFired`,
+  con el reloj del servidor en los dos extremos, y `serverEchoMs` sale de ahí.
+  El sello anterior era la hora de finalización: por eso daba el viaje más
+  500 ms y no servía. Con esto, la comparación `serverEchoMs` contra
+  `rttEngineAtConfirmation` y `rttDataAtConfirmation` se hace en el mismo
+  disparo, sin reconstruir nada.
+- **El horizonte sí se puede separar del error de dirección.** La trayectoria de
+  cada disparo se muestrea a 60 Hz con la hora del servidor por punto, así que
+  se puede preguntar dónde estaba el objetivo en el instante de llegada y no
+  solo en el de disparo. La trayectoria corta de los disparos 18, 20 y 186 ya
+  tiene explicación escrita: el objetivo murió y el muestreador deja de tomar
+  puntos con `Health <= 0`; el archivo lo dice en `samplingStoppedReason`.
+- **El daño es un hecho, no una inferencia.** `hitPart` dice que el rayo tocó
+  al personaje; `healthAfter`, `healthDropServerTime`, `died` y
+  `diedServerTime` dicen si el servidor aplicó daño y cuándo. Un disparo con
+  `hitTarget` y sin caída de salud es un toque sin daño, y eso se puede ver.
+- **La geometría queda registrada también cuando el disparo sale.** `occluder`
+  guarda lo primero que encuentra el rayo sin el filtro del juego (nombre,
+  distancia, transparencia, `CanCollide`) en los disparos permitidos, no solo
+  en los rechazados. Si un disparo "limpio" termina lejos del objetivo, el
+  archivo dice contra qué.
+
+Con el sello `v64-20261018-definitive-capture`, una sesión alcanza para cerrar
+las tres preguntas de arriba. No se pide otra calibración hasta haber leído
+ese archivo.
