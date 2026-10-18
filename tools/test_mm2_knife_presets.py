@@ -89,7 +89,7 @@ local toggle
 state.mm2KnifeAuraModule={CreateToggle=function(_,d) assert(d.Name=='Knife Throw' and d.Bindable);toggle=d.Function end}
 local toggles={}
 local function addToggleOption(_,name,_,fn,_,bindable)
-  assert(bindable and (name=='Knife Throw' or name=='Lanzar con el boton'),name)
+  assert(bindable and (name=='Knife Throw' or name=='Throw with button'),name)
   toggles[name]=fn
   if name=='Knife Throw' then toggle=fn end
 end
@@ -115,8 +115,8 @@ assert(loops.heartbeat,'master ON resumes selected Throw')
 far.visible=false;loops.heartbeat();assert(not loops.render,'fully hidden targets are not selected')
 close.visible=true;loops.heartbeat();assert(loops.render)
 charAdded();assert(not loops.render,'respawn cancels pose and packet')
-assert(toggles['Lanzar con el boton'],'the button trigger is a real checkbox')
-toggles['Lanzar con el boton'](true)
+assert(toggles['Throw with button'],'the button trigger is a real checkbox')
+toggles['Throw with button'](true)
 assert(not loops.render and loops.heartbeat,'manual mode stops the automatic windup')
 close.visible=true;far.visible=true
 local before=sends
@@ -128,7 +128,7 @@ activated()
 assert(sends==before+1,'a tap throws immediately, without the windup')
 activated()
 assert(sends==before+1,'a double tap still sends one packet')
-toggles['Lanzar con el boton'](false)
+toggles['Throw with button'](false)
 assert(loops.heartbeat and not activated,'manual mode releases the trigger when off')
 Module.destroy();assert(not loops.heartbeat and not charAdded and sends==before+1)
 print('PASS Knife preset: single toggle, actual whole module, nearest visible/retarget at 300 studs, always animation/LOS, complete recovery, repeat, readiness/master/OFF/respawn, blade probe and button trigger')

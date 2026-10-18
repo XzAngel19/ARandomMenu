@@ -22,6 +22,7 @@ local descriptionResult=description
 local fetchError="network"
 local calls={}
 local function getUserDescription() return descriptionResult,(descriptionResult and nil or fetchError) end
+local function bundleAnimationSlots() return nil,"not a bundle" end
 local generation=1
 local function stillCurrent(token,current)
     return generation==token and activeCard.Enabled and current==character

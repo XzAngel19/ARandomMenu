@@ -1,5 +1,5 @@
 return {
-    stamp = "v66-20261018-knife-blade-size",
+    stamp = "v67-20261018-mobile-buttons-and-sections",
     files = {
         ["src/Profile/142823291.lua"] = [[
 --!strict
@@ -2662,18 +2662,11 @@ function Module.init(runtime: any): any
     end
     state.mm2KnifeThrowRefresh = refreshKnifeThrow
     state.mm2KnifeThrowOff = function(): () toggleKnifeThrow(false) end
-    local button = addToggleOption(feature, "Knife Throw", false, toggleKnifeThrow,
+    -- The knife options open their own section, after the Gun rows that the
+    -- Shoot module already created: the two weapons never mix again.
+    if addSectionOption then addSectionOption(feature, "Knife") end
+    addToggleOption(feature, "Knife Throw", false, toggleKnifeThrow,
         "SilentAIM ON + held knife: repeats throws at visible targets. Full animation and WallCheck are automatic.", true)
-    -- Both automatic attacks belong at the top, ahead of Gun tuning. The
-    -- option is created by a later module, so move its real row, not only its
-    -- registry entry. The compact UI has no visible information headings.
-    local row = button and button.Parent
-    local index = row and table.find(feature.optionRows, row)
-    if index then
-        table.remove(feature.optionRows, index)
-        table.insert(feature.optionRows, 2, row)
-        for order, optionRow in ipairs(feature.optionRows) do optionRow.LayoutOrder = order end
-    end
     -- Second checkbox: same knob, different trigger. It is created after the
     -- first so it lands right below it, and it is independent of it.
     local manualKey = "MM2.Shoot.KnifeThrowButton"
@@ -2681,14 +2674,14 @@ function Module.init(runtime: any): any
         configData.states[manualKey] = false
     end
     manualThrowOnly = configData.states[manualKey] == true
-    addToggleOption(feature, "Lanzar con el boton", manualThrowOnly,
+    addToggleOption(feature, "Throw with button", manualThrowOnly,
         function(enabled: boolean): ()
             manualThrowOnly = enabled
             configData.states[manualKey] = enabled
             refreshKnifeThrow()
             if type(queueConfigSave) == "function" then queueConfigSave() end
         end,
-        "Lanza solo cuando tocas el boton de lanzar (movil o PC), con la misma punteria y sin esperar el gesto.", true)
+        "Throw only when you press the throw button on the tool (mobile or PC), with the same aim and no windup.", true)
     if type(queueConfigSave) == "function" then queueConfigSave() end
 
     featureConnections.MM2KnifeThrowCharacter = LocalPlayer.CharacterAdded:Connect(stopThrowAnimation)
@@ -3242,6 +3235,9 @@ function Module.init(runtime: any): any
         }
     )
     state.mm2SilentAimFeature = ShootFeature
+    -- One card, two weapons: the heading keeps the gun rows together and the
+    -- knife module opens its own section further down.
+    if addSectionOption then addSectionOption(ShootFeature, "Gun") end
     addToggleOption(ShootFeature, "Auto Shoot", false, toggleAutoShoot,
         "While SilentAIM is ON and you hold the gun: try every frame as soon as the current target is visible. No distance or prediction-confidence gate. Uses the Gun aim method.", true)
     local ShootTargetBox
@@ -17210,14 +17206,10 @@ function Module.init(context: Runtime): any
         refreshMotionOptions()
         if FreezeFeature and FreezeFeature.enabled then toggleFreezeMovements(true) end
     end)
+    -- The section widget renders its own caption and divider, so the card only
+    -- has to keep the row in its visibility group.
     local heading: any = host.addSectionOption and host.addSectionOption(FreezeFeature, "Motion settings")
     if heading then
-        if host.makeTextLabel then
-            heading.Size = UDim2.new(1, 0, 0, 20)
-            local title: any = host.makeTextLabel(heading, "Motion settings", 10)
-            title.Size = UDim2.fromScale(1, 1)
-            title.TextXAlignment = Enum.TextXAlignment.Left
-        end
         table.insert(motionRows, heading)
     end
     local emotes: any = addToggleOption(FreezeFeature, "Freeze Emotes", true, function(value: boolean): ()
@@ -18325,7 +18317,24 @@ local Module = {
 
 local activeCard: any = nil
 
-local DEFAULT_USER_ID: number = 239702688
+-- 78492 is the default disguise: a normal user avatar whose movement
+-- animations come from Roblox's own set, which is also the fallback below.
+local DEFAULT_USER_ID: number = 78492
+-- Roblox's own R15 animation set, i.e. the IDs inside the default Animate
+-- script. A HumanoidDescription stores 0 for "keep the default", so copying
+-- only the non-zero fields would silently keep OUR animations on the
+-- disguised avatar. Filling the gaps with these makes the disguise use the
+-- same set the target actually sees.
+local DEFAULT_ANIMATION_IDS: {[string]: {string}} = {
+    idle = {"507766666", "507766951", "507766388"},
+    walk = {"507777826"},
+    run = {"507767714"},
+    jump = {"507765000"},
+    fall = {"507767968"},
+    climb = {"507765644"},
+    swim = {"507784897"},
+    swimidle = {"507785072"},
+}
 local SCALE_FIELDS: {string} = {
     "HeightScale",
     "WidthScale",
@@ -18389,7 +18398,7 @@ function Module.init(context: Runtime): any
     -- toggles work instantly instead of fetching the avatar again.
     type TargetCache = {
         userId: number,
-        slots: {[string]: string},
+        slots: {[string]: any},
         emotes: any,
         equippedEmotes: any,
     }
@@ -18769,7 +18778,7 @@ function Module.init(context: Runtime): any
         return "rbxassetid://" .. tostring(math.floor(number))
     end
 
-    local function animationSlotsFromDescription(description: any): {[string]: string}
+    local function animationSlotsFromDescription(description: any): {[string]: any}
         local slots: {[string]: string} = {}
         for _, mapping in ipairs(MOVEMENT_ANIMATIONS) do
             local readOk: boolean, value: any = pcall(function()
@@ -18787,7 +18796,7 @@ function Module.init(context: Runtime): any
     local function applyAnimationSlots(
         character: Model,
         humanoid: Humanoid,
-        slots: {[string]: string}
+        slots: {[string]: any}
     ): number
         local animate: Instance? = character:FindFirstChild("Animate")
         if not animate then
@@ -18796,9 +18805,22 @@ function Module.init(context: Runtime): any
 
         local changedCount: number = 0
         for _, mapping in ipairs(MOVEMENT_ANIMATIONS) do
-            local chosenId: string? = slots[mapping.scriptCategory]
+            local chosen: any = slots[mapping.scriptCategory]
+            -- One ID for the whole category, or a list: idle has up to three
+            -- variants and Roblox plays them in order, so a default set keeps
+            -- all three instead of repeating the first.
+            local ids: {string} = {}
+            if type(chosen) == "table" then
+                for _, value: any in ipairs(chosen) do
+                    local id: string? = animationIdFromValue(value)
+                    if id then table.insert(ids, id) end
+                end
+            else
+                local id: string? = animationIdFromValue(chosen)
+                if id then table.insert(ids, id) end
+            end
             local category: Instance? = animate:FindFirstChild(mapping.scriptCategory)
-            if chosenId and category then
+            if #ids > 0 and category then
                 local targets: {Animation} = {}
                 if category:IsA("Animation") then
                     table.insert(targets, category)
@@ -18808,7 +18830,10 @@ function Module.init(context: Runtime): any
                         table.insert(targets, descendant)
                     end
                 end
-                for _, animation: Animation in ipairs(targets) do
+                for index: number, animation: Animation in ipairs(targets) do
+                    local chosenId: string = #ids == 1
+                        and ids[1]
+                        or ids[math.min(index, #ids)]
                     if animation.AnimationId ~= chosenId then
                         local changed: boolean = pcall(function()
                             animation.AnimationId = chosenId
@@ -18844,9 +18869,17 @@ function Module.init(context: Runtime): any
     -- description, so it can never touch or roll back the visible avatar.
     local function cacheTarget(userId: number, description: any): ()
         local emotes: any, equippedEmotes: any = readDescriptionEmotes(description)
+        local slots: {[string]: any} = animationSlotsFromDescription(description)
+        -- 0 in a description means "use Roblox's default", so the seven
+        -- standard clips are filled in where the target did not pick a pack.
+        for category: string, ids: {string} in pairs(DEFAULT_ANIMATION_IDS) do
+            if slots[category] == nil then
+                slots[category] = ids
+            end
+        end
         targetCache = {
             userId = userId,
-            slots = animationSlotsFromDescription(description),
+            slots = slots,
             emotes = emotes,
             equippedEmotes = equippedEmotes,
         }
@@ -18880,6 +18913,81 @@ function Module.init(context: Runtime): any
             current.meshParts = refreshed
         end
     end
+
+    -- Animation mode also accepts an animation *bundle* id (the same thing
+    -- Vape's Disguise accepts). A bundle item is a catalog entry, not always
+    -- a playable AnimationId, so the asset is inspected when the executor
+    -- exposes GetObjects; when it does not, the item id is used directly and
+    -- the status says so instead of pretending the pack was loaded.
+    local function animationAssetId(itemId: any): string?
+        if type((game :: any).GetObjects) == "function" then
+            local ok: boolean, objects: any = pcall(function(): any
+                return (game :: any):GetObjects("rbxassetid://" .. tostring(itemId))
+            end)
+            if ok and type(objects) == "table" then
+                for _, object: any in ipairs(objects) do
+                    if typeof(object) == "Instance" then
+                        if object:IsA("Animation") then
+                            return object.AnimationId
+                        end
+                        for _, descendant: Instance in ipairs(object:GetDescendants()) do
+                            if descendant:IsA("Animation") then
+                                return descendant.AnimationId
+                            end
+                        end
+                    end
+                end
+            end
+        end
+        return nil
+    end
+
+    local function bundleAnimationSlots(bundleId: number): ({[string]: any}?, string?)
+        local service: any = (host :: any).MarketplaceService
+            or (game :: any):GetService("MarketplaceService")
+        local ok: boolean, product: any = pcall(function(): any
+            return service:GetProductInfo(bundleId, Enum.InfoType.Bundle)
+        end)
+        if not ok or type(product) ~= "table" then
+            return nil, "That ID is not a user and the marketplace did not return a bundle."
+        end
+        if product.BundleType ~= "AvatarAnimations" then
+            return nil, "That bundle is not an animation pack."
+        end
+        if type(product.Items) ~= "table" then
+            return nil, "The animation pack did not expose its items."
+        end
+        local slots: {[string]: any} = {}
+        local categories: {string} = {
+            "idle", "walk", "run", "jump", "fall", "climb", "swim", "swimidle",
+        }
+        for _, item: any in ipairs(product.Items) do
+            local name: string = string.lower(tostring(item.Name or ""))
+            local category: string? = nil
+            for _, candidate: string in ipairs(categories) do
+                if string.find(name, candidate, 1, true) then
+                    category = candidate
+                    break
+                end
+            end
+            -- "Swim (Idle)" matches "idle" first alphabetically in the list
+            -- above only if it appears earlier; make the pair explicit.
+            if string.find(name, "swim", 1, true)
+                and string.find(name, "idle", 1, true) then
+                category = "swimidle"
+            end
+            if category and item.Id then
+                local resolved: string? = animationAssetId(item.Id)
+                slots[category] = resolved
+                    or ("rbxassetid://" .. tostring(item.Id))
+            end
+        end
+        if next(slots) == nil then
+            return nil, "The animation pack did not expose a usable animation."
+        end
+        return slots, nil
+    end
+
 
     -- Applies what was already cached for the current target. No fetch and no
     -- clone: turning a toggle back on is immediate.
@@ -19377,18 +19485,35 @@ function Module.init(context: Runtime): any
         userId: number
     ): ()
         local description: any, fetchError: string? = getUserDescription(userId)
-        if not description then
-            if stillCurrent(token, character) then
-                notify("Could not load that avatar: " .. tostring(fetchError))
+        if description then
+            if not stillCurrent(token, character) then
+                destroyInstance(description)
+                return
             end
-            return
+            cacheTarget(userId, description)
+        else
+            -- Not a user: Animation mode also accepts an animation pack id.
+            local slots: {[string]: any}?, bundleError: string? =
+                bundleAnimationSlots(userId)
+            if not slots then
+                if stillCurrent(token, character) then
+                    notify(
+                        "Could not load that ID: " .. tostring(fetchError)
+                            .. " " .. tostring(bundleError)
+                    )
+                end
+                return
+            end
+            if not stillCurrent(token, character) then
+                return
+            end
+            targetCache = {
+                userId = userId,
+                slots = slots :: {[string]: any},
+                emotes = nil,
+                equippedEmotes = nil,
+            }
         end
-        if not stillCurrent(token, character) then
-            destroyInstance(description)
-            return
-        end
-
-        cacheTarget(userId, description)
         local cached: TargetCache? = targetCache
 
         local current: AppearanceSnapshot = ensureSnapshot(character, humanoid)
@@ -19569,7 +19694,7 @@ function Module.init(context: Runtime): any
         Category = "Utilities",
         ConfigKey = "Universal.Disguise",
         Order = 26,
-        Tooltip = "Character: copies the target avatar, then optionally its emotes and movement animations through two independent toggles (both preloaded). Animation: always applies that user's emotes and movement animations to your own avatar, without hiding it.",
+        Tooltip = "Character: copies the target avatar, then optionally its emotes and movement animations through two independent toggles (both preloaded). Animation: always applies that user's, or animation pack's, movement animations and emotes to your own avatar, without hiding it. Default ID 78492.",
         Function = function(enabled: boolean): ()
             if enabled then
                 card:SetStatus(settings.mode)
@@ -19622,7 +19747,7 @@ function Module.init(context: Runtime): any
         Function = function(value: boolean): ()
             setMovementAnimationsEnabled(value)
         end,
-        Tooltip = "Character mode only. Shows the target user's movement animations (idle, walk, run, jump, climb, fall, swim) on the disguised avatar. They are already loaded, so this is instant; turning it off restores your own animations. Emotes are independent and stay untouched.",
+        Tooltip = "Character mode only. Shows the target user's movement animations (idle, walk, run, jump, climb, fall, swim, and Roblox's default set for any slot the avatar leaves empty) on the disguised avatar. They are already loaded, so this is instant; turning it off restores your own animations. Emotes are independent and stay untouched.",
     })
 
     card:CreateTextBox({
@@ -19641,7 +19766,7 @@ function Module.init(context: Runtime): any
                 applyDisguise()
             end
         end,
-        Tooltip = "Positive integer user ID. Character copies the avatar; Animation copies only its emotes and movement animations.",
+        Tooltip = "User ID (Character copies the avatar; Animation copies only its emotes and movement animations) or an animation pack ID in Animation mode. Default 78492. Missing animation slots fall back to Roblox's own R15 set.",
     })
 
     card:CreateToggle({
@@ -26111,6 +26236,50 @@ function Module.init(context: any): any
             )
         end
 
+        -- Mobile: the little square is not a key slot, it is the touch button
+        -- for this feature. It previews the configured shape and colour, "+"
+        -- when the button does not exist yet, and opens the editor on tap.
+        if state.isMobile and shortcutButton and state.mobileUi then
+            local slot: TextButton = shortcutButton :: TextButton
+            local mobileUi: any = state.mobileUi
+            local actionId: string = mobileUi.actionId(feature.configKey)
+            local function syncMobileSlot(): ()
+                local action: any = mobileUi.actions[actionId]
+                local corner: UICorner? = slot:FindFirstChildOfClass("UICorner")
+                if action then
+                    slot.Text = ""
+                    slot.BackgroundColor3 = mobileUi.colorFromHex(action.color)
+                        or Theme.surfaceRaised
+                    slot.BackgroundTransparency = 0.12
+                    if corner then
+                        corner.CornerRadius = action.shape == "Circle"
+                            and UDim.new(1, 0)
+                            or action.shape == "Rounded"
+                                and UDim.new(0, 10)
+                                or UDim.new(0, 2)
+                    end
+                else
+                    slot.Text = "+"
+                    slot.BackgroundColor3 = Theme.surfaceRaised
+                    slot.BackgroundTransparency = 0.35
+                    if corner then corner.CornerRadius = UDim.new(0, 6) end
+                end
+            end
+            syncMobileSlot()
+            if type(mobileUi.onChanged) == "function" then
+                mobileUi.onChanged(syncMobileSlot)
+            end
+            local binding: any = state.shortcutBindings
+                and state.shortcutBindings[feature.configKey]
+            if binding then
+                local previous: any = binding.refresh
+                binding.refresh = function(): ()
+                    if type(previous) == "function" then previous() end
+                    syncMobileSlot()
+                end
+            end
+        end
+
         if (feature.kind == "toggle"
                 or feature.kind == "action"
                 or feature.kind == "hold")
@@ -30073,6 +30242,8 @@ export type MobileActionRecord = {
     holdToken: number,
     size: number,
     opacity: number,
+    shape: string,
+    color: string,
     connections: {RBXScriptConnection},
 }
 
@@ -30127,6 +30298,8 @@ function Module.init(context: any): any
         holdToken: number,
         size: number,
         opacity: number,
+        shape: string,
+        color: string,
         connections: {RBXScriptConnection},
     }
 
@@ -30163,11 +30336,103 @@ function Module.init(context: any): any
     MobilePlacementLabel.Size = UDim2.new(0.84, 0, 0, 54)
     MobilePlacementLabel.ZIndex = 201
 
+    local MOBILE_SHAPES: {string} = {"Square", "Rounded", "Circle"}
+    local MOBILE_PALETTE: {string} = {
+        "#F2F2F2", "#2B2B2B", "#0A84FF", "#30D158",
+        "#FF9F0A", "#FF375F", "#BF5AF2", "#64D2FF",
+    }
+    local SHAPE_CORNERS: {[string]: UDim} = {
+        Square = UDim.new(0, 2),
+        Rounded = UDim.new(0, 12),
+        Circle = UDim.new(1, 0),
+    }
+    local changeListeners: {() -> ()} = {}
+
+    local function colorToHex(color: Color3): string
+        local ok: boolean, hex: any = pcall(function(): any
+            return (Color3 :: any).toHex(color)
+        end)
+        if ok and type(hex) == "string" then
+            if string.sub(hex, 1, 1) ~= "#" then
+                hex = "#" .. hex
+            end
+            return string.upper(hex)
+        end
+        return string.format(
+            "#%02X%02X%02X",
+            math.floor(color.R * 255 + 0.5),
+            math.floor(color.G * 255 + 0.5),
+            math.floor(color.B * 255 + 0.5)
+        )
+    end
+
+    local function colorFromHex(value: string): Color3?
+        if type(value) ~= "string" or value == "" then
+            return nil
+        end
+        if string.sub(value, 1, 1) ~= "#" then
+            value = "#" .. value
+        end
+        local ok: boolean, color: any = pcall(function(): any
+            return (Color3 :: any).fromHex(value)
+        end)
+        if ok and typeof(color) == "Color3" then
+            return color
+        end
+        return nil
+    end
+
+    local function readableTextColor(background: Color3): Color3
+        local luminance: number =
+            0.2126 * background.R + 0.7152 * background.G + 0.0722 * background.B
+        return luminance > 0.55
+            and Color3.fromRGB(18, 18, 18)
+            or Color3.fromRGB(242, 242, 242)
+    end
+
     local function ensureMobileConfig(): {[string]: any}
         if type(configData.ui.mobileActions) ~= "table" then
             configData.ui.mobileActions = {}
         end
         return configData.ui.mobileActions
+    end
+
+    -- Defaults for every button created from now on: shape and colour are
+    -- user choices, not hardcoded squares. Existing saved buttons keep their
+    -- own values (or fall back to these when they predate the feature).
+    local function ensureMobileDefaults(): {[string]: any}
+        if type(configData.ui.mobileButtons) ~= "table" then
+            configData.ui.mobileButtons = {}
+        end
+        local defaults: {[string]: any} = configData.ui.mobileButtons
+        if type(defaults.shape) ~= "string"
+            or not table.find(MOBILE_SHAPES, defaults.shape) then
+            defaults.shape = "Square"
+        end
+        if type(defaults.color) ~= "string"
+            or not colorFromHex(defaults.color) then
+            defaults.color = colorToHex(Theme.surfaceRaised)
+        end
+        return defaults
+    end
+
+    local function applyMobileStyle(record: MobileActionRecord): ()
+        local corner: UICorner? = record.button:FindFirstChildOfClass("UICorner")
+        if corner then
+            corner.CornerRadius = SHAPE_CORNERS[record.shape]
+                or SHAPE_CORNERS.Rounded
+        end
+        local color: Color3? = colorFromHex(record.color)
+        if color then
+            record.button.BackgroundColor3 = color
+            record.button.TextColor3 = readableTextColor(color)
+        end
+    end
+
+    local function notifyMobileChanged(): ()
+        for _, listener: () -> () in ipairs(changeListeners) do
+            pcall(listener)
+        end
     end
 
     local function clampMobileButtonPosition(
@@ -30187,13 +30452,18 @@ function Module.init(context: any): any
 
     local function saveMobileActionPosition(record: MobileActionRecord): ()
         local mobileConfig: {[string]: any} = ensureMobileConfig()
+        -- The first four slots keep the original saved format; shape and
+        -- colour are appended so older configs still load unchanged.
         mobileConfig[record.id] = {
             record.button.Position.X.Offset,
             record.button.Position.Y.Offset,
             record.size,
             record.opacity,
+            record.shape,
+            record.color,
         }
         queueConfigSave()
+        notifyMobileChanged()
     end
 
     local function removeMobileAction(id: string): ()
@@ -30211,6 +30481,7 @@ function Module.init(context: any): any
             record.button:Destroy()
         end
         queueConfigSave()
+        notifyMobileChanged()
         notify(record.label .. " mobile button removed.")
     end
 
@@ -30234,7 +30505,7 @@ function Module.init(context: any): any
         BackgroundTransparency = 0.04,
         BorderSizePixel = 0,
         Position = UDim2.fromScale(0.5, 0.5),
-        Size = UDim2.fromOffset(280, 190),
+        Size = UDim2.fromOffset(300, 300),
         ZIndex = 271,
     }) :: any) :: Frame
     create("UICorner", {
@@ -30271,6 +30542,8 @@ function Module.init(context: any): any
     end
     editorLabel("Size", 46)
     editorLabel("Opacity", 88)
+    editorLabel("Shape", 130)
+    editorLabel("Colour", 172)
 
     local function editorButton(
         name: string,
@@ -30311,10 +30584,13 @@ function Module.init(context: any): any
     local opacityValue: TextButton = editorButton("OpacityValue", "92%", 138, 89, 72)
     local opacityUp: TextButton = editorButton("OpacityUp", "+", 216, 89, 40)
     opacityValue.Active = false
-    local removeButton: TextButton = editorButton("Remove", "Remove", 14, 140, 78)
+    local shapeButton: TextButton = editorButton("Shape", "Square", 92, 131, 164)
+    shapeButton.TextXAlignment = Enum.TextXAlignment.Center
+    local removeButton: TextButton = editorButton("Remove", "Remove", 14, 214, 78)
     removeButton.BackgroundColor3 = Color3.fromRGB(120, 28, 28)
-    local resetButton: TextButton = editorButton("Reset", "Reset", 101, 140, 78)
-    local doneButton: TextButton = editorButton("Done", "Done", 188, 140, 78)
+    local resetButton: TextButton = editorButton("Reset", "Reset", 101, 214, 78)
+    local doneButton: TextButton = editorButton("Done", "Done", 188, 214, 78)
+    local applyAllButton: TextButton = editorButton("ApplyAll", "Apply to all buttons", 14, 256, 272)
     doneButton.BackgroundColor3 = Theme.enabled
     doneButton.TextColor3 = Theme.enabledText
     if ThemeEngine and type(ThemeEngine.Bind) == "function" then
@@ -30327,7 +30603,63 @@ function Module.init(context: any): any
         editorOverlay.Visible = false
     end
 
-    local function refreshEditor(): ()
+    -- Forward declaration: the swatch handlers below repaint the editor, and
+    -- the editor body is defined after them.
+    local refreshEditor: () -> () = function(): () end
+    -- Colour swatches: eight presets, repainted with a live ring around the
+    -- one the button is currently using.
+    local swatches: {[string]: TextButton} = {}
+    for index: number, hex: string in ipairs(MOBILE_PALETTE) do
+        local color: Color3 = colorFromHex(hex) or Theme.surfaceRaised
+        local swatch: TextButton = (create("TextButton", {
+            Parent = editorPanel,
+            Name = "Colour" .. tostring(index),
+            Active = true,
+            AutoButtonColor = false,
+            BackgroundColor3 = color,
+            BorderSizePixel = 0,
+            Position = UDim2.fromOffset(92 + (index - 1) * 25, 168),
+            Size = UDim2.fromOffset(22, 22),
+            Text = "",
+            ZIndex = 272,
+        }) :: any) :: TextButton
+        create("UICorner", {
+            Parent = swatch,
+            CornerRadius = UDim.new(1, 0),
+        })
+        local ring: UIStroke = (create("UIStroke", {
+            Parent = swatch,
+            Name = "SelectedRing",
+            Color = Theme.text,
+            Thickness = 1,
+            Transparency = 0.85,
+        }) :: any) :: UIStroke
+        swatch:SetAttribute("Hex", hex)
+        swatches[hex] = swatch
+        trackUiConnection(swatch.MouseButton1Click:Connect(function(): ()
+            local record: MobileActionRecord? = editingRecord
+            if not record then
+                return
+            end
+            record.color = hex
+            refreshEditor()
+        end))
+        local _ = ring
+    end
+
+    local function refreshSwatches(selected: string): ()
+        for hex: string, swatch: TextButton in pairs(swatches) do
+            local ring: UIStroke? = swatch:FindFirstChild("SelectedRing") :: UIStroke?
+            if ring then
+                local active: boolean = string.upper(hex) == string.upper(selected)
+                ring.Thickness = active and 2 or 1
+                ring.Transparency = active and 0 or 0.85
+                ring.Color = active and Theme.text or Theme.outline
+            end
+        end
+    end
+
+    refreshEditor = function(): ()
         local record: MobileActionRecord? = editingRecord
         if not record then
             return
@@ -30335,8 +30667,11 @@ function Module.init(context: any): any
         editorTitle.Text = record.label
         sizeValue.Text = tostring(math.round(record.size)) .. " px"
         opacityValue.Text = tostring(math.round(record.opacity * 100)) .. "%"
+        shapeButton.Text = record.shape
         record.button.Size = UDim2.fromOffset(record.size, record.size)
         record.button.BackgroundTransparency = 1 - record.opacity
+        applyMobileStyle(record)
+        refreshSwatches(record.color)
         local clamped: Vector2 = clampMobileButtonPosition(
             Vector2.new(record.button.Position.X.Offset, record.button.Position.Y.Offset),
             record.size
@@ -30375,12 +30710,42 @@ function Module.init(context: any): any
             refreshEditor()
         end
     end))
+    trackUiConnection(shapeButton.MouseButton1Click:Connect(function(): ()
+        local record: MobileActionRecord? = editingRecord
+        if not record then
+            return
+        end
+        local index: number = table.find(MOBILE_SHAPES, record.shape) or 1
+        record.shape = MOBILE_SHAPES[index % #MOBILE_SHAPES + 1]
+        refreshEditor()
+    end))
     trackUiConnection(resetButton.MouseButton1Click:Connect(function(): ()
-        if editingRecord then
-            editingRecord.size = 52
-            editingRecord.opacity = 0.92
+        local record: MobileActionRecord? = editingRecord
+        if record then
+            local defaults: {[string]: any} = ensureMobileDefaults()
+            record.size = 52
+            record.opacity = 0.92
+            record.shape = defaults.shape
+            record.color = defaults.color
             refreshEditor()
         end
+    end))
+    trackUiConnection(applyAllButton.MouseButton1Click:Connect(function(): ()
+        local source: MobileActionRecord? = editingRecord
+        if not source then
+            return
+        end
+        for _, record: MobileActionRecord in pairs(mobileActions) do
+            record.size = source.size
+            record.opacity = source.opacity
+            record.shape = source.shape
+            record.color = source.color
+            record.button.Size = UDim2.fromOffset(record.size, record.size)
+            record.button.BackgroundTransparency = 1 - record.opacity
+            applyMobileStyle(record)
+            saveMobileActionPosition(record)
+        end
+        notify("mobile button style applied to all.")
     end))
     trackUiConnection(removeButton.MouseButton1Click:Connect(function(): ()
         local record: MobileActionRecord? = editingRecord
@@ -30432,6 +30797,17 @@ function Module.init(context: any): any
             0.2,
             1
         )
+        local defaults: {[string]: any} = ensureMobileDefaults()
+        local shape: string = type(stored) == "table"
+            and type(stored[5]) == "string"
+            and table.find(MOBILE_SHAPES, stored[5])
+            and stored[5]
+            or defaults.shape
+        local color: string = type(stored) == "table"
+            and type(stored[6]) == "string"
+            and colorFromHex(stored[6])
+            and stored[6]
+            or defaults.color
         local actionCount: number = 0
         for _ in pairs(mobileActions) do
             actionCount += 1
@@ -30513,9 +30889,12 @@ function Module.init(context: any): any
             holdToken = 0,
             size = size,
             opacity = opacity,
+            shape = shape,
+            color = color,
             connections = {},
         }
         mobileActions[id] = record
+        applyMobileStyle(record)
         saveMobileActionPosition(record)
 
         table.insert(record.connections, trackUiConnection(
@@ -30721,7 +31100,14 @@ function Module.init(context: any): any
         end
 
         trackUiConnection(source.MouseButton1Click:Connect(function(): ()
-            beginMobileActionPlacement(id, label, callback, hold)
+            -- A placed button opens its editor; only a missing one starts the
+            -- placement flow. Tapping the card slot is therefore "configure".
+            local existing: MobileActionRecord? = mobileActions[id]
+            if existing then
+                openEditor(existing)
+            else
+                beginMobileActionPlacement(id, label, callback, hold)
+            end
         end))
 
         if ensureMobileConfig()[id] ~= nil then
@@ -30750,6 +31136,20 @@ function Module.init(context: any): any
         editor = editorOverlay,
         openEditor = openEditor,
         closeEditor = closeEditor,
+        place = beginMobileActionPlacement,
+        defaults = ensureMobileDefaults,
+        shapes = MOBILE_SHAPES,
+        palette = MOBILE_PALETTE,
+        style = applyMobileStyle,
+        colorFromHex = colorFromHex,
+        colorToHex = colorToHex,
+        notifyChanged = notifyMobileChanged,
+        onChanged = function(listener: () -> ()): ()
+            table.insert(changeListeners, listener)
+        end,
+        actionId = function(shortcutId: string): string
+            return "Shortcut" .. tostring(shortcutId):gsub("%W", "")
+        end,
     }
 
     state.addMenuVisibilityListener(setMobileActionVisibility)
@@ -32025,6 +32425,269 @@ function Module.init(context: any): any
         raiseOpen(keybindsRecord)
     end
 
+    ------------------------------------------------------------------
+    -- Mobile controls. Keybinds need a keyboard, so on a touch device the
+    -- same slot opens the buttons page instead: every shortcut the menu
+    -- exposes can be placed as an on-screen button and restyled (shape,
+    -- colour, size, opacity) without editing the config by hand.
+    ------------------------------------------------------------------
+    local buttonsRecord: any = nil
+    local buttonsList: Frame? = nil
+    local buttonsAddRecord: any = nil
+    local buttonsAddList: Frame? = nil
+
+    local function mobileCallbacks(binding: any): (() -> (), any)
+        local hold: boolean = binding.hold == true
+        local function press(): ()
+            if type(binding.onPress) == "function" then
+                binding.onPress()
+            end
+        end
+        local function release(): ()
+            if type(binding.onRelease) == "function" then
+                binding.onRelease()
+            end
+        end
+        local callback: () -> () = function(): ()
+            if not hold then press() end
+        end
+        if not hold then
+            return callback, nil
+        end
+        return callback, {
+            isActive = function(): boolean return true end,
+            onPress = press,
+            onRelease = release,
+        }
+    end
+
+    local function mobileUiOrNil(): any
+        return state.mobileUi
+    end
+
+    local function buttonRow(
+        parent: Frame,
+        order: number,
+        labelText: string,
+        valueText: string,
+        onClick: () -> ()
+    ): TextButton
+        local row: TextButton = (create("TextButton", {
+            TextTruncate = Enum.TextTruncate.AtEnd,
+            Parent = parent,
+            Name = "ButtonRow_" .. labelText:gsub("%W", ""),
+            Active = true,
+            AutoButtonColor = false,
+            BackgroundColor3 = Color3.fromRGB(0, 0, 0),
+            BackgroundTransparency = 0.5,
+            BorderSizePixel = 0,
+            FontFace = CONTROL_FONT,
+            LayoutOrder = order,
+            Size = UDim2.new(1, 0, 0, 22),
+            Text = "",
+            ZIndex = parent.ZIndex + 1,
+        }) :: any) :: TextButton
+        create("TextLabel", {
+            TextTruncate = Enum.TextTruncate.AtEnd,
+            Parent = row,
+            Name = "Label",
+            BackgroundTransparency = 1,
+            FontFace = CONTROL_FONT,
+            Position = UDim2.fromOffset(6, 0),
+            Size = UDim2.new(0.6, -6, 1, 0),
+            Text = labelText,
+            TextColor3 = Theme.text,
+            TextSize = 14,
+            TextXAlignment = Enum.TextXAlignment.Left,
+            ZIndex = row.ZIndex + 1,
+        })
+        create("TextLabel", {
+            TextTruncate = Enum.TextTruncate.AtEnd,
+            Parent = row,
+            Name = "Value",
+            BackgroundTransparency = 1,
+            FontFace = CONTROL_FONT,
+            Position = UDim2.new(0.6, 0, 0, 0),
+            Size = UDim2.new(0.4, -8, 1, 0),
+            Text = valueText,
+            TextColor3 = Theme.textMuted,
+            TextSize = 13,
+            TextXAlignment = Enum.TextXAlignment.Right,
+            ZIndex = row.ZIndex + 1,
+        })
+        trackUiConnection(row.MouseButton1Click:Connect(onClick))
+        return row
+    end
+
+    local rebuildButtons: () -> () = function(): () end
+    local openAddMobileButton: () -> () = function(): () end
+
+    rebuildButtons = function(): ()
+        local container: Frame? = buttonsList
+        local ui: any = mobileUiOrNil()
+        if not container or not ui then
+            return
+        end
+        container:ClearAllChildren()
+        local order: number = 1
+        local placed: number = 0
+        local ids: {string} = {}
+        for id: string in pairs(ui.actions) do
+            table.insert(ids, id)
+        end
+        table.sort(ids)
+        for _, id: string in ipairs(ids) do
+            local record: any = ui.actions[id]
+            if record then
+                placed += 1
+                local shape: string = tostring(record.shape or "Square")
+                buttonRow(
+                    container,
+                    order,
+                    tostring(record.label),
+                    tostring(record.shape),
+                    function(): ()
+                        ui.openEditor(record)
+                    end
+                )
+                order += 1
+            end
+        end
+        if placed == 0 then
+            buttonRow(container, order, "No buttons yet", "tap Add button", function(): () end)
+            order += 1
+        end
+        local defaults: any = ui.defaults and ui.defaults()
+        if defaults then
+            buttonRow(
+                container,
+                order,
+                "Default shape",
+                tostring(defaults.shape),
+                function(): ()
+                    local shapes: {string} = ui.shapes
+                    local index: number = table.find(shapes, defaults.shape) or 1
+                    defaults.shape = shapes[index % #shapes + 1]
+                    queueConfigSave()
+                    rebuildButtons()
+                    notify("new buttons: " .. defaults.shape)
+                end
+            )
+            order += 1
+            buttonRow(
+                container,
+                order,
+                "Default colour",
+                tostring(defaults.color),
+                function(): ()
+                    local palette: {string} = ui.palette
+                    local index: number = table.find(palette, string.upper(defaults.color)) or 1
+                    defaults.color = palette[index % #palette + 1]
+                    queueConfigSave()
+                    rebuildButtons()
+                    notify("new buttons: " .. defaults.color)
+                end
+            )
+            order += 1
+        end
+        if buttonsRecord then
+            buttonsRecord.resize()
+        end
+    end
+
+    local function openButtons(): ()
+        local ui: any = mobileUiOrNil()
+        if not ui then
+            notify("touch controls are not ready yet")
+            return
+        end
+        if buttonsRecord then
+            raiseOpen(buttonsRecord)
+            rebuildButtons()
+            return
+        end
+        local screen: Vector2 = viewport()
+        buttonsRecord = configWindow("Buttons", "Buttons", {
+            position = Vector2.new(screen.X - WINDOW_WIDTH * 2 - 32, 140),
+            anchor = uiRecord and uiRecord.window,
+            settingsSized = true,
+            packRows = {{"Add button", nil, 26}, {"Reset buttons", nil, 26}},
+        })
+        buttonsList = (create("Frame", {
+            Parent = buttonsRecord.window.body,
+            Name = "ButtonList",
+            AutomaticSize = Enum.AutomaticSize.Y,
+            BackgroundTransparency = 1,
+            BorderSizePixel = 0,
+            LayoutOrder = 1,
+            Size = UDim2.new(1, 0, 0, 0),
+            ZIndex = buttonsRecord.window.body.ZIndex + 1,
+        }) :: any) :: Frame
+        create("UIListLayout", {
+            Parent = buttonsList,
+            Padding = UDim.new(0, WINDOW_GAP),
+            SortOrder = Enum.SortOrder.LayoutOrder,
+        })
+        actionRow(buttonsRecord, 90, "Add button", openAddMobileButton)
+        actionRow(buttonsRecord, 91, "Reset buttons", function(): ()
+            ui.resetActions()
+            rebuildButtons()
+            notify("mobile buttons reset")
+        end)
+        rebuildButtons()
+        raiseOpen(buttonsRecord)
+    end
+
+    openAddMobileButton = function(): ()
+        local ui: any = mobileUiOrNil()
+        if not ui then
+            return
+        end
+        if buttonsAddRecord then
+            raiseOpen(buttonsAddRecord)
+            return
+        end
+        local screen: Vector2 = viewport()
+        buttonsAddRecord = configWindow("ButtonAdd", "Add button", {
+            position = Vector2.new(screen.X - WINDOW_WIDTH * 2 - 32, 200),
+            anchor = buttonsRecord and buttonsRecord.window,
+            settingsSized = true,
+            packRows = {{"Tap an action to place its button", nil, 12}},
+        })
+        buttonsAddList = (create("Frame", {
+            Parent = buttonsAddRecord.window.body,
+            Name = "ButtonAddList",
+            AutomaticSize = Enum.AutomaticSize.Y,
+            BackgroundTransparency = 1,
+            BorderSizePixel = 0,
+            LayoutOrder = 1,
+            Size = UDim2.new(1, 0, 0, 0),
+            ZIndex = buttonsAddRecord.window.body.ZIndex + 1,
+        }) :: any) :: Frame
+        create("UIListLayout", {
+            Parent = buttonsAddList,
+            Padding = UDim.new(0, WINDOW_GAP),
+            SortOrder = Enum.SortOrder.LayoutOrder,
+        })
+        local order: number = 1
+        for id: string, binding: any in pairs(state.shortcutBindings) do
+            local actionId: string = ui.actionId(id)
+            if not ui.actions[actionId] then
+                local label: string = featureLabel(tostring(id))
+                buttonRow(buttonsAddList :: Frame, order, label, "place", function(): ()
+                    local callback: () -> (), hold: any = mobileCallbacks(binding)
+                    ui.place(actionId, label, callback, hold)
+                end)
+                order += 1
+            end
+        end
+        if order == 1 then
+            buttonRow(buttonsAddList :: Frame, order, "Every action already has a button", "", function(): () end)
+        end
+        buttonsAddRecord.resize()
+        raiseOpen(buttonsAddRecord)
+    end
+
     local windowsRecord: any = nil
     local windowsPanel: any = nil
     local windowOptions: {[string]: boolean} = {}
@@ -32413,7 +33076,7 @@ function Module.init(context: any): any
         settingsSized = false,
         packRows = {
             {"HackList", nil, 26},
-            {"Keybinds", nil, 26},
+            {state.isMobile and "Buttons" or "Keybinds", nil, 26},
             {"Windows", nil, 26},
             {"WurstOptions", nil, 26},
             {"Background", "#404040"},
@@ -32425,7 +33088,13 @@ function Module.init(context: any): any
     uiRecord.open = true
 
     actionRow(uiRecord, 1, "HackList", openHackList)
-    actionRow(uiRecord, 2, "Keybinds", openKeybinds)
+    -- A phone has no keyboard: the row that would open keybinds opens the
+    -- touch-button page instead. Desktop keeps the keybinds window untouched.
+    if state.isMobile then
+        actionRow(uiRecord, 2, "Buttons", openButtons)
+    else
+        actionRow(uiRecord, 2, "Keybinds", openKeybinds)
+    end
     actionRow(uiRecord, 3, "Windows", openWindows)
     actionRow(uiRecord, 4, "WurstOptions", openWurstOptions)
 
@@ -32958,6 +33627,9 @@ function Module.init(context: any): WidgetLibrary
         return option
     end
 
+    -- A real heading, not an invisible spacer: a capitalised caption with a
+    -- hairline that runs to the right edge. Every card can group its rows
+    -- without inventing its own label and drifting from the rest.
     state.addSectionOption = function(feature: any, titleText: string): Frame
         feature.optionCount += 1
         local section: Frame = (create("Frame", {
@@ -32966,10 +33638,37 @@ function Module.init(context: any): WidgetLibrary
             BackgroundTransparency = 1,
             BorderSizePixel = 0,
             LayoutOrder = feature.optionCount,
-            Size = UDim2.new(1, 0, 0, 0),
-            Visible = false,
+            Size = UDim2.new(1, 0, 0, state.layout.sectionRowHeight or 22),
+            Visible = true,
             ZIndex = feature.options.ZIndex + 1,
         }) :: any) :: Frame
+        local caption: TextLabel = (create("TextLabel", {
+            Parent = section,
+            Name = "SectionLabel",
+            BackgroundTransparency = 1,
+            FontFace = CONTROL_FONT,
+            Position = UDim2.fromOffset(CHILD_INSET, 0),
+            Size = UDim2.new(1, -CHILD_INSET * 2, 0, section.Size.Y.Offset),
+            Text = string.upper(titleText),
+            TextColor3 = Theme.textMuted,
+            TextSize = 10,
+            TextXAlignment = Enum.TextXAlignment.Left,
+            ZIndex = section.ZIndex + 1,
+        }) :: any) :: TextLabel
+        caption:SetAttribute("SectionTitle", titleText)
+        -- The divider sits after the caption, so long titles never overlap it.
+        create("Frame", {
+            Parent = section,
+            Name = "SectionLine",
+            AnchorPoint = Vector2.new(0, 0.5),
+            BackgroundColor3 = Theme.outline,
+            BackgroundTransparency = 0.55,
+            BorderSizePixel = 0,
+            Position = UDim2.new(0, 4 + math.clamp(#string.upper(titleText) * 7 + 8, 24, 220), 0.5, 0),
+            Size = UDim2.new(1, -(4 + math.clamp(#string.upper(titleText) * 7 + 8, 24, 220)) - 4, 0, 1),
+            ZIndex = section.ZIndex,
+        })
+        section:SetAttribute("SectionTitle", titleText)
         table.insert(feature.optionRows, section)
         feature.updateExpandedSize()
         return section
@@ -34655,6 +35354,14 @@ function Module.init(context: any): WidgetLibrary
             return tostring(name or "")
         end
         local option = createOptionRow(feature, labelText, hintText)
+        -- A phone cannot press keys. The row is not merely inert: it is
+        -- removed from the card so the menu never offers an impossible
+        -- control. The action itself stays available through its own card or
+        -- the Buttons page.
+        if state.isMobile then
+            option.Visible = false
+            feature.updateExpandedSize()
+        end
         local button = makeButton(
             option,
             currentKey == Enum.KeyCode.Unknown and "" or keyLabel(currentKey.Name),

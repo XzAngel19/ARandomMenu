@@ -40,7 +40,24 @@ local Module = {
 
 local activeCard: any = nil
 
-local DEFAULT_USER_ID: number = 239702688
+-- 78492 is the default disguise: a normal user avatar whose movement
+-- animations come from Roblox's own set, which is also the fallback below.
+local DEFAULT_USER_ID: number = 78492
+-- Roblox's own R15 animation set, i.e. the IDs inside the default Animate
+-- script. A HumanoidDescription stores 0 for "keep the default", so copying
+-- only the non-zero fields would silently keep OUR animations on the
+-- disguised avatar. Filling the gaps with these makes the disguise use the
+-- same set the target actually sees.
+local DEFAULT_ANIMATION_IDS: {[string]: {string}} = {
+    idle = {"507766666", "507766951", "507766388"},
+    walk = {"507777826"},
+    run = {"507767714"},
+    jump = {"507765000"},
+    fall = {"507767968"},
+    climb = {"507765644"},
+    swim = {"507784897"},
+    swimidle = {"507785072"},
+}
 local SCALE_FIELDS: {string} = {
     "HeightScale",
     "WidthScale",
@@ -104,7 +121,7 @@ function Module.init(context: Runtime): any
     -- toggles work instantly instead of fetching the avatar again.
     type TargetCache = {
         userId: number,
-        slots: {[string]: string},
+        slots: {[string]: any},
         emotes: any,
         equippedEmotes: any,
     }
@@ -484,7 +501,7 @@ function Module.init(context: Runtime): any
         return "rbxassetid://" .. tostring(math.floor(number))
     end
 
-    local function animationSlotsFromDescription(description: any): {[string]: string}
+    local function animationSlotsFromDescription(description: any): {[string]: any}
         local slots: {[string]: string} = {}
         for _, mapping in ipairs(MOVEMENT_ANIMATIONS) do
             local readOk: boolean, value: any = pcall(function()
@@ -502,7 +519,7 @@ function Module.init(context: Runtime): any
     local function applyAnimationSlots(
         character: Model,
         humanoid: Humanoid,
-        slots: {[string]: string}
+        slots: {[string]: any}
     ): number
         local animate: Instance? = character:FindFirstChild("Animate")
         if not animate then
@@ -511,9 +528,22 @@ function Module.init(context: Runtime): any
 
         local changedCount: number = 0
         for _, mapping in ipairs(MOVEMENT_ANIMATIONS) do
-            local chosenId: string? = slots[mapping.scriptCategory]
+            local chosen: any = slots[mapping.scriptCategory]
+            -- One ID for the whole category, or a list: idle has up to three
+            -- variants and Roblox plays them in order, so a default set keeps
+            -- all three instead of repeating the first.
+            local ids: {string} = {}
+            if type(chosen) == "table" then
+                for _, value: any in ipairs(chosen) do
+                    local id: string? = animationIdFromValue(value)
+                    if id then table.insert(ids, id) end
+                end
+            else
+                local id: string? = animationIdFromValue(chosen)
+                if id then table.insert(ids, id) end
+            end
             local category: Instance? = animate:FindFirstChild(mapping.scriptCategory)
-            if chosenId and category then
+            if #ids > 0 and category then
                 local targets: {Animation} = {}
                 if category:IsA("Animation") then
                     table.insert(targets, category)
@@ -523,7 +553,10 @@ function Module.init(context: Runtime): any
                         table.insert(targets, descendant)
                     end
                 end
-                for _, animation: Animation in ipairs(targets) do
+                for index: number, animation: Animation in ipairs(targets) do
+                    local chosenId: string = #ids == 1
+                        and ids[1]
+                        or ids[math.min(index, #ids)]
                     if animation.AnimationId ~= chosenId then
                         local changed: boolean = pcall(function()
                             animation.AnimationId = chosenId
@@ -559,9 +592,17 @@ function Module.init(context: Runtime): any
     -- description, so it can never touch or roll back the visible avatar.
     local function cacheTarget(userId: number, description: any): ()
         local emotes: any, equippedEmotes: any = readDescriptionEmotes(description)
+        local slots: {[string]: any} = animationSlotsFromDescription(description)
+        -- 0 in a description means "use Roblox's default", so the seven
+        -- standard clips are filled in where the target did not pick a pack.
+        for category: string, ids: {string} in pairs(DEFAULT_ANIMATION_IDS) do
+            if slots[category] == nil then
+                slots[category] = ids
+            end
+        end
         targetCache = {
             userId = userId,
-            slots = animationSlotsFromDescription(description),
+            slots = slots,
             emotes = emotes,
             equippedEmotes = equippedEmotes,
         }
@@ -595,6 +636,81 @@ function Module.init(context: Runtime): any
             current.meshParts = refreshed
         end
     end
+
+    -- Animation mode also accepts an animation *bundle* id (the same thing
+    -- Vape's Disguise accepts). A bundle item is a catalog entry, not always
+    -- a playable AnimationId, so the asset is inspected when the executor
+    -- exposes GetObjects; when it does not, the item id is used directly and
+    -- the status says so instead of pretending the pack was loaded.
+    local function animationAssetId(itemId: any): string?
+        if type((game :: any).GetObjects) == "function" then
+            local ok: boolean, objects: any = pcall(function(): any
+                return (game :: any):GetObjects("rbxassetid://" .. tostring(itemId))
+            end)
+            if ok and type(objects) == "table" then
+                for _, object: any in ipairs(objects) do
+                    if typeof(object) == "Instance" then
+                        if object:IsA("Animation") then
+                            return object.AnimationId
+                        end
+                        for _, descendant: Instance in ipairs(object:GetDescendants()) do
+                            if descendant:IsA("Animation") then
+                                return descendant.AnimationId
+                            end
+                        end
+                    end
+                end
+            end
+        end
+        return nil
+    end
+
+    local function bundleAnimationSlots(bundleId: number): ({[string]: any}?, string?)
+        local service: any = (host :: any).MarketplaceService
+            or (game :: any):GetService("MarketplaceService")
+        local ok: boolean, product: any = pcall(function(): any
+            return service:GetProductInfo(bundleId, Enum.InfoType.Bundle)
+        end)
+        if not ok or type(product) ~= "table" then
+            return nil, "That ID is not a user and the marketplace did not return a bundle."
+        end
+        if product.BundleType ~= "AvatarAnimations" then
+            return nil, "That bundle is not an animation pack."
+        end
+        if type(product.Items) ~= "table" then
+            return nil, "The animation pack did not expose its items."
+        end
+        local slots: {[string]: any} = {}
+        local categories: {string} = {
+            "idle", "walk", "run", "jump", "fall", "climb", "swim", "swimidle",
+        }
+        for _, item: any in ipairs(product.Items) do
+            local name: string = string.lower(tostring(item.Name or ""))
+            local category: string? = nil
+            for _, candidate: string in ipairs(categories) do
+                if string.find(name, candidate, 1, true) then
+                    category = candidate
+                    break
+                end
+            end
+            -- "Swim (Idle)" matches "idle" first alphabetically in the list
+            -- above only if it appears earlier; make the pair explicit.
+            if string.find(name, "swim", 1, true)
+                and string.find(name, "idle", 1, true) then
+                category = "swimidle"
+            end
+            if category and item.Id then
+                local resolved: string? = animationAssetId(item.Id)
+                slots[category] = resolved
+                    or ("rbxassetid://" .. tostring(item.Id))
+            end
+        end
+        if next(slots) == nil then
+            return nil, "The animation pack did not expose a usable animation."
+        end
+        return slots, nil
+    end
+
 
     -- Applies what was already cached for the current target. No fetch and no
     -- clone: turning a toggle back on is immediate.
@@ -1092,18 +1208,35 @@ function Module.init(context: Runtime): any
         userId: number
     ): ()
         local description: any, fetchError: string? = getUserDescription(userId)
-        if not description then
-            if stillCurrent(token, character) then
-                notify("Could not load that avatar: " .. tostring(fetchError))
+        if description then
+            if not stillCurrent(token, character) then
+                destroyInstance(description)
+                return
             end
-            return
+            cacheTarget(userId, description)
+        else
+            -- Not a user: Animation mode also accepts an animation pack id.
+            local slots: {[string]: any}?, bundleError: string? =
+                bundleAnimationSlots(userId)
+            if not slots then
+                if stillCurrent(token, character) then
+                    notify(
+                        "Could not load that ID: " .. tostring(fetchError)
+                            .. " " .. tostring(bundleError)
+                    )
+                end
+                return
+            end
+            if not stillCurrent(token, character) then
+                return
+            end
+            targetCache = {
+                userId = userId,
+                slots = slots :: {[string]: any},
+                emotes = nil,
+                equippedEmotes = nil,
+            }
         end
-        if not stillCurrent(token, character) then
-            destroyInstance(description)
-            return
-        end
-
-        cacheTarget(userId, description)
         local cached: TargetCache? = targetCache
 
         local current: AppearanceSnapshot = ensureSnapshot(character, humanoid)
@@ -1284,7 +1417,7 @@ function Module.init(context: Runtime): any
         Category = "Utilities",
         ConfigKey = "Universal.Disguise",
         Order = 26,
-        Tooltip = "Character: copies the target avatar, then optionally its emotes and movement animations through two independent toggles (both preloaded). Animation: always applies that user's emotes and movement animations to your own avatar, without hiding it.",
+        Tooltip = "Character: copies the target avatar, then optionally its emotes and movement animations through two independent toggles (both preloaded). Animation: always applies that user's, or animation pack's, movement animations and emotes to your own avatar, without hiding it. Default ID 78492.",
         Function = function(enabled: boolean): ()
             if enabled then
                 card:SetStatus(settings.mode)
@@ -1337,7 +1470,7 @@ function Module.init(context: Runtime): any
         Function = function(value: boolean): ()
             setMovementAnimationsEnabled(value)
         end,
-        Tooltip = "Character mode only. Shows the target user's movement animations (idle, walk, run, jump, climb, fall, swim) on the disguised avatar. They are already loaded, so this is instant; turning it off restores your own animations. Emotes are independent and stay untouched.",
+        Tooltip = "Character mode only. Shows the target user's movement animations (idle, walk, run, jump, climb, fall, swim, and Roblox's default set for any slot the avatar leaves empty) on the disguised avatar. They are already loaded, so this is instant; turning it off restores your own animations. Emotes are independent and stay untouched.",
     })
 
     card:CreateTextBox({
@@ -1356,7 +1489,7 @@ function Module.init(context: Runtime): any
                 applyDisguise()
             end
         end,
-        Tooltip = "Positive integer user ID. Character copies the avatar; Animation copies only its emotes and movement animations.",
+        Tooltip = "User ID (Character copies the avatar; Animation copies only its emotes and movement animations) or an animation pack ID in Animation mode. Default 78492. Missing animation slots fall back to Roblox's own R15 set.",
     })
 
     card:CreateToggle({

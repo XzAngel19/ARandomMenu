@@ -522,6 +522,9 @@ function Module.init(runtime: any): any
         }
     )
     state.mm2SilentAimFeature = ShootFeature
+    -- One card, two weapons: the heading keeps the gun rows together and the
+    -- knife module opens its own section further down.
+    if addSectionOption then addSectionOption(ShootFeature, "Gun") end
     addToggleOption(ShootFeature, "Auto Shoot", false, toggleAutoShoot,
         "While SilentAIM is ON and you hold the gun: try every frame as soon as the current target is visible. No distance or prediction-confidence gate. Uses the Gun aim method.", true)
     local ShootTargetBox

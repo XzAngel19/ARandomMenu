@@ -150,6 +150,7 @@ type LayoutMetrics = {
     cardCorner: number,
     controlHeight: number,
     optionRowHeight: number,
+    sectionRowHeight: number,
     switchWidth: number,
     switchHeight: number,
     iconButton: number,
@@ -180,6 +181,7 @@ local function computeLayoutMetrics(
         cardCorner = UI_RADIUS.card,
         controlHeight = 20,
         optionRowHeight = 22,
+        sectionRowHeight = 22,
         switchWidth = 26,
         switchHeight = 14,
         iconButton = 16,
@@ -217,7 +219,7 @@ local RUNTIME_RAW_BASE: string =
         .. RUNTIME_BRANCH
         .. "/"
 
-local SOURCE_STAMP: string = "v66-20261018-knife-blade-size"
+local SOURCE_STAMP: string = "v67-20261018-mobile-buttons-and-sections"
 
 local BOOT_STARTED_AT: number = os.clock()
 local BOOT_FINGERPRINT_SECONDS: number = 0

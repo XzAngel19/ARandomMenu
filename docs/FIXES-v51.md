@@ -862,3 +862,119 @@ del bundle con `failures=0`.
 Todavía no hay sesión real con el sello v66. El grosor, la escalera y el botón
 están probados en el arnés contra un mundo simulado, no medidos contra el
 servidor de Murder Mystery 2. El lado de `Shoot` no se tocó en esta versión.
+
+## v67 — Móvil con botones de verdad, secciones en las opciones y Disguise con animaciones completas
+
+### Móvil: lo que no se puede hacer desaparece, y aparece Buttons
+
+La ventana **UI Settings** tenía una fila **Keybinds** en todos los dispositivos.
+Un teléfono no tiene teclado, así que esa fila ahora se llama **Buttons** y
+abre otra ventana, solo en táctil; en PC sigue siendo Keybinds y no cambia
+nada. Además:
+
+- **Cada acción puede tener su botón.** La lista muestra los botones ya
+  colocados (tocar uno abre su editor) y **Add button** ofrece cada atajo que
+  todavía no tiene botón: al elegir uno se entra en el modo de colocación de
+  siempre. Los botones de mantener (vuelo, etc.) conservan su
+  `isActive`/`onPress`/`onRelease`.
+- **Forma, color, tamaño y opacidad.** El editor del botón (mantener pulsado
+  el botón, o tocar su fila en la lista) añade **Shape** (Square / Rounded /
+  Circle) y **Colour** (ocho colores). El texto del botón cambia solo entre
+  claro y oscuro según el fondo para seguir siendo legible. **Apply to all
+  buttons** copia la apariencia a todos los botones de una vez.
+- **Valores por defecto para botones nuevos.** La misma ventana tiene
+  **Default shape** y **Default colour**; el botón por defecto sigue siendo
+  **cuadrado** (Square), como antes, pero ahora es una elección.
+- Se guardan en la misma entrada de siempre: los cuatro valores originales
+  (`x`, `y`, `size`, `opacity`) y dos nuevos (`shape`, `color`), así que los
+  perfiles viejos cargan sin migración.
+- **La casilla de atajo en cada card ya no es un hueco de teclado.** En táctil
+  muestra `+` cuando la acción no tiene botón y, cuando lo tiene, dibuja una
+  vista previa de su forma y color; al tocarla abre el editor (o inicia la
+  colocación si todavía no existe).
+- **Las opciones de tecla desaparecen en táctil.** `addKeyOption` (Pickup key,
+  Shot key, PowerShot key, etc.) ya no deja filas vacías que no se pueden
+  pulsar: se quitan de la card. Las teclas de teclado y los cuadraditos de
+  keybind ya estaban ocultos en móvil.
+
+### Secciones (headers) en las opciones
+
+`addSectionOption` era un marco invisible que cada módulo rellenaba a mano.
+Ahora es un **header real**: título en mayúsculas, color atenuado, altura fija
+y una línea fina hasta el borde. `Freeze Movements` dejó de dibujar su propia
+etiqueta y usa el mismo widget.
+
+En **SilentAIM** el orden queda:
+
+```
+Gun
+  Auto Shoot
+  Aim method
+  Target
+  WallCheck
+  Macro
+  …
+Knife
+  Knife Throw
+  Throw with button
+```
+
+Es decir: el header **Gun** abre las opciones del arma de fuego y el header
+**Knife** abre las del cuchillo, que es lo que el módulo del cuchillo crea de
+todos modos. Se eliminó el truco que movía la fila de Knife Throw a la
+posición 2 a mano: ya no hace falta. De paso, **"Lanzar con el boton"** pasó a
+**"Throw with button"**: el menú está en inglés y esa era la única etiqueta en
+español.
+
+### Disguise: el ID por defecto y las animaciones que faltaban
+
+- **ID por defecto: 78492.** Es una cuenta real (`fatcat`), no el usuario del
+  autor de Vape que se había heredado (239702688 = 7GrandDadPGN). El cuadro de
+  texto ya arranca con 78492.
+- **Las 7 animaciones de Roblox ya no se pierden.** Un `HumanoidDescription`
+  guarda `0` en los slots que usan la animación por defecto. Copiar solo los
+  valores distintos de cero dejaba *nuestras* animaciones en el avatar
+  disfrazado. Ahora los slots vacíos se rellenan con el set R15 de Roblox
+  (idle ×3: 507766666 / 507766951 / 507766388, walk 507777826, run 507767714,
+  jump 507765000, fall 507767968, climb 507765644, swim 507784897, swim-idle
+  507785072), que son exactamente los IDs del script `Animate` por defecto.
+  Si el objetivo sí eligió un pack, sus IDs mandan.
+- **Los tres idles se aplican en orden**, no el mismo repetido: `Animation1`,
+  `Animation2` y `Animation3` reciben su variante; si solo hay un ID, se usa
+  para todos como antes. El campo `MoodAnimation` no se fuerza porque el set
+  por defecto no trae uno.
+- **Animation mode acepta un pack de animación**, como el Disguise de Vape.
+  Si el número no es un usuario, se consulta
+  `MarketplaceService:GetProductInfo(id, Enum.InfoType.Bundle)`; si es
+  `AvatarAnimations` se mapean sus ítems (Idle/Walk/Run/Jump/Fall/Climb/Swim/
+  Swim Idle) y se usa el `AnimationId` real cuando el ejecutor permite
+  `game:GetObjects` (es lo que hace Vape), o el id del ítem si no. Si el
+  bundle no es de animaciones, se avisa: no se finge que se aplicó.
+  `game:GetObjects` / `InsertService` siguen **fuera** de las funciones de
+  copia de avatar, que es donde antes colgaban el botón.
+- **Character mode sigue necesitando un usuario** (un pack no tiene avatar).
+
+### Pruebas
+
+- `tools/test_mobile_buttons.py` (nueva): formas, paleta, contraste del texto,
+  esquina aplicada, página Buttons en táctil y solo en táctil, guardado de
+  `shape`/`color`, vista previa de la card y eliminación de filas de tecla.
+- `tools/test_option_headers.py` (nueva): el header se dibuja visible con su
+  caption y su línea, Gun/Knife en el orden correcto, etiqueta inglesa y
+  `Freeze Movements` sin etiqueta duplicada.
+- `tools/test_disguise_defaults.py` (nueva): los siete clips por defecto, los
+  tres idles en orden, mapeo del pack (incluido Swim vs Swim Idle) y errores
+  cerrados.
+- `tools/test_mm2_knife_presets.py` actualizado a **"Throw with button"**.
+- El arnés de arranque completo comprueba ahora los dos headers y que la
+  opción del botón vive bajo Knife.
+
+`bash tools/validate.sh` → **75 fuentes compilan, 44 suites en verde**,
+arranque con `failures=0`.
+
+### Lo que esta versión NO afirma
+
+No hay prueba en un dispositivo táctil real: el layout del editor y la
+colocación se validan en el arnés de UI, no con un teléfono en la mano. El
+paquete de animación depende de que el ejecutor exponga `game:GetObjects` para
+leer el `AnimationId` real; si no, se usa el id del ítem y puede no sonar.

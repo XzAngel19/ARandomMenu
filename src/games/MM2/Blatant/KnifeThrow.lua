@@ -557,18 +557,11 @@ function Module.init(runtime: any): any
     end
     state.mm2KnifeThrowRefresh = refreshKnifeThrow
     state.mm2KnifeThrowOff = function(): () toggleKnifeThrow(false) end
-    local button = addToggleOption(feature, "Knife Throw", false, toggleKnifeThrow,
+    -- The knife options open their own section, after the Gun rows that the
+    -- Shoot module already created: the two weapons never mix again.
+    if addSectionOption then addSectionOption(feature, "Knife") end
+    addToggleOption(feature, "Knife Throw", false, toggleKnifeThrow,
         "SilentAIM ON + held knife: repeats throws at visible targets. Full animation and WallCheck are automatic.", true)
-    -- Both automatic attacks belong at the top, ahead of Gun tuning. The
-    -- option is created by a later module, so move its real row, not only its
-    -- registry entry. The compact UI has no visible information headings.
-    local row = button and button.Parent
-    local index = row and table.find(feature.optionRows, row)
-    if index then
-        table.remove(feature.optionRows, index)
-        table.insert(feature.optionRows, 2, row)
-        for order, optionRow in ipairs(feature.optionRows) do optionRow.LayoutOrder = order end
-    end
     -- Second checkbox: same knob, different trigger. It is created after the
     -- first so it lands right below it, and it is independent of it.
     local manualKey = "MM2.Shoot.KnifeThrowButton"
@@ -576,14 +569,14 @@ function Module.init(runtime: any): any
         configData.states[manualKey] = false
     end
     manualThrowOnly = configData.states[manualKey] == true
-    addToggleOption(feature, "Lanzar con el boton", manualThrowOnly,
+    addToggleOption(feature, "Throw with button", manualThrowOnly,
         function(enabled: boolean): ()
             manualThrowOnly = enabled
             configData.states[manualKey] = enabled
             refreshKnifeThrow()
             if type(queueConfigSave) == "function" then queueConfigSave() end
         end,
-        "Lanza solo cuando tocas el boton de lanzar (movil o PC), con la misma punteria y sin esperar el gesto.", true)
+        "Throw only when you press the throw button on the tool (mobile or PC), with the same aim and no windup.", true)
     if type(queueConfigSave) == "function" then queueConfigSave() end
 
     featureConnections.MM2KnifeThrowCharacter = LocalPlayer.CharacterAdded:Connect(stopThrowAnimation)

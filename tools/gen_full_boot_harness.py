@@ -977,7 +977,17 @@ do
     assert(ex.state.mm2KnifeRuntime.auraWanted, "master OFF retains the selected attack")
     ex.state.toggleControls["MM2.Shoot.KnifeThrow"].setChecked(true)
     assert(not ex.state.mm2KnifeRuntime.masterEnabled, "child does not bypass master")
-    assert(shoot.options:FindFirstChild("Option_KnifeThrow").LayoutOrder == 2, "Knife Throw must be the second visible attack, not buried below Gun tuning")
+    local gunHeader = shoot.options:FindFirstChild("Section_Gun")
+    local knifeHeader = shoot.options:FindFirstChild("Section_Knife")
+    local knifeThrowOption = shoot.options:FindFirstChild("Option_KnifeThrow")
+    local autoShootOption = shoot.options:FindFirstChild("Option_AutoShoot")
+    assert(gunHeader and gunHeader.Visible, "the Gun section header must be visible")
+    assert(knifeHeader and knifeHeader.Visible, "the Knife section header must be visible")
+    assert(autoShootOption and gunHeader.LayoutOrder < autoShootOption.LayoutOrder,
+        "the Gun header opens the gun rows")
+    assert(knifeThrowOption and knifeThrowOption.LayoutOrder > knifeHeader.LayoutOrder,
+        "Knife Throw belongs under the Knife header, not buried below Gun tuning")
+    assert(shoot.options:FindFirstChild("Option_Throwwithbutton"), "the button trigger belongs to the Knife section")
     assert(not knife.options:FindFirstChild("Option_KnifeThrow"), "Knife Throw must not be in KillAura")
     shoot.activationTarget.MouseButton1Click:Fire();assert(ex.state.mm2SilentAimEnabled)
     auraModule:Toggle(true);assert(ex.state.mm2KnifeRuntime.masterEnabled and ex.state.mm2KnifeRuntime.throwWanted)
