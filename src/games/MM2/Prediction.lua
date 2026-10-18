@@ -133,7 +133,12 @@ local MAX_ECHOES: number = 8
 -- A median of two echoes is just the mean of two mismatches. Six fresh
 -- samples keep the transport estimate stable; before that the smoothed RTT is
 -- the better number.
-local MIN_ECHO_SAMPLES: number = 6
+-- The echo now has one source (the confirmation path) and the v64 session
+-- proved it matches the server clock to within 8 ms on 13 of 13 shots, so
+-- three samples are enough to trust the round trip. At six, the 189 s session
+-- never engaged it and led with an engine reading that was half the measured
+-- round trip.
+local MIN_ECHO_SAMPLES: number = 3
 -- Pairing sanity limits. An echo only reaches noteEcho after base.lua matched
 -- the same gun, an origin within 3.5 studs and a direction within ~15 degrees,
 -- so a late sample is our own shot, not a crossed one. The upper bound mirrors

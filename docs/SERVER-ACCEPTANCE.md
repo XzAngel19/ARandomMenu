@@ -271,3 +271,29 @@ que el archivo no guardaba. v64 las guarda, y además deja escrito el daño.
 Con el sello `v64-20261018-definitive-capture`, una sesión alcanza para cerrar
 las tres preguntas de arriba. No se pide otra calibración hasta haber leído
 ese archivo.
+
+## Corrección (v65): el ida y vuelta ya está medido, y el eco ya tiene una fuente
+
+Las dos sesiones con sello v64 (13 disparos confirmados) permiten por primera
+vez comparar el ida y vuelta medido con **el reloj del servidor en los dos
+extremos** contra el `latencyMs` del cliente: coinciden dentro de 9 ms en 13 de
+13. El viaje real de esas sesiones fue **126–472 ms**, y la lectura del motor
+que alimentaba el lead era **80–154 ms** — entre 1.15 y 4.7 veces menos.
+
+Eso no se traduce en "el lead debe ser el doble": el punto de mira quedó dentro
+del ancho del cuerpo en aciertos y fallos por igual (0.17–4.63 studs en los
+aciertos, 0.27–3.82 en los fallos de la sesión corta), así que el error de lead
+ya no separa el resultado. Lo que queda es qué parte del cuerpo corta el rayo.
+
+Lo que sí quedó corregido es el caso en que el lead se disparaba por un eco
+contaminado: en los disparos 9 y 10 de la sesión larga la mediana leía 318 y
+303 ms contra 150 y 161 medidos, y el lead de 381/379 ms produjo los dos
+mayores errores de puntería del archivo (3.90 y 6.15 studs). La causa era una
+segunda fuente de eco; queda una sola, la que está verificada contra el reloj
+del servidor. `MIN_ECHO_SAMPLES` baja de 6 a 3 por la misma razón.
+
+Con esto, el archivo de una sesión responde: cuánto tardó el disparo de verdad
+(`serverEchoMs`), qué tocó (`hitPart`, posición, tamaño), si hubo daño
+(`healthAtAim` / `healthAfter` / `died` / `diedServerTime`), dónde estaba el
+objetivo al llegar la señal (`rootAtConfirmation`) y con qué offset se apuntó
+(`aimOffsetAtFire`).

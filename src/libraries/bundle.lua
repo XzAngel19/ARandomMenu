@@ -1,5 +1,5 @@
 return {
-    stamp = "v64-20261018-definitive-capture",
+    stamp = "v65-20261018-single-source",
     files = {
         ["src/Profile/142823291.lua"] = [[
 --!strict
@@ -4216,7 +4216,12 @@ local MAX_ECHOES: number = 8
 -- A median of two echoes is just the mean of two mismatches. Six fresh
 -- samples keep the transport estimate stable; before that the smoothed RTT is
 -- the better number.
-local MIN_ECHO_SAMPLES: number = 6
+-- The echo now has one source (the confirmation path) and the v64 session
+-- proved it matches the server clock to within 8 ms on 13 of 13 shots, so
+-- three samples are enough to trust the round trip. At six, the 189 s session
+-- never engaged it and led with an engine reading that was half the measured
+-- round trip.
+local MIN_ECHO_SAMPLES: number = 3
 -- Pairing sanity limits. An echo only reaches noteEcho after base.lua matched
 -- the same gun, an origin within 3.5 studs and a direction within ~15 degrees,
 -- so a late sample is our own shot, not a crossed one. The upper bound mirrors
@@ -6777,6 +6782,10 @@ local function createTrajectoryCalibration(): any
         -- recording it lets an offline replay test an input-based turn instead
         -- of needing another session.
         moveDirection: {number}?,
+        -- Offset from the root to the part the aim fell on. The v64 misses
+        -- passed 0.2-0.3 studs below the root, which is under the torso: a
+        -- replay needs this to test aiming at the torso instead of the root.
+        aimOffset: {number}?,
     }
     type RunningStats = {
         count: number,
@@ -7437,6 +7446,7 @@ local function createTrajectoryCalibration(): any
             local velocity: any = sample.velocity
             if typeof(position) == "Vector3" and typeof(velocity) == "Vector3" then
                 local move: any = sample.moveDirection
+                local offset: any = sample.aimOffset
                 table.insert(points, {
                     dt = (sample.at or 0) - sampleAge,
                     position = {position.X, position.Y, position.Z},
@@ -7445,6 +7455,9 @@ local function createTrajectoryCalibration(): any
                     grounded = sample.grounded == true,
                     moveDirection = typeof(move) == "Vector3"
                             and {move.X, move.Y, move.Z}
+                        or nil,
+                    aimOffset = typeof(offset) == "Vector3"
+                            and {offset.X, offset.Y, offset.Z}
                         or nil,
                 })
             end
@@ -7958,6 +7971,11 @@ local function createTrajectoryCalibration(): any
             serverOrigin = pending.confirmedServerOrigin
                     and vectorArray(pending.confirmedServerOrigin)
                 or nil,
+            aimOffsetAtFire = (function(): {number}?
+                local history: {HistoryPoint} = pending.targetHistory or {}
+                local newest: HistoryPoint? = history[#history]
+                return newest and newest.aimOffset or nil
+            end)(),
             trajectoryPoints = #pending.targetTrajectory,
             trajectorySpanSeconds = (
                     #pending.targetTrajectory > 1
@@ -8343,6 +8361,44 @@ local function createTrajectoryCalibration(): any
                 and tool.Events:FindFirstChild("KnifeThrown") ~= nil)
     end
 
+    -- One constructor for every pending shot. The activation observer and the
+    -- authored-shot path used to build this table separately, and on
+    -- 2026-10-18 the authored copy was missing the health watcher and the
+    -- server-clock pair: 13 confirmations, healthAtAim nil on all of them and
+    -- no serverEchoMs. Duplicating the record was the bug; there is one now.
+    local function beginPendingShot(kind: string, entry: any, target: Player?): any
+        local now: number = entry.activatedAt or os.clock()
+        entry.activatedAt = now
+        entry.serverActivatedAt = workspace:GetServerTimeNow()
+        entry.targetUserId = target and target.UserId or entry.targetUserId
+        entry.targetName = target and target.Name or entry.targetName
+        if entry.targetTrajectory == nil then
+            entry.targetTrajectory = {}
+            if target then
+                local point: TrajectoryPoint? = captureTrajectoryPoint(
+                    target,
+                    now,
+                    entry.pingMs or 0
+                )
+                if point then
+                    table.insert(entry.targetTrajectory, point)
+                end
+            end
+        end
+        if entry.targetHistory == nil then
+            entry.targetHistory = captureTargetHistory(target, now)
+        end
+        entry.lastTrajectorySampleAt = entry.lastTrajectorySampleAt or now
+        watchPendingHealth(entry, target)
+        local queue: {any} = kind == "gun"
+                and runtime.pendingGuns
+            or runtime.pendingKnives
+        table.insert(queue, entry)
+        compactPending(queue, now)
+        ensureTrajectorySampler()
+        return entry
+    end
+
     local function observeTool(tool: Tool): ()
         if runtime.observedTools[tool] then
             return
@@ -8384,46 +8440,29 @@ local function createTrajectoryCalibration(): any
                 targetName = target and target.Name or nil, eventSource = "tool-activation"})
             if gun then
                 runtime.sessionGunAttempts += 1
-                local pendingGun: PendingGun = {
+                beginPendingShot("gun", {
                     shotId = shotId,
-                    attemptCounted = gun,
+                    attemptCounted = true,
                     tool = tool,
                     activatedAt = now,
-                    serverActivatedAt = workspace:GetServerTimeNow(),
                     origin = toolOrigin(tool),
                     requestedAim = requestedAim,
                     pingMs = pingMs,
-                    targetUserId = target and target.UserId or nil,
-                    targetName = target and target.Name or nil,
                     targetTrajectory = targetTrajectory,
-                    targetHistory = captureTargetHistory(target, now),
-                    lastTrajectorySampleAt = now,
-                }
-                watchPendingHealth(pendingGun, target)
-                table.insert(runtime.pendingGuns, pendingGun)
-                compactPending(runtime.pendingGuns, now)
+                }, target)
             elseif knife then
                 runtime.rawKnifeActivations += 1
-                local pendingKnife: PendingKnife = {
+                beginPendingShot("knife", {
                     shotId = shotId,
-                    attemptCounted = gun,
+                    attemptCounted = false,
                     tool = tool,
                     activatedAt = now,
-                    serverActivatedAt = workspace:GetServerTimeNow(),
                     origin = toolOrigin(tool),
                     requestedAim = requestedAim,
                     pingMs = pingMs,
-                    targetUserId = target and target.UserId or nil,
-                    targetName = target and target.Name or nil,
                     targetTrajectory = targetTrajectory,
-                    targetHistory = captureTargetHistory(target, now),
-                    lastTrajectorySampleAt = now,
-                }
-                watchPendingHealth(pendingKnife, target)
-                table.insert(runtime.pendingKnives, pendingKnife)
-                compactPending(runtime.pendingKnives, now)
+                }, target)
             end
-            ensureTrajectorySampler()
         end))
     end
 
@@ -8709,9 +8748,7 @@ local function createTrajectoryCalibration(): any
                 else
                     runtime.sessionKnifeAttempts += 1
                 end
-                local queue: {any} =
-                    isGun and runtime.pendingGuns or runtime.pendingKnives
-                table.insert(queue, {
+                beginPendingShot(isGun and "gun" or "knife", {
                     shotId = shotId,
                     attemptCounted = true,
                     tool = authoredTool,
@@ -8719,14 +8756,9 @@ local function createTrajectoryCalibration(): any
                     origin = info.originPos,
                     requestedAim = info.aimPos,
                     pingMs = pingMs,
-                    targetUserId = target and target.UserId or nil,
-                    targetName = target and target.Name or nil,
                     targetTrajectory = targetTrajectory,
                     targetHistory = targetHistory,
-                    lastTrajectorySampleAt = now,
-                })
-                compactPending(queue, now)
-                ensureTrajectorySampler()
+                }, target)
             end
         end
 
@@ -9140,9 +9172,11 @@ state.mm2ShotFeedback.handleGunFired = function(
     -- Feed the measured FireServer -> GunFired round trip to the prediction
     -- engine. It is the only transport sample the game exposes, and the
     -- engine keeps a median so one delayed echo cannot move the next shot.
-    if state.mm2Prediction and type(state.mm2Prediction.noteEcho) == "function" then
-        state.mm2Prediction.noteEcho(candidate.queuedAt, os.clock())
-    end
+    -- The echo is fed only from the confirmation path (finalizeGunCapture).
+    -- This second source measured from the feedback queue instead of from the
+    -- activation, and its samples were larger: at shot 9 of the v64 session the
+    -- median read 318 ms while the same shot's measured round trip was 150 ms,
+    -- and the lead built on it (381 ms) missed by 3.9 studs. One source.
 
     state.mm2ShotFeedback.pending = nil
     if candidate.ambiguous then return end

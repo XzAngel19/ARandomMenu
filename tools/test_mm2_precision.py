@@ -150,12 +150,16 @@ do
     -- A grounded target is aimed at where it is; the predictor must not invent
     -- a projectile drop for a blade that travels in a straight line.
     near(aim.Y,1,1e-6)
-    for _=1,5 do prediction.noteEcho(0,0.18) end
-    assert(prediction.getEchoDelay()==nil,"five echoes are not a median")
+    -- Three echoes are enough now that the source is the confirmation path
+    -- only: the v64 file matched it to the server clock within 8 ms on 13/13.
+    for _=1,2 do prediction.noteEcho(0,0.18) end
+    assert(prediction.getEchoDelay()==nil,"two echoes are not a median")
     assert(prediction.status(target):find("auto lead %(ping%)"),
         "with few echoes the lead must fall back to ping")
+    prediction.noteEcho(0,0.18)
+    near(prediction.getEchoDelay(),0.18,1e-9)
     prediction.noteEcho(0,0.04)
-    assert(prediction.getEchoDelay()==nil,"an impossible 40 ms echo is a mismatch")
+    assert(prediction.getEchoDelay()==0.18,"an impossible 40 ms echo is a mismatch")
     prediction.noteEcho(0,0.18)
     local _,echoed=prediction.gunAim(target,Vector3.new(0,0,-30))
     near(echoed.echoDelay,0.18,1e-9)
@@ -167,7 +171,7 @@ do
     -- it must be accepted, but one sample must not move the median.
     prediction.noteEcho(0,1.0)
     near(prediction.getEchoDelay(),0.18,1e-9)
-    assert(prediction.status(target):find("echo 180 ms %(7%)"),
+    assert(prediction.status(target):find("echo 180 ms %(5%)"),
         "the 1 s echo must be counted without changing the median: "
             ..prediction.status(target))
     prediction.settings.extraLead=0.05
@@ -765,6 +769,18 @@ def main() -> None:
     finalize = section(BASE, "    finalizeGunCapture = function",
                        "    local function analyzeTargetTrajectory")
     assert "noteEcho" in finalize, "the confirmation path must measure the echo"
+    # One constructor, one echo source. The v64 session lost healthAtAim and
+    # serverEchoMs on all 13 confirmations because the authored path built its
+    # own pending table without the watcher, and the echo median read 318 ms
+    # against a measured 150 ms because a second source fed it.
+    assert BASE.count("state.mm2Prediction.noteEcho(") == 1, \
+        "the echo must have exactly one source"
+    assert "watchPendingHealth(entry, target)" in BASE, \
+        "the shared constructor must attach the health watcher"
+    assert "beginPendingShot(isGun and" in BASE, \
+        "the authored path must use the shared constructor"
+    assert BASE.count("table.insert(runtime.pendingGuns") == 0, \
+        "no call site may bypass the shared constructor"
     assert "WeaponPassthrough" in BASE
     assert "computeGunAim" not in SHOOT and "predictionMath.sampleDue" not in BASE
     assert "predictionMath.closestCrossing" not in BASE and "GUN_LEAD" not in BASE

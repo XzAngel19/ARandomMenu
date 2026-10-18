@@ -676,3 +676,111 @@ Además:
 No cambia ninguna constante del modelo: el lead sigue siendo el menor de
 `GetNetworkPing` y `Data Ping`, acotado a 0.02–0.6 s, y el horizonte sigue
 siendo `echo or (rtt + 0.025 + sampleAge)`.
+
+## v65 — Las dos sesiones v64: el reloj quedó probado y el eco tenía dos fuentes
+
+Archivos nuevos en `TestingStuff`: dos sesiones con sello
+`v64-20261018-definitive-capture`.
+
+| sesión | duración | intentos | confirmados | tocaron al objetivo | bloqueados |
+|---|---|---|---|---|---|
+| `91bec4b8` | 1340.4 s | 11 | 8 | **6** | 5 |
+| `e995782f` | 188.9 s | 13 | 5 | **0** | 3 |
+| total | — | 24 | 13 | **6** | 8 |
+
+Los otros tres `.json` nuevos son el mismo archivo v62 subido tres veces: mismo
+`md5` (`5d0ccad…`), mismo `savedAt` (05:40:11) y mismo `sessionId`. No aportan
+nada y no se contaron.
+
+### Lo que la captura v64 sí resolvió
+
+1. **El reloj del servidor quedó probado.** `serverEchoMs` no llegó al archivo
+   (ver el fallo de abajo), pero se reconstruye restando `serverConfirmedAt`
+   menos el `serverTime` del evento `authored`, que se sella justo después de
+   `FireServer`. Contra el `latencyMs` medido en el cliente:
+
+   | disparo | reloj servidor | `latencyMs` | diferencia |
+   |---|---|---|---|
+   | 1 | 182.8 | 182.9 | 0.1 |
+   | 3 | 182.3 | 182.4 | 0.1 |
+   | 5 | 188.5 | 188.5 | 0.0 |
+   | 7 | 448.1 | 448.2 | 0.1 |
+   | 8 | 469.2 | 472.3 | 3.1 |
+   | 9 | 142.2 | 150.4 | 8.2 |
+   | 10 | 160.9 | 160.6 | 0.3 |
+   | 11 | 189.1 | 189.2 | 0.1 |
+   | 1 (B) | 126.4 | 126.4 | 0.0 |
+   | 3 (B) | 151.8 | 151.8 | 0.0 |
+   | 6 (B) | 280.2 | 280.2 | 0.0 |
+   | 8 (B) | 166.5 | 158.1 | 8.4 |
+   | 11 (B) | 382.4 | 382.4 | 0.0 |
+
+   **13 de 13 dentro de 9 ms.** El ida y vuelta real de estas sesiones fue
+   **126–472 ms**, y el `rtt` con el que se construía el lead (la menor de las
+   dos lecturas del motor) fue **80–154 ms**: entre 1.15 y 4.7 veces menos
+   (mediana 1.6). Es la primera vez que el insumo del lead está medido y
+   verificado contra el reloj del servidor en el mismo disparo.
+
+2. **La trayectoria ya se graba completa.** 3–38 puntos por disparo con
+   ventanas de 0.09–0.89 s, `trajectoryCapped = false` en los trece, cero
+   eventos desalojados y cero señales sin pareja. En v62 eran 4 puntos y 0.12 s
+   en los disparos enlazados: el problema está cerrado.
+
+3. **El daño se puede leer, aunque el disparo que lo mata se escape.** En 5 de
+   los 6 aciertos el objetivo estaba en `healthAtConfirmation = 0` cuando llegó
+   la señal, o sea que murió dentro del ida y vuelta del disparo. En el sexto
+   (disparo 8) estaba en 100: fue un impacto sin muerte.
+
+### El fallo que la propia sesión destapó
+
+`healthAtAim` quedó en `nil` en los trece disparos y `serverEchoMs` no se
+escribió. La causa: había **dos** constructores del registro pendiente. El
+camino real (`noteAuthoredShot`) armaba su propia tabla y no llamaba a
+`watchPendingHealth` ni sellaba `serverActivatedAt`; el único que lo hacía era
+el observador de `tool.Activated`, que en estas sesiones creó un solo registro.
+Ahora hay un constructor único (`beginPendingShot`) y una prueba que impide que
+vuelva a haber dos.
+
+### El segundo defecto: el eco tenía dos fuentes
+
+En el disparo 9 la mediana del eco era **318 ms** mientras el ida y vuelta
+medido de ese mismo disparo era **150 ms**. El lead salió 381 ms, el error de
+puntería en el momento del disparo fue **3.90 studs** (el mayor del archivo) y
+el disparo falló. En el 10, igual: eco 303 ms, real 161, lead 379, error 6.15
+studs, fallo.
+
+La mediana no podía ser 318 con los ocho ecos reales (todos entre 150 y 472,
+mediana 188). La causa es que `Prediction.noteEcho` recibía muestras de **dos**
+caminos: la confirmación (`finalizeGunCapture`, que mide activación → señal) y
+el emparejador de `mm2ShotFeedback`, que mide desde la cola de feedback. En el
+disparo 9 la lista tenía 8 muestras cuando solo habían ocurrido 5
+confirmaciones: tres venían del segundo camino, y eran las grandes.
+
+Queda una sola fuente, la verificada contra el reloj del servidor.
+
+### Lo que estas sesiones NO explican
+
+Los cinco fallos de la sesión corta son otra cosa. El objetivo se movía a
+14–18 studs/s y el punto de mira quedó a **0.27 · 0.87 · 2.31 · 3.54 · 3.82**
+studs del root en el instante en que llegó la señal; el rayo siguió de largo y
+terminó en una pared detrás. Los aciertos de la sesión larga quedaron a
+**0.17 · 0.81 · 1.36 · 1.92 · 3.69 · 4.63** studs: **los dos rangos se
+solapan**. O sea que el error del punto de mira ya no separa acierto de fallo;
+lo que decide es qué parte del cuerpo corta el rayo (postura, brazos, aire).
+Eso no se arregla con más lead: se arregla eligiendo la parte que se apunta, y
+para eso el archivo ahora guarda `aimOffset` en cada muestra del historial y
+`aimOffsetAtFire` por disparo, además de `hitPart`, `hitPartSize` y
+`hitPartPosition`, que ya estaban.
+
+### Cambios de v65
+
+- Constructor único del registro pendiente: la salud en el momento del disparo
+  y los dos sellos del servidor ya no dependen de qué camino disparó.
+- Una sola fuente de eco (la confirmación), y `MIN_ECHO_SAMPLES` de 6 a 3: con
+  la fuente verificada, tres muestras alcanzan, y en sesiones cortas el lead ya
+  no se queda con la lectura del motor, que es la mitad del ida y vuelta.
+- `aimOffset` por muestra y `aimOffsetAtFire` por disparo.
+- Tres pruebas nuevas: una sola fuente de eco, constructor compartido, y que
+  ningún sitio llame a `table.insert(runtime.pendingGuns` por fuera.
+
+No cambia ninguna constante del modelo de movimiento.
