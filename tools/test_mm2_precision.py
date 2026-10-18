@@ -131,6 +131,9 @@ do
     assert(aim)
     near(aim.Magnitude,96*knife.flightSeconds,1e-3)
     near(aim.X-16*now,16*(knife.leadSeconds+knife.flightSeconds),1e-3)
+    -- A grounded target is aimed at where it is; the predictor must not invent
+    -- a projectile drop for a blade that travels in a straight line.
+    near(aim.Y,1,1e-6)
     for _=1,5 do prediction.noteEcho(0,0.18) end
     assert(prediction.getEchoDelay()==nil,"five echoes are not a median")
     assert(prediction.status(target):find("auto lead %(ping%)"),
@@ -144,6 +147,13 @@ do
     prediction.noteEcho(0,0.001)
     prediction.noteEcho(0,2)
     near(prediction.getEchoDelay(),0.18,1e-9)
+    -- A late confirmation that passed the gun/origin/direction match is real:
+    -- it must be accepted, but one sample must not move the median.
+    prediction.noteEcho(0,1.0)
+    near(prediction.getEchoDelay(),0.18,1e-9)
+    assert(prediction.status(target):find("echo 180 ms %(7%)"),
+        "the 1 s echo must be counted without changing the median: "
+            ..prediction.status(target))
     prediction.settings.extraLead=0.05
     local _,automatic=prediction.gunAim(target,Vector3.new(0,0,-30))
     near(automatic.leadSeconds,0.205,1e-6)
@@ -199,6 +209,15 @@ do
     assert(blade and bladeInfo.flightSeconds)
     assert(blade.Y<falling.Y,"airborne blade aims at the projected impact, not a straight Y")
     pass("live predictor: weighted fit, echo median, freshness, teleport reset, gravity")
+
+    -- A sustained late echo set raises the median, but the automatic lead is
+    -- capped at 0.6 s and the status says so. This is the guard against the
+    -- cap becoming the normal value through a contaminated pairing.
+    prediction.reset()
+    for _=1,6 do prediction.noteEcho(0,1.0) end
+    near(prediction.getEchoDelay(),1.0,1e-9)
+    local cappedText=prediction.status(nil)
+    assert(cappedText:find("lead 600 ms %(capped%)"),cappedText)
 
     -- Turn: the chord over the horizon must beat the straight tangent.
     humanoid.GetState=function() return "Running" end

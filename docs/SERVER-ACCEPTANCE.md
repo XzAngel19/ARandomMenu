@@ -129,7 +129,11 @@ frena. En vez de inventar constantes de "giro" o "violencia", el predictor hace
 
 En recta ambos términos quedan exactamente en cero: no hay corrección
 "mágica". El cuchillo re-resuelve el intercepto una vez con la velocidad media
-del vuelo completo (cuerda + frenado + gravedad), no con la tangente.
+del vuelo completo (cuerda + frenado), no con la tangente. La única gravedad
+que entra es la **del objetivo en el aire**; la hoja se modela recta hasta el
+endpoint, igual que `ThrowingKnifeVisuals`. Si el proyectil del servidor
+tuviera caída propia, habría que subir el endpoint; eso no está medido y no se
+afirma.
 
 ## Qué significa el número (y qué no)
 
@@ -143,10 +147,15 @@ del vuelo completo (cuerda + frenado + gravedad), no con la tangente.
   son ruido de emparejamiento del eco. 3,73 ms es físicamente imposible con
   ping ~108 ms y 631 ms es un eco tardío.
 - El **tope de 1 s** (ahora 0,6 s para el lead automático) es del **lead**;
-  el emparejamiento de ecos tiene su propio rango (50–800 ms). Son dos
+  el emparejamiento de ecos tiene su propio rango (50–1600 ms). Son dos
   límites distintos y no se deben confundir.
 - Ecos: se exige una mediana de **6 muestras frescas**; si no, se usa el ping
   suavizado. Un eco aislado de 3 ms nunca mueve el lead.
+- El límite superior de 1600 ms no acepta cruces: `base.lua` solo entrega un
+  eco cuando coinciden arma, origen (±3,5 studs) y dirección (dot ≥0,965) del
+  disparo pendiente, y abandona la cola a los 1,6 s. En v18 hay un eco
+  **confirmado de 1007,7 ms con ping de 204,6 ms**; un corte de 800 ms lo
+  descartaba. La mediana y el tope de 0,6 s absorben un pico aislado.
 
 ## Lo que sí conviene explotar
 

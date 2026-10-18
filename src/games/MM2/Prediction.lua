@@ -120,10 +120,13 @@ local MAX_ECHOES: number = 8
 -- samples keep the transport estimate stable; before that the smoothed RTT is
 -- the better number.
 local MIN_ECHO_SAMPLES: number = 6
--- Pairing sanity limits. 3 ms is physically impossible and >800 ms is a late
--- or mismatched echo, not transport.
+-- Pairing sanity limits. An echo only reaches noteEcho after base.lua matched
+-- the same gun, an origin within 3.5 studs and a direction within ~15 degrees,
+-- so a late sample is our own shot, not a crossed one. The upper bound mirrors
+-- the 1.6 s pending-shot window in base.lua; the v18 session has a confirmed
+-- 1007.7 ms echo at 204.6 ms ping, which an 800 ms cut would have thrown away.
 local MIN_ECHO_DELAY: number = 0.05
-local MAX_ECHO_DELAY: number = 0.8
+local MAX_ECHO_DELAY: number = 1.6
 -- Transport + manual lead. A full second only happens when the session ping
 -- or the manual offset asks for it; the status line shows the real number.
 local MAX_HORIZON: number = 1.0
@@ -771,15 +774,21 @@ function Module.init(runtime: any): any
         local horizon: number = (echo or rtt)
             + settings.interpolation
             + manualLead()
-        if settings.autoLead then
-            horizon = math.min(horizon, MAX_AUTO_LEAD)
+        local capped: boolean = false
+        if settings.autoLead and horizon > MAX_AUTO_LEAD then
+            horizon = MAX_AUTO_LEAD
+            capped = true
+        end
+        if horizon > MAX_HORIZON then
+            horizon = MAX_HORIZON
+            capped = true
         end
         table.insert(
             parts,
             string.format(
                 "lead %.0f ms%s",
                 horizon * 1000,
-                horizon > MAX_HORIZON and " (capped)" or ""
+                capped and " (capped)" or ""
             )
         )
         if target then
