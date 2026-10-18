@@ -136,11 +136,17 @@ do
     prediction.noteEcho(0,2)
     near(prediction.getEchoDelay(),0.18,1e-9)
     prediction.settings.extraLead=0.05
+    local _,automatic=prediction.gunAim(target,Vector3.new(0,0,-30))
+    near(automatic.leadSeconds,0.205,1e-6)
+    local autoText=prediction.status(target)
+    assert(autoText:find("auto lead %(echo%)"),autoText)
+    assert(autoText:find("interp 25 ms"),autoText)
+    prediction.settings.autoLead=false
     local _,manual=prediction.gunAim(target,Vector3.new(0,0,-30))
     near(manual.leadSeconds,0.255,1e-6)
     local statusText=prediction.status(target)
     assert(statusText:find("manual %+50 ms"),statusText)
-    assert(statusText:find("interp 25 ms"),statusText)
+    assert(not statusText:find("auto lead"),statusText)
     prediction.settings.extraLead=0.6
     local _,capped=prediction.gunAim(target,Vector3.new(0,0,-30))
     near(capped.leadSeconds,0.805,1e-6)
@@ -149,6 +155,7 @@ do
     local _,clamped=prediction.gunAim(target,Vector3.new(0,0,-30))
     near(clamped.leadSeconds,1.0,1e-6)
     prediction.settings.extraLead=0
+    prediction.settings.autoLead=true
     now=now+1
     assert(prediction.gunAim(target,Vector3.new(0,0,-30))==nil,"stale pose must fail closed")
     prediction.reset()
@@ -187,6 +194,54 @@ do
     assert(state.mm2Prediction==nil and sampleTick==nil)
 end
 ''')
+    chunks.append(r"""
+do
+    local mm2Settings={predictionRtt=0.08}
+    local directSeconds=0.075
+    local pingMilliseconds=120
+    local LocalPlayer={GetNetworkPing=function() return directSeconds end}
+    local Stats={FindFirstChild=function(_,name)
+        if name~="Network" then return nil end
+        return {FindFirstChild=function(_,child)
+            if child~="ServerStatsItem" then return nil end
+            return {FindFirstChild=function(_,leaf)
+                if leaf~="Data Ping" then return nil end
+                return {GetValue=function() return pingMilliseconds end}
+            end}
+        end}
+    end}
+""")
+    chunks.append(section(BASE, "local lastLatencyReadAt:", "local function getGunOriginCFrame"))
+    chunks.append(r"""
+    now=100
+    local first=getEstimatedLatency()
+    now=101
+    local second=getEstimatedLatency()
+    assert(first>0.075 and first<0.076,first)
+    assert(second>0.075 and second<0.0761,second)
+    directSeconds=0
+    now=102
+    getEstimatedLatency()
+    now=103
+    near(getEstimatedLatency(),0.12,0.001)
+    directSeconds=5
+    now=104
+    getEstimatedLatency()
+    now=105
+    near(getEstimatedLatency(),0.12,0.001)
+    LocalPlayer.GetNetworkPing=function() error("unavailable") end
+    now=106
+    getEstimatedLatency()
+    now=107
+    near(getEstimatedLatency(),0.12,0.001)
+    pingMilliseconds=1500
+    now=108
+    getEstimatedLatency()
+    now=109
+    assert(getEstimatedLatency()<=0.6)
+    pass("latency: engine GetNetworkPing preferred, invalid values fall back to Data Ping, hard cap")
+end
+""")
     # Execute the real writer with an in-memory encoder/IO sink. Detect accidental
     # disk rereads, double accumulation, failed-write loss, and migration drift.
     chunks += [r'''

@@ -1,5 +1,5 @@
 return {
-    stamp = "v55-20261017-lead-disguise",
+    stamp = "v56-20261017-auto-lead",
     files = {
         ["src/Profile/142823291.lua"] = [[
 --!strict
@@ -2941,6 +2941,7 @@ function Module.init(runtime: any): any
     local silentSweepRow: GuiObject? = nil
     local silentSpawnRow: GuiObject? = nil
     local spawnStatsRow: GuiObject? = nil
+    local leadOffsetRow: GuiObject? = nil
     local function refreshShootOptions(): ()
         if ShootTargetBox then
             setOptionVisible(
@@ -2960,6 +2961,15 @@ function Module.init(runtime: any): any
         end
         if spawnStatsRow then
             setOptionVisible(ShootFeature, spawnStatsRow :: GuiObject, silent)
+        end
+        -- The manual offset only exists as an advanced fallback; automatic
+        -- lead is the default and needs no tuning.
+        if leadOffsetRow then
+            setOptionVisible(
+                ShootFeature,
+                leadOffsetRow :: GuiObject,
+                prediction.settings.autoLead ~= true
+            )
         end
     end
     addCycleOption(
@@ -3080,7 +3090,24 @@ function Module.init(runtime: any): any
     if spawnStatsButton then
         spawnStatsRow = spawnStatsButton.Parent :: GuiObject
     end
-    addNumberOption(
+    local autoLeadButton = addToggleOption(
+        ShootFeature,
+        "Auto lead",
+        true,
+        function(value: boolean): ()
+            prediction.settings.autoLead = value
+            refreshShootOptions()
+        end,
+        "Recommended. Uses the measured FireServer -> GunFired echo (or your "
+            .. "ping while it learns), the replication window and the sample "
+            .. "age. It adapts to your FPS, device and network without manual "
+            .. "tuning. Turn it off only to test a fixed manual offset.",
+        false
+    )
+    if autoLeadButton then
+        setOptionVisible(ShootFeature, autoLeadButton.Parent :: GuiObject, true)
+    end
+    leadOffsetRow = addNumberOption(
         ShootFeature,
         "Lead offset ms",
         math.round(prediction.settings.extraLead * 1000),
@@ -4063,6 +4090,10 @@ local MIN_ECHO_SAMPLES: number = 2
 local MAX_HORIZON: number = 1.0
 
 local settings = {
+    -- Automatic lead is the default: the measured FireServer -> GunFired echo
+    -- (fallback: smoothed ping) already includes the device/network timing.
+    -- Manual offset is only used when autoLead is turned off.
+    autoLead = true,
     -- Manual calibration in seconds. Positive aims further ahead.
     extraLead = 0,
     -- Half of the default 20 Hz replication interval. This is the window the
@@ -4375,13 +4406,17 @@ function Module.init(runtime: any): any
         end
     end
 
+    local function manualLead(): number
+        return settings.autoLead and 0 or settings.extraLead
+    end
+
     local function gunHorizon(): (number, number, number?)
         local rtt: number = currentRtt()
         local echo: number? = echoMedian()
         local pipeline: number = echo or rtt
         local horizon: number = pipeline
             + settings.interpolation
-            + settings.extraLead
+            + manualLead()
         return math.clamp(horizon, 0.005, MAX_HORIZON), rtt, echo
     end
 
@@ -4389,7 +4424,7 @@ function Module.init(runtime: any): any
         local rtt: number = currentRtt()
         local horizon: number = rtt
             + settings.interpolation
-            + settings.extraLead
+            + manualLead()
         return math.clamp(horizon, 0.005, MAX_HORIZON), rtt
     end
 
@@ -4509,7 +4544,12 @@ function Module.init(runtime: any): any
             parts,
             string.format("interp %.0f ms", settings.interpolation * 1000)
         )
-        if settings.extraLead ~= 0 then
+        if settings.autoLead then
+            table.insert(
+                parts,
+                echo and "auto lead (echo)" or "auto lead (ping)"
+            )
+        elseif settings.extraLead ~= 0 then
             table.insert(
                 parts,
                 string.format("manual %+.0f ms", settings.extraLead * 1000)
@@ -4517,7 +4557,7 @@ function Module.init(runtime: any): any
         end
         local horizon: number = (echo or rtt)
             + settings.interpolation
-            + settings.extraLead
+            + manualLead()
         table.insert(
             parts,
             string.format(
@@ -6093,6 +6133,18 @@ local function getEstimatedLatency(): number
     lastLatencyReadAt = now
     local measuredRtt: number = mm2Settings.predictionRtt
     pcall(function(): ()
+        -- Prefer the engine's own per-player measurement. It is available on
+        -- every client (touch, low-end, high-FPS) and does not depend on the
+        -- Stats panel being expanded or on Data Ping being replicated.
+        local direct: any = (LocalPlayer :: any).GetNetworkPing
+        if type(direct) == "function" then
+            local okDirect: boolean, seconds: any = pcall(direct, LocalPlayer)
+            if okDirect and predictionMath.finite(seconds)
+                and (seconds :: number) > 0.001 and (seconds :: number) <= 2 then
+                measuredRtt = seconds :: number
+                return
+            end
+        end
         local network: Instance? = Stats:FindFirstChild("Network")
         local serverItems: Instance? = network
             and network:FindFirstChild("ServerStatsItem")
@@ -6987,6 +7039,9 @@ local function createTrajectoryCalibration(): any
                 silentAim = mm2Settings.silentAim,
                 silentSweep = mm2Settings.silentSweep,
                 wallCheck = mm2Settings.shootWallCheck,
+                autoLead = state.mm2Prediction
+                    and state.mm2Prediction.settings.autoLead
+                    or true,
                 leadOffsetSeconds = state.mm2Prediction
                     and state.mm2Prediction.settings.extraLead
                     or 0,
@@ -17143,7 +17198,7 @@ function Module.init(context: Runtime): any
     local settings = {
         mode = "Character",
         id = tostring(DEFAULT_USER_ID),
-        useTargetMovementAnimations = false,
+        useTargetMovementAnimations = true,
     }
 
     local function status(message: string): ()
@@ -17435,6 +17490,45 @@ function Module.init(context: Runtime): any
     end
 
 
+    -- Used when "Use target movement animations" is turned off: restore only
+    -- the Animate slots, leaving the current appearance/emotes untouched.
+    local function restoreMovementAnimationsOnly(
+        character: Model,
+        humanoid: Humanoid?
+    ): ()
+        local current: AppearanceSnapshot? = snapshot
+        if not current or current.character ~= character
+            or not animationOverrideApplied then
+            return
+        end
+        for _, entry: AnimationTemplate in ipairs(current.animations) do
+            if isInsideCharacter(entry.animation, character) then
+                pcall(function()
+                    entry.animation.AnimationId = entry.animationId
+                end)
+            end
+        end
+        animationOverrideApplied = false
+        local animate: Instance? = character:FindFirstChild("Animate")
+        if not animate then
+            return
+        end
+        if humanoid then
+            local animator: Animator? = humanoid:FindFirstChildOfClass("Animator")
+            if animator then
+                local tracksOk: boolean, tracks: any = pcall(function()
+                    return animator:GetPlayingAnimationTracks()
+                end)
+                if tracksOk and type(tracks) == "table" then
+                    for _, track: AnimationTrack in ipairs(tracks) do
+                        pcall(track.Stop, track)
+                    end
+                end
+            end
+        end
+        restartAnimateScript(animate)
+    end
+
     local animationAssetCache: {[string]: {string}} = {}
 
     local function extractAnimationsFromAsset(rawAssetId: any): {string}
@@ -17569,114 +17663,6 @@ function Module.init(context: Runtime): any
             restartAnimateScript(animate)
         end
         return changedCount
-    end
-
-    local function applyTargetMovementAnimationsToCharacter(numericId: number): ()
-        local character: Model? = LocalPlayer.Character
-        local humanoid: Humanoid? = character
-            and character:FindFirstChildOfClass("Humanoid")
-            :: Humanoid?
-        if not character or not humanoid or humanoid.Health <= 0 then
-            notify("Your character is not available.")
-            return
-        end
-
-        local animate: Instance? = character:FindFirstChild("Animate")
-        if not animate then
-            notify("Your character has no Animate script to update.")
-            return
-        end
-
-        ensureSnapshot(character, humanoid)
-        status("Downloading target movement animations...")
-
-        task.spawn(function(): ()
-            local changedCount: number = 0
-
-            local targetPlayer: Player? = Players:GetPlayerByUserId(numericId)
-            if not targetPlayer then
-                for _, p: Player in ipairs(Players:GetPlayers()) do
-                    if tostring(p.UserId) == tostring(settings.id)
-                        or string.lower(p.Name) == string.lower(tostring(settings.id))
-                        or string.lower(p.DisplayName) == string.lower(tostring(settings.id)) then
-                        targetPlayer = p
-                        break
-                    end
-                end
-            end
-
-            local targetChar: Model? = targetPlayer and targetPlayer.Character
-            local targetAnimate: Instance? = targetChar and targetChar:FindFirstChild("Animate")
-            if targetAnimate then
-                for _, mapping in ipairs(MOVEMENT_ANIMATIONS) do
-                    local sourceCat: Instance? = targetAnimate:FindFirstChild(mapping.scriptCategory)
-                    local targetCat: Instance? = animate:FindFirstChild(mapping.scriptCategory)
-                    if sourceCat and targetCat then
-                        local sourceAnims: {Animation} = {}
-                        if sourceCat:IsA("Animation") and sourceCat.AnimationId ~= "" then
-                            table.insert(sourceAnims, sourceCat)
-                        end
-                        for _, obj: Instance in ipairs(sourceCat:GetDescendants()) do
-                            if obj:IsA("Animation") and obj.AnimationId ~= "" then
-                                table.insert(sourceAnims, obj)
-                            end
-                        end
-                        if #sourceAnims > 0 then
-                            local targetAnims: {Animation} = {}
-                            if targetCat:IsA("Animation") then
-                                table.insert(targetAnims, targetCat)
-                            end
-                            for _, obj: Instance in ipairs(targetCat:GetDescendants()) do
-                                if obj:IsA("Animation") then
-                                    table.insert(targetAnims, obj)
-                                end
-                            end
-                            for idx: number, targetAnim: Animation in ipairs(targetAnims) do
-                                local src: Animation? = sourceAnims[idx] or sourceAnims[1]
-                                if src and src.AnimationId ~= "" and targetAnim.AnimationId ~= src.AnimationId then
-                                    local changed: boolean = pcall(function()
-                                        targetAnim.AnimationId = src.AnimationId
-                                    end)
-                                    if changed then
-                                        changedCount += 1
-                                    end
-                                end
-                            end
-                        end
-                    end
-                end
-            end
-
-            if changedCount == 0 then
-                local description: any, fetchError: string? = getUserDescription(numericId)
-                if not description then
-                    notify("Could not load target avatar description: " .. tostring(fetchError))
-                    return
-                end
-                changedCount = copyTargetMovementAnimations(character, humanoid, description)
-                destroyInstance(description)
-            else
-                animationOverrideApplied = true
-                local animator: Animator? = humanoid:FindFirstChildOfClass("Animator")
-                if animator then
-                    local tracksOk: boolean, tracks: any = pcall(function()
-                        return animator:GetPlayingAnimationTracks()
-                    end)
-                    if tracksOk and type(tracks) == "table" then
-                        for _, track: AnimationTrack in ipairs(tracks) do
-                            pcall(track.Stop, track)
-                        end
-                    end
-                end
-                restartAnimateScript(animate)
-            end
-
-            if changedCount > 0 then
-                status("Applied " .. tostring(changedCount) .. " target movement animation slot(s); Animate restarted.")
-            else
-                status("No custom movement animations found for ID " .. tostring(numericId) .. " (target may use default animations).")
-            end
-        end)
     end
 
     local function refreshMeshPartSnapshot(
@@ -18167,11 +18153,14 @@ function Module.init(context: Runtime): any
             end
         end
 
-        local changedCount: number = copyTargetMovementAnimations(
-            character,
-            humanoid,
-            description
-        )
+        local changedCount: number = 0
+        if settings.useTargetMovementAnimations then
+            changedCount = copyTargetMovementAnimations(
+                character,
+                humanoid,
+                description
+            )
+        end
         destroyInstance(description)
         if not stillCurrent(token, character) then
             if emotesApplied then
@@ -18187,7 +18176,13 @@ function Module.init(context: Runtime): any
             return
         end
         if not emotesApplied and changedCount == 0 then
-            notify("That avatar did not expose emotes or movement animations.")
+            if not settings.useTargetMovementAnimations then
+                notify(
+                    "That avatar did not expose emotes. Turn on Use target movement animations to copy movement too."
+                )
+            else
+                notify("That avatar did not expose emotes or movement animations.")
+            end
             return
         end
 
@@ -18358,23 +18353,30 @@ function Module.init(context: Runtime): any
         Tooltip = "Character: visible avatar cosmetics and emotes from a user ID. Animation: the same user ID's emotes and movement animations only; your character stays exactly as it is.",
     })
 
-    card:CreateButton({
+    card:CreateToggle({
         Name = "Use target movement animations",
-        Show = {Option = "Mode", Values = {"Character"}},
-        Function = function(): ()
-            if not card.Enabled or settings.mode ~= "Character" then
-                notify("Enable Disguise in Character mode first.")
+        -- Both modes apply movement animations, so the control stays visible.
+        Show = {Option = "Mode", Values = {"Character", "Animation"}},
+        Default = true,
+        Function = function(value: boolean): ()
+            settings.useTargetMovementAnimations = value
+            if not card.Enabled then
                 return
             end
-            local numericId: number?, idError: string? = parseId()
-            if not numericId then
-                notify(tostring(idError))
+            if value then
+                applyDisguise()
                 return
             end
-            settings.useTargetMovementAnimations = true
-            applyTargetMovementAnimationsToCharacter(numericId)
+            local character: Model? = LocalPlayer.Character
+            local humanoid: Humanoid? = character
+                and character:FindFirstChildOfClass("Humanoid")
+                :: Humanoid?
+            if character then
+                restoreMovementAnimationsOnly(character, humanoid)
+            end
+            status(settings.mode)
         end,
-        Tooltip = "Downloads and applies the target user's movement animations (idle, walk, run, jump, climb, fall, swim) to your character. Original IDs return when Disguise is turned off.",
+        Tooltip = "Copies the target user's movement animation IDs (idle, walk, run, jump, climb, fall, swim) to your own Animate script. On by default in Character and Animation; turn it off to keep your own movement. Emotes are separate and stay applied.",
     })
 
     card:CreateTextBox({

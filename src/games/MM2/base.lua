@@ -1336,6 +1336,18 @@ local function getEstimatedLatency(): number
     lastLatencyReadAt = now
     local measuredRtt: number = mm2Settings.predictionRtt
     pcall(function(): ()
+        -- Prefer the engine's own per-player measurement. It is available on
+        -- every client (touch, low-end, high-FPS) and does not depend on the
+        -- Stats panel being expanded or on Data Ping being replicated.
+        local direct: any = (LocalPlayer :: any).GetNetworkPing
+        if type(direct) == "function" then
+            local okDirect: boolean, seconds: any = pcall(direct, LocalPlayer)
+            if okDirect and predictionMath.finite(seconds)
+                and (seconds :: number) > 0.001 and (seconds :: number) <= 2 then
+                measuredRtt = seconds :: number
+                return
+            end
+        end
         local network: Instance? = Stats:FindFirstChild("Network")
         local serverItems: Instance? = network
             and network:FindFirstChild("ServerStatsItem")
@@ -2230,6 +2242,9 @@ local function createTrajectoryCalibration(): any
                 silentAim = mm2Settings.silentAim,
                 silentSweep = mm2Settings.silentSweep,
                 wallCheck = mm2Settings.shootWallCheck,
+                autoLead = state.mm2Prediction
+                    and state.mm2Prediction.settings.autoLead
+                    or true,
                 leadOffsetSeconds = state.mm2Prediction
                     and state.mm2Prediction.settings.extraLead
                     or 0,

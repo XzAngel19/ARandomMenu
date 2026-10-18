@@ -1034,8 +1034,8 @@ do
     local disguise = ex.state.framework:GetModule("Disguise")
     assert(disguise and disguise.Category == "Utilities", "Disguise must actually load in Utilities")
     disguise.Options.Mode.Metadata.callback("Animation")
-    assert(not disguise.Options["Use target movement animations"].Visible and disguise.Options["Show target emotes"].Visible,
-        "Animation mode applies the target's emotes, so listing them must stay available")
+    assert(disguise.Options["Use target movement animations"].Visible and disguise.Options["Show target emotes"].Visible,
+        "Animation applies movement + emotes, so both controls must stay available")
     disguise.Options.Mode.Metadata.callback("Character")
     assert(disguise.Options["Use target movement animations"].Visible and disguise.Options["Show target emotes"].Visible)
     for _, feature in ipairs(ex.allFeatures) do

@@ -39,6 +39,7 @@ local function restoreOriginalAppearance() table.insert(calls,"restore") end
 local function stopAppearanceFilter() table.insert(calls,"filter-off") end
 local function refreshMeshPartSnapshot() table.insert(calls,"mesh") end
 
+local settings={useTargetMovementAnimations=true}
 local emoteList={hello=true}
 local equippedList={1}
 local emoteMode="ok"
@@ -81,7 +82,13 @@ assert(#notified==0 and activeCard.status~=nil,"emote-only disguise still succee
 assert(table.find(calls,"animations"))
 
 notified={};calls={};activeCard.status=nil
-emoteMode="none";animationCount=0
+settings.useTargetMovementAnimations=false
+animationCount=5
+applyAnimationDisguise(1,character,{},7)
+assert(#notified==0 and activeCard.status~=nil and not table.find(calls,"animations"),
+    "toggle off keeps the target's animation IDs untouched")
+settings.useTargetMovementAnimations=true
+notified={};calls={};activeCard.status=nil;emoteMode="none";animationCount=0
 applyAnimationDisguise(1,character,{},7)
 assert(#notified==1 and notified[1]:find("did not expose") and activeCard.status==nil)
 pass("Animation mode: emote-only works; nothing available is reported, not silent")

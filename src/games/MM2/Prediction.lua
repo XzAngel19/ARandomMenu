@@ -106,6 +106,10 @@ local MIN_ECHO_SAMPLES: number = 2
 local MAX_HORIZON: number = 1.0
 
 local settings = {
+    -- Automatic lead is the default: the measured FireServer -> GunFired echo
+    -- (fallback: smoothed ping) already includes the device/network timing.
+    -- Manual offset is only used when autoLead is turned off.
+    autoLead = true,
     -- Manual calibration in seconds. Positive aims further ahead.
     extraLead = 0,
     -- Half of the default 20 Hz replication interval. This is the window the
@@ -418,13 +422,17 @@ function Module.init(runtime: any): any
         end
     end
 
+    local function manualLead(): number
+        return settings.autoLead and 0 or settings.extraLead
+    end
+
     local function gunHorizon(): (number, number, number?)
         local rtt: number = currentRtt()
         local echo: number? = echoMedian()
         local pipeline: number = echo or rtt
         local horizon: number = pipeline
             + settings.interpolation
-            + settings.extraLead
+            + manualLead()
         return math.clamp(horizon, 0.005, MAX_HORIZON), rtt, echo
     end
 
@@ -432,7 +440,7 @@ function Module.init(runtime: any): any
         local rtt: number = currentRtt()
         local horizon: number = rtt
             + settings.interpolation
-            + settings.extraLead
+            + manualLead()
         return math.clamp(horizon, 0.005, MAX_HORIZON), rtt
     end
 
@@ -552,7 +560,12 @@ function Module.init(runtime: any): any
             parts,
             string.format("interp %.0f ms", settings.interpolation * 1000)
         )
-        if settings.extraLead ~= 0 then
+        if settings.autoLead then
+            table.insert(
+                parts,
+                echo and "auto lead (echo)" or "auto lead (ping)"
+            )
+        elseif settings.extraLead ~= 0 then
             table.insert(
                 parts,
                 string.format("manual %+.0f ms", settings.extraLead * 1000)
@@ -560,7 +573,7 @@ function Module.init(runtime: any): any
         end
         local horizon: number = (echo or rtt)
             + settings.interpolation
-            + settings.extraLead
+            + manualLead()
         table.insert(
             parts,
             string.format(

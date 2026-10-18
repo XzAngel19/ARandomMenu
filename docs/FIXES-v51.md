@@ -59,13 +59,17 @@
 ## Interfaz
 
 - **Aim method**: Prediction / Silent AIM.
-- **Lead offset ms** (−300 a 600 ms, paso 1 ms) es el único ajuste manual de
-  tiempo. El campo numérico acepta cualquier valor escrito sin cuantizarlo, así
-  que se puede fijar, por ejemplo, `37.5`; el deslizador avanza de 1 en 1 ms.
-  Se suma al horizonte medido: `eco (o ping) + 25 ms de interpolación + manual`.
-  El horizonte total se corta en 1,0 s, y **Prediction status** muestra
-  `interp`, `manual` y `lead` para ver exactamente cuánto se está aplicando y
-  si llegó al tope. Se guarda en la configuración como cualquier otra opción.
+- **Auto lead** (por defecto ON) no requiere configurar nada: usa la mediana
+  de los ecos `FireServer → GunFired` y, mientras aprende, el ping del motor
+  (`Player:GetNetworkPing()`) con `Stats → Network → Data Ping` como respaldo;
+  suma la ventana de interpolación (25 ms) y la antigüedad real de la muestra. Como la antigüedad se mide, un equipo a 30 FPS o 144 FPS recibe
+  el mismo trato: no hay un número fijo por dispositivo.
+- **Lead offset ms** (−300 a 600 ms, paso 1 ms) es el respaldo manual, oculto
+  mientras Auto lead está ON. El campo numérico acepta cualquier valor escrito
+  sin cuantizarlo (`37.5` es válido); el deslizador avanza de 1 en 1 ms. Se
+  suma al horizonte: `eco (o ping) + 25 ms + manual`. El total se corta en
+  1,0 s y **Prediction status** muestra `auto lead (echo|ping)` o `manual`,
+  `interp`, `lead` y `(capped)`. Se guarda en la configuración.
 - **Prediction status** muestra RTT, eco mediano y su cantidad, interpolación,
   ajuste manual, horizonte final (con `(capped)` si saturó) y, para el objetivo
   elegido, velocidad, muestras, antigüedad y si está en el aire.
@@ -94,12 +98,22 @@
 
 ## Disguise: modo Animation
 
-- **Character** sigue igual: copia cosméticos y emotes del avatar objetivo.
+- **Character** copia cosméticos y emotes del avatar objetivo y, con **Use
+  target movement animations** ON (por defecto), también sus animaciones de
+  movimiento.
 - **Animation** ya no pide un bundle de animación: usa el mismo **Target ID**
   (usuario) que Character y aplica **solo** sus emotes y sus animaciones de
   movimiento (idle, walk, run, jump, climb, fall, swim, mood) al personaje
   propio. No clona mallas, accesorios, ropa ni rostro: el avatar local sigue
   visible tal cual.
+- **Use target movement animations** ahora es un toggle visible en **ambos**
+  modos, ON por defecto. En Character se aplica junto con el disfraz; en
+  Animation decide si se copian las animaciones de movimiento (los emotes se
+  aplican igual). Al apagarlo se restauran solo las animaciones originales,
+  sin quitar el disfraz ni los emotes.
+- Se eliminó el botón antiguo y su ruta `applyTargetMovementAnimationsToCharacter`,
+  que podía quedarse para siempre en `Downloading target movement animations...`
+  cuando la consulta del avatar no respondía.
 - Al desactivar, se restauran los emotes y las animaciones originales desde el
   snapshot. Si el personaje cambia a mitad de la aplicación, se revierten los
   emotes aplicados y no se reporta éxito.

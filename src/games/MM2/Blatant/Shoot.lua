@@ -505,6 +505,7 @@ function Module.init(runtime: any): any
     local silentSweepRow: GuiObject? = nil
     local silentSpawnRow: GuiObject? = nil
     local spawnStatsRow: GuiObject? = nil
+    local leadOffsetRow: GuiObject? = nil
     local function refreshShootOptions(): ()
         if ShootTargetBox then
             setOptionVisible(
@@ -524,6 +525,15 @@ function Module.init(runtime: any): any
         end
         if spawnStatsRow then
             setOptionVisible(ShootFeature, spawnStatsRow :: GuiObject, silent)
+        end
+        -- The manual offset only exists as an advanced fallback; automatic
+        -- lead is the default and needs no tuning.
+        if leadOffsetRow then
+            setOptionVisible(
+                ShootFeature,
+                leadOffsetRow :: GuiObject,
+                prediction.settings.autoLead ~= true
+            )
         end
     end
     addCycleOption(
@@ -644,7 +654,24 @@ function Module.init(runtime: any): any
     if spawnStatsButton then
         spawnStatsRow = spawnStatsButton.Parent :: GuiObject
     end
-    addNumberOption(
+    local autoLeadButton = addToggleOption(
+        ShootFeature,
+        "Auto lead",
+        true,
+        function(value: boolean): ()
+            prediction.settings.autoLead = value
+            refreshShootOptions()
+        end,
+        "Recommended. Uses the measured FireServer -> GunFired echo (or your "
+            .. "ping while it learns), the replication window and the sample "
+            .. "age. It adapts to your FPS, device and network without manual "
+            .. "tuning. Turn it off only to test a fixed manual offset.",
+        false
+    )
+    if autoLeadButton then
+        setOptionVisible(ShootFeature, autoLeadButton.Parent :: GuiObject, true)
+    end
+    leadOffsetRow = addNumberOption(
         ShootFeature,
         "Lead offset ms",
         math.round(prediction.settings.extraLead * 1000),
