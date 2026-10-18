@@ -113,6 +113,10 @@ do
 local knifeThrowSettings={enabled=true}
 local lastThrow=-math.huge
 local throwPending=false
+-- Declared above the sliced region in the module: the harness pins them.
+KNIFE_CYCLE_SECONDS=0.55
+MIN_PACKET_INTERVAL=0.25
+lastPacketAt=-math.huge
 local root={Position=Vector3.new(30,0,0)}
 local target={Character={FindFirstChild=function() return root end}}
 local valid=true
@@ -153,11 +157,20 @@ now=10;throwKnife();assert(pending and sends==0 and predictionCalls==0)
 root.Position=Vector3.new(40,0,0)
 local release=pending;throwPending=false;pending=nil;release()
 assert(sends==1 and notes==1 and predictionCalls==1)
+-- A held knife released on every frame used to author a packet per frame
+-- (722 events in 22 s in the 2026-10-18 capture). One packet per quarter
+-- second is the floor every caller has to respect.
+now=10.05
+throwKnife();release=pending;throwPending=false;pending=nil;release()
+assert(sends==1,'a second packet inside the interval is dropped')
+now=10.4
+throwKnife();release=pending;throwPending=false;pending=nil;release()
+assert(sends==2,'the next cycle sends again')
 throwKnife();assert(pending,'no artificial delay after completed animation')
-throwKnife();assert(pending and sends==1,'in-flight animation is not restarted')
-valid=false;release=pending;throwPending=false;pending=nil;release();assert(sends==1,'invalidated target cancels release')
-valid=true;throwKnife();knife.Parent={};release=pending;throwPending=false;pending=nil;release();assert(sends==1,'unequip cancels packet')
-knife.Parent=LocalPlayer.Character;throwKnife();visible=false;release=pending;throwPending=false;pending=nil;release();assert(sends==1,'WallCheck rechecked at release')
+throwKnife();assert(pending and sends==2,'in-flight animation is not restarted')
+valid=false;release=pending;throwPending=false;pending=nil;release();assert(sends==2,'invalidated target cancels release')
+valid=true;now=11;throwKnife();knife.Parent={};release=pending;throwPending=false;pending=nil;release();assert(sends==2,'unequip cancels packet')
+knife.Parent=LocalPlayer.Character;now=12;throwKnife();visible=false;release=pending;throwPending=false;pending=nil;release();assert(sends==2,'WallCheck rechecked at release')
 pass('actual throw packet: deferred, fresh target prediction, camera-coherent handle frame pointing at the aim, animation busy guard and cancellation')
 end
 '''

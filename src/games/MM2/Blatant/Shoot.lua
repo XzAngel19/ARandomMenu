@@ -99,9 +99,30 @@ function Module.init(runtime: any): any
     local SILENT_LIFT_STUDS: number = 1.6
     local MAX_SILENT_SWEEP: number = 1.5
 
-    local function getSilentSweepDistance(): number
+    -- The bypass segment runs along the target's own motion. A fixed extra
+    -- length guesses; the confirmed shots already measure how far the aim
+    -- lands from the body, so the same measurement decides how much segment
+    -- the shot needs. With no confirmations yet the uncertainty is zero and
+    -- the configured value is used untouched.
+    local function getSilentSweepDistance(speed: number?): number
         local configured: number = tonumber(mm2Settings.silentSweep) or 0
-        return math.clamp(configured, 0, MAX_SILENT_SWEEP)
+        local sweep: number = math.clamp(configured, 0, MAX_SILENT_SWEEP)
+        local uncertainty: number = 0
+        if type(prediction) == "table"
+            and type(prediction.getLeadUncertainty) == "function" then
+            local ok: boolean, seconds: any = pcall(
+                prediction.getLeadUncertainty
+            )
+            if ok and type(seconds) == "number" and seconds == seconds then
+                uncertainty = math.clamp(seconds, 0, 0.15)
+            end
+        end
+        if uncertainty <= 0 then
+            return sweep
+        end
+        local travel: number = math.max(tonumber(speed) or 0, 0)
+        local extra: number = uncertainty * travel
+        return math.clamp(sweep + extra, 0, MAX_SILENT_SWEEP)
     end
 
     local function buildSilentShot(
@@ -119,7 +140,7 @@ function Module.init(runtime: any): any
         if horizontal.Magnitude > 1.5 then
             direction = horizontal.Unit
 
-            sweep = getSilentSweepDistance()
+            sweep = getSilentSweepDistance(horizontal.Magnitude)
         end
         local sweepStart: Vector3 =
             direction and -direction * sweep or Vector3.zero

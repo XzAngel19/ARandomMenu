@@ -715,6 +715,22 @@ function Module.init(runtime: any): any
         return math.clamp(median, -MAX_LEAD_CORRECTION, MAX_LEAD_CORRECTION)
     end
 
+    -- How far the recent shots were off, without their sign. Silent aim draws
+    -- its bypass segment along the target's own motion, and that segment has to
+    -- be as long as the lead's uncertainty: at 16 studs/s a 60 ms error is a
+    -- whole stud, which is wider than the blade and most of a limb. Derived
+    -- from the same confirmations as the correction, never from a constant.
+    local function leadUncertainty(): number
+        if #leadErrors < LEAD_FEEDBACK_MIN_SAMPLES then
+            return 0
+        end
+        local absolute: {number} = {}
+        for _, seconds: number in ipairs(leadErrors) do
+            table.insert(absolute, math.abs(seconds))
+        end
+        return medianOf(absolute) or 0
+    end
+
     local function gunHorizon(): (number, number, number?)
         local rtt: number = robustRtt()
         local echo: number? = echoMedian()
@@ -1059,6 +1075,7 @@ function Module.init(runtime: any): any
         end,
         noteLeadError = noteLeadError,
         getLeadCorrection = leadCorrection,
+        getLeadUncertainty = leadUncertainty,
         reset = function(): ()
             table.clear(echoes)
             table.clear(tracks)

@@ -1,5 +1,5 @@
 return {
-    stamp = "v68-20261018-rig-animations-and-lead-feedback",
+    stamp = "v69-20261018-single-knife-packet-and-moving-rig",
     files = {
         ["src/Profile/142823291.lua"] = [[
 --!strict
@@ -2395,6 +2395,15 @@ function Module.init(runtime: any): any
         joint: Motor6D, c0: CFrame, transform: CFrame,
         initial: CFrame, raised: CFrame, forward: CFrame,
     }
+    -- One animation cycle: windup 0.3 s plus the 0.25 s recovery. Used both
+    -- for the render loop and for the no-pose timer so the packet cadence is
+    -- the same no matter which branch a rig takes.
+    local KNIFE_CYCLE_SECONDS: number = 0.55
+    -- A packet cannot leave twice inside a quarter second, whatever calls the
+    -- release path. This is the backstop for the capture that recorded ~77
+    -- throws in one second; the game needs the knife back in hand first.
+    local MIN_PACKET_INTERVAL: number = 0.25
+    local lastPacketAt: number = -math.huge
     local throwPose: {ThrowJoint} = {}
     local throwPending: boolean = false
     local function stopThrowAnimation(): ()
@@ -2441,10 +2450,24 @@ function Module.init(runtime: any): any
         else
             addJoint("Torso", "Right Shoulder", 155, 85, -12)
         end
-        if #throwPose == 0 then release(); return end
+        -- The guard is armed before the pose is inspected. Releasing from the
+        -- "no joint to pose" branch without it turned a held knife into one
+        -- packet per frame: the 2026-10-18 capture holds 722 authored knife
+        -- events in 22 seconds, up to 77 in a single second, against a 0.55 s
+        -- animation. The server cannot use that: the blade leaves the hand
+        -- with whichever packet it accepted first.
+        throwPending = onRelease ~= nil
+        if #throwPose == 0 then
+            release()
+            task.delay(KNIFE_CYCLE_SECONDS, function(): ()
+                if throwPending then
+                    stopThrowAnimation()
+                end
+            end)
+            return
+        end
         local elapsed: number = 0
         local released: boolean = false
-        throwPending = onRelease ~= nil
         featureConnections.MM2KnifeAnimation = TaskManager:Connect(function(dt: number): ()
             if LocalPlayer.Character ~= character or knife.Parent ~= character then
                 stopThrowAnimation()
@@ -2468,12 +2491,13 @@ function Module.init(runtime: any): any
                 released = true
                 pcall(release)
             end
-            if elapsed >= 0.55 then stopThrowAnimation() end
+            if elapsed >= KNIFE_CYCLE_SECONDS then stopThrowAnimation() end
         end, "render")
     end
 
-    -- The spawn point: the handle when it exists, the hand otherwise. Sent
-    -- as a position-only CFrame, the same shape the game's own client sends.
+
+    -- The spawn point: the handle when it exists, the hand otherwise. The
+    -- position is always the real one; the rotation is completed below.
     local function knifeOrigin(knife: Tool, character: Model?): CFrame?
         if not character or character ~= LocalPlayer.Character then
             return nil
@@ -2529,6 +2553,15 @@ function Module.init(runtime: any): any
         if travel.Magnitude > 1e-3 then
             originCFrame = CFrame.lookAt(origin.Position, aim)
         end
+        -- Last gate before the wire: one packet per quarter second. The
+        -- capture of 2026-10-18 proves the callers alone cannot be trusted
+        -- with this (722 knife events in 22 s). Everything above is pure
+        -- reading, so a rejected packet costs nothing.
+        local now: number = os.clock()
+        if now - lastPacketAt < MIN_PACKET_INTERVAL then
+            return false
+        end
+        lastPacketAt = now
         remote:FireServer(originCFrame, CFrame.new(aim))
         pcall(trajectoryCalibration.noteAuthoredShot, trajectoryCalibration, {
             kind = "knife", tool = knife, toolName = knife.Name,
@@ -2827,9 +2860,30 @@ function Module.init(runtime: any): any
     local SILENT_LIFT_STUDS: number = 1.6
     local MAX_SILENT_SWEEP: number = 1.5
 
-    local function getSilentSweepDistance(): number
+    -- The bypass segment runs along the target's own motion. A fixed extra
+    -- length guesses; the confirmed shots already measure how far the aim
+    -- lands from the body, so the same measurement decides how much segment
+    -- the shot needs. With no confirmations yet the uncertainty is zero and
+    -- the configured value is used untouched.
+    local function getSilentSweepDistance(speed: number?): number
         local configured: number = tonumber(mm2Settings.silentSweep) or 0
-        return math.clamp(configured, 0, MAX_SILENT_SWEEP)
+        local sweep: number = math.clamp(configured, 0, MAX_SILENT_SWEEP)
+        local uncertainty: number = 0
+        if type(prediction) == "table"
+            and type(prediction.getLeadUncertainty) == "function" then
+            local ok: boolean, seconds: any = pcall(
+                prediction.getLeadUncertainty
+            )
+            if ok and type(seconds) == "number" and seconds == seconds then
+                uncertainty = math.clamp(seconds, 0, 0.15)
+            end
+        end
+        if uncertainty <= 0 then
+            return sweep
+        end
+        local travel: number = math.max(tonumber(speed) or 0, 0)
+        local extra: number = uncertainty * travel
+        return math.clamp(sweep + extra, 0, MAX_SILENT_SWEEP)
     end
 
     local function buildSilentShot(
@@ -2847,7 +2901,7 @@ function Module.init(runtime: any): any
         if horizontal.Magnitude > 1.5 then
             direction = horizontal.Unit
 
-            sweep = getSilentSweepDistance()
+            sweep = getSilentSweepDistance(horizontal.Magnitude)
         end
         local sweepStart: Vector3 =
             direction and -direction * sweep or Vector3.zero
@@ -5020,6 +5074,22 @@ function Module.init(runtime: any): any
         return math.clamp(median, -MAX_LEAD_CORRECTION, MAX_LEAD_CORRECTION)
     end
 
+    -- How far the recent shots were off, without their sign. Silent aim draws
+    -- its bypass segment along the target's own motion, and that segment has to
+    -- be as long as the lead's uncertainty: at 16 studs/s a 60 ms error is a
+    -- whole stud, which is wider than the blade and most of a limb. Derived
+    -- from the same confirmations as the correction, never from a constant.
+    local function leadUncertainty(): number
+        if #leadErrors < LEAD_FEEDBACK_MIN_SAMPLES then
+            return 0
+        end
+        local absolute: {number} = {}
+        for _, seconds: number in ipairs(leadErrors) do
+            table.insert(absolute, math.abs(seconds))
+        end
+        return medianOf(absolute) or 0
+    end
+
     local function gunHorizon(): (number, number, number?)
         local rtt: number = robustRtt()
         local echo: number? = echoMedian()
@@ -5364,6 +5434,7 @@ function Module.init(runtime: any): any
         end,
         noteLeadError = noteLeadError,
         getLeadCorrection = leadCorrection,
+        getLeadUncertainty = leadUncertainty,
         reset = function(): ()
             table.clear(echoes)
             table.clear(tracks)
@@ -19321,6 +19392,62 @@ function Module.init(context: Runtime): any
         end)
     end
 
+    -- The Animator writes every pose into Motor6D.Transform. A clip built for
+    -- the OTHER rig never writes a joint: Roblox still hands back a track that
+    -- reports IsPlaying, so `#playingAnimationTracks > 0` is not proof that the
+    -- body moves. That gap is the frozen avatar reported with every target
+    -- except the default one: a bought R15 pack on an R6 body "plays" forever
+    -- without moving a single limb. Reading the joints is the only client-side
+    -- way to tell a body that animates from one stuck in its rest pose.
+    local function poseSignature(humanoid: Humanoid?): number?
+        local character: Instance? = humanoid and humanoid.Parent
+        if not character then
+            return nil
+        end
+        local joints: number = 0
+        local signature: number = 0
+        for _, object: Instance in ipairs(character:GetDescendants()) do
+            if object:IsA("Motor6D") then
+                local ok: boolean, transform: CFrame = pcall(function(): CFrame
+                    return (object :: Motor6D).Transform
+                end)
+                if ok and transform then
+                    joints += 1
+                    signature += transform.X * 13.17 + transform.Y * 7.31
+                        + transform.Z * 3.77 + transform.R00 * 29.1
+                        + transform.R11 * 17.3 + transform.R22 * 11.9
+                end
+            end
+        end
+        if joints == 0 then
+            -- A rig we cannot read is not a rig we may accuse of being frozen.
+            return nil
+        end
+        return signature
+    end
+
+    -- nil means "cannot tell" (no joints exposed), and callers must keep the
+    -- old behaviour in that case. A fixed step count instead of a wall clock
+    -- keeps the check from ever spinning when the scheduler is stubbed.
+    local function poseMoves(humanoid: Humanoid?, seconds: number): boolean?
+        local before: number? = poseSignature(humanoid)
+        if before == nil then
+            return nil
+        end
+        local steps: number = 5
+        for _ = 1, steps do
+            task.wait(seconds / steps)
+            local after: number? = poseSignature(humanoid)
+            if after == nil then
+                return nil
+            end
+            if math.abs(after - before) > 1e-3 then
+                return true
+            end
+        end
+        return false
+    end
+
     -- Clears the tracks, restarts the script and proves the body moves again.
     -- Returns false only when nothing plays, which is the signal to fall back
     -- to the rig's own clips instead of leaving a frozen character.
@@ -19371,8 +19498,13 @@ function Module.init(context: Runtime): any
         if not animate then
             return false
         end
-        if #playingAnimationTracks(humanoid) > 0 then
-            return true
+        local tracks: number = #playingAnimationTracks(humanoid)
+        if tracks > 0 then
+            -- The script is playing something. Only a moving pose proves it
+            -- belongs to this rig.
+            if poseMoves(humanoid, 0.3) ~= false then
+                return true
+            end
         end
         local bridge: AnimationTrack? = playIdleBridge(humanoid, animate)
         if bridge then
@@ -19381,7 +19513,7 @@ function Module.init(context: Runtime): any
             pcall(function(): ()
                 playing = (bridge :: any).IsPlaying == true
             end)
-            if playing then
+            if playing and poseMoves(humanoid, 0.3) ~= false then
                 idleBridgeTrack = bridge
                 watchIdleBridge(humanoid)
                 return true
@@ -19403,7 +19535,8 @@ function Module.init(context: Runtime): any
             end
             restartAnimateScript(animate)
             task.wait(0.1)
-            if #playingAnimationTracks(humanoid) > 0 then
+            if #playingAnimationTracks(humanoid) > 0
+                and poseMoves(humanoid, 0.3) ~= false then
                 notify(
                     "Those clips do not play on your "
                         .. (isR6 and "R6" or "R15")
@@ -19418,7 +19551,7 @@ function Module.init(context: Runtime): any
                 pcall(function(): ()
                     playing = (fallbackBridge :: any).IsPlaying == true
                 end)
-                if playing then
+                if playing and poseMoves(humanoid, 0.3) ~= false then
                     idleBridgeTrack = fallbackBridge
                     watchIdleBridge(humanoid)
                     notify(
@@ -19529,7 +19662,10 @@ function Module.init(context: Runtime): any
             humanoid,
             cached.slots
         )
-        if changedCount > 0 then
+        -- Zero writes do not mean the body is fine: the ids may already be
+        -- the frozen set from a previous apply, and re-selecting the same
+        -- target has to settle it again instead of trusting the old state.
+        if changedCount > 0 or animationOverrideApplied then
             settleMovementAnimations(character, humanoid)
         end
         return changedCount

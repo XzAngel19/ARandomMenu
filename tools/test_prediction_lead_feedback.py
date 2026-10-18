@@ -30,6 +30,7 @@ local function near(a, b) assert(math.abs(a - b) < 1e-6, tostring(a) .. " != " .
 local horizon = gunHorizon()
 near(horizon, 0.2 + 1 / 40)
 near(leadCorrection(), 0)
+near(leadUncertainty(), 0)
 pass("gun horizon: transport only until three confirmations are measured")
 
 -- 2) Two samples are not a median.
@@ -81,6 +82,16 @@ settings.autoLead = false
 settings.extraLead = 0.12
 near(gunHorizon(), 0.2 + 1 / 40 + 0.12)
 pass("manual lead: unchanged when automatic lead is off")
+
+-- 8) The same measurements, without their sign, size the silent segment. It
+--    is zero until the median exists, so a fresh session keeps the configured
+--    sweep and a measured one grows by exactly the error it has to cover.
+settings.autoLead = true
+settings.extraLead = 0
+near(leadUncertainty(), 0.09)
+assert(leadUncertainty() > 0 and leadUncertainty() <= 0.15,
+    "the segment never grows past the sample limit")
+pass("lead uncertainty: measured, unsigned, and zero without samples")
 '''
 with tempfile.TemporaryDirectory(prefix='prediction-feedback-') as tmp:
     path = Path(tmp) / 'test.luau'

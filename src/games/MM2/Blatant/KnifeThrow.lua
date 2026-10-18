@@ -290,6 +290,15 @@ function Module.init(runtime: any): any
         joint: Motor6D, c0: CFrame, transform: CFrame,
         initial: CFrame, raised: CFrame, forward: CFrame,
     }
+    -- One animation cycle: windup 0.3 s plus the 0.25 s recovery. Used both
+    -- for the render loop and for the no-pose timer so the packet cadence is
+    -- the same no matter which branch a rig takes.
+    local KNIFE_CYCLE_SECONDS: number = 0.55
+    -- A packet cannot leave twice inside a quarter second, whatever calls the
+    -- release path. This is the backstop for the capture that recorded ~77
+    -- throws in one second; the game needs the knife back in hand first.
+    local MIN_PACKET_INTERVAL: number = 0.25
+    local lastPacketAt: number = -math.huge
     local throwPose: {ThrowJoint} = {}
     local throwPending: boolean = false
     local function stopThrowAnimation(): ()
@@ -336,10 +345,24 @@ function Module.init(runtime: any): any
         else
             addJoint("Torso", "Right Shoulder", 155, 85, -12)
         end
-        if #throwPose == 0 then release(); return end
+        -- The guard is armed before the pose is inspected. Releasing from the
+        -- "no joint to pose" branch without it turned a held knife into one
+        -- packet per frame: the 2026-10-18 capture holds 722 authored knife
+        -- events in 22 seconds, up to 77 in a single second, against a 0.55 s
+        -- animation. The server cannot use that: the blade leaves the hand
+        -- with whichever packet it accepted first.
+        throwPending = onRelease ~= nil
+        if #throwPose == 0 then
+            release()
+            task.delay(KNIFE_CYCLE_SECONDS, function(): ()
+                if throwPending then
+                    stopThrowAnimation()
+                end
+            end)
+            return
+        end
         local elapsed: number = 0
         local released: boolean = false
-        throwPending = onRelease ~= nil
         featureConnections.MM2KnifeAnimation = TaskManager:Connect(function(dt: number): ()
             if LocalPlayer.Character ~= character or knife.Parent ~= character then
                 stopThrowAnimation()
@@ -363,12 +386,13 @@ function Module.init(runtime: any): any
                 released = true
                 pcall(release)
             end
-            if elapsed >= 0.55 then stopThrowAnimation() end
+            if elapsed >= KNIFE_CYCLE_SECONDS then stopThrowAnimation() end
         end, "render")
     end
 
-    -- The spawn point: the handle when it exists, the hand otherwise. Sent
-    -- as a position-only CFrame, the same shape the game's own client sends.
+
+    -- The spawn point: the handle when it exists, the hand otherwise. The
+    -- position is always the real one; the rotation is completed below.
     local function knifeOrigin(knife: Tool, character: Model?): CFrame?
         if not character or character ~= LocalPlayer.Character then
             return nil
@@ -424,6 +448,15 @@ function Module.init(runtime: any): any
         if travel.Magnitude > 1e-3 then
             originCFrame = CFrame.lookAt(origin.Position, aim)
         end
+        -- Last gate before the wire: one packet per quarter second. The
+        -- capture of 2026-10-18 proves the callers alone cannot be trusted
+        -- with this (722 knife events in 22 s). Everything above is pure
+        -- reading, so a rejected packet costs nothing.
+        local now: number = os.clock()
+        if now - lastPacketAt < MIN_PACKET_INTERVAL then
+            return false
+        end
+        lastPacketAt = now
         remote:FireServer(originCFrame, CFrame.new(aim))
         pcall(trajectoryCalibration.noteAuthoredShot, trajectoryCalibration, {
             kind = "knife", tool = knife, toolName = knife.Name,

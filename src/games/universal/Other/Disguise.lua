@@ -854,6 +854,62 @@ function Module.init(context: Runtime): any
         end)
     end
 
+    -- The Animator writes every pose into Motor6D.Transform. A clip built for
+    -- the OTHER rig never writes a joint: Roblox still hands back a track that
+    -- reports IsPlaying, so `#playingAnimationTracks > 0` is not proof that the
+    -- body moves. That gap is the frozen avatar reported with every target
+    -- except the default one: a bought R15 pack on an R6 body "plays" forever
+    -- without moving a single limb. Reading the joints is the only client-side
+    -- way to tell a body that animates from one stuck in its rest pose.
+    local function poseSignature(humanoid: Humanoid?): number?
+        local character: Instance? = humanoid and humanoid.Parent
+        if not character then
+            return nil
+        end
+        local joints: number = 0
+        local signature: number = 0
+        for _, object: Instance in ipairs(character:GetDescendants()) do
+            if object:IsA("Motor6D") then
+                local ok: boolean, transform: CFrame = pcall(function(): CFrame
+                    return (object :: Motor6D).Transform
+                end)
+                if ok and transform then
+                    joints += 1
+                    signature += transform.X * 13.17 + transform.Y * 7.31
+                        + transform.Z * 3.77 + transform.R00 * 29.1
+                        + transform.R11 * 17.3 + transform.R22 * 11.9
+                end
+            end
+        end
+        if joints == 0 then
+            -- A rig we cannot read is not a rig we may accuse of being frozen.
+            return nil
+        end
+        return signature
+    end
+
+    -- nil means "cannot tell" (no joints exposed), and callers must keep the
+    -- old behaviour in that case. A fixed step count instead of a wall clock
+    -- keeps the check from ever spinning when the scheduler is stubbed.
+    local function poseMoves(humanoid: Humanoid?, seconds: number): boolean?
+        local before: number? = poseSignature(humanoid)
+        if before == nil then
+            return nil
+        end
+        local steps: number = 5
+        for _ = 1, steps do
+            task.wait(seconds / steps)
+            local after: number? = poseSignature(humanoid)
+            if after == nil then
+                return nil
+            end
+            if math.abs(after - before) > 1e-3 then
+                return true
+            end
+        end
+        return false
+    end
+
     -- Clears the tracks, restarts the script and proves the body moves again.
     -- Returns false only when nothing plays, which is the signal to fall back
     -- to the rig's own clips instead of leaving a frozen character.
@@ -904,8 +960,13 @@ function Module.init(context: Runtime): any
         if not animate then
             return false
         end
-        if #playingAnimationTracks(humanoid) > 0 then
-            return true
+        local tracks: number = #playingAnimationTracks(humanoid)
+        if tracks > 0 then
+            -- The script is playing something. Only a moving pose proves it
+            -- belongs to this rig.
+            if poseMoves(humanoid, 0.3) ~= false then
+                return true
+            end
         end
         local bridge: AnimationTrack? = playIdleBridge(humanoid, animate)
         if bridge then
@@ -914,7 +975,7 @@ function Module.init(context: Runtime): any
             pcall(function(): ()
                 playing = (bridge :: any).IsPlaying == true
             end)
-            if playing then
+            if playing and poseMoves(humanoid, 0.3) ~= false then
                 idleBridgeTrack = bridge
                 watchIdleBridge(humanoid)
                 return true
@@ -936,7 +997,8 @@ function Module.init(context: Runtime): any
             end
             restartAnimateScript(animate)
             task.wait(0.1)
-            if #playingAnimationTracks(humanoid) > 0 then
+            if #playingAnimationTracks(humanoid) > 0
+                and poseMoves(humanoid, 0.3) ~= false then
                 notify(
                     "Those clips do not play on your "
                         .. (isR6 and "R6" or "R15")
@@ -951,7 +1013,7 @@ function Module.init(context: Runtime): any
                 pcall(function(): ()
                     playing = (fallbackBridge :: any).IsPlaying == true
                 end)
-                if playing then
+                if playing and poseMoves(humanoid, 0.3) ~= false then
                     idleBridgeTrack = fallbackBridge
                     watchIdleBridge(humanoid)
                     notify(
@@ -1062,7 +1124,10 @@ function Module.init(context: Runtime): any
             humanoid,
             cached.slots
         )
-        if changedCount > 0 then
+        -- Zero writes do not mean the body is fine: the ids may already be
+        -- the frozen set from a previous apply, and re-selecting the same
+        -- target has to settle it again instead of trusting the old state.
+        if changedCount > 0 or animationOverrideApplied then
             settleMovementAnimations(character, humanoid)
         end
         return changedCount

@@ -50,13 +50,13 @@ function notify(message) table.insert(notices, message) end
 animationOverrideApplied = false
 targetCache = nil
 
-local playing = {}
 -- The bridge is the fallback path that plays the idle directly through the
 -- Animator when the restarted script starts no track. `bridgeWorksFrom` says
 -- on which attempt it is allowed to succeed, so one test can prove the
 -- rig-default fallback and another the final restore.
 local bridgeAttempts = 0
 local bridgeWorksFrom = 1
+local playing = {}
 local function track(playingFlag)
     return {IsPlaying = playingFlag, Stop = function(self) self.IsPlaying = false end,
         Destroy = function() end, Play = function(self) self.IsPlaying = playingFlag end}
@@ -89,11 +89,11 @@ local function makeCharacter()
     local animate = {FindFirstChild=function(_, name) return categories[name] end}
     local character = {FindFirstChild=function(_, name)
         return name == "Animate" and animate or nil
-    end}
+    end, GetDescendants=function() return {} end}
     return character, animate, {idle1=idle1, idle2=idle2, idle3=idle3, walk=walk}
 end
-local function humanoidFor(rigType)
-    return {RigType = rigType,
+local function humanoidFor(rigType, character)
+    return {RigType = rigType, Parent = character or {GetDescendants=function() return {} end},
         FindFirstChildOfClass=function(_, class)
             if class ~= "Animator" then return nil end
             return animator()
@@ -117,13 +117,13 @@ pass("cache: the description is stored as-is, no rig assumption")
 -- 3) The defaults follow the body. An R6 rig never receives the R15 set: those
 --    clips are keyed to UpperTorso/RightUpperArm and do not play at all, which
 --    is the frozen rest pose in the report.
-local r6 = resolvedAnimationSlots({}, humanoidFor(Enum.HumanoidRigType.R6))
+local r6 = resolvedAnimationSlots({}, humanoidFor(Enum.HumanoidRigType.R6, nil))
 assert(r6.idle[1] == "180435571" and r6.idle[2] == "180435792", "R6 idle pair")
 assert(r6.walk[1] == "180426354" and r6.run[1] == "180426354", "R6 walk/run")
 assert(r6.jump[1] == "125750702" and r6.fall[1] == "180436148")
 assert(r6.climb[1] == "180436334")
 assert(r6.swim == nil and r6.swimidle == nil, "R6 has no swim default to invent")
-local r15 = resolvedAnimationSlots({}, humanoidFor(Enum.HumanoidRigType.R15))
+local r15 = resolvedAnimationSlots({}, humanoidFor(Enum.HumanoidRigType.R15, nil))
 assert(r15.idle[1] == "507766666" and r15.walk[1] == "507777826", "R15 defaults")
 pass("rig defaults: R6 gets the classic set, R15 gets the 50xxxxx set")
 
@@ -131,13 +131,13 @@ pass("rig defaults: R6 gets the classic set, R15 gets the 50xxxxx set")
 --    ids are recognised as "not mine" and replaced, never applied.
 local mixed = resolvedAnimationSlots(
     {walk = "rbxassetid://507777826", idle = {"rbxassetid://507766666"}},
-    humanoidFor(Enum.HumanoidRigType.R6)
+    humanoidFor(Enum.HumanoidRigType.R6, nil)
 )
 assert(mixed.walk[1] == "180426354", "an R15 default must not reach an R6 rig")
 assert(mixed.idle[1] == "180435571", "the R6 idle replaces the R15 one")
 local custom = resolvedAnimationSlots(
     {walk = "rbxassetid://99887766"},
-    humanoidFor(Enum.HumanoidRigType.R6)
+    humanoidFor(Enum.HumanoidRigType.R6, nil)
 )
 assert(custom.walk == "rbxassetid://99887766", "a real custom pack is still tried")
 pass("rig defaults: R15 defaults are substituted on R6, custom ids are kept")
@@ -146,7 +146,7 @@ pass("rig defaults: R15 defaults are substituted on R6, custom ids are kept")
 --    script is restarted once.
 playing = {track(true)}
 local character, animate, refs = makeCharacter()
-local r6 = humanoidFor(Enum.HumanoidRigType.R6)
+local r6 = humanoidFor(Enum.HumanoidRigType.R6, character)
 local changed = applyAnimationSlots(character, r6,
     animationSlotsFromDescription({}))
 assert(changed == 4, "two idle variants plus the walk for R6: " .. tostring(changed))
@@ -167,7 +167,7 @@ playing = {}
 bridgeAttempts = 0
 bridgeWorksFrom = 2
 local character2, _, refs2 = makeCharacter()
-local r6b = humanoidFor(Enum.HumanoidRigType.R6)
+local r6b = humanoidFor(Enum.HumanoidRigType.R6, character2)
 local customSlots = {idle = "rbxassetid://777777", walk = "rbxassetid://888888"}
 local applied = applyAnimationSlots(character2, r6b, customSlots)
 assert(applied == 4, "one idle id fills the three slots, plus the walk: "
@@ -188,7 +188,7 @@ playing = {}
 bridgeAttempts = 0
 bridgeWorksFrom = 99
 local character3, _, _ = makeCharacter()
-local r6c = humanoidFor(Enum.HumanoidRigType.R6)
+local r6c = humanoidFor(Enum.HumanoidRigType.R6, character3)
 local restored = applyAnimationSlots(character3, r6c, customSlots)
 assert(restored == 4, "the slots were written before the check")
 assert(settleMovementAnimations(character3, r6c) == false,
@@ -199,7 +199,51 @@ assert(#notices >= 1 and string.find(notices[#notices], "your own animations are
     "the failure is reported in the status")
 pass("apply: a rig that cannot animate anything restores the snapshot")
 
--- 8) An animation pack id maps its seven items by name.
+-- 8) A playing track is not a moving body. A bought R15 pack on an R6 rig makes
+--    the Animator report a track forever while no joint is written; that is
+--    the frozen avatar reported for every target except the default one. The
+--    check must read the joints, not the track flag, and put back a set that
+--    actually moves the rig.
+notices = {}
+playing = {track(true)}
+bridgeAttempts = 0
+bridgeWorksFrom = 1
+local character4, _, refs4 = makeCharacter()
+local jointReads = 0
+-- The joint moves only while the slot holds a clip built for this rig: an R15
+-- clip on an R6 body writes nothing, which is exactly the frozen case.
+local rigJoint = setmetatable({}, {
+    __index = function(_, key)
+        if key == "Transform" then
+            jointReads += 1
+            if refs4.idle1.AnimationId == "rbxassetid://555" then
+                return {X = 0, Y = 0, Z = 0, R00 = 1, R11 = 1, R22 = 1}
+            end
+            return {X = 0, Y = 0, Z = 0,
+                R00 = math.cos(jointReads * 0.25), R11 = 1, R22 = 1}
+        end
+        if key == "IsA" then
+            return function(_, className) return className == "Motor6D" end
+        end
+        return nil
+    end,
+})
+character4.GetDescendants = function() return {rigJoint} end
+local r6d = humanoidFor(Enum.HumanoidRigType.R6, character4)
+local applied4 = applyAnimationSlots(character4, r6d, {idle = "rbxassetid://555"})
+assert(applied4 == 4, "one idle id fills three slots, plus walk: " .. tostring(applied4))
+assert(settleMovementAnimations(character4, r6d) == true,
+    "a track that never moves a joint cannot count as a working animation")
+assert(refs4.idle1.AnimationId == "rbxassetid://180435571",
+    "the rig's own idle replaces the frozen clip")
+assert(refs4.walk.AnimationId == "rbxassetid://180426354")
+assert(jointReads >= 6, "the settle step samples every joint in the window: "
+    .. tostring(jointReads))
+assert(#notices >= 1 and string.find(notices[#notices], "do not play"),
+    "the substitution is reported in the status")
+pass("apply: a frozen rig is detected from the joints, not from IsPlaying")
+
+-- 9) An animation pack id maps its seven items by name.
 local items = {
     {Name = "Toy Idle", Id = 111},
     {Name = "Toy Walk", Id = 222},
@@ -218,22 +262,29 @@ end}
 local packSlots, packError = bundleAnimationSlots(43)
 assert(packSlots and not packError, packError)
 assert(asked.id == 43 and asked.kind == Enum.InfoType.Bundle)
-assert(packSlots.idle == "rbxassetid://111" and packSlots.walk == "rbxassetid://222")
-assert(packSlots.run == "rbxassetid://333" and packSlots.jump == "rbxassetid://444")
-assert(packSlots.fall == "rbxassetid://555" and packSlots.climb == "rbxassetid://666")
-assert(packSlots.swim == "rbxassetid://777", "Swim must not swallow Swim (Idle)")
-assert(packSlots.swimidle == "rbxassetid://888", "the pair maps to swimidle")
+assert(packSlots.idle == "rbxassetid://111")
+assert(packSlots.walk == "rbxassetid://222" and packSlots.run == "rbxassetid://333")
+assert(packSlots.jump == "rbxassetid://444" and packSlots.fall == "rbxassetid://555")
+assert(packSlots.climb == "rbxassetid://666")
+assert(packSlots.swimidle == "rbxassetid://888", "swim idle must win over swim")
+assert(packSlots.swim == "rbxassetid://777")
 pass("animation pack: seven categories by item name, swim vs swim idle")
 
--- 9) Anything else fails closed with an explanation.
-host.MarketplaceService = {GetProductInfo = function() return {BundleType = "BodyParts"} end}
-local none, why = bundleAnimationSlots(1)
-assert(none == nil and type(why) == "string" and why:find("not an animation pack"))
-host.MarketplaceService = {GetProductInfo = function() error("offline") end}
-none, why = bundleAnimationSlots(2)
-assert(none == nil and type(why) == "string" and why:find("not a user"))
+-- 10) A bundle that is not an animation pack, or a fetch that fails, is
+--     reported instead of being written into the slots.
+host.MarketplaceService = {GetProductInfo = function()
+    return {BundleType = "AvatarAccessories", Items = {}}
+end}
+local wrongSlots, wrongError = bundleAnimationSlots(44)
+assert(wrongSlots == nil and string.find(wrongError, "not an animation pack"),
+    tostring(wrongError))
+host.MarketplaceService = {GetProductInfo = function() error("not a bundle") end}
+local missingSlots, missingError = bundleAnimationSlots(45)
+assert(missingSlots == nil and string.find(missingError, "did not return a bundle"),
+    tostring(missingError))
 pass("animation pack: non-animation bundles and fetch errors are reported")
 '''
+
 with tempfile.TemporaryDirectory(prefix='disguise-defaults-') as tmp:
     path = Path(tmp) / 'test.luau'
     path.write_text(script)

@@ -1072,3 +1072,111 @@ Las calibraciones nuevas **no llegaron al workspace**: no hay ningún
 sesión, así que no se revisaron. Lo de arriba se apoya en los registros
 nativos ya citados (v33/v34) y en la sesión v64 que sí está en el repo. No hay
 prueba en dispositivo táctil ni sesión real con este sello.
+
+---
+
+## v69 — un paquete por cuchillazo y el rig que de verdad se mueve
+
+Sello: `v69-20261018-single-knife-packet-and-moving-rig`.
+
+### Lo que dicen las 27 calibraciones de `XzAngel19/TestingStuff`
+
+Se descargaron y procesaron **las 27 capturas** (`MM2_Trajectory_Calibration.json`
+más sus 26 copias `.before-*`, 4 KB–10 MB) y el `Shoot..txt`. Números reales:
+
+| dato | valor |
+| --- | --- |
+| sesiones con eventos | 20 |
+| lanzamientos de cuchillo anotados (sesión grande, v67) | **722 en 22 s** (máximo **77 en un segundo**) |
+| cuchillo confirmado por proyectil observado | 15 de esas 722 |
+| velocidad del cuchillo medida | **96 studs/s en las 20 sesiones** |
+| retardo de aparición del cuchillo | mediana ≈ 151 ms |
+| aceptación del disparo (`GunFired`) | media 237 ms, mínimo 95, máximo 980 |
+| aciertos de arma sobre confirmaciones | **95 de 173 (55 %)**; sesión v67: 25/48 |
+| error de lead en el instante de resolución | mediana **−10…+12 ms** por sesión |
+
+El hallazgo que explica la falta de precisión del cuchillo no es la puntería:
+`performThrow` se llamaba **una vez por frame**. Con `throwPending` armado
+después de comprobar la pose, la rama «este rig no tiene hombro que animar»
+largaba el paquete sin armar la guarda, y el bucle de `RenderStepped` volvía a
+entrar al frame siguiente. El servidor recibe decenas de paquetes por segundo y
+usa el primero que acepta: la hoja sale con el aim de *ese* frame, no con el
+que el predictor consideró bueno.
+
+### Cuchillo
+
+- **Un paquete por ciclo.** `throwPending` se arma **antes** de inspeccionar la
+  pose; si no hay articulación que animar se lanza una vez y un `task.delay`
+  libera la guarda al terminar el ciclo (0.55 s). El ciclo ahora es la constante
+  `KNIFE_CYCLE_SECONDS`.
+- **Segunda barrera antes del cable**: `MIN_PACKET_INTERVAL` (0.25 s). Ningún
+  llamador —auto, botón, reentrada— puede emitir dos paquetes dentro de esa
+  ventana. Todo lo anterior es lectura, así que un paquete rechazado no cuesta
+  nada.
+- El `CFrame.lookAt(handle, aim)` de v68 se mantiene: el registro sigue
+  anotando `originRotation` para distinguir builds.
+
+### Gafas (Disguise): el rig que no se mueve
+
+La captura del avatar «en pose rara» es un rig **congelado**, no un idle
+equivocado. Un pack R15 comprado sobre un cuerpo R6 no escribe ni una
+articulación, pero Roblox devuelve igual un `AnimationTrack` con
+`IsPlaying = true`. La comprobación de v68 miraba ese flag, así que daba por
+buena una animación que no movía nada; solo el objetivo sin pack (el 78492 por
+defecto) caía en los defaults R6 y se movía. De ahí que «solo funcione con
+fatcat».
+
+- `poseSignature`/`poseMoves` leen `Motor6D.Transform` del cuerpo y exigen que
+  la pose **cambie** en una ventana de 5 muestras. Si no cambia, el clip no es
+  del rig.
+- `settleMovementAnimations` comprueba la pose en las tres ramas (track del
+  script, puente de idle y set propio del rig). Solo acepta la que mueve el
+  cuerpo.
+- Si el set propio del rig tampoco mueve el cuerpo, se restaura el snapshot y se
+  avisa; nunca se deja el avatar tieso.
+- `applyCachedMovementAnimations` vuelve a asentar aunque no haya escrituras:
+  reaplicar el mismo objetivo tiene que arreglar un cuerpo que quedó congelado
+  en una aplicación anterior.
+
+### Puntería silenciosa
+
+- El segmento del bypass silencioso ya no es un largo fijo: crece con la
+  **incertidumbre de lead medida** (`getLeadUncertainty`, mediana de los
+  |errores| de las últimas confirmaciones) por la velocidad horizontal del
+  objetivo, con el mismo tope del slider. Sin muestras vale cero y el slider se
+  usa tal cual.
+- El `Shoot..txt` confirma el formato del remoto: `FireServer(CFrame, CFrame)`
+  desde el arma, igual que ya se envía.
+
+### Herramienta nueva
+
+`tools/analyze_calibration_sessions.py` lee un directorio de capturas y saca
+por sesión: sellos, disparos, confirmaciones, aciertos, eco vs ping, error de
+lead en el instante de resolución, lead ideal, lanzamientos y velocidad medida.
+Es de solo lectura.
+
+### Pruebas
+
+- `tools/test_silent_aim_sweep.py` (nueva): el segmento con el slider, con la
+  incertidumbre medida (0.06 s × 16 studs/s = 0.96 studs), con objetivo quieto,
+  con el tope y con una medición ausente o que falla. **5 comprobaciones.**
+- `test_disguise_defaults.py`: nuevo caso de rig congelado —un track «sonando»
+  que no mueve ninguna articulación— que debe acabar en el set del rig y avisar.
+  **10 comprobaciones.**
+- `test_prediction_lead_feedback.py`: incertidumbre medida, sin signo y cero sin
+  muestras. **8 comprobaciones.**
+- `test_mm2_knife_rebuild.py` y `test_mm2_knife_presets.py`: el segundo paquete
+  dentro de la ventana se descarta y el ciclo siguiente vuelve a enviar.
+
+`bash tools/validate.sh` → **75 fuentes compilan, 47 suites en verde**,
+arranque completo con `failures=0`.
+
+### Lo que esta versión NO afirma
+
+- No hay medición en el juego con este sello: los números salen de las capturas
+  guardadas, no de una sesión nueva.
+- El cuchillo sigue dependiendo de que el servidor acepte el paquete; lo que
+  cambia es que ahora manda **uno** con la puntería buena en vez de decenas.
+- El set R15 de un objetivo **no puede** reproducirse en un cuerpo R6: en ese
+  caso se muestra el set del rig y se avisa. Si prefieres que la casilla
+  desaparezca en rigs R6, dilo y se quita.

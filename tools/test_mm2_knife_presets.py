@@ -40,6 +40,19 @@ local loops,featureConnections={},{}
 local TaskManager={Connect=function(_,fn,phase)
  local key=phase or 'heartbeat';loops[key]=fn;return {Disconnect=function() loops[key]=nil end}
 end}
+-- The packet gate reads a wall clock. Simulated time only exists in the pose
+-- loop's dt, so the two are tied together: one animation cycle of dt is one
+-- animation cycle of clock, and the anti-spam window can be exercised.
+local simulatedClock=0
+os.clock=function() return simulatedClock end
+local rawConnect=TaskManager.Connect
+TaskManager.Connect=function(self,fn,phase)
+ local callback=fn
+ if phase=='render' then
+  callback=function(dt) simulatedClock+=dt or 0; fn(dt) end
+ end
+ return rawConnect(self,callback,phase)
+end
 local function disconnectFeatureConnection(k)
  if featureConnections[k] then featureConnections[k]:Disconnect();featureConnections[k]=nil end
 end
