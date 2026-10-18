@@ -83,6 +83,10 @@ type Motion = {
     brakeSeconds: number?,
     -- How far behind `now` the fitted direction sits.
     fitLag: number,
+    -- True only when the measured vertical speed is worth extrapolating. The
+    -- humanoid state alone is not enough: a replicated "Jumping" pose can be a
+    -- character standing at the apex of a jump.
+    verticalLead: boolean,
 }
 
 type AimInfo = {
@@ -101,6 +105,9 @@ type AimInfo = {
     model: string,
     rtt: number,
     echoDelay: number?,
+    -- How many echoes back the recorded delay. Zero means the horizon used
+    -- the ping, which the calibration can distinguish from a real median.
+    echoSamples: number,
     flightSeconds: number?,
 }
 
@@ -144,6 +151,19 @@ local TURN_MAX_RATE: number = 10.0
 -- that small only adds noise to the endpoint.
 local TURN_MIN_RATE: number = 0.4
 local TURN_MAX_ANGLE: number = math.rad(45)
+-- Two fits over replicated poses disagree by jitter as much as by turning.
+-- At 0.5 the recorded session produced 224 deg and 152 deg turns on a
+-- straight run; at 0.20 the shots with a >100 deg turn drop from five to two
+-- and the measured aim improves, so this is where the noise stops.
+local TURN_RESIDUAL: number = 0.20
+-- Vertical extrapolation needs a real vertical speed. A humanoid reported as
+-- Jumping at its apex has almost no vertical velocity; dropping the aim by a
+-- full ballistic term there is what put shot 6 2.3 studs under the target.
+local VERTICAL_MIN_SPEED: number = 5.0
+-- Robust transport fallback: a single GetNetworkPing spike (0.31 s against a
+-- 0.107 s baseline in the 2026-10-18 session) must not move the next aim.
+local RTT_SAMPLES: number = 8
+local RTT_SAMPLE_INTERVAL: number = 0.25
 local BRAKE_MIN_ACCEL: number = 6.0
 local BRAKE_MAX_ACCEL: number = 120.0
 
@@ -375,12 +395,12 @@ function Module.init(runtime: any): any
         fit: Fit
     ): (number, number, number?, number)
         local fitLag: number = math.max(0, now - fit.center)
-        if fit.count < 3 or fit.span < 0.06 or fit.residual > 0.5 then
+        if fit.count < 3 or fit.span < 0.06 or fit.residual > TURN_RESIDUAL then
             return 0, 0, nil, fitLag
         end
         local previous: Fit? = fitVelocity(track, now - TURN_SPAN)
         if not previous or previous.count < 3 or previous.span < 0.04
-            or previous.residual > 0.5 then
+            or previous.residual > TURN_RESIDUAL then
             return 0, 0, nil, fitLag
         end
         local v0: Vector3 = Vector3.new(previous.velocity.X, 0, previous.velocity.Z)
@@ -433,6 +453,7 @@ function Module.init(runtime: any): any
         local longitudinalAccel: number = 0
         local brakeSeconds: number? = nil
         local fitLag: number = 0
+        local verticalLead: boolean = false
         if fit and fit.count >= 3 and fit.span >= 0.06 and fit.residual <= 0.5 then
             -- Clean replicated path: the fit rejects the single-sample spikes
             -- and is not fooled by a zero AssemblyLinearVelocity.
@@ -463,6 +484,9 @@ function Module.init(runtime: any): any
             turnRate, longitudinalAccel, brakeSeconds, fitLag =
                 measureTurn(track, now, fit)
         end
+        if airborne and math.abs(vertical) >= VERTICAL_MIN_SPEED then
+            verticalLead = true
+        end
         return {
             velocity = Vector3.new(horizontal.X, vertical, horizontal.Z),
             horizontal = horizontal,
@@ -476,6 +500,7 @@ function Module.init(runtime: any): any
             longitudinalAccel = longitudinalAccel,
             brakeSeconds = brakeSeconds,
             fitLag = fitLag,
+            verticalLead = verticalLead,
         }
     end
 
@@ -508,12 +533,14 @@ function Module.init(runtime: any): any
         -- Correct it by the measured longitudinal acceleration over that lag,
         -- and include the acceleration over the horizon itself. Both terms
         -- are clamped in measureTurn; a clean straight run leaves them at 0.
-        local speedNow: number = math.max(
-            0,
-            speed + motion.longitudinalAccel * motion.fitLag
-        )
+        -- Only deceleration earns a length correction. In the recorded v61
+        -- session the measured "acceleration" of a running target swung to the
+        -- +120 clamp and stretched the lead by 1.5 studs; a real stop is the
+        -- case that matters and it is a negative value.
+        local along: number = math.min(0, motion.longitudinalAccel)
+        local speedNow: number = math.max(0, speed + along * motion.fitLag)
         local length: number = speedNow * horizon
-            + 0.5 * motion.longitudinalAccel * horizon * horizon
+            + 0.5 * along * horizon * horizon
         length = math.max(0, length)
         if motion.brakeSeconds and horizon > motion.brakeSeconds then
             -- The target is already stopped by then; extrapolating further
@@ -536,7 +563,7 @@ function Module.init(runtime: any): any
         local x: number = last.position.X + lead.X
         local z: number = last.position.Z + lead.Z
         local y: number = last.position.Y
-        if motion.airborne then
+        if motion.verticalLead then
             y += motion.vertical * horizon
                 - 0.5 * workspace.Gravity * horizon * horizon
         end
@@ -555,6 +582,26 @@ function Module.init(runtime: any): any
             latency = 0.08
         end
         return math.clamp(latency, 0.02, 0.6)
+    end
+
+    -- A median of recent readings, not the live number. A single spike in the
+    -- engine estimate produced leads of 0.36-0.40 s against a 0.13 s baseline
+    -- on 2026-10-18, and both of those shots missed by 7+ studs.
+    local rttSamples: {number} = {}
+    local lastRttSampleAt: number = -math.huge
+    local function robustRtt(): number
+        local now: number = os.clock()
+        if now - lastRttSampleAt >= RTT_SAMPLE_INTERVAL then
+            lastRttSampleAt = now
+            table.insert(rttSamples, currentRtt())
+            while #rttSamples > RTT_SAMPLES do
+                table.remove(rttSamples, 1)
+            end
+        end
+        local sorted: {number} = table.clone(rttSamples)
+        table.insert(sorted, currentRtt())
+        table.sort(sorted)
+        return sorted[math.floor((#sorted + 1) / 2)]
     end
 
     local function echoMedian(): number?
@@ -589,8 +636,13 @@ function Module.init(runtime: any): any
     end
 
     local function gunHorizon(): (number, number, number?)
-        local rtt: number = currentRtt()
+        local rtt: number = robustRtt()
         local echo: number? = echoMedian()
+        -- The echo is measured client-side from the activation to the
+        -- confirmation, so it is a real round trip rather than an engine
+        -- estimate; it replaces the ping when a median exists. It has to be
+        -- measured from the confirmation path for that to happen at all:
+        -- v61 recorded none (`echoDelay` nil on all 13 shots).
         local pipeline: number = echo or rtt
         local horizon: number = pipeline
             + settings.interpolation
@@ -602,7 +654,7 @@ function Module.init(runtime: any): any
     end
 
     local function knifeHorizon(): (number, number)
-        local rtt: number = currentRtt()
+        local rtt: number = robustRtt()
         local horizon: number = rtt
             + settings.interpolation
             + manualLead()
@@ -649,6 +701,7 @@ function Module.init(runtime: any): any
             model = "kinematic-v51",
             rtt = rtt,
             echoDelay = echo,
+            echoSamples = #echoes,
             turnRate = motion.turnRate,
             brakeSeconds = motion.brakeSeconds,
         }, nil
@@ -694,8 +747,8 @@ function Module.init(runtime: any): any
         -- tangent, and the blade needs the chord.
         local span: number = horizon + flight
         local lead: Vector3 = leadHorizontal(motion, span)
-        local vertical: number = motion.vertical
-        if motion.airborne then
+        local vertical: number = motion.verticalLead and motion.vertical or 0
+        if motion.verticalLead then
             vertical -= 0.5 * workspace.Gravity * span
         end
         local effective: Vector3 = Vector3.new(
@@ -712,8 +765,8 @@ function Module.init(runtime: any): any
             flight = revised
             span = horizon + flight
             lead = leadHorizontal(motion, span)
-            vertical = motion.vertical
-            if motion.airborne then
+            vertical = motion.verticalLead and motion.vertical or 0
+            if motion.verticalLead then
                 vertical -= 0.5 * workspace.Gravity * span
             end
             effective = Vector3.new(lead.X, vertical * span, lead.Z) / span
@@ -739,13 +792,14 @@ function Module.init(runtime: any): any
             motionSource = motion.source,
             model = "kinematic-v51",
             rtt = rtt,
+            echoSamples = #echoes,
             turnRate = motion.turnRate,
             brakeSeconds = motion.brakeSeconds,
         }, nil
     end
 
     local function playerStatus(target: Player?): string
-        local rtt: number = currentRtt()
+        local rtt: number = robustRtt()
         local echo: number? = echoMedian()
         local parts: {string} = {
             string.format("RTT %.0f ms", rtt * 1000),
@@ -827,20 +881,28 @@ function Module.init(runtime: any): any
         -- in seconds relative to now (negative). Telemetry attaches it to each
         -- shot so an alternative predictor can be replayed offline from the
         -- same inputs instead of being judged only on live hits.
-        getHistory = function(player: Player, seconds: number?): {any}?
+        getHistory = function(
+            player: Player,
+            seconds: number?
+        ): ({any}?, number?)
             local track: Track? = tracks[player]
             if not track or #track.samples < 2 then
-                return nil
+                return nil, 0
             end
             local span: number = math.clamp(
                 seconds or HISTORY_SECONDS,
                 0.05,
                 HISTORY_SECONDS
             )
-            local now: number = os.clock()
+            -- Times are relative to the newest sample, not to this call. The
+            -- modules do not share a clock epoch (the v61 log recorded a
+            -- -2546 s offset), so only the predictor's own timestamps can be
+            -- subtracted from each other. The caller gets the age separately.
+            local newest: Sample = track.samples[#track.samples]
+            local age: number = math.max(0, os.clock() - newest.at)
             local points: {any} = {}
             for _, sample: Sample in ipairs(track.samples) do
-                local at: number = sample.at - now
+                local at: number = sample.at - newest.at
                 if at >= -span - 1e-6 then
                     table.insert(points, {
                         at = at,
@@ -852,9 +914,9 @@ function Module.init(runtime: any): any
                 end
             end
             if #points < 2 then
-                return nil
+                return nil, age
             end
-            return points
+            return points, age
         end,
         gunAim = gunAim,
         knifeAim = knifeAim,
@@ -882,6 +944,8 @@ function Module.init(runtime: any): any
         reset = function(): ()
             table.clear(echoes)
             table.clear(tracks)
+            table.clear(rttSamples)
+            lastRttSampleAt = -math.huge
         end,
     }
 

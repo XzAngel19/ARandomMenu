@@ -59,6 +59,10 @@ local function pass(name) passed+=1; print("PASS",name) end
 '''
 
 
+WALLCHECK = section(BASE, "local function isWeaponPathClear",
+                   "local function getWeaponFromContainer")
+
+
 def build() -> str:
     chunks = [PRELUDE, section(BASE, "local predictionMath = {}", "local lastLatencyReadAt")]
     chunks.append(r'''
@@ -454,6 +458,211 @@ assert(saveSnapshot("next") and not runtime.dirty)
 pass("real telemetry writer: idempotent saves, no disk reread, retry preserves counts, legacy migration")
 end
 ''']
+
+    # v62: the three defects that explain the 2026-10-18 session (13 shots,
+    # 1 hit): a ping spike that stretched the lead, acceleration that stretched
+    # it further, and a Jumping state that dropped the aim below a target whose
+    # vertical speed was zero.
+    chunks.append(r"""
+do
+    type Instance = any
+    type Model = any
+    type RaycastResult = any
+    type RaycastParams = any
+    local workspace={Gravity=196.2}
+    local LocalPlayer={Character={}}
+    local latency=0.10
+    local humanoidState="Running"
+    local humanoid={Health=100,GetState=function() return humanoidState end}
+    local root={Position=Vector3.zero,AssemblyLinearVelocity=Vector3.zero}
+    local torso={Position=Vector3.new(0,1,0),IsA=function() return true end}
+    local character={FindFirstChild=function(_,name)
+        if name=="HumanoidRootPart" then return root end
+        if name=="UpperTorso" then return torso end
+        return nil
+    end,FindFirstChildOfClass=function() return humanoid end}
+    local target={Character=character}
+    local Players={GetPlayers=function() return {LocalPlayer,target} end}
+    local state={mm2Core={predictionMath=predictionMath,
+        getEstimatedLatency=function() return latency end}}
+    local featureConnections={}
+    local function disconnectFeatureConnection(key)
+        if featureConnections[key] then featureConnections[key]:Disconnect();featureConnections[key]=nil end
+    end
+    local sampleTick=nil
+    local TaskManager={Connect=function(_,callback)
+        sampleTick=callback
+        return {Disconnect=function() sampleTick=nil end}
+    end}
+    local function loadPrediction()
+""")
+    chunks.append(PREDICTION)
+    chunks.append(r"""
+    end
+    local Module=loadPrediction()
+    Module.init({})
+    local prediction=state.mm2Prediction
+    assert(type(prediction)=="table")
+    local function place(x,y,vx,vy)
+        root.Position=Vector3.new(x,y,0)
+        torso.Position=Vector3.new(x,y+1,0)
+        root.AssemblyLinearVelocity=Vector3.new(vx,vy,0)
+    end
+    local function tick(count)
+        for _=1,count do
+            now=now+1/60
+            sampleTick(1/60)
+        end
+    end
+    -- 1. Jumping with no vertical speed: the state alone must not earn a
+    -- ballistic drop. v61 aimed 2.29 studs under a target at its apex.
+    humanoidState="Jumping"
+    local floorY=40
+    for _=1,30 do
+        now=now+1/60
+        place(16*now,floorY,16,0)
+        sampleTick(1/60)
+    end
+    local apex,apexInfo=prediction.gunAim(target,Vector3.new(0,0,-30))
+    assert(apex and apexInfo)
+    assert(apexInfo.leadSeconds>0.1)
+    near(apex.Y,floorY+1,0.05)
+    -- 2. Freefall with a real vertical speed still extrapolates ballistically.
+    humanoidState="Freefall"
+    local riseStart=now
+    local riseY=root.Position.Y
+    for _=1,30 do
+        now=now+1/60
+        local t=now-riseStart
+        place(16*now,riseY+40*t,16,40)
+        sampleTick(1/60)
+    end
+    local rising,risingInfo=prediction.gunAim(target,Vector3.new(0,0,-30))
+    assert(rising and risingInfo)
+    local expected=root.Position.Y+1+40*risingInfo.leadSeconds
+        -0.5*196.2*risingInfo.leadSeconds*risingInfo.leadSeconds
+    near(rising.Y,expected,0.75)
+    assert(rising.Y>root.Position.Y+3,"a rising target must be led upward")
+    -- 3. One ping spike must not stretch the lead. v61 turned a 0.34 s read
+    -- into a 0.40 s lead (0.36 s on shot 8) and missed both by 7+ studs.
+    humanoidState="Running"
+    latency=0.10
+    for _=1,10 do
+        for _=1,18 do
+            now=now+1/60
+            place(16*now,floorY,16,0)
+            sampleTick(1/60)
+        end
+        prediction.status(target)
+    end
+    local _,before=prediction.gunAim(target,Vector3.new(0,0,-30))
+    for _=1,18 do
+        now=now+1/60
+        place(16*now,floorY,16,0)
+        sampleTick(1/60)
+    end
+    latency=0.34
+    prediction.status(target)
+    local _,after=prediction.gunAim(target,Vector3.new(0,0,-30))
+    assert(after.leadSeconds<before.leadSeconds+0.02,
+        "one ping spike moved the lead to "..after.leadSeconds)
+    near(prediction.getRtt(),0.34,1e-9)
+    latency=0.10
+    -- 4. Accelerating again must not lengthen the lead either; only braking
+    -- shortens it. v61 stretched running shots on positive acceleration.
+    local t0=now
+    local startX=root.Position.X
+    local startV=16
+    for _=1,24 do
+        now=now+1/60
+        local t=now-t0
+        place(startX+startV*t+0.5*120*t*t,floorY,startV+120*t,0)
+        sampleTick(1/60)
+    end
+    local _,accel=prediction.gunAim(target,Vector3.new(0,0,-30))
+    local speedNow=startV+120*(now-t0)
+    local travelled=root.Position.X-startX
+    assert(accel.leadSeconds>0.1,accel.leadSeconds)
+    -- A constant-speed lead is speed*horizon; positive acceleration must add
+    -- nothing to it.
+    assert(travelled+speedNow*accel.leadSeconds<=travelled
+        +speedNow*accel.leadSeconds*1.03+0.2)
+    local endpointAccel=select(1,prediction.gunAim(target,Vector3.new(0,0,-30)))
+    near(endpointAccel.X,root.Position.X+speedNow*accel.leadSeconds,1.5)
+    -- 5. The pre-shot window is relative to the newest sample; its age is
+    -- reported separately because the modules do not share a clock epoch.
+    now=now+5
+    local history,age=prediction.getHistory(target,0.6)
+    assert(history and #history>=5)
+    near(history[#history].at,0,1e-9)
+    near(age,5,1e-6)
+    near(history[1].at,-0.6,0.05)
+    pass("v62 aim: apex held, freefall extrapolated, ping spike filtered, acceleration ignored, history age reported")
+end
+""")
+
+
+    # The server stopped five of nine confirmed shots 24-56 studs short of the
+    # aim while the client's transparency-skipping filter saw nothing. The
+    # second pass must see an invisible *solid* part; skipping it is what let
+    # those shots fire into geometry the server treats as a wall.
+    chunks.append(r"""
+do
+    type Instance = any
+    type Model = any
+    type RaycastResult = any
+    type RaycastParams = any
+    local LocalPlayer={Character=nil}
+    local CollectionService={GetTagged=function() return {} end}
+    local Enum={RaycastFilterType={Exclude="Exclude"}}
+    local RaycastParams={new=function() return {} end}
+    local hits={}
+    local workspace={Raycast=function(_,origin,direction,params)
+        for _,hit in ipairs(hits) do
+            local filtered=false
+            for _,object in ipairs(params.FilterDescendantsInstances or {}) do
+                if object==hit.Instance then filtered=true end
+            end
+            if not filtered then return hit end
+        end
+        return nil
+    end}
+    local function part(name,transparency,canCollide,distance)
+        return {Instance={IsA=function(_,class) return class=="BasePart" end,
+            Transparency=transparency,CanCollide=canCollide,ClassName="Part",
+            GetFullName=function() return name end},Position=Vector3.new(distance,0,0)}
+    end
+""")
+    chunks.append(WALLCHECK)
+    chunks.append(r"""
+    local origin=Vector3.zero
+    local endpoint=Vector3.new(100,0,0)
+    -- 1. Invisible but solid: the visual filter skips it, the server does not.
+    hits={part("Workspace.Glitch Proof.Wall",1,true,24)}
+    local visibleClear=isWeaponPathClear(origin,endpoint,nil,nil,nil)
+    assert(visibleClear,"the game's own filter skips every transparent part")
+    local solidClear,blocker=isWeaponPathClear(origin,endpoint,nil,true,nil)
+    assert(not solidClear,"a transparent collidable part is an invisible wall")
+    assert(blocker and blocker.name=="Workspace.Glitch Proof.Wall",blocker and blocker.name)
+    assert(blocker.transparency==1 and blocker.canCollide==true and blocker.skipped==false)
+    near(blocker.distance,24,1e-9)
+    -- 2. Invisible decoration that cannot collide is still skipped.
+    hits={part("Workspace.Decor",1,false,24)}
+    local decorClear=isWeaponPathClear(origin,endpoint,nil,true,nil)
+    assert(decorClear,"non-colliding decoration must stay skippable")
+    -- 3. An ordinary wall is reported with its name, not as "something".
+    hits={part("Workspace.Map.Brick",0,true,12)}
+    local wallClear,wall=isWeaponPathClear(origin,endpoint,nil,true,nil)
+    assert(not wallClear and wall.name=="Workspace.Map.Brick")
+    assert(wall.transparency==0 and wall.canCollide==true)
+    -- 4. Clear line of sight still returns true with no blocker.
+    hits={}
+    local clear,empty=isWeaponPathClear(origin,endpoint,nil,true,nil)
+    assert(clear and empty==nil)
+    pass("invisible wall: transparent solids stop the strict pass and are named")
+end
+""")
+
     chunks.append('print("MM2 regression groups passed:",passed)\n')
     return "\n".join(chunks)
 
@@ -462,6 +671,15 @@ def main() -> None:
     assert "state.mm2Prediction" in SHOOT and "prediction.gunAim" in SHOOT
     assert "state.mm2Prediction" in KNIFE and "prediction.knifeAim" in KNIFE
     assert "validateGunShot" in SHOOT and "isWeaponPathClear" in BASE
+    # v62 invariants: the invisible-wall pass, the ping median, the vertical
+    # speed gate and the "deceleration only" length correction.
+    assert "TURN_RESIDUAL" in PREDICTION and "VERTICAL_MIN_SPEED" in PREDICTION
+    assert "verticalLead" in PREDICTION and "RTT_SAMPLES" in PREDICTION
+    assert "local along: number = math.min(0, motion.longitudinalAccel)" in PREDICTION
+    assert "noteBlockedShot" in BASE and "noteBlockedShot" in SHOOT
+    finalize = section(BASE, "    finalizeGunCapture = function",
+                       "    local function analyzeTargetTrajectory")
+    assert "noteEcho" in finalize, "the confirmation path must measure the echo"
     assert "WeaponPassthrough" in BASE
     assert "computeGunAim" not in SHOOT and "predictionMath.sampleDue" not in BASE
     assert "predictionMath.closestCrossing" not in BASE and "GUN_LEAD" not in BASE

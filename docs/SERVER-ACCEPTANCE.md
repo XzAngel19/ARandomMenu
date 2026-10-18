@@ -181,3 +181,36 @@ afirma.
 4. **Ping alto no impide acertar.** La sesión registrada tenía ping mediano
    ~171 ms y máximos de 507 ms, y aun así hubo impactos: por eso el lead
    automático usa el eco real en vez de un valor fijo.
+
+## La sesión del 18-10: qué la explica y qué no
+
+Archivo: `TestingStuff/MM2_Trajectory_Calibration.json` (sello
+`v61-20261017-pre-shot-history`), 285,2 s, modo `Normal` en los 13 disparos.
+
+- **13 autorados · 9 confirmados (`GunFired`) · 1 con `hitPart` del objetivo.**
+  Los otros 4 no recibieron señal del servidor y no se cuentan como fallo de
+  puntería.
+- **5 de los 9 confirmados (1, 2, 4, 7, 11) terminaron 24–56 studs antes del
+  punto apuntado**, con el WallCheck del cliente en verde. El error del modelo
+  en esos disparos es 0.1–2.9 studs: la puntería no era el problema; el rayo
+  murió antes. Los disparos 1 y 2 acaban en el **mismo plano**
+  `z = 9017.9736`, que es una pared, no ruido.
+- **2 de los 9 (8 y 10)** usaron un `rtt` de 0.314/0.342 s contra 0.104–0.108
+  del resto. El horizonte salió 0.36–0.40 s y el error horizontal 2.3 y 9.3
+  studs. Un pico de ping, no un cambio de modelo.
+- **Los 2 restantes (6, 13)** dependían del modelo: 6 llevaba el error vertical
+  del vértice de salto (−2.29 studs) y el 13 acertó con 1.9 studs de error
+  horizontal gracias al hitbox.
+
+Conclusión honesta: **el 1/9 no es «el predictor no sirve» ni «todo es el
+lead»**. Es una parte de geometría del mapa (5), una parte de un pico de red
+(2) y una parte de modelo (2). v62 ataca las tres: rechaza y **registra** el
+bloqueador invisible, filtra el pico con mediana y corrige el vértice, el giro
+por ruido y el alargue por aceleración.
+
+La pregunta que este archivo **no** puede responder todavía es si el horizonte
+correcto es el RTT completo o media ida: el ancla `referencePoint` está
+desfasada ~1 stud de la primera muestra de `targetTrajectory` (hasta 1.12
+studs), que es el mismo tamaño que la diferencia entre ambos modelos. Por eso
+no se cambia el horizonte y se sigue midiendo (`echoSamples`, `turnRate`,
+`brakeSeconds` y los eventos `blocked` van ahora en cada disparo).

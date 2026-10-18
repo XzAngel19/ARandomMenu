@@ -397,3 +397,103 @@ ajuste habría usado. Eso es lo que se añade:
   cronológico, acotadas a 0.6 s y con la última en `dt ≈ 0`.
 - `captureTargetHistory` filtra muestras inválidas, respeta el límite de 36 y
   devuelve vacío cuando no hay predictor.
+
+## v62 — La sesión real del 18-10 (13 disparos, 9 confirmados, 1 acierto)
+
+El archivo `MM2_Trajectory_Calibration.json` del repo `TestingStuff` es la
+sesión v61 completa: 13 disparos autorados, 9 confirmaciones de servidor, **1
+`hitTarget`** (disparo 13) y 4 disparos sin confirmar (3, 5, 9, 12). Antes de
+tocar nada se reprodujo el modelo validado (`referencePoint` + `targetHistory`,
+sin giro ni frenado) contra el `predictedPoint` grabado: mediana 0.10 studs,
+máximo 1.68. Las cifras de abajo son error real de puntería, no del análisis.
+
+### Lo que estaba mal y se corrige
+
+1. **Relojes distintos en la historia.** `Prediction.getHistory` devolvía `at`
+   restado del `os.clock()` del módulo de predicción y `base.lua` le restaba
+   *otro* `os.clock()`. En el archivo guardado la última muestra tenía
+   `dt = -238.19 s`: cuatro minutos de desfase. La ventana pre-disparo existía
+   pero no era reproducible. Ahora `at` es relativo a la muestra más nueva y la
+   edad de esa muestra se devuelve aparte (`age`); `captureTargetHistory` la
+   aplica en el mismo lado y los `dt` quedan en `[-0.6, 0]`.
+
+2. **Un pico de ping estiraba el lead.** Los disparos 8 y 10 usaron
+   `rtt = 0.314 / 0.342` cuando el ping del resto de la sesión era 0.104–0.108
+   (ping real 172/147 ms). El horizonte salió 0.359/0.395 s y los dos fallaron.
+   `robustRtt()` toma la **mediana de las últimas 8 lecturas** (una cada
+   0.25 s): un pico aislado no mueve el lead, un cambio sostenido sí (en ~1 s).
+
+3. **La aceleración positiva también estiraba el lead.** `leadHorizontal`
+   aplicaba `v·h + ½a·h²` con el signo que fuera; en carrera el término `a`
+   medido llegaba al tope de +120 studs/s² y alargaba el tiro por delante del
+   objetivo. Solo la **desaceleración** acorta el vuelo; con `a > 0` el modelo
+   asume velocidad constante. En la sesión, apagar el término positivo bajó el
+   error horizontal medio de 2.27 a 1.94 studs.
+
+4. **El giro se disparaba con ruido.** Con el umbral de residuo 0.5, una
+   carrera recta producía giros de −224° (disparo 6) y −152° (13) y el disparo
+   2 se clavaba en el tope de 10 rad/s. Dos ajustes separados 0.10 s que
+   difieren menos de **0.20 studs** no son un giro: el umbral pasa a 0.20
+   (`TURN_RESIDUAL`) y el tope de 45° sigue en pie.
+
+5. **Salto en el vértice.** El estado `Jumping` dura unos frames en el vértice,
+   con velocidad vertical ≈0. v61 aplicaba la caída balística completa: −2.29
+   studs en el disparo 6. Ahora el término vertical solo se aplica si la
+   velocidad vertical medida supera **5 studs/s** (`VERTICAL_MIN_SPEED`); por
+   debajo se mantiene la altura, que es exactamente lo que hace un cuerpo en el
+   vértice. `Climbing` nunca fue aéreo y ya se quedaba en Y.
+
+6. **El eco no se medía nunca.** `echoDelay` fue `nil` en los 13 disparos
+   aunque hubo 9 confirmaciones: la conexión que alimentaba `noteEcho` no se
+   creó. Ahora el eco se cierra en `finalizeGunCapture`, el mismo camino que
+   produjo esas 9 confirmaciones, y se guarda `echoSamples` para saber si el
+   horizonte vino del ping o de una mediana real.
+
+7. **Pared invisible.** Cinco de las nueve confirmaciones terminaron 24–56
+   studs *antes* del punto apuntado (los disparos 1 y 2 en el mismo plano
+   `z = 9017.9736`) con el WallCheck local en verde. El primer pase usa la
+   regla del juego (salta todo lo transparente); se añade un **segundo pase
+   estricto** que solo salta lo transparente que además no colisiona. Un
+   bloqueador transparente y sólido se rechaza y se registra (`noteBlockedShot`
+   → evento `gun`/`blocked` con nombre, transparencia, `CanCollide` y
+   distancia). Así el siguiente informe dice *qué* pared come el rayo, en vez
+   de deducirlo de un fallo.
+
+### Proyección medida (no promesa)
+
+Reproduciendo la sesión con el modelo nuevo sobre las mismas muestras y la
+misma verdad (`targetTrajectory`), error horizontal contra el objetivo:
+
+| | media | mediana | máximo |
+|---|---|---|---|
+| v61 (lo grabado) | 2.27 | 2.02 | 9.32 |
+| v62 (proyección) | 1.27 | 1.46 | 1.99 |
+
+Los cinco disparos con bloqueo geométrico (1, 2, 4, 7, 11) bajan su error de
+puntería (media 1.77 → 1.28 studs), pero seguirían sin acertar: el rayo del
+servidor muere 24–56 studs antes. Se arreglan rechazándolos y anotando el
+bloqueador, no apuntando más lejos. La mejora grande es la de los disparos que
+sí dependían del modelo: 6, 8, 10, 13 y los de las sesiones 03:51/04:04
+(media 2.58 → 1.27).
+
+### Lo que no se cambia (y por qué)
+
+- **El horizonte sigue siendo el RTT completo + 25 ms de interpolación.** El
+  mejor `lead` empírico por disparo sale 0.00–0.09 s, pero el ancla
+  `referencePoint` está desfasada ~1 stud respecto de la primera muestra de
+  `targetTrajectory` (hasta 1.12 studs en el disparo 1, en la dirección del
+  movimiento). Con ese piso de ruido no se puede decidir entre RTT completo y
+  media ida, y mover el horizonte a ciegas sería repetir el error que este
+  documento critica. Queda como pregunta abierta para la próxima sesión, que ya
+  registra `echoSamples`.
+
+### Pruebas
+
+- `v62 aim`: vértice sin caída, caída con velocidad real, pico de ping
+  filtrado, aceleración ignorada, `getHistory` con edad reportada.
+- `invisible wall`: un sólido transparente detiene el pase estricto y se
+  nombra; la decoración no colisionable sigue pasando.
+- `test_gun_safety`: el segundo pase cuesta un rayo más y el rechazo lleva
+  bloqueador; un `WeaponPassthrough` sigue sin bloquear.
+- Total: `tools/validate.sh` EXIT=0, 41 suites, 73 archivos, sello
+  `v62-20261018-invisible-wall`.

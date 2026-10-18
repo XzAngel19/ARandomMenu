@@ -68,7 +68,7 @@ local workspace={Raycast=function(_,origin,delta,params)
    if t and t<nearest then nearest,hit=t,part end
   end
  end
- return hit and {Instance=hit} or nil
+ return hit and {Instance=hit,Position=origin+delta*(nearest or 0)} or nil
 end}
 ''' + section(B, 'local function isWeaponPathClear(', 'local function getWeaponFromContainer(') + section(B, 'local function validateGunShot(', 'local function disconnectGunFiredObserver') + r'''
 local mm2SettingsWallsDefault=true
@@ -81,14 +81,31 @@ assert(check())
 local wall,wallPart=model(Vector3.new(10,0,0));table.insert(scene,wallPart)
 assert(not check())
 wallPart.Transparency=1
-assert(check(),'the game filter skips fully transparent geometry')
+-- v62: the game's own filter skips every transparent part; the strict pass
+-- treats a transparent *solid* as the invisible wall the server collided
+-- with (five of nine confirmed shots in the 2026-10-18 session stopped
+-- 24-56 studs short of the aim).
+local invisibleAllowed,invisibleWhy,invisibleBlocker=check()
+assert(not invisibleAllowed,'an invisible solid is not a clear path')
+assert(type(invisibleWhy)=='string' and invisibleWhy:find('invisible'),
+    'the refusal must name the invisible wall')
+assert(type(invisibleBlocker)=='table' and invisibleBlocker.transparency==1
+    and invisibleBlocker.canCollide~=false and invisibleBlocker.skipped==false,
+    'the blocker must be recorded for the calibration')
+assert(isWeaponPathClear(muzzle,body.Position,victim,nil,nil),
+    'the game filter skips every transparent part')
+wallPart.CanCollide=false
+assert(check(),'invisible decoration that cannot collide stays skippable')
+wallPart.CanCollide=true
 wallPart.CanQuery=false
 -- Friendly players block a normal shot until the segment is clear.
 friend.CanQuery=true
 friend.Position=Vector3.new(10,0,0)
 assert(not check(),'an innocent in front of the murderer blocks the shot')
 friend.Transparency=1
+friend.CanCollide=false
 assert(check(),'the game filter also skips invisible player parts')
+friend.CanCollide=true
 friend.Transparency=0
 assert(not check())
 friend.Position=Vector3.new(30,0,0);assert(check())
@@ -109,7 +126,8 @@ own.humanoid.Health=0;assert(not check());own.humanoid.Health=100
 assert(not check(true,muzzle,Vector3.new(0/0,0,0)))
 assert(not check(true,muzzle,Vector3.zero),'zero-length shot is rejected')
 assert(check(true),'WallCheck OFF only relaxes map geometry')
-local before=rays;assert(check());assert(rays-before==1,'one filtered ray per clear check')
+local before=rays;assert(check())
+assert(rays-before==2,'a clear WallCheck costs one game-rule ray and one strict ray')
 local ghost,ghostPart=model(Vector3.new(10,0,0))
 ghostPart.Transparency=1;ghostPart.CanCollide=false
 table.insert(scene,ghostPart)

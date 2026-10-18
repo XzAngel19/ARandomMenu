@@ -269,9 +269,15 @@ function Module.init(runtime: any): any
                 or gun:GetAttribute("Reloading") == true or gun:GetAttribute("IsReloading") == true then
                 return reject("The gun is disabled or reloading.")
             end
-            local ok, allowed, why = pcall(validateGunShot,target,character,targetCharacter,
+            local ok, allowed, why, blocker = pcall(validateGunShot,target,character,targetCharacter,
                 shotOrigin.Position,shotOrigin.Position,shotEnd.Position,mm2Settings.shootWallCheck)
-            if not ok or not allowed then return reject(why or "Shot safety check failed.") end
+            if not ok or not allowed then
+                if type(blocker) == "table" and trajectoryCalibration
+                    and type(trajectoryCalibration.noteBlockedShot) == "function" then
+                    pcall(trajectoryCalibration.noteBlockedShot, trajectoryCalibration, blocker)
+                end
+                return reject(why or "Shot safety check failed.")
+            end
             return true
         end
 
@@ -322,7 +328,9 @@ function Module.init(runtime: any): any
                     referencePoint = info.capturedPosition and {info.capturedPosition.X, info.capturedPosition.Y, info.capturedPosition.Z},
                     predictedPoint = {info.endpoint.X, info.endpoint.Y, info.endpoint.Z},
                     sampledVelocity = {info.velocity.X, info.velocity.Y, info.velocity.Z},
-                    rtt = info.rtt, echoDelay = info.echoDelay},
+                    rtt = info.rtt, echoDelay = info.echoDelay,
+                    echoSamples = info.echoSamples,
+                    turnRate = info.turnRate, brakeSeconds = info.brakeSeconds},
             })
             if not quiet and ShootFeature then ShootFeature:SetStatus(nil) end
             macroUnequip(gun)
@@ -354,7 +362,9 @@ function Module.init(runtime: any): any
                 referencePoint = info.capturedPosition and {info.capturedPosition.X, info.capturedPosition.Y, info.capturedPosition.Z},
                 predictedPoint = {info.endpoint.X, info.endpoint.Y, info.endpoint.Z},
                 sampledVelocity = {info.velocity.X, info.velocity.Y, info.velocity.Z},
-                rtt = info.rtt, echoDelay = info.echoDelay},
+                rtt = info.rtt, echoDelay = info.echoDelay,
+                echoSamples = info.echoSamples,
+                turnRate = info.turnRate, brakeSeconds = info.brakeSeconds},
         })
         if not quiet and ShootFeature then ShootFeature:SetStatus(nil) end
         macroUnequip(gun)

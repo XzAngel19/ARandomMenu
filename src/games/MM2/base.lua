@@ -117,9 +117,12 @@ local function clearEffects(folder)
 end
 
 -- Match the recovered client's cursor filters, not an assertion about server rules.
-local function isWeaponPathClear(origin: Vector3, endpoint: Vector3, target: Model?, strict: boolean?, options: {ignoreTarget: boolean?, requireTarget: boolean?}?): boolean
+-- Returns (clear, blocker). `blocker` describes the part that stopped the ray
+-- (or the last transparent part that was skipped) so the caller can record what
+-- the server disagreed about instead of guessing.
+local function isWeaponPathClear(origin: Vector3, endpoint: Vector3, target: Model?, strict: boolean?, options: {ignoreTarget: boolean?, requireTarget: boolean?}?): (boolean, any?)
     local direction: Vector3 = endpoint - origin
-    if direction.Magnitude < 0.05 then return true end
+    if direction.Magnitude < 0.05 then return true, nil end
     local excluded: {Instance} = {}
     if LocalPlayer.Character then table.insert(excluded, LocalPlayer.Character) end
     -- Projectile endpoints are future poses: the target's present body must
@@ -134,21 +137,42 @@ local function isWeaponPathClear(origin: Vector3, endpoint: Vector3, target: Mod
     for _ = 1, 32 do
         params.FilterDescendantsInstances = excluded
         local hit: RaycastResult? = workspace:Raycast(origin, direction, params)
-        if not hit then return not (options and options.requireTarget == true) end
-        if target and hit.Instance:IsDescendantOf(target) then return true end
-        -- The gun is hitscan and uses the game's rule verbatim: every fully
-        -- transparent part is skipped. The knife is a physical blade, so with
-        -- strict it only ignores transparent parts that cannot collide;
-        -- an invisible solid wall still stops the knife.
+        if not hit then return not (options and options.requireTarget == true), nil end
+        if target and hit.Instance:IsDescendantOf(target) then return true, nil end
+        -- The gun uses the game's rule verbatim: every fully transparent part
+        -- is skipped. With strict (knife, and the second gun pass) only
+        -- transparent parts that cannot collide are skipped; an invisible
+        -- solid barrier stops the ray.
         local part: Instance = hit.Instance
+        local info: any = {
+            name = nil,
+            className = nil,
+            transparency = nil,
+            canCollide = nil,
+            distance = nil,
+            skipped = false,
+        }
+        pcall(function(): ()
+            info.name = string.sub(part:GetFullName(), 1, 160)
+            info.className = part.ClassName
+            local hitPosition: any = (hit :: any).Position
+            if hitPosition then
+                info.distance = (hitPosition - origin).Magnitude
+            end
+        end)
+        if part:IsA("BasePart") then
+            info.transparency = part.Transparency
+            info.canCollide = part.CanCollide
+        end
         if part:IsA("BasePart") and part.Transparency == 1
             and (not strict or part.CanCollide == false) then
+            info.skipped = true
             table.insert(excluded, part)
         else
-            return false
+            return false, info
         end
     end
-    return false -- bounded work, conservative if a map has many transparent layers
+    return false, { name = "raycast budget", skipped = false } -- conservative
 end
 
 local function getWeaponFromContainer(
@@ -1527,6 +1551,11 @@ local function createTrajectoryCalibration(): any
         bestMotionModel: string?,
         motionModelErrors: {[string]: number}?,
         evaluationSeconds: number?,
+        blockedName: string?,
+        blockedTransparency: number?,
+        blockedCanCollide: boolean?,
+        blockedSkipped: boolean?,
+        blockedDistance: number?,
     }
     type Estimates = {
         gunAcceptanceMs: number?,
@@ -1578,6 +1607,7 @@ local function createTrajectoryCalibration(): any
         sessionKnifeAttempts = 0,
         sessionKnifeConfirmed = 0,
         pendingGuns = {} :: {PendingGun},
+        lastBlockedAt = 0,
         pendingKnives = {} :: {PendingKnife},
         tracks = {} :: {[Instance]: KnifeTrack},
         observedTools = setmetatable({}, {__mode = "k"}) :: {[Tool]: boolean},
@@ -1946,7 +1976,7 @@ local function createTrajectoryCalibration(): any
             or type(state.mm2Prediction.getHistory) ~= "function" then
             return points
         end
-        local ok: boolean, history: any = pcall(
+        local ok: boolean, history: any, age: any = pcall(
             state.mm2Prediction.getHistory,
             player,
             0.6
@@ -1954,6 +1984,10 @@ local function createTrajectoryCalibration(): any
         if not ok or type(history) ~= "table" then
             return points
         end
+        -- `at` is relative to the newest predictor sample and `age` is how old
+        -- that sample was at the shot. Clocks in the two modules do not share
+        -- an epoch, so the subtraction happens on the predictor's side only.
+        local sampleAge: number = predictionMath.finite(age) and age or 0
         for _, sample: any in ipairs(history) do
             if #points >= 36 then
                 break
@@ -1962,7 +1996,7 @@ local function createTrajectoryCalibration(): any
             local velocity: any = sample.velocity
             if typeof(position) == "Vector3" and typeof(velocity) == "Vector3" then
                 table.insert(points, {
-                    dt = (sample.at or 0) - now,
+                    dt = (sample.at or 0) - sampleAge,
                     position = {position.X, position.Y, position.Z},
                     velocity = {velocity.X, velocity.Y, velocity.Z},
                     humanoidState = tostring(sample.state or "Running"),
@@ -2398,6 +2432,19 @@ local function createTrajectoryCalibration(): any
     end
 
     finalizeGunCapture = function(pending: PendingGun): ()
+        -- The echo lives here on purpose. The shot-feedback handler that used
+        -- to feed it depends on a connection made when the feature toggles;
+        -- the v61 log shows it never fired (echoDelay nil on all 13 shots
+        -- despite 9 confirmations). This handler is the one that produced
+        -- those 9 confirmations, so it is the reliable place to measure.
+        if state.mm2Prediction and type(state.mm2Prediction.noteEcho) == "function"
+            and predictionMath.finite(pending.latencyMs)
+            and predictionMath.finite(pending.activatedAt) then
+            state.mm2Prediction.noteEcho(
+                pending.activatedAt,
+                pending.activatedAt + pending.latencyMs / 1000
+            )
+        end
         local analysis: {[string]: any} = analyzeTargetTrajectory(
             pending.targetTrajectory,
             pending.pingMs,
@@ -3003,6 +3050,33 @@ local function createTrajectoryCalibration(): any
             endpointToObservedTarget = targetPosition and (info.endpoint - targetPosition).Magnitude or nil,
             targetPositionScope = "client-observed-at-GunFired-receipt; not server impact-time position",
             hitPartPath = path, hitTarget = hitTarget, evidence = "GunFired endpoint/hitPart",
+        })
+    end
+
+    -- A shot the client refused. Recorded so the blocker that the server
+    -- respects (invisible wall, barrier, tagged part) can be identified
+    -- instead of being inferred from a miss. Throttled: a held auto-shoot
+    -- would otherwise flood the event ring.
+    function controller:noteBlockedShot(blocker: any): ()
+        if not runtime.active or type(blocker) ~= "table" then
+            return
+        end
+        local now: number = os.clock()
+        if now - runtime.lastBlockedAt < 1 then
+            return
+        end
+        runtime.lastBlockedAt = now
+        appendEvent({
+            kind = "gun",
+            phase = "blocked",
+            serverTime = workspace:GetServerTimeNow(),
+            pingMs = getPingMilliseconds(),
+            reason = "wall",
+            blockedName = type(blocker.name) == "string" and blocker.name or nil,
+            blockedTransparency = tonumber(blocker.transparency),
+            blockedCanCollide = blocker.canCollide == true,
+            blockedSkipped = blocker.skipped == true,
+            blockedDistance = tonumber(blocker.distance),
         })
     end
 
@@ -3652,7 +3726,7 @@ end
 -- following the segment because the aim point is a future pose; seeing the
 -- wall behind it is the point of the check.
 local function validateGunShot(target: Player, character: Model, targetCharacter: Model,
-    muzzle: Vector3, origin: Vector3, endpoint: Vector3, walls: boolean): (boolean, string?)
+    muzzle: Vector3, origin: Vector3, endpoint: Vector3, walls: boolean): (boolean, string?, any?)
     if LocalPlayer.Character ~= character or not target or target == LocalPlayer
         or target.Character ~= targetCharacter or not isPlayerAlive(target)
         or isProtectedTarget(target) or getPlayerRole(target) ~= "Murderer" then
@@ -3671,15 +3745,31 @@ local function validateGunShot(target: Player, character: Model, targetCharacter
         or (endpoint-muzzle).Magnitude < 0.05 then return false,"Invalid shot geometry." end
     if walls then
         local options = {ignoreTarget = true}
-        if not isWeaponPathClear(muzzle,endpoint,targetCharacter,nil,options) then
-            return false,"A wall or another body blocks the shot."
+        local clear, blocker = isWeaponPathClear(muzzle,endpoint,targetCharacter,nil,options)
+        if not clear then
+            return false,"A wall or another body blocks the shot.",blocker
         end
-        if (origin-muzzle).Magnitude > 0.05
-            and not isWeaponPathClear(origin,endpoint,targetCharacter,nil,options) then
-            return false,"A wall or another body blocks the shot."
+        -- Second pass with the conservative rule: a fully transparent part
+        -- that still collides is an invisible barrier. The 2026-10-18 session
+        -- confirmed nine shots and five of them stopped 24-56 studs short of
+        -- the aim while this first pass was clear, so the skipped geometry is
+        -- real to the server even though the client's visual filter ignores it.
+        local solidClear, solidBlocker = isWeaponPathClear(muzzle,endpoint,targetCharacter,true,options)
+        if not solidClear then
+            return false,"An invisible wall blocks the shot.",solidBlocker
+        end
+        if (origin-muzzle).Magnitude > 0.05 then
+            local originClear, originBlocker = isWeaponPathClear(origin,endpoint,targetCharacter,nil,options)
+            if not originClear then
+                return false,"A wall or another body blocks the shot.",originBlocker
+            end
+            local originSolid, originSolidBlocker = isWeaponPathClear(origin,endpoint,targetCharacter,true,options)
+            if not originSolid then
+                return false,"An invisible wall blocks the shot.",originSolidBlocker
+            end
         end
     end
-    return true,nil
+    return true,nil,nil
 end
 
 local function disconnectGunFiredObserver(): ()

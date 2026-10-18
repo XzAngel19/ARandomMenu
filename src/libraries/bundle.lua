@@ -1,5 +1,5 @@
 return {
-    stamp = "v61-20261017-pre-shot-history",
+    stamp = "v62-20261018-invisible-wall",
     files = {
         ["src/Profile/142823291.lua"] = [[
 --!strict
@@ -2774,9 +2774,15 @@ function Module.init(runtime: any): any
                 or gun:GetAttribute("Reloading") == true or gun:GetAttribute("IsReloading") == true then
                 return reject("The gun is disabled or reloading.")
             end
-            local ok, allowed, why = pcall(validateGunShot,target,character,targetCharacter,
+            local ok, allowed, why, blocker = pcall(validateGunShot,target,character,targetCharacter,
                 shotOrigin.Position,shotOrigin.Position,shotEnd.Position,mm2Settings.shootWallCheck)
-            if not ok or not allowed then return reject(why or "Shot safety check failed.") end
+            if not ok or not allowed then
+                if type(blocker) == "table" and trajectoryCalibration
+                    and type(trajectoryCalibration.noteBlockedShot) == "function" then
+                    pcall(trajectoryCalibration.noteBlockedShot, trajectoryCalibration, blocker)
+                end
+                return reject(why or "Shot safety check failed.")
+            end
             return true
         end
 
@@ -2827,7 +2833,9 @@ function Module.init(runtime: any): any
                     referencePoint = info.capturedPosition and {info.capturedPosition.X, info.capturedPosition.Y, info.capturedPosition.Z},
                     predictedPoint = {info.endpoint.X, info.endpoint.Y, info.endpoint.Z},
                     sampledVelocity = {info.velocity.X, info.velocity.Y, info.velocity.Z},
-                    rtt = info.rtt, echoDelay = info.echoDelay},
+                    rtt = info.rtt, echoDelay = info.echoDelay,
+                    echoSamples = info.echoSamples,
+                    turnRate = info.turnRate, brakeSeconds = info.brakeSeconds},
             })
             if not quiet and ShootFeature then ShootFeature:SetStatus(nil) end
             macroUnequip(gun)
@@ -2859,7 +2867,9 @@ function Module.init(runtime: any): any
                 referencePoint = info.capturedPosition and {info.capturedPosition.X, info.capturedPosition.Y, info.capturedPosition.Z},
                 predictedPoint = {info.endpoint.X, info.endpoint.Y, info.endpoint.Z},
                 sampledVelocity = {info.velocity.X, info.velocity.Y, info.velocity.Z},
-                rtt = info.rtt, echoDelay = info.echoDelay},
+                rtt = info.rtt, echoDelay = info.echoDelay,
+                echoSamples = info.echoSamples,
+                turnRate = info.turnRate, brakeSeconds = info.brakeSeconds},
         })
         if not quiet and ShootFeature then ShootFeature:SetStatus(nil) end
         macroUnequip(gun)
@@ -4136,6 +4146,10 @@ type Motion = {
     brakeSeconds: number?,
     -- How far behind `now` the fitted direction sits.
     fitLag: number,
+    -- True only when the measured vertical speed is worth extrapolating. The
+    -- humanoid state alone is not enough: a replicated "Jumping" pose can be a
+    -- character standing at the apex of a jump.
+    verticalLead: boolean,
 }
 
 type AimInfo = {
@@ -4154,6 +4168,9 @@ type AimInfo = {
     model: string,
     rtt: number,
     echoDelay: number?,
+    -- How many echoes back the recorded delay. Zero means the horizon used
+    -- the ping, which the calibration can distinguish from a real median.
+    echoSamples: number,
     flightSeconds: number?,
 }
 
@@ -4197,6 +4214,19 @@ local TURN_MAX_RATE: number = 10.0
 -- that small only adds noise to the endpoint.
 local TURN_MIN_RATE: number = 0.4
 local TURN_MAX_ANGLE: number = math.rad(45)
+-- Two fits over replicated poses disagree by jitter as much as by turning.
+-- At 0.5 the recorded session produced 224 deg and 152 deg turns on a
+-- straight run; at 0.20 the shots with a >100 deg turn drop from five to two
+-- and the measured aim improves, so this is where the noise stops.
+local TURN_RESIDUAL: number = 0.20
+-- Vertical extrapolation needs a real vertical speed. A humanoid reported as
+-- Jumping at its apex has almost no vertical velocity; dropping the aim by a
+-- full ballistic term there is what put shot 6 2.3 studs under the target.
+local VERTICAL_MIN_SPEED: number = 5.0
+-- Robust transport fallback: a single GetNetworkPing spike (0.31 s against a
+-- 0.107 s baseline in the 2026-10-18 session) must not move the next aim.
+local RTT_SAMPLES: number = 8
+local RTT_SAMPLE_INTERVAL: number = 0.25
 local BRAKE_MIN_ACCEL: number = 6.0
 local BRAKE_MAX_ACCEL: number = 120.0
 
@@ -4428,12 +4458,12 @@ function Module.init(runtime: any): any
         fit: Fit
     ): (number, number, number?, number)
         local fitLag: number = math.max(0, now - fit.center)
-        if fit.count < 3 or fit.span < 0.06 or fit.residual > 0.5 then
+        if fit.count < 3 or fit.span < 0.06 or fit.residual > TURN_RESIDUAL then
             return 0, 0, nil, fitLag
         end
         local previous: Fit? = fitVelocity(track, now - TURN_SPAN)
         if not previous or previous.count < 3 or previous.span < 0.04
-            or previous.residual > 0.5 then
+            or previous.residual > TURN_RESIDUAL then
             return 0, 0, nil, fitLag
         end
         local v0: Vector3 = Vector3.new(previous.velocity.X, 0, previous.velocity.Z)
@@ -4486,6 +4516,7 @@ function Module.init(runtime: any): any
         local longitudinalAccel: number = 0
         local brakeSeconds: number? = nil
         local fitLag: number = 0
+        local verticalLead: boolean = false
         if fit and fit.count >= 3 and fit.span >= 0.06 and fit.residual <= 0.5 then
             -- Clean replicated path: the fit rejects the single-sample spikes
             -- and is not fooled by a zero AssemblyLinearVelocity.
@@ -4516,6 +4547,9 @@ function Module.init(runtime: any): any
             turnRate, longitudinalAccel, brakeSeconds, fitLag =
                 measureTurn(track, now, fit)
         end
+        if airborne and math.abs(vertical) >= VERTICAL_MIN_SPEED then
+            verticalLead = true
+        end
         return {
             velocity = Vector3.new(horizontal.X, vertical, horizontal.Z),
             horizontal = horizontal,
@@ -4529,6 +4563,7 @@ function Module.init(runtime: any): any
             longitudinalAccel = longitudinalAccel,
             brakeSeconds = brakeSeconds,
             fitLag = fitLag,
+            verticalLead = verticalLead,
         }
     end
 
@@ -4561,12 +4596,14 @@ function Module.init(runtime: any): any
         -- Correct it by the measured longitudinal acceleration over that lag,
         -- and include the acceleration over the horizon itself. Both terms
         -- are clamped in measureTurn; a clean straight run leaves them at 0.
-        local speedNow: number = math.max(
-            0,
-            speed + motion.longitudinalAccel * motion.fitLag
-        )
+        -- Only deceleration earns a length correction. In the recorded v61
+        -- session the measured "acceleration" of a running target swung to the
+        -- +120 clamp and stretched the lead by 1.5 studs; a real stop is the
+        -- case that matters and it is a negative value.
+        local along: number = math.min(0, motion.longitudinalAccel)
+        local speedNow: number = math.max(0, speed + along * motion.fitLag)
         local length: number = speedNow * horizon
-            + 0.5 * motion.longitudinalAccel * horizon * horizon
+            + 0.5 * along * horizon * horizon
         length = math.max(0, length)
         if motion.brakeSeconds and horizon > motion.brakeSeconds then
             -- The target is already stopped by then; extrapolating further
@@ -4589,7 +4626,7 @@ function Module.init(runtime: any): any
         local x: number = last.position.X + lead.X
         local z: number = last.position.Z + lead.Z
         local y: number = last.position.Y
-        if motion.airborne then
+        if motion.verticalLead then
             y += motion.vertical * horizon
                 - 0.5 * workspace.Gravity * horizon * horizon
         end
@@ -4608,6 +4645,26 @@ function Module.init(runtime: any): any
             latency = 0.08
         end
         return math.clamp(latency, 0.02, 0.6)
+    end
+
+    -- A median of recent readings, not the live number. A single spike in the
+    -- engine estimate produced leads of 0.36-0.40 s against a 0.13 s baseline
+    -- on 2026-10-18, and both of those shots missed by 7+ studs.
+    local rttSamples: {number} = {}
+    local lastRttSampleAt: number = -math.huge
+    local function robustRtt(): number
+        local now: number = os.clock()
+        if now - lastRttSampleAt >= RTT_SAMPLE_INTERVAL then
+            lastRttSampleAt = now
+            table.insert(rttSamples, currentRtt())
+            while #rttSamples > RTT_SAMPLES do
+                table.remove(rttSamples, 1)
+            end
+        end
+        local sorted: {number} = table.clone(rttSamples)
+        table.insert(sorted, currentRtt())
+        table.sort(sorted)
+        return sorted[math.floor((#sorted + 1) / 2)]
     end
 
     local function echoMedian(): number?
@@ -4642,8 +4699,13 @@ function Module.init(runtime: any): any
     end
 
     local function gunHorizon(): (number, number, number?)
-        local rtt: number = currentRtt()
+        local rtt: number = robustRtt()
         local echo: number? = echoMedian()
+        -- The echo is measured client-side from the activation to the
+        -- confirmation, so it is a real round trip rather than an engine
+        -- estimate; it replaces the ping when a median exists. It has to be
+        -- measured from the confirmation path for that to happen at all:
+        -- v61 recorded none (`echoDelay` nil on all 13 shots).
         local pipeline: number = echo or rtt
         local horizon: number = pipeline
             + settings.interpolation
@@ -4655,7 +4717,7 @@ function Module.init(runtime: any): any
     end
 
     local function knifeHorizon(): (number, number)
-        local rtt: number = currentRtt()
+        local rtt: number = robustRtt()
         local horizon: number = rtt
             + settings.interpolation
             + manualLead()
@@ -4702,6 +4764,7 @@ function Module.init(runtime: any): any
             model = "kinematic-v51",
             rtt = rtt,
             echoDelay = echo,
+            echoSamples = #echoes,
             turnRate = motion.turnRate,
             brakeSeconds = motion.brakeSeconds,
         }, nil
@@ -4747,8 +4810,8 @@ function Module.init(runtime: any): any
         -- tangent, and the blade needs the chord.
         local span: number = horizon + flight
         local lead: Vector3 = leadHorizontal(motion, span)
-        local vertical: number = motion.vertical
-        if motion.airborne then
+        local vertical: number = motion.verticalLead and motion.vertical or 0
+        if motion.verticalLead then
             vertical -= 0.5 * workspace.Gravity * span
         end
         local effective: Vector3 = Vector3.new(
@@ -4765,8 +4828,8 @@ function Module.init(runtime: any): any
             flight = revised
             span = horizon + flight
             lead = leadHorizontal(motion, span)
-            vertical = motion.vertical
-            if motion.airborne then
+            vertical = motion.verticalLead and motion.vertical or 0
+            if motion.verticalLead then
                 vertical -= 0.5 * workspace.Gravity * span
             end
             effective = Vector3.new(lead.X, vertical * span, lead.Z) / span
@@ -4792,13 +4855,14 @@ function Module.init(runtime: any): any
             motionSource = motion.source,
             model = "kinematic-v51",
             rtt = rtt,
+            echoSamples = #echoes,
             turnRate = motion.turnRate,
             brakeSeconds = motion.brakeSeconds,
         }, nil
     end
 
     local function playerStatus(target: Player?): string
-        local rtt: number = currentRtt()
+        local rtt: number = robustRtt()
         local echo: number? = echoMedian()
         local parts: {string} = {
             string.format("RTT %.0f ms", rtt * 1000),
@@ -4880,20 +4944,28 @@ function Module.init(runtime: any): any
         -- in seconds relative to now (negative). Telemetry attaches it to each
         -- shot so an alternative predictor can be replayed offline from the
         -- same inputs instead of being judged only on live hits.
-        getHistory = function(player: Player, seconds: number?): {any}?
+        getHistory = function(
+            player: Player,
+            seconds: number?
+        ): ({any}?, number?)
             local track: Track? = tracks[player]
             if not track or #track.samples < 2 then
-                return nil
+                return nil, 0
             end
             local span: number = math.clamp(
                 seconds or HISTORY_SECONDS,
                 0.05,
                 HISTORY_SECONDS
             )
-            local now: number = os.clock()
+            -- Times are relative to the newest sample, not to this call. The
+            -- modules do not share a clock epoch (the v61 log recorded a
+            -- -2546 s offset), so only the predictor's own timestamps can be
+            -- subtracted from each other. The caller gets the age separately.
+            local newest: Sample = track.samples[#track.samples]
+            local age: number = math.max(0, os.clock() - newest.at)
             local points: {any} = {}
             for _, sample: Sample in ipairs(track.samples) do
-                local at: number = sample.at - now
+                local at: number = sample.at - newest.at
                 if at >= -span - 1e-6 then
                     table.insert(points, {
                         at = at,
@@ -4905,9 +4977,9 @@ function Module.init(runtime: any): any
                 end
             end
             if #points < 2 then
-                return nil
+                return nil, age
             end
-            return points
+            return points, age
         end,
         gunAim = gunAim,
         knifeAim = knifeAim,
@@ -4935,6 +5007,8 @@ function Module.init(runtime: any): any
         reset = function(): ()
             table.clear(echoes)
             table.clear(tracks)
+            table.clear(rttSamples)
+            lastRttSampleAt = -math.huge
         end,
     }
 
@@ -5237,9 +5311,12 @@ local function clearEffects(folder)
 end
 
 -- Match the recovered client's cursor filters, not an assertion about server rules.
-local function isWeaponPathClear(origin: Vector3, endpoint: Vector3, target: Model?, strict: boolean?, options: {ignoreTarget: boolean?, requireTarget: boolean?}?): boolean
+-- Returns (clear, blocker). `blocker` describes the part that stopped the ray
+-- (or the last transparent part that was skipped) so the caller can record what
+-- the server disagreed about instead of guessing.
+local function isWeaponPathClear(origin: Vector3, endpoint: Vector3, target: Model?, strict: boolean?, options: {ignoreTarget: boolean?, requireTarget: boolean?}?): (boolean, any?)
     local direction: Vector3 = endpoint - origin
-    if direction.Magnitude < 0.05 then return true end
+    if direction.Magnitude < 0.05 then return true, nil end
     local excluded: {Instance} = {}
     if LocalPlayer.Character then table.insert(excluded, LocalPlayer.Character) end
     -- Projectile endpoints are future poses: the target's present body must
@@ -5254,21 +5331,42 @@ local function isWeaponPathClear(origin: Vector3, endpoint: Vector3, target: Mod
     for _ = 1, 32 do
         params.FilterDescendantsInstances = excluded
         local hit: RaycastResult? = workspace:Raycast(origin, direction, params)
-        if not hit then return not (options and options.requireTarget == true) end
-        if target and hit.Instance:IsDescendantOf(target) then return true end
-        -- The gun is hitscan and uses the game's rule verbatim: every fully
-        -- transparent part is skipped. The knife is a physical blade, so with
-        -- strict it only ignores transparent parts that cannot collide;
-        -- an invisible solid wall still stops the knife.
+        if not hit then return not (options and options.requireTarget == true), nil end
+        if target and hit.Instance:IsDescendantOf(target) then return true, nil end
+        -- The gun uses the game's rule verbatim: every fully transparent part
+        -- is skipped. With strict (knife, and the second gun pass) only
+        -- transparent parts that cannot collide are skipped; an invisible
+        -- solid barrier stops the ray.
         local part: Instance = hit.Instance
+        local info: any = {
+            name = nil,
+            className = nil,
+            transparency = nil,
+            canCollide = nil,
+            distance = nil,
+            skipped = false,
+        }
+        pcall(function(): ()
+            info.name = string.sub(part:GetFullName(), 1, 160)
+            info.className = part.ClassName
+            local hitPosition: any = (hit :: any).Position
+            if hitPosition then
+                info.distance = (hitPosition - origin).Magnitude
+            end
+        end)
+        if part:IsA("BasePart") then
+            info.transparency = part.Transparency
+            info.canCollide = part.CanCollide
+        end
         if part:IsA("BasePart") and part.Transparency == 1
             and (not strict or part.CanCollide == false) then
+            info.skipped = true
             table.insert(excluded, part)
         else
-            return false
+            return false, info
         end
     end
-    return false -- bounded work, conservative if a map has many transparent layers
+    return false, { name = "raycast budget", skipped = false } -- conservative
 end
 
 local function getWeaponFromContainer(
@@ -6647,6 +6745,11 @@ local function createTrajectoryCalibration(): any
         bestMotionModel: string?,
         motionModelErrors: {[string]: number}?,
         evaluationSeconds: number?,
+        blockedName: string?,
+        blockedTransparency: number?,
+        blockedCanCollide: boolean?,
+        blockedSkipped: boolean?,
+        blockedDistance: number?,
     }
     type Estimates = {
         gunAcceptanceMs: number?,
@@ -6698,6 +6801,7 @@ local function createTrajectoryCalibration(): any
         sessionKnifeAttempts = 0,
         sessionKnifeConfirmed = 0,
         pendingGuns = {} :: {PendingGun},
+        lastBlockedAt = 0,
         pendingKnives = {} :: {PendingKnife},
         tracks = {} :: {[Instance]: KnifeTrack},
         observedTools = setmetatable({}, {__mode = "k"}) :: {[Tool]: boolean},
@@ -7066,7 +7170,7 @@ local function createTrajectoryCalibration(): any
             or type(state.mm2Prediction.getHistory) ~= "function" then
             return points
         end
-        local ok: boolean, history: any = pcall(
+        local ok: boolean, history: any, age: any = pcall(
             state.mm2Prediction.getHistory,
             player,
             0.6
@@ -7074,6 +7178,10 @@ local function createTrajectoryCalibration(): any
         if not ok or type(history) ~= "table" then
             return points
         end
+        -- `at` is relative to the newest predictor sample and `age` is how old
+        -- that sample was at the shot. Clocks in the two modules do not share
+        -- an epoch, so the subtraction happens on the predictor's side only.
+        local sampleAge: number = predictionMath.finite(age) and age or 0
         for _, sample: any in ipairs(history) do
             if #points >= 36 then
                 break
@@ -7082,7 +7190,7 @@ local function createTrajectoryCalibration(): any
             local velocity: any = sample.velocity
             if typeof(position) == "Vector3" and typeof(velocity) == "Vector3" then
                 table.insert(points, {
-                    dt = (sample.at or 0) - now,
+                    dt = (sample.at or 0) - sampleAge,
                     position = {position.X, position.Y, position.Z},
                     velocity = {velocity.X, velocity.Y, velocity.Z},
                     humanoidState = tostring(sample.state or "Running"),
@@ -7518,6 +7626,19 @@ local function createTrajectoryCalibration(): any
     end
 
     finalizeGunCapture = function(pending: PendingGun): ()
+        -- The echo lives here on purpose. The shot-feedback handler that used
+        -- to feed it depends on a connection made when the feature toggles;
+        -- the v61 log shows it never fired (echoDelay nil on all 13 shots
+        -- despite 9 confirmations). This handler is the one that produced
+        -- those 9 confirmations, so it is the reliable place to measure.
+        if state.mm2Prediction and type(state.mm2Prediction.noteEcho) == "function"
+            and predictionMath.finite(pending.latencyMs)
+            and predictionMath.finite(pending.activatedAt) then
+            state.mm2Prediction.noteEcho(
+                pending.activatedAt,
+                pending.activatedAt + pending.latencyMs / 1000
+            )
+        end
         local analysis: {[string]: any} = analyzeTargetTrajectory(
             pending.targetTrajectory,
             pending.pingMs,
@@ -8123,6 +8244,33 @@ local function createTrajectoryCalibration(): any
             endpointToObservedTarget = targetPosition and (info.endpoint - targetPosition).Magnitude or nil,
             targetPositionScope = "client-observed-at-GunFired-receipt; not server impact-time position",
             hitPartPath = path, hitTarget = hitTarget, evidence = "GunFired endpoint/hitPart",
+        })
+    end
+
+    -- A shot the client refused. Recorded so the blocker that the server
+    -- respects (invisible wall, barrier, tagged part) can be identified
+    -- instead of being inferred from a miss. Throttled: a held auto-shoot
+    -- would otherwise flood the event ring.
+    function controller:noteBlockedShot(blocker: any): ()
+        if not runtime.active or type(blocker) ~= "table" then
+            return
+        end
+        local now: number = os.clock()
+        if now - runtime.lastBlockedAt < 1 then
+            return
+        end
+        runtime.lastBlockedAt = now
+        appendEvent({
+            kind = "gun",
+            phase = "blocked",
+            serverTime = workspace:GetServerTimeNow(),
+            pingMs = getPingMilliseconds(),
+            reason = "wall",
+            blockedName = type(blocker.name) == "string" and blocker.name or nil,
+            blockedTransparency = tonumber(blocker.transparency),
+            blockedCanCollide = blocker.canCollide == true,
+            blockedSkipped = blocker.skipped == true,
+            blockedDistance = tonumber(blocker.distance),
         })
     end
 
@@ -8772,7 +8920,7 @@ end
 -- following the segment because the aim point is a future pose; seeing the
 -- wall behind it is the point of the check.
 local function validateGunShot(target: Player, character: Model, targetCharacter: Model,
-    muzzle: Vector3, origin: Vector3, endpoint: Vector3, walls: boolean): (boolean, string?)
+    muzzle: Vector3, origin: Vector3, endpoint: Vector3, walls: boolean): (boolean, string?, any?)
     if LocalPlayer.Character ~= character or not target or target == LocalPlayer
         or target.Character ~= targetCharacter or not isPlayerAlive(target)
         or isProtectedTarget(target) or getPlayerRole(target) ~= "Murderer" then
@@ -8791,15 +8939,31 @@ local function validateGunShot(target: Player, character: Model, targetCharacter
         or (endpoint-muzzle).Magnitude < 0.05 then return false,"Invalid shot geometry." end
     if walls then
         local options = {ignoreTarget = true}
-        if not isWeaponPathClear(muzzle,endpoint,targetCharacter,nil,options) then
-            return false,"A wall or another body blocks the shot."
+        local clear, blocker = isWeaponPathClear(muzzle,endpoint,targetCharacter,nil,options)
+        if not clear then
+            return false,"A wall or another body blocks the shot.",blocker
         end
-        if (origin-muzzle).Magnitude > 0.05
-            and not isWeaponPathClear(origin,endpoint,targetCharacter,nil,options) then
-            return false,"A wall or another body blocks the shot."
+        -- Second pass with the conservative rule: a fully transparent part
+        -- that still collides is an invisible barrier. The 2026-10-18 session
+        -- confirmed nine shots and five of them stopped 24-56 studs short of
+        -- the aim while this first pass was clear, so the skipped geometry is
+        -- real to the server even though the client's visual filter ignores it.
+        local solidClear, solidBlocker = isWeaponPathClear(muzzle,endpoint,targetCharacter,true,options)
+        if not solidClear then
+            return false,"An invisible wall blocks the shot.",solidBlocker
+        end
+        if (origin-muzzle).Magnitude > 0.05 then
+            local originClear, originBlocker = isWeaponPathClear(origin,endpoint,targetCharacter,nil,options)
+            if not originClear then
+                return false,"A wall or another body blocks the shot.",originBlocker
+            end
+            local originSolid, originSolidBlocker = isWeaponPathClear(origin,endpoint,targetCharacter,true,options)
+            if not originSolid then
+                return false,"An invisible wall blocks the shot.",originSolidBlocker
+            end
         end
     end
-    return true,nil
+    return true,nil,nil
 end
 
 local function disconnectGunFiredObserver(): ()
