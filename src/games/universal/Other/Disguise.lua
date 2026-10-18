@@ -87,8 +87,6 @@ function Module.init(context: Runtime): any
     local framework: any = context.framework
     local host: any = context.host
     local Players: Players = host.Players or (game :: any):GetService("Players")
-    local MarketplaceService: MarketplaceService = host.MarketplaceService
-        or (game :: any):GetService("MarketplaceService")
     local LocalPlayer: Player = host.LocalPlayer or Players.LocalPlayer
 
     local cloned = setmetatable({}, {__mode = "k"}) :: {[Instance]: boolean}
@@ -106,7 +104,7 @@ function Module.init(context: Runtime): any
     local settings = {
         mode = "Character",
         id = tostring(DEFAULT_USER_ID),
-        useTargetMovementAnimations = false,
+        useTargetMovementAnimations = true,
     }
 
     local function status(message: string): ()
@@ -398,78 +396,63 @@ function Module.init(context: Runtime): any
     end
 
 
-    local animationAssetCache: {[string]: {string}} = {}
-
-    local function extractAnimationsFromAsset(rawAssetId: any): {string}
-        local cacheKey: string = tostring(rawAssetId or "")
-        if cacheKey == "" or cacheKey == "0" then
-            return {}
+    -- Used when "Use target movement animations" is turned off: restore only
+    -- the Animate slots, leaving the current appearance/emotes untouched.
+    local function restoreMovementAnimationsOnly(
+        character: Model,
+        humanoid: Humanoid?
+    ): ()
+        local current: AppearanceSnapshot? = snapshot
+        if not current or current.character ~= character
+            or not animationOverrideApplied then
+            return
         end
-        if animationAssetCache[cacheKey] then
-            return animationAssetCache[cacheKey]
+        for _, entry: AnimationTemplate in ipairs(current.animations) do
+            if isInsideCharacter(entry.animation, character) then
+                pcall(function()
+                    entry.animation.AnimationId = entry.animationId
+                end)
+            end
         end
+        animationOverrideApplied = false
+        local animate: Instance? = character:FindFirstChild("Animate")
+        if not animate then
+            return
+        end
+        if humanoid then
+            local animator: Animator? = humanoid:FindFirstChildOfClass("Animator")
+            if animator then
+                local tracksOk: boolean, tracks: any = pcall(function()
+                    return animator:GetPlayingAnimationTracks()
+                end)
+                if tracksOk and type(tracks) == "table" then
+                    for _, track: AnimationTrack in ipairs(tracks) do
+                        pcall(track.Stop, track)
+                    end
+                end
+            end
+        end
+        restartAnimateScript(animate)
+    end
 
-        local numericId: number? = nil
-        if type(rawAssetId) == "number" and rawAssetId > 0 then
-            numericId = rawAssetId
-        elseif type(rawAssetId) == "string" then
-            local matched: string? = string.match(rawAssetId, "%d+")
+    -- HumanoidDescription already stores the target's animation asset IDs
+    -- (rbxassetid://numbers). Assigning them directly is instant and does not
+    -- depend on game:GetObjects / InsertService, which are Studio or server
+    -- only and are the reason the old button could hang on "Downloading...".
+    local function animationIdFromValue(value: any): string?
+        local number: number? = nil
+        if type(value) == "number" and value > 0 then
+            number = value
+        elseif type(value) == "string" then
+            local matched: string? = string.match(value, "%d+")
             if matched then
-                numericId = tonumber(matched)
+                number = tonumber(matched)
             end
         end
-
-        local result: {string} = {}
-        if numericId and numericId > 0 then
-
-            local objectsOk: boolean, objects: any = pcall(function()
-                return (game :: any):GetObjects("rbxassetid://" .. tostring(numericId))
-            end)
-            if objectsOk and type(objects) == "table" and #objects > 0 then
-                for _, obj: Instance in ipairs(objects) do
-                    if obj:IsA("Animation") and obj.AnimationId ~= "" then
-                        table.insert(result, obj.AnimationId)
-                    end
-                    for _, descendant: Instance in ipairs(obj:GetDescendants()) do
-                        if descendant:IsA("Animation") and descendant.AnimationId ~= "" then
-                            table.insert(result, descendant.AnimationId)
-                        end
-                    end
-                end
-                for _, obj: Instance in ipairs(objects) do
-                    destroyInstance(obj)
-                end
-            end
-
-            if #result == 0 then
-                local insertService: any = (game :: any):GetService("InsertService")
-                if insertService and type(insertService.LoadAsset) == "function" then
-                    local loadOk: boolean, loaded: any = pcall(function()
-                        return insertService:LoadAsset(numericId)
-                    end)
-                    if loadOk and loaded then
-                        if loaded:IsA("Animation") and loaded.AnimationId ~= "" then
-                            table.insert(result, loaded.AnimationId)
-                        end
-                        for _, descendant: Instance in ipairs(loaded:GetDescendants()) do
-                            if descendant:IsA("Animation") and descendant.AnimationId ~= "" then
-                                table.insert(result, descendant.AnimationId)
-                            end
-                        end
-                        destroyInstance(loaded)
-                    end
-                end
-            end
-
-            if #result == 0 then
-                table.insert(result, "rbxassetid://" .. tostring(numericId))
-            end
-        elseif type(rawAssetId) == "string" and rawAssetId ~= "" then
-            table.insert(result, rawAssetId)
+        if not number or number <= 0 then
+            return nil
         end
-
-        animationAssetCache[cacheKey] = result
-        return result
+        return "rbxassetid://" .. tostring(math.floor(number))
     end
 
     local function copyTargetMovementAnimations(
@@ -489,27 +472,24 @@ function Module.init(context: Runtime): any
             end)
             local assetId: any = if readOk then value else nil
             local category: Instance? = animate:FindFirstChild(mapping.scriptCategory)
-            if assetId and category then
-                local animIds: {string} = extractAnimationsFromAsset(assetId)
-                if #animIds > 0 then
-                    local targets: {Animation} = {}
-                    if category:IsA("Animation") then
-                        table.insert(targets, category)
+            local chosenId: string? = animationIdFromValue(assetId)
+            if chosenId and category then
+                local targets: {Animation} = {}
+                if category:IsA("Animation") then
+                    table.insert(targets, category)
+                end
+                for _, descendant: Instance in ipairs(category:GetDescendants()) do
+                    if descendant:IsA("Animation") then
+                        table.insert(targets, descendant)
                     end
-                    for _, descendant: Instance in ipairs(category:GetDescendants()) do
-                        if descendant:IsA("Animation") then
-                            table.insert(targets, descendant)
-                        end
-                    end
-                    for idx: number, animation: Animation in ipairs(targets) do
-                        local chosenId: string = animIds[idx] or animIds[1]
-                        if chosenId and chosenId ~= "" and animation.AnimationId ~= chosenId then
-                            local changed: boolean = pcall(function()
-                                animation.AnimationId = chosenId
-                            end)
-                            if changed then
-                                changedCount += 1
-                            end
+                end
+                for _, animation: Animation in ipairs(targets) do
+                    if animation.AnimationId ~= chosenId then
+                        local changed: boolean = pcall(function()
+                            animation.AnimationId = chosenId
+                        end)
+                        if changed then
+                            changedCount += 1
                         end
                     end
                 end
@@ -532,114 +512,6 @@ function Module.init(context: Runtime): any
             restartAnimateScript(animate)
         end
         return changedCount
-    end
-
-    local function applyTargetMovementAnimationsToCharacter(numericId: number): ()
-        local character: Model? = LocalPlayer.Character
-        local humanoid: Humanoid? = character
-            and character:FindFirstChildOfClass("Humanoid")
-            :: Humanoid?
-        if not character or not humanoid or humanoid.Health <= 0 then
-            notify("Your character is not available.")
-            return
-        end
-
-        local animate: Instance? = character:FindFirstChild("Animate")
-        if not animate then
-            notify("Your character has no Animate script to update.")
-            return
-        end
-
-        ensureSnapshot(character, humanoid)
-        status("Downloading target movement animations...")
-
-        task.spawn(function(): ()
-            local changedCount: number = 0
-
-            local targetPlayer: Player? = Players:GetPlayerByUserId(numericId)
-            if not targetPlayer then
-                for _, p: Player in ipairs(Players:GetPlayers()) do
-                    if tostring(p.UserId) == tostring(settings.id)
-                        or string.lower(p.Name) == string.lower(tostring(settings.id))
-                        or string.lower(p.DisplayName) == string.lower(tostring(settings.id)) then
-                        targetPlayer = p
-                        break
-                    end
-                end
-            end
-
-            local targetChar: Model? = targetPlayer and targetPlayer.Character
-            local targetAnimate: Instance? = targetChar and targetChar:FindFirstChild("Animate")
-            if targetAnimate then
-                for _, mapping in ipairs(MOVEMENT_ANIMATIONS) do
-                    local sourceCat: Instance? = targetAnimate:FindFirstChild(mapping.scriptCategory)
-                    local targetCat: Instance? = animate:FindFirstChild(mapping.scriptCategory)
-                    if sourceCat and targetCat then
-                        local sourceAnims: {Animation} = {}
-                        if sourceCat:IsA("Animation") and sourceCat.AnimationId ~= "" then
-                            table.insert(sourceAnims, sourceCat)
-                        end
-                        for _, obj: Instance in ipairs(sourceCat:GetDescendants()) do
-                            if obj:IsA("Animation") and obj.AnimationId ~= "" then
-                                table.insert(sourceAnims, obj)
-                            end
-                        end
-                        if #sourceAnims > 0 then
-                            local targetAnims: {Animation} = {}
-                            if targetCat:IsA("Animation") then
-                                table.insert(targetAnims, targetCat)
-                            end
-                            for _, obj: Instance in ipairs(targetCat:GetDescendants()) do
-                                if obj:IsA("Animation") then
-                                    table.insert(targetAnims, obj)
-                                end
-                            end
-                            for idx: number, targetAnim: Animation in ipairs(targetAnims) do
-                                local src: Animation? = sourceAnims[idx] or sourceAnims[1]
-                                if src and src.AnimationId ~= "" and targetAnim.AnimationId ~= src.AnimationId then
-                                    local changed: boolean = pcall(function()
-                                        targetAnim.AnimationId = src.AnimationId
-                                    end)
-                                    if changed then
-                                        changedCount += 1
-                                    end
-                                end
-                            end
-                        end
-                    end
-                end
-            end
-
-            if changedCount == 0 then
-                local description: any, fetchError: string? = getUserDescription(numericId)
-                if not description then
-                    notify("Could not load target avatar description: " .. tostring(fetchError))
-                    return
-                end
-                changedCount = copyTargetMovementAnimations(character, humanoid, description)
-                destroyInstance(description)
-            else
-                animationOverrideApplied = true
-                local animator: Animator? = humanoid:FindFirstChildOfClass("Animator")
-                if animator then
-                    local tracksOk: boolean, tracks: any = pcall(function()
-                        return animator:GetPlayingAnimationTracks()
-                    end)
-                    if tracksOk and type(tracks) == "table" then
-                        for _, track: AnimationTrack in ipairs(tracks) do
-                            pcall(track.Stop, track)
-                        end
-                    end
-                end
-                restartAnimateScript(animate)
-            end
-
-            if changedCount > 0 then
-                status("Applied " .. tostring(changedCount) .. " target movement animation slot(s); Animate restarted.")
-            else
-                status("No custom movement animations found for ID " .. tostring(numericId) .. " (target may use default animations).")
-            end
-        end)
     end
 
     local function refreshMeshPartSnapshot(
@@ -1039,19 +911,6 @@ function Module.init(context: Runtime): any
             return
         end
 
-        if settings.useTargetMovementAnimations then
-            copyTargetMovementAnimations(
-                character,
-                humanoid,
-                description
-            )
-            if not stillCurrent(token, character) then
-                destroyInstance(description)
-                destroyInstance(clone)
-                return
-            end
-        end
-
         installAppearanceFilter(character)
         restoring = true
         local oldItems: {Instance} = {}
@@ -1068,143 +927,59 @@ function Module.init(context: Runtime): any
         local copied: boolean, copyError: any = pcall(function()
             copyCharacterAppearance(character, clone)
         end)
-        destroyInstance(description)
         destroyInstance(clone)
         if not copied then
+            destroyInstance(description)
             notify("The avatar was loaded, but some appearance parts could not be copied: "
                 .. tostring(copyError))
             return
         end
-        if stillCurrent(token, character) then
-            activeCard:SetStatus("Character")
-            if emoteWarning and targetEmotes and targetEquippedEmotes then
-                notify("Disguise emotes could not be applied: " .. emoteWarning)
-            end
-            status("Ready")
+        if not stillCurrent(token, character) then
+            destroyInstance(description)
+            return
         end
-    end
-
-    local function getService(name: string): any
-        local supplied: any = host[name]
-        if supplied then
-            return supplied
+        activeCard:SetStatus("Character")
+        if emoteWarning and targetEmotes and targetEquippedEmotes then
+            notify("Disguise emotes could not be applied: " .. emoteWarning)
         end
-        local ok: boolean, result: any = pcall(function()
-            return (game :: any):GetService(name)
-        end)
-        return if ok then result else nil
-    end
-
-    local function getBundleItems(
-        bundleId: number,
-        productInfo: any
-    ): ({any}?, string?)
-        local directItems: any = productInfo.Items or productInfo.items
-        local hasDirectItems: boolean = type(directItems) == "table"
-            and #directItems > 0
-        local directType: string = tostring(productInfo.BundleType or "")
-        if hasDirectItems and directType ~= "" then
-            return directItems, directType
-        end
-
-        for _, serviceName: string in ipairs({"AssetService", "AvatarEditorService"}) do
-            local service: any = getService(serviceName)
-            local method: any = service and service.GetBundleDetailsAsync
-            if type(method) == "function" then
-                local ok: boolean, details: any = pcall(method, service, bundleId)
-                if ok and type(details) == "table" then
-                    local items: any = details.Items or details.items
-                    local bundleType: string = tostring(
-                        details.BundleType or directType
-                    )
-                    if bundleType ~= ""
-                        and type(items) == "table"
-                        and #items > 0 then
-                        return items, bundleType
-                    end
-                    if bundleType ~= "" and hasDirectItems then
-                        return directItems, bundleType
-                    end
-                end
+        -- Movement animations are cosmetic and optional, so they run LAST and
+        -- can never block or roll back the avatar copy above.
+        if settings.useTargetMovementAnimations then
+            local movementOk: boolean, movementError: any = pcall(
+                copyTargetMovementAnimations,
+                character,
+                humanoid,
+                description
+            )
+            if not movementOk then
+                notify(
+                    "The avatar was applied, but movement animations failed: "
+                        .. tostring(movementError)
+                )
             end
         end
-        if hasDirectItems then
-            return directItems, directType
-        end
-        return nil, nil
+        destroyInstance(description)
+        status("Ready")
     end
 
-    local function getAnimationType(itemName: string): string
-        local normalized: string = string.lower(itemName)
-            :gsub("%s*animations?%s*$", "")
-            :gsub("%s+", "")
-        local aliases: {[string]: string} = {
-            pose = "idle",
-            idling = "idle",
-            walking = "walk",
-            running = "run",
-            jumping = "jump",
-            falling = "fall",
-            climbing = "climb",
-            swimming = "swim",
-        }
-        return aliases[normalized] or normalized
-    end
-
-    local function applyAnimationBundle(
+    -- Animation mode: the same target user as Character mode, but only what
+    -- moves on our own avatar. No clone, mesh, accessory or texture is copied:
+    -- the character you already have must stay fully visible.
+    local function applyAnimationDisguise(
         token: number,
         character: Model,
         humanoid: Humanoid,
-        bundleId: number
+        userId: number
     ): ()
-        local items: {any}?, rawBundleType: string? = getBundleItems(
-            bundleId,
-            {}
-        )
-        local productInfoError: string? = nil
-        if not items or rawBundleType == nil or rawBundleType == "" then
-            if not stillCurrent(token, character) then
-                return
+        local description: any, fetchError: string? = getUserDescription(userId)
+        if not description then
+            if stillCurrent(token, character) then
+                notify("Could not load that avatar: " .. tostring(fetchError))
             end
-            local infoOk: boolean, productInfo: any = pcall(function()
-                return MarketplaceService:GetProductInfo(
-                    bundleId,
-                    Enum.InfoType.Bundle
-                )
-            end)
-            if not stillCurrent(token, character) then
-                return
-            end
-            if infoOk and type(productInfo) == "table" then
-                local fallbackItems: {any}?, fallbackBundleType: string? =
-                    getBundleItems(bundleId, productInfo)
-                if fallbackItems then
-                    items = fallbackItems
-                end
-                if fallbackBundleType and fallbackBundleType ~= "" then
-                    rawBundleType = fallbackBundleType
-                end
-            else
-                productInfoError = tostring(productInfo)
-            end
+            return
         end
         if not stillCurrent(token, character) then
-            return
-        end
-        if not items then
-            local detail: string = productInfoError
-                and (" " .. productInfoError)
-                or ""
-            notify("Could not read the bundle's animation items." .. detail)
-            return
-        end
-        local bundleType: string = string.lower(tostring(rawBundleType or ""))
-        if bundleType == "" then
-            notify("This client could not verify the bundle type.")
-            return
-        end
-        if not string.find(bundleType, "animation", 1, true) then
-            notify("That ID is not an avatar animation bundle.")
+            destroyInstance(description)
             return
         end
 
@@ -1212,94 +987,68 @@ function Module.init(context: Runtime): any
         restoreOriginalAppearance(character, humanoid)
         stopAppearanceFilter()
 
-        local animate: Instance? = character:FindFirstChild("Animate")
-        if not animate then
-            notify("This character has no Animate script to update.")
-            return
+        local emotesApplied: boolean = false
+        local emotes: any, equippedEmotes: any = readDescriptionEmotes(description)
+        if emotes and equippedEmotes then
+            local applied: boolean, emoteError: string? = setHumanoidEmotes(
+                humanoid,
+                emotes,
+                equippedEmotes
+            )
+            if applied then
+                emotesApplied = true
+                emotesAppliedToHumanoid = true
+                targetEmotes, targetEquippedEmotes = emotes, equippedEmotes
+                refreshMeshPartSnapshot(character, current)
+            else
+                notify(
+                    "Disguise emotes could not be applied: "
+                        .. tostring(emoteError)
+                )
+            end
         end
 
         local changedCount: number = 0
-        for _, item: any in ipairs(items) do
-            if not stillCurrent(token, character) then
-                return
-            end
-            local itemName: string = tostring(item.Name or item.name or "")
-            local itemId: number? = tonumber(item.Id or item.AssetId or item.id)
-            local itemType: string = getAnimationType(itemName)
-            local targetCategory: Instance? = animate:FindFirstChild(itemType)
-            if itemId and targetCategory then
-                local objectsOk: boolean, objects: any = pcall(function()
-                    return (game :: any):GetObjects(
-                        "rbxassetid://" .. tostring(itemId)
-                    )
-                end)
-                if objectsOk and type(objects) == "table" then
-                    if not stillCurrent(token, character) then
-                        for _, object: Instance in ipairs(objects) do
-                            destroyInstance(object)
-                        end
-                        return
-                    end
-                    local sourceAnimation: Animation? = nil
-                    for _, object: Instance in ipairs(objects) do
-                        if object:IsA("Animation") then
-                            sourceAnimation = object
-                            break
-                        end
-                        sourceAnimation = object:FindFirstChildWhichIsA(
-                            "Animation",
-                            true
-                        ) :: Animation?
-                        if sourceAnimation then
-                            break
-                        end
-                    end
-                    if sourceAnimation then
-                        local targetAnimations: {Animation} = {}
-                        if targetCategory:IsA("Animation") then
-                            table.insert(targetAnimations, targetCategory)
-                        end
-                        for _, object: Instance in ipairs(targetCategory:GetDescendants()) do
-                            if object:IsA("Animation") then
-                                table.insert(targetAnimations, object)
-                            end
-                        end
-                        for _, animation: Animation in ipairs(targetAnimations) do
-                            local changed: boolean = pcall(function()
-                                animation.AnimationId = sourceAnimation.AnimationId
-                            end)
-                            if changed then
-                                changedCount += 1
-                            end
-                        end
-                    end
-                    for _, object: Instance in ipairs(objects) do
-                        destroyInstance(object)
-                    end
+        if settings.useTargetMovementAnimations then
+            changedCount = copyTargetMovementAnimations(
+                character,
+                humanoid,
+                description
+            )
+        end
+        destroyInstance(description)
+        if not stillCurrent(token, character) then
+            if emotesApplied then
+                local rolledBack: boolean = setHumanoidEmotes(
+                    humanoid,
+                    current.emotes,
+                    current.equippedEmotes
+                )
+                if rolledBack then
+                    emotesAppliedToHumanoid = false
                 end
             end
+            return
         end
-
-        if changedCount == 0 then
-
-            restoreOriginalAppearance(character, humanoid)
-            notify("No compatible animations were found in that bundle.")
+        if not emotesApplied and changedCount == 0 then
+            if not settings.useTargetMovementAnimations then
+                notify(
+                    "That avatar did not expose emotes. Turn on Use target movement animations to copy movement too."
+                )
+            else
+                notify("That avatar did not expose emotes or movement animations.")
+            end
             return
         end
 
-        animationOverrideApplied = true
-        local animator: Animator? = humanoid:FindFirstChildOfClass("Animator")
-        if animator then
-            for _, track: AnimationTrack in ipairs(animator:GetPlayingAnimationTracks()) do
-                pcall(track.Stop, track)
-            end
-        end
-        restartAnimateScript(animate)
-        if current.character == character and stillCurrent(token, character) then
-            activeCard:SetStatus("Animation")
-            status("Animation bundle applied to " .. tostring(changedCount)
-                .. " slots; Animate restarted. Original IDs return when disabled.")
-        end
+        activeCard:SetStatus("Animation")
+        status(
+            string.format(
+                "Animation · emotes %s · %d animation slots. Your own avatar stays visible.",
+                emotesApplied and "applied" or "not available",
+                changedCount
+            )
+        )
     end
 
     local function applyDisguise(): ()
@@ -1331,7 +1080,7 @@ function Module.init(context: Runtime): any
                     numericId :: number
                 )
             else
-                applyAnimationBundle(
+                applyAnimationDisguise(
                     token,
                     character :: Model,
                     humanoid :: Humanoid,
@@ -1412,7 +1161,7 @@ function Module.init(context: Runtime): any
         Category = "Utilities",
         ConfigKey = "Universal.Disguise",
         Order = 26,
-        Tooltip = "Copies a target avatar's cosmetics and emotes; optionally copies its movement animations. Animation mode changes local motion IDs only, not the visible avatar.",
+        Tooltip = "Character: copies a target avatar's cosmetics and emotes, with optional movement animations. Animation: applies that user's emotes and movement animations to your own avatar without hiding it.",
         Function = function(enabled: boolean): ()
             if enabled then
                 card:SetStatus(settings.mode)
@@ -1456,26 +1205,33 @@ function Module.init(context: Runtime): any
                 applyDisguise()
             end
         end,
-        Tooltip = "Character: visible avatar cosmetics and emotes from a user ID. Animation: movement animation IDs from a bundle; it does not render the target character.",
+        Tooltip = "Character: visible avatar cosmetics and emotes from a user ID. Animation: the same user ID's emotes and movement animations only; your character stays exactly as it is.",
     })
 
-    card:CreateButton({
+    card:CreateToggle({
         Name = "Use target movement animations",
-        Show = {Option = "Mode", Values = {"Character"}},
-        Function = function(): ()
-            if not card.Enabled or settings.mode ~= "Character" then
-                notify("Enable Disguise in Character mode first.")
+        -- Both modes apply movement animations, so the control stays visible.
+        Show = {Option = "Mode", Values = {"Character", "Animation"}},
+        Default = true,
+        Function = function(value: boolean): ()
+            settings.useTargetMovementAnimations = value
+            if not card.Enabled then
                 return
             end
-            local numericId: number?, idError: string? = parseId()
-            if not numericId then
-                notify(tostring(idError))
+            if value then
+                applyDisguise()
                 return
             end
-            settings.useTargetMovementAnimations = true
-            applyTargetMovementAnimationsToCharacter(numericId)
+            local character: Model? = LocalPlayer.Character
+            local humanoid: Humanoid? = character
+                and character:FindFirstChildOfClass("Humanoid")
+                :: Humanoid?
+            if character then
+                restoreMovementAnimationsOnly(character, humanoid)
+            end
+            status(settings.mode)
         end,
-        Tooltip = "Downloads and applies the target user's movement animations (idle, walk, run, jump, climb, fall, swim) to your character. Original IDs return when Disguise is turned off.",
+        Tooltip = "Copies the target user's movement animation IDs (idle, walk, run, jump, climb, fall, swim) to your own Animate script. On by default in Character and Animation; turn it off to keep your own movement. Emotes are separate and stay applied.",
     })
 
     card:CreateTextBox({
@@ -1494,15 +1250,16 @@ function Module.init(context: Runtime): any
                 applyDisguise()
             end
         end,
-        Tooltip = "Positive integer user ID (Character) or avatar-animation bundle ID (Animation).",
+        Tooltip = "Positive integer user ID. Character copies the avatar; Animation copies only its emotes and movement animations.",
     })
 
     card:CreateButton({
         Name = "Show target emotes",
-        Show = {Option = "Mode", Values = {"Character"}},
+        -- Both modes read the same user ID and apply its emotes.
+        Show = {Option = "Mode", Values = {"Character", "Animation"}},
         Function = function(): ()
             if type(targetEmotes) ~= "table" then
-                notify("Load a user ID in Character mode before listing emotes.")
+                notify("Load a user ID before listing emotes.")
                 return
             end
             local names: {string} = sortedEmoteNames(targetEmotes)
@@ -1515,7 +1272,7 @@ function Module.init(context: Runtime): any
                 formatNameList(equipped)
             ))
         end,
-        Tooltip = "Lists the emotes and equipped emote slots returned for the target user ID.",
+        Tooltip = "Lists the emotes and equipped emote slots returned for the target user ID in either mode.",
     })
 
     activeCard = card

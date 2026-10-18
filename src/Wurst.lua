@@ -217,7 +217,7 @@ local RUNTIME_RAW_BASE: string =
         .. RUNTIME_BRANCH
         .. "/"
 
-local SOURCE_STAMP: string = "v53-20261017-safewalk"
+local SOURCE_STAMP: string = "v57-20261017-knife-corridor"
 
 local BOOT_STARTED_AT: number = os.clock()
 local BOOT_FINGERPRINT_SECONDS: number = 0
@@ -4994,6 +4994,7 @@ local function loadGameModule(
     local paths: {string} = if moduleName == "MM2" then {
 
         "src/games/MM2/base.lua",
+        "src/games/MM2/Prediction.lua",
         "src/games/MM2/Blatant/Shoot.lua",
         "src/games/MM2/Blatant/KnifeAura.lua",
         "src/games/MM2/Blatant/KnifeThrow.lua",

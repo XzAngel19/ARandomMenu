@@ -20,11 +20,11 @@ function Module.init(runtime: any): any
     local getPlayerWeapon: any = core.getPlayerWeapon
     local isPlayerAlive: any = core.isPlayerAlive
     local isProtectedTarget: any = core.isProtectedTarget
-    local getFilteredVelocity: any = core.getFilteredVelocity
-    local getEstimatedLatency: any = core.getEstimatedLatency
-    local predictionMath: any = core.predictionMath
+    local prediction: any = state.mm2Prediction
+    assert(type(prediction) == "table", "MM2 Knife Throw requires MM2 Prediction")
     local mm2Settings: any = core.mm2Settings
     local lastKnifePrediction: any = nil
+    local lastKnifeError: string? = nil
     local isWeaponPathClear: any = core.isWeaponPathClear
     local trajectoryCalibration: any = core.trajectoryCalibration
 
@@ -50,23 +50,31 @@ function Module.init(runtime: any): any
         if not localRoot then
             return nil
         end
-        local closest: Player? = nil
-        local closestDistance: number = math.huge
+        local candidates: {{player: Player, distance: number}} = {}
         for _, player: Player in ipairs(Players:GetPlayers()) do
             if isValidTarget(player) then
                 local targetRoot: BasePart? = player.Character
                     and player.Character:FindFirstChild("HumanoidRootPart") :: BasePart?
                 if targetRoot then
-                    local distance: number =
-                        (targetRoot.Position - localRoot.Position).Magnitude
-                    if distance < closestDistance and resolveKnifeAim(player, origin) ~= nil then
-                        closest = player
-                        closestDistance = distance
-                    end
+                    table.insert(candidates, {
+                        player = player,
+                        distance = (targetRoot.Position - localRoot.Position).Magnitude,
+                    })
                 end
             end
         end
-        return closest
+        table.sort(candidates, function(left: any, right: any): boolean
+            return left.distance < right.distance
+        end)
+        -- Corridor checks are rays: cap them per frame. The nearest three
+        -- visible targets are enough; blocked players do not starve the rest.
+        for index: number = 1, math.min(#candidates, 3) do
+            local candidate: any = candidates[index]
+            if resolveKnifeAim(candidate.player, origin) ~= nil then
+                return candidate.player
+            end
+        end
+        return nil
     end
 
     local function getReadyKnife(): Tool?
@@ -86,90 +94,106 @@ function Module.init(runtime: any): any
         return knife
     end
 
-    local function predictAim(target: Player, originPos: Vector3): Vector3?
-        lastKnifePrediction = nil
-        -- Rebuilt from the recovered ThrowingKnifeVisuals integrator:
-        -- position += Direction * ThrowSpeed * dt (96 studs/s by default).
-        -- There is no projectile gravity term in that client model.
-        local root: BasePart? = target.Character
-            and target.Character:FindFirstChild("HumanoidRootPart") :: BasePart?
-        if not root then return nil end
-        local velocity: Vector3 = getFilteredVelocity(target, root)
+    local function readKnifeSpeed(knife: Tool?): number
+        -- ThrowingKnifeVisuals: position += Direction * ThrowSpeed * dt,
+        -- default 96 studs/s, no gravity term.
         local speed: number = 96
-        local knife: Tool? = getReadyKnife()
         if knife then
             local measured: any = knife:GetAttribute("ThrowSpeed")
-            if predictionMath.finite(measured) and measured >= 24 and measured <= 300 then speed = measured end
-        end
-        local latency: number = getEstimatedLatency()
-        if not predictionMath.finite(latency) then latency = 0 end
-        latency = math.clamp(latency, 0, 0.6)
-        local observed: Vector3 = root.Position + velocity * latency
-        local relative: Vector3 = observed - originPos
-        if not predictionMath.finite(relative.Magnitude) or not predictionMath.finite(velocity.Magnitude) then return nil end
-        -- |relative + velocity*t| = speed*t. Stable quadratic roots avoid
-        -- cancellation for approaching targets and handle the linear limit.
-        local a: number = velocity:Dot(velocity) - speed * speed
-        local b: number = 2 * relative:Dot(velocity)
-        local c: number = relative:Dot(relative)
-        local flight: number? = nil
-        if c < 0.0025 then return observed end
-        if math.abs(a) < 1e-6 then
-            if b < -1e-6 then flight = -c / b end
-        else
-            local discriminant: number = b*b - 4*a*c
-            if discriminant >= 0 then
-                local q: number = -0.5 * (b + (b >= 0 and 1 or -1) * math.sqrt(discriminant))
-                local t1: number = q / a
-                local t2: number = math.abs(q) > 1e-9 and c / q or -1
-                if t1 > 0 then flight = t1 end
-                if t2 > 0 and (not flight or t2 < flight) then flight = t2 end
+            if type(measured) == "number"
+                and measured == measured
+                and measured >= 24
+                and measured <= 300 then
+                speed = measured
             end
         end
-        if not flight or not predictionMath.finite(flight) then return nil end
-        local reference = observed + velocity * flight
-        lastKnifePrediction = {motionSource="velocity", model="reference-v41", referenceEndpoint=reference}
-        return reference
+        return speed
     end
 
-    local KNIFE_VISIBILITY_PARTS: {string} = {
-        "UpperTorso", "Torso", "HumanoidRootPart", "Head",
-        "RightHand", "LeftHand", "RightLowerArm", "LeftLowerArm", "RightUpperArm", "LeftUpperArm",
-        "Right Arm", "Left Arm", "RightLowerLeg", "LeftLowerLeg", "RightFoot", "LeftFoot", "Right Leg", "Left Leg",
-    }
-    local KNIFE_PATH_OPTIONS = {ignoreTarget = true}
-    local KNIFE_VISIBLE_OPTIONS = {requireTarget = true}
-    resolveKnifeAim = function(target: Player, origin: Vector3): Vector3?
-        local predicted: Vector3? = predictAim(target, origin)
-        if not predicted then return nil end
-        local character: Model? = target.Character
-        local root: BasePart? = character and character:FindFirstChild("HumanoidRootPart") :: BasePart?
-        if not character or not root then return nil end
-        if isWeaponPathClear(origin, root.Position, character, nil, KNIFE_VISIBLE_OPTIONS)
-            and isWeaponPathClear(origin, predicted, character, nil, KNIFE_PATH_OPTIONS) then return predicted end
-        -- Same recovered ray filter and torso-first visibility strategy as
-        -- Shoot, but keep projectile lead: no hitscan/raw-position rewind here.
-        local lead: Vector3 = predicted - root.Position
-        for _, name: string in ipairs(KNIFE_VISIBILITY_PARTS) do
-            local part: Instance? = character:FindFirstChild(name)
-            if part and part:IsA("BasePart") then
-                local body: BasePart = part :: BasePart
-                local points: {Vector3} = {body.Position + lead}
-                if name == "UpperTorso" or name == "Torso" or name == "HumanoidRootPart" then
-                    local right: Vector3 = body.CFrame.RightVector * math.min(body.Size.X * 0.4, 0.55)
-                    local up: Vector3 = body.CFrame.UpVector * math.min(body.Size.Y * 0.3, 0.35)
-                    for _, offset: Vector3 in ipairs({right, -right, up, -up}) do
-                        table.insert(points, body.Position + offset + lead)
-                    end
-                end
-                for _, point: Vector3 in ipairs(points) do
-                    if (point - origin).Magnitude > 0.05
-                        and isWeaponPathClear(origin, point - lead, character, nil, KNIFE_VISIBLE_OPTIONS)
-                        and isWeaponPathClear(origin, point, character, nil, KNIFE_PATH_OPTIONS) then return point end
-                end
+    -- The blade is a physical straight projectile, so graze tolerance matters:
+    -- a single centre ray passes a wall the real knife then clips. STRICT means
+    -- transparent parts are only ignored when they cannot collide; an invisible
+    -- solid wall still stops the blade. The corridor is sampled with a small
+    -- cross of rays around the centre line.
+    local KNIFE_CORRIDOR_RADIUS: number = 0.5
+    -- The blade keeps flying until it hits something, so there is no range
+    -- limit: only an absurd lead (a vanished target, a broken sample) is
+    -- refused. Ordinary long throws stay available.
+    local MAX_KNIFE_DISTANCE: number = 400
+
+    local function knifeCorridorClear(
+        origin: Vector3,
+        endpoint: Vector3,
+        targetCharacter: Model
+    ): boolean
+        local delta: Vector3 = endpoint - origin
+        local distance: number = delta.Magnitude
+        if distance < 0.05 then
+            return false
+        end
+        local direction: Vector3 = delta.Unit
+        local right: Vector3 = direction:Cross(Vector3.new(0, 1, 0))
+        if right.Magnitude < 1e-3 then
+            right = Vector3.new(1, 0, 0)
+        else
+            right = right.Unit
+        end
+        local up: Vector3 = right:Cross(direction).Unit
+        local offsets: {Vector3} = {
+            Vector3.zero,
+            right * KNIFE_CORRIDOR_RADIUS,
+            right * -KNIFE_CORRIDOR_RADIUS,
+            up * KNIFE_CORRIDOR_RADIUS,
+            up * -KNIFE_CORRIDOR_RADIUS,
+        }
+        for _, offset: Vector3 in ipairs(offsets) do
+            if not isWeaponPathClear(
+                origin + offset,
+                endpoint + offset,
+                targetCharacter,
+                true,
+                {ignoreTarget = true}
+            ) then
+                return false
             end
         end
-        return nil
+        return true
+    end
+
+    -- The blade is a straight projectile. The predictor solves the intercept
+    -- (including the measured transport delay); WallCheck then verifies the
+    -- exact corridor and that the target is not currently behind cover.
+    resolveKnifeAim = function(target: Player, origin: Vector3): Vector3?
+        lastKnifePrediction = nil
+        lastKnifeError = nil
+        local endpoint: Vector3?, info: any, reason: string? =
+            prediction.knifeAim(target, origin, readKnifeSpeed(getReadyKnife()))
+        if not endpoint then
+            lastKnifeError = reason
+            return nil
+        end
+        local character: Model? = target.Character
+        if not character then
+            return nil
+        end
+        if (endpoint - origin).Magnitude > MAX_KNIFE_DISTANCE then
+            lastKnifeError = "too far"
+            return nil
+        end
+        -- Cheapest rejection first: if the target is behind cover right now,
+        -- the blade would fly into that wall whatever the future pose says.
+        -- Here the target is NOT excluded, so reaching it proves line of sight.
+        local captured: Vector3 = info and info.capturedPosition or endpoint
+        if not isWeaponPathClear(origin, captured, character, true, nil) then
+            lastKnifeError = "covered"
+            return nil
+        end
+        if not knifeCorridorClear(origin, endpoint, character) then
+            lastKnifeError = "obstructed"
+            return nil
+        end
+        lastKnifePrediction = info
+        return endpoint
     end
 
     type ThrowJoint = {
@@ -288,8 +312,16 @@ function Module.init(runtime: any): any
                 originPos = origin.Position, aimPos = aim, target = target, silent = false,
                 settings = {mode = "Normal", animation = true, wallCheck = true,
                     motionSource = lastKnifePrediction and lastKnifePrediction.motionSource,
-                    cadence = "animation-cycle", model = lastKnifePrediction and lastKnifePrediction.model or "reference-v41",
-                    referencePoint = lastKnifePrediction and {lastKnifePrediction.referenceEndpoint.X, lastKnifePrediction.referenceEndpoint.Y, lastKnifePrediction.referenceEndpoint.Z}, windupSeconds = 0.3},
+                    cadence = "animation-cycle",
+                    model = lastKnifePrediction and lastKnifePrediction.model or "kinematic-v51",
+                    referencePoint = lastKnifePrediction and {lastKnifePrediction.capturedPosition.X, lastKnifePrediction.capturedPosition.Y, lastKnifePrediction.capturedPosition.Z},
+                    predictedPoint = lastKnifePrediction and {lastKnifePrediction.endpoint.X, lastKnifePrediction.endpoint.Y, lastKnifePrediction.endpoint.Z},
+                    sampledVelocity = lastKnifePrediction and {lastKnifePrediction.velocity.X, lastKnifePrediction.velocity.Y, lastKnifePrediction.velocity.Z},
+                    leadSeconds = lastKnifePrediction and lastKnifePrediction.leadSeconds,
+                    flightSeconds = lastKnifePrediction and lastKnifePrediction.flightSeconds,
+                    sampleAge = lastKnifePrediction and lastKnifePrediction.sampleAge,
+                    samples = lastKnifePrediction and lastKnifePrediction.samples,
+                    windupSeconds = 0.3},
             })
         end
         local ok: boolean = pcall(playThrowAnimation, knife, sendAtRelease)

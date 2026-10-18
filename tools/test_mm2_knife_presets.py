@@ -26,7 +26,7 @@ local function target(x)
  local root=body(x)
  return {Character={FindFirstChild=function(_,n) return n=='HumanoidRootPart' and root or nil end},visible=true}
 end
-local close,far=target(20),target(2000)
+local close,far=target(20),target(300)
 local Players={GetPlayers=function() return {LocalPlayer,far,close} end}
 local sends,notes=0,0
 local lastAim,lastTarget
@@ -44,6 +44,11 @@ local function disconnectFeatureConnection(k)
  if featureConnections[k] then featureConnections[k]:Disconnect();featureConnections[k]=nil end
 end
 local state={mm2SilentAimEnabled=true,mm2SilentAimFeature={},mm2KnifeRuntime={masterEnabled=false}}
+state.mm2Prediction={knifeAim=function(target)
+ local root=target.Character:FindFirstChild('HumanoidRootPart')
+ return root.Position,{capturedPosition=root.Position,endpoint=root.Position,velocity=Vector3.zero,
+  model='kinematic-v51',leadSeconds=.1,flightSeconds=.1,sampleAge=0,samples=3,motionSource='fit'}
+end}
 local configData={states={},values={}}
 local function addInformationOption() end
 state.mm2Core={findMurderer=function() return LocalPlayer end,getPlayerRole=function() return 'Innocent' end,
@@ -51,7 +56,9 @@ state.mm2Core={findMurderer=function() return LocalPlayer end,getPlayerRole=func
  isProtectedTarget=function() return false end,getFilteredVelocity=function() return Vector3.zero end,
  getEstimatedLatency=function() return 0 end,predictionMath={finite=function(v) return type(v)=='number' and v==v and math.abs(v)<math.huge end},
  isWeaponPathClear=function(_,_,char,_,opts)
-   assert(opts.requireTarget or opts.ignoreTarget)
+   if opts==nil then return char==close.Character and close.visible
+     or char==far.Character and far.visible end
+   assert(opts.ignoreTarget)
    return char==close.Character and close.visible or char==far.Character and far.visible
  end,
  trajectoryCalibration={noteAuthoredShot=function(_,shot)
@@ -69,7 +76,7 @@ toggle(true);loops.heartbeat();assert(loops.render and sends==0)
 local render=loops.render
 render(.2);loops.heartbeat();assert(loops.render==render,'do not restart windup')
 close.visible=false;render(.101)
-assert(sends==1 and notes==1 and lastTarget==far and lastAim.X==2000,'retarget at release; no 120-stud or 4-second cap')
+assert(sends==1 and notes==1 and lastTarget==far and lastAim.X==300,'retarget at release; no 120-stud cap inside the 400-stud blade limit')
 loops.heartbeat();assert(loops.render==render,'recovery must finish instead of being interrupted by spam')
 render(.26);assert(not loops.render)
 loops.heartbeat();assert(loops.render and sends==1,'next cycle starts without extra Fire delay')
@@ -83,7 +90,7 @@ far.visible=false;loops.heartbeat();assert(not loops.render,'fully hidden target
 close.visible=true;loops.heartbeat();assert(loops.render)
 charAdded();assert(not loops.render,'respawn cancels pose and packet')
 Module.destroy();assert(not loops.heartbeat and not charAdded and sends==1)
-print('PASS Knife preset: single toggle, actual whole module, nearest visible/retarget, 2000 studs, always animation/LOS, complete recovery, repeat, readiness/master/OFF/respawn')
+print('PASS Knife preset: single toggle, actual whole module, nearest visible/retarget at 300 studs, always animation/LOS, complete recovery, repeat, readiness/master/OFF/respawn')
 '''
 with tempfile.TemporaryDirectory(prefix='knife-presets-') as tmp:
     path=Path(tmp)/'test.luau'

@@ -953,8 +953,8 @@ do
     local blurt = findFeature("Blurt Roles")
     -- Option identity is also persisted in the widget toggle registry.
     assert(ex.state.toggleControls["MM2.BlurtRoles.InstantRoles"], "Instant Roles must be a Blurt Roles option")
-    assert(ex.state.mm2Core.mm2Settings.predictionModel == "66d", "66d must replace Adaptive as default")
-    assert(type(ex.state.mm2Core.validateGunShot) == "function" and type(ex.state.mm2Core.isGunPathClear) == "function")
+    assert(ex.state.mm2Prediction and type(ex.state.mm2Prediction.gunAim) == "function", "MM2 Prediction must own aiming")
+    assert(type(ex.state.mm2Core.validateGunShot) == "function" and type(ex.state.mm2Core.isWeaponPathClear) == "function")
     local shoot = findFeature("SilentAIM")
     local aimMethod = ex.state.valueControls["MM2.Shoot.Aimmethod"]
     assert(aimMethod, "Gun method must be configurable")
@@ -1034,7 +1034,8 @@ do
     local disguise = ex.state.framework:GetModule("Disguise")
     assert(disguise and disguise.Category == "Utilities", "Disguise must actually load in Utilities")
     disguise.Options.Mode.Metadata.callback("Animation")
-    assert(not disguise.Options["Use target movement animations"].Visible and not disguise.Options["Show target emotes"].Visible)
+    assert(disguise.Options["Use target movement animations"].Visible and disguise.Options["Show target emotes"].Visible,
+        "Animation applies movement + emotes, so both controls must stay available")
     disguise.Options.Mode.Metadata.callback("Character")
     assert(disguise.Options["Use target movement animations"].Visible and disguise.Options["Show target emotes"].Visible)
     for _, feature in ipairs(ex.allFeatures) do
