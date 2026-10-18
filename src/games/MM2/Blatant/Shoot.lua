@@ -647,17 +647,21 @@ function Module.init(runtime: any): any
     addNumberOption(
         ShootFeature,
         "Lead offset ms",
-        math.floor(prediction.settings.extraLead * 1000 + 0.5),
-        -150,
-        250,
+        math.round(prediction.settings.extraLead * 1000),
+        -300,
+        600,
         function(value: number): ()
-            prediction.settings.extraLead = math.clamp(value, -150, 250) / 1000
+            -- Typed values are not quantized by the UI, so 1 ms precision is
+            -- real. The predictor adds this on top of echo/RTT + interpolation.
+            prediction.settings.extraLead = math.clamp(value, -300, 600) / 1000
         end,
-        "Manual timing correction in milliseconds. The predictor already adds "
-            .. "the measured FireServer -> GunFired round trip plus the "
-            .. "replication interpolation. Positive aims further ahead, "
-            .. "negative closer; 0 keeps the measured model.",
-        5
+        "Manual timing correction in milliseconds, on top of the measured "
+            .. "FireServer -> GunFired echo (or ping) and the replication "
+            .. "interpolation. Type an exact value in the numeric box; the "
+            .. "slider moves in 1 ms steps. Positive aims further ahead, "
+            .. "negative closer, 0 keeps the measured model. Prediction status "
+            .. "shows the resulting lead; it saturates at the model's cap.",
+        1
     )
     addActionOption(ShootFeature, "Prediction status", function(): ()
         notify(prediction.status(getSelectedShootTarget()))

@@ -135,6 +135,20 @@ do
     prediction.noteEcho(0,0.001)
     prediction.noteEcho(0,2)
     near(prediction.getEchoDelay(),0.18,1e-9)
+    prediction.settings.extraLead=0.05
+    local _,manual=prediction.gunAim(target,Vector3.new(0,0,-30))
+    near(manual.leadSeconds,0.255,1e-6)
+    local statusText=prediction.status(target)
+    assert(statusText:find("manual %+50 ms"),statusText)
+    assert(statusText:find("interp 25 ms"),statusText)
+    prediction.settings.extraLead=0.6
+    local _,capped=prediction.gunAim(target,Vector3.new(0,0,-30))
+    near(capped.leadSeconds,0.805,1e-6)
+    assert(prediction.status(target):find("manual %+600 ms"))
+    prediction.settings.extraLead=1.5
+    local _,clamped=prediction.gunAim(target,Vector3.new(0,0,-30))
+    near(clamped.leadSeconds,1.0,1e-6)
+    prediction.settings.extraLead=0
     now=now+1
     assert(prediction.gunAim(target,Vector3.new(0,0,-30))==nil,"stale pose must fail closed")
     prediction.reset()

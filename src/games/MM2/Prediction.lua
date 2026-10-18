@@ -92,11 +92,18 @@ local MAX_SAMPLE_AGE: number = 0.35
 local FIT_WINDOW: number = 0.16
 local FIT_TAU: number = 0.055
 local HISTORY_SECONDS: number = 0.6
+-- Remote characters replicate around 20 Hz. 60 Hz keeps three observations per
+-- replicated pose (so a fit is never built from a single packet) without
+-- inventing detail that the network never sent. Raising it only re-weights the
+-- same poses and costs CPU; the dominant error is the transport horizon.
 local SAMPLE_HZ: number = 60
 local MAX_HORIZONTAL_SPEED: number = 60
 local DEFAULT_KNIFE_SPEED: number = 96
 local MAX_ECHOES: number = 8
 local MIN_ECHO_SAMPLES: number = 2
+-- Transport + manual lead. A full second only happens when the session ping
+-- or the manual offset asks for it; the status line shows the real number.
+local MAX_HORIZON: number = 1.0
 
 local settings = {
     -- Manual calibration in seconds. Positive aims further ahead.
@@ -418,7 +425,7 @@ function Module.init(runtime: any): any
         local horizon: number = pipeline
             + settings.interpolation
             + settings.extraLead
-        return math.clamp(horizon, 0.005, 0.75), rtt, echo
+        return math.clamp(horizon, 0.005, MAX_HORIZON), rtt, echo
     end
 
     local function knifeHorizon(): (number, number)
@@ -426,7 +433,7 @@ function Module.init(runtime: any): any
         local horizon: number = rtt
             + settings.interpolation
             + settings.extraLead
-        return math.clamp(horizon, 0.005, 0.75), rtt
+        return math.clamp(horizon, 0.005, MAX_HORIZON), rtt
     end
 
     local function gunAim(
@@ -446,7 +453,7 @@ function Module.init(runtime: any): any
         local horizon: number = math.clamp(
             motion.sampleAge + pipeline,
             0.005,
-            0.8
+            MAX_HORIZON
         )
         local rootPosition: Vector3 = predictedRoot(track, motion, horizon)
         local last: Sample = track.samples[#track.samples]
@@ -491,7 +498,7 @@ function Module.init(runtime: any): any
         local horizon: number = math.clamp(
             motion.sampleAge + pipeline,
             0.005,
-            0.8
+            MAX_HORIZON
         )
         local last: Sample = track.samples[#track.samples]
         local aimStart: Vector3 = last.position + last.aimOffset
@@ -541,10 +548,27 @@ function Module.init(runtime: any): any
                 string.format("echo %.0f ms (%d)", echo * 1000, #echoes)
             )
         end
+        table.insert(
+            parts,
+            string.format("interp %.0f ms", settings.interpolation * 1000)
+        )
+        if settings.extraLead ~= 0 then
+            table.insert(
+                parts,
+                string.format("manual %+.0f ms", settings.extraLead * 1000)
+            )
+        end
         local horizon: number = (echo or rtt)
             + settings.interpolation
             + settings.extraLead
-        table.insert(parts, string.format("lead %.0f ms", horizon * 1000))
+        table.insert(
+            parts,
+            string.format(
+                "lead %.0f ms%s",
+                horizon * 1000,
+                horizon > MAX_HORIZON and " (capped)" or ""
+            )
+        )
         if target then
             local track: Track? = tracks[target]
             local motion: Motion? = track and estimateMotion(track, os.clock())

@@ -1,5 +1,5 @@
 return {
-    stamp = "v54-20261017-kinematic-prediction",
+    stamp = "v55-20261017-lead-disguise",
     files = {
         ["src/Profile/142823291.lua"] = [[
 --!strict
@@ -3083,17 +3083,21 @@ function Module.init(runtime: any): any
     addNumberOption(
         ShootFeature,
         "Lead offset ms",
-        math.floor(prediction.settings.extraLead * 1000 + 0.5),
-        -150,
-        250,
+        math.round(prediction.settings.extraLead * 1000),
+        -300,
+        600,
         function(value: number): ()
-            prediction.settings.extraLead = math.clamp(value, -150, 250) / 1000
+            -- Typed values are not quantized by the UI, so 1 ms precision is
+            -- real. The predictor adds this on top of echo/RTT + interpolation.
+            prediction.settings.extraLead = math.clamp(value, -300, 600) / 1000
         end,
-        "Manual timing correction in milliseconds. The predictor already adds "
-            .. "the measured FireServer -> GunFired round trip plus the "
-            .. "replication interpolation. Positive aims further ahead, "
-            .. "negative closer; 0 keeps the measured model.",
-        5
+        "Manual timing correction in milliseconds, on top of the measured "
+            .. "FireServer -> GunFired echo (or ping) and the replication "
+            .. "interpolation. Type an exact value in the numeric box; the "
+            .. "slider moves in 1 ms steps. Positive aims further ahead, "
+            .. "negative closer, 0 keeps the measured model. Prediction status "
+            .. "shows the resulting lead; it saturates at the model's cap.",
+        1
     )
     addActionOption(ShootFeature, "Prediction status", function(): ()
         notify(prediction.status(getSelectedShootTarget()))
@@ -4045,11 +4049,18 @@ local MAX_SAMPLE_AGE: number = 0.35
 local FIT_WINDOW: number = 0.16
 local FIT_TAU: number = 0.055
 local HISTORY_SECONDS: number = 0.6
+-- Remote characters replicate around 20 Hz. 60 Hz keeps three observations per
+-- replicated pose (so a fit is never built from a single packet) without
+-- inventing detail that the network never sent. Raising it only re-weights the
+-- same poses and costs CPU; the dominant error is the transport horizon.
 local SAMPLE_HZ: number = 60
 local MAX_HORIZONTAL_SPEED: number = 60
 local DEFAULT_KNIFE_SPEED: number = 96
 local MAX_ECHOES: number = 8
 local MIN_ECHO_SAMPLES: number = 2
+-- Transport + manual lead. A full second only happens when the session ping
+-- or the manual offset asks for it; the status line shows the real number.
+local MAX_HORIZON: number = 1.0
 
 local settings = {
     -- Manual calibration in seconds. Positive aims further ahead.
@@ -4371,7 +4382,7 @@ function Module.init(runtime: any): any
         local horizon: number = pipeline
             + settings.interpolation
             + settings.extraLead
-        return math.clamp(horizon, 0.005, 0.75), rtt, echo
+        return math.clamp(horizon, 0.005, MAX_HORIZON), rtt, echo
     end
 
     local function knifeHorizon(): (number, number)
@@ -4379,7 +4390,7 @@ function Module.init(runtime: any): any
         local horizon: number = rtt
             + settings.interpolation
             + settings.extraLead
-        return math.clamp(horizon, 0.005, 0.75), rtt
+        return math.clamp(horizon, 0.005, MAX_HORIZON), rtt
     end
 
     local function gunAim(
@@ -4399,7 +4410,7 @@ function Module.init(runtime: any): any
         local horizon: number = math.clamp(
             motion.sampleAge + pipeline,
             0.005,
-            0.8
+            MAX_HORIZON
         )
         local rootPosition: Vector3 = predictedRoot(track, motion, horizon)
         local last: Sample = track.samples[#track.samples]
@@ -4444,7 +4455,7 @@ function Module.init(runtime: any): any
         local horizon: number = math.clamp(
             motion.sampleAge + pipeline,
             0.005,
-            0.8
+            MAX_HORIZON
         )
         local last: Sample = track.samples[#track.samples]
         local aimStart: Vector3 = last.position + last.aimOffset
@@ -4494,10 +4505,27 @@ function Module.init(runtime: any): any
                 string.format("echo %.0f ms (%d)", echo * 1000, #echoes)
             )
         end
+        table.insert(
+            parts,
+            string.format("interp %.0f ms", settings.interpolation * 1000)
+        )
+        if settings.extraLead ~= 0 then
+            table.insert(
+                parts,
+                string.format("manual %+.0f ms", settings.extraLead * 1000)
+            )
+        end
         local horizon: number = (echo or rtt)
             + settings.interpolation
             + settings.extraLead
-        table.insert(parts, string.format("lead %.0f ms", horizon * 1000))
+        table.insert(
+            parts,
+            string.format(
+                "lead %.0f ms%s",
+                horizon * 1000,
+                horizon > MAX_HORIZON and " (capped)" or ""
+            )
+        )
         if target then
             local track: Track? = tracks[target]
             local motion: Motion? = track and estimateMotion(track, os.clock())
@@ -17098,8 +17126,6 @@ function Module.init(context: Runtime): any
     local framework: any = context.framework
     local host: any = context.host
     local Players: Players = host.Players or (game :: any):GetService("Players")
-    local MarketplaceService: MarketplaceService = host.MarketplaceService
-        or (game :: any):GetService("MarketplaceService")
     local LocalPlayer: Player = host.LocalPlayer or Players.LocalPlayer
 
     local cloned = setmetatable({}, {__mode = "k"}) :: {[Instance]: boolean}
@@ -18095,127 +18121,24 @@ function Module.init(context: Runtime): any
         end
     end
 
-    local function getService(name: string): any
-        local supplied: any = host[name]
-        if supplied then
-            return supplied
-        end
-        local ok: boolean, result: any = pcall(function()
-            return (game :: any):GetService(name)
-        end)
-        return if ok then result else nil
-    end
-
-    local function getBundleItems(
-        bundleId: number,
-        productInfo: any
-    ): ({any}?, string?)
-        local directItems: any = productInfo.Items or productInfo.items
-        local hasDirectItems: boolean = type(directItems) == "table"
-            and #directItems > 0
-        local directType: string = tostring(productInfo.BundleType or "")
-        if hasDirectItems and directType ~= "" then
-            return directItems, directType
-        end
-
-        for _, serviceName: string in ipairs({"AssetService", "AvatarEditorService"}) do
-            local service: any = getService(serviceName)
-            local method: any = service and service.GetBundleDetailsAsync
-            if type(method) == "function" then
-                local ok: boolean, details: any = pcall(method, service, bundleId)
-                if ok and type(details) == "table" then
-                    local items: any = details.Items or details.items
-                    local bundleType: string = tostring(
-                        details.BundleType or directType
-                    )
-                    if bundleType ~= ""
-                        and type(items) == "table"
-                        and #items > 0 then
-                        return items, bundleType
-                    end
-                    if bundleType ~= "" and hasDirectItems then
-                        return directItems, bundleType
-                    end
-                end
-            end
-        end
-        if hasDirectItems then
-            return directItems, directType
-        end
-        return nil, nil
-    end
-
-    local function getAnimationType(itemName: string): string
-        local normalized: string = string.lower(itemName)
-            :gsub("%s*animations?%s*$", "")
-            :gsub("%s+", "")
-        local aliases: {[string]: string} = {
-            pose = "idle",
-            idling = "idle",
-            walking = "walk",
-            running = "run",
-            jumping = "jump",
-            falling = "fall",
-            climbing = "climb",
-            swimming = "swim",
-        }
-        return aliases[normalized] or normalized
-    end
-
-    local function applyAnimationBundle(
+    -- Animation mode: the same target user as Character mode, but only what
+    -- moves on our own avatar. No clone, mesh, accessory or texture is copied:
+    -- the character you already have must stay fully visible.
+    local function applyAnimationDisguise(
         token: number,
         character: Model,
         humanoid: Humanoid,
-        bundleId: number
+        userId: number
     ): ()
-        local items: {any}?, rawBundleType: string? = getBundleItems(
-            bundleId,
-            {}
-        )
-        local productInfoError: string? = nil
-        if not items or rawBundleType == nil or rawBundleType == "" then
-            if not stillCurrent(token, character) then
-                return
+        local description: any, fetchError: string? = getUserDescription(userId)
+        if not description then
+            if stillCurrent(token, character) then
+                notify("Could not load that avatar: " .. tostring(fetchError))
             end
-            local infoOk: boolean, productInfo: any = pcall(function()
-                return MarketplaceService:GetProductInfo(
-                    bundleId,
-                    Enum.InfoType.Bundle
-                )
-            end)
-            if not stillCurrent(token, character) then
-                return
-            end
-            if infoOk and type(productInfo) == "table" then
-                local fallbackItems: {any}?, fallbackBundleType: string? =
-                    getBundleItems(bundleId, productInfo)
-                if fallbackItems then
-                    items = fallbackItems
-                end
-                if fallbackBundleType and fallbackBundleType ~= "" then
-                    rawBundleType = fallbackBundleType
-                end
-            else
-                productInfoError = tostring(productInfo)
-            end
+            return
         end
         if not stillCurrent(token, character) then
-            return
-        end
-        if not items then
-            local detail: string = productInfoError
-                and (" " .. productInfoError)
-                or ""
-            notify("Could not read the bundle's animation items." .. detail)
-            return
-        end
-        local bundleType: string = string.lower(tostring(rawBundleType or ""))
-        if bundleType == "" then
-            notify("This client could not verify the bundle type.")
-            return
-        end
-        if not string.find(bundleType, "animation", 1, true) then
-            notify("That ID is not an avatar animation bundle.")
+            destroyInstance(description)
             return
         end
 
@@ -18223,94 +18146,59 @@ function Module.init(context: Runtime): any
         restoreOriginalAppearance(character, humanoid)
         stopAppearanceFilter()
 
-        local animate: Instance? = character:FindFirstChild("Animate")
-        if not animate then
-            notify("This character has no Animate script to update.")
-            return
+        local emotesApplied: boolean = false
+        local emotes: any, equippedEmotes: any = readDescriptionEmotes(description)
+        if emotes and equippedEmotes then
+            local applied: boolean, emoteError: string? = setHumanoidEmotes(
+                humanoid,
+                emotes,
+                equippedEmotes
+            )
+            if applied then
+                emotesApplied = true
+                emotesAppliedToHumanoid = true
+                targetEmotes, targetEquippedEmotes = emotes, equippedEmotes
+                refreshMeshPartSnapshot(character, current)
+            else
+                notify(
+                    "Disguise emotes could not be applied: "
+                        .. tostring(emoteError)
+                )
+            end
         end
 
-        local changedCount: number = 0
-        for _, item: any in ipairs(items) do
-            if not stillCurrent(token, character) then
-                return
-            end
-            local itemName: string = tostring(item.Name or item.name or "")
-            local itemId: number? = tonumber(item.Id or item.AssetId or item.id)
-            local itemType: string = getAnimationType(itemName)
-            local targetCategory: Instance? = animate:FindFirstChild(itemType)
-            if itemId and targetCategory then
-                local objectsOk: boolean, objects: any = pcall(function()
-                    return (game :: any):GetObjects(
-                        "rbxassetid://" .. tostring(itemId)
-                    )
-                end)
-                if objectsOk and type(objects) == "table" then
-                    if not stillCurrent(token, character) then
-                        for _, object: Instance in ipairs(objects) do
-                            destroyInstance(object)
-                        end
-                        return
-                    end
-                    local sourceAnimation: Animation? = nil
-                    for _, object: Instance in ipairs(objects) do
-                        if object:IsA("Animation") then
-                            sourceAnimation = object
-                            break
-                        end
-                        sourceAnimation = object:FindFirstChildWhichIsA(
-                            "Animation",
-                            true
-                        ) :: Animation?
-                        if sourceAnimation then
-                            break
-                        end
-                    end
-                    if sourceAnimation then
-                        local targetAnimations: {Animation} = {}
-                        if targetCategory:IsA("Animation") then
-                            table.insert(targetAnimations, targetCategory)
-                        end
-                        for _, object: Instance in ipairs(targetCategory:GetDescendants()) do
-                            if object:IsA("Animation") then
-                                table.insert(targetAnimations, object)
-                            end
-                        end
-                        for _, animation: Animation in ipairs(targetAnimations) do
-                            local changed: boolean = pcall(function()
-                                animation.AnimationId = sourceAnimation.AnimationId
-                            end)
-                            if changed then
-                                changedCount += 1
-                            end
-                        end
-                    end
-                    for _, object: Instance in ipairs(objects) do
-                        destroyInstance(object)
-                    end
+        local changedCount: number = copyTargetMovementAnimations(
+            character,
+            humanoid,
+            description
+        )
+        destroyInstance(description)
+        if not stillCurrent(token, character) then
+            if emotesApplied then
+                local rolledBack: boolean = setHumanoidEmotes(
+                    humanoid,
+                    current.emotes,
+                    current.equippedEmotes
+                )
+                if rolledBack then
+                    emotesAppliedToHumanoid = false
                 end
             end
+            return
         end
-
-        if changedCount == 0 then
-
-            restoreOriginalAppearance(character, humanoid)
-            notify("No compatible animations were found in that bundle.")
+        if not emotesApplied and changedCount == 0 then
+            notify("That avatar did not expose emotes or movement animations.")
             return
         end
 
-        animationOverrideApplied = true
-        local animator: Animator? = humanoid:FindFirstChildOfClass("Animator")
-        if animator then
-            for _, track: AnimationTrack in ipairs(animator:GetPlayingAnimationTracks()) do
-                pcall(track.Stop, track)
-            end
-        end
-        restartAnimateScript(animate)
-        if current.character == character and stillCurrent(token, character) then
-            activeCard:SetStatus("Animation")
-            status("Animation bundle applied to " .. tostring(changedCount)
-                .. " slots; Animate restarted. Original IDs return when disabled.")
-        end
+        activeCard:SetStatus("Animation")
+        status(
+            string.format(
+                "Animation · emotes %s · %d animation slots. Your own avatar stays visible.",
+                emotesApplied and "applied" or "not available",
+                changedCount
+            )
+        )
     end
 
     local function applyDisguise(): ()
@@ -18342,7 +18230,7 @@ function Module.init(context: Runtime): any
                     numericId :: number
                 )
             else
-                applyAnimationBundle(
+                applyAnimationDisguise(
                     token,
                     character :: Model,
                     humanoid :: Humanoid,
@@ -18423,7 +18311,7 @@ function Module.init(context: Runtime): any
         Category = "Utilities",
         ConfigKey = "Universal.Disguise",
         Order = 26,
-        Tooltip = "Copies a target avatar's cosmetics and emotes; optionally copies its movement animations. Animation mode changes local motion IDs only, not the visible avatar.",
+        Tooltip = "Character: copies a target avatar's cosmetics and emotes, with optional movement animations. Animation: applies that user's emotes and movement animations to your own avatar without hiding it.",
         Function = function(enabled: boolean): ()
             if enabled then
                 card:SetStatus(settings.mode)
@@ -18467,7 +18355,7 @@ function Module.init(context: Runtime): any
                 applyDisguise()
             end
         end,
-        Tooltip = "Character: visible avatar cosmetics and emotes from a user ID. Animation: movement animation IDs from a bundle; it does not render the target character.",
+        Tooltip = "Character: visible avatar cosmetics and emotes from a user ID. Animation: the same user ID's emotes and movement animations only; your character stays exactly as it is.",
     })
 
     card:CreateButton({
@@ -18505,15 +18393,16 @@ function Module.init(context: Runtime): any
                 applyDisguise()
             end
         end,
-        Tooltip = "Positive integer user ID (Character) or avatar-animation bundle ID (Animation).",
+        Tooltip = "Positive integer user ID. Character copies the avatar; Animation copies only its emotes and movement animations.",
     })
 
     card:CreateButton({
         Name = "Show target emotes",
-        Show = {Option = "Mode", Values = {"Character"}},
+        -- Both modes read the same user ID and apply its emotes.
+        Show = {Option = "Mode", Values = {"Character", "Animation"}},
         Function = function(): ()
             if type(targetEmotes) ~= "table" then
-                notify("Load a user ID in Character mode before listing emotes.")
+                notify("Load a user ID before listing emotes.")
                 return
             end
             local names: {string} = sortedEmoteNames(targetEmotes)
@@ -18526,7 +18415,7 @@ function Module.init(context: Runtime): any
                 formatNameList(equipped)
             ))
         end,
-        Tooltip = "Lists the emotes and equipped emote slots returned for the target user ID.",
+        Tooltip = "Lists the emotes and equipped emote slots returned for the target user ID in either mode.",
     })
 
     activeCard = card

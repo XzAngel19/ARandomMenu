@@ -59,9 +59,16 @@
 ## Interfaz
 
 - **Aim method**: Prediction / Silent AIM.
-- **Lead offset ms** (−150 a 250 ms) es el único ajuste manual de tiempo.
-- **Prediction status** muestra RTT, eco mediano y su cantidad, horizonte y,
-  para el objetivo elegido, velocidad, muestras, antigüedad y si está en el aire.
+- **Lead offset ms** (−300 a 600 ms, paso 1 ms) es el único ajuste manual de
+  tiempo. El campo numérico acepta cualquier valor escrito sin cuantizarlo, así
+  que se puede fijar, por ejemplo, `37.5`; el deslizador avanza de 1 en 1 ms.
+  Se suma al horizonte medido: `eco (o ping) + 25 ms de interpolación + manual`.
+  El horizonte total se corta en 1,0 s, y **Prediction status** muestra
+  `interp`, `manual` y `lead` para ver exactamente cuánto se está aplicando y
+  si llegó al tope. Se guarda en la configuración como cualquier otra opción.
+- **Prediction status** muestra RTT, eco mediano y su cantidad, interpolación,
+  ajuste manual, horizonte final (con `(capped)` si saturó) y, para el objetivo
+  elegido, velocidad, muestras, antigüedad y si está en el aire.
 - **Reset prediction** limpia historial y ecos.
 - La telemetría guarda `model = "kinematic-v51"`, `leadSeconds`, `flightSeconds`,
   `sampleAge`, `samples`, `motionSource`, `rtt`, `echoDelay`, `capturedPosition`
@@ -84,3 +91,27 @@
   y un solo WallCheck sobre el segmento exacto, sin rescate por partes visibles.
 - `tools/test_prediction_66d.py` (modelo 66d contra el código vivo) se eliminó
   junto con el modelo que probaba.
+
+## Disguise: modo Animation
+
+- **Character** sigue igual: copia cosméticos y emotes del avatar objetivo.
+- **Animation** ya no pide un bundle de animación: usa el mismo **Target ID**
+  (usuario) que Character y aplica **solo** sus emotes y sus animaciones de
+  movimiento (idle, walk, run, jump, climb, fall, swim, mood) al personaje
+  propio. No clona mallas, accesorios, ropa ni rostro: el avatar local sigue
+  visible tal cual.
+- Al desactivar, se restauran los emotes y las animaciones originales desde el
+  snapshot. Si el personaje cambia a mitad de la aplicación, se revierten los
+  emotes aplicados y no se reporta éxito.
+- **Show target emotes** funciona en ambos modos.
+- Se eliminó el flujo de bundles de animación (`applyAnimationBundle`,
+  `getBundleItems`, `getAnimationType`), que era la causa de que Animation
+  pareciera "no hacer nada" al introducir un ID de usuario.
+
+## Frecuencia de muestreo
+
+El predictor muestrea a **60 Hz** aunque el render vaya a 144: el personaje
+remoto se replica a ~20 Hz, así que 60 Hz da tres observaciones por pose
+replicada. Subir a 120 Hz solo repite más veces la misma pose y no mejora el
+error dominante, que es el horizonte de transporte (eco/ping); además duplica
+el costo por jugador.
