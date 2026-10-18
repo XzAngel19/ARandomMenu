@@ -1,5 +1,5 @@
 return {
-    stamp = "v62-20261018-invisible-wall",
+    stamp = "v63-20261018-latency-lower",
     files = {
         ["src/Profile/142823291.lua"] = [[
 --!strict
@@ -2834,6 +2834,7 @@ function Module.init(runtime: any): any
                     predictedPoint = {info.endpoint.X, info.endpoint.Y, info.endpoint.Z},
                     sampledVelocity = {info.velocity.X, info.velocity.Y, info.velocity.Z},
                     rtt = info.rtt, echoDelay = info.echoDelay,
+                    rttEngine = info.rttEngine, rttData = info.rttData,
                     echoSamples = info.echoSamples,
                     turnRate = info.turnRate, brakeSeconds = info.brakeSeconds},
             })
@@ -2868,6 +2869,7 @@ function Module.init(runtime: any): any
                 predictedPoint = {info.endpoint.X, info.endpoint.Y, info.endpoint.Z},
                 sampledVelocity = {info.velocity.X, info.velocity.Y, info.velocity.Z},
                 rtt = info.rtt, echoDelay = info.echoDelay,
+                rttEngine = info.rttEngine, rttData = info.rttData,
                 echoSamples = info.echoSamples,
                 turnRate = info.turnRate, brakeSeconds = info.brakeSeconds},
         })
@@ -4167,6 +4169,10 @@ type AimInfo = {
     motionSource: string,
     model: string,
     rtt: number,
+    -- Raw engine readings at aim time, so a calibration can tell which of the
+    -- two sources produced the lead instead of having to reconstruct it.
+    rttEngine: number?,
+    rttData: number?,
     echoDelay: number?,
     -- How many echoes back the recorded delay. Zero means the horizon used
     -- the ping, which the calibration can distinguish from a real median.
@@ -4741,6 +4747,14 @@ function Module.init(runtime: any): any
             return nil, nil, "stale sample"
         end
         local pipeline: number, rtt: number, echo: number? = gunHorizon()
+        local rttEngine: number?, rttData: number? = nil, nil
+        if type(core.getLatencyReadings) == "function" then
+            local ok: boolean, engine: any, data: any = pcall(core.getLatencyReadings)
+            if ok then
+                rttEngine = finiteNumber(engine) and engine or nil
+                rttData = finiteNumber(data) and data or nil
+            end
+        end
         local horizon: number = math.clamp(
             motion.sampleAge + pipeline,
             0.005,
@@ -4763,6 +4777,8 @@ function Module.init(runtime: any): any
             motionSource = motion.source,
             model = "kinematic-v51",
             rtt = rtt,
+            rttEngine = rttEngine,
+            rttData = rttData,
             echoDelay = echo,
             echoSamples = #echoes,
             turnRate = motion.turnRate,
@@ -4789,6 +4805,14 @@ function Module.init(runtime: any): any
             resolvedSpeed = DEFAULT_KNIFE_SPEED
         end
         local pipeline: number, rtt: number = knifeHorizon()
+        local rttEngine: number?, rttData: number? = nil, nil
+        if type(core.getLatencyReadings) == "function" then
+            local ok: boolean, engine: any, data: any = pcall(core.getLatencyReadings)
+            if ok then
+                rttEngine = finiteNumber(engine) and engine or nil
+                rttData = finiteNumber(data) and data or nil
+            end
+        end
         local horizon: number = math.clamp(
             motion.sampleAge + pipeline,
             0.005,
@@ -4855,6 +4879,8 @@ function Module.init(runtime: any): any
             motionSource = motion.source,
             model = "kinematic-v51",
             rtt = rtt,
+            rttEngine = rttEngine,
+            rttData = rttData,
             echoSamples = #echoes,
             turnRate = motion.turnRate,
             brakeSeconds = motion.brakeSeconds,
@@ -6551,6 +6577,42 @@ function predictionMath.interceptTime(offset: Vector3, velocity: Vector3, speed:
 end
 
 local lastLatencyReadAt: number = -math.huge
+
+-- Two engine readings of the same path. They disagree: in the 2026-10-18
+-- session GetNetworkPing read 314/342 ms on two shots whose measured
+-- confirmation echo was 152/164 ms, and it read 241 ms at session start when
+-- Data Ping read 130 and the echo came back in 144. Across 17 recorded shots
+-- Data Ping was within 30 ms of the echo in 12, GetNetworkPing in 3.
+-- The lead takes the lower of the two: over-leading is the failure this data
+-- shows (a stopped or turned target costs more than an early one), and the
+-- median in Prediction still rejects a one-off dip.
+local function readLatencyReadings(): (number?, number?)
+    local engine: number? = nil
+    local data: number? = nil
+    pcall(function(): ()
+        local direct: any = (LocalPlayer :: any).GetNetworkPing
+        if type(direct) == "function" then
+            local okDirect: boolean, seconds: any = pcall(direct, LocalPlayer)
+            if okDirect and predictionMath.finite(seconds)
+                and (seconds :: number) > 0.001 and (seconds :: number) <= 2 then
+                engine = seconds :: number
+            end
+        end
+        local network: Instance? = Stats:FindFirstChild("Network")
+        local serverItems: Instance? = network
+            and network:FindFirstChild("ServerStatsItem")
+        local pingItem: any = serverItems and serverItems:FindFirstChild("Data Ping")
+        if pingItem and type(pingItem.GetValue) == "function" then
+            local pingMilliseconds: number? = tonumber(pingItem:GetValue())
+            if predictionMath.finite(pingMilliseconds)
+                and pingMilliseconds >= 10 and pingMilliseconds <= 2000 then
+                data = pingMilliseconds / 1000
+            end
+        end
+    end)
+    return engine, data
+end
+
 local function getEstimatedLatency(): number
     local now: number = os.clock()
     if now - lastLatencyReadAt < 0.1 then
@@ -6560,27 +6622,15 @@ local function getEstimatedLatency(): number
     lastLatencyReadAt = now
     local measuredRtt: number = mm2Settings.predictionRtt
     pcall(function(): ()
-        -- Prefer the engine's own per-player measurement. It is available on
-        -- every client (touch, low-end, high-FPS) and does not depend on the
-        -- Stats panel being expanded or on Data Ping being replicated.
-        local direct: any = (LocalPlayer :: any).GetNetworkPing
-        if type(direct) == "function" then
-            local okDirect: boolean, seconds: any = pcall(direct, LocalPlayer)
-            if okDirect and predictionMath.finite(seconds)
-                and (seconds :: number) > 0.001 and (seconds :: number) <= 2 then
-                measuredRtt = seconds :: number
-                return
-            end
+        local engine: number?, data: number? = readLatencyReadings()
+        local lower: number? = nil
+        if engine and data then
+            lower = math.min(engine, data)
+        else
+            lower = engine or data
         end
-        local network: Instance? = Stats:FindFirstChild("Network")
-        local serverItems: Instance? = network
-            and network:FindFirstChild("ServerStatsItem")
-        local pingItem: any = serverItems and serverItems:FindFirstChild("Data Ping")
-        if pingItem and type(pingItem.GetValue) == "function" then
-            local pingMilliseconds: number? = tonumber(pingItem:GetValue())
-            if predictionMath.finite(pingMilliseconds) and pingMilliseconds >= 0 then
-                measuredRtt = pingMilliseconds / 1000
-            end
+        if lower then
+            measuredRtt = lower
         end
     end)
     -- Time-based smoothing: sampling frequency must not change the RTT.
@@ -6750,6 +6800,8 @@ local function createTrajectoryCalibration(): any
         blockedCanCollide: boolean?,
         blockedSkipped: boolean?,
         blockedDistance: number?,
+        rttEngine: number?,
+        rttData: number?,
     }
     type Estimates = {
         gunAcceptanceMs: number?,
@@ -9022,6 +9074,7 @@ state.mm2Core = {
     validateGunShot = validateGunShot,
     predictionMath = predictionMath,
     getEstimatedLatency = getEstimatedLatency,
+    getLatencyReadings = readLatencyReadings,
     getGunOriginCFrame = getGunOriginCFrame,
     trajectoryCalibration = trajectoryCalibration,
 

@@ -104,6 +104,10 @@ type AimInfo = {
     motionSource: string,
     model: string,
     rtt: number,
+    -- Raw engine readings at aim time, so a calibration can tell which of the
+    -- two sources produced the lead instead of having to reconstruct it.
+    rttEngine: number?,
+    rttData: number?,
     echoDelay: number?,
     -- How many echoes back the recorded delay. Zero means the horizon used
     -- the ping, which the calibration can distinguish from a real median.
@@ -678,6 +682,14 @@ function Module.init(runtime: any): any
             return nil, nil, "stale sample"
         end
         local pipeline: number, rtt: number, echo: number? = gunHorizon()
+        local rttEngine: number?, rttData: number? = nil, nil
+        if type(core.getLatencyReadings) == "function" then
+            local ok: boolean, engine: any, data: any = pcall(core.getLatencyReadings)
+            if ok then
+                rttEngine = finiteNumber(engine) and engine or nil
+                rttData = finiteNumber(data) and data or nil
+            end
+        end
         local horizon: number = math.clamp(
             motion.sampleAge + pipeline,
             0.005,
@@ -700,6 +712,8 @@ function Module.init(runtime: any): any
             motionSource = motion.source,
             model = "kinematic-v51",
             rtt = rtt,
+            rttEngine = rttEngine,
+            rttData = rttData,
             echoDelay = echo,
             echoSamples = #echoes,
             turnRate = motion.turnRate,
@@ -726,6 +740,14 @@ function Module.init(runtime: any): any
             resolvedSpeed = DEFAULT_KNIFE_SPEED
         end
         local pipeline: number, rtt: number = knifeHorizon()
+        local rttEngine: number?, rttData: number? = nil, nil
+        if type(core.getLatencyReadings) == "function" then
+            local ok: boolean, engine: any, data: any = pcall(core.getLatencyReadings)
+            if ok then
+                rttEngine = finiteNumber(engine) and engine or nil
+                rttData = finiteNumber(data) and data or nil
+            end
+        end
         local horizon: number = math.clamp(
             motion.sampleAge + pipeline,
             0.005,
@@ -792,6 +814,8 @@ function Module.init(runtime: any): any
             motionSource = motion.source,
             model = "kinematic-v51",
             rtt = rtt,
+            rttEngine = rttEngine,
+            rttData = rttData,
             echoSamples = #echoes,
             turnRate = motion.turnRate,
             brakeSeconds = motion.brakeSeconds,

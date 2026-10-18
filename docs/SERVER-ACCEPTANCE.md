@@ -214,3 +214,27 @@ desfasada ~1 stud de la primera muestra de `targetTrajectory` (hasta 1.12
 studs), que es el mismo tamaño que la diferencia entre ambos modelos. Por eso
 no se cambia el horizonte y se sigue midiendo (`echoSamples`, `turnRate`,
 `brakeSeconds` y los eventos `blocked` van ahora en cada disparo).
+
+## Corrección (v63): el ping que se usaba no era el ida y vuelta
+
+La sesión del 18-10 con sello v62 permite comparar por primera vez las dos
+lecturas del motor contra el eco medido (activación → `GunFired`) en el mismo
+disparo, y con la sesión v61 completa: **17 disparos**.
+
+- `Data Ping` (Stats) queda a menos de 30 ms del eco en **12 de 17**.
+- `GetNetworkPing` queda a menos de 30 ms en **3 de 17**. Es sistemáticamente
+  50–90 ms más bajo en la sesión v61 y da los dos «picos» de 314/342 ms cuyos
+  ecos reales fueron 152/164.
+- Dos disparos de v61 que se habían atribuido a un pico de red no lo eran: el
+  pico estaba en la lectura del motor, no en el camino.
+
+Por eso el lead usa ahora **el menor de los dos**, y `rttEngine`/`rttData`
+quedan grabados por disparo. Este archivo ya no sostiene la frase «el ping
+mediano era ~171 ms» como si fuera el tiempo que tarda el disparo en llegar:
+eso era `Data Ping`, y se confundía con `GetNetworkPing`.
+
+Lo que sigue sin poder decidirse con estos archivos es si el horizonte correcto
+es el ida y vuelta completo o la mitad. El barrido de horizonte favorece leads
+más cortos, pero ese barrido está confundido por el error de dirección (en un
+objetivo recto el error es plano en `h`), así que no se usa como prueba. La
+próxima sesión graba las dos lecturas y el eco por disparo para poder separarlo.

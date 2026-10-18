@@ -329,6 +329,7 @@ function Module.init(runtime: any): any
                     predictedPoint = {info.endpoint.X, info.endpoint.Y, info.endpoint.Z},
                     sampledVelocity = {info.velocity.X, info.velocity.Y, info.velocity.Z},
                     rtt = info.rtt, echoDelay = info.echoDelay,
+                    rttEngine = info.rttEngine, rttData = info.rttData,
                     echoSamples = info.echoSamples,
                     turnRate = info.turnRate, brakeSeconds = info.brakeSeconds},
             })
@@ -363,6 +364,7 @@ function Module.init(runtime: any): any
                 predictedPoint = {info.endpoint.X, info.endpoint.Y, info.endpoint.Z},
                 sampledVelocity = {info.velocity.X, info.velocity.Y, info.velocity.Z},
                 rtt = info.rtt, echoDelay = info.echoDelay,
+                rttEngine = info.rttEngine, rttData = info.rttData,
                 echoSamples = info.echoSamples,
                 turnRate = info.turnRate, brakeSeconds = info.brakeSeconds},
         })

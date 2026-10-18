@@ -497,3 +497,104 @@ sí dependían del modelo: 6, 8, 10, 13 y los de las sesiones 03:51/04:04
   bloqueador; un `WeaponPassthrough` sigue sin bloquear.
 - Total: `tools/validate.sh` EXIT=0, 41 suites, 73 archivos, sello
   `v62-20261018-invisible-wall`.
+
+## v63 — La sesión v62: el eco ya mide, y el ping mentía
+
+Archivo nuevo de `TestingStuff`: `MM2_Trajectory_Calibration.json`, sello
+**`v62-20261018-invisible-wall`**, 1104.7 s, mismo servidor y misma cuenta.
+
+### Resultado
+
+- **22 intentos de pistola · 8 confirmados · 4 con `hitPart` del objetivo.**
+  En v61 fue 13 / 9 / 1. La tasa sobre confirmados pasa de 11 % a 50 %.
+- **8 disparos rechazados antes de salir** (`gun/blocked`): todos contra muros
+  opacos (`Hotel`, `Office3`, `BioLab`, `Transparency 0`, `CanCollide true`).
+  Son los mismos que el pase del juego ya rechazaba; ahora queda escrito cuál
+  era. Ninguno fue un falso positivo del pase estricto.
+- **El eco ya se mide**: `echoSamples` crece 0 → 1 → 2 → 3 → 4 → 6 → 7 durante
+  la sesión. En v61 era `nil` en los 13 disparos.
+- Error de puntería en los disparos cuya trayectoria cubre el lead usado:
+  2.40 · 2.06 · 0.02 · 0.57 studs (mediana 1.32, antes 2.02).
+
+### Lo que este archivo sí permite separar
+
+1. **El acierto no depende del lead largo.** Los 4 aciertos usaron leads de
+   0.139–0.196 s; los fallos 17 y 1/3 no. El disparo 17 tenía el objetivo
+   **parado** (`|v| = 0.0`, verdad constante 0.72 s) y la mira a **0.02 studs**:
+   aun así el servidor devolvió un impacto a 11.88 studs. Eso no es puntería ni
+   lead; es geometría u otro cuerpo. El pase estricto es la única defensa que
+   queda y sigue sin poder verse desde el cliente.
+
+2. **El residuo del modelo es la dirección, no el largo.** Ángulo entre la
+   velocidad ajustada y el desplazamiento real del objetivo durante el lead:
+
+   | disparo | ángulo | resultado |
+   |---|---|---|
+   | 18 | 1.6° | acierto |
+   | 20 | 10.5° | acierto |
+   | 11 | 11.8° | acierto |
+   | 3 | 18.6° | fallo |
+   | 1 | 23.6° | fallo |
+   | 17 | 0.0° (parado) | fallo por geometría |
+
+   Los aciertos quedaron por debajo de 12° y los fallos por encima de 18°. El
+   error crece con el horizonte exactamente como crece un error angular fijo,
+   que es lo que explica el barrido de abajo.
+
+3. **`GetNetworkPing` no es el ida y vuelta que usa el lead.** Comparando las
+   dos lecturas del motor con el eco medido (activación → `GunFired`) en **17
+   disparos de tres sesiones**:
+
+   | fuente | dentro de 30 ms del eco |
+   |---|---|
+   | `Data Ping` (Stats) | 12 de 17 |
+   | `GetNetworkPing` | 3 de 17 |
+
+   Los dos «picos de ping» que en v61 se culparon (disparos 8 y 10, `rtt`
+   314/342 ms) tenían eco de **151.9 / 164.0 ms**: el pico era de
+   `GetNetworkPing`, no de la red. Y al arrancar la sesión v62,
+   `GetNetworkPing` leyó **240.8 ms** con `Data Ping` en **130.4** y eco de
+   **144.4**; los dos primeros disparos usaron el lead inflado (0.289/0.290 s)
+   y fallaron por 2.40/2.06 studs.
+
+### El cambio
+
+`getEstimatedLatency` toma **el menor** de `GetNetworkPing` y `Data Ping`
+(ambos validados, y `Data Ping` acotado a 10–2000 ms). La mediana de 8 muestras
+del predictor sigue rechazando una caída puntual.
+
+Proyección sobre los 17 disparos grabados, reescalando el lead con la misma
+dirección de la mira registrada:
+
+| | media | mediana | máximo |
+|---|---|---|---|
+| lead actual | 2.08 | 1.85 | 11.00 |
+| con `min(GetNetworkPing, Data Ping)` | **1.51** | **1.31** | **3.35** |
+
+Solo cambia el lead en 5 de los 17 disparos; los otros 12 quedan idénticos.
+En v61 solo mejora (2.92 → 2.03 de media, máximo 11.00 → 3.35); en la sesión
+v62 mejora 1.09 → 0.84 salvo el disparo 20 (0.97 → 1.16, que igual acertó).
+
+### Lo que se probó y se descartó (con los datos)
+
+- **Barrido de horizonte.** Barrer el lead de 0.04 a 0.28 s da un mínimo en
+  0.04 s en las tres sesiones (media 0.31 studs en v62). Tentador, pero está
+  confundido: para un objetivo en línea recta y velocidad constante el error es
+  **plano** en el horizonte; lo que crece con `h` es el error **angular** (23.6°
+  en el disparo 1). No es evidencia de que el lead deba ser 0.04 s, y no se
+  cambia por eso.
+- **`Humanoid.MoveDirection` como dirección de tiro.** Es una señal replicada
+  real (el disparo 1 pulsaba +X mientras la velocidad caía en −Z). Probado
+  sobre los 5 disparos con datos: mejoró 2 (23.6°→8.2°, 26.5°→17.1°), empeoró 3
+  (11.8°→15.9°, 10.5°→17.2°, 18.6°→1.1° sin umbral que lo active). No entra: no
+  hay evidencia de que sea mejor que la velocidad ajustada.
+- **`MIN_ECHO_SAMPLES` de 6 a 3.** En esta sesión habría adelantado el eco a los
+  disparos 17–19 con efecto neutro (sus objetivos casi no se movían). Sin
+  evidencia a favor, no se toca.
+
+### Añadido para la próxima sesión
+
+`rttEngine` y `rttData` viajan en `settings` de cada disparo, junto a
+`echoSamples`, `turnRate` y `brakeSeconds`. Así la próxima calibración puede
+decidir el horizonte con el eco y las dos lecturas del motor en el mismo
+registro, sin reconstruirlo.

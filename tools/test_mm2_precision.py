@@ -349,12 +349,32 @@ do
     getEstimatedLatency()
     now=107
     near(getEstimatedLatency(),0.12,0.001)
-    pingMilliseconds=1500
-    now=108
+    -- The lower of the two engine readings wins. On 2026-10-18 GetNetworkPing
+    -- read 314/342 ms on shots whose measured echo was 152/164, and 241 ms at
+    -- session start when Data Ping read 130 (echo 144).
+    LocalPlayer.GetNetworkPing=function() return directSeconds end
+    directSeconds=0.314
+    pingMilliseconds=172
+    now=110
     getEstimatedLatency()
-    now=109
+    now=111
+    near(getEstimatedLatency(),0.172,0.005)
+    directSeconds=0.105
+    pingMilliseconds=300
+    now=112
+    getEstimatedLatency()
+    now=113
+    near(getEstimatedLatency(),0.105,0.005)
+    local engine,data=readLatencyReadings()
+    near(engine,0.105,1e-9)
+    near(data,0.300,1e-9)
+    directSeconds=5
+    pingMilliseconds=1500
+    now=114
+    getEstimatedLatency()
+    now=115
     assert(getEstimatedLatency()<=0.6)
-    pass("latency: engine GetNetworkPing preferred, invalid values fall back to Data Ping, hard cap")
+    pass("latency: lower of GetNetworkPing and Data Ping, invalid values fall back, hard cap")
 end
 """)
     # Execute the real writer with an in-memory encoder/IO sink. Detect accidental
