@@ -342,7 +342,8 @@ function Module.init(runtime: any): any
                     rttEngine = info.rttEngine, rttData = info.rttData,
                     occluder = lastGunOccluder,
                     echoSamples = info.echoSamples,
-                    turnRate = info.turnRate, brakeSeconds = info.brakeSeconds},
+                    turnRate = info.turnRate, brakeSeconds = info.brakeSeconds,
+                    leadCorrection = info.leadCorrection},
             })
             if not quiet and ShootFeature then ShootFeature:SetStatus(nil) end
             macroUnequip(gun)
@@ -378,7 +379,8 @@ function Module.init(runtime: any): any
                 rttEngine = info.rttEngine, rttData = info.rttData,
                 occluder = lastGunOccluder,
                 echoSamples = info.echoSamples,
-                turnRate = info.turnRate, brakeSeconds = info.brakeSeconds},
+                turnRate = info.turnRate, brakeSeconds = info.brakeSeconds,
+                leadCorrection = info.leadCorrection},
         })
         if not quiet and ShootFeature then ShootFeature:SetStatus(nil) end
         macroUnequip(gun)

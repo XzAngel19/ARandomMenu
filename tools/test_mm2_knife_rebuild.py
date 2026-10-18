@@ -16,6 +16,15 @@ local function rotate(a,v)
     return Vector3.new(r[1]*v.X+r[2]*v.Y+r[3]*v.Z,r[4]*v.X+r[5]*v.Y+r[6]*v.Z,r[7]*v.X+r[8]*v.Y+r[9]*v.Z)
 end
 CFrame.new=function(p) return make(p or Vector3.zero) end
+-- Coherent origin: the frame looks at the aim point instead of world -Z.
+CFrame.lookAt=function(at,look)
+    local d=(look-at).Unit
+    local up=Vector3.new(0,1,0)
+    local right=d:Cross(up)
+    if right.Magnitude<1e-3 then right=Vector3.new(1,0,0) else right=right.Unit end
+    up=right:Cross(d)
+    return make(at,{right.X,up.X,-d.X,right.Y,up.Y,-d.Y,right.Z,up.Z,-d.Z})
+end
 cf.__mul=function(a,b)
     local r={}
     for i=0,2 do for j=0,2 do
@@ -114,10 +123,12 @@ local sends,notes=0,0
 local originalFrame=CFrame.new(Vector3.new(1,2,3))*CFrame.Angles(.4,.8,.2)
 local handle={CFrame=originalFrame,IsA=function(_,c) return c=='BasePart' end}
 local remote={IsA=function() return true end,FireServer=function(_,origin,aim)
-    -- Position-only CFrames, the same shape the game's own client sends.
+    -- A coherent frame: the spawn point is the handle, and the look vector
+    -- points at the predicted point, never at the world -Z of an identity.
     assert(origin.Position==handle.CFrame.Position,'the packet carries the handle position')
-    assert(origin.r[1]==1 and origin.r[5]==1 and origin.r[9]==1,
-        'the packet must not carry the handle rotation')
+    local expected=(aim.Position-origin.Position).Unit
+    local look=Vector3.new(-origin.r[3],-origin.r[6],-origin.r[9])
+    near(look.X,expected.X); near(look.Y,expected.Y); near(look.Z,expected.Z)
     near(aim.Position.X,root.Position.X)
     sends+=1
 end}
@@ -147,7 +158,7 @@ throwKnife();assert(pending and sends==1,'in-flight animation is not restarted')
 valid=false;release=pending;throwPending=false;pending=nil;release();assert(sends==1,'invalidated target cancels release')
 valid=true;throwKnife();knife.Parent={};release=pending;throwPending=false;pending=nil;release();assert(sends==1,'unequip cancels packet')
 knife.Parent=LocalPlayer.Character;throwKnife();visible=false;release=pending;throwPending=false;pending=nil;release();assert(sends==1,'WallCheck rechecked at release')
-pass('actual throw packet: deferred, fresh target prediction, position-only handle frame, animation busy guard and cancellation')
+pass('actual throw packet: deferred, fresh target prediction, camera-coherent handle frame pointing at the aim, animation busy guard and cancellation')
 end
 '''
 with tempfile.TemporaryDirectory(prefix='knife-rebuild-') as tmp:

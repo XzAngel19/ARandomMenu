@@ -978,3 +978,97 @@ No hay prueba en un dispositivo táctil real: el layout del editor y la
 colocación se validan en el arnés de UI, no con un teléfono en la mano. El
 paquete de animación depende de que el ejecutor exponga `game:GetObjects` para
 leer el `AnimationId` real; si no, se usa el id del ítem y puede no sonar.
+
+---
+
+## v68-20261018-rig-animations-and-lead-feedback
+
+### El avatar congelado del Disguise
+
+La captura mostraba el avatar propio **quieto en su pose de reposo** después de
+Disguise en modo Animation. No era un idle equivocado: era el rig equivocado.
+
+- **MM2 corre en R6.** El set que se rellenaba por defecto era el de R15
+  (`507766666`, `507777826`, …). Esas animaciones están construidas sobre
+  `UpperTorso` y `RightUpperArm`; en un cuerpo R6 **no se reproducen**, y el
+  `Animate` se queda sin pista activa. El personaje conserva la última pose.
+- **Los defaults ahora dependen del rig.** `rigDefaultSlots(humanoid)` lee
+  `Humanoid.RigType`: R6 recibe el set clásico (idle `180435571` +
+  `180435792`, walk/run `180426354`, jump `125750702`, fall `180436148`,
+  climb `180436334`) y R15 conserva el suyo. `cacheTarget` ya **no** hornea
+  defaults: guarda solo lo que el objetivo eligió, porque cuál es el default
+  depende de nuestro cuerpo, no del suyo.
+- **Un set R15 sobre un cuerpo R6 se detecta y se sustituye.** Un avatar sin
+  pack llega con los ids 50xxxxx; `belongsToR15Defaults` los reconoce y
+  `resolvedAnimationSlots` los trata como hueco. Un pack propio se intenta tal
+  cual.
+- **El reinicio del `Animate` se verifica.** El script clásico solo reproduce
+  el idle desde un evento `Humanoid.Running`, que un cuerpo parado nunca
+  dispara: reiniciarlo puede dejar cero pistas. `settleMovementAnimations`
+  espera 0.1 s, cuenta pistas con `GetPlayingAnimationTracks` y, si no hay
+  ninguna, **puentea el idle** cargando el mismo `Animation` del `Animate`
+  (`playIdleBridge`) y retirándose en cuanto otra pista empieza.
+- **Si nada suena, se vuelve atrás.** Con el set del rig tampoco: se restaura
+  el snapshot, `animationOverrideApplied` vuelve a `false` y la barra de estado
+  lo dice. Nunca se deja al jugador en una pose fija y nunca se afirma que se
+  aplicó lo que no se aplicó.
+- La copia del avatar sigue **sin esperar**: `applyAnimationSlots` solo
+  escribe ids y reinicia; toda la verificación vive en
+  `settleMovementAnimations`, fuera del camino de copia.
+
+### Disparo: el lead ahora se corrige con las confirmaciones
+
+- **Error de lead medido, con signo.** En `finalizeGunCapture` se interpola
+  dónde estaba el root del objetivo **cuando el servidor procesó el disparo**
+  (`activación + ida`), se le suma el `aimOffset` del último sample y se
+  proyecta sobre su velocidad horizontal: positivo = iba por delante de
+  nuestra puntería (faltó lead), negativo = sobró.
+- **Corrección acotada.** Mediana de las últimas 8 mediciones (mínimo 3),
+  cada muestra limitada a ±0.15 s, resultado acotado a **±0.06 s** y sumado al
+  horizonte solo cuando el lead es automático. Un teleport, un cambio de
+  objetivo o un NaN se descartan en vez de aprenderse.
+- **Todo queda en el archivo.** Cada confirmación escribe
+  `leadErrorSeconds` y `leadCorrectionSeconds`; cada disparo enviado escribe
+  `leadCorrection`. No hace falta otra ronda de instrumentación: la siguiente
+  sesión ya llega con el lazo cerrado.
+
+### Cuchillo: CFrame coherente y transporte medido
+
+- **El origen ya no es una posición suelta.** Se envía
+  `CFrame.lookAt(handle.Position, aim)`: misma posición de siempre y un
+  `LookVector` que apunta al punto predicho. Los registros nativos mostraban
+  un origen **con rotación no identidad**; con la rotación identidad, cualquier
+  servidor que lea `LookVector` lanzaría hacia el -Z del mundo. El segundo
+  argumento sigue siendo una posición: ahí debe terminar la hoja.
+- **El cuchillo usa el eco medido.** `knifeHorizon` toma la mediana del viaje
+  real `FireServer → GunFired` cuando existe (misma conexión, mismo servidor) y
+  solo cae al ping del motor si no hay muestras. En v64 el viaje real fue
+  126–472 ms contra una lectura de motor de 80–154 ms: hasta 300 ms de
+  movimiento sin liderar, que es el cuchillo quedándose atrás.
+- La captura anota `originRotation` y `echoDelay` para poder separar ambas
+  cosas en la próxima sesión.
+
+### Pruebas
+
+- `tools/test_disguise_defaults.py` reescrita: sets R6/R15, sustitución de
+  defaults R15 en R6, pack propio intacto, fallback al set del rig, restore
+  cuando nada suena, y los mapeos de bundle de siempre. **9 comprobaciones.**
+- `tools/test_prediction_lead_feedback.py` (nueva): mediana, mínimo de 3
+  muestras, tope ±60 ms, rechazo de teleports/NaN, offset manual intacto y
+  horizonte del cuchillo con eco. **7 comprobaciones.**
+- `tools/test_prediction_lead_measure.py` (nueva): signo del error, objetivo
+  parado, salto de 20 studs y datos faltantes. **6 comprobaciones.**
+- `test_mm2_knife_rebuild.py` y `test_mm2_knife_wallcheck.py` actualizados al
+  CFrame con `lookAt`, con la comprobación de que la rotación identidad **no**
+  vuelve.
+
+`bash tools/validate.sh` → **75 fuentes compilan, 46 suites en verde**,
+arranque completo con `failures=0`.
+
+### Lo que esta versión NO afirma
+
+Las calibraciones nuevas **no llegaron al workspace**: no hay ningún
+`MM2_Trajectory_Calibration.json` en el repositorio ni en las subidas de esta
+sesión, así que no se revisaron. Lo de arriba se apoya en los registros
+nativos ya citados (v33/v34) y en la sesión v64 que sí está en el repo. No hay
+prueba en dispositivo táctil ni sesión real con este sello.

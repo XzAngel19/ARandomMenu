@@ -2648,6 +2648,78 @@ local function createTrajectoryCalibration(): any
         return value:FindFirstAncestorOfClass("Tool")
     end
 
+    -- Where the target really was when the server scored the shot, compared
+    -- with the point we aimed at, projected on the target's own horizontal
+    -- velocity. That projection is the lead error in seconds: positive means
+    -- the target was ahead of our aim (we under-led), negative means we led too
+    -- far. The server scores roughly one way into the measured round trip, so
+    -- the target's root is interpolated between the newest pre-shot sample and
+    -- the root captured at confirmation.
+    local function measureLeadErrorSeconds(pending: PendingGun): number?
+        local history: {HistoryPoint} = pending.targetHistory or {}
+        local newest: HistoryPoint? = history[#history]
+        local aim: Vector3? = pending.requestedAim
+        local latencyMs: any = pending.latencyMs
+        local confirmation: any = pending.rootAtConfirmation
+        if not newest or not aim or not confirmation then
+            return nil
+        end
+        if not predictionMath.finite(latencyMs) or latencyMs <= 0
+            or latencyMs > 1200 then
+            return nil
+        end
+        if not predictionMath.finite(pending.activatedAt) then
+            return nil
+        end
+        local beforeAt: number = pending.activatedAt + (newest.dt or 0)
+        local afterAt: number = pending.confirmedAt
+                and pending.confirmedAt
+            or (pending.activatedAt + latencyMs / 1000)
+        if not predictionMath.finite(afterAt) or afterAt <= beforeAt then
+            return nil
+        end
+        local scoringAt: number = pending.activatedAt + latencyMs / 2000
+        local alpha: number = math.clamp(
+            (scoringAt - beforeAt) / (afterAt - beforeAt),
+            0,
+            1
+        )
+        local p0: {number}? = newest.position
+        local p1: {number}? = confirmation.position
+        if type(p0) ~= "table" or type(p1) ~= "table"
+            or #p0 < 3 or #p1 < 3 then
+            return nil
+        end
+        local rootX: number = p0[1] + (p1[1] - p0[1]) * alpha
+        local rootY: number = p0[2] + (p1[2] - p0[2]) * alpha
+        local rootZ: number = p0[3] + (p1[3] - p0[3]) * alpha
+        local offset: {number}? = newest.aimOffset
+        if type(offset) == "table" and #offset >= 3 then
+            rootX += offset[1]
+            rootY += offset[2]
+            rootZ += offset[3]
+        end
+        local velocity: {number}? = newest.velocity
+        if type(velocity) ~= "table" or #velocity < 3 then
+            return nil
+        end
+        local vx: number = velocity[1]
+        local vz: number = velocity[3]
+        local speed: number = math.sqrt(vx * vx + vz * vz)
+        -- A target that is not walking has no lead to correct; its aim error is
+        -- noise around a stationary body.
+        if speed < 3 then
+            return nil
+        end
+        local along: number = ((rootX - aim.X) * vx + (rootZ - aim.Z) * vz) / speed
+        -- Anything past this is not a lead error: a respawn, a teleport or the
+        -- aim landing on a different player.
+        if math.abs(along) > 6 then
+            return nil
+        end
+        return along / speed
+    end
+
     finalizeGunCapture = function(pending: PendingGun): ()
         if pending.targetDiedAt then
             runtime.sessionGunKills += 1
@@ -2670,6 +2742,23 @@ local function createTrajectoryCalibration(): any
                 pending.activatedAt,
                 pending.activatedAt + pending.latencyMs / 1000
             )
+        end
+        -- Feed the measured lead error back into the predictor before the
+        -- record is written, so the event can show what the next shot used.
+        local leadError: number? = measureLeadErrorSeconds(pending)
+        if leadError and state.mm2Prediction
+            and type(state.mm2Prediction.noteLeadError) == "function" then
+            pcall(state.mm2Prediction.noteLeadError, leadError)
+        end
+        local leadCorrection: number? = nil
+        if state.mm2Prediction
+            and type(state.mm2Prediction.getLeadCorrection) == "function" then
+            local ok: boolean, value: any = pcall(
+                state.mm2Prediction.getLeadCorrection
+            )
+            if ok and predictionMath.finite(value) then
+                leadCorrection = value
+            end
         end
         local analysis: {[string]: any} = analyzeTargetTrajectory(
             pending.targetTrajectory,
@@ -2721,6 +2810,12 @@ local function createTrajectoryCalibration(): any
                 local newest: HistoryPoint? = history[#history]
                 return newest and newest.aimOffset or nil
             end)(),
+            -- Signed lead error measured from this very confirmation, and the
+            -- bounded correction the next shot will apply. Both are written in
+            -- seconds so a saved session can be replayed and audited without
+            -- rerunning the shot.
+            leadErrorSeconds = leadError,
+            leadCorrectionSeconds = leadCorrection,
             trajectoryPoints = #pending.targetTrajectory,
             trajectorySpanSeconds = (
                     #pending.targetTrajectory > 1

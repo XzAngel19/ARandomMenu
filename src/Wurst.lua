@@ -219,7 +219,7 @@ local RUNTIME_RAW_BASE: string =
         .. RUNTIME_BRANCH
         .. "/"
 
-local SOURCE_STAMP: string = "v67-20261018-mobile-buttons-and-sections"
+local SOURCE_STAMP: string = "v68-20261018-rig-animations-and-lead-feedback"
 
 local BOOT_STARTED_AT: number = os.clock()
 local BOOT_FINGERPRINT_SECONDS: number = 0

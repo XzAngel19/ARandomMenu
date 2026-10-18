@@ -1,5 +1,5 @@
 return {
-    stamp = "v67-20261018-mobile-buttons-and-sections",
+    stamp = "v68-20261018-rig-animations-and-lead-feedback",
     files = {
         ["src/Profile/142823291.lua"] = [[
 --!strict
@@ -2515,10 +2515,21 @@ function Module.init(runtime: any): any
         if not aim or (aim - origin.Position).Magnitude < 0.05 then
             return false
         end
-        -- Position-only CFrames: the server takes the spawn point and the aim
-        -- point, exactly like the game's own client. The handle's rotation is
-        -- not part of the packet.
-        remote:FireServer(CFrame.new(origin.Position), CFrame.new(aim))
+        -- The origin is a real CFrame, not a bare position. The native
+        -- KnifeClient sends the handle's pose with a non-identity rotation
+        -- (recorded in both native logs), so a server that reads LookVector
+        -- takes the blade's direction from here. Pointing that look vector at
+        -- the predicted point makes the packet coherent for both readings:
+        -- a server that uses (target - origin) gets the same aim it always
+        -- did, and a server that uses the rotation now gets the lead too,
+        -- instead of world -Z. The second argument stays a position: that is
+        -- where the blade has to end up.
+        local travel: Vector3 = aim - origin.Position
+        local originCFrame: CFrame = origin
+        if travel.Magnitude > 1e-3 then
+            originCFrame = CFrame.lookAt(origin.Position, aim)
+        end
+        remote:FireServer(originCFrame, CFrame.new(aim))
         pcall(trajectoryCalibration.noteAuthoredShot, trajectoryCalibration, {
             kind = "knife", tool = knife, toolName = knife.Name,
             originPos = origin.Position, aimPos = aim, target = target,
@@ -2535,6 +2546,7 @@ function Module.init(runtime: any): any
                 sampleAge = lastKnifePrediction and lastKnifePrediction.sampleAge,
                 samples = lastKnifePrediction and lastKnifePrediction.samples,
                 rtt = lastKnifePrediction and lastKnifePrediction.rtt,
+                echoDelay = lastKnifePrediction and lastKnifePrediction.echoDelay,
                 echoSamples = lastKnifePrediction and lastKnifePrediction.echoSamples,
                 rttEngine = lastKnifePrediction and lastKnifePrediction.rttEngine,
                 rttData = lastKnifePrediction and lastKnifePrediction.rttData,
@@ -2546,6 +2558,9 @@ function Module.init(runtime: any): any
                 aimOffsetStuds = lastKnifeAimHeight,
                 knifeRadius = lastKnifeRadius,
                 throwSource = source,
+                -- The packet now carries a frame whose look vector points at
+                -- the aim; a capture can tell which build threw it.
+                originRotation = travel.Magnitude > 1e-3 and "look-at" or "handle",
                 windupSeconds = source == "manual" and 0 or 0.3},
         })
         return true
@@ -3055,7 +3070,8 @@ function Module.init(runtime: any): any
                     rttEngine = info.rttEngine, rttData = info.rttData,
                     occluder = lastGunOccluder,
                     echoSamples = info.echoSamples,
-                    turnRate = info.turnRate, brakeSeconds = info.brakeSeconds},
+                    turnRate = info.turnRate, brakeSeconds = info.brakeSeconds,
+                    leadCorrection = info.leadCorrection},
             })
             if not quiet and ShootFeature then ShootFeature:SetStatus(nil) end
             macroUnequip(gun)
@@ -3091,7 +3107,8 @@ function Module.init(runtime: any): any
                 rttEngine = info.rttEngine, rttData = info.rttData,
                 occluder = lastGunOccluder,
                 echoSamples = info.echoSamples,
-                turnRate = info.turnRate, brakeSeconds = info.brakeSeconds},
+                turnRate = info.turnRate, brakeSeconds = info.brakeSeconds,
+                leadCorrection = info.leadCorrection},
         })
         if not quiet and ShootFeature then ShootFeature:SetStatus(nil) end
         macroUnequip(gun)
@@ -4403,6 +4420,9 @@ type AimInfo = {
     -- How many echoes back the recorded delay. Zero means the horizon used
     -- the ping, which the calibration can distinguish from a real median.
     echoSamples: number,
+    -- Seconds added to the horizon by the confirmed-shot feedback. Zero until
+    -- three confirmations have been measured.
+    leadCorrection: number,
     flightSeconds: number?,
 }
 
@@ -4466,6 +4486,22 @@ local RTT_SAMPLES: number = 8
 local RTT_SAMPLE_INTERVAL: number = 0.25
 local BRAKE_MIN_ACCEL: number = 6.0
 local BRAKE_MAX_ACCEL: number = 120.0
+-- Closed-loop lead feedback. Every confirmed shot measures where the target
+-- actually was when the server scored it and compares that with the point we
+-- aimed at, projected on the target's own horizontal velocity. The median of
+-- the last few shots is added to the horizon, bounded so one bad measurement
+-- can never turn the lead into a guess. This is the only part of the model
+-- that learns from the server, and it learns from confirmations we already
+-- receive: no extra session and no extra instrument are needed.
+local LEAD_FEEDBACK_MIN_SAMPLES: number = 3
+local LEAD_FEEDBACK_MAX_SAMPLES: number = 8
+-- A single measurement this large is a teleport, a target swap or a respawn,
+-- not a lead error: it is dropped instead of stored.
+local LEAD_FEEDBACK_SAMPLE_LIMIT: number = 0.15
+-- The applied correction. At 18 studs/s this is ~1.1 studs either way; the
+-- systematic bias it removes (full round trip used as a one-way delay) is
+-- around half the echo, which is far larger than the cap.
+local MAX_LEAD_CORRECTION: number = 0.06
 
 local settings = {
     -- Automatic lead is the default: the measured FireServer -> GunFired echo
@@ -4943,6 +4979,47 @@ function Module.init(runtime: any): any
         return settings.autoLead and 0 or settings.extraLead
     end
 
+    -- Signed over/under-lead measurements, in seconds. Positive means the
+    -- target was ahead of the point we aimed at when the server scored it.
+    local leadErrors: {number} = {}
+
+    local function medianOf(values: {number}): number?
+        local count: number = #values
+        if count == 0 then
+            return nil
+        end
+        local sorted: {number} = table.clone(values)
+        table.sort(sorted)
+        if count % 2 == 1 then
+            return sorted[(count + 1) // 2]
+        end
+        return (sorted[count // 2] + sorted[count // 2 + 1]) * 0.5
+    end
+
+    local function noteLeadError(seconds: any): ()
+        if not finiteNumber(seconds) then
+            return
+        end
+        if math.abs(seconds) > LEAD_FEEDBACK_SAMPLE_LIMIT then
+            return
+        end
+        table.insert(leadErrors, seconds)
+        while #leadErrors > LEAD_FEEDBACK_MAX_SAMPLES do
+            table.remove(leadErrors, 1)
+        end
+    end
+
+    local function leadCorrection(): number
+        if #leadErrors < LEAD_FEEDBACK_MIN_SAMPLES then
+            return 0
+        end
+        local median: number? = medianOf(leadErrors)
+        if not median then
+            return 0
+        end
+        return math.clamp(median, -MAX_LEAD_CORRECTION, MAX_LEAD_CORRECTION)
+    end
+
     local function gunHorizon(): (number, number, number?)
         local rtt: number = robustRtt()
         local echo: number? = echoMedian()
@@ -4956,20 +5033,32 @@ function Module.init(runtime: any): any
             + settings.interpolation
             + manualLead()
         if settings.autoLead then
+            -- The correction belongs to the automatic model. A manual offset
+            -- is the user saying they know the transport better, so it is not
+            -- silently adjusted on top.
+            horizon += leadCorrection()
             horizon = math.min(horizon, MAX_AUTO_LEAD)
         end
         return math.clamp(horizon, 0.005, MAX_HORIZON), rtt, echo
     end
 
-    local function knifeHorizon(): (number, number)
+    -- The blade travels on the same connection as the bullet, so the measured
+    -- FireServer -> GunFired round trip is a better transport number than the
+    -- engine's ping estimate here too. The v64 file measured 126-472 ms of real
+    -- round trip against an 80-154 ms engine reading: leading a thrown blade
+    -- with the engine number leaves up to 300 ms of unled movement, which is
+    -- the knife missing high and behind a target that is already running.
+    local function knifeHorizon(): (number, number, number?)
         local rtt: number = robustRtt()
-        local horizon: number = rtt
+        local echo: number? = echoMedian()
+        local pipeline: number = echo or rtt
+        local horizon: number = pipeline
             + settings.interpolation
             + manualLead()
         if settings.autoLead then
             horizon = math.min(horizon, MAX_AUTO_LEAD)
         end
-        return math.clamp(horizon, 0.005, MAX_HORIZON), rtt
+        return math.clamp(horizon, 0.005, MAX_HORIZON), rtt, echo
     end
 
     local function gunAim(
@@ -5022,6 +5111,7 @@ function Module.init(runtime: any): any
             echoSamples = #echoes,
             turnRate = motion.turnRate,
             brakeSeconds = motion.brakeSeconds,
+            leadCorrection = leadCorrection(),
         }, nil
     end
 
@@ -5043,7 +5133,7 @@ function Module.init(runtime: any): any
         if resolvedSpeed < 24 or resolvedSpeed > 300 then
             resolvedSpeed = DEFAULT_KNIFE_SPEED
         end
-        local pipeline: number, rtt: number = knifeHorizon()
+        local pipeline: number, rtt: number, echo: number? = knifeHorizon()
         local rttEngine: number?, rttData: number? = nil, nil
         if type(core.getLatencyReadings) == "function" then
             local ok: boolean, engine: any, data: any = pcall(core.getLatencyReadings)
@@ -5120,9 +5210,11 @@ function Module.init(runtime: any): any
             rtt = rtt,
             rttEngine = rttEngine,
             rttData = rttData,
+            echoDelay = echo,
             echoSamples = #echoes,
             turnRate = motion.turnRate,
             brakeSeconds = motion.brakeSeconds,
+            leadCorrection = 0,
         }, nil
     end
 
@@ -5270,10 +5362,13 @@ function Module.init(runtime: any): any
             end
             return estimateMotion(track, os.clock())
         end,
+        noteLeadError = noteLeadError,
+        getLeadCorrection = leadCorrection,
         reset = function(): ()
             table.clear(echoes)
             table.clear(tracks)
             table.clear(rttSamples)
+            table.clear(leadErrors)
             lastRttSampleAt = -math.huge
         end,
     }
@@ -8108,6 +8203,78 @@ local function createTrajectoryCalibration(): any
         return value:FindFirstAncestorOfClass("Tool")
     end
 
+    -- Where the target really was when the server scored the shot, compared
+    -- with the point we aimed at, projected on the target's own horizontal
+    -- velocity. That projection is the lead error in seconds: positive means
+    -- the target was ahead of our aim (we under-led), negative means we led too
+    -- far. The server scores roughly one way into the measured round trip, so
+    -- the target's root is interpolated between the newest pre-shot sample and
+    -- the root captured at confirmation.
+    local function measureLeadErrorSeconds(pending: PendingGun): number?
+        local history: {HistoryPoint} = pending.targetHistory or {}
+        local newest: HistoryPoint? = history[#history]
+        local aim: Vector3? = pending.requestedAim
+        local latencyMs: any = pending.latencyMs
+        local confirmation: any = pending.rootAtConfirmation
+        if not newest or not aim or not confirmation then
+            return nil
+        end
+        if not predictionMath.finite(latencyMs) or latencyMs <= 0
+            or latencyMs > 1200 then
+            return nil
+        end
+        if not predictionMath.finite(pending.activatedAt) then
+            return nil
+        end
+        local beforeAt: number = pending.activatedAt + (newest.dt or 0)
+        local afterAt: number = pending.confirmedAt
+                and pending.confirmedAt
+            or (pending.activatedAt + latencyMs / 1000)
+        if not predictionMath.finite(afterAt) or afterAt <= beforeAt then
+            return nil
+        end
+        local scoringAt: number = pending.activatedAt + latencyMs / 2000
+        local alpha: number = math.clamp(
+            (scoringAt - beforeAt) / (afterAt - beforeAt),
+            0,
+            1
+        )
+        local p0: {number}? = newest.position
+        local p1: {number}? = confirmation.position
+        if type(p0) ~= "table" or type(p1) ~= "table"
+            or #p0 < 3 or #p1 < 3 then
+            return nil
+        end
+        local rootX: number = p0[1] + (p1[1] - p0[1]) * alpha
+        local rootY: number = p0[2] + (p1[2] - p0[2]) * alpha
+        local rootZ: number = p0[3] + (p1[3] - p0[3]) * alpha
+        local offset: {number}? = newest.aimOffset
+        if type(offset) == "table" and #offset >= 3 then
+            rootX += offset[1]
+            rootY += offset[2]
+            rootZ += offset[3]
+        end
+        local velocity: {number}? = newest.velocity
+        if type(velocity) ~= "table" or #velocity < 3 then
+            return nil
+        end
+        local vx: number = velocity[1]
+        local vz: number = velocity[3]
+        local speed: number = math.sqrt(vx * vx + vz * vz)
+        -- A target that is not walking has no lead to correct; its aim error is
+        -- noise around a stationary body.
+        if speed < 3 then
+            return nil
+        end
+        local along: number = ((rootX - aim.X) * vx + (rootZ - aim.Z) * vz) / speed
+        -- Anything past this is not a lead error: a respawn, a teleport or the
+        -- aim landing on a different player.
+        if math.abs(along) > 6 then
+            return nil
+        end
+        return along / speed
+    end
+
     finalizeGunCapture = function(pending: PendingGun): ()
         if pending.targetDiedAt then
             runtime.sessionGunKills += 1
@@ -8130,6 +8297,23 @@ local function createTrajectoryCalibration(): any
                 pending.activatedAt,
                 pending.activatedAt + pending.latencyMs / 1000
             )
+        end
+        -- Feed the measured lead error back into the predictor before the
+        -- record is written, so the event can show what the next shot used.
+        local leadError: number? = measureLeadErrorSeconds(pending)
+        if leadError and state.mm2Prediction
+            and type(state.mm2Prediction.noteLeadError) == "function" then
+            pcall(state.mm2Prediction.noteLeadError, leadError)
+        end
+        local leadCorrection: number? = nil
+        if state.mm2Prediction
+            and type(state.mm2Prediction.getLeadCorrection) == "function" then
+            local ok: boolean, value: any = pcall(
+                state.mm2Prediction.getLeadCorrection
+            )
+            if ok and predictionMath.finite(value) then
+                leadCorrection = value
+            end
         end
         local analysis: {[string]: any} = analyzeTargetTrajectory(
             pending.targetTrajectory,
@@ -8181,6 +8365,12 @@ local function createTrajectoryCalibration(): any
                 local newest: HistoryPoint? = history[#history]
                 return newest and newest.aimOffset or nil
             end)(),
+            -- Signed lead error measured from this very confirmation, and the
+            -- bounded correction the next shot will apply. Both are written in
+            -- seconds so a saved session can be replayed and audited without
+            -- rerunning the shot.
+            leadErrorSeconds = leadError,
+            leadCorrectionSeconds = leadCorrection,
             trajectoryPoints = #pending.targetTrajectory,
             trajectorySpanSeconds = (
                     #pending.targetTrajectory > 1
@@ -18335,6 +18525,28 @@ local DEFAULT_ANIMATION_IDS: {[string]: {string}} = {
     swim = {"507784897"},
     swimidle = {"507785072"},
 }
+-- Roblox's own R6 set, i.e. the IDs inside the classic R6 Animate script the
+-- engine inserts on blocky rigs. The R15 IDs above are keyed to UpperTorso and
+-- RightUpperArm, so an R6 body cannot play them at all: the Animate script
+-- stops without an error and the character freezes in its rest pose. That is
+-- the still avatar in the report, not a wrong idle.
+local DEFAULT_ANIMATION_IDS_R6: {[string]: {string}} = {
+    idle = {"180435571", "180435792"},
+    walk = {"180426354"},
+    run = {"180426354"},
+    jump = {"125750702"},
+    fall = {"180436148"},
+    climb = {"180436334"},
+}
+-- Every id the R15 default set owns. A HumanoidDescription from an avatar that
+-- never bought a pack is indistinguishable from one that asked for the R15
+-- defaults, so this table is how an R6 body recognises "these are not mine".
+local R15_DEFAULT_IDS: {[string]: boolean} = {}
+for _, ids: {string} in pairs(DEFAULT_ANIMATION_IDS) do
+    for _, id: string in ipairs(ids) do
+        R15_DEFAULT_IDS[id] = true
+    end
+end
 local SCALE_FIELDS: {string} = {
     "HeightScale",
     "WidthScale",
@@ -18392,6 +18604,14 @@ function Module.init(context: Runtime): any
     local restoring: boolean = false
     local emotesAppliedToHumanoid: boolean = false
     local animationOverrideApplied: boolean = false
+    -- Forward declarations. The write path runs before the settle step is
+    -- defined, and Lua resolves names at definition time: without these the
+    -- calls would silently become globals.
+    local releaseIdleBridge: () -> () = function(): () end
+    local playingAnimationTracks: (Humanoid?) -> {AnimationTrack} =
+        function(): {AnimationTrack}
+            return {}
+        end
     -- Everything the target user exposes is cached the moment the avatar
     -- description is fetched: the movement animation slots and the emotes.
     -- Character mode applies the avatar but keeps this cache loaded, so the two
@@ -18725,6 +18945,7 @@ function Module.init(context: Runtime): any
         character: Model,
         humanoid: Humanoid?
     ): ()
+        releaseIdleBridge()
         local current: AppearanceSnapshot? = snapshot
         if not current or current.character ~= character
             or not animationOverrideApplied then
@@ -18793,16 +19014,77 @@ function Module.init(context: Runtime): any
         return slots
     end
 
-    local function applyAnimationSlots(
-        character: Model,
-        humanoid: Humanoid,
+    -- Which default set fits the body we are actually driving. An R15 table on
+    -- an R6 rig is the failure mode behind the frozen avatar: the clips load
+    -- but nothing plays, so the character keeps its rest pose forever.
+    local function rigDefaultSlots(humanoid: Humanoid?): {[string]: any}
+        local rig: any = nil
+        if humanoid then
+            pcall(function(): ()
+                rig = (humanoid :: any).RigType
+            end)
+        end
+        if rig == Enum.HumanoidRigType.R6 then
+            return DEFAULT_ANIMATION_IDS_R6
+        end
+        return DEFAULT_ANIMATION_IDS
+    end
+
+    local function isR15DefaultId(value: any): boolean
+        if type(value) == "number" then
+            value = tostring(math.floor(value))
+        end
+        if type(value) ~= "string" then
+            return false
+        end
+        local digits: string? = string.match(value, "%d+")
+        return digits ~= nil and R15_DEFAULT_IDS[digits] == true
+    end
+
+    local function belongsToR15Defaults(value: any): boolean
+        if type(value) == "table" then
+            if #value == 0 then
+                return false
+            end
+            for _, entry: any in ipairs(value) do
+                if not isR15DefaultId(entry) then
+                    return false
+                end
+            end
+            return true
+        end
+        return isR15DefaultId(value)
+    end
+
+    -- Gaps are filled with the set that matches the rig; a slot that only
+    -- holds R15 default ids on an R6 body is treated as a gap.
+    local function resolvedAnimationSlots(
+        slots: {[string]: any},
+        humanoid: Humanoid?
+    ): {[string]: any}
+        local defaults: {[string]: any} = rigDefaultSlots(humanoid)
+        local isR6: boolean = defaults == DEFAULT_ANIMATION_IDS_R6
+        local resolved: {[string]: any} = {}
+        for category: string, value: any in pairs(slots) do
+            if isR6 and belongsToR15Defaults(value) then
+                value = nil
+            end
+            if value ~= nil then
+                resolved[category] = value
+            end
+        end
+        for category: string, ids: any in pairs(defaults) do
+            if resolved[category] == nil then
+                resolved[category] = ids
+            end
+        end
+        return resolved
+    end
+
+    local function writeAnimationSlots(
+        animate: Instance,
         slots: {[string]: any}
     ): number
-        local animate: Instance? = character:FindFirstChild("Animate")
-        if not animate then
-            return 0
-        end
-
         local changedCount: number = 0
         for _, mapping in ipairs(MOVEMENT_ANIMATIONS) do
             local chosen: any = slots[mapping.scriptCategory]
@@ -18846,21 +19128,35 @@ function Module.init(context: Runtime): any
             end
         end
 
-        if changedCount > 0 then
-            animationOverrideApplied = true
-            local animator: Animator? = humanoid:FindFirstChildOfClass("Animator")
-            if animator then
-                local tracksOk: boolean, tracks: any = pcall(function()
-                    return animator:GetPlayingAnimationTracks()
-                end)
-                if tracksOk and type(tracks) == "table" then
-                    for _, track: AnimationTrack in ipairs(tracks) do
-                        pcall(track.Stop, track)
-                    end
-                end
-            end
-            restartAnimateScript(animate)
+        return changedCount
+    end
+
+    -- What every caller uses: the target's clips are resolved against the rig
+    -- and written into the Animate slots. The result is verified by
+    -- settleMovementAnimations right after, which owns every wait and every
+    -- fallback: copying an avatar must never block on an animation check.
+    local function applyAnimationSlots(
+        character: Model,
+        humanoid: Humanoid,
+        slots: {[string]: any}
+    ): number
+        local animate: Instance? = character:FindFirstChild("Animate")
+        if not animate then
+            return 0
         end
+        local resolved: {[string]: any} = resolvedAnimationSlots(slots, humanoid)
+        local changedCount: number = writeAnimationSlots(animate, resolved)
+        if changedCount == 0 then
+            return 0
+        end
+        animationOverrideApplied = true
+        releaseIdleBridge()
+        for _, track: AnimationTrack in ipairs(playingAnimationTracks(humanoid)) do
+            pcall(function(): ()
+                track:Stop()
+            end)
+        end
+        restartAnimateScript(animate)
         return changedCount
     end
 
@@ -18869,14 +19165,10 @@ function Module.init(context: Runtime): any
     -- description, so it can never touch or roll back the visible avatar.
     local function cacheTarget(userId: number, description: any): ()
         local emotes: any, equippedEmotes: any = readDescriptionEmotes(description)
+        -- Only what the target actually chose. A 0 in a description means
+        -- "use Roblox's default", and which default that is depends on OUR rig,
+        -- so the gap is filled at apply time, never here.
         local slots: {[string]: any} = animationSlotsFromDescription(description)
-        -- 0 in a description means "use Roblox's default", so the seven
-        -- standard clips are filled in where the target did not pick a pack.
-        for category: string, ids: {string} in pairs(DEFAULT_ANIMATION_IDS) do
-            if slots[category] == nil then
-                slots[category] = ids
-            end
-        end
         targetCache = {
             userId = userId,
             slots = slots,
@@ -18912,6 +19204,239 @@ function Module.init(context: Runtime): any
         if #refreshed > 0 then
             current.meshParts = refreshed
         end
+    end
+
+    -- Runs after the ids are written. The Animate script is restarted by the
+    -- write itself, but a restart does not guarantee a playing track: the
+    -- classic script only replays the idle loop from a Humanoid.Running event,
+    -- and a body standing still never fires one. That is the frozen pose in
+    -- the report. Here the body is checked, the idle is bridged when needed,
+    -- and a rig that cannot play the target's clips gets its own set back
+    -- instead of keeping a still avatar.
+    playingAnimationTracks = function(humanoid: Humanoid?): {AnimationTrack}
+        local playing: {AnimationTrack} = {}
+        if not humanoid then
+            return playing
+        end
+        local animator: Animator? = humanoid:FindFirstChildOfClass("Animator")
+        if not animator then
+            return playing
+        end
+        local ok: boolean, tracks: any = pcall(function(): any
+            return animator:GetPlayingAnimationTracks()
+        end)
+        if not ok or type(tracks) ~= "table" then
+            return playing
+        end
+        for _, track: AnimationTrack in ipairs(tracks) do
+            local isPlaying: boolean = false
+            pcall(function(): ()
+                isPlaying = track.IsPlaying == true
+            end)
+            if isPlaying then
+                table.insert(playing, track)
+            end
+        end
+        return playing
+    end
+
+    -- Some games restart the Animate script without replaying the idle loop:
+    -- the script only plays it from a Humanoid.Running event, and a body that
+    -- is standing still never fires one. The bridge plays the same Animation
+    -- the script would have played, and steps aside the moment any other
+    -- track (walk, jump, an emote) starts.
+    local idleBridgeTrack: AnimationTrack? = nil
+    releaseIdleBridge = function(): ()
+        local bridge: AnimationTrack? = idleBridgeTrack
+        idleBridgeTrack = nil
+        if bridge then
+            pcall(function(): ()
+                (bridge :: any):Stop(0.15)
+            end)
+            pcall(function(): ()
+                (bridge :: any):Destroy()
+            end)
+        end
+    end
+
+    local function playIdleBridge(
+        humanoid: Humanoid?,
+        animate: Instance
+    ): AnimationTrack?
+        if not humanoid then
+            return nil
+        end
+        local idle: Instance? = animate:FindFirstChild("idle")
+        local animation: Animation? = nil
+        if idle then
+            if idle:IsA("Animation") then
+                animation = idle :: Animation
+            end
+            for _, descendant: Instance in ipairs(idle:GetDescendants()) do
+                if not animation and descendant:IsA("Animation") then
+                    animation = descendant :: Animation
+                end
+            end
+        end
+        local animator: Animator? = humanoid:FindFirstChildOfClass("Animator")
+        if not animation or not animator then
+            return nil
+        end
+        local ok: boolean, track: any = pcall(function(): any
+            return animator:LoadAnimation(animation)
+        end)
+        if not ok or not track then
+            return nil
+        end
+        local played: boolean = pcall(function(): ()
+            track:Play(0.1)
+        end)
+        if not played then
+            return nil
+        end
+        return track
+    end
+
+    local function watchIdleBridge(humanoid: Humanoid?): ()
+        local bridge: AnimationTrack? = idleBridgeTrack
+        if not bridge then
+            return
+        end
+        task.spawn(function(): ()
+            local deadline: number = os.clock() + 6
+            while idleBridgeTrack == bridge and os.clock() < deadline do
+                task.wait(0.1)
+                if idleBridgeTrack ~= bridge then
+                    return
+                end
+                for _, track: AnimationTrack in ipairs(
+                    playingAnimationTracks(humanoid)
+                ) do
+                    if track ~= bridge then
+                        releaseIdleBridge()
+                        return
+                    end
+                end
+            end
+        end)
+    end
+
+    -- Clears the tracks, restarts the script and proves the body moves again.
+    -- Returns false only when nothing plays, which is the signal to fall back
+    -- to the rig's own clips instead of leaving a frozen character.
+    local function activateAnimationOverride(
+        character: Model,
+        humanoid: Humanoid,
+        animate: Instance
+    ): boolean
+        releaseIdleBridge()
+        for _, track: AnimationTrack in ipairs(playingAnimationTracks(humanoid)) do
+            pcall(function(): ()
+                track:Stop()
+            end)
+        end
+        restartAnimateScript(animate)
+        task.wait(0.1)
+        if #playingAnimationTracks(humanoid) > 0 then
+            return true
+        end
+        local bridge: AnimationTrack? = playIdleBridge(humanoid, animate)
+        if not bridge then
+            return false
+        end
+        task.wait(0.1)
+        local playing: boolean = false
+        pcall(function(): ()
+            playing = (bridge :: any).IsPlaying == true
+        end)
+        if not playing then
+            pcall(function(): ()
+                (bridge :: any):Destroy()
+            end)
+            return false
+        end
+        idleBridgeTrack = bridge
+        watchIdleBridge(humanoid)
+        return true
+    end
+
+    local function settleMovementAnimations(
+        character: Model,
+        humanoid: Humanoid
+    ): boolean
+        if not animationOverrideApplied then
+            return false
+        end
+        local animate: Instance? = character:FindFirstChild("Animate")
+        if not animate then
+            return false
+        end
+        if #playingAnimationTracks(humanoid) > 0 then
+            return true
+        end
+        local bridge: AnimationTrack? = playIdleBridge(humanoid, animate)
+        if bridge then
+            task.wait(0.1)
+            local playing: boolean = false
+            pcall(function(): ()
+                playing = (bridge :: any).IsPlaying == true
+            end)
+            if playing then
+                idleBridgeTrack = bridge
+                watchIdleBridge(humanoid)
+                return true
+            end
+            pcall(function(): ()
+                (bridge :: any):Destroy()
+            end)
+        end
+
+        local defaults: {[string]: any} = rigDefaultSlots(humanoid)
+        local isR6: boolean = defaults == DEFAULT_ANIMATION_IDS_R6
+        if writeAnimationSlots(animate, defaults) > 0 then
+            for _, track: AnimationTrack in ipairs(
+                playingAnimationTracks(humanoid)
+            ) do
+                pcall(function(): ()
+                    track:Stop()
+                end)
+            end
+            restartAnimateScript(animate)
+            task.wait(0.1)
+            if #playingAnimationTracks(humanoid) > 0 then
+                notify(
+                    "Those clips do not play on your "
+                        .. (isR6 and "R6" or "R15")
+                        .. " rig; your rig's own set is back."
+                )
+                return true
+            end
+            local fallbackBridge: AnimationTrack? = playIdleBridge(humanoid, animate)
+            if fallbackBridge then
+                task.wait(0.1)
+                local playing: boolean = false
+                pcall(function(): ()
+                    playing = (fallbackBridge :: any).IsPlaying == true
+                end)
+                if playing then
+                    idleBridgeTrack = fallbackBridge
+                    watchIdleBridge(humanoid)
+                    notify(
+                        "Those clips do not play on your "
+                            .. (isR6 and "R6" or "R15")
+                            .. " rig; your rig's own set is back."
+                    )
+                    return true
+                end
+            end
+        end
+
+        restoreMovementAnimationsOnly(character, humanoid)
+        notify(
+            "The target's animations do not play on your rig; "
+                .. "your own animations are back."
+        )
+        return false
     end
 
     -- Animation mode also accepts an animation *bundle* id (the same thing
@@ -18999,7 +19524,15 @@ function Module.init(context: Runtime): any
         if not cached then
             return 0
         end
-        return applyAnimationSlots(character, humanoid, cached.slots)
+        local changedCount: number = applyAnimationSlots(
+            character,
+            humanoid,
+            cached.slots
+        )
+        if changedCount > 0 then
+            settleMovementAnimations(character, humanoid)
+        end
+        return changedCount
     end
 
     local function applyCachedEmotes(
@@ -19059,6 +19592,7 @@ function Module.init(context: Runtime): any
         end
 
         restoring = true
+        releaseIdleBridge()
         if emotesAppliedToHumanoid and humanoid then
             local emotesRestored: boolean = setHumanoidEmotes(
                 humanoid,

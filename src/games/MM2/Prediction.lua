@@ -115,6 +115,9 @@ type AimInfo = {
     -- How many echoes back the recorded delay. Zero means the horizon used
     -- the ping, which the calibration can distinguish from a real median.
     echoSamples: number,
+    -- Seconds added to the horizon by the confirmed-shot feedback. Zero until
+    -- three confirmations have been measured.
+    leadCorrection: number,
     flightSeconds: number?,
 }
 
@@ -178,6 +181,22 @@ local RTT_SAMPLES: number = 8
 local RTT_SAMPLE_INTERVAL: number = 0.25
 local BRAKE_MIN_ACCEL: number = 6.0
 local BRAKE_MAX_ACCEL: number = 120.0
+-- Closed-loop lead feedback. Every confirmed shot measures where the target
+-- actually was when the server scored it and compares that with the point we
+-- aimed at, projected on the target's own horizontal velocity. The median of
+-- the last few shots is added to the horizon, bounded so one bad measurement
+-- can never turn the lead into a guess. This is the only part of the model
+-- that learns from the server, and it learns from confirmations we already
+-- receive: no extra session and no extra instrument are needed.
+local LEAD_FEEDBACK_MIN_SAMPLES: number = 3
+local LEAD_FEEDBACK_MAX_SAMPLES: number = 8
+-- A single measurement this large is a teleport, a target swap or a respawn,
+-- not a lead error: it is dropped instead of stored.
+local LEAD_FEEDBACK_SAMPLE_LIMIT: number = 0.15
+-- The applied correction. At 18 studs/s this is ~1.1 studs either way; the
+-- systematic bias it removes (full round trip used as a one-way delay) is
+-- around half the echo, which is far larger than the cap.
+local MAX_LEAD_CORRECTION: number = 0.06
 
 local settings = {
     -- Automatic lead is the default: the measured FireServer -> GunFired echo
@@ -655,6 +674,47 @@ function Module.init(runtime: any): any
         return settings.autoLead and 0 or settings.extraLead
     end
 
+    -- Signed over/under-lead measurements, in seconds. Positive means the
+    -- target was ahead of the point we aimed at when the server scored it.
+    local leadErrors: {number} = {}
+
+    local function medianOf(values: {number}): number?
+        local count: number = #values
+        if count == 0 then
+            return nil
+        end
+        local sorted: {number} = table.clone(values)
+        table.sort(sorted)
+        if count % 2 == 1 then
+            return sorted[(count + 1) // 2]
+        end
+        return (sorted[count // 2] + sorted[count // 2 + 1]) * 0.5
+    end
+
+    local function noteLeadError(seconds: any): ()
+        if not finiteNumber(seconds) then
+            return
+        end
+        if math.abs(seconds) > LEAD_FEEDBACK_SAMPLE_LIMIT then
+            return
+        end
+        table.insert(leadErrors, seconds)
+        while #leadErrors > LEAD_FEEDBACK_MAX_SAMPLES do
+            table.remove(leadErrors, 1)
+        end
+    end
+
+    local function leadCorrection(): number
+        if #leadErrors < LEAD_FEEDBACK_MIN_SAMPLES then
+            return 0
+        end
+        local median: number? = medianOf(leadErrors)
+        if not median then
+            return 0
+        end
+        return math.clamp(median, -MAX_LEAD_CORRECTION, MAX_LEAD_CORRECTION)
+    end
+
     local function gunHorizon(): (number, number, number?)
         local rtt: number = robustRtt()
         local echo: number? = echoMedian()
@@ -668,20 +728,32 @@ function Module.init(runtime: any): any
             + settings.interpolation
             + manualLead()
         if settings.autoLead then
+            -- The correction belongs to the automatic model. A manual offset
+            -- is the user saying they know the transport better, so it is not
+            -- silently adjusted on top.
+            horizon += leadCorrection()
             horizon = math.min(horizon, MAX_AUTO_LEAD)
         end
         return math.clamp(horizon, 0.005, MAX_HORIZON), rtt, echo
     end
 
-    local function knifeHorizon(): (number, number)
+    -- The blade travels on the same connection as the bullet, so the measured
+    -- FireServer -> GunFired round trip is a better transport number than the
+    -- engine's ping estimate here too. The v64 file measured 126-472 ms of real
+    -- round trip against an 80-154 ms engine reading: leading a thrown blade
+    -- with the engine number leaves up to 300 ms of unled movement, which is
+    -- the knife missing high and behind a target that is already running.
+    local function knifeHorizon(): (number, number, number?)
         local rtt: number = robustRtt()
-        local horizon: number = rtt
+        local echo: number? = echoMedian()
+        local pipeline: number = echo or rtt
+        local horizon: number = pipeline
             + settings.interpolation
             + manualLead()
         if settings.autoLead then
             horizon = math.min(horizon, MAX_AUTO_LEAD)
         end
-        return math.clamp(horizon, 0.005, MAX_HORIZON), rtt
+        return math.clamp(horizon, 0.005, MAX_HORIZON), rtt, echo
     end
 
     local function gunAim(
@@ -734,6 +806,7 @@ function Module.init(runtime: any): any
             echoSamples = #echoes,
             turnRate = motion.turnRate,
             brakeSeconds = motion.brakeSeconds,
+            leadCorrection = leadCorrection(),
         }, nil
     end
 
@@ -755,7 +828,7 @@ function Module.init(runtime: any): any
         if resolvedSpeed < 24 or resolvedSpeed > 300 then
             resolvedSpeed = DEFAULT_KNIFE_SPEED
         end
-        local pipeline: number, rtt: number = knifeHorizon()
+        local pipeline: number, rtt: number, echo: number? = knifeHorizon()
         local rttEngine: number?, rttData: number? = nil, nil
         if type(core.getLatencyReadings) == "function" then
             local ok: boolean, engine: any, data: any = pcall(core.getLatencyReadings)
@@ -832,9 +905,11 @@ function Module.init(runtime: any): any
             rtt = rtt,
             rttEngine = rttEngine,
             rttData = rttData,
+            echoDelay = echo,
             echoSamples = #echoes,
             turnRate = motion.turnRate,
             brakeSeconds = motion.brakeSeconds,
+            leadCorrection = 0,
         }, nil
     end
 
@@ -982,10 +1057,13 @@ function Module.init(runtime: any): any
             end
             return estimateMotion(track, os.clock())
         end,
+        noteLeadError = noteLeadError,
+        getLeadCorrection = leadCorrection,
         reset = function(): ()
             table.clear(echoes)
             table.clear(tracks)
             table.clear(rttSamples)
+            table.clear(leadErrors)
             lastRttSampleAt = -math.huge
         end,
     }

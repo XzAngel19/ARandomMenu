@@ -18,7 +18,7 @@ appearance = section(
     '    local function applyAnimationDisguise(',
 )
 
-mappings = section(SOURCE, 'local MOVEMENT_ANIMATIONS:', 'function Module.init(')
+mappings = SOURCE[SOURCE.index('local DEFAULT_ANIMATION_IDS:'):SOURCE.index('function Module.init(')]
 helper = section(SOURCE, '    local function animationIdFromValue(', '    local function animationSlotsFromDescription(')
 
 script = PRELUDE + mappings + r'''
@@ -26,6 +26,14 @@ local animationOverrideApplied=false
 local restarted=0
 local stopped=0
 local function restartAnimateScript(script) restarted+=1 end
+Enum.HumanoidRigType = {R6 = "R6", R15 = "R15"}
+-- Declared above the sliced section in the module; the harness supplies them.
+local function playingAnimationTracks(humanoid)
+    local animator = humanoid and humanoid:FindFirstChildOfClass("Animator")
+    if not animator then return {} end
+    return animator:GetPlayingAnimationTracks()
+end
+function releaseIdleBridge() end
 ''' + helper + character_body + r'''
 -- copyTargetMovementAnimations: direct description IDs, no network calls.
 local function animation(name, id)

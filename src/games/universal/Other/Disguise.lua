@@ -58,6 +58,28 @@ local DEFAULT_ANIMATION_IDS: {[string]: {string}} = {
     swim = {"507784897"},
     swimidle = {"507785072"},
 }
+-- Roblox's own R6 set, i.e. the IDs inside the classic R6 Animate script the
+-- engine inserts on blocky rigs. The R15 IDs above are keyed to UpperTorso and
+-- RightUpperArm, so an R6 body cannot play them at all: the Animate script
+-- stops without an error and the character freezes in its rest pose. That is
+-- the still avatar in the report, not a wrong idle.
+local DEFAULT_ANIMATION_IDS_R6: {[string]: {string}} = {
+    idle = {"180435571", "180435792"},
+    walk = {"180426354"},
+    run = {"180426354"},
+    jump = {"125750702"},
+    fall = {"180436148"},
+    climb = {"180436334"},
+}
+-- Every id the R15 default set owns. A HumanoidDescription from an avatar that
+-- never bought a pack is indistinguishable from one that asked for the R15
+-- defaults, so this table is how an R6 body recognises "these are not mine".
+local R15_DEFAULT_IDS: {[string]: boolean} = {}
+for _, ids: {string} in pairs(DEFAULT_ANIMATION_IDS) do
+    for _, id: string in ipairs(ids) do
+        R15_DEFAULT_IDS[id] = true
+    end
+end
 local SCALE_FIELDS: {string} = {
     "HeightScale",
     "WidthScale",
@@ -115,6 +137,14 @@ function Module.init(context: Runtime): any
     local restoring: boolean = false
     local emotesAppliedToHumanoid: boolean = false
     local animationOverrideApplied: boolean = false
+    -- Forward declarations. The write path runs before the settle step is
+    -- defined, and Lua resolves names at definition time: without these the
+    -- calls would silently become globals.
+    local releaseIdleBridge: () -> () = function(): () end
+    local playingAnimationTracks: (Humanoid?) -> {AnimationTrack} =
+        function(): {AnimationTrack}
+            return {}
+        end
     -- Everything the target user exposes is cached the moment the avatar
     -- description is fetched: the movement animation slots and the emotes.
     -- Character mode applies the avatar but keeps this cache loaded, so the two
@@ -448,6 +478,7 @@ function Module.init(context: Runtime): any
         character: Model,
         humanoid: Humanoid?
     ): ()
+        releaseIdleBridge()
         local current: AppearanceSnapshot? = snapshot
         if not current or current.character ~= character
             or not animationOverrideApplied then
@@ -516,16 +547,77 @@ function Module.init(context: Runtime): any
         return slots
     end
 
-    local function applyAnimationSlots(
-        character: Model,
-        humanoid: Humanoid,
+    -- Which default set fits the body we are actually driving. An R15 table on
+    -- an R6 rig is the failure mode behind the frozen avatar: the clips load
+    -- but nothing plays, so the character keeps its rest pose forever.
+    local function rigDefaultSlots(humanoid: Humanoid?): {[string]: any}
+        local rig: any = nil
+        if humanoid then
+            pcall(function(): ()
+                rig = (humanoid :: any).RigType
+            end)
+        end
+        if rig == Enum.HumanoidRigType.R6 then
+            return DEFAULT_ANIMATION_IDS_R6
+        end
+        return DEFAULT_ANIMATION_IDS
+    end
+
+    local function isR15DefaultId(value: any): boolean
+        if type(value) == "number" then
+            value = tostring(math.floor(value))
+        end
+        if type(value) ~= "string" then
+            return false
+        end
+        local digits: string? = string.match(value, "%d+")
+        return digits ~= nil and R15_DEFAULT_IDS[digits] == true
+    end
+
+    local function belongsToR15Defaults(value: any): boolean
+        if type(value) == "table" then
+            if #value == 0 then
+                return false
+            end
+            for _, entry: any in ipairs(value) do
+                if not isR15DefaultId(entry) then
+                    return false
+                end
+            end
+            return true
+        end
+        return isR15DefaultId(value)
+    end
+
+    -- Gaps are filled with the set that matches the rig; a slot that only
+    -- holds R15 default ids on an R6 body is treated as a gap.
+    local function resolvedAnimationSlots(
+        slots: {[string]: any},
+        humanoid: Humanoid?
+    ): {[string]: any}
+        local defaults: {[string]: any} = rigDefaultSlots(humanoid)
+        local isR6: boolean = defaults == DEFAULT_ANIMATION_IDS_R6
+        local resolved: {[string]: any} = {}
+        for category: string, value: any in pairs(slots) do
+            if isR6 and belongsToR15Defaults(value) then
+                value = nil
+            end
+            if value ~= nil then
+                resolved[category] = value
+            end
+        end
+        for category: string, ids: any in pairs(defaults) do
+            if resolved[category] == nil then
+                resolved[category] = ids
+            end
+        end
+        return resolved
+    end
+
+    local function writeAnimationSlots(
+        animate: Instance,
         slots: {[string]: any}
     ): number
-        local animate: Instance? = character:FindFirstChild("Animate")
-        if not animate then
-            return 0
-        end
-
         local changedCount: number = 0
         for _, mapping in ipairs(MOVEMENT_ANIMATIONS) do
             local chosen: any = slots[mapping.scriptCategory]
@@ -569,21 +661,35 @@ function Module.init(context: Runtime): any
             end
         end
 
-        if changedCount > 0 then
-            animationOverrideApplied = true
-            local animator: Animator? = humanoid:FindFirstChildOfClass("Animator")
-            if animator then
-                local tracksOk: boolean, tracks: any = pcall(function()
-                    return animator:GetPlayingAnimationTracks()
-                end)
-                if tracksOk and type(tracks) == "table" then
-                    for _, track: AnimationTrack in ipairs(tracks) do
-                        pcall(track.Stop, track)
-                    end
-                end
-            end
-            restartAnimateScript(animate)
+        return changedCount
+    end
+
+    -- What every caller uses: the target's clips are resolved against the rig
+    -- and written into the Animate slots. The result is verified by
+    -- settleMovementAnimations right after, which owns every wait and every
+    -- fallback: copying an avatar must never block on an animation check.
+    local function applyAnimationSlots(
+        character: Model,
+        humanoid: Humanoid,
+        slots: {[string]: any}
+    ): number
+        local animate: Instance? = character:FindFirstChild("Animate")
+        if not animate then
+            return 0
         end
+        local resolved: {[string]: any} = resolvedAnimationSlots(slots, humanoid)
+        local changedCount: number = writeAnimationSlots(animate, resolved)
+        if changedCount == 0 then
+            return 0
+        end
+        animationOverrideApplied = true
+        releaseIdleBridge()
+        for _, track: AnimationTrack in ipairs(playingAnimationTracks(humanoid)) do
+            pcall(function(): ()
+                track:Stop()
+            end)
+        end
+        restartAnimateScript(animate)
         return changedCount
     end
 
@@ -592,14 +698,10 @@ function Module.init(context: Runtime): any
     -- description, so it can never touch or roll back the visible avatar.
     local function cacheTarget(userId: number, description: any): ()
         local emotes: any, equippedEmotes: any = readDescriptionEmotes(description)
+        -- Only what the target actually chose. A 0 in a description means
+        -- "use Roblox's default", and which default that is depends on OUR rig,
+        -- so the gap is filled at apply time, never here.
         local slots: {[string]: any} = animationSlotsFromDescription(description)
-        -- 0 in a description means "use Roblox's default", so the seven
-        -- standard clips are filled in where the target did not pick a pack.
-        for category: string, ids: {string} in pairs(DEFAULT_ANIMATION_IDS) do
-            if slots[category] == nil then
-                slots[category] = ids
-            end
-        end
         targetCache = {
             userId = userId,
             slots = slots,
@@ -635,6 +737,239 @@ function Module.init(context: Runtime): any
         if #refreshed > 0 then
             current.meshParts = refreshed
         end
+    end
+
+    -- Runs after the ids are written. The Animate script is restarted by the
+    -- write itself, but a restart does not guarantee a playing track: the
+    -- classic script only replays the idle loop from a Humanoid.Running event,
+    -- and a body standing still never fires one. That is the frozen pose in
+    -- the report. Here the body is checked, the idle is bridged when needed,
+    -- and a rig that cannot play the target's clips gets its own set back
+    -- instead of keeping a still avatar.
+    playingAnimationTracks = function(humanoid: Humanoid?): {AnimationTrack}
+        local playing: {AnimationTrack} = {}
+        if not humanoid then
+            return playing
+        end
+        local animator: Animator? = humanoid:FindFirstChildOfClass("Animator")
+        if not animator then
+            return playing
+        end
+        local ok: boolean, tracks: any = pcall(function(): any
+            return animator:GetPlayingAnimationTracks()
+        end)
+        if not ok or type(tracks) ~= "table" then
+            return playing
+        end
+        for _, track: AnimationTrack in ipairs(tracks) do
+            local isPlaying: boolean = false
+            pcall(function(): ()
+                isPlaying = track.IsPlaying == true
+            end)
+            if isPlaying then
+                table.insert(playing, track)
+            end
+        end
+        return playing
+    end
+
+    -- Some games restart the Animate script without replaying the idle loop:
+    -- the script only plays it from a Humanoid.Running event, and a body that
+    -- is standing still never fires one. The bridge plays the same Animation
+    -- the script would have played, and steps aside the moment any other
+    -- track (walk, jump, an emote) starts.
+    local idleBridgeTrack: AnimationTrack? = nil
+    releaseIdleBridge = function(): ()
+        local bridge: AnimationTrack? = idleBridgeTrack
+        idleBridgeTrack = nil
+        if bridge then
+            pcall(function(): ()
+                (bridge :: any):Stop(0.15)
+            end)
+            pcall(function(): ()
+                (bridge :: any):Destroy()
+            end)
+        end
+    end
+
+    local function playIdleBridge(
+        humanoid: Humanoid?,
+        animate: Instance
+    ): AnimationTrack?
+        if not humanoid then
+            return nil
+        end
+        local idle: Instance? = animate:FindFirstChild("idle")
+        local animation: Animation? = nil
+        if idle then
+            if idle:IsA("Animation") then
+                animation = idle :: Animation
+            end
+            for _, descendant: Instance in ipairs(idle:GetDescendants()) do
+                if not animation and descendant:IsA("Animation") then
+                    animation = descendant :: Animation
+                end
+            end
+        end
+        local animator: Animator? = humanoid:FindFirstChildOfClass("Animator")
+        if not animation or not animator then
+            return nil
+        end
+        local ok: boolean, track: any = pcall(function(): any
+            return animator:LoadAnimation(animation)
+        end)
+        if not ok or not track then
+            return nil
+        end
+        local played: boolean = pcall(function(): ()
+            track:Play(0.1)
+        end)
+        if not played then
+            return nil
+        end
+        return track
+    end
+
+    local function watchIdleBridge(humanoid: Humanoid?): ()
+        local bridge: AnimationTrack? = idleBridgeTrack
+        if not bridge then
+            return
+        end
+        task.spawn(function(): ()
+            local deadline: number = os.clock() + 6
+            while idleBridgeTrack == bridge and os.clock() < deadline do
+                task.wait(0.1)
+                if idleBridgeTrack ~= bridge then
+                    return
+                end
+                for _, track: AnimationTrack in ipairs(
+                    playingAnimationTracks(humanoid)
+                ) do
+                    if track ~= bridge then
+                        releaseIdleBridge()
+                        return
+                    end
+                end
+            end
+        end)
+    end
+
+    -- Clears the tracks, restarts the script and proves the body moves again.
+    -- Returns false only when nothing plays, which is the signal to fall back
+    -- to the rig's own clips instead of leaving a frozen character.
+    local function activateAnimationOverride(
+        character: Model,
+        humanoid: Humanoid,
+        animate: Instance
+    ): boolean
+        releaseIdleBridge()
+        for _, track: AnimationTrack in ipairs(playingAnimationTracks(humanoid)) do
+            pcall(function(): ()
+                track:Stop()
+            end)
+        end
+        restartAnimateScript(animate)
+        task.wait(0.1)
+        if #playingAnimationTracks(humanoid) > 0 then
+            return true
+        end
+        local bridge: AnimationTrack? = playIdleBridge(humanoid, animate)
+        if not bridge then
+            return false
+        end
+        task.wait(0.1)
+        local playing: boolean = false
+        pcall(function(): ()
+            playing = (bridge :: any).IsPlaying == true
+        end)
+        if not playing then
+            pcall(function(): ()
+                (bridge :: any):Destroy()
+            end)
+            return false
+        end
+        idleBridgeTrack = bridge
+        watchIdleBridge(humanoid)
+        return true
+    end
+
+    local function settleMovementAnimations(
+        character: Model,
+        humanoid: Humanoid
+    ): boolean
+        if not animationOverrideApplied then
+            return false
+        end
+        local animate: Instance? = character:FindFirstChild("Animate")
+        if not animate then
+            return false
+        end
+        if #playingAnimationTracks(humanoid) > 0 then
+            return true
+        end
+        local bridge: AnimationTrack? = playIdleBridge(humanoid, animate)
+        if bridge then
+            task.wait(0.1)
+            local playing: boolean = false
+            pcall(function(): ()
+                playing = (bridge :: any).IsPlaying == true
+            end)
+            if playing then
+                idleBridgeTrack = bridge
+                watchIdleBridge(humanoid)
+                return true
+            end
+            pcall(function(): ()
+                (bridge :: any):Destroy()
+            end)
+        end
+
+        local defaults: {[string]: any} = rigDefaultSlots(humanoid)
+        local isR6: boolean = defaults == DEFAULT_ANIMATION_IDS_R6
+        if writeAnimationSlots(animate, defaults) > 0 then
+            for _, track: AnimationTrack in ipairs(
+                playingAnimationTracks(humanoid)
+            ) do
+                pcall(function(): ()
+                    track:Stop()
+                end)
+            end
+            restartAnimateScript(animate)
+            task.wait(0.1)
+            if #playingAnimationTracks(humanoid) > 0 then
+                notify(
+                    "Those clips do not play on your "
+                        .. (isR6 and "R6" or "R15")
+                        .. " rig; your rig's own set is back."
+                )
+                return true
+            end
+            local fallbackBridge: AnimationTrack? = playIdleBridge(humanoid, animate)
+            if fallbackBridge then
+                task.wait(0.1)
+                local playing: boolean = false
+                pcall(function(): ()
+                    playing = (fallbackBridge :: any).IsPlaying == true
+                end)
+                if playing then
+                    idleBridgeTrack = fallbackBridge
+                    watchIdleBridge(humanoid)
+                    notify(
+                        "Those clips do not play on your "
+                            .. (isR6 and "R6" or "R15")
+                            .. " rig; your rig's own set is back."
+                    )
+                    return true
+                end
+            end
+        end
+
+        restoreMovementAnimationsOnly(character, humanoid)
+        notify(
+            "The target's animations do not play on your rig; "
+                .. "your own animations are back."
+        )
+        return false
     end
 
     -- Animation mode also accepts an animation *bundle* id (the same thing
@@ -722,7 +1057,15 @@ function Module.init(context: Runtime): any
         if not cached then
             return 0
         end
-        return applyAnimationSlots(character, humanoid, cached.slots)
+        local changedCount: number = applyAnimationSlots(
+            character,
+            humanoid,
+            cached.slots
+        )
+        if changedCount > 0 then
+            settleMovementAnimations(character, humanoid)
+        end
+        return changedCount
     end
 
     local function applyCachedEmotes(
@@ -782,6 +1125,7 @@ function Module.init(context: Runtime): any
         end
 
         restoring = true
+        releaseIdleBridge()
         if emotesAppliedToHumanoid and humanoid then
             local emotesRestored: boolean = setHumanoidEmotes(
                 humanoid,

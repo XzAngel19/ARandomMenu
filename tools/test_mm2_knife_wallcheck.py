@@ -175,8 +175,12 @@ pass("knife aim: unreachable and >400-stud leads are still refused")
 assert 'KNIFE_CORRIDOR_RADIUS' not in K, "the fixed 0.5 corridor is gone"
 assert 'KNIFE_AIM_LADDER' in K
 assert K.count(':FireServer(') == 1, "one throw path, one packet"
-assert 'CFrame.new(origin.Position), CFrame.new(aim)' in K, \
-    "the packet is built from position-only CFrames, like the game's own client"
+assert 'CFrame.new(origin.Position), CFrame.new(aim)' not in K, \
+    "the origin must not be an identity-rotation frame again"
+assert 'CFrame.lookAt(origin.Position, aim)' in K, \
+    "the packet origin looks at the predicted point: coherent for servers that read LookVector"
+assert 'remote:FireServer(originCFrame, CFrame.new(aim))' in K, \
+    "the aim stays a position: that is where the blade has to end up"
 assert 'knife.Activated:Connect' in K, \
     "manual mode must listen to the tool, the event a tap and a click both fire"
 assert 'throwKnife(true)' in K, "the button path must throw immediately"

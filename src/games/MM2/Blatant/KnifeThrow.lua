@@ -410,10 +410,21 @@ function Module.init(runtime: any): any
         if not aim or (aim - origin.Position).Magnitude < 0.05 then
             return false
         end
-        -- Position-only CFrames: the server takes the spawn point and the aim
-        -- point, exactly like the game's own client. The handle's rotation is
-        -- not part of the packet.
-        remote:FireServer(CFrame.new(origin.Position), CFrame.new(aim))
+        -- The origin is a real CFrame, not a bare position. The native
+        -- KnifeClient sends the handle's pose with a non-identity rotation
+        -- (recorded in both native logs), so a server that reads LookVector
+        -- takes the blade's direction from here. Pointing that look vector at
+        -- the predicted point makes the packet coherent for both readings:
+        -- a server that uses (target - origin) gets the same aim it always
+        -- did, and a server that uses the rotation now gets the lead too,
+        -- instead of world -Z. The second argument stays a position: that is
+        -- where the blade has to end up.
+        local travel: Vector3 = aim - origin.Position
+        local originCFrame: CFrame = origin
+        if travel.Magnitude > 1e-3 then
+            originCFrame = CFrame.lookAt(origin.Position, aim)
+        end
+        remote:FireServer(originCFrame, CFrame.new(aim))
         pcall(trajectoryCalibration.noteAuthoredShot, trajectoryCalibration, {
             kind = "knife", tool = knife, toolName = knife.Name,
             originPos = origin.Position, aimPos = aim, target = target,
@@ -430,6 +441,7 @@ function Module.init(runtime: any): any
                 sampleAge = lastKnifePrediction and lastKnifePrediction.sampleAge,
                 samples = lastKnifePrediction and lastKnifePrediction.samples,
                 rtt = lastKnifePrediction and lastKnifePrediction.rtt,
+                echoDelay = lastKnifePrediction and lastKnifePrediction.echoDelay,
                 echoSamples = lastKnifePrediction and lastKnifePrediction.echoSamples,
                 rttEngine = lastKnifePrediction and lastKnifePrediction.rttEngine,
                 rttData = lastKnifePrediction and lastKnifePrediction.rttData,
@@ -441,6 +453,9 @@ function Module.init(runtime: any): any
                 aimOffsetStuds = lastKnifeAimHeight,
                 knifeRadius = lastKnifeRadius,
                 throwSource = source,
+                -- The packet now carries a frame whose look vector points at
+                -- the aim; a capture can tell which build threw it.
+                originRotation = travel.Magnitude > 1e-3 and "look-at" or "handle",
                 windupSeconds = source == "manual" and 0 or 0.3},
         })
         return true
