@@ -50,23 +50,31 @@ function Module.init(runtime: any): any
         if not localRoot then
             return nil
         end
-        local closest: Player? = nil
-        local closestDistance: number = math.huge
+        local candidates: {{player: Player, distance: number}} = {}
         for _, player: Player in ipairs(Players:GetPlayers()) do
             if isValidTarget(player) then
                 local targetRoot: BasePart? = player.Character
                     and player.Character:FindFirstChild("HumanoidRootPart") :: BasePart?
                 if targetRoot then
-                    local distance: number =
-                        (targetRoot.Position - localRoot.Position).Magnitude
-                    if distance < closestDistance and resolveKnifeAim(player, origin) ~= nil then
-                        closest = player
-                        closestDistance = distance
-                    end
+                    table.insert(candidates, {
+                        player = player,
+                        distance = (targetRoot.Position - localRoot.Position).Magnitude,
+                    })
                 end
             end
         end
-        return closest
+        table.sort(candidates, function(left: any, right: any): boolean
+            return left.distance < right.distance
+        end)
+        -- Corridor checks are rays: cap them per frame. The nearest three
+        -- visible targets are enough; blocked players do not starve the rest.
+        for index: number = 1, math.min(#candidates, 3) do
+            local candidate: any = candidates[index]
+            if resolveKnifeAim(candidate.player, origin) ~= nil then
+                return candidate.player
+            end
+        end
+        return nil
     end
 
     local function getReadyKnife(): Tool?
@@ -102,10 +110,59 @@ function Module.init(runtime: any): any
         return speed
     end
 
+    -- The blade is a physical straight projectile, so graze tolerance matters:
+    -- a single centre ray passes a wall the real knife then clips. STRICT means
+    -- transparent parts are only ignored when they cannot collide; an invisible
+    -- solid wall still stops the blade. The corridor is sampled with a small
+    -- cross of rays around the centre line.
+    local KNIFE_CORRIDOR_RADIUS: number = 0.5
+    -- The blade keeps flying until it hits something, so there is no range
+    -- limit: only an absurd lead (a vanished target, a broken sample) is
+    -- refused. Ordinary long throws stay available.
+    local MAX_KNIFE_DISTANCE: number = 400
+
+    local function knifeCorridorClear(
+        origin: Vector3,
+        endpoint: Vector3,
+        targetCharacter: Model
+    ): boolean
+        local delta: Vector3 = endpoint - origin
+        local distance: number = delta.Magnitude
+        if distance < 0.05 then
+            return false
+        end
+        local direction: Vector3 = delta.Unit
+        local right: Vector3 = direction:Cross(Vector3.new(0, 1, 0))
+        if right.Magnitude < 1e-3 then
+            right = Vector3.new(1, 0, 0)
+        else
+            right = right.Unit
+        end
+        local up: Vector3 = right:Cross(direction).Unit
+        local offsets: {Vector3} = {
+            Vector3.zero,
+            right * KNIFE_CORRIDOR_RADIUS,
+            right * -KNIFE_CORRIDOR_RADIUS,
+            up * KNIFE_CORRIDOR_RADIUS,
+            up * -KNIFE_CORRIDOR_RADIUS,
+        }
+        for _, offset: Vector3 in ipairs(offsets) do
+            if not isWeaponPathClear(
+                origin + offset,
+                endpoint + offset,
+                targetCharacter,
+                true,
+                {ignoreTarget = true}
+            ) then
+                return false
+            end
+        end
+        return true
+    end
+
     -- The blade is a straight projectile. The predictor solves the intercept
-    -- (including the measured transport delay); WallCheck then verifies that
-    -- exact segment with the game's WeaponService filter. There is no
-    -- visible-part rescue: a shot that needs one is a shot through cover.
+    -- (including the measured transport delay); WallCheck then verifies the
+    -- exact corridor and that the target is not currently behind cover.
     resolveKnifeAim = function(target: Player, origin: Vector3): Vector3?
         lastKnifePrediction = nil
         lastKnifeError = nil
@@ -119,7 +176,19 @@ function Module.init(runtime: any): any
         if not character then
             return nil
         end
-        if not isWeaponPathClear(origin, endpoint, character, nil, {ignoreTarget = true}) then
+        if (endpoint - origin).Magnitude > MAX_KNIFE_DISTANCE then
+            lastKnifeError = "too far"
+            return nil
+        end
+        -- Cheapest rejection first: if the target is behind cover right now,
+        -- the blade would fly into that wall whatever the future pose says.
+        -- Here the target is NOT excluded, so reaching it proves line of sight.
+        local captured: Vector3 = info and info.capturedPosition or endpoint
+        if not isWeaponPathClear(origin, captured, character, true, nil) then
+            lastKnifeError = "covered"
+            return nil
+        end
+        if not knifeCorridorClear(origin, endpoint, character) then
             lastKnifeError = "obstructed"
             return nil
         end

@@ -41,6 +41,9 @@ mt.__index=function(a,k)
     if k=="Magnitude" then return math.sqrt(a.X*a.X+a.Y*a.Y+a.Z*a.Z) end
     if k=="Unit" then return a/a.Magnitude end
     if k=="Dot" then return function(a,b) return a.X*b.X+a.Y*b.Y+a.Z*b.Z end end
+    if k=="Cross" then return function(a,b)
+        return Vector3.new(a.Y*b.Z-a.Z*b.Y,a.Z*b.X-a.X*b.Z,a.X*b.Y-a.Y*b.X)
+    end end
 end
 local CFrame={new=function(p) return {Position=p} end,lookAt=function(p,q)
     assert((q-p).Magnitude>0.00001,"degenerate CFrame")

@@ -1,5 +1,5 @@
 return {
-    stamp = "v56-20261017-auto-lead",
+    stamp = "v57-20261017-knife-corridor",
     files = {
         ["src/Profile/142823291.lua"] = [[
 --!strict
@@ -2155,23 +2155,31 @@ function Module.init(runtime: any): any
         if not localRoot then
             return nil
         end
-        local closest: Player? = nil
-        local closestDistance: number = math.huge
+        local candidates: {{player: Player, distance: number}} = {}
         for _, player: Player in ipairs(Players:GetPlayers()) do
             if isValidTarget(player) then
                 local targetRoot: BasePart? = player.Character
                     and player.Character:FindFirstChild("HumanoidRootPart") :: BasePart?
                 if targetRoot then
-                    local distance: number =
-                        (targetRoot.Position - localRoot.Position).Magnitude
-                    if distance < closestDistance and resolveKnifeAim(player, origin) ~= nil then
-                        closest = player
-                        closestDistance = distance
-                    end
+                    table.insert(candidates, {
+                        player = player,
+                        distance = (targetRoot.Position - localRoot.Position).Magnitude,
+                    })
                 end
             end
         end
-        return closest
+        table.sort(candidates, function(left: any, right: any): boolean
+            return left.distance < right.distance
+        end)
+        -- Corridor checks are rays: cap them per frame. The nearest three
+        -- visible targets are enough; blocked players do not starve the rest.
+        for index: number = 1, math.min(#candidates, 3) do
+            local candidate: any = candidates[index]
+            if resolveKnifeAim(candidate.player, origin) ~= nil then
+                return candidate.player
+            end
+        end
+        return nil
     end
 
     local function getReadyKnife(): Tool?
@@ -2207,10 +2215,59 @@ function Module.init(runtime: any): any
         return speed
     end
 
+    -- The blade is a physical straight projectile, so graze tolerance matters:
+    -- a single centre ray passes a wall the real knife then clips. STRICT means
+    -- transparent parts are only ignored when they cannot collide; an invisible
+    -- solid wall still stops the blade. The corridor is sampled with a small
+    -- cross of rays around the centre line.
+    local KNIFE_CORRIDOR_RADIUS: number = 0.5
+    -- The blade keeps flying until it hits something, so there is no range
+    -- limit: only an absurd lead (a vanished target, a broken sample) is
+    -- refused. Ordinary long throws stay available.
+    local MAX_KNIFE_DISTANCE: number = 400
+
+    local function knifeCorridorClear(
+        origin: Vector3,
+        endpoint: Vector3,
+        targetCharacter: Model
+    ): boolean
+        local delta: Vector3 = endpoint - origin
+        local distance: number = delta.Magnitude
+        if distance < 0.05 then
+            return false
+        end
+        local direction: Vector3 = delta.Unit
+        local right: Vector3 = direction:Cross(Vector3.new(0, 1, 0))
+        if right.Magnitude < 1e-3 then
+            right = Vector3.new(1, 0, 0)
+        else
+            right = right.Unit
+        end
+        local up: Vector3 = right:Cross(direction).Unit
+        local offsets: {Vector3} = {
+            Vector3.zero,
+            right * KNIFE_CORRIDOR_RADIUS,
+            right * -KNIFE_CORRIDOR_RADIUS,
+            up * KNIFE_CORRIDOR_RADIUS,
+            up * -KNIFE_CORRIDOR_RADIUS,
+        }
+        for _, offset: Vector3 in ipairs(offsets) do
+            if not isWeaponPathClear(
+                origin + offset,
+                endpoint + offset,
+                targetCharacter,
+                true,
+                {ignoreTarget = true}
+            ) then
+                return false
+            end
+        end
+        return true
+    end
+
     -- The blade is a straight projectile. The predictor solves the intercept
-    -- (including the measured transport delay); WallCheck then verifies that
-    -- exact segment with the game's WeaponService filter. There is no
-    -- visible-part rescue: a shot that needs one is a shot through cover.
+    -- (including the measured transport delay); WallCheck then verifies the
+    -- exact corridor and that the target is not currently behind cover.
     resolveKnifeAim = function(target: Player, origin: Vector3): Vector3?
         lastKnifePrediction = nil
         lastKnifeError = nil
@@ -2224,7 +2281,19 @@ function Module.init(runtime: any): any
         if not character then
             return nil
         end
-        if not isWeaponPathClear(origin, endpoint, character, nil, {ignoreTarget = true}) then
+        if (endpoint - origin).Magnitude > MAX_KNIFE_DISTANCE then
+            lastKnifeError = "too far"
+            return nil
+        end
+        -- Cheapest rejection first: if the target is behind cover right now,
+        -- the blade would fly into that wall whatever the future pose says.
+        -- Here the target is NOT excluded, so reaching it proves line of sight.
+        local captured: Vector3 = info and info.capturedPosition or endpoint
+        if not isWeaponPathClear(origin, captured, character, true, nil) then
+            lastKnifeError = "covered"
+            return nil
+        end
+        if not knifeCorridorClear(origin, endpoint, character) then
             lastKnifeError = "obstructed"
             return nil
         end
@@ -4933,8 +5002,14 @@ local function isWeaponPathClear(origin: Vector3, endpoint: Vector3, target: Mod
         local hit: RaycastResult? = workspace:Raycast(origin, direction, params)
         if not hit then return not (options and options.requireTarget == true) end
         if target and hit.Instance:IsDescendantOf(target) then return true end
-        if not strict and hit.Instance:IsA("BasePart") and hit.Instance.Transparency == 1 then
-            table.insert(excluded, hit.Instance)
+        -- The gun is hitscan and uses the game's rule verbatim: every fully
+        -- transparent part is skipped. The knife is a physical blade, so with
+        -- strict it only ignores transparent parts that cannot collide;
+        -- an invisible solid wall still stops the knife.
+        local part: Instance = hit.Instance
+        if part:IsA("BasePart") and part.Transparency == 1
+            and (not strict or part.CanCollide == false) then
+            table.insert(excluded, part)
         else
             return false
         end
@@ -17529,78 +17604,24 @@ function Module.init(context: Runtime): any
         restartAnimateScript(animate)
     end
 
-    local animationAssetCache: {[string]: {string}} = {}
-
-    local function extractAnimationsFromAsset(rawAssetId: any): {string}
-        local cacheKey: string = tostring(rawAssetId or "")
-        if cacheKey == "" or cacheKey == "0" then
-            return {}
-        end
-        if animationAssetCache[cacheKey] then
-            return animationAssetCache[cacheKey]
-        end
-
-        local numericId: number? = nil
-        if type(rawAssetId) == "number" and rawAssetId > 0 then
-            numericId = rawAssetId
-        elseif type(rawAssetId) == "string" then
-            local matched: string? = string.match(rawAssetId, "%d+")
+    -- HumanoidDescription already stores the target's animation asset IDs
+    -- (rbxassetid://numbers). Assigning them directly is instant and does not
+    -- depend on game:GetObjects / InsertService, which are Studio or server
+    -- only and are the reason the old button could hang on "Downloading...".
+    local function animationIdFromValue(value: any): string?
+        local number: number? = nil
+        if type(value) == "number" and value > 0 then
+            number = value
+        elseif type(value) == "string" then
+            local matched: string? = string.match(value, "%d+")
             if matched then
-                numericId = tonumber(matched)
+                number = tonumber(matched)
             end
         end
-
-        local result: {string} = {}
-        if numericId and numericId > 0 then
-
-            local objectsOk: boolean, objects: any = pcall(function()
-                return (game :: any):GetObjects("rbxassetid://" .. tostring(numericId))
-            end)
-            if objectsOk and type(objects) == "table" and #objects > 0 then
-                for _, obj: Instance in ipairs(objects) do
-                    if obj:IsA("Animation") and obj.AnimationId ~= "" then
-                        table.insert(result, obj.AnimationId)
-                    end
-                    for _, descendant: Instance in ipairs(obj:GetDescendants()) do
-                        if descendant:IsA("Animation") and descendant.AnimationId ~= "" then
-                            table.insert(result, descendant.AnimationId)
-                        end
-                    end
-                end
-                for _, obj: Instance in ipairs(objects) do
-                    destroyInstance(obj)
-                end
-            end
-
-            if #result == 0 then
-                local insertService: any = (game :: any):GetService("InsertService")
-                if insertService and type(insertService.LoadAsset) == "function" then
-                    local loadOk: boolean, loaded: any = pcall(function()
-                        return insertService:LoadAsset(numericId)
-                    end)
-                    if loadOk and loaded then
-                        if loaded:IsA("Animation") and loaded.AnimationId ~= "" then
-                            table.insert(result, loaded.AnimationId)
-                        end
-                        for _, descendant: Instance in ipairs(loaded:GetDescendants()) do
-                            if descendant:IsA("Animation") and descendant.AnimationId ~= "" then
-                                table.insert(result, descendant.AnimationId)
-                            end
-                        end
-                        destroyInstance(loaded)
-                    end
-                end
-            end
-
-            if #result == 0 then
-                table.insert(result, "rbxassetid://" .. tostring(numericId))
-            end
-        elseif type(rawAssetId) == "string" and rawAssetId ~= "" then
-            table.insert(result, rawAssetId)
+        if not number or number <= 0 then
+            return nil
         end
-
-        animationAssetCache[cacheKey] = result
-        return result
+        return "rbxassetid://" .. tostring(math.floor(number))
     end
 
     local function copyTargetMovementAnimations(
@@ -17620,27 +17641,24 @@ function Module.init(context: Runtime): any
             end)
             local assetId: any = if readOk then value else nil
             local category: Instance? = animate:FindFirstChild(mapping.scriptCategory)
-            if assetId and category then
-                local animIds: {string} = extractAnimationsFromAsset(assetId)
-                if #animIds > 0 then
-                    local targets: {Animation} = {}
-                    if category:IsA("Animation") then
-                        table.insert(targets, category)
+            local chosenId: string? = animationIdFromValue(assetId)
+            if chosenId and category then
+                local targets: {Animation} = {}
+                if category:IsA("Animation") then
+                    table.insert(targets, category)
+                end
+                for _, descendant: Instance in ipairs(category:GetDescendants()) do
+                    if descendant:IsA("Animation") then
+                        table.insert(targets, descendant)
                     end
-                    for _, descendant: Instance in ipairs(category:GetDescendants()) do
-                        if descendant:IsA("Animation") then
-                            table.insert(targets, descendant)
-                        end
-                    end
-                    for idx: number, animation: Animation in ipairs(targets) do
-                        local chosenId: string = animIds[idx] or animIds[1]
-                        if chosenId and chosenId ~= "" and animation.AnimationId ~= chosenId then
-                            local changed: boolean = pcall(function()
-                                animation.AnimationId = chosenId
-                            end)
-                            if changed then
-                                changedCount += 1
-                            end
+                end
+                for _, animation: Animation in ipairs(targets) do
+                    if animation.AnimationId ~= chosenId then
+                        local changed: boolean = pcall(function()
+                            animation.AnimationId = chosenId
+                        end)
+                        if changed then
+                            changedCount += 1
                         end
                     end
                 end
@@ -18062,19 +18080,6 @@ function Module.init(context: Runtime): any
             return
         end
 
-        if settings.useTargetMovementAnimations then
-            copyTargetMovementAnimations(
-                character,
-                humanoid,
-                description
-            )
-            if not stillCurrent(token, character) then
-                destroyInstance(description)
-                destroyInstance(clone)
-                return
-            end
-        end
-
         installAppearanceFilter(character)
         restoring = true
         local oldItems: {Instance} = {}
@@ -18091,20 +18096,39 @@ function Module.init(context: Runtime): any
         local copied: boolean, copyError: any = pcall(function()
             copyCharacterAppearance(character, clone)
         end)
-        destroyInstance(description)
         destroyInstance(clone)
         if not copied then
+            destroyInstance(description)
             notify("The avatar was loaded, but some appearance parts could not be copied: "
                 .. tostring(copyError))
             return
         end
-        if stillCurrent(token, character) then
-            activeCard:SetStatus("Character")
-            if emoteWarning and targetEmotes and targetEquippedEmotes then
-                notify("Disguise emotes could not be applied: " .. emoteWarning)
-            end
-            status("Ready")
+        if not stillCurrent(token, character) then
+            destroyInstance(description)
+            return
         end
+        activeCard:SetStatus("Character")
+        if emoteWarning and targetEmotes and targetEquippedEmotes then
+            notify("Disguise emotes could not be applied: " .. emoteWarning)
+        end
+        -- Movement animations are cosmetic and optional, so they run LAST and
+        -- can never block or roll back the avatar copy above.
+        if settings.useTargetMovementAnimations then
+            local movementOk: boolean, movementError: any = pcall(
+                copyTargetMovementAnimations,
+                character,
+                humanoid,
+                description
+            )
+            if not movementOk then
+                notify(
+                    "The avatar was applied, but movement animations failed: "
+                        .. tostring(movementError)
+                )
+            end
+        end
+        destroyInstance(description)
+        status("Ready")
     end
 
     -- Animation mode: the same target user as Character mode, but only what

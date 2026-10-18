@@ -91,8 +91,9 @@
   reales contra un motor de rayos independiente: muro opaco bloquea, parte
   transparente se ignora, inocente en la línea bloquea, y ningún rechazo
   encola o envía paquetes.
-- `tools/test_mm2_knife_wallcheck.py` verifica que el cuchillo usa el intercepto
-  y un solo WallCheck sobre el segmento exacto, sin rescate por partes visibles.
+- `tools/test_mm2_knife_wallcheck.py` verifica el corredor completo del cuchillo:
+  un rayo de cobertura al cuerpo actual y cinco rayos (centro ±0,5 studs) sobre
+  el segmento futuro, todos estrictos con las partes invisibles.
 - `tools/test_prediction_66d.py` (modelo 66d contra el código vivo) se eliminó
   junto con el modelo que probaba.
 
@@ -129,3 +130,68 @@ remoto se replica a ~20 Hz, así que 60 Hz da tres observaciones por pose
 replicada. Subir a 120 Hz solo repite más veces la misma pose y no mejora el
 error dominante, que es el horizonte de transporte (eco/ping); además duplica
 el costo por jugador.
+
+## v57 — Character arreglado y cuchillo que ya no se clava en la pared
+
+### Character volvía a mostrar tu propio avatar
+
+- El bloque de **Use target movement animations** corría **antes** de
+  `copyCharacterAppearance`. Cualquier espera o fallo ahí —`ApplyDescription`
+  del clon, lectura del `Animate`, el antiguo `InsertService`— devolvía o
+  abortaba la función antes de copiar el avatar, y el resultado era el
+  personaje local intacto.
+- Ahora el orden es: filtro de apariencia → copia del avatar →
+  `SetStatus("Character")` → animaciones de movimiento **al final**, dentro de
+  un `pcall` con aviso propio. Un fallo de animaciones ya no puede impedir el
+  disfraz ni deshacerlo.
+- La copia de animaciones lee los `rbxassetid://` directamente del
+  `HumanoidDescription` (`animationIdFromValue`) y los asigna a cada
+  `Animation` del `Animate`. Se eliminaron `extractAnimationsFromAsset` y la
+  caché `animationAssetCache`: nada de `game:GetObjects` ni `InsertService`,
+  que solo existen en Studio/servidor y eran la causa de que el disfraz se
+  quedara pensando.
+- La `HumanoidDescription` se destruye al final y también en las salidas
+  tempranas (copia fallida, token viejo), sin dejar instancias colgando.
+
+### Cuchillo: por qué se clavaba en la pared
+
+El predictor acertaba, pero el chequeo era un solo rayo por el centro:
+
+- Un rayo central pasa junto a una esquina que la hoja real (con grosor) sí
+  toca, sobre todo en tiros con lead largo.
+- El endpoint es una pose **futura**; si el objetivo está detrás de una pared
+  **ahora**, el rayo futuro puede pasar por el hueco que dejó y la hoja se
+  estrella contra esa pared al salir.
+
+Ahora `resolveKnifeAim`:
+
+1. Descarta el lanzamiento si el objetivo no es visible **en este instante**
+   desde la mano: un rayo al cuerpo actual, sin excluirlo, con el filtro del
+   juego y en modo `strict`: la hoja ignora las partes invisibles que no
+   colisionan, pero una pared invisible sólida sí la detiene.
+2. Comprueba un corredor de cinco rayos (centro, ±0,5 studs en horizontal y
+   vertical) sobre el segmento futuro, excluyendo al objetivo y a
+   `WeaponPassthrough`, igual que el filtro del juego.
+3. Rechaza solo leads absurdos (>400 studs). No hay tope de distancia normal:
+   la hoja sigue recta hasta chocar, así que un tiro largo y despejado vale.
+4. Si el objetivo más cercano está tapado, prueba los **tres** más cercanos y
+   no todos los de la partida: máximo 3 selecciones por ciclo.
+
+La precisión no cambia: se sigue apuntando al mismo intercepto cinemático; lo
+que cambia es que un tiro con el corredor sucio no se envía. Menos cuchillos
+gastados en paredes y más en el Murderer.
+
+### La afirmación de los 200 ms
+
+No se pudo confirmar y **no se usa**. Detalle y evidencia en
+`docs/SERVER-ACCEPTANCE.md`: el place no incluye scripts de servidor, y los
+registros guardados muestran ecos `FireServer → GunFired` de hasta 1007 ms y
+cinco impactos confirmados con más de 200 ms de eco (máximo 259,2 ms). Un tope
+de 200,33 ms no aparece en ninguna parte del código recuperado.
+
+- `tools/test_mm2_knife_wallcheck.py` cubre el orden de los rayos, el rechazo
+  por cobertura y por corredor, el fallback de velocidad y el límite de 400
+  studs.
+- `tools/test_mm2_knife_presets.py` recorta su caso de 2000 studs a 300: el
+  módulo ya no finge alcanzar cualquier distancia, pero tampoco impone un tope
+  de 120 studs.

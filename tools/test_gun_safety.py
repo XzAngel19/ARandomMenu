@@ -110,6 +110,18 @@ assert(not check(true,muzzle,Vector3.new(0/0,0,0)))
 assert(not check(true,muzzle,Vector3.zero),'zero-length shot is rejected')
 assert(check(true),'WallCheck OFF only relaxes map geometry')
 local before=rays;assert(check());assert(rays-before==1,'one filtered ray per clear check')
+local ghost,ghostPart=model(Vector3.new(10,0,0))
+ghostPart.Transparency=1;ghostPart.CanCollide=false
+table.insert(scene,ghostPart)
+assert(isWeaponPathClear(muzzle,body.Position,victim,true,nil),
+    'strict: an invisible non-collidable decoration is ignored')
+ghostPart.CanCollide=true
+assert(not isWeaponPathClear(muzzle,body.Position,victim,true,nil),
+    'strict: an invisible solid wall still stops the knife')
+assert(isWeaponPathClear(muzzle,body.Position,victim,nil,nil),
+    'the gun keeps the game rule: any invisible part is skipped')
+table.remove(scene)
+pass('strict WallCheck: invisible decorations pass, invisible solids block')
 pass('actual validateGunShot: game filter, transparent skip, walls, innocents, roles, geometry, WallCheck OFF')
 '''
 

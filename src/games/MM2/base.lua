@@ -136,8 +136,14 @@ local function isWeaponPathClear(origin: Vector3, endpoint: Vector3, target: Mod
         local hit: RaycastResult? = workspace:Raycast(origin, direction, params)
         if not hit then return not (options and options.requireTarget == true) end
         if target and hit.Instance:IsDescendantOf(target) then return true end
-        if not strict and hit.Instance:IsA("BasePart") and hit.Instance.Transparency == 1 then
-            table.insert(excluded, hit.Instance)
+        -- The gun is hitscan and uses the game's rule verbatim: every fully
+        -- transparent part is skipped. The knife is a physical blade, so with
+        -- strict it only ignores transparent parts that cannot collide;
+        -- an invisible solid wall still stops the knife.
+        local part: Instance = hit.Instance
+        if part:IsA("BasePart") and part.Transparency == 1
+            and (not strict or part.CanCollide == false) then
+            table.insert(excluded, part)
         else
             return false
         end

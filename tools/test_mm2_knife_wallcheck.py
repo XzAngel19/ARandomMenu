@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Actual knife intercept hand-off and game-filter WallCheck, without visibility rescue."""
+"""Actual knife corridor: strict multi-ray WallCheck, current-cover rejection."""
 import os, subprocess, tempfile
 from pathlib import Path
 from test_mm2_precision import PRELUDE, section
@@ -25,34 +25,69 @@ local prediction={knifeAim=function(target,origin,speed)
     aimSpeed=speed
     return aimResult,(aimResult and info or nil),aimReason
 end}
-local clear=true
-local clearCalls=0
+local corridor=true
+local visible=true
+local corridorRays=0
+local coverageRays=0
 local function isWeaponPathClear(origin,finish,character,strict,opts)
-    clearCalls+=1
-    assert(strict==nil and opts and opts.ignoreTarget)
-    return clear
+    assert(strict==true,"the blade must not skip invisible solid parts")
+    assert(character==targetPlayer.Character)
+    if opts==nil then
+        coverageRays+=1
+        return visible
+    end
+    assert(opts.ignoreTarget and opts.requireTarget==nil)
+    corridorRays+=1
+    return corridor
+end
+local function reset()
+    corridorRays=0
+    coverageRays=0
 end
 ''' + section(K, '    local function readKnifeSpeed', '    type ThrowJoint') + r'''
+reset()
 assert(resolveKnifeAim(targetPlayer,Vector3.zero)==endpoint)
 assert(lastKnifePrediction==info and lastKnifeError==nil)
 near(aimSpeed,96)
-assert(clearCalls==1)
+assert(coverageRays==1,coverageRays)
+assert(corridorRays==5,corridorRays)
+pass("corridor: one current-body ray, then centre + four 0.5-stud rays")
+
 readySpeed=120;resolveKnifeAim(targetPlayer,Vector3.zero);near(aimSpeed,120)
 readySpeed=10;resolveKnifeAim(targetPlayer,Vector3.zero);near(aimSpeed,96)
 readySpeed=0/0;resolveKnifeAim(targetPlayer,Vector3.zero);near(aimSpeed,96)
-clear=false;clearCalls=0
+pass("speed probe: ThrowSpeed inside 24-300, otherwise 96")
+
+reset();visible=false
+assert(resolveKnifeAim(targetPlayer,Vector3.zero)==nil and lastKnifeError=='covered')
+assert(coverageRays==1 and corridorRays==0,"cover is rejected before any corridor ray")
+visible=true
+reset();corridor=false
 assert(resolveKnifeAim(targetPlayer,Vector3.zero)==nil and lastKnifeError=='obstructed')
-assert(lastKnifePrediction==nil and clearCalls==1,'WallCheck runs on the exact authored segment')
-clear=true
-aimResult=nil;aimReason='unreachable'
+assert(coverageRays==1 and corridorRays==1,"a blocked corridor stops at the first ray")
+corridor=true
+pass("current cover and blocked corridor both fail closed")
+
+reset();aimResult=nil;aimReason='unreachable'
 assert(resolveKnifeAim(targetPlayer,Vector3.zero)==nil and lastKnifeError=='unreachable')
-assert(clearCalls==1,'an unsolvable intercept is not raycast')
+assert(corridorRays==0 and coverageRays==0)
+aimResult=Vector3.new(500,0,0);aimReason=nil
+assert(resolveKnifeAim(targetPlayer,Vector3.zero)==nil and lastKnifeError=='too far')
+assert(corridorRays==0,"an absurd lead is refused before any ray")
 aimResult=endpoint
-targetPlayer.Character=nil
+pass("unreachable and >400-stud leads are refused without rays")
+
+reset();local far=Vector3.new(300,4,0);aimResult=far;info.flightSeconds=3.2
+assert(resolveKnifeAim(targetPlayer,Vector3.zero)==far,
+    "a slow blade over 300 studs is still thrown: no arbitrary range cap")
+info.flightSeconds=.2
+aimResult=endpoint
+reset();targetPlayer.Character=nil
 assert(resolveKnifeAim(targetPlayer,Vector3.zero)==nil and lastKnifeError==nil)
-ready=false;targetPlayer.Character={}
-assert(resolveKnifeAim(targetPlayer,Vector3.zero)==endpoint and aimSpeed==96)
-pass('actual knife resolve: intercept, speed probe, single game-filter WallCheck, fail-closed obstruction')
+targetPlayer.Character={}
+ready=false;assert(resolveKnifeAim(targetPlayer,Vector3.zero)==endpoint and aimSpeed==96)
+ready=true
+pass("long throws stay allowed; missing character and tool fall back safely")
 '''
 assert 'KNIFE_VISIBILITY_PARTS' not in K
 assert 'predictAim' not in K
