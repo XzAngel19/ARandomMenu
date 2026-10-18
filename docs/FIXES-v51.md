@@ -323,15 +323,16 @@ distribución va de 3,7 a 631 ms: es una media, no un umbral. Un tope fijo de
 ### Ecos tardíos: evidencia, no un multiplicador
 
 - La sesión v18 (`TestingStuff/Place_142823291_Game_Learning.json`) tiene un
-  eco **confirmado de 1007,7 ms con ping de 204,6 ms**. El corte de 800 ms lo
-  descartaba.
+  eco emparejado (verdict `shot-confirmed`, `hitTarget=false`) de **1007,7 ms
+  con ping de 270,3 ms**. El corte de 800 ms lo descartaba; el de 679,2 ms
+  (ping 400,1) también.
 - Ese eco no es un cruce: `base.lua` solo llama a `noteEcho` cuando coinciden el
   arma, el origen (±3,5 studs) y la dirección (dot ≥0,965) del disparo pendiente;
   además, la cola se abandona a los 1,6 s. Todo lo que llega a `noteEcho` ya
   pasó ese emparejamiento geométrico.
 - Por eso el límite superior pasa a **1600 ms**, el mismo horizonte de la cola
-  de disparos, en vez de un `max(800, 3×RTT)`: con 204,6 ms de ping, 3×RTT =
-  613,8 ms, que sigue rechazando el caso observado.
+  de disparos, en vez de un `max(800, 3×RTT)`: con 270,3 ms de ping, 3×RTT =
+  810,9 ms, que sigue rechazando el caso observado de 1007,7 ms.
 - La mediana sigue siendo la protección: 1 eco de 1 s entre 6 de 120 ms deja la
   mediana en 120 ms y solo se cuenta como muestra; 6 ecos de 1 s suben la
   mediana a 1 s, el lead automático se corta en 0,6 s y el estado lo marca
@@ -349,9 +350,9 @@ distribución va de 3,7 a 631 ms: es una media, no un umbral. Un tope fijo de
   no modela caída del proyectil. Un objetivo en suelo se apunta a su root actual
   (Y sin corrección), que es lo que asume una hoja recta.
 - No hay todavía impactos de cuchillo confirmados con posición en la telemetría
-  (38 tiros de cuchillo en v18, casi todos `unconfirmed` o
-  `projectile-observed`), así que la comprobación empírica de si el servidor
-  aplica caída a la hoja queda pendiente de datos, no afirmada.
+  (38 tiros de cuchillo en v18: 27 `unconfirmed`, 11 `projectile-observed`, 0
+  `shot-confirmed`), así que la comprobación empírica de si el servidor aplica
+  caída a la hoja queda pendiente de datos, no afirmada.
 
 ### Pruebas
 

@@ -124,7 +124,7 @@ local MIN_ECHO_SAMPLES: number = 6
 -- the same gun, an origin within 3.5 studs and a direction within ~15 degrees,
 -- so a late sample is our own shot, not a crossed one. The upper bound mirrors
 -- the 1.6 s pending-shot window in base.lua; the v18 session has a confirmed
--- 1007.7 ms echo at 204.6 ms ping, which an 800 ms cut would have thrown away.
+-- 1007.7 ms echo at 270.3 ms ping, which an 800 ms cut would have thrown away.
 local MIN_ECHO_DELAY: number = 0.05
 local MAX_ECHO_DELAY: number = 1.6
 -- Transport + manual lead. A full second only happens when the session ping

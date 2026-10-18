@@ -154,8 +154,9 @@ afirma.
 - El límite superior de 1600 ms no acepta cruces: `base.lua` solo entrega un
   eco cuando coinciden arma, origen (±3,5 studs) y dirección (dot ≥0,965) del
   disparo pendiente, y abandona la cola a los 1,6 s. En v18 hay un eco
-  **confirmado de 1007,7 ms con ping de 204,6 ms**; un corte de 800 ms lo
-  descartaba. La mediana y el tope de 0,6 s absorben un pico aislado.
+  emparejado de 1007,7 ms con ping de 270,3 ms (y otro de 679,2 ms con ping
+  400,1); un corte de 800 ms los descartaba. La mediana y el tope de 0,6 s
+  absorben un pico aislado.
 
 ## Lo que sí conviene explotar
 
