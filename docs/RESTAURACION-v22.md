@@ -888,3 +888,31 @@ DIRECCIÓN. Ahora:
 - Suites: precisión 16/16 (grupo nuevo de arc lead), v16 4/4, teams 14.
 - 71/71 compilan; bundle 70 archivos, sello
   `v28-20261016-arc-lead-hit-feedback`.
+
+## v28 (Parte 2.3) — 2026-10-17 — El horizonte usa la ventana de aceptación medida
+
+Sello `v28-20261017-acceptance-horizon`.
+
+Antes el horizonte de lead era `1.0 x RTT` (modelo teórico: lo que ves
+tiene ~1 RTT de viejo). Ahora, cuando la calibración tiene evidencia fresca
+y sana de la ventana de rebobinado REAL del servidor — la mediana de los
+ecos GunFired confirmados del último minuto (`liveGunAcceptanceMs`, ≥6
+muestras, dentro de 60-250 ms) — esa medida **es** la base del staleness
+directamente. Con el ping actual (~105 ms) eso son 123.5 ms medidos con
+297 disparos confirmados acumulados: incluye el margen de procesamiento
+del server y se auto-ajusta al ping.
+
+Reglas de seguridad (todas con test):
+- <6 muestras frescas → fallback al modelo RTT.
+- Fuera de [60, 250] ms → fallback (la regresión vieja de "calibración
+  rancia de 400 ms empuja el horizonte" sigue cubierta).
+- Tope de staleness 0.15 s y tope total del horizonte sin cambios.
+
+**Lead status** ahora dice de dónde sale el número:
+"Manual +0.000s | adaptive +0.000s (off; stored +0.000s) | horizon 0.123s
+| base: measured acceptance 123ms (9 fresh echoes)" — o "base: RTT model
+(no fresh acceptance data)" cuando no hay datos.
+
+Verificación: suites precisión 17/17 (grupo nuevo de aceptación), v16 4/4,
+teams 14; harness failures=0 con HERO + paleta + ciclos de toggle; 71/71
+compilan; bundle 70 archivos.

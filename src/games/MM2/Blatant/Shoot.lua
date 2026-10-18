@@ -1040,13 +1040,24 @@ function Module.init(runtime: any): any
             ))
             return
         end
+        local base: string
+        if status.horizonSource == "measured" then
+            base = string.format(
+                "measured acceptance %.0fms (%d fresh echoes)",
+                status.acceptanceMs or 0,
+                status.acceptanceSamples or 0
+            )
+        else
+            base = "RTT model (no fresh acceptance data)"
+        end
         notify(string.format(
-            "Manual %+.3fs | adaptive %+.3fs (%s; stored %+.3fs) | horizon %.3fs",
+            "Manual %+.3fs | adaptive %+.3fs (%s; stored %+.3fs) | horizon %.3fs | base: %s",
             status.manualBias or 0,
             status.autoCorrection or 0,
             status.autoTuneEnabled and "on" or "off",
             status.storedAutoCorrection or 0,
-            status.horizon or getGunHorizonSeconds()
+            status.horizon or getGunHorizonSeconds(),
+            base
         ))
     end)
     addActionOption(ShootFeature, "Reset auto lead correction", function(): ()

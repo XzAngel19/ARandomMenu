@@ -223,7 +223,34 @@ end
     -- Stale calibration data must never push the horizon again.
     trajectoryCalibration={getEstimates=function() return {liveGunAcceptanceMs=400,liveGunSamples=50} end}
     near(getGunHorizonSeconds(),0.08)
+    -- v28: fresh measured acceptance (median of the last minute's confirmed
+    -- echoes) IS the server's rewind window - it drives the base staleness
+    -- directly (123 ms measured at ~105 ms ping). Insane values, too few
+    -- samples and missing calibration all fall back to the RTT model.
+    trajectoryCalibration={getEstimates=function()
+        return {liveGunAcceptanceMs=123,liveGunSamples=9}
+    end}
+    near(getGunHorizonSeconds(),0.123)
+    trajectoryCalibration={getEstimates=function()
+        return {liveGunAcceptanceMs=123,liveGunSamples=3}
+    end}
+    near(getGunHorizonSeconds(),0.08)
+    trajectoryCalibration={getEstimates=function()
+        return {liveGunAcceptanceMs=40,liveGunSamples=9}
+    end}
+    near(getGunHorizonSeconds(),0.08)
+    trajectoryCalibration={getEstimates=function()
+        return {liveGunAcceptanceMs=240,liveGunSamples=12}
+    end}
+    near(getGunHorizonSeconds(),0.15)
+    trajectoryCalibration={getEstimates=function()
+        return {liveGunAcceptanceMs=400,liveGunSamples=50}
+    end}
+    near(getGunHorizonSeconds(),0.08)
+    trajectoryCalibration=nil
+    near(getGunHorizonSeconds(),0.08)
     pass("gun horizon: 1.0xRTT staleness lead; auto capped at 0.1; huge ping capped")
+    pass("gun horizon: measured acceptance drives staleness; insane/stale/few-sample data falls back to RTT")
     -- Signed turn + chord rotation (2026-10-16 field data: accepted shots
     -- that missed were targets turning hard; direction, not magnitude).
     local turningSample={turnRate=2.4,turnSign=1}

@@ -1,5 +1,5 @@
 return {
-    stamp = "v28-20261016-arc-lead-hit-feedback",
+    stamp = "v28-20261017-acceptance-horizon",
     files = {
         ["src/games/BedFight/Combat/AutoSwing.lua"] = [[
 local Module = {Name = "BedFight Auto Swing", Initialized = false, Connection = nil}
@@ -3178,13 +3178,24 @@ function Module.init(runtime: any): any
             ))
             return
         end
+        local base: string
+        if status.horizonSource == "measured" then
+            base = string.format(
+                "measured acceptance %.0fms (%d fresh echoes)",
+                status.acceptanceMs or 0,
+                status.acceptanceSamples or 0
+            )
+        else
+            base = "RTT model (no fresh acceptance data)"
+        end
         notify(string.format(
-            "Manual %+.3fs | adaptive %+.3fs (%s; stored %+.3fs) | horizon %.3fs",
+            "Manual %+.3fs | adaptive %+.3fs (%s; stored %+.3fs) | horizon %.3fs | base: %s",
             status.manualBias or 0,
             status.autoCorrection or 0,
             status.autoTuneEnabled and "on" or "off",
             status.storedAutoCorrection or 0,
-            status.horizon or getGunHorizonSeconds()
+            status.horizon or getGunHorizonSeconds(),
+            base
         ))
     end)
     addActionOption(ShootFeature, "Reset auto lead correction", function(): ()
@@ -6997,6 +7008,38 @@ end
 
 local trajectoryCalibration: any = nil
 
+local function getGunMeasuredAcceptanceSeconds(): (number?, number)
+    -- The server's OWN rewind window, measured: the median latency of the
+    -- last minute's confirmed GunFired echoes (liveGunAcceptanceMs). When
+    -- that evidence is fresh and sane it is a better base for the lead
+    -- than the theoretical RTT model, because it includes the server's
+    -- processing margin and tracks the current ping automatically.
+    -- Returns (seconds, samples); (nil, samples) means "no trustworthy
+    -- measurement - fall back to RTT".
+    if type(trajectoryCalibration) ~= "table"
+        or type(trajectoryCalibration.getEstimates) ~= "function" then
+        return nil, 0
+    end
+    local ok: boolean, estimates: any = pcall(trajectoryCalibration.getEstimates)
+    if not ok or type(estimates) ~= "table" then
+        return nil, 0
+    end
+    local acceptanceMs: any = estimates.liveGunAcceptanceMs
+    local samples: any = estimates.liveGunSamples
+    local sampleCount: number = type(samples) == "number" and samples or 0
+    if type(acceptanceMs) ~= "number" or sampleCount < 6 then
+        return nil, sampleCount
+    end
+    -- Sanity window: acceptance is RTT + a small server margin. Anything
+    -- outside 60-250 ms is not a rewind window MM2 plausibly grants (the
+    -- stale-calibration regression: 400 ms with 50 samples must stay
+    -- ignored); the 0.15 s staleness cap below still applies on top.
+    if acceptanceMs < 60 or acceptanceMs > 250 then
+        return nil, sampleCount
+    end
+    return acceptanceMs / 1000, sampleCount
+end
+
 local function getGunHorizonSeconds(): number
     -- Three field reports, one per direction:
     --  * v24: leading by the FULL ~277 ms acceptance window missed AHEAD
@@ -7013,11 +7056,17 @@ local function getGunHorizonSeconds(): number
     -- itself: lead by exactly that - no more (the acceptance window is a
     -- REWIND of past positions and must not be spent as forward lead), no
     -- less (undershoot keeps aiming at the recent past).
-    local staleness: number = math.clamp(
-        getEstimatedLatency() * 1.0,
-        0,
-        0.15
-    )
+    -- v28: when the calibration has fresh, sane evidence of the server's
+    -- ACTUAL rewind window (median of the last minute's confirmed echoes,
+    -- e.g. 123 ms at ~105 ms ping), that measurement IS where the rewind
+    -- lands - use it directly instead of the RTT approximation.
+    local staleness: number
+    local measuredAcceptance: number? = getGunMeasuredAcceptanceSeconds()
+    if measuredAcceptance ~= nil then
+        staleness = math.clamp(measuredAcceptance :: number, 0, 0.15)
+    else
+        staleness = math.clamp(getEstimatedLatency() * 1.0, 0, 0.15)
+    end
     local manualBias: number = math.clamp(
         mm2Settings.gunLeadBias,
         -GUN_LEAD.maximumManualBias,
@@ -7115,7 +7164,7 @@ local function getGunLeadSensitivity(horizon: number, turnRate: number?): number
 end
 
 local function getGunLeadStatus(): {[string]: any}
-    return {
+    local status: {[string]: any} = {
         manualBias = math.clamp(
             mm2Settings.gunLeadBias,
             -GUN_LEAD.maximumManualBias,
@@ -7125,7 +7174,20 @@ local function getGunLeadStatus(): {[string]: any}
         storedAutoCorrection = autoLeadCorrection,
         autoTuneEnabled = mm2Settings.autoTuneLead,
         horizon = getGunHorizonSeconds(),
+        horizonSource = "rtt",
+        acceptanceMs = nil :: number?,
+        acceptanceSamples = 0,
     }
+    do
+        local acceptance: number?, samples: number =
+            getGunMeasuredAcceptanceSeconds()
+        if acceptance ~= nil then
+            status.horizonSource = "measured"
+            status.acceptanceMs = (acceptance :: number) * 1000
+            status.acceptanceSamples = samples
+        end
+    end
+    return status
 end
 
 local function getGunOriginCFrame(character: Model, gun: Tool?): CFrame?
