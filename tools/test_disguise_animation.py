@@ -16,8 +16,6 @@ local function notify(message) table.insert(notified,message) end
 local function status(message) activeCard.status=message end
 local function destroyInstance(instance) instance.destroyed=true end
 local emotesAppliedToHumanoid=false
-local targetEmotes=nil
-local targetEquippedEmotes=nil
 
 local description={id="target"}
 local descriptionResult=description
@@ -39,13 +37,17 @@ local function restoreOriginalAppearance() table.insert(calls,"restore") end
 local function stopAppearanceFilter() table.insert(calls,"filter-off") end
 local function refreshMeshPartSnapshot() table.insert(calls,"mesh") end
 
-local settings={useTargetMovementAnimations=true}
 local emoteList={hello=true}
 local equippedList={1}
 local emoteMode="ok"
-local function readDescriptionEmotes()
-    if emoteMode=="none" then return nil,nil end
-    return emoteList,equippedList
+local targetCache=nil
+local function cacheTarget(userId,desc)
+    table.insert(calls,"cache")
+    assert(userId==7 and desc==description)
+    local emotes,equipped=emoteList,equippedList
+    if emoteMode=="none" then emotes,equipped=nil,nil end
+    targetCache={userId=userId,slots={idle="rbxassetid://1"},
+        emotes=emotes,equippedEmotes=equipped}
 end
 local function setHumanoidEmotes(humanoid,emotes,equipped)
     table.insert(calls,"emotes")
@@ -57,9 +59,9 @@ end
 
 local animationCount=2
 local animationHook=nil
-local function copyTargetMovementAnimations(current,humanoid,desc)
+local function applyCachedMovementAnimations(current,humanoid)
     table.insert(calls,"animations")
-    assert(current==character and desc==description)
+    assert(current==character)
     if animationHook then animationHook() end
     return animationCount
 end
@@ -69,8 +71,8 @@ end
     '    local function applyDisguise(): ()',
 ) + r'''
 applyAnimationDisguise(1,character,{},7)
-assert(table.concat(calls,",")=="snapshot,restore,filter-off,emotes,mesh,animations",table.concat(calls,","))
-assert(emotesAppliedToHumanoid and targetEmotes==emoteList and targetEquippedEmotes==equippedList)
+assert(table.concat(calls,",")=="cache,snapshot,restore,filter-off,emotes,mesh,animations",table.concat(calls,","))
+assert(emotesAppliedToHumanoid and targetCache.emotes==emoteList and targetCache.equippedEmotes==equippedList)
 assert((activeCard.status or ""):find("Animation ·") and description.destroyed)
 assert(#notified==0)
 pass("Animation mode: snapshot, restore, emotes and movement; no avatar copy")
@@ -82,12 +84,12 @@ assert(#notified==0 and activeCard.status~=nil,"emote-only disguise still succee
 assert(table.find(calls,"animations"))
 
 notified={};calls={};activeCard.status=nil
-settings.useTargetMovementAnimations=false
+-- Animation mode has no toggles: it always applies movement, whatever the
+-- Character-mode preference says.
 animationCount=5
 applyAnimationDisguise(1,character,{},7)
-assert(#notified==0 and activeCard.status~=nil and not table.find(calls,"animations"),
-    "toggle off keeps the target's animation IDs untouched")
-settings.useTargetMovementAnimations=true
+assert(#notified==0 and activeCard.status~=nil and table.find(calls,"animations"),
+    "movement is always applied in Animation mode")
 notified={};calls={};activeCard.status=nil;emoteMode="none";animationCount=0
 applyAnimationDisguise(1,character,{},7)
 assert(#notified==1 and notified[1]:find("did not expose") and activeCard.status==nil)
@@ -121,16 +123,29 @@ assert(not SOURCE_MARKER)
 # SOURCE_MARKER is never defined: remove that line (kept for clarity of intent).
 script = script.replace("\nassert(not SOURCE_MARKER)\n", "\n")
 
-assert 'applyAnimationBundle' not in SOURCE
-assert 'getBundleItems' not in SOURCE
-assert 'copyCharacterAppearance' not in section(
+animation_section = section(
     SOURCE,
     '    local function applyAnimationDisguise(',
     '    local function applyDisguise(): ()',
 )
+assert 'applyAnimationBundle' not in SOURCE
+assert 'getBundleItems' not in SOURCE
+assert 'copyCharacterAppearance' not in animation_section
+assert 'settings.useTargetMovementAnimations' not in animation_section, \
+    'Animation mode must not read the Character toggle'
+assert 'settings.showTargetEmotes' not in animation_section
+assert 'applyCachedMovementAnimations' in animation_section
+assert 'setHumanoidEmotes' in animation_section
 assert 'applyAnimationDisguise(' in SOURCE.split('local function applyDisguise(): ()', 1)[1]
 assert '{"Character", "Animation"}' in SOURCE
 assert 'without hiding it' in SOURCE
+
+# Both Character toggles are gated to Character only.
+movement_toggle = SOURCE.split('Name = "Use target movement animations"', 1)[1]
+assert 'Values = {"Character"}' in movement_toggle.split('Tooltip', 1)[0]
+emotes_toggle = SOURCE.split('Name = "Show target emotes"', 1)[1]
+assert 'Values = {"Character"}' in emotes_toggle.split('Tooltip', 1)[0]
+assert 'card:CreateButton' not in SOURCE, 'Show target emotes must be a check, not a run button'
 
 with tempfile.TemporaryDirectory(prefix='disguise-animation-') as tmp:
     path = Path(tmp) / 'test.luau'

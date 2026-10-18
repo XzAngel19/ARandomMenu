@@ -1,5 +1,5 @@
 return {
-    stamp = "v57-20261017-knife-corridor",
+    stamp = "v58-20261017-independent-toggles",
     files = {
         ["src/Profile/142823291.lua"] = [[
 --!strict
@@ -17267,13 +17267,42 @@ function Module.init(context: Runtime): any
     local restoring: boolean = false
     local emotesAppliedToHumanoid: boolean = false
     local animationOverrideApplied: boolean = false
-    local targetEmotes: any = nil
-    local targetEquippedEmotes: any = nil
+    -- Everything the target user exposes is cached the moment the avatar
+    -- description is fetched: the movement animation slots and the emotes.
+    -- Character mode applies the avatar but keeps this cache loaded, so the two
+    -- toggles work instantly instead of fetching the avatar again.
+    type TargetCache = {
+        userId: number,
+        slots: {[string]: string},
+        emotes: any,
+        equippedEmotes: any,
+    }
+    local targetCache: TargetCache? = nil
+
+    -- The checkbox restores its saved state from configData without calling
+    -- back, so the module settings must be read from the same place. Without
+    -- this, a saved OFF check would still apply the target's data.
+    local function savedToggle(name: string, fallback: boolean): boolean
+        local store: any = host.configData
+        local states: any = store and store.states
+        if type(states) ~= "table" then
+            return fallback
+        end
+        local saved: any = states["Universal.Disguise." .. name:gsub("%W", "")]
+        if type(saved) == "boolean" then
+            return saved
+        end
+        return fallback
+    end
 
     local settings = {
         mode = "Character",
         id = tostring(DEFAULT_USER_ID),
-        useTargetMovementAnimations = true,
+        useTargetMovementAnimations = savedToggle(
+            "Use target movement animations",
+            true
+        ),
+        showTargetEmotes = savedToggle("Show target emotes", true),
     }
 
     local function status(message: string): ()
@@ -17624,10 +17653,25 @@ function Module.init(context: Runtime): any
         return "rbxassetid://" .. tostring(math.floor(number))
     end
 
-    local function copyTargetMovementAnimations(
+    local function animationSlotsFromDescription(description: any): {[string]: string}
+        local slots: {[string]: string} = {}
+        for _, mapping in ipairs(MOVEMENT_ANIMATIONS) do
+            local readOk: boolean, value: any = pcall(function()
+                return description[mapping.descriptionField]
+            end)
+            local assetId: any = if readOk then value else nil
+            local chosenId: string? = animationIdFromValue(assetId)
+            if chosenId then
+                slots[mapping.scriptCategory] = chosenId
+            end
+        end
+        return slots
+    end
+
+    local function applyAnimationSlots(
         character: Model,
         humanoid: Humanoid,
-        description: any
+        slots: {[string]: string}
     ): number
         local animate: Instance? = character:FindFirstChild("Animate")
         if not animate then
@@ -17636,12 +17680,8 @@ function Module.init(context: Runtime): any
 
         local changedCount: number = 0
         for _, mapping in ipairs(MOVEMENT_ANIMATIONS) do
-            local readOk: boolean, value: any = pcall(function()
-                return description[mapping.descriptionField]
-            end)
-            local assetId: any = if readOk then value else nil
+            local chosenId: string? = slots[mapping.scriptCategory]
             local category: Instance? = animate:FindFirstChild(mapping.scriptCategory)
-            local chosenId: string? = animationIdFromValue(assetId)
             if chosenId and category then
                 local targets: {Animation} = {}
                 if category:IsA("Animation") then
@@ -17683,6 +17723,19 @@ function Module.init(context: Runtime): any
         return changedCount
     end
 
+    -- Runs as soon as a description is fetched, before anything is applied:
+    -- this is the "load everything in the background" step. It only reads the
+    -- description, so it can never touch or roll back the visible avatar.
+    local function cacheTarget(userId: number, description: any): ()
+        local emotes: any, equippedEmotes: any = readDescriptionEmotes(description)
+        targetCache = {
+            userId = userId,
+            slots = animationSlotsFromDescription(description),
+            emotes = emotes,
+            equippedEmotes = equippedEmotes,
+        }
+    end
+
     local function refreshMeshPartSnapshot(
         character: Model,
         current: AppearanceSnapshot
@@ -17709,6 +17762,66 @@ function Module.init(context: Runtime): any
         end
         if #refreshed > 0 then
             current.meshParts = refreshed
+        end
+    end
+
+    -- Applies what was already cached for the current target. No fetch and no
+    -- clone: turning a toggle back on is immediate.
+    local function applyCachedMovementAnimations(
+        character: Model,
+        humanoid: Humanoid
+    ): number
+        local cached: TargetCache? = targetCache
+        if not cached then
+            return 0
+        end
+        return applyAnimationSlots(character, humanoid, cached.slots)
+    end
+
+    local function applyCachedEmotes(
+        character: Model,
+        humanoid: Humanoid
+    ): boolean
+        local cached: TargetCache? = targetCache
+        local current: AppearanceSnapshot? = snapshot
+        if not cached or not current or current.character ~= character then
+            return false
+        end
+        if type(cached.emotes) ~= "table" or type(cached.equippedEmotes) ~= "table" then
+            return false
+        end
+        local applied: boolean = setHumanoidEmotes(
+            humanoid,
+            cached.emotes,
+            cached.equippedEmotes
+        )
+        if not applied then
+            return false
+        end
+        emotesAppliedToHumanoid = true
+        refreshMeshPartSnapshot(character, current)
+        return true
+    end
+
+    -- Independent counterpart of restoreMovementAnimationsOnly: only the
+    -- emotes go back to the snapshot, the avatar and the animations stay.
+    local function restoreEmotesOnly(
+        character: Model,
+        humanoid: Humanoid?
+    ): ()
+        local current: AppearanceSnapshot? = snapshot
+        if not humanoid or not current or current.character ~= character
+            or not emotesAppliedToHumanoid then
+            return
+        end
+        local restored: boolean = setHumanoidEmotes(
+            humanoid,
+            current.emotes,
+            current.equippedEmotes
+        )
+        if restored then
+            emotesAppliedToHumanoid = false
+            refreshMeshPartSnapshot(character, current)
         end
     end
 
@@ -17988,6 +18101,12 @@ function Module.init(context: Runtime): any
             return
         end
 
+        -- Load the target's animations and emotes first. They stay cached even
+        -- when both toggles are off, so the avatar below is the only thing the
+        -- toggles can ever apply later without another fetch.
+        cacheTarget(userId, description)
+        local cached: TargetCache? = targetCache
+
         local current: AppearanceSnapshot = ensureSnapshot(character, humanoid)
         restoreOriginalAppearance(character, humanoid)
         setDescriptionScales(description, current)
@@ -18037,32 +18156,34 @@ function Module.init(context: Runtime): any
             return
         end
 
-        targetEmotes, targetEquippedEmotes = readDescriptionEmotes(description)
         local emoteWarning: string? = nil
-        if targetEmotes and targetEquippedEmotes then
-            local emotesApplied: boolean, emoteError: string? = setHumanoidEmotes(
-                humanoid,
-                targetEmotes,
-                targetEquippedEmotes
-            )
-            if emotesApplied then
-                emotesAppliedToHumanoid = true
-                refreshMeshPartSnapshot(character, current)
-            else
-                emoteWarning = tostring(emoteError)
-
-                local rolledBack: boolean = setHumanoidEmotes(
+        if settings.showTargetEmotes then
+            if cached and type(cached.emotes) == "table"
+                and type(cached.equippedEmotes) == "table" then
+                local emotesApplied: boolean, emoteError: string? = setHumanoidEmotes(
                     humanoid,
-                    current.emotes,
-                    current.equippedEmotes
+                    cached.emotes,
+                    cached.equippedEmotes
                 )
-                if not rolledBack then
+                if emotesApplied then
                     emotesAppliedToHumanoid = true
-                    emoteWarning ..= " The original emotes could not be restored yet."
+                    refreshMeshPartSnapshot(character, current)
+                else
+                    emoteWarning = tostring(emoteError)
+
+                    local rolledBack: boolean = setHumanoidEmotes(
+                        humanoid,
+                        current.emotes,
+                        current.equippedEmotes
+                    )
+                    if not rolledBack then
+                        emotesAppliedToHumanoid = true
+                        emoteWarning ..= " The original emotes could not be restored yet."
+                    end
                 end
+            else
+                emoteWarning = "The target avatar description did not expose emotes."
             end
-        else
-            emoteWarning = "The target avatar description did not expose emotes."
         end
         if not stillCurrent(token, character) then
             if emotesAppliedToHumanoid then
@@ -18108,17 +18229,16 @@ function Module.init(context: Runtime): any
             return
         end
         activeCard:SetStatus("Character")
-        if emoteWarning and targetEmotes and targetEquippedEmotes then
+        if emoteWarning and settings.showTargetEmotes then
             notify("Disguise emotes could not be applied: " .. emoteWarning)
         end
         -- Movement animations are cosmetic and optional, so they run LAST and
         -- can never block or roll back the avatar copy above.
         if settings.useTargetMovementAnimations then
             local movementOk: boolean, movementError: any = pcall(
-                copyTargetMovementAnimations,
+                applyCachedMovementAnimations,
                 character,
-                humanoid,
-                description
+                humanoid
             )
             if not movementOk then
                 notify(
@@ -18152,22 +18272,26 @@ function Module.init(context: Runtime): any
             return
         end
 
+        cacheTarget(userId, description)
+        local cached: TargetCache? = targetCache
+
         local current: AppearanceSnapshot = ensureSnapshot(character, humanoid)
         restoreOriginalAppearance(character, humanoid)
         stopAppearanceFilter()
 
+        -- Animation mode is fixed: the target's emotes and movement animations
+        -- always apply. Neither Character toggle exists in this mode.
         local emotesApplied: boolean = false
-        local emotes: any, equippedEmotes: any = readDescriptionEmotes(description)
-        if emotes and equippedEmotes then
+        if cached and type(cached.emotes) == "table"
+            and type(cached.equippedEmotes) == "table" then
             local applied: boolean, emoteError: string? = setHumanoidEmotes(
                 humanoid,
-                emotes,
-                equippedEmotes
+                cached.emotes,
+                cached.equippedEmotes
             )
             if applied then
                 emotesApplied = true
                 emotesAppliedToHumanoid = true
-                targetEmotes, targetEquippedEmotes = emotes, equippedEmotes
                 refreshMeshPartSnapshot(character, current)
             else
                 notify(
@@ -18177,14 +18301,7 @@ function Module.init(context: Runtime): any
             end
         end
 
-        local changedCount: number = 0
-        if settings.useTargetMovementAnimations then
-            changedCount = copyTargetMovementAnimations(
-                character,
-                humanoid,
-                description
-            )
-        end
+        local changedCount: number = applyCachedMovementAnimations(character, humanoid)
         destroyInstance(description)
         if not stillCurrent(token, character) then
             if emotesApplied then
@@ -18200,13 +18317,7 @@ function Module.init(context: Runtime): any
             return
         end
         if not emotesApplied and changedCount == 0 then
-            if not settings.useTargetMovementAnimations then
-                notify(
-                    "That avatar did not expose emotes. Turn on Use target movement animations to copy movement too."
-                )
-            else
-                notify("That avatar did not expose emotes or movement animations.")
-            end
+            notify("That avatar did not expose emotes or movement animations.")
             return
         end
 
@@ -18238,8 +18349,9 @@ function Module.init(context: Runtime): any
         end
 
         local selectedMode: string = settings.mode
-        targetEmotes = nil
-        targetEquippedEmotes = nil
+        -- A new application invalidates the previous target's cache. The fetch
+        -- that follows repopulates it before anything is applied.
+        targetCache = nil
         task.spawn(function(): ()
             if selectedMode == "Character" then
                 applyCharacterDisguise(
@@ -18259,6 +18371,66 @@ function Module.init(context: Runtime): any
         end)
     end
 
+    local function activeCharacter(): (any, any)
+        local character: any = LocalPlayer.Character
+        local humanoid: any = character
+            and character:FindFirstChildOfClass("Humanoid")
+        if not character or not humanoid then
+            return nil, nil
+        end
+        return character, humanoid
+    end
+
+    -- Character mode only. Both toggles are independent: one touches the
+    -- Animate slots, the other the Humanoid emotes, and neither refetches the
+    -- avatar because cacheTarget already loaded everything.
+    local function setMovementAnimationsEnabled(enabled: boolean): ()
+        settings.useTargetMovementAnimations = enabled
+        if not activeCard or not activeCard.Enabled or settings.mode ~= "Character" then
+            return
+        end
+        local character: any, humanoid: any = activeCharacter()
+        if not character then
+            return
+        end
+        if enabled then
+            if not targetCache then
+                applyDisguise()
+                return
+            end
+            applyCachedMovementAnimations(character, humanoid)
+        else
+            restoreMovementAnimationsOnly(character, humanoid)
+        end
+        status(settings.mode)
+    end
+
+    local function setTargetEmotesEnabled(enabled: boolean): ()
+        settings.showTargetEmotes = enabled
+        if not activeCard or not activeCard.Enabled or settings.mode ~= "Character" then
+            return
+        end
+        local character: any, humanoid: any = activeCharacter()
+        if not character then
+            return
+        end
+        if enabled then
+            if not targetCache then
+                applyDisguise()
+                return
+            end
+            if type(targetCache.emotes) ~= "table"
+                or type(targetCache.equippedEmotes) ~= "table" then
+                notify("That avatar did not expose emotes.")
+                return
+            end
+            applyCachedEmotes(character, humanoid)
+        else
+            restoreEmotesOnly(character, humanoid)
+        end
+        status(settings.mode)
+    end
+
     local function restoreAndRelease(): ()
         generation += 1
         stopAppearanceFilter()
@@ -18270,58 +18442,9 @@ function Module.init(context: Runtime): any
             restoreOriginalAppearance(character, humanoid)
         end
         destroySnapshot()
+        targetCache = nil
         table.clear(cloned)
         table.clear(disguisedItems)
-    end
-
-    local function sortedEmoteNames(data: any): {string}
-        local names: {string} = {}
-        if type(data) == "table" then
-            for name: any in pairs(data) do
-                if type(name) == "string" then
-                    table.insert(names, name)
-                end
-            end
-        end
-        table.sort(names)
-        return names
-    end
-
-    local function equippedEmoteNames(data: any): {string}
-        local names: {string} = {}
-        local seen: {[string]: boolean} = {}
-        if type(data) == "table" then
-            for key: any, entry: any in pairs(data) do
-                local name: any = nil
-                if type(entry) == "string" then
-                    name = entry
-                elseif entry == true and type(key) == "string" then
-                    name = key
-                elseif type(entry) == "table" then
-                    name = entry.Name or entry.name or entry[1]
-                end
-                if type(name) == "string" and not seen[name] then
-                    seen[name] = true
-                    table.insert(names, name)
-                end
-            end
-        end
-        table.sort(names)
-        return names
-    end
-
-    local function formatNameList(names: {string}): string
-        if #names == 0 then
-            return "none"
-        end
-        local shown: {string} = {}
-        for index = 1, math.min(#names, 12) do
-            table.insert(shown, names[index])
-        end
-        if #names > 12 then
-            table.insert(shown, "+" .. tostring(#names - 12) .. " more")
-        end
-        return table.concat(shown, ", ")
     end
 
     local card: any
@@ -18330,7 +18453,7 @@ function Module.init(context: Runtime): any
         Category = "Utilities",
         ConfigKey = "Universal.Disguise",
         Order = 26,
-        Tooltip = "Character: copies a target avatar's cosmetics and emotes, with optional movement animations. Animation: applies that user's emotes and movement animations to your own avatar without hiding it.",
+        Tooltip = "Character: copies the target avatar, then optionally its emotes and movement animations through two independent toggles (both preloaded). Animation: always applies that user's emotes and movement animations to your own avatar, without hiding it.",
         Function = function(enabled: boolean): ()
             if enabled then
                 card:SetStatus(settings.mode)
@@ -18360,8 +18483,6 @@ function Module.init(context: Runtime): any
             card:SetStatus(value)
             if card.Enabled then
                 if value == "Animation" then
-                    targetEmotes = nil
-                    targetEquippedEmotes = nil
                     local character: Model? = LocalPlayer.Character
                     local humanoid: Humanoid? = character
                         and character:FindFirstChildOfClass("Humanoid")
@@ -18374,33 +18495,18 @@ function Module.init(context: Runtime): any
                 applyDisguise()
             end
         end,
-        Tooltip = "Character: visible avatar cosmetics and emotes from a user ID. Animation: the same user ID's emotes and movement animations only; your character stays exactly as it is.",
+        Tooltip = "Character: the visible avatar, plus independent toggles for its emotes and movement animations. Animation: the same user ID's emotes and movement animations only, always on; your character stays exactly as it is.",
     })
 
     card:CreateToggle({
         Name = "Use target movement animations",
-        -- Both modes apply movement animations, so the control stays visible.
-        Show = {Option = "Mode", Values = {"Character", "Animation"}},
-        Default = true,
+        -- Character only: Animation mode always applies them and has no control.
+        Show = {Option = "Mode", Values = {"Character"}},
+        Default = settings.useTargetMovementAnimations,
         Function = function(value: boolean): ()
-            settings.useTargetMovementAnimations = value
-            if not card.Enabled then
-                return
-            end
-            if value then
-                applyDisguise()
-                return
-            end
-            local character: Model? = LocalPlayer.Character
-            local humanoid: Humanoid? = character
-                and character:FindFirstChildOfClass("Humanoid")
-                :: Humanoid?
-            if character then
-                restoreMovementAnimationsOnly(character, humanoid)
-            end
-            status(settings.mode)
+            setMovementAnimationsEnabled(value)
         end,
-        Tooltip = "Copies the target user's movement animation IDs (idle, walk, run, jump, climb, fall, swim) to your own Animate script. On by default in Character and Animation; turn it off to keep your own movement. Emotes are separate and stay applied.",
+        Tooltip = "Character mode only. Shows the target user's movement animations (idle, walk, run, jump, climb, fall, swim) on the disguised avatar. They are already loaded, so this is instant; turning it off restores your own animations. Emotes are independent and stay untouched.",
     })
 
     card:CreateTextBox({
@@ -18422,26 +18528,15 @@ function Module.init(context: Runtime): any
         Tooltip = "Positive integer user ID. Character copies the avatar; Animation copies only its emotes and movement animations.",
     })
 
-    card:CreateButton({
+    card:CreateToggle({
         Name = "Show target emotes",
-        -- Both modes read the same user ID and apply its emotes.
-        Show = {Option = "Mode", Values = {"Character", "Animation"}},
-        Function = function(): ()
-            if type(targetEmotes) ~= "table" then
-                notify("Load a user ID before listing emotes.")
-                return
-            end
-            local names: {string} = sortedEmoteNames(targetEmotes)
-            local equipped: {string} = equippedEmoteNames(targetEquippedEmotes)
-            notify(string.format(
-                "Target emotes (%d): %s | Equipped (%d): %s",
-                #names,
-                formatNameList(names),
-                #equipped,
-                formatNameList(equipped)
-            ))
+        -- Character only: Animation mode always applies the target's emotes.
+        Show = {Option = "Mode", Values = {"Character"}},
+        Default = settings.showTargetEmotes,
+        Function = function(value: boolean): ()
+            setTargetEmotesEnabled(value)
         end,
-        Tooltip = "Lists the emotes and equipped emote slots returned for the target user ID in either mode.",
+        Tooltip = "Character mode only. Shows the target user's emotes and equipped emote slots on the disguised avatar. Independent from movement animations; turning it off restores your own emotes without touching the disguise.",
     })
 
     activeCard = card

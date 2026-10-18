@@ -108,7 +108,8 @@
   propio. No clona mallas, accesorios, ropa ni rostro: el avatar local sigue
   visible tal cual.
 - **Use target movement animations** ahora es un toggle visible en **ambos**
-  modos, ON por defecto. En Character se aplica junto con el disfraz; en
+  modos, ON por defecto. *(v58 lo dejó solo en Character y lo hizo instantáneo
+  desde caché; ver «v58» al final.)* En Character se aplica junto con el disfraz; en
   Animation decide si se copian las animaciones de movimiento (los emotes se
   aplican igual). Al apagarlo se restauran solo las animaciones originales,
   sin quitar el disfraz ni los emotes.
@@ -118,7 +119,8 @@
 - Al desactivar, se restauran los emotes y las animaciones originales desde el
   snapshot. Si el personaje cambia a mitad de la aplicación, se revierten los
   emotes aplicados y no se reporta éxito.
-- **Show target emotes** funciona en ambos modos.
+- **Show target emotes** funciona en ambos modos. *(v58: pasó a ser un check
+  independiente, solo en Character.)*
 - Se eliminó el flujo de bundles de animación (`applyAnimationBundle`,
   `getBundleItems`, `getAnimationType`), que era la causa de que Animation
   pareciera "no hacer nada" al introducir un ID de usuario.
@@ -183,11 +185,13 @@ gastados en paredes y más en el Murderer.
 
 ### La afirmación de los 200 ms
 
-No se pudo confirmar y **no se usa**. Detalle y evidencia en
+No se pudo confirmar como constante y **no se usa**. Detalle y evidencia en
 `docs/SERVER-ACCEPTANCE.md`: el place no incluye scripts de servidor, y los
 registros guardados muestran ecos `FireServer → GunFired` de hasta 1007 ms y
-cinco impactos confirmados con más de 200 ms de eco (máximo 259,2 ms). Un tope
-de 200,33 ms no aparece en ninguna parte del código recuperado.
+cinco impactos confirmados con más de 200 ms de eco (máximo 259,2 ms). El
+estimador del 16 de octubre da una media de 123,5 ms con ping ~108 ms, pero su
+distribución va de 3,7 a 631 ms: es una media, no un umbral. Un tope fijo de
+200,33 ms no aparece en ninguna parte del código recuperado.
 
 - `tools/test_mm2_knife_wallcheck.py` cubre el orden de los rayos, el rechazo
   por cobertura y por corredor, el fallback de velocidad y el límite de 400
@@ -195,3 +199,51 @@ de 200,33 ms no aparece en ninguna parte del código recuperado.
 - `tools/test_mm2_knife_presets.py` recorta su caso de 2000 studs a 300: el
   módulo ya no finge alcanzar cualquier distancia, pero tampoco impone un tope
   de 120 studs.
+
+## v58 — Disfraz: animaciones y emotes independientes
+
+### La carga ocurre una sola vez
+
+- Al aplicar **Character**, el `HumanoidDescription` se lee **al principio** y
+  se guardan en caché las animaciones de movimiento de cada slot y los emotes.
+  Esa es la carga en segundo plano: después se copia el avatar, y a partir de
+  ahí los dos toggles trabajan sobre la caché, sin volver a pedir el avatar ni
+  volver a clonarlo.
+- La caché guarda también el `UserId`; al cambiar el Target ID, al desactivar el
+  módulo, al cambiar de modo o al empezar otra aplicación se invalida, así que
+  nunca se aplican animaciones del usuario anterior.
+- Los dos checks recuperan su estado guardado con la misma clave que persiste el
+  widget (`Universal.Disguise.<nombre>`), de modo que un check guardado en OFF
+  no sigue aplicando datos al iniciar.
+
+### Character: dos checks independientes
+
+- **Use target movement animations**: visible solo en Character, ON por defecto.
+  Al encenderlo aplica los slots desde la caché en el acto
+  (`applyCachedMovementAnimations`); al apagarlo restaura solo las animaciones
+  originales (`restoreMovementAnimationsOnly`). No toca emotes.
+- **Show target emotes**: deja de ser un botón Run y pasa a ser un check, también
+  solo en Character y ON por defecto. Al encenderlo aplica los emotes y slots
+  equipados desde la caché (`applyCachedEmotes`); al apagarlo restaura solo los
+  emotes originales (`restoreEmotesOnly`). No toca el avatar ni las animaciones.
+- Se eliminó el listado de emotes y sus helpers: el botón ya no existe. Si el
+  avatar no expone emotes, el check avisa y no hace nada más.
+- Los dos checks no se pisan: un fallo o un cambio en uno no revierte el otro.
+
+### Animation: fijo, sin controles
+
+- **Animation** ya no muestra **Use target movement animations** ni **Show
+  target emotes**: en ese modo los emotes y las animaciones de movimiento del
+  usuario objetivo se aplican siempre y no se pueden desactivar. Sigue sin
+  copiar nada visible del avatar.
+- El modo Animation ignora el valor de los checks de Character (aunque estén
+  apagados, ahí se aplica todo).
+
+### Pruebas
+
+- `tools/test_disguise_toggles.py`: los dos handlers son independientes, usan la
+  caché sin refetch, no hacen nada en Animation y fallan cerrado sin personaje.
+- `tools/test_disguise_character.py`: orden caché → avatar → animaciones, y
+  bloques de emotes/animaciones separados.
+- `tools/test_disguise_animation.py`: Animation aplica siempre ambos y no lee
+  los checks de Character.

@@ -9,7 +9,7 @@ SOURCE = (ROOT / 'src/games/universal/Other/Disguise.lua').read_text()
 
 character_body = section(
     SOURCE,
-    '    local function copyTargetMovementAnimations(',
+    '    local function animationSlotsFromDescription(',
     '    local function refreshMeshPartSnapshot(',
 )
 appearance = section(
@@ -19,7 +19,7 @@ appearance = section(
 )
 
 mappings = section(SOURCE, 'local MOVEMENT_ANIMATIONS:', 'function Module.init(')
-helper = section(SOURCE, '    local function animationIdFromValue(', '    local function copyTargetMovementAnimations(')
+helper = section(SOURCE, '    local function animationIdFromValue(', '    local function animationSlotsFromDescription(')
 
 script = PRELUDE + mappings + r'''
 local animationOverrideApplied=false
@@ -53,7 +53,7 @@ local humanoid={FindFirstChildOfClass=function(_,class)
 end}
 local description={IdleAnimation=12345,WalkAnimation="rbxassetid://67890",RunAnimation=0/0}
 
-local changed=copyTargetMovementAnimations(character,humanoid,description)
+local changed=applyAnimationSlots(character,humanoid,animationSlotsFromDescription(description))
 assert(changed==3,"idle pair + walk slot: "..tostring(changed))
 assert(idleA.AnimationId=="rbxassetid://12345" and idleB.AnimationId=="rbxassetid://12345",
     "every idle slot gets the target animation")
@@ -64,19 +64,38 @@ pass("movement copy: direct IDs, every slot, animator restart")
 -- A throwing description must not explode through the caller's pcall.
 local bad={}
 setmetatable(bad,{__index=function() error("description unavailable") end})
-local ok=pcall(copyTargetMovementAnimations,character,humanoid,bad)
+local ok=pcall(function()
+    return applyAnimationSlots(character,humanoid,animationSlotsFromDescription(bad))
+end)
 assert(ok,"field read is already guarded")
 pass("movement copy never raises on a broken description")
 '''
 
-# Ordering contract inside applyCharacterDisguise.
+# Ordering contract inside applyCharacterDisguise: load the target's data,
+# copy the avatar, then apply movement from the cache as the optional last step.
 appearance_index = appearance.index('copyCharacterAppearance(character, clone)')
-movement_index = appearance.index('copyTargetMovementAnimations')
-assert appearance_index < movement_index, 'appearance copy must run before movement'
-assert 'pcall(\n                copyTargetMovementAnimations' in appearance
+load_index = appearance.index('cacheTarget(userId, description)')
+movement_index = appearance.index('applyCachedMovementAnimations')
+assert load_index < appearance_index < movement_index, \
+    'cache -> avatar -> movement is the only accepted order'
+assert 'pcall(\n                applyCachedMovementAnimations' in appearance
 assert 'destroyInstance(description)\n        status("Ready")' in appearance
 
-# copyTargetMovementAnimations must not use Studio/server-only asset APIs.
+# The two Character toggles are independent gates around separate blocks.
+marker = '-- Movement animations are cosmetic'
+assert appearance.count(marker) == 1
+emote_block, movement_tail = appearance.split(marker, 1)
+emote_block = emote_block.split('local cached: TargetCache? = targetCache', 1)[1]
+assert 'settings.showTargetEmotes' in emote_block
+assert 'settings.useTargetMovementAnimations' not in emote_block, \
+    'the emote block must not depend on the movement toggle'
+assert 'setHumanoidEmotes' in emote_block
+assert 'settings.useTargetMovementAnimations' in movement_tail
+assert 'setHumanoidEmotes' not in movement_tail, \
+    'the movement block must not depend on the emote toggle'
+assert 'applyCachedMovementAnimations' in movement_tail
+
+# No Studio/server-only asset APIs anywhere in the loading/copying helpers.
 for forbidden in ('GetObjects', 'InsertService', 'LoadAsset', 'task.wait'):
     assert forbidden not in character_body, forbidden
 

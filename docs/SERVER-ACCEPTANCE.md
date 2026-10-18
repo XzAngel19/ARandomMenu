@@ -60,6 +60,33 @@ resultado, ordenados por eco:
 | 679.2 | no |
 | 1007.7 | no |
 
+## La «ventana dinámica» del 16 de octubre
+
+`TestingStuff/MM2_Trajectory_Calibration.json` (stamp `v35-20261016-menu-motion`,
+sesión con ping ~108 ms) guarda el estimador que usó el otro agente:
+
+| Métrica | Valor |
+|---|---|
+| `confirmedShots` | 297 |
+| `gunAcceptanceMs` mínimo | 3,73 ms |
+| `gunAcceptanceMs` media | **123,51 ms** |
+| `gunAcceptanceMs` máximo | **631,12 ms** |
+
+Ese 123,5 ms es la **media** de una distribución con cola larga, no un umbral:
+el propio registro contiene aceptaciones de 3,73 ms y de 631 ms. La media es
+~15 ms mayor que el ping de esa sesión, así que la regla «ventana ≈ RTT + 10–20
+ms» describe bien el centro de la distribución, pero **no es un corte**:
+usar 123 ms como límite habría rechazado disparos que el servidor sí aceptó.
+
+Es exactamente lo que ya hace el mod: la mediana de ecos medidos (con respaldo
+del ping) es la «ventana» en vivo, sin constante mágica. La diferencia es que
+nosotros usamos la mediana y no la media, y no descartamos por encima de un
+número fijo.
+
+Ojo con mezclar archivos: en `Place_142823291_Game_Learning.json` (14 oct) los
+**297** son `hitboxAnomalies` y solo hay **29** `confirmations`; los 297
+disparos confirmados y el 123,5 ms salen del archivo de calibración v35.
+
 ## Veredicto
 
 La afirmación tal como suena —un corte duro de aceptación a 200 ms— **no queda

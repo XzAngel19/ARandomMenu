@@ -1034,10 +1034,13 @@ do
     local disguise = ex.state.framework:GetModule("Disguise")
     assert(disguise and disguise.Category == "Utilities", "Disguise must actually load in Utilities")
     disguise.Options.Mode.Metadata.callback("Animation")
-    assert(disguise.Options["Use target movement animations"].Visible and disguise.Options["Show target emotes"].Visible,
-        "Animation applies movement + emotes, so both controls must stay available")
+    assert(not disguise.Options["Use target movement animations"].Visible
+        and not disguise.Options["Show target emotes"].Visible,
+        "Animation always applies movement + emotes, so it has no controls for them")
     disguise.Options.Mode.Metadata.callback("Character")
-    assert(disguise.Options["Use target movement animations"].Visible and disguise.Options["Show target emotes"].Visible)
+    assert(disguise.Options["Use target movement animations"].Visible
+        and disguise.Options["Show target emotes"].Visible,
+        "Character exposes the two independent checks")
     for _, feature in ipairs(ex.allFeatures) do
       local seen = {}
       for _, row in ipairs(feature.optionRows or {}) do
