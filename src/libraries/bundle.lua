@@ -4277,28 +4277,30 @@ local function findButtonIn(root: Instance?, specificOnly: boolean): GuiButton?
     return nil
 end
 
-local function findWindow(playerGui: Instance?): Instance?
+local function findWindows(playerGui: Instance?): {Instance}
+    local windows: {Instance} = {}
     if not playerGui then
-        return nil
+        return windows
     end
     local ok: boolean, descendants: any = pcall(function(): any
         return playerGui:GetDescendants()
     end)
     if not ok or type(descendants) ~= "table" then
-        return nil
+        return windows
     end
     for _, object: Instance in ipairs(descendants) do
         if isWindow(object) then
-            return object
+            table.insert(windows, object)
         end
     end
-    return nil
+    return windows
 end
 
--- Returns the button and, when it was found, the window it belongs to.
+-- Returns the button and, when it was found, the window it belongs to. Every
+-- window is tried: the game keeps some of them in the PlayerGui while hidden.
 local function findOpenButton(playerGui: Instance?): (GuiButton?, Instance?)
-    local window: Instance? = findWindow(playerGui)
-    if window then
+    local windows: {Instance} = findWindows(playerGui)
+    for _, window: Instance in ipairs(windows) do
         local inWindow: GuiButton? = findButtonIn(window, false)
         if inWindow then
             return inWindow, window
@@ -4306,7 +4308,7 @@ local function findOpenButton(playerGui: Instance?): (GuiButton?, Instance?)
     end
     -- Last resort: the exact label is unambiguous, wherever it lives.
     local exact: GuiButton? = findButtonIn(playerGui, true)
-    return exact, window
+    return exact, windows[1]
 end
 
 -- Executors expose `firesignal`; without it a GuiButton cannot be pressed from

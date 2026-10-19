@@ -199,6 +199,29 @@ buttons[#buttons + 1] = generic
 clock += 10
 loop(0.1)
 assert(#pressed == 0, "a generic OPEN outside a box window is ignored")
+-- The game keeps hidden unboxing windows around: they must not shadow the
+-- visible one, and their buttons must not be pressed.
+local hiddenHatch = {Name = "Hatching", Visible = false, children = {}}
+function hiddenHatch:IsA(class) return class == "Frame" end
+function hiddenHatch:GetDescendants()
+    local list = {}
+    local function walk(node)
+        for _, child in ipairs(node.children or {}) do
+            list[#list + 1] = child
+            walk(child)
+        end
+    end
+    walk(self)
+    return list
+end
+hiddenHatch.Parent = frame
+buttons[#buttons + 1] = hiddenHatch
+local hiddenOpen = guiButton("OpenHidden", "OPEN BOX", true)
+hiddenOpen.Parent = hiddenHatch
+hiddenHatch.children[1] = hiddenOpen
+clock += 1.1
+loop(0.1)
+assert(#pressed == 0, "a button inside a hidden window is not pressed")
 local unboxing = {Name = "Unboxing", Visible = true, children = {}}
 function unboxing:IsA(class) return class == "Frame" end
 function unboxing:GetFullName() return "PlayerGui.Shop.Unboxing" end
