@@ -59,10 +59,17 @@ echo "PASS menu audit: $cards cards, every row dumped from the booted bundle"
 # A release boot must not build the developer capture card. This runs the
 # bundle with WURST_DEBUG=false and checks the card is absent, not hidden.
 python3 tools/audit_menu.py --release >build/menu_release.md 2>&1 || { cat build/menu_release.md; exit 1; }
-grep -q '^35 cards total' build/menu_release.md
+release_cards="$(grep -E '^[0-9]+ cards total' build/menu_release.md | cut -d' ' -f1)"
+[ -n "$release_cards" ] || { cat build/menu_release.md; exit 1; }
+# The only difference between the two boots is the debug capture card.
+if [ "$release_cards" -ne "$((cards - 1))" ]; then
+    cat build/menu_release.md
+    echo "release boot has $release_cards cards, expected $((cards - 1))" >&2
+    exit 1
+fi
 if grep -q 'Calibration' build/menu_release.md; then
     cat build/menu_release.md
     echo "release boot built the debug Calibration card" >&2
     exit 1
 fi
-echo "PASS release menu: 35 cards, no Calibration card"
+echo "PASS release menu: $release_cards cards, no Calibration card"

@@ -1,5 +1,5 @@
 return {
-    stamp = "v71-20261019-menu-cleanup-coin-esp-and-real-modules",
+    stamp = "v72-20261019-candy-coins-and-auto-unbox",
     files = {
         ["src/Profile/142823291.lua"] = [[
 --!strict
@@ -4137,6 +4137,512 @@ end
 return Module
 
 ]],
+        ["src/games/MM2/Other/AutoUnbox.lua"] = [[
+-- MM2 Auto Unbox: opens the game's own 1000-coin mystery boxes by pressing
+-- the same button a player presses.
+--
+-- Why the UI and not a remote: the box purchase is a client-side flow that
+-- the game exposes only through its Unboxing window. Firing a remote nobody
+-- has seen would be a guess; pressing the real button runs the real code, and
+-- the inventory change that follows proves it worked.
+local Module = {
+    Name = "MM2 Auto Unbox",
+    PlaceId = 142823291,
+    Events = {} :: {[string]: any},
+    Initialized = false,
+    Runtime = nil :: any,
+}
+
+local activeCleanup: () -> () = function(): () end
+
+-- The labels the Unboxing window uses. Localisation strings in the place
+-- dump: "OPEN BOX", "Opening Box...", "Open - {number1}", "Unboxing".
+local OPEN_LABELS: {string} = {
+    "OPEN BOX",
+    "OPENBOX",
+    "UNBOX",
+    "HATCH",
+}
+-- The game's own unboxing windows, straight from the place dump. A generic
+-- "OPEN" button is only trusted inside one of these.
+local WINDOW_NAMES: {string} = {
+    "Unboxing",
+    "Unboxing2",
+    "Hatching",
+    "MysteryBoxOpen",
+    "MysteryBox",
+}
+-- Never press a button that spends Robux: those are the purchase prompts.
+local FORBIDDEN_LABELS: {string} = {
+    "PURCHASE",
+    "BUY",
+    "ROBUX",
+}
+
+local function uppercase(text: any): string
+    return string.upper(tostring(text or ""))
+end
+
+local function isOpenLabel(text: string): boolean
+    for _, label: string in ipairs(FORBIDDEN_LABELS) do
+        if string.find(text, label, 1, true) then
+            return false
+        end
+    end
+    if text == "OPEN" or string.sub(text, 1, 7) == "OPEN - " then
+        return true
+    end
+    for _, label: string in ipairs(OPEN_LABELS) do
+        if string.find(text, label, 1, true) then
+            return true
+        end
+    end
+    return false
+end
+
+-- Visible and interactive all the way up to the ScreenGui.
+local function isPressable(button: GuiButton): boolean
+    if button.Visible ~= true then
+        return false
+    end
+    local active: any = (button :: any).Active
+    if active == false then
+        return false
+    end
+    local interactable: any = (button :: any).Interactable
+    if interactable == false then
+        return false
+    end
+    local parent: Instance? = button.Parent
+    while parent do
+        local visible: any = (parent :: any).Visible
+        if visible == false then
+            return false
+        end
+        if parent:IsA("ScreenGui") or parent:IsA("PlayerGui") then
+            break
+        end
+        parent = parent.Parent
+    end
+    return true
+end
+
+local function isWindow(object: Instance): boolean
+    local name: string = object.Name
+    for _, windowName: string in ipairs(WINDOW_NAMES) do
+        if name == windowName then
+            return true
+        end
+    end
+    return false
+end
+
+-- Only "OPEN BOX" and friends are specific enough to trust anywhere; a bare
+-- "OPEN" could belong to any menu on screen.
+local function isSpecificOpenLabel(text: string): boolean
+    for _, label: string in ipairs(OPEN_LABELS) do
+        if string.find(text, label, 1, true) then
+            return true
+        end
+    end
+    return string.sub(text, 1, 7) == "OPEN - "
+end
+
+local function findButtonIn(root: Instance?, specificOnly: boolean): GuiButton?
+    if not root then
+        return nil
+    end
+    local ok: boolean, descendants: any = pcall(function(): any
+        return root:GetDescendants()
+    end)
+    if not ok or type(descendants) ~= "table" then
+        return nil
+    end
+    for _, object: Instance in ipairs(descendants) do
+        if object:IsA("GuiButton") then
+            local button: GuiButton = object :: GuiButton
+            local text: string = uppercase(button.Text)
+            local name: string = uppercase(button.Name)
+            local usable: boolean
+            if specificOnly then
+                usable = isSpecificOpenLabel(text) or isSpecificOpenLabel(name)
+            else
+                usable = isOpenLabel(text) or isOpenLabel(name)
+            end
+            if usable and isPressable(button) then
+                return button
+            end
+        end
+    end
+    return nil
+end
+
+local function findWindow(playerGui: Instance?): Instance?
+    if not playerGui then
+        return nil
+    end
+    local ok: boolean, descendants: any = pcall(function(): any
+        return playerGui:GetDescendants()
+    end)
+    if not ok or type(descendants) ~= "table" then
+        return nil
+    end
+    for _, object: Instance in ipairs(descendants) do
+        if isWindow(object) then
+            return object
+        end
+    end
+    return nil
+end
+
+-- Returns the button and, when it was found, the window it belongs to.
+local function findOpenButton(playerGui: Instance?): (GuiButton?, Instance?)
+    local window: Instance? = findWindow(playerGui)
+    if window then
+        local inWindow: GuiButton? = findButtonIn(window, false)
+        if inWindow then
+            return inWindow, window
+        end
+    end
+    -- Last resort: the exact label is unambiguous, wherever it lives.
+    local exact: GuiButton? = findButtonIn(playerGui, true)
+    return exact, window
+end
+
+-- Executors expose `firesignal`; without it a GuiButton cannot be pressed from
+-- a script, and pretending otherwise is worse than saying so.
+local function signalFirer(): any
+    local ok: boolean, firer: any = pcall(function(): any
+        return (getfenv and getfenv()) or nil
+    end)
+    if ok and type(firer) == "table" and type(firer.firesignal) == "function" then
+        return firer.firesignal
+    end
+    local okDirect: boolean, direct: any = pcall(function(): any
+        return (firesignal :: any)
+    end)
+    if okDirect and type(direct) == "function" then
+        return direct
+    end
+    return nil
+end
+
+function Module.init(runtime: any): any
+    if Module.Initialized then
+        return Module
+    end
+    local core: any = state.mm2Core
+    assert(type(core) == "table", "MM2 Auto Unbox requires the MM2 core module")
+    Module.Runtime = runtime
+
+    local settings = {
+        delay = 1.5,
+        maxBoxes = 10,
+    }
+    local session = {
+        opened = 0,
+        failures = 0,
+        pendingButton = nil :: GuiButton?,
+        pendingSince = 0,
+        nextAt = 0,
+        finished = false,
+        window = nil :: Instance?,
+    }
+
+    local function inventorySignals(): {any}
+        local signals: {any} = {}
+        local ok: boolean, remotes: any = pcall(function(): any
+            local replicated: Instance = game:GetService("ReplicatedStorage")
+            return replicated:FindFirstChild("Remotes")
+        end)
+        if not ok or not remotes then
+            return signals
+        end
+        for _, name: string in ipairs({"ItemReceived", "CrateComplete", "ChangeInventoryItem"}) do
+            local okFind: boolean, remote: any = pcall(function(): any
+                return remotes:FindFirstChild(name, true)
+            end)
+            if okFind and remote and remote:IsA("RemoteEvent") then
+                table.insert(signals, remote)
+            end
+        end
+        return signals
+    end
+
+    local confirmedByRemote: boolean = false
+    local confirmationConnections: {any} = {}
+    local function connectConfirmations(): ()
+        table.clear(confirmationConnections)
+        confirmedByRemote = false
+        for _, remote: any in ipairs(inventorySignals()) do
+            local ok: boolean, connection: any = pcall(function(): any
+                return remote.OnClientEvent:Connect(function(): ()
+                    confirmedByRemote = true
+                end)
+            end)
+            if ok and connection then
+                table.insert(confirmationConnections, connection)
+            end
+        end
+    end
+
+    local function disconnectConfirmations(): ()
+        for _, connection: any in ipairs(confirmationConnections) do
+            pcall(function(): ()
+                connection:Disconnect()
+            end)
+        end
+        table.clear(confirmationConnections)
+    end
+
+    local function report(text: string): ()
+        local card: any = state.mm2AutoUnboxFeature
+        if card then
+            card:SetStatus(text)
+        end
+    end
+
+    local function summary(): string
+        if session.opened == 0 and session.failures == 0 then
+            if session.window then
+                return "window: " .. session.window.Name
+            end
+            return "waiting for a box window"
+        end
+        local text: string = tostring(session.opened) .. " opened"
+        if session.failures > 0 then
+            text ..= " · " .. tostring(session.failures) .. " failed"
+        end
+        if session.finished then
+            text ..= " · done"
+        end
+        return text
+    end
+
+    -- A universal card has no :Toggle (that belongs to framework modules); it
+    -- switches off through its own onToggle plus the shared repaint.
+    local function turnCardOff(): ()
+        local card: any = state.mm2AutoUnboxFeature
+        if not card then
+            return
+        end
+        card.enabled = false
+        pcall(function(): ()
+            card.onToggle(false)
+        end)
+        if type(refreshFeatureToggle) == "function" then
+            pcall(refreshFeatureToggle, card)
+        end
+    end
+
+    local function stop(reason: string?): ()
+        disconnectFeatureConnection("MM2AutoUnbox")
+        disconnectConfirmations()
+        session.pendingButton = nil
+        if reason then
+            notify(reason)
+        end
+        turnCardOff()
+    end
+
+    local function press(button: GuiButton, firer: any): boolean
+        local ok: boolean = pcall(function(): ()
+            firer(button.MouseButton1Click)
+        end)
+        if ok then
+            return true
+        end
+        -- Some executors expose `activated` only; try the other signal too.
+        return pcall(function(): ()
+            (button.Activated :: any):Fire()
+        end)
+    end
+
+    local function activationConfirmed(button: GuiButton): boolean
+        if confirmedByRemote then
+            return true
+        end
+        local text: string = uppercase(button.Text)
+        if string.find(text, "OPENING", 1, true) then
+            return true
+        end
+        local parent: Instance? = button.Parent
+        while parent and not parent:IsA("ScreenGui") and not parent:IsA("PlayerGui") do
+            if (parent :: any).Visible == false then
+                return true
+            end
+            parent = parent.Parent
+        end
+        return (button :: any).Visible == false
+    end
+
+    local function beginRun(): ()
+        session.opened = 0
+        session.failures = 0
+        session.pendingButton = nil
+        session.pendingSince = 0
+        session.nextAt = 0
+        session.finished = false
+        session.window = nil
+        confirmedByRemote = false
+        connectConfirmations()
+    end
+
+    local function tick(deltaTime: number): ()
+        if session.finished then
+            return
+        end
+        if session.opened >= math.round(settings.maxBoxes) then
+            session.finished = true
+            report(summary())
+            stop(nil)
+            return
+        end
+        local now: number = os.clock()
+        local pending: GuiButton? = session.pendingButton
+        if pending then
+            if activationConfirmed(pending) then
+                session.opened += 1
+                session.failures = 0
+                confirmedByRemote = false
+                session.pendingButton = nil
+                session.nextAt = now + settings.delay
+                report(summary())
+                return
+            end
+            if now - session.pendingSince > 8 then
+                session.failures += 1
+                session.pendingButton = nil
+                confirmedByRemote = false
+                report(summary())
+                if session.failures >= 3 then
+                    session.finished = true
+                    stop("Auto Unbox stopped: the box button did not respond.")
+                end
+            end
+            return
+        end
+        if now < session.nextAt then
+            return
+        end
+        local playerGui: Instance? = LocalPlayer and LocalPlayer:FindFirstChild("PlayerGui")
+        local button: GuiButton?, window: Instance? = findOpenButton(playerGui)
+        session.window = window
+        if not button then
+            report(summary())
+            session.nextAt = now + 1
+            return
+        end
+        local firer: any = signalFirer()
+        if not firer then
+            session.finished = true
+            stop("Auto Unbox: this executor does not expose firesignal, so the box button cannot be pressed.")
+            return
+        end
+        if not press(button, firer) then
+            session.finished = true
+            stop("Auto Unbox: the box button could not be pressed.")
+            return
+        end
+        session.pendingButton = button
+        session.pendingSince = now
+        report(summary())
+    end
+
+    local AutoUnboxFeature: any = createUniversalFeature(
+        "Auto Unbox",
+        "Opens the game's 1000-coin or candy mystery boxes by pressing their OPEN BOX button, one at a time.",
+        4,
+        function(enabled: boolean): ()
+            disconnectFeatureConnection("MM2AutoUnbox")
+            if not enabled then
+                disconnectConfirmations()
+                session.pendingButton = nil
+                return
+            end
+            beginRun()
+            report(summary())
+            featureConnections.MM2AutoUnbox = TaskManager:Connect(tick)
+        end,
+        {
+            categoryName = "Utilities",
+            parent = MM2Scroll,
+            registry = mm2Features,
+        }
+    )
+    state.mm2AutoUnboxFeature = AutoUnboxFeature
+    addNumberOption(
+        AutoUnboxFeature,
+        "Delay between boxes",
+        settings.delay,
+        0.8,
+        5,
+        function(value: number): ()
+            settings.delay = value
+        end
+    )
+    addNumberOption(
+        AutoUnboxFeature,
+        "Max boxes per run",
+        settings.maxBoxes,
+        1,
+        50,
+        function(value: number): ()
+            settings.maxBoxes = value
+        end
+    )
+    addActionOption(
+        AutoUnboxFeature,
+        "Find box button",
+        function(): ()
+            local playerGui: Instance? = LocalPlayer and LocalPlayer:FindFirstChild("PlayerGui")
+            local button: GuiButton?, window: Instance? = findOpenButton(playerGui)
+            if button then
+                notify(
+                    "Open box button found: "
+                        .. tostring(button.Text)
+                        .. " ("
+                        .. button:GetFullName()
+                        .. ")"
+                        .. (window and (" inside " .. window:GetFullName()) or "")
+                )
+            elseif window then
+                notify("The " .. window.Name .. " window is open, but it has no usable open button.")
+            else
+                notify("No unboxing window on screen. Open the mystery box window first.")
+            end
+        end
+    )
+    addInformationOption(
+        AutoUnboxFeature,
+        "Presses the OPEN BOX button inside the game's own Unboxing/Hatching window, never a purchase prompt, and counts a box only when the inventory changes."
+    )
+
+    activeCleanup = function(): ()
+        state.mm2AutoUnboxFeature = nil
+        disconnectFeatureConnection("MM2AutoUnbox")
+        disconnectConfirmations()
+    end
+    Module.Events = featureConnections
+    Module.Initialized = true
+    return Module
+end
+
+function Module.destroy(): ()
+    if not Module.Initialized then
+        return
+    end
+    Module.Initialized = false
+    pcall(activeCleanup)
+    activeCleanup = function(): ()
+    end
+    Module.Events = {}
+    Module.Runtime = nil
+end
+
+return Module
+
+]],
         ["src/games/MM2/Other/CalibrationTrails.lua"] = [[
 local Module = {Name = "MM2 Calibration Trails", Initialized = false}
 local activeCleanup = function() end
@@ -5505,10 +6011,17 @@ return Module
 
 ]=],
         ["src/games/MM2/Render/CoinEsp.lua"] = [[
--- MM2 coins: highlight every coin in the map and report how many exist.
--- Client-side only: it reads the map, it never talks to a remote. The folder
--- and the colour settings already lived in MM2/base.lua as leftovers of the
--- old monolith; this module is what uses them again.
+-- MM2 coins and candies: highlight every pickup in the map and report how many
+-- of each exist. Client-side only: it reads the world, it never calls a remote.
+--
+-- How a pickup is recognised. The place dump names the coin's two parts
+-- `CoinVisual` (the visible half) and `Coin_Server` (the server's half), and
+-- lists ~100 of each. The event candies are the same coin model with another
+-- decal, so they carry the same part names; their models are named `Candy`,
+-- `Candy2020`, `CandyToy2021`, `Candies2022`, `Candies2024`, `CandyCorn`...
+-- The old module only looked inside three folders (`CoinContainer`,
+-- `CoinAreas`, `Coins`) that the live game does not populate, which is why the
+-- candy on screen was never highlighted.
 local Module = {
     Name = "MM2 Coin ESP",
     PlaceId = 142823291,
@@ -5519,13 +6032,74 @@ local Module = {
 
 local activeCleanup: () -> () = function(): () end
 
--- The containers the game puts the collectible coins in. The same names are
--- how base.lua recognises a map model, so a hit here is a hit there.
-local COIN_CONTAINERS: {string} = {
-    "CoinContainer",
-    "CoinAreas",
-    "Coins",
+-- CollectionService tags: names the game itself attaches to a pickup. A tag
+-- survives a rename, a name does not.
+local COIN_TAGS: {string} = {
+    "CoinVisual",
+    "ServerCoinPart",
+    "Coin",
 }
+
+-- Part names a pickup is made of.
+local COIN_PARTS: {string} = {
+    "CoinVisual",
+    "Coin_Server",
+    "ServerCoinPart",
+    "MainCoin",
+    "Coin",
+}
+
+-- How far up a coin part is walked to reach the model that owns it.
+local COIN_ANCESTOR_DEPTH: number = 2
+-- A full rescan, in case the game moved a pickup without adding or removing it.
+local RESCAN_PERIOD: number = 5
+
+local function lower(value: string): string
+    return string.lower(value)
+end
+
+local function contains(value: string, needle: string): boolean
+    return string.find(value, needle, 1, true) ~= nil
+end
+
+-- "Candy", "Candy2020", "CandyToy2022", "Candies2024", "Candied", "CandyCorn".
+local function isCandyName(name: string): boolean
+    local value: string = lower(name)
+    return contains(value, "candy")
+        or contains(value, "candies")
+        or contains(value, "candied")
+end
+
+-- "Coin", "CoinOld", "CoinBag", "MainCoin", "Coins", "Coin_1".
+local function isCoinName(name: string): boolean
+    return contains(lower(name), "coin")
+end
+
+-- A model that holds one of the pickup parts without being named after it.
+local function hasPickupPart(model: Instance): boolean
+    for _, partName: string in ipairs({"CoinVisual", "Coin_Server", "ServerCoinPart"}) do
+        local part: Instance? = model:FindFirstChild(partName)
+        if part and part:IsA("BasePart") then
+            return true
+        end
+    end
+    return false
+end
+
+local function listContains(list: {string}, value: string): boolean
+    for _, entry: string in ipairs(list) do
+        if entry == value then
+            return true
+        end
+    end
+    return false
+end
+
+-- "Candy 1", "Candy_2": a numbered copy of a known name.
+local function isNumberedVariant(list: {string}, value: string): boolean
+    local stripped: string = string.gsub(value, "[_%s]%d+$", "")
+    return stripped ~= value and listContains(list, stripped)
+end
 
 function Module.init(runtime: any): any
     if Module.Initialized then
@@ -5537,51 +6111,149 @@ function Module.init(runtime: any): any
     local CoinEffects: any = core.CoinEffects
     local clearEffects: any = core.clearEffects
     local createMM2Cham: any = core.createMM2Cham
-    local findMM2Map: any = core.findMM2Map
     local mm2Settings: any = core.mm2Settings
+    local collectionService: any = game:GetService("CollectionService")
 
-    local function collectInto(container: Instance, found: {[Instance]: boolean}): ()
-        for _, child: Instance in ipairs(container:GetChildren()) do
-            if child:IsA("BasePart") then
-                found[child] = true
-            elseif child:IsA("Model") then
-                if child:FindFirstChildWhichIsA("BasePart", true) then
-                    found[child] = true
-                end
-            elseif child:IsA("Folder") then
-                collectInto(child, found)
+    local function hasCoinTag(object: Instance): boolean
+        for _, tag: string in ipairs(COIN_TAGS) do
+            local ok: boolean, tagged: boolean = pcall(function(): boolean
+                return collectionService:HasTag(object, tag)
+            end)
+            if ok and tagged then
+                return true
             end
         end
-        if container:IsA("BasePart") then
-            found[container] = true
-        end
+        return false
     end
 
-    local function coinObjects(): {[Instance]: boolean}
+    -- A character or an NPC is never a pickup, whatever its parts are called.
+    local function insideCharacter(object: Instance): boolean
+        local current: Instance? = object
+        for _ = 1, COIN_ANCESTOR_DEPTH + 1 do
+            if not current then
+                return false
+            end
+            if current:FindFirstChildOfClass("Humanoid") then
+                return true
+            end
+            current = current.Parent
+        end
+        return false
+    end
+
+    local function isCoinPart(object: Instance): boolean
+        if not object:IsA("BasePart") then
+            return false
+        end
+        if hasCoinTag(object) then
+            return true
+        end
+        local name: string = object.Name
+        return listContains(COIN_PARTS, name)
+            or isNumberedVariant(COIN_PARTS, name)
+            or isCoinName(name)
+    end
+
+    -- A candy's clickable part is a generic `InteractiveBox`: accept it only
+    -- inside a model named like a treat, or it would light every door.
+    local function isCandyBox(part: Instance): boolean
+        if part.Name ~= "InteractiveBox" or not part:IsA("BasePart") then
+            return false
+        end
+        local current: Instance? = part.Parent
+        for _ = 1, COIN_ANCESTOR_DEPTH do
+            if not current or current == workspace then
+                return false
+            end
+            if isCandyName(current.Name) then
+                return true
+            end
+            current = current.Parent
+        end
+        return false
+    end
+
+    local function isPickupModel(object: Instance): boolean
+        if not object:IsA("Model") then
+            return false
+        end
+        if insideCharacter(object) then
+            return false
+        end
+        local name: string = object.Name
+        return isCoinName(name) or isCandyName(name) or hasCoinTag(object) or hasPickupPart(object)
+    end
+
+    -- The thing to highlight: the model that holds the part when there is one,
+    -- so a two-part coin lights up once instead of once per part.
+    local function pickupAdornee(object: Instance): Instance?
+        if insideCharacter(object) then
+            return nil
+        end
+        if isCoinPart(object) or isCandyBox(object) then
+            local current: Instance = object
+            for _ = 1, COIN_ANCESTOR_DEPTH do
+                local parent: Instance? = current.Parent
+                if not parent or parent == workspace then
+                    break
+                end
+                if not parent:IsA("Model") then
+                    break
+                end
+                current = parent
+            end
+            return current
+        end
+        if isPickupModel(object) then
+            if object:FindFirstChildWhichIsA("BasePart") then
+                return object
+            end
+        end
+        return nil
+    end
+
+    local function collectAll(): {[Instance]: boolean}
         local found: {[Instance]: boolean} = {}
-        local map: Instance? = findMM2Map()
-        if not map then
+        local ok: boolean, descendants: any = pcall(function(): any
+            return workspace:GetDescendants()
+        end)
+        if not ok or type(descendants) ~= "table" then
             return found
         end
-        for _, containerName: string in ipairs(COIN_CONTAINERS) do
-            local container: Instance? = map:FindFirstChild(containerName, true)
-            if container then
-                collectInto(container, found)
+        for _, object: Instance in ipairs(descendants) do
+            local adornee: Instance? = pickupAdornee(object)
+            if adornee then
+                found[adornee] = true
             end
         end
         return found
     end
 
-    local function countOf(set: {[Instance]: boolean}): number
-        local count: number = 0
-        for _ in pairs(set) do
-            count += 1
+    local function describe(counts: {coins: number, candies: number}): string
+        local total: number = counts.coins + counts.candies
+        if total == 0 then
+            return "no coins yet"
         end
-        return count
+        local parts: {string} = {}
+        if counts.coins > 0 then
+            table.insert(parts, tostring(counts.coins) .. (counts.coins == 1 and " coin" or " coins"))
+        end
+        if counts.candies > 0 then
+            table.insert(parts, tostring(counts.candies)
+                .. (counts.candies == 1 and " candy" or " candies"))
+        end
+        return table.concat(parts, " · ")
     end
 
     local function toggleCoinEsp(enabled: boolean): ()
         disconnectFeatureConnection("MM2CoinRefresh")
+        disconnectFeatureConnection("MM2CoinCollected")
+        disconnectFeatureConnection("MM2CoinAdded")
+        disconnectFeatureConnection("MM2CoinRemoved")
+        for index: number = 1, #COIN_TAGS do
+            disconnectFeatureConnection("MM2CoinTagAdded" .. tostring(index))
+            disconnectFeatureConnection("MM2CoinTagRemoved" .. tostring(index))
+        end
         clearEffects(CoinEffects)
 
         if not enabled then
@@ -5593,11 +6265,26 @@ function Module.init(runtime: any): any
         end
 
         local marked: {[Instance]: boolean} = {}
-        local elapsed: number = 1
-        local lastCount: number = -1
+        local elapsed: number = 0
+        local lastStatus: string? = nil
+        local dirty: boolean = true
 
+        local function setStatus(counts: {coins: number, candies: number}): ()
+            local text: string = describe(counts)
+            if text == lastStatus then
+                return
+            end
+            lastStatus = text
+            local card: any = state.mm2CoinFeature
+            if card then
+                card:SetStatus(text)
+            end
+        end
+
+        -- Redraws only when the set changed: one Highlight per pickup, never
+        -- per part, and no work while the map stands still.
         local function refresh(): ()
-            local found: {[Instance]: boolean} = coinObjects()
+            local found: {[Instance]: boolean} = collectAll()
             local changed: boolean = false
             for object: Instance in pairs(found) do
                 if not marked[object] then
@@ -5611,7 +6298,6 @@ function Module.init(runtime: any): any
                     changed = true
                 end
             end
-            local count: number = countOf(found)
             if changed then
                 clearEffects(CoinEffects)
                 for object: Instance in pairs(found) do
@@ -5623,25 +6309,77 @@ function Module.init(runtime: any): any
                     )
                 end
             end
-            if count ~= lastCount then
-                lastCount = count
-                local card: any = state.mm2CoinFeature
-                if card then
-                    card:SetStatus(
-                        count == 0 and "no coins" or (tostring(count) .. " coins")
-                    )
+            local counts: {coins: number, candies: number} = {coins = 0, candies = 0}
+            for object: Instance in pairs(found) do
+                if isCandyName(object.Name) then
+                    counts.candies += 1
+                else
+                    counts.coins += 1
                 end
             end
+            setStatus(counts)
+            dirty = false
+        end
+
+        -- The game adds and removes pickups all the time: react to that and
+        -- keep the full scan as a safety net, not as the main loop.
+        local added: any = workspace.DescendantAdded:Connect(function(object: Instance): ()
+            if pickupAdornee(object) then
+                dirty = true
+            end
+        end)
+        local removed: any = workspace.DescendantRemoving:Connect(function(object: Instance): ()
+            -- Do not touch `marked` here: refresh compares the set it finds
+            -- against `marked`, and the old highlight is only dropped when the
+            -- diff really sees the pickup gone.
+            if marked[object] then
+                dirty = true
+                return
+            end
+            for adornee: Instance in pairs(marked) do
+                if not adornee:IsDescendantOf(workspace) then
+                    dirty = true
+                    return
+                end
+            end
+        end)
+        featureConnections.MM2CoinAdded = added
+        featureConnections.MM2CoinRemoved = removed
+
+        -- Tag signals: a part can be named `Part` and only become a coin when
+        -- the game tags it, after it is already in the workspace.
+        for index: number = 1, #COIN_TAGS do
+            local tag: string = COIN_TAGS[index]
+            local tagAdded: any = collectionService:GetInstanceAddedSignal(tag):Connect(function(): ()
+                dirty = true
+            end)
+            local tagRemoved: any = collectionService:GetInstanceRemovedSignal(tag):Connect(function(): ()
+                dirty = true
+            end)
+            featureConnections["MM2CoinTagAdded" .. tostring(index)] = tagAdded
+            featureConnections["MM2CoinTagRemoved" .. tostring(index)] = tagRemoved
+        end
+
+        -- A collection is the one moment the map changed for sure: refresh on
+        -- the next frame instead of waiting for the scan window.
+        local remotes: any = core.mm2GameplayRemotes
+        local collected: Instance? = remotes and remotes:FindFirstChild("CoinCollected")
+        if collected and collected:IsA("RemoteEvent") then
+            featureConnections.MM2CoinCollected =
+                (collected :: any).OnClientEvent:Connect(function(): ()
+                    dirty = true
+                end)
         end
 
         refresh()
         featureConnections.MM2CoinRefresh = TaskManager:Connect(
             function(deltaTime: number): ()
                 elapsed += deltaTime
-                if elapsed < 0.75 then
+                if not dirty and elapsed < RESCAN_PERIOD then
                     return
                 end
                 elapsed = 0
+                dirty = true
                 refresh()
             end
         )
@@ -5649,7 +6387,7 @@ function Module.init(runtime: any): any
 
     local CoinFeature: any = createUniversalFeature(
         "Coin ESP",
-        "Highlights every coin the current map has, and reports how many there are.",
+        "Highlights every coin or candy in the map and reports how many of each exist.",
         3,
         toggleCoinEsp,
         {
@@ -5659,9 +6397,8 @@ function Module.init(runtime: any): any
         }
     )
     state.mm2CoinFeature = CoinFeature
-    -- One switch: the card. A second "Coin ESP" row inside a card called
-    -- "Coin ESP" is how the old menu ended up with controls that could be ON
-    -- while the feature was OFF.
+    -- One switch: the card. A second row called like the card is how the old
+    -- menu ended up with controls that could be ON while the feature was OFF.
     addColorOption(
         CoinFeature,
         "Coin colour",
@@ -5688,7 +6425,7 @@ function Module.init(runtime: any): any
     )
     addInformationOption(
         CoinFeature,
-        "Only coins that exist in the map are counted; the status shows the live number."
+        "Found by the game's own CoinVisual/Coin_Server parts and by the coin, candy and candies names; one highlight per pickup."
     )
 
     activeCleanup = function(): ()

@@ -219,7 +219,7 @@ local RUNTIME_RAW_BASE: string =
         .. RUNTIME_BRANCH
         .. "/"
 
-local SOURCE_STAMP: string = "v71-20261019-menu-cleanup-coin-esp-and-real-modules"
+local SOURCE_STAMP: string = "v72-20261019-candy-coins-and-auto-unbox"
 
 local BOOT_STARTED_AT: number = os.clock()
 local BOOT_FINGERPRINT_SECONDS: number = 0
@@ -5009,6 +5009,7 @@ local function loadGameModule(
         "src/games/MM2/Blatant/Fling.lua",
         "src/games/MM2/Movement/Teleport.lua",
         "src/games/MM2/Fun/BlurtRoles.lua",
+        "src/games/MM2/Other/AutoUnbox.lua",
         "src/games/MM2/Other/TrajectoryCalibration.lua",
         "src/games/MM2/Other/CalibrationTrails.lua",
     } elseif moduleName == "VD" then {

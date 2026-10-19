@@ -1341,3 +1341,75 @@ huérfanos, fallback idéntico, 13 archivos MM2 listados).
 
 No se pone un módulo que no haga nada: es el código muerto que esta versión
 acaba de sacar.
+
+## v72 — las candy, el video y las cajas de 1000 monedas
+
+Sello: `v72-20261019-candy-coins-and-auto-unbox`.
+
+### Coin ESP no veía las candy
+
+El módulo de v71 solo buscaba dentro de `CoinContainer`, `CoinAreas` y `Coins`.
+Esas carpetas no existen en la partida: el volcado del lugar
+(`Place_142823291_...rbxl`) nombra las piezas de una moneda `CoinVisual` y
+`Coin_Server` (≈100 de cada una) y los dulces de evento son el mismo modelo con
+otro decal, bajo nombres `Candy`, `Candy2020`, `CandyToy2021`, `Candies2022`,
+`Candies2024`, `CandyCorn`, `Candied`. Por eso el contador de candy del video
+marcaba 4 y no había ni un contorno.
+
+Ahora se reconoce un pickup por:
+
+- las etiquetas de `CollectionService` `CoinVisual`, `ServerCoinPart` y `Coin`
+  (con sus señales de alta/baja, porque una pieza puede llamarse `Part` y
+  volverse moneda después);
+- las piezas `CoinVisual`, `Coin_Server`, `ServerCoinPart`, `MainCoin`, `Coin`
+  y cualquier pieza cuyo nombre contenga «coin»;
+- los modelos cuyo nombre contiene «coin» o «candy»/«candies»/«candied»;
+- un `InteractiveBox` **solo** dentro de un modelo con nombre de dulce, para no
+  encender las puertas.
+
+Se descarta todo lo que esté dentro de un modelo con `Humanoid` (jugadores y
+NPC). El resaltado es uno por pickup, no uno por pieza, y el estado separa las
+dos cuentas: `3 coins · 2 candies`. El escaneo completo pasa cada 5 s; entre
+medio mandan las señales de alta/baja y `Remotes.Gameplay.CoinCollected`.
+
+No se agregaron `CoinObjects` ni `CandyObjects` como contenedores: en el volcado
+son carpetas de plantillas del catálogo, no lo que aparece en el mapa.
+
+### El video `2026-10-18-20-52-16.mp4`
+
+7,4 s de partida con el contador de candy en 4 (icono morado, abajo a la
+izquierda); se ven una candy morada detrás del mostrador y un objeto amarillo
+sobre él. Los NPC tienen contorno verde (NPC/Player ESP) y ningún pickup tiene
+contorno: es exactamente el fallo que reporta el usuario. El video no muestra
+el fallo de Disguise: el avatar no cambia de aspecto en ningún fotograma.
+
+### Auto Unbox: las cajas del juego, no Robux
+
+`src/games/MM2/Other/AutoUnbox.lua` busca el botón dentro de las ventanas que
+el propio juego usa (`Unboxing`, `Unboxing2`, `Hatching`, `MysteryBoxOpen`,
+`MysteryBox`) y pulsa `MouseButton1Click` con `firesignal`, la misma señal que
+dispara un clic real. Nunca toca un botón `PURCHASE`/`BUY`/`ROBUX`; un `OPEN`
+genérico solo se acepta dentro de una de esas ventanas, y fuera de ellas solo se
+acepta el texto exacto `OPEN BOX`. Sin `firesignal` la tarjeta se apaga y lo
+dice, en vez de fingir que funciona.
+
+Cuenta una caja cuando la confirma el inventario (`ItemReceived`,
+`CrateComplete`, `ChangeInventoryItem`), cuando el botón pasa a «Opening
+Box...» o cuando su ventana se oculta; si en 8 s no hay confirmación, es un
+fallo. A los 3 fallos se detiene. Opciones: `Delay between boxes` (0,8–5 s),
+`Max boxes per run` (1–50) y la acción `Find box button`, que informa qué botón
+y en qué ventana lo encontró.
+
+### Verificación
+
+`tools/validate.sh` → **EXIT=0**: 73 fuentes Luau, **53 suites**, `failures=0`,
+auditoría **37 tarjetas** (36 en release, sin Calibration), bundle de **72
+archivos**.
+
+`test_mm2_coin_esp.py` prueba monedas de dos piezas, candy por nombre,
+`InteractiveBox` dentro y fuera de un dulce, etiqueta tardía, personaje
+descartado, conteo separado, `CoinCollected`, color, apagado, mapa vacío y
+descarga. `test_mm2_auto_unbox.py` prueba que un `OPEN` genérico fuera de la
+ventana no se pulsa, que el `OPEN` de la ventana sí, que una compra nunca se
+pulsa, la confirmación, el retardo, el máximo, el timeout, la ausencia de
+`firesignal` y la descarga.
