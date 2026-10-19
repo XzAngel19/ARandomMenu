@@ -253,6 +253,9 @@ function Module.init(context: any): WidgetLibrary
         return option
     end
 
+    -- A real heading, not an invisible spacer: a capitalised caption with a
+    -- hairline that runs to the right edge. Every card can group its rows
+    -- without inventing its own label and drifting from the rest.
     state.addSectionOption = function(feature: any, titleText: string): Frame
         feature.optionCount += 1
         local section: Frame = (create("Frame", {
@@ -261,10 +264,37 @@ function Module.init(context: any): WidgetLibrary
             BackgroundTransparency = 1,
             BorderSizePixel = 0,
             LayoutOrder = feature.optionCount,
-            Size = UDim2.new(1, 0, 0, 0),
-            Visible = false,
+            Size = UDim2.new(1, 0, 0, state.layout.sectionRowHeight or 22),
+            Visible = true,
             ZIndex = feature.options.ZIndex + 1,
         }) :: any) :: Frame
+        local caption: TextLabel = (create("TextLabel", {
+            Parent = section,
+            Name = "SectionLabel",
+            BackgroundTransparency = 1,
+            FontFace = CONTROL_FONT,
+            Position = UDim2.fromOffset(CHILD_INSET, 0),
+            Size = UDim2.new(1, -CHILD_INSET * 2, 0, section.Size.Y.Offset),
+            Text = string.upper(titleText),
+            TextColor3 = Theme.textMuted,
+            TextSize = 10,
+            TextXAlignment = Enum.TextXAlignment.Left,
+            ZIndex = section.ZIndex + 1,
+        }) :: any) :: TextLabel
+        caption:SetAttribute("SectionTitle", titleText)
+        -- The divider sits after the caption, so long titles never overlap it.
+        create("Frame", {
+            Parent = section,
+            Name = "SectionLine",
+            AnchorPoint = Vector2.new(0, 0.5),
+            BackgroundColor3 = Theme.outline,
+            BackgroundTransparency = 0.55,
+            BorderSizePixel = 0,
+            Position = UDim2.new(0, 4 + math.clamp(#string.upper(titleText) * 7 + 8, 24, 220), 0.5, 0),
+            Size = UDim2.new(1, -(4 + math.clamp(#string.upper(titleText) * 7 + 8, 24, 220)) - 4, 0, 1),
+            ZIndex = section.ZIndex,
+        })
+        section:SetAttribute("SectionTitle", titleText)
         table.insert(feature.optionRows, section)
         feature.updateExpandedSize()
         return section
@@ -1950,6 +1980,14 @@ function Module.init(context: any): WidgetLibrary
             return tostring(name or "")
         end
         local option = createOptionRow(feature, labelText, hintText)
+        -- A phone cannot press keys. The row is not merely inert: it is
+        -- removed from the card so the menu never offers an impossible
+        -- control. The action itself stays available through its own card or
+        -- the Buttons page.
+        if state.isMobile then
+            option.Visible = false
+            feature.updateExpandedSize()
+        end
         local button = makeButton(
             option,
             currentKey == Enum.KeyCode.Unknown and "" or keyLabel(currentKey.Name),

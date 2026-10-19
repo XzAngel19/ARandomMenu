@@ -953,8 +953,8 @@ do
     local blurt = findFeature("Blurt Roles")
     -- Option identity is also persisted in the widget toggle registry.
     assert(ex.state.toggleControls["MM2.BlurtRoles.InstantRoles"], "Instant Roles must be a Blurt Roles option")
-    assert(ex.state.mm2Core.mm2Settings.predictionModel == "66d", "66d must replace Adaptive as default")
-    assert(type(ex.state.mm2Core.validateGunShot) == "function" and type(ex.state.mm2Core.isGunPathClear) == "function")
+    assert(ex.state.mm2Prediction and type(ex.state.mm2Prediction.gunAim) == "function", "MM2 Prediction must own aiming")
+    assert(type(ex.state.mm2Core.validateGunShot) == "function" and type(ex.state.mm2Core.isWeaponPathClear) == "function")
     local shoot = findFeature("SilentAIM")
     local aimMethod = ex.state.valueControls["MM2.Shoot.Aimmethod"]
     assert(aimMethod, "Gun method must be configurable")
@@ -977,7 +977,17 @@ do
     assert(ex.state.mm2KnifeRuntime.auraWanted, "master OFF retains the selected attack")
     ex.state.toggleControls["MM2.Shoot.KnifeThrow"].setChecked(true)
     assert(not ex.state.mm2KnifeRuntime.masterEnabled, "child does not bypass master")
-    assert(shoot.options:FindFirstChild("Option_KnifeThrow").LayoutOrder == 2, "Knife Throw must be the second visible attack, not buried below Gun tuning")
+    local gunHeader = shoot.options:FindFirstChild("Section_Gun")
+    local knifeHeader = shoot.options:FindFirstChild("Section_Knife")
+    local knifeThrowOption = shoot.options:FindFirstChild("Option_KnifeThrow")
+    local autoShootOption = shoot.options:FindFirstChild("Option_AutoShoot")
+    assert(gunHeader and gunHeader.Visible, "the Gun section header must be visible")
+    assert(knifeHeader and knifeHeader.Visible, "the Knife section header must be visible")
+    assert(autoShootOption and gunHeader.LayoutOrder < autoShootOption.LayoutOrder,
+        "the Gun header opens the gun rows")
+    assert(knifeThrowOption and knifeThrowOption.LayoutOrder > knifeHeader.LayoutOrder,
+        "Knife Throw belongs under the Knife header, not buried below Gun tuning")
+    assert(shoot.options:FindFirstChild("Option_Throwwithbutton"), "the button trigger belongs to the Knife section")
     assert(not knife.options:FindFirstChild("Option_KnifeThrow"), "Knife Throw must not be in KillAura")
     shoot.activationTarget.MouseButton1Click:Fire();assert(ex.state.mm2SilentAimEnabled)
     auraModule:Toggle(true);assert(ex.state.mm2KnifeRuntime.masterEnabled and ex.state.mm2KnifeRuntime.throwWanted)
@@ -1034,9 +1044,13 @@ do
     local disguise = ex.state.framework:GetModule("Disguise")
     assert(disguise and disguise.Category == "Utilities", "Disguise must actually load in Utilities")
     disguise.Options.Mode.Metadata.callback("Animation")
-    assert(not disguise.Options["Use target movement animations"].Visible and not disguise.Options["Show target emotes"].Visible)
+    assert(not disguise.Options["Use target movement animations"].Visible
+        and not disguise.Options["Show target emotes"].Visible,
+        "Animation always applies movement + emotes, so it has no controls for them")
     disguise.Options.Mode.Metadata.callback("Character")
-    assert(disguise.Options["Use target movement animations"].Visible and disguise.Options["Show target emotes"].Visible)
+    assert(disguise.Options["Use target movement animations"].Visible
+        and disguise.Options["Show target emotes"].Visible,
+        "Character exposes the two independent checks")
     for _, feature in ipairs(ex.allFeatures) do
       local seen = {}
       for _, row in ipairs(feature.optionRows or {}) do

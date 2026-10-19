@@ -1,3 +1,9 @@
+> **Actualización v51:** la predicción antigua se eliminó por completo y fue
+> sustituida por `src/games/MM2/Prediction.lua` (`kinematic-v51`). El modelo se
+> describe en [FIXES-v51.md](FIXES-v51.md). El resto de este documento queda
+> como registro histórico de v35–v44 y de sus límites; sus ecuaciones ya no
+> están en el código vivo.
+
 > **Actualización v42:** el trabajo de predicción ya está implementado en esta
 > run, no pospuesto. Este documento conserva el plan histórico y sus límites.
 > Ver [implementación y pruebas](FIXES-v42.md) y

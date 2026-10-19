@@ -1257,6 +1257,269 @@ function Module.init(context: any): any
         raiseOpen(keybindsRecord)
     end
 
+    ------------------------------------------------------------------
+    -- Mobile controls. Keybinds need a keyboard, so on a touch device the
+    -- same slot opens the buttons page instead: every shortcut the menu
+    -- exposes can be placed as an on-screen button and restyled (shape,
+    -- colour, size, opacity) without editing the config by hand.
+    ------------------------------------------------------------------
+    local buttonsRecord: any = nil
+    local buttonsList: Frame? = nil
+    local buttonsAddRecord: any = nil
+    local buttonsAddList: Frame? = nil
+
+    local function mobileCallbacks(binding: any): (() -> (), any)
+        local hold: boolean = binding.hold == true
+        local function press(): ()
+            if type(binding.onPress) == "function" then
+                binding.onPress()
+            end
+        end
+        local function release(): ()
+            if type(binding.onRelease) == "function" then
+                binding.onRelease()
+            end
+        end
+        local callback: () -> () = function(): ()
+            if not hold then press() end
+        end
+        if not hold then
+            return callback, nil
+        end
+        return callback, {
+            isActive = function(): boolean return true end,
+            onPress = press,
+            onRelease = release,
+        }
+    end
+
+    local function mobileUiOrNil(): any
+        return state.mobileUi
+    end
+
+    local function buttonRow(
+        parent: Frame,
+        order: number,
+        labelText: string,
+        valueText: string,
+        onClick: () -> ()
+    ): TextButton
+        local row: TextButton = (create("TextButton", {
+            TextTruncate = Enum.TextTruncate.AtEnd,
+            Parent = parent,
+            Name = "ButtonRow_" .. labelText:gsub("%W", ""),
+            Active = true,
+            AutoButtonColor = false,
+            BackgroundColor3 = Color3.fromRGB(0, 0, 0),
+            BackgroundTransparency = 0.5,
+            BorderSizePixel = 0,
+            FontFace = CONTROL_FONT,
+            LayoutOrder = order,
+            Size = UDim2.new(1, 0, 0, 22),
+            Text = "",
+            ZIndex = parent.ZIndex + 1,
+        }) :: any) :: TextButton
+        create("TextLabel", {
+            TextTruncate = Enum.TextTruncate.AtEnd,
+            Parent = row,
+            Name = "Label",
+            BackgroundTransparency = 1,
+            FontFace = CONTROL_FONT,
+            Position = UDim2.fromOffset(6, 0),
+            Size = UDim2.new(0.6, -6, 1, 0),
+            Text = labelText,
+            TextColor3 = Theme.text,
+            TextSize = 14,
+            TextXAlignment = Enum.TextXAlignment.Left,
+            ZIndex = row.ZIndex + 1,
+        })
+        create("TextLabel", {
+            TextTruncate = Enum.TextTruncate.AtEnd,
+            Parent = row,
+            Name = "Value",
+            BackgroundTransparency = 1,
+            FontFace = CONTROL_FONT,
+            Position = UDim2.new(0.6, 0, 0, 0),
+            Size = UDim2.new(0.4, -8, 1, 0),
+            Text = valueText,
+            TextColor3 = Theme.textMuted,
+            TextSize = 13,
+            TextXAlignment = Enum.TextXAlignment.Right,
+            ZIndex = row.ZIndex + 1,
+        })
+        trackUiConnection(row.MouseButton1Click:Connect(onClick))
+        return row
+    end
+
+    local rebuildButtons: () -> () = function(): () end
+    local openAddMobileButton: () -> () = function(): () end
+
+    rebuildButtons = function(): ()
+        local container: Frame? = buttonsList
+        local ui: any = mobileUiOrNil()
+        if not container or not ui then
+            return
+        end
+        container:ClearAllChildren()
+        local order: number = 1
+        local placed: number = 0
+        local ids: {string} = {}
+        for id: string in pairs(ui.actions) do
+            table.insert(ids, id)
+        end
+        table.sort(ids)
+        for _, id: string in ipairs(ids) do
+            local record: any = ui.actions[id]
+            if record then
+                placed += 1
+                local shape: string = tostring(record.shape or "Square")
+                buttonRow(
+                    container,
+                    order,
+                    tostring(record.label),
+                    tostring(record.shape),
+                    function(): ()
+                        ui.openEditor(record)
+                    end
+                )
+                order += 1
+            end
+        end
+        if placed == 0 then
+            buttonRow(container, order, "No buttons yet", "tap Add button", function(): () end)
+            order += 1
+        end
+        local defaults: any = ui.defaults and ui.defaults()
+        if defaults then
+            buttonRow(
+                container,
+                order,
+                "Default shape",
+                tostring(defaults.shape),
+                function(): ()
+                    local shapes: {string} = ui.shapes
+                    local index: number = table.find(shapes, defaults.shape) or 1
+                    defaults.shape = shapes[index % #shapes + 1]
+                    queueConfigSave()
+                    rebuildButtons()
+                    notify("new buttons: " .. defaults.shape)
+                end
+            )
+            order += 1
+            buttonRow(
+                container,
+                order,
+                "Default colour",
+                tostring(defaults.color),
+                function(): ()
+                    local palette: {string} = ui.palette
+                    local index: number = table.find(palette, string.upper(defaults.color)) or 1
+                    defaults.color = palette[index % #palette + 1]
+                    queueConfigSave()
+                    rebuildButtons()
+                    notify("new buttons: " .. defaults.color)
+                end
+            )
+            order += 1
+        end
+        if buttonsRecord then
+            buttonsRecord.resize()
+        end
+    end
+
+    local function openButtons(): ()
+        local ui: any = mobileUiOrNil()
+        if not ui then
+            notify("touch controls are not ready yet")
+            return
+        end
+        if buttonsRecord then
+            raiseOpen(buttonsRecord)
+            rebuildButtons()
+            return
+        end
+        local screen: Vector2 = viewport()
+        buttonsRecord = configWindow("Buttons", "Buttons", {
+            position = Vector2.new(screen.X - WINDOW_WIDTH * 2 - 32, 140),
+            anchor = uiRecord and uiRecord.window,
+            settingsSized = true,
+            packRows = {{"Add button", nil, 26}, {"Reset buttons", nil, 26}},
+        })
+        buttonsList = (create("Frame", {
+            Parent = buttonsRecord.window.body,
+            Name = "ButtonList",
+            AutomaticSize = Enum.AutomaticSize.Y,
+            BackgroundTransparency = 1,
+            BorderSizePixel = 0,
+            LayoutOrder = 1,
+            Size = UDim2.new(1, 0, 0, 0),
+            ZIndex = buttonsRecord.window.body.ZIndex + 1,
+        }) :: any) :: Frame
+        create("UIListLayout", {
+            Parent = buttonsList,
+            Padding = UDim.new(0, WINDOW_GAP),
+            SortOrder = Enum.SortOrder.LayoutOrder,
+        })
+        actionRow(buttonsRecord, 90, "Add button", openAddMobileButton)
+        actionRow(buttonsRecord, 91, "Reset buttons", function(): ()
+            ui.resetActions()
+            rebuildButtons()
+            notify("mobile buttons reset")
+        end)
+        rebuildButtons()
+        raiseOpen(buttonsRecord)
+    end
+
+    openAddMobileButton = function(): ()
+        local ui: any = mobileUiOrNil()
+        if not ui then
+            return
+        end
+        if buttonsAddRecord then
+            raiseOpen(buttonsAddRecord)
+            return
+        end
+        local screen: Vector2 = viewport()
+        buttonsAddRecord = configWindow("ButtonAdd", "Add button", {
+            position = Vector2.new(screen.X - WINDOW_WIDTH * 2 - 32, 200),
+            anchor = buttonsRecord and buttonsRecord.window,
+            settingsSized = true,
+            packRows = {{"Tap an action to place its button", nil, 12}},
+        })
+        buttonsAddList = (create("Frame", {
+            Parent = buttonsAddRecord.window.body,
+            Name = "ButtonAddList",
+            AutomaticSize = Enum.AutomaticSize.Y,
+            BackgroundTransparency = 1,
+            BorderSizePixel = 0,
+            LayoutOrder = 1,
+            Size = UDim2.new(1, 0, 0, 0),
+            ZIndex = buttonsAddRecord.window.body.ZIndex + 1,
+        }) :: any) :: Frame
+        create("UIListLayout", {
+            Parent = buttonsAddList,
+            Padding = UDim.new(0, WINDOW_GAP),
+            SortOrder = Enum.SortOrder.LayoutOrder,
+        })
+        local order: number = 1
+        for id: string, binding: any in pairs(state.shortcutBindings) do
+            local actionId: string = ui.actionId(id)
+            if not ui.actions[actionId] then
+                local label: string = featureLabel(tostring(id))
+                buttonRow(buttonsAddList :: Frame, order, label, "place", function(): ()
+                    local callback: () -> (), hold: any = mobileCallbacks(binding)
+                    ui.place(actionId, label, callback, hold)
+                end)
+                order += 1
+            end
+        end
+        if order == 1 then
+            buttonRow(buttonsAddList :: Frame, order, "Every action already has a button", "", function(): () end)
+        end
+        buttonsAddRecord.resize()
+        raiseOpen(buttonsAddRecord)
+    end
+
     local windowsRecord: any = nil
     local windowsPanel: any = nil
     local windowOptions: {[string]: boolean} = {}
@@ -1645,7 +1908,7 @@ function Module.init(context: any): any
         settingsSized = false,
         packRows = {
             {"HackList", nil, 26},
-            {"Keybinds", nil, 26},
+            {state.isMobile and "Buttons" or "Keybinds", nil, 26},
             {"Windows", nil, 26},
             {"WurstOptions", nil, 26},
             {"Background", "#404040"},
@@ -1657,7 +1920,13 @@ function Module.init(context: any): any
     uiRecord.open = true
 
     actionRow(uiRecord, 1, "HackList", openHackList)
-    actionRow(uiRecord, 2, "Keybinds", openKeybinds)
+    -- A phone has no keyboard: the row that would open keybinds opens the
+    -- touch-button page instead. Desktop keeps the keybinds window untouched.
+    if state.isMobile then
+        actionRow(uiRecord, 2, "Buttons", openButtons)
+    else
+        actionRow(uiRecord, 2, "Keybinds", openKeybinds)
+    end
     actionRow(uiRecord, 3, "Windows", openWindows)
     actionRow(uiRecord, 4, "WurstOptions", openWurstOptions)
 

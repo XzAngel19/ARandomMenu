@@ -1,0 +1,15 @@
+*.log
+*.tmp
+Thumbs.db
+.DS_Store
+runtime-config/
+local-profiles/
+/compile-*.txt
+/register-stats.json
+
+# Local research, CLI builds, and generated test harnesses
+.arena/
+build/
+__pycache__/
+tools/luau/node_modules/
+tools/luau/bin/

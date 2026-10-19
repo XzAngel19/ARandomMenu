@@ -150,6 +150,7 @@ type LayoutMetrics = {
     cardCorner: number,
     controlHeight: number,
     optionRowHeight: number,
+    sectionRowHeight: number,
     switchWidth: number,
     switchHeight: number,
     iconButton: number,
@@ -180,6 +181,7 @@ local function computeLayoutMetrics(
         cardCorner = UI_RADIUS.card,
         controlHeight = 20,
         optionRowHeight = 22,
+        sectionRowHeight = 22,
         switchWidth = 26,
         switchHeight = 14,
         iconButton = 16,
@@ -217,7 +219,7 @@ local RUNTIME_RAW_BASE: string =
         .. RUNTIME_BRANCH
         .. "/"
 
-local SOURCE_STAMP: string = "v53-20261017-safewalk"
+local SOURCE_STAMP: string = "v72-20261019-candy-coins-and-auto-unbox"
 
 local BOOT_STARTED_AT: number = os.clock()
 local BOOT_FINGERPRINT_SECONDS: number = 0
@@ -1001,6 +1003,9 @@ end
 
 local state: any = {
 
+    -- Dev surfaces (MM2 calibration capture) ask for this before they build
+    -- a card. A release boot must not show capture tools to players.
+    debug = DEBUG_LOGS,
     visible = false,
     isMobile = IS_MOBILE_DEVICE,
     guiStyle = "Default",
@@ -4994,14 +4999,17 @@ local function loadGameModule(
     local paths: {string} = if moduleName == "MM2" then {
 
         "src/games/MM2/base.lua",
+        "src/games/MM2/Prediction.lua",
         "src/games/MM2/Blatant/Shoot.lua",
         "src/games/MM2/Blatant/KnifeAura.lua",
         "src/games/MM2/Blatant/KnifeThrow.lua",
         "src/games/MM2/Render/RoundEsp.lua",
+        "src/games/MM2/Render/CoinEsp.lua",
         "src/games/MM2/Movement/Sprint.lua",
         "src/games/MM2/Blatant/Fling.lua",
         "src/games/MM2/Movement/Teleport.lua",
         "src/games/MM2/Fun/BlurtRoles.lua",
+        "src/games/MM2/Other/AutoUnbox.lua",
         "src/games/MM2/Other/TrajectoryCalibration.lua",
         "src/games/MM2/Other/CalibrationTrails.lua",
     } elseif moduleName == "VD" then {
@@ -5819,6 +5827,9 @@ local fallbackManifest: any = {
         "src/guis/Wurst/Code/Furniture.lua",
     },
     modules = {
+        {path = "src/games/universal/Render/FreeCam.lua", name = "FreeCam", category = "World"},
+        {path = "src/games/universal/Render/Spectate.lua", name = "Spectate", category = "World"},
+        {path = "src/games/universal/Render/Markers.lua", name = "Markers", category = "Render"},
         {path = "src/games/universal/Render/ItemRender.lua", name = "ItemESP", category = "Render"},
         {path = "src/games/universal/Render/PlayerESP.lua", name = "PlayerESP", category = "Render"},
         {path = "src/games/universal/Render/Chams.lua", name = "Chams", category = "Render"},
@@ -5826,30 +5837,29 @@ local fallbackManifest: any = {
         {path = "src/games/universal/Render/HP.lua", name = "HP", category = "Render"},
         {path = "src/games/universal/Render/Arrows.lua", name = "Arrows", category = "Render"},
         {path = "src/games/universal/Render/NPCESP.lua", name = "NPCESP", category = "Render"},
+        {path = "src/games/universal/Render/FieldOfView.lua", name = "FOV", category = "Render"},
+        {path = "src/games/universal/Render/Fullbright.lua", name = "Fullbright", category = "Render"},
+        {path = "src/games/universal/Render/XRay.lua", name = "X-Ray", category = "Render"},
+        {path = "src/games/universal/Render/ZoomUnlocker.lua", name = "Zoom", category = "Render"},
         {path = "src/games/universal/Combat/KillAura.lua", name = "KillAura", category = "Combat"},
-        {path = "src/games/universal/Movement/ClickTeleport.lua", name = "Teleport", category = "Utilities"},
         {path = "src/games/universal/Combat/AimAssist.lua", name = "Aim Assist", category = "Combat"},
         {path = "src/games/universal/Combat/TriggerBot.lua", name = "TriggerBot", category = "Combat"},
-        {path = "src/games/universal/Render/XRay.lua", name = "X-Ray", category = "Render"},
-        {path = "src/games/universal/Movement/Jump.lua", name = "Jump", category = "Exploits"},
-        {path = "src/games/universal/Blatant/Spider.lua", name = "Spider", category = "Exploits"},
         {path = "src/games/universal/Blatant/Invisible.lua", name = "Ghost", category = "Utilities"},
-        {path = "src/games/universal/Movement/SafeWalk.lua", name = "Safe Walk", category = "World"},
-        {path = "src/games/universal/Render/FreeCam.lua", name = "FreeCam", category = "World"},
-        {path = "src/games/universal/Render/Spectate.lua", name = "Spectate", category = "World"},
-        {path = "src/games/universal/Render/Markers.lua", name = "Markers", category = "Render"},
-        {path = "src/games/universal/Render/ZoomUnlocker.lua", name = "Zoom", category = "Render"},
-        {path = "src/games/universal/Other/InteractExtender.lua", name = "Interact Extender", category = "Exploits"},
-        {path = "src/games/universal/Blatant/Fly.lua", name = "Fly", category = "Exploits"},
-        {path = "src/games/universal/Movement/AntiVoid.lua", name = "Anti Void", category = "Utilities"},
-        {path = "src/games/universal/Movement/Gravity.lua", name = "Gravity", category = "World"},
-        {path = "src/games/universal/Render/FieldOfView.lua", name = "FOV", category = "Render"},
-        {path = "src/games/universal/Blatant/Noclip.lua", name = "Noclip", category = "Exploits"},
-        {path = "src/games/universal/Other/AntiAfk.lua", name = "Anti AFK", category = "World"},
-        {path = "src/games/universal/Other/ImproveFps.lua", name = "Improve FPS", category = "World"},
-        {path = "src/games/universal/Render/Fullbright.lua", name = "Fullbright", category = "Render"},
-        {path = "src/games/universal/Movement/FreezeMovements.lua", name = "Freeze Movements", category = "Utilities"},
         {path = "src/games/universal/Movement/Speed.lua", name = "Speed", category = "Exploits"},
+        {path = "src/games/universal/Movement/Jump.lua", name = "Jump", category = "Exploits"},
+        {path = "src/games/universal/Movement/ClickTeleport.lua", name = "Teleport", category = "Utilities"},
+        {path = "src/games/universal/Blatant/Spider.lua", name = "Spider", category = "Exploits"},
+        {path = "src/games/universal/Blatant/Fly.lua", name = "Fly", category = "Exploits"},
+        {path = "src/games/universal/Blatant/Noclip.lua", name = "Noclip", category = "Exploits"},
+        {path = "src/games/universal/Movement/AntiVoid.lua", name = "Anti Void", category = "Utilities"},
+        {path = "src/games/universal/Movement/FreezeMovements.lua", name = "Freeze Movements", category = "Utilities"},
+        {path = "src/games/universal/Movement/Gravity.lua", name = "Gravity", category = "World"},
+        {path = "src/games/universal/Movement/SafeWalk.lua", name = "Safe Walk", category = "World"},
+        {path = "src/games/universal/Other/Disguise.lua", name = "Disguise", category = "Utilities"},
+        {path = "src/games/universal/Other/AntiAfk.lua", name = "Anti AFK", category = "World"},
+        {path = "src/games/universal/Other/InteractExtender.lua", name = "Interact Extender", category = "Exploits"},
+        {path = "src/games/universal/Other/RejoinServer.lua", name = "Rejoin Server", category = "Utilities"},
+        {path = "src/games/universal/Other/ImproveFps.lua", name = "Improve FPS", category = "World"},
     },
 }
 
