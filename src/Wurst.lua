@@ -219,7 +219,7 @@ local RUNTIME_RAW_BASE: string =
         .. RUNTIME_BRANCH
         .. "/"
 
-local SOURCE_STAMP: string = "v69-20261018-single-knife-packet-and-moving-rig"
+local SOURCE_STAMP: string = "v70-20261019-disguise-rig-guard-and-menu-audit"
 
 local BOOT_STARTED_AT: number = os.clock()
 local BOOT_FINGERPRINT_SECONDS: number = 0

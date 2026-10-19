@@ -16,6 +16,8 @@ local function notify(message) table.insert(notified,message) end
 local function status(message) activeCard.status=message end
 local function destroyInstance(instance) instance.destroyed=true end
 local emotesAppliedToHumanoid=false
+-- Defined above the slice in the real module; the status line reads it.
+local function rigName() return "R6" end
 
 local description={id="target"}
 local descriptionResult=description

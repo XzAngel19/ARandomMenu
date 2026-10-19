@@ -1180,3 +1180,75 @@ arranque completo con `failures=0`.
 - El set R15 de un objetivo **no puede** reproducirse en un cuerpo R6: en ese
   caso se muestra el set del rig y se avisa. Si prefieres que la casilla
   desaparezca en rigs R6, dilo y se quita.
+
+## v70 — el clip tiene que ser del cuerpo, no del objetivo
+
+Sello: `v70-20261019-disguise-rig-guard-and-menu-audit`.
+
+### La captura `Screenshot_20261018_192834_Roblox.jpg`
+
+El avatar disfrazado aparece **arrodillado y hundido**: los muslos atraviesan
+el suelo, el torso va inclinado hacia delante y los brazos quedan pegados al
+cuerpo. Las articulaciones son de un cuerpo **R6**. Eso no es una pose idle
+equivocada: es el resultado de escribir clips **R15** en un `Animate` de R6.
+El motor no rechaza el clip que no encaja, lo reproyecta y deforma el cuerpo.
+
+Coincide con el único patrón del informe: **solo pasa con packs que no son el
+de defecto**. Con el pack de defecto la descripción devuelve los ids R15 por
+defecto, que ya se descartaban, así que el cuerpo se quedaba con su set y se
+veía bien. Con Toy, Ninja y compañía los ids no son de defecto y se escribían.
+
+La versión anterior (v69) solo protegía el caso «el objetivo es R15». En una
+partida R6 el objetivo **también es R6**, así que esa condición no se cumplía
+nunca y el cuerpo seguía recibiendo clips que no son suyos. Por eso el fallo
+seguía ahí.
+
+### La regla nueva
+
+La pregunta ya no es de qué rig es el objetivo, sino **de quién es el clip**:
+
+- Un cuerpo **R6** solo acepta ids del set R6 por defecto. Cualquier otro
+  (pack comprado, bundle manual, id suelto) se descarta.
+- Un cuerpo **R15** rechaza el set R6 y acepta lo demás, que es donde se
+  escriben los clips de pack.
+- El descarte se informa **una vez por objetivo** y el estado de la tarjeta
+  ahora dice cuántos slots se saltaron: `Character · R6 · 0 slots · 4 pack
+  clips skipped`.
+
+No hay forma de saber el rig de un clip desde una `HumanoidDescription`: no
+lleva ese dato. El único set que el cliente puede avalar es el de defecto de
+su propio rig. Preferimos un avatar que se mueve con su set antes que uno
+deformado con el del objetivo.
+
+### Auditoría del menú MM2
+
+`tools/audit_menu.py` (nuevo) arranca el bundle real en el entorno simulado y
+vuelca **cada tarjeta y cada fila** en el orden en que se ven, en Markdown o
+JSON. Sirve porque un módulo puede compilar, viajar en `bundle.lua` y no
+registrarse nunca: el grep no lo distingue.
+
+Resultado: **35 tarjetas**, de las cuales la sección MM2 tiene **4**
+(SilentAIM, Fling, Blurt Roles, Calibration). El resto de controles de MM2
+(Gun ESP, Trap ESP, colores por rol, Knife Aura, Sprint, teleports y Get Gun)
+viven dentro de tarjetas universales. El informe completo, con la comparación
+contra Eclipse Hub y OverDrive H, está en `docs/MM2-MENU-AUDIT.md`.
+
+### Pruebas
+
+- `test_disguise_defaults.py`: **14 comprobaciones**. Cambian los casos 9-12:
+  un pack ya no entra en un cuerpo R6 aunque el objetivo sea R6, y el set R6
+  tampoco entra en un cuerpo R15.
+- `test_disguise_animation.py` (4), `test_disguise_character.py` (3),
+  `test_disguise_toggles.py` (11): en verde.
+- `bash tools/validate.sh` → **75 fuentes compilan, 47 suites en verde**,
+  arranque completo con `failures=0`.
+
+### Lo que esta versión NO afirma
+
+- No hay prueba en el juego: la regla se apoya en la captura y en el
+  comportamiento documentado del retargeting, no en una sesión nueva.
+- En un cuerpo R6 con un pack comprado, la animación que se verá es la del
+  **rig**, no la del pack. Es el precio de no volver a enseñar el muñeco
+  hundido; si se prefiere lo contrario, hay que aceptar el riesgo.
+- La auditoría no arregla nada por sí misma: enumera lo que falta y lo que
+  está muerto. Los arreglos propuestos están al final del informe.

@@ -1,5 +1,5 @@
 return {
-    stamp = "v69-20261018-single-knife-packet-and-moving-rig",
+    stamp = "v70-20261019-disguise-rig-guard-and-menu-audit",
     files = {
         ["src/Profile/142823291.lua"] = [[
 --!strict
@@ -18618,6 +18618,14 @@ for _, ids: {string} in pairs(DEFAULT_ANIMATION_IDS) do
         R15_DEFAULT_IDS[id] = true
     end
 end
+-- The mirror image: every id the R6 default set owns. R6 clips are the only
+-- clips an R6 body may play, and R6 ids never belong in an R15 slot.
+local R6_DEFAULT_IDS: {[string]: boolean} = {}
+for _, ids: {string} in pairs(DEFAULT_ANIMATION_IDS_R6) do
+    for _, id: string in ipairs(ids) do
+        R6_DEFAULT_IDS[id] = true
+    end
+end
 local SCALE_FIELDS: {string} = {
     "HeightScale",
     "WidthScale",
@@ -18675,6 +18683,12 @@ function Module.init(context: Runtime): any
     local restoring: boolean = false
     local emotesAppliedToHumanoid: boolean = false
     local animationOverrideApplied: boolean = false
+    -- One notice per target: a pack authored for another rig says so once
+    -- instead of on every re-apply.
+    local foreignPackNotified: boolean = false
+    -- Slots the last apply actually wrote; the status line repeats it.
+    local lastAppliedSlotCount: number = 0
+    local lastDroppedSlotCount: number = 0
     -- Forward declarations. The write path runs before the settle step is
     -- defined, and Lua resolves names at definition time: without these the
     -- calls would silently become globals.
@@ -18692,6 +18706,10 @@ function Module.init(context: Runtime): any
         slots: {[string]: any},
         emotes: any,
         equippedEmotes: any,
+        -- "R6"/"R15" when the target is in the server, nil when they are only
+        -- known by id. A description never says which rig its clips were
+        -- authored for, so this is the only source for that fact.
+        rig: string?,
     }
     local targetCache: TargetCache? = nil
 
@@ -19101,47 +19119,96 @@ function Module.init(context: Runtime): any
         return DEFAULT_ANIMATION_IDS
     end
 
-    local function isR15DefaultId(value: any): boolean
-        if type(value) == "number" then
-            value = tostring(math.floor(value))
+    local function rigName(humanoid: Humanoid?): string?
+        local rig: any = nil
+        if humanoid then
+            pcall(function(): ()
+                rig = (humanoid :: any).RigType
+            end)
         end
-        if type(value) ~= "string" then
-            return false
+        if rig == Enum.HumanoidRigType.R6 then
+            return "R6"
         end
-        local digits: string? = string.match(value, "%d+")
-        return digits ~= nil and R15_DEFAULT_IDS[digits] == true
+        if rig == Enum.HumanoidRigType.R15 then
+            return "R15"
+        end
+        return nil
     end
 
-    local function belongsToR15Defaults(value: any): boolean
+    local function belongsToDefaultSet(value: any, set: {[string]: boolean}): boolean
+        local function owns(entry: any): boolean
+            if type(entry) == "number" then
+                entry = tostring(math.floor(entry))
+            end
+            if type(entry) ~= "string" then
+                return false
+            end
+            local digits: string? = string.match(entry, "%d+")
+            return digits ~= nil and set[digits] == true
+        end
         if type(value) == "table" then
             if #value == 0 then
                 return false
             end
             for _, entry: any in ipairs(value) do
-                if not isR15DefaultId(entry) then
+                if not owns(entry) then
                     return false
                 end
             end
             return true
         end
-        return isR15DefaultId(value)
+        return owns(value)
+    end
+
+    local function belongsToR15Defaults(value: any): boolean
+        return belongsToDefaultSet(value, R15_DEFAULT_IDS)
+    end
+
+    local function belongsToR6Defaults(value: any): boolean
+        return belongsToDefaultSet(value, R6_DEFAULT_IDS)
     end
 
     -- Gaps are filled with the set that matches the rig; a slot that only
     -- holds R15 default ids on an R6 body is treated as a gap.
+    --
+    -- A pack description never says which rig its clips were authored for, and
+    -- every pack sold since 2016 is R15. An R6 body that receives those ids is
+    -- handed to the engine's legacy retargeting, which bends the limbs and
+    -- sinks the torso instead of refusing the clip: that is the broken pose in
+    -- the report, and it only shows up with a non-default pack, because the
+    -- default pack resolves to ids the body already plays. The target's rig is
+    -- no defence: in an R6 game the target is R6 too, and their description
+    -- still hands out R15 clips. The rule is therefore about the clips, not
+    -- about the target: an R6 body only accepts the R6 set, and an R15 body
+    -- refuses the R6 set. The second return value counts the pack slots that
+    -- were dropped for being foreign, so the menu can say it instead of
+    -- showing a mangled avatar in silence.
     local function resolvedAnimationSlots(
         slots: {[string]: any},
-        humanoid: Humanoid?
-    ): {[string]: any}
+        humanoid: Humanoid?,
+        _targetRig: string?
+    ): ({[string]: any}, number)
         local defaults: {[string]: any} = rigDefaultSlots(humanoid)
         local isR6: boolean = defaults == DEFAULT_ANIMATION_IDS_R6
+        local dropped: number = 0
         local resolved: {[string]: any} = {}
         for category: string, value: any in pairs(slots) do
-            if isR6 and belongsToR15Defaults(value) then
-                value = nil
+            -- Only the body's own rig may be written into its Animate slots.
+            -- On R6 that means the R6 default ids; on R15, anything that is
+            -- not an R6 default id (pack clips included).
+            local owned: boolean
+            if isR6 then
+                owned = belongsToR6Defaults(value)
+            else
+                owned = not belongsToR6Defaults(value)
             end
-            if value ~= nil then
+            if owned then
                 resolved[category] = value
+            elseif not belongsToR15Defaults(value) then
+                -- Dropping the R15 defaults is not a loss: they equal the set
+                -- the R6 body already had, which is why the default pack looks
+                -- fine. Only real pack clips are worth telling the user about.
+                dropped += 1
             end
         end
         for category: string, ids: any in pairs(defaults) do
@@ -19149,7 +19216,7 @@ function Module.init(context: Runtime): any
                 resolved[category] = ids
             end
         end
-        return resolved
+        return resolved, dropped
     end
 
     local function writeAnimationSlots(
@@ -19209,13 +19276,26 @@ function Module.init(context: Runtime): any
     local function applyAnimationSlots(
         character: Model,
         humanoid: Humanoid,
-        slots: {[string]: any}
+        slots: {[string]: any},
+        targetRig: string?
     ): number
         local animate: Instance? = character:FindFirstChild("Animate")
         if not animate then
             return 0
         end
-        local resolved: {[string]: any} = resolvedAnimationSlots(slots, humanoid)
+        local resolved: {[string]: any}, dropped: number =
+            resolvedAnimationSlots(slots, humanoid, targetRig)
+        -- The status reports this: "0 slots" on its own looks like a failure
+        -- even when the four foreign clips were refused on purpose.
+        lastDroppedSlotCount = dropped
+        if dropped > 0 and not foreignPackNotified then
+            foreignPackNotified = true
+            notify(
+                "That pack's clips are not "
+                    .. (rigName(humanoid) or "your rig")
+                    .. " clips; your own animations stay."
+            )
+        end
         local changedCount: number = writeAnimationSlots(animate, resolved)
         if changedCount == 0 then
             return 0
@@ -19234,17 +19314,36 @@ function Module.init(context: Runtime): any
     -- Runs as soon as a description is fetched, before anything is applied:
     -- this is the "load everything in the background" step. It only reads the
     -- description, so it can never touch or roll back the visible avatar.
+    -- The target's own rig, when they are in the server. A description carries
+    -- clip ids but never the rig those clips were authored for.
+    local function targetRigFor(userId: number): string?
+        local ok: boolean, player: any = pcall(function(): any
+            return Players:GetPlayerByUserId(userId)
+        end)
+        if not ok or not player then
+            return nil
+        end
+        local character: any = player.Character
+        local humanoid: any = character and character:FindFirstChildOfClass("Humanoid")
+        if not humanoid then
+            return nil
+        end
+        return rigName(humanoid)
+    end
+
     local function cacheTarget(userId: number, description: any): ()
         local emotes: any, equippedEmotes: any = readDescriptionEmotes(description)
         -- Only what the target actually chose. A 0 in a description means
         -- "use Roblox's default", and which default that is depends on OUR rig,
         -- so the gap is filled at apply time, never here.
         local slots: {[string]: any} = animationSlotsFromDescription(description)
+        foreignPackNotified = false
         targetCache = {
             userId = userId,
             slots = slots,
             emotes = emotes,
             equippedEmotes = equippedEmotes,
+            rig = targetRigFor(userId),
         }
     end
 
@@ -19660,7 +19759,8 @@ function Module.init(context: Runtime): any
         local changedCount: number = applyAnimationSlots(
             character,
             humanoid,
-            cached.slots
+            cached.slots,
+            cached.rig
         )
         -- Zero writes do not mean the body is fine: the ids may already be
         -- the frozen set from a previous apply, and re-selecting the same
@@ -19983,6 +20083,7 @@ function Module.init(context: Runtime): any
         humanoid: Humanoid,
         userId: number
     ): ()
+        lastDroppedSlotCount = 0
         local description: any, fetchError: string? = getUserDescription(userId)
         if not description then
             if stillCurrent(token, character) then
@@ -20129,20 +20230,37 @@ function Module.init(context: Runtime): any
         -- Movement animations are cosmetic and optional, so they run LAST and
         -- can never block or roll back the avatar copy above.
         if settings.useTargetMovementAnimations then
-            local movementOk: boolean, movementError: any = pcall(
+            local movementOk: boolean, movementResult: any = pcall(
                 applyCachedMovementAnimations,
                 character,
                 humanoid
             )
+            lastAppliedSlotCount = movementOk
+                and (tonumber(movementResult) or 0)
+                or 0
             if not movementOk then
                 notify(
                     "The avatar was applied, but movement animations failed: "
-                        .. tostring(movementError)
+                        .. tostring(movementResult)
                 )
             end
         end
         destroyInstance(description)
-        status("Ready")
+        -- The rig and the number of slots are the two facts a report needs:
+        -- "R6 · 0 slots" and "R15 · 7 slots" are different bugs.
+        local applied: string = string.format(
+            "%s · %s · %d slots",
+            settings.mode,
+            rigName(humanoid) or "rig?",
+            lastAppliedSlotCount
+        )
+        if (lastDroppedSlotCount or 0) > 0 then
+            applied ..= string.format(
+                " · %d pack clips skipped",
+                lastDroppedSlotCount or 0
+            )
+        end
+        status(applied)
     end
 
     -- Animation mode: the same target user as Character mode, but only what
@@ -20154,6 +20272,7 @@ function Module.init(context: Runtime): any
         humanoid: Humanoid,
         userId: number
     ): ()
+        lastDroppedSlotCount = 0
         local description: any, fetchError: string? = getUserDescription(userId)
         if description then
             if not stillCurrent(token, character) then
@@ -20233,16 +20352,23 @@ function Module.init(context: Runtime): any
         end
 
         activeCard:SetStatus("Animation")
-        status(
-            string.format(
-                "Animation · emotes %s · %d animation slots. Your own avatar stays visible.",
-                emotesApplied and "applied" or "not available",
-                changedCount
-            )
+        local animationLine: string = string.format(
+            "Animation · %s · emotes %s · %d slots",
+            rigName(humanoid) or "rig?",
+            emotesApplied and "applied" or "not available",
+            changedCount
         )
+        if (lastDroppedSlotCount or 0) > 0 then
+            animationLine ..= string.format(
+                " · %d pack clips skipped",
+                lastDroppedSlotCount or 0
+            )
+        end
+        status(animationLine .. ". Your own avatar stays visible.")
     end
 
     local function applyDisguise(): ()
+        lastDroppedSlotCount = 0
         generation += 1
         local token: number = generation
         local character: Model? = LocalPlayer.Character

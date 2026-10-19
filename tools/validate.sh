@@ -35,3 +35,11 @@ python3 tools/gen_full_boot_harness.py
 grep -F 'Load complete · failures=0' build/full_boot.log
 grep -F '[HARNESS] done' build/full_boot.log
 echo 'PASS bundle boot, silent startup, native controls and cleanup assertions'
+
+# The menu that the bundle builds, not the names that appear in the source: a
+# module can compile, ship and never register. Registering a card is a user
+# visible change, so the count is asserted.
+python3 tools/audit_menu.py >build/menu_audit.md 2>&1 || { cat build/menu_audit.md; exit 1; }
+cards="$(grep -E '^[0-9]+ cards total$' build/menu_audit.md | cut -d' ' -f1)"
+[ -n "$cards" ] || { cat build/menu_audit.md; exit 1; }
+echo "PASS menu audit: $cards cards, every row dumped from the booted bundle"

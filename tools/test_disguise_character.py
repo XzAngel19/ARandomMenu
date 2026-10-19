@@ -87,7 +87,11 @@ movement_index = appearance.index('applyCachedMovementAnimations')
 assert load_index < appearance_index < movement_index, \
     'cache -> avatar -> movement is the only accepted order'
 assert 'pcall(\n                applyCachedMovementAnimations' in appearance
-assert 'destroyInstance(description)\n        status("Ready")' in appearance
+assert 'destroyInstance(description)' in appearance
+# The final status names the rig and the slot count: a report has to say
+# which body ran and how many slots it wrote.
+assert '"%s · %s · %d slots"' in appearance
+assert 'rigName(humanoid)' in appearance
 
 # The two Character toggles are independent gates around separate blocks.
 marker = '-- Movement animations are cosmetic'

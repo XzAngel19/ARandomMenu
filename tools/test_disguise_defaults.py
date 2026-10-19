@@ -100,6 +100,7 @@ local function humanoidFor(rigType, character)
         end}
 end
 function readDescriptionEmotes() return nil, nil end
+function targetRigFor() return nil end
 ''' + settle + pack + r'''
 -- 1) The description wins where it has a value.
 local slots = animationSlotsFromDescription({IdleAnimation = 12345})
@@ -135,12 +136,24 @@ local mixed = resolvedAnimationSlots(
 )
 assert(mixed.walk[1] == "180426354", "an R15 default must not reach an R6 rig")
 assert(mixed.idle[1] == "180435571", "the R6 idle replaces the R15 one")
-local custom = resolvedAnimationSlots(
+-- A custom pack never lands on an R6 body, not even a clip that claims to
+-- come from an R6 avatar: a description does not carry the rig of its clips,
+-- and the only R6 clips this code can vouch for are the R6 defaults.
+local customSameRig, customDropped = resolvedAnimationSlots(
     {walk = "rbxassetid://99887766"},
-    humanoidFor(Enum.HumanoidRigType.R6, nil)
+    humanoidFor(Enum.HumanoidRigType.R6, nil),
+    "R6"
 )
-assert(custom.walk == "rbxassetid://99887766", "a real custom pack is still tried")
-pass("rig defaults: R15 defaults are substituted on R6, custom ids are kept")
+assert(customDropped == 1 and customSameRig.walk[1] == "180426354",
+    "a custom clip is replaced by the R6 walk")
+local customUnknown = resolvedAnimationSlots(
+    {walk = "rbxassetid://99887766"},
+    humanoidFor(Enum.HumanoidRigType.R6, nil),
+    nil
+)
+assert(customUnknown.walk[1] == "180426354",
+    "an unverified pack on R6 is replaced by the rig's own walk")
+pass("rig defaults: R15 defaults are substituted on R6, a same-rig pack is kept")
 
 -- 5) A fully default R6 avatar: two idle variants in order plus walk, and the
 --    script is restarted once.
@@ -161,22 +174,24 @@ assert(settleMovementAnimations(character, r6) == true,
 pass("apply: R6 defaults in order, one restart, no R15 id")
 
 -- 6) When the target's clips load but nothing plays, the rig's own set goes on
---    and the menu says so. The avatar is never left in a still pose.
+--    and the menu says so. The avatar is never left in a still pose. This is
+--    the R15 body: on R6 the pack is never written, so there is nothing to
+--    fall back from.
 notices = {}
 playing = {}
 bridgeAttempts = 0
 bridgeWorksFrom = 2
 local character2, _, refs2 = makeCharacter()
-local r6b = humanoidFor(Enum.HumanoidRigType.R6, character2)
+local r15b = humanoidFor(Enum.HumanoidRigType.R15, character2)
 local customSlots = {idle = "rbxassetid://777777", walk = "rbxassetid://888888"}
-local applied = applyAnimationSlots(character2, r6b, customSlots)
+local applied = applyAnimationSlots(character2, r15b, customSlots, "R15")
 assert(applied == 4, "one idle id fills the three slots, plus the walk: "
     .. tostring(applied))
-assert(settleMovementAnimations(character2, r6b) == true,
+assert(settleMovementAnimations(character2, r15b) == true,
     "the rig's own set takes over instead of leaving a still body")
-assert(refs2.idle1.AnimationId == "rbxassetid://180435571",
+assert(refs2.idle1.AnimationId == "rbxassetid://507766666",
     "the fallback writes the rig's default idle")
-assert(refs2.walk.AnimationId == "rbxassetid://180426354")
+assert(refs2.walk.AnimationId == "rbxassetid://507777826")
 assert(#notices >= 1 and string.find(notices[#notices], "do not play"),
     "the fallback is reported, not hidden")
 pass("apply: clips that never play fall back to the rig's own set")
@@ -188,10 +203,10 @@ playing = {}
 bridgeAttempts = 0
 bridgeWorksFrom = 99
 local character3, _, _ = makeCharacter()
-local r6c = humanoidFor(Enum.HumanoidRigType.R6, character3)
-local restored = applyAnimationSlots(character3, r6c, customSlots)
+local r15c = humanoidFor(Enum.HumanoidRigType.R15, character3)
+local restored = applyAnimationSlots(character3, r15c, customSlots, "R15")
 assert(restored == 4, "the slots were written before the check")
-assert(settleMovementAnimations(character3, r6c) == false,
+assert(settleMovementAnimations(character3, r15c) == false,
     "nothing can play, so the settle step fails")
 assert(restoredCalls == 1, "the snapshot restore runs exactly once")
 assert(animationOverrideApplied == false, "the override must be released")
@@ -210,8 +225,8 @@ bridgeAttempts = 0
 bridgeWorksFrom = 1
 local character4, _, refs4 = makeCharacter()
 local jointReads = 0
--- The joint moves only while the slot holds a clip built for this rig: an R15
--- clip on an R6 body writes nothing, which is exactly the frozen case.
+-- The joint moves only while the slot holds the rig's own clip: a foreign
+-- clip writes nothing, which is exactly the frozen case.
 local rigJoint = setmetatable({}, {
     __index = function(_, key)
         if key == "Transform" then
@@ -229,21 +244,72 @@ local rigJoint = setmetatable({}, {
     end,
 })
 character4.GetDescendants = function() return {rigJoint} end
-local r6d = humanoidFor(Enum.HumanoidRigType.R6, character4)
-local applied4 = applyAnimationSlots(character4, r6d, {idle = "rbxassetid://555"})
+local r15d = humanoidFor(Enum.HumanoidRigType.R15, character4)
+local applied4 = applyAnimationSlots(character4, r15d, {idle = "rbxassetid://555"}, "R15")
 assert(applied4 == 4, "one idle id fills three slots, plus walk: " .. tostring(applied4))
-assert(settleMovementAnimations(character4, r6d) == true,
+assert(settleMovementAnimations(character4, r15d) == true,
     "a track that never moves a joint cannot count as a working animation")
-assert(refs4.idle1.AnimationId == "rbxassetid://180435571",
+assert(refs4.idle1.AnimationId == "rbxassetid://507766666",
     "the rig's own idle replaces the frozen clip")
-assert(refs4.walk.AnimationId == "rbxassetid://180426354")
+assert(refs4.walk.AnimationId == "rbxassetid://507777826")
 assert(jointReads >= 6, "the settle step samples every joint in the window: "
     .. tostring(jointReads))
 assert(#notices >= 1 and string.find(notices[#notices], "do not play"),
     "the substitution is reported in the status")
 pass("apply: a frozen rig is detected from the joints, not from IsPlaying")
 
--- 9) An animation pack id maps its seven items by name.
+-- 9) A pack never reaches an R6 body, whoever the target is. The engine
+--    "plays" R15 clips by retargeting them, which bends the limbs and sinks
+--    the torso: the broken pose in the report, and it only happens with a
+--    non-default pack. In an R6 game the target is R6 too, so the target's rig
+--    cannot be the test; the clips themselves are. The status must say it
+--    instead of doing it silently.
+notices = {}
+playing = {track(true)}
+local character5, _, refs5 = makeCharacter()
+local r6e = humanoidFor(Enum.HumanoidRigType.R6, character5)
+local packSlots = {idle = "rbxassetid://111", walk = "rbxassetid://222",
+    run = "rbxassetid://333", jump = "rbxassetid://444"}
+local written, dropped = resolvedAnimationSlots(packSlots, r6e, "R15")
+assert(dropped == 4, "every foreign slot is dropped: " .. tostring(dropped))
+assert(written.idle[1] == "180435571", "the R6 idle is used instead")
+assert(written.walk[1] == "180426354", "the R6 walk is used instead")
+assert(written.jump[1] == "125750702", "the R6 jump is used instead")
+foreignPackNotified = false
+local applied5 = applyAnimationSlots(character5, r6e, packSlots, "R15")
+assert(applied5 == 4, "the rig's own clips are written: " .. tostring(applied5))
+assert(#notices >= 1 and string.find(notices[#notices], "not R6 clips"),
+    "the substitution is reported: " .. tostring(notices[#notices]))
+pass("rig guard: an R15 pack is not forced onto an R6 body")
+
+-- 10) An R6 target does not change the answer. MM2 is an R6 game, so this is
+--     the case the report comes from: the target's body is R6 and the clips
+--     still are not. The rule is about the clips, not about the target.
+local written2, dropped2 = resolvedAnimationSlots(packSlots, r6e, "R6")
+assert(dropped2 == 4, "an R6 target does not make R15 clips playable: " .. tostring(dropped2))
+assert(written2.idle[1] == "180435571" and written2.walk[1] == "180426354")
+local written2b, dropped2b = resolvedAnimationSlots(packSlots, r6e, nil)
+assert(dropped2b == 4 and written2b.idle[1] == "180435571")
+pass("rig guard: an R6 target still keeps the R6 set on an R6 body")
+
+-- 11) An R15 body keeps its pack: the rule only protects R6.
+local written3, dropped3 = resolvedAnimationSlots(packSlots,
+    humanoidFor(Enum.HumanoidRigType.R15, nil), "R15")
+assert(dropped3 == 0 and written3.idle == "rbxassetid://111")
+pass("rig guard: an R15 body still gets the target's pack")
+
+-- 12) The R6 default set is not written into R15 slots either: the invariant
+--     is symmetric, even though the R15 side almost never sees it.
+local r6Defaults = {idle = {"180435571", "180435792"}, walk = {"180426354"},
+    run = {"180426354"}, jump = {"125750702"}, fall = {"180436148"},
+    climb = {"180436334"}}
+local written4, dropped4 = resolvedAnimationSlots(r6Defaults,
+    humanoidFor(Enum.HumanoidRigType.R15, nil), "R6")
+assert(dropped4 > 0, "R6 defaults are foreign to an R15 body")
+assert(written4.walk[1] == "507777826", "the R15 walk is used instead")
+pass("rig guard: R6 clips are refused on an R15 body")
+
+-- 13) An animation pack id maps its seven items by name.
 local items = {
     {Name = "Toy Idle", Id = 111},
     {Name = "Toy Walk", Id = 222},
