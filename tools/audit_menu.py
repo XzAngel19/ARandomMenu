@@ -70,7 +70,7 @@ print("[AUDIT] cards\t" .. tostring(#ex.allFeatures) .. "\trows\t" .. tostring(t
 '''
 
 
-def build() -> Path:
+def build(debug: bool = True) -> Path:
     bundle = (ROOT / "src/libraries/bundle.lua").read_text(encoding="utf-8")
     wurst = (ROOT / "src/Wurst.lua").read_text(encoding="utf-8")
 
@@ -90,7 +90,7 @@ def build() -> Path:
         f'    ["src/libraries/bundle.lua"] = {harness.long_bracket(bundle)},\n',
         "}\n",
         'SOURCES["src/Wurst.lua"] = nil\n',
-        "GENV.WURST_DEBUG = true\n",
+        f"GENV.WURST_DEBUG = {'true' if debug else 'false'}\n",
         "\nlocal ok, err = pcall(function()\n",
         wurst,
         "\nend)\n",
@@ -153,14 +153,16 @@ def as_markdown(cards) -> None:
 
 
 def main() -> None:
-    path = build()
+    release = "--release" in sys.argv
+    path = build(debug=not release)
     output = run(path)
     cards = parse(output)
     if "--json" in sys.argv:
         as_json(cards)
     else:
         as_markdown(cards)
-        print(f"\n{len(cards)} cards total")
+        label = "release" if release else "debug"
+        print(f"\n{len(cards)} cards total ({label} boot)")
 
 
 if __name__ == "__main__":

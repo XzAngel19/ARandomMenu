@@ -1,4 +1,15 @@
-# MM2 menu audit (v70)
+# MM2 menu audit (v70, executed in v71)
+
+> **v71 state.** Items 1-4 below are done. The menu now has 36 cards and the
+> MM2 section has 5 (SilentAIM, Coin ESP, Fling, Blurt Roles, and Calibration
+> only when `WURST_DEBUG` is on). Deleted: `src/games/MM2.luau` and the four
+> other legacy monoliths (`TRS`, `VD`, `MVSD`, `Universal`, 10,502 lines that
+> no longer loaded), plus `WallHop`, `LagSwitch` and `RemoteLogger`.
+> `Rejoin Server` is registered. Coin ESP is a real module built on what used
+> to be the dead `CoinChams` leftovers (folder, colour, transparency), and
+> Kill Aura gained an "Ignore players" list. The provider rows now turn Item
+> ESP on instead of staying ON and dead. The details of what is still missing
+> (god mode, kill all, no-spread, auto unbox) and why are at the bottom.
 
 The question was whether the MM2 side of the menu is complete next to Eclipse
 Hub, OverDrive H and similar hubs, and which modules are useless or broken.
@@ -17,14 +28,16 @@ booted menu can answer "is this feature there?".
 
 ## What the menu has
 
-35 cards. 31 are the universal set; the MM2 section has **4**:
+36 cards. 31 are the universal set; the MM2 section has **5** (4 in a release
+boot, where the debug-only Calibration card does not exist):
 
 | Section | Card | Category | Rows |
 | --- | --- | --- | --- |
 | MM2 | SilentAIM | Combat | 15 (Gun: Auto Shoot, Aim method, Target, WallCheck, Macro, Silent sweep, Silent spawn, Spawn A/B status, Auto lead, Lead offset ms, Prediction status, Reset prediction, Target player; Knife: Knife Throw, Throw with button) |
 | MM2 | Fling | Exploits | 5 |
 | MM2 | Blurt Roles | World | 5 (Instant Roles, Delay, Repeat on change, Fake Blurt Roles, Blurt now) |
-| MM2 | Calibration | Utilities | 5 (Calibration status, Save calibration, Clear MM2 history, TrailESP, Trail color) |
+| MM2 | Coin ESP | Render | 2 (Coin colour, Coin transparency) + live count in the card status |
+| MM2 | Calibration | Utilities | 5, **debug only** (`WURST_DEBUG`) |
 
 The other MM2 controls are real but live **inside universal cards**, so they
 are invisible to anyone scanning the MM2 section:
@@ -73,18 +86,20 @@ notify ("Instant Roles"), config save/load.
 
 ## Useless, broken or dead
 
-1. **Gun ESP and Trap ESP look broken.** Both are toggles inside ItemESP, and
-   `ItemRender.lua:191-203` only starts the providers while the ItemESP card
-   itself is ON, while `:496-514` lets the toggle be ON with the card OFF.
-   The tooltip says "while ItemESP is ON", but a toggle that stays ON and
-   does nothing is the worst possible feedback. Either enabling a provider
-   turns Item ESP on, or the provider row is disabled while the card is off.
-2. **`CoinChams` is a ghost.** `MM2/base.lua:28-31` creates the
-   `MM2Effects/CoinChams` folder, `:94-95` defines `coinColor` and
-   `coinTransparency`, `:4243` exports the folder, and nothing reads any of
-   it: there is no card and no cham. The coin containers at `:766-770`
-   (`CoinContainer`, `CoinAreas`, `Coins`) are used only to find the map.
-3. **`src/games/MM2.luau` is dead code.** 5,229 lines, not in
+1. ~~**Gun ESP and Trap ESP look broken.**~~ **Fixed in v71.**
+   A provider only draws while Item ESP is ON (`ItemRender.lua:191-203`), and
+   the row used to stay ON with the card OFF. Now the row's callback goes
+   through `setProviderEnabled`: ON with the card OFF activates the card's own
+   switch, ON with the card ON enables the provider, OFF disables it.
+2. ~~**`CoinChams` is a ghost.**~~ **Fixed in v71.** `CoinEsp.lua` now uses
+   `MM2Effects/CoinChams`, `coinColor` and `coinTransparency`: one Highlight
+   per coin under the map's coin containers, a refresh loop that follows
+   pickups, and the live count in the card status. The containers at
+   `MM2/base.lua:766-770` still identify the map; the same list drives the
+   highlight.
+3. ~~**`src/games/MM2.luau` is dead code.**~~ **Deleted in v71**, together
+   with `src/games/{TRS,VD,MVSD,Universal}.luau` (10,502 lines in total, none
+   of them loaded or bundled). It was 5,229 lines, not in
    `Wurst.lua`'s module list, not in the bundle (none of its card names
    appear in `bundle.lua`: Gun Visuals, Silence, Auto Play ID, Always Show
    Timer, FriendList, Hide Names, Loop All Interact and Coin Chams are all 0
@@ -93,34 +108,43 @@ notify ("Instant Roles"), config save/load.
    Notify, Loop All Interact, Silence, Auto Play ID, Always Show Timer,
    FriendList, Hide Names, Coin Chams and the old Trajectory Calibration.
    Anyone reading the repo will believe those features exist.
-4. **Four universal modules compile but never load.** `Manifest.lua` lists 32
-   modules; `src/games/universal` has 36 files. Missing from the manifest:
-   `Blatant/WallHop.lua`, `Other/LagSwitch.lua`, `Other/RejoinServer.lua`,
-   `Other/RemoteLogger.lua`. All four are written into `bundle.lua` (73
-   files) and never required, so they cost bytes and documentation noise
-   only. Two of them (server hop, lag switch) are hub features users ask for.
-5. **Developer capture lives in the player menu.** The Calibration card
-   (`TrajectoryCalibration.lua` + `CalibrationTrails.lua`) exposes
-   "Save calibration", "Clear MM2 history", "TrailESP" and "Trail colour" in
-   Utilities. It is useful for us and meaningless for a player; it belongs
-   behind a debug flag or a single "Advanced" section, not beside real
-   modules.
+4. ~~**Four universal modules compile but never load.**~~ **Fixed in v71.**
+   `Rejoin Server` is registered (33 modules, and the fallback manifest in
+   `Wurst.lua` is now generated from the same list and asserted equal by
+   `tools/test_manifest_sync.py`). `WallHop`, `LagSwitch` and `RemoteLogger`
+   were deleted: no menu entry, no caller, no plan.
+5. ~~**Developer capture lives in the player menu.**~~ **Fixed in v71.**
+   The Calibration card and its TrailESP rows exist only when
+   `WURST_DEBUG == true`; a release boot does not build them. The recorder in
+   `base.lua` still runs, because the prediction needs it.
 6. **Overlapping pairs, candidates to merge:** Gravity vs Anti Void
    ("Velocity limit" applies velocity damping), Freeze Movements vs Disguise
    (both stop the target animation state), and Spider vs the dead WallHop and
    Noclip (three ways to move through geometry).
 
-## What I would do, in this order
+## What is done, and what is refused
 
-1. Fix the provider feedback (Gun ESP / Trap ESP): a toggle that is ON must
-   turn Item ESP on, or be visibly unavailable while Item ESP is OFF.
-2. Delete `src/games/MM2.luau` and the dead `CoinChams` leftovers, or finish
-   the coin ESP; right now it is a half-removed feature.
-3. Register `RejoinServer` (a hub feature that already works) and delete
-   `RemoteLogger`, `LagSwitch` and `WallHop` unless they are coming back.
-4. Move the Calibration card to a debug section.
-5. Only then add new modules: god mode, kill all, aura whitelist, no-spread,
-   coin counter, auto unbox. Each one needs a server-authority check before
-   it is promised in the menu.
+Done in v71: provider feedback, dead code deletion, `Rejoin Server`, debug-only
+Calibration, Coin ESP + live counter (it uses what used to be the dead
+`CoinChams` leftovers), and the Kill Aura ignore list.
 
-Items 1-4 are cleanup, not new surface; they can ship together.
+Not shipped, on purpose:
+
+- **God mode.** Damage in MM2 is applied by the server. Writing
+  `Humanoid.Health` client-side is overwritten by the next replication and
+  never stops a death. A toggle that does nothing is the dead code this
+  cleanup just removed, so it is not in the menu.
+- **Kill all.** It needs a remote that applies damage to arbitrary players.
+  The captured traffic has `Shoot`, `KnifeThrown` and `GunFired`; there is no
+  damage remote in any log or in the place dump. The gun fires one projectile
+  at one target, so "kill all" would have to be a sequence of real shots, not
+  a button.
+- **No-spread.** Spread is decided by the server when it processes the shot;
+  the client sends origin and destination. There is nothing client-side to
+  tighten.
+- **Auto unbox.** The mystery boxes are paid products. Automating
+  `MarketplaceService` purchases would spend Robux without a confirmation
+  screen; it is not going in the menu.
+
+If any of those gets a verified remote or a server check, it can be added with
+a test that proves it does something.

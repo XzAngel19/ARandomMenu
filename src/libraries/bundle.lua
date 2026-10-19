@@ -1,5 +1,5 @@
 return {
-    stamp = "v70-20261019-disguise-rig-guard-and-menu-audit",
+    stamp = "v71-20261019-menu-cleanup-coin-esp-and-real-modules",
     files = {
         ["src/Profile/142823291.lua"] = [[
 --!strict
@@ -4144,7 +4144,12 @@ local activeCleanup = function() end
 function Module.init(runtime: any): any
     if Module.Initialized then return Module end
     local core = state.mm2Core
-    assert(core and state.mm2CalibrationFeature, "TrailESP requires Calibration")
+    -- The Calibration card is a debug surface: no card, no trail options.
+    if not state.mm2CalibrationFeature then
+        Module.Initialized = true
+        return Module
+    end
+    assert(core, "Calibration Trails requires the MM2 core module")
     local options = {trailEsp = false, color = Color3.fromRGB(100, 185, 255)}
     local trailFolder: Folder? = nil
     local connection: any = nil
@@ -4298,6 +4303,15 @@ function Module.init(runtime: any): any
     assert(type(core) == "table", "MM2 Trajectory Calibration requires the MM2 core module")
     Module.Runtime = runtime
     local trajectoryCalibration: any = core.trajectoryCalibration
+
+    -- Capture tools only exist with WURST_DEBUG on. The recorder in base.lua
+    -- keeps working either way; this is the card the player would otherwise
+    -- see between "Blurt Roles" and the real modules.
+    if state.debug ~= true then
+        Module.Events = featureConnections
+        Module.Initialized = true
+        return Module
+    end
 
     local TrajectoryFeature: any = state.mm2CalibrationFeature
     if not TrajectoryFeature then
@@ -5490,6 +5504,217 @@ end
 return Module
 
 ]=],
+        ["src/games/MM2/Render/CoinEsp.lua"] = [[
+-- MM2 coins: highlight every coin in the map and report how many exist.
+-- Client-side only: it reads the map, it never talks to a remote. The folder
+-- and the colour settings already lived in MM2/base.lua as leftovers of the
+-- old monolith; this module is what uses them again.
+local Module = {
+    Name = "MM2 Coin ESP",
+    PlaceId = 142823291,
+    Events = {} :: {[string]: any},
+    Initialized = false,
+    Runtime = nil :: any,
+}
+
+local activeCleanup: () -> () = function(): () end
+
+-- The containers the game puts the collectible coins in. The same names are
+-- how base.lua recognises a map model, so a hit here is a hit there.
+local COIN_CONTAINERS: {string} = {
+    "CoinContainer",
+    "CoinAreas",
+    "Coins",
+}
+
+function Module.init(runtime: any): any
+    if Module.Initialized then
+        return Module
+    end
+    local core: any = state.mm2Core
+    assert(type(core) == "table", "MM2 Coin ESP requires the MM2 core module")
+    Module.Runtime = runtime
+    local CoinEffects: any = core.CoinEffects
+    local clearEffects: any = core.clearEffects
+    local createMM2Cham: any = core.createMM2Cham
+    local findMM2Map: any = core.findMM2Map
+    local mm2Settings: any = core.mm2Settings
+
+    local function collectInto(container: Instance, found: {[Instance]: boolean}): ()
+        for _, child: Instance in ipairs(container:GetChildren()) do
+            if child:IsA("BasePart") then
+                found[child] = true
+            elseif child:IsA("Model") then
+                if child:FindFirstChildWhichIsA("BasePart", true) then
+                    found[child] = true
+                end
+            elseif child:IsA("Folder") then
+                collectInto(child, found)
+            end
+        end
+        if container:IsA("BasePart") then
+            found[container] = true
+        end
+    end
+
+    local function coinObjects(): {[Instance]: boolean}
+        local found: {[Instance]: boolean} = {}
+        local map: Instance? = findMM2Map()
+        if not map then
+            return found
+        end
+        for _, containerName: string in ipairs(COIN_CONTAINERS) do
+            local container: Instance? = map:FindFirstChild(containerName, true)
+            if container then
+                collectInto(container, found)
+            end
+        end
+        return found
+    end
+
+    local function countOf(set: {[Instance]: boolean}): number
+        local count: number = 0
+        for _ in pairs(set) do
+            count += 1
+        end
+        return count
+    end
+
+    local function toggleCoinEsp(enabled: boolean): ()
+        disconnectFeatureConnection("MM2CoinRefresh")
+        clearEffects(CoinEffects)
+
+        if not enabled then
+            local card: any = state.mm2CoinFeature
+            if card then
+                card:SetStatus(nil)
+            end
+            return
+        end
+
+        local marked: {[Instance]: boolean} = {}
+        local elapsed: number = 1
+        local lastCount: number = -1
+
+        local function refresh(): ()
+            local found: {[Instance]: boolean} = coinObjects()
+            local changed: boolean = false
+            for object: Instance in pairs(found) do
+                if not marked[object] then
+                    marked[object] = true
+                    changed = true
+                end
+            end
+            for object: Instance in pairs(marked) do
+                if not found[object] then
+                    marked[object] = nil
+                    changed = true
+                end
+            end
+            local count: number = countOf(found)
+            if changed then
+                clearEffects(CoinEffects)
+                for object: Instance in pairs(found) do
+                    createMM2Cham(
+                        CoinEffects,
+                        object,
+                        mm2Settings.coinColor,
+                        mm2Settings.coinTransparency
+                    )
+                end
+            end
+            if count ~= lastCount then
+                lastCount = count
+                local card: any = state.mm2CoinFeature
+                if card then
+                    card:SetStatus(
+                        count == 0 and "no coins" or (tostring(count) .. " coins")
+                    )
+                end
+            end
+        end
+
+        refresh()
+        featureConnections.MM2CoinRefresh = TaskManager:Connect(
+            function(deltaTime: number): ()
+                elapsed += deltaTime
+                if elapsed < 0.75 then
+                    return
+                end
+                elapsed = 0
+                refresh()
+            end
+        )
+    end
+
+    local CoinFeature: any = createUniversalFeature(
+        "Coin ESP",
+        "Highlights every coin the current map has, and reports how many there are.",
+        3,
+        toggleCoinEsp,
+        {
+            categoryName = "Render",
+            parent = MM2Scroll,
+            registry = mm2Features,
+        }
+    )
+    state.mm2CoinFeature = CoinFeature
+    -- One switch: the card. A second "Coin ESP" row inside a card called
+    -- "Coin ESP" is how the old menu ended up with controls that could be ON
+    -- while the feature was OFF.
+    addColorOption(
+        CoinFeature,
+        "Coin colour",
+        mm2Settings.coinColor,
+        function(value: Color3): ()
+            mm2Settings.coinColor = value
+            if CoinFeature.enabled then
+                toggleCoinEsp(true)
+            end
+        end
+    )
+    addNumberOption(
+        CoinFeature,
+        "Coin transparency",
+        mm2Settings.coinTransparency,
+        0,
+        1,
+        function(value: number): ()
+            mm2Settings.coinTransparency = value
+            if CoinFeature.enabled then
+                toggleCoinEsp(true)
+            end
+        end
+    )
+    addInformationOption(
+        CoinFeature,
+        "Only coins that exist in the map are counted; the status shows the live number."
+    )
+
+    activeCleanup = function(): ()
+        state.mm2CoinFeature = nil
+        toggleCoinEsp(false)
+    end
+    Module.Events = featureConnections
+    Module.Initialized = true
+    return Module
+end
+
+function Module.destroy(): ()
+    if not Module.Initialized then
+        return
+    end
+    Module.Initialized = false
+    pcall(activeCleanup)
+    activeCleanup = function(): ()
+    end
+    Module.Events = {}
+    Module.Runtime = nil
+end
+
+return Module
+
+]],
         ["src/games/MM2/Render/RoundEsp.lua"] = [[
 local Module = {
     Name = "MM2 Round ESP",
@@ -14960,274 +15185,6 @@ end
 return Module
 
 ]],
-        ["src/games/universal/Blatant/WallHop.lua"] = [[
-export type Runtime = {
-    framework: any,
-    host: any,
-    services: any,
-}
-
-type WallSighting = {
-    part: BasePart,
-    normal: Vector3,
-    direction: Vector3,
-    distance: number,
-}
-
-local Module = {
-    Name = "WallHop",
-    PlaceId = 0,
-    Events = {} :: {[string]: any},
-    Initialized = false,
-}
-
-local activeCard: any = nil
-
-local SCAN_DIRECTIONS: number = 8
-local SCAN_HEIGHTS: {number} = {-2.35, 0.2, 1.2}
-local ARROWS: {string} = {"↑", "↗", "→", "↘", "↓", "↙", "←", "↖"}
-
-function Module.init(context: Runtime): any
-    local framework: any = context.framework
-    local host: any = context.host
-    local movementInput: any = context.services.movementInput
-    local getCharacterParts: any = host.getCharacterParts
-    local currentWorkspace: Workspace = host.workspace or workspace
-    local lastHopAt: number = -math.huge
-    local lastScanAt: number = -math.huge
-    local highlight: Highlight? = nil
-
-    local function destroyHighlight(): ()
-        if highlight then
-            highlight:Destroy()
-            highlight = nil
-        end
-    end
-
-    local function findWall(
-        character: Model,
-        humanoid: Humanoid,
-        root: BasePart,
-        range: number
-    ): WallSighting?
-        local parameters: RaycastParams = RaycastParams.new()
-        parameters.FilterType = Enum.RaycastFilterType.Exclude
-        parameters.FilterDescendantsInstances = {character}
-        parameters.IgnoreWater = true
-        parameters.RespectCanCollide = true
-
-        local best: WallSighting? = nil
-        for directionIndex: number = 0, SCAN_DIRECTIONS - 1 do
-            local angle: number = (directionIndex / SCAN_DIRECTIONS) * math.pi * 2
-            local direction: Vector3 = Vector3.new(
-                math.sin(angle),
-                0,
-                math.cos(angle)
-            )
-            for _, height: number in ipairs(SCAN_HEIGHTS) do
-                local origin: Vector3 = root.Position + Vector3.new(0, height, 0)
-                local hit: RaycastResult? = currentWorkspace:Raycast(
-                    origin,
-                    direction * range,
-                    parameters
-                )
-                if hit
-                    and hit.Instance
-                    and hit.Instance:IsA("BasePart")
-                    and math.abs(hit.Normal.Y) <= 0.35 then
-                    if best == nil or hit.Distance < best.distance then
-                        best = {
-                            part = hit.Instance,
-                            normal = Vector3.new(
-                                hit.Normal.X,
-                                0,
-                                hit.Normal.Z
-                            ),
-                            direction = direction,
-                            distance = hit.Distance,
-                        }
-                    end
-                    break
-                end
-            end
-        end
-        if best and best.normal.Magnitude > 0.01 then
-            best.normal = best.normal.Unit
-        else
-            best = nil
-        end
-        return best
-    end
-
-    local function wallArrow(root: BasePart, sighting: WallSighting): string
-        local flatLook: Vector3 = Vector3.new(
-            root.CFrame.LookVector.X,
-            0,
-            root.CFrame.LookVector.Z
-        )
-        if flatLook.Magnitude < 0.01 then
-            return "↑"
-        end
-        flatLook = flatLook.Unit
-        local flatDirection: Vector3 = sighting.direction
-        local angle: number = math.atan2(
-            flatLook:Cross(flatDirection).Y,
-            flatLook:Dot(flatDirection)
-        )
-        local index: number = math.floor(
-            (angle / (math.pi * 2)) * SCAN_DIRECTIONS + 0.5
-        ) % SCAN_DIRECTIONS
-
-        index = (SCAN_DIRECTIONS - index) % SCAN_DIRECTIONS + 1
-        return ARROWS[index]
-    end
-
-    local card: any
-    local function clearVisuals(): ()
-        destroyHighlight()
-    end
-
-    card = framework.Categories.Blatant:CreateModule({
-        Name = "WallHop",
-        Category = "Blatant",
-        ConfigKey = "Universal.WallHop",
-        Order = 31,
-        Tooltip = "Detect walls and thin ledges around you and wall hop off "
-            .. "them with one realistic jump.",
-        Function = function(enabled: boolean): ()
-            clearVisuals()
-            lastHopAt = -math.huge
-            if not enabled then
-                card:SetStatus(nil)
-                return
-            end
-            card:SetStatus("ready")
-
-            card:Clean(movementInput.onJumpRequest(function(): ()
-                local now: number = os.clock()
-                if now - lastHopAt < 0.3 then
-                    return
-                end
-                local character: Model?, humanoid: Humanoid?, root: BasePart? =
-                    getCharacterParts()
-                if not character or not humanoid or not root
-                    or humanoid.Health <= 0
-                    or humanoid.FloorMaterial == Enum.Material.Air then
-                    return
-                end
-
-                local range: number = tonumber(card.Options["Wall range"].Value) or 2.6
-                local kick: number = tonumber(card.Options["Kick strength"].Value) or 14
-                local sighting: WallSighting? = findWall(character, humanoid, root, range)
-                if not sighting then
-                    return
-                end
-
-                lastHopAt = now
-                local jumpVelocity: number = 50
-                if humanoid.UseJumpPower then
-                    jumpVelocity = math.max(humanoid.JumpPower, 16)
-                elseif humanoid.JumpHeight > 0 then
-                    jumpVelocity = math.sqrt(
-                        2 * currentWorkspace.Gravity * humanoid.JumpHeight
-                    )
-                end
-                local velocity: Vector3 = root.AssemblyLinearVelocity
-
-                root.AssemblyLinearVelocity = Vector3.new(
-                    velocity.X * 0.35 + sighting.normal.X * kick,
-                    math.max(velocity.Y, jumpVelocity + 3),
-                    velocity.Z * 0.35 + sighting.normal.Z * kick
-                )
-                humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
-                card:SetStatus("hop")
-            end))
-
-            card:Loop(function(): ()
-                local now: number = os.clock()
-                if now - lastScanAt < 0.07 then
-                    return
-                end
-                lastScanAt = now
-
-                local character: Model?, humanoid: Humanoid?, root: BasePart? =
-                    getCharacterParts()
-                if not character or not humanoid or not root
-                    or humanoid.Health <= 0 then
-                    clearVisuals()
-                    return
-                end
-
-                local range: number = tonumber(card.Options["Wall range"].Value) or 2.6
-                local sighting: WallSighting? = findWall(character, humanoid, root, range)
-
-                local grounded: boolean = humanoid.FloorMaterial ~= Enum.Material.Air
-                if not sighting or not grounded then
-                    destroyHighlight()
-                    card:SetStatus(grounded and "ready" or nil)
-                    return
-                end
-
-                card:SetStatus(wallArrow(root, sighting))
-                if card.Options["Highlight walls"].Value ~= true then
-                    destroyHighlight()
-                    return
-                end
-                if not highlight or not highlight.Parent then
-                    highlight = Instance.new("Highlight")
-                    highlight.Name = "Wurst_WallHop"
-                    highlight.FillColor = Color3.fromRGB(64, 255, 140)
-                    highlight.FillTransparency = 0.82
-                    highlight.OutlineColor = Color3.fromRGB(64, 255, 140)
-                    highlight.OutlineTransparency = 0.1
-                    highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
-                    highlight.Parent = currentWorkspace
-                end
-                if (highlight :: Highlight).Adornee ~= sighting.part then
-                    (highlight :: Highlight).Adornee = sighting.part
-                end
-            end)
-        end,
-    })
-
-    card:CreateSlider({
-        Name = "Wall range",
-        Min = 1.5,
-        Max = 5,
-        Default = 2.6,
-        Step = 0.1,
-        Tooltip = "How far from a wall you can be to wall hop.",
-    })
-    card:CreateSlider({
-        Name = "Kick strength",
-        Min = 8,
-        Max = 26,
-        Default = 14,
-        Step = 1,
-        Tooltip = "Horizontal push away from the wall on each hop.",
-    })
-    card:CreateToggle({
-        Name = "Highlight walls",
-        Default = true,
-        Tooltip = "Outline the wall you can currently wall hop off.",
-    })
-
-    activeCard = card
-    Module.Initialized = true
-    return card
-end
-
-function Module.destroy(): ()
-    if activeCard and activeCard.Enabled then
-        pcall(activeCard.Toggle, false)
-    end
-    activeCard = nil
-    Module.Initialized = false
-end
-
-return Module
-
-]],
         ["src/games/universal/Combat/AimAssist.lua"] = [[
 export type Runtime = {
     framework: any,
@@ -15524,6 +15481,27 @@ local Module = {
 }
 
 local activeCleanup: (() -> ())? = nil
+
+-- Ignore list: names, display names or user ids, separated by commas. It is
+-- parsed outside the per-frame loop and applied to the entity list before any
+-- rotation or swing, so an ignored player is never picked.
+local function compileIgnoreList(text: string?): {[string]: boolean}
+    local ignored: {[string]: boolean} = {}
+    for name: string in string.gmatch(text or "", "[^,;%s]+") do
+        ignored[string.lower(name)] = true
+    end
+    return ignored
+end
+
+local function isIgnoredEntity(entity: any, ignored: {[string]: boolean}): boolean
+    local player: any = entity and entity.Player
+    if not player then
+        return false
+    end
+    return ignored[string.lower(player.Name or "")] == true
+        or ignored[string.lower(player.DisplayName or "")] == true
+        or ignored[tostring(player.UserId)] == true
+end
 
 local function collectTools(localPlayer: Player): {Tool}
     local tools: {Tool} = {}
@@ -15850,6 +15828,19 @@ function Module.init(context: Runtime): any
                     end
                     targets = kept
                 end
+                local ignoreText: string = tostring(
+                    options["Ignore players"].Value or ""
+                )
+                if ignoreText ~= "" then
+                    local ignored: {[string]: boolean} = compileIgnoreList(ignoreText)
+                    local kept: {any} = {}
+                    for _, entity: any in ipairs(targets) do
+                        if not isIgnoredEntity(entity, ignored) then
+                            table.insert(kept, entity)
+                        end
+                    end
+                    targets = kept
+                end
                 updateTargetStatus(#targets)
                 if #targets == 0 then
                     clearHighlights()
@@ -16097,6 +16088,12 @@ function Module.init(context: Runtime): any
         Name = "Target NPCs",
         Default = false,
         Tooltip = "Include non-player humanoid models in the reach scan.",
+    })
+    aura:CreateTextBox({
+        Name = "Ignore players",
+        Default = "",
+        Tooltip = "Names, display names or user ids, separated by commas. "
+            .. "They are skipped by targeting: never picked, rotated to or hit.",
     })
     aura:CreateToggle({
         Name = "Highlight targets",
@@ -21187,105 +21184,6 @@ end
 return Module
 
 ]],
-        ["src/games/universal/Other/LagSwitch.lua"] = [[
-export type Runtime = {
-    framework: any,
-    entity: any,
-    host: any,
-}
-
-local Module = {
-    Name = "LagSwitch",
-    PlaceId = 0,
-    Events = {} :: {[string]: any},
-    Initialized = false,
-}
-
-local activeCleanup: (() -> ())? = nil
-
-function Module.init(context: Runtime): any
-    local host: any = context.host
-    local TaskManager: any = host.TaskManager
-    local featureConnections: any = host.featureConnections
-    local disconnectFeatureConnection: any = host.disconnectFeatureConnection
-    local createUniversalFeature: any = host.createUniversalFeature
-    local addNumberOption: any = host.addNumberOption
-    local lagSwitchSettings = {incomingLag = 999}
-    local originalIncomingLag = 0
-    local LagSwitchFeature: any = nil
-
-    local function setIncomingReplicationLag(value)
-        local success = pcall(function()
-            settings():GetService("NetworkSettings").IncomingReplicationLag = value
-        end)
-        return success
-    end
-
-    local function toggleLagSwitch(enabled)
-        disconnectFeatureConnection("LagSwitch")
-
-        if not enabled then
-            if LagSwitchFeature then LagSwitchFeature:SetStatus(nil) end
-            setIncomingReplicationLag(originalIncomingLag)
-            return
-        end
-
-        LagSwitchFeature:SetStatus(tostring(math.round(lagSwitchSettings.incomingLag)) .. " ms")
-        pcall(function()
-            originalIncomingLag = settings():GetService(
-                "NetworkSettings"
-            ).IncomingReplicationLag
-        end)
-
-        if not setIncomingReplicationLag(lagSwitchSettings.incomingLag) then
-            error("NetworkSettings is not available in this client.")
-        end
-
-        featureConnections.LagSwitch = TaskManager:Connect(function()
-            setIncomingReplicationLag(lagSwitchSettings.incomingLag)
-        end)
-    end
-
-    LagSwitchFeature = createUniversalFeature(
-        "Lag Switch",
-        "Simulate extreme incoming replication delay",
-        16,
-        toggleLagSwitch,
-        {categoryName = "Other"}
-    )
-    addNumberOption(
-        LagSwitchFeature,
-        "Incoming lag",
-        lagSwitchSettings.incomingLag,
-        1,
-        999,
-        function(value)
-            lagSwitchSettings.incomingLag = value
-            if LagSwitchFeature.enabled then
-                LagSwitchFeature:SetStatus(tostring(math.round(value)) .. " ms")
-            end
-        end
-    )
-
-    activeCleanup = function(): ()
-        disconnectFeatureConnection("LagSwitch")
-        setIncomingReplicationLag(originalIncomingLag)
-    end
-    Module.Initialized = true
-    return LagSwitchFeature
-end
-
-function Module.destroy(): ()
-    if activeCleanup then
-        pcall(activeCleanup)
-    end
-    activeCleanup = nil
-    Module.Initialized = false
-end
-
-return Module
-
-]],
         ["src/games/universal/Other/RejoinServer.lua"] = [[
 export type Runtime = {
     framework: any,
@@ -21391,474 +21289,6 @@ function Module.init(context: Runtime): any
     activeCleanup = function(): () end
     Module.Initialized = true
     return feature
-end
-
-function Module.destroy(): ()
-    if activeCleanup then
-        pcall(activeCleanup)
-    end
-    activeCleanup = nil
-    Module.Initialized = false
-end
-
-return Module
-
-]],
-        ["src/games/universal/Other/RemoteLogger.lua"] = [[
-export type Runtime = {
-    framework: any,
-    entity: any,
-    host: any,
-}
-
-local Module = {
-    Name = "RemoteLogger",
-    PlaceId = 0,
-    Events = {} :: {[string]: any},
-    Initialized = false,
-}
-
-local activeCleanup: (() -> ())? = nil
-
-local function fullName(instance: Instance): string
-    local ok: boolean, name: any = pcall(function(): string
-        return instance:GetFullName()
-    end)
-    return ok and tostring(name) or instance.Name
-end
-
-local function describe(value: any, depth: number): string
-    local kind: string = typeof(value)
-    if kind == "string" then
-        return string.format("%q", (value :: string):sub(1, 200))
-    end
-    if kind == "number" or kind == "boolean" or kind == "nil" then
-        return tostring(value)
-    end
-    if kind == "Instance" then
-        return "«" .. (value :: Instance).ClassName .. " " .. fullName(value :: Instance) .. "»"
-    end
-    if kind == "Vector3" or kind == "Vector2" or kind == "CFrame"
-        or kind == "Color3" or kind == "UDim2" or kind == "EnumItem" then
-        return kind .. "(" .. tostring(value) .. ")"
-    end
-    if kind == "table" then
-        if depth <= 0 then
-            return "{...}"
-        end
-        local parts: {string} = {}
-        local count: number = 0
-        for key: any, entry: any in pairs(value :: any) do
-            count += 1
-            if count > 12 then
-                table.insert(parts, "...")
-                break
-            end
-            table.insert(
-                parts,
-                "[" .. describe(key, depth - 1) .. "] = " .. describe(entry, depth - 1)
-            )
-        end
-        return "{" .. table.concat(parts, ", ") .. "}"
-    end
-    return kind
-end
-
-local function snippetFor(entry: any): string
-    local parts: {string} = {}
-    for _, argument: string in ipairs(entry.arguments) do
-        table.insert(parts, argument)
-    end
-    return "game:GetService(\"ReplicatedStorage\")"
-        .. " -- "
-        .. entry.path
-        .. "\n-- :"
-        .. entry.method
-        .. "("
-        .. table.concat(parts, ", ")
-        .. ")"
-end
-
-function Module.init(context: Runtime): any
-    local host: any = context.host
-    local httpService: HttpService = host.HttpService
-    local product: any = host.PRODUCT
-    local remoteLogFolder: string = product.storageFolder .. "/RemoteLogs"
-
-    local notify: any = host.notify
-    local createUniversalFeature: any = host.createUniversalFeature
-    local addToggleOption: any = host.addToggleOption
-    local addNumberOption: any = host.addNumberOption
-    local addTextOption: any = host.addTextOption
-    local addActionOption: any = host.addActionOption
-    local addInformationOption: any = host.addInformationOption
-    local TaskManager: any = host.TaskManager
-
-    local settings = {
-        filter = "",
-        maxRemotes = 120,
-        announceNew = false,
-        resampleAlways = false,
-    }
-
-    local log: {[string]: any} = {}
-    local order: {string} = {}
-    local pathCache: any = setmetatable({}, {__mode = "k"})
-    local hooked: boolean = false
-    local restore: (() -> ())? = nil
-    local capturing: boolean = false
-    local drainConnection: any = nil
-
-    local function record(remote: Instance, method: string, ...: any): ()
-        if not capturing then
-            return
-        end
-
-        local path: string = pathCache[remote]
-        if not path then
-            path = fullName(remote)
-            pathCache[remote] = path
-        end
-        if settings.filter ~= ""
-            and not string.find(string.lower(path), string.lower(settings.filter), 1, true) then
-            return
-        end
-
-        local key: string = path .. "::" .. method
-        local entry: any = log[key]
-        if not entry then
-            if #order >= settings.maxRemotes then
-                return
-            end
-            entry = {
-                path = path,
-                class = remote.ClassName,
-                method = method,
-                calls = 0,
-                samples = 0,
-                firstSeen = os.clock(),
-                arguments = {},
-            }
-            log[key] = entry
-            table.insert(order, key)
-            if settings.announceNew then
-                notify(remote.Name .. " · " .. method)
-            end
-        end
-        entry.calls += 1
-        entry.lastSeen = os.clock()
-
-        if entry.samples >= 3 and not settings.resampleAlways then
-            return
-        end
-        entry.samples += 1
-        local described: {string} = {}
-        local packed: {any} = table.pack(...)
-        for index: number = 1, math.min(packed.n, 10) do
-            table.insert(described, describe(packed[index], 3))
-        end
-        if packed.n > 10 then
-            table.insert(described, "...")
-        end
-        entry.arguments = described
-    end
-
-    local queue: {any} = {}
-    local queued: number = 0
-    local inHook: boolean = false
-
-    local function installHook(): boolean
-        if hooked then
-            return true
-        end
-        local environment: any = getfenv()
-        local hookMetamethod: any = environment.hookmetamethod
-        local getNamecall: any = environment.getnamecallmethod
-        local checkCaller: any = environment.checkcaller
-        if type(hookMetamethod) ~= "function" or type(getNamecall) ~= "function" then
-            notify("Remote Logger: executor lacks hookmetamethod")
-            return false
-        end
-
-        local previous: any
-        local ok: boolean = pcall(function(): ()
-            previous = hookMetamethod(game, "__namecall", function(self: any, ...: any): any
-
-                if not capturing or inHook then
-                    return previous(self, ...)
-                end
-                local method: string = getNamecall()
-                if method ~= "FireServer" and method ~= "InvokeServer" then
-                    return previous(self, ...)
-                end
-                if type(checkCaller) == "function" and checkCaller() then
-                    return previous(self, ...)
-                end
-                if queued < 256 then
-                    inHook = true
-                    queued += 1
-                    queue[queued] = {
-                        remote = self,
-                        method = method,
-                        count = select("#", ...),
-                        arguments = table.pack(...),
-                        at = os.clock(),
-                    }
-                    inHook = false
-                end
-                return previous(self, ...)
-            end)
-        end)
-        if not ok then
-            notify("Remote Logger: could not install the hook")
-            return false
-        end
-        hooked = true
-        restore = function(): ()
-
-            local removed: boolean = pcall(hookMetamethod, game, "__namecall", previous)
-            if removed then
-                hooked = false
-                return
-            end
-
-            notify("Remote Logger: hook stays until rejoin")
-        end
-        return true
-    end
-
-    local function drainQueue(): ()
-        if queued == 0 then
-            return
-        end
-        local pending: {any} = queue
-        queue = {}
-        local count: number = queued
-        queued = 0
-        for index: number = 1, count do
-            local item: any = pending[index]
-            if item then
-                pcall(function(): ()
-                    record(
-                        item.remote,
-                        item.method,
-                        table.unpack(item.arguments, 1, item.count)
-                    )
-                end)
-            end
-        end
-    end
-
-    local function buildReport(): string
-        local lines: {string} = {
-            "-- " .. tostring(product.name) .. " remote log",
-            "-- place " .. tostring(game.PlaceId),
-            "-- " .. tostring(#order) .. " remotes",
-            "",
-        }
-        for _, key: string in ipairs(order) do
-            local entry: any = log[key]
-            table.insert(lines, string.rep("-", 70))
-            table.insert(lines, entry.path)
-            table.insert(
-                lines,
-                "  class "
-                    .. entry.class
-                    .. "  ·  "
-                    .. entry.method
-                    .. "  ·  "
-                    .. tostring(entry.calls)
-                    .. " calls"
-            )
-            table.insert(lines, "  args  " .. table.concat(entry.arguments, ", "))
-            table.insert(lines, snippetFor(entry))
-        end
-        return table.concat(lines, "\n")
-    end
-
-    local function saveReport(): ()
-        local environment: any = getfenv()
-        local writeFile: any = environment.writefile
-        local makeFolder: any = environment.makefolder
-        local isFolder: any = environment.isfolder
-        if type(writeFile) ~= "function" then
-            notify("Remote Logger: executor has no writefile")
-            return
-        end
-        if type(makeFolder) == "function" and type(isFolder) == "function" then
-            if not isFolder(product.storageFolder) then
-                pcall(makeFolder, product.storageFolder)
-            end
-            if not isFolder(remoteLogFolder) then
-                pcall(makeFolder, remoteLogFolder)
-            end
-        end
-
-        local stamp: string = tostring(math.round(os.time()))
-        local base: string = remoteLogFolder
-            .. "/"
-            .. tostring(game.PlaceId)
-            .. "-"
-            .. stamp
-
-        local wrote: boolean = pcall(writeFile, base .. ".txt", buildReport())
-
-        local payload: {any} = {}
-        for _, key: string in ipairs(order) do
-            local entry: any = log[key]
-            table.insert(payload, {
-                path = entry.path,
-                class = entry.class,
-                method = entry.method,
-                calls = entry.calls,
-                arguments = entry.arguments,
-            })
-        end
-        local encoded: boolean, json: any = pcall(function(): string
-            return httpService:JSONEncode(payload)
-        end)
-        if encoded then
-            pcall(writeFile, base .. ".json", json)
-        end
-        if wrote then
-            notify("Remote Logger: saved " .. tostring(#order) .. " remotes")
-        else
-            notify("Remote Logger: could not write the log")
-        end
-    end
-
-    local function stopCapturing(): ()
-        capturing = false
-        if drainConnection then
-            pcall(function(): ()
-                drainConnection:Disconnect()
-            end)
-            drainConnection = nil
-        end
-    end
-
-    local LearningFeature: any = state.learningFeature
-    if not LearningFeature then
-        LearningFeature = createUniversalFeature(
-            "Learning",
-            "Evidence collection in one card: remote logging and screen samples.",
-            2,
-            function(_enabled: boolean): () end,
-            {category = true, categoryName = "Other"}
-        )
-        state.learningFeature = LearningFeature
-    end
-    local finishPanel = state.beginCardPanel(LearningFeature, "Remote logger")
-
-    addToggleOption(
-        LearningFeature,
-        "Remote logger",
-        false,
-        function(enabled: boolean): ()
-            capturing = enabled
-            if not enabled then
-                stopCapturing()
-                return
-            end
-            if not installHook() then
-                capturing = false
-                return
-            end
-            drainConnection = TaskManager:Connect(function(): ()
-                drainQueue()
-            end)
-        end,
-        "Records the arguments the game sends to its own remotes. It watches; "
-            .. "it never blocks, delays or alters a call."
-    )
-    addTextOption(
-        LearningFeature,
-        "Only containing",
-        "",
-        function(value: string): ()
-            settings.filter = value
-        end,
-        nil,
-        "Record only remotes whose path contains this. Leave empty for everything."
-    )
-    addNumberOption(
-        LearningFeature,
-        "Max remotes",
-        settings.maxRemotes,
-        10,
-        400,
-        function(value: number): ()
-            settings.maxRemotes = math.round(value)
-        end,
-        "Stops the log growing without bound in a chatty game.",
-        1
-    )
-    addToggleOption(
-        LearningFeature,
-        "Announce new",
-        settings.announceNew,
-        function(value: boolean): ()
-            settings.announceNew = value
-        end,
-        "Toast the first time each remote is seen."
-    )
-    addToggleOption(
-        LearningFeature,
-        "Resample always",
-        settings.resampleAlways,
-        function(value: boolean): ()
-            settings.resampleAlways = value
-        end,
-        "Describe the arguments of every call instead of the first few. "
-            .. "Useful for a remote whose shape changes; heavier."
-    )
-    addActionOption(LearningFeature, "Save to file", function(): ()
-        saveReport()
-    end, "Writes " .. remoteLogFolder .. "/<place>-<time>.txt and .json")
-    addActionOption(LearningFeature, "Copy to clipboard", function(): ()
-        local environment: any = getfenv()
-        local copy: any = environment.setclipboard or environment.toclipboard
-        if type(copy) ~= "function" then
-            notify("Remote Logger: executor has no clipboard")
-            return
-        end
-        pcall(copy, buildReport())
-        notify("Remote Logger: copied")
-    end)
-    addActionOption(LearningFeature, "Clear log", function(): ()
-        log = {}
-        order = {}
-        notify("Remote Logger: cleared")
-    end)
-    addInformationOption(
-        LearningFeature,
-        "Turn it on, do the thing you want a module to do — buy, mine, place, "
-            .. "hit — then save. The log records what only a live game can "
-            .. "tell you: the arguments, in order, as the game really sent "
-            .. "them."
-    )
-    finishPanel()
-
-    Module.entries = function(): {any}
-        local list: {any} = {}
-        for _, key: string in ipairs(order) do
-            table.insert(list, log[key])
-        end
-        return list
-    end
-    Module.report = buildReport
-
-    activeCleanup = function(): ()
-        stopCapturing()
-        if restore then
-            (restore :: () -> ())()
-            restore = nil
-        end
-        Module.entries = nil
-        Module.report = nil
-    end
-    Module.Initialized = true
-    return Module
 end
 
 function Module.destroy(): ()
@@ -22892,6 +22322,36 @@ local Module = {
 
 local activeCleanup: (() -> ())? = nil
 
+-- A game provider (Gun ESP, Trap ESP, ...) only draws while Item ESP is ON,
+-- and the card owns that switch. Turning the provider row ON with the card
+-- OFF used to leave the row ON and silently dead; now it brings the card
+-- with it, so ON always means drawn.
+local function setProviderEnabled(
+    render: any,
+    providerStates: {[string]: boolean},
+    provider: any,
+    value: boolean
+): ()
+    providerStates[provider.name] = value
+    if render.Enabled then
+        pcall(provider.setEnabled, value)
+        return
+    end
+    if not value then
+        return
+    end
+    -- The card's own switch, not the internal state: the user must see Item
+    -- ESP turn ON, not only behind the scenes.
+    local feature: any = render.Feature
+    if feature
+        and type(feature.activate) == "function"
+        and feature.enabled ~= true then
+        feature.activate()
+    else
+        render:Toggle(true)
+    end
+end
+
 -- Bounded template fingerprint, not semantic image recognition. Ignore names,
 -- world position and colour; compare geometry and mesh asset identity instead.
 function Module.appearanceSignature(object: Instance): string?
@@ -23379,10 +22839,7 @@ function Module.init(context: Runtime): any
             Default = false,
             Tooltip = provider.tooltip,
             Function = function(value: boolean): ()
-                providerStates[provider.name] = value
-                if render.Enabled then
-                    pcall(provider.setEnabled, value)
-                end
+                setProviderEnabled(render, providerStates, provider, value)
             end,
         })
     end
@@ -40072,6 +39529,11 @@ local Manifest: Manifest = {
             path = "src/games/universal/Other/InteractExtender.lua",
             name = "Interact Extender",
             category = "Exploits",
+        },
+        {
+            path = "src/games/universal/Other/RejoinServer.lua",
+            name = "Rejoin Server",
+            category = "Utilities",
         },
         {
             path = "src/games/universal/Other/ImproveFps.lua",

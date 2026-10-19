@@ -1252,3 +1252,92 @@ contra Eclipse Hub y OverDrive H, está en `docs/MM2-MENU-AUDIT.md`.
   hundido; si se prefiere lo contrario, hay que aceptar el riesgo.
 - La auditoría no arregla nada por sí misma: enumera lo que falta y lo que
   está muerto. Los arreglos propuestos están al final del informe.
+
+## v71 — fuera lo muerto, y los módulos nuevos hacen algo
+
+Sello: `v71-20261019-menu-cleanup-coin-esp-and-real-modules`.
+
+### Lo que se borró (y por qué)
+
+| archivo | líneas | estado |
+| --- | --- | --- |
+| `src/games/MM2.luau` | 5.229 | fuera del bundle y del cargador; describía 17 tarjetas que ya no existen |
+| `src/games/TRS.luau` | 1.923 | lo mismo: el cargador usa `TRS/base.lua` |
+| `src/games/VD.luau` | 1.987 | ídem |
+| `src/games/MVSD.luau` | 1.288 | ídem |
+| `src/games/Universal.luau` | 75 | solo tipos, sin un solo lector |
+| `Blatant/WallHop.lua` | — | compilaba, viajaba en el bundle, no se registraba |
+| `Other/LagSwitch.lua` | — | ídem |
+| `Other/RemoteLogger.lua` | — | ídem |
+
+**10.502 líneas** de monolitos más los tres módulos huérfanos. El bundle pasa
+de 73 a **71 archivos** (entra `CoinEsp`, salen cuatro fuentes).
+
+La lista de módulos del `fallbackManifest` de `Wurst.lua` se generaba a mano y
+ya no coincidía con `Manifest.lua`: un fallo de red podía arrancar un menú
+distinto del probado. Ahora se escribe desde la misma lista y
+`tools/test_manifest_sync.py` falla si vuelven a separarse, si el manifiesto
+apunta a un archivo que no existe o si hay un módulo universal en disco sin
+registrar.
+
+### Lo que se registró
+
+`Rejoin Server` estaba escrito, funcionaba y nunca se cargaba. Entra en el
+manifiesto (33 módulos) como acción de Wurst Options, donde ya viven
+`Reinject` y `Destruct`.
+
+### Lo que estaba roto y se arregló
+
+- **Gun ESP / Trap ESP.** Son toggles dentro de Item ESP y solo dibujan con la
+  tarjeta encendida. Se podían dejar en ON sin efecto. Ahora
+  `setProviderEnabled` enciende la tarjeta con su propio interruptor cuando la
+  fila se pone en ON, y el ON siempre dibuja.
+- **Calibration** (captura de trayectorias, TrailESP, guardar historial) ya no
+  aparece en un arranque normal: solo con `WURST_DEBUG`. El grabador de
+  `base.lua` sigue funcionando porque lo usa la predicción.
+
+### Lo nuevo, con prueba
+
+- **`src/games/MM2/Render/CoinEsp.lua`**: una tarjeta `Coin ESP` que resalta
+  cada moneda del mapa y muestra la cuenta viva en el estado. Usa la carpeta
+  `MM2Effects/CoinChams`, `coinColor` y `coinTransparency`, que estaban en
+  `base.lua` sin un solo lector. Sigue las monedas que aparecen y las que se
+  recogen, y al apagarse no deja ni un Highlight.
+- **Lista de ignorados de Kill Aura**: nombres, nombres visibles o ids,
+  separados por comas. Se aplica antes de rotar o golpear, así que un jugador
+  de la lista no se elige nunca. Sin texto no filtra a nadie.
+
+### Herramientas en la rama
+
+Como el entorno borra `/home/user/.tools`, el toolchain queda versionado en
+`tools/luau/`: el paquete `@luau-rs/luau@0.739` (2,7 MB) en `vendor/`,
+`setup.sh` que lo descomprime sin red y sin npm, y los dos runners. `validate.sh`
+lo instala solo si falta y prefiere `tools/luau/bin/*`. Un clon limpio pasa la
+validación con solo tener `node`.
+
+### Verificación
+
+`tools/validate.sh` → **EXIT=0**: 73 fuentes Luau compilan, **52 suites**
+(+5 nuevas), arranque completo `failures=0` y auditoría del menú con **36
+tarjetas**.
+
+Nuevas: `test_mm2_coin_esp.py` (tarjeta, un resaltado por moneda, conteo vivo,
+alta/baja, color, apagado, mapa vacío, sin remotos, descarga),
+`test_killaura_ignore.py` (nombres, display, ids, separadores, NPCs),
+`test_item_provider_activation.py` (ON con tarjeta apagada la enciende; ON con
+tarjeta encendida activa; OFF apaga) y `test_manifest_sync.py` (33 módulos, sin
+huérfanos, fallback idéntico, 13 archivos MM2 listados).
+
+### Lo que NO se agregó, y por qué
+
+- **God mode**: el daño lo aplica el servidor. Escribir `Humanoid.Health` en el
+  cliente lo pisa la siguiente réplica y no evita la muerte.
+- **Kill all**: necesita un remoto de daño; en el tráfico capturado solo hay
+  `Shoot`, `KnifeThrown` y `GunFired`, y el arma dispara un proyectil a un
+  objetivo.
+- **No-spread**: el spread lo decide el servidor al procesar el disparo.
+- **Auto unbox**: son productos pagos; automatizar la compra gastaría Robux
+  sin confirmación.
+
+No se pone un módulo que no haga nada: es el código muerto que esta versión
+acaba de sacar.
