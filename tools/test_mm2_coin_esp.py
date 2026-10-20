@@ -21,6 +21,13 @@ SOURCE = (ROOT / 'src/games/MM2/Render/CoinEsp.lua').read_text()
 script = r'''
 local workspace = {}
 function workspace:GetAttribute(_) return nil end
+local worldScan = {}
+function workspace:GetDescendants() return worldScan end
+local descendantAdded = nil
+workspace.DescendantAdded = {Connect = function(_, fn)
+    descendantAdded = fn
+    return {Disconnect = function() descendantAdded = nil end}
+end}
 
 local function base(name, tags, attrs, children)
     local object = {Name = name, Parent = workspace, tags = tags or {},
@@ -33,6 +40,12 @@ local function base(name, tags, attrs, children)
         return nil
     end
     function object:GetAttribute(name) return self.attrs[name] end
+    function object:FindFirstChild(childName)
+        for _, child in ipairs(self.children) do
+            if child.Name == childName then return child end
+        end
+        return nil
+    end
     function object:GetDescendants()
         local out = {}
         local function walk(node)
@@ -82,6 +95,8 @@ local container = model("CoinContainer", {serverPart, untaggedVisual})
 local doorBox = base("InteractiveBox")                    -- untagged
 local coinModel = model("Coin", {base("Coin_Server")})    -- untagged model
 
+-- A pickup known only by its CoinID attribute (the CoinCollected key).
+local coinIdPart = base("Hitbox", {}, {CoinID = "candy-7"}, {base("CandyMesh")})
 -- A tagged part inside a character is not a pickup.
 local character = model("Dummy", {})
 local charPart = base("CoinVisual", {CoinVisual = true})
@@ -90,6 +105,9 @@ character.humanoid = true
 character.children = {charPart}
 
 local tagged = {coinPart, candyPart, snowPart, collectedPart, charPart}
+worldScan = {coinPart, candyPart, snowPart, collectedPart, charPart,
+    serverPart, looseMainCoin, untaggedVisual, container, doorBox, coinModel,
+    coinIdPart}
 
 local statuses = {}
 local lastStatus = "unset"
@@ -213,25 +231,26 @@ end
 -- ON: only the three uncollected tagged parts, each highlighted ITSELF.
 feature.enabled = true
 feature.onToggle(true)
-assert(#state.mm2Core.CoinEffects == 3, "three pickups: " .. #state.mm2Core.CoinEffects)
+assert(#state.mm2Core.CoinEffects == 5, "five pickups: " .. #state.mm2Core.CoinEffects)
 assert(highlighted(coinPart), "the tagged coin part itself is highlighted")
 assert(highlighted(candyPart), "the tagged candy part itself is highlighted")
 assert(highlighted(snowPart), "the tagged snow part itself is highlighted")
 assert(not highlighted(collectedPart), "a collected pickup stays dark")
 assert(not highlighted(serverPart), "Coin_Server alone is never a pickup")
 assert(not highlighted(looseMainCoin), "an untagged MainCoin is never a pickup")
-assert(not highlighted(untaggedVisual), "the NAME CoinVisual without the tag is nothing")
+assert(highlighted(untaggedVisual), "the exact CoinVisual name is a signature even without the tag")
+assert(highlighted(coinIdPart), "a CoinID attribute is a signature even without the tag")
 assert(not highlighted(container), "a container model is never highlighted")
 assert(not highlighted(coinModel), "a model named Coin is never highlighted")
 assert(not highlighted(doorBox), "an InteractiveBox is never a pickup")
 assert(not highlighted(charPart), "a tagged part inside a character is skipped")
-assert(lastStatus == "1 coin · 1 candy · 1 snowtoken", tostring(lastStatus))
+assert(lastStatus == "2 coins · 2 candies · 1 snowtoken", tostring(lastStatus))
 
 -- Selector: Candy only.
 callbacks["Coin in use"]("Candy")
 assert(highlighted(candyPart) and not highlighted(coinPart)
     and not highlighted(snowPart), "the selector keeps only the chosen family")
-assert(lastStatus == "1 coin · 1 candy · 1 snowtoken",
+assert(lastStatus == "2 coins · 2 candies · 1 snowtoken",
     "counts still report every family: " .. tostring(lastStatus))
 
 -- Auto + the server announces Candy: only candy.
@@ -247,7 +266,7 @@ table.insert(tagged, genericPart)
 tagAdded:fire(genericPart)
 loops.coin(0.01)
 assert(highlighted(genericPart), "a newly tagged part lights on the tag signal")
-assert(lastStatus == "1 coin · 2 candies · 1 snowtoken", tostring(lastStatus))
+assert(lastStatus == "1 coin · 4 candies · 1 snowtoken", tostring(lastStatus))
 
 -- Collection: the attribute flips, the remote fires, highlight drops.
 genericPart.attrs.Collected = true
@@ -255,12 +274,14 @@ coinCollected:fire()
 loops.coin(0.01)
 assert(not highlighted(genericPart), "a collected pickup loses its highlight")
 
--- Tag removed: the part is no longer a pickup at all.
+-- Destroyed: gone from the tag list and the workspace scan.
 snowPart.tags.CoinVisual = nil
+for i, object in ipairs(tagged) do if object == snowPart then table.remove(tagged, i) end end
+for i, object in ipairs(worldScan) do if object == snowPart then table.remove(worldScan, i) end end
 tagRemoved:fire(snowPart)
 loops.coin(0.01)
-assert(not highlighted(snowPart), "an untagged part loses its highlight")
-assert(lastStatus == "1 coin · 1 candy", tostring(lastStatus))
+assert(not highlighted(snowPart), "a destroyed part loses its highlight")
+assert(lastStatus == "1 coin · 3 candies", tostring(lastStatus))
 
 -- Report action names the server coin.
 callbacks["Report server coin"]()
@@ -276,6 +297,7 @@ feature.onToggle(false)
 assert(#state.mm2Core.CoinEffects == 0, "OFF clears every highlight")
 assert(lastStatus == nil, "OFF clears the status")
 tagged = {}
+worldScan = {}
 feature.enabled = true
 feature.onToggle(true)
 assert(lastStatus == "no coins yet", tostring(lastStatus))
@@ -287,11 +309,11 @@ assert(#state.mm2Core.CoinEffects == 0 and not loops.coin, "unload leaves nothin
 
 -- Client-side only, and no name heuristics left in the source.
 for _, forbidden in ipairs({"FireServer", "InvokeServer", "HttpGet", "HttpPost",
-    "InteractiveBox", "Coin_Server", "DescendantAdded"}) do
+    "InteractiveBox"}) do
     assert(not string.find(''' + repr(SOURCE) + ''', forbidden),
         "Coin ESP must not use " .. forbidden)
 end
-print("PASS MM2 Coins: CoinVisual tag only, highlight on the tagged part, no containers/models/names, collected skip, families, selector, server bag, tag signals, OFF, unload")
+print("PASS MM2 Coins: three exact signatures (CoinVisual tag, CoinID attribute, server/visual pair), highlight on the visual part only, collected skip, families, selector, server bag, signals, OFF, unload")
 '''
 
 with tempfile.TemporaryDirectory(prefix='coin-esp-') as tmp:
