@@ -18,6 +18,14 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 SOURCE = (ROOT / 'src/games/MM2/Render/CoinEsp.lua').read_text()
 
+# Lightweight contract (user report: labels lagged with ~100 coins):
+# no billboard labels at all, exactly one box adornment per pickup, and
+# the box takes the visible MainCoin mesh size -- never Coin_Server's.
+assert "BillboardGui" not in SOURCE, "coin markers must not create labels"
+assert 'Instance.new("BoxHandleAdornment")' in SOURCE
+assert 'FindFirstChild("MainCoin", true)' in SOURCE
+assert "state.mm2CoinPickups" in SOURCE, "Auto Farm shares this pickup list"
+
 script = r'''
 local workspace = {}
 local workspaceAttrs = {}

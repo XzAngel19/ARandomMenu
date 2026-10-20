@@ -143,13 +143,12 @@ function Module.init(runtime: any): any
     -- Raw signature counts from the last scan, for the report action.
     local lastRaw = {tagged = 0, coinId = 0, named = 0}
 
-    -- Native per-pickup tags: a BillboardGui label and a
-    -- BoxHandleAdornment parented straight onto the pickup part.
-    -- Adornments and billboards render regardless of the part's own
-    -- transparency (the holders are Transparency = 1) and through
-    -- walls, with no dependency on any menu library or projection
-    -- math -- this is the part that must always be visible.
-    local coinTags: {[Instance]: {gui: Instance, label: Instance, box: Instance}} = {}
+    -- Native per-pickup marker: ONE small BoxHandleAdornment per
+    -- pickup, sized exactly to the visible coin mesh. No labels and
+    -- no per-frame Lua: a hundred markers cost the engine one
+    -- adornment each and nothing else. The adornment renders through
+    -- walls regardless of the holder's transparency.
+    local coinTags: {[Instance]: {box: Instance}} = {}
     -- Pickup -> family, kept between scans for the tag text.
     local lastFamilies: {[Instance]: string} = {}
     -- Parts currently carrying a tag, for tests and the report action.
@@ -158,9 +157,6 @@ function Module.init(runtime: any): any
     local function clearTags(): ()
         for part: Instance, entry in pairs(coinTags) do
             coinTags[part] = nil
-            pcall(function(): ()
-                entry.gui:Destroy()
-            end)
             pcall(function(): ()
                 entry.box:Destroy()
             end)
@@ -378,6 +374,16 @@ function Module.init(runtime: any): any
         return table.concat(parts, " · ")
     end
 
+    -- Shared with Auto Farm: the pickup parts of the family in use.
+    state.mm2CoinPickups = function(): {Instance}
+        local found: {[Instance]: string} = collectAll()
+        local list: {Instance} = {}
+        for part: Instance in pairs(found) do
+            table.insert(list, part)
+        end
+        return list
+    end
+
     local function toggleCoinEsp(enabled: boolean): ()
         disconnectFeatureConnection("MM2CoinRefresh")
         disconnectFeatureConnection("MM2CoinCollected")
@@ -413,84 +419,66 @@ function Module.init(runtime: any): any
             end
         end
 
-        -- Label + adornment box for every visible pickup, parented to
-        -- the pickup part itself: Roblox draws both no matter how
-        -- transparent the holder is, and AlwaysOnTop puts them through
-        -- walls. The text refresh is throttled; the instances follow
-        -- their parts on their own.
-        local tagClock: number = 0
-        local function drawOverlay(forceText: boolean?): ()
-            local camera: any = nil
-            local okCam: boolean, foundCam: any = pcall(function(): any
-                return workspace.CurrentCamera
+        -- The visible mesh of a pickup: MainCoin under the CoinVisual
+        -- holder (the Candy / coin itself), falling back to the pickup
+        -- part. The box takes THIS part's exact size, so the marker is
+        -- as small as the candy on screen -- never the big invisible
+        -- Coin_Server touch volume.
+        local function visualOf(part: Instance): Instance
+            local ok: boolean, found: any = pcall(function(): any
+                local main: Instance? = part:FindFirstChild("MainCoin", true)
+                if main and main:IsA("BasePart") then
+                    return main
+                end
+                local visual: Instance? = part:FindFirstChild("CoinVisual", true)
+                if visual and visual:IsA("BasePart") then
+                    return visual
+                end
+                return part
             end)
-            if okCam then
-                camera = foundCam
+            if ok and found then
+                return found
             end
-            local origin: any = camera and camera.CFrame and camera.CFrame.Position
+            return part
+        end
+
+        -- One small adornment per visible pickup. Creation happens
+        -- once per pickup; between rescans Lua does nothing at all.
+        local tagClock: number = 0
+        local function drawOverlay(): ()
             tagClock += 1
-            local refreshText: boolean = forceText == true or tagClock % 15 == 0
+            local refreshColour: boolean = tagClock % 30 == 0
             local seen: {[Instance]: boolean} = {}
-            for part: Instance, family: string in pairs(lastFamilies) do
+            for part: Instance in pairs(lastFamilies) do
                 if part.Parent then
                     seen[part] = true
                     local entry = coinTags[part]
                     if not entry then
                         local okMake: boolean, created: any = pcall(function(): any
-                            local gui: Instance = Instance.new("BillboardGui")
-                            gui.Name = "WurstCoinTag"
-                            gui.AlwaysOnTop = true
-                            gui.LightInfluence = 0
-                            gui.Size = UDim2.fromOffset(96, 22)
-                            gui.StudsOffsetWorldSpace = Vector3.new(0, 1.4, 0)
-                            local label: Instance = Instance.new("TextLabel")
-                            label.Name = "Text"
-                            label.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
-                            label.BackgroundTransparency = 0.45
-                            label.BorderSizePixel = 0
-                            label.Size = UDim2.fromScale(1, 1)
-                            label.TextColor3 = mm2Settings.coinColor
-                            label.TextScaled = true
-                            label.TextStrokeTransparency = 0.4
-                            label.Parent = gui
+                            local visual: Instance = visualOf(part)
                             local box: Instance = Instance.new("BoxHandleAdornment")
                             box.Name = "WurstCoinBox"
                             box.AlwaysOnTop = true
                             box.ZIndex = 5
-                            box.Adornee = part
+                            box.Adornee = visual
                             box.Color3 = mm2Settings.coinColor
-                            box.Transparency = 0.35
-                            local okSize: boolean, partSize: any = pcall(function(): any
-                                return (part :: any).Size
+                            box.Transparency = math.clamp(mm2Settings.coinTransparency, 0, 1)
+                            local okSize: boolean, visualSize: any = pcall(function(): any
+                                return (visual :: any).Size
                             end)
-                            if okSize and partSize then
-                                box.Size = partSize
+                            if okSize and visualSize then
+                                box.Size = visualSize
                             end
-                            gui.Parent = part
                             box.Parent = part
-                            return {gui = gui, label = label, box = box}
+                            return {box = box}
                         end)
                         if okMake and created then
-                            entry = created
-                            coinTags[part] = entry
+                            coinTags[part] = created
                         end
-                    end
-                    if entry and refreshText then
-                        local nouns: {string} = FAMILY_NOUNS[family] or FAMILY_NOUNS[FAMILY_COIN]
-                        local text: string = nouns[1]
-                        local position: any = (part :: any).Position
-                        if origin and position then
-                            local okDist: boolean, dist: any = pcall(function(): any
-                                return (position - origin).Magnitude
-                            end)
-                            if okDist and type(dist) == "number" then
-                                text = "[" .. tostring(math.round(dist)) .. "] " .. text
-                            end
-                        end
+                    elseif refreshColour then
                         pcall(function(): ()
-                            entry.label.Text = text
-                            entry.label.TextColor3 = mm2Settings.coinColor
                             entry.box.Color3 = mm2Settings.coinColor
+                            entry.box.Transparency = math.clamp(mm2Settings.coinTransparency, 0, 1)
                         end)
                     end
                 end
@@ -500,14 +488,11 @@ function Module.init(runtime: any): any
                     local entry = coinTags[part]
                     coinTags[part] = nil
                     pcall(function(): ()
-                        entry.gui:Destroy()
-                    end)
-                    pcall(function(): ()
                         entry.box:Destroy()
                     end)
                 end
             end
-            -- Publish which parts carry tags right now.
+            -- Publish which parts carry a marker right now.
             local published: {[Instance]: boolean} = {}
             for part: Instance in pairs(coinTags) do
                 published[part] = true
@@ -610,10 +595,9 @@ function Module.init(runtime: any): any
         refresh()
         featureConnections.MM2CoinRefresh = TaskManager:Connect(
             function(deltaTime: number): ()
-                -- Tags and adornments follow their parts inside the
-                -- engine; Lua only refreshes the text now and then and
-                -- rescans when the map changed. With ~100 coins out
-                -- this is the whole per-frame cost.
+                -- The adornments follow their parts inside the
+                -- engine; Lua only rescans when the map changed.
+                -- With ~100 coins out this is the whole cost.
                 drawOverlay()
                 elapsed += deltaTime
                 if not dirty and elapsed < RESCAN_PERIOD then
@@ -627,7 +611,7 @@ function Module.init(runtime: any): any
 
     local CoinFeature: any = createUniversalFeature(
         "Coin ESP",
-        "Puts a glowing cham model of each real coin, candy, snow token, beach ball and egg on the map and reports how many of each family exist.",
+        "Draws one small box, exactly the size of the coin, candy, snow token, beach ball or egg mesh, on every real pickup and reports how many of each family exist.",
         3,
         toggleCoinEsp,
         {
@@ -677,7 +661,7 @@ function Module.init(runtime: any): any
     )
     addInformationOption(
         CoinFeature,
-        "Pickups are recognised by the game's own signatures only: the CoinVisual tag, the CoinID attribute and the exact server/visual part pair. Each pickup gets a BillboardGui label and a BoxHandleAdornment in the coin colour; the engine draws both, so a hundred coins cost no per-frame Lua. Auto follows the family the server announces on CoinsStarted."
+        "Pickups are recognised by the game's own signatures only: the CoinVisual tag, the CoinID attribute and the exact server/visual part pair. Each pickup gets a single BoxHandleAdornment sized exactly to its visible mesh (no labels), so a hundred coins cost no per-frame Lua. Auto follows the family the server announces on CoinsStarted."
     )
 
     activeCleanup = function(): ()
