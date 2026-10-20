@@ -546,7 +546,11 @@ function Module.init(runtime: any): any
             return
         end
         openOnce()
-        session.nextAt = now + settings.delay
+        -- Extra settle time while the reveal plays: firing the next
+        -- BoxController animation over a running one can leave the screen
+        -- black, so a revealed box always gets a longer breather.
+        local settle: number = settings.reveal == REVEAL_ON and 3 or 0
+        session.nextAt = now + settings.delay + settle
     end
 
     local AutoUnboxFeature: any = createUniversalFeature(

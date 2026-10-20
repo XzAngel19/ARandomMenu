@@ -1,5 +1,5 @@
 return {
-    stamp = "v73-20261020-coin-families-box-catalog",
+    stamp = "v74-20261020-coin-tag-only-slower-unbox",
     files = {
         ["src/Profile/142823291.lua"] = [[
 --!strict
@@ -4686,7 +4686,11 @@ function Module.init(runtime: any): any
             return
         end
         openOnce()
-        session.nextAt = now + settings.delay
+        -- Extra settle time while the reveal plays: firing the next
+        -- BoxController animation over a running one can leave the screen
+        -- black, so a revealed box always gets a longer breather.
+        local settle: number = settings.reveal == REVEAL_ON and 3 or 0
+        session.nextAt = now + settings.delay + settle
     end
 
     local AutoUnboxFeature: any = createUniversalFeature(
@@ -6204,31 +6208,29 @@ return Module
 
 ]=],
         ["src/games/MM2/Render/CoinEsp.lua"] = [[
--- MM2 Coin ESP: highlight every pickup in the map, sorted by the coin family
--- the server is actually using this round.
+-- MM2 Coin ESP: highlights ONLY the real pickups the game itself spawns.
 --
--- What the place dump says a pickup is. `ReplicatedStorage/Coins` holds one
--- objects folder per coin family: `CoinObjects` (normal coins: the `Coin` part
--- with `MainCoin`/`DecalPart`/`2Part` meshes and the old `CoinOld`),
--- `CandyObjects` and `_CandiesObjects` (candy meshes `Purple`, `Green`,
--- `Cyan`, `Orange`, `Pink`), `SnowTokenObjects` (the `SnowToken` part),
--- `BeachBallObjects` (`BeachBall` mesh) and `EggObjects` (`CurrencyEgg1..3`
--- plus the rare `*Egg` meshes). In the map the pickup's visible half is
--- tagged `CoinVisual` and carries the attributes `CoinID`, `Collected`,
--- `RoundEnd` and `IsSetup`; the server's half is named `Coin_Server`. The
--- event candies are the same coin model under names such as `Candy2024`,
--- `Candies2022` or `CandyCorn`, and their clickable half is a generic
--- `InteractiveBox` that only counts inside a treat-named model.
+-- How the game marks a real pickup (from its own CoinVisualizer script):
+-- every live pickup is a BasePart tagged "CoinVisual" by CollectionService.
+-- In the map each pickup hangs from a container under an invisible
+-- server part; the tagged part is its visible half, with mesh children
+-- such as MainCoin / DecalPart / 2Part or the event look of the season.
+-- CoinVisualizer reads GetTagged("CoinVisual"), skips the ones whose
+-- "Collected" attribute is true and destroys the ones marked "Delete".
 --
--- Which family is in use comes from the game itself: the
--- `Remotes/Gameplay/CoinsStarted` remote sends one entry per active bag,
--- keyed by the CoinBags frames `Coin`, `Candy`, `SnowToken`, `BeachBall` and
--- `Egg`, and the Workspace attributes `CurrentEvent`, `isChristmas`,
--- `IsSummer`, `IsEaster` and `isValentines` name the same families before
--- the remote fires.
+-- This module does exactly that and nothing else. There is NO name-based
+-- detection: no part name and no model name is ever treated as a pickup,
+-- and the highlight is placed on
+-- the tagged part itself -- never on a parent model or container. The old
+-- name heuristics lit containers such as CoinContainer (every coin in the
+-- map inside one giant yellow highlight) and counted dozens of fakes.
 --
--- The menu lets the player pick which family counts as "in use" (Auto follows
--- the server) and the status line reports every family found on the map.
+-- The family of a tagged part (Coin, Candy, SnowToken, BeachBall, Egg,
+-- Heart) is read from the part's own mesh children; when the meshes say
+-- nothing specific, the family the server announced applies, because a
+-- round only pays one kind of pickup. The server family comes from the
+-- Remotes/Gameplay/CoinsStarted bag table (Coin, Candy, SnowToken,
+-- BeachBall, Egg) and from the Workspace event attributes.
 local Module = {
     Name = "MM2 Coin ESP",
     PlaceId = 142823291,
@@ -6239,25 +6241,9 @@ local Module = {
 
 local activeCleanup: () -> () = function(): () end
 
--- CollectionService tags: names the game itself attaches to a pickup. A tag
--- survives a rename, a name does not.
-local COIN_TAGS: {string} = {
-    "CoinVisual",
-    "ServerCoinPart",
-    "Coin",
-}
+-- The one and only tag the game puts on a real pickup.
+local COIN_TAG: string = "CoinVisual"
 
--- Part names a pickup is made of.
-local COIN_PARTS: {string} = {
-    "CoinVisual",
-    "Coin_Server",
-    "ServerCoinPart",
-    "MainCoin",
-    "Coin",
-}
-
--- The families the game has shipped so far, from `ReplicatedStorage/Coins`
--- and the CoinBags frames.
 local FAMILY_COIN: string = "Coin"
 local FAMILY_CANDY: string = "Candy"
 local FAMILY_SNOW: string = "SnowToken"
@@ -6267,8 +6253,7 @@ local FAMILY_HEART: string = "Heart"
 local FAMILY_ALL: string = "All"
 local FAMILY_AUTO: string = "Auto (server)"
 
--- Classification order: most specific first, because a SnowToken carries a
--- mesh named `Coin` and `Coin` is only the fallback family.
+-- Most specific first: a SnowToken can carry a mesh named Coin.
 local FAMILY_ORDER: {string} = {
     FAMILY_EGG,
     FAMILY_BEACH,
@@ -6278,7 +6263,6 @@ local FAMILY_ORDER: {string} = {
     FAMILY_COIN,
 }
 
--- Counting order: the classic coins lead, then the event families.
 local COUNT_ORDER: {string} = {
     FAMILY_COIN,
     FAMILY_CANDY,
@@ -6297,7 +6281,6 @@ local FAMILY_NOUNS: {[string]: {string}} = {
     [FAMILY_HEART] = {"heart", "hearts"},
 }
 
--- What the selector offers. Auto follows the server; All shows everything.
 local FAMILY_CHOICES: {string} = {
     FAMILY_AUTO,
     FAMILY_COIN,
@@ -6309,7 +6292,6 @@ local FAMILY_CHOICES: {string} = {
     FAMILY_ALL,
 }
 
--- The CoinBags frames the `CoinsStarted` remote keys its table by.
 local BAG_TO_FAMILY: {[string]: string} = {
     Coin = FAMILY_COIN,
     Candy = FAMILY_CANDY,
@@ -6318,18 +6300,20 @@ local BAG_TO_FAMILY: {[string]: string} = {
     Egg = FAMILY_EGG,
 }
 
+-- Words read ONLY from the tagged part and its own mesh children (never
+-- from parents: a container name must not reclassify every coin inside).
 local FAMILY_PHRASES: {[string]: {string}} = {
     [FAMILY_EGG] = {"egg", "eggs"},
     [FAMILY_BEACH] = {"beachball", "beach ball", "beachballs", "beach balls"},
     [FAMILY_SNOW] = {"snowtoken", "snow token", "snowtokens", "snow tokens", "snowball", "snow ball"},
     [FAMILY_CANDY] = {"candy", "candies", "candied", "candycorn", "candy corn"},
     [FAMILY_HEART] = {"heart", "hearts"},
-    [FAMILY_COIN] = {"coin", "maincoin", "coinvisual", "coin_server", "coinold", "decalpart"},
+    -- Note: the tagged part is always named CoinVisual, whatever family it
+    -- pays, so that name itself must never classify a part as a plain coin.
+    [FAMILY_COIN] = {"maincoin", "coinold", "decalpart"},
 }
 
--- How far up a coin part is walked to reach the model that owns it.
-local COIN_ANCESTOR_DEPTH: number = 2
--- A full rescan, in case the game moved a pickup without adding or removing it.
+-- Safety-net rescan; the tag signals do the real work.
 local RESCAN_PERIOD: number = 5
 
 local function lower(value: string): string
@@ -6338,19 +6322,6 @@ end
 
 local function contains(value: string, needle: string): boolean
     return string.find(value, needle, 1, true) ~= nil
-end
-
--- Picks the family a set of names describes. `haystack` is every relevant
--- instance name (model, parts, meshes) joined and lowered.
-local function classifyFamily(haystack: string): string
-    for _, family: string in ipairs(FAMILY_ORDER) do
-        for _, phrase: string in ipairs(FAMILY_PHRASES[family]) do
-            if contains(haystack, phrase) then
-                return family
-            end
-        end
-    end
-    return FAMILY_COIN
 end
 
 function Module.init(runtime: any): any
@@ -6372,147 +6343,74 @@ function Module.init(runtime: any): any
     -- Set by the `CoinsStarted` remote and by the Workspace event attributes.
     local serverFamily: string? = nil
 
-    local function hasCoinTag(object: Instance): boolean
-        for _, tag: string in ipairs(COIN_TAGS) do
-            local ok: boolean, tagged: boolean = pcall(function(): boolean
-                return collectionService:HasTag(object, tag)
-            end)
-            if ok and tagged then
-                return true
-            end
-        end
-        return false
-    end
-
-    -- A character or an NPC is never a pickup, whatever its parts are called.
-    local function insideCharacter(object: Instance): boolean
-        local current: Instance? = object
-        for _ = 1, COIN_ANCESTOR_DEPTH + 1 do
-            if not current then
-                return false
-            end
-            if current:FindFirstChildOfClass("Humanoid") then
-                return true
-            end
-            current = current.Parent
-        end
-        return false
-    end
-
-    local function isCoinPart(object: Instance): boolean
-        if not object:IsA("BasePart") then
-            return false
-        end
-        if hasCoinTag(object) then
-            return true
-        end
-        local name: string = object.Name
-        for _, partName: string in ipairs(COIN_PARTS) do
-            if name == partName then
-                return true
-            end
-        end
-        -- `OldCoin`, `Coin_1`, anything the game names after a coin.
-        return contains(lower(name), "coin")
-    end
-
-    -- A candy's clickable part is a generic `InteractiveBox`: accept it only
-    -- inside a model named like a treat, or it would light every door.
-    local function isCandyBox(part: Instance): boolean
-        if part.Name ~= "InteractiveBox" or not part:IsA("BasePart") then
-            return false
-        end
-        local current: Instance? = part.Parent
-        for _ = 1, COIN_ANCESTOR_DEPTH do
-            if not current or current == workspace then
-                return false
-            end
-            local name: string = lower(current.Name)
-            if contains(name, "candy") or contains(name, "candies") or contains(name, "candied") then
-                return true
-            end
-            current = current.Parent
-        end
-        return false
-    end
-
-    local function isPickupModel(object: Instance): boolean
-        if not object:IsA("Model") then
-            return false
-        end
-        if insideCharacter(object) then
-            return false
-        end
-        -- `Coin`, `Candy2024`, `Candies2022`, `SnowToken`, `BeachBall`,
-        -- `CurrencyEgg`: a model named after any family is the pickup itself.
-        local name: string = lower(object.Name)
-        for _, phrases: {string} in pairs(FAMILY_PHRASES) do
-            for _, phrase: string in ipairs(phrases) do
-                if contains(name, phrase) then
-                    return true
-                end
-            end
-        end
-        return hasCoinTag(object)
-    end
-
-    -- The thing to highlight: the model that holds the part when there is one,
-    -- so a two-part coin lights up once instead of once per part.
-    local function pickupAdornee(object: Instance): Instance?
-        if insideCharacter(object) then
-            return nil
-        end
-        if isCoinPart(object) or isCandyBox(object) then
-            local current: Instance = object
-            for _ = 1, COIN_ANCESTOR_DEPTH do
-                local parent: Instance? = current.Parent
-                if not parent or parent == workspace then
-                    break
-                end
-                if not parent:IsA("Model") then
-                    break
-                end
-                current = parent
-            end
-            return current
-        end
-        if isPickupModel(object) then
-            if object:FindFirstChildWhichIsA("BasePart") then
-                return object
-            end
+    local function attribute(object: Instance, name: string): any
+        local ok: boolean, value: any = pcall(function(): any
+            return object:GetAttribute(name)
+        end)
+        if ok then
+            return value
         end
         return nil
     end
 
-    -- Family of one pickup: every name from its model down to its meshes.
-    local function familyOf(adornee: Instance): string
-        local names: {string} = {adornee.Name}
-        local current: Instance? = adornee.Parent
-        for _ = 1, COIN_ANCESTOR_DEPTH do
-            if not current or current == workspace then
-                break
+    -- A real pickup, exactly as the game's CoinVisualizer defines it: a
+    -- tagged BasePart still in the workspace, not collected, not deleted,
+    -- and not part of a character.
+    local function isRealPickup(object: Instance): boolean
+        if not object:IsA("BasePart") then
+            return false
+        end
+        local ok: boolean, tagged: boolean = pcall(function(): boolean
+            return collectionService:HasTag(object, COIN_TAG)
+        end)
+        if not ok or not tagged then
+            return false
+        end
+        if not object:IsDescendantOf(workspace) then
+            return false
+        end
+        if attribute(object, "Collected") == true or attribute(object, "Delete") == true then
+            return false
+        end
+        local current: Instance? = object.Parent
+        while current and current ~= workspace do
+            local humanoid: Instance? = current:FindFirstChildOfClass("Humanoid")
+            if humanoid then
+                return false
             end
-            table.insert(names, current.Name)
             current = current.Parent
         end
+        return true
+    end
+
+    -- Family of one tagged part: its own name and its mesh children only.
+    -- With no specific word, the round's family applies (a round pays a
+    -- single kind of pickup), falling back to the classic coin.
+    local function familyOf(part: Instance): string
+        local names: {string} = {part.Name}
         local ok: boolean, descendants: any = pcall(function(): any
-            return adornee:GetDescendants()
+            return part:GetDescendants()
         end)
         if ok and type(descendants) == "table" then
             for _, object: Instance in ipairs(descendants) do
                 table.insert(names, object.Name)
             end
         end
-        return classifyFamily(lower(table.concat(names, " ")))
+        local haystack: string = lower(table.concat(names, " "))
+        for _, family: string in ipairs(FAMILY_ORDER) do
+            for _, phrase: string in ipairs(FAMILY_PHRASES[family]) do
+                if contains(haystack, phrase) then
+                    return family
+                end
+            end
+        end
+        return serverFamily or FAMILY_COIN
     end
 
     -- The family the server says is in play: the `CoinsStarted` table first,
     -- then the Workspace event attributes.
     local function familyFromWorkspace(): string?
-        local ok: boolean, value: any = pcall(function(): any
-            return workspace:GetAttribute("CurrentEvent")
-        end)
-        local eventName: string = ok and lower(tostring(value or "")) or ""
+        local eventName: string = lower(tostring(attribute(workspace, "CurrentEvent") or ""))
         if contains(eventName, "halloween") then
             return FAMILY_CANDY
         elseif contains(eventName, "christmas") then
@@ -6524,17 +6422,14 @@ function Module.init(runtime: any): any
         elseif contains(eventName, "valentine") then
             return FAMILY_HEART
         end
-        for attribute: string, family: string in pairs({
+        for attrName: string, family: string in pairs({
             isValentines = FAMILY_HEART,
             isChristmas = FAMILY_SNOW,
             isChristmasEnding = FAMILY_SNOW,
             IsSummer = FAMILY_BEACH,
             IsEaster = FAMILY_EGG,
         }) do
-            local okAttr: boolean, flag: any = pcall(function(): any
-                return workspace:GetAttribute(attribute)
-            end)
-            if okAttr and flag == true then
+            if attribute(workspace, attrName) == true then
                 return family
             end
         end
@@ -6545,28 +6440,26 @@ function Module.init(runtime: any): any
         return serverFamily or familyFromWorkspace()
     end
 
+    -- Every real pickup on the map, straight from CollectionService.
     local function collectAll(): ({[Instance]: string}, {[string]: number})
         local found: {[Instance]: string} = {}
         local counts: {[string]: number} = {}
-        local ok: boolean, descendants: any = pcall(function(): any
-            return workspace:GetDescendants()
+        local ok: boolean, tagged: any = pcall(function(): any
+            return collectionService:GetTagged(COIN_TAG)
         end)
-        if not ok or type(descendants) ~= "table" then
+        if not ok or type(tagged) ~= "table" then
             return found, counts
         end
-        for _, object: Instance in ipairs(descendants) do
-            local adornee: Instance? = pickupAdornee(object)
-            if adornee and not found[adornee] then
-                local family: string = familyOf(adornee)
-                found[adornee] = family
+        for _, object: Instance in ipairs(tagged) do
+            if isRealPickup(object) and not found[object] then
+                local family: string = familyOf(object)
+                found[object] = family
                 counts[family] = (counts[family] or 0) + 1
             end
         end
         return found, counts
     end
 
-    -- Only the families that count as "in use" are highlighted. The status
-    -- still reports every family found on the map.
     local function wanted(family: string): boolean
         local choice: string = settings.family
         if choice == FAMILY_ALL then
@@ -6574,7 +6467,6 @@ function Module.init(runtime: any): any
         end
         if choice == FAMILY_AUTO then
             local active: string? = activeFamily()
-            -- Nothing detected yet: show everything instead of nothing.
             return active == nil or family == active
         end
         return family == choice
@@ -6598,13 +6490,9 @@ function Module.init(runtime: any): any
     local function toggleCoinEsp(enabled: boolean): ()
         disconnectFeatureConnection("MM2CoinRefresh")
         disconnectFeatureConnection("MM2CoinCollected")
-        disconnectFeatureConnection("MM2CoinAdded")
-        disconnectFeatureConnection("MM2CoinRemoved")
         disconnectFeatureConnection("MM2CoinsStarted")
-        for index: number = 1, #COIN_TAGS do
-            disconnectFeatureConnection("MM2CoinTagAdded" .. tostring(index))
-            disconnectFeatureConnection("MM2CoinTagRemoved" .. tostring(index))
-        end
+        disconnectFeatureConnection("MM2CoinTagAdded")
+        disconnectFeatureConnection("MM2CoinTagRemoved")
         clearEffects(CoinEffects)
 
         if not enabled then
@@ -6632,8 +6520,8 @@ function Module.init(runtime: any): any
             end
         end
 
-        -- Redraws only when the set changed: one Highlight per pickup, never
-        -- per part, and no work while the map stands still.
+        -- One Highlight per tagged part, on the part itself. Nothing else
+        -- is ever drawn, so a container can never flood the screen.
         local function refresh(): ()
             local found: {[Instance]: string}, counts: {[string]: number} = collectAll()
             local visible: {[Instance]: boolean} = {}
@@ -6670,33 +6558,19 @@ function Module.init(runtime: any): any
             dirty = false
         end
 
-        -- The game adds and removes pickups all the time: react to that and
-        -- keep the full scan as a safety net, not as the main loop.
-        local added: any = workspace.DescendantAdded:Connect(function(object: Instance): ()
-            if pickupAdornee(object) then
-                dirty = true
-            end
-        end)
-        local removed: any = workspace.DescendantRemoving:Connect(function(object: Instance): ()
-            -- Do not touch `marked` here: refresh compares the set it finds
-            -- against `marked`, and the old highlight is only dropped when the
-            -- diff really sees the pickup gone.
-            if marked[object] then
-                dirty = true
-                return
-            end
-            for adornee: Instance in pairs(marked) do
-                if not adornee:IsDescendantOf(workspace) then
+        -- The exact signals the game itself uses: a pickup appears when it
+        -- gets the tag and disappears when the tag (or the part) goes away.
+        featureConnections.MM2CoinTagAdded =
+            collectionService:GetInstanceAddedSignal(COIN_TAG):Connect(function(object: Instance): ()
+                if isRealPickup(object) then
                     dirty = true
-                    return
                 end
-            end
-        end)
-        featureConnections.MM2CoinAdded = added
-        featureConnections.MM2CoinRemoved = removed
+            end)
+        featureConnections.MM2CoinTagRemoved =
+            collectionService:GetInstanceRemovedSignal(COIN_TAG):Connect(function(): ()
+                dirty = true
+            end)
 
-        -- The server names the active bag: follow it when the selector is on
-        -- Auto. This is the coin the round is paying out.
         local started: Instance? = core.mm2GameplayRemotes
             and core.mm2GameplayRemotes:FindFirstChild("CoinsStarted")
         if started and started:IsA("RemoteEvent") then
@@ -6714,22 +6588,6 @@ function Module.init(runtime: any): any
                 end)
         end
 
-        -- Tag signals: a part can be named `Part` and only become a coin when
-        -- the game tags it, after it is already in the workspace.
-        for index: number = 1, #COIN_TAGS do
-            local tag: string = COIN_TAGS[index]
-            local tagAdded: any = collectionService:GetInstanceAddedSignal(tag):Connect(function(): ()
-                dirty = true
-            end)
-            local tagRemoved: any = collectionService:GetInstanceRemovedSignal(tag):Connect(function(): ()
-                dirty = true
-            end)
-            featureConnections["MM2CoinTagAdded" .. tostring(index)] = tagAdded
-            featureConnections["MM2CoinTagRemoved" .. tostring(index)] = tagRemoved
-        end
-
-        -- A collection is the one moment the map changed for sure: refresh on
-        -- the next frame instead of waiting for the scan window.
         local remotes: any = core.mm2GameplayRemotes
         local collected: Instance? = remotes and remotes:FindFirstChild("CoinCollected")
         if collected and collected:IsA("RemoteEvent") then
@@ -6747,7 +6605,6 @@ function Module.init(runtime: any): any
                     return
                 end
                 elapsed = 0
-                dirty = true
                 refresh()
             end
         )
@@ -6755,7 +6612,7 @@ function Module.init(runtime: any): any
 
     local CoinFeature: any = createUniversalFeature(
         "Coin ESP",
-        "Highlights every coin, candy, snow token, beach ball and egg on the map and reports how many of each family exist.",
+        "Highlights the real coin, candy, snow token, beach ball and egg pickups of the map and reports how many of each family exist.",
         3,
         toggleCoinEsp,
         {
@@ -6807,17 +6664,16 @@ function Module.init(runtime: any): any
         CoinFeature,
         "Report server coin",
         function(): ()
-            local active: string? = activeFamily()
             local _found: {[Instance]: string}, counts: {[string]: number} = collectAll()
             notify(
-                "Server coin: " .. (active or "unknown")
+                "Server coin: " .. (activeFamily() or "unknown")
                     .. " · on the map: " .. describe(counts)
             )
         end
     )
     addInformationOption(
         CoinFeature,
-        "Pickups are found through the game's own CoinVisual tag and the Coin_Server parts, then classified into Coin, Candy, SnowToken, BeachBall, Egg and Heart by their names and meshes. Auto highlights the family the server announces on CoinsStarted."
+        "Pickups are found only through the game's own CoinVisual tag (CollectionService:GetTagged), the same list the game's CoinVisualizer uses. Highlights sit on the tagged part itself, never on a parent model or container. Auto highlights the family the server announces on CoinsStarted."
     )
 
     activeCleanup = function(): ()

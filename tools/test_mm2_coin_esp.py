@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
 """Execute the real MM2 Coin ESP module against a mocked map and card.
 
-The place dump names a coin by its two parts (`CoinVisual` + `Coin_Server`) and
-the event candies are the same coin model under names such as `Candy2024`,
-`Candies2022` or `CandyCorn`. The old module only looked inside three folders
-that the live game does not populate, which is why the candy on screen was
-never highlighted. The families the game ships (`ReplicatedStorage/Coins`:
-CoinObjects, CandyObjects, SnowTokenObjects, BeachBallObjects, EggObjects)
-are classified and counted, the `CoinsStarted` remote names the family the
-round pays out, and the "Coin in use" selector filters the highlights.
+The game's own CoinVisualizer is the contract: a real pickup is a BasePart
+tagged "CoinVisual" by CollectionService (structure in the place dump:
+CoinContainer -> Coin_Server -> CoinVisual with MainCoin/DecalPart/2Part
+mesh children), skipped when its "Collected" attribute is true. The old
+name-based detection (Coin_Server parts, InteractiveBox, models named like
+coins) lit whole containers and flooded the screen with one giant
+highlight, so the module now uses GetTagged("CoinVisual") ONLY and puts
+each highlight on the tagged part itself -- never on a parent model.
 """
 import os
 import subprocess
@@ -19,9 +19,12 @@ ROOT = Path(__file__).resolve().parents[1]
 SOURCE = (ROOT / 'src/games/MM2/Render/CoinEsp.lua').read_text()
 
 script = r'''
--- A tiny instance mock: only what the module reads.
-local function base(name, tags)
-    local object = {Name = name, Parent = nil, tags = tags or {}, children = {}}
+local workspace = {}
+function workspace:GetAttribute(_) return nil end
+
+local function base(name, tags, attrs, children)
+    local object = {Name = name, Parent = workspace, tags = tags or {},
+        attrs = attrs or {}, children = children or {}}
     function object:IsA(class)
         return class == "BasePart" or class == "Instance"
     end
@@ -29,7 +32,18 @@ local function base(name, tags)
         if class == "Humanoid" then return self.humanoid end
         return nil
     end
-    function object:GetChildren() return self.children end
+    function object:GetAttribute(name) return self.attrs[name] end
+    function object:GetDescendants()
+        local out = {}
+        local function walk(node)
+            for _, child in ipairs(node.children) do
+                out[#out + 1] = child
+                walk(child)
+            end
+        end
+        walk(self)
+        return out
+    end
     function object:IsDescendantOf(ancestor)
         local current = self.Parent
         while current do
@@ -38,148 +52,87 @@ local function base(name, tags)
         end
         return false
     end
-    function object:FindFirstChild(childName)
-        for _, child in ipairs(self.children) do
-            if child.Name == childName then return child end
-        end
-        return nil
-    end
-    function object:FindFirstChildWhichIsA(class)
-        local function walk(node)
-            for _, child in ipairs(node:GetChildren()) do
-                if child:IsA(class) then return child end
-                local nested = walk(child)
-                if nested then return nested end
-            end
-            return nil
-        end
-        return walk(self)
-    end
+    for _, child in ipairs(object.children) do child.Parent = object end
     return object
 end
 local function model(name, children)
-    local object = base(name)
-    object.children = children or {}
+    local object = base(name, nil, nil, children)
     function object:IsA(class)
         return class == "Model" or class == "Instance"
     end
-    for _, child in ipairs(object.children) do child.Parent = object end
-    return object
-end
-local function folder(name, children)
-    local object = base(name)
-    object.children = children or {}
-    function object:IsA(class)
-        return class == "Folder" or class == "Instance"
-    end
-    for _, child in ipairs(object.children) do child.Parent = object end
     return object
 end
 
--- One coin: a model holding CoinVisual + Coin_Server, exactly the pair the
--- place dump lists ~100 times.
-local coinModel = model("Coin", {
-    base("CoinVisual"),
-    base("Coin_Server"),
-})
--- A candy: the same coin model with another look, named like an event treat.
-local candyModel = model("Candy2024", {
-    base("InteractiveBox"),
-})
--- One loose part that only carries the part name, no model around it.
-local looseCoin = base("CoinVisual")
--- A legacy container with an untagged part inside.
-local legacyCoin = base("OldCoin")
-local container = folder("Coins", {legacyCoin})
--- Noise: a character part must never be counted.
-local character = model("Dummy", {base("CoinVisual")})
+-- REAL pickups: tagged CoinVisual parts, exactly as the game spawns them.
+local coinPart = base("CoinVisual", {CoinVisual = true}, nil,
+    {base("MainCoin"), base("DecalPart"), base("2Part")})
+local candyPart = base("CoinVisual", {CoinVisual = true}, nil,
+    {base("CandyMesh")})
+local snowPart = base("CoinVisual", {CoinVisual = true}, nil,
+    {base("SnowTokenMesh")})
+-- A collected pickup: the game keeps it tagged, the ESP must skip it.
+local collectedPart = base("CoinVisual", {CoinVisual = true},
+    {Collected = true}, {base("MainCoin")})
+
+-- FAKES the old code lit up -- none of these may ever be highlighted.
+local serverPart = base("Coin_Server")                    -- untagged
+local looseMainCoin = base("MainCoin")                    -- untagged
+local untaggedVisual = base("CoinVisual")                 -- name only, no tag
+local container = model("CoinContainer", {serverPart, untaggedVisual})
+local doorBox = base("InteractiveBox")                    -- untagged
+local coinModel = model("Coin", {base("Coin_Server")})    -- untagged model
+
+-- A tagged part inside a character is not a pickup.
+local character = model("Dummy", {})
+local charPart = base("CoinVisual", {CoinVisual = true})
+charPart.Parent = character
 character.humanoid = true
--- Noise: another InteractiveBox, this one on a door, must stay dark.
-local door = model("Door", {base("InteractiveBox")})
+character.children = {charPart}
 
-local world = {coinModel, candyModel, looseCoin, container, character, door}
--- GetDescendants returns everything below the roots, exactly like the engine.
-local function flatten(roots)
-    local out = {}
-    local function walk(node)
-        for _, child in ipairs(node:GetChildren()) do
-            out[#out + 1] = child
-            walk(child)
-        end
-    end
-    for _, root in ipairs(roots) do
-        out[#out + 1] = root
-        walk(root)
-    end
-    return out
-end
-local worldConnections = {}
-local workspace = {
-    GetDescendants = function() return flatten(world) end,
-    DescendantAdded = {Connect = function(_, fn)
-        worldConnections.added = fn
-        return {Disconnect = function() worldConnections.added = nil end}
-    end},
-    DescendantRemoving = {Connect = function(_, fn)
-        worldConnections.removed = fn
-        return {Disconnect = function() worldConnections.removed = nil end}
-    end},
-}
+local tagged = {coinPart, candyPart, snowPart, collectedPart, charPart}
 
-local marks = {}
 local statuses = {}
 local lastStatus = "unset"
 local callbacks = {}
 local cycleValues = {}
 local loops = {}
 local featureConnections = {}
-local coinCollected = {listeners = {}}
-function coinCollected:Connect(fn)
-    self.listeners[#self.listeners + 1] = fn
-    return {Disconnect = function() end}
+local function signal()
+    local entry = {listeners = {}}
+    function entry:Connect(fn)
+        entry.listeners[#entry.listeners + 1] = fn
+        return {Disconnect = function() end}
+    end
+    function entry:fire(...)
+        for _, fn in ipairs(self.listeners) do fn(...) end
+    end
+    return entry
 end
-function coinCollected:fire()
-    for _, fn in ipairs(self.listeners) do fn() end
-end
-local coinStarted = {listeners = {}}
-function coinStarted:Connect(fn)
-    self.listeners[#self.listeners + 1] = fn
-    return {Disconnect = function() end}
-end
-function coinStarted:fire(bagTable)
-    for _, fn in ipairs(self.listeners) do fn(bagTable) end
-end
+local coinCollected, coinStarted = signal(), signal()
 function coinStarted:IsA(class) return class == "RemoteEvent" end
 coinStarted.OnClientEvent = coinStarted
+function coinCollected:IsA(class) return class == "RemoteEvent" end
+coinCollected.OnClientEvent = coinCollected
 local remotes = {FindFirstChild = function(_, name)
     if name == "CoinCollected" then return coinCollected end
     if name == "CoinsStarted" then return coinStarted end
     return nil
 end}
-function coinCollected:IsA(class) return class == "RemoteEvent" end
--- The module connects to OnClientEvent; the mock uses itself as the signal.
-coinCollected.OnClientEvent = coinCollected
 
--- CollectionService: tags plus the added/removed signals the module listens to.
-local tagSignals = {added = {}, removed = {}}
-local function signal(bag, tag)
-    bag[tag] = bag[tag] or {listeners = {}}
-    local entry = bag[tag]
-    entry.Connect = function(_, fn)
-        entry.listeners[#entry.listeners + 1] = fn
-        return {Disconnect = function() end}
-    end
-    entry.fire = function()
-        for _, fn in ipairs(entry.listeners) do fn() end
-    end
-    return entry
-end
+local tagAdded, tagRemoved = signal(), signal()
 local CollectionService = {
     HasTag = function(_, object, tag)
         return object.tags and object.tags[tag] == true
     end,
-    GetInstanceAddedSignal = function(_, tag) return signal(tagSignals.added, tag) end,
-    GetInstanceRemovedSignal = function(_, tag) return signal(tagSignals.removed, tag) end,
+    GetTagged = function(_, tag)
+        local out = {}
+        for _, object in ipairs(tagged) do
+            if object.tags[tag] then out[#out + 1] = object end
+        end
+        return out
+    end,
+    GetInstanceAddedSignal = function(_, _) return tagAdded end,
+    GetInstanceRemovedSignal = function(_, _) return tagRemoved end,
 }
 
 local function disconnectFeatureConnection(key)
@@ -204,7 +157,6 @@ local state = {
         mm2Settings = {coinColor = "gold", coinTransparency = 0.8},
     },
 }
-local mm2Settings = state.mm2Core.mm2Settings
 local MM2Scroll, mm2Features = {}, {}
 local function createUniversalFeature(name, description, order, onToggle, config)
     return {name = name, description = description, order = order,
@@ -258,136 +210,88 @@ local function highlighted(object)
     return false
 end
 
--- ON: the coin model once (not once per part), the candy model via the
--- InteractiveBox inside it, the loose tagged part and the legacy container
--- child. The character and the door stay dark.
+-- ON: only the three uncollected tagged parts, each highlighted ITSELF.
 feature.enabled = true
 feature.onToggle(true)
-assert(#state.mm2Core.CoinEffects == 4, "four pickups: " .. #state.mm2Core.CoinEffects)
-assert(highlighted(coinModel), "the coin model is the adornee, both parts light up once")
-assert(highlighted(candyModel), "the candy is highlighted")
-assert(highlighted(looseCoin), "a loose CoinVisual part is highlighted")
-assert(highlighted(legacyCoin), "a legacy container child is highlighted")
-assert(not highlighted(character), "a character is never a pickup")
-assert(not highlighted(door), "a generic InteractiveBox on a door stays dark")
-assert(lastStatus == "3 coins · 1 candy", tostring(lastStatus))
+assert(#state.mm2Core.CoinEffects == 3, "three pickups: " .. #state.mm2Core.CoinEffects)
+assert(highlighted(coinPart), "the tagged coin part itself is highlighted")
+assert(highlighted(candyPart), "the tagged candy part itself is highlighted")
+assert(highlighted(snowPart), "the tagged snow part itself is highlighted")
+assert(not highlighted(collectedPart), "a collected pickup stays dark")
+assert(not highlighted(serverPart), "Coin_Server alone is never a pickup")
+assert(not highlighted(looseMainCoin), "an untagged MainCoin is never a pickup")
+assert(not highlighted(untaggedVisual), "the NAME CoinVisual without the tag is nothing")
+assert(not highlighted(container), "a container model is never highlighted")
+assert(not highlighted(coinModel), "a model named Coin is never highlighted")
+assert(not highlighted(doorBox), "an InteractiveBox is never a pickup")
+assert(not highlighted(charPart), "a tagged part inside a character is skipped")
+assert(lastStatus == "1 coin · 1 candy · 1 snowtoken", tostring(lastStatus))
 
--- A candy appears without any tag: the model name is enough, and the world
--- signal makes the module look again.
-local candy2022 = model("Candies2022", {base("Part")})
-table.insert(world, candy2022)
-worldConnections.added(candy2022)
-assert(lastStatus == "3 coins · 1 candy", "the status waits for the next tick")
-loops.coin(0.01)
-assert(highlighted(candy2022), "a Candies2022 model is highlighted")
-assert(lastStatus == "3 coins · 2 candies", tostring(lastStatus))
+-- Selector: Candy only.
+callbacks["Coin in use"]("Candy")
+assert(highlighted(candyPart) and not highlighted(coinPart)
+    and not highlighted(snowPart), "the selector keeps only the chosen family")
+assert(lastStatus == "1 coin · 1 candy · 1 snowtoken",
+    "counts still report every family: " .. tostring(lastStatus))
 
--- A part becomes a coin only after the game tags it: the tag signal is what
--- catches it, because its name (`Part`) says nothing.
-local taggedPart = base("Part")
-table.insert(world, taggedPart)
-worldConnections.added(taggedPart)
+-- Auto + the server announces Candy: only candy.
+callbacks["Coin in use"]("Auto (server)")
+coinStarted:fire({Candy = true})
 loops.coin(0.01)
-assert(not highlighted(taggedPart), "an untagged Part is not a coin yet")
-taggedPart.tags.CoinVisual = true
-tagSignals.added.CoinVisual.fire()
-loops.coin(0.01)
-assert(highlighted(taggedPart), "the tag signal promotes the part")
-assert(lastStatus == "4 coins · 2 candies", tostring(lastStatus))
+assert(highlighted(candyPart) and not highlighted(coinPart),
+    "Auto follows the CoinsStarted bag")
 
--- Collected: remove it, fire the game's remote, and the next frame drops the
--- highlight without waiting for the five second scan.
-table.remove(world)
-taggedPart.tags.CoinVisual = false
+-- A generic tagged part takes the server family (one kind per round).
+local genericPart = base("CoinVisual", {CoinVisual = true}, nil, {base("Mesh")})
+table.insert(tagged, genericPart)
+tagAdded:fire(genericPart)
+loops.coin(0.01)
+assert(highlighted(genericPart), "a newly tagged part lights on the tag signal")
+assert(lastStatus == "1 coin · 2 candies · 1 snowtoken", tostring(lastStatus))
+
+-- Collection: the attribute flips, the remote fires, highlight drops.
+genericPart.attrs.Collected = true
 coinCollected:fire()
 loops.coin(0.01)
-assert(not highlighted(taggedPart), "a collected coin loses its highlight")
-assert(lastStatus == "3 coins · 2 candies", tostring(lastStatus))
+assert(not highlighted(genericPart), "a collected pickup loses its highlight")
 
--- Removing through the world signal works too.
-table.remove(world)
-worldConnections.removed(candy2022)
+-- Tag removed: the part is no longer a pickup at all.
+snowPart.tags.CoinVisual = nil
+tagRemoved:fire(snowPart)
 loops.coin(0.01)
-assert(not highlighted(candy2022), "a removed candy loses its highlight")
+assert(not highlighted(snowPart), "an untagged part loses its highlight")
+assert(lastStatus == "1 coin · 1 candy", tostring(lastStatus))
 
--- Colour changes while ON rebuild with the new colour.
+-- Report action names the server coin.
+callbacks["Report server coin"]()
+assert(string.find(notices[#notices], "Server coin: Candy"), tostring(notices[#notices]))
+
+-- Colour applies live, OFF clears, empty map reports honestly.
 callbacks["Coin colour"]("red")
 for _, entry in ipairs(state.mm2Core.CoinEffects) do
     assert(entry.color == "red", "colour applies live")
 end
-
--- OFF clears every highlight and the status.
 feature.enabled = false
 feature.onToggle(false)
 assert(#state.mm2Core.CoinEffects == 0, "OFF clears every highlight")
-assert(not loops.coin, "OFF stops the refresh loop")
 assert(lastStatus == nil, "OFF clears the status")
-
--- An empty map says so instead of drawing nothing in silence.
-world = {}
+tagged = {}
 feature.enabled = true
 feature.onToggle(true)
-assert(#state.mm2Core.CoinEffects == 0)
 assert(lastStatus == "no coins yet", tostring(lastStatus))
 feature.onToggle(false)
-
--- Every family the game ships is identified and counted, exactly in the
--- order the status reports them.
-local coinOnly = model("Coin", {base("CoinVisual")})
-local snowToken = model("SnowToken", {base("CoinVisual")})
-local beachBall = model("BeachBall", {base("CoinVisual")})
-local egg = model("CurrencyEgg1", {base("CoinVisual")})
-local heart = model("Hearts2023", {base("CoinVisual")})
-local candyAgain = model("Candy2024", {base("CoinVisual")})
-world = {coinOnly, snowToken, beachBall, egg, heart, candyAgain}
-feature.enabled = true
-feature.onToggle(true)
-assert(highlighted(coinOnly) and highlighted(snowToken) and highlighted(beachBall)
-    and highlighted(egg) and highlighted(heart) and highlighted(candyAgain),
-    "every family lights up while nothing is detected")
-assert(lastStatus == "1 coin · 1 candy · 1 snowtoken · 1 beachball · 1 egg · 1 heart",
-    tostring(lastStatus))
-
--- The selector filters the highlights, not the counts: with Candy in use
--- only the candy stays lit while the status still names every family.
-callbacks["Coin in use"]("Candy")
-assert(highlighted(candyAgain), "the chosen family stays lit")
-assert(not highlighted(coinOnly) and not highlighted(snowToken)
-    and not highlighted(beachBall) and not highlighted(egg)
-    and not highlighted(heart), "the other families go dark")
-assert(lastStatus == "1 coin · 1 candy · 1 snowtoken · 1 beachball · 1 egg · 1 heart",
-    tostring(lastStatus))
-
--- Auto follows the bag the server announces on CoinsStarted.
-callbacks["Coin in use"]("Auto (server)")
-coinStarted:fire({Candy = true})
-loops.coin(0.01)
-assert(highlighted(candyAgain), "Auto keeps the family the server announced")
-assert(not highlighted(coinOnly) and not highlighted(snowToken)
-    and not highlighted(beachBall) and not highlighted(egg)
-    and not highlighted(heart), "Auto drops the families the server is not paying")
-
--- The report action names the server coin and the families on the map.
-callbacks["Report server coin"]()
-assert(string.find(notices[#notices], "Server coin: Candy"), tostring(notices[#notices]))
-assert(string.find(notices[#notices], "1 snowtoken"), "the report lists the families")
-
--- All shows everything even when the server names another family.
-callbacks["Coin in use"]("All")
-assert(highlighted(coinOnly) and highlighted(candyAgain)
-    and highlighted(snowToken) and highlighted(egg),
-    "All ignores the server filter")
 
 Module.destroy()
 assert(not state.mm2CoinFeature, "the card reference is released")
 assert(#state.mm2Core.CoinEffects == 0 and not loops.coin, "unload leaves nothing")
 
--- Client-side only: no remote and no network anywhere in the module.
-for _, forbidden in ipairs({"FireServer", "InvokeServer", "HttpGet", "HttpPost"}) do
+-- Client-side only, and no name heuristics left in the source.
+for _, forbidden in ipairs({"FireServer", "InvokeServer", "HttpGet", "HttpPost",
+    "InteractiveBox", "Coin_Server", "DescendantAdded"}) do
     assert(not string.find(''' + repr(SOURCE) + ''', forbidden),
-        "Coin ESP must not call " .. forbidden)
+        "Coin ESP must not use " .. forbidden)
 end
-print("PASS MM2 Coins: coin parts, candy names, InteractiveBox scoping, tag signal, character skip, live counts, collection refresh, colour, OFF, empty map, families, selector, server bag, unload")
+print("PASS MM2 Coins: CoinVisual tag only, highlight on the tagged part, no containers/models/names, collected skip, families, selector, server bag, tag signals, OFF, unload")
 '''
 
 with tempfile.TemporaryDirectory(prefix='coin-esp-') as tmp:
