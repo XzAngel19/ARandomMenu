@@ -40,10 +40,11 @@ assert "settings.speed" in SOURCE
 assert "state.mm2CoinPickups" in SOURCE
 assert '"Coin_Server"' in SOURCE  # fallback scan if Coin ESP is off
 
-# Two-phase collection: travel low, then rise into the touch volume.
-# Coin_Server is 1.2x2x2 in the place, reaching 1 stud either side of
-# the coin centre; the old single 3.1 ride height never touched it.
-assert "TRAVEL_UNDER" in SOURCE and "COLLECT_UNDER" in SOURCE
+# One constant collect height: Coin_Server is 1.2x2x2 in the place,
+# reaching 1 stud either side of the coin centre, so a body part
+# overlaps it at all times (the old 3.1 ride height touched nothing;
+# a two-phase rise bobbed visibly at every coin).
+assert "local UNDER_OFFSET: number = 1.0" in SOURCE
 
 # Prone applied once on engage; NoClip forced while engaged.
 assert "CFrame.Angles(math.rad(90), 0, 0)" in SOURCE
@@ -90,6 +91,7 @@ assert "state.fireTouchInterest" in SOURCE
 
 print("PASS MM2 Auto Farm: velocity flight at slider speed (no CFrame "
       "teleports, no 267 kick), NoClip + prone on engage only, "
-      "two-phase collect (rise into the 2-stud Coin_Server volume + "
-      "touch pulse), lobby hands-off, OFF returns home upright, ping "
+      "constant-height collect (a body part always overlaps the "
+      "2-stud Coin_Server volume; touch pulse), lobby hands-off, "
+      "OFF returns home upright, ping "
       "in status, full-bag reset/flings, YARHM Kill All, grab gun")

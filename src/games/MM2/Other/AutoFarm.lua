@@ -29,17 +29,16 @@ function Module.init(_runtime: any): any
         killAllOnFull = false,
     }
 
-    -- Travel height under the coin, then the collect height. The
-    -- place data is exact: Coin_Server (the part that pays) is
-    -- 1.2 x 2 x 2, centred on the coin, so its touch volume reaches
-    -- only 1 stud above and below the coin centre. The old ride
-    -- height of 3.1 put the whole body ~1 stud UNDER that volume:
-    -- the farm parked beneath coin after coin and touched nothing
-    -- (the "only 2-3 coins, by luck" bug). Travel stays low and
-    -- hidden; on arrival the body rises to COLLECT_UNDER, where the
-    -- root (2 tall) overlaps the volume by a full stud.
-    local TRAVEL_UNDER: number = 2.4
-    local COLLECT_UNDER: number = 0.8
+    -- ONE constant ride height, from the place data: Coin_Server
+    -- (the part that pays) is 1.2 x 2 x 2 centred on the coin, so
+    -- its touch volume reaches 1 stud above and below the coin
+    -- centre. Riding with the root centre 1 stud under the coin
+    -- keeps a body part (the 2-tall root itself) overlapping that
+    -- volume at ALL times -- travelling and parked alike -- so every
+    -- coin the body passes pays, with no rising phase. (3.1 studs
+    -- under never touched anything; a two-phase rise bobbed the
+    -- character up and down at each coin.)
+    local UNDER_OFFSET: number = 1.0
     -- A coin that does not collect within this long is skipped for a
     -- while instead of trapping the farm on one unreachable pickup.
     local STUCK_SECONDS: number = 1.4
@@ -650,19 +649,12 @@ function Module.init(_runtime: any): any
                     return
                 end
                 engage(character, humanoid, root)
-                -- Two phases: fly low to below the coin, then rise
-                -- into the touch volume and stay there until it pays.
-                local coinPosition: Vector3 = nearestPosition :: Vector3
-                local flatDelta: Vector3 = coinPosition - root.Position
-                local horizontal: number =
-                    Vector3.new(flatDelta.X, 0, flatDelta.Z).Magnitude
-                local under: number =
-                    horizontal > 1.6 and TRAVEL_UNDER or COLLECT_UNDER
                 local destination: Vector3 =
-                    coinPosition + Vector3.new(0, -under, 0)
+                    (nearestPosition :: Vector3)
+                    + Vector3.new(0, -UNDER_OFFSET, 0)
                 local remaining: number =
                     moveTowards(root, destination, deltaTime)
-                if under == COLLECT_UNDER and remaining < 1.2 then
+                if remaining < 1.2 then
                     -- Belt and braces: some builds only pay on a
                     -- physics Touched, and a fully NoClipped body can
                     -- miss that pairing. Pulse the touch directly

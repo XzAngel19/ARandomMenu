@@ -25,14 +25,15 @@ assert "BillboardGui" not in SOURCE, "coin markers must not create labels"
 assert 'Instance.new("BoxHandleAdornment")' in SOURCE
 assert 'FindFirstChild("MainCoin", true)' in SOURCE
 assert "state.mm2CoinPickups" in SOURCE, "Auto Farm shares this pickup list"
-# Performance contract (live report: the ESP still lagged): dirty
-# rescans are cheap (tag list + known parts re-verified), the full
-# Workspace walk is enable/5s-only, and the Auto Farm pickup list is
-# cached instead of rescanning per poll.
-assert "local function collectAll(fullScan" in SOURCE
-assert "knownParts" in SOURCE
+# Performance contract (live report: the ESP still lagged): the Auto
+# Farm pickup list is cached instead of rescanning per poll, the
+# static filter half is cached per part, and families are cached.
+# (A cheap-rescan variant shipped in v84 reported nothing in game;
+# the single full scan is the proven behaviour and stays.)
+assert "local function collectAll()" in SOURCE
+assert "filterCache" in SOURCE
 assert "pickupCache" in SOURCE
-assert "refresh(false)" in SOURCE and "refresh(true)" in SOURCE
+assert "refreshPickupCache(found)" in SOURCE
 
 script = r'''
 local workspace = {}

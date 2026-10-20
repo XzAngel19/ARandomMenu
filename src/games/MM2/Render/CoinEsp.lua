@@ -305,21 +305,36 @@ function Module.init(runtime: any): any
         return active or FAMILY_COIN
     end
 
-    -- Parts any earlier scan proved are pickups. The cheap rescan
-    -- re-checks just these (attributes may have flipped) instead of
-    -- walking the whole map again.
-    local knownParts: {[Instance]: boolean} = {}
-
     -- Every real pickup on the map, merged from the three signatures.
-    -- A cheap scan (fullScan ~= true) skips the Workspace descendant
-    -- walk -- the expensive part -- and combines the game's tag list
-    -- with the parts already known. The full scan remains the
-    -- enable-time sweep and the 5 s safety net.
-    local function collectAll(fullScan: boolean?): ({[Instance]: string}, {[string]: number})
+    -- (v84 tried a "cheap" rescan -- tag list plus previously-known
+    -- parts -- and in the live game the ESP stopped reporting coins
+    -- entirely; the mock suite passed, the game did not. The full
+    -- scan below is the behaviour that demonstrably works in game.
+    -- The cost is kept down elsewhere: Auto Farm's polls are cached
+    -- (1.5 s), the family classification is cached, and the ancestor
+    -- walk inside passesFilters is cached per part.)
+    local filterCache: {[Instance]: boolean} = {}
+    local function collectAll(): ({[Instance]: string}, {[string]: number})
         local found: {[Instance]: string} = {}
         local counts: {[string]: number} = {}
-        if fullScan then
-            lastRaw = {tagged = 0, coinId = 0, named = 0}
+        lastRaw = {tagged = 0, coinId = 0, named = 0}
+
+        -- The attribute half of the filter is volatile (Collected
+        -- flips when a coin is taken) and is always re-read; only
+        -- the static half (in the workspace, not inside a character)
+        -- is cached -- a pickup's ancestry never changes.
+        local function passesFiltersCached(part: Instance): boolean
+            if attribute(part, "Collected") == true
+                or attribute(part, "Delete") == true then
+                return false
+            end
+            local cached: boolean? = filterCache[part]
+            if cached ~= nil then
+                return cached
+            end
+            local result: boolean = passesFilters(part)
+            filterCache[part] = result
+            return result
         end
 
         local function consider(part: Instance?): ()
@@ -330,7 +345,7 @@ function Module.init(runtime: any): any
             if not visual or found[visual] then
                 return
             end
-            if not passesFilters(visual) then
+            if not passesFiltersCached(visual) then
                 return
             end
             local family: string = familyOf(visual)
@@ -343,37 +358,12 @@ function Module.init(runtime: any): any
             return collectionService:GetTagged(COIN_TAG)
         end)
         if okTagged and type(tagged) == "table" then
-            if fullScan then
-                lastRaw.tagged = #tagged
-            end
+            lastRaw.tagged = #tagged
             for _, object: Instance in ipairs(tagged) do
                 if object:IsA("BasePart") then
                     consider(object)
                 end
             end
-        end
-
-        if not fullScan then
-            -- Cheap path: re-check the known parts only, and only
-            -- while at least one signature still holds -- a part that
-            -- lost its tag (collected and cleaned up by the game)
-            -- must drop out immediately, not at the next full scan.
-            local taggedSet: {[Instance]: boolean} = {}
-            if okTagged and type(tagged) == "table" then
-                for _, object: Instance in ipairs(tagged) do
-                    taggedSet[object] = true
-                end
-            end
-            for object: Instance in pairs(knownParts) do
-                if object:IsA("BasePart")
-                    and (taggedSet[object]
-                        or attribute(object, "CoinID") ~= nil
-                        or object.Name == VISUAL_NAME
-                        or object.Name == SERVER_NAME) then
-                    consider(object)
-                end
-            end
-            return found, counts
         end
 
         -- Signatures 2 and 3: the CoinID attribute and the exact spawn
@@ -393,11 +383,6 @@ function Module.init(runtime: any): any
                     end
                 end
             end
-        end
-        -- Remember the proven set for the cheap rescans.
-        table.clear(knownParts)
-        for object: Instance in pairs(found) do
-            knownParts[object] = true
         end
         return found, counts
     end
@@ -448,7 +433,7 @@ function Module.init(runtime: any): any
         if os.clock() - pickupCache.at < 1.5 then
             return pickupCache.list
         end
-        local found: {[Instance]: string} = collectAll(true)
+        local found: {[Instance]: string} = collectAll()
         refreshPickupCache(found)
         return pickupCache.list
     end
@@ -577,8 +562,8 @@ function Module.init(runtime: any): any
         end
 
         -- One pickup, cham(s) on its visible geometry only.
-        local function refresh(fullScan: boolean?): ()
-            local found: {[Instance]: string}, counts: {[string]: number} = collectAll(fullScan)
+        local function refresh(): ()
+            local found: {[Instance]: string}, counts: {[string]: number} = collectAll()
             local visible: {[Instance]: boolean} = {}
             table.clear(lastFamilies)
             for object: Instance, family: string in pairs(found) do
@@ -631,10 +616,7 @@ function Module.init(runtime: any): any
                 dirty = true
             end)
         featureConnections.MM2CoinTagRemoved =
-            collectionService:GetInstanceRemovedSignal(COIN_TAG):Connect(function(object: Instance): ()
-                -- Prune at once: the cheap rescan trusts knownParts,
-                -- and a part the game untagged is gone for good.
-                knownParts[object] = nil
+            collectionService:GetInstanceRemovedSignal(COIN_TAG):Connect(function(): ()
                 dirty = true
             end)
         featureConnections.MM2CoinAdded = workspace.DescendantAdded:Connect(function(object: Instance): ()
@@ -672,27 +654,20 @@ function Module.init(runtime: any): any
                 end)
         end
 
-        refresh(true)
+        refresh()
         featureConnections.MM2CoinRefresh = TaskManager:Connect(
             function(deltaTime: number): ()
                 -- The adornments follow their parts inside the
-                -- engine. A dirty rescan (a coin spawned or was
-                -- collected) is CHEAP: the game's tag list plus the
-                -- parts already known, no Workspace walk. The full
-                -- three-signature scan runs at enable and on the 5 s
-                -- safety timer only -- walking every descendant per
-                -- CoinCollected was the remaining ESP lag.
+                -- engine; Lua only rescans when the map changed or on
+                -- the safety timer. With ~100 coins out this is the
+                -- whole per-frame cost.
                 drawOverlay()
                 elapsed += deltaTime
-                if dirty then
-                    refresh(false)
-                    return
-                end
-                if elapsed < RESCAN_PERIOD then
+                if not dirty and elapsed < RESCAN_PERIOD then
                     return
                 end
                 elapsed = 0
-                refresh(true)
+                refresh()
             end
         )
     end

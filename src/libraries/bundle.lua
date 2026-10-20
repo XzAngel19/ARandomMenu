@@ -1,5 +1,5 @@
 return {
-    stamp = "v84-20261020-farm-collect-esp-fastscan",
+    stamp = "v85-20261020-esp-revert-farm-constant-onewaylead",
     files = {
         ["src/Profile/142823291.lua"] = [[
 --!strict
@@ -4147,17 +4147,16 @@ function Module.init(_runtime: any): any
         killAllOnFull = false,
     }
 
-    -- Travel height under the coin, then the collect height. The
-    -- place data is exact: Coin_Server (the part that pays) is
-    -- 1.2 x 2 x 2, centred on the coin, so its touch volume reaches
-    -- only 1 stud above and below the coin centre. The old ride
-    -- height of 3.1 put the whole body ~1 stud UNDER that volume:
-    -- the farm parked beneath coin after coin and touched nothing
-    -- (the "only 2-3 coins, by luck" bug). Travel stays low and
-    -- hidden; on arrival the body rises to COLLECT_UNDER, where the
-    -- root (2 tall) overlaps the volume by a full stud.
-    local TRAVEL_UNDER: number = 2.4
-    local COLLECT_UNDER: number = 0.8
+    -- ONE constant ride height, from the place data: Coin_Server
+    -- (the part that pays) is 1.2 x 2 x 2 centred on the coin, so
+    -- its touch volume reaches 1 stud above and below the coin
+    -- centre. Riding with the root centre 1 stud under the coin
+    -- keeps a body part (the 2-tall root itself) overlapping that
+    -- volume at ALL times -- travelling and parked alike -- so every
+    -- coin the body passes pays, with no rising phase. (3.1 studs
+    -- under never touched anything; a two-phase rise bobbed the
+    -- character up and down at each coin.)
+    local UNDER_OFFSET: number = 1.0
     -- A coin that does not collect within this long is skipped for a
     -- while instead of trapping the farm on one unreachable pickup.
     local STUCK_SECONDS: number = 1.4
@@ -4768,19 +4767,12 @@ function Module.init(_runtime: any): any
                     return
                 end
                 engage(character, humanoid, root)
-                -- Two phases: fly low to below the coin, then rise
-                -- into the touch volume and stay there until it pays.
-                local coinPosition: Vector3 = nearestPosition :: Vector3
-                local flatDelta: Vector3 = coinPosition - root.Position
-                local horizontal: number =
-                    Vector3.new(flatDelta.X, 0, flatDelta.Z).Magnitude
-                local under: number =
-                    horizontal > 1.6 and TRAVEL_UNDER or COLLECT_UNDER
                 local destination: Vector3 =
-                    coinPosition + Vector3.new(0, -under, 0)
+                    (nearestPosition :: Vector3)
+                    + Vector3.new(0, -UNDER_OFFSET, 0)
                 local remaining: number =
                     moveTowards(root, destination, deltaTime)
-                if under == COLLECT_UNDER and remaining < 1.2 then
+                if remaining < 1.2 then
                     -- Belt and braces: some builds only pay on a
                     -- physics Touched, and a fully NoClipped body can
                     -- miss that pairing. Pulse the touch directly
@@ -5859,8 +5851,10 @@ local Module = {
         with ThrowSpeed 96 by default and no gravity term. A blade therefore
         needs an intercept solve, not a ballistic one.
       * A remote character's replicated position is older than the server
-        state the gun ray is checked against. The aim point must advance by
-        the round trip plus the replication interpolation window.
+        state the gun ray is checked against. The aim point advances by
+        the ONE-WAY transport (half the measured round trip: the server
+        raycasts when the packet arrives and nothing client-side rewinds
+        the target) plus the replication interpolation window.
 
     What this model deliberately does NOT do:
 
@@ -6579,7 +6573,16 @@ function Module.init(runtime: any): any
         -- measured from the confirmation path for that to happen at all:
         -- v61 recorded none (`echoDelay` nil on all 13 shots).
         local pipeline: number = echo or rtt
-        local horizon: number = pipeline
+        -- One-way, not the round trip. The echo and the engine RTT
+        -- both measure there-and-back, but the packet only travels
+        -- one way before the server raycasts it: nothing in the
+        -- client code (GunFired is a visual confirmation) rewinds
+        -- the target, so leading by the full round trip overshoots
+        -- by the return half -- about a stud at running speed on a
+        -- 80 ms connection, which reads as "the aim is ahead of
+        -- everyone". The closed-loop correction below still
+        -- re-centres whatever residual error real hits measure.
+        local horizon: number = pipeline * 0.5
             + settings.interpolation
             + manualLead()
         if settings.autoLead then
@@ -6602,7 +6605,11 @@ function Module.init(runtime: any): any
         local rtt: number = robustRtt()
         local echo: number? = echoMedian()
         local pipeline: number = echo or rtt
-        local horizon: number = pipeline
+        -- Same one-way rule as the gun: the blade spawns when the
+        -- packet ARRIVES, so only the outbound half of the measured
+        -- round trip delays it (the flight itself is solved by the
+        -- intercept). Leading by the full round trip threw ahead.
+        local horizon: number = pipeline * 0.5
             + settings.interpolation
             + manualLead()
         if settings.autoLead then
@@ -7297,21 +7304,36 @@ function Module.init(runtime: any): any
         return active or FAMILY_COIN
     end
 
-    -- Parts any earlier scan proved are pickups. The cheap rescan
-    -- re-checks just these (attributes may have flipped) instead of
-    -- walking the whole map again.
-    local knownParts: {[Instance]: boolean} = {}
-
     -- Every real pickup on the map, merged from the three signatures.
-    -- A cheap scan (fullScan ~= true) skips the Workspace descendant
-    -- walk -- the expensive part -- and combines the game's tag list
-    -- with the parts already known. The full scan remains the
-    -- enable-time sweep and the 5 s safety net.
-    local function collectAll(fullScan: boolean?): ({[Instance]: string}, {[string]: number})
+    -- (v84 tried a "cheap" rescan -- tag list plus previously-known
+    -- parts -- and in the live game the ESP stopped reporting coins
+    -- entirely; the mock suite passed, the game did not. The full
+    -- scan below is the behaviour that demonstrably works in game.
+    -- The cost is kept down elsewhere: Auto Farm's polls are cached
+    -- (1.5 s), the family classification is cached, and the ancestor
+    -- walk inside passesFilters is cached per part.)
+    local filterCache: {[Instance]: boolean} = {}
+    local function collectAll(): ({[Instance]: string}, {[string]: number})
         local found: {[Instance]: string} = {}
         local counts: {[string]: number} = {}
-        if fullScan then
-            lastRaw = {tagged = 0, coinId = 0, named = 0}
+        lastRaw = {tagged = 0, coinId = 0, named = 0}
+
+        -- The attribute half of the filter is volatile (Collected
+        -- flips when a coin is taken) and is always re-read; only
+        -- the static half (in the workspace, not inside a character)
+        -- is cached -- a pickup's ancestry never changes.
+        local function passesFiltersCached(part: Instance): boolean
+            if attribute(part, "Collected") == true
+                or attribute(part, "Delete") == true then
+                return false
+            end
+            local cached: boolean? = filterCache[part]
+            if cached ~= nil then
+                return cached
+            end
+            local result: boolean = passesFilters(part)
+            filterCache[part] = result
+            return result
         end
 
         local function consider(part: Instance?): ()
@@ -7322,7 +7344,7 @@ function Module.init(runtime: any): any
             if not visual or found[visual] then
                 return
             end
-            if not passesFilters(visual) then
+            if not passesFiltersCached(visual) then
                 return
             end
             local family: string = familyOf(visual)
@@ -7335,37 +7357,12 @@ function Module.init(runtime: any): any
             return collectionService:GetTagged(COIN_TAG)
         end)
         if okTagged and type(tagged) == "table" then
-            if fullScan then
-                lastRaw.tagged = #tagged
-            end
+            lastRaw.tagged = #tagged
             for _, object: Instance in ipairs(tagged) do
                 if object:IsA("BasePart") then
                     consider(object)
                 end
             end
-        end
-
-        if not fullScan then
-            -- Cheap path: re-check the known parts only, and only
-            -- while at least one signature still holds -- a part that
-            -- lost its tag (collected and cleaned up by the game)
-            -- must drop out immediately, not at the next full scan.
-            local taggedSet: {[Instance]: boolean} = {}
-            if okTagged and type(tagged) == "table" then
-                for _, object: Instance in ipairs(tagged) do
-                    taggedSet[object] = true
-                end
-            end
-            for object: Instance in pairs(knownParts) do
-                if object:IsA("BasePart")
-                    and (taggedSet[object]
-                        or attribute(object, "CoinID") ~= nil
-                        or object.Name == VISUAL_NAME
-                        or object.Name == SERVER_NAME) then
-                    consider(object)
-                end
-            end
-            return found, counts
         end
 
         -- Signatures 2 and 3: the CoinID attribute and the exact spawn
@@ -7385,11 +7382,6 @@ function Module.init(runtime: any): any
                     end
                 end
             end
-        end
-        -- Remember the proven set for the cheap rescans.
-        table.clear(knownParts)
-        for object: Instance in pairs(found) do
-            knownParts[object] = true
         end
         return found, counts
     end
@@ -7440,7 +7432,7 @@ function Module.init(runtime: any): any
         if os.clock() - pickupCache.at < 1.5 then
             return pickupCache.list
         end
-        local found: {[Instance]: string} = collectAll(true)
+        local found: {[Instance]: string} = collectAll()
         refreshPickupCache(found)
         return pickupCache.list
     end
@@ -7569,8 +7561,8 @@ function Module.init(runtime: any): any
         end
 
         -- One pickup, cham(s) on its visible geometry only.
-        local function refresh(fullScan: boolean?): ()
-            local found: {[Instance]: string}, counts: {[string]: number} = collectAll(fullScan)
+        local function refresh(): ()
+            local found: {[Instance]: string}, counts: {[string]: number} = collectAll()
             local visible: {[Instance]: boolean} = {}
             table.clear(lastFamilies)
             for object: Instance, family: string in pairs(found) do
@@ -7623,10 +7615,7 @@ function Module.init(runtime: any): any
                 dirty = true
             end)
         featureConnections.MM2CoinTagRemoved =
-            collectionService:GetInstanceRemovedSignal(COIN_TAG):Connect(function(object: Instance): ()
-                -- Prune at once: the cheap rescan trusts knownParts,
-                -- and a part the game untagged is gone for good.
-                knownParts[object] = nil
+            collectionService:GetInstanceRemovedSignal(COIN_TAG):Connect(function(): ()
                 dirty = true
             end)
         featureConnections.MM2CoinAdded = workspace.DescendantAdded:Connect(function(object: Instance): ()
@@ -7664,27 +7653,20 @@ function Module.init(runtime: any): any
                 end)
         end
 
-        refresh(true)
+        refresh()
         featureConnections.MM2CoinRefresh = TaskManager:Connect(
             function(deltaTime: number): ()
                 -- The adornments follow their parts inside the
-                -- engine. A dirty rescan (a coin spawned or was
-                -- collected) is CHEAP: the game's tag list plus the
-                -- parts already known, no Workspace walk. The full
-                -- three-signature scan runs at enable and on the 5 s
-                -- safety timer only -- walking every descendant per
-                -- CoinCollected was the remaining ESP lag.
+                -- engine; Lua only rescans when the map changed or on
+                -- the safety timer. With ~100 coins out this is the
+                -- whole per-frame cost.
                 drawOverlay()
                 elapsed += deltaTime
-                if dirty then
-                    refresh(false)
-                    return
-                end
-                if elapsed < RESCAN_PERIOD then
+                if not dirty and elapsed < RESCAN_PERIOD then
                     return
                 end
                 elapsed = 0
-                refresh(true)
+                refresh()
             end
         )
     end

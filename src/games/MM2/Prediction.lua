@@ -20,8 +20,10 @@ local Module = {
         with ThrowSpeed 96 by default and no gravity term. A blade therefore
         needs an intercept solve, not a ballistic one.
       * A remote character's replicated position is older than the server
-        state the gun ray is checked against. The aim point must advance by
-        the round trip plus the replication interpolation window.
+        state the gun ray is checked against. The aim point advances by
+        the ONE-WAY transport (half the measured round trip: the server
+        raycasts when the packet arrives and nothing client-side rewinds
+        the target) plus the replication interpolation window.
 
     What this model deliberately does NOT do:
 
@@ -740,7 +742,16 @@ function Module.init(runtime: any): any
         -- measured from the confirmation path for that to happen at all:
         -- v61 recorded none (`echoDelay` nil on all 13 shots).
         local pipeline: number = echo or rtt
-        local horizon: number = pipeline
+        -- One-way, not the round trip. The echo and the engine RTT
+        -- both measure there-and-back, but the packet only travels
+        -- one way before the server raycasts it: nothing in the
+        -- client code (GunFired is a visual confirmation) rewinds
+        -- the target, so leading by the full round trip overshoots
+        -- by the return half -- about a stud at running speed on a
+        -- 80 ms connection, which reads as "the aim is ahead of
+        -- everyone". The closed-loop correction below still
+        -- re-centres whatever residual error real hits measure.
+        local horizon: number = pipeline * 0.5
             + settings.interpolation
             + manualLead()
         if settings.autoLead then
@@ -763,7 +774,11 @@ function Module.init(runtime: any): any
         local rtt: number = robustRtt()
         local echo: number? = echoMedian()
         local pipeline: number = echo or rtt
-        local horizon: number = pipeline
+        -- Same one-way rule as the gun: the blade spawns when the
+        -- packet ARRIVES, so only the outbound half of the measured
+        -- round trip delays it (the flight itself is solved by the
+        -- intercept). Leading by the full round trip threw ahead.
+        local horizon: number = pipeline * 0.5
             + settings.interpolation
             + manualLead()
         if settings.autoLead then
