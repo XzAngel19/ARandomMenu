@@ -4998,12 +4998,14 @@ local function loadGameModule(
         "src/games/MM2/Blatant/KnifeAura.lua",
         "src/games/MM2/Blatant/KnifeThrow.lua",
         "src/games/MM2/Render/RoundEsp.lua",
+        "src/games/MM2/Render/CoinESP.lua",
         "src/games/MM2/Movement/Sprint.lua",
         "src/games/MM2/Blatant/Fling.lua",
         "src/games/MM2/Movement/Teleport.lua",
         "src/games/MM2/Fun/BlurtRoles.lua",
         "src/games/MM2/Other/TrajectoryCalibration.lua",
         "src/games/MM2/Other/CalibrationTrails.lua",
+        "src/games/MM2/Other/AutoUnbox.lua",
     } elseif moduleName == "VD" then {
         "src/games/VD/base.lua",
     } elseif moduleName == "BedFight" then {

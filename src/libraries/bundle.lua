@@ -1,5 +1,5 @@
 return {
-    stamp = "v50-20261017-points",
+    stamp = "v3-20261020-coinfix",
     files = {
         ["src/Profile/142823291.lua"] = [[
 --!strict
@@ -4113,6 +4113,362 @@ end
 return Module
 
 ]],
+        ["src/games/MM2/Other/AutoUnbox.lua"] = [[
+local Module = {
+    Name = "MM2 Auto Unbox",
+    PlaceId = 142823291,
+    Events = {} :: {[string]: any},
+    Initialized = false,
+    Runtime = nil :: any,
+}
+
+local activeCleanup: () -> () = function(): () end
+
+function Module.init(runtime: any): any
+    if Module.Initialized then
+        return Module
+    end
+    local core: any = state.mm2Core
+    assert(type(core) == "table", "MM2 Auto Unbox requires the MM2 core module")
+    Module.Runtime = runtime
+
+    local mm2Settings: any = core.mm2Settings
+    local MM2_ALL_BOXES: {string} = core.MM2_ALL_BOXES
+    local MM2_STANDARD_BOXES: {string} = core.MM2_STANDARD_BOXES
+    local MM2_EVENT_BOXES: {string} = core.MM2_EVENT_BOXES
+    local MM2_BOX_INTERNAL_NAMES: {[string]: {string}} = core.MM2_BOX_INTERNAL_NAMES
+
+    local autoUnboxEnabled: boolean = false
+    local statusText: string = "Idle"
+    local lastAttemptAt: number = -math.huge
+    local foundRemotes: {Instance} = {}
+    local remoteCacheAt: number = -math.huge
+
+    -- Try to locate box-related remotes dynamically
+    local function findBoxRemotes(): {Instance}
+        if os.clock() - remoteCacheAt < 5 and #foundRemotes > 0 then
+            return foundRemotes
+        end
+        remoteCacheAt = os.clock()
+        foundRemotes = {}
+
+        local replicatedStorage: ReplicatedStorage = game:GetService("ReplicatedStorage")
+        local remotesFolder: Instance? = replicatedStorage:FindFirstChild("Remotes")
+        local shopFolder: Instance? = remotesFolder and remotesFolder:FindFirstChild("Shop")
+        local gameplayFolder: Instance? = remotesFolder and remotesFolder:FindFirstChild("Gameplay")
+
+        local candidates: {Instance} = {}
+
+        if shopFolder then
+            for _, child in ipairs(shopFolder:GetChildren()) do
+                if child:IsA("RemoteEvent") or child:IsA("RemoteFunction") then
+                    table.insert(candidates, child)
+                end
+            end
+            -- Deep search
+            for _, desc in ipairs(shopFolder:GetDescendants()) do
+                if desc:IsA("RemoteEvent") or desc:IsA("RemoteFunction") then
+                    if not table.find(candidates, desc) then
+                        table.insert(candidates, desc)
+                    end
+                end
+            end
+        end
+
+        if remotesFolder then
+            for _, desc in ipairs(remotesFolder:GetDescendants()) do
+                if desc:IsA("RemoteEvent") or desc:IsA("RemoteFunction") then
+                    local lname = string.lower(desc.Name)
+                    if string.find(lname, "box", 1, true) or string.find(lname, "crate", 1, true) or string.find(lname, "unbox", 1, true) or string.find(lname, "shop", 1, true) then
+                        if not table.find(candidates, desc) then
+                            table.insert(candidates, desc)
+                        end
+                    end
+                end
+            end
+        end
+
+        -- Global search as fallback
+        if #candidates == 0 then
+            for _, desc in ipairs(replicatedStorage:GetDescendants()) do
+                if desc:IsA("RemoteEvent") or desc:IsA("RemoteFunction") then
+                    local lname = string.lower(desc.Name)
+                    if string.find(lname, "box", 1, true) or string.find(lname, "crate", 1, true) then
+                        table.insert(candidates, desc)
+                        if #candidates >= 12 then break end
+                    end
+                end
+            end
+        end
+
+        foundRemotes = candidates
+        return foundRemotes
+    end
+
+    local function getBoxInternalCandidates(displayName: string): {string}
+        local mapped = MM2_BOX_INTERNAL_NAMES[displayName]
+        if mapped then
+            return mapped
+        end
+        -- Generate variants
+        local noSpace = string.gsub(displayName, "%s+", "")
+        local lowerNoSpace = noSpace
+        return {
+            displayName,
+            noSpace,
+            string.gsub(displayName, " ", ""),
+            string.gsub(displayName, " Box", "Box"),
+            string.gsub(displayName, " Box ", ""),
+            displayName .. "Box",
+            noSpace .. "Box",
+        }
+    end
+
+    local function tryUnboxBox(boxDisplayName: string, currency: string?): boolean
+        local remotes = findBoxRemotes()
+        if #remotes == 0 then
+            statusText = "No box remote found"
+            return false
+        end
+
+        local internalNames = getBoxInternalCandidates(boxDisplayName)
+        local currenciesToTry: {string} = {}
+        if currency and currency ~= "Auto" then
+            table.insert(currenciesToTry, currency)
+        end
+        -- Always try common currency names
+        for _, c in ipairs({"Coins", "Coin", "Diamonds", "Diamond", "MysteryKey", "Key", "SnowToken", "Candy", "BeachBall", "Egg"}) do
+            if not table.find(currenciesToTry, c) then
+                table.insert(currenciesToTry, c)
+            end
+        end
+
+        for _, remote: Instance in ipairs(remotes) do
+            -- Try different argument patterns observed in MM2 scripts
+            for _, boxName in ipairs(internalNames) do
+                for _, curr in ipairs(currenciesToTry) do
+                    local attempts: {{any}} = {
+                        {boxName},
+                        {boxName, curr},
+                        {boxName, curr, 1},
+                        {boxName, 1},
+                        {boxName, "Coins"},
+                        {curr, boxName},
+                    }
+
+                    for _, args in ipairs(attempts) do
+                        local ok, result = pcall(function()
+                            if remote:IsA("RemoteEvent") then
+                                remote:FireServer(table.unpack(args))
+                                return true
+                            else
+                                return remote:InvokeServer(table.unpack(args))
+                            end
+                        end)
+                        if ok then
+                            statusText = "Fired " .. remote.Name .. " with " .. boxName .. " (" .. curr .. ")"
+                            if mm2Settings.autoUnboxShowStatus then
+                                notify("AutoUnbox: attempted " .. boxDisplayName .. " via " .. remote.Name)
+                            end
+                            return true
+                        end
+                    end
+                end
+            end
+        end
+
+        statusText = "Failed to unbox " .. boxDisplayName
+        return false
+    end
+
+    local function getAvailableBoxesFromShopGui(): {string}
+        local found: {[string]: boolean} = {}
+        local playerGui: PlayerGui? = LocalPlayer:FindFirstChildOfClass("PlayerGui")
+        if not playerGui then return {} end
+
+        -- Try to find MainGUI Shop
+        local mainGui: Instance? = playerGui:FindFirstChild("MainGUI")
+        local shopGui: Instance? = mainGui and mainGui:FindFirstChild("Shop") or playerGui:FindFirstChild("Shop", true) or mainGui and mainGui:FindFirstChild("Shop", true)
+
+        if shopGui then
+            for _, desc in ipairs(shopGui:GetDescendants()) do
+                if desc:IsA("TextLabel") or desc:IsA("TextButton") then
+                    local txt: string = (desc :: any).Text or ""
+                    for _, boxName in ipairs(MM2_ALL_BOXES) do
+                        if string.find(string.lower(txt), string.lower(boxName), 1, true) then
+                            found[boxName] = true
+                        end
+                    end
+                    -- Also detect internal names like "MysteryBox2"
+                    for _, boxName in ipairs(MM2_STANDARD_BOXES) do
+                        local internal = string.gsub(boxName, "%s+", "")
+                        if string.find(string.lower(txt), string.lower(internal), 1, true) then
+                            found[boxName] = true
+                        end
+                    end
+                end
+            end
+        end
+
+        local list: {string} = {}
+        for k in pairs(found) do table.insert(list, k) end
+        table.sort(list)
+        return list
+    end
+
+    local function toggleAutoUnbox(enabled: boolean): ()
+        autoUnboxEnabled = enabled
+        disconnectFeatureConnection("MM2AutoUnboxLoop")
+
+        if not enabled then
+            statusText = "Idle"
+            return
+        end
+
+        statusText = "Running - Target: " .. tostring(mm2Settings.autoUnboxTarget)
+
+        -- Initial remote scan
+        findBoxRemotes()
+        local guiBoxes = getAvailableBoxesFromShopGui()
+        if #guiBoxes > 0 and mm2Settings.autoUnboxShowStatus then
+            notify("Shop GUI boxes detected: " .. table.concat(guiBoxes, ", "))
+        end
+
+        local elapsed = 0
+        featureConnections.MM2AutoUnboxLoop = TaskManager:Connect(function(dt: number)
+            elapsed += dt
+            if elapsed < mm2Settings.autoUnboxDelay then return end
+            elapsed = 0
+            if not autoUnboxEnabled then return end
+            if os.clock() - lastAttemptAt < mm2Settings.autoUnboxDelay then return end
+            lastAttemptAt = os.clock()
+
+            local target = mm2Settings.autoUnboxTarget
+            if target == "Auto" then
+                -- Auto: try first affordable? For now pick Mystery Box 2 as default
+                target = "Mystery Box 2"
+            end
+
+            local ok = tryUnboxBox(target, mm2Settings.autoUnboxCurrency)
+            if not ok then
+                -- Try to refresh remotes periodically
+                if os.clock() - remoteCacheAt > 10 then
+                    findBoxRemotes()
+                end
+            end
+        end)
+    end
+
+    -- Expose to core for UI
+    core.toggleAutoUnbox = toggleAutoUnbox
+    core.getAvailableBoxes = function(): {string}
+        local dynamic = getAvailableBoxesFromShopGui()
+        if #dynamic > 0 then return dynamic end
+        return MM2_ALL_BOXES
+    end
+    core.getStandardBoxes = function(): {string} return MM2_STANDARD_BOXES end
+    core.getAllBoxes = function(): {string} return MM2_ALL_BOXES end
+    core.getBoxRemotes = findBoxRemotes
+    core.tryUnboxBox = tryUnboxBox
+    core.getAutoUnboxStatus = function(): string return statusText end
+    core.refreshBoxList = getAvailableBoxesFromShopGui
+
+    -- Create UI in MM2 section? We will hook into existing MM2 features via framework if available
+    -- For now, register as a toggle in the universal Other? Actually we create a dedicated MM2 module entry
+    -- Using the same pattern as other MM2 modules: we need to create features via host.createUniversalFeature if available
+    -- But since this module is loaded via Wurst.lua composite, we can create features directly using host functions if they exist
+
+    local hostEnv: any = getfenv()
+    local createUniversalFeature: any = hostEnv.createUniversalFeature
+    local addToggleOption: any = hostEnv.addToggleOption
+    local addCycleOption: any = hostEnv.addCycleOption
+    local addActionOption: any = hostEnv.addActionOption
+    local addInformationOption: any = hostEnv.addInformationOption
+    local addNumberOption: any = hostEnv.addNumberOption
+
+    if type(createUniversalFeature) == "function" then
+        local BoxFeature = createUniversalFeature(
+            "Auto Unbox",
+            "Automatically unboxes selected MM2 boxes. Detects all boxes (Mystery Box 1/2, Knife Box 1-5, Rainbow Box, Gun Boxes, Event Boxes).",
+            20,
+            function(enabled: boolean) toggleAutoUnbox(enabled) end,
+            {parent = hostEnv.MM2Scroll, registry = hostEnv.mm2Features}
+        )
+
+        if BoxFeature then
+            if type(addCycleOption) == "function" then
+                addCycleOption(BoxFeature, "Target Box", MM2_ALL_BOXES, table.find(MM2_ALL_BOXES, mm2Settings.autoUnboxTarget) or 2, function(value: string)
+                    mm2Settings.autoUnboxTarget = value
+                    if autoUnboxEnabled then
+                        statusText = "Running - Target: " .. value
+                    end
+                end)
+                addCycleOption(BoxFeature, "Currency", {"Auto", "Coins", "Diamonds", "MysteryKey", "SnowToken", "Candy", "BeachBall", "Egg", "Shell", "Heart", "Gift"}, 1, function(value: string)
+                    mm2Settings.autoUnboxCurrency = value
+                end)
+            end
+            if type(addNumberOption) == "function" then
+                addNumberOption(BoxFeature, "Delay", mm2Settings.autoUnboxDelay, 0.2, 5, function(value: number)
+                    mm2Settings.autoUnboxDelay = value
+                end)
+            end
+            if type(addToggleOption) == "function" then
+                addToggleOption(BoxFeature, "Show status", mm2Settings.autoUnboxShowStatus, function(value: boolean)
+                    mm2Settings.autoUnboxShowStatus = value
+                end)
+            end
+            if type(addActionOption) == "function" then
+                addActionOption(BoxFeature, "Scan shop GUI", function()
+                    local boxes = getAvailableBoxesFromShopGui()
+                    if #boxes > 0 then
+                        notify("Detected boxes: " .. table.concat(boxes, ", "))
+                    else
+                        notify("No boxes detected in Shop GUI, using hardcoded list (" .. tostring(#MM2_ALL_BOXES) .. ")")
+                    end
+                end)
+                addActionOption(BoxFeature, "Scan remotes", function()
+                    local rems = findBoxRemotes()
+                    local names: {string} = {}
+                    for _, r in ipairs(rems) do table.insert(names, r.Name .. " (" .. r.ClassName .. ")") end
+                    if #names > 0 then
+                        notify("Box remotes: " .. table.concat(names, ", "))
+                    else
+                        notify("No box remotes found yet. Open shop in game first.")
+                    end
+                end)
+                addActionOption(BoxFeature, "Unbox once", function()
+                    tryUnboxBox(mm2Settings.autoUnboxTarget, mm2Settings.autoUnboxCurrency)
+                end)
+            end
+            if type(addInformationOption) == "function" then
+                addInformationOption(BoxFeature, "Standard boxes cost 1000 Coins / 100 Diamonds / 1 Mystery Key. Event boxes need Snow Tokens/Candies/BeachBalls etc. Auto mode tries to detect current shop currency.")
+            end
+        end
+    end
+
+    activeCleanup = function(): ()
+        toggleAutoUnbox(false)
+    end
+
+    Module.Events = featureConnections
+    Module.Initialized = true
+    return Module
+end
+
+function Module.destroy(): ()
+    if not Module.Initialized then
+        return
+    end
+    Module.Initialized = false
+    pcall(activeCleanup)
+    activeCleanup = function(): () end
+    Module.Events = {}
+    Module.Runtime = nil
+end
+
+return Module
+
+]],
         ["src/games/MM2/Other/CalibrationTrails.lua"] = [[
 local Module = {Name = "MM2 Calibration Trails", Initialized = false}
 local activeCleanup = function() end
@@ -4319,6 +4675,538 @@ function Module.init(runtime: any): any
     activeCleanup = function(): ()
 
     end
+    Module.Events = featureConnections
+    Module.Initialized = true
+    return Module
+end
+
+function Module.destroy(): ()
+    if not Module.Initialized then
+        return
+    end
+    Module.Initialized = false
+    pcall(activeCleanup)
+    activeCleanup = function(): () end
+    Module.Events = {}
+    Module.Runtime = nil
+end
+
+return Module
+
+]],
+        ["src/games/MM2/Render/CoinESP.lua"] = [[
+local Module = {
+    Name = "MM2 Coin ESP",
+    PlaceId = 142823291,
+    Events = {} :: {[string]: any},
+    Initialized = false,
+    Runtime = nil :: any,
+}
+
+local activeCleanup: () -> () = function(): () end
+
+function Module.init(runtime: any): any
+    if Module.Initialized then
+        return Module
+    end
+    local core: any = state.mm2Core
+    assert(type(core) == "table", "MM2 Coin ESP requires the MM2 core module")
+    Module.Runtime = runtime
+
+    local CoinEffects: any = core.CoinEffects
+    local clearEffects: any = core.clearEffects
+    local mm2Settings: any = core.mm2Settings
+    local findCoinContainer: any = core.findCoinContainer
+    local getCoinTypeFromInstance: any = core.getCoinTypeFromInstance
+    local normalizeCoinType: any = core.normalizeCoinType
+    local isPotentialCoinObject: any = core.isPotentialCoinObject
+    local isCoinLikeName: any = core.isCoinLikeName
+    local getCoinServer: any = core.getCoinServer
+    local isLiveCoin: any = core.isLiveCoin
+    local findCoinPartInContainer: any = core.findCoinPartInContainer
+    local getAllCoinTypesDetected: any = core.getAllCoinTypesDetected
+    local shouldShowCoinType: any = core.shouldShowCoinType
+    local normalizedCoinName: any = core.normalizedCoinName
+    local findMM2Map: any = core.findMM2Map
+
+    local coinChamsEnabled: boolean = false
+    local detectedTypesCache: {string} = {}
+    local lastDetectAt: number = -math.huge
+
+    type CoinChamRecord = {
+        highlight: Highlight,
+        billboard: BillboardGui,
+        connections: {RBXScriptConnection},
+        coinType: string?,
+        root: Instance,
+    }
+
+    local coinBoxes: {[BasePart]: CoinChamRecord} = setmetatable({}, {__mode = "k"}) :: any
+
+    local function getCoinVisual(coin: BasePart): BasePart
+        local mainCoin: Instance? = coin:FindFirstChild("MainCoin", true)
+        if mainCoin and mainCoin:IsA("BasePart") then
+            return mainCoin
+        end
+        local coinVisual: Instance? = coin:FindFirstChild("CoinVisual", true)
+        if coinVisual and coinVisual:IsA("BasePart") then
+            return coinVisual
+        end
+        return coin
+    end
+
+    local function removeCoinBox(coin: BasePart): ()
+        local record: CoinChamRecord? = coinBoxes[coin]
+        if not record then
+            return
+        end
+        coinBoxes[coin] = nil
+        for _, connection: RBXScriptConnection in ipairs(record.connections) do
+            pcall(function() connection:Disconnect() end)
+        end
+        if record.highlight then pcall(function() record.highlight:Destroy() end) end
+        if record.billboard then pcall(function() record.billboard:Destroy() end) end
+    end
+
+    local function clearCoinBoxes(): ()
+        for coin: BasePart in pairs(coinBoxes) do
+            removeCoinBox(coin)
+        end
+        clearEffects(CoinEffects)
+        coinBoxes = setmetatable({}, {__mode = "k"}) :: any
+    end
+
+    local function createCoinBillboard(adornee: BasePart, coinType: string?): BillboardGui
+        local billboard: BillboardGui = Instance.new("BillboardGui")
+        billboard.Name = "Wurst_CoinMarker_" .. (coinType or "Coin")
+        billboard.Adornee = adornee
+        billboard.AlwaysOnTop = true
+        billboard.LightInfluence = 0
+        billboard.Size = UDim2.fromOffset(42, 22)
+        billboard.StudsOffsetWorldSpace = Vector3.new(0, 1.2, 0)
+        billboard.Parent = CoinEffects
+
+        local marker: Frame = Instance.new("Frame")
+        marker.Name = "Marker"
+        marker.BackgroundColor3 = mm2Settings.coinColor
+        marker.BackgroundTransparency = 0.18
+        marker.BorderSizePixel = 0
+        marker.Size = UDim2.fromScale(1, 1)
+        marker.Parent = billboard
+
+        local corner: UICorner = Instance.new("UICorner")
+        corner.CornerRadius = UDim.new(0, 4)
+        corner.Parent = marker
+
+        local stroke: UIStroke = Instance.new("UIStroke")
+        stroke.Color = Color3.fromRGB(255, 248, 170)
+        stroke.Thickness = 1.5
+        stroke.Transparency = 0.08
+        stroke.Parent = marker
+
+        local label = Instance.new("TextLabel")
+        label.BackgroundTransparency = 1
+        label.Size = UDim2.fromScale(1, 1)
+        label.Font = Enum.Font.GothamBold
+        label.Text = coinType or "Coin"
+        label.TextColor3 = Color3.fromRGB(255, 255, 255)
+        label.TextStrokeTransparency = 0.2
+        label.TextScaled = true
+        label.Parent = marker
+
+        return billboard
+    end
+
+    local function resolveCoinTypeForInstance(rootInstance: Instance, coinPart: BasePart): string?
+        -- Try direct attribute on root, then on part, then name
+        local t = getCoinTypeFromInstance(rootInstance)
+        if t then return t end
+        t = getCoinTypeFromInstance(coinPart)
+        if t then return t end
+        -- Check parent chain for type
+        local cur: Instance? = coinPart.Parent
+        for _ = 1, 6 do
+            if not cur then break end
+            local ct = getCoinTypeFromInstance(cur)
+            if ct then return ct end
+            cur = cur.Parent
+        end
+        -- Fallback: guess from name
+        local norm = normalizeCoinType(rootInstance.Name) or normalizeCoinType(coinPart.Name)
+        return norm or "Coin"
+    end
+
+    local function addCoinBox(object: Instance): ()
+        local coin: BasePart? = getCoinServer(object)
+        if not coin then
+            -- Also try if object itself is a coin container model with CoinID attribute
+            if object:IsA("Model") or object:IsA("Folder") then
+                local ct = getCoinTypeFromInstance(object)
+                if ct then
+                    local part = findCoinPartInContainer(object)
+                    if part and isLiveCoin(part) then
+                        coin = part
+                    end
+                end
+            end
+            if not coin then return end
+        end
+
+        -- Determine type for filtering
+        local rootForType: Instance = object
+        -- If object is TouchTransmitter, use parent model as root
+        if object:IsA("TouchTransmitter") or object.Name == "TouchInterest" then
+            local p = object.Parent
+            if p and p.Parent then
+                rootForType = p.Parent
+            elseif p then
+                rootForType = p
+            end
+        else
+            -- Walk up to find container model that has CoinID
+            local cur: Instance? = object
+            for _ = 1, 8 do
+                if not cur then break end
+                if cur:GetAttribute("CoinID") ~= nil or cur:FindFirstChild("CoinType") then
+                    rootForType = cur
+                    break
+                end
+                cur = cur.Parent
+            end
+        end
+
+        local coinType = resolveCoinTypeForInstance(rootForType, coin)
+        if not shouldShowCoinType(coinType) then
+            -- If already exists but now filtered out, remove
+            if coinBoxes[coin] then removeCoinBox(coin) end
+            return
+        end
+
+        local visual: BasePart = getCoinVisual(coin)
+        local existing: CoinChamRecord? = coinBoxes[coin]
+        if existing then
+            -- Update if type changed or adornee changed
+            existing.highlight.Adornee = visual
+            existing.billboard.Adornee = visual
+            if existing.coinType ~= coinType then
+                existing.coinType = coinType
+                local lbl = existing.billboard:FindFirstChild("Marker", true)
+                if lbl then
+                    local txt = lbl:FindFirstChildOfClass("TextLabel")
+                    if txt then txt.Text = coinType or "Coin" end
+                end
+            end
+            return
+        end
+
+        local highlight: Highlight = Instance.new("Highlight")
+        highlight.Name = "Wurst_CoinHighlight"
+        highlight.Adornee = visual
+        highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+        highlight.FillColor = mm2Settings.coinColor
+        highlight.FillTransparency = math.clamp(mm2Settings.coinTransparency * 0.65, 0.15, 0.62)
+        highlight.OutlineColor = Color3.fromRGB(255, 246, 135)
+        highlight.OutlineTransparency = 0.04
+        highlight.Parent = coin
+
+        local billboard = createCoinBillboard(visual, coinType)
+
+        local record: CoinChamRecord = {
+            highlight = highlight,
+            billboard = billboard,
+            connections = {},
+            coinType = coinType,
+            root = rootForType,
+        }
+        coinBoxes[coin] = record
+
+        table.insert(record.connections, coin.AncestryChanged:Connect(function()
+            if not isLiveCoin(coin) then
+                removeCoinBox(coin)
+            end
+        end))
+        for _, attrName in ipairs({"Collected", "Delete", "CollectedBy"}) do
+            table.insert(record.connections, coin:GetAttributeChangedSignal(attrName):Connect(function()
+                if not isLiveCoin(coin) then
+                    removeCoinBox(coin)
+                end
+            end))
+        end
+        -- Also watch root removal
+        if rootForType ~= coin then
+            table.insert(record.connections, rootForType.AncestryChanged:Connect(function()
+                if not rootForType.Parent then
+                    removeCoinBox(coin)
+                end
+            end))
+        end
+    end
+
+    local function scanCoins(container: Instance): ()
+        if isPotentialCoinObject(container) then
+            addCoinBox(container)
+        end
+        for _, obj: Instance in ipairs(container:GetDescendants()) do
+            if isPotentialCoinObject(obj) then
+                addCoinBox(obj)
+            end
+        end
+    end
+
+    local function refreshDetectedTypes(forceNotify: boolean?): ()
+        if os.clock() - lastDetectAt < 1 and not forceNotify then return end
+        lastDetectAt = os.clock()
+        local types = getAllCoinTypesDetected()
+        detectedTypesCache = types
+        if #types > 0 and mm2Settings.coinAutoDetect then
+            if forceNotify then
+                notify("Detected coin types: " .. table.concat(types, ", "))
+            end
+            -- If Auto mode and we detected, we keep showing them; user can see status via status text
+            if core.updateCoinStatus then
+                pcall(core.updateCoinStatus, types)
+            end
+        end
+    end
+
+    local function toggleCoinChams(enabled: boolean): ()
+        coinChamsEnabled = enabled
+        disconnectFeatureConnection("MM2CoinAdded")
+        disconnectFeatureConnection("MM2CoinTagged")
+        disconnectFeatureConnection("MM2CoinCollected")
+        disconnectFeatureConnection("MM2CoinMapAdded")
+        disconnectFeatureConnection("MM2CoinContainerWatcher")
+        disconnectFeatureConnection("MM2CoinTypeScanner")
+        clearCoinBoxes()
+
+        if not enabled then
+            return
+        end
+
+        -- Initial scan
+        scanCoins(workspace)
+        local container = findCoinContainer()
+        if container then
+            scanCoins(container)
+        end
+
+        for _, obj: Instance in ipairs(CollectionService:GetTagged("CoinVisual")) do
+            addCoinBox(obj)
+        end
+
+        refreshDetectedTypes(true)
+
+        featureConnections.MM2CoinTagged = CollectionService:GetInstanceAddedSignal("CoinVisual"):Connect(addCoinBox)
+        featureConnections.MM2CoinAdded = workspace.DescendantAdded:Connect(function(obj: Instance)
+            if isPotentialCoinObject(obj) then
+                addCoinBox(obj)
+            end
+        end)
+        featureConnections.MM2CoinMapAdded = workspace.ChildAdded:Connect(function(obj: Instance)
+            task.defer(function()
+                if coinChamsEnabled then
+                    scanCoins(obj)
+                    refreshDetectedTypes(false)
+                end
+            end)
+        end)
+
+        -- Periodic rescan for new maps and type detection
+        local elapsed = 0
+        featureConnections.MM2CoinTypeScanner = TaskManager:Connect(function(dt: number)
+            elapsed += dt
+            if elapsed < 1.2 then return end
+            elapsed = 0
+            if coinChamsEnabled then
+                local c = findCoinContainer()
+                if c then
+                    -- Only scan container children to be cheap
+                    for _, child in ipairs(c:GetChildren()) do
+                        if isPotentialCoinObject(child) then addCoinBox(child) end
+                    end
+                end
+                refreshDetectedTypes(false)
+            end
+        end)
+
+        -- Initial delayed rescans
+        for _, delay in ipairs({0.5, 1.5, 3}) do
+            task.delay(delay, function()
+                if coinChamsEnabled then
+                    scanCoins(workspace)
+                    local cont = findCoinContainer()
+                    if cont then scanCoins(cont) end
+                    refreshDetectedTypes(false)
+                end
+            end)
+        end
+
+        local gameplayRemotes = core.mm2GameplayRemotes
+        local coinCollected: Instance? = gameplayRemotes and gameplayRemotes:FindFirstChild("CoinCollected")
+        if coinCollected and coinCollected:IsA("RemoteEvent") then
+            featureConnections.MM2CoinCollected = coinCollected.OnClientEvent:Connect(function(coinId: any, current: any, max: any)
+                -- Remove by CoinID attribute matching
+                for coin: BasePart in pairs(coinBoxes) do
+                    local attr = coin:GetAttribute("CoinID")
+                    if attr == coinId then
+                        removeCoinBox(coin)
+                    else
+                        -- Also check root model attribute
+                        local rec = coinBoxes[coin]
+                        if rec and rec.root then
+                            local rAttr = rec.root:GetAttribute("CoinID")
+                            if rAttr == coinId then
+                                removeCoinBox(coin)
+                            end
+                        end
+                    end
+                end
+                -- If bag full, optionally notify
+                if type(current) == "number" and type(max) == "number" and current >= max then
+                    if mm2Settings.coinAutoDetect then
+                        -- Bag full, will reset soon
+                    end
+                end
+            end)
+        end
+    end
+
+    -- Expose for settings UI
+    core.toggleCoinChams = toggleCoinChams
+    core.getDetectedCoinTypes = function(): {string}
+        return detectedTypesCache
+    end
+    core.refreshCoinTypes = function(): {string}
+        refreshDetectedTypes(true)
+        return detectedTypesCache
+    end
+    core.updateCoinStatus = nil -- placeholder for UI hook
+    core.coinBoxesCount = function(): number
+        local c = 0
+        for _ in pairs(coinBoxes) do c += 1 end
+        return c
+    end
+
+    -- Provider registration
+    local unregister = {}
+    local itemEsp = services and services.itemEsp
+    assert(itemEsp and type(itemEsp.register) == "function", "MM2 Coin ESP requires the provider service")
+
+    for _, provider in ipairs({
+        {
+            name = "Coin ESP",
+            tooltip = "Highlights MM2 coins with support for all seasonal types (Coin, SnowToken, Candy, BeachBall, Egg, etc.). Auto-detects current currency.",
+            setEnabled = toggleCoinChams,
+        },
+    }) do
+        local release = itemEsp.register(provider)
+        if release then table.insert(unregister, release) end
+    end
+
+    -- Enhanced UI: create a dedicated MM2 Coin feature with options for type selection, auto-detect, colors
+    local hostEnv: any = getfenv()
+    local createUniversalFeature: any = hostEnv.createUniversalFeature
+    local addToggleOption: any = hostEnv.addToggleOption
+    local addCycleOption: any = hostEnv.addCycleOption
+    local addActionOption: any = hostEnv.addActionOption
+    local addInformationOption: any = hostEnv.addInformationOption
+    local addColorOption: any = hostEnv.addColorOption
+    local addNumberOption: any = hostEnv.addNumberOption
+
+    if type(createUniversalFeature) == "function" then
+        local CoinFeature = createUniversalFeature(
+            "Coin ESP Config",
+            "Configure coin ESP: choose which seasonal currency to highlight, auto-detect current server type, colors.",
+            19,
+            function(_enabled: boolean) end,
+            {category = true, parent = hostEnv.MM2Scroll, registry = hostEnv.mm2Features}
+        )
+
+        if CoinFeature then
+            local coinTypeList = core.MM2_COIN_TYPE_LIST or {"Auto", "All", "Coin", "SnowToken", "Candy", "BeachBall", "Egg"}
+            local defaultIndex = table.find(coinTypeList, mm2Settings.coinTypeFilter) or 1
+
+            if type(addCycleOption) == "function" then
+                addCycleOption(CoinFeature, "Coin type", coinTypeList, defaultIndex, function(value: string)
+                    mm2Settings.coinTypeFilter = value
+                    -- Refresh ESP if enabled
+                    if coinChamsEnabled then
+                        toggleCoinChams(false)
+                        task.wait(0.1)
+                        toggleCoinChams(true)
+                    end
+                end)
+            end
+            if type(addToggleOption) == "function" then
+                addToggleOption(CoinFeature, "Auto-detect", mm2Settings.coinAutoDetect, function(value: boolean)
+                    mm2Settings.coinAutoDetect = value
+                end)
+                addToggleOption(CoinFeature, "Show all in Auto", mm2Settings.coinShowAllInAuto, function(value: boolean)
+                    mm2Settings.coinShowAllInAuto = value
+                    if coinChamsEnabled then
+                        toggleCoinChams(false)
+                        task.wait(0.1)
+                        toggleCoinChams(true)
+                    end
+                end)
+            end
+            if type(addColorOption) == "function" then
+                addColorOption(CoinFeature, "Coin color", mm2Settings.coinColor, function(value: Color3)
+                    mm2Settings.coinColor = value
+                    if coinChamsEnabled then
+                        -- Update existing highlights
+                        for _, rec in pairs(coinBoxes) do
+                            if rec.highlight then rec.highlight.FillColor = value end
+                            local marker = rec.billboard and rec.billboard:FindFirstChild("Marker")
+                            if marker then marker.BackgroundColor3 = value end
+                        end
+                    end
+                end)
+            end
+            if type(addNumberOption) == "function" then
+                addNumberOption(CoinFeature, "Coin transparency", mm2Settings.coinTransparency * 10, 0, 10, function(value: number)
+                    mm2Settings.coinTransparency = value / 10
+                    if coinChamsEnabled then
+                        for _, rec in pairs(coinBoxes) do
+                            if rec.highlight then
+                                rec.highlight.FillTransparency = math.clamp(mm2Settings.coinTransparency * 0.65, 0.15, 0.62)
+                            end
+                        end
+                    end
+                end)
+            end
+            if type(addActionOption) == "function" then
+                addActionOption(CoinFeature, "Refresh detected types", function()
+                    local types = getAllCoinTypesDetected()
+                    if #types > 0 then
+                        notify("Detected: " .. table.concat(types, ", ") .. " | Count: " .. tostring(core.coinBoxesCount()))
+                    else
+                        notify("No coin types detected. Map may not be loaded.")
+                    end
+                end)
+                addActionOption(CoinFeature, "Rescan coins", function()
+                    if coinChamsEnabled then
+                        toggleCoinChams(false)
+                        task.wait(0.1)
+                        toggleCoinChams(true)
+                        notify("Rescanned coins: " .. tostring(core.coinBoxesCount()))
+                    else
+                        notify("Enable Coin ESP first")
+                    end
+                end)
+            end
+            if type(addInformationOption) == "function" then
+                addInformationOption(CoinFeature, "Coin types: Coin (normal), SnowToken (Christmas), Candy (Halloween), BeachBall (Summer), Egg (Easter), Gift, Heart, Shell, Log. Auto mode detects what the server spawns. Use All to show everything.")
+            end
+        end
+    end
+
+    activeCleanup = function(): ()
+        for _, release in ipairs(unregister) do pcall(release) end
+        table.clear(unregister)
+        toggleCoinChams(false)
+    end
+
     Module.Events = featureConnections
     Module.Initialized = true
     return Module
@@ -4572,12 +5460,23 @@ local mm2Settings = {
     blurtFake = false,
     coinColor = Color3.fromRGB(230, 220, 65),
     coinTransparency = 0.8,
+    coinTypeFilter = "Auto",
+    coinAutoDetect = true,
+    coinShowAllInAuto = false,
+    coinEspMode = "Highlight+Billboard",
     trapColor = Color3.fromRGB(145, 25, 25),
     trapTransparency = 0.7,
 
     gunColor = Color3.fromRGB(255, 215, 0),
     gunTransparency = 0.55,
     autoPlayId = "",
+
+    -- Box Auto-Unbox
+    autoUnboxEnabled = false,
+    autoUnboxTarget = "Mystery Box 2",
+    autoUnboxCurrency = "Coins",
+    autoUnboxDelay = 0.6,
+    autoUnboxShowStatus = true,
 }
 
 local function isProtectedTarget(player: Player?): boolean
@@ -5174,6 +6073,168 @@ local MM2_MAP_COIN_CONTAINERS: {string} = {
     "Coins",
 }
 
+-- All known MM2 currencies that can appear as collectibles in CoinContainer.
+-- Normalized keys are used for filtering; values are display names.
+local MM2_KNOWN_COIN_TYPES: {[string]: string} = {
+    Coin = "Coin",
+    Coins = "Coin",
+    SnowToken = "SnowToken",
+    SnowTokens = "SnowToken",
+    Snow_Token = "SnowToken",
+    Snow = "SnowToken",
+    Candy = "Candy",
+    Candies = "Candy",
+    BeachBall = "BeachBall",
+    BeachBalls = "BeachBall",
+    Beach_Ball = "BeachBall",
+    Beach = "BeachBall",
+    Egg = "Egg",
+    Eggs = "Egg",
+    Gift = "Gift",
+    Gifts = "Gift",
+    Heart = "Heart",
+    Hearts = "Heart",
+    Shell = "Shell",
+    Shells = "Shell",
+    Log = "Log",
+    Logs = "Log",
+    Snowflake = "SnowToken",
+    BlueToken = "BlueToken",
+    RedToken = "RedToken",
+}
+
+local MM2_COIN_TYPE_LIST: {string} = {
+    "Auto",
+    "All",
+    "Coin",
+    "SnowToken",
+    "Candy",
+    "BeachBall",
+    "Egg",
+    "Gift",
+    "Heart",
+    "Shell",
+    "Log",
+}
+
+local MM2_COIN_NAME_KEYWORDS: {string} = {
+    "coin",
+    "snow",
+    "candy",
+    "beach",
+    "egg",
+    "gift",
+    "heart",
+    "shell",
+    "log",
+    "token",
+    "ball",
+}
+
+-- Box definitions: standard + event boxes from wiki + known internal names.
+local MM2_STANDARD_BOXES: {string} = {
+    "Mystery Box 1",
+    "Mystery Box 2",
+    "Knife Box 1",
+    "Knife Box 2",
+    "Knife Box 3",
+    "Knife Box 4",
+    "Knife Box 5",
+    "Gun Box 1",
+    "Gun Box 2",
+    "Gun Box 3",
+    "Rainbow Box",
+}
+
+local MM2_EVENT_BOXES: {string} = {
+    "2015 Christmas Knife Box",
+    "2015 Christmas Gun Box",
+    "2016 Halloween Box",
+    "2017 Halloween Box",
+    "2017 Christmas Box",
+    "2018 Halloween Box",
+    "2018 Christmas Box",
+    "2019 Halloween Box",
+    "2019 Christmas Box",
+    "2020 Halloween Box",
+    "2020 Christmas Box",
+    "2021 Halloween Box",
+    "2021 Christmas Box",
+    "2022 Halloween Box",
+    "2022 Christmas Box",
+    "2023 Halloween Box",
+    "2023 Christmas Box",
+    "2024 Summer Box",
+    "2024 Halloween Box",
+    "2024 Christmas Box",
+    "2025 Summer Box",
+    "2025 Halloween Box",
+    "2025 Christmas Box",
+    "2026 Summer Box",
+    "Summer Box",
+    "Halloween Box",
+    "Christmas Box",
+}
+
+local MM2_ALL_BOXES: {string} = {}
+do
+    for _, b in ipairs(MM2_STANDARD_BOXES) do table.insert(MM2_ALL_BOXES, b) end
+    for _, b in ipairs(MM2_EVENT_BOXES) do table.insert(MM2_ALL_BOXES, b) end
+end
+
+-- Internal box name mappings (display -> possible internal IDs used by remotes)
+local MM2_BOX_INTERNAL_NAMES: {[string]: {string}} = {
+    ["Mystery Box 1"] = {"MysteryBox1", "Mystery Box 1", "MysteryBox 1", "Mystery1"},
+    ["Mystery Box 2"] = {"MysteryBox2", "Mystery Box 2", "MysteryBox 2", "Mystery2"},
+    ["Knife Box 1"] = {"KnifeBox1", "Knife Box 1", "KnifeBox 1"},
+    ["Knife Box 2"] = {"KnifeBox2", "Knife Box 2", "KnifeBox 2"},
+    ["Knife Box 3"] = {"KnifeBox3", "Knife Box 3", "KnifeBox 3"},
+    ["Knife Box 4"] = {"KnifeBox4", "Knife Box 4", "KnifeBox 4"},
+    ["Knife Box 5"] = {"KnifeBox5", "Knife Box 5", "KnifeBox 5"},
+    ["Gun Box 1"] = {"GunBox1", "Gun Box 1", "GunBox 1"},
+    ["Gun Box 2"] = {"GunBox2", "Gun Box 2", "GunBox 2"},
+    ["Gun Box 3"] = {"GunBox3", "Gun Box 3", "GunBox 3"},
+    ["Rainbow Box"] = {"RainbowBox", "Rainbow Box", "Rainbow"},
+    ["2024 Summer Box"] = {"Summer2024Box", "SummerBox2024", "2024SummerBox", "Summer Box 2024", "Beach2024Box"},
+    ["2024 Halloween Box"] = {"Halloween2024Box", "HalloweenBox2024", "2024HalloweenBox"},
+    ["2024 Christmas Box"] = {"Christmas2024Box", "ChristmasBox2024", "2024ChristmasBox", "Winter2024Box"},
+    ["2025 Summer Box"] = {"Summer2025Box", "SummerBox2025", "2025SummerBox"},
+    ["2025 Halloween Box"] = {"Halloween2025Box", "HalloweenBox2025"},
+    ["2025 Christmas Box"] = {"Christmas2025Box", "ChristmasBox2025", "Winter2025Box"},
+    ["Summer Box"] = {"SummerBox", "BeachBox", "Summer2024Box", "Summer2025Box"},
+    ["Halloween Box"] = {"HalloweenBox", "Halloween2024Box", "Halloween2025Box"},
+    ["Christmas Box"] = {"ChristmasBox", "WinterBox", "Christmas2024Box", "Christmas2025Box"},
+}
+
+local function normalizeCoinType(raw: any): string?
+    if type(raw) ~= "string" then return nil end
+    local trimmed = string.match(raw, "^%s*(.-)%s*$") or raw
+    if trimmed == "" then return nil end
+    -- Remove spaces, underscores, lower first char handling
+    local noSpace = string.gsub(trimmed, "[%s_]", "")
+    -- Direct lookup
+    if MM2_KNOWN_COIN_TYPES[trimmed] then return MM2_KNOWN_COIN_TYPES[trimmed] end
+    if MM2_KNOWN_COIN_TYPES[noSpace] then return MM2_KNOWN_COIN_TYPES[noSpace] end
+    -- Case-insensitive
+    for key, canon in pairs(MM2_KNOWN_COIN_TYPES) do
+        if string.lower(key) == string.lower(trimmed) or string.lower(key) == string.lower(noSpace) then
+            return canon
+        end
+    end
+    -- Keyword fallback
+    local lower = string.lower(trimmed)
+    if string.find(lower, "snow", 1, true) then return "SnowToken" end
+    if string.find(lower, "candy", 1, true) then return "Candy" end
+    if string.find(lower, "beach", 1, true) or string.find(lower, "ball", 1, true) then return "BeachBall" end
+    if string.find(lower, "egg", 1, true) then return "Egg" end
+    if string.find(lower, "gift", 1, true) then return "Gift" end
+    if string.find(lower, "heart", 1, true) then return "Heart" end
+    if string.find(lower, "shell", 1, true) then return "Shell" end
+    if string.find(lower, "log", 1, true) then return "Log" end
+    if string.find(lower, "coin", 1, true) then return "Coin" end
+    return nil
+end
+
 local LOBBY_MODEL_NAMES: {string} = {
     "Lobby",
     "MainLobby",
@@ -5231,6 +6292,204 @@ local function findMM2Map(): Instance?
     mm2MapCache.at = os.clock()
     mm2MapCache.map = findMM2MapUncached()
     return mm2MapCache.map
+end
+
+-- ===== Coin helpers (expanded for all seasonal currencies) =====
+local function getCoinTypeFromInstance(object: Instance): string?
+    -- Direct attribute CoinID
+    local attr = object:GetAttribute(\"CoinID\") or object:GetAttribute(\"CoinType\") or object:GetAttribute(\"Currency\") or object:GetAttribute(\"CurrencyType\")
+    if type(attr) == \"string\" then
+        local norm = normalizeCoinType(attr)
+        if norm then return norm end
+    end
+    -- Child ValueObjects
+    for _, childName in ipairs({\"CoinType\", \"CoinID\", \"Currency\", \"CurrencyType\", \"Type\"}) do
+        local child = object:FindFirstChild(childName)
+        if child and child:IsA(\"ValueBase\") then
+            local v = (child :: any).Value
+            if type(v) == \"string\" then
+                local norm = normalizeCoinType(v)
+                if norm then return norm end
+            end
+        end
+    end
+    -- Name based fallback
+    local norm = normalizeCoinType(object.Name)
+    if norm then return norm end
+    -- Parent chain check for coin container child
+    local parent = object.Parent
+    if parent then
+        local pAttr = parent:GetAttribute(\"CoinID\") or parent:GetAttribute(\"CoinType\")
+        if type(pAttr) == \"string\" then
+            local n = normalizeCoinType(pAttr)
+            if n then return n end
+        end
+    end
+    return nil
+end
+
+local function normalizedCoinName(object: Instance): string
+    return string.gsub(string.lower(object.Name), \"[^%w]\", \"\")
+end
+
+local function isCoinLikeName(object: Instance): boolean
+    local n = normalizedCoinName(object)
+    for _, kw in ipairs(MM2_COIN_NAME_KEYWORDS) do
+        if string.find(n, kw, 1, true) then return true end
+    end
+    return false
+end
+
+local function isPotentialCoinObject(object: Instance): boolean
+    if object:GetAttribute(\"CoinID\") ~= nil or object:GetAttribute(\"CoinType\") ~= nil then return true end
+    if object:FindFirstChild(\"CoinType\") or object:FindFirstChild(\"CoinID\") then return true end
+    if CollectionService:HasTag(object, \"CoinVisual\") then return true end
+    if object:IsA(\"TouchTransmitter\") or object.Name == \"TouchInterest\" then return true end
+    if isCoinLikeName(object) then
+        -- Must be in coin container or have touch interest to avoid false positives
+        if object:IsA(\"BasePart\") then return true end
+        if object:IsA(\"Model\") or object:IsA(\"Folder\") then return true end
+    end
+    return false
+end
+
+local function isLiveCoin(coin: BasePart): boolean
+    return coin:IsDescendantOf(workspace)
+        and coin:GetAttribute(\"Delete\") ~= true
+        and coin:GetAttribute(\"Collected\") ~= true
+        and coin:GetAttribute(\"CollectedBy\") == nil
+end
+
+local function findCoinPartInContainer(container: Instance): BasePart?
+    for _, descendant: Instance in ipairs(container:GetDescendants()) do
+        if descendant:IsA(\"BasePart\") then
+            local nm = normalizedCoinName(descendant)
+            if string.find(nm, \"coinserver\", 1, true) then
+                return descendant
+            end
+        end
+    end
+    if container:IsA(\"Model\") and container.PrimaryPart then
+        return container.PrimaryPart
+    end
+    for _, preferredName: string in ipairs({\"CoinVisual\", \"MainCoin\", \"Coin\", \"SnowToken\", \"Candy\", \"BeachBall\", \"Egg\"}) do
+        local preferred: Instance? = container:FindFirstChild(preferredName, true)
+        if preferred and preferred:IsA(\"BasePart\") then
+            return preferred
+        end
+    end
+    return container:FindFirstChildWhichIsA(\"BasePart\", true)
+end
+
+local function getCoinServer(object: Instance?): BasePart?
+    if not object or object:GetAttribute(\"Delete\") == true then return nil end
+
+    local coinContainer: Instance? = nil
+    local cursor: Instance? = object
+    for _index: number = 1, 12 do
+        if not cursor or cursor == workspace then break end
+        if cursor:IsA(\"BasePart\") then
+            local nm = normalizedCoinName(cursor)
+            if string.find(nm, \"coinserver\", 1, true) or cursor:GetAttribute(\"CoinID\") ~= nil then
+                return isLiveCoin(cursor) and cursor or nil
+            end
+        end
+        if (cursor:IsA(\"Model\") or cursor:IsA(\"Folder\")) and isCoinLikeName(cursor) then
+            coinContainer = cursor
+        end
+        -- If this is a touch transmitter, its parent is the actual coin part
+        if object:IsA(\"TouchTransmitter\") or object.Name == \"TouchInterest\" then
+            local parent = object.Parent
+            if parent and parent:IsA(\"BasePart\") then
+                return isLiveCoin(parent) and parent or nil
+            end
+        end
+        cursor = cursor.Parent
+    end
+
+    if coinContainer then
+        local containerPart: BasePart? = findCoinPartInContainer(coinContainer)
+        if containerPart and isLiveCoin(containerPart) then
+            return containerPart
+        end
+    end
+
+    if object:IsA(\"BasePart\") and isCoinLikeName(object) then
+        return isLiveCoin(object) and object or nil
+    end
+
+    return nil
+end
+
+local function findCoinContainer(): Instance?
+    -- Try map first
+    local map = findMM2Map()
+    if map then
+        for _, name in ipairs(MM2_MAP_COIN_CONTAINERS) do
+            local c = map:FindFirstChild(name)
+            if c then return c end
+        end
+        -- Deep search in map
+        for _, name in ipairs(MM2_MAP_COIN_CONTAINERS) do
+            local c = map:FindFirstChild(name, true)
+            if c then return c end
+        end
+    end
+    -- Global search
+    for _, name in ipairs(MM2_MAP_COIN_CONTAINERS) do
+        local c = workspace:FindFirstChild(name, true)
+        if c then return c end
+    end
+    return nil
+end
+
+local function scanCoinTypesInContainer(container: Instance?): {[string]: boolean}
+    local found: {[string]: boolean} = {}
+    if not container then return found end
+    for _, child in ipairs(container:GetChildren()) do
+        local t = getCoinTypeFromInstance(child)
+        if t then
+            found[t] = true
+        else
+            -- Check descendants for attribute
+            for _, desc in ipairs(child:GetDescendants()) do
+                local dt = getCoinTypeFromInstance(desc)
+                if dt then found[dt] = true; break end
+            end
+            -- Fallback name detection
+            local nt = normalizeCoinType(child.Name)
+            if nt then found[nt] = true end
+        end
+    end
+    return found
+end
+
+local function getAllCoinTypesDetected(): {string}
+    local container = findCoinContainer()
+    local map = scanCoinTypesInContainer(container)
+    local list: {string} = {}
+    for k in pairs(map) do table.insert(list, k) end
+    table.sort(list)
+    return list
+end
+
+local function shouldShowCoinType(coinType: string?): boolean
+    local filter = mm2Settings.coinTypeFilter
+    if filter == \"All\" or filter == \"\" then return true end
+    if filter == \"Auto\" then
+        if mm2Settings.coinShowAllInAuto then return true end
+        -- In Auto, if we have detected types, show only those; otherwise show all
+        local detected = getAllCoinTypesDetected()
+        if #detected == 0 then return true end
+        if not coinType then return true end
+        for _, dt in ipairs(detected) do
+            if dt == coinType then return true end
+        end
+        -- If coin type not in detected list but we are in Auto, still show if it's the only type? Actually show all detected, hide others.
+        return false
+    end
+    if not coinType then return true end
+    return coinType == filter
 end
 
 local droppedGunCache: {gun: (Model | BasePart)?, at: number} =
@@ -8564,6 +9823,27 @@ state.mm2Core = {
 
     findMM2Map = findMM2Map,
     findDroppedGun = findDroppedGun,
+    findCoinContainer = findCoinContainer,
+    getCoinTypeFromInstance = getCoinTypeFromInstance,
+    normalizeCoinType = normalizeCoinType,
+    isPotentialCoinObject = isPotentialCoinObject,
+    isCoinLikeName = isCoinLikeName,
+    getCoinServer = getCoinServer,
+    isLiveCoin = isLiveCoin,
+    findCoinPartInContainer = findCoinPartInContainer,
+    scanCoinTypesInContainer = scanCoinTypesInContainer,
+    getAllCoinTypesDetected = getAllCoinTypesDetected,
+    shouldShowCoinType = shouldShowCoinType,
+    normalizedCoinName = normalizedCoinName,
+
+    MM2_MAP_COIN_CONTAINERS = MM2_MAP_COIN_CONTAINERS,
+    MM2_KNOWN_COIN_TYPES = MM2_KNOWN_COIN_TYPES,
+    MM2_COIN_TYPE_LIST = MM2_COIN_TYPE_LIST,
+    MM2_COIN_NAME_KEYWORDS = MM2_COIN_NAME_KEYWORDS,
+    MM2_STANDARD_BOXES = MM2_STANDARD_BOXES,
+    MM2_EVENT_BOXES = MM2_EVENT_BOXES,
+    MM2_ALL_BOXES = MM2_ALL_BOXES,
+    MM2_BOX_INTERNAL_NAMES = MM2_BOX_INTERNAL_NAMES,
 
     isWeaponPathClear = isWeaponPathClear,
     isGunPathClear = isGunPathClear,

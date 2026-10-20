@@ -98,12 +98,23 @@ local mm2Settings = {
     blurtFake = false,
     coinColor = Color3.fromRGB(230, 220, 65),
     coinTransparency = 0.8,
+    coinTypeFilter = "Auto",
+    coinAutoDetect = true,
+    coinShowAllInAuto = false,
+    coinEspMode = "Highlight+Billboard",
     trapColor = Color3.fromRGB(145, 25, 25),
     trapTransparency = 0.7,
 
     gunColor = Color3.fromRGB(255, 215, 0),
     gunTransparency = 0.55,
     autoPlayId = "",
+
+    -- Box Auto-Unbox
+    autoUnboxEnabled = false,
+    autoUnboxTarget = "Mystery Box 2",
+    autoUnboxCurrency = "Coins",
+    autoUnboxDelay = 0.6,
+    autoUnboxShowStatus = true,
 }
 
 local function isProtectedTarget(player: Player?): boolean
@@ -700,6 +711,168 @@ local MM2_MAP_COIN_CONTAINERS: {string} = {
     "Coins",
 }
 
+-- All known MM2 currencies that can appear as collectibles in CoinContainer.
+-- Normalized keys are used for filtering; values are display names.
+local MM2_KNOWN_COIN_TYPES: {[string]: string} = {
+    Coin = "Coin",
+    Coins = "Coin",
+    SnowToken = "SnowToken",
+    SnowTokens = "SnowToken",
+    Snow_Token = "SnowToken",
+    Snow = "SnowToken",
+    Candy = "Candy",
+    Candies = "Candy",
+    BeachBall = "BeachBall",
+    BeachBalls = "BeachBall",
+    Beach_Ball = "BeachBall",
+    Beach = "BeachBall",
+    Egg = "Egg",
+    Eggs = "Egg",
+    Gift = "Gift",
+    Gifts = "Gift",
+    Heart = "Heart",
+    Hearts = "Heart",
+    Shell = "Shell",
+    Shells = "Shell",
+    Log = "Log",
+    Logs = "Log",
+    Snowflake = "SnowToken",
+    BlueToken = "BlueToken",
+    RedToken = "RedToken",
+}
+
+local MM2_COIN_TYPE_LIST: {string} = {
+    "Auto",
+    "All",
+    "Coin",
+    "SnowToken",
+    "Candy",
+    "BeachBall",
+    "Egg",
+    "Gift",
+    "Heart",
+    "Shell",
+    "Log",
+}
+
+local MM2_COIN_NAME_KEYWORDS: {string} = {
+    "coin",
+    "snow",
+    "candy",
+    "beach",
+    "egg",
+    "gift",
+    "heart",
+    "shell",
+    "log",
+    "token",
+    "ball",
+}
+
+-- Box definitions: standard + event boxes from wiki + known internal names.
+local MM2_STANDARD_BOXES: {string} = {
+    "Mystery Box 1",
+    "Mystery Box 2",
+    "Knife Box 1",
+    "Knife Box 2",
+    "Knife Box 3",
+    "Knife Box 4",
+    "Knife Box 5",
+    "Gun Box 1",
+    "Gun Box 2",
+    "Gun Box 3",
+    "Rainbow Box",
+}
+
+local MM2_EVENT_BOXES: {string} = {
+    "2015 Christmas Knife Box",
+    "2015 Christmas Gun Box",
+    "2016 Halloween Box",
+    "2017 Halloween Box",
+    "2017 Christmas Box",
+    "2018 Halloween Box",
+    "2018 Christmas Box",
+    "2019 Halloween Box",
+    "2019 Christmas Box",
+    "2020 Halloween Box",
+    "2020 Christmas Box",
+    "2021 Halloween Box",
+    "2021 Christmas Box",
+    "2022 Halloween Box",
+    "2022 Christmas Box",
+    "2023 Halloween Box",
+    "2023 Christmas Box",
+    "2024 Summer Box",
+    "2024 Halloween Box",
+    "2024 Christmas Box",
+    "2025 Summer Box",
+    "2025 Halloween Box",
+    "2025 Christmas Box",
+    "2026 Summer Box",
+    "Summer Box",
+    "Halloween Box",
+    "Christmas Box",
+}
+
+local MM2_ALL_BOXES: {string} = {}
+do
+    for _, b in ipairs(MM2_STANDARD_BOXES) do table.insert(MM2_ALL_BOXES, b) end
+    for _, b in ipairs(MM2_EVENT_BOXES) do table.insert(MM2_ALL_BOXES, b) end
+end
+
+-- Internal box name mappings (display -> possible internal IDs used by remotes)
+local MM2_BOX_INTERNAL_NAMES: {[string]: {string}} = {
+    ["Mystery Box 1"] = {"MysteryBox1", "Mystery Box 1", "MysteryBox 1", "Mystery1"},
+    ["Mystery Box 2"] = {"MysteryBox2", "Mystery Box 2", "MysteryBox 2", "Mystery2"},
+    ["Knife Box 1"] = {"KnifeBox1", "Knife Box 1", "KnifeBox 1"},
+    ["Knife Box 2"] = {"KnifeBox2", "Knife Box 2", "KnifeBox 2"},
+    ["Knife Box 3"] = {"KnifeBox3", "Knife Box 3", "KnifeBox 3"},
+    ["Knife Box 4"] = {"KnifeBox4", "Knife Box 4", "KnifeBox 4"},
+    ["Knife Box 5"] = {"KnifeBox5", "Knife Box 5", "KnifeBox 5"},
+    ["Gun Box 1"] = {"GunBox1", "Gun Box 1", "GunBox 1"},
+    ["Gun Box 2"] = {"GunBox2", "Gun Box 2", "GunBox 2"},
+    ["Gun Box 3"] = {"GunBox3", "Gun Box 3", "GunBox 3"},
+    ["Rainbow Box"] = {"RainbowBox", "Rainbow Box", "Rainbow"},
+    ["2024 Summer Box"] = {"Summer2024Box", "SummerBox2024", "2024SummerBox", "Summer Box 2024", "Beach2024Box"},
+    ["2024 Halloween Box"] = {"Halloween2024Box", "HalloweenBox2024", "2024HalloweenBox"},
+    ["2024 Christmas Box"] = {"Christmas2024Box", "ChristmasBox2024", "2024ChristmasBox", "Winter2024Box"},
+    ["2025 Summer Box"] = {"Summer2025Box", "SummerBox2025", "2025SummerBox"},
+    ["2025 Halloween Box"] = {"Halloween2025Box", "HalloweenBox2025"},
+    ["2025 Christmas Box"] = {"Christmas2025Box", "ChristmasBox2025", "Winter2025Box"},
+    ["Summer Box"] = {"SummerBox", "BeachBox", "Summer2024Box", "Summer2025Box"},
+    ["Halloween Box"] = {"HalloweenBox", "Halloween2024Box", "Halloween2025Box"},
+    ["Christmas Box"] = {"ChristmasBox", "WinterBox", "Christmas2024Box", "Christmas2025Box"},
+}
+
+local function normalizeCoinType(raw: any): string?
+    if type(raw) ~= "string" then return nil end
+    local trimmed = string.match(raw, "^%s*(.-)%s*$") or raw
+    if trimmed == "" then return nil end
+    -- Remove spaces, underscores, lower first char handling
+    local noSpace = string.gsub(trimmed, "[%s_]", "")
+    -- Direct lookup
+    if MM2_KNOWN_COIN_TYPES[trimmed] then return MM2_KNOWN_COIN_TYPES[trimmed] end
+    if MM2_KNOWN_COIN_TYPES[noSpace] then return MM2_KNOWN_COIN_TYPES[noSpace] end
+    -- Case-insensitive
+    for key, canon in pairs(MM2_KNOWN_COIN_TYPES) do
+        if string.lower(key) == string.lower(trimmed) or string.lower(key) == string.lower(noSpace) then
+            return canon
+        end
+    end
+    -- Keyword fallback
+    local lower = string.lower(trimmed)
+    if string.find(lower, "snow", 1, true) then return "SnowToken" end
+    if string.find(lower, "candy", 1, true) then return "Candy" end
+    if string.find(lower, "beach", 1, true) or string.find(lower, "ball", 1, true) then return "BeachBall" end
+    if string.find(lower, "egg", 1, true) then return "Egg" end
+    if string.find(lower, "gift", 1, true) then return "Gift" end
+    if string.find(lower, "heart", 1, true) then return "Heart" end
+    if string.find(lower, "shell", 1, true) then return "Shell" end
+    if string.find(lower, "log", 1, true) then return "Log" end
+    if string.find(lower, "coin", 1, true) then return "Coin" end
+    return nil
+end
+
 local LOBBY_MODEL_NAMES: {string} = {
     "Lobby",
     "MainLobby",
@@ -757,6 +930,204 @@ local function findMM2Map(): Instance?
     mm2MapCache.at = os.clock()
     mm2MapCache.map = findMM2MapUncached()
     return mm2MapCache.map
+end
+
+-- ===== Coin helpers (expanded for all seasonal currencies) =====
+local function getCoinTypeFromInstance(object: Instance): string?
+    -- Direct attribute CoinID
+    local attr = object:GetAttribute(\"CoinID\") or object:GetAttribute(\"CoinType\") or object:GetAttribute(\"Currency\") or object:GetAttribute(\"CurrencyType\")
+    if type(attr) == \"string\" then
+        local norm = normalizeCoinType(attr)
+        if norm then return norm end
+    end
+    -- Child ValueObjects
+    for _, childName in ipairs({\"CoinType\", \"CoinID\", \"Currency\", \"CurrencyType\", \"Type\"}) do
+        local child = object:FindFirstChild(childName)
+        if child and child:IsA(\"ValueBase\") then
+            local v = (child :: any).Value
+            if type(v) == \"string\" then
+                local norm = normalizeCoinType(v)
+                if norm then return norm end
+            end
+        end
+    end
+    -- Name based fallback
+    local norm = normalizeCoinType(object.Name)
+    if norm then return norm end
+    -- Parent chain check for coin container child
+    local parent = object.Parent
+    if parent then
+        local pAttr = parent:GetAttribute(\"CoinID\") or parent:GetAttribute(\"CoinType\")
+        if type(pAttr) == \"string\" then
+            local n = normalizeCoinType(pAttr)
+            if n then return n end
+        end
+    end
+    return nil
+end
+
+local function normalizedCoinName(object: Instance): string
+    return string.gsub(string.lower(object.Name), \"[^%w]\", \"\")
+end
+
+local function isCoinLikeName(object: Instance): boolean
+    local n = normalizedCoinName(object)
+    for _, kw in ipairs(MM2_COIN_NAME_KEYWORDS) do
+        if string.find(n, kw, 1, true) then return true end
+    end
+    return false
+end
+
+local function isPotentialCoinObject(object: Instance): boolean
+    if object:GetAttribute(\"CoinID\") ~= nil or object:GetAttribute(\"CoinType\") ~= nil then return true end
+    if object:FindFirstChild(\"CoinType\") or object:FindFirstChild(\"CoinID\") then return true end
+    if CollectionService:HasTag(object, \"CoinVisual\") then return true end
+    if object:IsA(\"TouchTransmitter\") or object.Name == \"TouchInterest\" then return true end
+    if isCoinLikeName(object) then
+        -- Must be in coin container or have touch interest to avoid false positives
+        if object:IsA(\"BasePart\") then return true end
+        if object:IsA(\"Model\") or object:IsA(\"Folder\") then return true end
+    end
+    return false
+end
+
+local function isLiveCoin(coin: BasePart): boolean
+    return coin:IsDescendantOf(workspace)
+        and coin:GetAttribute(\"Delete\") ~= true
+        and coin:GetAttribute(\"Collected\") ~= true
+        and coin:GetAttribute(\"CollectedBy\") == nil
+end
+
+local function findCoinPartInContainer(container: Instance): BasePart?
+    for _, descendant: Instance in ipairs(container:GetDescendants()) do
+        if descendant:IsA(\"BasePart\") then
+            local nm = normalizedCoinName(descendant)
+            if string.find(nm, \"coinserver\", 1, true) then
+                return descendant
+            end
+        end
+    end
+    if container:IsA(\"Model\") and container.PrimaryPart then
+        return container.PrimaryPart
+    end
+    for _, preferredName: string in ipairs({\"CoinVisual\", \"MainCoin\", \"Coin\", \"SnowToken\", \"Candy\", \"BeachBall\", \"Egg\"}) do
+        local preferred: Instance? = container:FindFirstChild(preferredName, true)
+        if preferred and preferred:IsA(\"BasePart\") then
+            return preferred
+        end
+    end
+    return container:FindFirstChildWhichIsA(\"BasePart\", true)
+end
+
+local function getCoinServer(object: Instance?): BasePart?
+    if not object or object:GetAttribute(\"Delete\") == true then return nil end
+
+    local coinContainer: Instance? = nil
+    local cursor: Instance? = object
+    for _index: number = 1, 12 do
+        if not cursor or cursor == workspace then break end
+        if cursor:IsA(\"BasePart\") then
+            local nm = normalizedCoinName(cursor)
+            if string.find(nm, \"coinserver\", 1, true) or cursor:GetAttribute(\"CoinID\") ~= nil then
+                return isLiveCoin(cursor) and cursor or nil
+            end
+        end
+        if (cursor:IsA(\"Model\") or cursor:IsA(\"Folder\")) and isCoinLikeName(cursor) then
+            coinContainer = cursor
+        end
+        -- If this is a touch transmitter, its parent is the actual coin part
+        if object:IsA(\"TouchTransmitter\") or object.Name == \"TouchInterest\" then
+            local parent = object.Parent
+            if parent and parent:IsA(\"BasePart\") then
+                return isLiveCoin(parent) and parent or nil
+            end
+        end
+        cursor = cursor.Parent
+    end
+
+    if coinContainer then
+        local containerPart: BasePart? = findCoinPartInContainer(coinContainer)
+        if containerPart and isLiveCoin(containerPart) then
+            return containerPart
+        end
+    end
+
+    if object:IsA(\"BasePart\") and isCoinLikeName(object) then
+        return isLiveCoin(object) and object or nil
+    end
+
+    return nil
+end
+
+local function findCoinContainer(): Instance?
+    -- Try map first
+    local map = findMM2Map()
+    if map then
+        for _, name in ipairs(MM2_MAP_COIN_CONTAINERS) do
+            local c = map:FindFirstChild(name)
+            if c then return c end
+        end
+        -- Deep search in map
+        for _, name in ipairs(MM2_MAP_COIN_CONTAINERS) do
+            local c = map:FindFirstChild(name, true)
+            if c then return c end
+        end
+    end
+    -- Global search
+    for _, name in ipairs(MM2_MAP_COIN_CONTAINERS) do
+        local c = workspace:FindFirstChild(name, true)
+        if c then return c end
+    end
+    return nil
+end
+
+local function scanCoinTypesInContainer(container: Instance?): {[string]: boolean}
+    local found: {[string]: boolean} = {}
+    if not container then return found end
+    for _, child in ipairs(container:GetChildren()) do
+        local t = getCoinTypeFromInstance(child)
+        if t then
+            found[t] = true
+        else
+            -- Check descendants for attribute
+            for _, desc in ipairs(child:GetDescendants()) do
+                local dt = getCoinTypeFromInstance(desc)
+                if dt then found[dt] = true; break end
+            end
+            -- Fallback name detection
+            local nt = normalizeCoinType(child.Name)
+            if nt then found[nt] = true end
+        end
+    end
+    return found
+end
+
+local function getAllCoinTypesDetected(): {string}
+    local container = findCoinContainer()
+    local map = scanCoinTypesInContainer(container)
+    local list: {string} = {}
+    for k in pairs(map) do table.insert(list, k) end
+    table.sort(list)
+    return list
+end
+
+local function shouldShowCoinType(coinType: string?): boolean
+    local filter = mm2Settings.coinTypeFilter
+    if filter == \"All\" or filter == \"\" then return true end
+    if filter == \"Auto\" then
+        if mm2Settings.coinShowAllInAuto then return true end
+        -- In Auto, if we have detected types, show only those; otherwise show all
+        local detected = getAllCoinTypesDetected()
+        if #detected == 0 then return true end
+        if not coinType then return true end
+        for _, dt in ipairs(detected) do
+            if dt == coinType then return true end
+        end
+        -- If coin type not in detected list but we are in Auto, still show if it's the only type? Actually show all detected, hide others.
+        return false
+    end
+    if not coinType then return true end
+    return coinType == filter
 end
 
 local droppedGunCache: {gun: (Model | BasePart)?, at: number} =
@@ -4090,6 +4461,27 @@ state.mm2Core = {
 
     findMM2Map = findMM2Map,
     findDroppedGun = findDroppedGun,
+    findCoinContainer = findCoinContainer,
+    getCoinTypeFromInstance = getCoinTypeFromInstance,
+    normalizeCoinType = normalizeCoinType,
+    isPotentialCoinObject = isPotentialCoinObject,
+    isCoinLikeName = isCoinLikeName,
+    getCoinServer = getCoinServer,
+    isLiveCoin = isLiveCoin,
+    findCoinPartInContainer = findCoinPartInContainer,
+    scanCoinTypesInContainer = scanCoinTypesInContainer,
+    getAllCoinTypesDetected = getAllCoinTypesDetected,
+    shouldShowCoinType = shouldShowCoinType,
+    normalizedCoinName = normalizedCoinName,
+
+    MM2_MAP_COIN_CONTAINERS = MM2_MAP_COIN_CONTAINERS,
+    MM2_KNOWN_COIN_TYPES = MM2_KNOWN_COIN_TYPES,
+    MM2_COIN_TYPE_LIST = MM2_COIN_TYPE_LIST,
+    MM2_COIN_NAME_KEYWORDS = MM2_COIN_NAME_KEYWORDS,
+    MM2_STANDARD_BOXES = MM2_STANDARD_BOXES,
+    MM2_EVENT_BOXES = MM2_EVENT_BOXES,
+    MM2_ALL_BOXES = MM2_ALL_BOXES,
+    MM2_BOX_INTERNAL_NAMES = MM2_BOX_INTERNAL_NAMES,
 
     isWeaponPathClear = isWeaponPathClear,
     isGunPathClear = isGunPathClear,
