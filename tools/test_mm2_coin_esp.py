@@ -271,28 +271,19 @@ assert(callbacks["Coin in use"] and cycleValues["Coin in use"],
 assert(not next(state.mm2CoinChamSources or {}), "nothing is drawn before enabling")
 
 local function highlighted(object)
-    return state.mm2CoinChamSources ~= nil
-        and state.mm2CoinChamSources[object] ~= nil
-end
-local function chamCount()
-    local n = 0
-    for _ in pairs(state.mm2CoinChamSources or {}) do n += 1 end
-    return n
+    return state.mm2CoinTagParts ~= nil
+        and state.mm2CoinTagParts[object] ~= nil
 end
 
 -- ON: only the three uncollected tagged parts, each highlighted ITSELF.
 feature.enabled = true
 feature.onToggle(true)
-assert(chamCount() >= 5, "pickups drawn: " .. chamCount())
-assert(not highlighted(coinPart), "the invisible holder itself is not drawn")
-assert(highlighted(coinMesh), "the coin's visible mesh is highlighted")
-local coinClone = state.mm2CoinChamSources[coinMesh]
-assert(coinClone and coinClone.Name == "CoinCham" and coinClone.Anchored
-    and not coinClone.CanCollide, "each coin gets a cloned cham model")
-assert(coinClone.Color == "gold", "the clone takes the coin colour")
-assert(highlighted(candyMesh), "the candy's visible mesh is highlighted")
-assert(highlighted(snowMesh), "the snow token's visible mesh is highlighted")
-assert(not highlighted(snowPart), "the mesh is drawn instead of its holder")
+local drawnCount = 0
+for _ in pairs(state.mm2CoinTagParts or {}) do drawnCount += 1 end
+assert(drawnCount >= 5, "pickups tagged: " .. drawnCount)
+assert(highlighted(coinPart), "the coin part carries a tag")
+assert(highlighted(candyPart), "the candy part carries a tag")
+assert(highlighted(snowPart), "the snow part carries a tag")
 assert(not highlighted(collectedPart), "a collected pickup stays dark")
 assert(not highlighted(serverPart), "Coin_Server alone is never a pickup")
 assert(not highlighted(looseMainCoin), "an untagged MainCoin is never a pickup")
@@ -311,8 +302,8 @@ assert(state.mm2CoinTagParts[coinPart] and state.mm2CoinTagParts[candyPart],
 
 -- Selector: Candy only.
 callbacks["Coin in use"]("Candy")
-assert(highlighted(candyMesh) and not highlighted(coinMesh)
-    and not highlighted(snowMesh), "the selector keeps only the chosen family")
+assert(highlighted(candyPart) and not highlighted(coinPart)
+    and not highlighted(snowPart), "the selector keeps only the chosen family")
 assert(lastStatus == "2 coins · 2 candies · 1 snowtoken",
     "counts still report every family: " .. tostring(lastStatus))
 
@@ -320,7 +311,7 @@ assert(lastStatus == "2 coins · 2 candies · 1 snowtoken",
 callbacks["Coin in use"]("Auto (server)")
 coinStarted:fire({Candy = true})
 loops.coin(0.01)
-assert(highlighted(candyMesh) and highlighted(coinMesh),
+assert(highlighted(candyPart) and highlighted(coinPart),
     "Auto follows the CoinsStarted bag: coin-template pickups are candies this round")
 
 -- A generic tagged part takes the server family (one kind per round).
@@ -329,15 +320,14 @@ local genericPart = base("CoinVisual", {CoinVisual = true}, nil, {genericMesh})
 table.insert(tagged, genericPart)
 tagAdded:fire(genericPart)
 loops.coin(0.01)
-assert(highlighted(genericMesh), "a newly tagged part lights on the tag signal")
-assert(highlighted(genericPart), "an opaque holder is drawn too")
+assert(highlighted(genericPart), "a newly tagged part gets a tag on the tag signal")
 assert(lastStatus == "5 candies · 1 snowtoken", tostring(lastStatus))
 
 -- Collection: the attribute flips, the remote fires, highlight drops.
 genericPart.attrs.Collected = true
 coinCollected:fire()
 loops.coin(0.01)
-assert(not highlighted(genericMesh), "a collected pickup loses its highlight")
+assert(not highlighted(genericPart), "a collected pickup loses its tag")
 
 -- Destroyed: gone from the tag list and the workspace scan.
 snowPart.tags.CoinVisual = nil
@@ -345,21 +335,14 @@ for i, object in ipairs(tagged) do if object == snowPart then table.remove(tagge
 for i, object in ipairs(worldScan) do if object == snowPart then table.remove(worldScan, i) end end
 tagRemoved:fire(snowPart)
 loops.coin(0.01)
-assert(not highlighted(snowMesh), "a destroyed part loses its highlight")
+assert(not highlighted(snowPart), "a destroyed part loses its tag")
 assert(lastStatus == "4 candies", tostring(lastStatus))
-
--- Report action names the server coin.
-callbacks["Report server coin"]()
-assert(string.find(notices[#notices], "Server coin: Candy"), tostring(notices[#notices]))
 
 -- Colour applies live, OFF clears, empty map reports honestly.
 callbacks["Coin colour"]("red")
-for _, clone in pairs(state.mm2CoinChamSources) do
-    assert(clone.Color == "red", "colour applies live")
-end
+assert(state.mm2CoinTagParts[coinPart], "tags still applied after colour change")
 feature.enabled = false
 feature.onToggle(false)
-assert(chamCount() == 0, "OFF clears every cham model")
 assert(not next(state.mm2CoinTagParts or {}), "OFF clears every tag")
 assert(lastStatus == nil, "OFF clears the status")
 tagged = {}
@@ -382,14 +365,13 @@ feature.enabled = true
 feature.onToggle(true)
 assert(lastStatus == "1 candy", "event template counts as candy: " .. tostring(lastStatus))
 assert(state.mm2CoinTagParts[eventCandy], "the event candy carries a tag on Auto")
-assert(chamCount() >= 1, "the event candy gets a cham model")
 feature.enabled = false
 feature.onToggle(false)
 workspaceAttrs.CurrentEvent = nil
 
 Module.destroy()
 assert(not state.mm2CoinFeature, "the card reference is released")
-assert(chamCount() == 0 and not loops.coin, "unload leaves nothing")
+assert(not next(state.mm2CoinTagParts or {}) and not loops.coin, "unload leaves nothing")
 
 -- Client-side only, and no name heuristics left in the source.
 for _, forbidden in ipairs({"FireServer", "InvokeServer", "HttpGet", "HttpPost",
@@ -397,7 +379,7 @@ for _, forbidden in ipairs({"FireServer", "InvokeServer", "HttpGet", "HttpPost",
     assert(not string.find(''' + repr(SOURCE) + ''', forbidden),
         "Coin ESP must not use " .. forbidden)
 end
-print("PASS MM2 Coins: three exact signatures (CoinVisual tag, CoinID attribute, server/visual pair), cham clone models, native billboard+adornment tags on every pickup, collected skip, families, selector, server bag, signals, OFF, unload")
+print("PASS MM2 Coins: three exact signatures (CoinVisual tag, CoinID attribute, server/visual pair), native billboard+adornment tags on every pickup, collected skip, families, selector, server bag, signals, OFF, unload")
 '''
 
 with tempfile.TemporaryDirectory(prefix='coin-esp-') as tmp:

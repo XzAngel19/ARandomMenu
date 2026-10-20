@@ -801,7 +801,15 @@ function Module.init(runtime: any): any
         )
         local rootPosition: Vector3 = predictedRoot(track, motion, horizon)
         local last: Sample = track.samples[#track.samples]
+        -- The torso offset turns with the character. The sampled offset is
+        -- one sample old; the part's current offset from the current root
+        -- is the same measurement without the sample delay, and at a
+        -- 100 ms horizon a turning target has already rotated it.
         local aimOffset: Vector3 = last.aimOffset
+        local freshAimPart: BasePart? = findAimPart(track.character)
+        if freshAimPart then
+            aimOffset = freshAimPart.Position - track.root.Position
+        end
         local endpoint: Vector3 = rootPosition + aimOffset
         return endpoint, {
             endpoint = endpoint,
@@ -959,6 +967,17 @@ function Module.init(runtime: any): any
         local horizon: number = (echo or rtt)
             + settings.interpolation
             + manualLead()
+        -- The status must show the horizon the shot actually uses:
+        -- gunAim adds the age of the newest sample on top of the
+        -- pipeline. Showing only the pipeline (98 ms when the shot
+        -- used 111 ms) makes the lead look shorter than it is.
+        if target then
+            local track: Track? = tracks[target]
+            local preview: Motion? = track and estimateMotion(track, os.clock())
+            if preview then
+                horizon += preview.sampleAge
+            end
+        end
         local capped: boolean = false
         if settings.autoLead and horizon > MAX_AUTO_LEAD then
             horizon = MAX_AUTO_LEAD

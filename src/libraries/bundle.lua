@@ -1,5 +1,5 @@
 return {
-    stamp = "v80-20261020-coin-family-mismatch-fix",
+    stamp = "v81-20261020-coin-light-prediction-status",
     files = {
         ["src/Profile/142823291.lua"] = [[
 --!strict
@@ -5877,7 +5877,15 @@ function Module.init(runtime: any): any
         )
         local rootPosition: Vector3 = predictedRoot(track, motion, horizon)
         local last: Sample = track.samples[#track.samples]
+        -- The torso offset turns with the character. The sampled offset is
+        -- one sample old; the part's current offset from the current root
+        -- is the same measurement without the sample delay, and at a
+        -- 100 ms horizon a turning target has already rotated it.
         local aimOffset: Vector3 = last.aimOffset
+        local freshAimPart: BasePart? = findAimPart(track.character)
+        if freshAimPart then
+            aimOffset = freshAimPart.Position - track.root.Position
+        end
         local endpoint: Vector3 = rootPosition + aimOffset
         return endpoint, {
             endpoint = endpoint,
@@ -6035,6 +6043,17 @@ function Module.init(runtime: any): any
         local horizon: number = (echo or rtt)
             + settings.interpolation
             + manualLead()
+        -- The status must show the horizon the shot actually uses:
+        -- gunAim adds the age of the newest sample on top of the
+        -- pipeline. Showing only the pipeline (98 ms when the shot
+        -- used 111 ms) makes the lead look shorter than it is.
+        if target then
+            local track: Track? = tracks[target]
+            local preview: Motion? = track and estimateMotion(track, os.clock())
+            if preview then
+                horizon += preview.sampleAge
+            end
+        end
         local capped: boolean = false
         if settings.autoLead and horizon > MAX_AUTO_LEAD then
             horizon = MAX_AUTO_LEAD
@@ -6342,7 +6361,6 @@ function Module.init(runtime: any): any
     Module.Runtime = runtime
     local CoinEffects: any = core.CoinEffects
     local clearEffects: any = core.clearEffects
-    local createMM2Cham: any = core.createMM2Cham
     local mm2Settings: any = core.mm2Settings
     local collectionService: any = game:GetService("CollectionService")
 
@@ -6353,32 +6371,6 @@ function Module.init(runtime: any): any
     local serverFamily: string? = nil
     -- Raw signature counts from the last scan, for the report action.
     local lastRaw = {tagged = 0, coinId = 0, named = 0}
-
-    -- Cham models: one cloned mesh per pickup geometry part, living in a
-    -- folder in the workspace and following the original every frame.
-    -- A Highlight never rendered here (the pickup holders are invisible,
-    -- Transparency = 1, and Highlights skip transparent parts), so each
-    -- coin gets a real neon copy of itself instead.
-    local chamFolder: Instance? = nil
-    local chamClones: {{source: Instance, clone: Instance}} = {}
-    -- Geometry part -> its clone, for tests and the report action.
-    state.mm2CoinChamSources = {}
-
-    local function clearChams(): ()
-        for _, entry in ipairs(chamClones) do
-            pcall(function(): ()
-                entry.clone:Destroy()
-            end)
-        end
-        table.clear(chamClones)
-        state.mm2CoinChamSources = {}
-        if chamFolder then
-            pcall(function(): ()
-                (chamFolder :: Instance):Destroy()
-            end)
-            chamFolder = nil
-        end
-    end
 
     -- Native per-pickup tags: a BillboardGui label and a
     -- BoxHandleAdornment parented straight onto the pickup part.
@@ -6623,7 +6615,6 @@ function Module.init(runtime: any): any
         disconnectFeatureConnection("MM2CoinTagRemoved")
         disconnectFeatureConnection("MM2CoinAdded")
         clearEffects(CoinEffects)
-        clearChams()
         clearTags()
 
         if not enabled then
@@ -6648,124 +6639,6 @@ function Module.init(runtime: any): any
             local card: any = state.mm2CoinFeature
             if card then
                 card:SetStatus(text)
-            end
-        end
-
-        -- The geometry of one pickup: its mesh parts (what the player
-        -- actually sees), else its plain parts, else -- when the holder
-        -- carries no geometry at all -- the geometry of its parent
-        -- group, provided that group is pickup-sized (a container of
-        -- many coins is never cloned).
-        local function geometryOf(visual: Instance): {Instance}
-            local meshes: {Instance} = {}
-            local parts: {Instance} = {}
-            local function harvest(root: Instance): ()
-                if root:IsA("BasePart") then
-                    table.insert(parts, root)
-                    if root:IsA("MeshPart") then
-                        table.insert(meshes, root)
-                    end
-                end
-                local ok: boolean, descendants: any = pcall(function(): any
-                    return root:GetDescendants()
-                end)
-                if ok and type(descendants) == "table" then
-                    for _, object: Instance in ipairs(descendants) do
-                        -- The invisible server holder is never geometry.
-                        if object:IsA("BasePart") and object.Name ~= SERVER_NAME then
-                            table.insert(parts, object)
-                            if object:IsA("MeshPart") then
-                                table.insert(meshes, object)
-                            end
-                        end
-                    end
-                end
-            end
-            harvest(visual)
-            if #meshes == 0 and #parts <= 1 then
-                local parent: Instance? = visual.Parent
-                if parent and parent ~= workspace then
-                    local ok: boolean, descendants: any = pcall(function(): any
-                        return parent:GetDescendants()
-                    end)
-                    if ok and type(descendants) == "table" then
-                        local total: number = 0
-                        for _, object: Instance in ipairs(descendants) do
-                            if object:IsA("BasePart") then
-                                total += 1
-                            end
-                        end
-                        if total > 0 and total <= 24 then
-                            table.clear(meshes)
-                            table.clear(parts)
-                            harvest(parent)
-                        end
-                    end
-                end
-            end
-            if #meshes > 0 then
-                return meshes
-            end
-            return parts
-        end
-
-        -- A cham model of the coin itself: clone each geometry part,
-        -- strip everything inside it, force it neon in the coin colour
-        -- and slightly larger than the original, so a glowing copy of
-        -- the coin sits exactly where the coin is.
-        local function buildChams(visible: {[Instance]: boolean}): ()
-            clearChams()
-            local folder: Instance = Instance.new("Folder")
-            folder.Name = "WurstCoinChams"
-            folder.Parent = workspace
-            chamFolder = folder
-            local transparency: number = math.clamp(mm2Settings.coinTransparency, 0, 0.6)
-            for visual: Instance in pairs(visible) do
-                for _, source: Instance in ipairs(geometryOf(visual)) do
-                    local ok: boolean, clone: any = pcall(function(): any
-                        return (source :: any):Clone()
-                    end)
-                    if ok and clone then
-                        for _, child: Instance in ipairs(clone:GetDescendants()) do
-                            pcall(function(): ()
-                                child:Destroy()
-                            end)
-                        end
-                        clone.Name = "CoinCham"
-                        clone.Anchored = true
-                        clone.CanCollide = false
-                        clone.CanQuery = false
-                        clone.CanTouch = false
-                        clone.Color = mm2Settings.coinColor
-                        clone.Transparency = transparency
-                        pcall(function(): ()
-                            clone.Material = Enum.Material.Neon
-                        end)
-                        pcall(function(): ()
-                            clone.Size = clone.Size * 1.07
-                        end)
-                        clone.CFrame = (source :: any).CFrame
-                        clone.Parent = folder
-                        table.insert(chamClones, {source = source, clone = clone})
-                        state.mm2CoinChamSources[source] = clone
-                    end
-                end
-            end
-        end
-
-        -- Coins spin and bob: every clone follows its original.
-        local function syncChams(): ()
-            for index: number = #chamClones, 1, -1 do
-                local entry = chamClones[index]
-                if not entry.source.Parent then
-                    pcall(function(): ()
-                        entry.clone:Destroy()
-                    end)
-                    state.mm2CoinChamSources[entry.source] = nil
-                    table.remove(chamClones, index)
-                else
-                    entry.clone.CFrame = (entry.source :: any).CFrame
-                end
             end
         end
 
@@ -6911,10 +6784,8 @@ function Module.init(runtime: any): any
                     changed = true
                 end
             end
-            if changed then
-                clearEffects(CoinEffects)
-                buildChams(visible)
-            end
+            -- `changed` no longer drives any drawing: tags are created
+            -- and removed by drawOverlay from lastFamilies alone.
             drawOverlay(true)
             setStatus(counts)
             dirty = false
@@ -6968,10 +6839,10 @@ function Module.init(runtime: any): any
         refresh()
         featureConnections.MM2CoinRefresh = TaskManager:Connect(
             function(deltaTime: number): ()
-                -- The clones follow their coins every frame; the scan
-                -- itself only runs when something changed (plus the
-                -- safety-net rescan).
-                syncChams()
+                -- Tags and adornments follow their parts inside the
+                -- engine; Lua only refreshes the text now and then and
+                -- rescans when the map changed. With ~100 coins out
+                -- this is the whole per-frame cost.
                 drawOverlay()
                 elapsed += deltaTime
                 if not dirty and elapsed < RESCAN_PERIOD then
@@ -7033,30 +6904,9 @@ function Module.init(runtime: any): any
             end
         end
     )
-    addActionOption(
-        CoinFeature,
-        "Report server coin",
-        function(): ()
-            local _found: {[Instance]: string}, counts: {[string]: number} = collectAll()
-            notify(
-                "Server coin: " .. (activeFamily() or "unknown")
-                    .. " · on the map: " .. describe(counts)
-                    .. " · signatures: tag=" .. tostring(lastRaw.tagged)
-                    .. " coinId=" .. tostring(lastRaw.coinId)
-                    .. " named=" .. tostring(lastRaw.named)
-                    .. " · tags drawn=" .. tostring((function(): number
-                        local n: number = 0
-                        for _ in pairs(state.mm2CoinTagParts or {}) do
-                            n += 1
-                        end
-                        return n
-                    end)())
-            )
-        end
-    )
     addInformationOption(
         CoinFeature,
-        "Pickups are recognised by the game's own signatures only: the CoinVisual tag, the CoinID attribute and the exact server/visual part pair. Each pickup gets a cloned cham model of its own mesh (neon, in the coin colour) that follows it; containers are never cloned. Auto follows the family the server announces on CoinsStarted."
+        "Pickups are recognised by the game's own signatures only: the CoinVisual tag, the CoinID attribute and the exact server/visual part pair. Each pickup gets a BillboardGui label and a BoxHandleAdornment in the coin colour; the engine draws both, so a hundred coins cost no per-frame Lua. Auto follows the family the server announces on CoinsStarted."
     )
 
     activeCleanup = function(): ()
