@@ -183,6 +183,24 @@ local TaskManager = {Connect = function(_, fn)
     loops.coin = fn
     return {Disconnect = function() loops.coin = nil end}
 end}
+-- The menu render library Item ESP draws with: record every label/box.
+local overlayLabels = {}
+local overlayBoxes = 0
+local overlayLayer = {Visible = false}
+local renderLibrary = {
+    Layer = function(_, _) return overlayLayer end,
+    Set = function(_, _, part)
+        return {
+            Show = function() end,
+            Label = function(_, slot, text) overlayLabels[text] = true end,
+            Box = function() overlayBoxes += 1 end,
+        }
+    end,
+    Release = function() end,
+    ReleaseAll = function() end,
+    Project = function(_, _, _) return {X = 100, Y = 50} end,
+}
+workspace.CurrentCamera = {CFrame = {}}
 local state = {
     renderLibrary = renderLibrary,
     mm2Core = {
@@ -228,24 +246,6 @@ local Instance = {new = function(class)
     object.ClassName = class
     return object
 end}
--- The menu render library Item ESP draws with: record every label/box.
-local overlayLabels = {}
-local overlayBoxes = 0
-local overlayLayer = {Visible = false}
-local renderLibrary = {
-    Layer = function(_, _) return overlayLayer end,
-    Set = function(_, _, part)
-        return {
-            Show = function() end,
-            Label = function(_, slot, text) overlayLabels[text] = true end,
-            Box = function() overlayBoxes += 1 end,
-        }
-    end,
-    Release = function() end,
-    ReleaseAll = function() end,
-    Project = function(_, _, _) return {X = 100, Y = 50} end,
-}
-workspace.CurrentCamera = {CFrame = {}}
 local game = {GetService = function(_, name)
     if name == "CollectionService" then return CollectionService end
     error("unexpected service " .. tostring(name))
