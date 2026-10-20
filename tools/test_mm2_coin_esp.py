@@ -246,6 +246,10 @@ local Instance = {new = function(class)
     object.ClassName = class
     return object
 end}
+local UDim2 = {fromOffset = function(x, y) return {x, y} end,
+    fromScale = function(x, y) return {x, y} end}
+local Vector3 = {new = function(x, y, z) return {X = x, Y = y, Z = z} end}
+local Color3 = {fromRGB = function(r, g, b) return {r, g, b} end}
 local game = {GetService = function(_, name)
     if name == "CollectionService" then return CollectionService end
     error("unexpected service " .. tostring(name))
@@ -298,10 +302,11 @@ assert(not highlighted(coinModel), "a model named Coin is never highlighted")
 assert(not highlighted(doorBox), "an InteractiveBox is never a pickup")
 assert(not highlighted(charPart), "a tagged part inside a character is skipped")
 assert(lastStatus == "2 coins · 2 candies · 1 snowtoken", tostring(lastStatus))
-local labelCount = 0
-for _ in pairs(overlayLabels) do labelCount += 1 end
-assert(labelCount >= 3, "the overlay labels the pickups like Item ESP does")
-assert(overlayLayer.Visible, "the overlay layer is shown")
+local tagCount = 0
+for _ in pairs(state.mm2CoinTagParts or {}) do tagCount += 1 end
+assert(tagCount >= 5, "every pickup carries a billboard tag: " .. tagCount)
+assert(state.mm2CoinTagParts[coinPart] and state.mm2CoinTagParts[candyPart],
+    "the tags sit on the pickup parts themselves")
 
 -- Selector: Candy only.
 callbacks["Coin in use"]("Candy")
@@ -354,6 +359,7 @@ end
 feature.enabled = false
 feature.onToggle(false)
 assert(chamCount() == 0, "OFF clears every cham model")
+assert(not next(state.mm2CoinTagParts or {}), "OFF clears every tag")
 assert(lastStatus == nil, "OFF clears the status")
 tagged = {}
 worldScan = {}
@@ -372,7 +378,7 @@ for _, forbidden in ipairs({"FireServer", "InvokeServer", "HttpGet", "HttpPost",
     assert(not string.find(''' + repr(SOURCE) + ''', forbidden),
         "Coin ESP must not use " .. forbidden)
 end
-print("PASS MM2 Coins: three exact signatures (CoinVisual tag, CoinID attribute, server/visual pair), cham clone models, ItemESP-style screen overlay labels/boxes, collected skip, families, selector, server bag, signals, OFF, unload")
+print("PASS MM2 Coins: three exact signatures (CoinVisual tag, CoinID attribute, server/visual pair), cham clone models, native billboard+adornment tags on every pickup, collected skip, families, selector, server bag, signals, OFF, unload")
 '''
 
 with tempfile.TemporaryDirectory(prefix='coin-esp-') as tmp:
