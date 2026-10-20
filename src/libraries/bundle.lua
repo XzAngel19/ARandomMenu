@@ -1,5 +1,5 @@
 return {
-    stamp = "v85-20261020-esp-revert-farm-constant-onewaylead",
+    stamp = "v86-20261020-coin-visible-opacity",
     files = {
         ["src/Profile/142823291.lua"] = [[
 --!strict
@@ -7460,8 +7460,8 @@ function Module.init(runtime: any): any
         local lastStatus: string? = nil
         local dirty: boolean = true
 
-        local function setStatus(counts: {[string]: number}): ()
-            local text: string = describe(counts)
+        local function setStatus(text: string): ()
+
             if text == lastStatus then
                 return
             end
@@ -7499,6 +7499,14 @@ function Module.init(runtime: any): any
         -- once per pickup; between rescans Lua does nothing at all.
         local tagClock: number = 0
         local tagsDirty: boolean = true
+        -- Opacity guard: the setting's old default (0.8, from the
+        -- full-model Highlight era) made a candy-sized adornment
+        -- effectively invisible -- v82-v85 "detected nothing" while
+        -- the farm, using the same list, walked to the coins fine.
+        -- Cap the marker at 0.6 transparency whatever is saved.
+        local function markerTransparency(): number
+            return math.clamp(mm2Settings.coinTransparency, 0, 0.6)
+        end
         local function drawOverlay(): ()
             tagClock += 1
             local refreshColour: boolean = tagClock % 30 == 0
@@ -7516,12 +7524,12 @@ function Module.init(runtime: any): any
                             box.ZIndex = 5
                             box.Adornee = visual
                             box.Color3 = mm2Settings.coinColor
-                            box.Transparency = math.clamp(mm2Settings.coinTransparency, 0, 1)
+                            box.Transparency = markerTransparency()
                             local okSize: boolean, visualSize: any = pcall(function(): any
                                 return (visual :: any).Size
                             end)
                             if okSize and visualSize then
-                                box.Size = visualSize
+                                box.Size = visualSize * 1.3
                             end
                             box.Parent = part
                             return {box = box}
@@ -7533,7 +7541,7 @@ function Module.init(runtime: any): any
                     elseif refreshColour then
                         pcall(function(): ()
                             entry.box.Color3 = mm2Settings.coinColor
-                            entry.box.Transparency = math.clamp(mm2Settings.coinTransparency, 0, 1)
+                            entry.box.Transparency = markerTransparency()
                         end)
                     end
                 end
@@ -7604,7 +7612,21 @@ function Module.init(runtime: any): any
             -- and removed by drawOverlay from lastFamilies alone.
             refreshPickupCache(found)
             drawOverlay(true)
-            setStatus(counts)
+            local shown: number = 0
+            for _ in pairs(visible) do
+                shown += 1
+            end
+            local foundTotal: number = 0
+            for _ in pairs(found) do
+                foundTotal += 1
+            end
+            if foundTotal == 0 then
+                setStatus(string.format(
+                    "no coins yet (tag %d · id %d · named %d)",
+                    lastRaw.tagged, lastRaw.coinId, lastRaw.named))
+            else
+                setStatus(describe(counts) .. " · " .. shown .. " shown")
+            end
             dirty = false
         end
 
@@ -7978,7 +8000,7 @@ local mm2Settings = {
     blurtRepeat = false,
     blurtFake = false,
     coinColor = Color3.fromRGB(230, 220, 65),
-    coinTransparency = 0.8,
+    coinTransparency = 0.35,
     trapColor = Color3.fromRGB(145, 25, 25),
     trapTransparency = 0.7,
 

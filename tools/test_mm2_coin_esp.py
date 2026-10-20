@@ -25,6 +25,14 @@ assert "BillboardGui" not in SOURCE, "coin markers must not create labels"
 assert 'Instance.new("BoxHandleAdornment")' in SOURCE
 assert 'FindFirstChild("MainCoin", true)' in SOURCE
 assert "state.mm2CoinPickups" in SOURCE, "Auto Farm shares this pickup list"
+# Visibility guard (v82-v85 live bug): the marker used the raw
+# coinTransparency setting whose core default was 0.8 -- a candy-sized
+# adornment at 80% transparency is invisible, so the ESP "detected
+# nothing" while detection ran fine. The opacity is capped and the
+# core default is the 0.35 the last visible build used.
+assert "markerTransparency" in SOURCE and "0, 0.6" in SOURCE
+BASE = (ROOT / 'src/games/MM2/base.lua').read_text()
+assert "coinTransparency = 0.35," in BASE
 # Performance contract (live report: the ESP still lagged): the Auto
 # Farm pickup list is cached instead of rescanning per poll, the
 # static filter half is cached per part, and families are cached.
@@ -310,7 +318,7 @@ assert(not highlighted(container), "a container model is never highlighted")
 assert(not highlighted(coinModel), "a model named Coin is never highlighted")
 assert(not highlighted(doorBox), "an InteractiveBox is never a pickup")
 assert(not highlighted(charPart), "a tagged part inside a character is skipped")
-assert(lastStatus == "2 coins · 2 candies · 1 snowtoken", tostring(lastStatus))
+assert(lastStatus:find("2 coins · 2 candies · 1 snowtoken", 1, true) == 1, tostring(lastStatus))
 local tagCount = 0
 for _ in pairs(state.mm2CoinTagParts or {}) do tagCount += 1 end
 assert(tagCount >= 5, "every pickup carries a billboard tag: " .. tagCount)
@@ -321,7 +329,7 @@ assert(state.mm2CoinTagParts[coinPart] and state.mm2CoinTagParts[candyPart],
 callbacks["Coin in use"]("Candy")
 assert(highlighted(candyPart) and not highlighted(coinPart)
     and not highlighted(snowPart), "the selector keeps only the chosen family")
-assert(lastStatus == "2 coins · 2 candies · 1 snowtoken",
+assert(lastStatus:find("2 coins · 2 candies · 1 snowtoken", 1, true) == 1,
     "counts still report every family: " .. tostring(lastStatus))
 
 -- Auto + the server announces Candy: only candy.
@@ -338,7 +346,7 @@ table.insert(tagged, genericPart)
 tagAdded:fire(genericPart)
 loops.coin(0.01)
 assert(highlighted(genericPart), "a newly tagged part gets a tag on the tag signal")
-assert(lastStatus == "5 candies · 1 snowtoken", tostring(lastStatus))
+assert(lastStatus:find("5 candies · 1 snowtoken", 1, true) == 1, tostring(lastStatus))
 
 -- Collection: the attribute flips, the remote fires, highlight drops.
 genericPart.attrs.Collected = true
@@ -353,7 +361,7 @@ for i, object in ipairs(worldScan) do if object == snowPart then table.remove(wo
 tagRemoved:fire(snowPart)
 loops.coin(0.01)
 assert(not highlighted(snowPart), "a destroyed part loses its tag")
-assert(lastStatus == "4 candies", tostring(lastStatus))
+assert(lastStatus:find("4 candies", 1, true) == 1, tostring(lastStatus))
 
 -- Colour applies live, OFF clears, empty map reports honestly.
 callbacks["Coin colour"]("red")
@@ -366,7 +374,7 @@ tagged = {}
 worldScan = {}
 feature.enabled = true
 feature.onToggle(true)
-assert(lastStatus == "no coins yet", tostring(lastStatus))
+assert(lastStatus:find("no coins yet", 1, true) == 1, tostring(lastStatus))
 feature.onToggle(false)
 
 -- The reported live bug: an event round announced ONLY through the
@@ -380,7 +388,7 @@ tagged = {eventCandy}
 worldScan = {eventCandy}
 feature.enabled = true
 feature.onToggle(true)
-assert(lastStatus == "1 candy", "event template counts as candy: " .. tostring(lastStatus))
+assert(lastStatus:find("1 candy", 1, true) == 1, tostring(lastStatus))
 assert(state.mm2CoinTagParts[eventCandy], "the event candy carries a tag on Auto")
 feature.enabled = false
 feature.onToggle(false)

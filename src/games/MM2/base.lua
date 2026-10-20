@@ -92,7 +92,7 @@ local mm2Settings = {
     blurtRepeat = false,
     blurtFake = false,
     coinColor = Color3.fromRGB(230, 220, 65),
-    coinTransparency = 0.8,
+    coinTransparency = 0.35,
     trapColor = Color3.fromRGB(145, 25, 25),
     trapTransparency = 0.7,
 
