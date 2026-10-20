@@ -256,30 +256,6 @@ function Module.init(runtime: any): any
         return true
     end
 
-    -- Family of one pickup: its mesh children only. With no specific
-    -- word, the round's family applies (a round pays a single kind of
-    -- pickup), falling back to the classic coin.
-    local function familyOf(part: Instance): string
-        local names: {string} = {}
-        local ok: boolean, descendants: any = pcall(function(): any
-            return part:GetDescendants()
-        end)
-        if ok and type(descendants) == "table" then
-            for _, object: Instance in ipairs(descendants) do
-                table.insert(names, object.Name)
-            end
-        end
-        local haystack: string = lower(table.concat(names, " "))
-        for _, family: string in ipairs(FAMILY_ORDER) do
-            for _, phrase: string in ipairs(FAMILY_PHRASES[family]) do
-                if contains(haystack, phrase) then
-                    return family
-                end
-            end
-        end
-        return serverFamily or FAMILY_COIN
-    end
-
     -- The family the server says is in play: the `CoinsStarted` table first,
     -- then the Workspace event attributes.
     local function familyFromWorkspace(): string?
@@ -311,6 +287,39 @@ function Module.init(runtime: any): any
 
     local function activeFamily(): string?
         return serverFamily or familyFromWorkspace()
+    end
+
+    -- Family of one pickup: its mesh children only. With no specific
+    -- word, the round's family applies (a round pays a single kind of
+    -- pickup), falling back to the classic coin.
+    local function familyOf(part: Instance): string
+        local names: {string} = {}
+        local ok: boolean, descendants: any = pcall(function(): any
+            return part:GetDescendants()
+        end)
+        if ok and type(descendants) == "table" then
+            for _, object: Instance in ipairs(descendants) do
+                table.insert(names, object.Name)
+            end
+        end
+        local haystack: string = lower(table.concat(names, " "))
+        -- A round pays a single kind of pickup, and event pickups are
+        -- built on the classic coin template (MainCoin/DecalPart meshes
+        -- with an event look). So when the server announces an event
+        -- family, plain coin mesh names must NOT drag the pickup back
+        -- to Coin -- that mismatch is what left Auto showing nothing
+        -- while the map was full of candies.
+        local active: string? = activeFamily()
+        for _, family: string in ipairs(FAMILY_ORDER) do
+            if family ~= FAMILY_COIN or active == nil or active == FAMILY_COIN then
+                for _, phrase: string in ipairs(FAMILY_PHRASES[family]) do
+                    if contains(haystack, phrase) then
+                        return family
+                    end
+                end
+            end
+        end
+        return active or FAMILY_COIN
     end
 
     -- Every real pickup on the map, merged from the three signatures.
@@ -661,6 +670,22 @@ function Module.init(runtime: any): any
                 if wanted(family) then
                     visible[object] = true
                     lastFamilies[object] = family
+                end
+            end
+            -- Auto follows the server family, but a mismatch between
+            -- the classification and the announcement must not blank
+            -- the ESP: fall back to showing every pickup found.
+            if settings.family == FAMILY_AUTO and activeFamily() ~= nil then
+                local anyWanted: boolean = false
+                for object: Instance in pairs(visible) do
+                    anyWanted = true
+                    break
+                end
+                if not anyWanted then
+                    for object: Instance, family: string in pairs(found) do
+                        visible[object] = true
+                        lastFamilies[object] = family
+                    end
                 end
             end
             local changed: boolean = false

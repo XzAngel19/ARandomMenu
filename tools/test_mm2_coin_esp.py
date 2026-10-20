@@ -20,7 +20,8 @@ SOURCE = (ROOT / 'src/games/MM2/Render/CoinEsp.lua').read_text()
 
 script = r'''
 local workspace = {}
-function workspace:GetAttribute(_) return nil end
+local workspaceAttrs = {}
+function workspace:GetAttribute(name) return workspaceAttrs[name] end
 local worldScan = {}
 function workspace:GetDescendants() return worldScan end
 local descendantAdded = nil
@@ -319,8 +320,8 @@ assert(lastStatus == "2 coins · 2 candies · 1 snowtoken",
 callbacks["Coin in use"]("Auto (server)")
 coinStarted:fire({Candy = true})
 loops.coin(0.01)
-assert(highlighted(candyMesh) and not highlighted(coinMesh),
-    "Auto follows the CoinsStarted bag")
+assert(highlighted(candyMesh) and highlighted(coinMesh),
+    "Auto follows the CoinsStarted bag: coin-template pickups are candies this round")
 
 -- A generic tagged part takes the server family (one kind per round).
 local genericMesh = base("Mesh")
@@ -330,7 +331,7 @@ tagAdded:fire(genericPart)
 loops.coin(0.01)
 assert(highlighted(genericMesh), "a newly tagged part lights on the tag signal")
 assert(highlighted(genericPart), "an opaque holder is drawn too")
-assert(lastStatus == "1 coin · 4 candies · 1 snowtoken", tostring(lastStatus))
+assert(lastStatus == "5 candies · 1 snowtoken", tostring(lastStatus))
 
 -- Collection: the attribute flips, the remote fires, highlight drops.
 genericPart.attrs.Collected = true
@@ -345,7 +346,7 @@ for i, object in ipairs(worldScan) do if object == snowPart then table.remove(wo
 tagRemoved:fire(snowPart)
 loops.coin(0.01)
 assert(not highlighted(snowMesh), "a destroyed part loses its highlight")
-assert(lastStatus == "1 coin · 3 candies", tostring(lastStatus))
+assert(lastStatus == "4 candies", tostring(lastStatus))
 
 -- Report action names the server coin.
 callbacks["Report server coin"]()
@@ -367,6 +368,24 @@ feature.enabled = true
 feature.onToggle(true)
 assert(lastStatus == "no coins yet", tostring(lastStatus))
 feature.onToggle(false)
+
+-- The reported live bug: an event round announced ONLY through the
+-- Workspace attributes (CurrentEvent = Halloween), with pickups built
+-- on the classic coin template (MainCoin meshes). They must classify
+-- as candies and be drawn on Auto -- not counted as coins and hidden.
+workspaceAttrs.CurrentEvent = "Halloween"
+local eventCandy = base("CoinVisual", {CoinVisual = true}, nil,
+    {base("MainCoin"), base("DecalPart")})
+tagged = {eventCandy}
+worldScan = {eventCandy}
+feature.enabled = true
+feature.onToggle(true)
+assert(lastStatus == "1 candy", "event template counts as candy: " .. tostring(lastStatus))
+assert(state.mm2CoinTagParts[eventCandy], "the event candy carries a tag on Auto")
+assert(chamCount() >= 1, "the event candy gets a cham model")
+feature.enabled = false
+feature.onToggle(false)
+workspaceAttrs.CurrentEvent = nil
 
 Module.destroy()
 assert(not state.mm2CoinFeature, "the card reference is released")
