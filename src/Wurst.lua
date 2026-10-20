@@ -219,7 +219,7 @@ local RUNTIME_RAW_BASE: string =
         .. RUNTIME_BRANCH
         .. "/"
 
-local SOURCE_STAMP: string = "v77-20261020-coin-cham-models-disguise-anim-speed"
+local SOURCE_STAMP: string = "v78-20261020-coin-overlay-itemesp-style"
 
 local BOOT_STARTED_AT: number = os.clock()
 local BOOT_FINGERPRINT_SECONDS: number = 0

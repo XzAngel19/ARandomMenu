@@ -31,7 +31,8 @@ end}
 
 local function base(name, tags, attrs, children)
     local object = {Name = name, Parent = workspace, tags = tags or {},
-        attrs = attrs or {}, children = children or {}, Transparency = 0}
+        attrs = attrs or {}, children = children or {}, Transparency = 0,
+        Position = {}}
     function object:IsA(class)
         return class == "BasePart" or class == "Instance"
     end
@@ -183,6 +184,7 @@ local TaskManager = {Connect = function(_, fn)
     return {Disconnect = function() loops.coin = nil end}
 end}
 local state = {
+    renderLibrary = renderLibrary,
     mm2Core = {
         CoinEffects = {},
         clearEffects = function(folder) table.clear(folder) end,
@@ -226,6 +228,24 @@ local Instance = {new = function(class)
     object.ClassName = class
     return object
 end}
+-- The menu render library Item ESP draws with: record every label/box.
+local overlayLabels = {}
+local overlayBoxes = 0
+local overlayLayer = {Visible = false}
+local renderLibrary = {
+    Layer = function(_, _) return overlayLayer end,
+    Set = function(_, _, part)
+        return {
+            Show = function() end,
+            Label = function(_, slot, text) overlayLabels[text] = true end,
+            Box = function() overlayBoxes += 1 end,
+        }
+    end,
+    Release = function() end,
+    ReleaseAll = function() end,
+    Project = function(_, _, _) return {X = 100, Y = 50} end,
+}
+workspace.CurrentCamera = {CFrame = {}}
 local game = {GetService = function(_, name)
     if name == "CollectionService" then return CollectionService end
     error("unexpected service " .. tostring(name))
@@ -278,6 +298,10 @@ assert(not highlighted(coinModel), "a model named Coin is never highlighted")
 assert(not highlighted(doorBox), "an InteractiveBox is never a pickup")
 assert(not highlighted(charPart), "a tagged part inside a character is skipped")
 assert(lastStatus == "2 coins · 2 candies · 1 snowtoken", tostring(lastStatus))
+local labelCount = 0
+for _ in pairs(overlayLabels) do labelCount += 1 end
+assert(labelCount >= 3, "the overlay labels the pickups like Item ESP does")
+assert(overlayLayer.Visible, "the overlay layer is shown")
 
 -- Selector: Candy only.
 callbacks["Coin in use"]("Candy")
@@ -348,7 +372,7 @@ for _, forbidden in ipairs({"FireServer", "InvokeServer", "HttpGet", "HttpPost",
     assert(not string.find(''' + repr(SOURCE) + ''', forbidden),
         "Coin ESP must not use " .. forbidden)
 end
-print("PASS MM2 Coins: three exact signatures (CoinVisual tag, CoinID attribute, server/visual pair), highlight on the visible geometry (never on invisible holder parts), collected skip, families, selector, server bag, signals, OFF, unload")
+print("PASS MM2 Coins: three exact signatures (CoinVisual tag, CoinID attribute, server/visual pair), cham clone models, ItemESP-style screen overlay labels/boxes, collected skip, families, selector, server bag, signals, OFF, unload")
 '''
 
 with tempfile.TemporaryDirectory(prefix='coin-esp-') as tmp:

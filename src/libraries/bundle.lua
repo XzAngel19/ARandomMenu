@@ -1,5 +1,5 @@
 return {
-    stamp = "v77-20261020-coin-cham-models-disguise-anim-speed",
+    stamp = "v78-20261020-coin-overlay-itemesp-style",
     files = {
         ["src/Profile/142823291.lua"] = [[
 --!strict
@@ -6380,6 +6380,32 @@ function Module.init(runtime: any): any
         end
     end
 
+    -- Screen-space overlay, the same render library Item ESP draws its
+    -- "[16] Coin_Server" labels with (state.renderLibrary): a box and a
+    -- name tag projected onto the screen for every pickup. This layer is
+    -- plain GUI, so it is visible no matter what the 3D parts look like.
+    local renderLibrary: any = state.renderLibrary
+    local overlayLayer: any = nil
+    if renderLibrary then
+        local ok: boolean, layer: any = pcall(function(): any
+            return renderLibrary:Layer("CoinEspLayer")
+        end)
+        if ok then
+            overlayLayer = layer
+        end
+    end
+    local overlaySets: {[Instance]: any} = {}
+
+    local function clearOverlay(): ()
+        if renderLibrary and overlayLayer then
+            pcall(function(): ()
+                renderLibrary:ReleaseAll(overlayLayer)
+            end)
+            overlayLayer.Visible = false
+        end
+        table.clear(overlaySets)
+    end
+
     local function attribute(object: Instance, name: string): any
         local ok: boolean, value: any = pcall(function(): any
             return object:GetAttribute(name)
@@ -6589,6 +6615,7 @@ function Module.init(runtime: any): any
         disconnectFeatureConnection("MM2CoinAdded")
         clearEffects(CoinEffects)
         clearChams()
+        clearOverlay()
 
         if not enabled then
             local card: any = state.mm2CoinFeature
@@ -6733,13 +6760,136 @@ function Module.init(runtime: any): any
             end
         end
 
+        -- The last set worth drawing, kept so the overlay can follow the
+        -- camera between scans.
+        local lastVisible: {[Instance]: string} = {}
+
+        -- Box + label for every visible pickup, projected on screen with
+        -- the menu's own render library -- exactly how Item ESP shows
+        -- its "[16] Coin_Server" tags. Pure GUI: always visible.
+        local function drawOverlay(): ()
+            if not renderLibrary or not overlayLayer then
+                return
+            end
+            local camera: any = nil
+            local okCam: boolean, foundCam: any = pcall(function(): any
+                return workspace.CurrentCamera
+            end)
+            if okCam then
+                camera = foundCam
+            end
+            if not camera then
+                return
+            end
+            overlayLayer.Visible = true
+            local origin: any = camera.CFrame and camera.CFrame.Position
+            local seen: {[Instance]: boolean} = {}
+            for part: Instance, family: string in pairs(lastVisible) do
+                if part.Parent then
+                    seen[part] = true
+                    local set: any = overlaySets[part]
+                    if not set then
+                        local okSet: boolean, newSet: any = pcall(function(): any
+                            return renderLibrary:Set(overlayLayer, part)
+                        end)
+                        if okSet then
+                            set = newSet
+                            overlaySets[part] = set
+                        end
+                    end
+                    if set then
+                        local position: any = (part :: any).Position
+                        local projected: any = nil
+                        if position then
+                            local okProj: boolean, point: any = pcall(function(): any
+                                return renderLibrary:Project(camera, position)
+                            end)
+                            if okProj then
+                                projected = point
+                            end
+                        end
+                        if projected then
+                            set:Show(true)
+                            -- Screen box from the part's own 3D corners.
+                            local okBox: boolean = pcall(function(): ()
+                                local cf: any = (part :: any).CFrame
+                                local size: any = (part :: any).Size
+                                if not cf or not size then
+                                    return
+                                end
+                                local half: any = size * 0.5
+                                local minX: number, minY: number = math.huge, math.huge
+                                local maxX: number, maxY: number = -math.huge, -math.huge
+                                local inFront: number = 0
+                                for _, corner in ipairs({
+                                    {1, 1, 1}, {1, 1, -1}, {1, -1, 1}, {1, -1, -1},
+                                    {-1, 1, 1}, {-1, 1, -1}, {-1, -1, 1}, {-1, -1, -1},
+                                }) do
+                                    local world: any = cf * Vector3.new(
+                                        half.X * corner[1], half.Y * corner[2], half.Z * corner[3])
+                                    local viewport: any = camera:WorldToViewportPoint(world)
+                                    if viewport.Z > 0 then
+                                        inFront += 1
+                                        minX = math.min(minX, viewport.X)
+                                        minY = math.min(minY, viewport.Y)
+                                        maxX = math.max(maxX, viewport.X)
+                                        maxY = math.max(maxY, viewport.Y)
+                                    end
+                                end
+                                if inFront >= 2 and maxX > minX and maxY > minY then
+                                    set:Box({
+                                        left = minX, right = maxX,
+                                        top = minY, bottom = maxY,
+                                        width = maxX - minX, height = maxY - minY,
+                                        centreX = (minX + maxX) * 0.5,
+                                        centreY = (minY + maxY) * 0.5,
+                                    }, "Full", 1, mm2Settings.coinColor)
+                                end
+                            end)
+                            local distance: number = 0
+                            if origin and position then
+                                local okDist: boolean, dist: any = pcall(function(): any
+                                    return (position - origin).Magnitude
+                                end)
+                                if okDist and type(dist) == "number" then
+                                    distance = dist
+                                end
+                            end
+                            local nouns: {string} = FAMILY_NOUNS[family] or FAMILY_NOUNS[FAMILY_COIN]
+                            set:Label(
+                                "NameTag",
+                                "[" .. tostring(math.round(distance)) .. "] " .. nouns[1],
+                                projected,
+                                1,
+                                13,
+                                mm2Settings.coinColor,
+                                true
+                            )
+                        else
+                            set:Show(false)
+                        end
+                    end
+                end
+            end
+            for part: Instance, set: any in pairs(overlaySets) do
+                if not seen[part] then
+                    overlaySets[part] = nil
+                    pcall(function(): ()
+                        renderLibrary:Release(overlayLayer, part)
+                    end)
+                end
+            end
+        end
+
         -- One pickup, cham(s) on its visible geometry only.
         local function refresh(): ()
             local found: {[Instance]: string}, counts: {[string]: number} = collectAll()
             local visible: {[Instance]: boolean} = {}
+            table.clear(lastVisible)
             for object: Instance, family: string in pairs(found) do
                 if wanted(family) then
                     visible[object] = true
+                    lastVisible[object] = family
                 end
             end
             local changed: boolean = false
@@ -6759,6 +6909,7 @@ function Module.init(runtime: any): any
                 clearEffects(CoinEffects)
                 buildChams(visible)
             end
+            drawOverlay()
             setStatus(counts)
             dirty = false
         end
@@ -6815,6 +6966,7 @@ function Module.init(runtime: any): any
                 -- itself only runs when something changed (plus the
                 -- safety-net rescan).
                 syncChams()
+                drawOverlay()
                 elapsed += deltaTime
                 if not dirty and elapsed < RESCAN_PERIOD then
                     return
