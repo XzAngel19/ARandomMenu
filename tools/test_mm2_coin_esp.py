@@ -25,6 +25,14 @@ assert "BillboardGui" not in SOURCE, "coin markers must not create labels"
 assert 'Instance.new("BoxHandleAdornment")' in SOURCE
 assert 'FindFirstChild("MainCoin", true)' in SOURCE
 assert "state.mm2CoinPickups" in SOURCE, "Auto Farm shares this pickup list"
+# Performance contract (live report: the ESP still lagged): dirty
+# rescans are cheap (tag list + known parts re-verified), the full
+# Workspace walk is enable/5s-only, and the Auto Farm pickup list is
+# cached instead of rescanning per poll.
+assert "local function collectAll(fullScan" in SOURCE
+assert "knownParts" in SOURCE
+assert "pickupCache" in SOURCE
+assert "refresh(false)" in SOURCE and "refresh(true)" in SOURCE
 
 script = r'''
 local workspace = {}
@@ -387,7 +395,7 @@ for _, forbidden in ipairs({"FireServer", "InvokeServer", "HttpGet", "HttpPost",
     assert(not string.find(''' + repr(SOURCE) + ''', forbidden),
         "Coin ESP must not use " .. forbidden)
 end
-print("PASS MM2 Coins: three exact signatures (CoinVisual tag, CoinID attribute, server/visual pair), native billboard+adornment tags on every pickup, collected skip, families, selector, server bag, signals, OFF, unload")
+print("PASS MM2 Coins: three exact signatures (CoinVisual tag, CoinID attribute, server/visual pair), one box per pickup, collected skip, families, selector, server bag, signals, OFF, unload")
 '''
 
 with tempfile.TemporaryDirectory(prefix='coin-esp-') as tmp:

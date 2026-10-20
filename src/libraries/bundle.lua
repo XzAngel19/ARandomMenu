@@ -1,5 +1,5 @@
 return {
-    stamp = "v83-20261020-autofarm-velocity-knifeanim",
+    stamp = "v84-20261020-farm-collect-esp-fastscan",
     files = {
         ["src/Profile/142823291.lua"] = [[
 --!strict
@@ -4147,10 +4147,17 @@ function Module.init(_runtime: any): any
         killAllOnFull = false,
     }
 
-    -- How far under the coin the root rides: close enough that the
-    -- body overlaps the Coin_Server touch volume, low enough that the
-    -- character lies hidden under the floor.
-    local UNDER_OFFSET: number = 3.1
+    -- Travel height under the coin, then the collect height. The
+    -- place data is exact: Coin_Server (the part that pays) is
+    -- 1.2 x 2 x 2, centred on the coin, so its touch volume reaches
+    -- only 1 stud above and below the coin centre. The old ride
+    -- height of 3.1 put the whole body ~1 stud UNDER that volume:
+    -- the farm parked beneath coin after coin and touched nothing
+    -- (the "only 2-3 coins, by luck" bug). Travel stays low and
+    -- hidden; on arrival the body rises to COLLECT_UNDER, where the
+    -- root (2 tall) overlaps the volume by a full stud.
+    local TRAVEL_UNDER: number = 2.4
+    local COLLECT_UNDER: number = 0.8
     -- A coin that does not collect within this long is skipped for a
     -- while instead of trapping the farm on one unreachable pickup.
     local STUCK_SECONDS: number = 1.4
@@ -4191,6 +4198,14 @@ function Module.init(_runtime: any): any
             if ok and type(list) == "table" then
                 return list
             end
+        end
+        -- Cheap first: the game's own tag list. The descendant walk
+        -- below is only for builds where the tag list is unavailable.
+        local okTagged: boolean, tagged: any = pcall(function(): any
+            return game:GetService("CollectionService"):GetTagged("CoinVisual")
+        end)
+        if okTagged and type(tagged) == "table" and #tagged > 0 then
+            return tagged
         end
         local out: {Instance} = {}
         local ok: boolean, descendants: any = pcall(function(): any
@@ -4437,6 +4452,7 @@ function Module.init(_runtime: any): any
         local scanAt: number = 0
         local stuckPart: Instance? = nil
         local stuckSince: number = 0
+        local lastTouchPulse: number = 0
         local blacklist: {[Instance]: number} = {}
 
         -- Engagement state. The farm touches the character ONLY while
@@ -4752,11 +4768,40 @@ function Module.init(_runtime: any): any
                     return
                 end
                 engage(character, humanoid, root)
+                -- Two phases: fly low to below the coin, then rise
+                -- into the touch volume and stay there until it pays.
+                local coinPosition: Vector3 = nearestPosition :: Vector3
+                local flatDelta: Vector3 = coinPosition - root.Position
+                local horizontal: number =
+                    Vector3.new(flatDelta.X, 0, flatDelta.Z).Magnitude
+                local under: number =
+                    horizontal > 1.6 and TRAVEL_UNDER or COLLECT_UNDER
                 local destination: Vector3 =
-                    (nearestPosition :: Vector3)
-                    + Vector3.new(0, -UNDER_OFFSET, 0)
+                    coinPosition + Vector3.new(0, -under, 0)
                 local remaining: number =
                     moveTowards(root, destination, deltaTime)
+                if under == COLLECT_UNDER and remaining < 1.2 then
+                    -- Belt and braces: some builds only pay on a
+                    -- physics Touched, and a fully NoClipped body can
+                    -- miss that pairing. Pulse the touch directly
+                    -- against the Coin_Server part, like the farm in
+                    -- YARHM did, until the coin is gone.
+                    if now - lastTouchPulse > 0.25 then
+                        lastTouchPulse = now
+                        local touchPart: Instance? = nearest
+                        if nearest.Name ~= "Coin_Server" then
+                            local parent: Instance? = nearest.Parent
+                            if parent and parent:IsA("BasePart") then
+                                touchPart = parent
+                            end
+                        end
+                        if type(state.fireTouchInterest) == "function"
+                            and touchPart then
+                            pcall(state.fireTouchInterest, root, touchPart, 0)
+                            pcall(state.fireTouchInterest, root, touchPart, 1)
+                        end
+                    end
+                end
                 setStatus(string.format(
                     "Auto Farm: %d coins - bag %d/%d - speed %d u/s - ping %dms",
                     #scanCache, bagAmount, bagLimit,
@@ -7208,7 +7253,12 @@ function Module.init(runtime: any): any
     -- Family of one pickup: its mesh children only. With no specific
     -- word, the round's family applies (a round pays a single kind of
     -- pickup), falling back to the classic coin.
+    local familyCache: {[Instance]: string} = {}
     local function familyOf(part: Instance): string
+        local cached: string? = familyCache[part]
+        if cached then
+            return cached
+        end
         local names: {string} = {}
         local ok: boolean, descendants: any = pcall(function(): any
             return part:GetDescendants()
@@ -7230,6 +7280,15 @@ function Module.init(runtime: any): any
             if family ~= FAMILY_COIN or active == nil or active == FAMILY_COIN then
                 for _, phrase: string in ipairs(FAMILY_PHRASES[family]) do
                     if contains(haystack, phrase) then
+                        -- Cache only the non-Coin mesh families:
+                        -- they win over the server family in every
+                        -- scan, so they can never go stale. A Coin
+                        -- mesh classification is NOT cached -- when
+                        -- the server announces an event family, the
+                        -- coin template must reclassify to it.
+                        if family ~= FAMILY_COIN then
+                            familyCache[part] = family
+                        end
                         return family
                     end
                 end
@@ -7238,11 +7297,22 @@ function Module.init(runtime: any): any
         return active or FAMILY_COIN
     end
 
+    -- Parts any earlier scan proved are pickups. The cheap rescan
+    -- re-checks just these (attributes may have flipped) instead of
+    -- walking the whole map again.
+    local knownParts: {[Instance]: boolean} = {}
+
     -- Every real pickup on the map, merged from the three signatures.
-    local function collectAll(): ({[Instance]: string}, {[string]: number})
+    -- A cheap scan (fullScan ~= true) skips the Workspace descendant
+    -- walk -- the expensive part -- and combines the game's tag list
+    -- with the parts already known. The full scan remains the
+    -- enable-time sweep and the 5 s safety net.
+    local function collectAll(fullScan: boolean?): ({[Instance]: string}, {[string]: number})
         local found: {[Instance]: string} = {}
         local counts: {[string]: number} = {}
-        lastRaw = {tagged = 0, coinId = 0, named = 0}
+        if fullScan then
+            lastRaw = {tagged = 0, coinId = 0, named = 0}
+        end
 
         local function consider(part: Instance?): ()
             if not part then
@@ -7265,12 +7335,37 @@ function Module.init(runtime: any): any
             return collectionService:GetTagged(COIN_TAG)
         end)
         if okTagged and type(tagged) == "table" then
-            lastRaw.tagged = #tagged
+            if fullScan then
+                lastRaw.tagged = #tagged
+            end
             for _, object: Instance in ipairs(tagged) do
                 if object:IsA("BasePart") then
                     consider(object)
                 end
             end
+        end
+
+        if not fullScan then
+            -- Cheap path: re-check the known parts only, and only
+            -- while at least one signature still holds -- a part that
+            -- lost its tag (collected and cleaned up by the game)
+            -- must drop out immediately, not at the next full scan.
+            local taggedSet: {[Instance]: boolean} = {}
+            if okTagged and type(tagged) == "table" then
+                for _, object: Instance in ipairs(tagged) do
+                    taggedSet[object] = true
+                end
+            end
+            for object: Instance in pairs(knownParts) do
+                if object:IsA("BasePart")
+                    and (taggedSet[object]
+                        or attribute(object, "CoinID") ~= nil
+                        or object.Name == VISUAL_NAME
+                        or object.Name == SERVER_NAME) then
+                    consider(object)
+                end
+            end
+            return found, counts
         end
 
         -- Signatures 2 and 3: the CoinID attribute and the exact spawn
@@ -7290,6 +7385,11 @@ function Module.init(runtime: any): any
                     end
                 end
             end
+        end
+        -- Remember the proven set for the cheap rescans.
+        table.clear(knownParts)
+        for object: Instance in pairs(found) do
+            knownParts[object] = true
         end
         return found, counts
     end
@@ -7322,13 +7422,27 @@ function Module.init(runtime: any): any
     end
 
     -- Shared with Auto Farm: the pickup parts of the family in use.
-    state.mm2CoinPickups = function(): {Instance}
-        local found: {[Instance]: string} = collectAll()
+    -- CACHED: this used to run a full collectAll() per call, and Auto
+    -- Farm polls every 0.4 s -- each poll re-scanned every descendant
+    -- of Workspace and hitch-spiked the frame. The cache refreshes on
+    -- the ESP's own scans, or at most every 1.5 s when polled.
+    local pickupCache: {at: number, list: {Instance}} = {at = -math.huge, list = {}}
+    local function refreshPickupCache(found: {[Instance]: string}): ()
         local list: {Instance} = {}
-        for part: Instance in pairs(found) do
-            table.insert(list, part)
+        for part: Instance, family: string in pairs(found) do
+            if wanted(family) then
+                table.insert(list, part)
+            end
         end
-        return list
+        pickupCache = {at = os.clock(), list = list}
+    end
+    state.mm2CoinPickups = function(): {Instance}
+        if os.clock() - pickupCache.at < 1.5 then
+            return pickupCache.list
+        end
+        local found: {[Instance]: string} = collectAll(true)
+        refreshPickupCache(found)
+        return pickupCache.list
     end
 
     local function toggleCoinEsp(enabled: boolean): ()
@@ -7392,6 +7506,7 @@ function Module.init(runtime: any): any
         -- One small adornment per visible pickup. Creation happens
         -- once per pickup; between rescans Lua does nothing at all.
         local tagClock: number = 0
+        local tagsDirty: boolean = true
         local function drawOverlay(): ()
             tagClock += 1
             local refreshColour: boolean = tagClock % 30 == 0
@@ -7421,6 +7536,7 @@ function Module.init(runtime: any): any
                         end)
                         if okMake and created then
                             coinTags[part] = created
+                            tagsDirty = true
                         end
                     elseif refreshColour then
                         pcall(function(): ()
@@ -7437,19 +7553,24 @@ function Module.init(runtime: any): any
                     pcall(function(): ()
                         entry.box:Destroy()
                     end)
+                    tagsDirty = true
                 end
             end
-            -- Publish which parts carry a marker right now.
-            local published: {[Instance]: boolean} = {}
-            for part: Instance in pairs(coinTags) do
-                published[part] = true
+            -- Publish which parts carry a marker right now (only
+            -- when the set actually changed; this runs every tick).
+            if tagsDirty then
+                tagsDirty = false
+                local published: {[Instance]: boolean} = {}
+                for part: Instance in pairs(coinTags) do
+                    published[part] = true
+                end
+                state.mm2CoinTagParts = published
             end
-            state.mm2CoinTagParts = published
         end
 
         -- One pickup, cham(s) on its visible geometry only.
-        local function refresh(): ()
-            local found: {[Instance]: string}, counts: {[string]: number} = collectAll()
+        local function refresh(fullScan: boolean?): ()
+            local found: {[Instance]: string}, counts: {[string]: number} = collectAll(fullScan)
             local visible: {[Instance]: boolean} = {}
             table.clear(lastFamilies)
             for object: Instance, family: string in pairs(found) do
@@ -7489,6 +7610,7 @@ function Module.init(runtime: any): any
             end
             -- `changed` no longer drives any drawing: tags are created
             -- and removed by drawOverlay from lastFamilies alone.
+            refreshPickupCache(found)
             drawOverlay(true)
             setStatus(counts)
             dirty = false
@@ -7501,7 +7623,10 @@ function Module.init(runtime: any): any
                 dirty = true
             end)
         featureConnections.MM2CoinTagRemoved =
-            collectionService:GetInstanceRemovedSignal(COIN_TAG):Connect(function(): ()
+            collectionService:GetInstanceRemovedSignal(COIN_TAG):Connect(function(object: Instance): ()
+                -- Prune at once: the cheap rescan trusts knownParts,
+                -- and a part the game untagged is gone for good.
+                knownParts[object] = nil
                 dirty = true
             end)
         featureConnections.MM2CoinAdded = workspace.DescendantAdded:Connect(function(object: Instance): ()
@@ -7539,19 +7664,27 @@ function Module.init(runtime: any): any
                 end)
         end
 
-        refresh()
+        refresh(true)
         featureConnections.MM2CoinRefresh = TaskManager:Connect(
             function(deltaTime: number): ()
                 -- The adornments follow their parts inside the
-                -- engine; Lua only rescans when the map changed.
-                -- With ~100 coins out this is the whole cost.
+                -- engine. A dirty rescan (a coin spawned or was
+                -- collected) is CHEAP: the game's tag list plus the
+                -- parts already known, no Workspace walk. The full
+                -- three-signature scan runs at enable and on the 5 s
+                -- safety timer only -- walking every descendant per
+                -- CoinCollected was the remaining ESP lag.
                 drawOverlay()
                 elapsed += deltaTime
-                if not dirty and elapsed < RESCAN_PERIOD then
+                if dirty then
+                    refresh(false)
+                    return
+                end
+                if elapsed < RESCAN_PERIOD then
                     return
                 end
                 elapsed = 0
-                refresh()
+                refresh(true)
             end
         )
     end

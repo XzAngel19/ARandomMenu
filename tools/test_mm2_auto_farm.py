@@ -40,8 +40,12 @@ assert "settings.speed" in SOURCE
 assert "state.mm2CoinPickups" in SOURCE
 assert '"Coin_Server"' in SOURCE  # fallback scan if Coin ESP is off
 
+# Two-phase collection: travel low, then rise into the touch volume.
+# Coin_Server is 1.2x2x2 in the place, reaching 1 stud either side of
+# the coin centre; the old single 3.1 ride height never touched it.
+assert "TRAVEL_UNDER" in SOURCE and "COLLECT_UNDER" in SOURCE
+
 # Prone applied once on engage; NoClip forced while engaged.
-assert "UNDER_OFFSET" in SOURCE
 assert "CFrame.Angles(math.rad(90), 0, 0)" in SOURCE
 assert "CanCollide = false" in SOURCE
 assert "PlatformStand = true" in SOURCE
@@ -80,7 +84,12 @@ assert "prediction.gunAim" in SOURCE
 # A coin that never collects is skipped instead of trapping the farm.
 assert "BLACKLIST_SECONDS" in SOURCE
 
+# Parked collections also pulse the touch directly (physics Touched
+# is not guaranteed for a fully NoClipped body).
+assert "state.fireTouchInterest" in SOURCE
+
 print("PASS MM2 Auto Farm: velocity flight at slider speed (no CFrame "
-      "teleports, no 267 kick), NoClip + prone on engage only, lobby "
-      "hands-off, OFF returns home upright, ping in status, full-bag "
-      "reset/flings, YARHM Kill All, grab gun + predicted shot")
+      "teleports, no 267 kick), NoClip + prone on engage only, "
+      "two-phase collect (rise into the 2-stud Coin_Server volume + "
+      "touch pulse), lobby hands-off, OFF returns home upright, ping "
+      "in status, full-bag reset/flings, YARHM Kill All, grab gun")

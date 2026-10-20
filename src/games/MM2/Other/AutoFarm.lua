@@ -29,10 +29,17 @@ function Module.init(_runtime: any): any
         killAllOnFull = false,
     }
 
-    -- How far under the coin the root rides: close enough that the
-    -- body overlaps the Coin_Server touch volume, low enough that the
-    -- character lies hidden under the floor.
-    local UNDER_OFFSET: number = 3.1
+    -- Travel height under the coin, then the collect height. The
+    -- place data is exact: Coin_Server (the part that pays) is
+    -- 1.2 x 2 x 2, centred on the coin, so its touch volume reaches
+    -- only 1 stud above and below the coin centre. The old ride
+    -- height of 3.1 put the whole body ~1 stud UNDER that volume:
+    -- the farm parked beneath coin after coin and touched nothing
+    -- (the "only 2-3 coins, by luck" bug). Travel stays low and
+    -- hidden; on arrival the body rises to COLLECT_UNDER, where the
+    -- root (2 tall) overlaps the volume by a full stud.
+    local TRAVEL_UNDER: number = 2.4
+    local COLLECT_UNDER: number = 0.8
     -- A coin that does not collect within this long is skipped for a
     -- while instead of trapping the farm on one unreachable pickup.
     local STUCK_SECONDS: number = 1.4
@@ -73,6 +80,14 @@ function Module.init(_runtime: any): any
             if ok and type(list) == "table" then
                 return list
             end
+        end
+        -- Cheap first: the game's own tag list. The descendant walk
+        -- below is only for builds where the tag list is unavailable.
+        local okTagged: boolean, tagged: any = pcall(function(): any
+            return game:GetService("CollectionService"):GetTagged("CoinVisual")
+        end)
+        if okTagged and type(tagged) == "table" and #tagged > 0 then
+            return tagged
         end
         local out: {Instance} = {}
         local ok: boolean, descendants: any = pcall(function(): any
@@ -319,6 +334,7 @@ function Module.init(_runtime: any): any
         local scanAt: number = 0
         local stuckPart: Instance? = nil
         local stuckSince: number = 0
+        local lastTouchPulse: number = 0
         local blacklist: {[Instance]: number} = {}
 
         -- Engagement state. The farm touches the character ONLY while
@@ -634,11 +650,40 @@ function Module.init(_runtime: any): any
                     return
                 end
                 engage(character, humanoid, root)
+                -- Two phases: fly low to below the coin, then rise
+                -- into the touch volume and stay there until it pays.
+                local coinPosition: Vector3 = nearestPosition :: Vector3
+                local flatDelta: Vector3 = coinPosition - root.Position
+                local horizontal: number =
+                    Vector3.new(flatDelta.X, 0, flatDelta.Z).Magnitude
+                local under: number =
+                    horizontal > 1.6 and TRAVEL_UNDER or COLLECT_UNDER
                 local destination: Vector3 =
-                    (nearestPosition :: Vector3)
-                    + Vector3.new(0, -UNDER_OFFSET, 0)
+                    coinPosition + Vector3.new(0, -under, 0)
                 local remaining: number =
                     moveTowards(root, destination, deltaTime)
+                if under == COLLECT_UNDER and remaining < 1.2 then
+                    -- Belt and braces: some builds only pay on a
+                    -- physics Touched, and a fully NoClipped body can
+                    -- miss that pairing. Pulse the touch directly
+                    -- against the Coin_Server part, like the farm in
+                    -- YARHM did, until the coin is gone.
+                    if now - lastTouchPulse > 0.25 then
+                        lastTouchPulse = now
+                        local touchPart: Instance? = nearest
+                        if nearest.Name ~= "Coin_Server" then
+                            local parent: Instance? = nearest.Parent
+                            if parent and parent:IsA("BasePart") then
+                                touchPart = parent
+                            end
+                        end
+                        if type(state.fireTouchInterest) == "function"
+                            and touchPart then
+                            pcall(state.fireTouchInterest, root, touchPart, 0)
+                            pcall(state.fireTouchInterest, root, touchPart, 1)
+                        end
+                    end
+                end
                 setStatus(string.format(
                     "Auto Farm: %d coins - bag %d/%d - speed %d u/s - ping %dms",
                     #scanCache, bagAmount, bagLimit,
