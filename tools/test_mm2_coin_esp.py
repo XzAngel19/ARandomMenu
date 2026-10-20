@@ -40,6 +40,13 @@ local function base(name, tags, attrs, children)
         return nil
     end
     function object:GetAttribute(name) return self.attrs[name] end
+    function object:Clone()
+        local copy = base(self.Name)
+        copy.Transparency = self.Transparency
+        copy.Color = self.Color
+        return copy
+    end
+    function object:Destroy() self.Parent = nil end
     function object:FindFirstChild(childName)
         for _, child in ipairs(self.children) do
             if child.Name == childName then return child end
@@ -78,13 +85,22 @@ end
 
 -- REAL pickups: tagged CoinVisual parts, exactly as the game spawns them.
 local coinMesh = base("MainCoin")
+function coinMesh:IsA(class)
+    return class == "MeshPart" or class == "BasePart" or class == "Instance"
+end
 local coinPart = base("CoinVisual", {CoinVisual = true}, nil,
     {coinMesh, base("DecalPart"), base("2Part")})
 coinPart.Transparency = 1 -- the holder is invisible; its meshes are the coin
 local candyMesh = base("CandyMesh")
+function candyMesh:IsA(class)
+    return class == "MeshPart" or class == "BasePart" or class == "Instance"
+end
 local candyPart = base("CoinVisual", {CoinVisual = true}, nil, {candyMesh})
 candyPart.Transparency = 1
 local snowMesh = base("SnowTokenMesh")
+function snowMesh:IsA(class)
+    return class == "MeshPart" or class == "BasePart" or class == "Instance"
+end
 local snowPart = base("CoinVisual", {CoinVisual = true}, nil, {snowMesh})
 -- A collected pickup: the game keeps it tagged, the ESP must skip it.
 local collectedPart = base("CoinVisual", {CoinVisual = true},
@@ -205,6 +221,11 @@ local function addInformationOption(feature, text)
 end
 local notices = {}
 local function notify(message) notices[#notices + 1] = message end
+local Instance = {new = function(class)
+    local object = base("WurstCoinChams")
+    object.ClassName = class
+    return object
+end}
 local game = {GetService = function(_, name)
     if name == "CollectionService" then return CollectionService end
     error("unexpected service " .. tostring(name))
@@ -222,24 +243,31 @@ assert(feature.information and string.find(feature.information, "CoinVisual"),
 assert(callbacks["Coin colour"] and callbacks["Coin transparency"])
 assert(callbacks["Coin in use"] and cycleValues["Coin in use"],
     "the family selector is registered")
-assert(not next(state.mm2Core.CoinEffects), "nothing is drawn before enabling")
+assert(not next(state.mm2CoinChamSources or {}), "nothing is drawn before enabling")
 
 local function highlighted(object)
-    for _, entry in ipairs(state.mm2Core.CoinEffects) do
-        if entry.object == object then return true end
-    end
-    return false
+    return state.mm2CoinChamSources ~= nil
+        and state.mm2CoinChamSources[object] ~= nil
+end
+local function chamCount()
+    local n = 0
+    for _ in pairs(state.mm2CoinChamSources or {}) do n += 1 end
+    return n
 end
 
 -- ON: only the three uncollected tagged parts, each highlighted ITSELF.
 feature.enabled = true
 feature.onToggle(true)
-assert(#state.mm2Core.CoinEffects >= 5, "pickups drawn: " .. #state.mm2Core.CoinEffects)
+assert(chamCount() >= 5, "pickups drawn: " .. chamCount())
 assert(not highlighted(coinPart), "the invisible holder itself is not drawn")
 assert(highlighted(coinMesh), "the coin's visible mesh is highlighted")
+local coinClone = state.mm2CoinChamSources[coinMesh]
+assert(coinClone and coinClone.Name == "CoinCham" and coinClone.Anchored
+    and not coinClone.CanCollide, "each coin gets a cloned cham model")
+assert(coinClone.Color == "gold", "the clone takes the coin colour")
 assert(highlighted(candyMesh), "the candy's visible mesh is highlighted")
 assert(highlighted(snowMesh), "the snow token's visible mesh is highlighted")
-assert(highlighted(snowPart), "an opaque holder is drawn itself")
+assert(not highlighted(snowPart), "the mesh is drawn instead of its holder")
 assert(not highlighted(collectedPart), "a collected pickup stays dark")
 assert(not highlighted(serverPart), "Coin_Server alone is never a pickup")
 assert(not highlighted(looseMainCoin), "an untagged MainCoin is never a pickup")
@@ -296,12 +324,12 @@ assert(string.find(notices[#notices], "Server coin: Candy"), tostring(notices[#n
 
 -- Colour applies live, OFF clears, empty map reports honestly.
 callbacks["Coin colour"]("red")
-for _, entry in ipairs(state.mm2Core.CoinEffects) do
-    assert(entry.color == "red", "colour applies live")
+for _, clone in pairs(state.mm2CoinChamSources) do
+    assert(clone.Color == "red", "colour applies live")
 end
 feature.enabled = false
 feature.onToggle(false)
-assert(#state.mm2Core.CoinEffects == 0, "OFF clears every highlight")
+assert(chamCount() == 0, "OFF clears every cham model")
 assert(lastStatus == nil, "OFF clears the status")
 tagged = {}
 worldScan = {}
@@ -312,7 +340,7 @@ feature.onToggle(false)
 
 Module.destroy()
 assert(not state.mm2CoinFeature, "the card reference is released")
-assert(#state.mm2Core.CoinEffects == 0 and not loops.coin, "unload leaves nothing")
+assert(chamCount() == 0 and not loops.coin, "unload leaves nothing")
 
 -- Client-side only, and no name heuristics left in the source.
 for _, forbidden in ipairs({"FireServer", "InvokeServer", "HttpGet", "HttpPost",

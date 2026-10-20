@@ -1,5 +1,5 @@
 return {
-    stamp = "v76-20261020-coin-highlight-visible-geometry",
+    stamp = "v77-20261020-coin-cham-models-disguise-anim-speed",
     files = {
         ["src/Profile/142823291.lua"] = [[
 --!strict
@@ -6354,6 +6354,32 @@ function Module.init(runtime: any): any
     -- Raw signature counts from the last scan, for the report action.
     local lastRaw = {tagged = 0, coinId = 0, named = 0}
 
+    -- Cham models: one cloned mesh per pickup geometry part, living in a
+    -- folder in the workspace and following the original every frame.
+    -- A Highlight never rendered here (the pickup holders are invisible,
+    -- Transparency = 1, and Highlights skip transparent parts), so each
+    -- coin gets a real neon copy of itself instead.
+    local chamFolder: Instance? = nil
+    local chamClones: {{source: Instance, clone: Instance}} = {}
+    -- Geometry part -> its clone, for tests and the report action.
+    state.mm2CoinChamSources = {}
+
+    local function clearChams(): ()
+        for _, entry in ipairs(chamClones) do
+            pcall(function(): ()
+                entry.clone:Destroy()
+            end)
+        end
+        table.clear(chamClones)
+        state.mm2CoinChamSources = {}
+        if chamFolder then
+            pcall(function(): ()
+                (chamFolder :: Instance):Destroy()
+            end)
+            chamFolder = nil
+        end
+    end
+
     local function attribute(object: Instance, name: string): any
         local ok: boolean, value: any = pcall(function(): any
             return object:GetAttribute(name)
@@ -6562,6 +6588,7 @@ function Module.init(runtime: any): any
         disconnectFeatureConnection("MM2CoinTagRemoved")
         disconnectFeatureConnection("MM2CoinAdded")
         clearEffects(CoinEffects)
+        clearChams()
 
         if not enabled then
             local card: any = state.mm2CoinFeature
@@ -6588,67 +6615,121 @@ function Module.init(runtime: any): any
             end
         end
 
-        -- Roblox does not render a Highlight on a part whose Transparency
-        -- is above ~0.01, and a pickup's tagged part is an invisible
-        -- holder (Transparency = 1 in the place) whose visible geometry
-        -- is its mesh children. So the cham goes on every VISIBLE
-        -- BasePart of the pickup: the holder itself when it is opaque,
-        -- its mesh descendants, and -- when the holder carries no
-        -- visible geometry at all -- the visible parts of its parent
+        -- The geometry of one pickup: its mesh parts (what the player
+        -- actually sees), else its plain parts, else -- when the holder
+        -- carries no geometry at all -- the geometry of its parent
         -- group, provided that group is pickup-sized (a container of
-        -- many coins is never painted).
-        local function drawPickup(visual: Instance): ()
-            local drew: boolean = false
-            local function drawPart(part: Instance): ()
-                createMM2Cham(
-                    CoinEffects,
-                    part,
-                    mm2Settings.coinColor,
-                    mm2Settings.coinTransparency
-                )
-                drew = true
-            end
-            local function isVisible(part: Instance): boolean
-                local transparency: any = (part :: any).Transparency
-                return type(transparency) ~= "number" or transparency <= 0.9
-            end
-            local function drawVisibleIn(root: Instance): ()
-                if root:IsA("BasePart") and isVisible(root) then
-                    drawPart(root)
+        -- many coins is never cloned).
+        local function geometryOf(visual: Instance): {Instance}
+            local meshes: {Instance} = {}
+            local parts: {Instance} = {}
+            local function harvest(root: Instance): ()
+                if root:IsA("BasePart") then
+                    table.insert(parts, root)
+                    if root:IsA("MeshPart") then
+                        table.insert(meshes, root)
+                    end
                 end
                 local ok: boolean, descendants: any = pcall(function(): any
                     return root:GetDescendants()
                 end)
                 if ok and type(descendants) == "table" then
                     for _, object: Instance in ipairs(descendants) do
-                        if object:IsA("BasePart") and isVisible(object) then
-                            drawPart(object)
+                        -- The invisible server holder is never geometry.
+                        if object:IsA("BasePart") and object.Name ~= SERVER_NAME then
+                            table.insert(parts, object)
+                            if object:IsA("MeshPart") then
+                                table.insert(meshes, object)
+                            end
                         end
                     end
                 end
             end
-            drawVisibleIn(visual)
-            if not drew then
+            harvest(visual)
+            if #meshes == 0 and #parts <= 1 then
                 local parent: Instance? = visual.Parent
                 if parent and parent ~= workspace then
                     local ok: boolean, descendants: any = pcall(function(): any
                         return parent:GetDescendants()
                     end)
                     if ok and type(descendants) == "table" then
-                        local baseParts: number = 0
+                        local total: number = 0
                         for _, object: Instance in ipairs(descendants) do
                             if object:IsA("BasePart") then
-                                baseParts += 1
+                                total += 1
                             end
                         end
-                        if baseParts <= 24 then
-                            drawVisibleIn(parent)
+                        if total > 0 and total <= 24 then
+                            table.clear(meshes)
+                            table.clear(parts)
+                            harvest(parent)
                         end
                     end
                 end
             end
-            if not drew then
-                drawPart(visual)
+            if #meshes > 0 then
+                return meshes
+            end
+            return parts
+        end
+
+        -- A cham model of the coin itself: clone each geometry part,
+        -- strip everything inside it, force it neon in the coin colour
+        -- and slightly larger than the original, so a glowing copy of
+        -- the coin sits exactly where the coin is.
+        local function buildChams(visible: {[Instance]: boolean}): ()
+            clearChams()
+            local folder: Instance = Instance.new("Folder")
+            folder.Name = "WurstCoinChams"
+            folder.Parent = workspace
+            chamFolder = folder
+            local transparency: number = math.clamp(mm2Settings.coinTransparency, 0, 0.6)
+            for visual: Instance in pairs(visible) do
+                for _, source: Instance in ipairs(geometryOf(visual)) do
+                    local ok: boolean, clone: any = pcall(function(): any
+                        return (source :: any):Clone()
+                    end)
+                    if ok and clone then
+                        for _, child: Instance in ipairs(clone:GetDescendants()) do
+                            pcall(function(): ()
+                                child:Destroy()
+                            end)
+                        end
+                        clone.Name = "CoinCham"
+                        clone.Anchored = true
+                        clone.CanCollide = false
+                        clone.CanQuery = false
+                        clone.CanTouch = false
+                        clone.Color = mm2Settings.coinColor
+                        clone.Transparency = transparency
+                        pcall(function(): ()
+                            clone.Material = Enum.Material.Neon
+                        end)
+                        pcall(function(): ()
+                            clone.Size = clone.Size * 1.07
+                        end)
+                        clone.CFrame = (source :: any).CFrame
+                        clone.Parent = folder
+                        table.insert(chamClones, {source = source, clone = clone})
+                        state.mm2CoinChamSources[source] = clone
+                    end
+                end
+            end
+        end
+
+        -- Coins spin and bob: every clone follows its original.
+        local function syncChams(): ()
+            for index: number = #chamClones, 1, -1 do
+                local entry = chamClones[index]
+                if not entry.source.Parent then
+                    pcall(function(): ()
+                        entry.clone:Destroy()
+                    end)
+                    state.mm2CoinChamSources[entry.source] = nil
+                    table.remove(chamClones, index)
+                else
+                    entry.clone.CFrame = (entry.source :: any).CFrame
+                end
             end
         end
 
@@ -6676,9 +6757,7 @@ function Module.init(runtime: any): any
             end
             if changed then
                 clearEffects(CoinEffects)
-                for object: Instance in pairs(visible) do
-                    drawPickup(object)
-                end
+                buildChams(visible)
             end
             setStatus(counts)
             dirty = false
@@ -6732,6 +6811,10 @@ function Module.init(runtime: any): any
         refresh()
         featureConnections.MM2CoinRefresh = TaskManager:Connect(
             function(deltaTime: number): ()
+                -- The clones follow their coins every frame; the scan
+                -- itself only runs when something changed (plus the
+                -- safety-net rescan).
+                syncChams()
                 elapsed += deltaTime
                 if not dirty and elapsed < RESCAN_PERIOD then
                     return
@@ -6744,7 +6827,7 @@ function Module.init(runtime: any): any
 
     local CoinFeature: any = createUniversalFeature(
         "Coin ESP",
-        "Highlights the real coin, candy, snow token, beach ball and egg pickups of the map and reports how many of each family exist.",
+        "Puts a glowing cham model of each real coin, candy, snow token, beach ball and egg on the map and reports how many of each family exist.",
         3,
         toggleCoinEsp,
         {
@@ -6808,7 +6891,7 @@ function Module.init(runtime: any): any
     )
     addInformationOption(
         CoinFeature,
-        "Pickups are recognised by the game's own signatures only: the CoinVisual tag, the CoinID attribute and the exact server/visual part pair. Highlights sit on the visible part itself, never on a parent model or container. Auto highlights the family the server announces on CoinsStarted."
+        "Pickups are recognised by the game's own signatures only: the CoinVisual tag, the CoinID attribute and the exact server/visual part pair. Each pickup gets a cloned cham model of its own mesh (neon, in the coin colour) that follows it; containers are never cloned. Auto follows the family the server announces on CoinsStarted."
     )
 
     activeCleanup = function(): ()
@@ -19848,6 +19931,7 @@ function Module.init(context: Runtime): any
 
     local settings = {
         mode = "Character",
+        animationSpeed = 1,
         id = tostring(DEFAULT_USER_ID),
         useTargetMovementAnimations = savedToggle(
             "Use target movement animations",
@@ -21535,6 +21619,26 @@ function Module.init(context: Runtime): any
         return character, humanoid
     end
 
+    -- Animation Speed: every playing track of our own character runs at
+    -- this rate (0 freezes, 1 is normal, 2 is double). The Heartbeat
+    -- below re-applies it, because the Animate script starts new tracks
+    -- at speed 1 whenever the animation changes.
+    local function applyAnimationSpeedValue(speed: number): ()
+        local _character: any, humanoid: any = activeCharacter()
+        if not humanoid then
+            return
+        end
+        for _, track: AnimationTrack in ipairs(playingAnimationTracks(humanoid)) do
+            pcall(function(): ()
+                track:AdjustSpeed(speed)
+            end)
+        end
+    end
+
+    local function applyAnimationSpeed(): ()
+        applyAnimationSpeedValue(settings.animationSpeed)
+    end
+
     -- Character mode only. Both toggles are independent: one touches the
     -- Animate slots, the other the Humanoid emotes, and neither refetches the
     -- avatar because cacheTarget already loaded everything.
@@ -21587,6 +21691,7 @@ function Module.init(context: Runtime): any
 
     local function restoreAndRelease(): ()
         generation += 1
+        applyAnimationSpeedValue(1)
         stopAppearanceFilter()
         local character: Model? = LocalPlayer.Character
         local humanoid: Humanoid? = character
@@ -21611,6 +21716,28 @@ function Module.init(context: Runtime): any
         Function = function(enabled: boolean): ()
             if enabled then
                 card:SetStatus(settings.mode)
+                -- Keep new tracks at the chosen speed: the Animate
+                -- script starts each one at 1.
+                local runService: any = host.RunService
+                if not runService then
+                    local ok: boolean, service: any = pcall(function(): any
+                        return (game :: any):GetService("RunService")
+                    end)
+                    if ok then
+                        runService = service
+                    end
+                end
+                if runService and runService.Heartbeat then
+                    local lastSpeedAt: number = 0
+                    card:Clean(runService.Heartbeat:Connect(function(): ()
+                        local now: number = os.clock()
+                        if now - lastSpeedAt < 0.2 then
+                            return
+                        end
+                        lastSpeedAt = now
+                        applyAnimationSpeed()
+                    end))
+                end
                 card:Clean(LocalPlayer.CharacterAdded:Connect(function(): ()
                     generation += 1
                     stopAppearanceFilter()
@@ -21650,6 +21777,21 @@ function Module.init(context: Runtime): any
             end
         end,
         Tooltip = "Character: the visible avatar, plus independent toggles for its emotes and movement animations. Animation: the same user ID's emotes and movement animations only, always on; your character stays exactly as it is.",
+    })
+
+    card:CreateSlider({
+        Name = "Animation Speed",
+        Min = 0,
+        Max = 2,
+        Step = 0.05,
+        Default = settings.animationSpeed,
+        Function = function(value: number): ()
+            settings.animationSpeed = math.clamp(value, 0, 2)
+            if card.Enabled then
+                applyAnimationSpeed()
+            end
+        end,
+        Tooltip = "Playback speed of your character's animations while Disguise is on: 0 freezes them, 1 is normal, 2 is double speed. Turning Disguise off restores speed 1.",
     })
 
     card:CreateToggle({

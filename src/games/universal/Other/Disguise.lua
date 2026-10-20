@@ -193,6 +193,7 @@ function Module.init(context: Runtime): any
 
     local settings = {
         mode = "Character",
+        animationSpeed = 1,
         id = tostring(DEFAULT_USER_ID),
         useTargetMovementAnimations = savedToggle(
             "Use target movement animations",
@@ -1880,6 +1881,26 @@ function Module.init(context: Runtime): any
         return character, humanoid
     end
 
+    -- Animation Speed: every playing track of our own character runs at
+    -- this rate (0 freezes, 1 is normal, 2 is double). The Heartbeat
+    -- below re-applies it, because the Animate script starts new tracks
+    -- at speed 1 whenever the animation changes.
+    local function applyAnimationSpeedValue(speed: number): ()
+        local _character: any, humanoid: any = activeCharacter()
+        if not humanoid then
+            return
+        end
+        for _, track: AnimationTrack in ipairs(playingAnimationTracks(humanoid)) do
+            pcall(function(): ()
+                track:AdjustSpeed(speed)
+            end)
+        end
+    end
+
+    local function applyAnimationSpeed(): ()
+        applyAnimationSpeedValue(settings.animationSpeed)
+    end
+
     -- Character mode only. Both toggles are independent: one touches the
     -- Animate slots, the other the Humanoid emotes, and neither refetches the
     -- avatar because cacheTarget already loaded everything.
@@ -1932,6 +1953,7 @@ function Module.init(context: Runtime): any
 
     local function restoreAndRelease(): ()
         generation += 1
+        applyAnimationSpeedValue(1)
         stopAppearanceFilter()
         local character: Model? = LocalPlayer.Character
         local humanoid: Humanoid? = character
@@ -1956,6 +1978,28 @@ function Module.init(context: Runtime): any
         Function = function(enabled: boolean): ()
             if enabled then
                 card:SetStatus(settings.mode)
+                -- Keep new tracks at the chosen speed: the Animate
+                -- script starts each one at 1.
+                local runService: any = host.RunService
+                if not runService then
+                    local ok: boolean, service: any = pcall(function(): any
+                        return (game :: any):GetService("RunService")
+                    end)
+                    if ok then
+                        runService = service
+                    end
+                end
+                if runService and runService.Heartbeat then
+                    local lastSpeedAt: number = 0
+                    card:Clean(runService.Heartbeat:Connect(function(): ()
+                        local now: number = os.clock()
+                        if now - lastSpeedAt < 0.2 then
+                            return
+                        end
+                        lastSpeedAt = now
+                        applyAnimationSpeed()
+                    end))
+                end
                 card:Clean(LocalPlayer.CharacterAdded:Connect(function(): ()
                     generation += 1
                     stopAppearanceFilter()
@@ -1995,6 +2039,21 @@ function Module.init(context: Runtime): any
             end
         end,
         Tooltip = "Character: the visible avatar, plus independent toggles for its emotes and movement animations. Animation: the same user ID's emotes and movement animations only, always on; your character stays exactly as it is.",
+    })
+
+    card:CreateSlider({
+        Name = "Animation Speed",
+        Min = 0,
+        Max = 2,
+        Step = 0.05,
+        Default = settings.animationSpeed,
+        Function = function(value: number): ()
+            settings.animationSpeed = math.clamp(value, 0, 2)
+            if card.Enabled then
+                applyAnimationSpeed()
+            end
+        end,
+        Tooltip = "Playback speed of your character's animations while Disguise is on: 0 freezes them, 1 is normal, 2 is double speed. Turning Disguise off restores speed 1.",
     })
 
     card:CreateToggle({
