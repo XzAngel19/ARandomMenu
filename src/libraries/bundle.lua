@@ -1,5 +1,5 @@
 return {
-    stamp = "v75-20261020-coin-three-signatures",
+    stamp = "v76-20261020-coin-highlight-visible-geometry",
     files = {
         ["src/Profile/142823291.lua"] = [[
 --!strict
@@ -6588,7 +6588,71 @@ function Module.init(runtime: any): any
             end
         end
 
-        -- One Highlight per pickup, on the visible part itself.
+        -- Roblox does not render a Highlight on a part whose Transparency
+        -- is above ~0.01, and a pickup's tagged part is an invisible
+        -- holder (Transparency = 1 in the place) whose visible geometry
+        -- is its mesh children. So the cham goes on every VISIBLE
+        -- BasePart of the pickup: the holder itself when it is opaque,
+        -- its mesh descendants, and -- when the holder carries no
+        -- visible geometry at all -- the visible parts of its parent
+        -- group, provided that group is pickup-sized (a container of
+        -- many coins is never painted).
+        local function drawPickup(visual: Instance): ()
+            local drew: boolean = false
+            local function drawPart(part: Instance): ()
+                createMM2Cham(
+                    CoinEffects,
+                    part,
+                    mm2Settings.coinColor,
+                    mm2Settings.coinTransparency
+                )
+                drew = true
+            end
+            local function isVisible(part: Instance): boolean
+                local transparency: any = (part :: any).Transparency
+                return type(transparency) ~= "number" or transparency <= 0.9
+            end
+            local function drawVisibleIn(root: Instance): ()
+                if root:IsA("BasePart") and isVisible(root) then
+                    drawPart(root)
+                end
+                local ok: boolean, descendants: any = pcall(function(): any
+                    return root:GetDescendants()
+                end)
+                if ok and type(descendants) == "table" then
+                    for _, object: Instance in ipairs(descendants) do
+                        if object:IsA("BasePart") and isVisible(object) then
+                            drawPart(object)
+                        end
+                    end
+                end
+            end
+            drawVisibleIn(visual)
+            if not drew then
+                local parent: Instance? = visual.Parent
+                if parent and parent ~= workspace then
+                    local ok: boolean, descendants: any = pcall(function(): any
+                        return parent:GetDescendants()
+                    end)
+                    if ok and type(descendants) == "table" then
+                        local baseParts: number = 0
+                        for _, object: Instance in ipairs(descendants) do
+                            if object:IsA("BasePart") then
+                                baseParts += 1
+                            end
+                        end
+                        if baseParts <= 24 then
+                            drawVisibleIn(parent)
+                        end
+                    end
+                end
+            end
+            if not drew then
+                drawPart(visual)
+            end
+        end
+
+        -- One pickup, cham(s) on its visible geometry only.
         local function refresh(): ()
             local found: {[Instance]: string}, counts: {[string]: number} = collectAll()
             local visible: {[Instance]: boolean} = {}
@@ -6613,12 +6677,7 @@ function Module.init(runtime: any): any
             if changed then
                 clearEffects(CoinEffects)
                 for object: Instance in pairs(visible) do
-                    createMM2Cham(
-                        CoinEffects,
-                        object,
-                        mm2Settings.coinColor,
-                        mm2Settings.coinTransparency
-                    )
+                    drawPickup(object)
                 end
             end
             setStatus(counts)

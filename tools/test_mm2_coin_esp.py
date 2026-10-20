@@ -31,7 +31,7 @@ end}
 
 local function base(name, tags, attrs, children)
     local object = {Name = name, Parent = workspace, tags = tags or {},
-        attrs = attrs or {}, children = children or {}}
+        attrs = attrs or {}, children = children or {}, Transparency = 0}
     function object:IsA(class)
         return class == "BasePart" or class == "Instance"
     end
@@ -77,12 +77,15 @@ local function model(name, children)
 end
 
 -- REAL pickups: tagged CoinVisual parts, exactly as the game spawns them.
+local coinMesh = base("MainCoin")
 local coinPart = base("CoinVisual", {CoinVisual = true}, nil,
-    {base("MainCoin"), base("DecalPart"), base("2Part")})
-local candyPart = base("CoinVisual", {CoinVisual = true}, nil,
-    {base("CandyMesh")})
-local snowPart = base("CoinVisual", {CoinVisual = true}, nil,
-    {base("SnowTokenMesh")})
+    {coinMesh, base("DecalPart"), base("2Part")})
+coinPart.Transparency = 1 -- the holder is invisible; its meshes are the coin
+local candyMesh = base("CandyMesh")
+local candyPart = base("CoinVisual", {CoinVisual = true}, nil, {candyMesh})
+candyPart.Transparency = 1
+local snowMesh = base("SnowTokenMesh")
+local snowPart = base("CoinVisual", {CoinVisual = true}, nil, {snowMesh})
 -- A collected pickup: the game keeps it tagged, the ESP must skip it.
 local collectedPart = base("CoinVisual", {CoinVisual = true},
     {Collected = true}, {base("MainCoin")})
@@ -231,10 +234,12 @@ end
 -- ON: only the three uncollected tagged parts, each highlighted ITSELF.
 feature.enabled = true
 feature.onToggle(true)
-assert(#state.mm2Core.CoinEffects == 5, "five pickups: " .. #state.mm2Core.CoinEffects)
-assert(highlighted(coinPart), "the tagged coin part itself is highlighted")
-assert(highlighted(candyPart), "the tagged candy part itself is highlighted")
-assert(highlighted(snowPart), "the tagged snow part itself is highlighted")
+assert(#state.mm2Core.CoinEffects >= 5, "pickups drawn: " .. #state.mm2Core.CoinEffects)
+assert(not highlighted(coinPart), "the invisible holder itself is not drawn")
+assert(highlighted(coinMesh), "the coin's visible mesh is highlighted")
+assert(highlighted(candyMesh), "the candy's visible mesh is highlighted")
+assert(highlighted(snowMesh), "the snow token's visible mesh is highlighted")
+assert(highlighted(snowPart), "an opaque holder is drawn itself")
 assert(not highlighted(collectedPart), "a collected pickup stays dark")
 assert(not highlighted(serverPart), "Coin_Server alone is never a pickup")
 assert(not highlighted(looseMainCoin), "an untagged MainCoin is never a pickup")
@@ -248,8 +253,8 @@ assert(lastStatus == "2 coins · 2 candies · 1 snowtoken", tostring(lastStatus)
 
 -- Selector: Candy only.
 callbacks["Coin in use"]("Candy")
-assert(highlighted(candyPart) and not highlighted(coinPart)
-    and not highlighted(snowPart), "the selector keeps only the chosen family")
+assert(highlighted(candyMesh) and not highlighted(coinMesh)
+    and not highlighted(snowMesh), "the selector keeps only the chosen family")
 assert(lastStatus == "2 coins · 2 candies · 1 snowtoken",
     "counts still report every family: " .. tostring(lastStatus))
 
@@ -257,22 +262,24 @@ assert(lastStatus == "2 coins · 2 candies · 1 snowtoken",
 callbacks["Coin in use"]("Auto (server)")
 coinStarted:fire({Candy = true})
 loops.coin(0.01)
-assert(highlighted(candyPart) and not highlighted(coinPart),
+assert(highlighted(candyMesh) and not highlighted(coinMesh),
     "Auto follows the CoinsStarted bag")
 
 -- A generic tagged part takes the server family (one kind per round).
-local genericPart = base("CoinVisual", {CoinVisual = true}, nil, {base("Mesh")})
+local genericMesh = base("Mesh")
+local genericPart = base("CoinVisual", {CoinVisual = true}, nil, {genericMesh})
 table.insert(tagged, genericPart)
 tagAdded:fire(genericPart)
 loops.coin(0.01)
-assert(highlighted(genericPart), "a newly tagged part lights on the tag signal")
+assert(highlighted(genericMesh), "a newly tagged part lights on the tag signal")
+assert(highlighted(genericPart), "an opaque holder is drawn too")
 assert(lastStatus == "1 coin · 4 candies · 1 snowtoken", tostring(lastStatus))
 
 -- Collection: the attribute flips, the remote fires, highlight drops.
 genericPart.attrs.Collected = true
 coinCollected:fire()
 loops.coin(0.01)
-assert(not highlighted(genericPart), "a collected pickup loses its highlight")
+assert(not highlighted(genericMesh), "a collected pickup loses its highlight")
 
 -- Destroyed: gone from the tag list and the workspace scan.
 snowPart.tags.CoinVisual = nil
@@ -280,7 +287,7 @@ for i, object in ipairs(tagged) do if object == snowPart then table.remove(tagge
 for i, object in ipairs(worldScan) do if object == snowPart then table.remove(worldScan, i) end end
 tagRemoved:fire(snowPart)
 loops.coin(0.01)
-assert(not highlighted(snowPart), "a destroyed part loses its highlight")
+assert(not highlighted(snowMesh), "a destroyed part loses its highlight")
 assert(lastStatus == "1 coin · 3 candies", tostring(lastStatus))
 
 -- Report action names the server coin.
@@ -313,7 +320,7 @@ for _, forbidden in ipairs({"FireServer", "InvokeServer", "HttpGet", "HttpPost",
     assert(not string.find(''' + repr(SOURCE) + ''', forbidden),
         "Coin ESP must not use " .. forbidden)
 end
-print("PASS MM2 Coins: three exact signatures (CoinVisual tag, CoinID attribute, server/visual pair), highlight on the visual part only, collected skip, families, selector, server bag, signals, OFF, unload")
+print("PASS MM2 Coins: three exact signatures (CoinVisual tag, CoinID attribute, server/visual pair), highlight on the visible geometry (never on invisible holder parts), collected skip, families, selector, server bag, signals, OFF, unload")
 '''
 
 with tempfile.TemporaryDirectory(prefix='coin-esp-') as tmp:
