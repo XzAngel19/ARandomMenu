@@ -76,7 +76,7 @@ assert gun < auto_shoot, 'the Gun header must precede the gun options'
 knife = KNIFE.index('addSectionOption(feature, "Knife")')
 knife_throw = KNIFE.index('addToggleOption(feature, "Knife Throw"')
 assert knife < knife_throw, 'the Knife header must precede the knife options'
-assert 'Throw with button' in KNIFE
+assert 'Throw with button' not in KNIFE, 'the button trigger option was removed'
 assert 'Lanzar con el boton' not in KNIFE, 'the menu is English'
 assert 'table.insert(feature.optionRows, 2, row)' not in KNIFE, \
     'headers replace the old row-reordering hack'

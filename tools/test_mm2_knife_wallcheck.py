@@ -181,9 +181,9 @@ assert 'CFrame.lookAt(origin.Position, aim)' in K, \
     "the packet origin looks at the predicted point: coherent for servers that read LookVector"
 assert 'remote:FireServer(originCFrame, CFrame.new(aim))' in K, \
     "the aim stays a position: that is where the blade has to end up"
-assert 'knife.Activated:Connect' in K, \
-    "manual mode must listen to the tool, the event a tap and a click both fire"
-assert 'throwKnife(true)' in K, "the button path must throw immediately"
+assert 'knife.Activated:Connect' not in K, \
+    "the button trigger was removed: throws are automatic only"
+assert 'Throw with button' not in K
 assert 'lastKnifeAimName' in K and 'knifeRadius = lastKnifeRadius' in K, \
     "the aim rung and the blade size must reach the calibration file"
 

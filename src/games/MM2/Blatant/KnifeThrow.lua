@@ -34,9 +34,6 @@ function Module.init(runtime: any): any
     -- One preset: held knife, nearest visible target, normal origin,
     -- always-on animation/LOS. The animation owns the throw cadence.
     local knifeThrowSettings = {enabled = false}
-    -- Manual mode: the throw happens when the player presses the tool button
-    -- (tap on mobile, click on desktop) instead of on the automatic cadence.
-    local manualThrowOnly: boolean = false
 
     local function isValidTarget(player: Player): boolean
         if player == LocalPlayer
@@ -345,6 +342,50 @@ function Module.init(runtime: any): any
         else
             addJoint("Torso", "Right Shoulder", 155, 85, -12)
         end
+        if #throwPose == 0 and type(character.GetDescendants) == "function" then
+            -- Rig parenting varies (MM2 spawns its own R15 bodies and
+            -- not every build parents the shoulder under the arm):
+            -- find the right-arm Motor6Ds wherever they sit, matched
+            -- by joint name or by the arm part they drive (Part1).
+            -- Without this the pose list came back empty in game and
+            -- the throw fired instantly, with no animation at all.
+            local wanted: {[string]: {lift: number, forward: number, roll: number}} = {
+                RightShoulder = {lift = 155, forward = 85, roll = -12},
+                ["Right Shoulder"] = {lift = 155, forward = 85, roll = -12},
+                RightElbow = {lift = -85, forward = -8, roll = 0},
+                ["Right Elbow"] = {lift = -85, forward = -8, roll = 0},
+                RightWrist = {lift = -15, forward = 10, roll = 0},
+                ["Right Wrist"] = {lift = -15, forward = 10, roll = 0},
+            }
+            local byPart1: {[string]: string} = {
+                RightUpperArm = "RightShoulder", ["Right Arm"] = "RightShoulder",
+                RightLowerArm = "RightElbow", RightHand = "RightWrist",
+            }
+            for _, object: Instance in ipairs(character:GetDescendants()) do
+                if object:IsA("Motor6D") then
+                    local key: string? = wanted[object.Name] and object.Name or nil
+                    if not key then
+                        local part1: any = (object :: any).Part1
+                        if part1 then
+                            key = byPart1[part1.Name]
+                        end
+                    end
+                    local spec: any = key and wanted[key :: string]
+                    if spec then
+                        local joint: any = object
+                        local c0: CFrame = joint.C0
+                        local pivot: CFrame = CFrame.new(c0.Position)
+                        local basis: CFrame = c0 - c0.Position
+                        table.insert(throwPose, {
+                            joint = joint, c0 = c0, transform = joint.Transform,
+                            initial = c0 * joint.Transform,
+                            raised = pivot * CFrame.Angles(math.rad(spec.lift), 0, math.rad(spec.roll)) * basis,
+                            forward = pivot * CFrame.Angles(math.rad(spec.forward), 0, 0) * basis,
+                        })
+                    end
+                end
+            end
+        end
         -- The guard is armed before the pose is inspected. Releasing from the
         -- "no joint to pose" branch without it turned a held knife into one
         -- packet per frame: the 2026-10-18 capture holds 722 authored knife
@@ -413,8 +454,7 @@ function Module.init(runtime: any): any
     -- moment of sending, so a windup cannot fire from a stale hand position.
     local function performThrow(
         knife: Tool,
-        remote: Instance,
-        source: string
+        remote: Instance
     ): boolean
         if not knifeThrowSettings.enabled or getReadyKnife() ~= knife then
             return false
@@ -461,10 +501,10 @@ function Module.init(runtime: any): any
         pcall(trajectoryCalibration.noteAuthoredShot, trajectoryCalibration, {
             kind = "knife", tool = knife, toolName = knife.Name,
             originPos = origin.Position, aimPos = aim, target = target,
-            silent = source == "manual",
+            silent = false,
             settings = {mode = "Normal", animation = true, wallCheck = true,
                 motionSource = lastKnifePrediction and lastKnifePrediction.motionSource,
-                cadence = source == "manual" and "button" or "animation-cycle",
+                cadence = "animation-cycle",
                 model = lastKnifePrediction and lastKnifePrediction.model or "kinematic-v51",
                 referencePoint = lastKnifePrediction and {lastKnifePrediction.capturedPosition.X, lastKnifePrediction.capturedPosition.Y, lastKnifePrediction.capturedPosition.Z},
                 predictedPoint = lastKnifePrediction and {lastKnifePrediction.endpoint.X, lastKnifePrediction.endpoint.Y, lastKnifePrediction.endpoint.Z},
@@ -485,40 +525,27 @@ function Module.init(runtime: any): any
                 aimHeight = lastKnifeAimName,
                 aimOffsetStuds = lastKnifeAimHeight,
                 knifeRadius = lastKnifeRadius,
-                throwSource = source,
+                throwSource = "auto",
                 -- The packet now carries a frame whose look vector points at
                 -- the aim; a capture can tell which build threw it.
                 originRotation = travel.Magnitude > 1e-3 and "look-at" or "handle",
-                windupSeconds = source == "manual" and 0 or 0.3},
+                windupSeconds = 0.3},
         })
         return true
     end
 
-    local lastManualThrowAt: number = -math.huge
-    local function throwKnife(manual: boolean?): ()
+    local function throwKnife(): ()
         if not knifeThrowSettings.enabled then
             return
         end
         local knife: Tool? = getReadyKnife()
         if not knife then
-            if not manual then stopThrowAnimation() end
+            stopThrowAnimation()
             return
         end
         local events: Instance? = knife:FindFirstChild("Events")
         local remote: Instance? = events and events:FindFirstChild("KnifeThrown")
         if not remote or not remote:IsA("RemoteEvent") then
-            return
-        end
-        if manual then
-            -- A tap has to throw now, so the windup is skipped and the packet
-            -- leaves on the spot. The guard only stops a double tap.
-            if os.clock() - lastManualThrowAt < 0.25 then
-                return
-            end
-            lastManualThrowAt = os.clock()
-            if performThrow(knife, remote, "manual") then
-                pcall(playThrowAnimation, knife, nil)
-            end
             return
         end
         if throwPending then
@@ -533,7 +560,7 @@ function Module.init(runtime: any): any
             playThrowAnimation,
             knife,
             function(): ()
-                performThrow(knife, remote, "auto")
+                performThrow(knife, remote)
             end
         )
         if not ok then
@@ -541,48 +568,16 @@ function Module.init(runtime: any): any
         end
     end
 
-    -- Manual mode watches the tool itself, so the throw happens on the same
-    -- event a tap and a click both produce (Tool.Activated) and nothing here
-    -- depends on a keyboard. The connection follows the knife across respawns.
-    local watchedKnife: Tool? = nil
-    local function disconnectManualTrigger(): ()
-        disconnectFeatureConnection("MM2KnifeActivated")
-        watchedKnife = nil
-    end
-    local function watchManualTrigger(): ()
-        local knife: Tool? = getReadyKnife()
-        if knife == watchedKnife then
-            return
-        end
-        disconnectManualTrigger()
-        if not knife then
-            return
-        end
-        watchedKnife = knife
-        featureConnections.MM2KnifeActivated = knife.Activated:Connect(function(): ()
-            if not knifeThrowSettings.enabled or not manualThrowOnly then
-                return
-            end
-            throwKnife(true)
-        end)
-    end
-
     local function refreshKnifeThrow(): ()
         disconnectFeatureConnection("MM2KnifeThrow")
-        disconnectManualTrigger()
         if not knifeThrowSettings.enabled or state.mm2SilentAimEnabled ~= true then
             stopThrowAnimation()
             return
         end
-        if manualThrowOnly then
-            featureConnections.MM2KnifeThrow =
-                TaskManager:Connect(watchManualTrigger)
-        else
-            featureConnections.MM2KnifeThrow =
-                TaskManager:Connect(function(): ()
-                    throwKnife(false)
-                end)
-        end
+        featureConnections.MM2KnifeThrow =
+            TaskManager:Connect(function(): ()
+                throwKnife()
+            end)
     end
     local function toggleKnifeThrow(enabled: boolean): ()
         knifeThrowSettings.enabled = enabled
@@ -610,23 +605,6 @@ function Module.init(runtime: any): any
     if addSectionOption then addSectionOption(feature, "Knife") end
     addToggleOption(feature, "Knife Throw", false, toggleKnifeThrow,
         "SilentAIM ON + held knife: repeats throws at visible targets. Full animation and WallCheck are automatic.", true)
-    -- Second checkbox: same knob, different trigger. It is created after the
-    -- first so it lands right below it, and it is independent of it.
-    local manualKey = "MM2.Shoot.KnifeThrowButton"
-    if configData.states[manualKey] == nil then
-        configData.states[manualKey] = false
-    end
-    manualThrowOnly = configData.states[manualKey] == true
-    addToggleOption(feature, "Throw with button", manualThrowOnly,
-        function(enabled: boolean): ()
-            manualThrowOnly = enabled
-            configData.states[manualKey] = enabled
-            refreshKnifeThrow()
-            if type(queueConfigSave) == "function" then queueConfigSave() end
-        end,
-        "Throw only when you press the throw button on the tool (mobile or PC), with the same aim and no windup.", true)
-    if type(queueConfigSave) == "function" then queueConfigSave() end
-
     featureConnections.MM2KnifeThrowCharacter = LocalPlayer.CharacterAdded:Connect(stopThrowAnimation)
     activeCleanup = function(): ()
         toggleKnifeThrow(false)

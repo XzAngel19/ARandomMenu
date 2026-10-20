@@ -987,7 +987,7 @@ do
         "the Gun header opens the gun rows")
     assert(knifeThrowOption and knifeThrowOption.LayoutOrder > knifeHeader.LayoutOrder,
         "Knife Throw belongs under the Knife header, not buried below Gun tuning")
-    assert(shoot.options:FindFirstChild("Option_Throwwithbutton"), "the button trigger belongs to the Knife section")
+    assert(not shoot.options:FindFirstChild("Option_Throwwithbutton"), "the button trigger option was removed")
     assert(not knife.options:FindFirstChild("Option_KnifeThrow"), "Knife Throw must not be in KillAura")
     shoot.activationTarget.MouseButton1Click:Fire();assert(ex.state.mm2SilentAimEnabled)
     auraModule:Toggle(true);assert(ex.state.mm2KnifeRuntime.masterEnabled and ex.state.mm2KnifeRuntime.throwWanted)
