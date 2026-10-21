@@ -1,5 +1,5 @@
 return {
-    stamp = "v98-20261021-pose-mirror",
+    stamp = "v99-20261021-live-slots-mirror-fix",
     files = {
         ["src/Profile/142823291.lua"] = [[
 --!strict
@@ -22178,9 +22178,10 @@ function Module.init(context: Runtime): any
         local joints: number = 0
         local signature: number = 0
         for _, object: Instance in ipairs(character:GetDescendants()) do
-            if object:IsA("Motor6D") then
+            if object:IsA("Motor6D")
+                or object:IsA("AnimationConstraint") then
                 local ok: boolean, transform: CFrame = pcall(function(): CFrame
-                    return (object :: Motor6D).Transform
+                    return (object :: any).Transform
                 end)
                 if ok and transform then
                     joints += 1
@@ -22209,9 +22210,10 @@ function Module.init(context: Runtime): any
             return false
         end
         for _, object: Instance in ipairs(character:GetDescendants()) do
-            if object:IsA("Motor6D") then
+            if object:IsA("Motor6D")
+                or object:IsA("AnimationConstraint") then
                 local ok: boolean, transform: CFrame = pcall(function(): CFrame
-                    return (object :: Motor6D).Transform
+                    return (object :: any).Transform
                 end)
                 if ok and transform then
                     if math.abs(transform.X) > 1e-4
@@ -22330,6 +22332,18 @@ function Module.init(context: Runtime): any
     -- transforms are copied onto our joints every frame. Pack,
     -- emotes, mood -- whatever their body does, ours does, because
     -- it is pose data, not assets.
+    local function setAnimatePaused(animate: Instance?, paused: boolean): ()
+        if not animate then
+            return
+        end
+        pcall(function(): ()
+            (animate :: any).Enabled = not paused
+        end)
+        pcall(function(): ()
+            (animate :: any).Disabled = paused
+        end)
+    end
+
     local mirrorConnection: RBXScriptConnection? = nil
     local mirrorAnimate: Instance? = nil
     local mirrorCharacter: Model? = nil
@@ -22346,11 +22360,9 @@ function Module.init(context: Runtime): any
         mirrorAnimate = nil
         mirrorCharacter = nil
         if animate then
-            -- Re-enabling a BaseScript restarts it, so the game's own
+            -- Re-enabling the script restarts it, so the game's own
             -- controller resumes on the restored slots by itself.
-            pcall(function(): ()
-                (animate :: any).Disabled = false
-            end)
+            setAnimatePaused(animate, false)
         end
     end
 
@@ -22379,13 +22391,16 @@ function Module.init(context: Runtime): any
         -- names that matter, and fewer than six pairs is not a pose.
         local theirs: {[string]: any} = {}
         for _, obj: Instance in ipairs(targetCharacter:GetDescendants()) do
-            if obj:IsA("Motor6D") then
+            if obj:IsA("Motor6D")
+                or obj:IsA("AnimationConstraint") then
                 theirs[obj.Name] = obj
             end
         end
         local jointPairs: {{any}} = {}
         for _, obj: Instance in ipairs(character:GetDescendants()) do
-            if obj:IsA("Motor6D") and theirs[obj.Name] then
+            if (obj:IsA("Motor6D")
+                or obj:IsA("AnimationConstraint"))
+                and theirs[obj.Name] then
                 table.insert(jointPairs, {obj, theirs[obj.Name]})
             end
         end
@@ -22399,9 +22414,7 @@ function Module.init(context: Runtime): any
         mirrorAnimate = animate
         mirrorCharacter = character
         if animate then
-            pcall(function(): ()
-                (animate :: any).Disabled = true
-            end)
+            setAnimatePaused(animate, true)
         end
         for _, track: AnimationTrack in ipairs(
             playingAnimationTracks(humanoid)
@@ -22442,6 +22455,27 @@ function Module.init(context: Runtime): any
                 end)
             end
         end)
+        local sample: {any} = jointPairs[1]
+        for _, jointPair: {any} in ipairs(jointPairs) do
+            if jointPair[1].Name == "Neck"
+                or jointPair[1].Name == "Root" then
+                sample = jointPair
+                break
+            end
+        end
+        task.wait(0.3)
+        local gap: number? = nil
+        pcall(function(): ()
+            local oursNow: CFrame = (sample[1] :: any).Transform
+            local theirsNow: CFrame = (sample[2] :: any).Transform
+            gap = (oursNow.Position - theirsNow.Position).Magnitude
+                + math.abs(oursNow.R00 - theirsNow.R00)
+                + math.abs(oursNow.R11 - theirsNow.R11)
+        end)
+        if gap == nil or (gap :: number) > 0.5 then
+            stopPoseMirror()
+            return false
+        end
         animationOverrideApplied = true
         if mirrorNotifiedFor ~= cached.userId then
             mirrorNotifiedFor = cached.userId
@@ -22490,13 +22524,22 @@ function Module.init(context: Runtime): any
                     if animation then
                         local track: AnimationTrack =
                             animator:LoadAnimation(animation)
-                        track.Priority = if category == "idle"
-                            then Enum.AnimationPriority.Idle
-                            elseif category == "jump" or category == "fall"
-                            then Enum.AnimationPriority.Action
-                            else Enum.AnimationPriority.Movement
-                        track.Looped = category ~= "jump"
-                        directTracks[category] = track
+                        if track.Length == 0 then
+                            pcall(function(): ()
+                                track:Destroy()
+                            end)
+                            track = nil :: any
+                        end
+                        if track then
+                            track.Priority = if category == "idle"
+                                then Enum.AnimationPriority.Idle
+                                elseif category == "jump"
+                                    or category == "fall"
+                                then Enum.AnimationPriority.Action
+                                else Enum.AnimationPriority.Movement
+                            track.Looped = category ~= "jump"
+                            directTracks[category] = track
+                        end
                     end
                 end
             end
@@ -22702,6 +22745,8 @@ function Module.init(context: Runtime): any
         return out, replaced
     end
 
+
+    local mirrorAllowed: boolean = false
 
     local function settleMovementAnimations(
         character: Model,
@@ -22942,6 +22987,55 @@ function Module.init(context: Runtime): any
     end
 
 
+    -- The target's REAL slot ids, read from their own Animate script
+    -- while they are in this server. A description is a catalog
+    -- snapshot; the script riding their body holds the ids the engine
+    -- actually loaded for them, which are the ones that play here
+    -- (Probe 1 measured exactly those loading on our own Animator).
+    local function targetAnimateSlots(userId: number): {[string]: any}?
+        local player: any = nil
+        pcall(function(): ()
+            player = Players:GetPlayerByUserId(userId)
+        end)
+        local targetCharacter: any = player and player.Character
+        local animate: any = targetCharacter
+            and targetCharacter:FindFirstChild("Animate")
+        if not animate then
+            return nil
+        end
+        local slots: {[string]: any} = {}
+        for _, mapping in ipairs(MOVEMENT_ANIMATIONS) do
+            local container: any =
+                animate:FindFirstChild(mapping.scriptCategory)
+            local animation: any = nil
+            if container then
+                if container:IsA("Animation") then
+                    animation = container
+                else
+                    for _, descendant: any in ipairs(
+                        container:GetDescendants()
+                    ) do
+                        if descendant:IsA("Animation") then
+                            animation = descendant
+                            break
+                        end
+                    end
+                end
+            end
+            if animation then
+                local id: string? =
+                    animationIdFromValue(animation.AnimationId)
+                if id then
+                    slots[mapping.scriptCategory] = id
+                end
+            end
+        end
+        if next(slots) == nil then
+            return nil
+        end
+        return slots
+    end
+
     -- Applies what was already cached for the current target. No fetch and no
     -- clone: turning a toggle back on is immediate.
     local function applyCachedMovementAnimations(
@@ -22952,23 +23046,21 @@ function Module.init(context: Runtime): any
         if not cached then
             return 0
         end
-        -- In this server, the target's body is already playing the
-        -- real thing: mirror its pose instead of asking the engine
-        -- for clips this place is not allowed to load.
-        if startPoseMirror(character, humanoid) then
-            return 8
-        end
+        local slots: {[string]: any} =
+            targetAnimateSlots(cached.userId) or cached.slots
         local changedCount: number = applyAnimationSlots(
             character,
             humanoid,
-            cached.slots,
+            slots,
             cached.rig
         )
         -- Zero writes do not mean the body is fine: the ids may already be
         -- the frozen set from a previous apply, and re-selecting the same
         -- target has to settle it again instead of trusting the old state.
         if changedCount > 0 or animationOverrideApplied then
+            mirrorAllowed = true
             settleMovementAnimations(character, humanoid)
+            mirrorAllowed = false
         end
         return changedCount
     end
