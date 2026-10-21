@@ -1,5 +1,5 @@
 return {
-    stamp = "v94-20261021-disguise-description-route",
+    stamp = "v95-20261021-clip-sanitize-window-home",
     files = {
         ["src/Profile/142823291.lua"] = [[
 --!strict
@@ -21251,6 +21251,9 @@ function Module.init(context: Runtime): any
         -- movement toggle reuse them without resolving again.
         customPackSlots = (nil :: any),
         customPackName = (nil :: any),
+        -- Per-slot clips picked from bundles under Show Advanced:
+        -- scriptCategory -> rbxassetid string.
+        customSlotIds = ({} :: any),
     }
 
     local function status(message: string): ()
@@ -21888,6 +21891,18 @@ function Module.init(context: Runtime): any
         return applied and setCount or 0
     end
 
+    -- Clip sanitization lives after refreshMeshPartSnapshot (it must
+    -- wait on clip loads; the avatar-copy helpers above may not).
+    -- Forward-declared here so applyAnimationSlots can call it.
+    local sanitizedSlots: (
+        humanoid: Humanoid,
+        resolved: {[string]: any}
+    ) -> ({[string]: any}, number) =
+        function(_humanoid: Humanoid, resolved: {[string]: any}): ({[string]: any}, number)
+            return resolved, 0
+        end
+    local invalidClipNotified: boolean = false
+
     -- What every caller uses: the target's clips are resolved against the rig
     -- and written into the Animate slots. The result is verified by
     -- settleMovementAnimations right after, which owns every wait and every
@@ -21913,6 +21928,20 @@ function Module.init(context: Runtime): any
                 "That pack's clips are not "
                     .. (rigName(humanoid) or "your rig")
                     .. " clips; your own animations stay."
+            )
+        end
+        -- Nothing the engine refuses here may reach the description
+        -- or the slots: sanitized first, rig defaults in their place.
+        local sanitized: {[string]: any}, replacedClips: number =
+            sanitizedSlots(humanoid, resolved)
+        resolved = sanitized
+        if replacedClips > 0 and not invalidClipNotified then
+            invalidClipNotified = true
+            notify(
+                tostring(replacedClips)
+                    .. " of those animation slots cannot be used in "
+                    .. "this game (the engine refuses the clips); "
+                    .. "your rig's own clips fill them instead."
             )
         end
         -- Description first (the permission-exempt route above); the
@@ -22428,6 +22457,99 @@ function Module.init(context: Runtime): any
         end)
         return true
     end
+
+    -- Session cache of clip load verdicts, and its one-time notice.
+    -- Probing happens ONCE per id: never inside the Animate script's
+    -- retry loop.
+    local clipValidity: {[string]: boolean} = {}
+
+    -- Can this Animator actually load this clip here? A refused clip
+    -- ("AnimationClip loaded is not valid") hands back a track whose
+    -- Length never leaves 0, and that is the only conviction used: an
+    -- unreadable Length acquits, so a slow load is never punished.
+    local function clipLoads(humanoid: Humanoid, id: string): boolean
+        local cached: boolean? = clipValidity[id]
+        if cached ~= nil then
+            return cached
+        end
+        local valid: boolean = true
+        local animator: Animator? =
+            humanoid:FindFirstChildOfClass("Animator")
+        local factory: any = (Instance :: any)
+        if animator and factory and type(factory.new) == "function"
+            and type((animator :: any).LoadAnimation) == "function" then
+            local animation: Animation = Instance.new("Animation")
+            animation.AnimationId = id
+            local ok: boolean, track: any = pcall(function(): any
+                return animator:LoadAnimation(animation)
+            end)
+            if not ok or not track then
+                valid = false
+            else
+                pcall(function(): ()
+                    track:Play(0)
+                end)
+                local length: any = nil
+                for _ = 1, 2 do
+                    task.wait(0.12)
+                    pcall(function(): ()
+                        length = track.Length
+                    end)
+                    if type(length) ~= "number" or length > 0 then
+                        break
+                    end
+                end
+                if type(length) == "number" and length <= 0 then
+                    valid = false
+                end
+                pcall(function(): ()
+                    track:Stop(0)
+                end)
+                pcall(function(): ()
+                    track:Destroy()
+                end)
+            end
+            pcall(function(): ()
+                animation:Destroy()
+            end)
+        end
+        clipValidity[id] = valid
+        return valid
+    end
+
+    -- Drop every clip the engine refuses here and fill the slot with
+    -- the rig's own set BEFORE anything reaches the description or the
+    -- Animate slots. An invalid id inside the Animate script is the
+    -- console spam and the 64-track pile-up: the script retries the
+    -- load forever and every retry is another track.
+    sanitizedSlots = function(
+        humanoid: Humanoid,
+        resolved: {[string]: any}
+    ): ({[string]: any}, number)
+        local defaults: {[string]: any} = rigDefaultSlots(humanoid)
+        local out: {[string]: any} = {}
+        local replaced: number = 0
+        for category: string, value: any in pairs(resolved) do
+            local kept: {string} = {}
+            local list: {any} = type(value) == "table"
+                and value
+                or {value}
+            for _, entry: any in ipairs(list) do
+                local id: string? = animationIdFromValue(entry)
+                if id and clipLoads(humanoid, id) then
+                    table.insert(kept, id)
+                end
+            end
+            if #kept > 0 then
+                out[category] = #kept == 1 and kept[1] or kept
+            else
+                replaced += 1
+                out[category] = defaults[category]
+            end
+        end
+        return out, replaced
+    end
+
 
     local function settleMovementAnimations(
         character: Model,
@@ -23686,6 +23808,79 @@ function Module.init(context: Runtime): any
         end,
         Tooltip = "Any animation pack bundle ID from its catalog link (roblox.com/bundles/<id>/...), official or UGC -- for example 4899847411546. The bundle's items are resolved when you enter it (nothing is downloaded; the engine streams the clips) and the pack is kept for the session. It wins over the target's movement animations, like the built-in packs. R15 clips on an R6 body stay refused for that rig.",
     })
+
+    -- Per-slot bundle inserts: paste any pack's bundle ID into a slot
+    -- and that slot takes the pack's clip for it (Idle from one pack,
+    -- Run from another, ...). Slots left empty fall back to your rig's
+    -- own set when the pack applies.
+    local SLOT_INSERTS: {{string}} = {
+        {"Idle", "idle"},
+        {"Walk", "walk"},
+        {"Run", "run"},
+        {"Jump", "jump"},
+        {"Fall", "fall"},
+        {"Climb", "climb"},
+        {"Swim", "swim"},
+        {"Swim Idle", "swimidle"},
+    }
+    for _, slotInsert: {string} in ipairs(SLOT_INSERTS) do
+        local label: string = slotInsert[1]
+        local category: string = slotInsert[2]
+        card:CreateTextBox({
+            Name = label .. " Bundle ID",
+            Show = {Option = "Show Advanced", Values = {true}},
+            Default = "",
+            Function = function(value: string): ()
+                local digits: string? = string.match(
+                    tostring(value or ""),
+                    "%d+"
+                )
+                local bundleId: number? = digits and tonumber(digits)
+                    or nil
+                if not bundleId then
+                    notify("Enter a bundle ID for the " .. label .. " slot first.")
+                    return
+                end
+                local slots: {[string]: any}?, bundleError: string? =
+                    bundleAnimationSlots(bundleId)
+                if not slots then
+                    notify("Could not load that pack: " .. tostring(bundleError))
+                    return
+                end
+                local clip: any = slots[category]
+                if type(clip) == "table" then
+                    clip = clip[1]
+                end
+                if not clip then
+                    notify("That bundle has no " .. label .. " clip to take.")
+                    return
+                end
+                settings.customSlotIds[category] = clip
+                local merged: {[string]: any} = {}
+                for mergedCategory: string, mergedId: any in pairs(
+                    settings.customSlotIds
+                ) do
+                    merged[mergedCategory] = mergedId
+                end
+                settings.customPackSlots = merged
+                settings.customPackName = "Custom slots"
+                settings.animationPack = "Custom"
+                if not card.Enabled then
+                    notify(label .. " slot set; it applies while Disguise is on.")
+                    return
+                end
+                local character: Model? = LocalPlayer.Character
+                local humanoid: Humanoid? = character
+                    and character:FindFirstChildOfClass("Humanoid")
+                    :: Humanoid?
+                if character and humanoid then
+                    applyAnimationPack(character, humanoid)
+                    status(settings.mode .. " · pack Custom slots")
+                end
+            end,
+            Tooltip = "Set the " .. label .. " slot from any animation pack: paste the pack's bundle ID (official or UGC) and this slot takes that pack's " .. label .. " clip. Mix slots from different packs freely; empty slots use your rig's own set.",
+        })
+    end
 
     card:CreateToggle({
         Name = "Use target movement animations",
@@ -36478,7 +36673,14 @@ function Module.init(context: any): any
     end
 
     local screen: Vector2 = viewport()
-    uiRecord = configWindow("UISettings", "UI Settings", {
+    -- Small build watermark on the window the user opens first: the
+    -- short stamp ("v95") so a screenshot alone says which build it
+    -- is, without opening anything.
+    local versionTag: string = string.match(
+        tostring(SOURCE_STAMP or ""),
+        "^v%d+"
+    ) or tostring(SOURCE_STAMP or "")
+    uiRecord = configWindow("UISettings", "UI Settings · " .. versionTag, {
         position = Vector2.new(screen.X - WINDOW_WIDTH - 12, 64),
         closable = false,
         settingsSized = false,
@@ -39790,10 +39992,18 @@ function Module.init(context: any): any
         end
     end
 
+    -- Each window's home position: where the user (or its default)
+    -- actually put it. A viewport shrink only borrows a clamped
+    -- position; it must never become the window's place, or growing
+    -- the screen again cannot put the window back (the pile-up in
+    -- the report). Reclamp below always derives from home.
+    local homePositions: {[string]: Vector2} = {}
+
     local function persist(window: any): ()
+        local home: Vector2? = homePositions[window.id]
         configData.ui.windows[window.id] = {
-            x = window.root.Position.X.Offset,
-            y = window.root.Position.Y.Offset,
+            x = home and home.X or window.root.Position.X.Offset,
+            y = home and home.Y or window.root.Position.Y.Offset,
             collapsed = window.collapsed,
             pinned = window.pinned,
         }
@@ -39909,6 +40119,10 @@ function Module.init(context: any): any
                 window.userMoved = true
             end
         end
+        homePositions[id] = Vector2.new(
+            root.Position.X.Offset,
+            root.Position.Y.Offset
+        )
 
         function window:SetVisible(visible: boolean): ()
             root.Visible = visible
@@ -40049,6 +40263,10 @@ function Module.init(context: any): any
                 end
 
                 window.userMoved = true
+                homePositions[window.id] = Vector2.new(
+                    root.Position.X.Offset,
+                    root.Position.Y.Offset
+                )
                 persist(window)
             end
         end))
@@ -40082,6 +40300,7 @@ function Module.init(context: any): any
             )
         end
         position = clamp(position, definition.size)
+        homePositions[id] = position
 
         local root: Frame = create("Frame", {
             Parent = PopupLayer,
@@ -40738,7 +40957,9 @@ function Module.init(context: any): any
         local placed: {Vector2} = {}
         for _, window: any in ipairs(manager.list) do
             local x: number, y: number, w: number, h: number = windowRect(window)
-            local landed: Vector2 = clamp(Vector2.new(x, y), Vector2.new(w, h))
+            local home: Vector2? = homePositions[window.id]
+            local base: Vector2 = home or Vector2.new(x, y)
+            local landed: Vector2 = clamp(base, Vector2.new(w, h))
             local attempts: number = 0
             while attempts < 8 do
                 local stacked: boolean = false

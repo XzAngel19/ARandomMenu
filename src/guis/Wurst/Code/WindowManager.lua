@@ -266,10 +266,18 @@ function Module.init(context: any): any
         end
     end
 
+    -- Each window's home position: where the user (or its default)
+    -- actually put it. A viewport shrink only borrows a clamped
+    -- position; it must never become the window's place, or growing
+    -- the screen again cannot put the window back (the pile-up in
+    -- the report). Reclamp below always derives from home.
+    local homePositions: {[string]: Vector2} = {}
+
     local function persist(window: any): ()
+        local home: Vector2? = homePositions[window.id]
         configData.ui.windows[window.id] = {
-            x = window.root.Position.X.Offset,
-            y = window.root.Position.Y.Offset,
+            x = home and home.X or window.root.Position.X.Offset,
+            y = home and home.Y or window.root.Position.Y.Offset,
             collapsed = window.collapsed,
             pinned = window.pinned,
         }
@@ -385,6 +393,10 @@ function Module.init(context: any): any
                 window.userMoved = true
             end
         end
+        homePositions[id] = Vector2.new(
+            root.Position.X.Offset,
+            root.Position.Y.Offset
+        )
 
         function window:SetVisible(visible: boolean): ()
             root.Visible = visible
@@ -525,6 +537,10 @@ function Module.init(context: any): any
                 end
 
                 window.userMoved = true
+                homePositions[window.id] = Vector2.new(
+                    root.Position.X.Offset,
+                    root.Position.Y.Offset
+                )
                 persist(window)
             end
         end))
@@ -558,6 +574,7 @@ function Module.init(context: any): any
             )
         end
         position = clamp(position, definition.size)
+        homePositions[id] = position
 
         local root: Frame = create("Frame", {
             Parent = PopupLayer,
@@ -1214,7 +1231,9 @@ function Module.init(context: any): any
         local placed: {Vector2} = {}
         for _, window: any in ipairs(manager.list) do
             local x: number, y: number, w: number, h: number = windowRect(window)
-            local landed: Vector2 = clamp(Vector2.new(x, y), Vector2.new(w, h))
+            local home: Vector2? = homePositions[window.id]
+            local base: Vector2 = home or Vector2.new(x, y)
+            local landed: Vector2 = clamp(base, Vector2.new(w, h))
             local attempts: number = 0
             while attempts < 8 do
                 local stacked: boolean = false

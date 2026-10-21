@@ -1902,7 +1902,14 @@ function Module.init(context: any): any
     end
 
     local screen: Vector2 = viewport()
-    uiRecord = configWindow("UISettings", "UI Settings", {
+    -- Small build watermark on the window the user opens first: the
+    -- short stamp ("v95") so a screenshot alone says which build it
+    -- is, without opening anything.
+    local versionTag: string = string.match(
+        tostring(SOURCE_STAMP or ""),
+        "^v%d+"
+    ) or tostring(SOURCE_STAMP or "")
+    uiRecord = configWindow("UISettings", "UI Settings · " .. versionTag, {
         position = Vector2.new(screen.X - WINDOW_WIDTH - 12, 64),
         closable = false,
         settingsSized = false,
