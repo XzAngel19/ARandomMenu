@@ -1,5 +1,5 @@
 return {
-    stamp = "v88-20261020-antifling-antiafk",
+    stamp = "v89-20261020-shoot-accel",
     files = {
         ["src/Profile/142823291.lua"] = [[
 --!strict
@@ -5916,6 +5916,12 @@ type Motion = {
     -- Longitudinal acceleration along the current direction, clamped. Used
     -- only to keep the lead length honest while the target speeds up or stops.
     longitudinalAccel: number,
+    -- Full horizontal acceleration vector measured between two fits,
+    -- magnitude-clamped. The calibration replays (85 scored confirmations)
+    -- picked a constant-acceleration model over constant velocity 57 to 19,
+    -- so the vector is applied over the horizon when it is meaningful.
+    accelX: number,
+    accelZ: number,
     -- Seconds until the target stops when it is braking hard, else nil.
     brakeSeconds: number?,
     -- How far behind `now` the fitted direction sits.
@@ -6266,20 +6272,20 @@ function Module.init(runtime: any): any
         track: Track,
         now: number,
         fit: Fit
-    ): (number, number, number?, number)
+    ): (number, number, number?, number, number, number)
         local fitLag: number = math.max(0, now - fit.center)
         if fit.count < 3 or fit.span < 0.06 or fit.residual > TURN_RESIDUAL then
-            return 0, 0, nil, fitLag
+            return 0, 0, nil, fitLag, 0, 0
         end
         local previous: Fit? = fitVelocity(track, now - TURN_SPAN)
         if not previous or previous.count < 3 or previous.span < 0.04
             or previous.residual > TURN_RESIDUAL then
-            return 0, 0, nil, fitLag
+            return 0, 0, nil, fitLag, 0, 0
         end
         local v0: Vector3 = Vector3.new(previous.velocity.X, 0, previous.velocity.Z)
         local v1: Vector3 = Vector3.new(fit.velocity.X, 0, fit.velocity.Z)
         if v0.Magnitude < TURN_MIN_SPEED or v1.Magnitude < TURN_MIN_SPEED then
-            return 0, 0, nil, fitLag
+            return 0, 0, nil, fitLag, 0, 0
         end
         local dt: number = math.max(0.04, fit.center - previous.center)
         local cross: number = v0.Z * v1.X - v0.X * v1.Z
@@ -6305,7 +6311,13 @@ function Module.init(runtime: any): any
             local currentSpeed: number = math.max(0, speed + along * fitLag)
             brakeSeconds = currentSpeed / -along
         end
-        return rate, along, brakeSeconds, fitLag
+        local accelMagnitude: number = math.sqrt(ax * ax + az * az)
+        if accelMagnitude > BRAKE_MAX_ACCEL then
+            local scale: number = BRAKE_MAX_ACCEL / accelMagnitude
+            ax *= scale
+            az *= scale
+        end
+        return rate, along, brakeSeconds, fitLag, ax, az
     end
 
     local function estimateMotion(track: Track, now: number): Motion?
@@ -6324,6 +6336,8 @@ function Module.init(runtime: any): any
         local source: string
         local turnRate: number = 0
         local longitudinalAccel: number = 0
+        local accelX: number = 0
+        local accelZ: number = 0
         local brakeSeconds: number? = nil
         local fitLag: number = 0
         local verticalLead: boolean = false
@@ -6354,7 +6368,7 @@ function Module.init(runtime: any): any
             vertical = math.clamp(vertical, -120, 120)
         end
         if fit then
-            turnRate, longitudinalAccel, brakeSeconds, fitLag =
+            turnRate, longitudinalAccel, brakeSeconds, fitLag, accelX, accelZ =
                 measureTurn(track, now, fit)
         end
         if airborne and math.abs(vertical) >= VERTICAL_MIN_SPEED then
@@ -6371,6 +6385,8 @@ function Module.init(runtime: any): any
             source = source,
             turnRate = turnRate,
             longitudinalAccel = longitudinalAccel,
+            accelX = accelX,
+            accelZ = accelZ,
             brakeSeconds = brakeSeconds,
             fitLag = fitLag,
             verticalLead = verticalLead,
@@ -6388,6 +6404,49 @@ function Module.init(runtime: any): any
             return Vector3.zero
         end
         local direction: Vector3 = motion.horizontal.Unit
+        -- Measured-acceleration path. Across the scored calibration replays
+        -- this model beat constant velocity 57 to 19: MM2 targets accelerate,
+        -- brake and strafe constantly, and the lateral component of the
+        -- measured vector IS the turn, so no direction rotation is applied on
+        -- top of it. The application clamp is tighter than the measurement
+        -- clamp: the v61 failure came from a +120 swing stretching the lead,
+        -- and 60 studs/s^2 already covers a humanoid reaching WalkSpeed.
+        local accelMagnitude: number = math.sqrt(
+            motion.accelX * motion.accelX + motion.accelZ * motion.accelZ
+        )
+        if accelMagnitude >= 4 then
+            local applied: Vector3 = Vector3.new(
+                motion.accelX,
+                0,
+                motion.accelZ
+            )
+            if accelMagnitude > 60 then
+                applied *= 60 / accelMagnitude
+            end
+            local displacement: Vector3 = motion.horizontal * horizon
+                + applied * (motion.fitLag * horizon
+                    + 0.5 * horizon * horizon)
+            if motion.brakeSeconds and horizon > motion.brakeSeconds then
+                -- Already stopped by then: cap the along-track component at
+                -- the stop distance and keep the lateral correction.
+                local alongDistance: number = displacement:Dot(direction)
+                local along: number = math.min(
+                    0,
+                    motion.longitudinalAccel
+                )
+                local speedNow: number = math.max(
+                    0,
+                    speed + along * motion.fitLag
+                )
+                local stopDistance: number = speedNow
+                    * motion.brakeSeconds * 0.5
+                if alongDistance > stopDistance then
+                    displacement -= direction
+                        * (alongDistance - stopDistance)
+                end
+            end
+            return displacement
+        end
         if math.abs(motion.turnRate) > 1e-3 then
             local angle: number = math.clamp(
                 motion.turnRate * (horizon * 0.5 + motion.fitLag),
