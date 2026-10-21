@@ -346,9 +346,26 @@ assert(wrongSlots == nil and string.find(wrongError, "not an animation pack"),
     tostring(wrongError))
 host.MarketplaceService = {GetProductInfo = function() error("not a bundle") end}
 local missingSlots, missingError = bundleAnimationSlots(45)
-assert(missingSlots == nil and string.find(missingError, "did not return a bundle"),
+assert(missingSlots == nil and string.find(missingError, "no animation pack items"),
     tostring(missingError))
 pass("animation pack: non-animation bundles and fetch errors are reported")
+
+-- 14) UGC pack item names are free-form: categories come from keywords,
+--     and repeated idle items stay an ordered variant list.
+host.MarketplaceService = {GetProductInfo = function()
+    return {BundleType = "AvatarAnimations", Items = {
+        {Name = "Endless Aura Floating Pack - Idle", Id = 901},
+        {Name = "hover walk!!", Id = 902},
+        {Name = "Swim (Idle)", Id = 903},
+        {Name = "Idle Alt", Id = 904},
+    }}
+end}
+local ugcSlots = bundleAnimationSlots(4899847411546)
+assert(ugcSlots and ugcSlots.walk == "rbxassetid://902")
+assert(type(ugcSlots.idle) == "table" and ugcSlots.idle[1] == "rbxassetid://901"
+    and ugcSlots.idle[2] == "rbxassetid://904", "idle variants keep their order")
+assert(ugcSlots.swimidle == "rbxassetid://903")
+pass("animation pack: UGC item names resolve by keyword, idle variants ordered")
 '''
 
 with tempfile.TemporaryDirectory(prefix='disguise-defaults-') as tmp:

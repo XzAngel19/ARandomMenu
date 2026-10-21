@@ -17,6 +17,7 @@ local function status(message) activeCard.status=message end
 local function destroyInstance(instance) instance.destroyed=true end
 local emotesAppliedToHumanoid=false
 local settings={animationPack="Off"}
+local function packDisplayName() return settings.animationPack end
 -- Defined above the slice in the real module; the status line reads it.
 local function rigName() return "R6" end
 
@@ -169,6 +170,11 @@ for pack_name in ('Ninja', 'Knight', 'Mage', 'Zombie', 'Toy', 'Bubbly',
     assert f'name = "{pack_name}"' in SOURCE, f'missing pack {pack_name}'
 assert '"656117400"' in SOURCE and '"1083455352"' in SOURCE
 assert SOURCE.count('applyAnimationPack') >= 4
+assert 'Name = "Pack Bundle ID"' in SOURCE
+assert 'catalog.roblox.com/v1/bundles/' in SOURCE
+assert 'slotsFromBundleItems' in SOURCE and 'bundleItemCategory' in SOURCE
+assert 'settings.customPackSlots' in SOURCE
+assert 'poseDriven' in SOURCE  # held-pose clips count; identity joints do not
 
 with tempfile.TemporaryDirectory(prefix='disguise-animation-') as tmp:
     path = Path(tmp) / 'test.luau'

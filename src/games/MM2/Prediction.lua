@@ -443,13 +443,26 @@ function Module.init(runtime: any): any
         fit: Fit
     ): (number, number, number?, number, number, number)
         local fitLag: number = math.max(0, now - fit.center)
-        if fit.count < 3 or fit.span < 0.06 or fit.residual > TURN_RESIDUAL then
+        if fit.count < 3 or fit.span < 0.06 then
             return 0, 0, nil, fitLag, 0, 0
         end
         local previous: Fit? = fitVelocity(track, now - TURN_SPAN)
-        if not previous or previous.count < 3 or previous.span < 0.04
-            or previous.residual > TURN_RESIDUAL then
+        if not previous or previous.count < 3 or previous.span < 0.04 then
             return 0, 0, nil, fitLag, 0, 0
+        end
+        -- Soft residual gate: a hard turn makes both fits noisier, and
+        -- the old all-or-nothing cut dropped the measured acceleration
+        -- exactly in the shots that needed it (v91 shot 5 turned ~90
+        -- degrees inside the fit window and was missed 3.3 studs
+        -- sideways). Between one and 2.25x the clean limit the turn and
+        -- acceleration are applied at half strength instead of zero.
+        local worstResidual: number = math.max(fit.residual, previous.residual)
+        local confidence: number = 1
+        if worstResidual > TURN_RESIDUAL then
+            if worstResidual > TURN_RESIDUAL * 2.25 then
+                return 0, 0, nil, fitLag, 0, 0
+            end
+            confidence = 0.5
         end
         local v0: Vector3 = Vector3.new(previous.velocity.X, 0, previous.velocity.Z)
         local v1: Vector3 = Vector3.new(fit.velocity.X, 0, fit.velocity.Z)
@@ -467,8 +480,12 @@ function Module.init(runtime: any): any
         if math.abs(rate) < TURN_MIN_RATE then
             rate = 0
         end
-        local ax: number = (v1.X - v0.X) / dt
-        local az: number = (v1.Z - v0.Z) / dt
+        local ax: number = (v1.X - v0.X) / dt * confidence
+        local az: number = (v1.Z - v0.Z) / dt * confidence
+        rate *= confidence
+        if math.abs(rate) < TURN_MIN_RATE then
+            rate = 0
+        end
         local speed: number = v1.Magnitude
         local along: number = math.clamp(
             (ax * v1.X + az * v1.Z) / speed,
@@ -524,8 +541,15 @@ function Module.init(runtime: any): any
         elseif horizontal.Magnitude > MAX_HORIZONTAL_SPEED then
             horizontal = horizontal.Unit * MAX_HORIZONTAL_SPEED
         end
+        -- Airborne is a physics fact before it is a state name: in the
+        -- v91 session one target fell at -46 studs/s while its state
+        -- still read "Running" (it had just left a ledge), so no
+        -- ballistic lead was applied and the shot went over its head.
+        -- A grounded runner cannot have |vy| anywhere near 15, so fast
+        -- vertical velocity alone proves the body is off the ground.
         local airborne: boolean = last.state == "Jumping"
             or last.state == "Freefall"
+            or math.abs(reported.Y) >= 15
         local vertical: number = 0
         if airborne then
             vertical = reported.Y

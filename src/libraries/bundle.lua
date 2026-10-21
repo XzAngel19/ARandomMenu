@@ -1,5 +1,5 @@
 return {
-    stamp = "v91-20261021-autofarm-modes-autounbox",
+    stamp = "v92-20261021-disguise-ugc-shoot",
     files = {
         ["src/Profile/142823291.lua"] = [[
 --!strict
@@ -6441,13 +6441,26 @@ function Module.init(runtime: any): any
         fit: Fit
     ): (number, number, number?, number, number, number)
         local fitLag: number = math.max(0, now - fit.center)
-        if fit.count < 3 or fit.span < 0.06 or fit.residual > TURN_RESIDUAL then
+        if fit.count < 3 or fit.span < 0.06 then
             return 0, 0, nil, fitLag, 0, 0
         end
         local previous: Fit? = fitVelocity(track, now - TURN_SPAN)
-        if not previous or previous.count < 3 or previous.span < 0.04
-            or previous.residual > TURN_RESIDUAL then
+        if not previous or previous.count < 3 or previous.span < 0.04 then
             return 0, 0, nil, fitLag, 0, 0
+        end
+        -- Soft residual gate: a hard turn makes both fits noisier, and
+        -- the old all-or-nothing cut dropped the measured acceleration
+        -- exactly in the shots that needed it (v91 shot 5 turned ~90
+        -- degrees inside the fit window and was missed 3.3 studs
+        -- sideways). Between one and 2.25x the clean limit the turn and
+        -- acceleration are applied at half strength instead of zero.
+        local worstResidual: number = math.max(fit.residual, previous.residual)
+        local confidence: number = 1
+        if worstResidual > TURN_RESIDUAL then
+            if worstResidual > TURN_RESIDUAL * 2.25 then
+                return 0, 0, nil, fitLag, 0, 0
+            end
+            confidence = 0.5
         end
         local v0: Vector3 = Vector3.new(previous.velocity.X, 0, previous.velocity.Z)
         local v1: Vector3 = Vector3.new(fit.velocity.X, 0, fit.velocity.Z)
@@ -6465,8 +6478,12 @@ function Module.init(runtime: any): any
         if math.abs(rate) < TURN_MIN_RATE then
             rate = 0
         end
-        local ax: number = (v1.X - v0.X) / dt
-        local az: number = (v1.Z - v0.Z) / dt
+        local ax: number = (v1.X - v0.X) / dt * confidence
+        local az: number = (v1.Z - v0.Z) / dt * confidence
+        rate *= confidence
+        if math.abs(rate) < TURN_MIN_RATE then
+            rate = 0
+        end
         local speed: number = v1.Magnitude
         local along: number = math.clamp(
             (ax * v1.X + az * v1.Z) / speed,
@@ -6522,8 +6539,15 @@ function Module.init(runtime: any): any
         elseif horizontal.Magnitude > MAX_HORIZONTAL_SPEED then
             horizontal = horizontal.Unit * MAX_HORIZONTAL_SPEED
         end
+        -- Airborne is a physics fact before it is a state name: in the
+        -- v91 session one target fell at -46 studs/s while its state
+        -- still read "Running" (it had just left a ledge), so no
+        -- ballistic lead was applied and the shot went over its head.
+        -- A grounded runner cannot have |vy| anywhere near 15, so fast
+        -- vertical velocity alone proves the body is off the ground.
         local airborne: boolean = last.state == "Jumping"
             or last.state == "Freefall"
+            or math.abs(reported.Y) >= 15
         local vertical: number = 0
         if airborne then
             vertical = reported.Y
@@ -21165,6 +21189,11 @@ function Module.init(context: Runtime): any
         ),
         showTargetEmotes = savedToggle("Show target emotes", true),
         animationPack = savedAnimationPack(),
+        -- Slots of a bundle resolved by id at runtime (any official or
+        -- UGC pack), kept for the session so mode switches and the
+        -- movement toggle reuse them without resolving again.
+        customPackSlots = (nil :: any),
+        customPackName = (nil :: any),
     }
 
     local function status(message: string): ()
@@ -21953,6 +21982,37 @@ function Module.init(context: Runtime): any
         return signature
     end
 
+    -- A clip holding a pose (the floating/hover idles UGC packs ship)
+    -- barely moves a joint over time, but it still WRITES the joints:
+    -- their Transforms sit away from identity. A clip built for the
+    -- other rig never writes a joint at all, so its Transforms stay at
+    -- identity forever. That is how a held pose counts as animation
+    -- while a frozen wrong-rig clip still does not.
+    local function poseDriven(humanoid: Humanoid?): boolean
+        local character: Instance? = humanoid and humanoid.Parent
+        if not character then
+            return false
+        end
+        for _, object: Instance in ipairs(character:GetDescendants()) do
+            if object:IsA("Motor6D") then
+                local ok: boolean, transform: CFrame = pcall(function(): CFrame
+                    return (object :: Motor6D).Transform
+                end)
+                if ok and transform then
+                    if math.abs(transform.X) > 1e-4
+                        or math.abs(transform.Y) > 1e-4
+                        or math.abs(transform.Z) > 1e-4
+                        or math.abs(transform.R00 - 1) > 1e-3
+                        or math.abs(transform.R11 - 1) > 1e-3
+                        or math.abs(transform.R22 - 1) > 1e-3 then
+                        return true
+                    end
+                end
+            end
+        end
+        return false
+    end
+
     -- nil means "cannot tell" (no joints exposed), and callers must keep the
     -- old behaviour in that case. A fixed step count instead of a wall clock
     -- keeps the check from ever spinning when the scheduler is stubbed.
@@ -22032,6 +22092,11 @@ function Module.init(context: Runtime): any
             if poseMoves(humanoid, 0.3) ~= false then
                 return true
             end
+            -- A loaded clip holding a pose is still an animation: the
+            -- floating/hover idles UGC packs ship barely move a joint in
+            -- 0.3 s, and reverting those to the default set is exactly
+            -- the "the toggle gives me no animation" report. The bridge
+            -- check below decides: if the idle itself plays, keep it.
         end
         local bridge: AnimationTrack? = playIdleBridge(humanoid, animate)
         if bridge then
@@ -22040,7 +22105,8 @@ function Module.init(context: Runtime): any
             pcall(function(): ()
                 playing = (bridge :: any).IsPlaying == true
             end)
-            if playing and poseMoves(humanoid, 0.3) ~= false then
+            if playing and (poseMoves(humanoid, 0.3) ~= false
+                or poseDriven(humanoid)) then
                 idleBridgeTrack = bridge
                 watchIdleBridge(humanoid)
                 return true
@@ -22078,7 +22144,8 @@ function Module.init(context: Runtime): any
                 pcall(function(): ()
                     playing = (fallbackBridge :: any).IsPlaying == true
                 end)
-                if playing and poseMoves(humanoid, 0.3) ~= false then
+                if playing and (poseMoves(humanoid, 0.3) ~= false
+                    or poseDriven(humanoid)) then
                     idleBridgeTrack = fallbackBridge
                     watchIdleBridge(humanoid)
                     notify(
@@ -22127,50 +22194,118 @@ function Module.init(context: Runtime): any
         return nil
     end
 
+    -- Which Animate slot a bundle item belongs to, from its name.
+    -- Official packs name items "Ninja Run" / "Run Animation"; UGC packs
+    -- name them however the creator liked ("Endless Aura Floating Pack -
+    -- Idle", "hover idle", "Swim (Idle)"), so matching is by keyword
+    -- with the swim-idle pair resolved before plain idle can steal it.
+    local function bundleItemCategory(rawName: any): string?
+        local name: string = string.lower(tostring(rawName or ""))
+        local hasSwim: boolean = string.find(name, "swim", 1, true) ~= nil
+        local hasIdle: boolean = string.find(name, "idle", 1, true) ~= nil
+        if hasSwim and hasIdle then
+            return "swimidle"
+        end
+        if hasIdle then
+            return "idle"
+        end
+        if string.find(name, "walk", 1, true) then
+            return "walk"
+        end
+        if string.find(name, "run", 1, true) then
+            return "run"
+        end
+        if string.find(name, "jump", 1, true) then
+            return "jump"
+        end
+        if string.find(name, "climb", 1, true) then
+            return "climb"
+        end
+        if string.find(name, "fall", 1, true) then
+            return "fall"
+        end
+        if hasSwim then
+            return "swim"
+        end
+        return nil
+    end
+
+    local function slotsFromBundleItems(items: any): {[string]: any}
+        local slots: {[string]: any} = {}
+        if type(items) ~= "table" then
+            return slots
+        end
+        for _, item: any in ipairs(items) do
+            if type(item) == "table" then
+                local category: string? = bundleItemCategory(
+                    item.Name or item.name
+                )
+                local itemId: any = item.Id or item.id
+                if category and itemId then
+                    local resolved: string? = animationAssetId(itemId)
+                    local id: string = resolved
+                        or ("rbxassetid://" .. tostring(itemId))
+                    -- Several items can share a slot (idle variants):
+                    -- keep them all, in order, like a description does.
+                    local existing: any = slots[category]
+                    if type(existing) == "table" then
+                        table.insert(existing, id)
+                    elseif existing ~= nil then
+                        slots[category] = {existing, id}
+                    else
+                        slots[category] = id
+                    end
+                end
+            end
+        end
+        return slots
+    end
+
+    -- Any animation bundle id -> its Animate slots, whether Roblox made
+    -- the pack or a UGC creator did. Two sources, in order: the
+    -- MarketplaceService product info (bundle items with names), then
+    -- the public catalog API for the same bundle when the executor can
+    -- HttpGet it. Nothing is downloaded and nothing is hardcoded per
+    -- pack, which is the only way the thousands of UGC packs can work.
     local function bundleAnimationSlots(bundleId: number): ({[string]: any}?, string?)
         local service: any = (host :: any).MarketplaceService
             or (game :: any):GetService("MarketplaceService")
         local ok: boolean, product: any = pcall(function(): any
             return service:GetProductInfo(bundleId, Enum.InfoType.Bundle)
         end)
-        if not ok or type(product) ~= "table" then
-            return nil, "That ID is not a user and the marketplace did not return a bundle."
+        if ok and type(product) == "table"
+            and product.BundleType == "AvatarAnimations"
+            and type(product.Items) == "table" then
+            local slots: {[string]: any} = slotsFromBundleItems(product.Items)
+            if next(slots) ~= nil then
+                return slots, nil
+            end
         end
-        if product.BundleType ~= "AvatarAnimations" then
-            return nil, "That bundle is not an animation pack."
-        end
-        if type(product.Items) ~= "table" then
-            return nil, "The animation pack did not expose its items."
-        end
-        local slots: {[string]: any} = {}
-        local categories: {string} = {
-            "idle", "walk", "run", "jump", "fall", "climb", "swim", "swimidle",
-        }
-        for _, item: any in ipairs(product.Items) do
-            local name: string = string.lower(tostring(item.Name or ""))
-            local category: string? = nil
-            for _, candidate: string in ipairs(categories) do
-                if string.find(name, candidate, 1, true) then
-                    category = candidate
-                    break
+        local httpOk: boolean, body: any = pcall(function(): any
+            return (game :: any):HttpGet(
+                "https://catalog.roblox.com/v1/bundles/"
+                    .. tostring(math.floor(bundleId)) .. "/details"
+            )
+        end)
+        if httpOk and type(body) == "string" then
+            local httpService: any = (game :: any):GetService("HttpService")
+            local decodeOk: boolean, decoded: any = pcall(function(): any
+                return httpService:JSONDecode(body)
+            end)
+            if decodeOk and type(decoded) == "table"
+                and type(decoded.items) == "table" then
+                local slots: {[string]: any} =
+                    slotsFromBundleItems(decoded.items)
+                if next(slots) ~= nil then
+                    return slots, nil
                 end
             end
-            -- "Swim (Idle)" matches "idle" first alphabetically in the list
-            -- above only if it appears earlier; make the pair explicit.
-            if string.find(name, "swim", 1, true)
-                and string.find(name, "idle", 1, true) then
-                category = "swimidle"
-            end
-            if category and item.Id then
-                local resolved: string? = animationAssetId(item.Id)
-                slots[category] = resolved
-                    or ("rbxassetid://" .. tostring(item.Id))
-            end
         end
-        if next(slots) == nil then
-            return nil, "The animation pack did not expose a usable animation."
+        if ok and type(product) == "table"
+            and product.BundleType ~= "AvatarAnimations" then
+            return nil, "That bundle is not an animation pack."
         end
-        return slots, nil
+        return nil, "That ID is not a user and no animation pack items were found for it."
     end
 
 
@@ -22199,18 +22334,32 @@ function Module.init(context: Runtime): any
         return changedCount
     end
 
-    -- The selected catalog pack, written through the exact same resolved
-    -- path as a target's clips: the rig rules still apply (an R6 body is
-    -- handed the R6 set instead of clips it cannot play), and selecting a
-    -- pack wins over the target's movement animations because it is the
-    -- explicit choice. Nothing is downloaded: the pack ids are static
-    -- catalog data and the engine streams the clips itself.
+    -- The pack the user picked: one of the built-in catalog sets, or a
+    -- bundle resolved by id ("Custom"). Written through the exact same
+    -- resolved path as a target's clips: the rig rules still apply (an
+    -- R6 body is handed the R6 set instead of clips it cannot play), and
+    -- selecting a pack wins over the target's movement animations
+    -- because it is the explicit choice. Nothing is downloaded: the
+    -- pack ids are catalog data and the engine streams the clips.
+    local function selectedPackSlots(): {[string]: any}?
+        if settings.animationPack == "Custom" then
+            return settings.customPackSlots
+        end
+        return ANIMATION_PACK_BY_NAME[settings.animationPack]
+    end
+
+    local function packDisplayName(): string
+        if settings.animationPack == "Custom" then
+            return settings.customPackName or "Custom"
+        end
+        return settings.animationPack
+    end
+
     local function applyAnimationPack(
         character: Model,
         humanoid: Humanoid
     ): number
-        local slots: {[string]: any}? =
-            ANIMATION_PACK_BY_NAME[settings.animationPack]
+        local slots: {[string]: any}? = selectedPackSlots()
         if not slots then
             return 0
         end
@@ -22726,7 +22875,7 @@ function Module.init(context: Runtime): any
             )
         end
         if settings.animationPack ~= "Off" then
-            applied ..= " · pack " .. settings.animationPack
+            applied ..= " · pack " .. packDisplayName()
         end
         status(applied)
     end
@@ -22764,6 +22913,12 @@ function Module.init(context: Runtime): any
             if not stillCurrent(token, character) then
                 return
             end
+            -- Keep the resolved pack in the session library: switching
+            -- to Character mode (or its movement toggle) reuses these
+            -- slots instead of resolving the bundle again.
+            settings.customPackSlots = slots
+            settings.customPackName = "Bundle " .. tostring(userId)
+            settings.animationPack = "Custom"
             targetCache = {
                 userId = userId,
                 slots = slots :: {[string]: any},
@@ -22839,7 +22994,7 @@ function Module.init(context: Runtime): any
             )
         end
         if settings.animationPack ~= "Off" then
-            animationLine ..= " · pack " .. settings.animationPack
+            animationLine ..= " · pack " .. packDisplayName()
         end
         status(animationLine .. ". Your own avatar stays visible.")
     end
@@ -22932,7 +23087,16 @@ function Module.init(context: Runtime): any
                 applyDisguise()
                 return
             end
-            applyCachedMovementAnimations(character, humanoid)
+            local appliedCount: number =
+                applyCachedMovementAnimations(character, humanoid)
+            if appliedCount == 0 and not animationOverrideApplied then
+                -- The cache wrote nothing (the Animate slots already
+                -- matched, or the snapshot belongs to another body):
+                -- refetch and apply the whole disguise instead of
+                -- leaving the character with no animation change.
+                applyDisguise()
+                return
+            end
         else
             restoreMovementAnimationsOnly(character, humanoid)
         end
@@ -23102,6 +23266,47 @@ function Module.init(context: Runtime): any
             end
         end,
         Tooltip = "Built-in Roblox catalog animation packs (Ninja, Knight, Zombie, Toy and 13 more), applied to your character's own Animate slots -- idle, walk, run, jump, fall, climb, swim. No download: the ids are catalog data kept in the script and the engine streams the clips; your choice is saved. A selected pack wins over the target's movement animations. Off returns to the target/your own set. R15 clips on an R6 body stay refused for that rig, as before.",
+    })
+
+    card:CreateTextBox({
+        Name = "Pack Bundle ID",
+        Default = "",
+        Function = function(value: string): ()
+            local trimmed: string = tostring(value or "")
+                :gsub("^%s+", "")
+                :gsub("%s+$", "")
+            local digits: string? = string.match(trimmed, "%d+")
+            local bundleId: number? = digits and tonumber(digits) or nil
+            if not bundleId then
+                notify("Enter an animation bundle ID first (the number in its catalog link).")
+                return
+            end
+            -- Any pack at all -- official or UGC -- resolved live from
+            -- the bundle's own items, so the thousands of creator packs
+            -- work without a single hardcoded id.
+            local slots: {[string]: any}?, bundleError: string? =
+                bundleAnimationSlots(bundleId)
+            if not slots then
+                notify("Could not load that pack: " .. tostring(bundleError))
+                return
+            end
+            settings.customPackSlots = slots
+            settings.customPackName = "Bundle " .. tostring(bundleId)
+            settings.animationPack = "Custom"
+            if not card.Enabled then
+                notify("Pack " .. tostring(bundleId) .. " loaded; it applies while Disguise is on.")
+                return
+            end
+            local character: Model? = LocalPlayer.Character
+            local humanoid: Humanoid? = character
+                and character:FindFirstChildOfClass("Humanoid")
+                :: Humanoid?
+            if character and humanoid then
+                applyAnimationPack(character, humanoid)
+                status(settings.mode .. " · pack Bundle " .. tostring(bundleId))
+            end
+        end,
+        Tooltip = "Any animation pack bundle ID from its catalog link (roblox.com/bundles/<id>/...), official or UGC -- for example 4899847411546. The bundle's items are resolved when you enter it (nothing is downloaded; the engine streams the clips) and the pack is kept for the session. It wins over the target's movement animations, like the built-in packs. R15 clips on an R6 body stay refused for that rig.",
     })
 
     card:CreateToggle({
