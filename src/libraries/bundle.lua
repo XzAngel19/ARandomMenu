@@ -1,5 +1,5 @@
 return {
-    stamp = "v87-20261020-shoot-scored-at-confirmation",
+    stamp = "v88-20261020-antifling-antiafk",
     files = {
         ["src/Profile/142823291.lua"] = [[
 --!strict
@@ -18421,7 +18421,7 @@ local cleanup
 function Module.init(context)
     local host, world = context.host, context.host.workspace
     local antiFling, velocityLimit, platform, token = false,120,nil,0
-    local previousCharacter, previousRoot, previousPlanar
+    local previousCharacter, previousRoot, previousVelocity, overLimitTicks
     local function removePlatform()
         token+=1
         if platform then platform:Destroy();platform=nil end
@@ -18453,30 +18453,45 @@ function Module.init(context)
         local velocity=root.AssemblyLinearVelocity
         local planar=Vector3.new(velocity.X,0,velocity.Z)
         if previousCharacter~=character or previousRoot~=root then
-            previousCharacter,previousRoot,previousPlanar=character,root,planar
+            previousCharacter,previousRoot,previousVelocity,overLimitTicks=character,root,velocity,0
             removePlatform()
         end
         local fly=module("Fly")
         if root.Anchored or humanoid.Sit or humanoid.SeatPart or active("fling") or active("ghost")
             or active("teleport") or fly and fly.Enabled then
-            previousPlanar=planar;return
+            previousVelocity=velocity;return
         end
         if antiFling then
             local speed=expectedSpeed(humanoid)
             local limit=math.max(velocityLimit,speed*1.75)
             local spin=root.AssemblyAngularVelocity.Magnitude>velocityLimit
-            local impulse=planar.Magnitude>limit and previousPlanar
-                and (planar-previousPlanar).Magnitude>limit*0.65
-            if (spin or impulse) and nearOtherCharacter(root,character) then
+            -- The old detector only saw a one-tick horizontal impulse.
+            -- Real contact flings (a spinning attacker parked on you)
+            -- accelerate over several physics frames and usually launch
+            -- UP as much as sideways, so three more signatures count:
+            -- a vertical launch no jump can produce, a shove sustained
+            -- past the limit, and the spin it already knew. All of them
+            -- still require another player close by: a distant scripted
+            -- launcher or pad is never guessed to be a fling, and pure
+            -- downward velocity (any fall) is never touched.
+            local jumpPower=humanoid.JumpPower or 50
+            local delta=previousVelocity and (velocity-previousVelocity) or Vector3.zero
+            local deltaPlanar=Vector3.new(delta.X,0,delta.Z).Magnitude
+            local impulse=planar.Magnitude>limit and deltaPlanar>limit*0.65
+            local launch=velocity.Y>math.max(limit,jumpPower*1.6) and delta.Y>limit*0.65
+            if planar.Magnitude>limit*1.5 then overLimitTicks=(overLimitTicks or 0)+1 else overLimitTicks=0 end
+            local sustained=overLimitTicks>=2
+            if (spin or impulse or launch or sustained) and nearOtherCharacter(root,character) then
                 -- Remove the contact impulse, not the player's position/input.
-                -- Ordinary downward velocity is never treated as a fling.
                 local desired=humanoid.MoveDirection*speed
-                root.AssemblyLinearVelocity=Vector3.new(desired.X,spin and math.min(velocity.Y,math.max(0,humanoid.JumpPower or 50)) or velocity.Y,desired.Z)
+                root.AssemblyLinearVelocity=Vector3.new(desired.X,(spin or launch) and math.min(velocity.Y,math.max(0,jumpPower)) or velocity.Y,desired.Z)
                 root.AssemblyAngularVelocity=Vector3.zero
+                velocity=root.AssemblyLinearVelocity
                 planar=Vector3.new(desired.X,0,desired.Z)
+                overLimitTicks=0
             end
         end
-        previousPlanar=planar
+        previousVelocity=velocity
         if humanoid.FloorMaterial~=Enum.Material.Air or velocity.Y>=0 or platform then return end
         local destroyHeight=world.FallenPartsDestroyHeight
         if destroyHeight~=destroyHeight or math.abs(destroyHeight)==math.huge then destroyHeight=-500 end
@@ -18503,7 +18518,7 @@ function Module.init(context)
     end
     local feature=host.createUniversalFeature("Anti Void","Rescue imminent falls into the destroy layer, not normal drops",4,function(enabled)
         host.disconnectFeatureConnection("AntiVoid");removePlatform()
-        previousCharacter,previousRoot,previousPlanar=nil,nil,nil
+        previousCharacter,previousRoot,previousVelocity,overLimitTicks=nil,nil,nil,0
         if enabled then host.featureConnections.AntiVoid=host.TaskManager:Connect(step) end
     end,{categoryName="Utilities"})
     local velocityRow
@@ -18512,7 +18527,7 @@ function Module.init(context)
         if host.setOptionVisible then host.setOptionVisible(feature,velocityRow,antiFling) else velocityRow.Visible=antiFling end
     end
     host.addToggleOption(feature,"Anti fling",false,function(value) antiFling=value;showLimit() end,
-        "Damp sudden sideways/spin impulses near other players. Never rolls you back or blocks normal falling.")
+        "Requires Anti Void ON. Damps sideways, upward and sustained contact impulses near other players. Never rolls you back or blocks normal falling.")
     velocityRow=host.addNumberOption(feature,"Velocity limit",120,40,1000,function(value) velocityLimit=math.max(1,value) end)
     showLimit()
     host.addFeatureTooltip(feature,"Only rescues a falling character near the void when there is no collidable floor below. Anti fling respects movement speed and never teleports you back.")
@@ -20544,27 +20559,96 @@ function Module.init(context: Runtime): any
     local disconnectFeatureConnection: any = host.disconnectFeatureConnection
     local createUniversalFeature: any = host.createUniversalFeature
     local addFeatureTooltip: any = host.addFeatureTooltip
-    local function toggleAntiAfk(enabled)
+
+    -- Simulate one user input. The old build relied on a single legacy
+    -- call (VirtualUser:CaptureController + ClickButton2 at (0,0)):
+    -- on current clients the capture silently does nothing, so the
+    -- handler ran, "worked", and the idle kick landed anyway. Every
+    -- strategy is tried in order until one reports success, and a
+    -- failure is never mistaken for a success again.
+    local function pokeAfk(): boolean
+        local camera: any = nil
+        pcall(function(): ()
+            camera = (host.workspace :: any).CurrentCamera
+        end)
+        local centre: Vector2 = Vector2.new(400, 300)
+        if camera and camera.ViewportSize then
+            centre = camera.ViewportSize / 2
+        end
+
+        -- Strategy 1: VirtualUser button press (the classic path, but
+        -- as an explicit down/up instead of a corner click).
+        local virtualUser: any = nil
+        pcall(function(): ()
+            virtualUser = (game :: any):GetService("VirtualUser")
+        end)
+        if virtualUser then
+            local ok: boolean = pcall(function(): ()
+                virtualUser:CaptureController()
+                virtualUser:Button2Down(centre, camera and camera.CFrame)
+                virtualUser:Button2Up(centre, camera and camera.CFrame)
+            end)
+            if ok then
+                return true
+            end
+            local legacyOk: boolean = pcall(function(): ()
+                virtualUser:ClickButton2(centre)
+            end)
+            if legacyOk then
+                return true
+            end
+        end
+
+        -- Strategy 2: VirtualInputManager mouse event at screen centre.
+        local virtualInput: any = nil
+        pcall(function(): ()
+            virtualInput = (game :: any):GetService("VirtualInputManager")
+        end)
+        if virtualInput then
+            local ok: boolean = pcall(function(): ()
+                virtualInput:SendMouseButtonEvent(centre.X, centre.Y, 0, true, game, false)
+                virtualInput:SendMouseButtonEvent(centre.X, centre.Y, 0, false, game, false)
+            end)
+            if ok then
+                return true
+            end
+        end
+        return false
+    end
+
+    local function toggleAntiAfk(enabled: boolean): ()
         disconnectFeatureConnection("AntiAFK")
+        disconnectFeatureConnection("AntiAFKTimer")
 
         if not enabled then
             return
         end
 
-        featureConnections.AntiAFK = LocalPlayer.Idled:Connect(function()
-            local virtualUserOk, virtualUser = pcall(function()
-                return game:GetService("VirtualUser")
-            end)
-            if virtualUserOk and virtualUser then
-                virtualUser:CaptureController()
-                virtualUser:ClickButton2(Vector2.new(0, 0))
-            end
+        -- Reactive: Roblox warns through Idled shortly before the
+        -- 20-minute kick. Answer it.
+        featureConnections.AntiAFK = LocalPlayer.Idled:Connect(function(): ()
+            pokeAfk()
         end)
+        -- Proactive: never let the idle timer get anywhere near the
+        -- kick in the first place. Simulated input every 150 s keeps
+        -- the session "active" even if the Idled event never fires
+        -- (it does not fire while some menus hold focus).
+        local elapsed: number = 0
+        featureConnections.AntiAFKTimer = host.TaskManager:Connect(
+            function(deltaTime: number): ()
+                elapsed += deltaTime
+                if elapsed < 150 then
+                    return
+                end
+                elapsed = 0
+                pokeAfk()
+            end
+        )
     end
 
     local AntiAfkFeature = createUniversalFeature(
         "Anti AFK",
-        "Prevent the local idle event from disconnecting",
+        "Simulate input before Roblox's idle kick (about every 2.5 minutes, and on the idle warning)",
         13,
         toggleAntiAfk,
         {
@@ -20573,12 +20657,13 @@ function Module.init(context: Runtime): any
             categoryName = "World",
         }
     )
-    addFeatureTooltip(AntiAfkFeature, "Responds only to Roblox's local idle event and "
-        .. "disconnects immediately when disabled.")
+    addFeatureTooltip(AntiAfkFeature, "Simulates a real input every ~150 seconds and "
+        .. "answers Roblox's idle warning, so the 20-minute idle kick never lands. "
+        .. "Tries VirtualUser first, then VirtualInputManager. Disconnects immediately when disabled.")
 
     activeCleanup = function(): ()
-
         disconnectFeatureConnection("AntiAFK")
+        disconnectFeatureConnection("AntiAFKTimer")
     end
     Module.Initialized = true
     return AntiAfkFeature
