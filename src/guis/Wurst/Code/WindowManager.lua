@@ -126,12 +126,36 @@ function Module.init(context: any): any
         return math.round(value * factor) / factor
     end
 
+    -- How much of a window must stay reachable when it cannot fit:
+    -- enough title bar to grab, move and close it.
+    local MIN_GRAB_X: number = 140
+    local MIN_GRAB_Y: number = 40
+
     local function clamp(position: Vector2, size: Vector2): Vector2
         local screen: Vector2 = logicalViewport()
-        return Vector2.new(
-            snapPixel(math.clamp(position.X, MARGIN, math.max(MARGIN, screen.X - size.X - MARGIN))),
-            snapPixel(math.clamp(position.Y, MARGIN, math.max(MARGIN, screen.Y - size.Y - MARGIN)))
-        )
+        -- When the window fits, keep it fully on screen. When it does
+        -- not (a small or resized viewport), the old full-fit clamp
+        -- pinned every oversized window to the same top-left corner and
+        -- they stacked into one pile; instead let the window extend
+        -- past the edge and only guarantee the grab strip stays
+        -- visible, so part of it simply shows, as requested.
+        local x: number
+        if size.X <= screen.X - MARGIN * 2 then
+            x = math.clamp(position.X, MARGIN, screen.X - size.X - MARGIN)
+        else
+            x = math.clamp(
+                position.X,
+                MARGIN - (size.X - MIN_GRAB_X),
+                screen.X - MIN_GRAB_X
+            )
+        end
+        local y: number
+        if size.Y <= screen.Y - MARGIN * 2 then
+            y = math.clamp(position.Y, MARGIN, screen.Y - size.Y - MARGIN)
+        else
+            y = math.clamp(position.Y, MARGIN, screen.Y - MIN_GRAB_Y)
+        end
+        return Vector2.new(snapPixel(x), snapPixel(y))
     end
 
     function manager.ClampWindow(window: any): ()
@@ -1121,9 +1145,33 @@ function Module.init(context: any): any
     end
 
     function manager.Reclamp(): ()
+        -- After landing, windows that ended on (nearly) the same spot
+        -- cascade a step down-right each, so a shrink never leaves a
+        -- pile of identical title bars in one corner.
+        local placed: {Vector2} = {}
         for _, window: any in ipairs(manager.list) do
             local x: number, y: number, w: number, h: number = windowRect(window)
             local landed: Vector2 = clamp(Vector2.new(x, y), Vector2.new(w, h))
+            local attempts: number = 0
+            while attempts < 8 do
+                local stacked: boolean = false
+                for _, other: Vector2 in ipairs(placed) do
+                    if math.abs(other.X - landed.X) < 6
+                        and math.abs(other.Y - landed.Y) < 6 then
+                        stacked = true
+                        break
+                    end
+                end
+                if not stacked then
+                    break
+                end
+                attempts += 1
+                landed = clamp(
+                    landed + Vector2.new(26, 26),
+                    Vector2.new(w, h)
+                )
+            end
+            table.insert(placed, landed)
             window.root.Position = UDim2.fromOffset(landed.X, landed.Y)
         end
     end

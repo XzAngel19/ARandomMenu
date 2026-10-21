@@ -1,5 +1,5 @@
 return {
-    stamp = "v92-20261021-disguise-ugc-shoot",
+    stamp = "v93-20261021-fullbag-disguise-driver-menu",
     files = {
         ["src/Profile/142823291.lua"] = [[
 --!strict
@@ -3284,6 +3284,12 @@ function Module.init(runtime: any): any
         }
     )
     state.mm2SilentAimFeature = ShootFeature
+    -- Other modules (Auto Farm's full-bag grab) fire through the exact
+    -- SilentAim path -- same silent spawn construction, wall check and
+    -- calibration capture -- instead of hand-rolling their own shot.
+    state.mm2FireSilentShot = function(target: Player?): boolean
+        return fireGunAtTarget(target, {silent = true, quiet = true})
+    end
     -- One card, two weapons: the heading keeps the gun rows together and the
     -- knife module opens its own section further down.
     if addSectionOption then addSectionOption(ShootFeature, "Gun") end
@@ -3503,6 +3509,7 @@ function Module.init(runtime: any): any
     activeCleanup = function(): ()
         toggleShootMurderer(false)
         state.mm2SilentAimFeature = nil
+        state.mm2FireSilentShot = nil
         toggleAutoShoot(false)
         state.mm2ShotFeedback.hide()
     end
@@ -4713,13 +4720,107 @@ function Module.init(_runtime: any): any
             return collected ~= true
         end
 
+    -- Full-bag Auto Grab gun and Shoot: fetch the dropped sheriff gun
+    -- if we do not already carry it, equip it, and fire ONE SilentAim
+    -- shot at the murderer through the Shoot module's own silent path
+    -- (state.mm2FireSilentShot). Only the direct predicted shot remains
+    -- as a fallback for builds where that export is unavailable.
+    local function grabGunAndShoot(): ()
+        local murderer: Player? = nil
+        if type(findMurderer) == "function" then
+            murderer = findMurderer()
+        end
+        if not murderer
+            or (type(isPlayerAlive) == "function"
+                and not isPlayerAlive(murderer)) then
+            return
+        end
+        local gun: Tool? = nil
+        if type(getPlayerWeapon) == "function" then
+            gun = getPlayerWeapon(LocalPlayer, "Gun")
+        end
+        if not gun and type(findDroppedGun) == "function" then
+            -- Travel to the drop with the active farm mode, up to a few
+            -- seconds; the bag sequence owns the character meanwhile.
+            local deadline: number = os.clock() + 5
+            while os.clock() < deadline and not gun do
+                local character: Model?, humanoid: Humanoid?,
+                    root: BasePart? = characterParts()
+                local drop: Instance? = findDroppedGun()
+                if not character or not humanoid or not root or not drop then
+                    break
+                end
+                local dropPosition: Vector3? = nil
+                pcall(function(): ()
+                    if drop:IsA("BasePart") then
+                        dropPosition = (drop :: BasePart).Position
+                    elseif drop:IsA("Model") then
+                        dropPosition = (drop :: Model):GetPivot().Position
+                    end
+                end)
+                if not dropPosition then
+                    break
+                end
+                engage(character, humanoid, root)
+                local remaining: number
+                if settings.mode == "Walk" then
+                    remaining = walkTowards(
+                        humanoid, root, dropPosition :: Vector3)
+                else
+                    remaining = moveTowards(
+                        root,
+                        (dropPosition :: Vector3) + Vector3.new(0, 1, 0),
+                        0.05
+                    )
+                end
+                if remaining < 2.5 then
+                    task.wait(0.35)
+                    gun = getPlayerWeapon(LocalPlayer, "Gun")
+                    if gun then
+                        break
+                    end
+                end
+                task.wait()
+            end
+        end
+        if not gun then
+            return
+        end
+        local character: Model?, humanoid: Humanoid? = characterParts()
+        if not character or not humanoid then
+            return
+        end
+        if gun.Parent ~= character then
+            pcall(function(): ()
+                humanoid:EquipTool(gun :: Tool)
+            end)
+            task.wait(0.3)
+        end
+        if gun.Parent ~= character then
+            return
+        end
+        if type(state.mm2FireSilentShot) == "function" then
+            pcall(state.mm2FireSilentShot, murderer)
+        else
+            shootMurderer(murderer)
+        end
+    end
+
         -- The full-bag sequence, in the user's order: Kill All,
         -- reset, then the post-reset flings. Runs once per fill.
         local function runFullSequence(): ()
             busy = true
             local ok: boolean, err: any = pcall(function(): ()
+                -- Everything in this sequence happens ONLY when the
+                -- bag is full (50): Kill All, the gun grab + SilentAim
+                -- shot, the reset, and the flings. None of it runs
+                -- during ordinary farming.
                 if settings.killAllOnFull then
                     killAll()
+                    task.wait(0.4)
+                end
+                if settings.grabGunShoot then
+                    grabGunAndShoot()
                     task.wait(0.4)
                 end
                 if settings.resetOnFull then
@@ -4743,14 +4844,17 @@ function Module.init(_runtime: any): any
                         task.wait(0.25)
                     end
                     task.wait(0.6)
-                    if settings.flingMurder
-                        and type(findMurderer) == "function" then
-                        flingPlayer(findMurderer())
-                    end
-                    if settings.flingSheriff
-                        and type(findSheriff) == "function" then
-                        flingPlayer(findSheriff())
-                    end
+                end
+                -- Flings belong to the full bag too, reset or not: with
+                -- a reset they meet the fresh character first (above),
+                -- without one they simply happen now.
+                if settings.flingMurder
+                    and type(findMurderer) == "function" then
+                    flingPlayer(findMurderer())
+                end
+                if settings.flingSheriff
+                    and type(findSheriff) == "function" then
+                    flingPlayer(findSheriff())
                 end
             end)
             if not ok then
@@ -4786,10 +4890,13 @@ function Module.init(_runtime: any): any
                 if busy then
                     return
                 end
-                -- Full bag: run the sequence once, then keep farming.
+                -- Full bag (50): run the sequence once, then keep
+                -- farming. Any of its actions arms the trigger.
                 if bagLimit > 0 and bagAmount >= bagLimit
                     and not fullHandled
-                    and (settings.killAllOnFull or settings.resetOnFull) then
+                    and (settings.killAllOnFull or settings.resetOnFull
+                        or settings.flingMurder or settings.flingSheriff
+                        or settings.grabGunShoot) then
                     fullHandled = true
                     restoreCharacter(false)
                     task.spawn(runFullSequence)
@@ -4800,61 +4907,6 @@ function Module.init(_runtime: any): any
                 if not character or not humanoid or not root
                     or humanoid.Health <= 0 then
                     return
-                end
-
-                -- Gun first: grab the dropped gun, then shoot the
-                -- murderer with it; farming resumes afterwards.
-                if settings.grabGunShoot then
-                    local gun: Tool? = nil
-                    if type(getPlayerWeapon) == "function" then
-                        gun = getPlayerWeapon(LocalPlayer, "Gun")
-                    end
-                    if gun then
-                        local murderer: Player? = nil
-                        if type(findMurderer) == "function" then
-                            murderer = findMurderer()
-                        end
-                        if murderer
-                            and (type(isPlayerAlive) ~= "function"
-                                or isPlayerAlive(murderer)) then
-                            busy = true
-                            task.spawn(function(): ()
-                                pcall(shootMurderer, murderer)
-                                busy = false
-                            end)
-                        end
-                    elseif type(findDroppedGun) == "function" then
-                        local drop: Instance? = findDroppedGun()
-                        if drop then
-                            local dropPosition: Vector3? = nil
-                            pcall(function(): ()
-                                if drop:IsA("BasePart") then
-                                    dropPosition = (drop :: BasePart).Position
-                                elseif drop:IsA("Model") then
-                                    dropPosition = (drop :: Model):GetPivot().Position
-                                end
-                            end)
-                            if dropPosition then
-                                engage(character, humanoid, root)
-                                if settings.mode == "Walk" then
-                                    walkTowards(
-                                        humanoid,
-                                        root,
-                                        dropPosition :: Vector3
-                                    )
-                                else
-                                    moveTowards(
-                                        root,
-                                        (dropPosition :: Vector3)
-                                            + Vector3.new(0, 1, 0),
-                                        deltaTime
-                                    )
-                                end
-                                setStatus("Auto Farm: going for the dropped gun…")
-                                return
-                            end
-                        end
-                    end
                 end
 
                 -- Nearest pickup, from Coin ESP's own detection.
@@ -4994,15 +5046,15 @@ function Module.init(_runtime: any): any
     addToggleOption(AutoFarmFeature, "Fling Murder after reset", false,
         function(value: boolean): ()
             settings.flingMurder = value
-        end, "After the full-bag reset respawns you, fling the Murderer.")
+        end, "When the coin bag fills (50): fling the Murderer (after the reset above, if it is on).")
     addToggleOption(AutoFarmFeature, "Fling Sheriff after reset", false,
         function(value: boolean): ()
             settings.flingSheriff = value
-        end, "After the full-bag reset respawns you, fling the Sheriff.")
+        end, "When the coin bag fills (50): fling the Sheriff (after the reset above, if it is on).")
     addToggleOption(AutoFarmFeature, "Auto Grab gun and Shoot", false,
         function(value: boolean): ()
             settings.grabGunShoot = value
-        end, "Grab the dropped sheriff gun when it appears and shoot the Murderer with it.")
+        end, "Only when the coin bag fills (50): go get the dropped sheriff gun, equip it, and fire one SilentAim shot at the Murderer. Never during ordinary farming.")
     addToggleOption(AutoFarmFeature, "Auto Kill All When full coin bag", false,
         function(value: boolean): ()
             settings.killAllOnFull = value
@@ -21120,6 +21172,7 @@ function Module.init(context: Runtime): any
     -- defined, and Lua resolves names at definition time: without these the
     -- calls would silently become globals.
     local releaseIdleBridge: () -> () = function(): () end
+    local stopDirectDriver: () -> () = function(): () end
     local playingAnimationTracks: (Humanoid?) -> {AnimationTrack} =
         function(): {AnimationTrack}
             return {}
@@ -21874,6 +21927,7 @@ function Module.init(context: Runtime): any
     -- track (walk, jump, an emote) starts.
     local idleBridgeTrack: AnimationTrack? = nil
     releaseIdleBridge = function(): ()
+        stopDirectDriver()
         local bridge: AnimationTrack? = idleBridgeTrack
         idleBridgeTrack = nil
         if bridge then
@@ -22074,6 +22128,178 @@ function Module.init(context: Runtime): any
         return true
     end
 
+    -- Direct locomotion driver, the last-resort player. Writing ids into
+    -- the Animate slots only works while the game's own animation
+    -- controller cooperates: when it is custom, or never restarts after
+    -- its tracks were stopped, the character ends in a frozen, odd pose
+    -- and neither an official pack nor a target's movements ever show --
+    -- both reports were this. The driver loads the very same clips from
+    -- the Animate slots itself and switches them by humanoid state and
+    -- speed, the way classic animation scripts always have.
+    local directTracks: {[string]: AnimationTrack} = {}
+    local directConnection: RBXScriptConnection? = nil
+    local directCharacter: Model? = nil
+    stopDirectDriver = function(): ()
+        if directConnection then
+            pcall(function(): ()
+                (directConnection :: RBXScriptConnection):Disconnect()
+            end)
+            directConnection = nil
+        end
+        for _, track: AnimationTrack in pairs(directTracks) do
+            pcall(function(): ()
+                track:Stop(0.1)
+            end)
+            pcall(function(): ()
+                track:Destroy()
+            end)
+        end
+        table.clear(directTracks)
+        directCharacter = nil
+    end
+
+    local function startDirectDriver(
+        character: Model,
+        humanoid: Humanoid
+    ): boolean
+        stopDirectDriver()
+        local animate: Instance? = character:FindFirstChild("Animate")
+        local animator: Animator? =
+            humanoid:FindFirstChildOfClass("Animator")
+        if not animate or not animator then
+            return false
+        end
+        local built: boolean = pcall(function(): ()
+            for _, mapping in ipairs(MOVEMENT_ANIMATIONS) do
+                local category: string = mapping.scriptCategory
+                if category ~= "mood" then
+                    local container: Instance? =
+                        animate:FindFirstChild(category)
+                    local animation: Animation? = nil
+                    if container then
+                        if container:IsA("Animation") then
+                            animation = container :: Animation
+                        else
+                            for _, descendant: Instance in ipairs(
+                                container:GetDescendants()
+                            ) do
+                                if descendant:IsA("Animation") then
+                                    animation = descendant :: Animation
+                                    break
+                                end
+                            end
+                        end
+                    end
+                    if animation then
+                        local track: AnimationTrack =
+                            animator:LoadAnimation(animation)
+                        track.Priority = if category == "idle"
+                            then Enum.AnimationPriority.Idle
+                            elseif category == "jump" or category == "fall"
+                            then Enum.AnimationPriority.Action
+                            else Enum.AnimationPriority.Movement
+                        track.Looped = category ~= "jump"
+                        directTracks[category] = track
+                    end
+                end
+            end
+        end)
+        if not built
+            or (directTracks.idle == nil and directTracks.walk == nil) then
+            stopDirectDriver()
+            return false
+        end
+        directCharacter = character
+        local root: Instance? = character:FindFirstChild("HumanoidRootPart")
+        local runService: any = host.RunService
+        if not runService then
+            local ok: boolean, service: any = pcall(function(): any
+                return (game :: any):GetService("RunService")
+            end)
+            if ok then
+                runService = service
+            end
+        end
+        if not runService or not runService.Heartbeat then
+            stopDirectDriver()
+            return false
+        end
+        local lastSwitch: number = 0
+        local currentCategory: string? = nil
+        directConnection = runService.Heartbeat:Connect(function(): ()
+            if directCharacter ~= character then
+                stopDirectDriver()
+                return
+            end
+            local now: number = os.clock()
+            if now - lastSwitch < 0.08 then
+                return
+            end
+            lastSwitch = now
+            local stateName: string = ""
+            pcall(function(): ()
+                stateName = (humanoid:GetState() :: any).Name
+            end)
+            local speed: number = 0
+            if root then
+                pcall(function(): ()
+                    local velocity: Vector3 =
+                        (root :: BasePart).AssemblyLinearVelocity
+                    speed = math.sqrt(
+                        velocity.X * velocity.X + velocity.Z * velocity.Z
+                    )
+                end)
+            end
+            local desired: string? = nil
+            if stateName == "Jumping" then
+                desired = directTracks.jump and "jump" or "fall"
+            elseif stateName == "Freefall" then
+                desired = "fall"
+            elseif stateName == "Climbing" then
+                desired = "climb"
+            elseif stateName == "Swimming" then
+                desired = speed > 1 and "swim" or "swimidle"
+            elseif speed < 0.4 then
+                desired = "idle"
+            elseif speed <= math.max(4, humanoid.WalkSpeed * 0.6) then
+                desired = "walk"
+            else
+                desired = "run"
+            end
+            if desired and not directTracks[desired] then
+                desired = directTracks.walk and "walk" or "idle"
+            end
+            if not desired then
+                return
+            end
+            if desired ~= currentCategory then
+                currentCategory = desired
+                for category: string, track: AnimationTrack in pairs(directTracks) do
+                    if category == desired then
+                        pcall(function(): ()
+                            if not track.IsPlaying then
+                                track:Play(0.12)
+                            end
+                        end)
+                    else
+                        pcall(function(): ()
+                            if track.IsPlaying then
+                                track:Stop(0.12)
+                            end
+                        end)
+                    end
+                end
+            end
+            local active: AnimationTrack? = directTracks[desired]
+            if active then
+                pcall(function(): ()
+                    active:AdjustSpeed(settings.animationSpeed)
+                end)
+            end
+        end)
+        return true
+    end
+
     local function settleMovementAnimations(
         character: Model,
         humanoid: Humanoid
@@ -22114,6 +22340,20 @@ function Module.init(context: Runtime): any
             pcall(function(): ()
                 (bridge :: any):Destroy()
             end)
+        end
+
+        -- The script path animates nothing: play the same clips
+        -- directly instead of giving up on them.
+        if startDirectDriver(character, humanoid) then
+            task.wait(0.15)
+            if poseMoves(humanoid, 0.3) ~= false or poseDriven(humanoid) then
+                notify(
+                    "The game's animation controller would not play "
+                        .. "those clips; Disguise is playing them directly."
+                )
+                return true
+            end
+            stopDirectDriver()
         end
 
         local defaults: {[string]: any} = rigDefaultSlots(humanoid)
@@ -23268,8 +23508,17 @@ function Module.init(context: Runtime): any
         Tooltip = "Built-in Roblox catalog animation packs (Ninja, Knight, Zombie, Toy and 13 more), applied to your character's own Animate slots -- idle, walk, run, jump, fall, climb, swim. No download: the ids are catalog data kept in the script and the engine streams the clips; your choice is saved. A selected pack wins over the target's movement animations. Off returns to the target/your own set. R15 clips on an R6 body stay refused for that rig, as before.",
     })
 
+    card:CreateToggle({
+        Name = "Show Advanced",
+        Default = false,
+        Function = function(_value: boolean): ()
+        end,
+        Tooltip = "Shows the advanced animation options: inserting any animation pack (official or UGC) by its bundle ID.",
+    })
+
     card:CreateTextBox({
         Name = "Pack Bundle ID",
+        Show = {Option = "Show Advanced", Values = {true}},
         Default = "",
         Function = function(value: string): ()
             local trimmed: string = tostring(value or "")
@@ -39272,12 +39521,36 @@ function Module.init(context: any): any
         return math.round(value * factor) / factor
     end
 
+    -- How much of a window must stay reachable when it cannot fit:
+    -- enough title bar to grab, move and close it.
+    local MIN_GRAB_X: number = 140
+    local MIN_GRAB_Y: number = 40
+
     local function clamp(position: Vector2, size: Vector2): Vector2
         local screen: Vector2 = logicalViewport()
-        return Vector2.new(
-            snapPixel(math.clamp(position.X, MARGIN, math.max(MARGIN, screen.X - size.X - MARGIN))),
-            snapPixel(math.clamp(position.Y, MARGIN, math.max(MARGIN, screen.Y - size.Y - MARGIN)))
-        )
+        -- When the window fits, keep it fully on screen. When it does
+        -- not (a small or resized viewport), the old full-fit clamp
+        -- pinned every oversized window to the same top-left corner and
+        -- they stacked into one pile; instead let the window extend
+        -- past the edge and only guarantee the grab strip stays
+        -- visible, so part of it simply shows, as requested.
+        local x: number
+        if size.X <= screen.X - MARGIN * 2 then
+            x = math.clamp(position.X, MARGIN, screen.X - size.X - MARGIN)
+        else
+            x = math.clamp(
+                position.X,
+                MARGIN - (size.X - MIN_GRAB_X),
+                screen.X - MIN_GRAB_X
+            )
+        end
+        local y: number
+        if size.Y <= screen.Y - MARGIN * 2 then
+            y = math.clamp(position.Y, MARGIN, screen.Y - size.Y - MARGIN)
+        else
+            y = math.clamp(position.Y, MARGIN, screen.Y - MIN_GRAB_Y)
+        end
+        return Vector2.new(snapPixel(x), snapPixel(y))
     end
 
     function manager.ClampWindow(window: any): ()
@@ -40267,9 +40540,33 @@ function Module.init(context: any): any
     end
 
     function manager.Reclamp(): ()
+        -- After landing, windows that ended on (nearly) the same spot
+        -- cascade a step down-right each, so a shrink never leaves a
+        -- pile of identical title bars in one corner.
+        local placed: {Vector2} = {}
         for _, window: any in ipairs(manager.list) do
             local x: number, y: number, w: number, h: number = windowRect(window)
             local landed: Vector2 = clamp(Vector2.new(x, y), Vector2.new(w, h))
+            local attempts: number = 0
+            while attempts < 8 do
+                local stacked: boolean = false
+                for _, other: Vector2 in ipairs(placed) do
+                    if math.abs(other.X - landed.X) < 6
+                        and math.abs(other.Y - landed.Y) < 6 then
+                        stacked = true
+                        break
+                    end
+                end
+                if not stacked then
+                    break
+                end
+                attempts += 1
+                landed = clamp(
+                    landed + Vector2.new(26, 26),
+                    Vector2.new(w, h)
+                )
+            end
+            table.insert(placed, landed)
             window.root.Position = UDim2.fromOffset(landed.X, landed.Y)
         end
     end

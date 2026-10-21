@@ -84,11 +84,23 @@ assert "victimRoot.Anchored = true" in SOURCE
 assert 'FireServer("Slash")' in SOURCE
 assert '"HandleTouched"' in SOURCE
 
-# Grab gun and shoot: dropped gun lookup, equip, one predicted shot.
+# Full-bag actions ONLY at 50: Kill All, grab gun + SilentAim shot,
+# reset and flings all live in the full-bag sequence; the per-tick grab
+# is gone so nothing fires during ordinary farming.
+assert "state.mm2FireSilentShot" in SOURCE
+assert "grabGunAndShoot" in SOURCE
+assert "settings.grabGunShoot) then" in SOURCE
+assert "during ordinary farming" in SOURCE
 assert "findDroppedGun" in SOURCE
 assert "humanoid:EquipTool(gun :: Tool)" in SOURCE
-assert 'gun:FindFirstChild("Shoot")' in SOURCE
+assert 'gun:FindFirstChild("Shoot")' in SOURCE  # direct fallback shot
 assert "prediction.gunAim" in SOURCE
+assert "or settings.flingMurder or settings.flingSheriff" in SOURCE
+assert "going for the dropped gun" not in SOURCE, \
+    "no gun grab in the ordinary farming tick"
+tick_body = SOURCE.rsplit("featureConnections.MM2AutoFarmTick", 1)[1]
+assert "findDroppedGun" not in tick_body.split("-- Nearest pickup")[0], \
+    "the farming tick never looks for the dropped gun"
 
 # A coin that never collects is skipped instead of trapping the farm.
 assert "BLACKLIST_SECONDS" in SOURCE

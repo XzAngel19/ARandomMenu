@@ -187,6 +187,7 @@ function Module.init(context: Runtime): any
     -- defined, and Lua resolves names at definition time: without these the
     -- calls would silently become globals.
     local releaseIdleBridge: () -> () = function(): () end
+    local stopDirectDriver: () -> () = function(): () end
     local playingAnimationTracks: (Humanoid?) -> {AnimationTrack} =
         function(): {AnimationTrack}
             return {}
@@ -941,6 +942,7 @@ function Module.init(context: Runtime): any
     -- track (walk, jump, an emote) starts.
     local idleBridgeTrack: AnimationTrack? = nil
     releaseIdleBridge = function(): ()
+        stopDirectDriver()
         local bridge: AnimationTrack? = idleBridgeTrack
         idleBridgeTrack = nil
         if bridge then
@@ -1141,6 +1143,178 @@ function Module.init(context: Runtime): any
         return true
     end
 
+    -- Direct locomotion driver, the last-resort player. Writing ids into
+    -- the Animate slots only works while the game's own animation
+    -- controller cooperates: when it is custom, or never restarts after
+    -- its tracks were stopped, the character ends in a frozen, odd pose
+    -- and neither an official pack nor a target's movements ever show --
+    -- both reports were this. The driver loads the very same clips from
+    -- the Animate slots itself and switches them by humanoid state and
+    -- speed, the way classic animation scripts always have.
+    local directTracks: {[string]: AnimationTrack} = {}
+    local directConnection: RBXScriptConnection? = nil
+    local directCharacter: Model? = nil
+    stopDirectDriver = function(): ()
+        if directConnection then
+            pcall(function(): ()
+                (directConnection :: RBXScriptConnection):Disconnect()
+            end)
+            directConnection = nil
+        end
+        for _, track: AnimationTrack in pairs(directTracks) do
+            pcall(function(): ()
+                track:Stop(0.1)
+            end)
+            pcall(function(): ()
+                track:Destroy()
+            end)
+        end
+        table.clear(directTracks)
+        directCharacter = nil
+    end
+
+    local function startDirectDriver(
+        character: Model,
+        humanoid: Humanoid
+    ): boolean
+        stopDirectDriver()
+        local animate: Instance? = character:FindFirstChild("Animate")
+        local animator: Animator? =
+            humanoid:FindFirstChildOfClass("Animator")
+        if not animate or not animator then
+            return false
+        end
+        local built: boolean = pcall(function(): ()
+            for _, mapping in ipairs(MOVEMENT_ANIMATIONS) do
+                local category: string = mapping.scriptCategory
+                if category ~= "mood" then
+                    local container: Instance? =
+                        animate:FindFirstChild(category)
+                    local animation: Animation? = nil
+                    if container then
+                        if container:IsA("Animation") then
+                            animation = container :: Animation
+                        else
+                            for _, descendant: Instance in ipairs(
+                                container:GetDescendants()
+                            ) do
+                                if descendant:IsA("Animation") then
+                                    animation = descendant :: Animation
+                                    break
+                                end
+                            end
+                        end
+                    end
+                    if animation then
+                        local track: AnimationTrack =
+                            animator:LoadAnimation(animation)
+                        track.Priority = if category == "idle"
+                            then Enum.AnimationPriority.Idle
+                            elseif category == "jump" or category == "fall"
+                            then Enum.AnimationPriority.Action
+                            else Enum.AnimationPriority.Movement
+                        track.Looped = category ~= "jump"
+                        directTracks[category] = track
+                    end
+                end
+            end
+        end)
+        if not built
+            or (directTracks.idle == nil and directTracks.walk == nil) then
+            stopDirectDriver()
+            return false
+        end
+        directCharacter = character
+        local root: Instance? = character:FindFirstChild("HumanoidRootPart")
+        local runService: any = host.RunService
+        if not runService then
+            local ok: boolean, service: any = pcall(function(): any
+                return (game :: any):GetService("RunService")
+            end)
+            if ok then
+                runService = service
+            end
+        end
+        if not runService or not runService.Heartbeat then
+            stopDirectDriver()
+            return false
+        end
+        local lastSwitch: number = 0
+        local currentCategory: string? = nil
+        directConnection = runService.Heartbeat:Connect(function(): ()
+            if directCharacter ~= character then
+                stopDirectDriver()
+                return
+            end
+            local now: number = os.clock()
+            if now - lastSwitch < 0.08 then
+                return
+            end
+            lastSwitch = now
+            local stateName: string = ""
+            pcall(function(): ()
+                stateName = (humanoid:GetState() :: any).Name
+            end)
+            local speed: number = 0
+            if root then
+                pcall(function(): ()
+                    local velocity: Vector3 =
+                        (root :: BasePart).AssemblyLinearVelocity
+                    speed = math.sqrt(
+                        velocity.X * velocity.X + velocity.Z * velocity.Z
+                    )
+                end)
+            end
+            local desired: string? = nil
+            if stateName == "Jumping" then
+                desired = directTracks.jump and "jump" or "fall"
+            elseif stateName == "Freefall" then
+                desired = "fall"
+            elseif stateName == "Climbing" then
+                desired = "climb"
+            elseif stateName == "Swimming" then
+                desired = speed > 1 and "swim" or "swimidle"
+            elseif speed < 0.4 then
+                desired = "idle"
+            elseif speed <= math.max(4, humanoid.WalkSpeed * 0.6) then
+                desired = "walk"
+            else
+                desired = "run"
+            end
+            if desired and not directTracks[desired] then
+                desired = directTracks.walk and "walk" or "idle"
+            end
+            if not desired then
+                return
+            end
+            if desired ~= currentCategory then
+                currentCategory = desired
+                for category: string, track: AnimationTrack in pairs(directTracks) do
+                    if category == desired then
+                        pcall(function(): ()
+                            if not track.IsPlaying then
+                                track:Play(0.12)
+                            end
+                        end)
+                    else
+                        pcall(function(): ()
+                            if track.IsPlaying then
+                                track:Stop(0.12)
+                            end
+                        end)
+                    end
+                end
+            end
+            local active: AnimationTrack? = directTracks[desired]
+            if active then
+                pcall(function(): ()
+                    active:AdjustSpeed(settings.animationSpeed)
+                end)
+            end
+        end)
+        return true
+    end
+
     local function settleMovementAnimations(
         character: Model,
         humanoid: Humanoid
@@ -1181,6 +1355,20 @@ function Module.init(context: Runtime): any
             pcall(function(): ()
                 (bridge :: any):Destroy()
             end)
+        end
+
+        -- The script path animates nothing: play the same clips
+        -- directly instead of giving up on them.
+        if startDirectDriver(character, humanoid) then
+            task.wait(0.15)
+            if poseMoves(humanoid, 0.3) ~= false or poseDriven(humanoid) then
+                notify(
+                    "The game's animation controller would not play "
+                        .. "those clips; Disguise is playing them directly."
+                )
+                return true
+            end
+            stopDirectDriver()
         end
 
         local defaults: {[string]: any} = rigDefaultSlots(humanoid)
@@ -2335,8 +2523,17 @@ function Module.init(context: Runtime): any
         Tooltip = "Built-in Roblox catalog animation packs (Ninja, Knight, Zombie, Toy and 13 more), applied to your character's own Animate slots -- idle, walk, run, jump, fall, climb, swim. No download: the ids are catalog data kept in the script and the engine streams the clips; your choice is saved. A selected pack wins over the target's movement animations. Off returns to the target/your own set. R15 clips on an R6 body stay refused for that rig, as before.",
     })
 
+    card:CreateToggle({
+        Name = "Show Advanced",
+        Default = false,
+        Function = function(_value: boolean): ()
+        end,
+        Tooltip = "Shows the advanced animation options: inserting any animation pack (official or UGC) by its bundle ID.",
+    })
+
     card:CreateTextBox({
         Name = "Pack Bundle ID",
+        Show = {Option = "Show Advanced", Values = {true}},
         Default = "",
         Function = function(value: string): ()
             local trimmed: string = tostring(value or "")

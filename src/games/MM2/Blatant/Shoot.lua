@@ -545,6 +545,12 @@ function Module.init(runtime: any): any
         }
     )
     state.mm2SilentAimFeature = ShootFeature
+    -- Other modules (Auto Farm's full-bag grab) fire through the exact
+    -- SilentAim path -- same silent spawn construction, wall check and
+    -- calibration capture -- instead of hand-rolling their own shot.
+    state.mm2FireSilentShot = function(target: Player?): boolean
+        return fireGunAtTarget(target, {silent = true, quiet = true})
+    end
     -- One card, two weapons: the heading keeps the gun rows together and the
     -- knife module opens its own section further down.
     if addSectionOption then addSectionOption(ShootFeature, "Gun") end
@@ -764,6 +770,7 @@ function Module.init(runtime: any): any
     activeCleanup = function(): ()
         toggleShootMurderer(false)
         state.mm2SilentAimFeature = nil
+        state.mm2FireSilentShot = nil
         toggleAutoShoot(false)
         state.mm2ShotFeedback.hide()
     end

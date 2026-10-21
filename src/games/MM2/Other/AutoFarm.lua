@@ -595,13 +595,107 @@ function Module.init(_runtime: any): any
             return collected ~= true
         end
 
+    -- Full-bag Auto Grab gun and Shoot: fetch the dropped sheriff gun
+    -- if we do not already carry it, equip it, and fire ONE SilentAim
+    -- shot at the murderer through the Shoot module's own silent path
+    -- (state.mm2FireSilentShot). Only the direct predicted shot remains
+    -- as a fallback for builds where that export is unavailable.
+    local function grabGunAndShoot(): ()
+        local murderer: Player? = nil
+        if type(findMurderer) == "function" then
+            murderer = findMurderer()
+        end
+        if not murderer
+            or (type(isPlayerAlive) == "function"
+                and not isPlayerAlive(murderer)) then
+            return
+        end
+        local gun: Tool? = nil
+        if type(getPlayerWeapon) == "function" then
+            gun = getPlayerWeapon(LocalPlayer, "Gun")
+        end
+        if not gun and type(findDroppedGun) == "function" then
+            -- Travel to the drop with the active farm mode, up to a few
+            -- seconds; the bag sequence owns the character meanwhile.
+            local deadline: number = os.clock() + 5
+            while os.clock() < deadline and not gun do
+                local character: Model?, humanoid: Humanoid?,
+                    root: BasePart? = characterParts()
+                local drop: Instance? = findDroppedGun()
+                if not character or not humanoid or not root or not drop then
+                    break
+                end
+                local dropPosition: Vector3? = nil
+                pcall(function(): ()
+                    if drop:IsA("BasePart") then
+                        dropPosition = (drop :: BasePart).Position
+                    elseif drop:IsA("Model") then
+                        dropPosition = (drop :: Model):GetPivot().Position
+                    end
+                end)
+                if not dropPosition then
+                    break
+                end
+                engage(character, humanoid, root)
+                local remaining: number
+                if settings.mode == "Walk" then
+                    remaining = walkTowards(
+                        humanoid, root, dropPosition :: Vector3)
+                else
+                    remaining = moveTowards(
+                        root,
+                        (dropPosition :: Vector3) + Vector3.new(0, 1, 0),
+                        0.05
+                    )
+                end
+                if remaining < 2.5 then
+                    task.wait(0.35)
+                    gun = getPlayerWeapon(LocalPlayer, "Gun")
+                    if gun then
+                        break
+                    end
+                end
+                task.wait()
+            end
+        end
+        if not gun then
+            return
+        end
+        local character: Model?, humanoid: Humanoid? = characterParts()
+        if not character or not humanoid then
+            return
+        end
+        if gun.Parent ~= character then
+            pcall(function(): ()
+                humanoid:EquipTool(gun :: Tool)
+            end)
+            task.wait(0.3)
+        end
+        if gun.Parent ~= character then
+            return
+        end
+        if type(state.mm2FireSilentShot) == "function" then
+            pcall(state.mm2FireSilentShot, murderer)
+        else
+            shootMurderer(murderer)
+        end
+    end
+
         -- The full-bag sequence, in the user's order: Kill All,
         -- reset, then the post-reset flings. Runs once per fill.
         local function runFullSequence(): ()
             busy = true
             local ok: boolean, err: any = pcall(function(): ()
+                -- Everything in this sequence happens ONLY when the
+                -- bag is full (50): Kill All, the gun grab + SilentAim
+                -- shot, the reset, and the flings. None of it runs
+                -- during ordinary farming.
                 if settings.killAllOnFull then
                     killAll()
+                    task.wait(0.4)
+                end
+                if settings.grabGunShoot then
+                    grabGunAndShoot()
                     task.wait(0.4)
                 end
                 if settings.resetOnFull then
@@ -625,14 +719,17 @@ function Module.init(_runtime: any): any
                         task.wait(0.25)
                     end
                     task.wait(0.6)
-                    if settings.flingMurder
-                        and type(findMurderer) == "function" then
-                        flingPlayer(findMurderer())
-                    end
-                    if settings.flingSheriff
-                        and type(findSheriff) == "function" then
-                        flingPlayer(findSheriff())
-                    end
+                end
+                -- Flings belong to the full bag too, reset or not: with
+                -- a reset they meet the fresh character first (above),
+                -- without one they simply happen now.
+                if settings.flingMurder
+                    and type(findMurderer) == "function" then
+                    flingPlayer(findMurderer())
+                end
+                if settings.flingSheriff
+                    and type(findSheriff) == "function" then
+                    flingPlayer(findSheriff())
                 end
             end)
             if not ok then
@@ -668,10 +765,13 @@ function Module.init(_runtime: any): any
                 if busy then
                     return
                 end
-                -- Full bag: run the sequence once, then keep farming.
+                -- Full bag (50): run the sequence once, then keep
+                -- farming. Any of its actions arms the trigger.
                 if bagLimit > 0 and bagAmount >= bagLimit
                     and not fullHandled
-                    and (settings.killAllOnFull or settings.resetOnFull) then
+                    and (settings.killAllOnFull or settings.resetOnFull
+                        or settings.flingMurder or settings.flingSheriff
+                        or settings.grabGunShoot) then
                     fullHandled = true
                     restoreCharacter(false)
                     task.spawn(runFullSequence)
@@ -682,61 +782,6 @@ function Module.init(_runtime: any): any
                 if not character or not humanoid or not root
                     or humanoid.Health <= 0 then
                     return
-                end
-
-                -- Gun first: grab the dropped gun, then shoot the
-                -- murderer with it; farming resumes afterwards.
-                if settings.grabGunShoot then
-                    local gun: Tool? = nil
-                    if type(getPlayerWeapon) == "function" then
-                        gun = getPlayerWeapon(LocalPlayer, "Gun")
-                    end
-                    if gun then
-                        local murderer: Player? = nil
-                        if type(findMurderer) == "function" then
-                            murderer = findMurderer()
-                        end
-                        if murderer
-                            and (type(isPlayerAlive) ~= "function"
-                                or isPlayerAlive(murderer)) then
-                            busy = true
-                            task.spawn(function(): ()
-                                pcall(shootMurderer, murderer)
-                                busy = false
-                            end)
-                        end
-                    elseif type(findDroppedGun) == "function" then
-                        local drop: Instance? = findDroppedGun()
-                        if drop then
-                            local dropPosition: Vector3? = nil
-                            pcall(function(): ()
-                                if drop:IsA("BasePart") then
-                                    dropPosition = (drop :: BasePart).Position
-                                elseif drop:IsA("Model") then
-                                    dropPosition = (drop :: Model):GetPivot().Position
-                                end
-                            end)
-                            if dropPosition then
-                                engage(character, humanoid, root)
-                                if settings.mode == "Walk" then
-                                    walkTowards(
-                                        humanoid,
-                                        root,
-                                        dropPosition :: Vector3
-                                    )
-                                else
-                                    moveTowards(
-                                        root,
-                                        (dropPosition :: Vector3)
-                                            + Vector3.new(0, 1, 0),
-                                        deltaTime
-                                    )
-                                end
-                                setStatus("Auto Farm: going for the dropped gun…")
-                                return
-                            end
-                        end
-                    end
                 end
 
                 -- Nearest pickup, from Coin ESP's own detection.
@@ -876,15 +921,15 @@ function Module.init(_runtime: any): any
     addToggleOption(AutoFarmFeature, "Fling Murder after reset", false,
         function(value: boolean): ()
             settings.flingMurder = value
-        end, "After the full-bag reset respawns you, fling the Murderer.")
+        end, "When the coin bag fills (50): fling the Murderer (after the reset above, if it is on).")
     addToggleOption(AutoFarmFeature, "Fling Sheriff after reset", false,
         function(value: boolean): ()
             settings.flingSheriff = value
-        end, "After the full-bag reset respawns you, fling the Sheriff.")
+        end, "When the coin bag fills (50): fling the Sheriff (after the reset above, if it is on).")
     addToggleOption(AutoFarmFeature, "Auto Grab gun and Shoot", false,
         function(value: boolean): ()
             settings.grabGunShoot = value
-        end, "Grab the dropped sheriff gun when it appears and shoot the Murderer with it.")
+        end, "Only when the coin bag fills (50): go get the dropped sheriff gun, equip it, and fire one SilentAim shot at the Murderer. Never during ordinary farming.")
     addToggleOption(AutoFarmFeature, "Auto Kill All When full coin bag", false,
         function(value: boolean): ()
             settings.killAllOnFull = value
