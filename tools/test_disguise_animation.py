@@ -174,6 +174,10 @@ assert 'Name = "Pack Bundle ID"' in SOURCE
 assert 'catalog.roblox.com/v1/bundles/' in SOURCE
 assert 'slotsFromBundleItems' in SOURCE and 'bundleItemCategory' in SOURCE
 assert 'settings.customPackSlots' in SOURCE
+assert 'applySlotsViaDescription' in SOURCE
+assert 'descAnimations' in SOURCE
+assert 'track.Length' in SOURCE  # refused clips are not a bridge
+assert 'description first' in SOURCE.lower() or 'Description first' in SOURCE
 assert 'poseDriven' in SOURCE  # held-pose clips count; identity joints do not
 
 with tempfile.TemporaryDirectory(prefix='disguise-animation-') as tmp:

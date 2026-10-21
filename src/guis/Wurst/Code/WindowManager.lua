@@ -170,6 +170,68 @@ function Module.init(context: any): any
         root.Position = UDim2.fromOffset(landed.X, landed.Y)
     end
 
+    local function rectsOverlap(
+        aPos: Vector2,
+        aSize: Vector2,
+        bPos: Vector2,
+        bSize: Vector2
+    ): boolean
+        local overlapX: number = math.min(aPos.X + aSize.X, bPos.X + bSize.X)
+            - math.max(aPos.X, bPos.X)
+        local overlapY: number = math.min(aPos.Y + aSize.Y, bPos.Y + bSize.Y)
+            - math.max(aPos.Y, bPos.Y)
+        if overlapX <= 0 or overlapY <= 0 then
+            return false
+        end
+        return overlapX * overlapY > 0.3 * aSize.X * aSize.Y
+    end
+
+    -- A window that opens (nearly) on top of a visible one reads as
+    -- the two "glitching into each other": same landing spot, rows
+    -- bleeding through. Cascade it a step at a time until its body is
+    -- mostly its own, exactly like the reclamp cascade but at open.
+    function manager.Deoverlap(window: any): ()
+        local root: any = window and window.root
+        if not root then
+            return
+        end
+        local size: Vector2 = Vector2.new(
+            root.Size.X.Offset,
+            root.Size.Y.Offset
+        )
+        local position: Vector2 = Vector2.new(
+            root.Position.X.Offset,
+            root.Position.Y.Offset
+        )
+        for _ = 1, 10 do
+            local stacked: boolean = false
+            for _, other: any in ipairs(manager.list) do
+                if other ~= window and other.root and other.root.Visible then
+                    if rectsOverlap(
+                        position,
+                        size,
+                        Vector2.new(
+                            other.root.Position.X.Offset,
+                            other.root.Position.Y.Offset
+                        ),
+                        Vector2.new(
+                            other.root.Size.X.Offset,
+                            other.root.Size.Y.Offset
+                        )
+                    ) then
+                        stacked = true
+                        break
+                    end
+                end
+            end
+            if not stacked then
+                break
+            end
+            position = clamp(position + Vector2.new(30, 30), size)
+        end
+        root.Position = UDim2.fromOffset(position.X, position.Y)
+    end
+
     function manager.MeasureWindow(window: any): Vector2
         local root: any = window and window.root
         if not root then
@@ -328,6 +390,7 @@ function Module.init(context: any): any
             root.Visible = visible
             if visible then
                 raise(window)
+                manager.Deoverlap(window)
             end
         end
 

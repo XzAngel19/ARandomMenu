@@ -101,6 +101,10 @@ local function humanoidFor(rigType, character)
 end
 function readDescriptionEmotes() return nil, nil end
 function targetRigFor() return nil end
+-- No readable description in the harness: the apply uses its direct
+-- slot-write fallback, which is what these cases verify.
+function getAppliedDescription() return nil, false end
+function applyDescriptionToHumanoid() return false, "unavailable" end
 ''' + settle + pack + r'''
 -- 1) The description wins where it has a value.
 local slots = animationSlotsFromDescription({IdleAnimation = 12345})

@@ -34,6 +34,10 @@ local function playingAnimationTracks(humanoid)
     return animator:GetPlayingAnimationTracks()
 end
 function releaseIdleBridge() end
+-- Description-route helpers live above the slice in the module; with no
+-- readable description the apply must fall back to the direct write.
+local function getAppliedDescription() return nil, false end
+local function applyDescriptionToHumanoid() return false, "unavailable" end
 ''' + helper + character_body + r'''
 -- copyTargetMovementAnimations: direct description IDs, no network calls.
 local function animation(name, id)

@@ -1,5 +1,5 @@
 return {
-    stamp = "v93-20261021-fullbag-disguise-driver-menu",
+    stamp = "v94-20261021-disguise-description-route",
     files = {
         ["src/Profile/142823291.lua"] = [[
 --!strict
@@ -21014,6 +21014,10 @@ type AppearanceSnapshot = {
     emotes: any,
     equippedEmotes: any,
     scales: {[string]: number},
+    -- The humanoid description's own animation fields at snapshot
+    -- time, so restoring movements can undo a description-route
+    -- apply exactly instead of only rewriting Animate ids.
+    descAnimations: {[string]: number},
 }
 
 local Module = {
@@ -21422,6 +21426,7 @@ function Module.init(context: Runtime): any
         local meshParts: {MeshTemplate} = {}
         local animations: {AnimationTemplate} = {}
         local scales: {[string]: number} = {}
+        local descAnimations: {[string]: number} = {}
         local emotes: any = {}
         local equippedEmotes: any = {}
 
@@ -21464,6 +21469,14 @@ function Module.init(context: Runtime): any
                     scales[field] = value
                 end
             end
+            for _, mapping in ipairs(MOVEMENT_ANIMATIONS) do
+                local okField: boolean, fieldValue: any = pcall(function()
+                    return description[mapping.descriptionField]
+                end)
+                if okField and type(fieldValue) == "number" then
+                    descAnimations[mapping.descriptionField] = fieldValue
+                end
+            end
             local originalEmotes: any, originalEquipped: any =
                 readDescriptionEmotes(description)
             if originalEmotes and originalEquipped then
@@ -21483,6 +21496,7 @@ function Module.init(context: Runtime): any
             emotes = emotes,
             equippedEmotes = equippedEmotes,
             scales = scales,
+            descAnimations = descAnimations,
         }
     end
 
@@ -21549,6 +21563,38 @@ function Module.init(context: Runtime): any
         if not current or current.character ~= character
             or not animationOverrideApplied then
             return
+        end
+        -- Undo a description-route apply on the description itself,
+        -- or the engine keeps serving the foreign clips no matter
+        -- what the Animate slots say.
+        if humanoid and current.descAnimations then
+            local description: any, isTemporary: boolean =
+                getAppliedDescription(humanoid)
+            if description then
+                local working: any = description
+                if not isTemporary then
+                    local cloneOk: boolean, clone: any = pcall(function(): any
+                        return description:Clone()
+                    end)
+                    if cloneOk and clone then
+                        working = clone
+                        isTemporary = true
+                    end
+                end
+                pcall(function(): ()
+                    for field: string, asset: number in pairs(
+                        current.descAnimations
+                    ) do
+                        working[field] = asset
+                    end
+                end)
+                applyDescriptionToHumanoid(humanoid, working)
+                if isTemporary then
+                    pcall(function(): ()
+                        working:Destroy()
+                    end)
+                end
+            end
         end
         for _, entry: AnimationTemplate in ipairs(current.animations) do
             if isInsideCharacter(entry.animation, character) then
@@ -21779,6 +21825,69 @@ function Module.init(context: Runtime): any
         return changedCount
     end
 
+    -- Write the resolved slots into the humanoid's DESCRIPTION (on a
+    -- clone, then applied) and return how many fields were set. This
+    -- route matters: a description's animations are exempt from the
+    -- place's asset permissions -- that is how the target's own avatar
+    -- animates in this game at all -- while loading the same ids
+    -- directly fails with "AnimationClip loaded is not valid", and the
+    -- Animate script then retries (and spams the console) forever.
+    local function applySlotsViaDescription(
+        humanoid: Humanoid,
+        resolved: {[string]: any}
+    ): number
+        local description: any, isTemporary: boolean =
+            getAppliedDescription(humanoid)
+        if not description then
+            return 0
+        end
+        local working: any = description
+        if not isTemporary then
+            local cloneOk: boolean, clone: any = pcall(function(): any
+                return description:Clone()
+            end)
+            if cloneOk and clone then
+                working = clone
+                isTemporary = true
+            end
+        end
+        local setCount: number = 0
+        local setOk: boolean = pcall(function(): ()
+            for _, mapping in ipairs(MOVEMENT_ANIMATIONS) do
+                local chosen: any = resolved[mapping.scriptCategory]
+                if type(chosen) == "table" then
+                    chosen = chosen[1]
+                end
+                local digits: string? = chosen
+                    and string.match(tostring(chosen), "%d+")
+                    or nil
+                local asset: number? = digits and tonumber(digits) or nil
+                if asset and asset > 0 then
+                    working[mapping.descriptionField] = asset
+                    setCount += 1
+                end
+            end
+        end)
+        if not setOk or setCount == 0 then
+            if isTemporary then
+                pcall(function(): ()
+                    working:Destroy()
+                end)
+            end
+            return 0
+        end
+        local applied: boolean = applyDescriptionToHumanoid(
+            humanoid,
+            working
+        )
+        if isTemporary then
+            pcall(function(): ()
+                working:Destroy()
+            end)
+        end
+        return applied and setCount or 0
+    end
+
     -- What every caller uses: the target's clips are resolved against the rig
     -- and written into the Animate slots. The result is verified by
     -- settleMovementAnimations right after, which owns every wait and every
@@ -21806,7 +21915,14 @@ function Module.init(context: Runtime): any
                     .. " clips; your own animations stay."
             )
         end
-        local changedCount: number = writeAnimationSlots(animate, resolved)
+        -- Description first (the permission-exempt route above); the
+        -- direct slot write only remains for builds whose humanoid
+        -- exposes no readable description at all.
+        local changedCount: number =
+            applySlotsViaDescription(humanoid, resolved)
+        if changedCount == 0 then
+            changedCount = writeAnimationSlots(animate, resolved)
+        end
         if changedCount == 0 then
             return 0
         end
@@ -21973,6 +22089,19 @@ function Module.init(context: Runtime): any
             track:Play(0.1)
         end)
         if not played then
+            return nil
+        end
+        -- A clip the engine refused ("AnimationClip loaded is not
+        -- valid") still hands back a track; its Length stays 0. Call
+        -- that what it is -- not a bridge -- so settle moves on to a
+        -- set that loads instead of parking on a dead clip.
+        local lengthOk: boolean, length: any = pcall(function(): any
+            return track.Length
+        end)
+        if lengthOk and length == 0 then
+            pcall(function(): ()
+                (track :: any):Destroy()
+            end)
             return nil
         end
         return track
@@ -39565,6 +39694,68 @@ function Module.init(context: any): any
         root.Position = UDim2.fromOffset(landed.X, landed.Y)
     end
 
+    local function rectsOverlap(
+        aPos: Vector2,
+        aSize: Vector2,
+        bPos: Vector2,
+        bSize: Vector2
+    ): boolean
+        local overlapX: number = math.min(aPos.X + aSize.X, bPos.X + bSize.X)
+            - math.max(aPos.X, bPos.X)
+        local overlapY: number = math.min(aPos.Y + aSize.Y, bPos.Y + bSize.Y)
+            - math.max(aPos.Y, bPos.Y)
+        if overlapX <= 0 or overlapY <= 0 then
+            return false
+        end
+        return overlapX * overlapY > 0.3 * aSize.X * aSize.Y
+    end
+
+    -- A window that opens (nearly) on top of a visible one reads as
+    -- the two "glitching into each other": same landing spot, rows
+    -- bleeding through. Cascade it a step at a time until its body is
+    -- mostly its own, exactly like the reclamp cascade but at open.
+    function manager.Deoverlap(window: any): ()
+        local root: any = window and window.root
+        if not root then
+            return
+        end
+        local size: Vector2 = Vector2.new(
+            root.Size.X.Offset,
+            root.Size.Y.Offset
+        )
+        local position: Vector2 = Vector2.new(
+            root.Position.X.Offset,
+            root.Position.Y.Offset
+        )
+        for _ = 1, 10 do
+            local stacked: boolean = false
+            for _, other: any in ipairs(manager.list) do
+                if other ~= window and other.root and other.root.Visible then
+                    if rectsOverlap(
+                        position,
+                        size,
+                        Vector2.new(
+                            other.root.Position.X.Offset,
+                            other.root.Position.Y.Offset
+                        ),
+                        Vector2.new(
+                            other.root.Size.X.Offset,
+                            other.root.Size.Y.Offset
+                        )
+                    ) then
+                        stacked = true
+                        break
+                    end
+                end
+            end
+            if not stacked then
+                break
+            end
+            position = clamp(position + Vector2.new(30, 30), size)
+        end
+        root.Position = UDim2.fromOffset(position.X, position.Y)
+    end
+
     function manager.MeasureWindow(window: any): Vector2
         local root: any = window and window.root
         if not root then
@@ -39723,6 +39914,7 @@ function Module.init(context: any): any
             root.Visible = visible
             if visible then
                 raise(window)
+                manager.Deoverlap(window)
             end
         end
 
