@@ -1,5 +1,5 @@
 return {
-    stamp = "v89-20261020-shoot-accel",
+    stamp = "v90-20261020-disguise-packs",
     files = {
         ["src/Profile/142823291.lua"] = [[
 --!strict
@@ -20838,6 +20838,38 @@ local SCALE_FIELDS: {string} = {
     "BodyTypeScale",
     "ProportionScale",
 }
+-- Official catalog animation packs (Roblox creator-docs "Catalog
+-- animations" table): every bundle is the same eight slots, and the clips
+-- are ordinary rbxassetid animations the stock Animate script can load on
+-- any R15 body, so no download or asset file ever has to live on disk --
+-- writing the ids into the character's own Animate slots IS the pack, and
+-- the menu config keeps the chosen name between sessions. Idle keeps the
+-- first two variants (the Animate script has Animation1/Animation2 only).
+local ANIMATION_PACKS: {{name: string, slots: {[string]: any}}} = {
+    {name = "Ninja", slots = {idle = {"656117400", "656118341"}, walk = {"656121766"}, run = {"656118852"}, jump = {"656117878"}, fall = {"656115606"}, climb = {"656114359"}, swim = {"656119721"}, swimidle = {"656121397"}}},
+    {name = "Knight", slots = {idle = {"657595757", "657568135"}, walk = {"657552124"}, run = {"657564596"}, jump = {"658409194"}, fall = {"657600338"}, climb = {"658360781"}, swim = {"657560551"}, swimidle = {"657557095"}}},
+    {name = "Mage", slots = {idle = {"707742142", "707855907"}, walk = {"707897309"}, run = {"707861613"}, jump = {"707853694"}, fall = {"707829716"}, climb = {"707826056"}, swim = {"707876443"}, swimidle = {"707894699"}}},
+    {name = "Zombie", slots = {idle = {"616158929", "616160636"}, walk = {"616168032"}, run = {"616163682"}, jump = {"616161997"}, fall = {"616157476"}, climb = {"616156119"}, swim = {"616165109"}, swimidle = {"616166655"}}},
+    {name = "Toy", slots = {idle = {"782841498", "782845736"}, walk = {"782843345"}, run = {"782842708"}, jump = {"782847020"}, fall = {"782846423"}, climb = {"782843869"}, swim = {"782844582"}, swimidle = {"782845186"}}},
+    {name = "Bubbly", slots = {idle = {"910004836", "910009958"}, walk = {"910034870"}, run = {"910025107"}, jump = {"910016857"}, fall = {"910001910"}, climb = {"909997997"}, swim = {"910028158"}, swimidle = {"910030921"}}},
+    {name = "Cartoony", slots = {idle = {"742637544", "742638445"}, walk = {"742640026"}, run = {"742638842"}, jump = {"742637942"}, fall = {"742637151"}, climb = {"742636889"}, swim = {"742639220"}, swimidle = {"742639812"}}},
+    {name = "Pirate", slots = {idle = {"750781874", "750782770"}, walk = {"750785693"}, run = {"750783738"}, jump = {"750782230"}, fall = {"750780242"}, climb = {"750779899"}, swim = {"750784579"}, swimidle = {"750785176"}}},
+    {name = "Vampire", slots = {idle = {"1083445855", "1083450166"}, walk = {"1083473930"}, run = {"1083462077"}, jump = {"1083455352"}, fall = {"1083443587"}, climb = {"1083439238"}, swim = {"1083464683"}, swimidle = {"1083467779"}}},
+    {name = "Werewolf", slots = {idle = {"1083195517", "1083214717"}, walk = {"1083178339"}, run = {"1083216690"}, jump = {"1083218792"}, fall = {"1083189019"}, climb = {"1083182000"}, swim = {"1083222527"}, swimidle = {"1083225406"}}},
+    {name = "Astronaut", slots = {idle = {"891621366", "891633237"}, walk = {"891636393"}, run = {"891636393"}, jump = {"891627522"}, fall = {"891617961"}, climb = {"891609353"}, swim = {"891639666"}, swimidle = {"891663592"}}},
+    {name = "Elder", slots = {idle = {"845397899", "845400520"}, walk = {"845403856"}, run = {"845386501"}, jump = {"845398858"}, fall = {"845396048"}, climb = {"845392038"}, swim = {"845401742"}, swimidle = {"845403127"}}},
+    {name = "Levitation", slots = {idle = {"616006778", "616008087"}, walk = {"616013216"}, run = {"616010382"}, jump = {"616008936"}, fall = {"616005863"}, climb = {"616003713"}, swim = {"616011509"}, swimidle = {"616012453"}}},
+    {name = "Robot", slots = {idle = {"616088211", "616089559"}, walk = {"616095330"}, run = {"616091570"}, jump = {"616090535"}, fall = {"616087089"}, climb = {"616086039"}, swim = {"616092998"}, swimidle = {"616094091"}}},
+    {name = "Stylish", slots = {idle = {"616136790", "616138447"}, walk = {"616146177"}, run = {"616140816"}, jump = {"616139451"}, fall = {"616134815"}, climb = {"616133594"}, swim = {"616143378"}, swimidle = {"616144772"}}},
+    {name = "Superhero", slots = {idle = {"616111295", "616113536"}, walk = {"616122287"}, run = {"616117076"}, jump = {"616115533"}, fall = {"616108001"}, climb = {"616104706"}, swim = {"616119360"}, swimidle = {"616120861"}}},
+    {name = "Rthro", slots = {idle = {"2510197257", "2510196951"}, walk = {"2510202577"}, run = {"2510198475"}, jump = {"2510197830"}, fall = {"2510195892"}, climb = {"2510192778"}, swim = {"2510199791"}, swimidle = {"2510201162"}}},
+}
+local ANIMATION_PACK_BY_NAME: {[string]: {[string]: any}} = {}
+local ANIMATION_PACK_NAMES: {string} = {"Off"}
+for _, pack in ipairs(ANIMATION_PACKS) do
+    ANIMATION_PACK_BY_NAME[pack.name] = pack.slots
+    table.insert(ANIMATION_PACK_NAMES, pack.name)
+end
 local BODY_PARTS: {[string]: boolean} = {
     Head = true,
     Torso = true,
@@ -20933,6 +20965,29 @@ function Module.init(context: Runtime): any
         return fallback
     end
 
+    -- Same saved-state read for the pack dropdown, which also restores its
+    -- value without calling back.
+    local function savedString(name: string, fallback: string): string
+        local store: any = host.configData
+        local states: any = store and store.states
+        if type(states) ~= "table" then
+            return fallback
+        end
+        local saved: any = states["Universal.Disguise." .. name:gsub("%W", "")]
+        if type(saved) == "string" then
+            return saved
+        end
+        return fallback
+    end
+
+    local function savedAnimationPack(): string
+        local saved: string = savedString("Animation Pack", "Off")
+        if saved ~= "Off" and not ANIMATION_PACK_BY_NAME[saved] then
+            return "Off"
+        end
+        return saved
+    end
+
     local settings = {
         mode = "Character",
         animationSpeed = 1,
@@ -20942,6 +20997,7 @@ function Module.init(context: Runtime): any
             true
         ),
         showTargetEmotes = savedToggle("Show target emotes", true),
+        animationPack = savedAnimationPack(),
     }
 
     local function status(message: string): ()
@@ -21976,6 +22032,33 @@ function Module.init(context: Runtime): any
         return changedCount
     end
 
+    -- The selected catalog pack, written through the exact same resolved
+    -- path as a target's clips: the rig rules still apply (an R6 body is
+    -- handed the R6 set instead of clips it cannot play), and selecting a
+    -- pack wins over the target's movement animations because it is the
+    -- explicit choice. Nothing is downloaded: the pack ids are static
+    -- catalog data and the engine streams the clips itself.
+    local function applyAnimationPack(
+        character: Model,
+        humanoid: Humanoid
+    ): number
+        local slots: {[string]: any}? =
+            ANIMATION_PACK_BY_NAME[settings.animationPack]
+        if not slots then
+            return 0
+        end
+        local changedCount: number = applyAnimationSlots(
+            character,
+            humanoid,
+            slots,
+            nil
+        )
+        if changedCount > 0 or animationOverrideApplied then
+            settleMovementAnimations(character, humanoid)
+        end
+        return changedCount
+    end
+
     local function applyCachedEmotes(
         character: Model,
         humanoid: Humanoid
@@ -22450,6 +22533,16 @@ function Module.init(context: Runtime): any
                 )
             end
         end
+        if settings.animationPack ~= "Off" then
+            local packOk: boolean, packResult: any = pcall(
+                applyAnimationPack,
+                character,
+                humanoid
+            )
+            if packOk then
+                lastAppliedSlotCount = tonumber(packResult) or 0
+            end
+        end
         destroyInstance(description)
         -- The rig and the number of slots are the two facts a report needs:
         -- "R6 · 0 slots" and "R15 · 7 slots" are different bugs.
@@ -22464,6 +22557,9 @@ function Module.init(context: Runtime): any
                 " · %d pack clips skipped",
                 lastDroppedSlotCount or 0
             )
+        end
+        if settings.animationPack ~= "Off" then
+            applied ..= " · pack " .. settings.animationPack
         end
         status(applied)
     end
@@ -22537,6 +22633,12 @@ function Module.init(context: Runtime): any
         end
 
         local changedCount: number = applyCachedMovementAnimations(character, humanoid)
+        if settings.animationPack ~= "Off" then
+            local packCount: number = applyAnimationPack(character, humanoid)
+            if packCount > 0 then
+                changedCount = packCount
+            end
+        end
         destroyInstance(description)
         if not stillCurrent(token, character) then
             if emotesApplied then
@@ -22568,6 +22670,9 @@ function Module.init(context: Runtime): any
                 " · %d pack clips skipped",
                 lastDroppedSlotCount or 0
             )
+        end
+        if settings.animationPack ~= "Off" then
+            animationLine ..= " · pack " .. settings.animationPack
         end
         status(animationLine .. ". Your own avatar stays visible.")
     end
@@ -22796,6 +22901,40 @@ function Module.init(context: Runtime): any
             end
         end,
         Tooltip = "Playback speed of your character's animations while Disguise is on: 0 freezes them, 1 is normal, 2 is double speed. Turning Disguise off restores speed 1.",
+    })
+
+    local packIndex: number = 1
+    for index: number, name: string in ipairs(ANIMATION_PACK_NAMES) do
+        if name == settings.animationPack then
+            packIndex = index
+            break
+        end
+    end
+    card:CreateDropdown({
+        Name = "Animation Pack",
+        List = ANIMATION_PACK_NAMES,
+        Index = packIndex,
+        Function = function(value: string): ()
+            settings.animationPack = value
+            if not card.Enabled then
+                return
+            end
+            if value == "Off" then
+                -- Back to whatever the mode/toggles say: re-running the
+                -- apply rebuilds it exactly instead of unpicking slots here.
+                applyDisguise()
+                return
+            end
+            local character: Model? = LocalPlayer.Character
+            local humanoid: Humanoid? = character
+                and character:FindFirstChildOfClass("Humanoid")
+                :: Humanoid?
+            if character and humanoid then
+                applyAnimationPack(character, humanoid)
+                status(settings.mode .. " · pack " .. value)
+            end
+        end,
+        Tooltip = "Built-in Roblox catalog animation packs (Ninja, Knight, Zombie, Toy and 13 more), applied to your character's own Animate slots -- idle, walk, run, jump, fall, climb, swim. No download: the ids are catalog data kept in the script and the engine streams the clips; your choice is saved. A selected pack wins over the target's movement animations. Off returns to the target/your own set. R15 clips on an R6 body stay refused for that rig, as before.",
     })
 
     card:CreateToggle({

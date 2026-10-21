@@ -16,6 +16,7 @@ local function notify(message) table.insert(notified,message) end
 local function status(message) activeCard.status=message end
 local function destroyInstance(instance) instance.destroyed=true end
 local emotesAppliedToHumanoid=false
+local settings={animationPack="Off"}
 -- Defined above the slice in the real module; the status line reads it.
 local function rigName() return "R6" end
 
@@ -23,6 +24,7 @@ local description={id="target"}
 local descriptionResult=description
 local fetchError="network"
 local calls={}
+local function applyAnimationPack() table.insert(calls,"pack") return 4 end
 local function getUserDescription() return descriptionResult,(descriptionResult and nil or fetchError) end
 local function bundleAnimationSlots() return nil,"not a bundle" end
 local generation=1
@@ -121,6 +123,14 @@ assert(activeCard.status==nil,"a cancelled apply must not report success")
 activeCard.Enabled=true
 pass("Animation mode: partial success, rollback when the character changes")
 
+notified={};calls={};activeCard.status=nil
+settings.animationPack="Ninja"
+applyAnimationDisguise(1,character,{},7)
+assert(table.find(calls,"pack") and (activeCard.status or ""):find("pack Ninja"),
+    "a selected catalog pack is applied over the target's movement animations")
+settings.animationPack="Off"
+pass("Animation mode: catalog pack overrides movement animations")
+
 assert(not SOURCE_MARKER)
 '''
 # SOURCE_MARKER is never defined: remove that line (kept for clarity of intent).
@@ -149,6 +159,16 @@ assert 'Values = {"Character"}' in movement_toggle.split('Tooltip', 1)[0]
 emotes_toggle = SOURCE.split('Name = "Show target emotes"', 1)[1]
 assert 'Values = {"Character"}' in emotes_toggle.split('Tooltip', 1)[0]
 assert 'card:CreateButton' not in SOURCE, 'Show target emotes must be a check, not a run button'
+
+# Built-in catalog animation packs: static official ids, no downloads.
+assert 'ANIMATION_PACKS' in SOURCE and 'Name = "Animation Pack"' in SOURCE
+for pack_name in ('Ninja', 'Knight', 'Mage', 'Zombie', 'Toy', 'Bubbly',
+                  'Cartoony', 'Pirate', 'Vampire', 'Werewolf', 'Astronaut',
+                  'Elder', 'Levitation', 'Robot', 'Stylish', 'Superhero',
+                  'Rthro'):
+    assert f'name = "{pack_name}"' in SOURCE, f'missing pack {pack_name}'
+assert '"656117400"' in SOURCE and '"1083455352"' in SOURCE
+assert SOURCE.count('applyAnimationPack') >= 4
 
 with tempfile.TemporaryDirectory(prefix='disguise-animation-') as tmp:
     path = Path(tmp) / 'test.luau'
