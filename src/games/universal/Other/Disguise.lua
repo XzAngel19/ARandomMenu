@@ -951,6 +951,7 @@ function Module.init(context: Runtime): any
         local sanitized: {[string]: any}, replacedClips: number =
             sanitizedSlots(humanoid, resolved)
         resolved = sanitized
+        lastResolvedSlots = resolved
         if replacedClips > 0 and not invalidClipNotified then
             invalidClipNotified = true
             notify(
@@ -1762,6 +1763,7 @@ function Module.init(context: Runtime): any
 
 
     local mirrorAllowed: boolean = false
+    local lastResolvedSlots: {[string]: any}? = nil
 
     local function settleMovementAnimations(
         character: Model,
@@ -1805,10 +1807,52 @@ function Module.init(context: Runtime): any
             end)
         end
 
-        -- No direct driver here any more: loading the same foreign
-        -- clips ourselves only printed the engine's refusal once per
-        -- clip per state change. A set that does not move the body
-        -- falls through to the rig's own set below.
+        -- Direct driver: play the same clips ourselves, keeping only
+        -- the tracks the engine accepted (Length > 0). For new-style
+        -- packs this is the route that works when the game's own
+        -- controller will not restart on the new ids.
+        if startDirectDriver(character, humanoid) then
+            task.wait(0.15)
+            if poseMoves(humanoid, 0.3) ~= false
+                or poseDriven(humanoid) then
+                notify(
+                    "The game's animation controller would not play "
+                        .. "those clips; Disguise is playing them directly."
+                )
+                return true
+            end
+            stopDirectDriver()
+        end
+
+        -- Description retry, the offline-capable route: the ids came
+        -- from the target's HumanoidDescription (they are not in this
+        -- server to be read live), and a description's animations are
+        -- loaded by the avatar pipeline when it is applied. It only
+        -- counts if real tracks end up playing.
+        if mirrorAllowed and lastResolvedSlots then
+            local viaDescription: number =
+                applySlotsViaDescription(humanoid, lastResolvedSlots)
+            if viaDescription > 0 then
+                restartAnimateScript(animate)
+                task.wait(0.15)
+                if #playingAnimationTracks(humanoid) > 0
+                    and (poseMoves(humanoid, 0.3) ~= false
+                        or poseDriven(humanoid)) then
+                    notify(
+                        "The target's animations were applied through "
+                            .. "their avatar description."
+                    )
+                    return true
+                end
+            end
+        end
+
+        -- Pose mirror: copy the target's joints (AnimationConstraint
+        -- on this rig). startPoseMirror verifies the copy actually
+        -- lands on our body before it may claim success.
+        if mirrorAllowed and startPoseMirror(character, humanoid) then
+            return true
+        end
         local defaults: {[string]: any} = rigDefaultSlots(humanoid)
         local isR6: boolean = defaults == DEFAULT_ANIMATION_IDS_R6
         if writeAnimationSlots(animate, defaults) > 0 then
