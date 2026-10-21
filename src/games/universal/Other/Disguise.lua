@@ -1473,60 +1473,93 @@ function Module.init(context: Runtime): any
         return true
     end
 
-    -- Session cache of clip load verdicts, and its one-time notice.
-    -- Probing happens ONCE per id: never inside the Animate script's
-    -- retry loop.
+    -- Session cache of clip verdicts, and its one-time notice.
+    -- A verdict is computed ONCE per id and never inside the Animate
+    -- script's retry loop.
     local clipValidity: {[string]: boolean} = {}
 
-    -- Can this Animator actually load this clip here? A refused clip
-    -- ("AnimationClip loaded is not valid") hands back a track whose
-    -- Length never leaves 0, and that is the only conviction used: an
-    -- unreadable Length acquits, so a slow load is never punished.
-    local function clipLoads(humanoid: Humanoid, id: string): boolean
+    -- May the engine play this clip in this place? v95 probed by
+    -- loading the clip, but the probe itself printed "Failed to load
+    -- animation with sanitized ID ..." for every refused clip: quieter
+    -- than the old retry spam, still noise the user has to read. This
+    -- verdict never loads anything into an Animator:
+    --   1. Catalog metadata condemns what is certainly unusable -- a
+    --      deleted/private asset, or an id that is not an Animation at
+    --      all (a bundle id pasted where a clip belongs).
+    --   2. ContentProvider:PreloadAsync then fetches the asset the way
+    --      the loader will, but reports failure through its callback
+    --      instead of the console, so a clip this client cannot fetch
+    --      here is condemned in silence.
+    -- Anything a probe cannot judge acquits: an unreadable answer must
+    -- never punish a working pack.
+    local function clipLoads(_humanoid: Humanoid, id: string): boolean
         local cached: boolean? = clipValidity[id]
         if cached ~= nil then
             return cached
         end
         local valid: boolean = true
-        local animator: Animator? =
-            humanoid:FindFirstChildOfClass("Animator")
-        local factory: any = (Instance :: any)
-        if animator and factory and type(factory.new) == "function"
-            and type((animator :: any).LoadAnimation) == "function" then
-            local animation: Animation = Instance.new("Animation")
-            animation.AnimationId = id
-            local ok: boolean, track: any = pcall(function(): any
-                return animator:LoadAnimation(animation)
+        -- The rigs' own sets always play; skip the probes entirely.
+        if belongsToR15Defaults(id) or belongsToR6Defaults(id) then
+            clipValidity[id] = true
+            return true
+        end
+        local digits: string? = string.match(id, "%d+")
+        local assetId: number? = digits and tonumber(digits) or nil
+        if assetId then
+            local service: any = nil
+            pcall(function(): ()
+                service = (host :: any).MarketplaceService
+                    or (game :: any):GetService("MarketplaceService")
             end)
-            if not ok or not track then
-                valid = false
-            else
-                pcall(function(): ()
-                    track:Play(0)
+            if service and type(service.GetProductInfo) == "function" then
+                local infoOk: boolean, info: any = pcall(function(): any
+                    return service:GetProductInfo(
+                        assetId,
+                        Enum.InfoType.Asset
+                    )
                 end)
-                local length: any = nil
-                for _ = 1, 2 do
-                    task.wait(0.12)
-                    pcall(function(): ()
-                        length = track.Length
-                    end)
-                    if type(length) ~= "number" or length > 0 then
-                        break
+                if not infoOk or type(info) ~= "table" then
+                    -- Gone or private: every load would be refused too.
+                    valid = false
+                else
+                    local assetType: any = info.AssetTypeId
+                    if assetType ~= nil then
+                        local isAnimation: boolean = false
+                        pcall(function(): ()
+                            if type(assetType) == "number" then
+                                isAnimation = assetType
+                                    == Enum.AssetType.Animation.Value
+                            else
+                                isAnimation = assetType
+                                    == Enum.AssetType.Animation
+                            end
+                        end)
+                        if not isAnimation then
+                            valid = false
+                        end
                     end
                 end
-                if type(length) == "number" and length <= 0 then
+            end
+        end
+        if valid then
+            local provider: any = nil
+            pcall(function(): ()
+                provider = (game :: any):GetService("ContentProvider")
+            end)
+            if provider and type(provider.PreloadAsync) == "function" then
+                local fetched: boolean? = nil
+                local preloadOk: boolean = pcall(function(): ()
+                    provider:PreloadAsync({id}, function(
+                        _contentId: string,
+                        status: any
+                    ): ()
+                        fetched = status == Enum.AssetFetchStatus.Success
+                    end)
+                end)
+                if preloadOk and fetched == false then
                     valid = false
                 end
-                pcall(function(): ()
-                    track:Stop(0)
-                end)
-                pcall(function(): ()
-                    track:Destroy()
-                end)
             end
-            pcall(function(): ()
-                animation:Destroy()
-            end)
         end
         clipValidity[id] = valid
         return valid
