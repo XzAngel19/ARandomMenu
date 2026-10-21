@@ -190,8 +190,6 @@ function Module.init(context: Runtime): any
     -- Forward declarations. The write path runs before the settle step is
     -- defined, and Lua resolves names at definition time: without these the
     -- calls would silently become globals.
-    local releaseIdleBridge: () -> () = function(): () end
-    local stopDirectDriver: () -> () = function(): () end
     local stopPoseMirror: () -> () = function(): () end
     local playingAnimationTracks: (Humanoid?) -> {AnimationTrack} =
         function(): {AnimationTrack}
@@ -579,7 +577,6 @@ function Module.init(context: Runtime): any
         humanoid: Humanoid?
     ): ()
         stopPoseMirror()
-        releaseIdleBridge()
         local current: AppearanceSnapshot? = snapshot
         if not current or current.character ~= character
             or not animationOverrideApplied then
@@ -975,7 +972,6 @@ function Module.init(context: Runtime): any
             return 0
         end
         animationOverrideApplied = true
-        releaseIdleBridge()
         for _, track: AnimationTrack in ipairs(playingAnimationTracks(humanoid)) do
             pcall(function(): ()
                 track:Stop()
@@ -1084,101 +1080,6 @@ function Module.init(context: Runtime): any
         return playing
     end
 
-    -- Some games restart the Animate script without replaying the idle loop:
-    -- the script only plays it from a Humanoid.Running event, and a body that
-    -- is standing still never fires one. The bridge plays the same Animation
-    -- the script would have played, and steps aside the moment any other
-    -- track (walk, jump, an emote) starts.
-    local idleBridgeTrack: AnimationTrack? = nil
-    releaseIdleBridge = function(): ()
-        stopDirectDriver()
-        local bridge: AnimationTrack? = idleBridgeTrack
-        idleBridgeTrack = nil
-        if bridge then
-            pcall(function(): ()
-                (bridge :: any):Stop(0.15)
-            end)
-            pcall(function(): ()
-                (bridge :: any):Destroy()
-            end)
-        end
-    end
-
-    local function playIdleBridge(
-        humanoid: Humanoid?,
-        animate: Instance
-    ): AnimationTrack?
-        if not humanoid then
-            return nil
-        end
-        local idle: Instance? = animate:FindFirstChild("idle")
-        local animation: Animation? = nil
-        if idle then
-            if idle:IsA("Animation") then
-                animation = idle :: Animation
-            end
-            for _, descendant: Instance in ipairs(idle:GetDescendants()) do
-                if not animation and descendant:IsA("Animation") then
-                    animation = descendant :: Animation
-                end
-            end
-        end
-        local animator: Animator? = humanoid:FindFirstChildOfClass("Animator")
-        if not animation or not animator then
-            return nil
-        end
-        local ok: boolean, track: any = pcall(function(): any
-            return animator:LoadAnimation(animation)
-        end)
-        if not ok or not track then
-            return nil
-        end
-        local played: boolean = pcall(function(): ()
-            track:Play(0.1)
-        end)
-        if not played then
-            return nil
-        end
-        -- A clip the engine refused ("AnimationClip loaded is not
-        -- valid") still hands back a track; its Length stays 0. Call
-        -- that what it is -- not a bridge -- so settle moves on to a
-        -- set that loads instead of parking on a dead clip.
-        local lengthOk: boolean, length: any = pcall(function(): any
-            return track.Length
-        end)
-        if lengthOk and length == 0 then
-            pcall(function(): ()
-                (track :: any):Destroy()
-            end)
-            return nil
-        end
-        return track
-    end
-
-    local function watchIdleBridge(humanoid: Humanoid?): ()
-        local bridge: AnimationTrack? = idleBridgeTrack
-        if not bridge then
-            return
-        end
-        task.spawn(function(): ()
-            local deadline: number = os.clock() + 6
-            while idleBridgeTrack == bridge and os.clock() < deadline do
-                task.wait(0.1)
-                if idleBridgeTrack ~= bridge then
-                    return
-                end
-                for _, track: AnimationTrack in ipairs(
-                    playingAnimationTracks(humanoid)
-                ) do
-                    if track ~= bridge then
-                        releaseIdleBridge()
-                        return
-                    end
-                end
-            end
-        end)
-    end
-
     -- The Animator writes every pose into Motor6D.Transform. A clip built for
     -- the OTHER rig never writes a joint: Roblox still hands back a track that
     -- reports IsPlaying, so `#playingAnimationTracks > 0` is not proof that the
@@ -1276,7 +1177,6 @@ function Module.init(context: Runtime): any
         humanoid: Humanoid,
         animate: Instance
     ): boolean
-        releaseIdleBridge()
         for _, track: AnimationTrack in ipairs(playingAnimationTracks(humanoid)) do
             pcall(function(): ()
                 track:Stop()
@@ -1284,376 +1184,7 @@ function Module.init(context: Runtime): any
         end
         restartAnimateScript(animate)
         task.wait(0.1)
-        if #playingAnimationTracks(humanoid) > 0 then
-            return true
-        end
-        local bridge: AnimationTrack? = playIdleBridge(humanoid, animate)
-        if not bridge then
-            return false
-        end
-        task.wait(0.1)
-        local playing: boolean = false
-        pcall(function(): ()
-            playing = (bridge :: any).IsPlaying == true
-        end)
-        if not playing then
-            pcall(function(): ()
-                (bridge :: any):Destroy()
-            end)
-            return false
-        end
-        idleBridgeTrack = bridge
-        watchIdleBridge(humanoid)
-        return true
-    end
-
-    -- Direct locomotion driver, the last-resort player. Writing ids into
-    -- the Animate slots only works while the game's own animation
-    -- controller cooperates: when it is custom, or never restarts after
-    -- its tracks were stopped, the character ends in a frozen, odd pose
-    -- and neither an official pack nor a target's movements ever show --
-    -- both reports were this. The driver loads the very same clips from
-    -- the Animate slots itself and switches them by humanoid state and
-    -- speed, the way classic animation scripts always have.
-    local directTracks: {[string]: AnimationTrack} = {}
-    local directConnection: RBXScriptConnection? = nil
-    local directCharacter: Model? = nil
-    stopDirectDriver = function(): ()
-        if directConnection then
-            pcall(function(): ()
-                (directConnection :: RBXScriptConnection):Disconnect()
-            end)
-            directConnection = nil
-        end
-        for _, track: AnimationTrack in pairs(directTracks) do
-            pcall(function(): ()
-                track:Stop(0.1)
-            end)
-            pcall(function(): ()
-                track:Destroy()
-            end)
-        end
-        table.clear(directTracks)
-        directCharacter = nil
-    end
-
-    -- Pose mirror: the only way to wear another player's REAL
-    -- animations in a place that does not own them. The engine refuses
-    -- every LoadAnimation of a third-party clip here ("the asset is
-    -- not trusted for this place": only Roblox-owned and
-    -- place-creator animations may load, per Roblox's own docs), yet
-    -- the target's character animates in front of us because the
-    -- avatar pipeline loads its clips under its owner's authority.
-    -- So nothing is loaded at all: the target character's joint
-    -- transforms are copied onto our joints every frame. Pack,
-    -- emotes, mood -- whatever their body does, ours does, because
-    -- it is pose data, not assets.
-    local function setAnimatePaused(animate: Instance?, paused: boolean): ()
-        if not animate then
-            return
-        end
-        pcall(function(): ()
-            (animate :: any).Enabled = not paused
-        end)
-        pcall(function(): ()
-            (animate :: any).Disabled = paused
-        end)
-    end
-
-    local mirrorConnection: RBXScriptConnection? = nil
-    local mirrorAnimate: Instance? = nil
-    local mirrorCharacter: Model? = nil
-    local mirrorNotifiedFor: number? = nil
-
-    stopPoseMirror = function(): ()
-        if mirrorConnection then
-            pcall(function(): ()
-                (mirrorConnection :: RBXScriptConnection):Disconnect()
-            end)
-            mirrorConnection = nil
-        end
-        local animate: Instance? = mirrorAnimate
-        mirrorAnimate = nil
-        mirrorCharacter = nil
-        if animate then
-            -- Re-enabling the script restarts it, so the game's own
-            -- controller resumes on the restored slots by itself.
-            setAnimatePaused(animate, false)
-        end
-    end
-
-    local function startPoseMirror(
-        character: Model,
-        humanoid: Humanoid
-    ): boolean
-        local cached: TargetCache? = targetCache
-        if not cached then
-            return false
-        end
-        local targetPlayer: any = nil
-        pcall(function(): ()
-            targetPlayer = Players:GetPlayerByUserId(cached.userId)
-        end)
-        if not targetPlayer or targetPlayer == LocalPlayer then
-            return false
-        end
-        local targetCharacter: any = targetPlayer.Character
-        local targetHumanoid: any = targetCharacter
-            and targetCharacter:FindFirstChildOfClass("Humanoid")
-        if not targetCharacter or not targetHumanoid then
-            return false
-        end
-        -- Pair joints by name; two bodies on the same rig share the
-        -- names that matter, and fewer than six pairs is not a pose.
-        local theirs: {[string]: any} = {}
-        for _, obj: Instance in ipairs(targetCharacter:GetDescendants()) do
-            if obj:IsA("Motor6D")
-                or obj:IsA("AnimationConstraint") then
-                theirs[obj.Name] = obj
-            end
-        end
-        local jointPairs: {{any}} = {}
-        for _, obj: Instance in ipairs(character:GetDescendants()) do
-            if (obj:IsA("Motor6D")
-                or obj:IsA("AnimationConstraint"))
-                and theirs[obj.Name] then
-                table.insert(jointPairs, {obj, theirs[obj.Name]})
-            end
-        end
-        if #jointPairs < 6 then
-            return false
-        end
-        stopPoseMirror()
-        stopDirectDriver()
-        releaseIdleBridge()
-        local animate: Instance? = character:FindFirstChild("Animate")
-        mirrorAnimate = animate
-        mirrorCharacter = character
-        if animate then
-            setAnimatePaused(animate, true)
-        end
-        for _, track: AnimationTrack in ipairs(
-            playingAnimationTracks(humanoid)
-        ) do
-            pcall(function(): ()
-                track:Stop(0)
-            end)
-        end
-        local runService: any = host.RunService
-        if not runService then
-            pcall(function(): ()
-                runService = (game :: any):GetService("RunService")
-            end)
-        end
-        if not runService or not runService.Heartbeat then
-            stopPoseMirror()
-            return false
-        end
-        mirrorConnection = runService.Heartbeat:Connect(function(): ()
-            if mirrorCharacter ~= character or not character.Parent then
-                stopPoseMirror()
-                return
-            end
-            local currentTarget: any = nil
-            pcall(function(): ()
-                currentTarget = targetPlayer.Character
-            end)
-            if currentTarget ~= targetCharacter then
-                -- Respawned or gone: these joints belong to a dead body.
-                stopPoseMirror()
-                return
-            end
-            for _, jointPair: {any} in ipairs(jointPairs) do
-                local ours: any = jointPair[1]
-                local other: any = jointPair[2]
-                pcall(function(): ()
-                    ours.Transform = other.Transform
-                end)
-            end
-        end)
-        local sample: {any} = jointPairs[1]
-        for _, jointPair: {any} in ipairs(jointPairs) do
-            if jointPair[1].Name == "Neck"
-                or jointPair[1].Name == "Root" then
-                sample = jointPair
-                break
-            end
-        end
-        task.wait(0.3)
-        local gap: number? = nil
-        pcall(function(): ()
-            local oursNow: CFrame = (sample[1] :: any).Transform
-            local theirsNow: CFrame = (sample[2] :: any).Transform
-            gap = (oursNow.Position - theirsNow.Position).Magnitude
-                + math.abs(oursNow.R00 - theirsNow.R00)
-                + math.abs(oursNow.R11 - theirsNow.R11)
-        end)
-        if gap == nil or (gap :: number) > 0.5 then
-            stopPoseMirror()
-            return false
-        end
-        animationOverrideApplied = true
-        if mirrorNotifiedFor ~= cached.userId then
-            mirrorNotifiedFor = cached.userId
-            notify(
-                "Mirroring that player's animations directly: their "
-                    .. "clips cannot be loaded in this game (Roblox "
-                    .. "only loads Roblox or place-owned animations), "
-                    .. "so Disguise copies their pose instead."
-            )
-        end
-        return true
-    end
-
-    local function startDirectDriver(
-        character: Model,
-        humanoid: Humanoid
-    ): boolean
-        stopDirectDriver()
-        local animate: Instance? = character:FindFirstChild("Animate")
-        local animator: Animator? =
-            humanoid:FindFirstChildOfClass("Animator")
-        if not animate or not animator then
-            return false
-        end
-        local built: boolean = pcall(function(): ()
-            for _, mapping in ipairs(MOVEMENT_ANIMATIONS) do
-                local category: string = mapping.scriptCategory
-                if category ~= "mood" then
-                    local container: Instance? =
-                        animate:FindFirstChild(category)
-                    local animation: Animation? = nil
-                    if container then
-                        if container:IsA("Animation") then
-                            animation = container :: Animation
-                        else
-                            for _, descendant: Instance in ipairs(
-                                container:GetDescendants()
-                            ) do
-                                if descendant:IsA("Animation") then
-                                    animation = descendant :: Animation
-                                    break
-                                end
-                            end
-                        end
-                    end
-                    if animation then
-                        local track: AnimationTrack =
-                            animator:LoadAnimation(animation)
-                        if track.Length == 0 then
-                            pcall(function(): ()
-                                track:Destroy()
-                            end)
-                            track = nil :: any
-                        end
-                        if track then
-                            track.Priority = if category == "idle"
-                                then Enum.AnimationPriority.Idle
-                                elseif category == "jump"
-                                    or category == "fall"
-                                then Enum.AnimationPriority.Action
-                                else Enum.AnimationPriority.Movement
-                            track.Looped = category ~= "jump"
-                            directTracks[category] = track
-                        end
-                    end
-                end
-            end
-        end)
-        if not built
-            or (directTracks.idle == nil and directTracks.walk == nil) then
-            stopDirectDriver()
-            return false
-        end
-        directCharacter = character
-        local root: Instance? = character:FindFirstChild("HumanoidRootPart")
-        local runService: any = host.RunService
-        if not runService then
-            local ok: boolean, service: any = pcall(function(): any
-                return (game :: any):GetService("RunService")
-            end)
-            if ok then
-                runService = service
-            end
-        end
-        if not runService or not runService.Heartbeat then
-            stopDirectDriver()
-            return false
-        end
-        local lastSwitch: number = 0
-        local currentCategory: string? = nil
-        directConnection = runService.Heartbeat:Connect(function(): ()
-            if directCharacter ~= character then
-                stopDirectDriver()
-                return
-            end
-            local now: number = os.clock()
-            if now - lastSwitch < 0.08 then
-                return
-            end
-            lastSwitch = now
-            local stateName: string = ""
-            pcall(function(): ()
-                stateName = (humanoid:GetState() :: any).Name
-            end)
-            local speed: number = 0
-            if root then
-                pcall(function(): ()
-                    local velocity: Vector3 =
-                        (root :: BasePart).AssemblyLinearVelocity
-                    speed = math.sqrt(
-                        velocity.X * velocity.X + velocity.Z * velocity.Z
-                    )
-                end)
-            end
-            local desired: string? = nil
-            if stateName == "Jumping" then
-                desired = directTracks.jump and "jump" or "fall"
-            elseif stateName == "Freefall" then
-                desired = "fall"
-            elseif stateName == "Climbing" then
-                desired = "climb"
-            elseif stateName == "Swimming" then
-                desired = speed > 1 and "swim" or "swimidle"
-            elseif speed < 0.4 then
-                desired = "idle"
-            elseif speed <= math.max(4, humanoid.WalkSpeed * 0.6) then
-                desired = "walk"
-            else
-                desired = "run"
-            end
-            if desired and not directTracks[desired] then
-                desired = directTracks.walk and "walk" or "idle"
-            end
-            if not desired then
-                return
-            end
-            if desired ~= currentCategory then
-                currentCategory = desired
-                for category: string, track: AnimationTrack in pairs(directTracks) do
-                    if category == desired then
-                        pcall(function(): ()
-                            if not track.IsPlaying then
-                                track:Play(0.12)
-                            end
-                        end)
-                    else
-                        pcall(function(): ()
-                            if track.IsPlaying then
-                                track:Stop(0.12)
-                            end
-                        end)
-                    end
-                end
-            end
-            local active: AnimationTrack? = directTracks[desired]
-            if active then
-                pcall(function(): ()
-                    active:AdjustSpeed(settings.animationSpeed)
-                end)
-            end
-        end)
-        return true
+        return #playingAnimationTracks(humanoid) > 0
     end
 
     -- Session cache of clip verdicts, and its one-time notice.
@@ -1784,46 +1315,13 @@ function Module.init(context: Runtime): any
                 return true
             end
             -- A loaded clip holding a pose is still an animation: the
-            -- floating/hover idles UGC packs ship barely move a joint in
-            -- 0.3 s, and reverting those to the default set is exactly
-            -- the "the toggle gives me no animation" report. The bridge
-            -- check below decides: if the idle itself plays, keep it.
-        end
-        local bridge: AnimationTrack? = playIdleBridge(humanoid, animate)
-        if bridge then
-            task.wait(0.1)
-            local playing: boolean = false
-            pcall(function(): ()
-                playing = (bridge :: any).IsPlaying == true
-            end)
-            if playing and (poseMoves(humanoid, 0.3) ~= false
-                or poseDriven(humanoid)) then
-                idleBridgeTrack = bridge
-                watchIdleBridge(humanoid)
+            -- floating/hover idles UGC packs ship barely move a joint
+            -- in 0.3 s, and reverting those to the default set is
+            -- exactly the "the toggle gives me no animation" report.
+            if poseDriven(humanoid) then
                 return true
             end
-            pcall(function(): ()
-                (bridge :: any):Destroy()
-            end)
         end
-
-        -- Direct driver: play the same clips ourselves, keeping only
-        -- the tracks the engine accepted (Length > 0). For new-style
-        -- packs this is the route that works when the game's own
-        -- controller will not restart on the new ids.
-        if startDirectDriver(character, humanoid) then
-            task.wait(0.15)
-            if poseMoves(humanoid, 0.3) ~= false
-                or poseDriven(humanoid) then
-                notify(
-                    "The game's animation controller would not play "
-                        .. "those clips; Disguise is playing them directly."
-                )
-                return true
-            end
-            stopDirectDriver()
-        end
-
         -- Description retry, the offline-capable route: the ids came
         -- from the target's HumanoidDescription (they are not in this
         -- server to be read live), and a description's animations are
@@ -1873,25 +1371,6 @@ function Module.init(context: Runtime): any
                         .. " rig; your rig's own set is back."
                 )
                 return true
-            end
-            local fallbackBridge: AnimationTrack? = playIdleBridge(humanoid, animate)
-            if fallbackBridge then
-                task.wait(0.1)
-                local playing: boolean = false
-                pcall(function(): ()
-                    playing = (fallbackBridge :: any).IsPlaying == true
-                end)
-                if playing and (poseMoves(humanoid, 0.3) ~= false
-                    or poseDriven(humanoid)) then
-                    idleBridgeTrack = fallbackBridge
-                    watchIdleBridge(humanoid)
-                    notify(
-                        "Those clips do not play on your "
-                            .. (isR6 and "R6" or "R15")
-                            .. " rig; your rig's own set is back."
-                    )
-                    return true
-                end
             end
         end
 
@@ -2231,7 +1710,6 @@ function Module.init(context: Runtime): any
         end
 
         restoring = true
-        releaseIdleBridge()
         if emotesAppliedToHumanoid and humanoid then
             local emotesRestored: boolean = setHumanoidEmotes(
                 humanoid,

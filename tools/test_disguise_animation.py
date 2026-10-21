@@ -176,7 +176,7 @@ assert 'slotsFromBundleItems' in SOURCE and 'bundleItemCategory' in SOURCE
 assert 'settings.customPackSlots' in SOURCE
 assert 'applySlotsViaDescription' in SOURCE
 assert 'descAnimations' in SOURCE
-assert 'track.Length' in SOURCE  # refused clips are not a bridge
+assert 'AnimationConstraint' in SOURCE  # probe-proven joint class on the modern rig
 assert 'writeAnimationSlots(animate, resolved)' in SOURCE  # slots write first: it retargets the running script
 assert 'advancedPackArmed' in SOURCE  # Show Advanced suspends the pack until an advanced ID is submitted
 assert 'poseDriven' in SOURCE  # held-pose clips count; identity joints do not

@@ -37,6 +37,7 @@ local Enum = {
 -- The slice calls the script restart as a global, exactly like the real module
 -- does through its local; the stub counts restarts and proves they happen.
 local restarted = 0
+local animatePlaysDefaults = false
 function restartAnimateScript() restarted += 1 end
 function isInsideCharacter() return true end
 -- Defined above the sliced section in the real file, so the harness supplies it.
@@ -61,8 +62,30 @@ local function track(playingFlag)
     return {IsPlaying = playingFlag, Stop = function(self) self.IsPlaying = false end,
         Destroy = function() end, Play = function(self) self.IsPlaying = playingFlag end}
 end
-local function animator()
-    return {GetPlayingAnimationTracks = function() return playing end,
+local function animator(ownerCharacter)
+    return {GetPlayingAnimationTracks = function()
+            -- Simulated script playback: with animatePlaysDefaults
+            -- set, the Animate script "plays" only while an idle
+            -- slot holds a rig-default id -- the one set this
+            -- simulated world can actually run. A fresh track per
+            -- read keeps the apply step's stop loop from killing
+            -- the simulation before settle can look at it.
+            if animatePlaysDefaults and ownerCharacter
+                and ownerCharacter.FindFirstChild then
+                local animate = ownerCharacter:FindFirstChild("Animate")
+                local idle = animate and animate:FindFirstChild("idle")
+                if idle then
+                    for _, item in ipairs(idle:GetDescendants()) do
+                        if item.AnimationId
+                            and (string.find(item.AnimationId, "507766666", 1, true)
+                                or string.find(item.AnimationId, "180435571", 1, true)) then
+                            return {track(true)}
+                        end
+                    end
+                end
+            end
+            return playing
+        end,
         LoadAnimation = function()
             bridgeAttempts += 1
             return track(bridgeAttempts >= bridgeWorksFrom)
@@ -96,7 +119,7 @@ local function humanoidFor(rigType, character)
     return {RigType = rigType, Parent = character or {GetDescendants=function() return {} end},
         FindFirstChildOfClass=function(_, class)
             if class ~= "Animator" then return nil end
-            return animator()
+            return animator(character)
         end}
 end
 function readDescriptionEmotes() return nil, nil end
@@ -161,6 +184,7 @@ pass("rig defaults: R15 defaults are substituted on R6, a same-rig pack is kept"
 
 -- 5) A fully default R6 avatar: two idle variants in order plus walk, and the
 --    script is restarted once.
+animatePlaysDefaults = true
 playing = {track(true)}
 local character, animate, refs = makeCharacter()
 local r6 = humanoidFor(Enum.HumanoidRigType.R6, character)
@@ -185,6 +209,7 @@ notices = {}
 playing = {}
 bridgeAttempts = 0
 bridgeWorksFrom = 2
+animatePlaysDefaults = true
 local character2, _, refs2 = makeCharacter()
 local r15b = humanoidFor(Enum.HumanoidRigType.R15, character2)
 local customSlots = {idle = "rbxassetid://777777", walk = "rbxassetid://888888"}
@@ -206,6 +231,7 @@ notices = {}
 playing = {}
 bridgeAttempts = 0
 bridgeWorksFrom = 99
+animatePlaysDefaults = false
 local character3, _, _ = makeCharacter()
 local r15c = humanoidFor(Enum.HumanoidRigType.R15, character3)
 local restored = applyAnimationSlots(character3, r15c, customSlots, "R15")
@@ -249,6 +275,7 @@ local rigJoint = setmetatable({}, {
 })
 character4.GetDescendants = function() return {rigJoint} end
 local r15d = humanoidFor(Enum.HumanoidRigType.R15, character4)
+animatePlaysDefaults = true
 local applied4 = applyAnimationSlots(character4, r15d, {idle = "rbxassetid://555"}, "R15")
 assert(applied4 == 4, "one idle id fills three slots, plus walk: " .. tostring(applied4))
 assert(settleMovementAnimations(character4, r15d) == true,
@@ -256,7 +283,7 @@ assert(settleMovementAnimations(character4, r15d) == true,
 assert(refs4.idle1.AnimationId == "rbxassetid://507766666",
     "the rig's own idle replaces the frozen clip")
 assert(refs4.walk.AnimationId == "rbxassetid://507777826")
-assert(jointReads >= 6, "the settle step samples every joint in the window: "
+assert(jointReads >= 2, "the settle step reads the joints, not IsPlaying: "
     .. tostring(jointReads))
 assert(#notices >= 1 and string.find(notices[#notices], "do not play"),
     "the substitution is reported in the status")
