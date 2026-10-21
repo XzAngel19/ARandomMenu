@@ -447,12 +447,23 @@ function Module.init(runtime: any): any
         turnCardOff()
     end
 
+    -- Opening state that deliberately survives toggles. The tick runs every
+    -- frame and InvokeServer yields, so without a hard busy flag the next
+    -- tick (or a spam of off/on) fires a second OpenCrate while the first
+    -- reveal is still on screen; stacked BoxController reveals are the grey
+    -- screen that never clears. One opening at a time, and a reveal owns
+    -- the screen until its window ends -- toggling cannot bypass either.
+    local openingBusy: boolean = false
+    local revealUntil: number = 0
+    local REVEAL_SECONDS: number = 5
+
     local function reveal(boxId: string, category: string, reward: any): ()
         local remotes: Instance? = shopRemotes()
         if not remotes then
             return
         end
         if settings.reveal == REVEAL_ON then
+            revealUntil = os.clock() + REVEAL_SECONDS
             -- The official flow: the game plays the reveal and reports the
             -- crate as complete (the BoxController LocalScript does both).
             if category == "Eggs" then
@@ -483,15 +494,21 @@ function Module.init(runtime: any): any
     end
 
     local function openOnce(): boolean
+        if openingBusy then
+            return false
+        end
+        openingBusy = true
         local entry: BoxEntry? = currentEntry()
         if not entry then
             session.finished = true
+            openingBusy = false
             stop("Auto Unbox: no box catalogue found.")
             return false
         end
         local currency: string?, forced: boolean = resolveCurrency(entry)
         if not currency then
             session.finished = true
+            openingBusy = false
             stop("Auto Unbox: " .. entry.name .. " has no known price currency.")
             return false
         end
@@ -499,6 +516,7 @@ function Module.init(runtime: any): any
         local openCrate: Instance? = remotes and remotes:FindFirstChild("OpenCrate")
         if not (openCrate and openCrate:IsA("RemoteFunction")) then
             session.finished = true
+            openingBusy = false
             stop("Auto Unbox: the game's OpenCrate remote is missing.")
             return false
         end
@@ -513,11 +531,13 @@ function Module.init(runtime: any): any
             session.opened += 1
             session.consecutiveFailures = 0
             report(summary() .. note)
+            openingBusy = false
             return true
         end
         session.failures += 1
         session.consecutiveFailures += 1
         report(summary() .. note)
+        openingBusy = false
         if session.consecutiveFailures >= 3 then
             session.finished = true
             stop(
@@ -542,15 +562,16 @@ function Module.init(runtime: any): any
             return
         end
         local now: number = os.clock()
-        if now < session.nextAt then
+        if now < session.nextAt or now < revealUntil or openingBusy then
             return
         end
         openOnce()
         -- Extra settle time while the reveal plays: firing the next
         -- BoxController animation over a running one can leave the screen
         -- black, so a revealed box always gets a longer breather.
-        local settle: number = settings.reveal == REVEAL_ON and 3 or 0
-        session.nextAt = now + settings.delay + settle
+        local settle: number = settings.reveal == REVEAL_ON
+            and REVEAL_SECONDS or 0
+        session.nextAt = os.clock() + settings.delay + settle
     end
 
     local AutoUnboxFeature: any = createUniversalFeature(
@@ -565,7 +586,9 @@ function Module.init(runtime: any): any
             session.opened = 0
             session.failures = 0
             session.consecutiveFailures = 0
-            session.nextAt = 0
+            -- Never sooner than a reveal still on screen: re-enabling in
+            -- the middle of one must not stack a second BoxController.
+            session.nextAt = math.max(os.clock(), revealUntil)
             session.finished = false
             report(summary())
             featureConnections.MM2AutoUnbox = TaskManager:Connect(tick)

@@ -40,16 +40,24 @@ assert "settings.speed" in SOURCE
 assert "state.mm2CoinPickups" in SOURCE
 assert '"Coin_Server"' in SOURCE  # fallback scan if Coin ESP is off
 
-# One constant collect height: Coin_Server is 1.2x2x2 in the place,
-# reaching 1 stud either side of the coin centre, so a body part
-# overlaps it at all times (the old 3.1 ride height touched nothing;
-# a two-phase rise bobbed visibly at every coin).
-assert "local UNDER_OFFSET: number = 1.0" in SOURCE
-
-# Prone applied once on engage; NoClip forced while engaged.
-assert "CFrame.Angles(math.rad(90), 0, 0)" in SOURCE
-assert "CanCollide = false" in SOURCE
-assert "PlatformStand = true" in SOURCE
+# Two farm modes: Walk on the ground, or Below with a grown hitbox.
+assert '"Farm Mode"' in SOURCE and '"Walk"' in SOURCE
+assert '"Below (Hitbox)"' in SOURCE
+# Below: Coin_Server is 1.2x2x2 (one stud either side of its centre);
+# riding 3 studs under it with an 8-tall root hitbox overlaps that
+# volume without ever lying the character face-down.
+assert "local BELOW_OFFSET: number = 3.0" in SOURCE
+assert "Vector3.new(4, 8, 4)" in SOURCE
+assert "root.Size = HITBOX_SIZE" in SOURCE
+assert "savedRootSize" in SOURCE  # hitbox restored on OFF
+# The face-down tilt is gone for good (that fight glitched the camera).
+assert "math.rad(90)" not in SOURCE
+assert "PlatformStand = true" in SOURCE  # Below only, upright
+# Walk: plain humanoid locomotion at slider WalkSpeed, restored after.
+assert "humanoid:Move(flat.Unit, false)" in SOURCE
+assert "humanoid.WalkSpeed" in SOURCE and "savedWalkSpeed" in SOURCE
+assert "humanoid.Jump = true" in SOURCE  # hop when walking stalls
+assert "CanCollide = false" in SOURCE  # Below NoClip
 
 # Lobby safety: hands off the character when there is no target.
 assert "restoreCharacter(false)" in SOURCE
@@ -85,13 +93,19 @@ assert "prediction.gunAim" in SOURCE
 # A coin that never collects is skipped instead of trapping the farm.
 assert "BLACKLIST_SECONDS" in SOURCE
 
+# Already-collected coins stop being targets immediately (the old farm
+# flew up to a ghost coin and hovered over it).
+assert "stillCollectable" in SOURCE
+assert 'GetAttribute("Collected")' in SOURCE
+
 # Parked collections also pulse the touch directly (physics Touched
 # is not guaranteed for a fully NoClipped body).
 assert "state.fireTouchInterest" in SOURCE
 
-print("PASS MM2 Auto Farm: velocity flight at slider speed (no CFrame "
-      "teleports, no 267 kick), NoClip + prone on engage only, "
-      "constant-height collect (a body part always overlaps the "
-      "2-stud Coin_Server volume; touch pulse), lobby hands-off, "
-      "OFF returns home upright, ping "
-      "in status, full-bag reset/flings, YARHM Kill All, grab gun")
+print("PASS MM2 Auto Farm: Walk (ground locomotion, slider WalkSpeed, "
+      "hop on stall) and Below (Hitbox) (upright velocity flight, grown "
+      "4x8x4 root hitbox, NoClip, no face-down tilt, no 267 teleports), "
+      "collected coins dropped as targets at once, uncollectable coins "
+      "blacklisted, lobby hands-off, OFF restores hitbox/WalkSpeed and "
+      "returns home upright, ping in status, full-bag reset/flings, "
+      "YARHM Kill All, grab gun")

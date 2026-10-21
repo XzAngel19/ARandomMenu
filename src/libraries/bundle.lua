@@ -1,5 +1,5 @@
 return {
-    stamp = "v90-20261020-disguise-packs",
+    stamp = "v91-20261021-autofarm-modes-autounbox",
     files = {
         ["src/Profile/142823291.lua"] = [[
 --!strict
@@ -4139,6 +4139,7 @@ function Module.init(_runtime: any): any
     local getGunOriginCFrame: any = core.getGunOriginCFrame
 
     local settings = {
+        mode = "Walk",
         speed = 16,
         resetOnFull = true,
         flingMurder = false,
@@ -4147,16 +4148,22 @@ function Module.init(_runtime: any): any
         killAllOnFull = false,
     }
 
-    -- ONE constant ride height, from the place data: Coin_Server
-    -- (the part that pays) is 1.2 x 2 x 2 centred on the coin, so
-    -- its touch volume reaches 1 stud above and below the coin
-    -- centre. Riding with the root centre 1 stud under the coin
-    -- keeps a body part (the 2-tall root itself) overlapping that
-    -- volume at ALL times -- travelling and parked alike -- so every
-    -- coin the body passes pays, with no rising phase. (3.1 studs
-    -- under never touched anything; a two-phase rise bobbed the
-    -- character up and down at each coin.)
-    local UNDER_OFFSET: number = 1.0
+    -- Two ways to reach a coin, chosen with Farm Mode:
+    --
+    -- Walk: the humanoid simply walks on the ground (Humanoid:Move).
+    -- No prone tilt, no PlatformStand, no NoClip, no flying -- the
+    -- body's normal touch against Coin_Server pays, which is why this
+    -- is the reliable default. The slider becomes WalkSpeed.
+    --
+    -- Below (Hitbox): the character stays UPRIGHT and flies by physics
+    -- velocity underneath the floor, but the root's hitbox is grown
+    -- while engaged (4 x 8 x 4), so riding with the root centre
+    -- BELOW_OFFSET under the coin still overlaps Coin_Server (1.2 x 2 x
+    -- 2, one stud either side of its centre). The old build lay the
+    -- body face-down to get a part into that volume; the tilted camera
+    -- fight is what glitched, and the hitbox makes it unnecessary.
+    local BELOW_OFFSET: number = 3.0
+    local HITBOX_SIZE: Vector3 = Vector3.new(4, 8, 4)
     -- A coin that does not collect within this long is skipped for a
     -- while instead of trapping the farm on one unreachable pickup.
     local STUCK_SECONDS: number = 1.4
@@ -4463,6 +4470,14 @@ function Module.init(_runtime: any): any
         local engagedCharacter: Model? = nil
         local homeCFrame: CFrame? = nil
         local savedCollide: {[Instance]: boolean} = {}
+        local engagedMode: string? = nil
+        local savedWalkSpeed: number? = nil
+        local savedRootSize: Vector3? = nil
+        -- Home survives a mid-farm mode switch (Below <-> Walk), which
+        -- restores the character in place; OFF still returns there.
+        local preservedHome: CFrame? = nil
+        local walkLastDistance: number = math.huge
+        local walkStuckSince: number = 0
 
         local function yawOf(frame: CFrame): number
             local look: Vector3 = frame.LookVector
@@ -4485,11 +4500,19 @@ function Module.init(_runtime: any): any
                     if humanoid.Sit then
                         humanoid.Sit = false
                     end
+                    if savedWalkSpeed then
+                        humanoid.WalkSpeed = savedWalkSpeed
+                    end
+                    humanoid:Move(Vector3.zero, false)
                     humanoid:ChangeState(Enum.HumanoidStateType.Running)
                 end)
             end
+            savedWalkSpeed = nil
             if root then
                 pcall(function(): ()
+                    if savedRootSize then
+                        root.Size = savedRootSize
+                    end
                     root.AssemblyLinearVelocity = Vector3.zero
                     root.AssemblyAngularVelocity = Vector3.zero
                     if returnHome and homeCFrame then
@@ -4505,7 +4528,9 @@ function Module.init(_runtime: any): any
                     end
                 end)
             end
+            savedRootSize = nil
             engaged = false
+            engagedMode = nil
             engagedCharacter = nil
             homeCFrame = nil
         end
@@ -4515,29 +4540,64 @@ function Module.init(_runtime: any): any
             humanoid: Humanoid,
             root: BasePart
         ): ()
+            if engagedMode ~= settings.mode then
+                -- Mode switched (or first engage): undo the other
+                -- mode's body changes without losing home.
+                if homeCFrame then
+                    preservedHome = homeCFrame
+                end
+                restoreCharacter(false)
+                engagedMode = settings.mode
+                if engagedCharacter == character then
+                    homeCFrame = preservedHome
+                    preservedHome = nil
+                end
+            end
             if engagedCharacter ~= character then
                 -- New body (respawn): the previous restore belongs to
                 -- the old character; remember this one's start point.
                 restoreCharacter(false)
-                homeCFrame = root.CFrame
+                engagedMode = settings.mode
+                homeCFrame = preservedHome or root.CFrame
+                preservedHome = nil
                 engagedCharacter = character
             end
             if not engaged then
                 engaged = true
-                -- Lie face-down ONCE. The rotation is not rewritten
-                -- every frame -- that fight is what glitched the
-                -- camera. Movement below is pure velocity.
-                pcall(function(): ()
-                    root.CFrame = CFrame.new(root.Position)
-                        * CFrame.Angles(0, yawOf(root.CFrame), 0)
-                        * CFrame.Angles(math.rad(90), 0, 0)
-                    humanoid.PlatformStand = true
-                    humanoid.AutoRotate = false
-                end)
+                walkLastDistance = math.huge
+                walkStuckSince = os.clock()
+                if settings.mode ~= "Walk" then
+                    -- Below: upright, always -- no face-down tilt, the
+                    -- hitbox below does the reaching. PlatformStand
+                    -- hands the body to physics velocity alone.
+                    pcall(function(): ()
+                        root.CFrame = CFrame.new(root.Position)
+                            * CFrame.Angles(0, yawOf(root.CFrame), 0)
+                        humanoid.PlatformStand = true
+                        humanoid.AutoRotate = false
+                        if savedRootSize == nil then
+                            savedRootSize = root.Size
+                        end
+                        root.Size = HITBOX_SIZE
+                    end)
+                end
             end
-            -- NoClip: every character part (tools included) is forced
-            -- non-collidable each tick, so the flight never bumps a
-            -- platform edge on the way to a coin.
+            if settings.mode == "Walk" then
+                -- Walk on the real ground: collisions stay exactly as
+                -- they are (NoClip would drop the character through
+                -- the floor), and the slider is the WalkSpeed.
+                if savedWalkSpeed == nil then
+                    savedWalkSpeed = humanoid.WalkSpeed
+                end
+                pcall(function(): ()
+                    humanoid.WalkSpeed =
+                        math.clamp(settings.speed, 5, 60)
+                end)
+                return
+            end
+            -- Below keeps NoClip: every character part (tools
+            -- included) is forced non-collidable each tick, so the
+            -- flight never bumps a platform edge on the way to a coin.
             for _, object: Instance in ipairs(character:GetDescendants()) do
                 if object:IsA("BasePart") then
                     if savedCollide[object] == nil then
@@ -4586,6 +4646,71 @@ function Module.init(_runtime: any): any
                 root.AssemblyAngularVelocity = Vector3.zero
             end)
             return distance
+        end
+
+        -- Walk mode movement: point the humanoid at the coin and let
+        -- the engine's own locomotion do the walking. Returns the
+        -- horizontal distance left. If the distance stops shrinking
+        -- (a wall, a ledge), a hop is tried once a second; the caller's
+        -- stuck timer blacklists coins walking truly cannot reach.
+        local function walkTowards(
+            humanoid: Humanoid,
+            root: BasePart,
+            destination: Vector3
+        ): number
+            local delta: Vector3 = destination - root.Position
+            local flat: Vector3 = Vector3.new(delta.X, 0, delta.Z)
+            local distance: number = flat.Magnitude
+            local now: number = os.clock()
+            if distance < 1.4 then
+                pcall(function(): ()
+                    humanoid:Move(Vector3.zero, false)
+                end)
+                return distance
+            end
+            if distance < walkLastDistance - 0.3 then
+                walkLastDistance = distance
+                walkStuckSince = now
+            elseif now - walkStuckSince > 1.0 then
+                walkStuckSince = now
+                pcall(function(): ()
+                    humanoid.Jump = true
+                end)
+            end
+            pcall(function(): ()
+                humanoid:Move(flat.Unit, false)
+            end)
+            return distance
+        end
+
+        -- The Coin_Server part that pays for a pickup entry (ESP hands
+        -- out the visual, the server part is its parent).
+        local function serverPartOf(part: Instance): Instance?
+            if part.Name == "Coin_Server" then
+                return part
+            end
+            local parent: Instance? = part.Parent
+            if parent and parent.Name == "Coin_Server" then
+                return parent
+            end
+            return part
+        end
+
+        -- Still there to be collected? A coin somebody already took
+        -- keeps its entry in the throttled scan for a moment, and the
+        -- old farm flew up to that ghost and hovered over it. The
+        -- attribute/parent check runs on the chosen coin every tick,
+        -- so a collected coin stops being a target at once.
+        local function stillCollectable(part: Instance): boolean
+            if not part.Parent then
+                return false
+            end
+            local server: Instance? = serverPartOf(part)
+            local collected: any = nil
+            pcall(function(): ()
+                collected = (server :: any):GetAttribute("Collected")
+            end)
+            return collected ~= true
         end
 
         -- The full-bag sequence, in the user's order: Kill All,
@@ -4711,12 +4836,20 @@ function Module.init(_runtime: any): any
                             end)
                             if dropPosition then
                                 engage(character, humanoid, root)
-                                moveTowards(
-                                    root,
-                                    (dropPosition :: Vector3)
-                                        + Vector3.new(0, 1, 0),
-                                    deltaTime
-                                )
+                                if settings.mode == "Walk" then
+                                    walkTowards(
+                                        humanoid,
+                                        root,
+                                        dropPosition :: Vector3
+                                    )
+                                else
+                                    moveTowards(
+                                        root,
+                                        (dropPosition :: Vector3)
+                                            + Vector3.new(0, 1, 0),
+                                        deltaTime
+                                    )
+                                end
                                 setStatus("Auto Farm: going for the dropped gun…")
                                 return
                             end
@@ -4735,6 +4868,7 @@ function Module.init(_runtime: any): any
                 local nearestDistance: number = math.huge
                 for _, part: Instance in ipairs(scanCache) do
                     if part.Parent
+                        and stillCollectable(part)
                         and (not blacklist[part] or blacklist[part] < now) then
                         local position: Vector3? = nil
                         pcall(function(): ()
@@ -4767,12 +4901,23 @@ function Module.init(_runtime: any): any
                     return
                 end
                 engage(character, humanoid, root)
-                local destination: Vector3 =
-                    (nearestPosition :: Vector3)
-                    + Vector3.new(0, -UNDER_OFFSET, 0)
-                local remaining: number =
-                    moveTowards(root, destination, deltaTime)
-                if remaining < 1.2 then
+                local remaining: number
+                local arrived: boolean
+                if settings.mode == "Walk" then
+                    remaining = walkTowards(
+                        humanoid,
+                        root,
+                        nearestPosition :: Vector3
+                    )
+                    arrived = remaining < 1.4
+                else
+                    local destination: Vector3 =
+                        (nearestPosition :: Vector3)
+                        + Vector3.new(0, -BELOW_OFFSET, 0)
+                    remaining = moveTowards(root, destination, deltaTime)
+                    arrived = remaining < 1.2
+                end
+                if arrived then
                     -- Belt and braces: some builds only pay on a
                     -- physics Touched, and a fully NoClipped body can
                     -- miss that pairing. Pulse the touch directly
@@ -4780,13 +4925,8 @@ function Module.init(_runtime: any): any
                     -- YARHM did, until the coin is gone.
                     if now - lastTouchPulse > 0.25 then
                         lastTouchPulse = now
-                        local touchPart: Instance? = nearest
-                        if nearest.Name ~= "Coin_Server" then
-                            local parent: Instance? = nearest.Parent
-                            if parent and parent:IsA("BasePart") then
-                                touchPart = parent
-                            end
-                        end
+                        local touchPart: Instance? =
+                            serverPartOf(nearest)
                         if type(state.fireTouchInterest) == "function"
                             and touchPart then
                             pcall(state.fireTouchInterest, root, touchPart, 0)
@@ -4795,12 +4935,12 @@ function Module.init(_runtime: any): any
                     end
                 end
                 setStatus(string.format(
-                    "Auto Farm: %d coins - bag %d/%d - speed %d u/s - ping %dms",
-                    #scanCache, bagAmount, bagLimit,
+                    "Auto Farm (%s): %d coins - bag %d/%d - speed %d u/s - ping %dms",
+                    settings.mode, #scanCache, bagAmount, bagLimit,
                     math.round(math.clamp(settings.speed, 5, 60)),
                     pingMillis()
                 ))
-                if remaining < 1.2 then
+                if arrived then
                     -- Parked under the coin: if it does not collect,
                     -- skip it for a while instead of getting stuck.
                     if stuckPart ~= nearest then
@@ -4828,7 +4968,7 @@ function Module.init(_runtime: any): any
 
     local AutoFarmFeature: any = createUniversalFeature(
         "Auto Farm",
-        "Lies prone under the map and flies (velocity, NoClip) to the nearest coins at your Farm Speed, with full-bag actions.",
+        "Walks on the ground to the nearest coins (Walk), or flies upright under the floor with a grown hitbox that still touches them (Below), with full-bag actions.",
         6,
         toggleAutoFarm,
         {
@@ -4839,10 +4979,14 @@ function Module.init(_runtime: any): any
     )
     state.mm2AutoFarmFeature = AutoFarmFeature
 
+    addCycleOption(AutoFarmFeature, "Farm Mode", {"Walk", "Below (Hitbox)"}, 1,
+        function(value: string): ()
+            settings.mode = if value == "Walk" then "Walk" else "Below"
+        end, "Walk: your character walks on the ground to each coin (nothing about the body is changed; the slider is WalkSpeed). Below (Hitbox): upright, NoClip, flying under the floor with the root hitbox grown so it still touches the coin from below.")
     addNumberOption(AutoFarmFeature, "Farm Speed", 16, 5, 60,
         function(value: number): ()
             settings.speed = value
-        end, "Studs per second. If the server kicks you (Invalid position), lower it; raise it slowly to find your fastest safe speed.", 1)
+        end, "Walk mode: WalkSpeed. Below mode: flight speed in studs/second -- if the server kicks you (Invalid position), lower it; raise it slowly to find your fastest safe speed.", 1)
     addToggleOption(AutoFarmFeature, "Reset When Full Coin Bag", true,
         function(value: boolean): ()
             settings.resetOnFull = value
@@ -4865,7 +5009,7 @@ function Module.init(_runtime: any): any
         end, "As Murderer, when the bag fills: pull everyone in front of you and slash (YARHM Kill All).")
     addInformationOption(
         AutoFarmFeature,
-        "Movement is by physics velocity (never position teleports) with NoClip on the whole character, face-down under the floor to the nearest pickup Coin ESP sees. If you get kicked for Invalid position, lower Farm Speed and raise it little by little - the safe limit depends on your ping and the map. Turning it off restores collisions and returns you upright to where you started."
+        "Walk walks your character on the ground to the nearest pickup Coin ESP sees (safest, and the body's own touch collects). Below (Hitbox) flies upright under the floor by physics velocity (never position teleports) with NoClip and the root hitbox grown to 4x8x4, so the coin pays from underneath without lying the character face-down. Already-collected coins are dropped as targets the moment they are collected. If Below kicks you for Invalid position, lower Farm Speed and raise it little by little. Turning it off restores collisions, hitbox and WalkSpeed, and returns you upright to where you started."
     )
 
     activeCleanup = function(): ()
@@ -5342,12 +5486,23 @@ function Module.init(runtime: any): any
         turnCardOff()
     end
 
+    -- Opening state that deliberately survives toggles. The tick runs every
+    -- frame and InvokeServer yields, so without a hard busy flag the next
+    -- tick (or a spam of off/on) fires a second OpenCrate while the first
+    -- reveal is still on screen; stacked BoxController reveals are the grey
+    -- screen that never clears. One opening at a time, and a reveal owns
+    -- the screen until its window ends -- toggling cannot bypass either.
+    local openingBusy: boolean = false
+    local revealUntil: number = 0
+    local REVEAL_SECONDS: number = 5
+
     local function reveal(boxId: string, category: string, reward: any): ()
         local remotes: Instance? = shopRemotes()
         if not remotes then
             return
         end
         if settings.reveal == REVEAL_ON then
+            revealUntil = os.clock() + REVEAL_SECONDS
             -- The official flow: the game plays the reveal and reports the
             -- crate as complete (the BoxController LocalScript does both).
             if category == "Eggs" then
@@ -5378,15 +5533,21 @@ function Module.init(runtime: any): any
     end
 
     local function openOnce(): boolean
+        if openingBusy then
+            return false
+        end
+        openingBusy = true
         local entry: BoxEntry? = currentEntry()
         if not entry then
             session.finished = true
+            openingBusy = false
             stop("Auto Unbox: no box catalogue found.")
             return false
         end
         local currency: string?, forced: boolean = resolveCurrency(entry)
         if not currency then
             session.finished = true
+            openingBusy = false
             stop("Auto Unbox: " .. entry.name .. " has no known price currency.")
             return false
         end
@@ -5394,6 +5555,7 @@ function Module.init(runtime: any): any
         local openCrate: Instance? = remotes and remotes:FindFirstChild("OpenCrate")
         if not (openCrate and openCrate:IsA("RemoteFunction")) then
             session.finished = true
+            openingBusy = false
             stop("Auto Unbox: the game's OpenCrate remote is missing.")
             return false
         end
@@ -5408,11 +5570,13 @@ function Module.init(runtime: any): any
             session.opened += 1
             session.consecutiveFailures = 0
             report(summary() .. note)
+            openingBusy = false
             return true
         end
         session.failures += 1
         session.consecutiveFailures += 1
         report(summary() .. note)
+        openingBusy = false
         if session.consecutiveFailures >= 3 then
             session.finished = true
             stop(
@@ -5437,15 +5601,16 @@ function Module.init(runtime: any): any
             return
         end
         local now: number = os.clock()
-        if now < session.nextAt then
+        if now < session.nextAt or now < revealUntil or openingBusy then
             return
         end
         openOnce()
         -- Extra settle time while the reveal plays: firing the next
         -- BoxController animation over a running one can leave the screen
         -- black, so a revealed box always gets a longer breather.
-        local settle: number = settings.reveal == REVEAL_ON and 3 or 0
-        session.nextAt = now + settings.delay + settle
+        local settle: number = settings.reveal == REVEAL_ON
+            and REVEAL_SECONDS or 0
+        session.nextAt = os.clock() + settings.delay + settle
     end
 
     local AutoUnboxFeature: any = createUniversalFeature(
@@ -5460,7 +5625,9 @@ function Module.init(runtime: any): any
             session.opened = 0
             session.failures = 0
             session.consecutiveFailures = 0
-            session.nextAt = 0
+            -- Never sooner than a reveal still on screen: re-enabling in
+            -- the middle of one must not stack a second BoxController.
+            session.nextAt = math.max(os.clock(), revealUntil)
             session.finished = false
             report(summary())
             featureConnections.MM2AutoUnbox = TaskManager:Connect(tick)

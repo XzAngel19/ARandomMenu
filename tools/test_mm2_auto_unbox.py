@@ -248,6 +248,12 @@ assert(#boxController.fires == 1, "the reveal plays through BoxController")
 assert(boxController.fires[1][1].MysteryBoxId == "Halloween2025Box"
     and boxController.fires[1][1].RewardedItemId == "Reward_Halloween2025Box",
     "the reveal carries the box id and the rewarded item")
+-- Spamming ticks while the reveal is on screen opens nothing else:
+-- stacked BoxController reveals are the grey screen.
+loop(0.1)
+loop(0.1)
+assert(#openCalls == 1 and #boxController.fires == 1,
+    "ticks during a reveal never stack a second opening")
 assert(string.find(statuses[#statuses], "1 opened"), tostring(statuses[#statuses]))
 assert(string.find(statuses[#statuses], "server coin: Candy"), tostring(statuses[#statuses]))
 
@@ -258,7 +264,7 @@ options["Box to open"]("Christmas Box '24")
 options["Delay between boxes"](0.8)
 card.enabled = true
 card.onToggle(true)
-clock += 5
+clock += 8
 loop(0.1)
 assert(openCalls[#openCalls].boxId == "Christmas2024Box")
 assert(openCalls[#openCalls].currency == "SnowTokens2024",
@@ -271,7 +277,7 @@ options["Box to open"]("Mystery Box #1")
 options["Pay with"]("Gems")
 card.enabled = true
 card.onToggle(true)
-clock += 5
+clock += 8
 loop(0.1)
 assert(openCalls[#openCalls].boxId == "MysteryBox1")
 assert(openCalls[#openCalls].currency == "Gems", "the manual currency is used")
@@ -279,7 +285,7 @@ assert(openCalls[#openCalls].currency == "Gems", "the manual currency is used")
 -- A currency the box does not take falls back to Auto instead of firing a
 -- request the server must reject.
 options["Pay with"]("SnowTokens2024")
-clock += 5
+clock += 8
 loop(0.1)
 assert(openCalls[#openCalls].boxId == "MysteryBox1")
 assert(openCalls[#openCalls].currency ~= "SnowTokens2024",
@@ -292,7 +298,7 @@ options["Pay with"]("Auto")
 options["Reveal animation"]("Off")
 local crateBefore = #crateComplete.fires
 local boxBefore = #boxController.fires
-clock += 5
+clock += 8
 loop(0.1)
 assert(#boxController.fires == boxBefore, "Reveal Off plays no animation")
 assert(#crateComplete.fires == crateBefore + 1, "Reveal Off still reports CrateComplete")
@@ -301,7 +307,7 @@ options["Reveal animation"]("On")
 -- Eggs open through the Egss category and hatch through EggController.
 options["Box to open"]("Common Egg")
 options["Pay with"]("Coins")
-clock += 5
+clock += 8
 loop(0.1)
 assert(openCalls[#openCalls].boxId == "Egg" and openCalls[#openCalls].category == "Eggs",
     "pets open through the Eggs category")
@@ -320,11 +326,11 @@ card.enabled = false
 card.onToggle(false)
 card.enabled = true
 card.onToggle(true)
-clock += 5
+clock += 8
 loop(0.1) -- open 1
-clock += 5
+clock += 8
 loop(0.1) -- open 2
-clock += 5
+clock += 8
 loop(0.1) -- done
 assert(string.find(statuses[#statuses], "2 opened") and string.find(statuses[#statuses], "done"),
     tostring(statuses[#statuses]))
@@ -337,12 +343,12 @@ assert(refreshCalls > 0, "the card repaints when it turns itself OFF")
 openCrate.failCount = 10
 card.enabled = true
 card.onToggle(true)
-clock += 5
+clock += 8
 loop(0.1)
-clock += 5
+clock += 8
 loop(0.1)
 assert(string.find(statuses[#statuses], "2 failed"), tostring(statuses[#statuses]))
-clock += 5
+clock += 8
 loop(0.1)
 assert(loop == nil, "three failures stop the run")
 assert(card.enabled == false, "the card turns OFF after repeated failures")
@@ -377,8 +383,16 @@ for _, forbidden in ipairs({"firesignal", "MouseButton1Click", "PurchaseProduct"
     assert(not string.find(''' + repr(SOURCE) + ''', forbidden),
         "Auto Unbox must not use " .. forbidden)
 end
-print("PASS MM2 Auto Unbox: catalogue, event boxes, server currency, manual currency, impossible currency fallback, reveal on/off, eggs, delay, max boxes, failure stop, workspace fallback, unload")
+print("PASS MM2 Auto Unbox: catalogue, event boxes, server currency, manual currency, impossible currency fallback, reveal on/off, no stacked reveals (busy flag + reveal window survive toggles), eggs, delay, max boxes, failure stop, workspace fallback, unload")
 '''
+
+# Spam safety: one opening at a time, and a reveal owns the screen until
+# its window ends -- stacked BoxController reveals are the grey screen.
+assert "openingBusy" in SOURCE
+assert "revealUntil" in SOURCE
+assert "REVEAL_SECONDS" in SOURCE
+assert "now < revealUntil or openingBusy" in SOURCE
+assert "math.max(os.clock(), revealUntil)" in SOURCE
 
 with tempfile.TemporaryDirectory(prefix='auto-unbox-') as tmp:
     path = Path(tmp) / 'test.luau'
