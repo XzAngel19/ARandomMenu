@@ -219,7 +219,7 @@ local RUNTIME_RAW_BASE: string =
         .. RUNTIME_BRANCH
         .. "/"
 
-local SOURCE_STAMP: string = "v97-20261021-pack-sync-advanced-suspend"
+local SOURCE_STAMP: string = "v98-20261021-pose-mirror"
 
 local BOOT_STARTED_AT: number = os.clock()
 local BOOT_FINGERPRINT_SECONDS: number = 0

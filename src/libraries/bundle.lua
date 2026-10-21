@@ -1,5 +1,5 @@
 return {
-    stamp = "v97-20261021-pack-sync-advanced-suspend",
+    stamp = "v98-20261021-pose-mirror",
     files = {
         ["src/Profile/142823291.lua"] = [[
 --!strict
@@ -21177,6 +21177,7 @@ function Module.init(context: Runtime): any
     -- calls would silently become globals.
     local releaseIdleBridge: () -> () = function(): () end
     local stopDirectDriver: () -> () = function(): () end
+    local stopPoseMirror: () -> () = function(): () end
     local playingAnimationTracks: (Humanoid?) -> {AnimationTrack} =
         function(): {AnimationTrack}
             return {}
@@ -21562,6 +21563,7 @@ function Module.init(context: Runtime): any
         character: Model,
         humanoid: Humanoid?
     ): ()
+        stopPoseMirror()
         releaseIdleBridge()
         local current: AppearanceSnapshot? = snapshot
         if not current or current.character ~= character
@@ -22317,6 +22319,142 @@ function Module.init(context: Runtime): any
         directCharacter = nil
     end
 
+    -- Pose mirror: the only way to wear another player's REAL
+    -- animations in a place that does not own them. The engine refuses
+    -- every LoadAnimation of a third-party clip here ("the asset is
+    -- not trusted for this place": only Roblox-owned and
+    -- place-creator animations may load, per Roblox's own docs), yet
+    -- the target's character animates in front of us because the
+    -- avatar pipeline loads its clips under its owner's authority.
+    -- So nothing is loaded at all: the target character's joint
+    -- transforms are copied onto our joints every frame. Pack,
+    -- emotes, mood -- whatever their body does, ours does, because
+    -- it is pose data, not assets.
+    local mirrorConnection: RBXScriptConnection? = nil
+    local mirrorAnimate: Instance? = nil
+    local mirrorCharacter: Model? = nil
+    local mirrorNotifiedFor: number? = nil
+
+    stopPoseMirror = function(): ()
+        if mirrorConnection then
+            pcall(function(): ()
+                (mirrorConnection :: RBXScriptConnection):Disconnect()
+            end)
+            mirrorConnection = nil
+        end
+        local animate: Instance? = mirrorAnimate
+        mirrorAnimate = nil
+        mirrorCharacter = nil
+        if animate then
+            -- Re-enabling a BaseScript restarts it, so the game's own
+            -- controller resumes on the restored slots by itself.
+            pcall(function(): ()
+                (animate :: any).Disabled = false
+            end)
+        end
+    end
+
+    local function startPoseMirror(
+        character: Model,
+        humanoid: Humanoid
+    ): boolean
+        local cached: TargetCache? = targetCache
+        if not cached then
+            return false
+        end
+        local targetPlayer: any = nil
+        pcall(function(): ()
+            targetPlayer = Players:GetPlayerByUserId(cached.userId)
+        end)
+        if not targetPlayer or targetPlayer == LocalPlayer then
+            return false
+        end
+        local targetCharacter: any = targetPlayer.Character
+        local targetHumanoid: any = targetCharacter
+            and targetCharacter:FindFirstChildOfClass("Humanoid")
+        if not targetCharacter or not targetHumanoid then
+            return false
+        end
+        -- Pair joints by name; two bodies on the same rig share the
+        -- names that matter, and fewer than six pairs is not a pose.
+        local theirs: {[string]: any} = {}
+        for _, obj: Instance in ipairs(targetCharacter:GetDescendants()) do
+            if obj:IsA("Motor6D") then
+                theirs[obj.Name] = obj
+            end
+        end
+        local jointPairs: {{any}} = {}
+        for _, obj: Instance in ipairs(character:GetDescendants()) do
+            if obj:IsA("Motor6D") and theirs[obj.Name] then
+                table.insert(jointPairs, {obj, theirs[obj.Name]})
+            end
+        end
+        if #jointPairs < 6 then
+            return false
+        end
+        stopPoseMirror()
+        stopDirectDriver()
+        releaseIdleBridge()
+        local animate: Instance? = character:FindFirstChild("Animate")
+        mirrorAnimate = animate
+        mirrorCharacter = character
+        if animate then
+            pcall(function(): ()
+                (animate :: any).Disabled = true
+            end)
+        end
+        for _, track: AnimationTrack in ipairs(
+            playingAnimationTracks(humanoid)
+        ) do
+            pcall(function(): ()
+                track:Stop(0)
+            end)
+        end
+        local runService: any = host.RunService
+        if not runService then
+            pcall(function(): ()
+                runService = (game :: any):GetService("RunService")
+            end)
+        end
+        if not runService or not runService.Heartbeat then
+            stopPoseMirror()
+            return false
+        end
+        mirrorConnection = runService.Heartbeat:Connect(function(): ()
+            if mirrorCharacter ~= character or not character.Parent then
+                stopPoseMirror()
+                return
+            end
+            local currentTarget: any = nil
+            pcall(function(): ()
+                currentTarget = targetPlayer.Character
+            end)
+            if currentTarget ~= targetCharacter then
+                -- Respawned or gone: these joints belong to a dead body.
+                stopPoseMirror()
+                return
+            end
+            for _, jointPair: {any} in ipairs(jointPairs) do
+                local ours: any = jointPair[1]
+                local other: any = jointPair[2]
+                pcall(function(): ()
+                    ours.Transform = other.Transform
+                end)
+            end
+        end)
+        animationOverrideApplied = true
+        if mirrorNotifiedFor ~= cached.userId then
+            mirrorNotifiedFor = cached.userId
+            notify(
+                "Mirroring that player's animations directly: their "
+                    .. "clips cannot be loaded in this game (Roblox "
+                    .. "only loads Roblox or place-owned animations), "
+                    .. "so Disguise copies their pose instead."
+            )
+        end
+        return true
+    end
+
     local function startDirectDriver(
         character: Model,
         humanoid: Humanoid
@@ -22607,20 +22745,10 @@ function Module.init(context: Runtime): any
             end)
         end
 
-        -- The script path animates nothing: play the same clips
-        -- directly instead of giving up on them.
-        if startDirectDriver(character, humanoid) then
-            task.wait(0.15)
-            if poseMoves(humanoid, 0.3) ~= false or poseDriven(humanoid) then
-                notify(
-                    "The game's animation controller would not play "
-                        .. "those clips; Disguise is playing them directly."
-                )
-                return true
-            end
-            stopDirectDriver()
-        end
-
+        -- No direct driver here any more: loading the same foreign
+        -- clips ourselves only printed the engine's refusal once per
+        -- clip per state change. A set that does not move the body
+        -- falls through to the rig's own set below.
         local defaults: {[string]: any} = rigDefaultSlots(humanoid)
         local isR6: boolean = defaults == DEFAULT_ANIMATION_IDS_R6
         if writeAnimationSlots(animate, defaults) > 0 then
@@ -22824,6 +22952,12 @@ function Module.init(context: Runtime): any
         if not cached then
             return 0
         end
+        -- In this server, the target's body is already playing the
+        -- real thing: mirror its pose instead of asking the engine
+        -- for clips this place is not allowed to load.
+        if startPoseMirror(character, humanoid) then
+            return 8
+        end
         local changedCount: number = applyAnimationSlots(
             character,
             humanoid,
@@ -22872,6 +23006,7 @@ function Module.init(context: Runtime): any
         if settings.showAdvanced and not advancedPackArmed then
             return 0
         end
+        stopPoseMirror()
         local slots: {[string]: any}? = selectedPackSlots()
         if not slots then
             return 0
