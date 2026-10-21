@@ -1,5 +1,5 @@
 return {
-    stamp = "v96-20261021-silent-clip-probe",
+    stamp = "v97-20261021-pack-sync-advanced-suspend",
     files = {
         ["src/Profile/142823291.lua"] = [[
 --!strict
@@ -21246,6 +21246,7 @@ function Module.init(context: Runtime): any
         ),
         showTargetEmotes = savedToggle("Show target emotes", true),
         animationPack = savedAnimationPack(),
+        showAdvanced = false,
         -- Slots of a bundle resolved by id at runtime (any official or
         -- UGC pack), kept for the session so mode switches and the
         -- movement toggle reuse them without resolving again.
@@ -21829,12 +21830,10 @@ function Module.init(context: Runtime): any
     end
 
     -- Write the resolved slots into the humanoid's DESCRIPTION (on a
-    -- clone, then applied) and return how many fields were set. This
-    -- route matters: a description's animations are exempt from the
-    -- place's asset permissions -- that is how the target's own avatar
-    -- animates in this game at all -- while loading the same ids
-    -- directly fails with "AnimationClip loaded is not valid", and the
-    -- Animate script then retries (and spams the console) forever.
+    -- clone, then applied) and return how many fields were set. Kept
+    -- as the fallback when the Animate slots cannot be written at all;
+    -- as the primary route (v94) it reported success while the running
+    -- script kept playing the previous pack.
     local function applySlotsViaDescription(
         humanoid: Humanoid,
         resolved: {[string]: any}
@@ -21944,13 +21943,15 @@ function Module.init(context: Runtime): any
                     .. "your rig's own clips fill them instead."
             )
         end
-        -- Description first (the permission-exempt route above); the
-        -- direct slot write only remains for builds whose humanoid
-        -- exposes no readable description at all.
-        local changedCount: number =
-            applySlotsViaDescription(humanoid, resolved)
+        -- The Animate slots are the write that demonstrably retargets
+        -- the running script (packs switched correctly until v94).
+        -- The description route stays as fallback for builds whose
+        -- slots cannot be written: it reports success without changing
+        -- what the script plays here, which is exactly the reported
+        -- "I pick Mage and Ninja keeps playing" desync.
+        local changedCount: number = writeAnimationSlots(animate, resolved)
         if changedCount == 0 then
-            changedCount = writeAnimationSlots(animate, resolved)
+            changedCount = applySlotsViaDescription(humanoid, resolved)
         end
         if changedCount == 0 then
             return 0
@@ -22471,10 +22472,10 @@ function Module.init(context: Runtime): any
     --   1. Catalog metadata condemns what is certainly unusable -- a
     --      deleted/private asset, or an id that is not an Animation at
     --      all (a bundle id pasted where a clip belongs).
-    --   2. ContentProvider:PreloadAsync then fetches the asset the way
-    --      the loader will, but reports failure through its callback
-    --      instead of the console, so a clip this client cannot fetch
-    --      here is condemned in silence.
+    --   (A fetch probe was tried and removed: ContentProvider cannot
+    --      download other creators' animation assets at all, so it
+    --      condemned every foreign clip -- including packs already
+    --      playing on screen. Metadata is the only honest judge.)
     -- Anything a probe cannot judge acquits: an unreadable answer must
     -- never punish a working pack.
     local function clipLoads(_humanoid: Humanoid, id: string): boolean
@@ -22523,26 +22524,6 @@ function Module.init(context: Runtime): any
                             valid = false
                         end
                     end
-                end
-            end
-        end
-        if valid then
-            local provider: any = nil
-            pcall(function(): ()
-                provider = (game :: any):GetService("ContentProvider")
-            end)
-            if provider and type(provider.PreloadAsync) == "function" then
-                local fetched: boolean? = nil
-                local preloadOk: boolean = pcall(function(): ()
-                    provider:PreloadAsync({id}, function(
-                        _contentId: string,
-                        status: any
-                    ): ()
-                        fetched = status == Enum.AssetFetchStatus.Success
-                    end)
-                end)
-                if preloadOk and fetched == false then
-                    valid = false
                 end
             end
         end
@@ -22879,10 +22860,18 @@ function Module.init(context: Runtime): any
         return settings.animationPack
     end
 
+    -- While Show Advanced is on, the dropdown pack is suspended: the
+    -- character keeps its own animations until an advanced ID (a whole
+    -- bundle or a per-slot bundle) is submitted, which arms this flag.
+    local advancedPackArmed: boolean = false
+
     local function applyAnimationPack(
         character: Model,
         humanoid: Humanoid
     ): number
+        if settings.showAdvanced and not advancedPackArmed then
+            return 0
+        end
         local slots: {[string]: any}? = selectedPackSlots()
         if not slots then
             return 0
@@ -23443,6 +23432,7 @@ function Module.init(context: Runtime): any
             settings.customPackSlots = slots
             settings.customPackName = "Bundle " .. tostring(userId)
             settings.animationPack = "Custom"
+            advancedPackArmed = true
             targetCache = {
                 userId = userId,
                 slots = slots :: {[string]: any},
@@ -23771,6 +23761,13 @@ function Module.init(context: Runtime): any
         Index = packIndex,
         Function = function(value: string): ()
             settings.animationPack = value
+            if settings.showAdvanced then
+                status(
+                    settings.mode
+                        .. " · advanced on · pack suspended"
+                )
+                return
+            end
             if not card.Enabled then
                 return
             end
@@ -23795,9 +23792,39 @@ function Module.init(context: Runtime): any
     card:CreateToggle({
         Name = "Show Advanced",
         Default = false,
-        Function = function(_value: boolean): ()
+        Function = function(value: boolean): ()
+            settings.showAdvanced = value
+            if not card.Enabled then
+                return
+            end
+            local character: Model? = LocalPlayer.Character
+            local humanoid: Humanoid? = character
+                and character:FindFirstChildOfClass("Humanoid")
+                :: Humanoid?
+            if not character or not humanoid then
+                return
+            end
+            if value then
+                -- The pack comes off the moment Advanced opens: your
+                -- own animations are back until an advanced ID is
+                -- submitted below.
+                advancedPackArmed = false
+                restoreMovementAnimationsOnly(character, humanoid)
+                if animationOverrideApplied then
+                    applyAnimationSlots(
+                        character,
+                        humanoid,
+                        rigDefaultSlots(humanoid),
+                        nil
+                    )
+                end
+                status(settings.mode .. " · advanced · your own animations")
+            elseif settings.animationPack ~= "Off" then
+                applyAnimationPack(character, humanoid)
+                status(settings.mode .. " · pack " .. packDisplayName())
+            end
         end,
-        Tooltip = "Shows the advanced animation options: inserting any animation pack (official or UGC) by its bundle ID.",
+        Tooltip = "Shows the advanced animation options (any pack by bundle ID, or one bundle per slot). Turning this on suspends the Animation Pack above immediately and gives you your own animations back until you submit an advanced ID; turning it off re-applies the selected pack.",
     })
 
     card:CreateTextBox({
@@ -23826,6 +23853,7 @@ function Module.init(context: Runtime): any
             settings.customPackSlots = slots
             settings.customPackName = "Bundle " .. tostring(bundleId)
             settings.animationPack = "Custom"
+            advancedPackArmed = true
             if not card.Enabled then
                 notify("Pack " .. tostring(bundleId) .. " loaded; it applies while Disguise is on.")
                 return
@@ -23898,6 +23926,7 @@ function Module.init(context: Runtime): any
                 settings.customPackSlots = merged
                 settings.customPackName = "Custom slots"
                 settings.animationPack = "Custom"
+                advancedPackArmed = true
                 if not card.Enabled then
                     notify(label .. " slot set; it applies while Disguise is on.")
                     return
