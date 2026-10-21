@@ -126,8 +126,8 @@ do
     local endpoint,info,reason=prediction.gunAim(target,Vector3.new(0,0,-30))
     assert(endpoint,reason)
     near(info.velocity.X,16,0.25)
-    -- One-way lead: sampleAge + RTT/2 (0.04) + interpolation (0.025).
-    assert(info.leadSeconds>=0.08 and info.leadSeconds<=0.09,info.leadSeconds)
+    -- Full-transport lead: sampleAge + RTT (0.08) + interpolation (0.025).
+    assert(info.leadSeconds>=0.14 and info.leadSeconds<=0.15,info.leadSeconds)
     near(endpoint.X,16*now+16*info.leadSeconds,0.2)
     near(endpoint.Y,1,1e-6)
     assert(info.model=="kinematic-v51")
@@ -164,7 +164,7 @@ do
     prediction.noteEcho(0,0.18)
     local _,echoed=prediction.gunAim(target,Vector3.new(0,0,-30))
     near(echoed.echoDelay,0.18,1e-9)
-    near(echoed.leadSeconds,0.115,1e-6)  -- one-way: echo/2 + interp
+    near(echoed.leadSeconds,0.205,1e-6)
     prediction.noteEcho(0,0.001)
     prediction.noteEcho(0,2)
     near(prediction.getEchoDelay(),0.18,1e-9)
@@ -177,19 +177,19 @@ do
             ..prediction.status(target))
     prediction.settings.extraLead=0.05
     local _,automatic=prediction.gunAim(target,Vector3.new(0,0,-30))
-    near(automatic.leadSeconds,0.115,1e-6)
+    near(automatic.leadSeconds,0.205,1e-6)
     local autoText=prediction.status(target)
     assert(autoText:find("auto lead %(echo%)"),autoText)
     assert(autoText:find("interp 25 ms"),autoText)
     prediction.settings.autoLead=false
     local _,manual=prediction.gunAim(target,Vector3.new(0,0,-30))
-    near(manual.leadSeconds,0.165,1e-6)
+    near(manual.leadSeconds,0.255,1e-6)
     local statusText=prediction.status(target)
     assert(statusText:find("manual %+50 ms"),statusText)
     assert(not statusText:find("auto lead"),statusText)
     prediction.settings.extraLead=0.6
     local _,capped=prediction.gunAim(target,Vector3.new(0,0,-30))
-    near(capped.leadSeconds,0.715,1e-6)  -- one-way base + manual 600 ms
+    near(capped.leadSeconds,0.805,1e-6)
     assert(prediction.status(target):find("manual %+600 ms"))
     prediction.settings.extraLead=1.5
     local _,clamped=prediction.gunAim(target,Vector3.new(0,0,-30))
@@ -555,7 +555,7 @@ do
     end
     local apex,apexInfo=prediction.gunAim(target,Vector3.new(0,0,-30))
     assert(apex and apexInfo)
-    assert(apexInfo.leadSeconds>0.06)  -- one-way lead: RTT/2 + interp + sample age
+    assert(apexInfo.leadSeconds>0.1)
     near(apex.Y,floorY+1,0.05)
     -- 2. Freefall with a real vertical speed still extrapolates ballistically.
     humanoidState="Freefall"
@@ -612,7 +612,7 @@ do
     local _,accel=prediction.gunAim(target,Vector3.new(0,0,-30))
     local speedNow=startV+120*(now-t0)
     local travelled=root.Position.X-startX
-    assert(accel.leadSeconds>0.06,accel.leadSeconds)  -- one-way lead
+    assert(accel.leadSeconds>0.1,accel.leadSeconds)
     -- A constant-speed lead is speed*horizon; positive acceleration must add
     -- nothing to it.
     assert(travelled+speedNow*accel.leadSeconds<=travelled

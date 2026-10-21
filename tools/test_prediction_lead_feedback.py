@@ -28,10 +28,10 @@ local function near(a, b) assert(math.abs(a - b) < 1e-6, tostring(a) .. " != " .
 
 -- 1) No measurements yet: the horizon is the transport plus interpolation.
 local horizon = gunHorizon()
-near(horizon, 0.2 * 0.5 + 1 / 40)
+near(horizon, 0.2 + 1 / 40)
 near(leadCorrection(), 0)
 near(leadUncertainty(), 0)
-pass("gun horizon: one-way transport only until three confirmations are measured")
+pass("gun horizon: full transport only until three confirmations are measured")
 
 -- 2) Two samples are not a median.
 noteLeadError(0.05)
@@ -45,13 +45,13 @@ noteLeadError(0.12)
 noteLeadError(0.12)
 noteLeadError(0.12)
 near(leadCorrection(), 0.06)
-near(gunHorizon(), 0.2 * 0.5 + 1 / 40 + 0.06)
+near(gunHorizon(), 0.2 + 1 / 40 + 0.06)
 pass("lead feedback: a consistent under-lead is added, capped at 60 ms")
 
 -- 4) Over-leading subtracts, and the same cap applies in the other direction.
 for _ = 1, 5 do noteLeadError(-0.09) end
 near(leadCorrection(), -0.06)
-near(gunHorizon(), 0.2 * 0.5 + 1 / 40 - 0.06)
+near(gunHorizon(), 0.2 + 1 / 40 - 0.06)
 pass("lead feedback: over-lead is subtracted, capped symmetrically")
 
 -- 5) A single absurd measurement (teleport, target swap) is dropped, not
@@ -67,20 +67,20 @@ pass("lead feedback: teleports, swaps and NaN are rejected")
 --    exists, exactly like the gun, and reports it for the calibration file.
 echo = 0.31
 local knifePipeline, knifeRtt, knifeEcho = knifeHorizon()
-near(knifePipeline, 0.31 * 0.5 + 1 / 40)
+near(knifePipeline, 0.31 + 1 / 40)
 near(knifeRtt, 0.2)
 near(knifeEcho, 0.31)
 echo = nil
 local fallbackPipeline, _, fallbackEcho = knifeHorizon()
-near(fallbackPipeline, 0.2 * 0.5 + 1 / 40)
+near(fallbackPipeline, 0.2 + 1 / 40)
 assert(fallbackEcho == nil, "no echo means the engine RTT is used")
-pass("knife horizon: measured echo first, engine RTT as fallback (one-way)")
+pass("knife horizon: measured echo first, engine RTT as fallback")
 
 -- 7) A manual offset still works when auto lead is off, and the correction is
 --    not added on top of it.
 settings.autoLead = false
 settings.extraLead = 0.12
-near(gunHorizon(), 0.2 * 0.5 + 1 / 40 + 0.12)
+near(gunHorizon(), 0.2 + 1 / 40 + 0.12)
 pass("manual lead: unchanged when automatic lead is off")
 
 -- 8) The same measurements, without their sign, size the silent segment. It

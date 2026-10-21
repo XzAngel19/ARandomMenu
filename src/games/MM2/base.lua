@@ -2678,7 +2678,14 @@ local function createTrajectoryCalibration(): any
         if not predictionMath.finite(afterAt) or afterAt <= beforeAt then
             return nil
         end
-        local scoringAt: number = pending.activatedAt + latencyMs / 2000
+        -- Score where the server actually scores. The saved sessions
+        -- separate hits from misses at the CONFIRMATION instant (a
+        -- full round trip after firing), not half-way: scoring at
+        -- activatedAt + latency/2 measured the aim ~55 ms AHEAD and
+        -- taught the feedback loop a capped -60 ms correction, which
+        -- then fought the (correct) full-transport lead on every
+        -- shot -- the recorded cause of the chronic under-lead.
+        local scoringAt: number = pending.activatedAt + latencyMs / 1000
         local alpha: number = math.clamp(
             (scoringAt - beforeAt) / (afterAt - beforeAt),
             0,

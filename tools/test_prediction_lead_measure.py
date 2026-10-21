@@ -22,8 +22,8 @@ local function pending(overrides)
     local p = {
         activatedAt = 0,
         confirmedAt = 0.3,
-        latencyMs = 200,
-        -- The target walked 3 studs in 0.3 s: 10 studs/s along +X.
+        latencyMs = 300,
+        -- The target walked 3 studs in the 0.3 s round trip: 10 studs/s +X.
         targetHistory = {{dt = 0, position = {0, 3, 0}, velocity = {10, 0, 0},
             aimOffset = {0, 0, 0}}},
         rootAtConfirmation = {position = {3, 3, 0}},
@@ -45,17 +45,18 @@ local function near(a, b)
     assert(a ~= nil and math.abs(a - b) < 1e-6, tostring(a) .. " != " .. tostring(b))
 end
 
--- The server scores one way into the round trip: at 100 ms the target is at
--- x = 1, exactly where we aimed. No error.
-near(measureLeadErrorSeconds(pending()), 0)
+-- The server scores at the CONFIRMATION instant (the saved sessions
+-- separate hits from misses there, a full round trip after firing):
+-- at 300 ms the target is at x = 3. Aiming at x = 1 under-led by 0.2 s.
+near(measureLeadErrorSeconds(pending()), 0.2)
+pass("lead error: aiming short of the confirmation position is positive")
+
+-- Aimed exactly where the body was when the shot resolved: no error.
+near(measureLeadErrorSeconds(pending({requestedAim = Vector3.new(3, 3, 0)})), 0)
 pass("lead error: aiming at the scored position measures zero")
 
--- Aimed one stud short of where the body was: under-led by 0.1 s at 10/s.
-near(measureLeadErrorSeconds(pending({requestedAim = Vector3.new(0, 3, 0)})), 0.1)
-pass("lead error: a short aim is positive, in seconds")
-
 -- Aimed one stud past the body: over-led.
-near(measureLeadErrorSeconds(pending({requestedAim = Vector3.new(2, 3, 0)})), -0.1)
+near(measureLeadErrorSeconds(pending({requestedAim = Vector3.new(4, 3, 0)})), -0.1)
 pass("lead error: an aim past the body is negative")
 
 -- Standing still: no lead to correct, so no sample.
