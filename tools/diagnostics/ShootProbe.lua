@@ -19,6 +19,18 @@
       4. When done, run it AGAIN (inject a second time) -- the
          second run prints/writes/copies the report and stops.
 
+    V3 fixes the ray itself. The 191-shot v2 session proved the
+    camera LookVector is NOT the shot ray when aiming with the
+    cursor in third person: 3 of its 4 "hits" had targets that
+    never came within 5.7-14.1 studs of the camera ray, which a
+    hitscan shot cannot hit. The gun follows the mouse, so v3
+    builds the ray from the mouse position through the camera
+    (ViewportPointToRay on the player mouse -- identical to the
+    camera ray in first person / shift lock, correct in third).
+    It also refuses to learn lead from a hit whose target never
+    crossed the ray ("unmatched" hits: an unrelated health drop
+    inside the window, e.g. fall damage).
+
     V2 adds the two numbers v1 could not separate:
       - aimErr: how far your crosshair ray passed from the target's
         root AT the fire instant (pure aim error, no timing involved),
@@ -219,9 +231,21 @@ local function noteShot()
     if pending and not pending.done then
         finishShot(pending, nil, nil)
     end
-    -- Who is the ray actually pointing at?
+    -- Who is the ray actually pointing at? The gun follows the
+    -- mouse, not the camera forward vector: in third person the
+    -- cursor ray can sit 30 degrees off LookVector, and the v2
+    -- session's hits proved that gap is real. The player mouse
+    -- coordinates are the same ones the gun tool itself reads.
     local origin = camera.CFrame.Position
     local direction = camera.CFrame.LookVector
+    local okMouse, mouseRay = pcall(function()
+        local mouse = LocalPlayer:GetMouse()
+        return camera:ViewportPointToRay(mouse.X, mouse.Y)
+    end)
+    if okMouse and mouseRay then
+        origin = mouseRay.Origin
+        direction = mouseRay.Direction.Unit
+    end
     local guess, guessDistance = nil, math.huge
     for _, player in ipairs(Players:GetPlayers()) do
         if player ~= LocalPlayer then
@@ -334,16 +358,26 @@ local function finish()
     log("=== WURST SHOOT PROBE REPORT ===")
     log("PlaceId=%s samples of truth: %d shots", tostring(game.PlaceId), #shots)
     local hitLeads, hitCvErrors, hitCount = {}, {}, 0
+    local unmatchedHits = 0
     for index, shot in ipairs(shots) do
         local isHit = shot.hitAt ~= nil
         if isHit then
             hitCount += 1
-            if shot.bestT then
-                table.insert(hitLeads,
-                    (shot.bestT - shot.at) * 1000)
-            end
-            if shot.cvError then
-                table.insert(hitCvErrors, shot.cvError)
+            -- Only a hit whose target actually crossed the shot ray
+            -- can teach us the lead. A health drop while the target
+            -- stayed 6+ studs off the ray is something else entirely
+            -- (fall damage, another shooter) and must not move the
+            -- median.
+            if shot.bestDistance and shot.bestDistance <= 2.5 then
+                if shot.bestT then
+                    table.insert(hitLeads,
+                        (shot.bestT - shot.at) * 1000)
+                end
+                if shot.cvError then
+                    table.insert(hitCvErrors, shot.cvError)
+                end
+            else
+                unmatchedHits += 1
             end
         end
         log("#%d %s target=%s range=%s ping=%s effLead=%s "
@@ -391,7 +425,8 @@ local function finish()
             jumpShots += 1
             if shot.hitAt then jumpHits += 1 end
         end
-        if shot.hitAt and shot.ping then
+        if shot.hitAt and shot.ping and shot.bestDistance
+            and shot.bestDistance <= 2.5 then
             local registered = (shot.hitAt - shot.at) * 1000
             table.insert(extraDelays, registered - shot.ping)
         elseif not shot.hitAt and shot.dScore then
@@ -410,6 +445,8 @@ local function finish()
             .. "(scoring instant ~= ping + this)", medianExtra)
     end
     log("Jumping targets: %d shots, %d hits", jumpShots, jumpHits)
+    log("Unmatched hits (health dropped but target never crossed "
+        .. "the ray; excluded from lead stats): %d", unmatchedHits)
     log("Miss classes: on-target-at-scoring=%d (geometry right, "
         .. "server said no), moved-off=%d (prediction territory), "
         .. "aim-off-at-fire=%d (crosshair was not on them)",
