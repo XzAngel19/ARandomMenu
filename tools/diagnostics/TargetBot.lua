@@ -1,30 +1,40 @@
 --[[
-    WURST TARGET BOT v3  (diagnostic, standalone -- for YOUR OWN alt)
+    WURST TARGET BOT v4  (diagnostic, standalone -- for YOUR OWN alt)
 
-    What the probes proved about moving a body in MM2:
-      - Humanoid:Move is ignored (MoveDirection stays 0.00).
-      - Humanoid:MoveTo works (MoveDirection 1.00, full speed).
-    So v3 drives with MoveTo only, through a STEERING layer: the
-    heading turns at a limited rate (deg/sec) like a person's hand
-    on the keys -- no instant 180 flips, no velocity glitches.
+    Built from the v3 live results:
+      - Humanoid:Move is ignored here; Humanoid:MoveTo works.
+      - v3 crashed into walls (it had no eyes), ignored its
+        distance setting outside orbit, and could lock onto one
+        heading forever when MoveTo pushed it into geometry.
+      - v3 jumped with Humanoid.Jump, which this controller does
+        not honour either; v4 jumps with ChangeState(Jumping).
 
-    The movement is relative to YOU (the nearest other player, i.e.
-    the shooter): it strafes perpendicular to your line of sight,
-    zigzags in and out, orbits you, rushes and retreats -- the way a
-    real player dodges a sheriff. That is what makes it genuinely
-    hard to hit, and exactly the data ShootProbe needs.
+    v4 therefore has:
+      * EYES: raycast probes ahead (and a floor probe) score a fan
+        of candidate headings every step; the MoveTo point follows
+        the best-scoring clear heading, so walls and ledges bend
+        the path instead of eating it.
+      * ANTI-STUCK: real displacement is measured; a body that is
+        told to move but does not travel jumps, reverses toward the
+        clearest heading, and if it happens twice, forces a new
+        behaviour. It cannot grind one wall forever.
+      * REAL DISTANCE: every behaviour composes its direction from
+        a tangential dodge + a radial correction toward the ring
+        distance set in the menu (Cerca/Media/Lejos) around the
+        rival, not just the orbit behaviour.
+      * A RIVAL PICKER: "Rival: Auto" (nearest) or a named player,
+        so another passer-by cannot steal the reference.
+      * IMPOSIBLE difficulty: besides the steering chaos, it adds
+        velocity dash bursts and a flight behaviour (LinearVelocity
+        hover with PlatformStand) for a few seconds at a time.
+        Those patterns are NOT what real players do -- they exist
+        as a stress test; ShootProbe data from them should be read
+        as such.
 
-    A small menu on the alt's screen controls it:
-      [Activo]    start / stop button
-      Dificultad  Normal / Dificil / Caotico
-                    turn rate, strafe-flip rhythm, jump chance
-      Saltos      Sin / Normal / Frecuentes
-      Distancia   Cerca / Media / Lejos   (orbit distance to you)
-    plus a status line naming the current behaviour.
-
-    Place the alt somewhere open; it stays within ~40 studs of its
-    anchor and re-anchors where it respawns. Inject once to start,
-    again to remove the bot and its menu entirely.
+    Menu: Activo, Modo (Realista/Dificil/Caotico/Imposible),
+    Saltos, Distancia, Velocidad, Rival, Reanclar, Detener.
+    Inject once to start; inject again (or the red button) to
+    remove bot, menu and every physics object it created.
 ]]
 
 local Players = game:GetService("Players")
@@ -33,9 +43,12 @@ local LocalPlayer = Players.LocalPlayer
 
 local genv = getgenv()
 if genv.WURST_TARGET_BOT and genv.WURST_TARGET_BOT.active then
-    genv.WURST_TARGET_BOT.active = false
-    if genv.WURST_TARGET_BOT.gui then
-        pcall(function() genv.WURST_TARGET_BOT.gui:Destroy() end)
+    local old = genv.WURST_TARGET_BOT
+    if old.cleanup then
+        pcall(old.cleanup)
+    else
+        old.active = false
+        if old.gui then pcall(function() old.gui:Destroy() end) end
     end
     print("[TargetBot] removed")
     return
@@ -43,28 +56,50 @@ end
 
 local SETTINGS = {
     running = true,
-    difficulty = "Dificil",   -- Normal | Dificil | Caotico
-    jumps = "Normal",         -- Sin | Normal | Frecuentes
-    distance = "Media",       -- Cerca | Media | Lejos
+    difficulty = "Dificil",
+    jumps = "Normal",
+    distance = "Media",
+    speed = "Normal",
+    opponent = "Auto",
 }
 local DIFFICULTY = {
-    Normal = {turn = 200, flipMin = 0.9, flipMax = 1.6, jump = 0.15},
-    Dificil = {turn = 320, flipMin = 0.55, flipMax = 1.0, jump = 0.30},
-    Caotico = {turn = 460, flipMin = 0.35, flipMax = 0.7, jump = 0.45},
+    Realista = {turn = 240, flipMin = 1.0, flipMax = 1.7,
+        jumpMin = 2.8, jumpMax = 4.5, dashMin = 0, dashMax = 0},
+    Dificil = {turn = 360, flipMin = 0.65, flipMax = 1.1,
+        jumpMin = 1.4, jumpMax = 2.6, dashMin = 3.5, dashMax = 6},
+    Caotico = {turn = 540, flipMin = 0.38, flipMax = 0.72,
+        jumpMin = 0.65, jumpMax = 1.3, dashMin = 1.6, dashMax = 3.2},
+    Imposible = {turn = 760, flipMin = 0.22, flipMax = 0.5,
+        jumpMin = 0.35, jumpMax = 0.8, dashMin = 0.8, dashMax = 1.8},
 }
-local JUMP_MULT = {Sin = 0, Normal = 1, Frecuentes = 1.8}
-local DISTANCE = {Cerca = 16, Media = 26, Lejos = 38}
+local JUMP_MULT = {Sin = 0, Normal = 1, Frecuentes = 0.55}
+local DISTANCE = {Cerca = 14, Media = 24, Lejos = 36}
+local SPEEDS = {Normal = 16, Rapida = 22, Extrema = 30}
 
 local state = {
     active = true,
     heading = math.random() * math.pi * 2,
     targetHeading = 0,
-    wantJump = false,
-    behavior = "still",
-    mode = "moveto",
-    stuckSince = nil,
+    behavior = "strafe",
+    behaviorLabel = "Strafe lateral",
+    jumpQueued = false,
+    nextJumpAt = os.clock() + 2,
+    jumpAttempts = 0,
+    jumpsDone = 0,
+    jumpCheckAt = nil,
+    nextDashAt = os.clock() + 4,
+    flying = false,
+    flightUntil = 0,
+    flightBaseY = 0,
+    flightAttachment = nil,
+    flightVelocity = nil,
+    standUntil = 0,
+    forceBehaviorSwitch = false,
+    recoveryUntil = 0,
+    recoveryHeading = 0,
     lastMoveTo = 0,
     gui = nil,
+    cleanup = nil,
 }
 state.targetHeading = state.heading
 genv.WURST_TARGET_BOT = state
@@ -83,13 +118,21 @@ if not humanoid0 or not root0 then
     state.active = false
     return
 end
+local originalWalkSpeed = humanoid0.WalkSpeed
 local anchor = root0.Position
 
--- The opponent: the nearest other player with a body (the shooter).
-local function opponentRoot()
-    local best, bestDistance = nil, math.huge
+local function getOpponent()
+    if SETTINGS.opponent ~= "Auto" then
+        local named = Players:FindFirstChild(SETTINGS.opponent)
+        if named and named ~= LocalPlayer and named.Character then
+            local root =
+                named.Character:FindFirstChild("HumanoidRootPart")
+            if root then return named, root end
+        end
+    end
     local myRoot = select(3, characterParts())
-    if not myRoot then return nil end
+    if not myRoot then return nil, nil end
+    local best, bestRoot, bestDistance = nil, nil, math.huge
     for _, player in ipairs(Players:GetPlayers()) do
         if player ~= LocalPlayer and player.Character then
             local root =
@@ -98,12 +141,12 @@ local function opponentRoot()
                 local distance =
                     (root.Position - myRoot.Position).Magnitude
                 if distance < bestDistance then
-                    best, bestDistance = root, distance
+                    best, bestRoot, bestDistance = player, root, distance
                 end
             end
         end
     end
-    return best
+    return best, bestRoot
 end
 
 local function wrapAngle(angle)
@@ -111,188 +154,450 @@ local function wrapAngle(angle)
     while angle < -math.pi do angle += math.pi * 2 end
     return angle
 end
+local function wrapHeading()
+    state.heading = wrapAngle(state.heading)
+    state.targetHeading = wrapAngle(state.targetHeading)
+end
 local function headingVector(heading)
     return Vector3.new(math.sin(heading), 0, math.cos(heading))
 end
+local function randomBetween(a, b)
+    return a + math.random() * (b - a)
+end
 
--- Behaviour brain: picks a target heading (and jumps) relative to
--- the opponent. Runs on a 0.1 s tick; the steering layer below
--- turns toward it at the difficulty's rate, which is what keeps
--- every change of direction smooth and human.
-local brain = task.spawn(function()
-    local phaseUntil = 0
+--------------------------------------------------------------------------
+-- Flight (Imposible only). Everything it instances is named and
+-- removed by setFlight(false) / cleanup.
+--------------------------------------------------------------------------
+local function setFlight(enabled, humNow, rootNow)
+    if enabled then
+        if not rootNow or not humNow then return end
+        if not state.flightAttachment
+            or not state.flightAttachment.Parent then
+            state.flightAttachment = Instance.new("Attachment")
+            state.flightAttachment.Name = "TargetBotFlightAttachment"
+            state.flightAttachment.Parent = rootNow
+        end
+        if not state.flightVelocity
+            or not state.flightVelocity.Parent then
+            state.flightVelocity = Instance.new("LinearVelocity")
+            state.flightVelocity.Name = "TargetBotFlightVelocity"
+            state.flightVelocity.Attachment0 = state.flightAttachment
+            state.flightVelocity.RelativeTo =
+                Enum.ActuatorRelativeTo.World
+            state.flightVelocity.VelocityConstraintMode =
+                Enum.VelocityConstraintMode.Vector
+            state.flightVelocity.MaxForce = 100000
+            state.flightVelocity.Parent = rootNow
+        end
+        humNow.PlatformStand = true
+        state.flying = true
+    else
+        if state.flightVelocity then
+            pcall(function() state.flightVelocity:Destroy() end)
+            state.flightVelocity = nil
+        end
+        if state.flightAttachment then
+            pcall(function() state.flightAttachment:Destroy() end)
+            state.flightAttachment = nil
+        end
+        if humNow then
+            pcall(function() humNow.PlatformStand = false end)
+        end
+        state.flying = false
+    end
+end
+
+--------------------------------------------------------------------------
+-- Eyes: score a fan of candidate headings by wall clearance and
+-- floor presence, preferring the one closest to the wanted heading.
+--------------------------------------------------------------------------
+local raycastParams = RaycastParams.new()
+raycastParams.FilterType = Enum.RaycastFilterType.Exclude
+raycastParams.IgnoreWater = true
+
+local function refreshRaycastFilter(characterNow)
+    local filter = {}
+    if characterNow then table.insert(filter, characterNow) end
+    for _, player in ipairs(Players:GetPlayers()) do
+        if player.Character then
+            table.insert(filter, player.Character)
+        end
+    end
+    raycastParams.FilterDescendantsInstances = filter
+end
+
+local function probeClearance(rootNow, heading, probeLength)
+    local direction = headingVector(heading)
+    local origin = rootNow.Position + Vector3.new(0, 2, 0)
+    local hit = workspace:Raycast(
+        origin, direction * probeLength, raycastParams)
+    return hit and hit.Distance or probeLength
+end
+
+local function hasFloor(rootNow, heading)
+    local ahead = rootNow.Position
+        + headingVector(heading) * 5 + Vector3.new(0, 3, 0)
+    local hit = workspace:Raycast(
+        ahead, Vector3.new(0, -10, 0), raycastParams)
+    return hit ~= nil
+end
+
+local function chooseMovementHeading(rootNow, characterNow)
+    if os.clock() < state.recoveryUntil then
+        return state.recoveryHeading
+    end
+    refreshRaycastFilter(characterNow)
+    local probeLength = 9
+    local offsets = {0, 0.45, -0.45, 0.9, -0.9, 1.5, -1.5, 2.4, -2.4, math.pi}
+    local bestHeading, bestScore = state.heading, -math.huge
+    for _, offset in ipairs(offsets) do
+        local candidate = state.heading + offset
+        local clearance = probeClearance(rootNow, candidate, probeLength)
+        local score = clearance - math.abs(offset) * 2.2
+        if clearance <= 1.6 then score -= 25 end
+        if not state.flying and not hasFloor(rootNow, candidate) then
+            score -= 7
+        end
+        if score > bestScore then
+            bestScore, bestHeading = score, candidate
+        end
+    end
+    return bestHeading
+end
+
+--------------------------------------------------------------------------
+-- Brain: target heading from behaviour + rival-relative geometry.
+--------------------------------------------------------------------------
+local BEHAVIOR_LABELS = {
+    strafe = "Strafe lateral", orbit = "Orbitando",
+    zigzagIn = "Zigzag hacia ti", zigzagOut = "Zigzag alejandose",
+    rush = "Rusheando", wander = "Deambulando",
+    stopGo = "Paradas y arranques", fly = "VOLANDO",
+    airChaos = "Caos aereo",
+}
+
+task.spawn(function()
+    local behaviorUntil = 0
     local flipAt = 0
     local side = 1
-    local behaviors = {
-        "strafe", "zigzagIn", "orbit", "zigzagOut",
-        "rush", "wander", "strafe",
-    }
-    local behaviorIndex = 0
+    local index = 0
+    local stopStanding = false
+    local stopSwitchAt = 0
     while state.active do
-        task.wait(0.1)
+        task.wait(0.08)
         local _, humNow, rootNow = characterParts()
-        local opp = opponentRoot()
         local now = os.clock()
         if not SETTINGS.running or not humNow
             or humNow.Health <= 0 or not rootNow then
             state.targetHeading = state.heading
+            state.flying = false
         else
-            if now >= phaseUntil then
-                behaviorIndex = behaviorIndex % #behaviors + 1
-                state.behavior = behaviors[behaviorIndex]
-                phaseUntil = now + math.random(70, 120) / 10
+            local diff = DIFFICULTY[SETTINGS.difficulty]
+            if now >= behaviorUntil or state.forceBehaviorSwitch then
+                state.forceBehaviorSwitch = false
+                local pool = {"strafe", "orbit", "zigzagIn",
+                    "zigzagOut", "rush", "wander", "stopGo", "strafe"}
+                if SETTINGS.difficulty == "Imposible" then
+                    pool = {"strafe", "fly", "zigzagIn", "airChaos",
+                        "orbit", "rush", "strafe", "fly"}
+                end
+                index = index % #pool + 1
+                state.behavior = pool[index]
+                state.behaviorLabel =
+                    BEHAVIOR_LABELS[state.behavior] or state.behavior
+                behaviorUntil = now + randomBetween(7, 12)
                 flipAt = now
+                if state.behavior == "fly" then
+                    state.flightBaseY = rootNow.Position.Y + 9
+                    state.flightUntil = behaviorUntil
+                elseif state.behavior == "stopGo" then
+                    state.standUntil = now + randomBetween(0.4, 0.9)
+                end
                 print("[TargetBot] behavior: " .. state.behavior)
             end
-            local diff = DIFFICULTY[SETTINGS.difficulty]
-            local toOpp = state.heading
-            local orbitRadius = DISTANCE[SETTINGS.distance]
-            if opp then
-                local away = rootNow.Position - opp.Position
-                toOpp = math.atan2(away.X, away.Z) -- heading away
-            end
+            state.flying = state.behavior == "fly"
+                and now < state.flightUntil
+
+            local oppPlayer, oppRoot = getOpponent()
             local behavior = state.behavior
-            if behavior == "still" then
+            if behavior == "stopGo" then
+                if now >= stopSwitchAt then
+                    stopStanding = not stopStanding
+                    stopSwitchAt = now + (stopStanding
+                        and randomBetween(0.35, 0.85)
+                        or randomBetween(0.8, 1.7))
+                    state.standUntil = stopStanding
+                        and stopSwitchAt or 0
+                end
+                if stopStanding then
+                    state.targetHeading = state.heading
+                end
+            end
+            if behavior == "stopGo" and now < state.standUntil then
                 state.targetHeading = state.heading
-            elseif behavior == "strafe" then
-                if now >= flipAt then
-                    side = -side
-                    flipAt = now + math.random(
-                        diff.flipMin * 100, diff.flipMax * 100) / 100
-                    if math.random() < diff.jump
-                        * JUMP_MULT[SETTINGS.jumps] then
-                        state.wantJump = true
-                    end
+            elseif oppRoot then
+                local away = rootNow.Position - oppRoot.Position
+                local flat = Vector3.new(away.X, 0, away.Z)
+                local dist = flat.Magnitude
+                local awayUnit = dist > 0.01
+                    and flat.Unit or headingVector(state.heading)
+                local towardUnit = -awayUnit
+                local tangent = Vector3.new(
+                    awayUnit.Z, 0, -awayUnit.X)
+                local desired = DISTANCE[SETTINGS.distance]
+                -- +1 = too far (close in), -1 = too close (back off)
+                local radial = math.clamp((dist - desired) / 10, -1, 1)
+
+                local tangentWeight, radialWeight = 1, 0.75
+                if behavior == "zigzagIn" then
+                    radial = math.max(radial, 0.8)
+                    tangentWeight = 0.9
+                elseif behavior == "zigzagOut" then
+                    radial = math.min(radial, -0.8)
+                    tangentWeight = 0.9
+                elseif behavior == "rush" then
+                    radial = 1
+                    tangentWeight = 0.25
+                elseif behavior == "orbit" then
+                    radialWeight = 1.3
+                elseif behavior == "wander" then
+                    tangentWeight = 0.4
+                    radialWeight = 0.3
                 end
-                -- Perpendicular to the line of sight, flipping.
-                state.targetHeading = toOpp + side * math.pi / 2
-                    + math.rad(math.random(-12, 12))
-            elseif behavior == "zigzagIn" then
-                if now >= flipAt then
-                    side = -side
-                    flipAt = now + math.random(60, 110) / 100
-                end
-                state.targetHeading = toOpp + math.pi
-                    + side * math.rad(math.random(30, 55))
-            elseif behavior == "zigzagOut" then
-                if now >= flipAt then
-                    side = -side
-                    flipAt = now + math.random(60, 110) / 100
-                    if math.random() < diff.jump * 0.7
-                        * JUMP_MULT[SETTINGS.jumps] then
-                        state.wantJump = true
-                    end
-                end
-                state.targetHeading = toOpp
-                    + side * math.rad(math.random(30, 55))
-            elseif behavior == "orbit" then
-                -- Hold a ring around the opponent: tangent heading
-                -- corrected by how far off the ring we are.
-                if opp then
-                    local away = rootNow.Position - opp.Position
-                    local flat = Vector3.new(away.X, 0, away.Z)
-                    local radialError = flat.Magnitude - orbitRadius
-                    local correction = math.clamp(
-                        -radialError * 0.04, -0.7, 0.7)
-                    state.targetHeading = toOpp
-                        + side * (math.pi / 2 + correction)
+                if behavior == "strafe" or behavior == "zigzagIn"
+                    or behavior == "zigzagOut"
+                    or behavior == "orbit" then
                     if now >= flipAt then
-                        if math.random() < 0.3 then side = -side end
-                        flipAt = now + math.random(200, 400) / 100
+                        side = -side
+                        flipAt = now + randomBetween(
+                            diff.flipMin, diff.flipMax)
+                        if behavior == "orbit"
+                            and math.random() > 0.3 then
+                            side = -side -- orbit mostly holds its side
+                        end
                     end
-                else
-                    state.targetHeading = toOpp + side * math.pi / 2
                 end
-            elseif behavior == "rush" then
-                state.targetHeading = toOpp + math.pi
-                    + math.rad(math.random(-18, 18))
-                if math.random() < diff.jump * 0.5
-                    * JUMP_MULT[SETTINGS.jumps] then
-                    state.wantJump = true
-                end
-            else -- wander: smooth heading noise
-                if now >= flipAt then
-                    flipAt = now + math.random(40, 90) / 100
+                local move = tangent * (side * tangentWeight)
+                    + towardUnit * (radial * radialWeight)
+                if behavior == "wander" and now >= flipAt then
+                    flipAt = now + randomBetween(0.4, 0.9)
                     state.targetHeading = state.heading
                         + math.rad(math.random(-70, 70))
-                    if math.random() < diff.jump * 0.6
-                        * JUMP_MULT[SETTINGS.jumps] then
-                        state.wantJump = true
-                    end
+                elseif move.Magnitude > 0.05 then
+                    state.targetHeading =
+                        math.atan2(move.X, move.Z)
+                end
+            else
+                -- No rival visible: smooth wander around the anchor.
+                if now >= flipAt then
+                    flipAt = now + randomBetween(0.5, 1.0)
+                    state.targetHeading = state.heading
+                        + math.rad(math.random(-80, 80))
                 end
             end
-            -- Keep the alt near its anchor no matter what.
-            local flat = Vector3.new(
-                rootNow.Position.X - anchor.X, 0,
-                rootNow.Position.Z - anchor.Z)
-            if flat.Magnitude > 40 then
-                state.targetHeading =
-                    math.atan2(-flat.X, -flat.Z)
+
+            -- Anchor leash overrides everything but flight.
+            if not state.flying then
+                local flat = Vector3.new(
+                    rootNow.Position.X - anchor.X, 0,
+                    rootNow.Position.Z - anchor.Z)
+                if flat.Magnitude > 55 then
+                    state.targetHeading = math.atan2(-flat.X, -flat.Z)
+                    state.behaviorLabel = "Volviendo al ancla"
+                elseif behavior ~= "stopGo" or now >= state.standUntil then
+                    state.behaviorLabel =
+                        BEHAVIOR_LABELS[behavior] or behavior
+                end
+            end
+
+            -- Jump schedule (independent of behaviours, so it
+            -- cannot silently starve like v3's flip-tied jumps).
+            local jumpMult = JUMP_MULT[SETTINGS.jumps]
+            if jumpMult > 0 and not state.flying
+                and now >= state.nextJumpAt then
+                state.jumpQueued = true
+                local interval = randomBetween(
+                    diff.jumpMin, diff.jumpMax) * jumpMult
+                state.nextJumpAt = now + interval
             end
         end
     end
 end)
 
+--------------------------------------------------------------------------
 -- Steering + actuation pump.
-local pump = RunService.Heartbeat:Connect(function()
+--------------------------------------------------------------------------
+local pumpConnection
+local progressPos, progressAt, stuckCount = root0.Position, os.clock(), 0
+
+local function queueJump()
+    state.jumpQueued = true
+end
+
+pumpConnection = RunService.Heartbeat:Connect(function(dt)
     if not state.active then return end
-    local _, humNow, rootNow = characterParts()
-    if not humNow or not rootNow or humNow.Health <= 0 then
+    local characterNow, humNow, rootNow = characterParts()
+    if not humNow or not rootNow then return end
+    if humNow.Health <= 0 then
+        setFlight(false, humNow, rootNow)
         return
     end
     if not SETTINGS.running then
-        humNow:Move(Vector3.zero, false)
+        setFlight(false, humNow, rootNow)
+        humNow:MoveTo(rootNow.Position)
         return
     end
-    local diff = DIFFICULTY[SETTINGS.difficulty]
-    local delta = wrapAngle(state.targetHeading - state.heading)
-    local maxTurn = math.rad(diff.turn) * (1 / 60)
-    state.heading = state.heading
-        + math.clamp(delta, -maxTurn, maxTurn)
+
     local now = os.clock()
-    if now - state.lastMoveTo > 0.12 then
-        state.lastMoveTo = now
-        humNow:MoveTo(
-            rootNow.Position + headingVector(state.heading) * 14)
-    end
-    if state.wantJump
-        and humNow.FloorMaterial ~= Enum.Material.Air then
-        humNow.Jump = true
-        state.wantJump = false
-    end
-    -- Safety net only: if MoveTo ever stops moving this body,
-    -- fall back to direct velocity and say so once.
-    local velocity = rootNow.AssemblyLinearVelocity
-    local flatSpeed = Vector3.new(velocity.X, 0, velocity.Z).Magnitude
-    if flatSpeed < 1 and state.mode == "moveto" then
-        state.stuckSince = state.stuckSince or now
-        if now - state.stuckSince > 2 then
-            state.mode = "push"
-            print("[TargetBot] MoveTo stopped working; "
-                .. "velocity push fallback on")
+    local diff = DIFFICULTY[SETTINGS.difficulty]
+
+    -- WalkSpeed from the menu (the game may reset it; re-assert).
+    if not state.flying then
+        local wanted = SPEEDS[SETTINGS.speed]
+        if wanted and math.abs(humNow.WalkSpeed - wanted) > 0.5 then
+            humNow.WalkSpeed = wanted
         end
-    elseif flatSpeed >= 1 then
-        state.stuckSince = nil
     end
-    if state.mode == "push" then
-        local speed = humNow.WalkSpeed > 0 and humNow.WalkSpeed or 16
+
+    -- Turn the logical heading toward the target at the capped rate.
+    wrapHeading()
+    local delta = wrapAngle(state.targetHeading - state.heading)
+    local step = math.rad(diff.turn) * math.max(dt, 1 / 240)
+    state.heading = state.heading + math.clamp(delta, -step, step)
+    wrapHeading()
+
+    state.flying = state.flying
+        and SETTINGS.difficulty == "Imposible"
+
+    if state.flying then
+        if not state.flightVelocity
+            or not state.flightVelocity.Parent then
+            setFlight(true, humNow, rootNow)
+            state.flightBaseY = rootNow.Position.Y + 9
+        end
         local dir = headingVector(state.heading)
-        rootNow.AssemblyLinearVelocity =
-            Vector3.new(dir.X * speed, velocity.Y, dir.Z * speed)
+        local cruise = (SPEEDS[SETTINGS.speed] or 16) * 1.7
+        local targetY = state.flightBaseY
+            + math.sin(now * 1.7) * 1.6
+        local vy = math.clamp((targetY - rootNow.Position.Y) * 3.5,
+            -20, 20)
+        state.flightVelocity.VectorVelocity = Vector3.new(
+            dir.X * cruise, vy, dir.Z * cruise)
+        humNow:MoveTo(rootNow.Position) -- keep MoveDirection quiet
+    else
+        if state.flightVelocity or state.flightAttachment then
+            setFlight(false, humNow, rootNow)
+        end
+        local standing = now < state.standUntil
+        if standing then
+            humNow:MoveTo(rootNow.Position)
+        else
+            if now - state.lastMoveTo > 0.12 then
+                state.lastMoveTo = now
+                local moveHeading =
+                    chooseMovementHeading(rootNow, characterNow)
+                humNow:MoveTo(rootNow.Position
+                    + headingVector(moveHeading) * 13)
+            end
+            -- Dash bursts (Caotico+): a short, hard lateral shove.
+            if diff.dashMax > 0 and now >= state.nextDashAt then
+                state.nextDashAt = now
+                    + randomBetween(diff.dashMin, diff.dashMax)
+                local dir = headingVector(
+                    state.heading + (math.random() < 0.5
+                        and -math.pi / 2 or math.pi / 2))
+                local v = rootNow.AssemblyLinearVelocity
+                rootNow.AssemblyLinearVelocity = Vector3.new(
+                    v.X + dir.X * 20, v.Y, v.Z + dir.Z * 20)
+                queueJump()
+            end
+        end
+
+        -- Jump execution: ChangeState is what this controller
+        -- honours; Humanoid.Jump is the fallback whisper.
+        if state.jumpQueued then
+            state.jumpQueued = false
+            if humNow.FloorMaterial ~= Enum.Material.Air then
+                state.jumpAttempts += 1
+                state.jumpCheckAt = now + 0.3
+                pcall(function()
+                    humNow:ChangeState(
+                        Enum.HumanoidStateType.Jumping)
+                end)
+                pcall(function() humNow.Jump = true end)
+            end
+        end
+        if state.jumpCheckAt and now >= state.jumpCheckAt then
+            state.jumpCheckAt = nil
+            local vy = rootNow.AssemblyLinearVelocity.Y
+            local name = ""
+            pcall(function() name = humNow:GetState().Name end)
+            if vy > 8 or name == "Jumping" or name == "Freefall" then
+                state.jumpsDone += 1
+            end
+        end
+
+        -- Anti-stuck: measured travel, not hopeful speed.
+        if not standing and now - progressAt >= 0.8 then
+            local traveled = (rootNow.Position - progressPos).Magnitude
+            progressPos = rootNow.Position
+            progressAt = now
+            if traveled < 0.45 then
+                stuckCount += 1
+                queueJump()
+                -- Score escape headings around the reverse direction
+                -- (not blindly into whatever is behind us): swap the
+                -- logical heading just for the probe, then restore it.
+                local savedHeading = state.heading
+                state.heading = savedHeading + math.pi * 0.8
+                state.recoveryHeading = chooseMovementHeading(
+                    rootNow, characterNow)
+                state.heading = savedHeading
+                state.recoveryUntil = now + 0.8
+                if stuckCount >= 2 then
+                    stuckCount = 0
+                    state.forceBehaviorSwitch = true
+                    print("[TargetBot] stuck twice -- new behavior")
+                end
+            else
+                stuckCount = 0
+            end
+        end
     end
 end)
 
--- Re-anchor where the alt respawns.
 local anchorConnection =
     LocalPlayer.CharacterAdded:Connect(function(character)
         task.wait(1)
         local rootNow = character:FindFirstChild("HumanoidRootPart")
         if rootNow then
             anchor = rootNow.Position
+            progressPos = rootNow.Position
+            progressAt = os.clock()
             print("[TargetBot] re-anchored at respawn")
         end
     end)
-table.insert(state, anchorConnection)
+
+local function cleanup()
+    state.active = false
+    SETTINGS.running = false
+    local _, humNow, rootNow = characterParts()
+    setFlight(false, humNow, rootNow)
+    if pumpConnection then pumpConnection:Disconnect() end
+    if anchorConnection then anchorConnection:Disconnect() end
+    if humNow then
+        pcall(function() humNow.WalkSpeed = originalWalkSpeed end)
+        pcall(function() humNow.PlatformStand = false end)
+        if rootNow then
+            pcall(function() humNow:MoveTo(rootNow.Position) end)
+        end
+    end
+    if state.gui then
+        pcall(function() state.gui:Destroy() end)
+    end
+end
+state.cleanup = cleanup
 
 --------------------------------------------------------------------------
 -- Mini menu
@@ -301,9 +606,7 @@ local gui = Instance.new("ScreenGui")
 gui.Name = "WurstTargetBot"
 gui.ResetOnSpawn = false
 state.gui = gui
-local parentOk = pcall(function()
-    gui.Parent = gethui()
-end)
+local parentOk = pcall(function() gui.Parent = gethui() end)
 if not parentOk or not gui.Parent then
     pcall(function()
         gui.Parent = LocalPlayer:WaitForChild("PlayerGui")
@@ -312,8 +615,8 @@ end
 
 local frame = Instance.new("Frame")
 frame.Name = "Panel"
-frame.Size = UDim2.fromOffset(190, 208)
-frame.Position = UDim2.new(0, 12, 0.5, -104)
+frame.Size = UDim2.fromOffset(196, 344)
+frame.Position = UDim2.new(0, 12, 0.5, -172)
 frame.BackgroundColor3 = Color3.fromRGB(24, 24, 28)
 frame.BackgroundTransparency = 0.12
 frame.BorderSizePixel = 0
@@ -323,7 +626,7 @@ frame.Parent = gui
 local title = Instance.new("TextLabel")
 title.Size = UDim2.new(1, 0, 0, 24)
 title.BackgroundColor3 = Color3.fromRGB(14, 14, 17)
-title.Text = "  TargetBot"
+title.Text = "  TargetBot v4"
 title.TextColor3 = Color3.fromRGB(240, 240, 240)
 title.TextXAlignment = Enum.TextXAlignment.Left
 title.Font = Enum.Font.SourceSansBold
@@ -345,93 +648,138 @@ title.InputEnded:Connect(function(input)
         dragging = false
     end
 end)
-RunService.RenderStepped:Connect(function()
+local dragConnection = RunService.RenderStepped:Connect(function()
     if dragging and dragStart then
         local mouse = LocalPlayer:GetMouse()
-        local delta = Vector2.new(
-            mouse.X - dragStart.X, mouse.Y - dragStart.Y)
         frame.Position = UDim2.new(
-            frameStart.X.Scale, frameStart.X.Offset + delta.X,
-            frameStart.Y.Scale, frameStart.Y.Offset + delta.Y)
+            frameStart.X.Scale,
+            frameStart.X.Offset + (mouse.X - dragStart.X),
+            frameStart.Y.Scale,
+            frameStart.Y.Offset + (mouse.Y - dragStart.Y))
     end
 end)
+table.insert(state, dragConnection)
 
-local statusLabel = Instance.new("TextLabel")
-statusLabel.Position = UDim2.fromOffset(8, 28)
-statusLabel.Size = UDim2.new(1, -16, 0, 18)
-statusLabel.BackgroundTransparency = 1
-statusLabel.TextColor3 = Color3.fromRGB(170, 220, 170)
-statusLabel.Font = Enum.Font.SourceSans
-statusLabel.TextSize = 13
-statusLabel.TextXAlignment = Enum.TextXAlignment.Left
-statusLabel.Text = "..."
-statusLabel.Parent = frame
+local function makeLabel(y, height, color, size)
+    local label = Instance.new("TextLabel")
+    label.Position = UDim2.fromOffset(8, y)
+    label.Size = UDim2.new(1, -16, 0, height)
+    label.BackgroundTransparency = 1
+    label.TextColor3 = color
+    label.Font = Enum.Font.SourceSans
+    label.TextSize = size
+    label.TextXAlignment = Enum.TextXAlignment.Left
+    label.Text = "..."
+    label.Parent = frame
+    return label
+end
+local status1 = makeLabel(28, 16, Color3.fromRGB(170, 220, 170), 13)
+local status2 = makeLabel(44, 16, Color3.fromRGB(190, 190, 200), 12)
 
-local function makeButton(y, label)
+local function makeButton(y, text)
     local button = Instance.new("TextButton")
     button.Position = UDim2.fromOffset(8, y)
-    button.Size = UDim2.new(1, -16, 0, 26)
+    button.Size = UDim2.new(1, -16, 0, 25)
     button.BackgroundColor3 = Color3.fromRGB(45, 45, 54)
     button.BorderSizePixel = 0
     button.TextColor3 = Color3.fromRGB(235, 235, 235)
     button.Font = Enum.Font.SourceSansBold
-    button.TextSize = 14
-    button.Text = label
+    button.TextSize = 13
+    button.Text = text
     button.Parent = frame
     return button
 end
 
-local function cycle(value, list)
+local function cycleIn(list, value)
     for index, item in ipairs(list) do
-        if item == value then
-            return list[index % #list + 1]
-        end
+        if item == value then return list[index % #list + 1] end
     end
     return list[1]
 end
 
-local runButton = makeButton(52, "Activo: SI")
+local runButton = makeButton(66, "Activo: SI")
 runButton.MouseButton1Click:Connect(function()
     SETTINGS.running = not SETTINGS.running
     runButton.Text = SETTINGS.running and "Activo: SI" or "Activo: NO"
 end)
-local diffButton = makeButton(84, "Dificultad: " .. SETTINGS.difficulty)
+local diffButton = makeButton(97, "Modo: Dificil")
 diffButton.MouseButton1Click:Connect(function()
-    SETTINGS.difficulty = cycle(
-        SETTINGS.difficulty, {"Normal", "Dificil", "Caotico"})
-    diffButton.Text = "Dificultad: " .. SETTINGS.difficulty
+    SETTINGS.difficulty = cycleIn(
+        {"Realista", "Dificil", "Caotico", "Imposible"},
+        SETTINGS.difficulty)
+    diffButton.Text = "Modo: " .. SETTINGS.difficulty
+    if SETTINGS.difficulty ~= "Imposible" then
+        state.flying = false
+        state.flightUntil = 0
+    end
 end)
-local jumpButton = makeButton(116, "Saltos: " .. SETTINGS.jumps)
+local jumpButton = makeButton(128, "Saltos: Normal")
 jumpButton.MouseButton1Click:Connect(function()
-    SETTINGS.jumps = cycle(
-        SETTINGS.jumps, {"Sin", "Normal", "Frecuentes"})
+    SETTINGS.jumps = cycleIn(
+        {"Sin", "Normal", "Frecuentes"}, SETTINGS.jumps)
     jumpButton.Text = "Saltos: " .. SETTINGS.jumps
 end)
-local distButton = makeButton(148, "Distancia: " .. SETTINGS.distance)
+local distButton = makeButton(159, "Distancia: Media")
 distButton.MouseButton1Click:Connect(function()
-    SETTINGS.distance = cycle(
-        SETTINGS.distance, {"Cerca", "Media", "Lejos"})
+    SETTINGS.distance = cycleIn(
+        {"Cerca", "Media", "Lejos"}, SETTINGS.distance)
     distButton.Text = "Distancia: " .. SETTINGS.distance
 end)
-local stopButton = makeButton(180, "DETENER Y QUITAR")
+local speedButton = makeButton(190, "Velocidad: Normal")
+speedButton.MouseButton1Click:Connect(function()
+    SETTINGS.speed = cycleIn(
+        {"Normal", "Rapida", "Extrema"}, SETTINGS.speed)
+    speedButton.Text = "Velocidad: " .. SETTINGS.speed
+end)
+local oppButton = makeButton(221, "Rival: Auto")
+oppButton.MouseButton1Click:Connect(function()
+    local choices = {"Auto"}
+    for _, player in ipairs(Players:GetPlayers()) do
+        if player ~= LocalPlayer then
+            table.insert(choices, player.Name)
+        end
+    end
+    SETTINGS.opponent = cycleIn(choices, SETTINGS.opponent)
+    local label = SETTINGS.opponent
+    if #label > 14 then label = string.sub(label, 1, 14) end
+    oppButton.Text = "Rival: " .. label
+end)
+local anchorButton = makeButton(252, "Reanclar aqui")
+anchorButton.MouseButton1Click:Connect(function()
+    local rootNow = select(3, characterParts())
+    if rootNow then
+        anchor = rootNow.Position
+        print("[TargetBot] anchor moved here")
+    end
+end)
+local stopButton = makeButton(283, "DETENER Y QUITAR")
 stopButton.BackgroundColor3 = Color3.fromRGB(120, 45, 45)
 stopButton.MouseButton1Click:Connect(function()
-    state.active = false
-    local _, humNow = characterParts()
-    if humNow then
-        pcall(function() humNow:Move(Vector3.zero, false) end)
-    end
-    gui:Destroy()
+    cleanup()
     print("[TargetBot] removed from the menu button")
 end)
+makeLabel(314, 16, Color3.fromRGB(140, 140, 150), 11).Text =
+    "Imposible = vuelo + dashes (test extremo)"
 
 task.spawn(function()
     while state.active do
-        statusLabel.Text = (SETTINGS.running and "Moviendo: " or "Pausa: ")
-            .. state.behavior .. "  [" .. state.mode .. "]"
+        local _, _, rootNow = characterParts()
+        local oppPlayer, oppRoot = getOpponent()
+        local distText = "-"
+        if rootNow and oppRoot then
+            distText = string.format("%.0f",
+                (oppRoot.Position - rootNow.Position).Magnitude)
+        end
+        status1.Text = (SETTINGS.running and "" or "PAUSA · ")
+            .. state.behaviorLabel
+            .. (os.clock() < state.recoveryUntil and " [desatasco]" or "")
+        status2.Text = string.format(
+            "Rival %s a %s · Saltos %d/%d",
+            oppPlayer and oppPlayer.Name or "?",
+            distText, state.jumpsDone, state.jumpAttempts)
         task.wait(0.25)
     end
 end)
 
-print("[TargetBot v3] started (MoveTo + steering). "
-    .. "Menu on screen. Inject again to remove.")
+print("[TargetBot v4] started. Menu on screen. "
+    .. "Inject again to remove everything.")
