@@ -1,40 +1,39 @@
 --[[
-    WURST TARGET BOT v4  (diagnostic, standalone -- for YOUR OWN alt)
+    WURST TARGET BOT v5  (diagnostic, standalone -- for YOUR OWN alt)
 
-    Built from the v3 live results:
-      - Humanoid:Move is ignored here; Humanoid:MoveTo works.
-      - v3 crashed into walls (it had no eyes), ignored its
-        distance setting outside orbit, and could lock onto one
-        heading forever when MoveTo pushed it into geometry.
-      - v3 jumped with Humanoid.Jump, which this controller does
-        not honour either; v4 jumps with ChangeState(Jumping).
+    Lo que demostraron las versiones anteriores:
+      - Humanoid:Move es ignorado por este controlador.
+      - Humanoid:MoveTo sí mueve al personaje.
+      - Humanoid.Jump tampoco basta; ChangeState(Jumping) es la vía.
+      - Ir en línea recta hacia un punto produce choques, atascos y
+        movimientos robóticos.
 
-    v4 therefore has:
-      * EYES: raycast probes ahead (and a floor probe) score a fan
-        of candidate headings every step; the MoveTo point follows
-        the best-scoring clear heading, so walls and ledges bend
-        the path instead of eating it.
-      * ANTI-STUCK: real displacement is measured; a body that is
-        told to move but does not travel jumps, reverses toward the
-        clearest heading, and if it happens twice, forces a new
-        behaviour. It cannot grind one wall forever.
-      * REAL DISTANCE: every behaviour composes its direction from
-        a tangential dodge + a radial correction toward the ring
-        distance set in the menu (Cerca/Media/Lejos) around the
-        rival, not just the orbit behaviour.
-      * A RIVAL PICKER: "Rival: Auto" (nearest) or a named player,
-        so another passer-by cannot steal the reference.
-      * IMPOSIBLE difficulty: besides the steering chaos, it adds
-        velocity dash bursts and a flight behaviour (LinearVelocity
-        hover with PlatformStand) for a few seconds at a time.
-        Those patterns are NOT what real players do -- they exist
-        as a stress test; ShootProbe data from them should be read
-        as such.
+    v5 cambia la arquitectura:
 
-    Menu: Activo, Modo (Realista/Dificil/Caotico/Imposible),
-    Saltos, Distancia, Velocidad, Rival, Reanclar, Detener.
-    Inject once to start; inject again (or the red button) to
-    remove bot, menu and every physics object it created.
+      * NAVEGACIÓN REAL: un planificador (10 Hz) puntúa 24 direcciones
+        con rayos paralelos al cuerpo (izquierda/centro/derecha),
+        altura baja y alta, y sonda de suelo en el punto destino. Elige
+        waypoint practicable, no solo "la dirección que quiero".
+      * MOVIMIENTO NATURAL: velocidad con aceleración y frenado,
+        tiempo de reacción al cambiar de intención (120-320 ms),
+        ruido suave continuo (suma de senos, no azar por tick),
+        giros limitados y paradas con inercia. Nada de tele-giros.
+      * WALLCHECKS COMPLETOS: pasillo de 3 rayos, rayo de rodillas
+        para decidir saltos de obstáculo, suelo y caída en el destino,
+        línea de visión rival->punto para buscar COBERTURA real, y
+        recuperación por anillos cuando todo está bloqueado.
+      * ANTI-ATASCO POR DESPLAZAMIENTO REAL: si el cuerpo no viaja,
+        salta, escapa por el hueco mejor puntuado, cambia de patrón y,
+        en Imposible, puede salir con un blink.
+      * IMPOSIBLE: dash con LinearVelocity temporal, doble salto con
+        control aéreo, blink a punto validado (pasillo + suelo) y
+        vuelo con altura sobre el terreno, velocidad suavizada y
+        evasión 3D. Es un test extremo: no representa a un jugador.
+
+    Menú: Activo, Modo, Patrón, Saltos, Distancia, Velocidad,
+    Extras (dash/vuelo/blink), Rival, Reanclar y Detener.
+    Inyectar una vez para empezar; otra vez (o el botón rojo) para
+    retirar bot, menú y todos los objetos físicos creados.
 ]]
 
 local Players = game:GetService("Players")
@@ -61,16 +60,26 @@ local SETTINGS = {
     distance = "Media",
     speed = "Normal",
     opponent = "Auto",
+    extras = "Todo",
+    pattern = "Auto",
 }
-local DIFFICULTY = {
-    Realista = {turn = 240, flipMin = 1.0, flipMax = 1.7,
-        jumpMin = 2.8, jumpMax = 4.5, dashMin = 0, dashMax = 0},
-    Dificil = {turn = 360, flipMin = 0.65, flipMax = 1.1,
-        jumpMin = 1.4, jumpMax = 2.6, dashMin = 3.5, dashMax = 6},
-    Caotico = {turn = 540, flipMin = 0.38, flipMax = 0.72,
-        jumpMin = 0.65, jumpMax = 1.3, dashMin = 1.6, dashMax = 3.2},
-    Imposible = {turn = 760, flipMin = 0.22, flipMax = 0.5,
-        jumpMin = 0.35, jumpMax = 0.8, dashMin = 0.8, dashMax = 1.8},
+-- turn: giro maximo (grados/s). reaction: retardo humano al cambiar
+-- de intencion. accel: rampa de velocidad (fraccion/s). flip: ritmo
+-- de cambio de lado. jump: intervalo entre saltos. dash: intervalo
+-- entre acelerones (0 = nunca).
+local PROFILES = {
+    Realista = {turn = 215, reaction = 0.26, accel = 1.5,
+        flipMin = 1.0, flipMax = 1.8, jumpMin = 2.8, jumpMax = 4.6,
+        dashMin = 0, dashMax = 0, noise = 0.16},
+    Dificil = {turn = 340, reaction = 0.18, accel = 2.4,
+        flipMin = 0.6, flipMax = 1.1, jumpMin = 1.3, jumpMax = 2.6,
+        dashMin = 4, dashMax = 7, noise = 0.24},
+    Caotico = {turn = 540, reaction = 0.11, accel = 3.6,
+        flipMin = 0.36, flipMax = 0.7, jumpMin = 0.6, jumpMax = 1.25,
+        dashMin = 1.8, dashMax = 3.4, noise = 0.38},
+    Imposible = {turn = 780, reaction = 0.05, accel = 5.5,
+        flipMin = 0.2, flipMax = 0.48, jumpMin = 0.32, jumpMax = 0.75,
+        dashMin = 0.8, dashMax = 1.9, noise = 0.55},
 }
 local JUMP_MULT = {Sin = 0, Normal = 1, Frecuentes = 0.55}
 local DISTANCE = {Cerca = 14, Media = 24, Lejos = 36}
@@ -79,29 +88,53 @@ local SPEEDS = {Normal = 16, Rapida = 22, Extrema = 30}
 local state = {
     active = true,
     heading = math.random() * math.pi * 2,
-    targetHeading = 0,
+    desiredHeading = 0,
+    moveHeading = 0,
+    waypoint = nil,
+    wallClearance = 99,
+    speedScale = 0,
+    desiredIntensity = 1,
     behavior = "strafe",
     behaviorLabel = "Strafe lateral",
+    patternUntil = 0,
+    pendingHeading = nil,
+    reactionAt = 0,
     jumpQueued = false,
+    obstacleJump = false,
     nextJumpAt = os.clock() + 2,
     jumpAttempts = 0,
     jumpsDone = 0,
     jumpCheckAt = nil,
+    doubleJumpReady = false,
     nextDashAt = os.clock() + 4,
+    dashUntil = 0,
+    dashDirection = Vector3.zero,
+    dashAttachment = nil,
+    dashVelocity = nil,
+    nextBlinkAt = os.clock() + 6,
+    blinkCount = 0,
     flying = false,
     flightUntil = 0,
     flightBaseY = 0,
     flightAttachment = nil,
     flightVelocity = nil,
+    flightVelocityValue = Vector3.zero,
     standUntil = 0,
-    forceBehaviorSwitch = false,
+    coverPoint = nil,
+    coverUntil = 0,
+    forceSwitch = false,
     recoveryUntil = 0,
     recoveryHeading = 0,
+    lastReplan = 0,
     lastMoveTo = 0,
+    noiseA = math.random() * 20,
+    noiseB = math.random() * 20,
+    noiseC = math.random() * 20,
     gui = nil,
     cleanup = nil,
 }
-state.targetHeading = state.heading
+state.desiredHeading = state.heading
+state.moveHeading = state.heading
 genv.WURST_TARGET_BOT = state
 
 local function characterParts()
@@ -125,8 +158,8 @@ local function getOpponent()
     if SETTINGS.opponent ~= "Auto" then
         local named = Players:FindFirstChild(SETTINGS.opponent)
         if named and named ~= LocalPlayer and named.Character then
-            local root =
-                named.Character:FindFirstChild("HumanoidRootPart")
+            local root = named.Character
+                :FindFirstChild("HumanoidRootPart")
             if root then return named, root end
         end
     end
@@ -135,13 +168,14 @@ local function getOpponent()
     local best, bestRoot, bestDistance = nil, nil, math.huge
     for _, player in ipairs(Players:GetPlayers()) do
         if player ~= LocalPlayer and player.Character then
-            local root =
-                player.Character:FindFirstChild("HumanoidRootPart")
+            local root = player.Character
+                :FindFirstChild("HumanoidRootPart")
             if root then
                 local distance =
                     (root.Position - myRoot.Position).Magnitude
                 if distance < bestDistance then
-                    best, bestRoot, bestDistance = player, root, distance
+                    best, bestRoot, bestDistance =
+                        player, root, distance
                 end
             end
         end
@@ -149,26 +183,202 @@ local function getOpponent()
     return best, bestRoot
 end
 
-local function wrapAngle(angle)
-    while angle > math.pi do angle -= math.pi * 2 end
-    while angle < -math.pi do angle += math.pi * 2 end
-    return angle
+local function wrapAngle(a)
+    while a > math.pi do a -= math.pi * 2 end
+    while a < -math.pi do a += math.pi * 2 end
+    return a
 end
-local function wrapHeading()
-    state.heading = wrapAngle(state.heading)
-    state.targetHeading = wrapAngle(state.targetHeading)
+local function vecFromAngle(a)
+    return Vector3.new(math.sin(a), 0, math.cos(a))
 end
-local function headingVector(heading)
-    return Vector3.new(math.sin(heading), 0, math.cos(heading))
+local function angleOf(v)
+    return math.atan2(v.X, v.Z)
+end
+local function flatUnit(v, fallback)
+    local flat = Vector3.new(v.X, 0, v.Z)
+    if flat.Magnitude < 0.001 then return fallback end
+    return flat.Unit
 end
 local function randomBetween(a, b)
     return a + math.random() * (b - a)
 end
+local function smoothNoise(t)
+    return math.sin(t * 0.7 + state.noiseA) * 0.55
+        + math.sin(t * 1.7 + state.noiseB) * 0.3
+        + math.sin(t * 3.1 + state.noiseC) * 0.15
+end
+local function extrasAllow(name)
+    if SETTINGS.extras == "Todo" then return true end
+    if SETTINGS.extras == "Sin extras" then return false end
+    return SETTINGS.extras == name
+end
 
 --------------------------------------------------------------------------
--- Flight (Imposible only). Everything it instances is named and
--- removed by setFlight(false) / cleanup.
+-- Raycast helpers. El filtro excluye a TODOS los personajes: un rival
+-- no es una pared, y nuestro propio cuerpo tampoco.
 --------------------------------------------------------------------------
+local rayParams = RaycastParams.new()
+rayParams.FilterType = Enum.RaycastFilterType.Exclude
+rayParams.IgnoreWater = true
+
+local function refreshFilter(characterNow)
+    local filter = {}
+    if characterNow then table.insert(filter, characterNow) end
+    for _, player in ipairs(Players:GetPlayers()) do
+        if player.Character then
+            table.insert(filter, player.Character)
+        end
+    end
+    rayParams.FilterDescendantsInstances = filter
+end
+
+local function cast(origin, direction)
+    local result = workspace:Raycast(origin, direction, rayParams)
+    if not result then return nil, direction.Magnitude end
+    -- Geometria sin colision (decoracion consultable) no es pared.
+    if result.Instance and result.Instance:IsA("BasePart")
+        and not result.Instance.CanCollide
+        and result.Instance.ClassName ~= "Terrain" then
+        return nil, direction.Magnitude
+    end
+    return result, result.Distance
+end
+
+local function wallDistance(rootPos, dirVec, length, yOffset)
+    local _, dist = cast(
+        rootPos + Vector3.new(0, yOffset, 0), dirVec * length)
+    return dist
+end
+
+-- Distancia libre del pasillo: tres rayos paralelos (ancho del cuerpo).
+local function corridorClearance(rootPos, dirVec, length)
+    local perp = Vector3.new(dirVec.Z, 0, -dirVec.X)
+    local minDist = length
+    for _, side in ipairs({-1.4, 0, 1.4}) do
+        local origin = rootPos + perp * side
+            + Vector3.new(0, 2, 0)
+        local _, dist = cast(origin, dirVec * length)
+        if dist < minDist then minDist = dist end
+    end
+    return minDist
+end
+
+local function floorAt(rootPos, point)
+    local hit, _ = cast(
+        point + Vector3.new(0, 4, 0), Vector3.new(0, -11, 0))
+    if not hit then return nil end
+    return hit.Position.Y
+end
+
+--------------------------------------------------------------------------
+-- Planificador: puntua direcciones alrededor de la deseada.
+-- Devuelve waypoint y deja en state la holgura de pared observada.
+--------------------------------------------------------------------------
+local function scoreDirection(rootPos, angle, desiredAngle, probeLen)
+    local dir = vecFromAngle(angle)
+    local clearance = corridorClearance(rootPos, dir, probeLen)
+    local reach = math.clamp(clearance - 1.4, 2.2, probeLen)
+    local point = rootPos + dir * reach
+    local floorY = state.flying and rootPos.Y or floorAt(rootPos, point)
+    local align = math.cos(wrapAngle(angle - desiredAngle))
+    local turnCost = math.abs(wrapAngle(angle - state.moveHeading))
+    local score = align * 46 + clearance * 3.2 - turnCost * 9
+    if clearance <= 1.7 then score -= 30 end
+    if not state.flying then
+        if floorY == nil then
+            score -= 26
+        elseif rootPos.Y - floorY > 7 then
+            score -= 18 -- caida grande: solo si no queda otra
+        end
+    end
+    -- Rayo de rodillas: obstaculo bajo con paso libre arriba y suelo
+    -- al otro lado = salto natural, no rodeo. Solo cuenta si esta
+    -- acaba siendo la direccion elegida.
+    local knee = wallDistance(rootPos, dir, 4, 0.6)
+    local head = wallDistance(rootPos, dir, 4, 3.4)
+    local jumpable = knee < 3 and head > 4 and floorY ~= nil
+        and math.abs(wrapAngle(angle - desiredAngle)) < 0.5
+    if jumpable then
+        score += 14
+    end
+    return score, point, clearance, jumpable
+end
+
+local function planPath(rootNow, characterNow)
+    refreshFilter(characterNow)
+    local desired = state.desiredHeading
+    if os.clock() < state.recoveryUntil then
+        desired = state.recoveryHeading
+    end
+    local probeLen = 12
+    local bestScore, bestPoint, bestAngle, bestClear =
+        -math.huge, nil, desired, probeLen
+    local bestJumpable = false
+    for step = 0, 23 do
+        local offset = (step - 11.5) / 11.5 * math.pi
+        local angle = desired + offset
+        local score, point, clearance, jumpable =
+            scoreDirection(rootNow.Position, angle, desired, probeLen)
+        -- Histéresis: cambiar de hueco cada tick es lo que parece
+        -- robot; el camino anterior recibe una pequena ventaja.
+        if math.abs(wrapAngle(angle - state.moveHeading)) < 0.2 then
+            score += 4
+        end
+        if score > bestScore then
+            bestScore, bestPoint, bestAngle, bestClear, bestJumpable =
+                score, point, angle, clearance, jumpable
+        end
+    end
+    state.moveHeading = bestAngle
+    state.waypoint = bestPoint
+    state.wallClearance = bestClear
+    state.obstacleJump = bestJumpable
+    return bestPoint
+end
+
+-- Punto con linea de vision bloqueada desde el rival: cobertura real.
+local function findCoverPoint(rootNow, oppRoot)
+    refreshFilter(select(1, characterParts()))
+    local bestPoint, bestScore = nil, -math.huge
+    for step = 0, 15 do
+        local angle = step / 16 * math.pi * 2
+        for _, dist in ipairs({7, 11, 15, 20}) do
+            local point = rootNow.Position + vecFromAngle(angle) * dist
+            local floorY = floorAt(rootNow.Position, point)
+            if floorY ~= nil then
+                local eye = oppRoot.Position + Vector3.new(0, 2, 0)
+                local targetPos = point + Vector3.new(0, 2, 0)
+                local los, losDist = cast(eye, targetPos - eye)
+                local blocked = los ~= nil
+                    and losDist < (targetPos - eye).Magnitude - 2.5
+                if blocked then
+                    local score = 30 - dist * 0.7
+                        - (point - rootNow.Position).Magnitude * 0.4
+                    if score > bestScore then
+                        bestScore, bestPoint = score, point
+                    end
+                end
+            end
+        end
+    end
+    return bestPoint
+end
+
+--------------------------------------------------------------------------
+-- Objetos fisicos temporales (dash / vuelo), siempre con nombre y
+-- siempre destruidos al desactivarse.
+--------------------------------------------------------------------------
+local function destroyPhysics(name1, name2)
+    if state[name1] then
+        pcall(function() state[name1]:Destroy() end)
+        state[name1] = nil
+    end
+    if state[name2] then
+        pcall(function() state[name2]:Destroy() end)
+        state[name2] = nil
+    end
+end
+
 local function setFlight(enabled, humNow, rootNow)
     if enabled then
         if not rootNow or not humNow then return end
@@ -193,14 +403,7 @@ local function setFlight(enabled, humNow, rootNow)
         humNow.PlatformStand = true
         state.flying = true
     else
-        if state.flightVelocity then
-            pcall(function() state.flightVelocity:Destroy() end)
-            state.flightVelocity = nil
-        end
-        if state.flightAttachment then
-            pcall(function() state.flightAttachment:Destroy() end)
-            state.flightAttachment = nil
-        end
+        destroyPhysics("flightVelocity", "flightAttachment")
         if humNow then
             pcall(function() humNow.PlatformStand = false end)
         end
@@ -208,319 +411,463 @@ local function setFlight(enabled, humNow, rootNow)
     end
 end
 
---------------------------------------------------------------------------
--- Eyes: score a fan of candidate headings by wall clearance and
--- floor presence, preferring the one closest to the wanted heading.
---------------------------------------------------------------------------
-local raycastParams = RaycastParams.new()
-raycastParams.FilterType = Enum.RaycastFilterType.Exclude
-raycastParams.IgnoreWater = true
+local function setDash(enabled, rootNow, direction)
+    if enabled then
+        if not rootNow then return end
+        if not state.dashAttachment
+            or not state.dashAttachment.Parent then
+            state.dashAttachment = Instance.new("Attachment")
+            state.dashAttachment.Name = "TargetBotDashAttachment"
+            state.dashAttachment.Parent = rootNow
+        end
+        if not state.dashVelocity or not state.dashVelocity.Parent then
+            state.dashVelocity = Instance.new("LinearVelocity")
+            state.dashVelocity.Name = "TargetBotDashVelocity"
+            state.dashVelocity.Attachment0 = state.dashAttachment
+            state.dashVelocity.RelativeTo =
+                Enum.ActuatorRelativeTo.World
+            state.dashVelocity.VelocityConstraintMode =
+                Enum.VelocityConstraintMode.Vector
+            state.dashVelocity.MaxForce = 90000
+            state.dashVelocity.Parent = rootNow
+        end
+        local speed = (SPEEDS[SETTINGS.speed] or 16) * 2.6
+        state.dashVelocity.VectorVelocity = Vector3.new(
+            direction.X * speed,
+            math.max(rootNow.AssemblyLinearVelocity.Y, 2),
+            direction.Z * speed)
+    else
+        destroyPhysics("dashVelocity", "dashAttachment")
+    end
+end
 
-local function refreshRaycastFilter(characterNow)
-    local filter = {}
-    if characterNow then table.insert(filter, characterNow) end
-    for _, player in ipairs(Players:GetPlayers()) do
-        if player.Character then
-            table.insert(filter, player.Character)
+local function tryBlink(rootNow, characterNow)
+    -- Destino validado: pasillo libre, suelo y espacio al llegar.
+    refreshFilter(characterNow)
+    local sides = {math.pi / 2, -math.pi / 2, math.pi,
+        math.pi / 4, -math.pi / 4}
+    for _, offset in ipairs(sides) do
+        local angle = state.moveHeading + offset
+            + math.rad(math.random(-20, 20))
+        local dir = vecFromAngle(angle)
+        local length = randomBetween(8, 14)
+        local clearance = corridorClearance(
+            rootNow.Position, dir, length + 2)
+        if clearance > length then
+            local dest = rootNow.Position + dir * length
+            local floorY = floorAt(rootNow.Position, dest)
+            if floorY ~= nil
+                and corridorClearance(dest, dir, 3) > 2.4 then
+                local look = dest + vecFromAngle(state.moveHeading)
+                rootNow.CFrame = CFrame.lookAt(
+                    Vector3.new(dest.X, floorY + 3.2, dest.Z), look)
+                state.blinkCount += 1
+                return true
+            end
         end
     end
-    raycastParams.FilterDescendantsInstances = filter
-end
-
-local function probeClearance(rootNow, heading, probeLength)
-    local direction = headingVector(heading)
-    local origin = rootNow.Position + Vector3.new(0, 2, 0)
-    local hit = workspace:Raycast(
-        origin, direction * probeLength, raycastParams)
-    return hit and hit.Distance or probeLength
-end
-
-local function hasFloor(rootNow, heading)
-    local ahead = rootNow.Position
-        + headingVector(heading) * 5 + Vector3.new(0, 3, 0)
-    local hit = workspace:Raycast(
-        ahead, Vector3.new(0, -10, 0), raycastParams)
-    return hit ~= nil
-end
-
-local function chooseMovementHeading(rootNow, characterNow)
-    if os.clock() < state.recoveryUntil then
-        return state.recoveryHeading
-    end
-    refreshRaycastFilter(characterNow)
-    local probeLength = 9
-    local offsets = {0, 0.45, -0.45, 0.9, -0.9, 1.5, -1.5, 2.4, -2.4, math.pi}
-    local bestHeading, bestScore = state.heading, -math.huge
-    for _, offset in ipairs(offsets) do
-        local candidate = state.heading + offset
-        local clearance = probeClearance(rootNow, candidate, probeLength)
-        local score = clearance - math.abs(offset) * 2.2
-        if clearance <= 1.6 then score -= 25 end
-        if not state.flying and not hasFloor(rootNow, candidate) then
-            score -= 7
-        end
-        if score > bestScore then
-            bestScore, bestHeading = score, candidate
-        end
-    end
-    return bestHeading
+    return false
 end
 
 --------------------------------------------------------------------------
--- Brain: target heading from behaviour + rival-relative geometry.
+-- Cerebro: intencion (direccion deseada) segun patron y rival.
 --------------------------------------------------------------------------
 local BEHAVIOR_LABELS = {
     strafe = "Strafe lateral", orbit = "Orbitando",
     zigzagIn = "Zigzag hacia ti", zigzagOut = "Zigzag alejandose",
     rush = "Rusheando", wander = "Deambulando",
-    stopGo = "Paradas y arranques", fly = "VOLANDO",
-    airChaos = "Caos aereo",
+    stopGo = "Paradas y arranques", cover = "Buscando cobertura",
+    fake = "Amago y cambio", fly = "VOLANDO",
+    airChaos = "Caos aereo", blinkMad = "Blink y dash",
+}
+local PATTERN_POOL = {
+    "strafe", "orbit", "zigzagIn", "cover", "fake",
+    "zigzagOut", "rush", "wander", "stopGo", "strafe",
+}
+local PATTERN_POOL_IMPOSIBLE = {
+    "strafe", "fly", "zigzagIn", "airChaos", "cover",
+    "blinkMad", "orbit", "fake", "strafe", "fly",
 }
 
-task.spawn(function()
+local brainThread = task.spawn(function()
     local behaviorUntil = 0
     local flipAt = 0
     local side = 1
-    local index = 0
-    local stopStanding = false
-    local stopSwitchAt = 0
+    local poolIndex = 0
+    local stopStanding, stopSwitchAt = false, 0
+    local fakeFlipped = false
     while state.active do
         task.wait(0.08)
         local _, humNow, rootNow = characterParts()
         local now = os.clock()
+        local profile = PROFILES[SETTINGS.difficulty]
         if not SETTINGS.running or not humNow
             or humNow.Health <= 0 or not rootNow then
-            state.targetHeading = state.heading
+            state.desiredHeading = state.heading
+            state.desiredIntensity = 0
             state.flying = false
         else
-            local diff = DIFFICULTY[SETTINGS.difficulty]
-            if now >= behaviorUntil or state.forceBehaviorSwitch then
-                state.forceBehaviorSwitch = false
-                local pool = {"strafe", "orbit", "zigzagIn",
-                    "zigzagOut", "rush", "wander", "stopGo", "strafe"}
-                if SETTINGS.difficulty == "Imposible" then
-                    pool = {"strafe", "fly", "zigzagIn", "airChaos",
-                        "orbit", "rush", "strafe", "fly"}
-                end
-                index = index % #pool + 1
-                state.behavior = pool[index]
-                state.behaviorLabel =
-                    BEHAVIOR_LABELS[state.behavior] or state.behavior
-                behaviorUntil = now + randomBetween(7, 12)
+            state.desiredIntensity = 1
+            local forced = SETTINGS.pattern ~= "Auto"
+            local wanted = forced and SETTINGS.pattern or nil
+            if forced and state.behavior ~= wanted then
+                state.behavior = wanted
+                behaviorUntil = now + 3600
                 flipAt = now
+                fakeFlipped = false
+                if wanted == "fly" then
+                    state.flightBaseY = rootNow.Position.Y + 9
+                    state.flightUntil = now + 3600
+                end
+                if wanted == "cover" then
+                    state.coverPoint = nil
+                    state.coverUntil = 0
+                end
+            elseif not forced
+                and (now >= behaviorUntil or state.forceSwitch) then
+                state.forceSwitch = false
+                local pool = SETTINGS.difficulty == "Imposible"
+                    and PATTERN_POOL_IMPOSIBLE or PATTERN_POOL
+                poolIndex = poolIndex % #pool + 1
+                state.behavior = pool[poolIndex]
+                local duration = SETTINGS.difficulty == "Realista"
+                    and randomBetween(5, 10)
+                    or SETTINGS.difficulty == "Dificil"
+                        and randomBetween(4, 8)
+                        or randomBetween(2.5, 5.5)
+                behaviorUntil = now + duration
+                flipAt = now
+                fakeFlipped = false
                 if state.behavior == "fly" then
                     state.flightBaseY = rootNow.Position.Y + 9
                     state.flightUntil = behaviorUntil
-                elseif state.behavior == "stopGo" then
-                    state.standUntil = now + randomBetween(0.4, 0.9)
                 end
+                if state.behavior == "cover" then
+                    state.coverPoint = nil
+                    state.coverUntil = 0
+                end
+                if state.behavior == "stopGo" then
+                    stopStanding, stopSwitchAt = false, now
+                end
+                -- Reaccion humana: la nueva intencion no entra de
+                -- golpe; se anuncia y el pump la aplica tras el retardo.
+                state.reactionAt = now + profile.reaction
                 print("[TargetBot] behavior: " .. state.behavior)
             end
+            state.behaviorLabel =
+                BEHAVIOR_LABELS[state.behavior] or state.behavior
             state.flying = state.behavior == "fly"
                 and now < state.flightUntil
+                and SETTINGS.difficulty == "Imposible"
+                and extrasAllow("SoloVuelo")
 
             local oppPlayer, oppRoot = getOpponent()
             local behavior = state.behavior
+
+            -- Paradas: ciclos de quieto/moverse con tiempos humanos.
             if behavior == "stopGo" then
                 if now >= stopSwitchAt then
                     stopStanding = not stopStanding
                     stopSwitchAt = now + (stopStanding
-                        and randomBetween(0.35, 0.85)
-                        or randomBetween(0.8, 1.7))
+                        and randomBetween(0.35, 0.9)
+                        or randomBetween(0.8, 1.8))
                     state.standUntil = stopStanding
                         and stopSwitchAt or 0
                 end
                 if stopStanding then
-                    state.targetHeading = state.heading
+                    state.desiredIntensity = 0
                 end
             end
-            if behavior == "stopGo" and now < state.standUntil then
-                state.targetHeading = state.heading
-            elseif oppRoot then
-                local away = rootNow.Position - oppRoot.Position
+
+            if behavior == "cover" and oppRoot then
+                if not state.coverPoint or now >= state.coverUntil then
+                    state.coverPoint =
+                        findCoverPoint(rootNow, oppRoot)
+                    state.coverUntil = now + 6
+                end
+                if state.coverPoint then
+                    local toCover = state.coverPoint
+                        - rootNow.Position
+                    if Vector3.new(toCover.X, 0, toCover.Z).Magnitude
+                        < 2.2 then
+                        state.standUntil = now + 0.8
+                        state.desiredIntensity = 0
+                        state.coverPoint = nil
+                        state.coverUntil = now + 1
+                        state.forceSwitch = true
+                    else
+                        state.desiredHeading = angleOf(toCover)
+                    end
+                else
+                    behavior = "strafe"
+                end
+            end
+
+            if behavior ~= "cover" and oppRoot
+                and not (behavior == "stopGo" and stopStanding) then
+                -- El rival tambien se mueve: se apunta a donde va a
+                -- estar dentro de ~0.25 s, como hace un jugador.
+                local oppVel = oppRoot.AssemblyLinearVelocity
+                local oppPredicted = oppRoot.Position + Vector3.new(
+                    oppVel.X, 0, oppVel.Z) * 0.25
+                local away = rootNow.Position - oppPredicted
                 local flat = Vector3.new(away.X, 0, away.Z)
                 local dist = flat.Magnitude
-                local awayUnit = dist > 0.01
-                    and flat.Unit or headingVector(state.heading)
+                local awayUnit = dist > 0.01 and flat.Unit
+                    or vecFromAngle(state.heading)
                 local towardUnit = -awayUnit
                 local tangent = Vector3.new(
                     awayUnit.Z, 0, -awayUnit.X)
                 local desired = DISTANCE[SETTINGS.distance]
-                -- +1 = too far (close in), -1 = too close (back off)
-                local radial = math.clamp((dist - desired) / 10, -1, 1)
+                -- Banda muerta: dentro de +-3 studs no hay correccion
+                -- radial; fuera, rampa hasta 1.
+                local radial = 0
+                if dist > desired + 3 then
+                    radial = math.clamp((dist - desired) / 10, 0, 1)
+                elseif dist < desired - 3 then
+                    radial = -math.clamp((desired - dist) / 10, 0, 1)
+                end
 
-                local tangentWeight, radialWeight = 1, 0.75
+                local tangentWeight, radialWeight = 1, 0.8
                 if behavior == "zigzagIn" then
-                    radial = math.max(radial, 0.8)
-                    tangentWeight = 0.9
+                    radial = math.max(radial, 0.85)
+                    tangentWeight = 0.95
                 elseif behavior == "zigzagOut" then
-                    radial = math.min(radial, -0.8)
-                    tangentWeight = 0.9
+                    radial = math.min(radial, -0.85)
+                    tangentWeight = 0.95
                 elseif behavior == "rush" then
                     radial = 1
-                    tangentWeight = 0.25
+                    tangentWeight = 0.3
                 elseif behavior == "orbit" then
-                    radialWeight = 1.3
+                    radialWeight = 1.35
                 elseif behavior == "wander" then
                     tangentWeight = 0.4
                     radialWeight = 0.3
+                elseif behavior == "fake" then
+                    tangentWeight = 1
+                    radialWeight = 0.5
                 end
                 if behavior == "strafe" or behavior == "zigzagIn"
                     or behavior == "zigzagOut"
-                    or behavior == "orbit" then
+                    or behavior == "orbit"
+                    or behavior == "blinkMad" then
                     if now >= flipAt then
                         side = -side
                         flipAt = now + randomBetween(
-                            diff.flipMin, diff.flipMax)
+                            profile.flipMin, profile.flipMax)
                         if behavior == "orbit"
-                            and math.random() > 0.3 then
-                            side = -side -- orbit mostly holds its side
+                            and math.random() > 0.35 then
+                            side = -side
                         end
+                    end
+                elseif behavior == "fake" then
+                    local phaseLen = behaviorUntil - now
+                    if not fakeFlipped and phaseLen < 2.2 then
+                        side = -side
+                        fakeFlipped = true
                     end
                 end
                 local move = tangent * (side * tangentWeight)
                     + towardUnit * (radial * radialWeight)
-                if behavior == "wander" and now >= flipAt then
-                    flipAt = now + randomBetween(0.4, 0.9)
-                    state.targetHeading = state.heading
-                        + math.rad(math.random(-70, 70))
-                elseif move.Magnitude > 0.05 then
-                    state.targetHeading =
-                        math.atan2(move.X, move.Z)
+                if dist < 6 then
+                    -- Pegado al rival: retroceso franco.
+                    move = awayUnit * 1.2 + tangent * (side * 0.6)
                 end
-            else
-                -- No rival visible: smooth wander around the anchor.
+                if move.Magnitude > 0.05 then
+                    local noiseAngle = smoothNoise(now)
+                        * profile.noise
+                    local angle = angleOf(move) + noiseAngle
+                    if now >= (state.reactionAt or 0) then
+                        state.desiredHeading = angle
+                    else
+                        state.pendingHeading = angle
+                    end
+                end
+            elseif behavior ~= "cover" then
                 if now >= flipAt then
                     flipAt = now + randomBetween(0.5, 1.0)
-                    state.targetHeading = state.heading
+                    state.desiredHeading = state.heading
                         + math.rad(math.random(-80, 80))
                 end
             end
+            if state.pendingHeading
+                and now >= (state.reactionAt or 0) then
+                state.desiredHeading = state.pendingHeading
+                state.pendingHeading = nil
+            end
 
-            -- Anchor leash overrides everything but flight.
+            -- Sujecion al ancla (no durante el vuelo).
             if not state.flying then
                 local flat = Vector3.new(
                     rootNow.Position.X - anchor.X, 0,
                     rootNow.Position.Z - anchor.Z)
                 if flat.Magnitude > 55 then
-                    state.targetHeading = math.atan2(-flat.X, -flat.Z)
+                    state.desiredHeading =
+                        math.atan2(-flat.X, -flat.Z)
                     state.behaviorLabel = "Volviendo al ancla"
-                elseif behavior ~= "stopGo" or now >= state.standUntil then
-                    state.behaviorLabel =
-                        BEHAVIOR_LABELS[behavior] or behavior
                 end
             end
 
-            -- Jump schedule (independent of behaviours, so it
-            -- cannot silently starve like v3's flip-tied jumps).
+            -- Saltos programados, independientes del strafe.
             local jumpMult = JUMP_MULT[SETTINGS.jumps]
             if jumpMult > 0 and not state.flying
                 and now >= state.nextJumpAt then
                 state.jumpQueued = true
-                local interval = randomBetween(
-                    diff.jumpMin, diff.jumpMax) * jumpMult
-                state.nextJumpAt = now + interval
+                state.nextJumpAt = now + randomBetween(
+                    profile.jumpMin, profile.jumpMax) * jumpMult
             end
         end
     end
 end)
 
 --------------------------------------------------------------------------
--- Steering + actuation pump.
+-- Bomba: direccion suave, velocidad con inercia, saltos, dash,
+-- blink, vuelo y anti-atasco por desplazamiento real.
 --------------------------------------------------------------------------
 local pumpConnection
+local anchorConnection
 local progressPos, progressAt, stuckCount = root0.Position, os.clock(), 0
-
-local function queueJump()
-    state.jumpQueued = true
-end
 
 pumpConnection = RunService.Heartbeat:Connect(function(dt)
     if not state.active then return end
     local characterNow, humNow, rootNow = characterParts()
     if not humNow or not rootNow then return end
+    local now = os.clock()
     if humNow.Health <= 0 then
         setFlight(false, humNow, rootNow)
+        setDash(false, rootNow)
         return
     end
     if not SETTINGS.running then
         setFlight(false, humNow, rootNow)
+        setDash(false, rootNow)
         humNow:MoveTo(rootNow.Position)
         return
     end
+    dt = math.clamp(dt, 1 / 240, 1 / 20)
+    local profile = PROFILES[SETTINGS.difficulty]
 
-    local now = os.clock()
-    local diff = DIFFICULTY[SETTINGS.difficulty]
-
-    -- WalkSpeed from the menu (the game may reset it; re-assert).
+    -- Inercia de velocidad: la escala sube/baja con aceleracion
+    -- limitada; el WalkSpeed efectivo la sigue.
+    local accelStep = profile.accel * dt
+    state.speedScale = state.speedScale + math.clamp(
+        state.desiredIntensity - state.speedScale,
+        -accelStep, accelStep)
     if not state.flying then
-        local wanted = SPEEDS[SETTINGS.speed]
-        if wanted and math.abs(humNow.WalkSpeed - wanted) > 0.5 then
+        local wanted = (SPEEDS[SETTINGS.speed] or 16)
+            * math.clamp(state.speedScale, 0.2, 1.12)
+        if math.abs(humNow.WalkSpeed - wanted) > 0.6 then
             humNow.WalkSpeed = wanted
         end
     end
 
-    -- Turn the logical heading toward the target at the capped rate.
-    wrapHeading()
-    local delta = wrapAngle(state.targetHeading - state.heading)
-    local step = math.rad(diff.turn) * math.max(dt, 1 / 240)
-    state.heading = state.heading + math.clamp(delta, -step, step)
-    wrapHeading()
+    -- Giro suave hacia la direccion deseada.
+    local delta = wrapAngle(state.desiredHeading - state.heading)
+    local maxTurn = math.rad(profile.turn) * dt
+    state.heading = wrapAngle(
+        state.heading + math.clamp(delta, -maxTurn, maxTurn))
 
     state.flying = state.flying
         and SETTINGS.difficulty == "Imposible"
+        and extrasAllow("SoloVuelo")
 
     if state.flying then
         if not state.flightVelocity
             or not state.flightVelocity.Parent then
             setFlight(true, humNow, rootNow)
             state.flightBaseY = rootNow.Position.Y + 9
+            state.flightVelocityValue = Vector3.zero
         end
-        local dir = headingVector(state.heading)
+        refreshFilter(characterNow)
+        local floorY = floorAt(rootNow.Position, rootNow.Position)
+        local hoverBase = floorY and (floorY + 9)
+            or state.flightBaseY
+        local dir = vecFromAngle(state.heading)
+        -- Evasion 3D: pared delante a altura de vuelo = subir o girar.
+        local ahead = wallDistance(
+            rootNow.Position, dir, 8, 4)
+        if ahead < 5 then
+            hoverBase += 5
+            state.desiredHeading = state.heading
+                + math.rad(55)
+        end
         local cruise = (SPEEDS[SETTINGS.speed] or 16) * 1.7
-        local targetY = state.flightBaseY
-            + math.sin(now * 1.7) * 1.6
-        local vy = math.clamp((targetY - rootNow.Position.Y) * 3.5,
-            -20, 20)
-        state.flightVelocity.VectorVelocity = Vector3.new(
+        local targetY = hoverBase + math.sin(now * 1.7) * 1.6
+        local vy = math.clamp(
+            (targetY - rootNow.Position.Y) * 3.5, -20, 22)
+        local wantedVel = Vector3.new(
             dir.X * cruise, vy, dir.Z * cruise)
-        humNow:MoveTo(rootNow.Position) -- keep MoveDirection quiet
+        local blend = 1 - math.exp(-dt * 4)
+        state.flightVelocityValue =
+            state.flightVelocityValue:Lerp(wantedVel, blend)
+        state.flightVelocity.VectorVelocity =
+            state.flightVelocityValue
+        humNow:MoveTo(rootNow.Position)
     else
         if state.flightVelocity or state.flightAttachment then
             setFlight(false, humNow, rootNow)
         end
+        -- Dash activo: ventana corta con su propio objeto.
+        if os.clock() < state.dashUntil then
+            if not state.dashVelocity
+                or not state.dashVelocity.Parent then
+                setDash(true, rootNow,
+                    vecFromAngle(state.dashHeading or state.heading))
+            end
+        elseif state.dashVelocity or state.dashAttachment then
+            setDash(false, rootNow)
+        end
+
         local standing = now < state.standUntil
+            or state.desiredIntensity <= 0.05
         if standing then
             humNow:MoveTo(rootNow.Position)
         else
-            if now - state.lastMoveTo > 0.12 then
-                state.lastMoveTo = now
-                local moveHeading =
-                    chooseMovementHeading(rootNow, characterNow)
-                humNow:MoveTo(rootNow.Position
-                    + headingVector(moveHeading) * 13)
+            if now - state.lastReplan > 0.1 then
+                state.lastReplan = now
+                planPath(rootNow, characterNow)
             end
-            -- Dash bursts (Caotico+): a short, hard lateral shove.
-            if diff.dashMax > 0 and now >= state.nextDashAt then
-                state.nextDashAt = now
-                    + randomBetween(diff.dashMin, diff.dashMax)
-                local dir = headingVector(
-                    state.heading + (math.random() < 0.5
-                        and -math.pi / 2 or math.pi / 2))
-                local v = rootNow.AssemblyLinearVelocity
-                rootNow.AssemblyLinearVelocity = Vector3.new(
-                    v.X + dir.X * 20, v.Y, v.Z + dir.Z * 20)
-                queueJump()
+            if state.waypoint and now - state.lastMoveTo > 0.14 then
+                state.lastMoveTo = now
+                humNow:MoveTo(state.waypoint)
+            end
+            -- Salto de obstaculo detectado por el planificador.
+            if state.obstacleJump then
+                state.obstacleJump = false
+                state.jumpQueued = true
+            end
+            -- Dash programado.
+            if profile.dashMax > 0
+                and extrasAllow("SoloDash")
+                and now >= state.nextDashAt then
+                state.nextDashAt = now + randomBetween(
+                    profile.dashMin, profile.dashMax)
+                state.dashHeading = state.moveHeading
+                    + (math.random() < 0.5
+                        and -math.pi / 2 or math.pi / 2)
+                state.dashUntil = now + 0.18
+                setDash(true, rootNow,
+                    vecFromAngle(state.dashHeading))
+                state.jumpQueued = true
+            end
+            -- Blink (solo Imposible): salida o cambio de lado.
+            if SETTINGS.difficulty == "Imposible"
+                and extrasAllow("SoloBlink")
+                and now >= state.nextBlinkAt then
+                state.nextBlinkAt = now + randomBetween(2.5, 5)
+                tryBlink(rootNow, characterNow)
             end
         end
 
-        -- Jump execution: ChangeState is what this controller
-        -- honours; Humanoid.Jump is the fallback whisper.
-        if state.jumpQueued then
+        -- Salto: ChangeState (lo que este controlador obedece).
+        local grounded = humNow.FloorMaterial ~= Enum.Material.Air
+        if state.jumpQueued and not standing then
             state.jumpQueued = false
-            if humNow.FloorMaterial ~= Enum.Material.Air then
+            if grounded then
                 state.jumpAttempts += 1
                 state.jumpCheckAt = now + 0.3
+                state.doubleJumpReady =
+                    SETTINGS.difficulty == "Imposible"
                 pcall(function()
                     humNow:ChangeState(
                         Enum.HumanoidStateType.Jumping)
@@ -537,28 +884,63 @@ pumpConnection = RunService.Heartbeat:Connect(function(dt)
                 state.jumpsDone += 1
             end
         end
+        -- Doble salto / control aereo (Imposible).
+        if not grounded
+            and SETTINGS.difficulty == "Imposible" then
+            local v = rootNow.AssemblyLinearVelocity
+            if state.doubleJumpReady and v.Y < 6
+                and extrasAllow("SoloDash") then
+                state.doubleJumpReady = false
+                local dir = vecFromAngle(state.moveHeading)
+                rootNow.AssemblyLinearVelocity = Vector3.new(
+                    dir.X * 24, 34, dir.Z * 24)
+                state.jumpsDone += 1
+            else
+                -- Deriva aerea suave hacia el waypoint.
+                local dir = vecFromAngle(state.moveHeading)
+                local steered = Vector3.new(
+                    v.X + dir.X * dt * 16, v.Y,
+                    v.Z + dir.Z * dt * 16)
+                local flat = Vector3.new(steered.X, 0, steered.Z)
+                if flat.Magnitude > 36 then
+                    flat = flat.Unit * 36
+                    steered = Vector3.new(flat.X, v.Y, flat.Z)
+                end
+                rootNow.AssemblyLinearVelocity = steered
+            end
+        end
 
-        -- Anti-stuck: measured travel, not hopeful speed.
-        if not standing and now - progressAt >= 0.8 then
-            local traveled = (rootNow.Position - progressPos).Magnitude
+        -- Anti-atasco por desplazamiento real.
+        if not standing and now - progressAt >= 0.7 then
+            local traveled =
+                (rootNow.Position - progressPos).Magnitude
             progressPos = rootNow.Position
             progressAt = now
             if traveled < 0.45 then
                 stuckCount += 1
-                queueJump()
-                -- Score escape headings around the reverse direction
-                -- (not blindly into whatever is behind us): swap the
-                -- logical heading just for the probe, then restore it.
-                local savedHeading = state.heading
-                state.heading = savedHeading + math.pi * 0.8
-                state.recoveryHeading = chooseMovementHeading(
-                    rootNow, characterNow)
-                state.heading = savedHeading
-                state.recoveryUntil = now + 0.8
+                state.jumpQueued = true
+                -- Escaneo global: el hueco mas claro manda.
+                refreshFilter(characterNow)
+                local bestAngle, bestClear =
+                    state.heading + math.pi, -1
+                for step = 0, 15 do
+                    local angle = step / 16 * math.pi * 2
+                    local clear = corridorClearance(
+                        rootNow.Position, vecFromAngle(angle), 10)
+                    if clear > bestClear then
+                        bestClear, bestAngle = clear, angle
+                    end
+                end
+                state.recoveryHeading = bestAngle
+                state.recoveryUntil = now + 0.85
                 if stuckCount >= 2 then
                     stuckCount = 0
-                    state.forceBehaviorSwitch = true
-                    print("[TargetBot] stuck twice -- new behavior")
+                    state.forceSwitch = true
+                    if SETTINGS.difficulty == "Imposible"
+                        and extrasAllow("SoloBlink") then
+                        tryBlink(rootNow, characterNow)
+                    end
+                    print("[TargetBot] stuck -- escape + new behavior")
                 end
             else
                 stuckCount = 0
@@ -567,10 +949,11 @@ pumpConnection = RunService.Heartbeat:Connect(function(dt)
     end
 end)
 
-local anchorConnection =
-    LocalPlayer.CharacterAdded:Connect(function(character)
+anchorConnection = LocalPlayer.CharacterAdded:Connect(
+    function(character)
         task.wait(1)
-        local rootNow = character:FindFirstChild("HumanoidRootPart")
+        local rootNow =
+            character:FindFirstChild("HumanoidRootPart")
         if rootNow then
             anchor = rootNow.Position
             progressPos = rootNow.Position
@@ -582,8 +965,10 @@ local anchorConnection =
 local function cleanup()
     state.active = false
     SETTINGS.running = false
+    pcall(function() task.cancel(brainThread) end)
     local _, humNow, rootNow = characterParts()
     setFlight(false, humNow, rootNow)
+    setDash(false, rootNow)
     if pumpConnection then pumpConnection:Disconnect() end
     if anchorConnection then anchorConnection:Disconnect() end
     if humNow then
@@ -615,8 +1000,8 @@ end
 
 local frame = Instance.new("Frame")
 frame.Name = "Panel"
-frame.Size = UDim2.fromOffset(196, 344)
-frame.Position = UDim2.new(0, 12, 0.5, -172)
+frame.Size = UDim2.fromOffset(200, 404)
+frame.Position = UDim2.new(0, 12, 0.5, -202)
 frame.BackgroundColor3 = Color3.fromRGB(24, 24, 28)
 frame.BackgroundTransparency = 0.12
 frame.BorderSizePixel = 0
@@ -626,7 +1011,7 @@ frame.Parent = gui
 local title = Instance.new("TextLabel")
 title.Size = UDim2.new(1, 0, 0, 24)
 title.BackgroundColor3 = Color3.fromRGB(14, 14, 17)
-title.Text = "  TargetBot v4"
+title.Text = "  TargetBot v5"
 title.TextColor3 = Color3.fromRGB(240, 240, 240)
 title.TextXAlignment = Enum.TextXAlignment.Left
 title.Font = Enum.Font.SourceSansBold
@@ -713,25 +1098,58 @@ diffButton.MouseButton1Click:Connect(function()
         state.flightUntil = 0
     end
 end)
-local jumpButton = makeButton(128, "Saltos: Normal")
+local PATTERN_LIST = {
+    {id = "Auto", label = "Auto"},
+    {id = "strafe", label = "Strafe"},
+    {id = "orbit", label = "Orbita"},
+    {id = "zigzagIn", label = "Zigzag In"},
+    {id = "zigzagOut", label = "Zigzag Out"},
+    {id = "rush", label = "Rush"},
+    {id = "cover", label = "Cobertura"},
+    {id = "fake", label = "Amago"},
+    {id = "stopGo", label = "Stop-Go"},
+    {id = "wander", label = "Deambular"},
+    {id = "fly", label = "Vuelo"},
+}
+local patternButton = makeButton(128, "Patron: Auto")
+patternButton.MouseButton1Click:Connect(function()
+    local current = 1
+    for index, entry in ipairs(PATTERN_LIST) do
+        if entry.id == SETTINGS.pattern then current = index end
+    end
+    local nextEntry = PATTERN_LIST[current % #PATTERN_LIST + 1]
+    SETTINGS.pattern = nextEntry.id
+    patternButton.Text = "Patron: " .. nextEntry.label
+    if nextEntry.id == "Auto" then
+        state.forceSwitch = true
+    end
+end)
+local jumpButton = makeButton(159, "Saltos: Normal")
 jumpButton.MouseButton1Click:Connect(function()
     SETTINGS.jumps = cycleIn(
         {"Sin", "Normal", "Frecuentes"}, SETTINGS.jumps)
     jumpButton.Text = "Saltos: " .. SETTINGS.jumps
 end)
-local distButton = makeButton(159, "Distancia: Media")
+local distButton = makeButton(190, "Distancia: Media")
 distButton.MouseButton1Click:Connect(function()
     SETTINGS.distance = cycleIn(
         {"Cerca", "Media", "Lejos"}, SETTINGS.distance)
     distButton.Text = "Distancia: " .. SETTINGS.distance
 end)
-local speedButton = makeButton(190, "Velocidad: Normal")
+local speedButton = makeButton(221, "Velocidad: Normal")
 speedButton.MouseButton1Click:Connect(function()
     SETTINGS.speed = cycleIn(
         {"Normal", "Rapida", "Extrema"}, SETTINGS.speed)
     speedButton.Text = "Velocidad: " .. SETTINGS.speed
 end)
-local oppButton = makeButton(221, "Rival: Auto")
+local extrasButton = makeButton(252, "Extras: Todo")
+extrasButton.MouseButton1Click:Connect(function()
+    SETTINGS.extras = cycleIn(
+        {"Todo", "SoloDash", "SoloVuelo", "SoloBlink", "Sin extras"},
+        SETTINGS.extras)
+    extrasButton.Text = "Extras: " .. SETTINGS.extras
+end)
+local oppButton = makeButton(283, "Rival: Auto")
 oppButton.MouseButton1Click:Connect(function()
     local choices = {"Auto"}
     for _, player in ipairs(Players:GetPlayers()) do
@@ -744,7 +1162,7 @@ oppButton.MouseButton1Click:Connect(function()
     if #label > 14 then label = string.sub(label, 1, 14) end
     oppButton.Text = "Rival: " .. label
 end)
-local anchorButton = makeButton(252, "Reanclar aqui")
+local anchorButton = makeButton(314, "Reanclar aqui")
 anchorButton.MouseButton1Click:Connect(function()
     local rootNow = select(3, characterParts())
     if rootNow then
@@ -752,14 +1170,14 @@ anchorButton.MouseButton1Click:Connect(function()
         print("[TargetBot] anchor moved here")
     end
 end)
-local stopButton = makeButton(283, "DETENER Y QUITAR")
+local stopButton = makeButton(345, "DETENER Y QUITAR")
 stopButton.BackgroundColor3 = Color3.fromRGB(120, 45, 45)
 stopButton.MouseButton1Click:Connect(function()
     cleanup()
     print("[TargetBot] removed from the menu button")
 end)
-makeLabel(314, 16, Color3.fromRGB(140, 140, 150), 11).Text =
-    "Imposible = vuelo + dashes (test extremo)"
+makeLabel(374, 16, Color3.fromRGB(140, 140, 150), 11).Text =
+    "Imposible: vuelo, dash, blink, doble salto"
 
 task.spawn(function()
     while state.active do
@@ -772,14 +1190,17 @@ task.spawn(function()
         end
         status1.Text = (SETTINGS.running and "" or "PAUSA · ")
             .. state.behaviorLabel
-            .. (os.clock() < state.recoveryUntil and " [desatasco]" or "")
+            .. (os.clock() < state.recoveryUntil
+                and " [desatasco]" or "")
         status2.Text = string.format(
-            "Rival %s a %s · Saltos %d/%d",
+            "Rival %s a %s · Muro %.0f · S %d/%d B %d",
             oppPlayer and oppPlayer.Name or "?",
-            distText, state.jumpsDone, state.jumpAttempts)
+            distText, state.wallClearance,
+            state.jumpsDone, state.jumpAttempts,
+            state.blinkCount)
         task.wait(0.25)
     end
 end)
 
-print("[TargetBot v4] started. Menu on screen. "
+print("[TargetBot v5] started. Planner + steering + wallchecks. "
     .. "Inject again to remove everything.")
