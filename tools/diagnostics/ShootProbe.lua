@@ -19,6 +19,22 @@
       4. When done, run it AGAIN (inject a second time) -- the
          second run prints/writes/copies the report and stops.
 
+    V2 adds the two numbers v1 could not separate:
+      - aimErr: how far your crosshair ray passed from the target's
+        root AT the fire instant (pure aim error, no timing involved),
+      - dScore: how far the target's root was from your ray at the
+        ESTIMATED SCORING INSTANT (fire + ping + 25 ms, the horizon
+        the v1 hits validated). A miss with a small dScore means the
+        geometry was right at the moment that matters and the shot
+        still missed -- that is server/hitbox behaviour, not lead.
+        A miss with a large dScore and a small aimErr means the
+        target simply was not where the ray pointed when the server
+        looked -- that is exactly what prediction must fix.
+      v1's effLead searched a 1.2 s window, so a target that walked
+      back across the ray half a second later produced absurd
+      600-1200 ms "leads" (11 of 217 shots). winLead now reports the
+      closest approach inside the first 300 ms only.
+
     FOR EVERY SHOT IT RECORDS:
       - your camera ray and ping at the fire instant,
       - every player's position sampled every frame (a 3 s ring
@@ -152,6 +168,34 @@ local function finishShot(shot, hitPlayer, hitAt)
     shot.bestT = bestT
     shot.bestDistance = bestDistance
     shot.hitAt = hitAt
+    shot.aimErr = shot.guessDistance
+    -- Distance to the ray at the estimated scoring instant and the
+    -- closest approach inside the scoring-relevant window (300 ms).
+    if target then
+        local scoreAt = fireAt + math.clamp(
+            (shot.ping or 90) / 1000 + 0.025, 0.05, 0.45)
+        local scorePosition = positionAt(target, scoreAt)
+        if scorePosition then
+            shot.dScore = rayDistance(
+                shot.origin, shot.direction, scorePosition)
+        end
+        local winT, winD = nil, math.huge
+        local when = fireAt
+        while when <= fireAt + 0.3 do
+            local position = positionAt(target, when)
+            if position then
+                local distance = rayDistance(
+                    shot.origin, shot.direction, position)
+                if distance < winD then
+                    winD = distance
+                    winT = when
+                end
+            end
+            when += 0.01
+        end
+        shot.winLeadMs = winT and (winT - fireAt) * 1000 or nil
+        shot.winDistance = winD ~= math.huge and winD or nil
+    end
     if target and bestT then
         local velocity = velocityAt(target, fireAt)
         local horizontal = Vector3.new(velocity.X, 0, velocity.Z)
@@ -303,7 +347,8 @@ local function finish()
             end
         end
         log("#%d %s target=%s range=%s ping=%s effLead=%s "
-            .. "speed=%s jump=%s cvErr=%s closest=%s regDelay=%s",
+            .. "speed=%s jump=%s cvErr=%s closest=%s regDelay=%s "
+            .. "aimErr=%s dScore=%s winLead=%s",
             index,
             isHit and "HIT " or "MISS",
             shot.target and shot.target.Name or "?",
@@ -318,7 +363,11 @@ local function finish()
             shot.bestDistance and string.format("%.1f",
                 shot.bestDistance) or "-",
             shot.hitAt and string.format("%.0fms",
-                (shot.hitAt - shot.at) * 1000) or "-")
+                (shot.hitAt - shot.at) * 1000) or "-",
+            shot.aimErr and string.format("%.1f", shot.aimErr) or "-",
+            shot.dScore and string.format("%.1f", shot.dScore) or "-",
+            shot.winLeadMs and string.format("%.0fms/%.1f",
+                shot.winLeadMs, shot.winDistance or -1) or "-")
     end
     log("--- summary ---")
     log("shots=%d hits=%d (%.0f%%)", #shots, hitCount,
@@ -334,11 +383,44 @@ local function finish()
             .. "studs (>~0.9 means acceleration/turn handling matters)",
             medianCv)
     end
+    -- How much later than the ping the hits actually registered.
+    local extraDelays, jumpShots, jumpHits = {}, 0, 0
+    local onTargetMisses, lateMisses, aimMisses = 0, 0, 0
+    for _, shot in ipairs(shots) do
+        if shot.targetJumping then
+            jumpShots += 1
+            if shot.hitAt then jumpHits += 1 end
+        end
+        if shot.hitAt and shot.ping then
+            local registered = (shot.hitAt - shot.at) * 1000
+            table.insert(extraDelays, registered - shot.ping)
+        elseif not shot.hitAt and shot.dScore then
+            if shot.dScore <= 1.2 then
+                onTargetMisses += 1
+            elseif shot.aimErr and shot.aimErr > 2.5 then
+                aimMisses += 1
+            else
+                lateMisses += 1
+            end
+        end
+    end
+    local medianExtra = median(extraDelays)
+    if medianExtra then
+        log("MEDIAN registration delay beyond ping on hits: %.0f ms "
+            .. "(scoring instant ~= ping + this)", medianExtra)
+    end
+    log("Jumping targets: %d shots, %d hits", jumpShots, jumpHits)
+    log("Miss classes: on-target-at-scoring=%d (geometry right, "
+        .. "server said no), moved-off=%d (prediction territory), "
+        .. "aim-off-at-fire=%d (crosshair was not on them)",
+        onTargetMisses, lateMisses, aimMisses)
     log("Read me: if effective lead tracks your ping 1:1, the "
         .. "predictor's full-pipeline horizon is right and the "
         .. "misses live elsewhere (turns, jumps, fit window). If it "
         .. "sits consistently above/below ping, the horizon itself "
-        .. "is off by that gap on every shot.")
+        .. "is off by that gap on every shot. dScore is read at "
+        .. "ping+25 ms: small dScore + miss = not a lead problem; "
+        .. "large dScore + small aimErr = the lead problem.")
     log("=== END OF REPORT ===")
     local report = table.concat(lines, "\n")
     print(report)
