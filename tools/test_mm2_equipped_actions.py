@@ -21,7 +21,7 @@ local function getPlayerWeapon(_,name,equippedOnly)
     assert(name=='Knife' and equippedOnly==true,'never query backpack for action')
     return knife
 end
-'''+section(K,'    local function getReadyKnife','    local function predictAim')+r'''
+'''+section(K,'    local function getReadyKnife','    local function readKnifeSpeed')+r'''
 assert(getReadyKnife()==nil)
 knife.Parent=character;assert(getReadyKnife()==knife)
 knife.Parent={};assert(getReadyKnife()==nil)
@@ -65,18 +65,19 @@ function gun:FindFirstChild() return remote end
 local function getCharacterParts() return character,humanoid end
 local function getPlayerWeapon(_,_,equippedOnly) assert(equippedOnly);return gun end
 local function notify() end
-local mm2Settings={silentAim=false,shootWallCheck=true,motionSampleHz=60,gunLeadBias=0}
+local mm2Settings={silentAim=false,shootWallCheck=true,silentSpawn='Through',silentSweep=0}
 local function getGunOriginCFrame() return CFrame.new(Vector3.new(0,0,-10)) end
 local endpoint=Vector3.new(1000,1,1)
 local function isPlayerAlive() return true end
 local function isProtectedTarget() return false end
 local function getPlayerRole() return 'Murderer' end
-local core={validateGunShot=function() return true end}
-local prediction={endpoint=endpoint,targetPosition=endpoint,capturedPosition=endpoint,velocity=Vector3.zero,errorRadius=5,leadSeconds=.1}
-local function computeGunAim(_,_,options)
-    assert(options.allowUncertain and not options.ignoreVisibility)
-    return CFrame.new(endpoint),prediction
-end
+local function validateGunShot() return true end
+local function isWeaponPathClear() return true end
+local function buildSilentShot() return CFrame.new(Vector3.zero),CFrame.new(endpoint),2.5 end
+local function macroUnequip() end
+local info={endpoint=endpoint,targetPosition=endpoint,capturedPosition=endpoint,velocity=Vector3.zero,
+    leadSeconds=.1,model='kinematic-v51',sampleAge=0,samples=4,rtt=.1,motionSource='fit'}
+local prediction={gunAim=function() return endpoint,info,nil end}
 local queued,notes=0,0
 local state={mm2ShotFeedback={queue=function() queued+=1 end}}
 local trajectoryCalibration={noteAuthoredShot=function() notes+=1 end}
@@ -126,7 +127,8 @@ assert 'EquipTool' not in section(S,'    local function fireGunAtTarget','    lo
 assert '"Auto Range"' not in A and 'autoRange' not in A
 assert '"Throw now"' not in K
 assert '"Max error"' not in S
-assert 'allowUncertain' in S
+assert 'prediction.gunAim' in S and 'validateGunShot' in S
+assert 'computeGunAim' not in S
 with tempfile.TemporaryDirectory(prefix='equipped-actions-') as tmp:
     path=Path(tmp)/'actions.luau';path.write_text(script)
     subprocess.run([os.environ.get('LUAU','luau'),str(path)],check=True)

@@ -1,0 +1,84 @@
+[
+  {
+    "file": "knife2214.log",
+    "sha256": "2f97824949f80e4c600840b57b462ca895b16192f81f9daa64c097857bf00264",
+    "outgoingShootPackets": 1,
+    "outgoingKnifePackets": 0,
+    "knifeSources": [],
+    "knifeIntervalsSeconds": [],
+    "gunEchoListenerRecords": 12,
+    "deduplicatedGunEchoes": 3,
+    "deduplicatedOwnGunEchoes": 1,
+    "authoredEchoPairs": [
+      {
+        "source": "src/games/MM2/Blatant/Shoot.lua",
+        "outgoingToEchoCaptureMs": 119.671,
+        "outgoingToEchoHeaderMs": 127.135,
+        "echoEndpointToAuthoredRayStuds": 0.000203,
+        "endpointBeyondAimStuds": -3.146678,
+        "echoArguments": "game:GetService(\"Players\").LocalPlayer.Character.Gun.Handle, Vector3.new(-38.734611511230469, 283.90997314453125, 8956.216796875), Vector3.new(-59.709480285644531, 275.52276611328125, 8950.3515625), workspace.sabinita130[\"Kate Hair\"].Handle,"
+      }
+    ],
+    "animationEvidenceTerms": {
+      "AnimationId": 0,
+      "AnimationPlayed": 0,
+      "LoadAnimation": 0,
+      "Motor6D": 0
+    },
+    "limits": "Echo latency is not server rewind age. Echo geometry is not target trajectory or hit rate. Native throw packets do not contain animation keyframes."
+  },
+  {
+    "file": "knife2218.log",
+    "sha256": "56092c1cda397042f841094a0d93feae5d9ea2708133d50efd7984df8282bcd9",
+    "outgoingShootPackets": 1,
+    "outgoingKnifePackets": 0,
+    "knifeSources": [],
+    "knifeIntervalsSeconds": [],
+    "gunEchoListenerRecords": 4,
+    "deduplicatedGunEchoes": 1,
+    "deduplicatedOwnGunEchoes": 1,
+    "authoredEchoPairs": [
+      {
+        "source": "src/games/MM2/Blatant/Shoot.lua",
+        "outgoingToEchoCaptureMs": 132.397,
+        "outgoingToEchoHeaderMs": 152.589,
+        "echoEndpointToAuthoredRayStuds": 0.000303,
+        "endpointBeyondAimStuds": 2.158225,
+        "echoArguments": "game:GetService(\"Players\").LocalPlayer.Character.Gun.Handle, Vector3.new(-20.300392150878906, 278.34194946289062, 8993.5703125), Vector3.new(63.971054077148438, 277.14697265625, 8987.9404296875), workspace.Snowflakes12370.RightFoot,"
+      }
+    ],
+    "animationEvidenceTerms": {
+      "AnimationId": 0,
+      "AnimationPlayed": 0,
+      "LoadAnimation": 0,
+      "Motor6D": 0
+    },
+    "limits": "Echo latency is not server rewind age. Echo geometry is not target trajectory or hit rate. Native throw packets do not contain animation keyframes."
+  },
+  {
+    "file": "knife2219.log",
+    "sha256": "480b1c56e2f937633ac2b0847e6b7e3f45eeabb916f4baee886fb5aa1b93c07e",
+    "outgoingShootPackets": 0,
+    "outgoingKnifePackets": 5,
+    "knifeSources": [
+      "Players.TheXxDeXx.Backpack.Knife.KnifeClient"
+    ],
+    "knifeIntervalsSeconds": [
+      1.487754,
+      1.51333,
+      1.497152,
+      3.236049
+    ],
+    "gunEchoListenerRecords": 0,
+    "deduplicatedGunEchoes": 0,
+    "deduplicatedOwnGunEchoes": 0,
+    "authoredEchoPairs": [],
+    "animationEvidenceTerms": {
+      "AnimationId": 0,
+      "AnimationPlayed": 0,
+      "LoadAnimation": 0,
+      "Motor6D": 0
+    },
+    "limits": "Echo latency is not server rewind age. Echo geometry is not target trajectory or hit rate. Native throw packets do not contain animation keyframes."
+  }
+]

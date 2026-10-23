@@ -1,5 +1,5 @@
 return {
-    stamp = "v50-20261017-points",
+    stamp = "v102-20261023-calibration-endpoint-error",
     files = {
         ["src/Profile/142823291.lua"] = [[
 --!strict
@@ -1840,7 +1840,6 @@ function Module.init(runtime: any): any
     local isPlayerAlive: any = core.isPlayerAlive
     local isProtectedTarget: any = core.isProtectedTarget
     local trajectoryCalibration: any = core.trajectoryCalibration
-    local predictionMath: any = core.predictionMath
 
     type KnifeRuntimeState = {
         masterEnabled: boolean,
@@ -2006,9 +2005,11 @@ function Module.init(runtime: any): any
         local elapsed: number = 0
         featureConnections.MM2KnifeController =
             TaskManager:Connect(function(deltaTime: number): ()
-                local due: boolean
-                due, elapsed = predictionMath.sampleDue(elapsed, deltaTime, 20)
-                if due then processKnifeAura() end
+                elapsed += math.max(0, deltaTime)
+                local interval: number = 1 / 20
+                if elapsed + 1e-9 < interval then return end
+                elapsed = elapsed % interval
+                processKnifeAura()
             end)
     end
 
@@ -2124,11 +2125,14 @@ function Module.init(runtime: any): any
     local getPlayerWeapon: any = core.getPlayerWeapon
     local isPlayerAlive: any = core.isPlayerAlive
     local isProtectedTarget: any = core.isProtectedTarget
-    local getFilteredVelocity: any = core.getFilteredVelocity
-    local getEstimatedLatency: any = core.getEstimatedLatency
-    local predictionMath: any = core.predictionMath
+    local prediction: any = state.mm2Prediction
+    assert(type(prediction) == "table", "MM2 Knife Throw requires MM2 Prediction")
     local mm2Settings: any = core.mm2Settings
     local lastKnifePrediction: any = nil
+    local lastKnifeError: string? = nil
+    local lastKnifeAimName: string? = nil
+    local lastKnifeAimHeight: number? = nil
+    local lastKnifeRadius: number? = nil
     local isWeaponPathClear: any = core.isWeaponPathClear
     local trajectoryCalibration: any = core.trajectoryCalibration
 
@@ -2154,23 +2158,31 @@ function Module.init(runtime: any): any
         if not localRoot then
             return nil
         end
-        local closest: Player? = nil
-        local closestDistance: number = math.huge
+        local candidates: {{player: Player, distance: number}} = {}
         for _, player: Player in ipairs(Players:GetPlayers()) do
             if isValidTarget(player) then
                 local targetRoot: BasePart? = player.Character
                     and player.Character:FindFirstChild("HumanoidRootPart") :: BasePart?
                 if targetRoot then
-                    local distance: number =
-                        (targetRoot.Position - localRoot.Position).Magnitude
-                    if distance < closestDistance and resolveKnifeAim(player, origin) ~= nil then
-                        closest = player
-                        closestDistance = distance
-                    end
+                    table.insert(candidates, {
+                        player = player,
+                        distance = (targetRoot.Position - localRoot.Position).Magnitude,
+                    })
                 end
             end
         end
-        return closest
+        table.sort(candidates, function(left: any, right: any): boolean
+            return left.distance < right.distance
+        end)
+        -- Corridor checks are rays: cap them per frame. The nearest three
+        -- visible targets are enough; blocked players do not starve the rest.
+        for index: number = 1, math.min(#candidates, 3) do
+            local candidate: any = candidates[index]
+            if resolveKnifeAim(candidate.player, origin) ~= nil then
+                return candidate.player
+            end
+        end
+        return nil
     end
 
     local function getReadyKnife(): Tool?
@@ -2190,89 +2202,189 @@ function Module.init(runtime: any): any
         return knife
     end
 
-    local function predictAim(target: Player, originPos: Vector3): Vector3?
-        lastKnifePrediction = nil
-        -- Rebuilt from the recovered ThrowingKnifeVisuals integrator:
-        -- position += Direction * ThrowSpeed * dt (96 studs/s by default).
-        -- There is no projectile gravity term in that client model.
-        local root: BasePart? = target.Character
-            and target.Character:FindFirstChild("HumanoidRootPart") :: BasePart?
-        if not root then return nil end
-        local velocity: Vector3 = getFilteredVelocity(target, root)
+    local function readKnifeSpeed(knife: Tool?): number
+        -- ThrowingKnifeVisuals: position += Direction * ThrowSpeed * dt,
+        -- default 96 studs/s, no gravity term.
         local speed: number = 96
-        local knife: Tool? = getReadyKnife()
         if knife then
             local measured: any = knife:GetAttribute("ThrowSpeed")
-            if predictionMath.finite(measured) and measured >= 24 and measured <= 300 then speed = measured end
-        end
-        local latency: number = getEstimatedLatency()
-        if not predictionMath.finite(latency) then latency = 0 end
-        latency = math.clamp(latency, 0, 0.6)
-        local observed: Vector3 = root.Position + velocity * latency
-        local relative: Vector3 = observed - originPos
-        if not predictionMath.finite(relative.Magnitude) or not predictionMath.finite(velocity.Magnitude) then return nil end
-        -- |relative + velocity*t| = speed*t. Stable quadratic roots avoid
-        -- cancellation for approaching targets and handle the linear limit.
-        local a: number = velocity:Dot(velocity) - speed * speed
-        local b: number = 2 * relative:Dot(velocity)
-        local c: number = relative:Dot(relative)
-        local flight: number? = nil
-        if c < 0.0025 then return observed end
-        if math.abs(a) < 1e-6 then
-            if b < -1e-6 then flight = -c / b end
-        else
-            local discriminant: number = b*b - 4*a*c
-            if discriminant >= 0 then
-                local q: number = -0.5 * (b + (b >= 0 and 1 or -1) * math.sqrt(discriminant))
-                local t1: number = q / a
-                local t2: number = math.abs(q) > 1e-9 and c / q or -1
-                if t1 > 0 then flight = t1 end
-                if t2 > 0 and (not flight or t2 < flight) then flight = t2 end
+            if type(measured) == "number"
+                and measured == measured
+                and measured >= 24
+                and measured <= 300 then
+                speed = measured
             end
         end
-        if not flight or not predictionMath.finite(flight) then return nil end
-        local reference = observed + velocity * flight
-        lastKnifePrediction = {motionSource="velocity", model="reference-v41", referenceEndpoint=reference}
-        return reference
+        return speed
     end
 
-    local KNIFE_VISIBILITY_PARTS: {string} = {
-        "UpperTorso", "Torso", "HumanoidRootPart", "Head",
-        "RightHand", "LeftHand", "RightLowerArm", "LeftLowerArm", "RightUpperArm", "LeftUpperArm",
-        "Right Arm", "Left Arm", "RightLowerLeg", "LeftLowerLeg", "RightFoot", "LeftFoot", "Right Leg", "Left Leg",
-    }
-    local KNIFE_PATH_OPTIONS = {ignoreTarget = true}
-    local KNIFE_VISIBLE_OPTIONS = {requireTarget = true}
-    resolveKnifeAim = function(target: Player, origin: Vector3): Vector3?
-        local predicted: Vector3? = predictAim(target, origin)
-        if not predicted then return nil end
-        local character: Model? = target.Character
-        local root: BasePart? = character and character:FindFirstChild("HumanoidRootPart") :: BasePart?
-        if not character or not root then return nil end
-        if isWeaponPathClear(origin, root.Position, character, nil, KNIFE_VISIBLE_OPTIONS)
-            and isWeaponPathClear(origin, predicted, character, nil, KNIFE_PATH_OPTIONS) then return predicted end
-        -- Same recovered ray filter and torso-first visibility strategy as
-        -- Shoot, but keep projectile lead: no hitscan/raw-position rewind here.
-        local lead: Vector3 = predicted - root.Position
-        for _, name: string in ipairs(KNIFE_VISIBILITY_PARTS) do
-            local part: Instance? = character:FindFirstChild(name)
-            if part and part:IsA("BasePart") then
-                local body: BasePart = part :: BasePart
-                local points: {Vector3} = {body.Position + lead}
-                if name == "UpperTorso" or name == "Torso" or name == "HumanoidRootPart" then
-                    local right: Vector3 = body.CFrame.RightVector * math.min(body.Size.X * 0.4, 0.55)
-                    local up: Vector3 = body.CFrame.UpVector * math.min(body.Size.Y * 0.3, 0.35)
-                    for _, offset: Vector3 in ipairs({right, -right, up, -up}) do
-                        table.insert(points, body.Position + offset + lead)
-                    end
-                end
-                for _, point: Vector3 in ipairs(points) do
-                    if (point - origin).Magnitude > 0.05
-                        and isWeaponPathClear(origin, point - lead, character, nil, KNIFE_VISIBLE_OPTIONS)
-                        and isWeaponPathClear(origin, point, character, nil, KNIFE_PATH_OPTIONS) then return point end
-                end
+    -- The blade is a physical projectile, so "clear" is not a ray question.
+    -- Its own thickness decides how much gap it needs, and a rail that covers
+    -- the chest still leaves the head exposed: the aim walks upward until a
+    -- blade-sized body actually reaches a part of the target.
+    local MIN_KNIFE_RADIUS: number = 0.12
+    local MAX_KNIFE_RADIUS: number = 0.6
+    -- The blade keeps flying until it hits something, so there is no range
+    -- limit: only an absurd lead (a vanished target, a broken sample) is
+    -- refused. Ordinary long throws stay available.
+    local MAX_KNIFE_DISTANCE: number = 400
+
+    local function finiteNumber(value: any): boolean
+        return type(value) == "number"
+            and value == value
+            and value > -math.huge
+            and value < math.huge
+    end
+
+    local function knifeRadius(knife: Tool?): number
+        local handle: Instance? = knife and knife:FindFirstChild("Handle")
+        if handle and handle:IsA("BasePart") then
+            local size: Vector3 = handle.Size
+            -- The long axis runs along the flight path; the gap the blade has
+            -- to fit through is bounded by the middle of its extents.
+            local extents: {number} = {
+                size.X * 0.5, size.Y * 0.5, size.Z * 0.5,
+            }
+            table.sort(extents)
+            local section: number = extents[2]
+            if finiteNumber(section) then
+                return math.clamp(section, MIN_KNIFE_RADIUS, MAX_KNIFE_RADIUS)
             end
         end
+        return 0.25
+    end
+
+    -- The same exclusions the game's own WeaponService uses, and no
+    -- transparency rule: the blade is a solid body, so an invisible part that
+    -- can collide still stops it.
+    local function knifeProbeParams(): RaycastParams
+        local excluded: {Instance} = {}
+        if LocalPlayer.Character then
+            table.insert(excluded, LocalPlayer.Character)
+        end
+        for _, object: Instance in ipairs(
+            CollectionService:GetTagged("WeaponPassthrough")
+        ) do
+            table.insert(excluded, object)
+        end
+        local params: RaycastParams = RaycastParams.new()
+        params.FilterType = Enum.RaycastFilterType.Exclude
+        params.FilterDescendantsInstances = excluded
+        params.IgnoreWater = true
+        return params
+    end
+
+    -- True when a blade of `radius` thrown from `origin` meets the target
+    -- before anything else. Spherecast is exactly that body; where the engine
+    -- has no Spherecast, a centre ray plus a ring at the radius proves the
+    -- same thing: nothing solid is closer than the target.
+    local function knifeReaches(
+        origin: Vector3,
+        aim: Vector3,
+        radius: number,
+        targetCharacter: Model
+    ): boolean
+        local delta: Vector3 = aim - origin
+        if delta.Magnitude < 0.05 then
+            return false
+        end
+        local params: RaycastParams = knifeProbeParams()
+        local ok: boolean, result: any = pcall(function(): any
+            return (workspace :: any):Spherecast(origin, radius, delta, params)
+        end)
+        if ok then
+            local part: any = result and result.Instance
+            return typeof(part) == "Instance"
+                and part:IsDescendantOf(targetCharacter)
+        end
+        local centre: RaycastResult? = workspace:Raycast(origin, delta, params)
+        if not centre or not centre.Instance:IsDescendantOf(targetCharacter) then
+            return false
+        end
+        local reach: number = (centre.Position - origin).Magnitude
+        local direction: Vector3 = delta.Unit
+        local right: Vector3 = direction:Cross(Vector3.new(0, 1, 0))
+        if right.Magnitude < 1e-3 then
+            right = Vector3.new(1, 0, 0)
+        else
+            right = right.Unit
+        end
+        local up: Vector3 = right:Cross(direction).Unit
+        for _, offset: Vector3 in ipairs({
+            right * radius, right * -radius, up * radius, up * -radius,
+        }) do
+            local side: RaycastResult? =
+                workspace:Raycast(origin + offset, delta, params)
+            if side and not side.Instance:IsDescendantOf(targetCharacter)
+                and (side.Position - origin).Magnitude < reach then
+                return false
+            end
+        end
+        return true
+    end
+
+    -- Chest first, then upward: a rail that covers the chest usually leaves
+    -- the head exposed. Below and sideways are the last resorts.
+    local KNIFE_AIM_LADDER: {{height: number, lateral: number, name: string}} = {
+        {height = 0, lateral = 0, name = "chest"},
+        {height = 0.55, lateral = 0, name = "upper chest"},
+        {height = 1.05, lateral = 0, name = "head"},
+        {height = 1.5, lateral = 0, name = "above head"},
+        {height = -0.6, lateral = 0, name = "legs"},
+        {height = 0.5, lateral = 0.6, name = "shoulder"},
+        {height = 0.5, lateral = -0.6, name = "shoulder"},
+    }
+
+    -- The blade is a straight projectile. The predictor solves the intercept
+    -- (including the measured transport delay); the probe then proves that a
+    -- blade of this size reaches that point and not a rail in front of it.
+    resolveKnifeAim = function(target: Player, origin: Vector3): Vector3?
+        lastKnifePrediction = nil
+        lastKnifeError = nil
+        lastKnifeAimName = nil
+        lastKnifeAimHeight = nil
+        lastKnifeRadius = nil
+        local knife: Tool? = getReadyKnife()
+        local endpoint: Vector3?, info: any, reason: string? =
+            prediction.knifeAim(target, origin, readKnifeSpeed(knife))
+        if not endpoint then
+            lastKnifeError = reason
+            return nil
+        end
+        local character: Model? = target.Character
+        if not character then
+            return nil
+        end
+        if (endpoint - origin).Magnitude > MAX_KNIFE_DISTANCE then
+            lastKnifeError = "too far"
+            return nil
+        end
+        local radius: number = knifeRadius(knife)
+        lastKnifeRadius = radius
+        local direction: Vector3 = (endpoint - origin).Unit
+        local right: Vector3 = direction:Cross(Vector3.new(0, 1, 0))
+        if right.Magnitude < 1e-3 then
+            right = Vector3.new(1, 0, 0)
+        else
+            right = right.Unit
+        end
+        -- Height is world-up on purpose: the ladder exists to clear a
+        -- horizontal rail, so "a bit higher" must mean higher, not merely
+        -- perpendicular to a steep throw.
+        for _, step: any in ipairs(KNIFE_AIM_LADDER) do
+            local aim: Vector3 = endpoint
+                + Vector3.new(0, 1, 0) * step.height
+                + right * step.lateral
+            if knifeReaches(origin, aim, radius, character) then
+                lastKnifePrediction = info
+                lastKnifeAimName = step.name
+                lastKnifeAimHeight = step.height
+                return aim
+            end
+        end
+        -- Every rung was stopped by geometry. The target is behind cover for
+        -- a blade of this size, so the throw is refused instead of wasted.
+        lastKnifeError = "covered"
         return nil
     end
 
@@ -2280,6 +2392,15 @@ function Module.init(runtime: any): any
         joint: Motor6D, c0: CFrame, transform: CFrame,
         initial: CFrame, raised: CFrame, forward: CFrame,
     }
+    -- One animation cycle: windup 0.3 s plus the 0.25 s recovery. Used both
+    -- for the render loop and for the no-pose timer so the packet cadence is
+    -- the same no matter which branch a rig takes.
+    local KNIFE_CYCLE_SECONDS: number = 0.55
+    -- A packet cannot leave twice inside a quarter second, whatever calls the
+    -- release path. This is the backstop for the capture that recorded ~77
+    -- throws in one second; the game needs the knife back in hand first.
+    local MIN_PACKET_INTERVAL: number = 0.25
+    local lastPacketAt: number = -math.huge
     local throwPose: {ThrowJoint} = {}
     local throwPending: boolean = false
     local function stopThrowAnimation(): ()
@@ -2326,10 +2447,68 @@ function Module.init(runtime: any): any
         else
             addJoint("Torso", "Right Shoulder", 155, 85, -12)
         end
-        if #throwPose == 0 then release(); return end
+        if #throwPose == 0 and type(character.GetDescendants) == "function" then
+            -- Rig parenting varies (MM2 spawns its own R15 bodies and
+            -- not every build parents the shoulder under the arm):
+            -- find the right-arm Motor6Ds wherever they sit, matched
+            -- by joint name or by the arm part they drive (Part1).
+            -- Without this the pose list came back empty in game and
+            -- the throw fired instantly, with no animation at all.
+            local wanted: {[string]: {lift: number, forward: number, roll: number}} = {
+                RightShoulder = {lift = 155, forward = 85, roll = -12},
+                ["Right Shoulder"] = {lift = 155, forward = 85, roll = -12},
+                RightElbow = {lift = -85, forward = -8, roll = 0},
+                ["Right Elbow"] = {lift = -85, forward = -8, roll = 0},
+                RightWrist = {lift = -15, forward = 10, roll = 0},
+                ["Right Wrist"] = {lift = -15, forward = 10, roll = 0},
+            }
+            local byPart1: {[string]: string} = {
+                RightUpperArm = "RightShoulder", ["Right Arm"] = "RightShoulder",
+                RightLowerArm = "RightElbow", RightHand = "RightWrist",
+            }
+            for _, object: Instance in ipairs(character:GetDescendants()) do
+                if object:IsA("Motor6D") then
+                    local key: string? = wanted[object.Name] and object.Name or nil
+                    if not key then
+                        local part1: any = (object :: any).Part1
+                        if part1 then
+                            key = byPart1[part1.Name]
+                        end
+                    end
+                    local spec: any = key and wanted[key :: string]
+                    if spec then
+                        local joint: any = object
+                        local c0: CFrame = joint.C0
+                        local pivot: CFrame = CFrame.new(c0.Position)
+                        local basis: CFrame = c0 - c0.Position
+                        table.insert(throwPose, {
+                            joint = joint, c0 = c0, transform = joint.Transform,
+                            initial = c0 * joint.Transform,
+                            raised = pivot * CFrame.Angles(math.rad(spec.lift), 0, math.rad(spec.roll)) * basis,
+                            forward = pivot * CFrame.Angles(math.rad(spec.forward), 0, 0) * basis,
+                        })
+                    end
+                end
+            end
+        end
+        -- The guard is armed before the pose is inspected. Releasing from the
+        -- "no joint to pose" branch without it turned a held knife into one
+        -- packet per frame: the 2026-10-18 capture holds 722 authored knife
+        -- events in 22 seconds, up to 77 in a single second, against a 0.55 s
+        -- animation. The server cannot use that: the blade leaves the hand
+        -- with whichever packet it accepted first.
+        throwPending = onRelease ~= nil
+        if #throwPose == 0 then
+            release()
+            task.delay(KNIFE_CYCLE_SECONDS, function(): ()
+                if throwPending then
+                    stopThrowAnimation()
+                end
+            end)
+            return
+        end
         local elapsed: number = 0
         local released: boolean = false
-        throwPending = onRelease ~= nil
         featureConnections.MM2KnifeAnimation = TaskManager:Connect(function(dt: number): ()
             if LocalPlayer.Character ~= character or knife.Parent ~= character then
                 stopThrowAnimation()
@@ -2353,51 +2532,145 @@ function Module.init(runtime: any): any
                 released = true
                 pcall(release)
             end
-            if elapsed >= 0.55 then stopThrowAnimation() end
+            if elapsed >= KNIFE_CYCLE_SECONDS then stopThrowAnimation() end
         end, "render")
     end
 
+
+    -- The spawn point: the handle when it exists, the hand otherwise. The
+    -- position is always the real one; the rotation is completed below.
+    local function knifeOrigin(knife: Tool, character: Model?): CFrame?
+        if not character or character ~= LocalPlayer.Character then
+            return nil
+        end
+        local handle: Instance? = knife:FindFirstChild("Handle")
+        local hand: Instance? = character:FindFirstChild("RightHand")
+            or character:FindFirstChild("Right Arm")
+            or character:FindFirstChild("HumanoidRootPart")
+        local source: Instance? =
+            handle and handle:IsA("BasePart") and handle or hand
+        if not source or not source:IsA("BasePart") then
+            return nil
+        end
+        return (source :: BasePart).CFrame
+    end
+
+    -- One throw, one packet. The origin and the aim are resolved at the
+    -- moment of sending, so a windup cannot fire from a stale hand position.
+    local function performThrow(
+        knife: Tool,
+        remote: Instance
+    ): boolean
+        if not knifeThrowSettings.enabled or getReadyKnife() ~= knife then
+            return false
+        end
+        local character: Model? = LocalPlayer.Character
+        local origin: CFrame? = knifeOrigin(knife, character)
+        if not origin then
+            return false
+        end
+        -- Select again at release: do not cling to a target that closed its
+        -- peek during windup when another player is now visible.
+        local target: Player? = findNearestTarget(origin.Position)
+        if not target then
+            return false
+        end
+        local aim: Vector3? = resolveKnifeAim(target, origin.Position)
+        if not aim or (aim - origin.Position).Magnitude < 0.05 then
+            return false
+        end
+        -- The origin is a real CFrame, not a bare position. The native
+        -- KnifeClient sends the handle's pose with a non-identity rotation
+        -- (recorded in both native logs), so a server that reads LookVector
+        -- takes the blade's direction from here. Pointing that look vector at
+        -- the predicted point makes the packet coherent for both readings:
+        -- a server that uses (target - origin) gets the same aim it always
+        -- did, and a server that uses the rotation now gets the lead too,
+        -- instead of world -Z. The second argument stays a position: that is
+        -- where the blade has to end up.
+        local travel: Vector3 = aim - origin.Position
+        local originCFrame: CFrame = origin
+        if travel.Magnitude > 1e-3 then
+            originCFrame = CFrame.lookAt(origin.Position, aim)
+        end
+        -- Last gate before the wire: one packet per quarter second. The
+        -- capture of 2026-10-18 proves the callers alone cannot be trusted
+        -- with this (722 knife events in 22 s). Everything above is pure
+        -- reading, so a rejected packet costs nothing.
+        local now: number = os.clock()
+        if now - lastPacketAt < MIN_PACKET_INTERVAL then
+            return false
+        end
+        lastPacketAt = now
+        remote:FireServer(originCFrame, CFrame.new(aim))
+        pcall(trajectoryCalibration.noteAuthoredShot, trajectoryCalibration, {
+            kind = "knife", tool = knife, toolName = knife.Name,
+            originPos = origin.Position, aimPos = aim, target = target,
+            silent = false,
+            settings = {mode = "Normal", animation = true, wallCheck = true,
+                motionSource = lastKnifePrediction and lastKnifePrediction.motionSource,
+                cadence = "animation-cycle",
+                model = lastKnifePrediction and lastKnifePrediction.model or "kinematic-v51",
+                referencePoint = lastKnifePrediction and {lastKnifePrediction.capturedPosition.X, lastKnifePrediction.capturedPosition.Y, lastKnifePrediction.capturedPosition.Z},
+                predictedPoint = lastKnifePrediction and {lastKnifePrediction.endpoint.X, lastKnifePrediction.endpoint.Y, lastKnifePrediction.endpoint.Z},
+                sampledVelocity = lastKnifePrediction and {lastKnifePrediction.velocity.X, lastKnifePrediction.velocity.Y, lastKnifePrediction.velocity.Z},
+                leadSeconds = lastKnifePrediction and lastKnifePrediction.leadSeconds,
+                flightSeconds = lastKnifePrediction and lastKnifePrediction.flightSeconds,
+                sampleAge = lastKnifePrediction and lastKnifePrediction.sampleAge,
+                samples = lastKnifePrediction and lastKnifePrediction.samples,
+                rtt = lastKnifePrediction and lastKnifePrediction.rtt,
+                echoDelay = lastKnifePrediction and lastKnifePrediction.echoDelay,
+                echoSamples = lastKnifePrediction and lastKnifePrediction.echoSamples,
+                rttEngine = lastKnifePrediction and lastKnifePrediction.rttEngine,
+                rttData = lastKnifePrediction and lastKnifePrediction.rttData,
+                turnRate = lastKnifePrediction and lastKnifePrediction.turnRate,
+                brakeSeconds = lastKnifePrediction and lastKnifePrediction.brakeSeconds,
+                -- Where the blade went: the aim rung it took, how much it had
+                -- to clear and the body size the probe used.
+                aimHeight = lastKnifeAimName,
+                aimOffsetStuds = lastKnifeAimHeight,
+                knifeRadius = lastKnifeRadius,
+                throwSource = "auto",
+                -- The packet now carries a frame whose look vector points at
+                -- the aim; a capture can tell which build threw it.
+                originRotation = travel.Magnitude > 1e-3 and "look-at" or "handle",
+                windupSeconds = 0.3},
+        })
+        return true
+    end
+
     local function throwKnife(): ()
-        if not knifeThrowSettings.enabled or throwPending then return end
+        if not knifeThrowSettings.enabled then
+            return
+        end
         local knife: Tool? = getReadyKnife()
-        if not knife then stopThrowAnimation(); return end
+        if not knife then
+            stopThrowAnimation()
+            return
+        end
         local events: Instance? = knife:FindFirstChild("Events")
         local remote: Instance? = events and events:FindFirstChild("KnifeThrown")
-        if not remote or not remote:IsA("RemoteEvent") then return end
+        if not remote or not remote:IsA("RemoteEvent") then
+            return
+        end
+        if throwPending then
+            return
+        end
         local character: Model? = LocalPlayer.Character
-        local function getOrigin(): CFrame?
-            if not character or character ~= LocalPlayer.Character then return nil end
-            local handle: Instance? = knife:FindFirstChild("Handle")
-            local hand: Instance? = character:FindFirstChild("RightHand")
-                or character:FindFirstChild("Right Arm") or character:FindFirstChild("HumanoidRootPart")
-            local source: Instance? = handle and handle:IsA("BasePart") and handle or hand
-            if not source or not source:IsA("BasePart") then return nil end
-            return (source :: BasePart).CFrame
+        local origin: CFrame? = knifeOrigin(knife, character)
+        if not origin or not findNearestTarget(origin.Position) then
+            return
         end
-        local initialOrigin: CFrame? = getOrigin()
-        if not initialOrigin or not findNearestTarget(initialOrigin.Position) then return end
-        local function sendAtRelease(): ()
-            if not knifeThrowSettings.enabled or getReadyKnife() ~= knife then return end
-            local origin: CFrame? = getOrigin()
-            if not origin then return end
-            -- Select again at release: do not cling to a target that closed
-            -- its peek during windup when another player is now visible.
-            local target: Player? = findNearestTarget(origin.Position)
-            if not target then return end
-            local aim: Vector3? = resolveKnifeAim(target, origin.Position)
-            if not aim or (aim - origin.Position).Magnitude < 0.05 then return end
-            remote:FireServer(origin, CFrame.new(aim))
-            pcall(trajectoryCalibration.noteAuthoredShot, trajectoryCalibration, {
-                kind = "knife", tool = knife, toolName = knife.Name,
-                originPos = origin.Position, aimPos = aim, target = target, silent = false,
-                settings = {mode = "Normal", animation = true, wallCheck = true,
-                    motionSource = lastKnifePrediction and lastKnifePrediction.motionSource,
-                    cadence = "animation-cycle", model = lastKnifePrediction and lastKnifePrediction.model or "reference-v41",
-                    referencePoint = lastKnifePrediction and {lastKnifePrediction.referenceEndpoint.X, lastKnifePrediction.referenceEndpoint.Y, lastKnifePrediction.referenceEndpoint.Z}, windupSeconds = 0.3},
-            })
+        local ok: boolean = pcall(
+            playThrowAnimation,
+            knife,
+            function(): ()
+                performThrow(knife, remote)
+            end
+        )
+        if not ok then
+            stopThrowAnimation()
         end
-        local ok: boolean = pcall(playThrowAnimation, knife, sendAtRelease)
-        if not ok then stopThrowAnimation() end
     end
 
     local function refreshKnifeThrow(): ()
@@ -2406,7 +2679,10 @@ function Module.init(runtime: any): any
             stopThrowAnimation()
             return
         end
-        featureConnections.MM2KnifeThrow = TaskManager:Connect(throwKnife)
+        featureConnections.MM2KnifeThrow =
+            TaskManager:Connect(function(): ()
+                throwKnife()
+            end)
     end
     local function toggleKnifeThrow(enabled: boolean): ()
         knifeThrowSettings.enabled = enabled
@@ -2429,20 +2705,11 @@ function Module.init(runtime: any): any
     end
     state.mm2KnifeThrowRefresh = refreshKnifeThrow
     state.mm2KnifeThrowOff = function(): () toggleKnifeThrow(false) end
-    local button = addToggleOption(feature, "Knife Throw", false, toggleKnifeThrow,
+    -- The knife options open their own section, after the Gun rows that the
+    -- Shoot module already created: the two weapons never mix again.
+    if addSectionOption then addSectionOption(feature, "Knife") end
+    addToggleOption(feature, "Knife Throw", false, toggleKnifeThrow,
         "SilentAIM ON + held knife: repeats throws at visible targets. Full animation and WallCheck are automatic.", true)
-    -- Both automatic attacks belong at the top, ahead of Gun tuning. The
-    -- option is created by a later module, so move its real row, not only its
-    -- registry entry. The compact UI has no visible information headings.
-    local row = button and button.Parent
-    local index = row and table.find(feature.optionRows, row)
-    if index then
-        table.remove(feature.optionRows, index)
-        table.insert(feature.optionRows, 2, row)
-        for order, optionRow in ipairs(feature.optionRows) do optionRow.LayoutOrder = order end
-    end
-    if type(queueConfigSave) == "function" then queueConfigSave() end
-
     featureConnections.MM2KnifeThrowCharacter = LocalPlayer.CharacterAdded:Connect(stopThrowAnimation)
     activeCleanup = function(): ()
         toggleKnifeThrow(false)
@@ -2486,33 +2753,27 @@ function Module.init(runtime: any): any
     end
     local core: any = state.mm2Core
     assert(type(core) == "table", "MM2 Shoot requires the MM2 core module")
+    local prediction: any = state.mm2Prediction
+    assert(type(prediction) == "table", "MM2 Shoot requires MM2 Prediction")
     local trajectoryCalibration: any = core.trajectoryCalibration
     Module.Runtime = runtime
     local connectGunFiredSignal: any = core.connectGunFiredSignal
     local disconnectGunFiredObserver: any = core.disconnectGunFiredObserver
     local findMurderer: any = core.findMurderer
-    local getFilteredVelocity: any = core.getFilteredVelocity
-    local getGunHorizonSeconds: any = core.getGunHorizonSeconds
-    local getGunTurnDiscount: any = core.getGunTurnDiscount
-    local getGunTurnRate: any = core.getGunTurnRate
-    local getGunLeadSensitivity: any = core.getGunLeadSensitivity
-    local getGunLeadStatus: any = core.getGunLeadStatus
-    local resetAutoLeadCorrection: any = core.resetAutoLeadCorrection
     local getGunOriginCFrame: any = core.getGunOriginCFrame
     local getPlayerRole: any = core.getPlayerRole
     local getPlayerWeapon: any = core.getPlayerWeapon
     local getWeaponServiceModule: any = core.getWeaponServiceModule
     local isPlayerAlive: any = core.isPlayerAlive
     local isProtectedTarget: any = core.isProtectedTarget
+    local isWeaponPathClear: any = core.isWeaponPathClear
     local mm2Settings: any = core.mm2Settings
-    local motionSamples: any = core.motionSamples
-    local predictionMath: any = core.predictionMath
-    local isMotionGrounded: any = core.isMotionGrounded
-    local function isWeaponPathClear(origin: Vector3, endpoint: Vector3, target: Model?, requireTarget: boolean?): boolean
-        return core.isGunPathClear(origin,endpoint,target,requireTarget)
-    end
+    local validateGunShot: any = core.validateGunShot
 
     local shootMacro: boolean = false
+    -- First thing the untouched ray meets on an allowed shot (nil if nothing
+    -- short of the aim). Persisted into the shot's settings.
+    local lastGunOccluder: any = nil
     local function macroUnequip(gun: Tool?): ()
         if not shootMacro or not gun then
             return
@@ -2526,277 +2787,6 @@ function Module.init(runtime: any): any
                 end
             end)
         end)
-    end
-
-    type GunPrediction = {
-        motionSource: string?,
-        targetPosition: Vector3,
-        endpoint: Vector3,
-        velocity: Vector3,
-        errorRadius: number,
-        leadSeconds: number,
-        leadSensitivity: number,
-
-        capturedPosition: Vector3,
-        aimRootOffset: Vector3,
-        model: string?,
-        referenceEndpoint: Vector3?,
-    }
-
-    type GunAimOptions = {
-
-        ignoreVisibility: boolean?,
-        allowUncertain: boolean?,
-    }
-
-    local BODY_HALF_WIDTH: number = 1.0
-
-    local MINIMUM_ERROR_RADIUS: number = 0.35
-
-    local AIM_PARTS: {string} = {
-        "UpperTorso",
-        "Torso",
-        "HumanoidRootPart",
-        "Head",
-    }
-
-    -- Searched only when the main aim point is wall-blocked, in priority
-    -- order: big center-mass parts first, then the limbs that typically poke
-    -- out of cover (a hand holding the knife around a corner).
-    local VISIBILITY_PARTS: {string} = {
-        "UpperTorso", "Torso", "HumanoidRootPart", "Head",
-        "RightHand", "LeftHand", "Right Arm", "Left Arm", "RightLowerLeg", "LeftLowerLeg",
-        "Right Leg", "Left Leg", "RightFoot", "LeftFoot",
-    }
-
-    local function findAimPart(character: Model): BasePart?
-        for _, partName: string in ipairs(AIM_PARTS) do
-            local part: BasePart? = character:FindFirstChild(partName) :: BasePart?
-            if part and part:IsA("BasePart") then
-                return part
-            end
-        end
-        return nil
-    end
-
-    local function computeGunAim(
-        target: Player,
-        origin: CFrame,
-        options: GunAimOptions?
-    ): (CFrame?, GunPrediction?, string?)
-        local resolvedOptions: GunAimOptions = options or {}
-        local ignoreVisibility: boolean = resolvedOptions.ignoreVisibility == true
-        local character: Model? = target.Character
-        local humanoid: Humanoid? = character
-            and character:FindFirstChildOfClass("Humanoid")
-            :: Humanoid?
-        local root: BasePart? = character
-            and character:FindFirstChild("HumanoidRootPart")
-            :: BasePart?
-        if not character or not humanoid or humanoid.Health <= 0 or not root then
-            return nil, nil, "no body"
-        end
-
-        local part: BasePart? = findAimPart(character :: Model)
-        if not part then
-            return nil, nil, "no body"
-        end
-
-        local velocity: Vector3 = getFilteredVelocity(target, root :: BasePart)
-        local sample: MotionSample? = motionSamples[target]
-        if sample and (sample.character ~= character or os.clock() - sample.sampledAt > 0.25) then
-            sample = nil
-        end
-        local acceleration: Vector3 = sample and sample.acceleration or Vector3.zero
-        -- Do not use `a and false or fallback`: airborne false is meaningful.
-        local grounded: boolean = isMotionGrounded(humanoid, velocity)
-
-        local turnRate: number = getGunTurnRate(
-            sample and sample.character == character and sample or nil
-        )
-
-        -- Remote MoveDirection is not authoritative velocity (the supplied
-        -- traces contain opposing direction/velocity samples). Do not invent
-        -- WalkSpeed motion for a target whose measured velocity is zero.
-        local horizontalVelocity: Vector3 = Vector3.new(velocity.X, 0, velocity.Z)
-
-        local horizon: number = getGunHorizonSeconds()
-        local discount: number = getGunTurnDiscount(horizon, turnRate)
-        local lead: number = horizon * discount
-        local leadSensitivity: number = type(getGunLeadSensitivity) == "function"
-            and getGunLeadSensitivity(horizon, turnRate)
-            or discount
-
-        local horizontalAcceleration: Vector3 = Vector3.new(
-            acceleration.X,
-            0,
-            acceleration.Z
-        )
-
-        -- Never lead further than the time the target needs to stop. A
-        -- strafing player that reverses (peeking in and out of cover) would
-        -- otherwise be overshot ahead of his movement ("como prediciendo el
-        -- futuro"); the same damping shrinks the lead the moment the target
-        -- decelerates, so the aim tracks back toward his real path.
-        local horizontalSpeed: number = horizontalVelocity.Magnitude
-        if horizontalSpeed > 1 and lead > 0 then
-            local opposing: number =
-                -horizontalAcceleration:Dot(horizontalVelocity.Unit)
-            if opposing > 0 then
-                local stopTime: number =
-                    horizontalSpeed / math.max(opposing, 1)
-                if stopTime < lead then
-                    lead = stopTime
-                end
-            end
-        end
-
-        local displacement: Vector3 = Vector3.new(
-            velocity.X * lead,
-            0,
-            velocity.Z * lead
-        ) + horizontalAcceleration * (0.25 * lead * lead)
-
-        -- Vertical safety. Remote characters often read FloorMaterial = Air
-        -- on our client, so a player walking flat ground can be misclassified
-        -- as airborne; combined with the old ballistic drop this buried shots
-        -- several studs BELOW the target ("el tiro sale demasiado abajo").
-        -- A hitscan gun has no bullet drop of its own, and a walker on flat
-        -- ground has no vertical motion to predict, so: near-zero vertical
-        -- velocity means zero vertical lead, and the airborne term is capped.
-        -- The humanoid STATE (Jumping/Freefall) replicates with the humanoid
-        -- itself and can arrive before the physics velocity does, so an
-        -- early jump gets a minimum upward assumption instead of a flat shot.
-        local jumpState: boolean = false
-        local risingJumpState: boolean = false
-        do
-            local ok: boolean, stateName: any = pcall(function(): any
-                return (humanoid :: Humanoid):GetState()
-            end)
-            risingJumpState = ok and stateName == Enum.HumanoidStateType.Jumping
-            jumpState = ok
-                and (stateName == Enum.HumanoidStateType.Jumping
-                    or stateName == Enum.HumanoidStateType.Freefall)
-        end
-        local effectivelyGrounded: boolean =
-            (grounded or math.abs(velocity.Y) <= 0.5) and not jumpState
-        local verticalDisplacement: number = 0
-        if not effectivelyGrounded then
-            local verticalVelocity: number = velocity.Y
-            local risingJump: boolean = risingJumpState
-                and verticalVelocity < 8
-                and verticalVelocity > -8
-            if risingJump then
-                verticalVelocity = 8
-            end
-            verticalDisplacement = math.clamp(
-                verticalVelocity * lead
-                    - 0.5 * workspace.Gravity * lead * lead,
-                -3,
-                6 -- v31 shot :40: +4.16 observed, +4.18 ballistic; old +3 clipped it
-            )
-        elseif grounded then
-            verticalDisplacement = math.clamp(velocity.Y, -2.5, 2.5) * lead
-        end
-        displacement = Vector3.new(
-            displacement.X,
-            verticalDisplacement,
-            displacement.Z
-        )
-
-        local referenceEndpoint = part.Position + displacement
-        local classic = mm2Settings.predictionModel == "66d"
-        if classic then
-            -- 66d's compact motion equation, separate from wall/friendly safety.
-            local movement = humanoid.MoveDirection
-            if horizontalVelocity.Magnitude < 1.5 and movement.Magnitude > 0.05 then
-                local desired = movement.Unit * humanoid.WalkSpeed
-                velocity = Vector3.new(desired.X,velocity.Y,desired.Z)
-            end
-            local stability = sample and sample.character == character and sample.stability
-            turnRate = type(stability) == "number" and math.clamp((1-math.clamp(stability,0,1))*6,0,math.pi*1.5) or math.pi*0.5
-            lead = horizon * getGunTurnDiscount(horizon,turnRate)
-            leadSensitivity = getGunLeadSensitivity(horizon,turnRate)
-            displacement = Vector3.new(velocity.X*lead,0,velocity.Z*lead) + horizontalAcceleration*(0.25*lead*lead)
-            -- Keep this rollback's vertical model explicit, not an adaptive blend.
-            local onGround = sample and sample.grounded or humanoid.FloorMaterial ~= Enum.Material.Air
-            local y = onGround and math.clamp(velocity.Y,-2.5,2.5)*lead
-                or velocity.Y*lead-0.5*workspace.Gravity*lead*lead
-            displacement = Vector3.new(displacement.X,y,displacement.Z)
-        end
-        local predicted: Vector3 = part.Position + displacement
-        local delta: Vector3 = predicted - origin.Position
-        if delta.Magnitude <= 0.05 then
-            return nil, nil, "too close"
-        end
-
-        if not ignoreVisibility and mm2Settings.shootWallCheck
-            and not isWeaponPathClear(origin.Position,predicted,character,true) then
-            -- Visibility is a CURRENT-body test, never proof supplied by a
-            -- predicted point in empty space. A closed peek must fail even
-            -- when an old/future lead position has an unobstructed ray.
-            local visible: Vector3? = nil
-            local visiblePart: BasePart? = nil
-            for _, partName: string in ipairs(VISIBILITY_PARTS) do
-                local candidate: Instance? = character:FindFirstChild(partName)
-                if candidate and candidate:IsA("BasePart") then
-                    local body: BasePart = candidate :: BasePart
-                    local points: {Vector3} = {body.Position}
-                    local right: Vector3 = body.CFrame.RightVector * math.min(body.Size.X * 0.35, 0.55)
-                    local up: Vector3 = body.CFrame.UpVector * math.min(body.Size.Y * 0.25, 0.35)
-                    local probeOffsets: {Vector3} = {right, -right}
-                    if table.find(AIM_PARTS, partName) then
-                        table.insert(probeOffsets, up)
-                    end
-                    for _, offset: Vector3 in ipairs(probeOffsets) do table.insert(points, body.Position + offset) end
-                    for _, point: Vector3 in ipairs(points) do
-                        if (point - origin.Position).Magnitude > 0.05
-                            and isWeaponPathClear(origin.Position, point, character, true) then
-                            visible = point
-                            visiblePart = body
-                            break
-                        end
-                    end
-                end
-                if visible then break end
-            end
-            if not visible or not visiblePart then return nil, nil, "obstructed" end
-            -- Keep the solver's lead, anchored to the visible part NOW. If
-            -- cover blocks that lead, the currently exposed sliver wins.
-            part = visiblePart
-            local ledPoint: Vector3 = visible + displacement
-            local ledClear = isWeaponPathClear(origin.Position,ledPoint,character,true)
-            predicted = ledClear and ledPoint or visible
-            if not ledClear then leadSensitivity = 0 end
-            delta = predicted - origin.Position
-        end
-
-        local turnError: number = displacement.Magnitude
-            * math.sin(math.min(horizon * turnRate * 0.5, math.pi * 0.5))
-        local jitter: number = math.min(acceleration.Magnitude / 240, 0.45)
-        local errorRadius: number = math.max(
-            MINIMUM_ERROR_RADIUS,
-            turnError + jitter
-        )
-        local allowedErrorBudget: number = ignoreVisibility and (BODY_HALF_WIDTH * 1.75) or BODY_HALF_WIDTH
-        if errorRadius > allowedErrorBudget and not resolvedOptions.allowUncertain then
-            return nil, nil, "turning too hard"
-        end
-
-        local direction: Vector3 = delta.Unit
-        return CFrame.lookAt(predicted, predicted + direction), {
-            targetPosition = predicted,
-            endpoint = predicted,
-            velocity = velocity,
-            errorRadius = errorRadius,
-            leadSeconds = lead,
-            leadSensitivity = leadSensitivity,
-            capturedPosition = part.Position,
-            aimRootOffset = part.Position - (root :: BasePart).Position,
-            motionSource = "velocity",
-            model = classic and "classic-66d" or "reference-v41",
-            referenceEndpoint = referenceEndpoint,
-        }, nil
     end
 
     local function getSelectedShootTarget(): Player?
@@ -2848,19 +2838,40 @@ function Module.init(runtime: any): any
     local SILENT_LIFT_STUDS: number = 1.6
     local MAX_SILENT_SWEEP: number = 1.5
 
-    local function getSilentSweepDistance(): number
+    -- The bypass segment runs along the target's own motion. A fixed extra
+    -- length guesses; the confirmed shots already measure how far the aim
+    -- lands from the body, so the same measurement decides how much segment
+    -- the shot needs. With no confirmations yet the uncertainty is zero and
+    -- the configured value is used untouched.
+    local function getSilentSweepDistance(speed: number?): number
         local configured: number = tonumber(mm2Settings.silentSweep) or 0
-        return math.clamp(configured, 0, MAX_SILENT_SWEEP)
+        local sweep: number = math.clamp(configured, 0, MAX_SILENT_SWEEP)
+        local uncertainty: number = 0
+        if type(prediction) == "table"
+            and type(prediction.getLeadUncertainty) == "function" then
+            local ok: boolean, seconds: any = pcall(
+                prediction.getLeadUncertainty
+            )
+            if ok and type(seconds) == "number" and seconds == seconds then
+                uncertainty = math.clamp(seconds, 0, 0.15)
+            end
+        end
+        if uncertainty <= 0 then
+            return sweep
+        end
+        local travel: number = math.max(tonumber(speed) or 0, 0)
+        local extra: number = uncertainty * travel
+        return math.clamp(sweep + extra, 0, MAX_SILENT_SWEEP)
     end
 
     local function buildSilentShot(
         target: Player,
-        prediction: GunPrediction,
+        info: any,
         muzzleOrigin: CFrame?,
         variant: string
     ): (CFrame?, CFrame?, number)
-        local predicted: Vector3 = prediction.targetPosition
-        local velocity: Vector3 = prediction.velocity
+        local predicted: Vector3 = info.endpoint
+        local velocity: Vector3 = info.velocity
         local horizontal: Vector3 = Vector3.new(velocity.X, 0, velocity.Z)
 
         local direction: Vector3? = nil
@@ -2868,7 +2879,7 @@ function Module.init(runtime: any): any
         if horizontal.Magnitude > 1.5 then
             direction = horizontal.Unit
 
-            sweep = getSilentSweepDistance()
+            sweep = getSilentSweepDistance(horizontal.Magnitude)
         end
         local sweepStart: Vector3 =
             direction and -direction * sweep or Vector3.zero
@@ -2893,7 +2904,7 @@ function Module.init(runtime: any): any
         local endPoint: Vector3
         if variant == "Through" and approach then
 
-            local captured: Vector3 = prediction.capturedPosition or predicted
+            local captured: Vector3 = info.capturedPosition or predicted
             startPoint = captured - approach * 1.0 + sweepStart
             endPoint = predicted + approach * SILENT_PIERCE_STUDS + sweepEnd
         elseif variant == "Top" then
@@ -2940,7 +2951,6 @@ function Module.init(runtime: any): any
 
     type FireOptions = {
         silent: boolean?,
-        maxError: number?,
         quiet: boolean?,
         whenReady: boolean?,
     }
@@ -2985,32 +2995,34 @@ function Module.init(runtime: any): any
         local remote: Instance? = gun and gun:FindFirstChild("Shoot")
         local origin: CFrame? = getGunOriginCFrame(character, gun)
 
-        local aim: CFrame?, prediction: GunPrediction?, reason: string? = nil
+        local info: any = nil
+        local reason: string? = nil
         if origin then
-            local ok
-            ok, aim, prediction, reason = pcall(computeGunAim,
-                target, origin :: CFrame, {allowUncertain = opts.whenReady == true})
+            local ok: boolean, endpoint: any, aimInfo: any, aimReason: any =
+                pcall(prediction.gunAim, target, origin.Position)
             if not ok then return reject("Aim or visibility check failed.") end
+            if endpoint == nil then
+                reason = aimReason or "no samples"
+            else
+                info = aimInfo
+            end
         end
 
         local rejectMessages: {[string]: string} = {
             ["no body"] = "The murderer has no usable body to aim at.",
-            ["too close"] = "The murderer is too close to shoot cleanly.",
-            ["obstructed"] = "A wall blocks the shot.",
-            ["turning too hard"] = "The murderer is turning too hard to lead.",
+            ["no samples"] = "The murderer has no fresh motion samples yet.",
+            ["stale sample"] = "The murderer's position is stale; waiting for a fresh sample.",
+            ["unreachable"] = "The murderer is moving too fast to intercept.",
         }
         if not remote
             or not remote:IsA("RemoteEvent")
             or not origin
-            or not aim
-            or not prediction then
+            or not info then
             local message: string = rejectMessages[reason or ""]
                 or (
                     not origin
                         and "The gun has no usable origin."
-                        or (silent
-                            and "The murderer has no usable body to aim at."
-                            or "The murderer is unavailable or obstructed.")
+                        or "The murderer is unavailable or obstructed."
                 )
             return reject(message)
         end
@@ -3020,18 +3032,23 @@ function Module.init(runtime: any): any
                 or gun:GetAttribute("Reloading") == true or gun:GetAttribute("IsReloading") == true then
                 return reject("The gun is disabled or reloading.")
             end
-            local muzzle = getGunOriginCFrame(character,gun)
-            if not muzzle then return reject("The gun has no usable origin.") end
-            local ok, allowed, why = pcall(core.validateGunShot,target,character,targetCharacter,muzzle.Position,
-                shotOrigin.Position,shotEnd.Position,mm2Settings.shootWallCheck,prediction.leadSeconds)
-            if not ok or not allowed then return reject(why or "Shot safety check failed.") end
+            local ok, allowed, why, blocker, occluder = pcall(validateGunShot,target,character,targetCharacter,
+                shotOrigin.Position,shotOrigin.Position,shotEnd.Position,mm2Settings.shootWallCheck)
+            if not ok or not allowed then
+                if type(blocker) == "table" and trajectoryCalibration
+                    and type(trajectoryCalibration.noteBlockedShot) == "function" then
+                    pcall(trajectoryCalibration.noteBlockedShot, trajectoryCalibration, blocker)
+                end
+                return reject(why or "Shot safety check failed.")
+            end
+            -- Cleared, but keep what the untouched ray met: a transparent solid
+            -- short of the aim is exactly the case the client cannot see.
+            if type(occluder) == "table" then
+                lastGunOccluder = occluder
+            else
+                lastGunOccluder = nil
+            end
             return true
-        end
-        local resolved: GunPrediction = prediction :: GunPrediction
-        if opts.maxError
-            and resolved.errorRadius > opts.maxError then
-
-            return reject("Shot accuracy is too low to fire.")
         end
 
         -- Do not infer a reload from our last REQUEST: a rejected packet
@@ -3041,17 +3058,17 @@ function Module.init(runtime: any): any
 
             local variant: string = mm2Settings.silentSpawn
             local shotOrigin: CFrame?, shotEnd: CFrame?, offset: number =
-                buildSilentShot(target, resolved, origin, variant)
+                buildSilentShot(target, info, origin, variant)
             if not shotOrigin or not shotEnd then
                 return reject("Another player blocks the silent shot.")
             end
             -- A near-target origin inside a body can make the engine miss that
             -- containing body. Fall back to the real muzzle, never a bypass.
-            if not core.isGunPathClear(shotOrigin.Position,shotEnd.Position,targetCharacter,true) then
-                shotOrigin,shotEnd = origin,CFrame.new(resolved.endpoint)
+            if not isWeaponPathClear(shotOrigin.Position,shotEnd.Position,targetCharacter,nil,{ignoreTarget=true}) then
+                shotOrigin,shotEnd = origin,CFrame.new(info.endpoint)
             end
             if not safeToSend(shotOrigin,shotEnd) then return false end
-            state.mm2ShotFeedback.queue(target, gun, shotOrigin, shotEnd, resolved)
+            state.mm2ShotFeedback.queue(target, gun, shotOrigin, shotEnd)
             if state.mm2ShotFeedback.pending then
                 state.mm2ShotFeedback.pending.silentSpawn = variant
             end
@@ -3073,43 +3090,57 @@ function Module.init(runtime: any): any
                 silent = true,
                 variant = variant,
                 offset = offset,
-                settings = {mode = "Silent", spawn = mm2Settings.silentSpawn,
-                    sweep = mm2Settings.silentSweep, motionHz = mm2Settings.motionSampleHz,
-                    leadSeconds = resolved.leadSeconds, errorRadius = resolved.errorRadius,
-                    predictionModel = resolved.model, motionSource = resolved.motionSource,
-                    referencePoint = resolved.referenceEndpoint and {resolved.referenceEndpoint.X, resolved.referenceEndpoint.Y, resolved.referenceEndpoint.Z},
-                    predictedPoint = {resolved.endpoint.X, resolved.endpoint.Y, resolved.endpoint.Z},
-                    sampledVelocity = {resolved.velocity.X, resolved.velocity.Y, resolved.velocity.Z}},
+                settings = {mode = "Silent", spawn = variant,
+                    sweep = mm2Settings.silentSweep, wallCheck = mm2Settings.shootWallCheck,
+                    leadSeconds = info.leadSeconds, motionSource = info.motionSource,
+                    model = info.model,
+                    sampleAge = info.sampleAge, samples = info.samples,
+                    referencePoint = info.capturedPosition and {info.capturedPosition.X, info.capturedPosition.Y, info.capturedPosition.Z},
+                    predictedPoint = {info.endpoint.X, info.endpoint.Y, info.endpoint.Z},
+                    sampledVelocity = {info.velocity.X, info.velocity.Y, info.velocity.Z},
+                    rtt = info.rtt, echoDelay = info.echoDelay,
+                    rttEngine = info.rttEngine, rttData = info.rttData,
+                    occluder = lastGunOccluder,
+                    echoSamples = info.echoSamples,
+                    turnRate = info.turnRate, brakeSeconds = info.brakeSeconds,
+                    leadCorrection = info.leadCorrection},
             })
             if not quiet and ShootFeature then ShootFeature:SetStatus(nil) end
             macroUnequip(gun)
             return true
         end
 
-        if not safeToSend(origin,CFrame.new(resolved.endpoint)) then return false end
-        state.mm2ShotFeedback.queue(target, gun, origin, aim, resolved)
+        local shotEndCFrame: CFrame = CFrame.new(info.endpoint)
+        if not safeToSend(origin, shotEndCFrame) then return false end
+        state.mm2ShotFeedback.queue(target, gun, origin, shotEndCFrame)
         -- Author one endpoint, without speculative "piercing" past it.
         -- Echo timing documents transport/visual confirmation, NOT rewind
         -- duration or an authoritative hit-rate denominator.
         remote:FireServer(
-            CFrame.lookAt(origin.Position, resolved.endpoint),
-            CFrame.new(resolved.endpoint)
+            CFrame.lookAt(origin.Position, info.endpoint),
+            shotEndCFrame
         )
         pcall(trajectoryCalibration.noteAuthoredShot, trajectoryCalibration, {
             kind = "gun",
             tool = gun,
             toolName = gun and gun.Name or "Gun",
             originPos = origin.Position,
-            aimPos = resolved.endpoint,
+            aimPos = info.endpoint,
             target = target,
             silent = false,
             settings = {mode = "Normal", wallCheck = mm2Settings.shootWallCheck,
-                motionHz = mm2Settings.motionSampleHz, leadBias = mm2Settings.gunLeadBias,
-                wallCheckPolicy = "strict-final-first-target", leadSeconds = resolved.leadSeconds, errorRadius = resolved.errorRadius,
-                predictionModel = resolved.model, motionSource = resolved.motionSource,
-                referencePoint = resolved.referenceEndpoint and {resolved.referenceEndpoint.X, resolved.referenceEndpoint.Y, resolved.referenceEndpoint.Z},
-                predictedPoint = {resolved.endpoint.X, resolved.endpoint.Y, resolved.endpoint.Z},
-                sampledVelocity = {resolved.velocity.X, resolved.velocity.Y, resolved.velocity.Z}},
+                leadSeconds = info.leadSeconds, motionSource = info.motionSource,
+                model = info.model,
+                sampleAge = info.sampleAge, samples = info.samples,
+                referencePoint = info.capturedPosition and {info.capturedPosition.X, info.capturedPosition.Y, info.capturedPosition.Z},
+                predictedPoint = {info.endpoint.X, info.endpoint.Y, info.endpoint.Z},
+                sampledVelocity = {info.velocity.X, info.velocity.Y, info.velocity.Z},
+                rtt = info.rtt, echoDelay = info.echoDelay,
+                rttEngine = info.rttEngine, rttData = info.rttData,
+                occluder = lastGunOccluder,
+                echoSamples = info.echoSamples,
+                turnRate = info.turnRate, brakeSeconds = info.brakeSeconds,
+                leadCorrection = info.leadCorrection},
         })
         if not quiet and ShootFeature then ShootFeature:SetStatus(nil) end
         macroUnequip(gun)
@@ -3126,29 +3157,12 @@ function Module.init(runtime: any): any
         local wantActive: boolean = shootFeatureActive or autoShootActive
         state.mm2ShotFeedback.shootActive = wantActive
         if wantActive then
-            if not featureConnections.MM2MotionTracker then
-                local weaponService: any = getWeaponServiceModule()
-                if type(weaponService) == "table" then
-                    connectGunFiredSignal(weaponService)
-                end
-                local motionElapsed: number = 0
-                featureConnections.MM2MotionTracker = TaskManager:Connect(function(
-                    deltaTime: number
-                ): ()
-                    local due: boolean
-                    due, motionElapsed = predictionMath.sampleDue(motionElapsed, deltaTime, mm2Settings.motionSampleHz)
-                    if not due then return end
-                    -- Only the selected target needs prediction history; the
-                    -- solver also reads fresh velocity at the instant of fire.
-                    local player: Player? = getSelectedShootTarget()
-                    local root: BasePart? = player and player.Character
-                        and player.Character:FindFirstChild("HumanoidRootPart") :: BasePart?
-                    if player and root then getFilteredVelocity(player, root) end
-                end)
+            local weaponService: any = getWeaponServiceModule()
+            if type(weaponService) == "table" then
+                connectGunFiredSignal(weaponService)
             end
             return
         end
-        disconnectFeatureConnection("MM2MotionTracker")
         disconnectGunFiredObserver()
         state.mm2ShotFeedback.pending = nil
         state.mm2ShotFeedback.lastAccepted = nil
@@ -3177,8 +3191,6 @@ function Module.init(runtime: any): any
             end
             -- Never re-equip if the user switched away during that frame.
             if shootFeatureActive and LocalPlayer.Character == character and gun.Parent == character then
-                -- An explicit action never waits for a low prediction error.
-                -- This flag skips only that gate, not native reload/readiness or LOS.
                 fireGunAtTarget(getSelectedShootTarget(), {whenReady = true})
             end
         end)
@@ -3261,7 +3273,7 @@ function Module.init(runtime: any): any
     end
     ShootFeature = createUniversalFeature(
         "SilentAIM",
-        "Gun aim and Knife Throw. The main assigned key fires/equips Gun; Auto Shoot and Knife Throw use your held weapon. Aim method and lead controls below apply to Gun.",
+        "Gun aim and Knife Throw. The main assigned key fires/equips Gun; Auto Shoot and Knife Throw use your held weapon. Every shot uses the kinematic predictor with the game-filter WallCheck.",
         4,
         toggleShootMurderer,
         {
@@ -3272,6 +3284,15 @@ function Module.init(runtime: any): any
         }
     )
     state.mm2SilentAimFeature = ShootFeature
+    -- Other modules (Auto Farm's full-bag grab) fire through the exact
+    -- SilentAim path -- same silent spawn construction, wall check and
+    -- calibration capture -- instead of hand-rolling their own shot.
+    state.mm2FireSilentShot = function(target: Player?): boolean
+        return fireGunAtTarget(target, {silent = true, quiet = true})
+    end
+    -- One card, two weapons: the heading keeps the gun rows together and the
+    -- knife module opens its own section further down.
+    if addSectionOption then addSectionOption(ShootFeature, "Gun") end
     addToggleOption(ShootFeature, "Auto Shoot", false, toggleAutoShoot,
         "While SilentAIM is ON and you hold the gun: try every frame as soon as the current target is visible. No distance or prediction-confidence gate. Uses the Gun aim method.", true)
     local ShootTargetBox
@@ -3279,6 +3300,7 @@ function Module.init(runtime: any): any
     local silentSweepRow: GuiObject? = nil
     local silentSpawnRow: GuiObject? = nil
     local spawnStatsRow: GuiObject? = nil
+    local leadOffsetRow: GuiObject? = nil
     local function refreshShootOptions(): ()
         if ShootTargetBox then
             setOptionVisible(
@@ -3298,6 +3320,15 @@ function Module.init(runtime: any): any
         end
         if spawnStatsRow then
             setOptionVisible(ShootFeature, spawnStatsRow :: GuiObject, silent)
+        end
+        -- The manual offset only exists as an advanced fallback; automatic
+        -- lead is the default and needs no tuning.
+        if leadOffsetRow then
+            setOptionVisible(
+                ShootFeature,
+                leadOffsetRow :: GuiObject,
+                prediction.settings.autoLead ~= true
+            )
         end
     end
     addCycleOption(
@@ -3337,8 +3368,9 @@ function Module.init(runtime: any): any
         function(value: boolean): ()
             mm2Settings.shootWallCheck = value
         end,
-        "Check the current muzzle and final shot ray in both aim methods. "
-            .. "Requires the murderer as first hit. Other players always block firing, even with WallCheck OFF."
+        "Check the fired segment with the game's own WeaponService filter: "
+            .. "WeaponPassthrough tags and invisible layers are ignored and the "
+            .. "first solid surface or player blocks the shot. Applies to gun and knife."
     )
     wallCheckRow = wallButton and wallButton.Parent
     addToggleOption(
@@ -3417,72 +3449,50 @@ function Module.init(runtime: any): any
     if spawnStatsButton then
         spawnStatsRow = spawnStatsButton.Parent :: GuiObject
     end
-    addToggleOption(
+    local autoLeadButton = addToggleOption(
         ShootFeature,
-        "Auto tune lead",
-        mm2Settings.autoTuneLead,
+        "Auto lead",
+        true,
         function(value: boolean): ()
-            mm2Settings.autoTuneLead = value
+            prediction.settings.autoLead = value
+            refreshShootOptions()
         end,
-        "Opt-in calibration from confirmed hits. It learns a separate runtime "
-            .. "correction and never rewrites the manual Lead bias slider."
+        "Recommended. Uses the measured FireServer -> GunFired echo (or your "
+            .. "ping while it learns), the replication window and the sample "
+            .. "age. It adapts to your FPS, device and network without manual "
+            .. "tuning. Turn it off only to test a fixed manual offset.",
+        false
     )
-    addNumberOption(
+    if autoLeadButton then
+        setOptionVisible(ShootFeature, autoLeadButton.Parent :: GuiObject, true)
+    end
+    leadOffsetRow = addNumberOption(
         ShootFeature,
-        "Lead bias",
-        mm2Settings.gunLeadBias,
-        -0.15,
-        0.15,
+        "Lead offset ms",
+        math.round(prediction.settings.extraLead * 1000),
+        -300,
+        600,
         function(value: number): ()
-            mm2Settings.gunLeadBias = math.clamp(value, -0.15, 0.15)
+            -- Typed values are not quantized by the UI, so 1 ms precision is
+            -- real. The predictor adds this on top of echo/RTT + interpolation.
+            prediction.settings.extraLead = math.clamp(value, -300, 600) / 1000
         end,
-        "Manual correction in seconds on top of the bounded RTT-based "
-            .. "lead estimate. Network delay and sudden direction changes "
-            .. "prevent guaranteed hits. Positive aims further ahead, "
-            .. "negative aims closer; 0 keeps the automatic model. Capped at "
-            .. "+/-0.15s.",
-        0.005
+        "Manual timing correction in milliseconds, on top of the measured "
+            .. "FireServer -> GunFired echo (or ping) and the replication "
+            .. "interpolation. Type an exact value in the numeric box; the "
+            .. "slider moves in 1 ms steps. Positive aims further ahead, "
+            .. "negative closer, 0 keeps the measured model. Prediction status "
+            .. "shows the resulting lead; it saturates at the model's cap.",
+        1
     )
-    addNumberOption(
-        ShootFeature,
-        "Motion Hz",
-        mm2Settings.motionSampleHz,
-        20,
-        120,
-        function(value: number): ()
-            mm2Settings.motionSampleHz = math.clamp(math.round(value), 20, 120)
-        end,
-        "Selected-target motion samples per second. Default 60; 120 is optional "
-            .. "on high-FPS clients, not a network replication boost. Prediction "
-            .. "always reads current velocity when firing.",
-        5
-    )
-    addActionOption(ShootFeature, "Lead status", function(): ()
-        local status: any = type(getGunLeadStatus) == "function"
-            and getGunLeadStatus()
-            or nil
-        if type(status) ~= "table" then
-            notify(string.format(
-                "Manual lead bias: %+.3fs | horizon: %.3fs",
-                mm2Settings.gunLeadBias,
-                getGunHorizonSeconds()
-            ))
-            return
-        end
-        notify(string.format(
-            "Manual %+.3fs | auto %+.3fs (%s; stored %+.3fs) | horizon %.3fs",
-            status.manualBias or 0,
-            status.autoCorrection or 0,
-            status.autoTuneEnabled and "on" or "off",
-            status.storedAutoCorrection or 0,
-            status.horizon or getGunHorizonSeconds()
-        ))
+    addActionOption(ShootFeature, "Prediction status", function(): ()
+        notify(prediction.status(getSelectedShootTarget()))
     end)
-    addActionOption(ShootFeature, "Reset auto lead correction", function(): ()
-        if type(resetAutoLeadCorrection) == "function" then
-            resetAutoLeadCorrection()
+    addActionOption(ShootFeature, "Reset prediction", function(): ()
+        if type(prediction.reset) == "function" then
+            prediction.reset()
         end
-        notify("Auto lead correction reset to zero.")
+        notify("Prediction history and echo samples cleared.")
     end)
     ShootTargetBox = addTextOption(ShootFeature, "Target player", "", function(
         value: string
@@ -3491,16 +3501,15 @@ function Module.init(runtime: any): any
     end, false)
     refreshShootOptions()
 
-
-
     -- The visible Auto control is at the top, but arming waits until saved
-    -- aim method/target/lead values below have all been restored.
+    -- aim method/target options below have all been restored.
     shootOptionsReady = true
     if updateAutoShootConnection then updateAutoShootConnection() end
 
     activeCleanup = function(): ()
         toggleShootMurderer(false)
         state.mm2SilentAimFeature = nil
+        state.mm2FireSilentShot = nil
         toggleAutoShoot(false)
         state.mm2ShotFeedback.hide()
     end
@@ -4113,6 +4122,1698 @@ end
 return Module
 
 ]],
+        ["src/games/MM2/Other/AutoFarm.lua"] = [[
+local Module = {
+    Name = "MM2 Auto Farm",
+    PlaceId = 142823291,
+    Events = {},
+    Initialized = false,
+}
+
+local activeCleanup: () -> () = function(): ()
+end
+
+function Module.init(_runtime: any): any
+    assert(state.mm2Core, "MM2 Auto Farm requires the MM2 core")
+    local core: any = state.mm2Core
+    local getPlayerRole: any = core.getPlayerRole
+    local getPlayerWeapon: any = core.getPlayerWeapon
+    local isPlayerAlive: any = core.isPlayerAlive
+    local findMurderer: any = core.findMurderer
+    local findSheriff: any = core.findSheriff
+    local findDroppedGun: any = core.findDroppedGun
+    local getEstimatedLatency: any = core.getEstimatedLatency
+    local getGunOriginCFrame: any = core.getGunOriginCFrame
+
+    local settings = {
+        mode = "Walk",
+        speed = 16,
+        resetOnFull = true,
+        flingMurder = false,
+        flingSheriff = false,
+        grabGunShoot = false,
+        killAllOnFull = false,
+    }
+
+    -- Two ways to reach a coin, chosen with Farm Mode:
+    --
+    -- Walk: the humanoid simply walks on the ground (Humanoid:Move).
+    -- No prone tilt, no PlatformStand, no NoClip, no flying -- the
+    -- body's normal touch against Coin_Server pays, which is why this
+    -- is the reliable default. The slider becomes WalkSpeed.
+    --
+    -- Below (Hitbox): the character stays UPRIGHT and flies by physics
+    -- velocity underneath the floor, but the root's hitbox is grown
+    -- while engaged (4 x 8 x 4), so riding with the root centre
+    -- BELOW_OFFSET under the coin still overlaps Coin_Server (1.2 x 2 x
+    -- 2, one stud either side of its centre). The old build lay the
+    -- body face-down to get a part into that volume; the tilted camera
+    -- fight is what glitched, and the hitbox makes it unnecessary.
+    local BELOW_OFFSET: number = 3.0
+    local HITBOX_SIZE: Vector3 = Vector3.new(4, 8, 4)
+    -- A coin that does not collect within this long is skipped for a
+    -- while instead of trapping the farm on one unreachable pickup.
+    local STUCK_SECONDS: number = 1.4
+    local BLACKLIST_SECONDS: number = 6
+
+    local function characterParts(): (Model?, Humanoid?, BasePart?)
+        if type(getCharacterParts) == "function" then
+            local ok: boolean, character: any, humanoid: any, root: any =
+                pcall(getCharacterParts)
+            if ok and character then
+                return character, humanoid, root
+            end
+        end
+        local character: Model? = LocalPlayer and LocalPlayer.Character
+        if not character then
+            return nil, nil, nil
+        end
+        local humanoid: Humanoid? =
+            character:FindFirstChildOfClass("Humanoid") :: Humanoid?
+        local root: BasePart? =
+            character:FindFirstChild("HumanoidRootPart") :: BasePart?
+        return character, humanoid, root
+    end
+
+    local function rootOf(player: Player?): BasePart?
+        local character: Model? = player and player.Character
+        if not character then
+            return nil
+        end
+        return character:FindFirstChild("HumanoidRootPart") :: BasePart?
+    end
+
+    -- The pickup parts of the family in use, shared with Coin ESP.
+    -- A throttled local scan keeps this working if Coin ESP is off.
+    local function coinPickups(): {Instance}
+        if type(state.mm2CoinPickups) == "function" then
+            local ok: boolean, list: any = pcall(state.mm2CoinPickups)
+            if ok and type(list) == "table" then
+                return list
+            end
+        end
+        -- Cheap first: the game's own tag list. The descendant walk
+        -- below is only for builds where the tag list is unavailable.
+        local okTagged: boolean, tagged: any = pcall(function(): any
+            return game:GetService("CollectionService"):GetTagged("CoinVisual")
+        end)
+        if okTagged and type(tagged) == "table" and #tagged > 0 then
+            return tagged
+        end
+        local out: {Instance} = {}
+        local ok: boolean, descendants: any = pcall(function(): any
+            return workspace:GetDescendants()
+        end)
+        if ok and type(descendants) == "table" then
+            for _, object: Instance in ipairs(descendants) do
+                if object.Name == "Coin_Server" and object:IsA("BasePart") then
+                    local collected: any = nil
+                    pcall(function(): ()
+                        collected = (object :: any):GetAttribute("Collected")
+                    end)
+                    if collected ~= true then
+                        table.insert(out, object)
+                    end
+                end
+            end
+        end
+        return out
+    end
+
+    -- Live ping for the status line. The farm speed itself is the
+    -- slider: the server kicks ("Invalid position", 267) when the
+    -- root arrives faster than it accepts, and that limit varies by
+    -- map and connection, so the user tunes it -- start low.
+    local function pingMillis(): number
+        if type(getEstimatedLatency) == "function" then
+            local ok: boolean, value: any = pcall(getEstimatedLatency)
+            if ok and type(value) == "number" and value == value then
+                return math.round(math.clamp(value, 0.02, 0.6) * 1000)
+            end
+        end
+        return 0
+    end
+
+    local function setStatus(text: string?): ()
+        local card: any = state.mm2AutoFarmFeature
+        if card then
+            card:SetStatus(text)
+        end
+    end
+
+    -- Kill All, adapted from YARHM 1.21 ("Kill EVERYONE as
+    -- murderer"): equip the knife, pull every living player in front
+    -- of us (anchored), then slash. The slash uses the repo's own
+    -- knife path (Events.HandleTouched per victim, as KnifeAura
+    -- does) and falls back to the game's Stab remote like YARHM.
+    local function killAll(): ()
+        if type(getPlayerRole) ~= "function"
+            or getPlayerRole(LocalPlayer) ~= "Murderer" then
+            notify("Auto Farm: Kill All only works as the Murderer.")
+            return
+        end
+        local character: Model?, humanoid: Humanoid?, myRoot: BasePart? =
+            characterParts()
+        if not character or not humanoid or not myRoot then
+            return
+        end
+        local knife: Tool? = nil
+        if type(getPlayerWeapon) == "function" then
+            knife = getPlayerWeapon(LocalPlayer, "Knife")
+        end
+        if not knife then
+            notify("Auto Farm: no Knife found for Kill All.")
+            return
+        end
+        if knife.Parent ~= character then
+            pcall(function(): ()
+                humanoid:EquipTool(knife :: Tool)
+            end)
+            task.wait(0.3)
+        end
+        if knife.Parent ~= character then
+            return
+        end
+        local victims: {BasePart} = {}
+        for _, player: Player in ipairs(Players:GetPlayers()) do
+            if player ~= LocalPlayer
+                and (type(isPlayerAlive) ~= "function" or isPlayerAlive(player)) then
+                local victimRoot: BasePart? = rootOf(player)
+                if victimRoot then
+                    table.insert(victims, victimRoot)
+                    pcall(function(): ()
+                        victimRoot.Anchored = true
+                        victimRoot.CFrame = myRoot.CFrame
+                            + myRoot.CFrame.LookVector * 1
+                    end)
+                end
+            end
+        end
+        if #victims == 0 then
+            return
+        end
+        task.wait(0.15)
+        local stab: Instance? = knife:FindFirstChild("Stab")
+        if stab and stab:IsA("RemoteEvent") then
+            pcall(function(): ()
+                (stab :: RemoteEvent):FireServer("Slash")
+            end)
+        end
+        local events: Instance? = knife:FindFirstChild("Events")
+        local handleTouched: Instance? = events
+            and events:FindFirstChild("HandleTouched")
+        pcall(function(): ()
+            (knife :: Tool):Activate()
+        end)
+        for _, victimRoot: BasePart in ipairs(victims) do
+            if handleTouched and handleTouched:IsA("RemoteEvent") then
+                pcall(function(): ()
+                    (handleTouched :: RemoteEvent):FireServer(victimRoot)
+                end)
+            end
+            task.wait(0.05)
+        end
+        task.delay(0.5, function(): ()
+            for _, victimRoot: BasePart in ipairs(victims) do
+                pcall(function(): ()
+                    victimRoot.Anchored = false
+                end)
+            end
+        end)
+        notify("Auto Farm: Kill All fired at " .. #victims .. " players.")
+    end
+
+    -- Compact spin fling: park on the target spinning hard for a
+    -- couple of seconds; contact physics does the rest.
+    local function flingPlayer(target: Player?): ()
+        if not target then
+            return
+        end
+        local _, _, myRoot: BasePart? = characterParts()
+        if not myRoot then
+            return
+        end
+        local saved: CFrame = myRoot.CFrame
+        local startedAt: number = os.clock()
+        while os.clock() - startedAt < 2.2 do
+            local targetRoot: BasePart? = rootOf(target)
+            if not targetRoot then
+                break
+            end
+            pcall(function(): ()
+                myRoot.CFrame = targetRoot.CFrame
+                myRoot.AssemblyAngularVelocity = Vector3.new(0, 400, 0)
+                myRoot.AssemblyLinearVelocity = Vector3.zero
+            end)
+            task.wait()
+        end
+        pcall(function(): ()
+            myRoot.AssemblyAngularVelocity = Vector3.zero
+            myRoot.CFrame = saved
+        end)
+    end
+
+    -- Auto grab gun + auto shoot: equip the dropped sheriff gun and
+    -- fire one predicted shot at the murderer (same gun remote and
+    -- prediction the Shoot module authors).
+    local lastShotAt: number = 0
+    local function shootMurderer(murderer: Player): ()
+        if os.clock() - lastShotAt < 1.1 then
+            return
+        end
+        local character: Model?, humanoid: Humanoid? = characterParts()
+        if not character or not humanoid then
+            return
+        end
+        local gun: Tool? = nil
+        if type(getPlayerWeapon) == "function" then
+            gun = getPlayerWeapon(LocalPlayer, "Gun")
+        end
+        if not gun then
+            return
+        end
+        if gun.Parent ~= character then
+            pcall(function(): ()
+                humanoid:EquipTool(gun :: Tool)
+            end)
+            task.wait(0.2)
+        end
+        if gun.Parent ~= character
+            or gun:GetAttribute("Reloading") == true
+            or gun:GetAttribute("IsReloading") == true then
+            return
+        end
+        local remote: Instance? = gun:FindFirstChild("Shoot")
+        if not remote or not remote:IsA("RemoteEvent") then
+            return
+        end
+        local origin: CFrame? = nil
+        if type(getGunOriginCFrame) == "function" then
+            local ok: boolean, value: any =
+                pcall(getGunOriginCFrame, character, gun)
+            if ok then
+                origin = value
+            end
+        end
+        if not origin then
+            return
+        end
+        local endpoint: Vector3? = nil
+        local prediction: any = state.mm2Prediction
+        if prediction and type(prediction.gunAim) == "function" then
+            local ok: boolean, predicted: any = pcall(
+                prediction.gunAim, murderer, (origin :: CFrame).Position)
+            if ok and predicted then
+                endpoint = predicted
+            end
+        end
+        if not endpoint then
+            local targetRoot: BasePart? = rootOf(murderer)
+            if not targetRoot then
+                return
+            end
+            endpoint = targetRoot.Position + Vector3.new(0, 0.6, 0)
+        end
+        lastShotAt = os.clock()
+        pcall(function(): ()
+            (remote :: RemoteEvent):FireServer(
+                CFrame.lookAt((origin :: CFrame).Position, endpoint :: Vector3),
+                CFrame.new(endpoint :: Vector3)
+            )
+        end)
+    end
+
+    local function toggleAutoFarm(enabled: boolean): ()
+        disconnectFeatureConnection("MM2AutoFarmTick")
+        disconnectFeatureConnection("MM2AutoFarmCoinCollected")
+        -- Invokes the restore closure the previous enable registered:
+        -- collisions, PlatformStand, AutoRotate and the root all go
+        -- back, and the character returns to where the farm grabbed
+        -- it (never left lying under the floor, stuck in geometry).
+        disconnectFeatureConnection("MM2AutoFarmRestore")
+
+        if not enabled then
+            setStatus(nil)
+            return
+        end
+
+        local bagAmount: number = 0
+        local bagLimit: number = 0
+        local busy: boolean = false
+        local fullHandled: boolean = false
+        local scanCache: {Instance} = {}
+        local scanAt: number = 0
+        local stuckPart: Instance? = nil
+        local stuckSince: number = 0
+        local lastTouchPulse: number = 0
+        local blacklist: {[Instance]: number} = {}
+
+        -- Engagement state. The farm touches the character ONLY while
+        -- engaged (a target exists). In the lobby, between rounds, or
+        -- with no coins out, the character is left completely alone --
+        -- that was the camera glitch: noclip + prone applied in the
+        -- lobby made the character fall through the floor.
+        local engaged: boolean = false
+        local engagedCharacter: Model? = nil
+        local homeCFrame: CFrame? = nil
+        local savedCollide: {[Instance]: boolean} = {}
+        local engagedMode: string? = nil
+        local savedWalkSpeed: number? = nil
+        local savedRootSize: Vector3? = nil
+        -- Home survives a mid-farm mode switch (Below <-> Walk), which
+        -- restores the character in place; OFF still returns there.
+        local preservedHome: CFrame? = nil
+        local walkLastDistance: number = math.huge
+        local walkStuckSince: number = 0
+
+        local function yawOf(frame: CFrame): number
+            local look: Vector3 = frame.LookVector
+            return math.atan2(-look.X, -look.Z)
+        end
+
+        local function restoreCharacter(returnHome: boolean): ()
+            local character: Model?, humanoid: Humanoid?, root: BasePart? =
+                characterParts()
+            for part: Instance, was: boolean in pairs(savedCollide) do
+                pcall(function(): ()
+                    (part :: BasePart).CanCollide = was
+                end)
+            end
+            table.clear(savedCollide)
+            if humanoid then
+                pcall(function(): ()
+                    humanoid.PlatformStand = false
+                    humanoid.AutoRotate = true
+                    if humanoid.Sit then
+                        humanoid.Sit = false
+                    end
+                    if savedWalkSpeed then
+                        humanoid.WalkSpeed = savedWalkSpeed
+                    end
+                    humanoid:Move(Vector3.zero, false)
+                    humanoid:ChangeState(Enum.HumanoidStateType.Running)
+                end)
+            end
+            savedWalkSpeed = nil
+            if root then
+                pcall(function(): ()
+                    if savedRootSize then
+                        root.Size = savedRootSize
+                    end
+                    root.AssemblyLinearVelocity = Vector3.zero
+                    root.AssemblyAngularVelocity = Vector3.zero
+                    if returnHome and homeCFrame then
+                        -- Back where the farm found us, upright: only
+                        -- the position and yaw survive, never the
+                        -- face-planted pitch.
+                        root.CFrame = CFrame.new(homeCFrame.Position)
+                            * CFrame.Angles(0, yawOf(homeCFrame), 0)
+                    else
+                        -- Stand back up exactly where we are.
+                        root.CFrame = CFrame.new(root.Position)
+                            * CFrame.Angles(0, yawOf(root.CFrame), 0)
+                    end
+                end)
+            end
+            savedRootSize = nil
+            engaged = false
+            engagedMode = nil
+            engagedCharacter = nil
+            homeCFrame = nil
+        end
+
+        local function engage(
+            character: Model,
+            humanoid: Humanoid,
+            root: BasePart
+        ): ()
+            if engagedMode ~= settings.mode then
+                -- Mode switched (or first engage): undo the other
+                -- mode's body changes without losing home.
+                if homeCFrame then
+                    preservedHome = homeCFrame
+                end
+                restoreCharacter(false)
+                engagedMode = settings.mode
+                if engagedCharacter == character then
+                    homeCFrame = preservedHome
+                    preservedHome = nil
+                end
+            end
+            if engagedCharacter ~= character then
+                -- New body (respawn): the previous restore belongs to
+                -- the old character; remember this one's start point.
+                restoreCharacter(false)
+                engagedMode = settings.mode
+                homeCFrame = preservedHome or root.CFrame
+                preservedHome = nil
+                engagedCharacter = character
+            end
+            if not engaged then
+                engaged = true
+                walkLastDistance = math.huge
+                walkStuckSince = os.clock()
+                if settings.mode ~= "Walk" then
+                    -- Below: upright, always -- no face-down tilt, the
+                    -- hitbox below does the reaching. PlatformStand
+                    -- hands the body to physics velocity alone.
+                    pcall(function(): ()
+                        root.CFrame = CFrame.new(root.Position)
+                            * CFrame.Angles(0, yawOf(root.CFrame), 0)
+                        humanoid.PlatformStand = true
+                        humanoid.AutoRotate = false
+                        if savedRootSize == nil then
+                            savedRootSize = root.Size
+                        end
+                        root.Size = HITBOX_SIZE
+                    end)
+                end
+            end
+            if settings.mode == "Walk" then
+                -- Walk on the real ground: collisions stay exactly as
+                -- they are (NoClip would drop the character through
+                -- the floor), and the slider is the WalkSpeed.
+                if savedWalkSpeed == nil then
+                    savedWalkSpeed = humanoid.WalkSpeed
+                end
+                pcall(function(): ()
+                    humanoid.WalkSpeed =
+                        math.clamp(settings.speed, 5, 60)
+                end)
+                return
+            end
+            -- Below keeps NoClip: every character part (tools
+            -- included) is forced non-collidable each tick, so the
+            -- flight never bumps a platform edge on the way to a coin.
+            for _, object: Instance in ipairs(character:GetDescendants()) do
+                if object:IsA("BasePart") then
+                    if savedCollide[object] == nil then
+                        savedCollide[object] = (object :: BasePart).CanCollide
+                    end
+                    pcall(function(): ()
+                        (object :: BasePart).CanCollide = false
+                    end)
+                end
+            end
+        end
+
+        -- Fly the root at a destination with PHYSICS velocity. The
+        -- v82 build wrote CFrame positions every tick and zeroed the
+        -- velocity: to the server that is a stream of teleports, and
+        -- MM2 answers "Invalid position" (kick 267). A velocity the
+        -- physics engine integrates replicates as ordinary movement.
+        -- Speed is the Farm Speed slider -- start low, raise it until
+        -- just before the server complains, that point is yours.
+        local function moveTowards(
+            root: BasePart,
+            destination: Vector3,
+            deltaTime: number
+        ): number
+            local delta: Vector3 = destination - root.Position
+            local distance: number = delta.Magnitude
+            if distance < 0.05 then
+                pcall(function(): ()
+                    root.AssemblyLinearVelocity = Vector3.zero
+                end)
+                return 0
+            end
+            local speed: number = math.clamp(settings.speed, 5, 60)
+            if distance <= math.max(0.5, speed * deltaTime) then
+                -- Final approach inside one step: land on the point
+                -- and stop, instead of orbiting it at full speed.
+                pcall(function(): ()
+                    root.CFrame = CFrame.new(destination)
+                        * (root.CFrame - root.CFrame.Position)
+                    root.AssemblyLinearVelocity = Vector3.zero
+                end)
+                return 0
+            end
+            pcall(function(): ()
+                root.AssemblyLinearVelocity = delta.Unit * speed
+                root.AssemblyAngularVelocity = Vector3.zero
+            end)
+            return distance
+        end
+
+        -- Walk mode movement: point the humanoid at the coin and let
+        -- the engine's own locomotion do the walking. Returns the
+        -- horizontal distance left. If the distance stops shrinking
+        -- (a wall, a ledge), a hop is tried once a second; the caller's
+        -- stuck timer blacklists coins walking truly cannot reach.
+        local function walkTowards(
+            humanoid: Humanoid,
+            root: BasePart,
+            destination: Vector3
+        ): number
+            local delta: Vector3 = destination - root.Position
+            local flat: Vector3 = Vector3.new(delta.X, 0, delta.Z)
+            local distance: number = flat.Magnitude
+            local now: number = os.clock()
+            if distance < 1.4 then
+                pcall(function(): ()
+                    humanoid:Move(Vector3.zero, false)
+                end)
+                return distance
+            end
+            if distance < walkLastDistance - 0.3 then
+                walkLastDistance = distance
+                walkStuckSince = now
+            elseif now - walkStuckSince > 1.0 then
+                walkStuckSince = now
+                pcall(function(): ()
+                    humanoid.Jump = true
+                end)
+            end
+            pcall(function(): ()
+                humanoid:Move(flat.Unit, false)
+            end)
+            return distance
+        end
+
+        -- The Coin_Server part that pays for a pickup entry (ESP hands
+        -- out the visual, the server part is its parent).
+        local function serverPartOf(part: Instance): Instance?
+            if part.Name == "Coin_Server" then
+                return part
+            end
+            local parent: Instance? = part.Parent
+            if parent and parent.Name == "Coin_Server" then
+                return parent
+            end
+            return part
+        end
+
+        -- Still there to be collected? A coin somebody already took
+        -- keeps its entry in the throttled scan for a moment, and the
+        -- old farm flew up to that ghost and hovered over it. The
+        -- attribute/parent check runs on the chosen coin every tick,
+        -- so a collected coin stops being a target at once.
+        local function stillCollectable(part: Instance): boolean
+            if not part.Parent then
+                return false
+            end
+            local server: Instance? = serverPartOf(part)
+            local collected: any = nil
+            pcall(function(): ()
+                collected = (server :: any):GetAttribute("Collected")
+            end)
+            return collected ~= true
+        end
+
+    -- Full-bag Auto Grab gun and Shoot: fetch the dropped sheriff gun
+    -- if we do not already carry it, equip it, and fire ONE SilentAim
+    -- shot at the murderer through the Shoot module's own silent path
+    -- (state.mm2FireSilentShot). Only the direct predicted shot remains
+    -- as a fallback for builds where that export is unavailable.
+    local function grabGunAndShoot(): ()
+        local murderer: Player? = nil
+        if type(findMurderer) == "function" then
+            murderer = findMurderer()
+        end
+        if not murderer
+            or (type(isPlayerAlive) == "function"
+                and not isPlayerAlive(murderer)) then
+            return
+        end
+        local gun: Tool? = nil
+        if type(getPlayerWeapon) == "function" then
+            gun = getPlayerWeapon(LocalPlayer, "Gun")
+        end
+        if not gun and type(findDroppedGun) == "function" then
+            -- Travel to the drop with the active farm mode, up to a few
+            -- seconds; the bag sequence owns the character meanwhile.
+            local deadline: number = os.clock() + 5
+            while os.clock() < deadline and not gun do
+                local character: Model?, humanoid: Humanoid?,
+                    root: BasePart? = characterParts()
+                local drop: Instance? = findDroppedGun()
+                if not character or not humanoid or not root or not drop then
+                    break
+                end
+                local dropPosition: Vector3? = nil
+                pcall(function(): ()
+                    if drop:IsA("BasePart") then
+                        dropPosition = (drop :: BasePart).Position
+                    elseif drop:IsA("Model") then
+                        dropPosition = (drop :: Model):GetPivot().Position
+                    end
+                end)
+                if not dropPosition then
+                    break
+                end
+                engage(character, humanoid, root)
+                local remaining: number
+                if settings.mode == "Walk" then
+                    remaining = walkTowards(
+                        humanoid, root, dropPosition :: Vector3)
+                else
+                    remaining = moveTowards(
+                        root,
+                        (dropPosition :: Vector3) + Vector3.new(0, 1, 0),
+                        0.05
+                    )
+                end
+                if remaining < 2.5 then
+                    task.wait(0.35)
+                    gun = getPlayerWeapon(LocalPlayer, "Gun")
+                    if gun then
+                        break
+                    end
+                end
+                task.wait()
+            end
+        end
+        if not gun then
+            return
+        end
+        local character: Model?, humanoid: Humanoid? = characterParts()
+        if not character or not humanoid then
+            return
+        end
+        if gun.Parent ~= character then
+            pcall(function(): ()
+                humanoid:EquipTool(gun :: Tool)
+            end)
+            task.wait(0.3)
+        end
+        if gun.Parent ~= character then
+            return
+        end
+        if type(state.mm2FireSilentShot) == "function" then
+            pcall(state.mm2FireSilentShot, murderer)
+        else
+            shootMurderer(murderer)
+        end
+    end
+
+        -- The full-bag sequence, in the user's order: Kill All,
+        -- reset, then the post-reset flings. Runs once per fill.
+        local function runFullSequence(): ()
+            busy = true
+            local ok: boolean, err: any = pcall(function(): ()
+                -- Everything in this sequence happens ONLY when the
+                -- bag is full (50): Kill All, the gun grab + SilentAim
+                -- shot, the reset, and the flings. None of it runs
+                -- during ordinary farming.
+                if settings.killAllOnFull then
+                    killAll()
+                    task.wait(0.4)
+                end
+                if settings.grabGunShoot then
+                    grabGunAndShoot()
+                    task.wait(0.4)
+                end
+                if settings.resetOnFull then
+                    local oldCharacter: Model? = LocalPlayer.Character
+                    local _, humanoid: Humanoid? = characterParts()
+                    if humanoid then
+                        pcall(function(): ()
+                            humanoid.Health = 0
+                        end)
+                    end
+                    -- Wait for the respawned character.
+                    local deadline: number = os.clock() + 10
+                    while os.clock() < deadline do
+                        local character: Model?, newHumanoid: Humanoid?,
+                            newRoot: BasePart? = characterParts()
+                        if character and character ~= oldCharacter
+                            and newHumanoid and newHumanoid.Health > 0
+                            and newRoot then
+                            break
+                        end
+                        task.wait(0.25)
+                    end
+                    task.wait(0.6)
+                end
+                -- Flings belong to the full bag too, reset or not: with
+                -- a reset they meet the fresh character first (above),
+                -- without one they simply happen now.
+                if settings.flingMurder
+                    and type(findMurderer) == "function" then
+                    flingPlayer(findMurderer())
+                end
+                if settings.flingSheriff
+                    and type(findSheriff) == "function" then
+                    flingPlayer(findSheriff())
+                end
+            end)
+            if not ok then
+                warn("Auto Farm full-bag sequence failed: " .. tostring(err))
+            end
+            bagAmount = 0
+            fullHandled = false
+            busy = false
+        end
+
+        local remotes: any = core.mm2GameplayRemotes
+        local collected: Instance? = remotes
+            and remotes:FindFirstChild("CoinCollected")
+        if collected and collected:IsA("RemoteEvent") then
+            featureConnections.MM2AutoFarmCoinCollected =
+                (collected :: any).OnClientEvent:Connect(
+                    function(_bag: any, amount: any, limit: any): ()
+                        if type(amount) == "number" then
+                            bagAmount = amount
+                        end
+                        if type(limit) == "number" and limit > 0 then
+                            bagLimit = limit
+                        end
+                        if bagLimit > 0 and bagAmount < bagLimit then
+                            fullHandled = false
+                        end
+                    end
+                )
+        end
+
+        featureConnections.MM2AutoFarmTick = TaskManager:Connect(
+            function(deltaTime: number): ()
+                if busy then
+                    return
+                end
+                -- Full bag (50): run the sequence once, then keep
+                -- farming. Any of its actions arms the trigger.
+                if bagLimit > 0 and bagAmount >= bagLimit
+                    and not fullHandled
+                    and (settings.killAllOnFull or settings.resetOnFull
+                        or settings.flingMurder or settings.flingSheriff
+                        or settings.grabGunShoot) then
+                    fullHandled = true
+                    restoreCharacter(false)
+                    task.spawn(runFullSequence)
+                    return
+                end
+                local character: Model?, humanoid: Humanoid?,
+                    root: BasePart? = characterParts()
+                if not character or not humanoid or not root
+                    or humanoid.Health <= 0 then
+                    return
+                end
+
+                -- Nearest pickup, from Coin ESP's own detection.
+                if os.clock() - scanAt > 0.4 then
+                    scanAt = os.clock()
+                    scanCache = coinPickups()
+                end
+                local now: number = os.clock()
+                local nearest: Instance? = nil
+                local nearestPosition: Vector3? = nil
+                local nearestDistance: number = math.huge
+                for _, part: Instance in ipairs(scanCache) do
+                    if part.Parent
+                        and stillCollectable(part)
+                        and (not blacklist[part] or blacklist[part] < now) then
+                        local position: Vector3? = nil
+                        pcall(function(): ()
+                            position = (part :: BasePart).Position
+                        end)
+                        if position then
+                            local distance: number =
+                                ((position :: Vector3) - root.Position).Magnitude
+                            if distance < nearestDistance then
+                                nearest = part
+                                nearestPosition = position
+                                nearestDistance = distance
+                            end
+                        end
+                    end
+                end
+                if not nearest or not nearestPosition then
+                    -- Nothing to collect (lobby, intermission, round
+                    -- over): hands off the character entirely.
+                    if engaged then
+                        restoreCharacter(false)
+                    end
+                    setStatus(string.format(
+                        "Auto Farm: waiting for coins - bag %d/%d - speed %d u/s - ping %dms",
+                        bagAmount, bagLimit,
+                        math.round(math.clamp(settings.speed, 5, 60)),
+                        pingMillis()
+                    ))
+                    stuckPart = nil
+                    return
+                end
+                engage(character, humanoid, root)
+                local remaining: number
+                local arrived: boolean
+                if settings.mode == "Walk" then
+                    remaining = walkTowards(
+                        humanoid,
+                        root,
+                        nearestPosition :: Vector3
+                    )
+                    arrived = remaining < 1.4
+                else
+                    local destination: Vector3 =
+                        (nearestPosition :: Vector3)
+                        + Vector3.new(0, -BELOW_OFFSET, 0)
+                    remaining = moveTowards(root, destination, deltaTime)
+                    arrived = remaining < 1.2
+                end
+                if arrived then
+                    -- Belt and braces: some builds only pay on a
+                    -- physics Touched, and a fully NoClipped body can
+                    -- miss that pairing. Pulse the touch directly
+                    -- against the Coin_Server part, like the farm in
+                    -- YARHM did, until the coin is gone.
+                    if now - lastTouchPulse > 0.25 then
+                        lastTouchPulse = now
+                        local touchPart: Instance? =
+                            serverPartOf(nearest)
+                        if type(state.fireTouchInterest) == "function"
+                            and touchPart then
+                            pcall(state.fireTouchInterest, root, touchPart, 0)
+                            pcall(state.fireTouchInterest, root, touchPart, 1)
+                        end
+                    end
+                end
+                setStatus(string.format(
+                    "Auto Farm (%s): %d coins - bag %d/%d - speed %d u/s - ping %dms",
+                    settings.mode, #scanCache, bagAmount, bagLimit,
+                    math.round(math.clamp(settings.speed, 5, 60)),
+                    pingMillis()
+                ))
+                if arrived then
+                    -- Parked under the coin: if it does not collect,
+                    -- skip it for a while instead of getting stuck.
+                    if stuckPart ~= nearest then
+                        stuckPart = nearest
+                        stuckSince = now
+                    elseif now - stuckSince > STUCK_SECONDS then
+                        blacklist[nearest] = now + BLACKLIST_SECONDS
+                        stuckPart = nil
+                    end
+                else
+                    stuckPart = nil
+                end
+            end
+        )
+
+        -- Turning the feature off runs this through
+        -- disconnectFeatureConnection above: full restore, and the
+        -- character is put back where the farm first grabbed it.
+        featureConnections.MM2AutoFarmRestore = {
+            Disconnect = function(): ()
+                restoreCharacter(true)
+            end,
+        }
+    end
+
+    local AutoFarmFeature: any = createUniversalFeature(
+        "Auto Farm",
+        "Walks on the ground to the nearest coins (Walk), or flies upright under the floor with a grown hitbox that still touches them (Below), with full-bag actions.",
+        6,
+        toggleAutoFarm,
+        {
+            categoryName = "Utilities",
+            parent = MM2Scroll,
+            registry = mm2Features,
+        }
+    )
+    state.mm2AutoFarmFeature = AutoFarmFeature
+
+    addCycleOption(AutoFarmFeature, "Farm Mode", {"Walk", "Below (Hitbox)"}, 1,
+        function(value: string): ()
+            settings.mode = if value == "Walk" then "Walk" else "Below"
+        end, "Walk: your character walks on the ground to each coin (nothing about the body is changed; the slider is WalkSpeed). Below (Hitbox): upright, NoClip, flying under the floor with the root hitbox grown so it still touches the coin from below.")
+    addNumberOption(AutoFarmFeature, "Farm Speed", 16, 5, 60,
+        function(value: number): ()
+            settings.speed = value
+        end, "Walk mode: WalkSpeed. Below mode: flight speed in studs/second -- if the server kicks you (Invalid position), lower it; raise it slowly to find your fastest safe speed.", 1)
+    addToggleOption(AutoFarmFeature, "Reset When Full Coin Bag", true,
+        function(value: boolean): ()
+            settings.resetOnFull = value
+        end, "Reset the character as soon as the coin bag fills.")
+    addToggleOption(AutoFarmFeature, "Fling Murder after reset", false,
+        function(value: boolean): ()
+            settings.flingMurder = value
+        end, "When the coin bag fills (50): fling the Murderer (after the reset above, if it is on).")
+    addToggleOption(AutoFarmFeature, "Fling Sheriff after reset", false,
+        function(value: boolean): ()
+            settings.flingSheriff = value
+        end, "When the coin bag fills (50): fling the Sheriff (after the reset above, if it is on).")
+    addToggleOption(AutoFarmFeature, "Auto Grab gun and Shoot", false,
+        function(value: boolean): ()
+            settings.grabGunShoot = value
+        end, "Only when the coin bag fills (50): go get the dropped sheriff gun, equip it, and fire one SilentAim shot at the Murderer. Never during ordinary farming.")
+    addToggleOption(AutoFarmFeature, "Auto Kill All When full coin bag", false,
+        function(value: boolean): ()
+            settings.killAllOnFull = value
+        end, "As Murderer, when the bag fills: pull everyone in front of you and slash (YARHM Kill All).")
+    addInformationOption(
+        AutoFarmFeature,
+        "Walk walks your character on the ground to the nearest pickup Coin ESP sees (safest, and the body's own touch collects). Below (Hitbox) flies upright under the floor by physics velocity (never position teleports) with NoClip and the root hitbox grown to 4x8x4, so the coin pays from underneath without lying the character face-down. Already-collected coins are dropped as targets the moment they are collected. If Below kicks you for Invalid position, lower Farm Speed and raise it little by little. Turning it off restores collisions, hitbox and WalkSpeed, and returns you upright to where you started."
+    )
+
+    activeCleanup = function(): ()
+        state.mm2AutoFarmFeature = nil
+        toggleAutoFarm(false)
+    end
+    Module.Events = featureConnections
+    Module.Initialized = true
+    return Module
+end
+
+function Module.destroy(): ()
+    if not Module.Initialized then
+        return
+    end
+    Module.Initialized = false
+    pcall(activeCleanup)
+    activeCleanup = function(): ()
+    end
+    Module.Events = {}
+    Module.Runtime = nil
+end
+
+return Module
+
+]],
+        ["src/games/MM2/Other/AutoUnbox.lua"] = [=[
+-- MM2 Auto Unbox: opens the game's own mystery boxes through the same remote
+-- the shop uses, with the box and the currency chosen in the menu.
+--
+-- What the place dump says a box is. The box catalogue lives in
+-- `ReplicatedStorage/Database/Sync`: `Sync.MysteryBox` (Mystery Box #1/#2,
+-- Knife Box #1-#5, Rainbow Box, Gun Box #1-#3) and `Sync.Eggs` (Common Egg).
+-- Event boxes live under `SharedServices/EventInfoService1`: the
+-- `MysteryBoxes` folder (Christmas2024Box) and one `MysteryBox` module per
+-- entry of `EventList` (Summer2025Box, Halloween2025Box). Every box id also
+-- appears in `Sync.NewShop` with its `Price` table, whose keys ARE the
+-- currencies it accepts: classic boxes take Coins/Gems/Key, the Christmas box
+-- takes SnowTokens2024/SnowKey2024, the Summer box BeachBalls2025/SummerKey2025
+-- and the Halloween box Candies2025/HalloweenKey2025.
+--
+-- How the game opens one. The shop calls
+-- `Remotes.Shop.OpenCrate:InvokeServer(boxId, "MysteryBox", currency)` (or
+-- `("...", "Eggs", currency)` for pets) and gets the rewarded item id back.
+-- The reveal is pure client cosmetics: `Remotes.Shop.BoxController:Fire(list)`
+-- plays the official opening animation and reports `CrateComplete`, or
+-- `Remotes.Shop.EggController:Fire(eggId, petId)` hatches pets. This module
+-- replays exactly that flow; it never touches a Robux prompt.
+--
+-- Which currency to pay with. The round announces the coin family it pays out
+-- through `Remotes/Gameplay/CoinsStarted` (bag names `Coin`, `Candy`,
+-- `SnowToken`, `BeachBall`, `Egg`), and `Workspace` carries `CurrentEvent`,
+-- `isChristmas`, `IsSummer`, `IsEaster` and `isValentines`. Auto maps that
+-- family onto the currencies the chosen box accepts.
+local Module = {
+    Name = "MM2 Auto Unbox",
+    PlaceId = 142823291,
+    Events = {} :: {[string]: any},
+    Initialized = false,
+    Runtime = nil :: any,
+}
+
+local activeCleanup: () -> () = function(): () end
+
+type BoxEntry = {
+    id: string,
+    name: string,
+    category: string,
+    prices: {[string]: number},
+}
+
+local AUTO_CURRENCY: string = "Auto"
+local REVEAL_ON: string = "On"
+local REVEAL_OFF: string = "Off"
+local DEFAULT_BOX_LABEL: string = "Mystery Box #1"
+
+-- The catalogue as the dump ships it, used when the Sync module cannot be
+-- required. Order matches the shop: classic boxes, eggs, event boxes.
+local FALLBACK_BOXES: {BoxEntry} = {
+    {id = "MysteryBox1", name = "Mystery Box #1", category = "MysteryBox", prices = {Coins = 1000, Gems = 100, Key = 1}},
+    {id = "MysteryBox2", name = "Mystery Box #2", category = "MysteryBox", prices = {Coins = 1000, Gems = 100, Key = 1}},
+    {id = "KnifeBox1", name = "Knife Box #1", category = "MysteryBox", prices = {Coins = 1000, Gems = 100, Key = 1}},
+    {id = "KnifeBox2", name = "Knife Box #2", category = "MysteryBox", prices = {Coins = 1000, Gems = 100, Key = 1}},
+    {id = "KnifeBox3", name = "Knife Box #3", category = "MysteryBox", prices = {Coins = 1000, Gems = 100, Key = 1}},
+    {id = "KnifeBox4", name = "Knife Box #4", category = "MysteryBox", prices = {Coins = 1000, Gems = 100, Key = 1}},
+    {id = "KnifeBox5", name = "Knife Box #5", category = "MysteryBox", prices = {Coins = 1000, Gems = 100, Key = 1}},
+    {id = "MLG Box", name = "Rainbow Box", category = "MysteryBox", prices = {Coins = 1000, Gems = 100, Key = 1}},
+    {id = "GunBox1", name = "Gun Box #1", category = "MysteryBox", prices = {Coins = 1000, Gems = 100, Key = 1}},
+    {id = "GunBox2", name = "Gun Box #2", category = "MysteryBox", prices = {Coins = 1000, Gems = 100, Key = 1}},
+    {id = "GunBox3", name = "Gun Box #3", category = "MysteryBox", prices = {Coins = 1000, Gems = 100, Key = 1}},
+    {id = "Egg", name = "Common Egg", category = "Eggs", prices = {Coins = 1000, Gems = 100}},
+    {id = "Christmas2024Box", name = "Christmas Box '24", category = "MysteryBox", prices = {SnowTokens2024 = 800, SnowKey2024 = 1}},
+    {id = "Summer2025Box", name = "Summer Box '25", category = "MysteryBox", prices = {BeachBalls2025 = 800, SummerKey2025 = 1}},
+    {id = "Halloween2025Box", name = "Halloween Box '25", category = "MysteryBox", prices = {Candies2025 = 800, HalloweenKey2025 = 1}},
+}
+
+-- Coin family to the currencies that family pays for. Currency names come
+-- from `Sync.Currencies`; the order prefers the current year's currency.
+local FAMILY_CURRENCIES: {[string]: {string}} = {
+    Coin = {"Coins"},
+    Candy = {"Candies2025", "Candies2024", "Candies2022"},
+    SnowToken = {"SnowTokens2024", "SnowTokens2023", "SnowTokens2022", "SnowTokens2020"},
+    BeachBall = {"BeachBalls2025"},
+    Egg = {"Eggs2025", "RareEggs2025"},
+    Heart = {"Hearts2023"},
+}
+
+local BAG_TO_FAMILY: {[string]: string} = {
+    Coin = "Coin",
+    Candy = "Candy",
+    SnowToken = "SnowToken",
+    BeachBall = "BeachBall",
+    Egg = "Egg",
+}
+
+local function lower(value: string): string
+    return string.lower(value)
+end
+
+local function contains(value: string, needle: string): boolean
+    return string.find(value, needle, 1, true) ~= nil
+end
+
+local function sortedKeys(map: {[string]: any}): {string}
+    local keys: {string} = {}
+    for key: string in pairs(map) do
+        table.insert(keys, key)
+    end
+    table.sort(keys)
+    return keys
+end
+
+function Module.init(runtime: any): any
+    if Module.Initialized then
+        return Module
+    end
+    local core: any = state.mm2Core
+    assert(type(core) == "table", "MM2 Auto Unbox requires the MM2 core module")
+    Module.Runtime = runtime
+
+    local settings = {
+        boxLabel = DEFAULT_BOX_LABEL,
+        currency = AUTO_CURRENCY,
+        delay = 1.5,
+        maxBoxes = 10,
+        reveal = REVEAL_ON,
+    }
+    local session = {
+        opened = 0,
+        failures = 0,
+        consecutiveFailures = 0,
+        nextAt = 0,
+        finished = false,
+    }
+    -- The coin family the server announces; drives the Auto currency.
+    local serverFamily: string? = nil
+
+    ---------------------------------------------------------------
+    -- Catalogue: every box the game knows, with its display name and
+    -- the currencies its price table accepts.
+    ---------------------------------------------------------------
+
+    local function safeRequire(instance: Instance?): any?
+        if not instance then
+            return nil
+        end
+        local ok: boolean, result: any = pcall(function(): any
+            return (state :: any).requireModule(instance)
+        end)
+        if ok then
+            return result
+        end
+        return nil
+    end
+
+    local function priceOf(boxId: string, sync: any): {[string]: number}?
+        if type(sync) == "table" and type(sync.NewShop) == "table" then
+            local newShop: any = sync.NewShop
+            local holders: {any} = {}
+            if type(newShop[boxId]) == "table" then
+                table.insert(holders, newShop[boxId])
+            end
+            if type(newShop.Weapons) == "table" and type(newShop.Weapons[boxId]) == "table" then
+                table.insert(holders, newShop.Weapons[boxId])
+            end
+            if type(newShop.MysteryBox) == "table" and type(newShop.MysteryBox[boxId]) == "table" then
+                table.insert(holders, newShop.MysteryBox[boxId])
+            end
+            for _, holder: any in ipairs(holders) do
+                if type(holder.Price) == "table" then
+                    return holder.Price
+                end
+            end
+        end
+        for _, entry: BoxEntry in ipairs(FALLBACK_BOXES) do
+            if entry.id == boxId then
+                return entry.prices
+            end
+        end
+        return nil
+    end
+
+    local function eventBoxModules(): {Instance}
+        local found: {Instance} = {}
+        local replicated: Instance = game:GetService("ReplicatedStorage")
+        local shared: Instance? = replicated:FindFirstChild("SharedServices")
+        local service: Instance? = shared and shared:FindFirstChild("EventInfoService1")
+        if not service then
+            return found
+        end
+        local direct: Instance? = service:FindFirstChild("MysteryBoxes")
+        if direct then
+            for _, child: Instance in ipairs(direct:GetChildren()) do
+                if child:IsA("ModuleScript") then
+                    table.insert(found, child)
+                end
+            end
+        end
+        local eventList: Instance? = service:FindFirstChild("EventList")
+        if eventList then
+            for _, event: Instance in ipairs(eventList:GetChildren()) do
+                local boxModule: Instance? = event:FindFirstChild("MysteryBox")
+                if boxModule and boxModule:IsA("ModuleScript") then
+                    table.insert(found, boxModule)
+                end
+            end
+        end
+        return found
+    end
+
+    local function buildCatalog(): ({BoxEntry}, {string})
+        local catalog: {BoxEntry} = {}
+        local seen: {[string]: boolean} = {}
+        local function add(entry: BoxEntry): ()
+            if seen[entry.id] then
+                return
+            end
+            seen[entry.id] = true
+            table.insert(catalog, entry)
+        end
+
+        local replicated: Instance = game:GetService("ReplicatedStorage")
+        local database: Instance? = replicated:FindFirstChild("Database")
+        local sync: any = safeRequire(database and database:FindFirstChild("Sync"))
+        if type(sync) == "table" then
+            for _, bankName: string in ipairs({"MysteryBox", "Eggs"}) do
+                local bank: any = (sync :: any)[bankName]
+                if type(bank) == "table" then
+                    for id: string, data: any in pairs(bank) do
+                        add({
+                            id = id,
+                            name = (type(data) == "table" and type(data.Name) == "string" and data.Name) or id,
+                            category = bankName == "Eggs" and "Eggs" or "MysteryBox",
+                            prices = priceOf(id, sync) or {},
+                        })
+                    end
+                end
+            end
+        end
+
+        -- Event boxes: the module instance name is the box id, its
+        -- `ItemData.Name` (or `Name`) is what the shop calls it.
+        for _, boxModule: Instance in ipairs(eventBoxModules()) do
+            local data: any = safeRequire(boxModule)
+            local display: string? = nil
+            if type(data) == "table" then
+                if type(data.ItemData) == "table" and type(data.ItemData.Name) == "string" then
+                    display = data.ItemData.Name
+                elseif type(data.Name) == "string" and data.Name ~= boxModule.Name then
+                    display = data.Name
+                end
+            end
+            add({
+                id = boxModule.Name,
+                name = display or boxModule.Name,
+                category = "MysteryBox",
+                prices = priceOf(boxModule.Name, sync) or {},
+            })
+        end
+
+        -- Anything the dump knows and the live game has not registered yet is
+        -- still worth offering: the remote answers with a nil reward when a
+        -- box is not on sale, and that is reported honestly.
+        for _, entry: BoxEntry in ipairs(FALLBACK_BOXES) do
+            add(entry)
+        end
+
+        table.sort(catalog, function(a: BoxEntry, b: BoxEntry): boolean
+            return lower(a.name) < lower(b.name)
+        end)
+
+        -- Unique labels for the selector.
+        local labelCounts: {[string]: number} = {}
+        for _, entry: BoxEntry in ipairs(catalog) do
+            labelCounts[entry.name] = (labelCounts[entry.name] or 0) + 1
+        end
+        local labels: {string} = {}
+        for _, entry: BoxEntry in ipairs(catalog) do
+            if labelCounts[entry.name] > 1 then
+                table.insert(labels, entry.name .. " (" .. entry.id .. ")")
+            else
+                table.insert(labels, entry.name)
+            end
+        end
+        return catalog, labels
+    end
+
+    local catalog: {BoxEntry}, boxLabels: {string} = buildCatalog()
+    local labelToEntry: {[string]: BoxEntry} = {}
+    for index: number, entry: BoxEntry in ipairs(catalog) do
+        labelToEntry[boxLabels[index]] = entry
+    end
+    if not labelToEntry[settings.boxLabel] then
+        settings.boxLabel = boxLabels[1] or ""
+    end
+
+    local function currentEntry(): BoxEntry?
+        return labelToEntry[settings.boxLabel] or catalog[1]
+    end
+
+    -- Every currency the catalogue references, so the selector can name the
+    -- coin the player is farming right now.
+    local currencyChoices: {string} = {AUTO_CURRENCY}
+    do
+        local seen: {[string]: boolean} = {[AUTO_CURRENCY] = true}
+        for _, entry: BoxEntry in ipairs(catalog) do
+            for currency: string in pairs(entry.prices) do
+                if not seen[currency] then
+                    seen[currency] = true
+                    table.insert(currencyChoices, currency)
+                end
+            end
+        end
+    end
+
+    ---------------------------------------------------------------
+    -- Which coin the server is paying out.
+    ---------------------------------------------------------------
+
+    local function familyFromWorkspace(): string?
+        local ok: boolean, value: any = pcall(function(): any
+            return workspace:GetAttribute("CurrentEvent")
+        end)
+        local eventName: string = ok and lower(tostring(value or "")) or ""
+        if contains(eventName, "halloween") then
+            return "Candy"
+        elseif contains(eventName, "christmas") then
+            return "SnowToken"
+        elseif contains(eventName, "summer") then
+            return "BeachBall"
+        elseif contains(eventName, "easter") then
+            return "Egg"
+        elseif contains(eventName, "valentine") then
+            return "Heart"
+        end
+        for attribute: string, family: string in pairs({
+            isValentines = "Heart",
+            isChristmas = "SnowToken",
+            isChristmasEnding = "SnowToken",
+            IsSummer = "BeachBall",
+            IsEaster = "Egg",
+        }) do
+            local okAttr: boolean, flag: any = pcall(function(): any
+                return workspace:GetAttribute(attribute)
+            end)
+            if okAttr and flag == true then
+                return family
+            end
+        end
+        return nil
+    end
+
+    local function activeFamily(): string?
+        return serverFamily or familyFromWorkspace()
+    end
+
+    -- Auto: pay with the currency the active coin family fills, then Coins
+    -- and Gems, then the box's event currency, and only then a key.
+    local function autoCurrency(entry: BoxEntry): string?
+        local prices: {[string]: number} = entry.prices or {}
+        local family: string? = activeFamily()
+        if family then
+            for _, currency: string in ipairs(FAMILY_CURRENCIES[family] or {}) do
+                if prices[currency] then
+                    return currency
+                end
+            end
+        end
+        for _, currency: string in ipairs({"Coins", "Gems"}) do
+            if prices[currency] then
+                return currency
+            end
+        end
+        for _, currency: string in ipairs(sortedKeys(prices)) do
+            if not contains(lower(currency), "key") then
+                return currency
+            end
+        end
+        local keys: {string} = sortedKeys(prices)
+        return keys[1]
+    end
+
+    local function resolveCurrency(entry: BoxEntry): (string?, boolean)
+        if settings.currency ~= AUTO_CURRENCY then
+            if entry.prices and entry.prices[settings.currency] then
+                return settings.currency, false
+            end
+            -- The chosen currency does not open this box; fall back rather
+            -- than fire a request the server has to reject.
+            return autoCurrency(entry), true
+        end
+        return autoCurrency(entry), false
+    end
+
+    ---------------------------------------------------------------
+    -- Opening: the shop's own remote, then the shop's own reveal.
+    ---------------------------------------------------------------
+
+    local function shopRemotes(): Instance?
+        local replicated: Instance = game:GetService("ReplicatedStorage")
+        local remotes: Instance? = replicated:FindFirstChild("Remotes")
+        return remotes and remotes:FindFirstChild("Shop") or nil
+    end
+
+    local function report(text: string): ()
+        local card: any = state.mm2AutoUnboxFeature
+        if card then
+            card:SetStatus(text)
+        end
+    end
+
+    local function summary(): string
+        local entry: BoxEntry? = currentEntry()
+        local currency: string? = entry and resolveCurrency(entry) or nil
+        local text: string = (entry and entry.name or "no box")
+            .. " · pay " .. (currency or "nothing")
+        local family: string? = activeFamily()
+        if family then
+            text ..= " · server coin: " .. family
+        end
+        if session.opened > 0 or session.failures > 0 then
+            text ..= " · " .. tostring(session.opened) .. " opened"
+            if session.failures > 0 then
+                text ..= " · " .. tostring(session.failures) .. " failed"
+            end
+        end
+        if session.finished then
+            text ..= " · done"
+        end
+        return text
+    end
+
+    -- A universal card has no :Toggle (that belongs to framework modules); it
+    -- switches off through its own onToggle plus the shared repaint.
+    local function turnCardOff(): ()
+        local card: any = state.mm2AutoUnboxFeature
+        if not card then
+            return
+        end
+        card.enabled = false
+        pcall(function(): ()
+            card.onToggle(false)
+        end)
+        if type(refreshFeatureToggle) == "function" then
+            pcall(refreshFeatureToggle, card)
+        end
+    end
+
+    local function stop(reason: string?): ()
+        disconnectFeatureConnection("MM2AutoUnbox")
+        if reason then
+            notify(reason)
+        end
+        turnCardOff()
+    end
+
+    -- Opening state that deliberately survives toggles. The tick runs every
+    -- frame and InvokeServer yields, so without a hard busy flag the next
+    -- tick (or a spam of off/on) fires a second OpenCrate while the first
+    -- reveal is still on screen; stacked BoxController reveals are the grey
+    -- screen that never clears. One opening at a time, and a reveal owns
+    -- the screen until its window ends -- toggling cannot bypass either.
+    local openingBusy: boolean = false
+    local revealUntil: number = 0
+    local REVEAL_SECONDS: number = 5
+
+    local function reveal(boxId: string, category: string, reward: any): ()
+        local remotes: Instance? = shopRemotes()
+        if not remotes then
+            return
+        end
+        if settings.reveal == REVEAL_ON then
+            revealUntil = os.clock() + REVEAL_SECONDS
+            -- The official flow: the game plays the reveal and reports the
+            -- crate as complete (the BoxController LocalScript does both).
+            if category == "Eggs" then
+                local eggController: Instance? = remotes:FindFirstChild("EggController")
+                if eggController then
+                    pcall(function(): ()
+                        (eggController :: any):Fire(boxId, reward)
+                    end)
+                end
+            else
+                local boxController: Instance? = remotes:FindFirstChild("BoxController")
+                if boxController then
+                    pcall(function(): ()
+                        (boxController :: any):Fire({{MysteryBoxId = boxId, RewardedItemId = reward}})
+                    end)
+                end
+            end
+        else
+            -- No animation: still report the crate so the server sees the
+            -- same completion the reveal would have sent.
+            local crateComplete: Instance? = remotes:FindFirstChild("CrateComplete")
+            if crateComplete then
+                pcall(function(): ()
+                    (crateComplete :: any):FireServer(reward)
+                end)
+            end
+        end
+    end
+
+    local function openOnce(): boolean
+        if openingBusy then
+            return false
+        end
+        openingBusy = true
+        local entry: BoxEntry? = currentEntry()
+        if not entry then
+            session.finished = true
+            openingBusy = false
+            stop("Auto Unbox: no box catalogue found.")
+            return false
+        end
+        local currency: string?, forced: boolean = resolveCurrency(entry)
+        if not currency then
+            session.finished = true
+            openingBusy = false
+            stop("Auto Unbox: " .. entry.name .. " has no known price currency.")
+            return false
+        end
+        local remotes: Instance? = shopRemotes()
+        local openCrate: Instance? = remotes and remotes:FindFirstChild("OpenCrate")
+        if not (openCrate and openCrate:IsA("RemoteFunction")) then
+            session.finished = true
+            openingBusy = false
+            stop("Auto Unbox: the game's OpenCrate remote is missing.")
+            return false
+        end
+        local note: string = forced
+            and (" · " .. settings.currency .. " rejected, using " .. currency)
+            or ""
+        local ok: boolean, reward: any = pcall(function(): any
+            return (openCrate :: any):InvokeServer(entry.id, entry.category, currency)
+        end)
+        if ok and reward ~= nil then
+            reveal(entry.id, entry.category, reward)
+            session.opened += 1
+            session.consecutiveFailures = 0
+            report(summary() .. note)
+            openingBusy = false
+            return true
+        end
+        session.failures += 1
+        session.consecutiveFailures += 1
+        report(summary() .. note)
+        openingBusy = false
+        if session.consecutiveFailures >= 3 then
+            session.finished = true
+            stop(
+                "Auto Unbox stopped: "
+                    .. entry.name
+                    .. " did not open with "
+                    .. tostring(currency)
+                    .. ". Not enough currency, or the box is not on sale."
+            )
+        end
+        return false
+    end
+
+    local function tick(_deltaTime: number): ()
+        if session.finished then
+            return
+        end
+        if session.opened >= math.round(settings.maxBoxes) then
+            session.finished = true
+            report(summary())
+            stop(nil)
+            return
+        end
+        local now: number = os.clock()
+        if now < session.nextAt or now < revealUntil or openingBusy then
+            return
+        end
+        openOnce()
+        -- Extra settle time while the reveal plays: firing the next
+        -- BoxController animation over a running one can leave the screen
+        -- black, so a revealed box always gets a longer breather.
+        local settle: number = settings.reveal == REVEAL_ON
+            and REVEAL_SECONDS or 0
+        session.nextAt = os.clock() + settings.delay + settle
+    end
+
+    local AutoUnboxFeature: any = createUniversalFeature(
+        "Auto Unbox",
+        "Opens any mystery box or egg of the game through its own OpenCrate remote, paying with the currency you choose or the coin the server is giving.",
+        4,
+        function(enabled: boolean): ()
+            disconnectFeatureConnection("MM2AutoUnbox")
+            if not enabled then
+                return
+            end
+            session.opened = 0
+            session.failures = 0
+            session.consecutiveFailures = 0
+            -- Never sooner than a reveal still on screen: re-enabling in
+            -- the middle of one must not stack a second BoxController.
+            session.nextAt = math.max(os.clock(), revealUntil)
+            session.finished = false
+            report(summary())
+            featureConnections.MM2AutoUnbox = TaskManager:Connect(tick)
+        end,
+        {
+            categoryName = "Utilities",
+            parent = MM2Scroll,
+            registry = mm2Features,
+        }
+    )
+    state.mm2AutoUnboxFeature = AutoUnboxFeature
+
+    -- The server names the coin family this round pays out; Auto uses it to
+    -- pick the currency.
+    local startedRemote: Instance? = core.mm2GameplayRemotes
+        and core.mm2GameplayRemotes:FindFirstChild("CoinsStarted")
+    if startedRemote and startedRemote:IsA("RemoteEvent") then
+        featureConnections.MM2AutoUnboxCoinsStarted =
+            (startedRemote :: any).OnClientEvent:Connect(function(bagTable: any): ()
+                if type(bagTable) == "table" then
+                    for bag: any in pairs(bagTable) do
+                        local family: string? = BAG_TO_FAMILY[tostring(bag)]
+                        if family then
+                            serverFamily = family
+                        end
+                    end
+                end
+                if state.mm2AutoUnboxFeature then
+                    report(summary())
+                end
+            end)
+    end
+
+    local defaultBoxIndex: number = table.find(boxLabels, DEFAULT_BOX_LABEL) or 1
+    addCycleOption(
+        AutoUnboxFeature,
+        "Box to open",
+        boxLabels,
+        defaultBoxIndex,
+        function(value: string): ()
+            settings.boxLabel = value
+        end,
+        "Every box and egg of the game, including the event boxes."
+    )
+    addCycleOption(
+        AutoUnboxFeature,
+        "Pay with",
+        currencyChoices,
+        1,
+        function(value: string): ()
+            settings.currency = value
+        end,
+        "Auto pays with the currency the server's current coin fills."
+    )
+    addCycleOption(
+        AutoUnboxFeature,
+        "Reveal animation",
+        {REVEAL_ON, REVEAL_OFF},
+        1,
+        function(value: string): ()
+            settings.reveal = value
+        end,
+        "On replays the game's own opening animation and crate report."
+    )
+    addNumberOption(
+        AutoUnboxFeature,
+        "Delay between boxes",
+        settings.delay,
+        0.8,
+        5,
+        function(value: number): ()
+            settings.delay = value
+        end
+    )
+    addNumberOption(
+        AutoUnboxFeature,
+        "Max boxes per run",
+        settings.maxBoxes,
+        1,
+        50,
+        function(value: number): ()
+            settings.maxBoxes = value
+        end
+    )
+    addActionOption(
+        AutoUnboxFeature,
+        "Report boxes and coin",
+        function(): ()
+            local entry: BoxEntry? = currentEntry()
+            local prices: {string} = {}
+            if entry then
+                for _, currency: string in ipairs(sortedKeys(entry.prices)) do
+                    table.insert(prices, currency .. "=" .. tostring(entry.prices[currency]))
+                end
+            end
+            notify(
+                "Boxes found: " .. tostring(#catalog)
+                    .. " · chosen: " .. (entry and entry.name or "none")
+                    .. " (" .. (entry and entry.id or "?") .. ")"
+                    .. " · price: " .. (#prices > 0 and table.concat(prices, ", ") or "unknown")
+                    .. " · server coin: " .. tostring(activeFamily() or "unknown")
+            )
+        end
+    )
+    addInformationOption(
+        AutoUnboxFeature,
+        "Uses the shop's own OpenCrate remote with the box id and currency the game expects, then the game's own reveal. Robux prompts are never pressed."
+    )
+
+    activeCleanup = function(): ()
+        state.mm2AutoUnboxFeature = nil
+        disconnectFeatureConnection("MM2AutoUnbox")
+        disconnectFeatureConnection("MM2AutoUnboxCoinsStarted")
+    end
+    Module.Events = featureConnections
+    Module.Initialized = true
+    return Module
+end
+
+function Module.destroy(): ()
+    if not Module.Initialized then
+        return
+    end
+    Module.Initialized = false
+    pcall(activeCleanup)
+    activeCleanup = function(): ()
+    end
+    Module.Events = {}
+    Module.Runtime = nil
+end
+
+return Module
+
+]=],
         ["src/games/MM2/Other/CalibrationTrails.lua"] = [[
 local Module = {Name = "MM2 Calibration Trails", Initialized = false}
 local activeCleanup = function() end
@@ -4120,7 +5821,12 @@ local activeCleanup = function() end
 function Module.init(runtime: any): any
     if Module.Initialized then return Module end
     local core = state.mm2Core
-    assert(core and state.mm2CalibrationFeature, "TrailESP requires Calibration")
+    -- The Calibration card is a debug surface: no card, no trail options.
+    if not state.mm2CalibrationFeature then
+        Module.Initialized = true
+        return Module
+    end
+    assert(core, "Calibration Trails requires the MM2 core module")
     local options = {trailEsp = false, color = Color3.fromRGB(100, 185, 255)}
     local trailFolder: Folder? = nil
     local connection: any = nil
@@ -4275,6 +5981,15 @@ function Module.init(runtime: any): any
     Module.Runtime = runtime
     local trajectoryCalibration: any = core.trajectoryCalibration
 
+    -- Capture tools only exist with WURST_DEBUG on. The recorder in base.lua
+    -- keeps working either way; this is the card the player would otherwise
+    -- see between "Blurt Roles" and the real modules.
+    if state.debug ~= true then
+        Module.Events = featureConnections
+        Module.Initialized = true
+        return Module
+    end
+
     local TrajectoryFeature: any = state.mm2CalibrationFeature
     if not TrajectoryFeature then
         TrajectoryFeature = createUniversalFeature(
@@ -4291,12 +6006,6 @@ function Module.init(runtime: any): any
         )
         state.mm2CalibrationFeature = TrajectoryFeature
     end
-    addCycleOption(TrajectoryFeature, "Prediction model", {"66d", "Reference v41"},
-        core.mm2Settings.predictionModel == "Reference v41" and 2 or 1, function(value)
-            core.mm2Settings.predictionModel = value
-            -- A correction learned under A must not silently bias B.
-            core.resetAutoLeadCorrection()
-        end)
     addActionOption(TrajectoryFeature, "Calibration status", function(): ()
         notify(trajectoryCalibration:status())
     end)
@@ -4331,6 +6040,2032 @@ function Module.destroy(): ()
     Module.Initialized = false
     pcall(activeCleanup)
     activeCleanup = function(): () end
+    Module.Events = {}
+    Module.Runtime = nil
+end
+
+return Module
+
+]],
+        ["src/games/MM2/Prediction.lua"] = [=[
+local Module = {
+    Name = "MM2 Prediction",
+    PlaceId = 142823291,
+    Events = {} :: {[string]: any},
+    Initialized = false,
+    Runtime = nil :: any,
+}
+
+--[[
+    Kinematic prediction core for MM2 gun shots and knife throws.
+
+    What this model is based on (TestingStuff evidence, not guesses):
+
+      * GunFired echoes carry (handle, origin, endpoint, hitPart). The time
+        between our FireServer and that echo is the only transport number we
+        can measure in-game; the saved calibration recorded 297 confirmed
+        shots with a mean of ~123.5 ms.
+      * ThrowingKnifeVisuals advances the blade linearly:
+            CFrame + Direction * ThrowSpeed * dt
+        with ThrowSpeed 96 by default and no gravity term. A blade therefore
+        needs an intercept solve, not a ballistic one.
+      * A remote character's replicated position is older than the server
+        state the gun ray is checked against. The aim point advances by
+        the full measured transport plus the replication interpolation
+        window (the saved sessions score hits at the confirmation
+        instant, i.e. the server behaves as if it rewound by the whole
+        ping; the one-way half was tried in v85 and led short).
+
+    What this model deliberately does NOT do:
+
+      * No unmeasured heuristics. The turn (chord) and braking terms are
+        computed from two weighted fits 0.10 s apart, gated on clean residuals
+        and a real speed, and capped at 45 degrees / the stop distance. A
+        straight run leaves both at zero; nothing here guesses.
+      * No auto-tuned lead. The transport is the median of at least six fresh
+        echoes inside sane pairing limits, with the smoothed RTT as fallback.
+      * No invented movement when the measured velocity is zero but
+        MoveDirection is not. The server only knows replicated motion.
+      * No distance/confidence gate before firing. Freshness of the sample,
+        WallCheck and weapon readiness are the real conditions.
+]]
+
+type Sample = {
+    at: number,
+    position: Vector3,
+    velocity: Vector3,
+    state: string,
+    grounded: boolean,
+    aimOffset: Vector3,
+    aimPart: string,
+    -- Replicated control input, recorded so an offline replay can weigh an
+    -- input-based turn against the measured velocity turn.
+    moveDirection: Vector3,
+}
+
+type Track = {
+    character: Model,
+    humanoid: Humanoid,
+    root: BasePart,
+    samples: {Sample},
+}
+
+type Fit = {
+    velocity: Vector3,
+    residual: number,
+    count: number,
+    span: number,
+    -- Weighted mean sample time. The slope is the chord over the window, so
+    -- this is where the measured velocity actually points.
+    center: number,
+}
+
+type Motion = {
+    velocity: Vector3,
+    horizontal: Vector3,
+    vertical: number,
+    airborne: boolean,
+    sampleAge: number,
+    samples: number,
+    residual: number,
+    source: string,
+    -- Signed yaw rate in rad/s measured between two fits. Zero when the
+    -- measurement is not trustworthy (slow, noisy or too few samples).
+    turnRate: number,
+    -- Longitudinal acceleration along the current direction, clamped. Used
+    -- only to keep the lead length honest while the target speeds up or stops.
+    longitudinalAccel: number,
+    -- Full horizontal acceleration vector measured between two fits,
+    -- magnitude-clamped. The calibration replays (85 scored confirmations)
+    -- picked a constant-acceleration model over constant velocity 57 to 19,
+    -- so the vector is applied over the horizon when it is meaningful.
+    accelX: number,
+    accelZ: number,
+    -- Seconds until the target stops when it is braking hard, else nil.
+    brakeSeconds: number?,
+    -- How far behind `now` the fitted direction sits.
+    fitLag: number,
+    -- True only when the measured vertical speed is worth extrapolating. The
+    -- humanoid state alone is not enough: a replicated "Jumping" pose can be a
+    -- character standing at the apex of a jump.
+    verticalLead: boolean,
+}
+
+type AimInfo = {
+    endpoint: Vector3,
+    targetPosition: Vector3,
+    capturedPosition: Vector3,
+    rootPosition: Vector3,
+    velocity: Vector3,
+    leadSeconds: number,
+    turnRate: number,
+    brakeSeconds: number?,
+    sampleAge: number,
+    samples: number,
+    residual: number,
+    motionSource: string,
+    model: string,
+    rtt: number,
+    -- Raw engine readings at aim time, so a calibration can tell which of the
+    -- two sources produced the lead instead of having to reconstruct it.
+    rttEngine: number?,
+    rttData: number?,
+    echoDelay: number?,
+    -- How many echoes back the recorded delay. Zero means the horizon used
+    -- the ping, which the calibration can distinguish from a real median.
+    echoSamples: number,
+    -- Seconds added to the horizon by the confirmed-shot feedback. Zero until
+    -- three confirmations have been measured.
+    leadCorrection: number,
+    flightSeconds: number?,
+}
+
+local MAX_SAMPLE_AGE: number = 0.35
+local FIT_WINDOW: number = 0.16
+local FIT_TAU: number = 0.055
+local HISTORY_SECONDS: number = 0.6
+-- Remote characters replicate around 20 Hz. 60 Hz keeps three observations per
+-- replicated pose (so a fit is never built from a single packet) without
+-- inventing detail that the network never sent. Raising it only re-weights the
+-- same poses and costs CPU; the dominant error is the transport horizon.
+local SAMPLE_HZ: number = 60
+local MAX_HORIZONTAL_SPEED: number = 60
+local DEFAULT_KNIFE_SPEED: number = 96
+local MAX_ECHOES: number = 8
+-- A median of two echoes is just the mean of two mismatches. Six fresh
+-- samples keep the transport estimate stable; before that the smoothed RTT is
+-- the better number.
+-- The echo now has one source (the confirmation path) and the v64 session
+-- proved it matches the server clock to within 8 ms on 13 of 13 shots, so
+-- three samples are enough to trust the round trip. At six, the 189 s session
+-- never engaged it and led with an engine reading that was half the measured
+-- round trip.
+local MIN_ECHO_SAMPLES: number = 3
+-- Pairing sanity limits. An echo only reaches noteEcho after base.lua matched
+-- the same gun, an origin within 3.5 studs and a direction within ~15 degrees,
+-- so a late sample is our own shot, not a crossed one. The upper bound mirrors
+-- the 1.6 s pending-shot window in base.lua; the v18 session has a confirmed
+-- 1007.7 ms echo at 270.3 ms ping, which an 800 ms cut would have thrown away.
+local MIN_ECHO_DELAY: number = 0.05
+local MAX_ECHO_DELAY: number = 1.6
+-- Transport + manual lead. A full second only happens when the session ping
+-- or the manual offset asks for it; the status line shows the real number.
+local MAX_HORIZON: number = 1.0
+-- Automatic lead never exceeds this. At 16 studs/s a 1 s lead is 16 studs of
+-- overshoot; past 0.6 s the sample is stale enough that refusing to invent
+-- more distance is safer. Manual offset is still allowed up to MAX_HORIZON.
+local MAX_AUTO_LEAD: number = 0.6
+-- Turn and braking corrections are measured, never guessed:
+--   * two weighted fits 0.10 s apart give a signed yaw rate;
+--   * the same pair gives longitudinal acceleration for the stop cap.
+local TURN_SPAN: number = 0.10
+local TURN_MIN_SPEED: number = 2.0
+local TURN_MAX_RATE: number = 10.0
+-- Below ~23 deg/s the two fits are mostly replication jitter; a correction
+-- that small only adds noise to the endpoint.
+local TURN_MIN_RATE: number = 0.4
+local TURN_MAX_ANGLE: number = math.rad(45)
+-- Two fits over replicated poses disagree by jitter as much as by turning.
+-- At 0.5 the recorded session produced 224 deg and 152 deg turns on a
+-- straight run; at 0.20 the shots with a >100 deg turn drop from five to two
+-- and the measured aim improves, so this is where the noise stops.
+local TURN_RESIDUAL: number = 0.20
+-- Vertical extrapolation needs a real vertical speed. A humanoid reported as
+-- Jumping at its apex has almost no vertical velocity; dropping the aim by a
+-- full ballistic term there is what put shot 6 2.3 studs under the target.
+local VERTICAL_MIN_SPEED: number = 5.0
+-- Robust transport fallback: a single GetNetworkPing spike (0.31 s against a
+-- 0.107 s baseline in the 2026-10-18 session) must not move the next aim.
+local RTT_SAMPLES: number = 8
+local RTT_SAMPLE_INTERVAL: number = 0.25
+local BRAKE_MIN_ACCEL: number = 6.0
+local BRAKE_MAX_ACCEL: number = 120.0
+-- Closed-loop lead feedback. Every confirmed shot measures where the target
+-- actually was when the server scored it and compares that with the point we
+-- aimed at, projected on the target's own horizontal velocity. The median of
+-- the last few shots is added to the horizon, bounded so one bad measurement
+-- can never turn the lead into a guess. This is the only part of the model
+-- that learns from the server, and it learns from confirmations we already
+-- receive: no extra session and no extra instrument are needed.
+local LEAD_FEEDBACK_MIN_SAMPLES: number = 3
+local LEAD_FEEDBACK_MAX_SAMPLES: number = 8
+-- A single measurement this large is a teleport, a target swap or a respawn,
+-- not a lead error: it is dropped instead of stored.
+local LEAD_FEEDBACK_SAMPLE_LIMIT: number = 0.15
+-- The applied correction. At 18 studs/s this is ~1.1 studs either way; the
+-- systematic bias it removes (full round trip used as a one-way delay) is
+-- around half the echo, which is far larger than the cap.
+local MAX_LEAD_CORRECTION: number = 0.06
+
+local settings = {
+    -- Automatic lead is the default: the measured FireServer -> GunFired echo
+    -- (fallback: smoothed ping) already includes the device/network timing.
+    -- Manual offset is only used when autoLead is turned off.
+    autoLead = true,
+    -- Manual calibration in seconds. Positive aims further ahead.
+    extraLead = 0,
+    -- Half of the default 20 Hz replication interval. This is the window the
+    -- client interpolates between two replicated character states.
+    interpolation = 1 / 40,
+}
+
+local activeCleanup: () -> () = function(): () end
+
+local function finiteNumber(value: any): boolean
+    return type(value) == "number" and value == value and math.abs(value) < math.huge
+end
+
+local function finiteVector(value: any): boolean
+    return value ~= nil
+        and finiteNumber(value.X)
+        and finiteNumber(value.Y)
+        and finiteNumber(value.Z)
+end
+
+local function humanoidStateName(humanoid: Humanoid): string
+    local ok: boolean, state: any = pcall(function(): any
+        return humanoid:GetState()
+    end)
+    if not ok or state == nil then
+        return ""
+    end
+    local name: any = state.Name
+    if type(name) == "string" then
+        return name
+    end
+    return tostring(state)
+end
+
+local AIM_PARTS: {string} = {
+    "UpperTorso",
+    "Torso",
+    "HumanoidRootPart",
+    "Head",
+}
+
+local function findAimPart(character: Model): (BasePart?, string)
+    for _, partName: string in ipairs(AIM_PARTS) do
+        local part: Instance? = character:FindFirstChild(partName)
+        if part and part:IsA("BasePart") then
+            return part :: BasePart, partName
+        end
+    end
+    local root: Instance? = character:FindFirstChild("HumanoidRootPart")
+    if root and root:IsA("BasePart") then
+        return root :: BasePart, "HumanoidRootPart"
+    end
+    return nil, ""
+end
+
+function Module.init(runtime: any): any
+    if Module.Initialized then
+        return Module
+    end
+    local core: any = state.mm2Core
+    assert(type(core) == "table", "MM2 Prediction requires the MM2 core module")
+    local predictionMath: any = core.predictionMath
+    assert(type(predictionMath) == "table", "MM2 Prediction requires predictionMath")
+    Module.Runtime = runtime
+
+    local tracks: {[Player]: Track} =
+        setmetatable({}, {__mode = "k"}) :: any
+    local echoes: {number} = {}
+    local elapsed: number = 0
+
+    local function ensureTrack(player: Player): Track?
+        local character: Model? = player.Character
+        if not character then
+            tracks[player] = nil
+            return nil
+        end
+        local humanoid: Humanoid? = character:FindFirstChildOfClass("Humanoid")
+            :: Humanoid?
+        local root: BasePart? = character:FindFirstChild("HumanoidRootPart")
+            :: BasePart?
+        if not humanoid or not root or humanoid.Health <= 0 then
+            tracks[player] = nil
+            return nil
+        end
+        local track: Track? = tracks[player]
+        if not track or track.character ~= character then
+            track = {
+                character = character,
+                humanoid = humanoid,
+                root = root,
+                samples = {},
+            }
+            tracks[player] = track
+        end
+        track.humanoid = humanoid
+        track.root = root
+        return track
+    end
+
+    local function samplePlayer(player: Player, now: number): ()
+        local track: Track? = ensureTrack(player)
+        if not track then
+            return
+        end
+        local root: BasePart = track.root
+        local position: Vector3 = root.Position
+        local velocity: Vector3 = root.AssemblyLinearVelocity
+        if not finiteVector(velocity) then
+            velocity = Vector3.zero
+        end
+        local stateName: string = humanoidStateName(track.humanoid)
+        -- FloorMaterial often reads Air on remote characters that are walking
+        -- on flat ground. The humanoid state is the reliable signal.
+        local grounded: boolean = stateName ~= "Jumping"
+            and stateName ~= "Freefall"
+        local moveDirection: Vector3 = Vector3.zero
+        pcall(function(): ()
+            local move: any = track.humanoid.MoveDirection
+            if typeof(move) == "Vector3" and finiteVector(move) then
+                moveDirection = move
+            end
+        end)
+        local aimPart: BasePart?, aimPartName: string = findAimPart(track.character)
+        local aimOffset: Vector3 = aimPart
+            and (aimPart.Position - position)
+            or Vector3.zero
+
+        local samples: {Sample} = track.samples
+        local last: Sample? = samples[#samples]
+        if last then
+            local delta: number = now - last.at
+            -- Respawns, teleports and ownership changes must not seed a fit.
+            if delta > 0 and delta < 0.4
+                and (position - last.position).Magnitude > 8 + 120 * delta then
+                table.clear(samples)
+            end
+        end
+        table.insert(samples, {
+            at = now,
+            position = position,
+            velocity = velocity,
+            state = stateName,
+            grounded = grounded,
+            aimOffset = aimOffset,
+            aimPart = aimPartName,
+            moveDirection = moveDirection,
+        })
+        while #samples > 2 and now - samples[1].at > HISTORY_SECONDS do
+            table.remove(samples, 1)
+        end
+    end
+
+    local function fitVelocity(track: Track, reference: number): Fit?
+        local samples: {Sample} = track.samples
+        if #samples < 3 then
+            return nil
+        end
+        -- Collect the window that ends at `reference`, not necessarily at the
+        -- newest sample: the same weights applied to an older window give the
+        -- velocity direction 0.10 s ago, which is what the turn rate needs.
+        local collected: {Sample} = {}
+        for index: number = #samples, 1, -1 do
+            local sample: Sample = samples[index]
+            if sample.at <= reference + 1e-4 then
+                if reference - sample.at > FIT_WINDOW then
+                    break
+                end
+                table.insert(collected, 1, sample)
+            end
+        end
+        if #collected < 3 then
+            return nil
+        end
+        local anchor: number = collected[#collected].at
+        local sw, st, stt: number = 0, 0, 0
+        local sx, sy, sz: number = 0, 0, 0
+        local stx, sty, stz: number = 0, 0, 0
+        for _, sample: Sample in ipairs(collected) do
+            local dt: number = sample.at - anchor
+            local age: number = math.max(0, reference - sample.at)
+            local weight: number = math.exp(-age / FIT_TAU)
+            sw += weight
+            st += weight * dt
+            stt += weight * dt * dt
+            sx += weight * sample.position.X
+            sy += weight * sample.position.Y
+            sz += weight * sample.position.Z
+            stx += weight * dt * sample.position.X
+            sty += weight * dt * sample.position.Y
+            stz += weight * dt * sample.position.Z
+        end
+        if sw <= 0 then
+            return nil
+        end
+        local denominator: number = stt - st * st / sw
+        if denominator <= 1e-8 then
+            return nil
+        end
+        local meanT: number = st / sw
+        local meanX: number = sx / sw
+        local meanY: number = sy / sw
+        local meanZ: number = sz / sw
+        local vx: number = (stx - st * sx / sw) / denominator
+        local vy: number = (sty - st * sy / sw) / denominator
+        local vz: number = (stz - st * sz / sw) / denominator
+        local squared: number = 0
+        for _, sample: Sample in ipairs(collected) do
+            local dt: number = sample.at - anchor
+            local dx: number = sample.position.X - (meanX + vx * (dt - meanT))
+            local dy: number = sample.position.Y - (meanY + vy * (dt - meanT))
+            local dz: number = sample.position.Z - (meanZ + vz * (dt - meanT))
+            squared += dx * dx + dy * dy + dz * dz
+        end
+        return {
+            velocity = Vector3.new(vx, vy, vz),
+            residual = math.sqrt(squared / #collected),
+            count = #collected,
+            span = collected[#collected].at - collected[1].at,
+            center = reference + meanT,
+        }
+    end
+
+    -- Two fits 0.10 s apart: their directions give the signed yaw rate, their
+    -- magnitudes give the longitudinal braking. Everything is gated on a clean
+    -- fit and a real speed, so noise and near-stationary targets stay at zero.
+    local function measureTurn(
+        track: Track,
+        now: number,
+        fit: Fit
+    ): (number, number, number?, number, number, number)
+        local fitLag: number = math.max(0, now - fit.center)
+        if fit.count < 3 or fit.span < 0.06 then
+            return 0, 0, nil, fitLag, 0, 0
+        end
+        local previous: Fit? = fitVelocity(track, now - TURN_SPAN)
+        if not previous or previous.count < 3 or previous.span < 0.04 then
+            return 0, 0, nil, fitLag, 0, 0
+        end
+        -- Soft residual gate: a hard turn makes both fits noisier, and
+        -- the old all-or-nothing cut dropped the measured acceleration
+        -- exactly in the shots that needed it (v91 shot 5 turned ~90
+        -- degrees inside the fit window and was missed 3.3 studs
+        -- sideways). Between one and 2.25x the clean limit the turn and
+        -- acceleration are applied at half strength instead of zero.
+        local worstResidual: number = math.max(fit.residual, previous.residual)
+        local confidence: number = 1
+        if worstResidual > TURN_RESIDUAL then
+            if worstResidual > TURN_RESIDUAL * 2.25 then
+                return 0, 0, nil, fitLag, 0, 0
+            end
+            confidence = 0.5
+        end
+        local v0: Vector3 = Vector3.new(previous.velocity.X, 0, previous.velocity.Z)
+        local v1: Vector3 = Vector3.new(fit.velocity.X, 0, fit.velocity.Z)
+        if v0.Magnitude < TURN_MIN_SPEED or v1.Magnitude < TURN_MIN_SPEED then
+            return 0, 0, nil, fitLag, 0, 0
+        end
+        local dt: number = math.max(0.04, fit.center - previous.center)
+        local cross: number = v0.Z * v1.X - v0.X * v1.Z
+        local dot: number = v0.X * v1.X + v0.Z * v1.Z
+        local rate: number = math.clamp(
+            math.atan2(cross, dot) / dt,
+            -TURN_MAX_RATE,
+            TURN_MAX_RATE
+        )
+        if math.abs(rate) < TURN_MIN_RATE then
+            rate = 0
+        end
+        local ax: number = (v1.X - v0.X) / dt * confidence
+        local az: number = (v1.Z - v0.Z) / dt * confidence
+        rate *= confidence
+        if math.abs(rate) < TURN_MIN_RATE then
+            rate = 0
+        end
+        local speed: number = v1.Magnitude
+        local along: number = math.clamp(
+            (ax * v1.X + az * v1.Z) / speed,
+            -BRAKE_MAX_ACCEL,
+            BRAKE_MAX_ACCEL
+        )
+        local brakeSeconds: number? = nil
+        if along <= -BRAKE_MIN_ACCEL then
+            local currentSpeed: number = math.max(0, speed + along * fitLag)
+            brakeSeconds = currentSpeed / -along
+        end
+        local accelMagnitude: number = math.sqrt(ax * ax + az * az)
+        if accelMagnitude > BRAKE_MAX_ACCEL then
+            local scale: number = BRAKE_MAX_ACCEL / accelMagnitude
+            ax *= scale
+            az *= scale
+        end
+        return rate, along, brakeSeconds, fitLag, ax, az
+    end
+
+    local function estimateMotion(track: Track, now: number): Motion?
+        local samples: {Sample} = track.samples
+        local last: Sample? = samples[#samples]
+        if not last then
+            return nil
+        end
+        local age: number = math.max(0, now - last.at)
+        if age > MAX_SAMPLE_AGE then
+            return nil
+        end
+        local fit: Fit? = fitVelocity(track, now)
+        local reported: Vector3 = last.velocity
+        local horizontal: Vector3
+        local source: string
+        local turnRate: number = 0
+        local longitudinalAccel: number = 0
+        local accelX: number = 0
+        local accelZ: number = 0
+        local brakeSeconds: number? = nil
+        local fitLag: number = 0
+        local verticalLead: boolean = false
+        if fit and fit.count >= 3 and fit.span >= 0.06 and fit.residual <= 0.5 then
+            -- Clean replicated path: the fit rejects the single-sample spikes
+            -- and is not fooled by a zero AssemblyLinearVelocity.
+            horizontal = Vector3.new(fit.velocity.X, 0, fit.velocity.Z)
+            source = "history"
+        else
+            horizontal = Vector3.new(reported.X, 0, reported.Z)
+            source = "replicated"
+        end
+        if not finiteVector(horizontal) then
+            horizontal = Vector3.zero
+        elseif horizontal.Magnitude > MAX_HORIZONTAL_SPEED then
+            horizontal = horizontal.Unit * MAX_HORIZONTAL_SPEED
+        end
+        -- Airborne is a physics fact before it is a state name: in the
+        -- v91 session one target fell at -46 studs/s while its state
+        -- still read "Running" (it had just left a ledge), so no
+        -- ballistic lead was applied and the shot went over its head.
+        -- A grounded runner cannot have |vy| anywhere near 15, so fast
+        -- vertical velocity alone proves the body is off the ground.
+        local airborne: boolean = last.state == "Jumping"
+            or last.state == "Freefall"
+            or math.abs(reported.Y) >= 15
+        local vertical: number = 0
+        if airborne then
+            vertical = reported.Y
+            if not finiteNumber(vertical) then
+                vertical = 0
+            elseif math.abs(vertical) < 0.5 and fit then
+                vertical = fit.velocity.Y
+            end
+            vertical = math.clamp(vertical, -120, 120)
+        end
+        if fit then
+            turnRate, longitudinalAccel, brakeSeconds, fitLag, accelX, accelZ =
+                measureTurn(track, now, fit)
+        end
+        if airborne and math.abs(vertical) >= VERTICAL_MIN_SPEED then
+            verticalLead = true
+        end
+        return {
+            velocity = Vector3.new(horizontal.X, vertical, horizontal.Z),
+            horizontal = horizontal,
+            vertical = vertical,
+            airborne = airborne,
+            sampleAge = age,
+            samples = #samples,
+            residual = fit and fit.residual or math.huge,
+            source = source,
+            turnRate = turnRate,
+            longitudinalAccel = longitudinalAccel,
+            accelX = accelX,
+            accelZ = accelZ,
+            brakeSeconds = brakeSeconds,
+            fitLag = fitLag,
+            verticalLead = verticalLead,
+        }
+    end
+
+    -- Lead displacement for a horizon, with the measured turn and braking.
+    -- The fitted direction sits `fitLag` behind now, and the chord over the
+    -- horizon points at the tangent halfway through it, so the rotation is
+    -- rate * (horizon/2 + fitLag). Capped at 45 degrees on purpose: a larger
+    -- correction is a turn the samples cannot describe anymore.
+    local function leadHorizontal(motion: Motion, horizon: number): Vector3
+        local speed: number = motion.horizontal.Magnitude
+        if speed < 1e-4 or horizon <= 0 then
+            return Vector3.zero
+        end
+        local direction: Vector3 = motion.horizontal.Unit
+        -- Measured-acceleration path. Across the scored calibration replays
+        -- this model beat constant velocity 57 to 19: MM2 targets accelerate,
+        -- brake and strafe constantly, and the lateral component of the
+        -- measured vector IS the turn, so no direction rotation is applied on
+        -- top of it. The application clamp is tighter than the measurement
+        -- clamp: the v61 failure came from a +120 swing stretching the lead,
+        -- and 60 studs/s^2 already covers a humanoid reaching WalkSpeed.
+        local accelMagnitude: number = math.sqrt(
+            motion.accelX * motion.accelX + motion.accelZ * motion.accelZ
+        )
+        if accelMagnitude >= 4 then
+            local applied: Vector3 = Vector3.new(
+                motion.accelX,
+                0,
+                motion.accelZ
+            )
+            if accelMagnitude > 60 then
+                applied *= 60 / accelMagnitude
+            end
+            local displacement: Vector3 = motion.horizontal * horizon
+                + applied * (motion.fitLag * horizon
+                    + 0.5 * horizon * horizon)
+            if motion.brakeSeconds and horizon > motion.brakeSeconds then
+                -- Already stopped by then: cap the along-track component at
+                -- the stop distance and keep the lateral correction.
+                local alongDistance: number = displacement:Dot(direction)
+                local along: number = math.min(
+                    0,
+                    motion.longitudinalAccel
+                )
+                local speedNow: number = math.max(
+                    0,
+                    speed + along * motion.fitLag
+                )
+                local stopDistance: number = speedNow
+                    * motion.brakeSeconds * 0.5
+                if alongDistance > stopDistance then
+                    displacement -= direction
+                        * (alongDistance - stopDistance)
+                end
+            end
+            return displacement
+        end
+        if math.abs(motion.turnRate) > 1e-3 then
+            local angle: number = math.clamp(
+                motion.turnRate * (horizon * 0.5 + motion.fitLag),
+                -TURN_MAX_ANGLE,
+                TURN_MAX_ANGLE
+            )
+            local cosine: number = math.cos(angle)
+            local sine: number = math.sin(angle)
+            direction = Vector3.new(
+                direction.X * cosine + direction.Z * sine,
+                0,
+                -direction.X * sine + direction.Z * cosine
+            )
+        end
+        -- The fit is a chord over the window, so it lags the current speed.
+        -- Correct it by the measured longitudinal acceleration over that lag,
+        -- and include the acceleration over the horizon itself. Both terms
+        -- are clamped in measureTurn; a clean straight run leaves them at 0.
+        -- Only deceleration earns a length correction. In the recorded v61
+        -- session the measured "acceleration" of a running target swung to the
+        -- +120 clamp and stretched the lead by 1.5 studs; a real stop is the
+        -- case that matters and it is a negative value.
+        local along: number = math.min(0, motion.longitudinalAccel)
+        local speedNow: number = math.max(0, speed + along * motion.fitLag)
+        local length: number = speedNow * horizon
+            + 0.5 * along * horizon * horizon
+        length = math.max(0, length)
+        if motion.brakeSeconds and horizon > motion.brakeSeconds then
+            -- The target is already stopped by then; extrapolating further
+            -- would aim past it.
+            length = math.min(
+                length,
+                speedNow * motion.brakeSeconds * 0.5
+            )
+        end
+        return direction * length
+    end
+
+    local function predictedRoot(
+        track: Track,
+        motion: Motion,
+        horizon: number
+    ): Vector3
+        local last: Sample = track.samples[#track.samples]
+        local lead: Vector3 = leadHorizontal(motion, horizon)
+        local x: number = last.position.X + lead.X
+        local z: number = last.position.Z + lead.Z
+        local y: number = last.position.Y
+        if motion.verticalLead then
+            y += motion.vertical * horizon
+                - 0.5 * workspace.Gravity * horizon * horizon
+        end
+        return Vector3.new(x, y, z)
+    end
+
+    local function currentRtt(): number
+        local latency: any = nil
+        if type(core.getEstimatedLatency) == "function" then
+            local ok: boolean, value: any = pcall(core.getEstimatedLatency)
+            if ok then
+                latency = value
+            end
+        end
+        if not finiteNumber(latency) then
+            latency = 0.08
+        end
+        return math.clamp(latency, 0.02, 0.6)
+    end
+
+    -- A median of recent readings, not the live number. A single spike in the
+    -- engine estimate produced leads of 0.36-0.40 s against a 0.13 s baseline
+    -- on 2026-10-18, and both of those shots missed by 7+ studs.
+    local rttSamples: {number} = {}
+    local lastRttSampleAt: number = -math.huge
+    local function robustRtt(): number
+        local now: number = os.clock()
+        if now - lastRttSampleAt >= RTT_SAMPLE_INTERVAL then
+            lastRttSampleAt = now
+            table.insert(rttSamples, currentRtt())
+            while #rttSamples > RTT_SAMPLES do
+                table.remove(rttSamples, 1)
+            end
+        end
+        local sorted: {number} = table.clone(rttSamples)
+        table.insert(sorted, currentRtt())
+        table.sort(sorted)
+        return sorted[math.floor((#sorted + 1) / 2)]
+    end
+
+    local function echoMedian(): number?
+        local count: number = #echoes
+        if count < MIN_ECHO_SAMPLES then
+            return nil
+        end
+        local sorted: {number} = table.clone(echoes)
+        table.sort(sorted)
+        local middle: number = (count + 1) / 2
+        local lower: number = math.floor(middle)
+        local upper: number = math.ceil(middle)
+        return (sorted[lower] + sorted[upper]) / 2
+    end
+
+    local function noteEcho(sentAt: number, receivedAt: number): ()
+        if not finiteNumber(sentAt) or not finiteNumber(receivedAt) then
+            return
+        end
+        local delay: number = receivedAt - sentAt
+        if delay < MIN_ECHO_DELAY or delay > MAX_ECHO_DELAY then
+            return
+        end
+        table.insert(echoes, delay)
+        while #echoes > MAX_ECHOES do
+            table.remove(echoes, 1)
+        end
+    end
+
+    local function manualLead(): number
+        return settings.autoLead and 0 or settings.extraLead
+    end
+
+    -- Signed over/under-lead measurements, in seconds. Positive means the
+    -- target was ahead of the point we aimed at when the server scored it.
+    local leadErrors: {number} = {}
+
+    local function medianOf(values: {number}): number?
+        local count: number = #values
+        if count == 0 then
+            return nil
+        end
+        local sorted: {number} = table.clone(values)
+        table.sort(sorted)
+        if count % 2 == 1 then
+            return sorted[(count + 1) // 2]
+        end
+        return (sorted[count // 2] + sorted[count // 2 + 1]) * 0.5
+    end
+
+    local function noteLeadError(seconds: any): ()
+        if not finiteNumber(seconds) then
+            return
+        end
+        if math.abs(seconds) > LEAD_FEEDBACK_SAMPLE_LIMIT then
+            return
+        end
+        table.insert(leadErrors, seconds)
+        while #leadErrors > LEAD_FEEDBACK_MAX_SAMPLES do
+            table.remove(leadErrors, 1)
+        end
+    end
+
+    local function leadCorrection(): number
+        if #leadErrors < LEAD_FEEDBACK_MIN_SAMPLES then
+            return 0
+        end
+        local median: number? = medianOf(leadErrors)
+        if not median then
+            return 0
+        end
+        return math.clamp(median, -MAX_LEAD_CORRECTION, MAX_LEAD_CORRECTION)
+    end
+
+    -- How far the recent shots were off, without their sign. Silent aim draws
+    -- its bypass segment along the target's own motion, and that segment has to
+    -- be as long as the lead's uncertainty: at 16 studs/s a 60 ms error is a
+    -- whole stud, which is wider than the blade and most of a limb. Derived
+    -- from the same confirmations as the correction, never from a constant.
+    local function leadUncertainty(): number
+        if #leadErrors < LEAD_FEEDBACK_MIN_SAMPLES then
+            return 0
+        end
+        local absolute: {number} = {}
+        for _, seconds: number in ipairs(leadErrors) do
+            table.insert(absolute, math.abs(seconds))
+        end
+        return medianOf(absolute) or 0
+    end
+
+    local function gunHorizon(): (number, number, number?)
+        local rtt: number = robustRtt()
+        local echo: number? = echoMedian()
+        -- The echo is measured client-side from the activation to the
+        -- confirmation, so it is a real round trip rather than an engine
+        -- estimate; it replaces the ping when a median exists. It has to be
+        -- measured from the confirmation path for that to happen at all:
+        -- v61 recorded none (`echoDelay` nil on all 13 shots).
+        local pipeline: number = echo or rtt
+        -- Full transport, NOT the one-way half -- and this is measured,
+        -- not assumed: in the saved calibration sessions the confirmed
+        -- hits cluster at about +14 ms against the confirmation instant
+        -- (a full round trip after firing) and at about -55 ms against
+        -- the receive instant, so the server scores the shot as if it
+        -- rewound by the shooter's whole ping. v85 halved this on a
+        -- no-rewind theory and led systematically short. The closed-loop
+        -- correction below still re-centres the residual error.
+        local horizon: number = pipeline
+            + settings.interpolation
+            + manualLead()
+        if settings.autoLead then
+            -- The correction belongs to the automatic model. A manual offset
+            -- is the user saying they know the transport better, so it is not
+            -- silently adjusted on top.
+            horizon += leadCorrection()
+            horizon = math.min(horizon, MAX_AUTO_LEAD)
+        end
+        return math.clamp(horizon, 0.005, MAX_HORIZON), rtt, echo
+    end
+
+    -- The blade travels on the same connection as the bullet, so the measured
+    -- FireServer -> GunFired round trip is a better transport number than the
+    -- engine's ping estimate here too. The v64 file measured 126-472 ms of real
+    -- round trip against an 80-154 ms engine reading: leading a thrown blade
+    -- with the engine number leaves up to 300 ms of unled movement, which is
+    -- the knife missing high and behind a target that is already running.
+    local function knifeHorizon(): (number, number, number?)
+        local rtt: number = robustRtt()
+        local echo: number? = echoMedian()
+        local pipeline: number = echo or rtt
+        -- Same full-transport rule as the gun (measured the same way:
+        -- the blade's effective spawn behaves like a full rewind, so
+        -- the intercept leads the whole round trip plus flight time).
+        local horizon: number = pipeline
+            + settings.interpolation
+            + manualLead()
+        if settings.autoLead then
+            horizon = math.min(horizon, MAX_AUTO_LEAD)
+        end
+        return math.clamp(horizon, 0.005, MAX_HORIZON), rtt, echo
+    end
+
+    local function gunAim(
+        target: Player,
+        _muzzle: Vector3
+    ): (Vector3?, AimInfo?, string?)
+        local track: Track? = tracks[target]
+        if not track or #track.samples == 0 then
+            return nil, nil, "no samples"
+        end
+        local now: number = os.clock()
+        local motion: Motion? = estimateMotion(track, now)
+        if not motion then
+            return nil, nil, "stale sample"
+        end
+        local pipeline: number, rtt: number, echo: number? = gunHorizon()
+        local rttEngine: number?, rttData: number? = nil, nil
+        if type(core.getLatencyReadings) == "function" then
+            local ok: boolean, engine: any, data: any = pcall(core.getLatencyReadings)
+            if ok then
+                rttEngine = finiteNumber(engine) and engine or nil
+                rttData = finiteNumber(data) and data or nil
+            end
+        end
+        local horizon: number = math.clamp(
+            motion.sampleAge + pipeline,
+            0.005,
+            MAX_HORIZON
+        )
+        local rootPosition: Vector3 = predictedRoot(track, motion, horizon)
+        local last: Sample = track.samples[#track.samples]
+        -- The torso offset turns with the character. The sampled offset is
+        -- one sample old; the part's current offset from the current root
+        -- is the same measurement without the sample delay, and at a
+        -- 100 ms horizon a turning target has already rotated it.
+        local aimOffset: Vector3 = last.aimOffset
+        local freshAimPart: BasePart? = findAimPart(track.character)
+        if freshAimPart then
+            aimOffset = freshAimPart.Position - track.root.Position
+        end
+        local endpoint: Vector3 = rootPosition + aimOffset
+        return endpoint, {
+            endpoint = endpoint,
+            targetPosition = endpoint,
+            capturedPosition = last.position + aimOffset,
+            rootPosition = rootPosition,
+            velocity = motion.velocity,
+            leadSeconds = horizon,
+            sampleAge = motion.sampleAge,
+            samples = motion.samples,
+            residual = motion.residual,
+            motionSource = motion.source,
+            model = "kinematic-v51",
+            rtt = rtt,
+            rttEngine = rttEngine,
+            rttData = rttData,
+            echoDelay = echo,
+            echoSamples = #echoes,
+            turnRate = motion.turnRate,
+            brakeSeconds = motion.brakeSeconds,
+            leadCorrection = leadCorrection(),
+        }, nil
+    end
+
+    local function knifeAim(
+        target: Player,
+        origin: Vector3,
+        speed: number?
+    ): (Vector3?, AimInfo?, string?)
+        local track: Track? = tracks[target]
+        if not track or #track.samples == 0 then
+            return nil, nil, "no samples"
+        end
+        local now: number = os.clock()
+        local motion: Motion? = estimateMotion(track, now)
+        if not motion then
+            return nil, nil, "stale sample"
+        end
+        local resolvedSpeed: number = tonumber(speed) or DEFAULT_KNIFE_SPEED
+        if resolvedSpeed < 24 or resolvedSpeed > 300 then
+            resolvedSpeed = DEFAULT_KNIFE_SPEED
+        end
+        local pipeline: number, rtt: number, echo: number? = knifeHorizon()
+        local rttEngine: number?, rttData: number? = nil, nil
+        if type(core.getLatencyReadings) == "function" then
+            local ok: boolean, engine: any, data: any = pcall(core.getLatencyReadings)
+            if ok then
+                rttEngine = finiteNumber(engine) and engine or nil
+                rttData = finiteNumber(data) and data or nil
+            end
+        end
+        local horizon: number = math.clamp(
+            motion.sampleAge + pipeline,
+            0.005,
+            MAX_HORIZON
+        )
+        local last: Sample = track.samples[#track.samples]
+        local aimStart: Vector3 = last.position + last.aimOffset
+        local initial: Vector3 = motion.velocity
+        local flight: number? = predictionMath.interceptTime(
+            aimStart + initial * horizon - origin,
+            initial,
+            resolvedSpeed
+        )
+        if not flight then
+            return nil, nil, "unreachable"
+        end
+        -- One re-solve with the average velocity over the whole flight: a
+        -- turning or braking target does not travel along the instantaneous
+        -- tangent, and the blade needs the chord.
+        local span: number = horizon + flight
+        local lead: Vector3 = leadHorizontal(motion, span)
+        local vertical: number = motion.verticalLead and motion.vertical or 0
+        if motion.verticalLead then
+            vertical -= 0.5 * workspace.Gravity * span
+        end
+        local effective: Vector3 = Vector3.new(
+            lead.X,
+            vertical * span,
+            lead.Z
+        ) / span
+        local revised: number? = predictionMath.interceptTime(
+            aimStart + effective * horizon - origin,
+            effective,
+            resolvedSpeed
+        )
+        if revised then
+            flight = revised
+            span = horizon + flight
+            lead = leadHorizontal(motion, span)
+            vertical = motion.verticalLead and motion.vertical or 0
+            if motion.verticalLead then
+                vertical -= 0.5 * workspace.Gravity * span
+            end
+            effective = Vector3.new(lead.X, vertical * span, lead.Z) / span
+        end
+        local endpoint: Vector3 = aimStart + effective * (horizon + flight)
+        if motion.airborne then
+            -- A straight blade cannot follow a ballistic arc; aim at the
+            -- root's projected position at impact instead of a linear Y.
+            endpoint = predictedRoot(track, motion, horizon + flight)
+                + last.aimOffset
+        end
+        return endpoint, {
+            endpoint = endpoint,
+            targetPosition = endpoint,
+            capturedPosition = aimStart,
+            rootPosition = predictedRoot(track, motion, horizon + flight),
+            velocity = motion.velocity,
+            leadSeconds = horizon,
+            flightSeconds = flight,
+            sampleAge = motion.sampleAge,
+            samples = motion.samples,
+            residual = motion.residual,
+            motionSource = motion.source,
+            model = "kinematic-v51",
+            rtt = rtt,
+            rttEngine = rttEngine,
+            rttData = rttData,
+            echoDelay = echo,
+            echoSamples = #echoes,
+            turnRate = motion.turnRate,
+            brakeSeconds = motion.brakeSeconds,
+            leadCorrection = 0,
+        }, nil
+    end
+
+    local function playerStatus(target: Player?): string
+        local rtt: number = robustRtt()
+        local echo: number? = echoMedian()
+        local parts: {string} = {
+            string.format("RTT %.0f ms", rtt * 1000),
+        }
+        if echo then
+            table.insert(
+                parts,
+                string.format("echo %.0f ms (%d)", echo * 1000, #echoes)
+            )
+        end
+        table.insert(
+            parts,
+            string.format("interp %.0f ms", settings.interpolation * 1000)
+        )
+        if settings.autoLead then
+            table.insert(
+                parts,
+                echo and "auto lead (echo)" or "auto lead (ping)"
+            )
+        elseif settings.extraLead ~= 0 then
+            table.insert(
+                parts,
+                string.format("manual %+.0f ms", settings.extraLead * 1000)
+            )
+        end
+        local horizon: number = (echo or rtt)
+            + settings.interpolation
+            + manualLead()
+        -- The status must show the horizon the shot actually uses:
+        -- gunAim adds the age of the newest sample on top of the
+        -- pipeline. Showing only the pipeline (98 ms when the shot
+        -- used 111 ms) makes the lead look shorter than it is.
+        if target then
+            local track: Track? = tracks[target]
+            local preview: Motion? = track and estimateMotion(track, os.clock())
+            if preview then
+                horizon += preview.sampleAge
+            end
+        end
+        local capped: boolean = false
+        if settings.autoLead and horizon > MAX_AUTO_LEAD then
+            horizon = MAX_AUTO_LEAD
+            capped = true
+        end
+        if horizon > MAX_HORIZON then
+            horizon = MAX_HORIZON
+            capped = true
+        end
+        table.insert(
+            parts,
+            string.format(
+                "lead %.0f ms%s",
+                horizon * 1000,
+                capped and " (capped)" or ""
+            )
+        )
+        if target then
+            local track: Track? = tracks[target]
+            local motion: Motion? = track and estimateMotion(track, os.clock())
+            if motion then
+                table.insert(parts, string.format("%.1f studs/s", motion.horizontal.Magnitude))
+                table.insert(parts, string.format("%d samples", motion.samples))
+                table.insert(parts, string.format("age %.0f ms", motion.sampleAge * 1000))
+                if motion.airborne then
+                    table.insert(parts, "airborne")
+                end
+                if math.abs(motion.turnRate) > 0.05 then
+                    table.insert(
+                        parts,
+                        string.format("turn %+.0f deg/s", math.deg(motion.turnRate))
+                    )
+                end
+                if motion.brakeSeconds then
+                    table.insert(
+                        parts,
+                        string.format("brake %.2f s", motion.brakeSeconds)
+                    )
+                end
+            else
+                table.insert(parts, "no fresh samples")
+            end
+        end
+        return table.concat(parts, " · ")
+    end
+
+    local controller: any = {
+        settings = settings,
+        noteEcho = noteEcho,
+        -- The movement window that ends at the call, oldest first, with `at`
+        -- in seconds relative to now (negative). Telemetry attaches it to each
+        -- shot so an alternative predictor can be replayed offline from the
+        -- same inputs instead of being judged only on live hits.
+        getHistory = function(
+            player: Player,
+            seconds: number?
+        ): ({any}?, number?)
+            local track: Track? = tracks[player]
+            if not track or #track.samples < 2 then
+                return nil, 0
+            end
+            local span: number = math.clamp(
+                seconds or HISTORY_SECONDS,
+                0.05,
+                HISTORY_SECONDS
+            )
+            -- Times are relative to the newest sample, not to this call. The
+            -- modules do not share a clock epoch (the v61 log recorded a
+            -- -2546 s offset), so only the predictor's own timestamps can be
+            -- subtracted from each other. The caller gets the age separately.
+            local newest: Sample = track.samples[#track.samples]
+            local age: number = math.max(0, os.clock() - newest.at)
+            local points: {any} = {}
+            for _, sample: Sample in ipairs(track.samples) do
+                local at: number = sample.at - newest.at
+                if at >= -span - 1e-6 then
+                    table.insert(points, {
+                        at = at,
+                        position = sample.position,
+                        velocity = sample.velocity,
+                        state = sample.state,
+                        grounded = sample.grounded,
+                        moveDirection = sample.moveDirection,
+                    })
+                end
+            end
+            if #points < 2 then
+                return nil, age
+            end
+            return points, age
+        end,
+        gunAim = gunAim,
+        knifeAim = knifeAim,
+        status = playerStatus,
+        getRtt = currentRtt,
+        getEchoDelay = echoMedian,
+        predict = function(player: Player, horizon: number): Vector3?
+            local track: Track? = tracks[player]
+            if not track or #track.samples == 0 or not finiteNumber(horizon) then
+                return nil
+            end
+            local motion: Motion? = estimateMotion(track, os.clock())
+            if not motion then
+                return nil
+            end
+            return predictedRoot(track, motion, math.clamp(horizon, 0, 2))
+        end,
+        getMotion = function(player: Player): Motion?
+            local track: Track? = tracks[player]
+            if not track then
+                return nil
+            end
+            return estimateMotion(track, os.clock())
+        end,
+        noteLeadError = noteLeadError,
+        getLeadCorrection = leadCorrection,
+        getLeadUncertainty = leadUncertainty,
+        reset = function(): ()
+            table.clear(echoes)
+            table.clear(tracks)
+            table.clear(rttSamples)
+            table.clear(leadErrors)
+            lastRttSampleAt = -math.huge
+        end,
+    }
+
+    local function tick(deltaTime: number): ()
+        elapsed += math.max(0, deltaTime or 0)
+        local interval: number = 1 / SAMPLE_HZ
+        if elapsed + 1e-9 < interval then
+            return
+        end
+        elapsed = elapsed % interval
+        local now: number = os.clock()
+        for _, player: Player in ipairs(Players:GetPlayers()) do
+            if player ~= LocalPlayer then
+                samplePlayer(player, now)
+            end
+        end
+    end
+
+    state.mm2Prediction = controller
+    featureConnections.MM2PredictionSampler = TaskManager:Connect(tick)
+
+    activeCleanup = function(): ()
+        disconnectFeatureConnection("MM2PredictionSampler")
+        if state.mm2Prediction == controller then
+            state.mm2Prediction = nil
+        end
+        table.clear(echoes)
+        table.clear(tracks)
+    end
+
+    Module.Events = featureConnections
+    Module.Initialized = true
+    return Module
+end
+
+function Module.destroy(): ()
+    if not Module.Initialized then
+        return
+    end
+    Module.Initialized = false
+    pcall(activeCleanup)
+    activeCleanup = function(): () end
+    Module.Events = {}
+    Module.Runtime = nil
+end
+
+return Module
+
+]=],
+        ["src/games/MM2/Render/CoinEsp.lua"] = [[
+-- MM2 Coin ESP: highlights ONLY the real pickups the game itself spawns.
+--
+-- A real pickup carries three exact signatures from the game's own code,
+-- and this module accepts a part when ANY of them matches -- never a
+-- generic name search:
+--
+--   1. The CollectionService tag "CoinVisual". The game's CoinVisualizer
+--      script animates exactly GetTagged("CoinVisual"), skips the parts
+--      whose "Collected" attribute is true and destroys the "Delete" ones.
+--   2. The "CoinID" attribute. The same script keys every pickup by
+--      GetAttribute("CoinID") when CoinCollected fires, so only a real
+--      pickup carries it.
+--   3. The exact spawn structure from the place: an invisible server part
+--      named Coin_Server whose visible child is named CoinVisual, with the
+--      mesh children (MainCoin / DecalPart / 2Part, or the event look of
+--      the season) under it.
+--
+-- The highlight always sits on the visible CoinVisual part itself -- never
+-- on a parent model or container. (An earlier version walked up to the
+-- container model and painted the whole map yellow, and counted every
+-- part with "coin" in its name; that detection is gone.)
+--
+-- The family of a pickup (Coin, Candy, SnowToken, BeachBall, Egg, Heart)
+-- is read from its own mesh children; when the meshes say nothing
+-- specific, the family the server announced applies, because a round only
+-- pays one kind of pickup. Candies replace coins during Halloween with
+-- this same spawn system ([1](https://murder-mystery-2.fandom.com/wiki/Halloween_Event_2025)),
+-- so a candy round is found by the same signatures. The server family
+-- comes from the Remotes/Gameplay/CoinsStarted bag table (Coin, Candy,
+-- SnowToken, BeachBall, Egg) and the Workspace event attributes.
+local Module = {
+    Name = "MM2 Coin ESP",
+    PlaceId = 142823291,
+    Events = {} :: {[string]: any},
+    Initialized = false,
+    Runtime = nil :: any,
+}
+
+local activeCleanup: () -> () = function(): () end
+
+-- The exact signatures of a real pickup.
+local COIN_TAG: string = "CoinVisual"
+local VISUAL_NAME: string = "CoinVisual"
+local SERVER_NAME: string = "Coin_Server"
+
+local FAMILY_COIN: string = "Coin"
+local FAMILY_CANDY: string = "Candy"
+local FAMILY_SNOW: string = "SnowToken"
+local FAMILY_BEACH: string = "BeachBall"
+local FAMILY_EGG: string = "Egg"
+local FAMILY_HEART: string = "Heart"
+local FAMILY_ALL: string = "All"
+local FAMILY_AUTO: string = "Auto (server)"
+
+-- Most specific first: a SnowToken can carry a mesh named Coin.
+local FAMILY_ORDER: {string} = {
+    FAMILY_EGG,
+    FAMILY_BEACH,
+    FAMILY_SNOW,
+    FAMILY_CANDY,
+    FAMILY_HEART,
+    FAMILY_COIN,
+}
+
+local COUNT_ORDER: {string} = {
+    FAMILY_COIN,
+    FAMILY_CANDY,
+    FAMILY_SNOW,
+    FAMILY_BEACH,
+    FAMILY_EGG,
+    FAMILY_HEART,
+}
+
+local FAMILY_NOUNS: {[string]: {string}} = {
+    [FAMILY_COIN] = {"coin", "coins"},
+    [FAMILY_CANDY] = {"candy", "candies"},
+    [FAMILY_SNOW] = {"snowtoken", "snowtokens"},
+    [FAMILY_BEACH] = {"beachball", "beachballs"},
+    [FAMILY_EGG] = {"egg", "eggs"},
+    [FAMILY_HEART] = {"heart", "hearts"},
+}
+
+local FAMILY_CHOICES: {string} = {
+    FAMILY_AUTO,
+    FAMILY_COIN,
+    FAMILY_CANDY,
+    FAMILY_SNOW,
+    FAMILY_BEACH,
+    FAMILY_EGG,
+    FAMILY_HEART,
+    FAMILY_ALL,
+}
+
+local BAG_TO_FAMILY: {[string]: string} = {
+    Coin = FAMILY_COIN,
+    Candy = FAMILY_CANDY,
+    SnowToken = FAMILY_SNOW,
+    BeachBall = FAMILY_BEACH,
+    Egg = FAMILY_EGG,
+}
+
+-- Words read ONLY from the pickup's own mesh children (never from
+-- parents: a container name must not reclassify every coin inside).
+-- The tagged part itself is always named CoinVisual, whatever family it
+-- pays, so that name must never classify a part as a plain coin either.
+local FAMILY_PHRASES: {[string]: {string}} = {
+    [FAMILY_EGG] = {"egg", "eggs"},
+    [FAMILY_BEACH] = {"beachball", "beach ball", "beachballs", "beach balls"},
+    [FAMILY_SNOW] = {"snowtoken", "snow token", "snowtokens", "snow tokens", "snowball", "snow ball"},
+    [FAMILY_CANDY] = {"candy", "candies", "candied", "candycorn", "candy corn"},
+    [FAMILY_HEART] = {"heart", "hearts"},
+    [FAMILY_COIN] = {"maincoin", "coinold", "decalpart"},
+}
+
+-- Safety-net rescan; the signals do the real work.
+local RESCAN_PERIOD: number = 5
+
+local function lower(value: string): string
+    return string.lower(value)
+end
+
+local function contains(value: string, needle: string): boolean
+    return string.find(value, needle, 1, true) ~= nil
+end
+
+function Module.init(runtime: any): any
+    if Module.Initialized then
+        return Module
+    end
+    local core: any = state.mm2Core
+    assert(type(core) == "table", "MM2 Coin ESP requires the MM2 core module")
+    Module.Runtime = runtime
+    local CoinEffects: any = core.CoinEffects
+    local clearEffects: any = core.clearEffects
+    local mm2Settings: any = core.mm2Settings
+    local collectionService: any = game:GetService("CollectionService")
+
+    local settings = {
+        family = FAMILY_AUTO,
+    }
+    -- Set by the `CoinsStarted` remote and by the Workspace event attributes.
+    local serverFamily: string? = nil
+    -- Raw signature counts from the last scan, for the report action.
+    local lastRaw = {tagged = 0, coinId = 0, named = 0}
+
+    -- Native per-pickup marker: ONE small BoxHandleAdornment per
+    -- pickup, sized exactly to the visible coin mesh. No labels and
+    -- no per-frame Lua: a hundred markers cost the engine one
+    -- adornment each and nothing else. The adornment renders through
+    -- walls regardless of the holder's transparency.
+    local coinTags: {[Instance]: {box: Instance}} = {}
+    -- Pickup -> family, kept between scans for the tag text.
+    local lastFamilies: {[Instance]: string} = {}
+    -- Parts currently carrying a tag, for tests and the report action.
+    state.mm2CoinTagParts = {}
+
+    local function clearTags(): ()
+        for part: Instance, entry in pairs(coinTags) do
+            coinTags[part] = nil
+            pcall(function(): ()
+                entry.box:Destroy()
+            end)
+        end
+        table.clear(lastFamilies)
+        state.mm2CoinTagParts = {}
+    end
+
+    local function attribute(object: Instance, name: string): any
+        local ok: boolean, value: any = pcall(function(): any
+            return object:GetAttribute(name)
+        end)
+        if ok then
+            return value
+        end
+        return nil
+    end
+
+    local function hasTag(object: Instance): boolean
+        local ok: boolean, tagged: boolean = pcall(function(): boolean
+            return collectionService:HasTag(object, COIN_TAG)
+        end)
+        return ok and tagged == true
+    end
+
+    -- The visible half of a pickup. A server part resolves to its
+    -- CoinVisual child; anything else is used as-is. Parents are NEVER
+    -- walked: the container must stay dark.
+    local function visualOf(part: Instance): Instance?
+        if part.Name == SERVER_NAME then
+            local child: Instance? = part:FindFirstChild(VISUAL_NAME)
+            if child and child:IsA("BasePart") then
+                return child
+            end
+            return nil
+        end
+        return part
+    end
+
+    -- Filters that are safe to fail open: if an engine call errors, the
+    -- signature that found the part is trusted instead of dropping it.
+    local function passesFilters(part: Instance): boolean
+        if not part:IsA("BasePart") then
+            return false
+        end
+        if attribute(part, "Collected") == true or attribute(part, "Delete") == true then
+            return false
+        end
+        local okDesc: boolean, inside: boolean = pcall(function(): boolean
+            return part:IsDescendantOf(workspace)
+        end)
+        if okDesc and not inside then
+            return false
+        end
+        -- A character is never a pickup, whatever it carries.
+        local current: Instance? = part.Parent
+        while current and current ~= workspace do
+            local okHum: boolean, humanoid: Instance? = pcall(function(): Instance?
+                return current:FindFirstChildOfClass("Humanoid")
+            end)
+            if okHum and humanoid then
+                return false
+            end
+            current = current.Parent
+        end
+        return true
+    end
+
+    -- The family the server says is in play: the `CoinsStarted` table first,
+    -- then the Workspace event attributes.
+    local function familyFromWorkspace(): string?
+        local eventName: string = lower(tostring(attribute(workspace, "CurrentEvent") or ""))
+        if contains(eventName, "halloween") then
+            return FAMILY_CANDY
+        elseif contains(eventName, "christmas") then
+            return FAMILY_SNOW
+        elseif contains(eventName, "summer") then
+            return FAMILY_BEACH
+        elseif contains(eventName, "easter") then
+            return FAMILY_EGG
+        elseif contains(eventName, "valentine") then
+            return FAMILY_HEART
+        end
+        for attrName: string, family: string in pairs({
+            isValentines = FAMILY_HEART,
+            isChristmas = FAMILY_SNOW,
+            isChristmasEnding = FAMILY_SNOW,
+            IsSummer = FAMILY_BEACH,
+            IsEaster = FAMILY_EGG,
+        }) do
+            if attribute(workspace, attrName) == true then
+                return family
+            end
+        end
+        return nil
+    end
+
+    local function activeFamily(): string?
+        return serverFamily or familyFromWorkspace()
+    end
+
+    -- Family of one pickup: its mesh children only. With no specific
+    -- word, the round's family applies (a round pays a single kind of
+    -- pickup), falling back to the classic coin.
+    local familyCache: {[Instance]: string} = {}
+    local function familyOf(part: Instance): string
+        local cached: string? = familyCache[part]
+        if cached then
+            return cached
+        end
+        local names: {string} = {}
+        local ok: boolean, descendants: any = pcall(function(): any
+            return part:GetDescendants()
+        end)
+        if ok and type(descendants) == "table" then
+            for _, object: Instance in ipairs(descendants) do
+                table.insert(names, object.Name)
+            end
+        end
+        local haystack: string = lower(table.concat(names, " "))
+        -- A round pays a single kind of pickup, and event pickups are
+        -- built on the classic coin template (MainCoin/DecalPart meshes
+        -- with an event look). So when the server announces an event
+        -- family, plain coin mesh names must NOT drag the pickup back
+        -- to Coin -- that mismatch is what left Auto showing nothing
+        -- while the map was full of candies.
+        local active: string? = activeFamily()
+        for _, family: string in ipairs(FAMILY_ORDER) do
+            if family ~= FAMILY_COIN or active == nil or active == FAMILY_COIN then
+                for _, phrase: string in ipairs(FAMILY_PHRASES[family]) do
+                    if contains(haystack, phrase) then
+                        -- Cache only the non-Coin mesh families:
+                        -- they win over the server family in every
+                        -- scan, so they can never go stale. A Coin
+                        -- mesh classification is NOT cached -- when
+                        -- the server announces an event family, the
+                        -- coin template must reclassify to it.
+                        if family ~= FAMILY_COIN then
+                            familyCache[part] = family
+                        end
+                        return family
+                    end
+                end
+            end
+        end
+        return active or FAMILY_COIN
+    end
+
+    -- Every real pickup on the map, merged from the three signatures.
+    -- (v84 tried a "cheap" rescan -- tag list plus previously-known
+    -- parts -- and in the live game the ESP stopped reporting coins
+    -- entirely; the mock suite passed, the game did not. The full
+    -- scan below is the behaviour that demonstrably works in game.
+    -- The cost is kept down elsewhere: Auto Farm's polls are cached
+    -- (1.5 s), the family classification is cached, and the ancestor
+    -- walk inside passesFilters is cached per part.)
+    local filterCache: {[Instance]: boolean} = {}
+    local function collectAll(): ({[Instance]: string}, {[string]: number})
+        local found: {[Instance]: string} = {}
+        local counts: {[string]: number} = {}
+        lastRaw = {tagged = 0, coinId = 0, named = 0}
+
+        -- The attribute half of the filter is volatile (Collected
+        -- flips when a coin is taken) and is always re-read; only
+        -- the static half (in the workspace, not inside a character)
+        -- is cached -- a pickup's ancestry never changes.
+        local function passesFiltersCached(part: Instance): boolean
+            if attribute(part, "Collected") == true
+                or attribute(part, "Delete") == true then
+                return false
+            end
+            local cached: boolean? = filterCache[part]
+            if cached ~= nil then
+                return cached
+            end
+            local result: boolean = passesFilters(part)
+            filterCache[part] = result
+            return result
+        end
+
+        local function consider(part: Instance?): ()
+            if not part then
+                return
+            end
+            local visual: Instance? = visualOf(part)
+            if not visual or found[visual] then
+                return
+            end
+            if not passesFiltersCached(visual) then
+                return
+            end
+            local family: string = familyOf(visual)
+            found[visual] = family
+            counts[family] = (counts[family] or 0) + 1
+        end
+
+        -- Signature 1: the game's own tag list.
+        local okTagged: boolean, tagged: any = pcall(function(): any
+            return collectionService:GetTagged(COIN_TAG)
+        end)
+        if okTagged and type(tagged) == "table" then
+            lastRaw.tagged = #tagged
+            for _, object: Instance in ipairs(tagged) do
+                if object:IsA("BasePart") then
+                    consider(object)
+                end
+            end
+        end
+
+        -- Signatures 2 and 3: the CoinID attribute and the exact spawn
+        -- part names, from one workspace scan.
+        local okScan: boolean, descendants: any = pcall(function(): any
+            return workspace:GetDescendants()
+        end)
+        if okScan and type(descendants) == "table" then
+            for _, object: Instance in ipairs(descendants) do
+                if object:IsA("BasePart") then
+                    if attribute(object, "CoinID") ~= nil then
+                        lastRaw.coinId += 1
+                        consider(object)
+                    elseif object.Name == VISUAL_NAME or object.Name == SERVER_NAME then
+                        lastRaw.named += 1
+                        consider(object)
+                    end
+                end
+            end
+        end
+        return found, counts
+    end
+
+    local function wanted(family: string): boolean
+        local choice: string = settings.family
+        if choice == FAMILY_ALL then
+            return true
+        end
+        if choice == FAMILY_AUTO then
+            local active: string? = activeFamily()
+            return active == nil or family == active
+        end
+        return family == choice
+    end
+
+    local function describe(counts: {[string]: number}): string
+        local parts: {string} = {}
+        for _, family: string in ipairs(COUNT_ORDER) do
+            local amount: number = counts[family] or 0
+            if amount > 0 then
+                local nouns: {string} = FAMILY_NOUNS[family]
+                table.insert(parts, tostring(amount) .. " " .. (amount == 1 and nouns[1] or nouns[2]))
+            end
+        end
+        if #parts == 0 then
+            return "no coins yet"
+        end
+        return table.concat(parts, " · ")
+    end
+
+    -- Shared with Auto Farm: the pickup parts of the family in use.
+    -- CACHED: this used to run a full collectAll() per call, and Auto
+    -- Farm polls every 0.4 s -- each poll re-scanned every descendant
+    -- of Workspace and hitch-spiked the frame. The cache refreshes on
+    -- the ESP's own scans, or at most every 1.5 s when polled.
+    local pickupCache: {at: number, list: {Instance}} = {at = -math.huge, list = {}}
+    local function refreshPickupCache(found: {[Instance]: string}): ()
+        local list: {Instance} = {}
+        for part: Instance, family: string in pairs(found) do
+            if wanted(family) then
+                table.insert(list, part)
+            end
+        end
+        pickupCache = {at = os.clock(), list = list}
+    end
+    state.mm2CoinPickups = function(): {Instance}
+        if os.clock() - pickupCache.at < 1.5 then
+            return pickupCache.list
+        end
+        local found: {[Instance]: string} = collectAll()
+        refreshPickupCache(found)
+        return pickupCache.list
+    end
+
+    local function toggleCoinEsp(enabled: boolean): ()
+        disconnectFeatureConnection("MM2CoinRefresh")
+        disconnectFeatureConnection("MM2CoinCollected")
+        disconnectFeatureConnection("MM2CoinsStarted")
+        disconnectFeatureConnection("MM2CoinTagAdded")
+        disconnectFeatureConnection("MM2CoinTagRemoved")
+        disconnectFeatureConnection("MM2CoinAdded")
+        clearEffects(CoinEffects)
+        clearTags()
+
+        if not enabled then
+            local card: any = state.mm2CoinFeature
+            if card then
+                card:SetStatus(nil)
+            end
+            return
+        end
+
+        local marked: {[Instance]: boolean} = {}
+        local elapsed: number = 0
+        local lastStatus: string? = nil
+        local dirty: boolean = true
+
+        local function setStatus(text: string): ()
+
+            if text == lastStatus then
+                return
+            end
+            lastStatus = text
+            local card: any = state.mm2CoinFeature
+            if card then
+                card:SetStatus(text)
+            end
+        end
+
+        -- The visible mesh of a pickup: MainCoin under the CoinVisual
+        -- holder (the Candy / coin itself), falling back to the pickup
+        -- part. The box takes THIS part's exact size, so the marker is
+        -- as small as the candy on screen -- never the big invisible
+        -- Coin_Server touch volume.
+        local function visualOf(part: Instance): Instance
+            local ok: boolean, found: any = pcall(function(): any
+                local main: Instance? = part:FindFirstChild("MainCoin", true)
+                if main and main:IsA("BasePart") then
+                    return main
+                end
+                local visual: Instance? = part:FindFirstChild("CoinVisual", true)
+                if visual and visual:IsA("BasePart") then
+                    return visual
+                end
+                return part
+            end)
+            if ok and found then
+                return found
+            end
+            return part
+        end
+
+        -- One small adornment per visible pickup. Creation happens
+        -- once per pickup; between rescans Lua does nothing at all.
+        local tagClock: number = 0
+        local tagsDirty: boolean = true
+        -- Opacity guard: the setting's old default (0.8, from the
+        -- full-model Highlight era) made a candy-sized adornment
+        -- effectively invisible -- v82-v85 "detected nothing" while
+        -- the farm, using the same list, walked to the coins fine.
+        -- Cap the marker at 0.6 transparency whatever is saved.
+        local function markerTransparency(): number
+            return math.clamp(mm2Settings.coinTransparency, 0, 0.6)
+        end
+        local function drawOverlay(): ()
+            tagClock += 1
+            local refreshColour: boolean = tagClock % 30 == 0
+            local seen: {[Instance]: boolean} = {}
+            for part: Instance in pairs(lastFamilies) do
+                if part.Parent then
+                    seen[part] = true
+                    local entry = coinTags[part]
+                    if not entry then
+                        local okMake: boolean, created: any = pcall(function(): any
+                            local visual: Instance = visualOf(part)
+                            local box: Instance = Instance.new("BoxHandleAdornment")
+                            box.Name = "WurstCoinBox"
+                            box.AlwaysOnTop = true
+                            box.ZIndex = 5
+                            box.Adornee = visual
+                            box.Color3 = mm2Settings.coinColor
+                            box.Transparency = markerTransparency()
+                            local okSize: boolean, visualSize: any = pcall(function(): any
+                                return (visual :: any).Size
+                            end)
+                            if okSize and visualSize then
+                                box.Size = visualSize * 1.3
+                            end
+                            box.Parent = part
+                            return {box = box}
+                        end)
+                        if okMake and created then
+                            coinTags[part] = created
+                            tagsDirty = true
+                        end
+                    elseif refreshColour then
+                        pcall(function(): ()
+                            entry.box.Color3 = mm2Settings.coinColor
+                            entry.box.Transparency = markerTransparency()
+                        end)
+                    end
+                end
+            end
+            for part: Instance in pairs(coinTags) do
+                if not seen[part] then
+                    local entry = coinTags[part]
+                    coinTags[part] = nil
+                    pcall(function(): ()
+                        entry.box:Destroy()
+                    end)
+                    tagsDirty = true
+                end
+            end
+            -- Publish which parts carry a marker right now (only
+            -- when the set actually changed; this runs every tick).
+            if tagsDirty then
+                tagsDirty = false
+                local published: {[Instance]: boolean} = {}
+                for part: Instance in pairs(coinTags) do
+                    published[part] = true
+                end
+                state.mm2CoinTagParts = published
+            end
+        end
+
+        -- One pickup, cham(s) on its visible geometry only.
+        local function refresh(): ()
+            local found: {[Instance]: string}, counts: {[string]: number} = collectAll()
+            local visible: {[Instance]: boolean} = {}
+            table.clear(lastFamilies)
+            for object: Instance, family: string in pairs(found) do
+                if wanted(family) then
+                    visible[object] = true
+                    lastFamilies[object] = family
+                end
+            end
+            -- Auto follows the server family, but a mismatch between
+            -- the classification and the announcement must not blank
+            -- the ESP: fall back to showing every pickup found.
+            if settings.family == FAMILY_AUTO and activeFamily() ~= nil then
+                local anyWanted: boolean = false
+                for object: Instance in pairs(visible) do
+                    anyWanted = true
+                    break
+                end
+                if not anyWanted then
+                    for object: Instance, family: string in pairs(found) do
+                        visible[object] = true
+                        lastFamilies[object] = family
+                    end
+                end
+            end
+            local changed: boolean = false
+            for object: Instance in pairs(visible) do
+                if not marked[object] then
+                    marked[object] = true
+                    changed = true
+                end
+            end
+            for object: Instance in pairs(marked) do
+                if not visible[object] then
+                    marked[object] = nil
+                    changed = true
+                end
+            end
+            -- `changed` no longer drives any drawing: tags are created
+            -- and removed by drawOverlay from lastFamilies alone.
+            refreshPickupCache(found)
+            drawOverlay(true)
+            local shown: number = 0
+            for _ in pairs(visible) do
+                shown += 1
+            end
+            local foundTotal: number = 0
+            for _ in pairs(found) do
+                foundTotal += 1
+            end
+            if foundTotal == 0 then
+                setStatus(string.format(
+                    "no coins yet (tag %d · id %d · named %d)",
+                    lastRaw.tagged, lastRaw.coinId, lastRaw.named))
+            else
+                setStatus(describe(counts) .. " · " .. shown .. " shown")
+            end
+            dirty = false
+        end
+
+        -- A pickup appears: watch the tag signal (the game's own) and new
+        -- workspace parts carrying one of the exact signatures.
+        featureConnections.MM2CoinTagAdded =
+            collectionService:GetInstanceAddedSignal(COIN_TAG):Connect(function(): ()
+                dirty = true
+            end)
+        featureConnections.MM2CoinTagRemoved =
+            collectionService:GetInstanceRemovedSignal(COIN_TAG):Connect(function(): ()
+                dirty = true
+            end)
+        featureConnections.MM2CoinAdded = workspace.DescendantAdded:Connect(function(object: Instance): ()
+            if object:IsA("BasePart")
+                and (object.Name == VISUAL_NAME or object.Name == SERVER_NAME
+                    or attribute(object, "CoinID") ~= nil or hasTag(object))
+            then
+                dirty = true
+            end
+        end)
+
+        local started: Instance? = core.mm2GameplayRemotes
+            and core.mm2GameplayRemotes:FindFirstChild("CoinsStarted")
+        if started and started:IsA("RemoteEvent") then
+            featureConnections.MM2CoinsStarted =
+                (started :: any).OnClientEvent:Connect(function(bagTable: any): ()
+                    if type(bagTable) == "table" then
+                        for bag: any in pairs(bagTable) do
+                            local family: string? = BAG_TO_FAMILY[tostring(bag)]
+                            if family then
+                                serverFamily = family
+                            end
+                        end
+                    end
+                    dirty = true
+                end)
+        end
+
+        local remotes: any = core.mm2GameplayRemotes
+        local collected: Instance? = remotes and remotes:FindFirstChild("CoinCollected")
+        if collected and collected:IsA("RemoteEvent") then
+            featureConnections.MM2CoinCollected =
+                (collected :: any).OnClientEvent:Connect(function(): ()
+                    dirty = true
+                end)
+        end
+
+        refresh()
+        featureConnections.MM2CoinRefresh = TaskManager:Connect(
+            function(deltaTime: number): ()
+                -- The adornments follow their parts inside the
+                -- engine; Lua only rescans when the map changed or on
+                -- the safety timer. With ~100 coins out this is the
+                -- whole per-frame cost.
+                drawOverlay()
+                elapsed += deltaTime
+                if not dirty and elapsed < RESCAN_PERIOD then
+                    return
+                end
+                elapsed = 0
+                refresh()
+            end
+        )
+    end
+
+    local CoinFeature: any = createUniversalFeature(
+        "Coin ESP",
+        "Draws one small box, exactly the size of the coin, candy, snow token, beach ball or egg mesh, on every real pickup and reports how many of each family exist.",
+        3,
+        toggleCoinEsp,
+        {
+            categoryName = "Render",
+            parent = MM2Scroll,
+            registry = mm2Features,
+        }
+    )
+    state.mm2CoinFeature = CoinFeature
+
+    addCycleOption(
+        CoinFeature,
+        "Coin in use",
+        FAMILY_CHOICES,
+        1,
+        function(value: string): ()
+            settings.family = value
+            if CoinFeature.enabled then
+                toggleCoinEsp(true)
+            end
+        end,
+        "Auto follows the coin family the server announces through CoinsStarted."
+    )
+    addColorOption(
+        CoinFeature,
+        "Coin colour",
+        mm2Settings.coinColor,
+        function(value: Color3): ()
+            mm2Settings.coinColor = value
+            if CoinFeature.enabled then
+                toggleCoinEsp(true)
+            end
+        end
+    )
+    addNumberOption(
+        CoinFeature,
+        "Coin transparency",
+        mm2Settings.coinTransparency,
+        0,
+        1,
+        function(value: number): ()
+            mm2Settings.coinTransparency = value
+            if CoinFeature.enabled then
+                toggleCoinEsp(true)
+            end
+        end
+    )
+    addInformationOption(
+        CoinFeature,
+        "Pickups are recognised by the game's own signatures only: the CoinVisual tag, the CoinID attribute and the exact server/visual part pair. Each pickup gets a single BoxHandleAdornment sized exactly to its visible mesh (no labels), so a hundred coins cost no per-frame Lua. Auto follows the family the server announces on CoinsStarted."
+    )
+
+    activeCleanup = function(): ()
+        state.mm2CoinFeature = nil
+        toggleCoinEsp(false)
+    end
+    Module.Events = featureConnections
+    Module.Initialized = true
+    return Module
+end
+
+function Module.destroy(): ()
+    if not Module.Initialized then
+        return
+    end
+    Module.Initialized = false
+    pcall(activeCleanup)
+    activeCleanup = function(): ()
+    end
     Module.Events = {}
     Module.Runtime = nil
 end
@@ -4539,11 +8274,6 @@ local mm2Settings = {
     shootTarget = "",
     showMissCooldown = false,
     predictionRtt = 0.08,
-    gunLeadBias = 0,
-    predictionModel = "66d",
-    autoTuneLead = false,
-
-    motionSampleHz = 60,
     silentSweep = 0.5,
 
     silentSpawn = "Through",
@@ -4571,7 +8301,7 @@ local mm2Settings = {
     blurtRepeat = false,
     blurtFake = false,
     coinColor = Color3.fromRGB(230, 220, 65),
-    coinTransparency = 0.8,
+    coinTransparency = 0.35,
     trapColor = Color3.fromRGB(145, 25, 25),
     trapTransparency = 0.7,
 
@@ -4596,9 +8326,12 @@ local function clearEffects(folder)
 end
 
 -- Match the recovered client's cursor filters, not an assertion about server rules.
-local function isWeaponPathClear(origin: Vector3, endpoint: Vector3, target: Model?, strict: boolean?, options: {ignoreTarget: boolean?, requireTarget: boolean?}?): boolean
+-- Returns (clear, blocker). `blocker` describes the part that stopped the ray
+-- (or the last transparent part that was skipped) so the caller can record what
+-- the server disagreed about instead of guessing.
+local function isWeaponPathClear(origin: Vector3, endpoint: Vector3, target: Model?, strict: boolean?, options: {ignoreTarget: boolean?, requireTarget: boolean?}?): (boolean, any?)
     local direction: Vector3 = endpoint - origin
-    if direction.Magnitude < 0.05 then return true end
+    if direction.Magnitude < 0.05 then return true, nil end
     local excluded: {Instance} = {}
     if LocalPlayer.Character then table.insert(excluded, LocalPlayer.Character) end
     -- Projectile endpoints are future poses: the target's present body must
@@ -4613,15 +8346,85 @@ local function isWeaponPathClear(origin: Vector3, endpoint: Vector3, target: Mod
     for _ = 1, 32 do
         params.FilterDescendantsInstances = excluded
         local hit: RaycastResult? = workspace:Raycast(origin, direction, params)
-        if not hit then return not (options and options.requireTarget == true) end
-        if target and hit.Instance:IsDescendantOf(target) then return true end
-        if not strict and hit.Instance:IsA("BasePart") and hit.Instance.Transparency == 1 then
-            table.insert(excluded, hit.Instance)
+        if not hit then return not (options and options.requireTarget == true), nil end
+        if target and hit.Instance:IsDescendantOf(target) then return true, nil end
+        -- The gun uses the game's rule verbatim: every fully transparent part
+        -- is skipped. With strict (knife, and the second gun pass) only
+        -- transparent parts that cannot collide are skipped; an invisible
+        -- solid barrier stops the ray.
+        local part: Instance = hit.Instance
+        local info: any = {
+            name = nil,
+            className = nil,
+            transparency = nil,
+            canCollide = nil,
+            distance = nil,
+            skipped = false,
+        }
+        pcall(function(): ()
+            info.name = string.sub(part:GetFullName(), 1, 160)
+            info.className = part.ClassName
+            local hitPosition: any = (hit :: any).Position
+            if hitPosition then
+                info.distance = (hitPosition - origin).Magnitude
+            end
+        end)
+        if part:IsA("BasePart") then
+            info.transparency = part.Transparency
+            info.canCollide = part.CanCollide
+        end
+        if part:IsA("BasePart") and part.Transparency == 1
+            and (not strict or part.CanCollide == false) then
+            info.skipped = true
+            table.insert(excluded, part)
         else
-            return false
+            return false, info
         end
     end
-    return false -- bounded work, conservative if a map has many transparent layers
+    return false, { name = "raycast budget", skipped = false } -- conservative
+end
+
+-- What the ray meets when nothing is skipped. Recorded on every allowed
+-- shot, not only on refusals: five shots of the v61 session passed every check
+-- and still stopped 24-56 studs short of the aim, and without this there is no
+-- way to tell whether transparent geometry was in the way.
+local function describeRayHit(origin: Vector3, endpoint: Vector3, target: Model?): any
+    local direction: Vector3 = endpoint - origin
+    if direction.Magnitude < 0.05 then
+        return nil
+    end
+    local excluded: {Instance} = {}
+    if LocalPlayer.Character then
+        table.insert(excluded, LocalPlayer.Character)
+    end
+    for _, object: Instance in ipairs(CollectionService:GetTagged("WeaponPassthrough")) do
+        table.insert(excluded, object)
+    end
+    local params: RaycastParams = RaycastParams.new()
+    params.FilterType = Enum.RaycastFilterType.Exclude
+    params.IgnoreWater = true
+    params.FilterDescendantsInstances = excluded
+    local hit: RaycastResult? = workspace:Raycast(origin, direction, params)
+    if not hit then
+        return nil
+    end
+    local part: Instance = hit.Instance
+    local info: any = {
+        onTarget = target ~= nil and part:IsDescendantOf(target),
+    }
+    pcall(function(): ()
+        info.name = string.sub(part:GetFullName(), 1, 160)
+        info.className = part.ClassName
+        local position: any = (hit :: any).Position
+        if position then
+            info.distance = (position - origin).Magnitude
+        end
+    end)
+    if part:IsA("BasePart") then
+        info.transparency = part.Transparency
+        info.canCollide = part.CanCollide
+    end
+    return info
 end
 
 local function getWeaponFromContainer(
@@ -5779,16 +9582,6 @@ function predictionMath.finite(value: any): boolean
     return type(value) == "number" and value == value and math.abs(value) < math.huge
 end
 
-function predictionMath.sampleDue(elapsed: number, deltaTime: number, hz: number): (boolean, number)
-    local interval: number = 1 / math.clamp(hz, 1, 120)
-    local total: number = elapsed + math.max(0, deltaTime)
-    if total + 1e-9 < interval then
-        return false, total
-    end
-    -- Preserve fractional frames, but never issue catch-up shots after a stall.
-    return true, math.max(0, total - math.floor((total + 1e-9) / interval) * interval)
-end
-
 function predictionMath.interceptTime(offset: Vector3, velocity: Vector3, speed: number): number?
     if not predictionMath.finite(speed) or speed <= 1 then return nil end
     local a: number = velocity:Dot(velocity) - speed * speed
@@ -5815,290 +9608,77 @@ function predictionMath.interceptTime(offset: Vector3, velocity: Vector3, speed:
     return time and predictionMath.finite(time) and time <= 5 and time or nil
 end
 
-function predictionMath.closestCrossing(samples: {{t: number, p: Vector3}}, point: Vector3): (number?, number)
-    local bestTime: number? = nil
-    local bestDistance: number = math.huge
-    for index: number = 2, #samples do
-        local first, last = samples[index - 1], samples[index]
-        local step: Vector3 = last.p - first.p
-        local lengthSquared: number = step:Dot(step)
-        if last.t > first.t and lengthSquared > 1e-8 then
-            local alpha: number = math.clamp((point - first.p):Dot(step) / lengthSquared, 0, 1)
-            local distance: number = (first.p + step * alpha - point).Magnitude
-            if distance < bestDistance then
-                bestDistance = distance
-                bestTime = first.t + (last.t - first.t) * alpha
-            end
-        end
-    end
-    return bestTime, bestDistance
-end
-
-local function isMotionGrounded(humanoid: Humanoid?, velocity: Vector3): boolean
-    -- Remote FloorMaterial can lag a jump (also visible in TestingStuff logs).
-    return humanoid ~= nil and humanoid.FloorMaterial ~= Enum.Material.Air
-        and humanoid:GetState() ~= Enum.HumanoidStateType.Jumping
-        and math.abs(velocity.Y) <= 6
-end
-
-type MotionSample = {
-    character: Model?,
-    position: Vector3,
-    sampledAt: number,
-    velocity: Vector3,
-    acceleration: Vector3,
-    stability: number,
-    grounded: boolean,
-
-    turnRate: number?,
-    turnReferenceAt: number?,
-}
-
-local motionSamples: {[Player]: MotionSample} =
-    setmetatable({}, {__mode = "k"}) :: any
-
-local GUN_LEAD = {
-    replicationRate = 20,
-    serverFrame = 1 / 60,
-    minimumHorizon = 0,
-    maximumHorizon = 0.25,
-    maximumManualBias = 0.15,
-    maximumAutoCorrection = 0.1,
-
-    -- Radians/second. The turn rate itself is measured per motion sample in
-    -- getFilteredVelocity; these are only its bounds and its fallback.
-    defaultTurnRate = math.pi * 0.5,
-    maxTurnRate = math.pi * 1.5,
-}
-local autoLeadCorrection: number = 0
-
-local function getActiveAutoLeadCorrection(): number
-    return mm2Settings.autoTuneLead and autoLeadCorrection or 0
-end
-
-local function resetAutoLeadCorrection(): ()
-    autoLeadCorrection = 0
-end
-
-local function getFilteredVelocity(player: Player, root: BasePart): Vector3
-    local now: number = os.clock()
-    local velocity: Vector3 = root.AssemblyLinearVelocity
-    if not predictionMath.finite(velocity.X) or not predictionMath.finite(velocity.Y)
-        or not predictionMath.finite(velocity.Z) then
-        motionSamples[player] = nil
-        return Vector3.zero
-    end
-    if velocity.Magnitude > 110 then
-        velocity = velocity.Unit * 110
-    end
-    local sample: MotionSample? = motionSamples[player]
-    local acceleration: Vector3 = Vector3.zero
-    local stability: number = 1
-    local turnRate: number? = nil
-    local turnReferenceAt: number? = nil
-    local character: Model? = player.Character
-    local humanoid: Humanoid? = character
-        and character:FindFirstChildOfClass("Humanoid")
-        :: Humanoid?
-    local grounded: boolean = isMotionGrounded(humanoid, velocity)
-
-    if sample and sample.character == character then
-        local deltaTime: number = now - sample.sampledAt
-        if deltaTime + 1e-9 < 1 / 120 then
-            return velocity
-        end
-        -- Teleports/respawns must not seed an acceleration estimate.
-        if deltaTime < 0.25 and (root.Position - sample.position).Magnitude < 32 then
-            acceleration = (velocity - sample.velocity) / deltaTime
-            if acceleration.Magnitude > 250 then
-                acceleration = acceleration.Unit * 250
-            end
-
-            local previousHorizontal: Vector3 = Vector3.new(
-                sample.velocity.X,
-                0,
-                sample.velocity.Z
-            )
-            local currentHorizontal: Vector3 = Vector3.new(
-                velocity.X,
-                0,
-                velocity.Z
-            )
-            if previousHorizontal.Magnitude > 1
-                and currentHorizontal.Magnitude > 1 then
-                stability = math.clamp(
-                    previousHorizontal.Unit:Dot(currentHorizontal.Unit),
-                    0,
-                    1
-                )
-            end
-
-            -- Time-normalized turn rate in radians/second. Measured over the
-            -- window since the last direction change, so it stays the same
-            -- whether Motion Hz is 20 or 120: replication updates are chunky
-            -- and per-sample deltas would scale with the sampling frequency.
-            local referenceAt: number = sample.turnReferenceAt
-                or sample.sampledAt
-            if stability < 0.99999 then
-                local window: number = now - referenceAt
-                if window >= 1 / 240 then
-                    turnRate = math.clamp(
-                        math.acos(stability) / window,
-                        0,
-                        GUN_LEAD.maxTurnRate
-                    )
-                end
-                turnReferenceAt = now
-            else
-                turnRate = sample.turnRate
-                turnReferenceAt = referenceAt
-                -- Straight-line motion decays any stale turn estimate.
-                if now - referenceAt > 0.2 then
-                    turnRate = 0
-                end
-            end
-        end
-    end
-
-    motionSamples[player] = {
-        character = character,
-        position = root.Position,
-        sampledAt = now,
-        velocity = velocity,
-        acceleration = acceleration,
-        stability = stability,
-        grounded = grounded,
-        turnRate = turnRate,
-        turnReferenceAt = turnReferenceAt,
-    }
-    return velocity
-end
-
 local lastLatencyReadAt: number = -math.huge
-local function getEstimatedLatency(): number
-    local now: number = os.clock()
-    if now - lastLatencyReadAt < 0.1 then
-        return math.clamp(mm2Settings.predictionRtt, 0.03, 0.3)
-    end
-    local elapsed: number = now - lastLatencyReadAt
-    lastLatencyReadAt = now
-    local measuredRtt: number = mm2Settings.predictionRtt
+
+-- Two engine readings of the same path. They disagree: in the 2026-10-18
+-- session GetNetworkPing read 314/342 ms on two shots whose measured
+-- confirmation echo was 152/164 ms, and it read 241 ms at session start when
+-- Data Ping read 130 and the echo came back in 144. Across 17 recorded shots
+-- Data Ping was within 30 ms of the echo in 12, GetNetworkPing in 3.
+-- The lead takes the lower of the two: over-leading is the failure this data
+-- shows (a stopped or turned target costs more than an early one), and the
+-- median in Prediction still rejects a one-off dip.
+local function readLatencyReadings(): (number?, number?)
+    local engine: number? = nil
+    local data: number? = nil
     pcall(function(): ()
+        local direct: any = (LocalPlayer :: any).GetNetworkPing
+        if type(direct) == "function" then
+            local okDirect: boolean, seconds: any = pcall(direct, LocalPlayer)
+            if okDirect and predictionMath.finite(seconds)
+                and (seconds :: number) > 0.001 and (seconds :: number) <= 2 then
+                engine = seconds :: number
+            end
+        end
         local network: Instance? = Stats:FindFirstChild("Network")
         local serverItems: Instance? = network
             and network:FindFirstChild("ServerStatsItem")
         local pingItem: any = serverItems and serverItems:FindFirstChild("Data Ping")
         if pingItem and type(pingItem.GetValue) == "function" then
             local pingMilliseconds: number? = tonumber(pingItem:GetValue())
-            if predictionMath.finite(pingMilliseconds) and pingMilliseconds >= 0 then
-                measuredRtt = pingMilliseconds / 1000
+            if predictionMath.finite(pingMilliseconds)
+                and pingMilliseconds >= 10 and pingMilliseconds <= 2000 then
+                data = pingMilliseconds / 1000
             end
         end
     end)
-    -- Time-based smoothing: changing Motion/Throw Hz must not change the RTT.
+    return engine, data
+end
+
+local function getEstimatedLatency(): number
+    local now: number = os.clock()
+    if now - lastLatencyReadAt < 0.1 then
+        return math.clamp(mm2Settings.predictionRtt, 0.02, 0.6)
+    end
+    local elapsed: number = now - lastLatencyReadAt
+    lastLatencyReadAt = now
+    local measuredRtt: number = mm2Settings.predictionRtt
+    pcall(function(): ()
+        local engine: number?, data: number? = readLatencyReadings()
+        local lower: number? = nil
+        if engine and data then
+            lower = math.min(engine, data)
+        else
+            lower = engine or data
+        end
+        if lower then
+            measuredRtt = lower
+        end
+    end)
+    -- Time-based smoothing: sampling frequency must not change the RTT.
+    -- The upper bound covers the 400-500 ms sessions in TestingStuff; the
+    -- old 0.3 cap silently under-led every high-ping shot by 200+ ms.
     local alpha: number = 1 - math.exp(-math.min(elapsed, 1) / 0.5)
     mm2Settings.predictionRtt += (measuredRtt - mm2Settings.predictionRtt) * alpha
 
     return math.clamp(
         mm2Settings.predictionRtt,
-        0.03,
-        0.3
+        0.02,
+        0.6
     )
 end
 
 local trajectoryCalibration: any = nil
-
-local function getGunHorizonSeconds(): number
-    if mm2Settings.predictionModel == "66d" then
-        -- Legacy 66d timing, a rollback hypothesis, not measured server rewind.
-        local acceptance
-        if trajectoryCalibration and type(trajectoryCalibration.getEstimates) == "function" then
-            local ok, estimates = pcall(trajectoryCalibration.getEstimates,trajectoryCalibration)
-            if ok and type(estimates) == "table" and predictionMath.finite(estimates.confirmedShots) and estimates.confirmedShots >= 2
-                and predictionMath.finite(estimates.gunAcceptanceMs) and estimates.gunAcceptanceMs > 0 then
-                acceptance = estimates.gunAcceptanceMs/1000
-            end
-        end
-        return math.clamp((acceptance or math.max(getEstimatedLatency(),0.2)) + 1/40 + 1/120
-            + math.clamp(mm2Settings.gunLeadBias,-0.1,0.1) + math.clamp(getActiveAutoLeadCorrection(),-0.1,0.1),0.02,0.45)
-    end
-
-    -- Retain the reference timing hypothesis until reserved online data
-    -- identifies observation age/rewind. RTT is NOT itself proof of either.
-    local staleness: number = math.clamp(
-        getEstimatedLatency() * 1.0,
-        0,
-        0.15
-    )
-    local manualBias: number = math.clamp(
-        mm2Settings.gunLeadBias,
-        -GUN_LEAD.maximumManualBias,
-        GUN_LEAD.maximumManualBias
-    )
-    local autoCorrection: number = math.clamp(
-        getActiveAutoLeadCorrection(),
-        -GUN_LEAD.maximumAutoCorrection,
-        GUN_LEAD.maximumAutoCorrection
-    )
-    return math.clamp(
-        staleness + manualBias + autoCorrection,
-        GUN_LEAD.minimumHorizon,
-        GUN_LEAD.maximumHorizon
-    )
-end
-
-local function getGunTurnRate(sample: MotionSample?): number
-    -- Reads the time-normalized turn rate measured in getFilteredVelocity
-    -- (radians/second), so the lead discount no longer changes meaning when
-    -- Motion Hz changes. A missing or stale sample keeps the conservative
-    -- default.
-    if type(sample) ~= "table" then
-        return GUN_LEAD.defaultTurnRate
-    end
-    local measured: any = (sample :: any).turnRate
-    if type(measured) ~= "number" then
-        return GUN_LEAD.defaultTurnRate
-    end
-    return math.clamp(measured, 0, GUN_LEAD.maxTurnRate)
-end
-
-local function getGunTurnDiscount(horizon: number, turnRate: number?): number
-
-    local rate: number = turnRate or GUN_LEAD.defaultTurnRate
-    return math.clamp(
-        math.cos(math.min(horizon * rate * 0.5, math.pi * 0.5)),
-        0.25,
-        1
-    )
-end
-
-local function getGunLeadSensitivity(horizon: number, turnRate: number?): number
-
-    local rate: number = turnRate or GUN_LEAD.defaultTurnRate
-    local angle: number = horizon * rate * 0.5
-    if angle >= math.pi * 0.5 then
-        return 0.25
-    end
-    local rawDiscount: number = math.cos(angle)
-    if rawDiscount <= 0.25 then
-        return 0.25
-    end
-    return rawDiscount - horizon * math.sin(angle) * rate * 0.5
-end
-
-local function getGunLeadStatus(): {[string]: any}
-    return {
-        manualBias = math.clamp(
-            mm2Settings.gunLeadBias,
-            -GUN_LEAD.maximumManualBias,
-            GUN_LEAD.maximumManualBias
-        ),
-        autoCorrection = getActiveAutoLeadCorrection(),
-        storedAutoCorrection = autoLeadCorrection,
-        autoTuneEnabled = mm2Settings.autoTuneLead,
-        horizon = getGunHorizonSeconds(),
-    }
-end
 
 local function getGunOriginCFrame(character: Model, gun: Tool?): CFrame?
     local root: BasePart? = character:FindFirstChild("HumanoidRootPart") :: BasePart?
@@ -6143,6 +9723,24 @@ local function createTrajectoryCalibration(): any
         grounded: boolean,
         jumping: boolean,
     }
+    -- The movement window that ended at the shot. `dt` is negative (seconds
+    -- before the shot), unlike TrajectoryPoint's non-negative `dt`, so an
+    -- alternative predictor can be replayed from the same inputs offline.
+    type HistoryPoint = {
+        dt: number,
+        position: {number},
+        velocity: {number},
+        humanoidState: string,
+        grounded: boolean,
+        -- The replicated control input. It leads the velocity on a turn, so
+        -- recording it lets an offline replay test an input-based turn instead
+        -- of needing another session.
+        moveDirection: {number}?,
+        -- Offset from the root to the part the aim fell on. The v64 misses
+        -- passed 0.2-0.3 studs below the root, which is under the torso: a
+        -- replay needs this to test aiming at the torso instead of the root.
+        aimOffset: {number}?,
+    }
     type RunningStats = {
         count: number,
         mean: number,
@@ -6161,11 +9759,37 @@ local function createTrajectoryCalibration(): any
         targetUserId: number?,
         targetName: string?,
         targetTrajectory: {TrajectoryPoint},
+        targetHistory: {HistoryPoint},
         lastTrajectorySampleAt: number,
         confirmedAt: number?,
         latencyMs: number?,
         confirmedEndpoint: Vector3?,
         confirmedHitTarget: boolean?,
+        -- Everything below exists so a saved session can answer "did the shot
+        -- land, where, and when" without a second session: the server-clock
+        -- round trip, the part that was actually hit and its size, and the
+        -- target's health before and after.
+        serverActivatedAt: number?,
+        serverConfirmedAt: number?,
+        confirmedServerOrigin: Vector3?,
+        confirmedHitPart: string?,
+        confirmedHitPartPosition: Vector3?,
+        confirmedHitPartSize: Vector3?,
+        rootAtConfirmation: {[string]: any}?,
+        lastSeenPosition: Vector3?,
+        targetHealthAtAim: number?,
+        targetHealthAtConfirmation: number?,
+        targetHealthAfter: number?,
+        targetHealthDropAt: number?,
+        targetHealthDropServerTime: number?,
+        targetDiedAt: number?,
+        targetDiedServerTime: number?,
+        healthConnection: RBXScriptConnection?,
+        samplingStoppedAt: number?,
+        samplingStoppedReason: string?,
+        trajectoryCapped: boolean?,
+        rttEngineAtConfirmation: number?,
+        rttDataAtConfirmation: number?,
     }
     type PendingKnife = {
         shotId: string?,
@@ -6178,7 +9802,16 @@ local function createTrajectoryCalibration(): any
         targetUserId: number?,
         targetName: string?,
         targetTrajectory: {TrajectoryPoint},
+        targetHistory: {HistoryPoint},
         lastTrajectorySampleAt: number,
+        serverActivatedAt: number?,
+        samplingStoppedAt: number?,
+        samplingStoppedReason: string?,
+        trajectoryCapped: boolean?,
+        lastSeenPosition: Vector3?,
+        targetHealthAtAim: number?,
+        targetHealthAfter: number?,
+        healthConnection: RBXScriptConnection?,
     }
     type KnifeTrack = {
         shotId: string?,
@@ -6193,6 +9826,7 @@ local function createTrajectoryCalibration(): any
         targetUserId: number?,
         targetName: string?,
         targetTrajectory: {TrajectoryPoint},
+        targetHistory: {HistoryPoint},
         lastTrajectorySampleAt: number,
         destroyConnection: RBXScriptConnection?,
     }
@@ -6216,6 +9850,7 @@ local function createTrajectoryCalibration(): any
         targetState: string?,
         targetJumped: boolean?,
         targetTrajectory: {TrajectoryPoint}?,
+        targetHistory: {HistoryPoint}?,
         observedDisplacement: {number}?,
         constantVelocityResidual: {number}?,
         horizontalLeadSeconds: number?,
@@ -6233,6 +9868,14 @@ local function createTrajectoryCalibration(): any
         bestMotionModel: string?,
         motionModelErrors: {[string]: number}?,
         evaluationSeconds: number?,
+        blockedName: string?,
+        blockedTransparency: number?,
+        blockedCanCollide: boolean?,
+        blockedSkipped: boolean?,
+        blockedDistance: number?,
+        rttEngine: number?,
+        rttData: number?,
+        occluder: any?,
     }
     type Estimates = {
         gunAcceptanceMs: number?,
@@ -6244,6 +9887,13 @@ local function createTrajectoryCalibration(): any
         maxStabDistance: number?,
         knifeSpawnDelayMs: number?,
         confirmedSpawnDelays: number,
+        -- Direct endpoint error of our own predicted point, in studs,
+        -- measured against where the target really was at the scoring
+        -- instant. This is the number the accuracy question needs; it
+        -- used to require an offline replay of aim + trajectory.
+        predictionErrorSamples: number,
+        predictionErrorMedianStuds: number?,
+        predictionErrorMeanStuds: number?,
     }
     type Controller = {
         start: (self: Controller) -> (),
@@ -6262,6 +9912,12 @@ local function createTrajectoryCalibration(): any
         .. "/MM2_Trajectory_Calibration.json"
     local MAX_EVENTS: number = 2400
     local MAX_PENDING_AGE: number = 2.5
+    -- 30 Hz could not resolve a 0.02 s horizon, and the offline question is
+    -- exactly how the target moved in the last tens of milliseconds.
+    local TRAJECTORY_SAMPLE_HZ: number = 60
+    -- 2.5 s of pending life at 60 Hz needs 150; the margin covers a slow
+    -- frame without silently truncating the tail.
+    local MAX_TRAJECTORY_POINTS: number = 200
     local environment: {[string]: any} = getfenv() :: any
     local playerMouse: Mouse = LocalPlayer:GetMouse()
     local runtime: any = {
@@ -6281,9 +9937,13 @@ local function createTrajectoryCalibration(): any
         sessionStabAttempts = 0,
         sessionGunAttempts = 0,
         sessionGunConfirmed = 0,
+        sessionGunHitTarget = 0,
+        sessionGunKills = 0,
         sessionKnifeAttempts = 0,
         sessionKnifeConfirmed = 0,
         pendingGuns = {} :: {PendingGun},
+        lastBlockedAt = 0,
+        evictedEvents = 0,
         pendingKnives = {} :: {PendingKnife},
         tracks = {} :: {[Instance]: KnifeTrack},
         observedTools = setmetatable({}, {__mode = "k"}) :: {[Tool]: boolean},
@@ -6462,6 +10122,48 @@ local function createTrajectoryCalibration(): any
         }
     end
 
+    -- Health is the only client-visible proof that a shot did damage. The
+    -- `hitPart` of GunFired says a ray touched the target; a drop says the
+    -- server applied it. Both are recorded, with both clocks, per shot.
+    local function watchPendingHealth(pending: any, target: Player?): ()
+        pending.targetHealthAtAim = nil
+        pending.targetHealthAfter = nil
+        pending.targetHealthDropAt = nil
+        pending.targetDiedAt = nil
+        local character: Model? = target and target.Character
+        local humanoid: Humanoid? = character
+            and character:FindFirstChildOfClass("Humanoid")
+        if not humanoid then
+            return
+        end
+        pending.targetHealthAtAim = humanoid.Health
+        if pending.healthConnection then
+            pending.healthConnection:Disconnect()
+            pending.healthConnection = nil
+        end
+        pending.healthConnection = humanoid.HealthChanged:Connect(
+            function(health: number): ()
+                if not predictionMath.finite(health) then
+                    return
+                end
+                if pending.targetHealthAfter == nil
+                    or health < pending.targetHealthAfter then
+                    pending.targetHealthAfter = health
+                    if pending.targetHealthDropAt == nil then
+                        pending.targetHealthDropAt = os.clock()
+                        pending.targetHealthDropServerTime =
+                            workspace:GetServerTimeNow()
+                    end
+                    if health <= 0 and pending.targetDiedAt == nil then
+                        pending.targetDiedAt = os.clock()
+                        pending.targetDiedServerTime =
+                            workspace:GetServerTimeNow()
+                    end
+                end
+            end
+        )
+    end
+
     local function findKnifeAnalysisTarget(aimPosition: Vector3?): Player?
         local selected: Player? = nil
         local selectedScore: number = math.huge
@@ -6500,7 +10202,8 @@ local function createTrajectoryCalibration(): any
         local function sampleQueue(queue: {any}): ()
             for _, pending: any in ipairs(queue) do
                 if pending.targetUserId
-                    and now - pending.lastTrajectorySampleAt >= 1 / 30 then
+                    and now - pending.lastTrajectorySampleAt
+                        >= 1 / TRAJECTORY_SAMPLE_HZ then
                     local target: Player? = Players:GetPlayerByUserId(
                         pending.targetUserId
                     )
@@ -6511,8 +10214,27 @@ local function createTrajectoryCalibration(): any
                             pending.pingMs
                         )
                         or nil
-                    if point and #pending.targetTrajectory < 120 then
-                        table.insert(pending.targetTrajectory, point)
+                    if point then
+                        if #pending.targetTrajectory < MAX_TRAJECTORY_POINTS then
+                            table.insert(pending.targetTrajectory, point)
+                        else
+                            pending.trajectoryCapped = true
+                        end
+                    elseif pending.samplingStoppedAt == nil then
+                        -- The only two ways this is nil: the character is gone
+                        -- or the humanoid is dead. Either way it is the reason
+                        -- a saved trajectory ends early, so it gets written
+                        -- down instead of being guessed at later.
+                        pending.samplingStoppedAt = now
+                        pending.samplingStoppedReason = target
+                                and "target-dead-or-missing"
+                            or "target-left"
+                    end
+                    if target then
+                        local root: BasePart? = getTargetRoot(target)
+                        if root then
+                            pending.lastSeenPosition = root.Position
+                        end
                     end
                     pending.lastTrajectorySampleAt = now
                 end
@@ -6623,7 +10345,20 @@ local function createTrajectoryCalibration(): any
         record.sessionId = runtime.sessionId
         record.buildStamp = runtime.buildStamp
         if #runtime.events >= MAX_EVENTS then
-            table.remove(runtime.events, 1)
+            -- A session that spams the knife (158 authored events on
+            -- 2026-10-18) evicted the gun records before their confirmations
+            -- could be matched, so a shot could no longer be scored. The knife
+            -- noise goes first; the gun record carries the settings.
+            local victim: number = 1
+            for index: number = 1, #runtime.events do
+                local candidate: CalibrationEvent = runtime.events[index]
+                if candidate.kind == "knife" and candidate.phase == "authored" then
+                    victim = index
+                    break
+                end
+            end
+            table.remove(runtime.events, victim)
+            runtime.evictedEvents = (runtime.evictedEvents or 0) + 1
         end
         table.insert(runtime.events, record)
         runtime.revision += 1
@@ -6640,16 +10375,77 @@ local function createTrajectoryCalibration(): any
         end)
     end
 
+    -- Pre-shot movement window, straight from the predictor's ring buffer.
+    -- Without it a second predictor can only be scored on the shot it took;
+    -- with it the same slot can be replayed from the inputs.
+    local function captureTargetHistory(
+        player: Player?,
+        now: number
+    ): {HistoryPoint}
+        local points: {HistoryPoint} = {}
+        if not player or not state.mm2Prediction
+            or type(state.mm2Prediction.getHistory) ~= "function" then
+            return points
+        end
+        local ok: boolean, history: any, age: any = pcall(
+            state.mm2Prediction.getHistory,
+            player,
+            0.6
+        )
+        if not ok or type(history) ~= "table" then
+            return points
+        end
+        -- `at` is relative to the newest predictor sample and `age` is how old
+        -- that sample was at the shot. Clocks in the two modules do not share
+        -- an epoch, so the subtraction happens on the predictor's side only.
+        local sampleAge: number = predictionMath.finite(age) and age or 0
+        for _, sample: any in ipairs(history) do
+            if #points >= 36 then
+                break
+            end
+            local position: any = sample.position
+            local velocity: any = sample.velocity
+            if typeof(position) == "Vector3" and typeof(velocity) == "Vector3" then
+                local move: any = sample.moveDirection
+                local offset: any = sample.aimOffset
+                table.insert(points, {
+                    dt = (sample.at or 0) - sampleAge,
+                    position = {position.X, position.Y, position.Z},
+                    velocity = {velocity.X, velocity.Y, velocity.Z},
+                    humanoidState = tostring(sample.state or "Running"),
+                    grounded = sample.grounded == true,
+                    moveDirection = typeof(move) == "Vector3"
+                            and {move.X, move.Y, move.Z}
+                        or nil,
+                    aimOffset = typeof(offset) == "Vector3"
+                            and {offset.X, offset.Y, offset.Z}
+                        or nil,
+                })
+            end
+        end
+        return points
+    end
+
     local function trackConnection(connection: RBXScriptConnection): ()
         table.insert(runtime.connections, connection)
     end
 
     compactPending = function(queue: {any}, now: number): ()
+        local function drop(index: number): ()
+            local entry: any = queue[index]
+            if entry and entry.healthConnection then
+                pcall(function(): ()
+                    (entry.healthConnection :: RBXScriptConnection):Disconnect()
+                end)
+                entry.healthConnection = nil
+            end
+            table.remove(queue, index)
+        end
         while #queue > 0 and now - queue[1].activatedAt > MAX_PENDING_AGE do
-            table.remove(queue, 1)
+            drop(1)
         end
         while #queue > 12 do
-            table.remove(queue, 1)
+            drop(1)
         end
     end
 
@@ -6908,6 +10704,25 @@ local function createTrajectoryCalibration(): any
 
     local estimatesCache: Estimates? = nil
     local estimatesAt: number = -math.huge
+    local function endpointErrorStats(): (number, number?, number?)
+        local values: {number} = {}
+        for _, ev in ipairs(runtime.events) do
+            if ev.kind == "gun"
+                and predictionMath.finite(ev.endpointErrorStuds) then
+                table.insert(values, ev.endpointErrorStuds)
+            end
+        end
+        local mean: number? = nil
+        if #values > 0 then
+            local total: number = 0
+            for _, value in ipairs(values) do
+                total += value
+            end
+            mean = total / #values
+        end
+        return #values, median(values), mean
+    end
+
     local function estimates(): Estimates
         local now: number = os.clock()
         if estimatesCache and now - estimatesAt < 0.25 then return estimatesCache end
@@ -6927,7 +10742,12 @@ local function createTrajectoryCalibration(): any
                 end
             end
         end
+        local errCount: number, errMedian: number?, errMean: number? =
+            endpointErrorStats()
         estimatesCache = {
+            predictionErrorSamples = errCount,
+            predictionErrorMedianStuds = errMedian,
+            predictionErrorMeanStuds = errMean,
             gunAcceptanceMs = gunStats.count > 0 and gunStats.mean or nil,
             knifeSpeed = speedStats.count > 0 and speedStats.mean or nil,
             confirmedShots = gunStats.count,
@@ -6964,14 +10784,19 @@ local function createTrajectoryCalibration(): any
             sessionId = runtime.sessionId,
             historyBackup = runtime.historyBackup,
             settings = {
-                motionSampleHz = mm2Settings.motionSampleHz,
                 silentSpawn = mm2Settings.silentSpawn,
                 silentAim = mm2Settings.silentAim,
                 silentSweep = mm2Settings.silentSweep,
                 wallCheck = mm2Settings.shootWallCheck,
-                leadBias = mm2Settings.gunLeadBias,
-                autoTuneLead = mm2Settings.autoTuneLead,
-                predictionModel = mm2Settings.predictionModel,
+                autoLead = state.mm2Prediction
+                    and state.mm2Prediction.settings.autoLead
+                    or true,
+                leadOffsetSeconds = state.mm2Prediction
+                    and state.mm2Prediction.settings.extraLead
+                    or 0,
+                replicationInterpolationSeconds = state.mm2Prediction
+                    and state.mm2Prediction.settings.interpolation
+                    or nil,
             },
             placeId = game.PlaceId,
             savedAt = DateTime.now():ToIsoDate(),
@@ -7001,14 +10826,28 @@ local function createTrajectoryCalibration(): any
             session = {
                 startedAt = runtime.startedAtUnix,
                 countersScope = "this-session-only",
-                gunConfirmationMeaning = "matched GunFired signal; not necessarily damage or death",
+                gunConfirmationMeaning = "matched GunFired signal; hitTarget means the ray reached the target, died means the humanoid reached 0 health",
+                evictedEvents = runtime.evictedEvents,
+                healthMeaning = "client-observed Humanoid.Health; healthDropServerTime is GetServerTimeNow at the drop",
                 knifeConfirmationMeaning = "observed projectile with valid speed; not an impact",
                 rawKnifeActivations = runtime.rawKnifeActivations,
                 unmatchedGunSignals = runtime.unmatchedGunSignals,
                 stabAttempts = runtime.sessionStabAttempts,
                 elapsedSeconds = os.clock() - runtime.startedAt,
+                predictionError = (function(): {[string]: any}
+                    local ok: boolean, n: any, med: any, mean: any =
+                        pcall(endpointErrorStats)
+                    return {
+                        samples = ok and n or 0,
+                        medianStuds = ok and med or nil,
+                        meanStuds = ok and mean or nil,
+                        scope = "own predicted point vs target at scoring instant, confirmed gun shots",
+                    }
+                end)(),
                 gunAttempts = runtime.sessionGunAttempts,
                 gunConfirmed = runtime.sessionGunConfirmed,
+                gunHitTarget = runtime.sessionGunHitTarget,
+                gunKills = runtime.sessionGunKills,
                 knifeAttempts = runtime.sessionKnifeAttempts,
                 knifeConfirmed = runtime.sessionKnifeConfirmed,
                 events = runtime.events,
@@ -7059,7 +10898,185 @@ local function createTrajectoryCalibration(): any
         return value:FindFirstAncestorOfClass("Tool")
     end
 
+    -- Where the target really was when the server scored the shot, compared
+    -- with the point we aimed at, projected on the target's own horizontal
+    -- velocity. That projection is the lead error in seconds: positive means
+    -- the target was ahead of our aim (we under-led), negative means we led too
+    -- far. The server scores roughly one way into the measured round trip, so
+    -- the target's root is interpolated between the newest pre-shot sample and
+    -- the root captured at confirmation.
+    local function measureLeadErrorSeconds(pending: PendingGun): number?
+        local history: {HistoryPoint} = pending.targetHistory or {}
+        local newest: HistoryPoint? = history[#history]
+        local aim: Vector3? = pending.requestedAim
+        local latencyMs: any = pending.latencyMs
+        local confirmation: any = pending.rootAtConfirmation
+        if not newest or not aim or not confirmation then
+            return nil
+        end
+        if not predictionMath.finite(latencyMs) or latencyMs <= 0
+            or latencyMs > 1200 then
+            return nil
+        end
+        if not predictionMath.finite(pending.activatedAt) then
+            return nil
+        end
+        local beforeAt: number = pending.activatedAt + (newest.dt or 0)
+        local afterAt: number = pending.confirmedAt
+                and pending.confirmedAt
+            or (pending.activatedAt + latencyMs / 1000)
+        if not predictionMath.finite(afterAt) or afterAt <= beforeAt then
+            return nil
+        end
+        -- Score where the server actually scores. The saved sessions
+        -- separate hits from misses at the CONFIRMATION instant (a
+        -- full round trip after firing), not half-way: scoring at
+        -- activatedAt + latency/2 measured the aim ~55 ms AHEAD and
+        -- taught the feedback loop a capped -60 ms correction, which
+        -- then fought the (correct) full-transport lead on every
+        -- shot -- the recorded cause of the chronic under-lead.
+        local scoringAt: number = pending.activatedAt + latencyMs / 1000
+        local alpha: number = math.clamp(
+            (scoringAt - beforeAt) / (afterAt - beforeAt),
+            0,
+            1
+        )
+        local p0: {number}? = newest.position
+        local p1: {number}? = confirmation.position
+        if type(p0) ~= "table" or type(p1) ~= "table"
+            or #p0 < 3 or #p1 < 3 then
+            return nil
+        end
+        local rootX: number = p0[1] + (p1[1] - p0[1]) * alpha
+        local rootY: number = p0[2] + (p1[2] - p0[2]) * alpha
+        local rootZ: number = p0[3] + (p1[3] - p0[3]) * alpha
+        local offset: {number}? = newest.aimOffset
+        if type(offset) == "table" and #offset >= 3 then
+            rootX += offset[1]
+            rootY += offset[2]
+            rootZ += offset[3]
+        end
+        local velocity: {number}? = newest.velocity
+        if type(velocity) ~= "table" or #velocity < 3 then
+            return nil
+        end
+        local vx: number = velocity[1]
+        local vz: number = velocity[3]
+        local speed: number = math.sqrt(vx * vx + vz * vz)
+        -- A target that is not walking has no lead to correct; its aim error is
+        -- noise around a stationary body.
+        if speed < 3 then
+            return nil
+        end
+        local along: number = ((rootX - aim.X) * vx + (rootZ - aim.Z) * vz) / speed
+        -- Anything past this is not a lead error: a respawn, a teleport or the
+        -- aim landing on a different player.
+        if math.abs(along) > 6 then
+            return nil
+        end
+        return along / speed
+    end
+
+    -- Same scoring-instant interpolation as measureLeadErrorSeconds,
+    -- but the full 3D distance between the point we aimed at and where
+    -- the target's aim point really was -- the direct endpoint error.
+    -- No speed gate: a stationary target's error is real information
+    -- here (it isolates geometry/origin problems from lead problems).
+    local function measureEndpointErrorStuds(pending: PendingGun): number?
+        local history: {HistoryPoint} = pending.targetHistory or {}
+        local newest: HistoryPoint? = history[#history]
+        local aim: Vector3? = pending.requestedAim
+        local latencyMs: any = pending.latencyMs
+        local confirmation: any = pending.rootAtConfirmation
+        if not newest or not aim or not confirmation then
+            return nil
+        end
+        if not predictionMath.finite(latencyMs) or latencyMs <= 0
+            or latencyMs > 1200 then
+            return nil
+        end
+        if not predictionMath.finite(pending.activatedAt) then
+            return nil
+        end
+        local beforeAt: number = pending.activatedAt + (newest.dt or 0)
+        local afterAt: number = pending.confirmedAt
+                and pending.confirmedAt
+            or (pending.activatedAt + latencyMs / 1000)
+        if not predictionMath.finite(afterAt) or afterAt <= beforeAt then
+            return nil
+        end
+        local scoringAt: number = pending.activatedAt + latencyMs / 1000
+        local alpha: number = math.clamp(
+            (scoringAt - beforeAt) / (afterAt - beforeAt),
+            0,
+            1
+        )
+        local p0: {number}? = newest.position
+        local p1: {number}? = confirmation.position
+        if type(p0) ~= "table" or type(p1) ~= "table"
+            or #p0 < 3 or #p1 < 3 then
+            return nil
+        end
+        local rootX: number = p0[1] + (p1[1] - p0[1]) * alpha
+        local rootY: number = p0[2] + (p1[2] - p0[2]) * alpha
+        local rootZ: number = p0[3] + (p1[3] - p0[3]) * alpha
+        local offset: {number}? = newest.aimOffset
+        if type(offset) == "table" and #offset >= 3 then
+            rootX += offset[1]
+            rootY += offset[2]
+            rootZ += offset[3]
+        end
+        local dx: number = rootX - aim.X
+        local dy: number = rootY - aim.Y
+        local dz: number = rootZ - aim.Z
+        local distance: number = math.sqrt(dx * dx + dy * dy + dz * dz)
+        if not predictionMath.finite(distance) or distance > 30 then
+            return nil
+        end
+        return distance
+    end
+
     finalizeGunCapture = function(pending: PendingGun): ()
+        if pending.targetDiedAt then
+            runtime.sessionGunKills += 1
+        end
+        if pending.healthConnection then
+            pcall(function(): ()
+                (pending.healthConnection :: RBXScriptConnection):Disconnect()
+            end)
+            pending.healthConnection = nil
+        end
+        -- The echo lives here on purpose. The shot-feedback handler that used
+        -- to feed it depends on a connection made when the feature toggles;
+        -- the v61 log shows it never fired (echoDelay nil on all 13 shots
+        -- despite 9 confirmations). This handler is the one that produced
+        -- those 9 confirmations, so it is the reliable place to measure.
+        if state.mm2Prediction and type(state.mm2Prediction.noteEcho) == "function"
+            and predictionMath.finite(pending.latencyMs)
+            and predictionMath.finite(pending.activatedAt) then
+            state.mm2Prediction.noteEcho(
+                pending.activatedAt,
+                pending.activatedAt + pending.latencyMs / 1000
+            )
+        end
+        -- Feed the measured lead error back into the predictor before the
+        -- record is written, so the event can show what the next shot used.
+        local leadError: number? = measureLeadErrorSeconds(pending)
+        if leadError and state.mm2Prediction
+            and type(state.mm2Prediction.noteLeadError) == "function" then
+            pcall(state.mm2Prediction.noteLeadError, leadError)
+        end
+        local leadCorrection: number? = nil
+        if state.mm2Prediction
+            and type(state.mm2Prediction.getLeadCorrection) == "function" then
+            local ok: boolean, value: any = pcall(
+                state.mm2Prediction.getLeadCorrection
+            )
+            if ok and predictionMath.finite(value) then
+                leadCorrection = value
+            end
+        end
+        local endpointError: number? = measureEndpointErrorStuds(pending)
         local analysis: {[string]: any} = analyzeTargetTrajectory(
             pending.targetTrajectory,
             pending.pingMs,
@@ -7071,6 +11088,7 @@ local function createTrajectoryCalibration(): any
             phase = "confirmation",
             kind = "gun",
             serverTime = workspace:GetServerTimeNow(),
+            clock = os.clock(),
             pingMs = pending.pingMs,
             latencyMs = pending.latencyMs,
             targetUserId = pending.targetUserId,
@@ -7078,6 +11096,9 @@ local function createTrajectoryCalibration(): any
             targetState = analysis.initialState,
             targetJumped = analysis.jumped,
             targetTrajectory = pending.targetTrajectory,
+            targetHistory = #(pending.targetHistory or {}) > 0
+                    and pending.targetHistory
+                or nil,
             observedDisplacement = analysis.displacement,
             constantVelocityResidual = analysis.constantVelocityResidual,
             horizontalLeadSeconds = analysis.horizontalLeadSeconds,
@@ -7086,6 +11107,66 @@ local function createTrajectoryCalibration(): any
                     and vectorArray(pending.confirmedEndpoint)
                 or nil,
             hitTarget = pending.confirmedHitTarget,
+            -- Server-clock round trip: activation to GunFired, both stamped
+            -- with GetServerTimeNow. Independent of GetNetworkPing and of the
+            -- engine's Data Ping, so it settles which of them the lead needs.
+            serverEchoMs = (pending.serverConfirmedAt
+                    and pending.serverActivatedAt)
+                    and (pending.serverConfirmedAt - pending.serverActivatedAt)
+                        * 1000
+                or nil,
+            -- Anchor for the server-clock axis: every trajectory point carries
+            -- its own serverTime, so serverDt = point.serverTime - this.
+            serverActivatedAt = pending.serverActivatedAt,
+            serverConfirmedAt = pending.serverConfirmedAt,
+            serverOrigin = pending.confirmedServerOrigin
+                    and vectorArray(pending.confirmedServerOrigin)
+                or nil,
+            aimOffsetAtFire = (function(): {number}?
+                local history: {HistoryPoint} = pending.targetHistory or {}
+                local newest: HistoryPoint? = history[#history]
+                return newest and newest.aimOffset or nil
+            end)(),
+            -- Signed lead error measured from this very confirmation, and the
+            -- bounded correction the next shot will apply. Both are written in
+            -- seconds so a saved session can be replayed and audited without
+            -- rerunning the shot.
+            leadErrorSeconds = leadError,
+            leadCorrectionSeconds = leadCorrection,
+            endpointErrorStuds = endpointError,
+            trajectoryPoints = #pending.targetTrajectory,
+            trajectorySpanSeconds = (
+                    #pending.targetTrajectory > 1
+                    and (pending.targetTrajectory[#pending.targetTrajectory].dt
+                        - pending.targetTrajectory[1].dt)
+                )
+                or 0,
+            trajectoryCapped = pending.trajectoryCapped == true,
+            samplingStoppedReason = pending.samplingStoppedReason,
+            samplingStoppedAt = pending.samplingStoppedAt,
+            rttEngineAtConfirmation = pending.rttEngineAtConfirmation,
+            rttDataAtConfirmation = pending.rttDataAtConfirmation,
+            aim = pending.requestedAim and vectorArray(pending.requestedAim) or nil,
+            origin = pending.origin and vectorArray(pending.origin) or nil,
+            hitPart = pending.confirmedHitPart,
+            hitPartPosition = pending.confirmedHitPartPosition
+                    and vectorArray(pending.confirmedHitPartPosition)
+                or nil,
+            hitPartSize = pending.confirmedHitPartSize
+                    and vectorArray(pending.confirmedHitPartSize)
+                or nil,
+            rootAtConfirmation = pending.rootAtConfirmation,
+            lastSeenPosition = pending.lastSeenPosition
+                    and vectorArray(pending.lastSeenPosition)
+                or nil,
+            healthAtAim = pending.targetHealthAtAim,
+            healthAtConfirmation = pending.targetHealthAtConfirmation,
+            healthAfter = pending.targetHealthAfter,
+            healthDropAt = pending.targetHealthDropAt,
+            healthDropServerTime = pending.targetHealthDropServerTime,
+            diedAt = pending.targetDiedAt,
+            diedServerTime = pending.targetDiedServerTime,
+            died = pending.targetDiedAt ~= nil,
             pingBucket = analysis.pingBucket,
             bestMotionModel = analysis.bestMotionModel,
             motionModelErrors = analysis.motionModelErrors,
@@ -7172,6 +11253,42 @@ local function createTrajectoryCalibration(): any
         local hitTarget: boolean = typeof(hitPartValue) == "Instance"
             and targetCharacter ~= nil
             and hitPartValue:IsDescendantOf(targetCharacter)
+        -- Recorded at the moment the signal arrives, on the server clock, so
+        -- the round trip can be measured without either engine estimate.
+        pending.serverConfirmedAt = workspace:GetServerTimeNow()
+        pending.confirmedServerOrigin = eventOrigin
+        local engineNow: number?, dataNow: number? = readLatencyReadings()
+        pending.rttEngineAtConfirmation = engineNow
+        pending.rttDataAtConfirmation = dataNow
+        if typeof(hitPartValue) == "Instance" then
+            pcall(function(): ()
+                pending.confirmedHitPart = string.sub(hitPartValue.Name, 1, 80)
+                if hitPartValue:IsA("BasePart") then
+                    pending.confirmedHitPartPosition = hitPartValue.Position
+                    pending.confirmedHitPartSize = hitPartValue.Size
+                end
+            end)
+        end
+        if target then
+            local root: BasePart? = getTargetRoot(target)
+            local humanoid: Humanoid? = getTargetHumanoid(target)
+            if root then
+                local stateName: string? = nil
+                if humanoid then
+                    pcall(function(): ()
+                        stateName = humanoid:GetState().Name
+                    end)
+                end
+                pending.rootAtConfirmation = {
+                    position = vectorArray(root.Position),
+                    velocity = vectorArray(root.AssemblyLinearVelocity),
+                    state = stateName,
+                }
+            end
+            if humanoid then
+                pending.targetHealthAtConfirmation = humanoid.Health
+            end
+        end
         if latencyMs >= 30 and latencyMs <= 450 then
             table.insert(runtime.freshGunLatency, {at = now, ms = latencyMs})
             if #runtime.freshGunLatency > 24 then table.remove(runtime.freshGunLatency, 1) end
@@ -7179,6 +11296,9 @@ local function createTrajectoryCalibration(): any
         end
         addSample(runtime.gunAcceptance, latencyMs)
         runtime.sessionGunConfirmed += 1
+        if hitTarget then
+            runtime.sessionGunHitTarget += 1
+        end
         pending.confirmedAt = now
         pending.latencyMs = latencyMs
         pending.confirmedEndpoint = endpoint
@@ -7235,6 +11355,9 @@ local function createTrajectoryCalibration(): any
                 targetState = analysis.initialState,
                 targetJumped = analysis.jumped,
                 targetTrajectory = track.targetTrajectory,
+                targetHistory = #track.targetHistory > 0
+                        and track.targetHistory
+                    or nil,
                 observedDisplacement = analysis.displacement,
                 constantVelocityResidual = analysis.constantVelocityResidual,
                 horizontalLeadSeconds = analysis.horizontalLeadSeconds,
@@ -7371,6 +11494,7 @@ local function createTrajectoryCalibration(): any
                 targetUserId = pending.targetUserId,
                 targetName = pending.targetName,
                 targetTrajectory = pending.targetTrajectory,
+                targetHistory = pending.targetHistory or {},
                 lastTrajectorySampleAt = now,
                 destroyConnection = nil,
             }
@@ -7393,6 +11517,44 @@ local function createTrajectoryCalibration(): any
             or CollectionService:HasTag(tool, "Weapon_Knife")
             or (tool:FindFirstChild("Events") ~= nil
                 and tool.Events:FindFirstChild("KnifeThrown") ~= nil)
+    end
+
+    -- One constructor for every pending shot. The activation observer and the
+    -- authored-shot path used to build this table separately, and on
+    -- 2026-10-18 the authored copy was missing the health watcher and the
+    -- server-clock pair: 13 confirmations, healthAtAim nil on all of them and
+    -- no serverEchoMs. Duplicating the record was the bug; there is one now.
+    local function beginPendingShot(kind: string, entry: any, target: Player?): any
+        local now: number = entry.activatedAt or os.clock()
+        entry.activatedAt = now
+        entry.serverActivatedAt = workspace:GetServerTimeNow()
+        entry.targetUserId = target and target.UserId or entry.targetUserId
+        entry.targetName = target and target.Name or entry.targetName
+        if entry.targetTrajectory == nil then
+            entry.targetTrajectory = {}
+            if target then
+                local point: TrajectoryPoint? = captureTrajectoryPoint(
+                    target,
+                    now,
+                    entry.pingMs or 0
+                )
+                if point then
+                    table.insert(entry.targetTrajectory, point)
+                end
+            end
+        end
+        if entry.targetHistory == nil then
+            entry.targetHistory = captureTargetHistory(target, now)
+        end
+        entry.lastTrajectorySampleAt = entry.lastTrajectorySampleAt or now
+        watchPendingHealth(entry, target)
+        local queue: {any} = kind == "gun"
+                and runtime.pendingGuns
+            or runtime.pendingKnives
+        table.insert(queue, entry)
+        compactPending(queue, now)
+        ensureTrajectorySampler()
+        return entry
     end
 
     local function observeTool(tool: Tool): ()
@@ -7436,38 +11598,29 @@ local function createTrajectoryCalibration(): any
                 targetName = target and target.Name or nil, eventSource = "tool-activation"})
             if gun then
                 runtime.sessionGunAttempts += 1
-                table.insert(runtime.pendingGuns, {
+                beginPendingShot("gun", {
                     shotId = shotId,
-                    attemptCounted = gun,
+                    attemptCounted = true,
                     tool = tool,
                     activatedAt = now,
                     origin = toolOrigin(tool),
                     requestedAim = requestedAim,
                     pingMs = pingMs,
-                    targetUserId = target and target.UserId or nil,
-                    targetName = target and target.Name or nil,
                     targetTrajectory = targetTrajectory,
-                    lastTrajectorySampleAt = now,
-                })
-                compactPending(runtime.pendingGuns, now)
+                }, target)
             elseif knife then
                 runtime.rawKnifeActivations += 1
-                table.insert(runtime.pendingKnives, {
+                beginPendingShot("knife", {
                     shotId = shotId,
-                    attemptCounted = gun,
+                    attemptCounted = false,
                     tool = tool,
                     activatedAt = now,
                     origin = toolOrigin(tool),
                     requestedAim = requestedAim,
                     pingMs = pingMs,
-                    targetUserId = target and target.UserId or nil,
-                    targetName = target and target.Name or nil,
                     targetTrajectory = targetTrajectory,
-                    lastTrajectorySampleAt = now,
-                })
-                compactPending(runtime.pendingKnives, now)
+                }, target)
             end
-            ensureTrajectorySampler()
         end))
     end
 
@@ -7659,21 +11812,53 @@ local function createTrajectoryCalibration(): any
         })
     end
 
+    -- A shot the client refused. Recorded so the blocker that the server
+    -- respects (invisible wall, barrier, tagged part) can be identified
+    -- instead of being inferred from a miss. Throttled: a held auto-shoot
+    -- would otherwise flood the event ring.
+    function controller:noteBlockedShot(blocker: any): ()
+        if not runtime.active or type(blocker) ~= "table" then
+            return
+        end
+        local now: number = os.clock()
+        if now - runtime.lastBlockedAt < 1 then
+            return
+        end
+        runtime.lastBlockedAt = now
+        appendEvent({
+            kind = "gun",
+            phase = "blocked",
+            serverTime = workspace:GetServerTimeNow(),
+            pingMs = getPingMilliseconds(),
+            reason = "wall",
+            blockedName = type(blocker.name) == "string" and blocker.name or nil,
+            blockedTransparency = tonumber(blocker.transparency),
+            blockedCanCollide = blocker.canCollide == true,
+            blockedSkipped = blocker.skipped == true,
+            blockedDistance = tonumber(blocker.distance),
+        })
+    end
+
     function controller:noteAuthoredShot(info: any): ()
         if not runtime.active or type(info) ~= "table" then
             return
         end
         local kind: string = tostring(info.kind or "gun")
         local shotId: string = nextShotId()
-        if kind ~= "stab" then
-            appendEvent({kind = kind, shotId = shotId, phase = "authored",
-                serverTime = workspace:GetServerTimeNow(), pingMs = getPingMilliseconds(),
-                settings = info.settings, targetName = info.target and info.target.Name or nil})
-        end
         local now: number = os.clock()
         local pingMs: number = getPingMilliseconds()
         local target: Player? =
             info.target and info.target.Character ~= nil and info.target or nil
+        -- Captured before the authored event so the record carries the window
+        -- the predictor actually had, not a reconstruction.
+        local targetHistory: {HistoryPoint} = captureTargetHistory(target, now)
+        if kind ~= "stab" then
+            appendEvent({kind = kind, shotId = shotId, phase = "authored",
+                serverTime = workspace:GetServerTimeNow(), clock = now,
+                pingMs = pingMs,
+                settings = info.settings, targetName = info.target and info.target.Name or nil,
+                targetHistory = #targetHistory > 0 and targetHistory or nil})
+        end
         local targetTrajectory: {TrajectoryPoint} = {}
         if target then
             local initialPoint: TrajectoryPoint? = captureTrajectoryPoint(
@@ -7706,6 +11891,7 @@ local function createTrajectoryCalibration(): any
                     and targetTrajectory[1].humanoidState
                     or nil,
                 targetTrajectory = #targetTrajectory > 0 and targetTrajectory or nil,
+                targetHistory = #targetHistory > 0 and targetHistory or nil,
             })
         else
             local isGun: boolean = kind ~= "knife"
@@ -7720,9 +11906,7 @@ local function createTrajectoryCalibration(): any
                 else
                     runtime.sessionKnifeAttempts += 1
                 end
-                local queue: {any} =
-                    isGun and runtime.pendingGuns or runtime.pendingKnives
-                table.insert(queue, {
+                beginPendingShot(isGun and "gun" or "knife", {
                     shotId = shotId,
                     attemptCounted = true,
                     tool = authoredTool,
@@ -7730,13 +11914,9 @@ local function createTrajectoryCalibration(): any
                     origin = info.originPos,
                     requestedAim = info.aimPos,
                     pingMs = pingMs,
-                    targetUserId = target and target.UserId or nil,
-                    targetName = target and target.Name or nil,
                     targetTrajectory = targetTrajectory,
-                    lastTrajectorySampleAt = now,
-                })
-                compactPending(queue, now)
-                ensureTrajectorySampler()
+                    targetHistory = targetHistory,
+                }, target)
             end
         end
 
@@ -7830,26 +12010,8 @@ type PendingShot = {
     targetedMurderer: boolean,
     queuedAt: number,
 
-    aimRootOffset: Vector3?,
-    leadSeconds: number?,
-    leadSensitivity: number?,
-    velocity: Vector3?,
-    trajectory: {{t: number, p: Vector3}}?,
-
     silentSpawn: string?,
     ambiguous: boolean?,
-    model: string?,
-}
-
-type GunPrediction = {
-    model: string?,
-    aimRootOffset: Vector3?,
-    targetPosition: Vector3?,
-    endpoint: Vector3?,
-    velocity: Vector3?,
-    errorRadius: number?,
-    leadSeconds: number?,
-    leadSensitivity: number?,
 }
 
 state.mm2ShotFeedback = {
@@ -7945,113 +12107,11 @@ state.mm2ShotFeedback.getDuration = function(gun: Tool?): number
     return state.mm2ShotFeedback.defaultDuration
 end
 
-local leadTracking: PendingShot? = nil
-
-local function stopLeadTracking(): ()
-    leadTracking = nil
-    disconnectFeatureConnection("MM2LeadTuner")
-end
-
-local function startLeadTracking(candidate: PendingShot): ()
-    if not mm2Settings.autoTuneLead then
-        return
-    end
-    local root: BasePart? = candidate.targetCharacter
-        and candidate.targetCharacter:FindFirstChild("HumanoidRootPart")
-        :: BasePart?
-    if not root or candidate.velocity == nil then
-        return
-    end
-    stopLeadTracking()
-    leadTracking = candidate
-    local samples: {{t: number, p: Vector3}} = {{t = os.clock(), p = root.Position}}
-    candidate.trajectory = samples
-    local elapsed: number = 0
-    featureConnections.MM2LeadTuner = TaskManager:Connect(function(
-        deltaTime: number
-    ): ()
-        if leadTracking ~= candidate then
-            return
-        end
-        if state.mm2ShotFeedback.pending ~= candidate
-            and state.mm2ShotFeedback.lastAccepted ~= candidate then
-            stopLeadTracking()
-            return
-        end
-        local due: boolean
-        due, elapsed = predictionMath.sampleDue(elapsed, deltaTime, 30)
-        if not due then return end
-        table.insert(samples, {t = os.clock(), p = root.Position})
-        if #samples > 64 then
-            table.remove(samples, 1)
-        end
-    end)
-end
-
-local function tuneFromConfirmedShot(candidate: PendingShot): ()
-    if not mm2Settings.autoTuneLead or not candidate.aimPosition or candidate.silentSpawn
-        or candidate.ambiguous or candidate.model ~= (mm2Settings.predictionModel == "66d" and "classic-66d" or "reference-v41") then
-        return
-    end
-    local samples: {{t: number, p: Vector3}}? = candidate.trajectory
-    local velocity: Vector3? = candidate.velocity
-    local leadSeconds: number? = candidate.leadSeconds
-    local leadSensitivity: number? = candidate.leadSensitivity
-    if not samples
-        or #samples < 6
-        or velocity == nil
-        or leadSeconds == nil
-        or leadSensitivity == nil
-        or leadSensitivity < 0.15 then
-        return
-    end
-    local horizontal: Vector3 = Vector3.new(velocity.X, 0, velocity.Z)
-    if horizontal.Magnitude < 8 then
-        return
-    end
-    -- Interpolate between 30 Hz samples instead of quantizing to a frame.
-    local rootAim: Vector3 = candidate.aimPosition - (candidate.aimRootOffset or Vector3.zero)
-    local crossedAt: number?, closestDistance: number = predictionMath.closestCrossing(samples, rootAim)
-    if crossedAt == nil or closestDistance > 1 then return end
-    local leadMeasured: number = crossedAt - candidate.queuedAt
-    if leadMeasured < 0.03 or leadMeasured > 1.2 then
-        return
-    end
-
-    local firstSample: {t: number, p: Vector3} = samples[1]
-    local lastSample: {t: number, p: Vector3} = samples[#samples]
-    local span: number = lastSample.t - firstSample.t
-    if span < 0.05 then
-        return
-    end
-    local sampledVelocity: Vector3 = (lastSample.p - firstSample.p) / span
-    local sampledHorizontal: Vector3 = Vector3.new(
-        sampledVelocity.X,
-        0,
-        sampledVelocity.Z
-    )
-    if sampledHorizontal.Magnitude < 8 then
-        return
-    end
-    if sampledHorizontal.Unit:Dot(horizontal.Unit) < 0.75 then
-        return
-    end
-
-    local residual: number = (leadMeasured - leadSeconds) / leadSensitivity
-    local delta: number = residual * 0.25
-    autoLeadCorrection = math.clamp(
-        autoLeadCorrection + math.clamp(delta, -0.03, 0.03),
-        -GUN_LEAD.maximumAutoCorrection,
-        GUN_LEAD.maximumAutoCorrection
-    )
-end
-
 state.mm2ShotFeedback.queue = function(
     target: Player?,
     gun: Tool?,
     origin: CFrame?,
-    aim: CFrame?,
-    prediction: GunPrediction?
+    aim: CFrame?
 ): ()
     if not target or not gun or not origin then
         return
@@ -8065,22 +12125,16 @@ state.mm2ShotFeedback.queue = function(
         target = target,
         targetCharacter = targetCharacter,
         gun = gun,
-        model = prediction and prediction.model,
         -- A single pending slot cannot disambiguate rapid equal-geometry shots.
-        -- Exclude these echoes from tuning/statistics instead of guessing.
+        -- Exclude these echoes from statistics instead of guessing.
         ambiguous = state.mm2ShotFeedback.pending ~= nil,
         origin = origin.Position,
         aimPosition = aim and aim.Position,
         healthBefore = targetHumanoid and targetHumanoid.Health or 0,
         targetedMurderer = getPlayerRole(target) == "Murderer",
         queuedAt = os.clock(),
-        leadSeconds = prediction and prediction.leadSeconds or nil,
-        leadSensitivity = prediction and prediction.leadSensitivity or nil,
-        velocity = prediction and prediction.velocity or nil,
-        aimRootOffset = prediction and prediction.aimRootOffset or nil,
     }
     state.mm2ShotFeedback.pending = candidate
-    startLeadTracking(candidate)
 
     task.delay(1.8, function(): ()
         if state.mm2ShotFeedback.pending == candidate then
@@ -8193,8 +12247,7 @@ state.mm2ShotFeedback.resolve = function(
             )
 
         if hitConfirmed then
-            -- Disconnection/role changes are UI heuristics, not tuning evidence.
-            if directHit then tuneFromConfirmedShot(candidate) end
+            -- Disconnection/role changes are UI heuristics, not shot evidence.
             state.mm2ShotFeedback.hide()
         end
 
@@ -8273,6 +12326,15 @@ state.mm2ShotFeedback.handleGunFired = function(
     end
     if eventTool and not weaponMatches then return end
     if not originMatches or not directionMatches or endpointPosition == nil then return end
+
+    -- Feed the measured FireServer -> GunFired round trip to the prediction
+    -- engine. It is the only transport sample the game exposes, and the
+    -- engine keeps a median so one delayed echo cannot move the next shot.
+    -- The echo is fed only from the confirmation path (finalizeGunCapture).
+    -- This second source measured from the feedback queue instead of from the
+    -- activation, and its samples were larger: at shot 9 of the v64 session the
+    -- median read 318 ms while the same shot's measured round trip was 150 ms,
+    -- and the lead built on it (381 ms) missed by 3.9 studs. One source.
 
     state.mm2ShotFeedback.pending = nil
     if candidate.ambiguous then return end
@@ -8411,63 +12473,15 @@ moduleCleanup = function(): ()
     end
 end
 
--- Gun rays deliberately do not share Knife's transparent/passthrough filters.
--- A tagged or invisible player is still a player in front of the gun.
-local function isGunPathClear(origin: Vector3, endpoint: Vector3, target: Model?, requireTarget: boolean?): boolean
-    local direction = endpoint-origin
-    if not predictionMath.finite(direction.Magnitude) or direction.Magnitude < 0.05 then return false end
-    local params = RaycastParams.new()
-    params.FilterType = Enum.RaycastFilterType.Exclude
-    params.FilterDescendantsInstances = LocalPlayer.Character and {LocalPlayer.Character} or {}
-    params.IgnoreWater = true
-    params.RespectCanCollide = false
-    local hit = workspace:Raycast(origin,direction+direction.Unit*0.05,params)
-    if not hit then return requireTarget ~= true end
-    return target ~= nil and hit.Instance:IsDescendantOf(target)
-end
-
--- Ray/OBB slab intersection, including CanQuery=false and transparent body parts.
--- This guard is independent of the engine ray's filtering/collision groups.
-local function gunBoxEntry(origin: Vector3, direction: Vector3, frame: CFrame, size: Vector3, padding: number): number?
-    local p, d = frame:PointToObjectSpace(origin), frame:VectorToObjectSpace(direction)
-    local near, far = 0, math.huge
-    for _, axis in ipairs({"X","Y","Z"}) do
-        local extent = size[axis]*0.5+padding
-        if not predictionMath.finite(p[axis]) or not predictionMath.finite(d[axis])
-            or not predictionMath.finite(extent) then return 0 end -- uncertain geometry blocks
-        if math.abs(d[axis]) < 1e-8 then
-            if math.abs(p[axis]) > extent then return nil end
-        else
-            local a, b = (-extent-p[axis])/d[axis], (extent-p[axis])/d[axis]
-            near, far = math.max(near,math.min(a,b)), math.min(far,math.max(a,b))
-            if near > far then return nil end
-        end
-    end
-    return near
-end
-
-local function gunBystanderOnRay(target: Player, origin: Vector3, endpoint: Vector3, horizon: number): boolean
-    local direction = (endpoint-origin).Unit
-    for _, player in ipairs(Players:GetPlayers()) do
-        local character = player.Character
-        if player == LocalPlayer or player == target or not character then continue end
-        local root = character:FindFirstChild("HumanoidRootPart")
-        local speed = root and root.AssemblyLinearVelocity.Magnitude or 0
-        -- Account conservatively for a bystander entering the line during latency.
-        local padding = 0.15 + (predictionMath.finite(speed) and math.max(0,speed*horizon) or math.huge)
-        local frame, size = character:GetBoundingBox()
-        if gunBoxEntry(origin,direction,frame,size,padding) == nil then continue end
-        for _, part in ipairs(character:GetDescendants()) do
-            if part:IsA("BasePart") and gunBoxEntry(origin,direction,part.CFrame,part.Size,padding) ~= nil then
-                return true
-            end
-        end
-    end
-    return false
-end
-
+-- WallCheck for the gun uses the SAME filter as the game's own WeaponService
+-- (ClientServices.WeaponService): own character and every
+-- "WeaponPassthrough"-tagged instance are excluded, and hits whose part is
+-- fully transparent are skipped so the ray continues through them. The first
+-- solid surface or other player blocks the shot. The target is excluded while
+-- following the segment because the aim point is a future pose; seeing the
+-- wall behind it is the point of the check.
 local function validateGunShot(target: Player, character: Model, targetCharacter: Model,
-    muzzle: Vector3, origin: Vector3, endpoint: Vector3, walls: boolean, lead: number): (boolean, string?)
+    muzzle: Vector3, origin: Vector3, endpoint: Vector3, walls: boolean): (boolean, string?, any?, any?)
     if LocalPlayer.Character ~= character or not target or target == LocalPlayer
         or target.Character ~= targetCharacter or not isPlayerAlive(target)
         or isProtectedTarget(target) or getPlayerRole(target) ~= "Murderer" then
@@ -8484,33 +12498,50 @@ local function validateGunShot(target: Player, character: Model, targetCharacter
     if not predictionMath.finite(muzzle.Magnitude) or not predictionMath.finite(origin.Magnitude)
         or not predictionMath.finite(endpoint.Magnitude) or (endpoint-origin).Magnitude < 0.05
         or (endpoint-muzzle).Magnitude < 0.05 then return false,"Invalid shot geometry." end
-    -- No remembered visibility, transparent-layer skipping, or open-air success.
     if walls then
-        if not isGunPathClear(muzzle,endpoint,targetCharacter,true)
-            or ((origin-muzzle).Magnitude > 0.05 and not isGunPathClear(origin,endpoint,targetCharacter,true)) then
-            return false,"A wall or another body blocks the shot."
+        local options = {ignoreTarget = true}
+        local clear, blocker = isWeaponPathClear(muzzle,endpoint,targetCharacter,nil,options)
+        if not clear then
+            return false,"A wall or another body blocks the shot.",blocker
         end
-    else
-        -- OFF permits map penetration, not shooting toward empty space/innocents.
-        local params = RaycastParams.new()
-        params.FilterType = Enum.RaycastFilterType.Include
-        params.FilterDescendantsInstances = {targetCharacter}
-        params.IgnoreWater = true
-        local delta = endpoint-origin
-        if not workspace:Raycast(origin,delta+delta.Unit*0.05,params) then
-            return false,"The final ray does not intersect the murderer."
+        -- Second pass with the conservative rule: a fully transparent part
+        -- that still collides is an invisible barrier. The 2026-10-18 session
+        -- confirmed nine shots and five of them stopped 24-56 studs short of
+        -- the aim while this first pass was clear, so the skipped geometry is
+        -- real to the server even though the client's visual filter ignores it.
+        local solidClear, solidBlocker = isWeaponPathClear(muzzle,endpoint,targetCharacter,true,options)
+        if not solidClear then
+            return false,"An invisible wall blocks the shot.",solidBlocker
+        end
+        if (origin-muzzle).Magnitude > 0.05 then
+            local originClear, originBlocker = isWeaponPathClear(origin,endpoint,targetCharacter,nil,options)
+            if not originClear then
+                return false,"A wall or another body blocks the shot.",originBlocker
+            end
+            local originSolid, originSolidBlocker = isWeaponPathClear(origin,endpoint,targetCharacter,true,options)
+            if not originSolid then
+                return false,"An invisible wall blocks the shot.",originSolidBlocker
+            end
         end
     end
-    local horizon = predictionMath.finite(lead) and math.clamp(lead,0,0.45) or 0.45
-    local network = getEstimatedLatency()
-    if predictionMath.finite(network) then horizon = math.max(horizon,math.clamp(network,0,0.6)) end
-    -- Check the entire forward ray, including players BEHIND the aim point.
-    -- If the target moves and the shot misses, that player must not be ignored.
-    if gunBystanderOnRay(target,origin,endpoint,horizon)
-        or ((origin-muzzle).Magnitude > 0.05 and gunBystanderOnRay(target,muzzle,endpoint,horizon)) then
-        return false,"Another player is on the shot line."
+    -- Even a clear shot records the first thing the untouched ray meets: if it
+    -- is a transparent solid short of the aim, the server may stop the bullet
+    -- there while every client check passes.
+    local occluder: any = nil
+    if walls then
+        -- Never let the diagnostic decide a shot: it is wrapped, so a failure
+        -- here leaves the shot allowed and only loses the extra field.
+        pcall(function(): ()
+            local first: any = describeRayHit(muzzle, endpoint, targetCharacter)
+            local reach: number = (endpoint - muzzle).Magnitude
+            if first and not first.onTarget
+                and predictionMath.finite(first.distance)
+                and first.distance < reach - 0.5 then
+                occluder = first
+            end
+        end)
     end
-    return true,nil
+    return true,nil,nil,occluder
 end
 
 local function disconnectGunFiredObserver(): ()
@@ -8566,19 +12597,10 @@ state.mm2Core = {
     findDroppedGun = findDroppedGun,
 
     isWeaponPathClear = isWeaponPathClear,
-    isGunPathClear = isGunPathClear,
     validateGunShot = validateGunShot,
     predictionMath = predictionMath,
-    isMotionGrounded = isMotionGrounded,
-    motionSamples = motionSamples,
-    getFilteredVelocity = getFilteredVelocity,
     getEstimatedLatency = getEstimatedLatency,
-    getGunHorizonSeconds = getGunHorizonSeconds,
-    getGunTurnDiscount = getGunTurnDiscount,
-    getGunTurnRate = getGunTurnRate,
-    getGunLeadSensitivity = getGunLeadSensitivity,
-    getGunLeadStatus = getGunLeadStatus,
-    resetAutoLeadCorrection = resetAutoLeadCorrection,
+    getLatencyReadings = readLatencyReadings,
     getGunOriginCFrame = getGunOriginCFrame,
     trajectoryCalibration = trajectoryCalibration,
 
@@ -8596,7 +12618,6 @@ cleanupMM2Runtime = function()
         state.gameTargetProvider = nil
     end
     trajectoryCalibration:destroy()
-    stopLeadTracking()
     disconnectGunFiredObserver()
     state.mm2ShotFeedback.hide()
     for player: Player, _ in pairs(roleWatchers) do
@@ -13631,274 +17652,6 @@ end
 return Module
 
 ]],
-        ["src/games/universal/Blatant/WallHop.lua"] = [[
-export type Runtime = {
-    framework: any,
-    host: any,
-    services: any,
-}
-
-type WallSighting = {
-    part: BasePart,
-    normal: Vector3,
-    direction: Vector3,
-    distance: number,
-}
-
-local Module = {
-    Name = "WallHop",
-    PlaceId = 0,
-    Events = {} :: {[string]: any},
-    Initialized = false,
-}
-
-local activeCard: any = nil
-
-local SCAN_DIRECTIONS: number = 8
-local SCAN_HEIGHTS: {number} = {-2.35, 0.2, 1.2}
-local ARROWS: {string} = {"↑", "↗", "→", "↘", "↓", "↙", "←", "↖"}
-
-function Module.init(context: Runtime): any
-    local framework: any = context.framework
-    local host: any = context.host
-    local movementInput: any = context.services.movementInput
-    local getCharacterParts: any = host.getCharacterParts
-    local currentWorkspace: Workspace = host.workspace or workspace
-    local lastHopAt: number = -math.huge
-    local lastScanAt: number = -math.huge
-    local highlight: Highlight? = nil
-
-    local function destroyHighlight(): ()
-        if highlight then
-            highlight:Destroy()
-            highlight = nil
-        end
-    end
-
-    local function findWall(
-        character: Model,
-        humanoid: Humanoid,
-        root: BasePart,
-        range: number
-    ): WallSighting?
-        local parameters: RaycastParams = RaycastParams.new()
-        parameters.FilterType = Enum.RaycastFilterType.Exclude
-        parameters.FilterDescendantsInstances = {character}
-        parameters.IgnoreWater = true
-        parameters.RespectCanCollide = true
-
-        local best: WallSighting? = nil
-        for directionIndex: number = 0, SCAN_DIRECTIONS - 1 do
-            local angle: number = (directionIndex / SCAN_DIRECTIONS) * math.pi * 2
-            local direction: Vector3 = Vector3.new(
-                math.sin(angle),
-                0,
-                math.cos(angle)
-            )
-            for _, height: number in ipairs(SCAN_HEIGHTS) do
-                local origin: Vector3 = root.Position + Vector3.new(0, height, 0)
-                local hit: RaycastResult? = currentWorkspace:Raycast(
-                    origin,
-                    direction * range,
-                    parameters
-                )
-                if hit
-                    and hit.Instance
-                    and hit.Instance:IsA("BasePart")
-                    and math.abs(hit.Normal.Y) <= 0.35 then
-                    if best == nil or hit.Distance < best.distance then
-                        best = {
-                            part = hit.Instance,
-                            normal = Vector3.new(
-                                hit.Normal.X,
-                                0,
-                                hit.Normal.Z
-                            ),
-                            direction = direction,
-                            distance = hit.Distance,
-                        }
-                    end
-                    break
-                end
-            end
-        end
-        if best and best.normal.Magnitude > 0.01 then
-            best.normal = best.normal.Unit
-        else
-            best = nil
-        end
-        return best
-    end
-
-    local function wallArrow(root: BasePart, sighting: WallSighting): string
-        local flatLook: Vector3 = Vector3.new(
-            root.CFrame.LookVector.X,
-            0,
-            root.CFrame.LookVector.Z
-        )
-        if flatLook.Magnitude < 0.01 then
-            return "↑"
-        end
-        flatLook = flatLook.Unit
-        local flatDirection: Vector3 = sighting.direction
-        local angle: number = math.atan2(
-            flatLook:Cross(flatDirection).Y,
-            flatLook:Dot(flatDirection)
-        )
-        local index: number = math.floor(
-            (angle / (math.pi * 2)) * SCAN_DIRECTIONS + 0.5
-        ) % SCAN_DIRECTIONS
-
-        index = (SCAN_DIRECTIONS - index) % SCAN_DIRECTIONS + 1
-        return ARROWS[index]
-    end
-
-    local card: any
-    local function clearVisuals(): ()
-        destroyHighlight()
-    end
-
-    card = framework.Categories.Blatant:CreateModule({
-        Name = "WallHop",
-        Category = "Blatant",
-        ConfigKey = "Universal.WallHop",
-        Order = 31,
-        Tooltip = "Detect walls and thin ledges around you and wall hop off "
-            .. "them with one realistic jump.",
-        Function = function(enabled: boolean): ()
-            clearVisuals()
-            lastHopAt = -math.huge
-            if not enabled then
-                card:SetStatus(nil)
-                return
-            end
-            card:SetStatus("ready")
-
-            card:Clean(movementInput.onJumpRequest(function(): ()
-                local now: number = os.clock()
-                if now - lastHopAt < 0.3 then
-                    return
-                end
-                local character: Model?, humanoid: Humanoid?, root: BasePart? =
-                    getCharacterParts()
-                if not character or not humanoid or not root
-                    or humanoid.Health <= 0
-                    or humanoid.FloorMaterial == Enum.Material.Air then
-                    return
-                end
-
-                local range: number = tonumber(card.Options["Wall range"].Value) or 2.6
-                local kick: number = tonumber(card.Options["Kick strength"].Value) or 14
-                local sighting: WallSighting? = findWall(character, humanoid, root, range)
-                if not sighting then
-                    return
-                end
-
-                lastHopAt = now
-                local jumpVelocity: number = 50
-                if humanoid.UseJumpPower then
-                    jumpVelocity = math.max(humanoid.JumpPower, 16)
-                elseif humanoid.JumpHeight > 0 then
-                    jumpVelocity = math.sqrt(
-                        2 * currentWorkspace.Gravity * humanoid.JumpHeight
-                    )
-                end
-                local velocity: Vector3 = root.AssemblyLinearVelocity
-
-                root.AssemblyLinearVelocity = Vector3.new(
-                    velocity.X * 0.35 + sighting.normal.X * kick,
-                    math.max(velocity.Y, jumpVelocity + 3),
-                    velocity.Z * 0.35 + sighting.normal.Z * kick
-                )
-                humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
-                card:SetStatus("hop")
-            end))
-
-            card:Loop(function(): ()
-                local now: number = os.clock()
-                if now - lastScanAt < 0.07 then
-                    return
-                end
-                lastScanAt = now
-
-                local character: Model?, humanoid: Humanoid?, root: BasePart? =
-                    getCharacterParts()
-                if not character or not humanoid or not root
-                    or humanoid.Health <= 0 then
-                    clearVisuals()
-                    return
-                end
-
-                local range: number = tonumber(card.Options["Wall range"].Value) or 2.6
-                local sighting: WallSighting? = findWall(character, humanoid, root, range)
-
-                local grounded: boolean = humanoid.FloorMaterial ~= Enum.Material.Air
-                if not sighting or not grounded then
-                    destroyHighlight()
-                    card:SetStatus(grounded and "ready" or nil)
-                    return
-                end
-
-                card:SetStatus(wallArrow(root, sighting))
-                if card.Options["Highlight walls"].Value ~= true then
-                    destroyHighlight()
-                    return
-                end
-                if not highlight or not highlight.Parent then
-                    highlight = Instance.new("Highlight")
-                    highlight.Name = "Wurst_WallHop"
-                    highlight.FillColor = Color3.fromRGB(64, 255, 140)
-                    highlight.FillTransparency = 0.82
-                    highlight.OutlineColor = Color3.fromRGB(64, 255, 140)
-                    highlight.OutlineTransparency = 0.1
-                    highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
-                    highlight.Parent = currentWorkspace
-                end
-                if (highlight :: Highlight).Adornee ~= sighting.part then
-                    (highlight :: Highlight).Adornee = sighting.part
-                end
-            end)
-        end,
-    })
-
-    card:CreateSlider({
-        Name = "Wall range",
-        Min = 1.5,
-        Max = 5,
-        Default = 2.6,
-        Step = 0.1,
-        Tooltip = "How far from a wall you can be to wall hop.",
-    })
-    card:CreateSlider({
-        Name = "Kick strength",
-        Min = 8,
-        Max = 26,
-        Default = 14,
-        Step = 1,
-        Tooltip = "Horizontal push away from the wall on each hop.",
-    })
-    card:CreateToggle({
-        Name = "Highlight walls",
-        Default = true,
-        Tooltip = "Outline the wall you can currently wall hop off.",
-    })
-
-    activeCard = card
-    Module.Initialized = true
-    return card
-end
-
-function Module.destroy(): ()
-    if activeCard and activeCard.Enabled then
-        pcall(activeCard.Toggle, false)
-    end
-    activeCard = nil
-    Module.Initialized = false
-end
-
-return Module
-
-]],
         ["src/games/universal/Combat/AimAssist.lua"] = [[
 export type Runtime = {
     framework: any,
@@ -14195,6 +17948,27 @@ local Module = {
 }
 
 local activeCleanup: (() -> ())? = nil
+
+-- Ignore list: names, display names or user ids, separated by commas. It is
+-- parsed outside the per-frame loop and applied to the entity list before any
+-- rotation or swing, so an ignored player is never picked.
+local function compileIgnoreList(text: string?): {[string]: boolean}
+    local ignored: {[string]: boolean} = {}
+    for name: string in string.gmatch(text or "", "[^,;%s]+") do
+        ignored[string.lower(name)] = true
+    end
+    return ignored
+end
+
+local function isIgnoredEntity(entity: any, ignored: {[string]: boolean}): boolean
+    local player: any = entity and entity.Player
+    if not player then
+        return false
+    end
+    return ignored[string.lower(player.Name or "")] == true
+        or ignored[string.lower(player.DisplayName or "")] == true
+        or ignored[tostring(player.UserId)] == true
+end
 
 local function collectTools(localPlayer: Player): {Tool}
     local tools: {Tool} = {}
@@ -14521,6 +18295,19 @@ function Module.init(context: Runtime): any
                     end
                     targets = kept
                 end
+                local ignoreText: string = tostring(
+                    options["Ignore players"].Value or ""
+                )
+                if ignoreText ~= "" then
+                    local ignored: {[string]: boolean} = compileIgnoreList(ignoreText)
+                    local kept: {any} = {}
+                    for _, entity: any in ipairs(targets) do
+                        if not isIgnoredEntity(entity, ignored) then
+                            table.insert(kept, entity)
+                        end
+                    end
+                    targets = kept
+                end
                 updateTargetStatus(#targets)
                 if #targets == 0 then
                     clearHighlights()
@@ -14768,6 +18555,12 @@ function Module.init(context: Runtime): any
         Name = "Target NPCs",
         Default = false,
         Tooltip = "Include non-player humanoid models in the reach scan.",
+    })
+    aura:CreateTextBox({
+        Name = "Ignore players",
+        Default = "",
+        Tooltip = "Names, display names or user ids, separated by commas. "
+            .. "They are skipped by targeting: never picked, rotated to or hit.",
     })
     aura:CreateToggle({
         Name = "Highlight targets",
@@ -15032,7 +18825,7 @@ local cleanup
 function Module.init(context)
     local host, world = context.host, context.host.workspace
     local antiFling, velocityLimit, platform, token = false,120,nil,0
-    local previousCharacter, previousRoot, previousPlanar
+    local previousCharacter, previousRoot, previousVelocity, overLimitTicks
     local function removePlatform()
         token+=1
         if platform then platform:Destroy();platform=nil end
@@ -15064,30 +18857,45 @@ function Module.init(context)
         local velocity=root.AssemblyLinearVelocity
         local planar=Vector3.new(velocity.X,0,velocity.Z)
         if previousCharacter~=character or previousRoot~=root then
-            previousCharacter,previousRoot,previousPlanar=character,root,planar
+            previousCharacter,previousRoot,previousVelocity,overLimitTicks=character,root,velocity,0
             removePlatform()
         end
         local fly=module("Fly")
         if root.Anchored or humanoid.Sit or humanoid.SeatPart or active("fling") or active("ghost")
             or active("teleport") or fly and fly.Enabled then
-            previousPlanar=planar;return
+            previousVelocity=velocity;return
         end
         if antiFling then
             local speed=expectedSpeed(humanoid)
             local limit=math.max(velocityLimit,speed*1.75)
             local spin=root.AssemblyAngularVelocity.Magnitude>velocityLimit
-            local impulse=planar.Magnitude>limit and previousPlanar
-                and (planar-previousPlanar).Magnitude>limit*0.65
-            if (spin or impulse) and nearOtherCharacter(root,character) then
+            -- The old detector only saw a one-tick horizontal impulse.
+            -- Real contact flings (a spinning attacker parked on you)
+            -- accelerate over several physics frames and usually launch
+            -- UP as much as sideways, so three more signatures count:
+            -- a vertical launch no jump can produce, a shove sustained
+            -- past the limit, and the spin it already knew. All of them
+            -- still require another player close by: a distant scripted
+            -- launcher or pad is never guessed to be a fling, and pure
+            -- downward velocity (any fall) is never touched.
+            local jumpPower=humanoid.JumpPower or 50
+            local delta=previousVelocity and (velocity-previousVelocity) or Vector3.zero
+            local deltaPlanar=Vector3.new(delta.X,0,delta.Z).Magnitude
+            local impulse=planar.Magnitude>limit and deltaPlanar>limit*0.65
+            local launch=velocity.Y>math.max(limit,jumpPower*1.6) and delta.Y>limit*0.65
+            if planar.Magnitude>limit*1.5 then overLimitTicks=(overLimitTicks or 0)+1 else overLimitTicks=0 end
+            local sustained=overLimitTicks>=2
+            if (spin or impulse or launch or sustained) and nearOtherCharacter(root,character) then
                 -- Remove the contact impulse, not the player's position/input.
-                -- Ordinary downward velocity is never treated as a fling.
                 local desired=humanoid.MoveDirection*speed
-                root.AssemblyLinearVelocity=Vector3.new(desired.X,spin and math.min(velocity.Y,math.max(0,humanoid.JumpPower or 50)) or velocity.Y,desired.Z)
+                root.AssemblyLinearVelocity=Vector3.new(desired.X,(spin or launch) and math.min(velocity.Y,math.max(0,jumpPower)) or velocity.Y,desired.Z)
                 root.AssemblyAngularVelocity=Vector3.zero
+                velocity=root.AssemblyLinearVelocity
                 planar=Vector3.new(desired.X,0,desired.Z)
+                overLimitTicks=0
             end
         end
-        previousPlanar=planar
+        previousVelocity=velocity
         if humanoid.FloorMaterial~=Enum.Material.Air or velocity.Y>=0 or platform then return end
         local destroyHeight=world.FallenPartsDestroyHeight
         if destroyHeight~=destroyHeight or math.abs(destroyHeight)==math.huge then destroyHeight=-500 end
@@ -15114,7 +18922,7 @@ function Module.init(context)
     end
     local feature=host.createUniversalFeature("Anti Void","Rescue imminent falls into the destroy layer, not normal drops",4,function(enabled)
         host.disconnectFeatureConnection("AntiVoid");removePlatform()
-        previousCharacter,previousRoot,previousPlanar=nil,nil,nil
+        previousCharacter,previousRoot,previousVelocity,overLimitTicks=nil,nil,nil,0
         if enabled then host.featureConnections.AntiVoid=host.TaskManager:Connect(step) end
     end,{categoryName="Utilities"})
     local velocityRow
@@ -15123,7 +18931,7 @@ function Module.init(context)
         if host.setOptionVisible then host.setOptionVisible(feature,velocityRow,antiFling) else velocityRow.Visible=antiFling end
     end
     host.addToggleOption(feature,"Anti fling",false,function(value) antiFling=value;showLimit() end,
-        "Damp sudden sideways/spin impulses near other players. Never rolls you back or blocks normal falling.")
+        "Requires Anti Void ON. Damps sideways, upward and sustained contact impulses near other players. Never rolls you back or blocks normal falling.")
     velocityRow=host.addNumberOption(feature,"Velocity limit",120,40,1000,function(value) velocityLimit=math.max(1,value) end)
     showLimit()
     host.addFeatureTooltip(feature,"Only rescues a falling character near the void when there is no collidable floor below. Anti fling respects movement speed and never teleports you back.")
@@ -16138,14 +19946,10 @@ function Module.init(context: Runtime): any
         refreshMotionOptions()
         if FreezeFeature and FreezeFeature.enabled then toggleFreezeMovements(true) end
     end)
+    -- The section widget renders its own caption and divider, so the card only
+    -- has to keep the row in its visibility group.
     local heading: any = host.addSectionOption and host.addSectionOption(FreezeFeature, "Motion settings")
     if heading then
-        if host.makeTextLabel then
-            heading.Size = UDim2.new(1, 0, 0, 20)
-            local title: any = host.makeTextLabel(heading, "Motion settings", 10)
-            title.Size = UDim2.fromScale(1, 1)
-            title.TextXAlignment = Enum.TextXAlignment.Left
-        end
         table.insert(motionRows, heading)
     end
     local emotes: any = addToggleOption(FreezeFeature, "Freeze Emotes", true, function(value: boolean): ()
@@ -16673,7 +20477,16 @@ function Module.init(context: Runtime): any
     local barrier: BasePart? = nil
     local SafeWalkFeature: any = nil
 
-    local function ensureBarrier(): BasePart
+    -- Geometry rules (studs). A barrier closer than MIN_EDGE would sit inside the
+    -- character's body, which pushes it back every frame; such edges are not guarded.
+    -- A gap must be at least MIN_GAP wide to count as a drop, so stair treads and
+    -- rail seams never place a barrier.
+    local MIN_EDGE: number = 1.25
+    local MIN_GAP: number = 1.5
+    local PROBE_STEP: number = 0.5
+    local PROBE_DEPTH: number = 6
+
+    local function getBarrier(): BasePart
         local existing: BasePart? = barrier
         if existing and existing.Parent then
             return existing
@@ -16686,21 +20499,29 @@ function Module.init(context: Runtime): any
         local part: BasePart = Instance.new("Part")
         part.Name = "SafeWalkBarrier"
         part.Anchored = true
-        part.CanCollide = true
+        part.CanCollide = false
         part.CanQuery = false
         part.CanTouch = false
         part.Massless = true
         part.CastShadow = false
         part.Transparency = 1
         part.Material = Enum.Material.SmoothPlastic
-        part.Size = Vector3.new(7, safeWalkSettings.barrierHeight, 0.35)
         part:SetAttribute("WurstSafeWalk", true)
         part.Parent = barrierFolder
         barrier = part
         return part
     end
 
-    local function hideBarrier(): ()
+    -- Turns the single barrier off in place: no destroy/recreate, so a part never
+    -- appears on top of the character.
+    local function releaseBarrier(): ()
+        local existing: BasePart? = barrier
+        if existing and existing.Parent then
+            existing.CanCollide = false
+        end
+    end
+
+    local function destroyBarrier(): ()
         if barrierFolder then
             barrierFolder:Destroy()
         end
@@ -16708,9 +20529,42 @@ function Module.init(context: Runtime): any
         barrier = nil
     end
 
+    -- Distance along moveDirection to the last ground before a confirmed drop
+    -- (a gap of at least MIN_GAP with no floor below). nil when none is ahead.
+    local function findDrop(root: BasePart, moveDirection: Vector3, parameters: RaycastParams): number?
+        -- Scan far enough to confirm a MIN_GAP-wide gap that starts inside the reach.
+        local reach: number = 1.0 + safeWalkSettings.lookAhead + MIN_GAP
+        local lastGround: number? = nil
+        local groundBeforeGap: number? = nil
+        local gapStart: number? = nil
+        local distance: number = PROBE_STEP
+        while distance <= reach do
+            local ground: RaycastResult? = currentWorkspace:Raycast(
+                root.Position + moveDirection * distance,
+                Vector3.new(0, -PROBE_DEPTH, 0),
+                parameters
+            )
+            if ground then
+                lastGround = distance
+                gapStart = nil
+                groundBeforeGap = nil
+            else
+                if gapStart == nil then
+                    gapStart = distance
+                    groundBeforeGap = lastGround
+                end
+                if distance - gapStart >= MIN_GAP then
+                    return groundBeforeGap
+                end
+            end
+            distance += PROBE_STEP
+        end
+        return nil
+    end
+
     local function toggleSafeWalk(enabled: boolean): ()
         disconnectFeatureConnection("SafeWalk")
-        hideBarrier()
+        destroyBarrier()
         if not enabled then
             if SafeWalkFeature then
                 SafeWalkFeature:SetStatus(nil)
@@ -16722,71 +20576,55 @@ function Module.init(context: Runtime): any
             local character: Model?, humanoid: Humanoid?, root: BasePart? = getCharacterParts()
             if not character or not humanoid or not root
                 or humanoid.Health <= 0 then
-                hideBarrier()
+                releaseBarrier()
                 return
             end
 
-            if humanoid.MoveDirection.Magnitude < 0.05 then
-                return
-            end
-            if humanoid.FloorMaterial == Enum.Material.Air then
+            -- Jumping or falling is a deliberate choice to leave the ledge: the barrier
+            -- is off for the whole airborne phase.
+            local state = humanoid:GetState()
+            if humanoid.FloorMaterial == Enum.Material.Air
+                or state == Enum.HumanoidStateType.Jumping
+                or state == Enum.HumanoidStateType.Freefall then
+                releaseBarrier()
                 return
             end
 
-            local moveDirection: Vector3 = humanoid.MoveDirection.Unit
+            local move: Vector3 = humanoid.MoveDirection
+            local flat: Vector3 = Vector3.new(move.X, 0, move.Z)
+            if flat.Magnitude < 0.05 then
+                return
+            end
+            local moveDirection: Vector3 = flat.Unit
+
             local parameters: RaycastParams = RaycastParams.new()
             parameters.FilterType = Enum.RaycastFilterType.Exclude
             parameters.FilterDescendantsInstances = {character}
             parameters.IgnoreWater = true
 
-            local stepCount: number = 7
-            local reach: number = 1.0 + safeWalkSettings.lookAhead + 0.8
-            local step: number = (reach - 1.0) / (stepCount - 1)
-            local lastGrounded: number? = nil
-            local firstGap: number? = nil
-            for index: number = 1, stepCount do
-                local distance: number = 1.0 + step * (index - 1)
-                local probeOrigin: Vector3 = root.Position + moveDirection * distance
-                local ground: RaycastResult? = currentWorkspace:Raycast(
-                    probeOrigin,
-                    Vector3.new(0, -6, 0),
-                    parameters
-                )
-                if ground then
-                    lastGrounded = distance
-                elseif lastGrounded ~= nil then
-                    firstGap = distance
-                    break
-                end
-            end
-
-            if lastGrounded == nil then
-
-                lastGrounded = 0.4
-                firstGap = 1.0
-            end
-            if firstGap == nil then
-
-                hideBarrier()
+            local edge: number? = findDrop(root :: BasePart, moveDirection, parameters)
+            if edge == nil then
+                releaseBarrier()
                 if SafeWalkFeature then
                     SafeWalkFeature:SetStatus(nil)
                 end
                 return
             end
 
-            local edgeDistance: number = (lastGrounded + firstGap) * 0.5
-            local feetHeight: number = root.Size.Y * 0.5 + humanoid.HipHeight
-            local barrierHeight: number = math.max(safeWalkSettings.barrierHeight, 3)
-            local part: BasePart = ensureBarrier()
-            part.Size = Vector3.new(7, barrierHeight, 0.35)
-            local feetY: number = root.Position.Y - feetHeight
-            local position: Vector3 = root.Position + moveDirection * edgeDistance
+            if edge < MIN_EDGE then
+                -- Already at the lip: keep whatever barrier was placed on approach,
+                -- never place a new one this close.
+                return
+            end
 
-            part.CFrame = CFrame.lookAt(
-                Vector3.new(position.X, feetY + barrierHeight * 0.5, position.Z),
-                Vector3.new(position.X, feetY + barrierHeight * 0.5, position.Z)
-                    + moveDirection
-            )
+            local part: BasePart = getBarrier()
+            local barrierHeight: number = math.max(safeWalkSettings.barrierHeight, 3)
+            local feetY: number = root.Position.Y - (root.Size.Y * 0.5 + humanoid.HipHeight)
+            local center: Vector3 = root.Position + moveDirection * edge
+            local wallCenter: Vector3 = Vector3.new(center.X, feetY + barrierHeight * 0.5, center.Z)
+            part.Size = Vector3.new(7, barrierHeight, 0.35)
+            part.CFrame = CFrame.lookAt(wallCenter, wallCenter + moveDirection)
+            part.CanCollide = true
             if SafeWalkFeature then
                 SafeWalkFeature:SetStatus("edge")
             end
@@ -16826,7 +20664,7 @@ function Module.init(context: Runtime): any
 
     activeCleanup = function(): ()
         disconnectFeatureConnection("SafeWalk")
-        hideBarrier()
+        destroyBarrier()
     end
     Module.Initialized = true
     return SafeWalkFeature
@@ -17125,27 +20963,96 @@ function Module.init(context: Runtime): any
     local disconnectFeatureConnection: any = host.disconnectFeatureConnection
     local createUniversalFeature: any = host.createUniversalFeature
     local addFeatureTooltip: any = host.addFeatureTooltip
-    local function toggleAntiAfk(enabled)
+
+    -- Simulate one user input. The old build relied on a single legacy
+    -- call (VirtualUser:CaptureController + ClickButton2 at (0,0)):
+    -- on current clients the capture silently does nothing, so the
+    -- handler ran, "worked", and the idle kick landed anyway. Every
+    -- strategy is tried in order until one reports success, and a
+    -- failure is never mistaken for a success again.
+    local function pokeAfk(): boolean
+        local camera: any = nil
+        pcall(function(): ()
+            camera = (host.workspace :: any).CurrentCamera
+        end)
+        local centre: Vector2 = Vector2.new(400, 300)
+        if camera and camera.ViewportSize then
+            centre = camera.ViewportSize / 2
+        end
+
+        -- Strategy 1: VirtualUser button press (the classic path, but
+        -- as an explicit down/up instead of a corner click).
+        local virtualUser: any = nil
+        pcall(function(): ()
+            virtualUser = (game :: any):GetService("VirtualUser")
+        end)
+        if virtualUser then
+            local ok: boolean = pcall(function(): ()
+                virtualUser:CaptureController()
+                virtualUser:Button2Down(centre, camera and camera.CFrame)
+                virtualUser:Button2Up(centre, camera and camera.CFrame)
+            end)
+            if ok then
+                return true
+            end
+            local legacyOk: boolean = pcall(function(): ()
+                virtualUser:ClickButton2(centre)
+            end)
+            if legacyOk then
+                return true
+            end
+        end
+
+        -- Strategy 2: VirtualInputManager mouse event at screen centre.
+        local virtualInput: any = nil
+        pcall(function(): ()
+            virtualInput = (game :: any):GetService("VirtualInputManager")
+        end)
+        if virtualInput then
+            local ok: boolean = pcall(function(): ()
+                virtualInput:SendMouseButtonEvent(centre.X, centre.Y, 0, true, game, false)
+                virtualInput:SendMouseButtonEvent(centre.X, centre.Y, 0, false, game, false)
+            end)
+            if ok then
+                return true
+            end
+        end
+        return false
+    end
+
+    local function toggleAntiAfk(enabled: boolean): ()
         disconnectFeatureConnection("AntiAFK")
+        disconnectFeatureConnection("AntiAFKTimer")
 
         if not enabled then
             return
         end
 
-        featureConnections.AntiAFK = LocalPlayer.Idled:Connect(function()
-            local virtualUserOk, virtualUser = pcall(function()
-                return game:GetService("VirtualUser")
-            end)
-            if virtualUserOk and virtualUser then
-                virtualUser:CaptureController()
-                virtualUser:ClickButton2(Vector2.new(0, 0))
-            end
+        -- Reactive: Roblox warns through Idled shortly before the
+        -- 20-minute kick. Answer it.
+        featureConnections.AntiAFK = LocalPlayer.Idled:Connect(function(): ()
+            pokeAfk()
         end)
+        -- Proactive: never let the idle timer get anywhere near the
+        -- kick in the first place. Simulated input every 150 s keeps
+        -- the session "active" even if the Idled event never fires
+        -- (it does not fire while some menus hold focus).
+        local elapsed: number = 0
+        featureConnections.AntiAFKTimer = host.TaskManager:Connect(
+            function(deltaTime: number): ()
+                elapsed += deltaTime
+                if elapsed < 150 then
+                    return
+                end
+                elapsed = 0
+                pokeAfk()
+            end
+        )
     end
 
     local AntiAfkFeature = createUniversalFeature(
         "Anti AFK",
-        "Prevent the local idle event from disconnecting",
+        "Simulate input before Roblox's idle kick (about every 2.5 minutes, and on the idle warning)",
         13,
         toggleAntiAfk,
         {
@@ -17154,12 +21061,13 @@ function Module.init(context: Runtime): any
             categoryName = "World",
         }
     )
-    addFeatureTooltip(AntiAfkFeature, "Responds only to Roblox's local idle event and "
-        .. "disconnects immediately when disabled.")
+    addFeatureTooltip(AntiAfkFeature, "Simulates a real input every ~150 seconds and "
+        .. "answers Roblox's idle warning, so the 20-minute idle kick never lands. "
+        .. "Tries VirtualUser first, then VirtualInputManager. Disconnects immediately when disabled.")
 
     activeCleanup = function(): ()
-
         disconnectFeatureConnection("AntiAFK")
+        disconnectFeatureConnection("AntiAFKTimer")
     end
     Module.Initialized = true
     return AntiAfkFeature
@@ -17208,6 +21116,10 @@ type AppearanceSnapshot = {
     emotes: any,
     equippedEmotes: any,
     scales: {[string]: number},
+    -- The humanoid description's own animation fields at snapshot
+    -- time, so restoring movements can undo a description-route
+    -- apply exactly instead of only rewriting Animate ids.
+    descAnimations: {[string]: number},
 }
 
 local Module = {
@@ -17219,7 +21131,54 @@ local Module = {
 
 local activeCard: any = nil
 
-local DEFAULT_USER_ID: number = 239702688
+-- 78492 is the default disguise: a normal user avatar whose movement
+-- animations come from Roblox's own set, which is also the fallback below.
+local DEFAULT_USER_ID: number = 78492
+-- Roblox's own R15 animation set, i.e. the IDs inside the default Animate
+-- script. A HumanoidDescription stores 0 for "keep the default", so copying
+-- only the non-zero fields would silently keep OUR animations on the
+-- disguised avatar. Filling the gaps with these makes the disguise use the
+-- same set the target actually sees.
+local DEFAULT_ANIMATION_IDS: {[string]: {string}} = {
+    idle = {"507766666", "507766951", "507766388"},
+    walk = {"507777826"},
+    run = {"507767714"},
+    jump = {"507765000"},
+    fall = {"507767968"},
+    climb = {"507765644"},
+    swim = {"507784897"},
+    swimidle = {"507785072"},
+}
+-- Roblox's own R6 set, i.e. the IDs inside the classic R6 Animate script the
+-- engine inserts on blocky rigs. The R15 IDs above are keyed to UpperTorso and
+-- RightUpperArm, so an R6 body cannot play them at all: the Animate script
+-- stops without an error and the character freezes in its rest pose. That is
+-- the still avatar in the report, not a wrong idle.
+local DEFAULT_ANIMATION_IDS_R6: {[string]: {string}} = {
+    idle = {"180435571", "180435792"},
+    walk = {"180426354"},
+    run = {"180426354"},
+    jump = {"125750702"},
+    fall = {"180436148"},
+    climb = {"180436334"},
+}
+-- Every id the R15 default set owns. A HumanoidDescription from an avatar that
+-- never bought a pack is indistinguishable from one that asked for the R15
+-- defaults, so this table is how an R6 body recognises "these are not mine".
+local R15_DEFAULT_IDS: {[string]: boolean} = {}
+for _, ids: {string} in pairs(DEFAULT_ANIMATION_IDS) do
+    for _, id: string in ipairs(ids) do
+        R15_DEFAULT_IDS[id] = true
+    end
+end
+-- The mirror image: every id the R6 default set owns. R6 clips are the only
+-- clips an R6 body may play, and R6 ids never belong in an R15 slot.
+local R6_DEFAULT_IDS: {[string]: boolean} = {}
+for _, ids: {string} in pairs(DEFAULT_ANIMATION_IDS_R6) do
+    for _, id: string in ipairs(ids) do
+        R6_DEFAULT_IDS[id] = true
+    end
+end
 local SCALE_FIELDS: {string} = {
     "HeightScale",
     "WidthScale",
@@ -17228,6 +21187,38 @@ local SCALE_FIELDS: {string} = {
     "BodyTypeScale",
     "ProportionScale",
 }
+-- Official catalog animation packs (Roblox creator-docs "Catalog
+-- animations" table): every bundle is the same eight slots, and the clips
+-- are ordinary rbxassetid animations the stock Animate script can load on
+-- any R15 body, so no download or asset file ever has to live on disk --
+-- writing the ids into the character's own Animate slots IS the pack, and
+-- the menu config keeps the chosen name between sessions. Idle keeps the
+-- first two variants (the Animate script has Animation1/Animation2 only).
+local ANIMATION_PACKS: {{name: string, slots: {[string]: any}}} = {
+    {name = "Ninja", slots = {idle = {"656117400", "656118341"}, walk = {"656121766"}, run = {"656118852"}, jump = {"656117878"}, fall = {"656115606"}, climb = {"656114359"}, swim = {"656119721"}, swimidle = {"656121397"}}},
+    {name = "Knight", slots = {idle = {"657595757", "657568135"}, walk = {"657552124"}, run = {"657564596"}, jump = {"658409194"}, fall = {"657600338"}, climb = {"658360781"}, swim = {"657560551"}, swimidle = {"657557095"}}},
+    {name = "Mage", slots = {idle = {"707742142", "707855907"}, walk = {"707897309"}, run = {"707861613"}, jump = {"707853694"}, fall = {"707829716"}, climb = {"707826056"}, swim = {"707876443"}, swimidle = {"707894699"}}},
+    {name = "Zombie", slots = {idle = {"616158929", "616160636"}, walk = {"616168032"}, run = {"616163682"}, jump = {"616161997"}, fall = {"616157476"}, climb = {"616156119"}, swim = {"616165109"}, swimidle = {"616166655"}}},
+    {name = "Toy", slots = {idle = {"782841498", "782845736"}, walk = {"782843345"}, run = {"782842708"}, jump = {"782847020"}, fall = {"782846423"}, climb = {"782843869"}, swim = {"782844582"}, swimidle = {"782845186"}}},
+    {name = "Bubbly", slots = {idle = {"910004836", "910009958"}, walk = {"910034870"}, run = {"910025107"}, jump = {"910016857"}, fall = {"910001910"}, climb = {"909997997"}, swim = {"910028158"}, swimidle = {"910030921"}}},
+    {name = "Cartoony", slots = {idle = {"742637544", "742638445"}, walk = {"742640026"}, run = {"742638842"}, jump = {"742637942"}, fall = {"742637151"}, climb = {"742636889"}, swim = {"742639220"}, swimidle = {"742639812"}}},
+    {name = "Pirate", slots = {idle = {"750781874", "750782770"}, walk = {"750785693"}, run = {"750783738"}, jump = {"750782230"}, fall = {"750780242"}, climb = {"750779899"}, swim = {"750784579"}, swimidle = {"750785176"}}},
+    {name = "Vampire", slots = {idle = {"1083445855", "1083450166"}, walk = {"1083473930"}, run = {"1083462077"}, jump = {"1083455352"}, fall = {"1083443587"}, climb = {"1083439238"}, swim = {"1083464683"}, swimidle = {"1083467779"}}},
+    {name = "Werewolf", slots = {idle = {"1083195517", "1083214717"}, walk = {"1083178339"}, run = {"1083216690"}, jump = {"1083218792"}, fall = {"1083189019"}, climb = {"1083182000"}, swim = {"1083222527"}, swimidle = {"1083225406"}}},
+    {name = "Astronaut", slots = {idle = {"891621366", "891633237"}, walk = {"891636393"}, run = {"891636393"}, jump = {"891627522"}, fall = {"891617961"}, climb = {"891609353"}, swim = {"891639666"}, swimidle = {"891663592"}}},
+    {name = "Elder", slots = {idle = {"845397899", "845400520"}, walk = {"845403856"}, run = {"845386501"}, jump = {"845398858"}, fall = {"845396048"}, climb = {"845392038"}, swim = {"845401742"}, swimidle = {"845403127"}}},
+    {name = "Levitation", slots = {idle = {"616006778", "616008087"}, walk = {"616013216"}, run = {"616010382"}, jump = {"616008936"}, fall = {"616005863"}, climb = {"616003713"}, swim = {"616011509"}, swimidle = {"616012453"}}},
+    {name = "Robot", slots = {idle = {"616088211", "616089559"}, walk = {"616095330"}, run = {"616091570"}, jump = {"616090535"}, fall = {"616087089"}, climb = {"616086039"}, swim = {"616092998"}, swimidle = {"616094091"}}},
+    {name = "Stylish", slots = {idle = {"616136790", "616138447"}, walk = {"616146177"}, run = {"616140816"}, jump = {"616139451"}, fall = {"616134815"}, climb = {"616133594"}, swim = {"616143378"}, swimidle = {"616144772"}}},
+    {name = "Superhero", slots = {idle = {"616111295", "616113536"}, walk = {"616122287"}, run = {"616117076"}, jump = {"616115533"}, fall = {"616108001"}, climb = {"616104706"}, swim = {"616119360"}, swimidle = {"616120861"}}},
+    {name = "Rthro", slots = {idle = {"2510197257", "2510196951"}, walk = {"2510202577"}, run = {"2510198475"}, jump = {"2510197830"}, fall = {"2510195892"}, climb = {"2510192778"}, swim = {"2510199791"}, swimidle = {"2510201162"}}},
+}
+local ANIMATION_PACK_BY_NAME: {[string]: {[string]: any}} = {}
+local ANIMATION_PACK_NAMES: {string} = {"Off"}
+for _, pack in ipairs(ANIMATION_PACKS) do
+    ANIMATION_PACK_BY_NAME[pack.name] = pack.slots
+    table.insert(ANIMATION_PACK_NAMES, pack.name)
+end
 local BODY_PARTS: {[string]: boolean} = {
     Head = true,
     Torso = true,
@@ -17266,8 +21257,6 @@ function Module.init(context: Runtime): any
     local framework: any = context.framework
     local host: any = context.host
     local Players: Players = host.Players or (game :: any):GetService("Players")
-    local MarketplaceService: MarketplaceService = host.MarketplaceService
-        or (game :: any):GetService("MarketplaceService")
     local LocalPlayer: Player = host.LocalPlayer or Players.LocalPlayer
 
     local cloned = setmetatable({}, {__mode = "k"}) :: {[Instance]: boolean}
@@ -17279,13 +21268,94 @@ function Module.init(context: Runtime): any
     local restoring: boolean = false
     local emotesAppliedToHumanoid: boolean = false
     local animationOverrideApplied: boolean = false
-    local targetEmotes: any = nil
-    local targetEquippedEmotes: any = nil
+    -- One notice per target: a pack authored for another rig says so once
+    -- instead of on every re-apply.
+    local foreignPackNotified: boolean = false
+    -- Slots the last apply actually wrote; the status line repeats it.
+    local lastAppliedSlotCount: number = 0
+    local lastDroppedSlotCount: number = 0
+    -- Forward declarations. The write path runs before the settle step is
+    -- defined, and Lua resolves names at definition time: without these the
+    -- calls would silently become globals.
+    local stopPoseMirror: () -> () = function(): () end
+    local playingAnimationTracks: (Humanoid?) -> {AnimationTrack} =
+        function(): {AnimationTrack}
+            return {}
+        end
+    -- Everything the target user exposes is cached the moment the avatar
+    -- description is fetched: the movement animation slots and the emotes.
+    -- Character mode applies the avatar but keeps this cache loaded, so the two
+    -- toggles work instantly instead of fetching the avatar again.
+    type TargetCache = {
+        userId: number,
+        slots: {[string]: any},
+        emotes: any,
+        equippedEmotes: any,
+        -- "R6"/"R15" when the target is in the server, nil when they are only
+        -- known by id. A description never says which rig its clips were
+        -- authored for, so this is the only source for that fact.
+        rig: string?,
+    }
+    local targetCache: TargetCache? = nil
+
+    -- The checkbox restores its saved state from configData without calling
+    -- back, so the module settings must be read from the same place. Without
+    -- this, a saved OFF check would still apply the target's data.
+    local function savedToggle(name: string, fallback: boolean): boolean
+        local store: any = host.configData
+        local states: any = store and store.states
+        if type(states) ~= "table" then
+            return fallback
+        end
+        local saved: any = states["Universal.Disguise." .. name:gsub("%W", "")]
+        if type(saved) == "boolean" then
+            return saved
+        end
+        return fallback
+    end
+
+    -- Same saved-state read for the pack dropdown, which also restores its
+    -- value without calling back.
+    local function savedString(name: string, fallback: string): string
+        local store: any = host.configData
+        local states: any = store and store.states
+        if type(states) ~= "table" then
+            return fallback
+        end
+        local saved: any = states["Universal.Disguise." .. name:gsub("%W", "")]
+        if type(saved) == "string" then
+            return saved
+        end
+        return fallback
+    end
+
+    local function savedAnimationPack(): string
+        local saved: string = savedString("Animation Pack", "Off")
+        if saved ~= "Off" and not ANIMATION_PACK_BY_NAME[saved] then
+            return "Off"
+        end
+        return saved
+    end
 
     local settings = {
         mode = "Character",
+        animationSpeed = 1,
         id = tostring(DEFAULT_USER_ID),
-        useTargetMovementAnimations = false,
+        useTargetMovementAnimations = savedToggle(
+            "Use target movement animations",
+            true
+        ),
+        showTargetEmotes = savedToggle("Show target emotes", true),
+        animationPack = savedAnimationPack(),
+        showAdvanced = false,
+        -- Slots of a bundle resolved by id at runtime (any official or
+        -- UGC pack), kept for the session so mode switches and the
+        -- movement toggle reuse them without resolving again.
+        customPackSlots = (nil :: any),
+        customPackName = (nil :: any),
+        -- Per-slot clips picked from bundles under Show Advanced:
+        -- scriptCategory -> rbxassetid string.
+        customSlotIds = ({} :: any),
     }
 
     local function status(message: string): ()
@@ -17461,6 +21531,7 @@ function Module.init(context: Runtime): any
         local meshParts: {MeshTemplate} = {}
         local animations: {AnimationTemplate} = {}
         local scales: {[string]: number} = {}
+        local descAnimations: {[string]: number} = {}
         local emotes: any = {}
         local equippedEmotes: any = {}
 
@@ -17503,6 +21574,14 @@ function Module.init(context: Runtime): any
                     scales[field] = value
                 end
             end
+            for _, mapping in ipairs(MOVEMENT_ANIMATIONS) do
+                local okField: boolean, fieldValue: any = pcall(function()
+                    return description[mapping.descriptionField]
+                end)
+                if okField and type(fieldValue) == "number" then
+                    descAnimations[mapping.descriptionField] = fieldValue
+                end
+            end
             local originalEmotes: any, originalEquipped: any =
                 readDescriptionEmotes(description)
             if originalEmotes and originalEquipped then
@@ -17522,6 +21601,7 @@ function Module.init(context: Runtime): any
             emotes = emotes,
             equippedEmotes = equippedEmotes,
             scales = scales,
+            descAnimations = descAnimations,
         }
     end
 
@@ -17577,126 +21657,63 @@ function Module.init(context: Runtime): any
     end
 
 
-    local animationAssetCache: {[string]: {string}} = {}
-
-    local function extractAnimationsFromAsset(rawAssetId: any): {string}
-        local cacheKey: string = tostring(rawAssetId or "")
-        if cacheKey == "" or cacheKey == "0" then
-            return {}
-        end
-        if animationAssetCache[cacheKey] then
-            return animationAssetCache[cacheKey]
-        end
-
-        local numericId: number? = nil
-        if type(rawAssetId) == "number" and rawAssetId > 0 then
-            numericId = rawAssetId
-        elseif type(rawAssetId) == "string" then
-            local matched: string? = string.match(rawAssetId, "%d+")
-            if matched then
-                numericId = tonumber(matched)
-            end
-        end
-
-        local result: {string} = {}
-        if numericId and numericId > 0 then
-
-            local objectsOk: boolean, objects: any = pcall(function()
-                return (game :: any):GetObjects("rbxassetid://" .. tostring(numericId))
-            end)
-            if objectsOk and type(objects) == "table" and #objects > 0 then
-                for _, obj: Instance in ipairs(objects) do
-                    if obj:IsA("Animation") and obj.AnimationId ~= "" then
-                        table.insert(result, obj.AnimationId)
-                    end
-                    for _, descendant: Instance in ipairs(obj:GetDescendants()) do
-                        if descendant:IsA("Animation") and descendant.AnimationId ~= "" then
-                            table.insert(result, descendant.AnimationId)
-                        end
-                    end
-                end
-                for _, obj: Instance in ipairs(objects) do
-                    destroyInstance(obj)
-                end
-            end
-
-            if #result == 0 then
-                local insertService: any = (game :: any):GetService("InsertService")
-                if insertService and type(insertService.LoadAsset) == "function" then
-                    local loadOk: boolean, loaded: any = pcall(function()
-                        return insertService:LoadAsset(numericId)
-                    end)
-                    if loadOk and loaded then
-                        if loaded:IsA("Animation") and loaded.AnimationId ~= "" then
-                            table.insert(result, loaded.AnimationId)
-                        end
-                        for _, descendant: Instance in ipairs(loaded:GetDescendants()) do
-                            if descendant:IsA("Animation") and descendant.AnimationId ~= "" then
-                                table.insert(result, descendant.AnimationId)
-                            end
-                        end
-                        destroyInstance(loaded)
-                    end
-                end
-            end
-
-            if #result == 0 then
-                table.insert(result, "rbxassetid://" .. tostring(numericId))
-            end
-        elseif type(rawAssetId) == "string" and rawAssetId ~= "" then
-            table.insert(result, rawAssetId)
-        end
-
-        animationAssetCache[cacheKey] = result
-        return result
-    end
-
-    local function copyTargetMovementAnimations(
+    -- Used when "Use target movement animations" is turned off: restore only
+    -- the Animate slots, leaving the current appearance/emotes untouched.
+    local function restoreMovementAnimationsOnly(
         character: Model,
-        humanoid: Humanoid,
-        description: any
-    ): number
+        humanoid: Humanoid?
+    ): ()
+        stopPoseMirror()
+        local current: AppearanceSnapshot? = snapshot
+        if not current or current.character ~= character
+            or not animationOverrideApplied then
+            return
+        end
+        -- Undo a description-route apply on the description itself,
+        -- or the engine keeps serving the foreign clips no matter
+        -- what the Animate slots say.
+        if humanoid and current.descAnimations then
+            local description: any, isTemporary: boolean =
+                getAppliedDescription(humanoid)
+            if description then
+                local working: any = description
+                if not isTemporary then
+                    local cloneOk: boolean, clone: any = pcall(function(): any
+                        return description:Clone()
+                    end)
+                    if cloneOk and clone then
+                        working = clone
+                        isTemporary = true
+                    end
+                end
+                pcall(function(): ()
+                    for field: string, asset: number in pairs(
+                        current.descAnimations
+                    ) do
+                        working[field] = asset
+                    end
+                end)
+                applyDescriptionToHumanoid(humanoid, working)
+                if isTemporary then
+                    pcall(function(): ()
+                        working:Destroy()
+                    end)
+                end
+            end
+        end
+        for _, entry: AnimationTemplate in ipairs(current.animations) do
+            if isInsideCharacter(entry.animation, character) then
+                pcall(function()
+                    entry.animation.AnimationId = entry.animationId
+                end)
+            end
+        end
+        animationOverrideApplied = false
         local animate: Instance? = character:FindFirstChild("Animate")
         if not animate then
-            return 0
+            return
         end
-
-        local changedCount: number = 0
-        for _, mapping in ipairs(MOVEMENT_ANIMATIONS) do
-            local readOk: boolean, value: any = pcall(function()
-                return description[mapping.descriptionField]
-            end)
-            local assetId: any = if readOk then value else nil
-            local category: Instance? = animate:FindFirstChild(mapping.scriptCategory)
-            if assetId and category then
-                local animIds: {string} = extractAnimationsFromAsset(assetId)
-                if #animIds > 0 then
-                    local targets: {Animation} = {}
-                    if category:IsA("Animation") then
-                        table.insert(targets, category)
-                    end
-                    for _, descendant: Instance in ipairs(category:GetDescendants()) do
-                        if descendant:IsA("Animation") then
-                            table.insert(targets, descendant)
-                        end
-                    end
-                    for idx: number, animation: Animation in ipairs(targets) do
-                        local chosenId: string = animIds[idx] or animIds[1]
-                        if chosenId and chosenId ~= "" and animation.AnimationId ~= chosenId then
-                            local changed: boolean = pcall(function()
-                                animation.AnimationId = chosenId
-                            end)
-                            if changed then
-                                changedCount += 1
-                            end
-                        end
-                    end
-                end
-            end
-        end
-
-        if changedCount > 0 then
-            animationOverrideApplied = true
+        if humanoid then
             local animator: Animator? = humanoid:FindFirstChildOfClass("Animator")
             if animator then
                 local tracksOk: boolean, tracks: any = pcall(function()
@@ -17708,117 +21725,383 @@ function Module.init(context: Runtime): any
                     end
                 end
             end
-            restartAnimateScript(animate)
         end
+        restartAnimateScript(animate)
+    end
+
+    -- HumanoidDescription already stores the target's animation asset IDs
+    -- (rbxassetid://numbers). Assigning them directly is instant and does not
+    -- depend on game:GetObjects / InsertService, which are Studio or server
+    -- only and are the reason the old button could hang on "Downloading...".
+    local function animationIdFromValue(value: any): string?
+        local number: number? = nil
+        if type(value) == "number" and value > 0 then
+            number = value
+        elseif type(value) == "string" then
+            local matched: string? = string.match(value, "%d+")
+            if matched then
+                number = tonumber(matched)
+            end
+        end
+        if not number or number <= 0 then
+            return nil
+        end
+        return "rbxassetid://" .. tostring(math.floor(number))
+    end
+
+    local function animationSlotsFromDescription(description: any): {[string]: any}
+        local slots: {[string]: string} = {}
+        for _, mapping in ipairs(MOVEMENT_ANIMATIONS) do
+            local readOk: boolean, value: any = pcall(function()
+                return description[mapping.descriptionField]
+            end)
+            local assetId: any = if readOk then value else nil
+            local chosenId: string? = animationIdFromValue(assetId)
+            if chosenId then
+                slots[mapping.scriptCategory] = chosenId
+            end
+        end
+        return slots
+    end
+
+    -- Which default set fits the body we are actually driving. An R15 table on
+    -- an R6 rig is the failure mode behind the frozen avatar: the clips load
+    -- but nothing plays, so the character keeps its rest pose forever.
+    local function rigDefaultSlots(humanoid: Humanoid?): {[string]: any}
+        local rig: any = nil
+        if humanoid then
+            pcall(function(): ()
+                rig = (humanoid :: any).RigType
+            end)
+        end
+        if rig == Enum.HumanoidRigType.R6 then
+            return DEFAULT_ANIMATION_IDS_R6
+        end
+        return DEFAULT_ANIMATION_IDS
+    end
+
+    local function rigName(humanoid: Humanoid?): string?
+        local rig: any = nil
+        if humanoid then
+            pcall(function(): ()
+                rig = (humanoid :: any).RigType
+            end)
+        end
+        if rig == Enum.HumanoidRigType.R6 then
+            return "R6"
+        end
+        if rig == Enum.HumanoidRigType.R15 then
+            return "R15"
+        end
+        return nil
+    end
+
+    local function belongsToDefaultSet(value: any, set: {[string]: boolean}): boolean
+        local function owns(entry: any): boolean
+            if type(entry) == "number" then
+                entry = tostring(math.floor(entry))
+            end
+            if type(entry) ~= "string" then
+                return false
+            end
+            local digits: string? = string.match(entry, "%d+")
+            return digits ~= nil and set[digits] == true
+        end
+        if type(value) == "table" then
+            if #value == 0 then
+                return false
+            end
+            for _, entry: any in ipairs(value) do
+                if not owns(entry) then
+                    return false
+                end
+            end
+            return true
+        end
+        return owns(value)
+    end
+
+    local function belongsToR15Defaults(value: any): boolean
+        return belongsToDefaultSet(value, R15_DEFAULT_IDS)
+    end
+
+    local function belongsToR6Defaults(value: any): boolean
+        return belongsToDefaultSet(value, R6_DEFAULT_IDS)
+    end
+
+    -- Gaps are filled with the set that matches the rig; a slot that only
+    -- holds R15 default ids on an R6 body is treated as a gap.
+    --
+    -- A pack description never says which rig its clips were authored for, and
+    -- every pack sold since 2016 is R15. An R6 body that receives those ids is
+    -- handed to the engine's legacy retargeting, which bends the limbs and
+    -- sinks the torso instead of refusing the clip: that is the broken pose in
+    -- the report, and it only shows up with a non-default pack, because the
+    -- default pack resolves to ids the body already plays. The target's rig is
+    -- no defence: in an R6 game the target is R6 too, and their description
+    -- still hands out R15 clips. The rule is therefore about the clips, not
+    -- about the target: an R6 body only accepts the R6 set, and an R15 body
+    -- refuses the R6 set. The second return value counts the pack slots that
+    -- were dropped for being foreign, so the menu can say it instead of
+    -- showing a mangled avatar in silence.
+    local function resolvedAnimationSlots(
+        slots: {[string]: any},
+        humanoid: Humanoid?,
+        _targetRig: string?
+    ): ({[string]: any}, number)
+        local defaults: {[string]: any} = rigDefaultSlots(humanoid)
+        local isR6: boolean = defaults == DEFAULT_ANIMATION_IDS_R6
+        local dropped: number = 0
+        local resolved: {[string]: any} = {}
+        for category: string, value: any in pairs(slots) do
+            -- Only the body's own rig may be written into its Animate slots.
+            -- On R6 that means the R6 default ids; on R15, anything that is
+            -- not an R6 default id (pack clips included).
+            local owned: boolean
+            if isR6 then
+                owned = belongsToR6Defaults(value)
+            else
+                owned = not belongsToR6Defaults(value)
+            end
+            if owned then
+                resolved[category] = value
+            elseif not belongsToR15Defaults(value) then
+                -- Dropping the R15 defaults is not a loss: they equal the set
+                -- the R6 body already had, which is why the default pack looks
+                -- fine. Only real pack clips are worth telling the user about.
+                dropped += 1
+            end
+        end
+        for category: string, ids: any in pairs(defaults) do
+            if resolved[category] == nil then
+                resolved[category] = ids
+            end
+        end
+        return resolved, dropped
+    end
+
+    local function writeAnimationSlots(
+        animate: Instance,
+        slots: {[string]: any}
+    ): number
+        local changedCount: number = 0
+        for _, mapping in ipairs(MOVEMENT_ANIMATIONS) do
+            local chosen: any = slots[mapping.scriptCategory]
+            -- One ID for the whole category, or a list: idle has up to three
+            -- variants and Roblox plays them in order, so a default set keeps
+            -- all three instead of repeating the first.
+            local ids: {string} = {}
+            if type(chosen) == "table" then
+                for _, value: any in ipairs(chosen) do
+                    local id: string? = animationIdFromValue(value)
+                    if id then table.insert(ids, id) end
+                end
+            else
+                local id: string? = animationIdFromValue(chosen)
+                if id then table.insert(ids, id) end
+            end
+            local category: Instance? = animate:FindFirstChild(mapping.scriptCategory)
+            if #ids > 0 and category then
+                local targets: {Animation} = {}
+                if category:IsA("Animation") then
+                    table.insert(targets, category)
+                end
+                for _, descendant: Instance in ipairs(category:GetDescendants()) do
+                    if descendant:IsA("Animation") then
+                        table.insert(targets, descendant)
+                    end
+                end
+                for index: number, animation: Animation in ipairs(targets) do
+                    local chosenId: string = #ids == 1
+                        and ids[1]
+                        or ids[math.min(index, #ids)]
+                    if animation.AnimationId ~= chosenId then
+                        local changed: boolean = pcall(function()
+                            animation.AnimationId = chosenId
+                        end)
+                        if changed then
+                            changedCount += 1
+                        end
+                    end
+                end
+            end
+        end
+
         return changedCount
     end
 
-    local function applyTargetMovementAnimationsToCharacter(numericId: number): ()
-        local character: Model? = LocalPlayer.Character
-        local humanoid: Humanoid? = character
-            and character:FindFirstChildOfClass("Humanoid")
-            :: Humanoid?
-        if not character or not humanoid or humanoid.Health <= 0 then
-            notify("Your character is not available.")
-            return
+    -- Write the resolved slots into the humanoid's DESCRIPTION (on a
+    -- clone, then applied) and return how many fields were set. Kept
+    -- as the fallback when the Animate slots cannot be written at all;
+    -- as the primary route (v94) it reported success while the running
+    -- script kept playing the previous pack.
+    local function applySlotsViaDescription(
+        humanoid: Humanoid,
+        resolved: {[string]: any}
+    ): number
+        local description: any, isTemporary: boolean =
+            getAppliedDescription(humanoid)
+        if not description then
+            return 0
         end
-
-        local animate: Instance? = character:FindFirstChild("Animate")
-        if not animate then
-            notify("Your character has no Animate script to update.")
-            return
+        local working: any = description
+        if not isTemporary then
+            local cloneOk: boolean, clone: any = pcall(function(): any
+                return description:Clone()
+            end)
+            if cloneOk and clone then
+                working = clone
+                isTemporary = true
+            end
         end
-
-        ensureSnapshot(character, humanoid)
-        status("Downloading target movement animations...")
-
-        task.spawn(function(): ()
-            local changedCount: number = 0
-
-            local targetPlayer: Player? = Players:GetPlayerByUserId(numericId)
-            if not targetPlayer then
-                for _, p: Player in ipairs(Players:GetPlayers()) do
-                    if tostring(p.UserId) == tostring(settings.id)
-                        or string.lower(p.Name) == string.lower(tostring(settings.id))
-                        or string.lower(p.DisplayName) == string.lower(tostring(settings.id)) then
-                        targetPlayer = p
-                        break
-                    end
+        local setCount: number = 0
+        local setOk: boolean = pcall(function(): ()
+            for _, mapping in ipairs(MOVEMENT_ANIMATIONS) do
+                local chosen: any = resolved[mapping.scriptCategory]
+                if type(chosen) == "table" then
+                    chosen = chosen[1]
                 end
-            end
-
-            local targetChar: Model? = targetPlayer and targetPlayer.Character
-            local targetAnimate: Instance? = targetChar and targetChar:FindFirstChild("Animate")
-            if targetAnimate then
-                for _, mapping in ipairs(MOVEMENT_ANIMATIONS) do
-                    local sourceCat: Instance? = targetAnimate:FindFirstChild(mapping.scriptCategory)
-                    local targetCat: Instance? = animate:FindFirstChild(mapping.scriptCategory)
-                    if sourceCat and targetCat then
-                        local sourceAnims: {Animation} = {}
-                        if sourceCat:IsA("Animation") and sourceCat.AnimationId ~= "" then
-                            table.insert(sourceAnims, sourceCat)
-                        end
-                        for _, obj: Instance in ipairs(sourceCat:GetDescendants()) do
-                            if obj:IsA("Animation") and obj.AnimationId ~= "" then
-                                table.insert(sourceAnims, obj)
-                            end
-                        end
-                        if #sourceAnims > 0 then
-                            local targetAnims: {Animation} = {}
-                            if targetCat:IsA("Animation") then
-                                table.insert(targetAnims, targetCat)
-                            end
-                            for _, obj: Instance in ipairs(targetCat:GetDescendants()) do
-                                if obj:IsA("Animation") then
-                                    table.insert(targetAnims, obj)
-                                end
-                            end
-                            for idx: number, targetAnim: Animation in ipairs(targetAnims) do
-                                local src: Animation? = sourceAnims[idx] or sourceAnims[1]
-                                if src and src.AnimationId ~= "" and targetAnim.AnimationId ~= src.AnimationId then
-                                    local changed: boolean = pcall(function()
-                                        targetAnim.AnimationId = src.AnimationId
-                                    end)
-                                    if changed then
-                                        changedCount += 1
-                                    end
-                                end
-                            end
-                        end
-                    end
+                local digits: string? = chosen
+                    and string.match(tostring(chosen), "%d+")
+                    or nil
+                local asset: number? = digits and tonumber(digits) or nil
+                if asset and asset > 0 then
+                    working[mapping.descriptionField] = asset
+                    setCount += 1
                 end
-            end
-
-            if changedCount == 0 then
-                local description: any, fetchError: string? = getUserDescription(numericId)
-                if not description then
-                    notify("Could not load target avatar description: " .. tostring(fetchError))
-                    return
-                end
-                changedCount = copyTargetMovementAnimations(character, humanoid, description)
-                destroyInstance(description)
-            else
-                animationOverrideApplied = true
-                local animator: Animator? = humanoid:FindFirstChildOfClass("Animator")
-                if animator then
-                    local tracksOk: boolean, tracks: any = pcall(function()
-                        return animator:GetPlayingAnimationTracks()
-                    end)
-                    if tracksOk and type(tracks) == "table" then
-                        for _, track: AnimationTrack in ipairs(tracks) do
-                            pcall(track.Stop, track)
-                        end
-                    end
-                end
-                restartAnimateScript(animate)
-            end
-
-            if changedCount > 0 then
-                status("Applied " .. tostring(changedCount) .. " target movement animation slot(s); Animate restarted.")
-            else
-                status("No custom movement animations found for ID " .. tostring(numericId) .. " (target may use default animations).")
             end
         end)
+        if not setOk or setCount == 0 then
+            if isTemporary then
+                pcall(function(): ()
+                    working:Destroy()
+                end)
+            end
+            return 0
+        end
+        local applied: boolean = applyDescriptionToHumanoid(
+            humanoid,
+            working
+        )
+        if isTemporary then
+            pcall(function(): ()
+                working:Destroy()
+            end)
+        end
+        return applied and setCount or 0
+    end
+
+    -- Clip sanitization lives after refreshMeshPartSnapshot (it must
+    -- wait on clip loads; the avatar-copy helpers above may not).
+    -- Forward-declared here so applyAnimationSlots can call it.
+    local sanitizedSlots: (
+        humanoid: Humanoid,
+        resolved: {[string]: any}
+    ) -> ({[string]: any}, number) =
+        function(_humanoid: Humanoid, resolved: {[string]: any}): ({[string]: any}, number)
+            return resolved, 0
+        end
+    local invalidClipNotified: boolean = false
+
+    -- What every caller uses: the target's clips are resolved against the rig
+    -- and written into the Animate slots. The result is verified by
+    -- settleMovementAnimations right after, which owns every wait and every
+    -- fallback: copying an avatar must never block on an animation check.
+    local function applyAnimationSlots(
+        character: Model,
+        humanoid: Humanoid,
+        slots: {[string]: any},
+        targetRig: string?
+    ): number
+        local animate: Instance? = character:FindFirstChild("Animate")
+        if not animate then
+            return 0
+        end
+        local resolved: {[string]: any}, dropped: number =
+            resolvedAnimationSlots(slots, humanoid, targetRig)
+        -- The status reports this: "0 slots" on its own looks like a failure
+        -- even when the four foreign clips were refused on purpose.
+        lastDroppedSlotCount = dropped
+        if dropped > 0 and not foreignPackNotified then
+            foreignPackNotified = true
+            notify(
+                "That pack's clips are not "
+                    .. (rigName(humanoid) or "your rig")
+                    .. " clips; your own animations stay."
+            )
+        end
+        -- Nothing the engine refuses here may reach the description
+        -- or the slots: sanitized first, rig defaults in their place.
+        local sanitized: {[string]: any}, replacedClips: number =
+            sanitizedSlots(humanoid, resolved)
+        resolved = sanitized
+        lastResolvedSlots = resolved
+        if replacedClips > 0 and not invalidClipNotified then
+            invalidClipNotified = true
+            notify(
+                tostring(replacedClips)
+                    .. " of those animation slots cannot be used in "
+                    .. "this game (the engine refuses the clips); "
+                    .. "your rig's own clips fill them instead."
+            )
+        end
+        -- The Animate slots are the write that demonstrably retargets
+        -- the running script (packs switched correctly until v94).
+        -- The description route stays as fallback for builds whose
+        -- slots cannot be written: it reports success without changing
+        -- what the script plays here, which is exactly the reported
+        -- "I pick Mage and Ninja keeps playing" desync.
+        local changedCount: number = writeAnimationSlots(animate, resolved)
+        if changedCount == 0 then
+            changedCount = applySlotsViaDescription(humanoid, resolved)
+        end
+        if changedCount == 0 then
+            return 0
+        end
+        animationOverrideApplied = true
+        for _, track: AnimationTrack in ipairs(playingAnimationTracks(humanoid)) do
+            pcall(function(): ()
+                track:Stop()
+            end)
+        end
+        restartAnimateScript(animate)
+        return changedCount
+    end
+
+    -- Runs as soon as a description is fetched, before anything is applied:
+    -- this is the "load everything in the background" step. It only reads the
+    -- description, so it can never touch or roll back the visible avatar.
+    -- The target's own rig, when they are in the server. A description carries
+    -- clip ids but never the rig those clips were authored for.
+    local function targetRigFor(userId: number): string?
+        local ok: boolean, player: any = pcall(function(): any
+            return Players:GetPlayerByUserId(userId)
+        end)
+        if not ok or not player then
+            return nil
+        end
+        local character: any = player.Character
+        local humanoid: any = character and character:FindFirstChildOfClass("Humanoid")
+        if not humanoid then
+            return nil
+        end
+        return rigName(humanoid)
+    end
+
+    local function cacheTarget(userId: number, description: any): ()
+        local emotes: any, equippedEmotes: any = readDescriptionEmotes(description)
+        -- Only what the target actually chose. A 0 in a description means
+        -- "use Roblox's default", and which default that is depends on OUR rig,
+        -- so the gap is filled at apply time, never here.
+        local slots: {[string]: any} = animationSlotsFromDescription(description)
+        foreignPackNotified = false
+        targetCache = {
+            userId = userId,
+            slots = slots,
+            emotes = emotes,
+            equippedEmotes = equippedEmotes,
+            rig = targetRigFor(userId),
+        }
     end
 
     local function refreshMeshPartSnapshot(
@@ -17847,6 +22130,660 @@ function Module.init(context: Runtime): any
         end
         if #refreshed > 0 then
             current.meshParts = refreshed
+        end
+    end
+
+    -- Runs after the ids are written. The Animate script is restarted by the
+    -- write itself, but a restart does not guarantee a playing track: the
+    -- classic script only replays the idle loop from a Humanoid.Running event,
+    -- and a body standing still never fires one. That is the frozen pose in
+    -- the report. Here the body is checked, the idle is bridged when needed,
+    -- and a rig that cannot play the target's clips gets its own set back
+    -- instead of keeping a still avatar.
+    playingAnimationTracks = function(humanoid: Humanoid?): {AnimationTrack}
+        local playing: {AnimationTrack} = {}
+        if not humanoid then
+            return playing
+        end
+        local animator: Animator? = humanoid:FindFirstChildOfClass("Animator")
+        if not animator then
+            return playing
+        end
+        local ok: boolean, tracks: any = pcall(function(): any
+            return animator:GetPlayingAnimationTracks()
+        end)
+        if not ok or type(tracks) ~= "table" then
+            return playing
+        end
+        for _, track: AnimationTrack in ipairs(tracks) do
+            local isPlaying: boolean = false
+            pcall(function(): ()
+                isPlaying = track.IsPlaying == true
+            end)
+            if isPlaying then
+                table.insert(playing, track)
+            end
+        end
+        return playing
+    end
+
+    -- The Animator writes every pose into Motor6D.Transform. A clip built for
+    -- the OTHER rig never writes a joint: Roblox still hands back a track that
+    -- reports IsPlaying, so `#playingAnimationTracks > 0` is not proof that the
+    -- body moves. That gap is the frozen avatar reported with every target
+    -- except the default one: a bought R15 pack on an R6 body "plays" forever
+    -- without moving a single limb. Reading the joints is the only client-side
+    -- way to tell a body that animates from one stuck in its rest pose.
+    local function poseSignature(humanoid: Humanoid?): number?
+        local character: Instance? = humanoid and humanoid.Parent
+        if not character then
+            return nil
+        end
+        local joints: number = 0
+        local signature: number = 0
+        for _, object: Instance in ipairs(character:GetDescendants()) do
+            if object:IsA("Motor6D")
+                or object:IsA("AnimationConstraint") then
+                local ok: boolean, transform: CFrame = pcall(function(): CFrame
+                    return (object :: any).Transform
+                end)
+                if ok and transform then
+                    joints += 1
+                    signature += transform.X * 13.17 + transform.Y * 7.31
+                        + transform.Z * 3.77 + transform.R00 * 29.1
+                        + transform.R11 * 17.3 + transform.R22 * 11.9
+                end
+            end
+        end
+        if joints == 0 then
+            -- A rig we cannot read is not a rig we may accuse of being frozen.
+            return nil
+        end
+        return signature
+    end
+
+    -- A clip holding a pose (the floating/hover idles UGC packs ship)
+    -- barely moves a joint over time, but it still WRITES the joints:
+    -- their Transforms sit away from identity. A clip built for the
+    -- other rig never writes a joint at all, so its Transforms stay at
+    -- identity forever. That is how a held pose counts as animation
+    -- while a frozen wrong-rig clip still does not.
+    local function poseDriven(humanoid: Humanoid?): boolean
+        local character: Instance? = humanoid and humanoid.Parent
+        if not character then
+            return false
+        end
+        for _, object: Instance in ipairs(character:GetDescendants()) do
+            if object:IsA("Motor6D")
+                or object:IsA("AnimationConstraint") then
+                local ok: boolean, transform: CFrame = pcall(function(): CFrame
+                    return (object :: any).Transform
+                end)
+                if ok and transform then
+                    if math.abs(transform.X) > 1e-4
+                        or math.abs(transform.Y) > 1e-4
+                        or math.abs(transform.Z) > 1e-4
+                        or math.abs(transform.R00 - 1) > 1e-3
+                        or math.abs(transform.R11 - 1) > 1e-3
+                        or math.abs(transform.R22 - 1) > 1e-3 then
+                        return true
+                    end
+                end
+            end
+        end
+        return false
+    end
+
+    -- nil means "cannot tell" (no joints exposed), and callers must keep the
+    -- old behaviour in that case. A fixed step count instead of a wall clock
+    -- keeps the check from ever spinning when the scheduler is stubbed.
+    local function poseMoves(humanoid: Humanoid?, seconds: number): boolean?
+        local before: number? = poseSignature(humanoid)
+        if before == nil then
+            return nil
+        end
+        local steps: number = 5
+        for _ = 1, steps do
+            task.wait(seconds / steps)
+            local after: number? = poseSignature(humanoid)
+            if after == nil then
+                return nil
+            end
+            if math.abs(after - before) > 1e-3 then
+                return true
+            end
+        end
+        return false
+    end
+
+    -- Clears the tracks, restarts the script and proves the body moves again.
+    -- Returns false only when nothing plays, which is the signal to fall back
+    -- to the rig's own clips instead of leaving a frozen character.
+    local function activateAnimationOverride(
+        character: Model,
+        humanoid: Humanoid,
+        animate: Instance
+    ): boolean
+        for _, track: AnimationTrack in ipairs(playingAnimationTracks(humanoid)) do
+            pcall(function(): ()
+                track:Stop()
+            end)
+        end
+        restartAnimateScript(animate)
+        task.wait(0.1)
+        return #playingAnimationTracks(humanoid) > 0
+    end
+
+    -- Session cache of clip verdicts, and its one-time notice.
+    -- A verdict is computed ONCE per id and never inside the Animate
+    -- script's retry loop.
+    local clipValidity: {[string]: boolean} = {}
+
+    -- May the engine play this clip in this place? v95 probed by
+    -- loading the clip, but the probe itself printed "Failed to load
+    -- animation with sanitized ID ..." for every refused clip: quieter
+    -- than the old retry spam, still noise the user has to read. This
+    -- verdict never loads anything into an Animator:
+    --   1. Catalog metadata condemns what is certainly unusable -- a
+    --      deleted/private asset, or an id that is not an Animation at
+    --      all (a bundle id pasted where a clip belongs).
+    --   (A fetch probe was tried and removed: ContentProvider cannot
+    --      download other creators' animation assets at all, so it
+    --      condemned every foreign clip -- including packs already
+    --      playing on screen. Metadata is the only honest judge.)
+    -- Anything a probe cannot judge acquits: an unreadable answer must
+    -- never punish a working pack.
+    local function clipLoads(_humanoid: Humanoid, id: string): boolean
+        local cached: boolean? = clipValidity[id]
+        if cached ~= nil then
+            return cached
+        end
+        local valid: boolean = true
+        -- The rigs' own sets always play; skip the probes entirely.
+        if belongsToR15Defaults(id) or belongsToR6Defaults(id) then
+            clipValidity[id] = true
+            return true
+        end
+        local digits: string? = string.match(id, "%d+")
+        local assetId: number? = digits and tonumber(digits) or nil
+        if assetId then
+            local service: any = nil
+            pcall(function(): ()
+                service = (host :: any).MarketplaceService
+                    or (game :: any):GetService("MarketplaceService")
+            end)
+            if service and type(service.GetProductInfo) == "function" then
+                local infoOk: boolean, info: any = pcall(function(): any
+                    return service:GetProductInfo(
+                        assetId,
+                        Enum.InfoType.Asset
+                    )
+                end)
+                if not infoOk or type(info) ~= "table" then
+                    -- Gone or private: every load would be refused too.
+                    valid = false
+                else
+                    local assetType: any = info.AssetTypeId
+                    if assetType ~= nil then
+                        local isAnimation: boolean = false
+                        pcall(function(): ()
+                            if type(assetType) == "number" then
+                                isAnimation = assetType
+                                    == Enum.AssetType.Animation.Value
+                            else
+                                isAnimation = assetType
+                                    == Enum.AssetType.Animation
+                            end
+                        end)
+                        if not isAnimation then
+                            valid = false
+                        end
+                    end
+                end
+            end
+        end
+        clipValidity[id] = valid
+        return valid
+    end
+
+    -- Drop every clip the engine refuses here and fill the slot with
+    -- the rig's own set BEFORE anything reaches the description or the
+    -- Animate slots. An invalid id inside the Animate script is the
+    -- console spam and the 64-track pile-up: the script retries the
+    -- load forever and every retry is another track.
+    sanitizedSlots = function(
+        humanoid: Humanoid,
+        resolved: {[string]: any}
+    ): ({[string]: any}, number)
+        local defaults: {[string]: any} = rigDefaultSlots(humanoid)
+        local out: {[string]: any} = {}
+        local replaced: number = 0
+        for category: string, value: any in pairs(resolved) do
+            local kept: {string} = {}
+            local list: {any} = type(value) == "table"
+                and value
+                or {value}
+            for _, entry: any in ipairs(list) do
+                local id: string? = animationIdFromValue(entry)
+                if id and clipLoads(humanoid, id) then
+                    table.insert(kept, id)
+                end
+            end
+            if #kept > 0 then
+                out[category] = #kept == 1 and kept[1] or kept
+            else
+                replaced += 1
+                out[category] = defaults[category]
+            end
+        end
+        return out, replaced
+    end
+
+
+    local mirrorAllowed: boolean = false
+    local lastResolvedSlots: {[string]: any}? = nil
+
+    local function settleMovementAnimations(
+        character: Model,
+        humanoid: Humanoid
+    ): boolean
+        if not animationOverrideApplied then
+            return false
+        end
+        local animate: Instance? = character:FindFirstChild("Animate")
+        if not animate then
+            return false
+        end
+        local tracks: number = #playingAnimationTracks(humanoid)
+        if tracks > 0 then
+            -- The script is playing something. Only a moving pose proves it
+            -- belongs to this rig.
+            if poseMoves(humanoid, 0.3) ~= false then
+                return true
+            end
+            -- A loaded clip holding a pose is still an animation: the
+            -- floating/hover idles UGC packs ship barely move a joint
+            -- in 0.3 s, and reverting those to the default set is
+            -- exactly the "the toggle gives me no animation" report.
+            if poseDriven(humanoid) then
+                return true
+            end
+        end
+        -- Description retry, the offline-capable route: the ids came
+        -- from the target's HumanoidDescription (they are not in this
+        -- server to be read live), and a description's animations are
+        -- loaded by the avatar pipeline when it is applied. It only
+        -- counts if real tracks end up playing.
+        if mirrorAllowed and lastResolvedSlots then
+            local viaDescription: number =
+                applySlotsViaDescription(humanoid, lastResolvedSlots)
+            if viaDescription > 0 then
+                restartAnimateScript(animate)
+                task.wait(0.15)
+                if #playingAnimationTracks(humanoid) > 0
+                    and (poseMoves(humanoid, 0.3) ~= false
+                        or poseDriven(humanoid)) then
+                    notify(
+                        "The target's animations were applied through "
+                            .. "their avatar description."
+                    )
+                    return true
+                end
+            end
+        end
+
+        -- Pose mirror: copy the target's joints (AnimationConstraint
+        -- on this rig). startPoseMirror verifies the copy actually
+        -- lands on our body before it may claim success.
+        if mirrorAllowed and startPoseMirror(character, humanoid) then
+            return true
+        end
+        local defaults: {[string]: any} = rigDefaultSlots(humanoid)
+        local isR6: boolean = defaults == DEFAULT_ANIMATION_IDS_R6
+        if writeAnimationSlots(animate, defaults) > 0 then
+            for _, track: AnimationTrack in ipairs(
+                playingAnimationTracks(humanoid)
+            ) do
+                pcall(function(): ()
+                    track:Stop()
+                end)
+            end
+            restartAnimateScript(animate)
+            task.wait(0.1)
+            if #playingAnimationTracks(humanoid) > 0
+                and poseMoves(humanoid, 0.3) ~= false then
+                notify(
+                    "Those clips do not play on your "
+                        .. (isR6 and "R6" or "R15")
+                        .. " rig; your rig's own set is back."
+                )
+                return true
+            end
+        end
+
+        restoreMovementAnimationsOnly(character, humanoid)
+        notify(
+            "The target's animations do not play on your rig; "
+                .. "your own animations are back."
+        )
+        return false
+    end
+
+    -- Animation mode also accepts an animation *bundle* id (the same thing
+    -- Vape's Disguise accepts). A bundle item is a catalog entry, not always
+    -- a playable AnimationId, so the asset is inspected when the executor
+    -- exposes GetObjects; when it does not, the item id is used directly and
+    -- the status says so instead of pretending the pack was loaded.
+    local function animationAssetId(itemId: any): string?
+        if type((game :: any).GetObjects) == "function" then
+            local ok: boolean, objects: any = pcall(function(): any
+                return (game :: any):GetObjects("rbxassetid://" .. tostring(itemId))
+            end)
+            if ok and type(objects) == "table" then
+                for _, object: any in ipairs(objects) do
+                    if typeof(object) == "Instance" then
+                        if object:IsA("Animation") then
+                            return object.AnimationId
+                        end
+                        for _, descendant: Instance in ipairs(object:GetDescendants()) do
+                            if descendant:IsA("Animation") then
+                                return descendant.AnimationId
+                            end
+                        end
+                    end
+                end
+            end
+        end
+        return nil
+    end
+
+    -- Which Animate slot a bundle item belongs to, from its name.
+    -- Official packs name items "Ninja Run" / "Run Animation"; UGC packs
+    -- name them however the creator liked ("Endless Aura Floating Pack -
+    -- Idle", "hover idle", "Swim (Idle)"), so matching is by keyword
+    -- with the swim-idle pair resolved before plain idle can steal it.
+    local function bundleItemCategory(rawName: any): string?
+        local name: string = string.lower(tostring(rawName or ""))
+        local hasSwim: boolean = string.find(name, "swim", 1, true) ~= nil
+        local hasIdle: boolean = string.find(name, "idle", 1, true) ~= nil
+        if hasSwim and hasIdle then
+            return "swimidle"
+        end
+        if hasIdle then
+            return "idle"
+        end
+        if string.find(name, "walk", 1, true) then
+            return "walk"
+        end
+        if string.find(name, "run", 1, true) then
+            return "run"
+        end
+        if string.find(name, "jump", 1, true) then
+            return "jump"
+        end
+        if string.find(name, "climb", 1, true) then
+            return "climb"
+        end
+        if string.find(name, "fall", 1, true) then
+            return "fall"
+        end
+        if hasSwim then
+            return "swim"
+        end
+        return nil
+    end
+
+    local function slotsFromBundleItems(items: any): {[string]: any}
+        local slots: {[string]: any} = {}
+        if type(items) ~= "table" then
+            return slots
+        end
+        for _, item: any in ipairs(items) do
+            if type(item) == "table" then
+                local category: string? = bundleItemCategory(
+                    item.Name or item.name
+                )
+                local itemId: any = item.Id or item.id
+                if category and itemId then
+                    local resolved: string? = animationAssetId(itemId)
+                    local id: string = resolved
+                        or ("rbxassetid://" .. tostring(itemId))
+                    -- Several items can share a slot (idle variants):
+                    -- keep them all, in order, like a description does.
+                    local existing: any = slots[category]
+                    if type(existing) == "table" then
+                        table.insert(existing, id)
+                    elseif existing ~= nil then
+                        slots[category] = {existing, id}
+                    else
+                        slots[category] = id
+                    end
+                end
+            end
+        end
+        return slots
+    end
+
+    -- Any animation bundle id -> its Animate slots, whether Roblox made
+    -- the pack or a UGC creator did. Two sources, in order: the
+    -- MarketplaceService product info (bundle items with names), then
+    -- the public catalog API for the same bundle when the executor can
+    -- HttpGet it. Nothing is downloaded and nothing is hardcoded per
+    -- pack, which is the only way the thousands of UGC packs can work.
+    local function bundleAnimationSlots(bundleId: number): ({[string]: any}?, string?)
+        local service: any = (host :: any).MarketplaceService
+            or (game :: any):GetService("MarketplaceService")
+        local ok: boolean, product: any = pcall(function(): any
+            return service:GetProductInfo(bundleId, Enum.InfoType.Bundle)
+        end)
+        if ok and type(product) == "table"
+            and product.BundleType == "AvatarAnimations"
+            and type(product.Items) == "table" then
+            local slots: {[string]: any} = slotsFromBundleItems(product.Items)
+            if next(slots) ~= nil then
+                return slots, nil
+            end
+        end
+        local httpOk: boolean, body: any = pcall(function(): any
+            return (game :: any):HttpGet(
+                "https://catalog.roblox.com/v1/bundles/"
+                    .. tostring(math.floor(bundleId)) .. "/details"
+            )
+        end)
+        if httpOk and type(body) == "string" then
+            local httpService: any = (game :: any):GetService("HttpService")
+            local decodeOk: boolean, decoded: any = pcall(function(): any
+                return httpService:JSONDecode(body)
+            end)
+            if decodeOk and type(decoded) == "table"
+                and type(decoded.items) == "table" then
+                local slots: {[string]: any} =
+                    slotsFromBundleItems(decoded.items)
+                if next(slots) ~= nil then
+                    return slots, nil
+                end
+            end
+        end
+        if ok and type(product) == "table"
+            and product.BundleType ~= "AvatarAnimations" then
+            return nil, "That bundle is not an animation pack."
+        end
+        return nil, "That ID is not a user and no animation pack items were found for it."
+    end
+
+
+    -- The target's REAL slot ids, read from their own Animate script
+    -- while they are in this server. A description is a catalog
+    -- snapshot; the script riding their body holds the ids the engine
+    -- actually loaded for them, which are the ones that play here
+    -- (Probe 1 measured exactly those loading on our own Animator).
+    local function targetAnimateSlots(userId: number): {[string]: any}?
+        local player: any = nil
+        pcall(function(): ()
+            player = Players:GetPlayerByUserId(userId)
+        end)
+        local targetCharacter: any = player and player.Character
+        local animate: any = targetCharacter
+            and targetCharacter:FindFirstChild("Animate")
+        if not animate then
+            return nil
+        end
+        local slots: {[string]: any} = {}
+        for _, mapping in ipairs(MOVEMENT_ANIMATIONS) do
+            local container: any =
+                animate:FindFirstChild(mapping.scriptCategory)
+            local animation: any = nil
+            if container then
+                if container:IsA("Animation") then
+                    animation = container
+                else
+                    for _, descendant: any in ipairs(
+                        container:GetDescendants()
+                    ) do
+                        if descendant:IsA("Animation") then
+                            animation = descendant
+                            break
+                        end
+                    end
+                end
+            end
+            if animation then
+                local id: string? =
+                    animationIdFromValue(animation.AnimationId)
+                if id then
+                    slots[mapping.scriptCategory] = id
+                end
+            end
+        end
+        if next(slots) == nil then
+            return nil
+        end
+        return slots
+    end
+
+    -- Applies what was already cached for the current target. No fetch and no
+    -- clone: turning a toggle back on is immediate.
+    local function applyCachedMovementAnimations(
+        character: Model,
+        humanoid: Humanoid
+    ): number
+        local cached: TargetCache? = targetCache
+        if not cached then
+            return 0
+        end
+        local slots: {[string]: any} =
+            targetAnimateSlots(cached.userId) or cached.slots
+        local changedCount: number = applyAnimationSlots(
+            character,
+            humanoid,
+            slots,
+            cached.rig
+        )
+        -- Zero writes do not mean the body is fine: the ids may already be
+        -- the frozen set from a previous apply, and re-selecting the same
+        -- target has to settle it again instead of trusting the old state.
+        if changedCount > 0 or animationOverrideApplied then
+            mirrorAllowed = true
+            settleMovementAnimations(character, humanoid)
+            mirrorAllowed = false
+        end
+        return changedCount
+    end
+
+    -- The pack the user picked: one of the built-in catalog sets, or a
+    -- bundle resolved by id ("Custom"). Written through the exact same
+    -- resolved path as a target's clips: the rig rules still apply (an
+    -- R6 body is handed the R6 set instead of clips it cannot play), and
+    -- selecting a pack wins over the target's movement animations
+    -- because it is the explicit choice. Nothing is downloaded: the
+    -- pack ids are catalog data and the engine streams the clips.
+    local function selectedPackSlots(): {[string]: any}?
+        if settings.animationPack == "Custom" then
+            return settings.customPackSlots
+        end
+        return ANIMATION_PACK_BY_NAME[settings.animationPack]
+    end
+
+    local function packDisplayName(): string
+        if settings.animationPack == "Custom" then
+            return settings.customPackName or "Custom"
+        end
+        return settings.animationPack
+    end
+
+    -- While Show Advanced is on, the dropdown pack is suspended: the
+    -- character keeps its own animations until an advanced ID (a whole
+    -- bundle or a per-slot bundle) is submitted, which arms this flag.
+    local advancedPackArmed: boolean = false
+
+    local function applyAnimationPack(
+        character: Model,
+        humanoid: Humanoid
+    ): number
+        if settings.showAdvanced and not advancedPackArmed then
+            return 0
+        end
+        stopPoseMirror()
+        local slots: {[string]: any}? = selectedPackSlots()
+        if not slots then
+            return 0
+        end
+        local changedCount: number = applyAnimationSlots(
+            character,
+            humanoid,
+            slots,
+            nil
+        )
+        if changedCount > 0 or animationOverrideApplied then
+            settleMovementAnimations(character, humanoid)
+        end
+        return changedCount
+    end
+
+    local function applyCachedEmotes(
+        character: Model,
+        humanoid: Humanoid
+    ): boolean
+        local cached: TargetCache? = targetCache
+        local current: AppearanceSnapshot? = snapshot
+        if not cached or not current or current.character ~= character then
+            return false
+        end
+        if type(cached.emotes) ~= "table" or type(cached.equippedEmotes) ~= "table" then
+            return false
+        end
+        local applied: boolean = setHumanoidEmotes(
+            humanoid,
+            cached.emotes,
+            cached.equippedEmotes
+        )
+        if not applied then
+            return false
+        end
+        emotesAppliedToHumanoid = true
+        refreshMeshPartSnapshot(character, current)
+        return true
+    end
+
+    -- Independent counterpart of restoreMovementAnimationsOnly: only the
+    -- emotes go back to the snapshot, the avatar and the animations stay.
+    local function restoreEmotesOnly(
+        character: Model,
+        humanoid: Humanoid?
+    ): ()
+        local current: AppearanceSnapshot? = snapshot
+        if not humanoid or not current or current.character ~= character
+            or not emotesAppliedToHumanoid then
+            return
+        end
+        local restored: boolean = setHumanoidEmotes(
+            humanoid,
+            current.emotes,
+            current.equippedEmotes
+        )
+        if restored then
+            emotesAppliedToHumanoid = false
+            refreshMeshPartSnapshot(character, current)
         end
     end
 
@@ -18114,6 +23051,7 @@ function Module.init(context: Runtime): any
         humanoid: Humanoid,
         userId: number
     ): ()
+        lastDroppedSlotCount = 0
         local description: any, fetchError: string? = getUserDescription(userId)
         if not description then
             if stillCurrent(token, character) then
@@ -18125,6 +23063,12 @@ function Module.init(context: Runtime): any
             destroyInstance(description)
             return
         end
+
+        -- Load the target's animations and emotes first. They stay cached even
+        -- when both toggles are off, so the avatar below is the only thing the
+        -- toggles can ever apply later without another fetch.
+        cacheTarget(userId, description)
+        local cached: TargetCache? = targetCache
 
         local current: AppearanceSnapshot = ensureSnapshot(character, humanoid)
         restoreOriginalAppearance(character, humanoid)
@@ -18175,32 +23119,34 @@ function Module.init(context: Runtime): any
             return
         end
 
-        targetEmotes, targetEquippedEmotes = readDescriptionEmotes(description)
         local emoteWarning: string? = nil
-        if targetEmotes and targetEquippedEmotes then
-            local emotesApplied: boolean, emoteError: string? = setHumanoidEmotes(
-                humanoid,
-                targetEmotes,
-                targetEquippedEmotes
-            )
-            if emotesApplied then
-                emotesAppliedToHumanoid = true
-                refreshMeshPartSnapshot(character, current)
-            else
-                emoteWarning = tostring(emoteError)
-
-                local rolledBack: boolean = setHumanoidEmotes(
+        if settings.showTargetEmotes then
+            if cached and type(cached.emotes) == "table"
+                and type(cached.equippedEmotes) == "table" then
+                local emotesApplied: boolean, emoteError: string? = setHumanoidEmotes(
                     humanoid,
-                    current.emotes,
-                    current.equippedEmotes
+                    cached.emotes,
+                    cached.equippedEmotes
                 )
-                if not rolledBack then
+                if emotesApplied then
                     emotesAppliedToHumanoid = true
-                    emoteWarning ..= " The original emotes could not be restored yet."
+                    refreshMeshPartSnapshot(character, current)
+                else
+                    emoteWarning = tostring(emoteError)
+
+                    local rolledBack: boolean = setHumanoidEmotes(
+                        humanoid,
+                        current.emotes,
+                        current.equippedEmotes
+                    )
+                    if not rolledBack then
+                        emotesAppliedToHumanoid = true
+                        emoteWarning ..= " The original emotes could not be restored yet."
+                    end
                 end
+            else
+                emoteWarning = "The target avatar description did not expose emotes."
             end
-        else
-            emoteWarning = "The target avatar description did not expose emotes."
         end
         if not stillCurrent(token, character) then
             if emotesAppliedToHumanoid then
@@ -18216,19 +23162,6 @@ function Module.init(context: Runtime): any
             destroyInstance(description)
             destroyInstance(clone)
             return
-        end
-
-        if settings.useTargetMovementAnimations then
-            copyTargetMovementAnimations(
-                character,
-                humanoid,
-                description
-            )
-            if not stillCurrent(token, character) then
-                destroyInstance(description)
-                destroyInstance(clone)
-                return
-            end
         end
 
         installAppearanceFilter(character)
@@ -18247,241 +23180,192 @@ function Module.init(context: Runtime): any
         local copied: boolean, copyError: any = pcall(function()
             copyCharacterAppearance(character, clone)
         end)
-        destroyInstance(description)
         destroyInstance(clone)
         if not copied then
+            destroyInstance(description)
             notify("The avatar was loaded, but some appearance parts could not be copied: "
                 .. tostring(copyError))
             return
         end
-        if stillCurrent(token, character) then
-            activeCard:SetStatus("Character")
-            if emoteWarning and targetEmotes and targetEquippedEmotes then
-                notify("Disguise emotes could not be applied: " .. emoteWarning)
-            end
-            status("Ready")
+        if not stillCurrent(token, character) then
+            destroyInstance(description)
+            return
         end
-    end
-
-    local function getService(name: string): any
-        local supplied: any = host[name]
-        if supplied then
-            return supplied
+        activeCard:SetStatus("Character")
+        if emoteWarning and settings.showTargetEmotes then
+            notify("Disguise emotes could not be applied: " .. emoteWarning)
         end
-        local ok: boolean, result: any = pcall(function()
-            return (game :: any):GetService(name)
-        end)
-        return if ok then result else nil
-    end
-
-    local function getBundleItems(
-        bundleId: number,
-        productInfo: any
-    ): ({any}?, string?)
-        local directItems: any = productInfo.Items or productInfo.items
-        local hasDirectItems: boolean = type(directItems) == "table"
-            and #directItems > 0
-        local directType: string = tostring(productInfo.BundleType or "")
-        if hasDirectItems and directType ~= "" then
-            return directItems, directType
-        end
-
-        for _, serviceName: string in ipairs({"AssetService", "AvatarEditorService"}) do
-            local service: any = getService(serviceName)
-            local method: any = service and service.GetBundleDetailsAsync
-            if type(method) == "function" then
-                local ok: boolean, details: any = pcall(method, service, bundleId)
-                if ok and type(details) == "table" then
-                    local items: any = details.Items or details.items
-                    local bundleType: string = tostring(
-                        details.BundleType or directType
-                    )
-                    if bundleType ~= ""
-                        and type(items) == "table"
-                        and #items > 0 then
-                        return items, bundleType
-                    end
-                    if bundleType ~= "" and hasDirectItems then
-                        return directItems, bundleType
-                    end
-                end
+        -- Movement animations are cosmetic and optional, so they run LAST and
+        -- can never block or roll back the avatar copy above.
+        if settings.useTargetMovementAnimations then
+            local movementOk: boolean, movementResult: any = pcall(
+                applyCachedMovementAnimations,
+                character,
+                humanoid
+            )
+            lastAppliedSlotCount = movementOk
+                and (tonumber(movementResult) or 0)
+                or 0
+            if not movementOk then
+                notify(
+                    "The avatar was applied, but movement animations failed: "
+                        .. tostring(movementResult)
+                )
             end
         end
-        if hasDirectItems then
-            return directItems, directType
+        if settings.animationPack ~= "Off" then
+            local packOk: boolean, packResult: any = pcall(
+                applyAnimationPack,
+                character,
+                humanoid
+            )
+            if packOk then
+                lastAppliedSlotCount = tonumber(packResult) or 0
+            end
         end
-        return nil, nil
+        destroyInstance(description)
+        -- The rig and the number of slots are the two facts a report needs:
+        -- "R6 · 0 slots" and "R15 · 7 slots" are different bugs.
+        local applied: string = string.format(
+            "%s · %s · %d slots",
+            settings.mode,
+            rigName(humanoid) or "rig?",
+            lastAppliedSlotCount
+        )
+        if (lastDroppedSlotCount or 0) > 0 then
+            applied ..= string.format(
+                " · %d pack clips skipped",
+                lastDroppedSlotCount or 0
+            )
+        end
+        if settings.animationPack ~= "Off" then
+            applied ..= " · pack " .. packDisplayName()
+        end
+        status(applied)
     end
 
-    local function getAnimationType(itemName: string): string
-        local normalized: string = string.lower(itemName)
-            :gsub("%s*animations?%s*$", "")
-            :gsub("%s+", "")
-        local aliases: {[string]: string} = {
-            pose = "idle",
-            idling = "idle",
-            walking = "walk",
-            running = "run",
-            jumping = "jump",
-            falling = "fall",
-            climbing = "climb",
-            swimming = "swim",
-        }
-        return aliases[normalized] or normalized
-    end
-
-    local function applyAnimationBundle(
+    -- Animation mode: the same target user as Character mode, but only what
+    -- moves on our own avatar. No clone, mesh, accessory or texture is copied:
+    -- the character you already have must stay fully visible.
+    local function applyAnimationDisguise(
         token: number,
         character: Model,
         humanoid: Humanoid,
-        bundleId: number
+        userId: number
     ): ()
-        local items: {any}?, rawBundleType: string? = getBundleItems(
-            bundleId,
-            {}
-        )
-        local productInfoError: string? = nil
-        if not items or rawBundleType == nil or rawBundleType == "" then
+        lastDroppedSlotCount = 0
+        local description: any, fetchError: string? = getUserDescription(userId)
+        if description then
+            if not stillCurrent(token, character) then
+                destroyInstance(description)
+                return
+            end
+            cacheTarget(userId, description)
+        else
+            -- Not a user: Animation mode also accepts an animation pack id.
+            local slots: {[string]: any}?, bundleError: string? =
+                bundleAnimationSlots(userId)
+            if not slots then
+                if stillCurrent(token, character) then
+                    notify(
+                        "Could not load that ID: " .. tostring(fetchError)
+                            .. " " .. tostring(bundleError)
+                    )
+                end
+                return
+            end
             if not stillCurrent(token, character) then
                 return
             end
-            local infoOk: boolean, productInfo: any = pcall(function()
-                return MarketplaceService:GetProductInfo(
-                    bundleId,
-                    Enum.InfoType.Bundle
-                )
-            end)
-            if not stillCurrent(token, character) then
-                return
-            end
-            if infoOk and type(productInfo) == "table" then
-                local fallbackItems: {any}?, fallbackBundleType: string? =
-                    getBundleItems(bundleId, productInfo)
-                if fallbackItems then
-                    items = fallbackItems
-                end
-                if fallbackBundleType and fallbackBundleType ~= "" then
-                    rawBundleType = fallbackBundleType
-                end
-            else
-                productInfoError = tostring(productInfo)
-            end
+            -- Keep the resolved pack in the session library: switching
+            -- to Character mode (or its movement toggle) reuses these
+            -- slots instead of resolving the bundle again.
+            settings.customPackSlots = slots
+            settings.customPackName = "Bundle " .. tostring(userId)
+            settings.animationPack = "Custom"
+            advancedPackArmed = true
+            targetCache = {
+                userId = userId,
+                slots = slots :: {[string]: any},
+                emotes = nil,
+                equippedEmotes = nil,
+            }
         end
-        if not stillCurrent(token, character) then
-            return
-        end
-        if not items then
-            local detail: string = productInfoError
-                and (" " .. productInfoError)
-                or ""
-            notify("Could not read the bundle's animation items." .. detail)
-            return
-        end
-        local bundleType: string = string.lower(tostring(rawBundleType or ""))
-        if bundleType == "" then
-            notify("This client could not verify the bundle type.")
-            return
-        end
-        if not string.find(bundleType, "animation", 1, true) then
-            notify("That ID is not an avatar animation bundle.")
-            return
-        end
+        local cached: TargetCache? = targetCache
 
         local current: AppearanceSnapshot = ensureSnapshot(character, humanoid)
         restoreOriginalAppearance(character, humanoid)
         stopAppearanceFilter()
 
-        local animate: Instance? = character:FindFirstChild("Animate")
-        if not animate then
-            notify("This character has no Animate script to update.")
-            return
+        -- Animation mode is fixed: the target's emotes and movement animations
+        -- always apply. Neither Character toggle exists in this mode.
+        local emotesApplied: boolean = false
+        if cached and type(cached.emotes) == "table"
+            and type(cached.equippedEmotes) == "table" then
+            local applied: boolean, emoteError: string? = setHumanoidEmotes(
+                humanoid,
+                cached.emotes,
+                cached.equippedEmotes
+            )
+            if applied then
+                emotesApplied = true
+                emotesAppliedToHumanoid = true
+                refreshMeshPartSnapshot(character, current)
+            else
+                notify(
+                    "Disguise emotes could not be applied: "
+                        .. tostring(emoteError)
+                )
+            end
         end
 
-        local changedCount: number = 0
-        for _, item: any in ipairs(items) do
-            if not stillCurrent(token, character) then
-                return
+        local changedCount: number = applyCachedMovementAnimations(character, humanoid)
+        if settings.animationPack ~= "Off" then
+            local packCount: number = applyAnimationPack(character, humanoid)
+            if packCount > 0 then
+                changedCount = packCount
             end
-            local itemName: string = tostring(item.Name or item.name or "")
-            local itemId: number? = tonumber(item.Id or item.AssetId or item.id)
-            local itemType: string = getAnimationType(itemName)
-            local targetCategory: Instance? = animate:FindFirstChild(itemType)
-            if itemId and targetCategory then
-                local objectsOk: boolean, objects: any = pcall(function()
-                    return (game :: any):GetObjects(
-                        "rbxassetid://" .. tostring(itemId)
-                    )
-                end)
-                if objectsOk and type(objects) == "table" then
-                    if not stillCurrent(token, character) then
-                        for _, object: Instance in ipairs(objects) do
-                            destroyInstance(object)
-                        end
-                        return
-                    end
-                    local sourceAnimation: Animation? = nil
-                    for _, object: Instance in ipairs(objects) do
-                        if object:IsA("Animation") then
-                            sourceAnimation = object
-                            break
-                        end
-                        sourceAnimation = object:FindFirstChildWhichIsA(
-                            "Animation",
-                            true
-                        ) :: Animation?
-                        if sourceAnimation then
-                            break
-                        end
-                    end
-                    if sourceAnimation then
-                        local targetAnimations: {Animation} = {}
-                        if targetCategory:IsA("Animation") then
-                            table.insert(targetAnimations, targetCategory)
-                        end
-                        for _, object: Instance in ipairs(targetCategory:GetDescendants()) do
-                            if object:IsA("Animation") then
-                                table.insert(targetAnimations, object)
-                            end
-                        end
-                        for _, animation: Animation in ipairs(targetAnimations) do
-                            local changed: boolean = pcall(function()
-                                animation.AnimationId = sourceAnimation.AnimationId
-                            end)
-                            if changed then
-                                changedCount += 1
-                            end
-                        end
-                    end
-                    for _, object: Instance in ipairs(objects) do
-                        destroyInstance(object)
-                    end
+        end
+        destroyInstance(description)
+        if not stillCurrent(token, character) then
+            if emotesApplied then
+                local rolledBack: boolean = setHumanoidEmotes(
+                    humanoid,
+                    current.emotes,
+                    current.equippedEmotes
+                )
+                if rolledBack then
+                    emotesAppliedToHumanoid = false
                 end
             end
+            return
         end
-
-        if changedCount == 0 then
-
-            restoreOriginalAppearance(character, humanoid)
-            notify("No compatible animations were found in that bundle.")
+        if not emotesApplied and changedCount == 0 then
+            notify("That avatar did not expose emotes or movement animations.")
             return
         end
 
-        animationOverrideApplied = true
-        local animator: Animator? = humanoid:FindFirstChildOfClass("Animator")
-        if animator then
-            for _, track: AnimationTrack in ipairs(animator:GetPlayingAnimationTracks()) do
-                pcall(track.Stop, track)
-            end
+        activeCard:SetStatus("Animation")
+        local animationLine: string = string.format(
+            "Animation · %s · emotes %s · %d slots",
+            rigName(humanoid) or "rig?",
+            emotesApplied and "applied" or "not available",
+            changedCount
+        )
+        if (lastDroppedSlotCount or 0) > 0 then
+            animationLine ..= string.format(
+                " · %d pack clips skipped",
+                lastDroppedSlotCount or 0
+            )
         end
-        restartAnimateScript(animate)
-        if current.character == character and stillCurrent(token, character) then
-            activeCard:SetStatus("Animation")
-            status("Animation bundle applied to " .. tostring(changedCount)
-                .. " slots; Animate restarted. Original IDs return when disabled.")
+        if settings.animationPack ~= "Off" then
+            animationLine ..= " · pack " .. packDisplayName()
         end
+        status(animationLine .. ". Your own avatar stays visible.")
     end
 
     local function applyDisguise(): ()
+        lastDroppedSlotCount = 0
         generation += 1
         local token: number = generation
         local character: Model? = LocalPlayer.Character
@@ -18499,8 +23383,9 @@ function Module.init(context: Runtime): any
         end
 
         local selectedMode: string = settings.mode
-        targetEmotes = nil
-        targetEquippedEmotes = nil
+        -- A new application invalidates the previous target's cache. The fetch
+        -- that follows repopulates it before anything is applied.
+        targetCache = nil
         task.spawn(function(): ()
             if selectedMode == "Character" then
                 applyCharacterDisguise(
@@ -18510,7 +23395,7 @@ function Module.init(context: Runtime): any
                     numericId :: number
                 )
             else
-                applyAnimationBundle(
+                applyAnimationDisguise(
                     token,
                     character :: Model,
                     humanoid :: Humanoid,
@@ -18520,8 +23405,98 @@ function Module.init(context: Runtime): any
         end)
     end
 
+    local function activeCharacter(): (any, any)
+        local character: any = LocalPlayer.Character
+        local humanoid: any = character
+            and character:FindFirstChildOfClass("Humanoid")
+        if not character or not humanoid then
+            return nil, nil
+        end
+        return character, humanoid
+    end
+
+    -- Animation Speed: every playing track of our own character runs at
+    -- this rate (0 freezes, 1 is normal, 2 is double). The Heartbeat
+    -- below re-applies it, because the Animate script starts new tracks
+    -- at speed 1 whenever the animation changes.
+    local function applyAnimationSpeedValue(speed: number): ()
+        local _character: any, humanoid: any = activeCharacter()
+        if not humanoid then
+            return
+        end
+        for _, track: AnimationTrack in ipairs(playingAnimationTracks(humanoid)) do
+            pcall(function(): ()
+                track:AdjustSpeed(speed)
+            end)
+        end
+    end
+
+    local function applyAnimationSpeed(): ()
+        applyAnimationSpeedValue(settings.animationSpeed)
+    end
+
+    -- Character mode only. Both toggles are independent: one touches the
+    -- Animate slots, the other the Humanoid emotes, and neither refetches the
+    -- avatar because cacheTarget already loaded everything.
+    local function setMovementAnimationsEnabled(enabled: boolean): ()
+        settings.useTargetMovementAnimations = enabled
+        if not activeCard or not activeCard.Enabled or settings.mode ~= "Character" then
+            return
+        end
+        local character: any, humanoid: any = activeCharacter()
+        if not character then
+            return
+        end
+        if enabled then
+            if not targetCache then
+                applyDisguise()
+                return
+            end
+            local appliedCount: number =
+                applyCachedMovementAnimations(character, humanoid)
+            if appliedCount == 0 and not animationOverrideApplied then
+                -- The cache wrote nothing (the Animate slots already
+                -- matched, or the snapshot belongs to another body):
+                -- refetch and apply the whole disguise instead of
+                -- leaving the character with no animation change.
+                applyDisguise()
+                return
+            end
+        else
+            restoreMovementAnimationsOnly(character, humanoid)
+        end
+        status(settings.mode)
+    end
+
+    local function setTargetEmotesEnabled(enabled: boolean): ()
+        settings.showTargetEmotes = enabled
+        if not activeCard or not activeCard.Enabled or settings.mode ~= "Character" then
+            return
+        end
+        local character: any, humanoid: any = activeCharacter()
+        if not character then
+            return
+        end
+        if enabled then
+            if not targetCache then
+                applyDisguise()
+                return
+            end
+            if type(targetCache.emotes) ~= "table"
+                or type(targetCache.equippedEmotes) ~= "table" then
+                notify("That avatar did not expose emotes.")
+                return
+            end
+            applyCachedEmotes(character, humanoid)
+        else
+            restoreEmotesOnly(character, humanoid)
+        end
+        status(settings.mode)
+    end
+
     local function restoreAndRelease(): ()
         generation += 1
+        applyAnimationSpeedValue(1)
         stopAppearanceFilter()
         local character: Model? = LocalPlayer.Character
         local humanoid: Humanoid? = character
@@ -18531,58 +23506,9 @@ function Module.init(context: Runtime): any
             restoreOriginalAppearance(character, humanoid)
         end
         destroySnapshot()
+        targetCache = nil
         table.clear(cloned)
         table.clear(disguisedItems)
-    end
-
-    local function sortedEmoteNames(data: any): {string}
-        local names: {string} = {}
-        if type(data) == "table" then
-            for name: any in pairs(data) do
-                if type(name) == "string" then
-                    table.insert(names, name)
-                end
-            end
-        end
-        table.sort(names)
-        return names
-    end
-
-    local function equippedEmoteNames(data: any): {string}
-        local names: {string} = {}
-        local seen: {[string]: boolean} = {}
-        if type(data) == "table" then
-            for key: any, entry: any in pairs(data) do
-                local name: any = nil
-                if type(entry) == "string" then
-                    name = entry
-                elseif entry == true and type(key) == "string" then
-                    name = key
-                elseif type(entry) == "table" then
-                    name = entry.Name or entry.name or entry[1]
-                end
-                if type(name) == "string" and not seen[name] then
-                    seen[name] = true
-                    table.insert(names, name)
-                end
-            end
-        end
-        table.sort(names)
-        return names
-    end
-
-    local function formatNameList(names: {string}): string
-        if #names == 0 then
-            return "none"
-        end
-        local shown: {string} = {}
-        for index = 1, math.min(#names, 12) do
-            table.insert(shown, names[index])
-        end
-        if #names > 12 then
-            table.insert(shown, "+" .. tostring(#names - 12) .. " more")
-        end
-        return table.concat(shown, ", ")
     end
 
     local card: any
@@ -18591,10 +23517,32 @@ function Module.init(context: Runtime): any
         Category = "Utilities",
         ConfigKey = "Universal.Disguise",
         Order = 26,
-        Tooltip = "Copies a target avatar's cosmetics and emotes; optionally copies its movement animations. Animation mode changes local motion IDs only, not the visible avatar.",
+        Tooltip = "Character: copies the target avatar, then optionally its emotes and movement animations through two independent toggles (both preloaded). Animation: always applies that user's, or animation pack's, movement animations and emotes to your own avatar, without hiding it. Default ID 78492.",
         Function = function(enabled: boolean): ()
             if enabled then
                 card:SetStatus(settings.mode)
+                -- Keep new tracks at the chosen speed: the Animate
+                -- script starts each one at 1.
+                local runService: any = host.RunService
+                if not runService then
+                    local ok: boolean, service: any = pcall(function(): any
+                        return (game :: any):GetService("RunService")
+                    end)
+                    if ok then
+                        runService = service
+                    end
+                end
+                if runService and runService.Heartbeat then
+                    local lastSpeedAt: number = 0
+                    card:Clean(runService.Heartbeat:Connect(function(): ()
+                        local now: number = os.clock()
+                        if now - lastSpeedAt < 0.2 then
+                            return
+                        end
+                        lastSpeedAt = now
+                        applyAnimationSpeed()
+                    end))
+                end
                 card:Clean(LocalPlayer.CharacterAdded:Connect(function(): ()
                     generation += 1
                     stopAppearanceFilter()
@@ -18621,8 +23569,6 @@ function Module.init(context: Runtime): any
             card:SetStatus(value)
             if card.Enabled then
                 if value == "Animation" then
-                    targetEmotes = nil
-                    targetEquippedEmotes = nil
                     local character: Model? = LocalPlayer.Character
                     local humanoid: Humanoid? = character
                         and character:FindFirstChildOfClass("Humanoid")
@@ -18635,26 +23581,229 @@ function Module.init(context: Runtime): any
                 applyDisguise()
             end
         end,
-        Tooltip = "Character: visible avatar cosmetics and emotes from a user ID. Animation: movement animation IDs from a bundle; it does not render the target character.",
+        Tooltip = "Character: the visible avatar, plus independent toggles for its emotes and movement animations. Animation: the same user ID's emotes and movement animations only, always on; your character stays exactly as it is.",
     })
 
-    card:CreateButton({
-        Name = "Use target movement animations",
-        Show = {Option = "Mode", Values = {"Character"}},
-        Function = function(): ()
-            if not card.Enabled or settings.mode ~= "Character" then
-                notify("Enable Disguise in Character mode first.")
-                return
+    card:CreateSlider({
+        Name = "Animation Speed",
+        Min = 0,
+        Max = 2,
+        Step = 0.05,
+        Default = settings.animationSpeed,
+        Function = function(value: number): ()
+            settings.animationSpeed = math.clamp(value, 0, 2)
+            if card.Enabled then
+                applyAnimationSpeed()
             end
-            local numericId: number?, idError: string? = parseId()
-            if not numericId then
-                notify(tostring(idError))
-                return
-            end
-            settings.useTargetMovementAnimations = true
-            applyTargetMovementAnimationsToCharacter(numericId)
         end,
-        Tooltip = "Downloads and applies the target user's movement animations (idle, walk, run, jump, climb, fall, swim) to your character. Original IDs return when Disguise is turned off.",
+        Tooltip = "Playback speed of your character's animations while Disguise is on: 0 freezes them, 1 is normal, 2 is double speed. Turning Disguise off restores speed 1.",
+    })
+
+    local packIndex: number = 1
+    for index: number, name: string in ipairs(ANIMATION_PACK_NAMES) do
+        if name == settings.animationPack then
+            packIndex = index
+            break
+        end
+    end
+    card:CreateDropdown({
+        Name = "Animation Pack",
+        List = ANIMATION_PACK_NAMES,
+        Index = packIndex,
+        Function = function(value: string): ()
+            settings.animationPack = value
+            if settings.showAdvanced then
+                status(
+                    settings.mode
+                        .. " · advanced on · pack suspended"
+                )
+                return
+            end
+            if not card.Enabled then
+                return
+            end
+            if value == "Off" then
+                -- Back to whatever the mode/toggles say: re-running the
+                -- apply rebuilds it exactly instead of unpicking slots here.
+                applyDisguise()
+                return
+            end
+            local character: Model? = LocalPlayer.Character
+            local humanoid: Humanoid? = character
+                and character:FindFirstChildOfClass("Humanoid")
+                :: Humanoid?
+            if character and humanoid then
+                applyAnimationPack(character, humanoid)
+                status(settings.mode .. " · pack " .. value)
+            end
+        end,
+        Tooltip = "Built-in Roblox catalog animation packs (Ninja, Knight, Zombie, Toy and 13 more), applied to your character's own Animate slots -- idle, walk, run, jump, fall, climb, swim. No download: the ids are catalog data kept in the script and the engine streams the clips; your choice is saved. A selected pack wins over the target's movement animations. Off returns to the target/your own set. R15 clips on an R6 body stay refused for that rig, as before.",
+    })
+
+    card:CreateToggle({
+        Name = "Show Advanced",
+        Default = false,
+        Function = function(value: boolean): ()
+            settings.showAdvanced = value
+            if not card.Enabled then
+                return
+            end
+            local character: Model? = LocalPlayer.Character
+            local humanoid: Humanoid? = character
+                and character:FindFirstChildOfClass("Humanoid")
+                :: Humanoid?
+            if not character or not humanoid then
+                return
+            end
+            if value then
+                -- The pack comes off the moment Advanced opens: your
+                -- own animations are back until an advanced ID is
+                -- submitted below.
+                advancedPackArmed = false
+                restoreMovementAnimationsOnly(character, humanoid)
+                if animationOverrideApplied then
+                    applyAnimationSlots(
+                        character,
+                        humanoid,
+                        rigDefaultSlots(humanoid),
+                        nil
+                    )
+                end
+                status(settings.mode .. " · advanced · your own animations")
+            elseif settings.animationPack ~= "Off" then
+                applyAnimationPack(character, humanoid)
+                status(settings.mode .. " · pack " .. packDisplayName())
+            end
+        end,
+        Tooltip = "Shows the advanced animation options (any pack by bundle ID, or one bundle per slot). Turning this on suspends the Animation Pack above immediately and gives you your own animations back until you submit an advanced ID; turning it off re-applies the selected pack.",
+    })
+
+    card:CreateTextBox({
+        Name = "Pack Bundle ID",
+        Show = {Option = "Show Advanced", Values = {true}},
+        Default = "",
+        Function = function(value: string): ()
+            local trimmed: string = tostring(value or "")
+                :gsub("^%s+", "")
+                :gsub("%s+$", "")
+            local digits: string? = string.match(trimmed, "%d+")
+            local bundleId: number? = digits and tonumber(digits) or nil
+            if not bundleId then
+                notify("Enter an animation bundle ID first (the number in its catalog link).")
+                return
+            end
+            -- Any pack at all -- official or UGC -- resolved live from
+            -- the bundle's own items, so the thousands of creator packs
+            -- work without a single hardcoded id.
+            local slots: {[string]: any}?, bundleError: string? =
+                bundleAnimationSlots(bundleId)
+            if not slots then
+                notify("Could not load that pack: " .. tostring(bundleError))
+                return
+            end
+            settings.customPackSlots = slots
+            settings.customPackName = "Bundle " .. tostring(bundleId)
+            settings.animationPack = "Custom"
+            advancedPackArmed = true
+            if not card.Enabled then
+                notify("Pack " .. tostring(bundleId) .. " loaded; it applies while Disguise is on.")
+                return
+            end
+            local character: Model? = LocalPlayer.Character
+            local humanoid: Humanoid? = character
+                and character:FindFirstChildOfClass("Humanoid")
+                :: Humanoid?
+            if character and humanoid then
+                applyAnimationPack(character, humanoid)
+                status(settings.mode .. " · pack Bundle " .. tostring(bundleId))
+            end
+        end,
+        Tooltip = "Any animation pack bundle ID from its catalog link (roblox.com/bundles/<id>/...), official or UGC -- for example 4899847411546. The bundle's items are resolved when you enter it (nothing is downloaded; the engine streams the clips) and the pack is kept for the session. It wins over the target's movement animations, like the built-in packs. R15 clips on an R6 body stay refused for that rig.",
+    })
+
+    -- Per-slot bundle inserts: paste any pack's bundle ID into a slot
+    -- and that slot takes the pack's clip for it (Idle from one pack,
+    -- Run from another, ...). Slots left empty fall back to your rig's
+    -- own set when the pack applies.
+    local SLOT_INSERTS: {{string}} = {
+        {"Idle", "idle"},
+        {"Walk", "walk"},
+        {"Run", "run"},
+        {"Jump", "jump"},
+        {"Fall", "fall"},
+        {"Climb", "climb"},
+        {"Swim", "swim"},
+        {"Swim Idle", "swimidle"},
+    }
+    for _, slotInsert: {string} in ipairs(SLOT_INSERTS) do
+        local label: string = slotInsert[1]
+        local category: string = slotInsert[2]
+        card:CreateTextBox({
+            Name = label .. " Bundle ID",
+            Show = {Option = "Show Advanced", Values = {true}},
+            Default = "",
+            Function = function(value: string): ()
+                local digits: string? = string.match(
+                    tostring(value or ""),
+                    "%d+"
+                )
+                local bundleId: number? = digits and tonumber(digits)
+                    or nil
+                if not bundleId then
+                    notify("Enter a bundle ID for the " .. label .. " slot first.")
+                    return
+                end
+                local slots: {[string]: any}?, bundleError: string? =
+                    bundleAnimationSlots(bundleId)
+                if not slots then
+                    notify("Could not load that pack: " .. tostring(bundleError))
+                    return
+                end
+                local clip: any = slots[category]
+                if type(clip) == "table" then
+                    clip = clip[1]
+                end
+                if not clip then
+                    notify("That bundle has no " .. label .. " clip to take.")
+                    return
+                end
+                settings.customSlotIds[category] = clip
+                local merged: {[string]: any} = {}
+                for mergedCategory: string, mergedId: any in pairs(
+                    settings.customSlotIds
+                ) do
+                    merged[mergedCategory] = mergedId
+                end
+                settings.customPackSlots = merged
+                settings.customPackName = "Custom slots"
+                settings.animationPack = "Custom"
+                advancedPackArmed = true
+                if not card.Enabled then
+                    notify(label .. " slot set; it applies while Disguise is on.")
+                    return
+                end
+                local character: Model? = LocalPlayer.Character
+                local humanoid: Humanoid? = character
+                    and character:FindFirstChildOfClass("Humanoid")
+                    :: Humanoid?
+                if character and humanoid then
+                    applyAnimationPack(character, humanoid)
+                    status(settings.mode .. " · pack Custom slots")
+                end
+            end,
+            Tooltip = "Set the " .. label .. " slot from any animation pack: paste the pack's bundle ID (official or UGC) and this slot takes that pack's " .. label .. " clip. Mix slots from different packs freely; empty slots use your rig's own set.",
+        })
+    end
+
+    card:CreateToggle({
+        Name = "Use target movement animations",
+        -- Character only: Animation mode always applies them and has no control.
+        Show = {Option = "Mode", Values = {"Character"}},
+        Default = settings.useTargetMovementAnimations,
+        Function = function(value: boolean): ()
+            setMovementAnimationsEnabled(value)
+        end,
+        Tooltip = "Character mode only. Shows the target user's movement animations (idle, walk, run, jump, climb, fall, swim, and Roblox's default set for any slot the avatar leaves empty) on the disguised avatar. They are already loaded, so this is instant; turning it off restores your own animations. Emotes are independent and stay untouched.",
     })
 
     card:CreateTextBox({
@@ -18673,28 +23822,18 @@ function Module.init(context: Runtime): any
                 applyDisguise()
             end
         end,
-        Tooltip = "Positive integer user ID (Character) or avatar-animation bundle ID (Animation).",
+        Tooltip = "User ID (Character copies the avatar; Animation copies only its emotes and movement animations) or an animation pack ID in Animation mode. Default 78492. Missing animation slots fall back to Roblox's own R15 set.",
     })
 
-    card:CreateButton({
+    card:CreateToggle({
         Name = "Show target emotes",
+        -- Character only: Animation mode always applies the target's emotes.
         Show = {Option = "Mode", Values = {"Character"}},
-        Function = function(): ()
-            if type(targetEmotes) ~= "table" then
-                notify("Load a user ID in Character mode before listing emotes.")
-                return
-            end
-            local names: {string} = sortedEmoteNames(targetEmotes)
-            local equipped: {string} = equippedEmoteNames(targetEquippedEmotes)
-            notify(string.format(
-                "Target emotes (%d): %s | Equipped (%d): %s",
-                #names,
-                formatNameList(names),
-                #equipped,
-                formatNameList(equipped)
-            ))
+        Default = settings.showTargetEmotes,
+        Function = function(value: boolean): ()
+            setTargetEmotesEnabled(value)
         end,
-        Tooltip = "Lists the emotes and equipped emote slots returned for the target user ID.",
+        Tooltip = "Character mode only. Shows the target user's emotes and equipped emote slots on the disguised avatar. Independent from movement animations; turning it off restores your own emotes without touching the disguise.",
     })
 
     activeCard = card
@@ -19308,105 +24447,6 @@ end
 return Module
 
 ]],
-        ["src/games/universal/Other/LagSwitch.lua"] = [[
-export type Runtime = {
-    framework: any,
-    entity: any,
-    host: any,
-}
-
-local Module = {
-    Name = "LagSwitch",
-    PlaceId = 0,
-    Events = {} :: {[string]: any},
-    Initialized = false,
-}
-
-local activeCleanup: (() -> ())? = nil
-
-function Module.init(context: Runtime): any
-    local host: any = context.host
-    local TaskManager: any = host.TaskManager
-    local featureConnections: any = host.featureConnections
-    local disconnectFeatureConnection: any = host.disconnectFeatureConnection
-    local createUniversalFeature: any = host.createUniversalFeature
-    local addNumberOption: any = host.addNumberOption
-    local lagSwitchSettings = {incomingLag = 999}
-    local originalIncomingLag = 0
-    local LagSwitchFeature: any = nil
-
-    local function setIncomingReplicationLag(value)
-        local success = pcall(function()
-            settings():GetService("NetworkSettings").IncomingReplicationLag = value
-        end)
-        return success
-    end
-
-    local function toggleLagSwitch(enabled)
-        disconnectFeatureConnection("LagSwitch")
-
-        if not enabled then
-            if LagSwitchFeature then LagSwitchFeature:SetStatus(nil) end
-            setIncomingReplicationLag(originalIncomingLag)
-            return
-        end
-
-        LagSwitchFeature:SetStatus(tostring(math.round(lagSwitchSettings.incomingLag)) .. " ms")
-        pcall(function()
-            originalIncomingLag = settings():GetService(
-                "NetworkSettings"
-            ).IncomingReplicationLag
-        end)
-
-        if not setIncomingReplicationLag(lagSwitchSettings.incomingLag) then
-            error("NetworkSettings is not available in this client.")
-        end
-
-        featureConnections.LagSwitch = TaskManager:Connect(function()
-            setIncomingReplicationLag(lagSwitchSettings.incomingLag)
-        end)
-    end
-
-    LagSwitchFeature = createUniversalFeature(
-        "Lag Switch",
-        "Simulate extreme incoming replication delay",
-        16,
-        toggleLagSwitch,
-        {categoryName = "Other"}
-    )
-    addNumberOption(
-        LagSwitchFeature,
-        "Incoming lag",
-        lagSwitchSettings.incomingLag,
-        1,
-        999,
-        function(value)
-            lagSwitchSettings.incomingLag = value
-            if LagSwitchFeature.enabled then
-                LagSwitchFeature:SetStatus(tostring(math.round(value)) .. " ms")
-            end
-        end
-    )
-
-    activeCleanup = function(): ()
-        disconnectFeatureConnection("LagSwitch")
-        setIncomingReplicationLag(originalIncomingLag)
-    end
-    Module.Initialized = true
-    return LagSwitchFeature
-end
-
-function Module.destroy(): ()
-    if activeCleanup then
-        pcall(activeCleanup)
-    end
-    activeCleanup = nil
-    Module.Initialized = false
-end
-
-return Module
-
-]],
         ["src/games/universal/Other/RejoinServer.lua"] = [[
 export type Runtime = {
     framework: any,
@@ -19512,474 +24552,6 @@ function Module.init(context: Runtime): any
     activeCleanup = function(): () end
     Module.Initialized = true
     return feature
-end
-
-function Module.destroy(): ()
-    if activeCleanup then
-        pcall(activeCleanup)
-    end
-    activeCleanup = nil
-    Module.Initialized = false
-end
-
-return Module
-
-]],
-        ["src/games/universal/Other/RemoteLogger.lua"] = [[
-export type Runtime = {
-    framework: any,
-    entity: any,
-    host: any,
-}
-
-local Module = {
-    Name = "RemoteLogger",
-    PlaceId = 0,
-    Events = {} :: {[string]: any},
-    Initialized = false,
-}
-
-local activeCleanup: (() -> ())? = nil
-
-local function fullName(instance: Instance): string
-    local ok: boolean, name: any = pcall(function(): string
-        return instance:GetFullName()
-    end)
-    return ok and tostring(name) or instance.Name
-end
-
-local function describe(value: any, depth: number): string
-    local kind: string = typeof(value)
-    if kind == "string" then
-        return string.format("%q", (value :: string):sub(1, 200))
-    end
-    if kind == "number" or kind == "boolean" or kind == "nil" then
-        return tostring(value)
-    end
-    if kind == "Instance" then
-        return "«" .. (value :: Instance).ClassName .. " " .. fullName(value :: Instance) .. "»"
-    end
-    if kind == "Vector3" or kind == "Vector2" or kind == "CFrame"
-        or kind == "Color3" or kind == "UDim2" or kind == "EnumItem" then
-        return kind .. "(" .. tostring(value) .. ")"
-    end
-    if kind == "table" then
-        if depth <= 0 then
-            return "{...}"
-        end
-        local parts: {string} = {}
-        local count: number = 0
-        for key: any, entry: any in pairs(value :: any) do
-            count += 1
-            if count > 12 then
-                table.insert(parts, "...")
-                break
-            end
-            table.insert(
-                parts,
-                "[" .. describe(key, depth - 1) .. "] = " .. describe(entry, depth - 1)
-            )
-        end
-        return "{" .. table.concat(parts, ", ") .. "}"
-    end
-    return kind
-end
-
-local function snippetFor(entry: any): string
-    local parts: {string} = {}
-    for _, argument: string in ipairs(entry.arguments) do
-        table.insert(parts, argument)
-    end
-    return "game:GetService(\"ReplicatedStorage\")"
-        .. " -- "
-        .. entry.path
-        .. "\n-- :"
-        .. entry.method
-        .. "("
-        .. table.concat(parts, ", ")
-        .. ")"
-end
-
-function Module.init(context: Runtime): any
-    local host: any = context.host
-    local httpService: HttpService = host.HttpService
-    local product: any = host.PRODUCT
-    local remoteLogFolder: string = product.storageFolder .. "/RemoteLogs"
-
-    local notify: any = host.notify
-    local createUniversalFeature: any = host.createUniversalFeature
-    local addToggleOption: any = host.addToggleOption
-    local addNumberOption: any = host.addNumberOption
-    local addTextOption: any = host.addTextOption
-    local addActionOption: any = host.addActionOption
-    local addInformationOption: any = host.addInformationOption
-    local TaskManager: any = host.TaskManager
-
-    local settings = {
-        filter = "",
-        maxRemotes = 120,
-        announceNew = false,
-        resampleAlways = false,
-    }
-
-    local log: {[string]: any} = {}
-    local order: {string} = {}
-    local pathCache: any = setmetatable({}, {__mode = "k"})
-    local hooked: boolean = false
-    local restore: (() -> ())? = nil
-    local capturing: boolean = false
-    local drainConnection: any = nil
-
-    local function record(remote: Instance, method: string, ...: any): ()
-        if not capturing then
-            return
-        end
-
-        local path: string = pathCache[remote]
-        if not path then
-            path = fullName(remote)
-            pathCache[remote] = path
-        end
-        if settings.filter ~= ""
-            and not string.find(string.lower(path), string.lower(settings.filter), 1, true) then
-            return
-        end
-
-        local key: string = path .. "::" .. method
-        local entry: any = log[key]
-        if not entry then
-            if #order >= settings.maxRemotes then
-                return
-            end
-            entry = {
-                path = path,
-                class = remote.ClassName,
-                method = method,
-                calls = 0,
-                samples = 0,
-                firstSeen = os.clock(),
-                arguments = {},
-            }
-            log[key] = entry
-            table.insert(order, key)
-            if settings.announceNew then
-                notify(remote.Name .. " · " .. method)
-            end
-        end
-        entry.calls += 1
-        entry.lastSeen = os.clock()
-
-        if entry.samples >= 3 and not settings.resampleAlways then
-            return
-        end
-        entry.samples += 1
-        local described: {string} = {}
-        local packed: {any} = table.pack(...)
-        for index: number = 1, math.min(packed.n, 10) do
-            table.insert(described, describe(packed[index], 3))
-        end
-        if packed.n > 10 then
-            table.insert(described, "...")
-        end
-        entry.arguments = described
-    end
-
-    local queue: {any} = {}
-    local queued: number = 0
-    local inHook: boolean = false
-
-    local function installHook(): boolean
-        if hooked then
-            return true
-        end
-        local environment: any = getfenv()
-        local hookMetamethod: any = environment.hookmetamethod
-        local getNamecall: any = environment.getnamecallmethod
-        local checkCaller: any = environment.checkcaller
-        if type(hookMetamethod) ~= "function" or type(getNamecall) ~= "function" then
-            notify("Remote Logger: executor lacks hookmetamethod")
-            return false
-        end
-
-        local previous: any
-        local ok: boolean = pcall(function(): ()
-            previous = hookMetamethod(game, "__namecall", function(self: any, ...: any): any
-
-                if not capturing or inHook then
-                    return previous(self, ...)
-                end
-                local method: string = getNamecall()
-                if method ~= "FireServer" and method ~= "InvokeServer" then
-                    return previous(self, ...)
-                end
-                if type(checkCaller) == "function" and checkCaller() then
-                    return previous(self, ...)
-                end
-                if queued < 256 then
-                    inHook = true
-                    queued += 1
-                    queue[queued] = {
-                        remote = self,
-                        method = method,
-                        count = select("#", ...),
-                        arguments = table.pack(...),
-                        at = os.clock(),
-                    }
-                    inHook = false
-                end
-                return previous(self, ...)
-            end)
-        end)
-        if not ok then
-            notify("Remote Logger: could not install the hook")
-            return false
-        end
-        hooked = true
-        restore = function(): ()
-
-            local removed: boolean = pcall(hookMetamethod, game, "__namecall", previous)
-            if removed then
-                hooked = false
-                return
-            end
-
-            notify("Remote Logger: hook stays until rejoin")
-        end
-        return true
-    end
-
-    local function drainQueue(): ()
-        if queued == 0 then
-            return
-        end
-        local pending: {any} = queue
-        queue = {}
-        local count: number = queued
-        queued = 0
-        for index: number = 1, count do
-            local item: any = pending[index]
-            if item then
-                pcall(function(): ()
-                    record(
-                        item.remote,
-                        item.method,
-                        table.unpack(item.arguments, 1, item.count)
-                    )
-                end)
-            end
-        end
-    end
-
-    local function buildReport(): string
-        local lines: {string} = {
-            "-- " .. tostring(product.name) .. " remote log",
-            "-- place " .. tostring(game.PlaceId),
-            "-- " .. tostring(#order) .. " remotes",
-            "",
-        }
-        for _, key: string in ipairs(order) do
-            local entry: any = log[key]
-            table.insert(lines, string.rep("-", 70))
-            table.insert(lines, entry.path)
-            table.insert(
-                lines,
-                "  class "
-                    .. entry.class
-                    .. "  ·  "
-                    .. entry.method
-                    .. "  ·  "
-                    .. tostring(entry.calls)
-                    .. " calls"
-            )
-            table.insert(lines, "  args  " .. table.concat(entry.arguments, ", "))
-            table.insert(lines, snippetFor(entry))
-        end
-        return table.concat(lines, "\n")
-    end
-
-    local function saveReport(): ()
-        local environment: any = getfenv()
-        local writeFile: any = environment.writefile
-        local makeFolder: any = environment.makefolder
-        local isFolder: any = environment.isfolder
-        if type(writeFile) ~= "function" then
-            notify("Remote Logger: executor has no writefile")
-            return
-        end
-        if type(makeFolder) == "function" and type(isFolder) == "function" then
-            if not isFolder(product.storageFolder) then
-                pcall(makeFolder, product.storageFolder)
-            end
-            if not isFolder(remoteLogFolder) then
-                pcall(makeFolder, remoteLogFolder)
-            end
-        end
-
-        local stamp: string = tostring(math.round(os.time()))
-        local base: string = remoteLogFolder
-            .. "/"
-            .. tostring(game.PlaceId)
-            .. "-"
-            .. stamp
-
-        local wrote: boolean = pcall(writeFile, base .. ".txt", buildReport())
-
-        local payload: {any} = {}
-        for _, key: string in ipairs(order) do
-            local entry: any = log[key]
-            table.insert(payload, {
-                path = entry.path,
-                class = entry.class,
-                method = entry.method,
-                calls = entry.calls,
-                arguments = entry.arguments,
-            })
-        end
-        local encoded: boolean, json: any = pcall(function(): string
-            return httpService:JSONEncode(payload)
-        end)
-        if encoded then
-            pcall(writeFile, base .. ".json", json)
-        end
-        if wrote then
-            notify("Remote Logger: saved " .. tostring(#order) .. " remotes")
-        else
-            notify("Remote Logger: could not write the log")
-        end
-    end
-
-    local function stopCapturing(): ()
-        capturing = false
-        if drainConnection then
-            pcall(function(): ()
-                drainConnection:Disconnect()
-            end)
-            drainConnection = nil
-        end
-    end
-
-    local LearningFeature: any = state.learningFeature
-    if not LearningFeature then
-        LearningFeature = createUniversalFeature(
-            "Learning",
-            "Evidence collection in one card: remote logging and screen samples.",
-            2,
-            function(_enabled: boolean): () end,
-            {category = true, categoryName = "Other"}
-        )
-        state.learningFeature = LearningFeature
-    end
-    local finishPanel = state.beginCardPanel(LearningFeature, "Remote logger")
-
-    addToggleOption(
-        LearningFeature,
-        "Remote logger",
-        false,
-        function(enabled: boolean): ()
-            capturing = enabled
-            if not enabled then
-                stopCapturing()
-                return
-            end
-            if not installHook() then
-                capturing = false
-                return
-            end
-            drainConnection = TaskManager:Connect(function(): ()
-                drainQueue()
-            end)
-        end,
-        "Records the arguments the game sends to its own remotes. It watches; "
-            .. "it never blocks, delays or alters a call."
-    )
-    addTextOption(
-        LearningFeature,
-        "Only containing",
-        "",
-        function(value: string): ()
-            settings.filter = value
-        end,
-        nil,
-        "Record only remotes whose path contains this. Leave empty for everything."
-    )
-    addNumberOption(
-        LearningFeature,
-        "Max remotes",
-        settings.maxRemotes,
-        10,
-        400,
-        function(value: number): ()
-            settings.maxRemotes = math.round(value)
-        end,
-        "Stops the log growing without bound in a chatty game.",
-        1
-    )
-    addToggleOption(
-        LearningFeature,
-        "Announce new",
-        settings.announceNew,
-        function(value: boolean): ()
-            settings.announceNew = value
-        end,
-        "Toast the first time each remote is seen."
-    )
-    addToggleOption(
-        LearningFeature,
-        "Resample always",
-        settings.resampleAlways,
-        function(value: boolean): ()
-            settings.resampleAlways = value
-        end,
-        "Describe the arguments of every call instead of the first few. "
-            .. "Useful for a remote whose shape changes; heavier."
-    )
-    addActionOption(LearningFeature, "Save to file", function(): ()
-        saveReport()
-    end, "Writes " .. remoteLogFolder .. "/<place>-<time>.txt and .json")
-    addActionOption(LearningFeature, "Copy to clipboard", function(): ()
-        local environment: any = getfenv()
-        local copy: any = environment.setclipboard or environment.toclipboard
-        if type(copy) ~= "function" then
-            notify("Remote Logger: executor has no clipboard")
-            return
-        end
-        pcall(copy, buildReport())
-        notify("Remote Logger: copied")
-    end)
-    addActionOption(LearningFeature, "Clear log", function(): ()
-        log = {}
-        order = {}
-        notify("Remote Logger: cleared")
-    end)
-    addInformationOption(
-        LearningFeature,
-        "Turn it on, do the thing you want a module to do — buy, mine, place, "
-            .. "hit — then save. The log records what only a live game can "
-            .. "tell you: the arguments, in order, as the game really sent "
-            .. "them."
-    )
-    finishPanel()
-
-    Module.entries = function(): {any}
-        local list: {any} = {}
-        for _, key: string in ipairs(order) do
-            table.insert(list, log[key])
-        end
-        return list
-    end
-    Module.report = buildReport
-
-    activeCleanup = function(): ()
-        stopCapturing()
-        if restore then
-            (restore :: () -> ())()
-            restore = nil
-        end
-        Module.entries = nil
-        Module.report = nil
-    end
-    Module.Initialized = true
-    return Module
 end
 
 function Module.destroy(): ()
@@ -21013,6 +25585,36 @@ local Module = {
 
 local activeCleanup: (() -> ())? = nil
 
+-- A game provider (Gun ESP, Trap ESP, ...) only draws while Item ESP is ON,
+-- and the card owns that switch. Turning the provider row ON with the card
+-- OFF used to leave the row ON and silently dead; now it brings the card
+-- with it, so ON always means drawn.
+local function setProviderEnabled(
+    render: any,
+    providerStates: {[string]: boolean},
+    provider: any,
+    value: boolean
+): ()
+    providerStates[provider.name] = value
+    if render.Enabled then
+        pcall(provider.setEnabled, value)
+        return
+    end
+    if not value then
+        return
+    end
+    -- The card's own switch, not the internal state: the user must see Item
+    -- ESP turn ON, not only behind the scenes.
+    local feature: any = render.Feature
+    if feature
+        and type(feature.activate) == "function"
+        and feature.enabled ~= true then
+        feature.activate()
+    else
+        render:Toggle(true)
+    end
+end
+
 -- Bounded template fingerprint, not semantic image recognition. Ignore names,
 -- world position and colour; compare geometry and mesh asset identity instead.
 function Module.appearanceSignature(object: Instance): string?
@@ -21500,10 +26102,7 @@ function Module.init(context: Runtime): any
             Default = false,
             Tooltip = provider.tooltip,
             Function = function(value: boolean): ()
-                providerStates[provider.name] = value
-                if render.Enabled then
-                    pcall(provider.setEnabled, value)
-                end
+                setProviderEnabled(render, providerStates, provider, value)
             end,
         })
     end
@@ -25151,6 +29750,50 @@ function Module.init(context: any): any
                 name,
                 activateFeature
             )
+        end
+
+        -- Mobile: the little square is not a key slot, it is the touch button
+        -- for this feature. It previews the configured shape and colour, "+"
+        -- when the button does not exist yet, and opens the editor on tap.
+        if state.isMobile and shortcutButton and state.mobileUi then
+            local slot: TextButton = shortcutButton :: TextButton
+            local mobileUi: any = state.mobileUi
+            local actionId: string = mobileUi.actionId(feature.configKey)
+            local function syncMobileSlot(): ()
+                local action: any = mobileUi.actions[actionId]
+                local corner: UICorner? = slot:FindFirstChildOfClass("UICorner")
+                if action then
+                    slot.Text = ""
+                    slot.BackgroundColor3 = mobileUi.colorFromHex(action.color)
+                        or Theme.surfaceRaised
+                    slot.BackgroundTransparency = 0.12
+                    if corner then
+                        corner.CornerRadius = action.shape == "Circle"
+                            and UDim.new(1, 0)
+                            or action.shape == "Rounded"
+                                and UDim.new(0, 10)
+                                or UDim.new(0, 2)
+                    end
+                else
+                    slot.Text = "+"
+                    slot.BackgroundColor3 = Theme.surfaceRaised
+                    slot.BackgroundTransparency = 0.35
+                    if corner then corner.CornerRadius = UDim.new(0, 6) end
+                end
+            end
+            syncMobileSlot()
+            if type(mobileUi.onChanged) == "function" then
+                mobileUi.onChanged(syncMobileSlot)
+            end
+            local binding: any = state.shortcutBindings
+                and state.shortcutBindings[feature.configKey]
+            if binding then
+                local previous: any = binding.refresh
+                binding.refresh = function(): ()
+                    if type(previous) == "function" then previous() end
+                    syncMobileSlot()
+                end
+            end
         end
 
         if (feature.kind == "toggle"
@@ -29115,6 +33758,8 @@ export type MobileActionRecord = {
     holdToken: number,
     size: number,
     opacity: number,
+    shape: string,
+    color: string,
     connections: {RBXScriptConnection},
 }
 
@@ -29169,6 +33814,8 @@ function Module.init(context: any): any
         holdToken: number,
         size: number,
         opacity: number,
+        shape: string,
+        color: string,
         connections: {RBXScriptConnection},
     }
 
@@ -29205,11 +33852,103 @@ function Module.init(context: any): any
     MobilePlacementLabel.Size = UDim2.new(0.84, 0, 0, 54)
     MobilePlacementLabel.ZIndex = 201
 
+    local MOBILE_SHAPES: {string} = {"Square", "Rounded", "Circle"}
+    local MOBILE_PALETTE: {string} = {
+        "#F2F2F2", "#2B2B2B", "#0A84FF", "#30D158",
+        "#FF9F0A", "#FF375F", "#BF5AF2", "#64D2FF",
+    }
+    local SHAPE_CORNERS: {[string]: UDim} = {
+        Square = UDim.new(0, 2),
+        Rounded = UDim.new(0, 12),
+        Circle = UDim.new(1, 0),
+    }
+    local changeListeners: {() -> ()} = {}
+
+    local function colorToHex(color: Color3): string
+        local ok: boolean, hex: any = pcall(function(): any
+            return (Color3 :: any).toHex(color)
+        end)
+        if ok and type(hex) == "string" then
+            if string.sub(hex, 1, 1) ~= "#" then
+                hex = "#" .. hex
+            end
+            return string.upper(hex)
+        end
+        return string.format(
+            "#%02X%02X%02X",
+            math.floor(color.R * 255 + 0.5),
+            math.floor(color.G * 255 + 0.5),
+            math.floor(color.B * 255 + 0.5)
+        )
+    end
+
+    local function colorFromHex(value: string): Color3?
+        if type(value) ~= "string" or value == "" then
+            return nil
+        end
+        if string.sub(value, 1, 1) ~= "#" then
+            value = "#" .. value
+        end
+        local ok: boolean, color: any = pcall(function(): any
+            return (Color3 :: any).fromHex(value)
+        end)
+        if ok and typeof(color) == "Color3" then
+            return color
+        end
+        return nil
+    end
+
+    local function readableTextColor(background: Color3): Color3
+        local luminance: number =
+            0.2126 * background.R + 0.7152 * background.G + 0.0722 * background.B
+        return luminance > 0.55
+            and Color3.fromRGB(18, 18, 18)
+            or Color3.fromRGB(242, 242, 242)
+    end
+
     local function ensureMobileConfig(): {[string]: any}
         if type(configData.ui.mobileActions) ~= "table" then
             configData.ui.mobileActions = {}
         end
         return configData.ui.mobileActions
+    end
+
+    -- Defaults for every button created from now on: shape and colour are
+    -- user choices, not hardcoded squares. Existing saved buttons keep their
+    -- own values (or fall back to these when they predate the feature).
+    local function ensureMobileDefaults(): {[string]: any}
+        if type(configData.ui.mobileButtons) ~= "table" then
+            configData.ui.mobileButtons = {}
+        end
+        local defaults: {[string]: any} = configData.ui.mobileButtons
+        if type(defaults.shape) ~= "string"
+            or not table.find(MOBILE_SHAPES, defaults.shape) then
+            defaults.shape = "Square"
+        end
+        if type(defaults.color) ~= "string"
+            or not colorFromHex(defaults.color) then
+            defaults.color = colorToHex(Theme.surfaceRaised)
+        end
+        return defaults
+    end
+
+    local function applyMobileStyle(record: MobileActionRecord): ()
+        local corner: UICorner? = record.button:FindFirstChildOfClass("UICorner")
+        if corner then
+            corner.CornerRadius = SHAPE_CORNERS[record.shape]
+                or SHAPE_CORNERS.Rounded
+        end
+        local color: Color3? = colorFromHex(record.color)
+        if color then
+            record.button.BackgroundColor3 = color
+            record.button.TextColor3 = readableTextColor(color)
+        end
+    end
+
+    local function notifyMobileChanged(): ()
+        for _, listener: () -> () in ipairs(changeListeners) do
+            pcall(listener)
+        end
     end
 
     local function clampMobileButtonPosition(
@@ -29229,13 +33968,18 @@ function Module.init(context: any): any
 
     local function saveMobileActionPosition(record: MobileActionRecord): ()
         local mobileConfig: {[string]: any} = ensureMobileConfig()
+        -- The first four slots keep the original saved format; shape and
+        -- colour are appended so older configs still load unchanged.
         mobileConfig[record.id] = {
             record.button.Position.X.Offset,
             record.button.Position.Y.Offset,
             record.size,
             record.opacity,
+            record.shape,
+            record.color,
         }
         queueConfigSave()
+        notifyMobileChanged()
     end
 
     local function removeMobileAction(id: string): ()
@@ -29253,6 +33997,7 @@ function Module.init(context: any): any
             record.button:Destroy()
         end
         queueConfigSave()
+        notifyMobileChanged()
         notify(record.label .. " mobile button removed.")
     end
 
@@ -29276,7 +34021,7 @@ function Module.init(context: any): any
         BackgroundTransparency = 0.04,
         BorderSizePixel = 0,
         Position = UDim2.fromScale(0.5, 0.5),
-        Size = UDim2.fromOffset(280, 190),
+        Size = UDim2.fromOffset(300, 300),
         ZIndex = 271,
     }) :: any) :: Frame
     create("UICorner", {
@@ -29313,6 +34058,8 @@ function Module.init(context: any): any
     end
     editorLabel("Size", 46)
     editorLabel("Opacity", 88)
+    editorLabel("Shape", 130)
+    editorLabel("Colour", 172)
 
     local function editorButton(
         name: string,
@@ -29353,10 +34100,13 @@ function Module.init(context: any): any
     local opacityValue: TextButton = editorButton("OpacityValue", "92%", 138, 89, 72)
     local opacityUp: TextButton = editorButton("OpacityUp", "+", 216, 89, 40)
     opacityValue.Active = false
-    local removeButton: TextButton = editorButton("Remove", "Remove", 14, 140, 78)
+    local shapeButton: TextButton = editorButton("Shape", "Square", 92, 131, 164)
+    shapeButton.TextXAlignment = Enum.TextXAlignment.Center
+    local removeButton: TextButton = editorButton("Remove", "Remove", 14, 214, 78)
     removeButton.BackgroundColor3 = Color3.fromRGB(120, 28, 28)
-    local resetButton: TextButton = editorButton("Reset", "Reset", 101, 140, 78)
-    local doneButton: TextButton = editorButton("Done", "Done", 188, 140, 78)
+    local resetButton: TextButton = editorButton("Reset", "Reset", 101, 214, 78)
+    local doneButton: TextButton = editorButton("Done", "Done", 188, 214, 78)
+    local applyAllButton: TextButton = editorButton("ApplyAll", "Apply to all buttons", 14, 256, 272)
     doneButton.BackgroundColor3 = Theme.enabled
     doneButton.TextColor3 = Theme.enabledText
     if ThemeEngine and type(ThemeEngine.Bind) == "function" then
@@ -29369,7 +34119,63 @@ function Module.init(context: any): any
         editorOverlay.Visible = false
     end
 
-    local function refreshEditor(): ()
+    -- Forward declaration: the swatch handlers below repaint the editor, and
+    -- the editor body is defined after them.
+    local refreshEditor: () -> () = function(): () end
+    -- Colour swatches: eight presets, repainted with a live ring around the
+    -- one the button is currently using.
+    local swatches: {[string]: TextButton} = {}
+    for index: number, hex: string in ipairs(MOBILE_PALETTE) do
+        local color: Color3 = colorFromHex(hex) or Theme.surfaceRaised
+        local swatch: TextButton = (create("TextButton", {
+            Parent = editorPanel,
+            Name = "Colour" .. tostring(index),
+            Active = true,
+            AutoButtonColor = false,
+            BackgroundColor3 = color,
+            BorderSizePixel = 0,
+            Position = UDim2.fromOffset(92 + (index - 1) * 25, 168),
+            Size = UDim2.fromOffset(22, 22),
+            Text = "",
+            ZIndex = 272,
+        }) :: any) :: TextButton
+        create("UICorner", {
+            Parent = swatch,
+            CornerRadius = UDim.new(1, 0),
+        })
+        local ring: UIStroke = (create("UIStroke", {
+            Parent = swatch,
+            Name = "SelectedRing",
+            Color = Theme.text,
+            Thickness = 1,
+            Transparency = 0.85,
+        }) :: any) :: UIStroke
+        swatch:SetAttribute("Hex", hex)
+        swatches[hex] = swatch
+        trackUiConnection(swatch.MouseButton1Click:Connect(function(): ()
+            local record: MobileActionRecord? = editingRecord
+            if not record then
+                return
+            end
+            record.color = hex
+            refreshEditor()
+        end))
+        local _ = ring
+    end
+
+    local function refreshSwatches(selected: string): ()
+        for hex: string, swatch: TextButton in pairs(swatches) do
+            local ring: UIStroke? = swatch:FindFirstChild("SelectedRing") :: UIStroke?
+            if ring then
+                local active: boolean = string.upper(hex) == string.upper(selected)
+                ring.Thickness = active and 2 or 1
+                ring.Transparency = active and 0 or 0.85
+                ring.Color = active and Theme.text or Theme.outline
+            end
+        end
+    end
+
+    refreshEditor = function(): ()
         local record: MobileActionRecord? = editingRecord
         if not record then
             return
@@ -29377,8 +34183,11 @@ function Module.init(context: any): any
         editorTitle.Text = record.label
         sizeValue.Text = tostring(math.round(record.size)) .. " px"
         opacityValue.Text = tostring(math.round(record.opacity * 100)) .. "%"
+        shapeButton.Text = record.shape
         record.button.Size = UDim2.fromOffset(record.size, record.size)
         record.button.BackgroundTransparency = 1 - record.opacity
+        applyMobileStyle(record)
+        refreshSwatches(record.color)
         local clamped: Vector2 = clampMobileButtonPosition(
             Vector2.new(record.button.Position.X.Offset, record.button.Position.Y.Offset),
             record.size
@@ -29417,12 +34226,42 @@ function Module.init(context: any): any
             refreshEditor()
         end
     end))
+    trackUiConnection(shapeButton.MouseButton1Click:Connect(function(): ()
+        local record: MobileActionRecord? = editingRecord
+        if not record then
+            return
+        end
+        local index: number = table.find(MOBILE_SHAPES, record.shape) or 1
+        record.shape = MOBILE_SHAPES[index % #MOBILE_SHAPES + 1]
+        refreshEditor()
+    end))
     trackUiConnection(resetButton.MouseButton1Click:Connect(function(): ()
-        if editingRecord then
-            editingRecord.size = 52
-            editingRecord.opacity = 0.92
+        local record: MobileActionRecord? = editingRecord
+        if record then
+            local defaults: {[string]: any} = ensureMobileDefaults()
+            record.size = 52
+            record.opacity = 0.92
+            record.shape = defaults.shape
+            record.color = defaults.color
             refreshEditor()
         end
+    end))
+    trackUiConnection(applyAllButton.MouseButton1Click:Connect(function(): ()
+        local source: MobileActionRecord? = editingRecord
+        if not source then
+            return
+        end
+        for _, record: MobileActionRecord in pairs(mobileActions) do
+            record.size = source.size
+            record.opacity = source.opacity
+            record.shape = source.shape
+            record.color = source.color
+            record.button.Size = UDim2.fromOffset(record.size, record.size)
+            record.button.BackgroundTransparency = 1 - record.opacity
+            applyMobileStyle(record)
+            saveMobileActionPosition(record)
+        end
+        notify("mobile button style applied to all.")
     end))
     trackUiConnection(removeButton.MouseButton1Click:Connect(function(): ()
         local record: MobileActionRecord? = editingRecord
@@ -29474,6 +34313,17 @@ function Module.init(context: any): any
             0.2,
             1
         )
+        local defaults: {[string]: any} = ensureMobileDefaults()
+        local shape: string = type(stored) == "table"
+            and type(stored[5]) == "string"
+            and table.find(MOBILE_SHAPES, stored[5])
+            and stored[5]
+            or defaults.shape
+        local color: string = type(stored) == "table"
+            and type(stored[6]) == "string"
+            and colorFromHex(stored[6])
+            and stored[6]
+            or defaults.color
         local actionCount: number = 0
         for _ in pairs(mobileActions) do
             actionCount += 1
@@ -29555,9 +34405,12 @@ function Module.init(context: any): any
             holdToken = 0,
             size = size,
             opacity = opacity,
+            shape = shape,
+            color = color,
             connections = {},
         }
         mobileActions[id] = record
+        applyMobileStyle(record)
         saveMobileActionPosition(record)
 
         table.insert(record.connections, trackUiConnection(
@@ -29763,7 +34616,14 @@ function Module.init(context: any): any
         end
 
         trackUiConnection(source.MouseButton1Click:Connect(function(): ()
-            beginMobileActionPlacement(id, label, callback, hold)
+            -- A placed button opens its editor; only a missing one starts the
+            -- placement flow. Tapping the card slot is therefore "configure".
+            local existing: MobileActionRecord? = mobileActions[id]
+            if existing then
+                openEditor(existing)
+            else
+                beginMobileActionPlacement(id, label, callback, hold)
+            end
         end))
 
         if ensureMobileConfig()[id] ~= nil then
@@ -29792,6 +34652,20 @@ function Module.init(context: any): any
         editor = editorOverlay,
         openEditor = openEditor,
         closeEditor = closeEditor,
+        place = beginMobileActionPlacement,
+        defaults = ensureMobileDefaults,
+        shapes = MOBILE_SHAPES,
+        palette = MOBILE_PALETTE,
+        style = applyMobileStyle,
+        colorFromHex = colorFromHex,
+        colorToHex = colorToHex,
+        notifyChanged = notifyMobileChanged,
+        onChanged = function(listener: () -> ()): ()
+            table.insert(changeListeners, listener)
+        end,
+        actionId = function(shortcutId: string): string
+            return "Shortcut" .. tostring(shortcutId):gsub("%W", "")
+        end,
     }
 
     state.addMenuVisibilityListener(setMobileActionVisibility)
@@ -31067,6 +35941,269 @@ function Module.init(context: any): any
         raiseOpen(keybindsRecord)
     end
 
+    ------------------------------------------------------------------
+    -- Mobile controls. Keybinds need a keyboard, so on a touch device the
+    -- same slot opens the buttons page instead: every shortcut the menu
+    -- exposes can be placed as an on-screen button and restyled (shape,
+    -- colour, size, opacity) without editing the config by hand.
+    ------------------------------------------------------------------
+    local buttonsRecord: any = nil
+    local buttonsList: Frame? = nil
+    local buttonsAddRecord: any = nil
+    local buttonsAddList: Frame? = nil
+
+    local function mobileCallbacks(binding: any): (() -> (), any)
+        local hold: boolean = binding.hold == true
+        local function press(): ()
+            if type(binding.onPress) == "function" then
+                binding.onPress()
+            end
+        end
+        local function release(): ()
+            if type(binding.onRelease) == "function" then
+                binding.onRelease()
+            end
+        end
+        local callback: () -> () = function(): ()
+            if not hold then press() end
+        end
+        if not hold then
+            return callback, nil
+        end
+        return callback, {
+            isActive = function(): boolean return true end,
+            onPress = press,
+            onRelease = release,
+        }
+    end
+
+    local function mobileUiOrNil(): any
+        return state.mobileUi
+    end
+
+    local function buttonRow(
+        parent: Frame,
+        order: number,
+        labelText: string,
+        valueText: string,
+        onClick: () -> ()
+    ): TextButton
+        local row: TextButton = (create("TextButton", {
+            TextTruncate = Enum.TextTruncate.AtEnd,
+            Parent = parent,
+            Name = "ButtonRow_" .. labelText:gsub("%W", ""),
+            Active = true,
+            AutoButtonColor = false,
+            BackgroundColor3 = Color3.fromRGB(0, 0, 0),
+            BackgroundTransparency = 0.5,
+            BorderSizePixel = 0,
+            FontFace = CONTROL_FONT,
+            LayoutOrder = order,
+            Size = UDim2.new(1, 0, 0, 22),
+            Text = "",
+            ZIndex = parent.ZIndex + 1,
+        }) :: any) :: TextButton
+        create("TextLabel", {
+            TextTruncate = Enum.TextTruncate.AtEnd,
+            Parent = row,
+            Name = "Label",
+            BackgroundTransparency = 1,
+            FontFace = CONTROL_FONT,
+            Position = UDim2.fromOffset(6, 0),
+            Size = UDim2.new(0.6, -6, 1, 0),
+            Text = labelText,
+            TextColor3 = Theme.text,
+            TextSize = 14,
+            TextXAlignment = Enum.TextXAlignment.Left,
+            ZIndex = row.ZIndex + 1,
+        })
+        create("TextLabel", {
+            TextTruncate = Enum.TextTruncate.AtEnd,
+            Parent = row,
+            Name = "Value",
+            BackgroundTransparency = 1,
+            FontFace = CONTROL_FONT,
+            Position = UDim2.new(0.6, 0, 0, 0),
+            Size = UDim2.new(0.4, -8, 1, 0),
+            Text = valueText,
+            TextColor3 = Theme.textMuted,
+            TextSize = 13,
+            TextXAlignment = Enum.TextXAlignment.Right,
+            ZIndex = row.ZIndex + 1,
+        })
+        trackUiConnection(row.MouseButton1Click:Connect(onClick))
+        return row
+    end
+
+    local rebuildButtons: () -> () = function(): () end
+    local openAddMobileButton: () -> () = function(): () end
+
+    rebuildButtons = function(): ()
+        local container: Frame? = buttonsList
+        local ui: any = mobileUiOrNil()
+        if not container or not ui then
+            return
+        end
+        container:ClearAllChildren()
+        local order: number = 1
+        local placed: number = 0
+        local ids: {string} = {}
+        for id: string in pairs(ui.actions) do
+            table.insert(ids, id)
+        end
+        table.sort(ids)
+        for _, id: string in ipairs(ids) do
+            local record: any = ui.actions[id]
+            if record then
+                placed += 1
+                local shape: string = tostring(record.shape or "Square")
+                buttonRow(
+                    container,
+                    order,
+                    tostring(record.label),
+                    tostring(record.shape),
+                    function(): ()
+                        ui.openEditor(record)
+                    end
+                )
+                order += 1
+            end
+        end
+        if placed == 0 then
+            buttonRow(container, order, "No buttons yet", "tap Add button", function(): () end)
+            order += 1
+        end
+        local defaults: any = ui.defaults and ui.defaults()
+        if defaults then
+            buttonRow(
+                container,
+                order,
+                "Default shape",
+                tostring(defaults.shape),
+                function(): ()
+                    local shapes: {string} = ui.shapes
+                    local index: number = table.find(shapes, defaults.shape) or 1
+                    defaults.shape = shapes[index % #shapes + 1]
+                    queueConfigSave()
+                    rebuildButtons()
+                    notify("new buttons: " .. defaults.shape)
+                end
+            )
+            order += 1
+            buttonRow(
+                container,
+                order,
+                "Default colour",
+                tostring(defaults.color),
+                function(): ()
+                    local palette: {string} = ui.palette
+                    local index: number = table.find(palette, string.upper(defaults.color)) or 1
+                    defaults.color = palette[index % #palette + 1]
+                    queueConfigSave()
+                    rebuildButtons()
+                    notify("new buttons: " .. defaults.color)
+                end
+            )
+            order += 1
+        end
+        if buttonsRecord then
+            buttonsRecord.resize()
+        end
+    end
+
+    local function openButtons(): ()
+        local ui: any = mobileUiOrNil()
+        if not ui then
+            notify("touch controls are not ready yet")
+            return
+        end
+        if buttonsRecord then
+            raiseOpen(buttonsRecord)
+            rebuildButtons()
+            return
+        end
+        local screen: Vector2 = viewport()
+        buttonsRecord = configWindow("Buttons", "Buttons", {
+            position = Vector2.new(screen.X - WINDOW_WIDTH * 2 - 32, 140),
+            anchor = uiRecord and uiRecord.window,
+            settingsSized = true,
+            packRows = {{"Add button", nil, 26}, {"Reset buttons", nil, 26}},
+        })
+        buttonsList = (create("Frame", {
+            Parent = buttonsRecord.window.body,
+            Name = "ButtonList",
+            AutomaticSize = Enum.AutomaticSize.Y,
+            BackgroundTransparency = 1,
+            BorderSizePixel = 0,
+            LayoutOrder = 1,
+            Size = UDim2.new(1, 0, 0, 0),
+            ZIndex = buttonsRecord.window.body.ZIndex + 1,
+        }) :: any) :: Frame
+        create("UIListLayout", {
+            Parent = buttonsList,
+            Padding = UDim.new(0, WINDOW_GAP),
+            SortOrder = Enum.SortOrder.LayoutOrder,
+        })
+        actionRow(buttonsRecord, 90, "Add button", openAddMobileButton)
+        actionRow(buttonsRecord, 91, "Reset buttons", function(): ()
+            ui.resetActions()
+            rebuildButtons()
+            notify("mobile buttons reset")
+        end)
+        rebuildButtons()
+        raiseOpen(buttonsRecord)
+    end
+
+    openAddMobileButton = function(): ()
+        local ui: any = mobileUiOrNil()
+        if not ui then
+            return
+        end
+        if buttonsAddRecord then
+            raiseOpen(buttonsAddRecord)
+            return
+        end
+        local screen: Vector2 = viewport()
+        buttonsAddRecord = configWindow("ButtonAdd", "Add button", {
+            position = Vector2.new(screen.X - WINDOW_WIDTH * 2 - 32, 200),
+            anchor = buttonsRecord and buttonsRecord.window,
+            settingsSized = true,
+            packRows = {{"Tap an action to place its button", nil, 12}},
+        })
+        buttonsAddList = (create("Frame", {
+            Parent = buttonsAddRecord.window.body,
+            Name = "ButtonAddList",
+            AutomaticSize = Enum.AutomaticSize.Y,
+            BackgroundTransparency = 1,
+            BorderSizePixel = 0,
+            LayoutOrder = 1,
+            Size = UDim2.new(1, 0, 0, 0),
+            ZIndex = buttonsAddRecord.window.body.ZIndex + 1,
+        }) :: any) :: Frame
+        create("UIListLayout", {
+            Parent = buttonsAddList,
+            Padding = UDim.new(0, WINDOW_GAP),
+            SortOrder = Enum.SortOrder.LayoutOrder,
+        })
+        local order: number = 1
+        for id: string, binding: any in pairs(state.shortcutBindings) do
+            local actionId: string = ui.actionId(id)
+            if not ui.actions[actionId] then
+                local label: string = featureLabel(tostring(id))
+                buttonRow(buttonsAddList :: Frame, order, label, "place", function(): ()
+                    local callback: () -> (), hold: any = mobileCallbacks(binding)
+                    ui.place(actionId, label, callback, hold)
+                end)
+                order += 1
+            end
+        end
+        if order == 1 then
+            buttonRow(buttonsAddList :: Frame, order, "Every action already has a button", "", function(): () end)
+        end
+        buttonsAddRecord.resize()
+        raiseOpen(buttonsAddRecord)
+    end
+
     local windowsRecord: any = nil
     local windowsPanel: any = nil
     local windowOptions: {[string]: boolean} = {}
@@ -31449,13 +36586,20 @@ function Module.init(context: any): any
     end
 
     local screen: Vector2 = viewport()
-    uiRecord = configWindow("UISettings", "UI Settings", {
+    -- Small build watermark on the window the user opens first: the
+    -- short stamp ("v95") so a screenshot alone says which build it
+    -- is, without opening anything.
+    local versionTag: string = string.match(
+        tostring(SOURCE_STAMP or ""),
+        "^v%d+"
+    ) or tostring(SOURCE_STAMP or "")
+    uiRecord = configWindow("UISettings", "UI Settings · " .. versionTag, {
         position = Vector2.new(screen.X - WINDOW_WIDTH - 12, 64),
         closable = false,
         settingsSized = false,
         packRows = {
             {"HackList", nil, 26},
-            {"Keybinds", nil, 26},
+            {state.isMobile and "Buttons" or "Keybinds", nil, 26},
             {"Windows", nil, 26},
             {"WurstOptions", nil, 26},
             {"Background", "#404040"},
@@ -31467,7 +36611,13 @@ function Module.init(context: any): any
     uiRecord.open = true
 
     actionRow(uiRecord, 1, "HackList", openHackList)
-    actionRow(uiRecord, 2, "Keybinds", openKeybinds)
+    -- A phone has no keyboard: the row that would open keybinds opens the
+    -- touch-button page instead. Desktop keeps the keybinds window untouched.
+    if state.isMobile then
+        actionRow(uiRecord, 2, "Buttons", openButtons)
+    else
+        actionRow(uiRecord, 2, "Keybinds", openKeybinds)
+    end
     actionRow(uiRecord, 3, "Windows", openWindows)
     actionRow(uiRecord, 4, "WurstOptions", openWurstOptions)
 
@@ -32000,6 +37150,9 @@ function Module.init(context: any): WidgetLibrary
         return option
     end
 
+    -- A real heading, not an invisible spacer: a capitalised caption with a
+    -- hairline that runs to the right edge. Every card can group its rows
+    -- without inventing its own label and drifting from the rest.
     state.addSectionOption = function(feature: any, titleText: string): Frame
         feature.optionCount += 1
         local section: Frame = (create("Frame", {
@@ -32008,10 +37161,37 @@ function Module.init(context: any): WidgetLibrary
             BackgroundTransparency = 1,
             BorderSizePixel = 0,
             LayoutOrder = feature.optionCount,
-            Size = UDim2.new(1, 0, 0, 0),
-            Visible = false,
+            Size = UDim2.new(1, 0, 0, state.layout.sectionRowHeight or 22),
+            Visible = true,
             ZIndex = feature.options.ZIndex + 1,
         }) :: any) :: Frame
+        local caption: TextLabel = (create("TextLabel", {
+            Parent = section,
+            Name = "SectionLabel",
+            BackgroundTransparency = 1,
+            FontFace = CONTROL_FONT,
+            Position = UDim2.fromOffset(CHILD_INSET, 0),
+            Size = UDim2.new(1, -CHILD_INSET * 2, 0, section.Size.Y.Offset),
+            Text = string.upper(titleText),
+            TextColor3 = Theme.textMuted,
+            TextSize = 10,
+            TextXAlignment = Enum.TextXAlignment.Left,
+            ZIndex = section.ZIndex + 1,
+        }) :: any) :: TextLabel
+        caption:SetAttribute("SectionTitle", titleText)
+        -- The divider sits after the caption, so long titles never overlap it.
+        create("Frame", {
+            Parent = section,
+            Name = "SectionLine",
+            AnchorPoint = Vector2.new(0, 0.5),
+            BackgroundColor3 = Theme.outline,
+            BackgroundTransparency = 0.55,
+            BorderSizePixel = 0,
+            Position = UDim2.new(0, 4 + math.clamp(#string.upper(titleText) * 7 + 8, 24, 220), 0.5, 0),
+            Size = UDim2.new(1, -(4 + math.clamp(#string.upper(titleText) * 7 + 8, 24, 220)) - 4, 0, 1),
+            ZIndex = section.ZIndex,
+        })
+        section:SetAttribute("SectionTitle", titleText)
         table.insert(feature.optionRows, section)
         feature.updateExpandedSize()
         return section
@@ -33697,6 +38877,14 @@ function Module.init(context: any): WidgetLibrary
             return tostring(name or "")
         end
         local option = createOptionRow(feature, labelText, hintText)
+        -- A phone cannot press keys. The row is not merely inert: it is
+        -- removed from the card so the menu never offers an impossible
+        -- control. The action itself stays available through its own card or
+        -- the Buttons page.
+        if state.isMobile then
+            option.Visible = false
+            feature.updateExpandedSize()
+        end
         local button = makeButton(
             option,
             currentKey == Enum.KeyCode.Unknown and "" or keyLabel(currentKey.Name),
@@ -34577,12 +39765,36 @@ function Module.init(context: any): any
         return math.round(value * factor) / factor
     end
 
+    -- How much of a window must stay reachable when it cannot fit:
+    -- enough title bar to grab, move and close it.
+    local MIN_GRAB_X: number = 140
+    local MIN_GRAB_Y: number = 40
+
     local function clamp(position: Vector2, size: Vector2): Vector2
         local screen: Vector2 = logicalViewport()
-        return Vector2.new(
-            snapPixel(math.clamp(position.X, MARGIN, math.max(MARGIN, screen.X - size.X - MARGIN))),
-            snapPixel(math.clamp(position.Y, MARGIN, math.max(MARGIN, screen.Y - size.Y - MARGIN)))
-        )
+        -- When the window fits, keep it fully on screen. When it does
+        -- not (a small or resized viewport), the old full-fit clamp
+        -- pinned every oversized window to the same top-left corner and
+        -- they stacked into one pile; instead let the window extend
+        -- past the edge and only guarantee the grab strip stays
+        -- visible, so part of it simply shows, as requested.
+        local x: number
+        if size.X <= screen.X - MARGIN * 2 then
+            x = math.clamp(position.X, MARGIN, screen.X - size.X - MARGIN)
+        else
+            x = math.clamp(
+                position.X,
+                MARGIN - (size.X - MIN_GRAB_X),
+                screen.X - MIN_GRAB_X
+            )
+        end
+        local y: number
+        if size.Y <= screen.Y - MARGIN * 2 then
+            y = math.clamp(position.Y, MARGIN, screen.Y - size.Y - MARGIN)
+        else
+            y = math.clamp(position.Y, MARGIN, screen.Y - MIN_GRAB_Y)
+        end
+        return Vector2.new(snapPixel(x), snapPixel(y))
     end
 
     function manager.ClampWindow(window: any): ()
@@ -34595,6 +39807,68 @@ function Module.init(context: any): any
             Vector2.new(root.Size.X.Offset, root.Size.Y.Offset)
         )
         root.Position = UDim2.fromOffset(landed.X, landed.Y)
+    end
+
+    local function rectsOverlap(
+        aPos: Vector2,
+        aSize: Vector2,
+        bPos: Vector2,
+        bSize: Vector2
+    ): boolean
+        local overlapX: number = math.min(aPos.X + aSize.X, bPos.X + bSize.X)
+            - math.max(aPos.X, bPos.X)
+        local overlapY: number = math.min(aPos.Y + aSize.Y, bPos.Y + bSize.Y)
+            - math.max(aPos.Y, bPos.Y)
+        if overlapX <= 0 or overlapY <= 0 then
+            return false
+        end
+        return overlapX * overlapY > 0.3 * aSize.X * aSize.Y
+    end
+
+    -- A window that opens (nearly) on top of a visible one reads as
+    -- the two "glitching into each other": same landing spot, rows
+    -- bleeding through. Cascade it a step at a time until its body is
+    -- mostly its own, exactly like the reclamp cascade but at open.
+    function manager.Deoverlap(window: any): ()
+        local root: any = window and window.root
+        if not root then
+            return
+        end
+        local size: Vector2 = Vector2.new(
+            root.Size.X.Offset,
+            root.Size.Y.Offset
+        )
+        local position: Vector2 = Vector2.new(
+            root.Position.X.Offset,
+            root.Position.Y.Offset
+        )
+        for _ = 1, 10 do
+            local stacked: boolean = false
+            for _, other: any in ipairs(manager.list) do
+                if other ~= window and other.root and other.root.Visible then
+                    if rectsOverlap(
+                        position,
+                        size,
+                        Vector2.new(
+                            other.root.Position.X.Offset,
+                            other.root.Position.Y.Offset
+                        ),
+                        Vector2.new(
+                            other.root.Size.X.Offset,
+                            other.root.Size.Y.Offset
+                        )
+                    ) then
+                        stacked = true
+                        break
+                    end
+                end
+            end
+            if not stacked then
+                break
+            end
+            position = clamp(position + Vector2.new(30, 30), size)
+        end
+        root.Position = UDim2.fromOffset(position.X, position.Y)
     end
 
     function manager.MeasureWindow(window: any): Vector2
@@ -34631,10 +39905,18 @@ function Module.init(context: any): any
         end
     end
 
+    -- Each window's home position: where the user (or its default)
+    -- actually put it. A viewport shrink only borrows a clamped
+    -- position; it must never become the window's place, or growing
+    -- the screen again cannot put the window back (the pile-up in
+    -- the report). Reclamp below always derives from home.
+    local homePositions: {[string]: Vector2} = {}
+
     local function persist(window: any): ()
+        local home: Vector2? = homePositions[window.id]
         configData.ui.windows[window.id] = {
-            x = window.root.Position.X.Offset,
-            y = window.root.Position.Y.Offset,
+            x = home and home.X or window.root.Position.X.Offset,
+            y = home and home.Y or window.root.Position.Y.Offset,
             collapsed = window.collapsed,
             pinned = window.pinned,
         }
@@ -34750,11 +40032,16 @@ function Module.init(context: any): any
                 window.userMoved = true
             end
         end
+        homePositions[id] = Vector2.new(
+            root.Position.X.Offset,
+            root.Position.Y.Offset
+        )
 
         function window:SetVisible(visible: boolean): ()
             root.Visible = visible
             if visible then
                 raise(window)
+                manager.Deoverlap(window)
             end
         end
 
@@ -34889,6 +40176,10 @@ function Module.init(context: any): any
                 end
 
                 window.userMoved = true
+                homePositions[window.id] = Vector2.new(
+                    root.Position.X.Offset,
+                    root.Position.Y.Offset
+                )
                 persist(window)
             end
         end))
@@ -34922,6 +40213,7 @@ function Module.init(context: any): any
             )
         end
         position = clamp(position, definition.size)
+        homePositions[id] = position
 
         local root: Frame = create("Frame", {
             Parent = PopupLayer,
@@ -35572,9 +40864,35 @@ function Module.init(context: any): any
     end
 
     function manager.Reclamp(): ()
+        -- After landing, windows that ended on (nearly) the same spot
+        -- cascade a step down-right each, so a shrink never leaves a
+        -- pile of identical title bars in one corner.
+        local placed: {Vector2} = {}
         for _, window: any in ipairs(manager.list) do
             local x: number, y: number, w: number, h: number = windowRect(window)
-            local landed: Vector2 = clamp(Vector2.new(x, y), Vector2.new(w, h))
+            local home: Vector2? = homePositions[window.id]
+            local base: Vector2 = home or Vector2.new(x, y)
+            local landed: Vector2 = clamp(base, Vector2.new(w, h))
+            local attempts: number = 0
+            while attempts < 8 do
+                local stacked: boolean = false
+                for _, other: Vector2 in ipairs(placed) do
+                    if math.abs(other.X - landed.X) < 6
+                        and math.abs(other.Y - landed.Y) < 6 then
+                        stacked = true
+                        break
+                    end
+                end
+                if not stacked then
+                    break
+                end
+                attempts += 1
+                landed = clamp(
+                    landed + Vector2.new(26, 26),
+                    Vector2.new(w, h)
+                )
+            end
+            table.insert(placed, landed)
             window.root.Position = UDim2.fromOffset(landed.X, landed.Y)
         end
     end
@@ -37611,6 +42929,11 @@ local Manifest: Manifest = {
             path = "src/games/universal/Other/InteractExtender.lua",
             name = "Interact Extender",
             category = "Exploits",
+        },
+        {
+            path = "src/games/universal/Other/RejoinServer.lua",
+            name = "Rejoin Server",
+            category = "Utilities",
         },
         {
             path = "src/games/universal/Other/ImproveFps.lua",

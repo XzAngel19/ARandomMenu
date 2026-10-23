@@ -17,6 +17,15 @@ function Module.init(runtime: any): any
     Module.Runtime = runtime
     local trajectoryCalibration: any = core.trajectoryCalibration
 
+    -- Capture tools only exist with WURST_DEBUG on. The recorder in base.lua
+    -- keeps working either way; this is the card the player would otherwise
+    -- see between "Blurt Roles" and the real modules.
+    if state.debug ~= true then
+        Module.Events = featureConnections
+        Module.Initialized = true
+        return Module
+    end
+
     local TrajectoryFeature: any = state.mm2CalibrationFeature
     if not TrajectoryFeature then
         TrajectoryFeature = createUniversalFeature(
@@ -33,12 +42,6 @@ function Module.init(runtime: any): any
         )
         state.mm2CalibrationFeature = TrajectoryFeature
     end
-    addCycleOption(TrajectoryFeature, "Prediction model", {"66d", "Reference v41"},
-        core.mm2Settings.predictionModel == "Reference v41" and 2 or 1, function(value)
-            core.mm2Settings.predictionModel = value
-            -- A correction learned under A must not silently bias B.
-            core.resetAutoLeadCorrection()
-        end)
     addActionOption(TrajectoryFeature, "Calibration status", function(): ()
         notify(trajectoryCalibration:status())
     end)
