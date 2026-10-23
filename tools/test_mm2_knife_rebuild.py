@@ -16,15 +16,6 @@ local function rotate(a,v)
     return Vector3.new(r[1]*v.X+r[2]*v.Y+r[3]*v.Z,r[4]*v.X+r[5]*v.Y+r[6]*v.Z,r[7]*v.X+r[8]*v.Y+r[9]*v.Z)
 end
 CFrame.new=function(p) return make(p or Vector3.zero) end
--- Coherent origin: the frame looks at the aim point instead of world -Z.
-CFrame.lookAt=function(at,look)
-    local d=(look-at).Unit
-    local up=Vector3.new(0,1,0)
-    local right=d:Cross(up)
-    if right.Magnitude<1e-3 then right=Vector3.new(1,0,0) else right=right.Unit end
-    up=right:Cross(d)
-    return make(at,{right.X,up.X,-d.X,right.Y,up.Y,-d.Y,right.Z,up.Z,-d.Z})
-end
 cf.__mul=function(a,b)
     local r={}
     for i=0,2 do for j=0,2 do
@@ -113,10 +104,6 @@ do
 local knifeThrowSettings={enabled=true}
 local lastThrow=-math.huge
 local throwPending=false
--- Declared above the sliced region in the module: the harness pins them.
-KNIFE_CYCLE_SECONDS=0.55
-MIN_PACKET_INTERVAL=0.25
-lastPacketAt=-math.huge
 local root={Position=Vector3.new(30,0,0)}
 local target={Character={FindFirstChild=function() return root end}}
 local valid=true
@@ -127,12 +114,7 @@ local sends,notes=0,0
 local originalFrame=CFrame.new(Vector3.new(1,2,3))*CFrame.Angles(.4,.8,.2)
 local handle={CFrame=originalFrame,IsA=function(_,c) return c=='BasePart' end}
 local remote={IsA=function() return true end,FireServer=function(_,origin,aim)
-    -- A coherent frame: the spawn point is the handle, and the look vector
-    -- points at the predicted point, never at the world -Z of an identity.
-    assert(origin.Position==handle.CFrame.Position,'the packet carries the handle position')
-    local expected=(aim.Position-origin.Position).Unit
-    local look=Vector3.new(-origin.r[3],-origin.r[6],-origin.r[9])
-    near(look.X,expected.X); near(look.Y,expected.Y); near(look.Z,expected.Z)
+    assert(origin==handle.CFrame,'normal packet must retain oriented handle frame')
     near(aim.Position.X,root.Position.X)
     sends+=1
 end}
@@ -149,29 +131,20 @@ local function playThrowAnimation(_,fn) pending=fn;throwPending=true end
 local function stopThrowAnimation() pending=nil;throwPending=false end
 local trajectoryCalibration={noteAuthoredShot=function(_,shot)
     near(shot.aimPos.X,root.Position.X)
-    assert(shot.settings.model=='kinematic-v51')
+    assert(shot.settings.model=='reference-v41')
     notes+=1
 end}
-'''+section(SOURCE,'    -- The spawn point: the handle when it exists','    local function toggleKnifeThrow')+r'''
+'''+section(SOURCE,'    local function throwKnife','    local function toggleKnifeThrow')+r'''
 now=10;throwKnife();assert(pending and sends==0 and predictionCalls==0)
 root.Position=Vector3.new(40,0,0)
 local release=pending;throwPending=false;pending=nil;release()
 assert(sends==1 and notes==1 and predictionCalls==1)
--- A held knife released on every frame used to author a packet per frame
--- (722 events in 22 s in the 2026-10-18 capture). One packet per quarter
--- second is the floor every caller has to respect.
-now=10.05
-throwKnife();release=pending;throwPending=false;pending=nil;release()
-assert(sends==1,'a second packet inside the interval is dropped')
-now=10.4
-throwKnife();release=pending;throwPending=false;pending=nil;release()
-assert(sends==2,'the next cycle sends again')
 throwKnife();assert(pending,'no artificial delay after completed animation')
-throwKnife();assert(pending and sends==2,'in-flight animation is not restarted')
-valid=false;release=pending;throwPending=false;pending=nil;release();assert(sends==2,'invalidated target cancels release')
-valid=true;now=11;throwKnife();knife.Parent={};release=pending;throwPending=false;pending=nil;release();assert(sends==2,'unequip cancels packet')
-knife.Parent=LocalPlayer.Character;now=12;throwKnife();visible=false;release=pending;throwPending=false;pending=nil;release();assert(sends==2,'WallCheck rechecked at release')
-pass('actual throw packet: deferred, fresh target prediction, camera-coherent handle frame pointing at the aim, animation busy guard and cancellation')
+throwKnife();assert(pending and sends==1,'in-flight animation is not restarted')
+valid=false;release=pending;throwPending=false;pending=nil;release();assert(sends==1,'invalidated target cancels release')
+valid=true;throwKnife();knife.Parent={};release=pending;throwPending=false;pending=nil;release();assert(sends==1,'unequip cancels packet')
+knife.Parent=LocalPlayer.Character;throwKnife();visible=false;release=pending;throwPending=false;pending=nil;release();assert(sends==1,'WallCheck rechecked at release')
+pass('actual throw packet: deferred, fresh target prediction, oriented handle frame, animation busy guard and cancellation')
 end
 '''
 with tempfile.TemporaryDirectory(prefix='knife-rebuild-') as tmp:

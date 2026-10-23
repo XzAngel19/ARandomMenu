@@ -54,6 +54,8 @@ local CONFIG = {
     SilentSpawn = "Front",   -- Front | Through | Top | Behind
     SilentSweep = 0,         -- studs extra en cada extremo del segmento silent (0-1.5)
     TargetName = "",         -- "" = murderer automatico; o nombre (parcial vale)
+    FireCooldown = 0.45,     -- 1 disparo por cooldown (Fix B: nada de 60/s)
+    WallSkinStuds = 0.5,     -- piel de pared: el check se acorta 0.5 studs
     FireKey = Enum.KeyCode.Q,
     AutoKey = Enum.KeyCode.T,
     LeadOffsetMs = 0,        -- correccion manual en ms (+ adelanta, - atrasa)
@@ -145,15 +147,24 @@ local function validateShot(target, targetCharacter, muzzle, origin, endpoint, w
         return false, "Invalid shot geometry"
     end
     if walls then
+        -- Piel de 0.5 studs: se comprueba el segmento acortado, para que
+        -- un roce de pared en el ultimo tramo no convierta el tiro en
+        -- un fallo silencioso del servidor. Solo afecta al CHECK; el
+        -- disparo sigue yendo al endpoint completo.
+        local checkEnd = endpoint
+        local seg = endpoint - origin
+        if CONFIG.WallSkinStuds > 0 and seg.Magnitude > CONFIG.WallSkinStuds + 0.05 then
+            checkEnd = origin + seg.Unit * (seg.Magnitude - CONFIG.WallSkinStuds)
+        end
         local options = { ignoreTarget = true }
-        local clear, blocker = isWeaponPathClear(muzzle, endpoint, targetCharacter, nil, options)
+        local clear, blocker = isWeaponPathClear(muzzle, checkEnd, targetCharacter, nil, options)
         if not clear then return false, "A wall or another body blocks the shot", blocker end
-        local solidClear, solidBlocker = isWeaponPathClear(muzzle, endpoint, targetCharacter, true, options)
+        local solidClear, solidBlocker = isWeaponPathClear(muzzle, checkEnd, targetCharacter, true, options)
         if not solidClear then return false, "An invisible wall blocks the shot", solidBlocker end
         if (origin - muzzle).Magnitude > 0.05 then
-            local oc, ob = isWeaponPathClear(origin, endpoint, targetCharacter, nil, options)
+            local oc, ob = isWeaponPathClear(origin, checkEnd, targetCharacter, nil, options)
             if not oc then return false, "A wall or another body blocks the shot", ob end
-            local osc, osb = isWeaponPathClear(origin, endpoint, targetCharacter, true, options)
+            local osc, osb = isWeaponPathClear(origin, checkEnd, targetCharacter, true, options)
             if not osc then return false, "An invisible wall blocks the shot", osb end
         end
     end
@@ -469,7 +480,7 @@ local function gunAim(target)
     local rootPosition = predictedRoot(track, motion, horizon)
     local last = track.samples[#track.samples]
     local aimOffset = last.aimOffset
-    local fresh = findAimPart(track.character)
+    local fresh, freshName = findAimPart(track.character)
     if fresh then aimOffset = fresh.Position - track.root.Position end
     local endpoint = rootPosition + aimOffset
     return endpoint, {
@@ -477,6 +488,7 @@ local function gunAim(target)
         rootPosition = rootPosition, velocity = motion.velocity,
         leadSeconds = horizon, sampleAge = motion.sampleAge,
         samples = motion.samples, motionSource = motion.source,
+        aimPart = freshName,
     }, nil
 end
 
@@ -613,6 +625,47 @@ end
 -- Disparo (nucleo del Shoot del menu, sin GUI ni telemetria)
 --=====================================================================
 local lastReject = ""
+
+-- Fix C: en vez de inferir la calidad de la prediccion desde
+-- hits/misses, guardamos el punto predicho y lo comparamos con la
+-- posicion REAL de la parte cuando pasa el horizonte. La salida es
+-- una distribucion de error en studs (mediana/max en el panel).
+local pendingPredictions = {}
+local predErrors = {}
+local predMedian = -1
+local function recordPrediction(target, point, horizon, partName)
+    pendingPredictions[#pendingPredictions + 1] = {
+        target = target, point = point, part = partName,
+        at = os.clock(), horizon = horizon,
+    }
+end
+local function resolvePredictions()
+    local now = os.clock()
+    local i = 1
+    while i <= #pendingPredictions do
+        local entry = pendingPredictions[i]
+        if now - entry.at >= entry.horizon then
+            local character = entry.target and entry.target.Character
+            local live = character and (character:FindFirstChild(entry.part or "")
+                or character:FindFirstChild("HumanoidRootPart"))
+            if live then
+                local err = (live.Position - entry.point).Magnitude
+                table.insert(predErrors, err)
+                if #predErrors > 60 then table.remove(predErrors, 1) end
+                local sorted = table.clone(predErrors)
+                table.sort(sorted)
+                predMedian = sorted[math.max(1, math.floor(#sorted / 2))]
+            end
+            table.remove(pendingPredictions, i)
+        else
+            i += 1
+        end
+    end
+end
+
+-- Fix B: cooldown real entre disparos enviados.
+local lastFiredAt = -math.huge
+
 local function fireGunAtTarget(target, silent)
     local function reject(msg) lastReject = msg return false end
     if not CONFIG.Enabled then return reject("Disabled") end
@@ -624,10 +677,17 @@ local function fireGunAtTarget(target, silent)
     if not character or not humanoid then return reject("No character") end
     local gun, equipped = getGun()
     if not gun then return reject("No gun") end
+    -- Fix A: nada de yields (Heartbeat:Wait) dentro del camino de
+    -- disparo: esto corre desde RenderStepped/InputBegan y un yield
+    -- aqui apila disparos y deja el estado colgado. Si el arma no
+    -- esta equipada, se equipa y ESTE intento se descarta; el
+    -- siguiente frame ya la encuentra en la mano.
     if not equipped then
-        humanoid:EquipTool(gun)
-        RunService.Heartbeat:Wait()
-        if gun.Parent ~= character then return reject("Gun not equipped") end
+        pcall(function() humanoid:EquipTool(gun) end)
+        return reject("Equipping gun - next frame")
+    end
+    if os.clock() - lastFiredAt < CONFIG.FireCooldown then
+        return reject("Cooldown")
     end
     if gun.Enabled == false or gun:GetAttribute("Disabled") == true
         or gun:GetAttribute("Reloading") == true or gun:GetAttribute("IsReloading") == true then
@@ -655,10 +715,14 @@ local function fireGunAtTarget(target, silent)
             shotOrigin, shotEnd = origin, CFrame.new(info.endpoint) -- fallback al origen real, nunca bypass
         end
         if not safeToSend(shotOrigin, shotEnd) then return false end
+        lastFiredAt = os.clock()
+        recordPrediction(target, info.endpoint, info.leadSeconds, info.aimPart)
         remote:FireServer(shotOrigin, shotEnd)
     else
         local shotEnd = CFrame.new(info.endpoint)
         if not safeToSend(origin, shotEnd) then return false end
+        lastFiredAt = os.clock()
+        recordPrediction(target, info.endpoint, info.leadSeconds, info.aimPart)
         remote:FireServer(CFrame.lookAt(origin.Position, info.endpoint), shotEnd)
     end
     lastReject = "FIRED lead=" .. string.format("%.0fms", info.leadSeconds * 1000)
@@ -745,14 +809,17 @@ RunService.RenderStepped:Connect(function(dt)
             if player ~= LocalPlayer then samplePlayer(player, now) end
         end
     end
-    if CONFIG.Enabled and CONFIG.AutoShoot then
-        local target = getTarget()
-        if target then fireGunAtTarget(target, CONFIG.SilentAim) end
+    resolvePredictions()
+    local target = getTarget() -- Fix D: una sola busqueda por frame
+    if CONFIG.Enabled and CONFIG.AutoShoot and target then
+        fireGunAtTarget(target, CONFIG.SilentAim)
     end
-    local target = getTarget()
     status.Text = "estado: " .. lastReject
         .. "\nobjetivo: " .. (target and target.Name or "-")
         .. "  ping: " .. string.format("%.0fms", robustRtt() * 1000)
+        .. "\nerror pred: " .. (predMedian >= 0
+            and string.format("med %.2f studs (n=%d)", predMedian, #predErrors)
+            or "sin datos aun")
 end)
 
 print("[WurstShootStandalone] activo. Q = disparar, T = auto. Panel a la izquierda.")

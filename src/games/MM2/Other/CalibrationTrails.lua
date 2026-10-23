@@ -4,12 +4,7 @@ local activeCleanup = function() end
 function Module.init(runtime: any): any
     if Module.Initialized then return Module end
     local core = state.mm2Core
-    -- The Calibration card is a debug surface: no card, no trail options.
-    if not state.mm2CalibrationFeature then
-        Module.Initialized = true
-        return Module
-    end
-    assert(core, "Calibration Trails requires the MM2 core module")
+    assert(core and state.mm2CalibrationFeature, "TrailESP requires Calibration")
     local options = {trailEsp = false, color = Color3.fromRGB(100, 185, 255)}
     local trailFolder: Folder? = nil
     local connection: any = nil

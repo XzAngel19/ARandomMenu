@@ -184,11 +184,6 @@ local Manifest: Manifest = {
             category = "Exploits",
         },
         {
-            path = "src/games/universal/Other/RejoinServer.lua",
-            name = "Rejoin Server",
-            category = "Utilities",
-        },
-        {
             path = "src/games/universal/Other/ImproveFps.lua",
             name = "Improve FPS",
             category = "World",

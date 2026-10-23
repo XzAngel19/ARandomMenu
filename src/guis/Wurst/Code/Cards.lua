@@ -543,50 +543,6 @@ function Module.init(context: any): any
             )
         end
 
-        -- Mobile: the little square is not a key slot, it is the touch button
-        -- for this feature. It previews the configured shape and colour, "+"
-        -- when the button does not exist yet, and opens the editor on tap.
-        if state.isMobile and shortcutButton and state.mobileUi then
-            local slot: TextButton = shortcutButton :: TextButton
-            local mobileUi: any = state.mobileUi
-            local actionId: string = mobileUi.actionId(feature.configKey)
-            local function syncMobileSlot(): ()
-                local action: any = mobileUi.actions[actionId]
-                local corner: UICorner? = slot:FindFirstChildOfClass("UICorner")
-                if action then
-                    slot.Text = ""
-                    slot.BackgroundColor3 = mobileUi.colorFromHex(action.color)
-                        or Theme.surfaceRaised
-                    slot.BackgroundTransparency = 0.12
-                    if corner then
-                        corner.CornerRadius = action.shape == "Circle"
-                            and UDim.new(1, 0)
-                            or action.shape == "Rounded"
-                                and UDim.new(0, 10)
-                                or UDim.new(0, 2)
-                    end
-                else
-                    slot.Text = "+"
-                    slot.BackgroundColor3 = Theme.surfaceRaised
-                    slot.BackgroundTransparency = 0.35
-                    if corner then corner.CornerRadius = UDim.new(0, 6) end
-                end
-            end
-            syncMobileSlot()
-            if type(mobileUi.onChanged) == "function" then
-                mobileUi.onChanged(syncMobileSlot)
-            end
-            local binding: any = state.shortcutBindings
-                and state.shortcutBindings[feature.configKey]
-            if binding then
-                local previous: any = binding.refresh
-                binding.refresh = function(): ()
-                    if type(previous) == "function" then previous() end
-                    syncMobileSlot()
-                end
-            end
-        end
-
         if (feature.kind == "toggle"
                 or feature.kind == "action"
                 or feature.kind == "hold")

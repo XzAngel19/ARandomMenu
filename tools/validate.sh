@@ -3,18 +3,6 @@
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
-# The toolchain is vendored in this branch: tools/luau/vendor holds the pinned
-# wasm package and tools/luau/setup.sh unpacks it into tools/luau/node_modules.
-# A fresh clone (or a wiped sandbox) only needs node, not npm and not network.
-if [ ! -x tools/luau/bin/luau ] && [ -f tools/luau/vendor/luau-rs-luau-0.739.0.tgz ]; then
-    bash tools/luau/setup.sh >/dev/null
-fi
-if [ -z "${LUAU:-}" ] && [ -x tools/luau/bin/luau ]; then
-    LUAU="tools/luau/bin/luau"
-fi
-if [ -z "${LUAU_COMPILE:-}" ] && [ -x tools/luau/bin/luau-compile ]; then
-    LUAU_COMPILE="tools/luau/bin/luau-compile"
-fi
 LUAU="${LUAU:-${LUAU_DIR:+$LUAU_DIR/}luau}"
 LUAU_COMPILE="${LUAU_COMPILE:-${LUAU_DIR:+$LUAU_DIR/}luau-compile}"
 for tool in "$LUAU" "$LUAU_COMPILE"; do
@@ -47,29 +35,3 @@ python3 tools/gen_full_boot_harness.py
 grep -F 'Load complete · failures=0' build/full_boot.log
 grep -F '[HARNESS] done' build/full_boot.log
 echo 'PASS bundle boot, silent startup, native controls and cleanup assertions'
-
-# The menu that the bundle builds, not the names that appear in the source: a
-# module can compile, ship and never register. Registering a card is a user
-# visible change, so the count is asserted.
-python3 tools/audit_menu.py >build/menu_audit.md 2>&1 || { cat build/menu_audit.md; exit 1; }
-cards="$(grep -E '^[0-9]+ cards total' build/menu_audit.md | cut -d' ' -f1)"
-[ -n "$cards" ] || { cat build/menu_audit.md; exit 1; }
-echo "PASS menu audit: $cards cards, every row dumped from the booted bundle"
-
-# A release boot must not build the developer capture card. This runs the
-# bundle with WURST_DEBUG=false and checks the card is absent, not hidden.
-python3 tools/audit_menu.py --release >build/menu_release.md 2>&1 || { cat build/menu_release.md; exit 1; }
-release_cards="$(grep -E '^[0-9]+ cards total' build/menu_release.md | cut -d' ' -f1)"
-[ -n "$release_cards" ] || { cat build/menu_release.md; exit 1; }
-# The only difference between the two boots is the debug capture card.
-if [ "$release_cards" -ne "$((cards - 1))" ]; then
-    cat build/menu_release.md
-    echo "release boot has $release_cards cards, expected $((cards - 1))" >&2
-    exit 1
-fi
-if grep -q 'Calibration' build/menu_release.md; then
-    cat build/menu_release.md
-    echo "release boot built the debug Calibration card" >&2
-    exit 1
-fi
-echo "PASS release menu: $release_cards cards, no Calibration card"

@@ -1,9 +1,0 @@
-{
-  "commit": "987d64b",
-  "purpose": "Immutable pre-v44 Adaptive reference; existing Reference v41 remains selectable.",
-  "files": {
-    "base.lua.txt": "85f454d560bda8f53389d287f5856f4e4717002876b98b46b22cfa371be704b3",
-    "Shoot.lua.txt": "23ff9d2fdc52f686ff3204dc77d84c6535bc69c00af250b5f20546e5ff856f04",
-    "KnifeThrow.lua.txt": "856bbf830832dd66b900369dde19b0ea20be87b0bc7d2d1fbc67a31b249bd584"
-  }
-}

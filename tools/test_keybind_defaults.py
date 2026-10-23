@@ -37,7 +37,7 @@ assert(state.shortcutBindings.Shoot.key=='J','explicit user assignment must surv
 state.shortcutBindings.Shoot.onPress();assert(fired==1)
 print('PASS keybinds: one-time reset, no registration defaults, explicit assignments persist')
 '''
-for filename in ["src/games/MM2/base.lua", "src/games/TRS/base.lua"]:
+for filename in ['src/games/MM2/base.lua', 'src/games/TRS/base.lua', 'src/games/MM2.luau', 'src/games/TRS.luau']:
     text = (ROOT / filename).read_text()
     for value in re.findall(r'\b(?:shootKey|getGunKey|powerShotKey|longShotKey|pickupKey|passKey)\s*=\s*Enum.KeyCode\.(\w+)', text):
         assert value == 'Unknown', (filename, value)
