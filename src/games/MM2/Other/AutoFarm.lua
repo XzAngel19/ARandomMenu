@@ -368,6 +368,46 @@ function Module.init(_runtime: any): any
             return math.atan2(-look.X, -look.Z)
         end
 
+        -- Teleport to Map, AutoFarm edition: put the body on a random
+        -- BasePart of the active map's Spawns, upright and stopped.
+        -- Returning "home" or standing up in place is not safe after a
+        -- Below run -- the body can be under the floor, and writing an
+        -- upright CFrame there just wedges it into the geometry. A map
+        -- spawn is a surface the game itself chose, so it cannot be
+        -- under the map. False when there is no active map (lobby):
+        -- the caller falls back to the old home return there.
+        local function teleportToRandomMapSpawn(
+            character: Model,
+            root: BasePart
+        ): boolean
+            if type(findMM2Map) ~= "function" then
+                return false
+            end
+            local map: Instance? = findMM2Map()
+            local spawns: Instance? = map
+                and (map :: Instance):FindFirstChild("Spawns")
+            if not spawns then
+                return false
+            end
+            local choices: {BasePart} = {}
+            for _, object: Instance in ipairs(spawns:GetChildren()) do
+                if object:IsA("BasePart") then
+                    table.insert(choices, object :: BasePart)
+                end
+            end
+            if #choices == 0 then
+                return false
+            end
+            local spawn: BasePart = choices[math.random(1, #choices)]
+            local ok: boolean = pcall(function(): ()
+                character:PivotTo(
+                    spawn.CFrame + Vector3.new(0, 3, 0))
+                root.AssemblyLinearVelocity = Vector3.zero
+                root.AssemblyAngularVelocity = Vector3.zero
+            end)
+            return ok
+        end
+
         local function restoreCharacter(returnHome: boolean): ()
             local character: Model?, humanoid: Humanoid?, root: BasePart? =
                 characterParts()
@@ -399,7 +439,20 @@ function Module.init(_runtime: any): any
                     end
                     root.AssemblyLinearVelocity = Vector3.zero
                     root.AssemblyAngularVelocity = Vector3.zero
-                    if returnHome and homeCFrame then
+                    -- A "return" inside an active map is a Teleport to
+                    -- Map onto a random spawn, never the stored home
+                    -- CFrame: after Below the home point can sit under
+                    -- the floor and the upright write wedged the body
+                    -- into the map. Only with no active map (lobby)
+                    -- does the old home return still apply.
+                    local teleported: boolean = false
+                    if returnHome and character then
+                        teleported = teleportToRandomMapSpawn(
+                            character, root)
+                    end
+                    if teleported then
+                        -- On a real spawn, upright and stopped.
+                    elseif returnHome and homeCFrame then
                         -- Back where the farm found us, upright: only
                         -- the position and yaw survive, never the
                         -- face-planted pitch.
@@ -639,7 +692,7 @@ function Module.init(_runtime: any): any
         end
         pcall(state.fireTouchInterest, root, touchPart, 0)
         pcall(state.fireTouchInterest, root, touchPart, 1)
-        task.wait(0.25)
+        task.wait(0.05)
         return type(getPlayerWeapon) == "function"
             and getPlayerWeapon(LocalPlayer, "Gun") ~= nil
     end
@@ -732,7 +785,7 @@ function Module.init(_runtime: any): any
             pcall(function(): ()
                 humanoid:EquipTool(gun :: Tool)
             end)
-            task.wait(0.3)
+            task.wait(0.1)
         end
         if gun.Parent ~= character then
             return
@@ -760,9 +813,18 @@ function Module.init(_runtime: any): any
                     killAll()
                     task.wait(0.4)
                 end
+                -- Back on the map properly before anything else: a
+                -- Teleport to Map onto a random spawn (restoreCharacter
+                -- with returnHome does exactly that while a map is
+                -- active), instead of standing the body up wherever
+                -- the farm left it -- under the floor after Below,
+                -- where it stayed bugged. Then the gun grab + shot
+                -- fires from that clean position, as fast as the
+                -- instant touch allows.
+                restoreCharacter(true)
                 if settings.grabGunShoot then
                     grabGunAndShoot()
-                    task.wait(0.4)
+                    task.wait(0.15)
                 end
                 if settings.resetOnFull then
                     local oldCharacter: Model? = LocalPlayer.Character

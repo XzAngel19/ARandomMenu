@@ -117,6 +117,21 @@ assert "if not canGrabGun() then" in SOURCE
 assert "local function touchDroppedGun(" in SOURCE
 assert "touchDroppedGun(firstDrop, startRoot)" in SOURCE
 
+# Return after a farm run (v111): never the stored home CFrame inside
+# an active map -- after Below that point can be under the floor and the
+# body wedged there. Teleport to Map onto a random map spawn instead,
+# then the full-bag grab + shot fires from that clean position.
+assert "local function teleportToRandomMapSpawn(" in SOURCE
+assert 'FindFirstChild("Spawns")' in SOURCE
+assert "math.random(1, #choices)" in SOURCE
+assert "character:PivotTo(" in SOURCE
+sequence_body = SOURCE.split("local function runFullSequence()", 1)[1]
+kill_index = sequence_body.index("killAll()")
+teleport_index = sequence_body.index("restoreCharacter(true)")
+grab_index = sequence_body.index("grabGunAndShoot()")
+assert kill_index < teleport_index < grab_index, \
+    "full-bag order: Kill All, Teleport to Map (random spawn), then Auto Grab + Shoot"
+
 # A coin that never collects is skipped instead of trapping the farm.
 assert "BLACKLIST_SECONDS" in SOURCE
 
