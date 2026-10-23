@@ -53,8 +53,11 @@ end
 tp.CreateButton=function(_,d) defs[d.Name]=d;tp.Options[d.Name]={Value=nil} end
 tp.CreateDropdown=option;tp.CreateTextBox=option;tp.CreateBind=option;tp.CreateToggle=option;tp.CreateSlider=option
 local settings={getGunKey='Unknown',autoGetGunDelay=.1}
-local state={framework={GetModule=function(_,name) assert(name=='Teleport');return tp end},mm2Core={
+local state={fireTouchInterest=function(_,_,toggle) touches+=1; if toggle==1 then hasGun=true end end,
+ framework={GetModule=function(_,name) assert(name=='Teleport');return tp end},mm2Core={
  findDroppedGun=function() return drop end,
+ getPlayerRole=function() return role end,
+ isRoundLifecycleActive=function() return roundActive end,
  findMM2Map=function() return {FindFirstChild=function() return {GetChildren=function() return {mapSpawn} end} end} end,
  mm2Settings=settings}}
 '''+ '\nlocal MM2=(function()\n'+MM2+'\nend)()\n'+r'''

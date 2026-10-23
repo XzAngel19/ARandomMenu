@@ -17,7 +17,62 @@ function Module.init(runtime: any): any
     Module.Runtime = runtime
     local findDroppedGun: any = core.findDroppedGun
     local findMM2Map: any = core.findMM2Map
+    local getPlayerRole: any = core.getPlayerRole
+    local isRoundLifecycleActive: any = core.isRoundLifecycleActive
     local mm2Settings: any = core.mm2Settings
+
+    -- Auto Get Gun is an innocent-only, in-round action. As Murderer it
+    -- must never run (the knife role has no use for the sheriff gun and
+    -- grabbing it exposes the role), and in the lobby there is no dropped
+    -- gun worth chasing. Fail closed when the role or round state is not
+    -- positively known.
+    local function canAutoGetGun(): boolean
+        if type(getPlayerRole) ~= "function"
+            or getPlayerRole(LocalPlayer) ~= "Innocent" then
+            return false
+        end
+        if type(isRoundLifecycleActive) ~= "function"
+            or isRoundLifecycleActive() ~= true then
+            return false
+        end
+        if type(findMM2Map) ~= "function" or not findMM2Map() then
+            return false
+        end
+        return true
+    end
+
+    -- Instant pickup without moving the character: pulse the touch
+    -- between our root and the dropped gun's part, the same mechanism
+    -- the farm already uses for Coin_Server pickups. Returns true when
+    -- the gun actually arrived in the backpack or character.
+    local function touchDroppedGun(gunDrop: Instance): boolean
+        if type(state.fireTouchInterest) ~= "function" then
+            return false
+        end
+        local character: Model? = LocalPlayer.Character
+        local root: Instance? = character
+            and character:FindFirstChild("HumanoidRootPart")
+        if not root then
+            return false
+        end
+        local touchPart: Instance? = nil
+        if gunDrop:IsA("BasePart") then
+            touchPart = gunDrop
+        elseif gunDrop:IsA("Model") then
+            touchPart = gunDrop:FindFirstChild("Handle", true)
+                or gunDrop:FindFirstChildWhichIsA("BasePart", true)
+        end
+        if not touchPart then
+            return false
+        end
+        pcall(state.fireTouchInterest, root, touchPart, 0)
+        pcall(state.fireTouchInterest, root, touchPart, 1)
+        task.wait(mm2Settings.autoGetGunDelay)
+        local backpack: Instance? =
+            LocalPlayer:FindFirstChildOfClass("Backpack")
+        return (backpack ~= nil and backpack:FindFirstChild("Gun") ~= nil)
+            or (character ~= nil and character:FindFirstChild("Gun") ~= nil)
+    end
 
     local autoGetGunBusy = false
 
@@ -41,19 +96,19 @@ function Module.init(runtime: any): any
             local backpack = LocalPlayer:FindFirstChildOfClass("Backpack")
             local gunDrop = findDroppedGun()
             if not character or not gunDrop
+                or not canAutoGetGun()
                 or (backpack and backpack:FindFirstChild("Gun"))
                 or character:FindFirstChild("Gun") then
                 return
             end
 
+            -- Instant touch first: no PivotTo, no position the server
+            -- can call invalid. If the touch does not deliver the gun,
+            -- stay put and let the next tick retry instead of falling
+            -- back to a teleport the user did not ask for.
             autoGetGunBusy = true
             task.spawn(function()
-                local savedCFrame = character:GetPivot()
-                character:PivotTo(gunDrop:GetPivot() + Vector3.new(0, 2, 0))
-                task.wait(mm2Settings.autoGetGunDelay)
-                if character.Parent then
-                    character:PivotTo(savedCFrame)
-                end
+                pcall(touchDroppedGun, gunDrop)
                 autoGetGunBusy = false
             end)
         end)

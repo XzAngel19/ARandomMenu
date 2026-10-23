@@ -17,6 +17,8 @@ function Module.init(_runtime: any): any
     local findMurderer: any = core.findMurderer
     local findSheriff: any = core.findSheriff
     local findDroppedGun: any = core.findDroppedGun
+    local isRoundLifecycleActive: any = core.isRoundLifecycleActive
+    local findMM2Map: any = core.findMM2Map
     local getEstimatedLatency: any = core.getEstimatedLatency
     local getGunOriginCFrame: any = core.getGunOriginCFrame
 
@@ -595,12 +597,62 @@ function Module.init(_runtime: any): any
             return collected ~= true
         end
 
+    -- The gun grab is an innocent-only, in-round action: as Murderer
+    -- it must never run, and in the lobby there is no round, no murderer
+    -- and no dropped gun to shoot with. Fail closed when the role or
+    -- the round state is not positively known.
+    local function canGrabGun(): boolean
+        if type(getPlayerRole) ~= "function"
+            or getPlayerRole(LocalPlayer) ~= "Innocent" then
+            return false
+        end
+        if type(isRoundLifecycleActive) ~= "function"
+            or isRoundLifecycleActive() ~= true then
+            return false
+        end
+        if type(findMM2Map) ~= "function" or not findMM2Map() then
+            return false
+        end
+        return true
+    end
+
+    -- Instant pickup attempt: pulse the touch between our root and the
+    -- dropped gun's part (the mechanism the coin loop already uses for
+    -- Coin_Server) instead of travelling to the drop. True only when
+    -- the gun actually arrived.
+    local function touchDroppedGun(
+        drop: Instance,
+        root: BasePart
+    ): boolean
+        if type(state.fireTouchInterest) ~= "function" then
+            return false
+        end
+        local touchPart: Instance? = nil
+        if drop:IsA("BasePart") then
+            touchPart = drop
+        elseif drop:IsA("Model") then
+            touchPart = drop:FindFirstChild("Handle", true)
+                or drop:FindFirstChildWhichIsA("BasePart", true)
+        end
+        if not touchPart then
+            return false
+        end
+        pcall(state.fireTouchInterest, root, touchPart, 0)
+        pcall(state.fireTouchInterest, root, touchPart, 1)
+        task.wait(0.25)
+        return type(getPlayerWeapon) == "function"
+            and getPlayerWeapon(LocalPlayer, "Gun") ~= nil
+    end
+
     -- Full-bag Auto Grab gun and Shoot: fetch the dropped sheriff gun
     -- if we do not already carry it, equip it, and fire ONE SilentAim
     -- shot at the murderer through the Shoot module's own silent path
     -- (state.mm2FireSilentShot). Only the direct predicted shot remains
     -- as a fallback for builds where that export is unavailable.
     local function grabGunAndShoot(): ()
+        if not canGrabGun() then
+            return
+        end
         local murderer: Player? = nil
         if type(findMurderer) == "function" then
             murderer = findMurderer()
@@ -615,10 +667,21 @@ function Module.init(_runtime: any): any
             gun = getPlayerWeapon(LocalPlayer, "Gun")
         end
         if not gun and type(findDroppedGun) == "function" then
-            -- Travel to the drop with the active farm mode, up to a few
+            -- Fastest first: an instant touch pulse from wherever we
+            -- stand. Only if that does not deliver the gun do we travel
+            -- to the drop with the active farm mode, up to a few
             -- seconds; the bag sequence owns the character meanwhile.
+            local _, _, startRoot: BasePart? = characterParts()
+            local firstDrop: Instance? = findDroppedGun()
+            if startRoot and firstDrop
+                and touchDroppedGun(firstDrop, startRoot) then
+                gun = getPlayerWeapon(LocalPlayer, "Gun")
+            end
             local deadline: number = os.clock() + 5
             while os.clock() < deadline and not gun do
+                if not canGrabGun() then
+                    return
+                end
                 local character: Model?, humanoid: Humanoid?,
                     root: BasePart? = characterParts()
                 local drop: Instance? = findDroppedGun()
@@ -672,6 +735,9 @@ function Module.init(_runtime: any): any
             task.wait(0.3)
         end
         if gun.Parent ~= character then
+            return
+        end
+        if not canGrabGun() then
             return
         end
         if type(state.mm2FireSilentShot) == "function" then
@@ -977,7 +1043,7 @@ function Module.init(_runtime: any): any
     addToggleOption(AutoFarmFeature, "Auto Grab gun and Shoot", false,
         function(value: boolean): ()
             settings.grabGunShoot = value
-        end, "Only when the coin bag fills (50): go get the dropped sheriff gun, equip it, and fire one SilentAim shot at the Murderer. Never during ordinary farming.")
+        end, "Only when the coin bag fills (50), only as Innocent and only during an active round (never as Murderer, never in the lobby): try an instant touch for the dropped sheriff gun, otherwise walk/fly to it, equip it, and fire one SilentAim shot at the Murderer. Never during ordinary farming.")
     addToggleOption(AutoFarmFeature, "Auto Kill All When full coin bag", false,
         function(value: boolean): ()
             settings.killAllOnFull = value

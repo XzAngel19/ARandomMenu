@@ -108,6 +108,15 @@ tick_body = SOURCE.rsplit("featureConnections.MM2AutoFarmTick", 1)[1]
 assert "findDroppedGun" not in tick_body.split("-- Nearest pickup")[0], \
     "the farming tick never looks for the dropped gun"
 
+# Gun grab guards (v110): Innocent only, active round only, never the
+# lobby -- and an instant touch attempt before any travel to the drop.
+assert "local function canGrabGun(): boolean" in SOURCE
+assert 'getPlayerRole(LocalPlayer) ~= "Innocent"' in SOURCE
+assert "isRoundLifecycleActive() ~= true" in SOURCE
+assert "if not canGrabGun() then" in SOURCE
+assert "local function touchDroppedGun(" in SOURCE
+assert "touchDroppedGun(firstDrop, startRoot)" in SOURCE
+
 # A coin that never collects is skipped instead of trapping the farm.
 assert "BLACKLIST_SECONDS" in SOURCE
 
