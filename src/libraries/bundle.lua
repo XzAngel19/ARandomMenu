@@ -1,5 +1,5 @@
 return {
-    stamp = "v104-20261023-echo-poison-gate",
+    stamp = "v105-20261023-echo-auto-reset",
     files = {
         ["src/Profile/142823291.lua"] = [[
 --!strict
@@ -6267,6 +6267,17 @@ local MIN_ECHO_SAMPLES: number = 3
 -- 1007.7 ms echo at 270.3 ms ping, which an 800 ms cut would have thrown away.
 local MIN_ECHO_DELAY: number = 0.05
 local MAX_ECHO_DELAY: number = 1.6
+-- Echo housekeeping (v105). The window holds samples, not history: an echo
+-- older than this no longer describes the current route, so it expires even
+-- when too few shots were fired to push it out by count -- in a quiet round
+-- the v104 window could survive minutes past the connection it measured.
+local ECHO_MAX_AGE: number = 30
+-- A healthy echo median sits at ~1.0-1.1x the RTT (both are the same round
+-- trip). If the median climbs past 1.5x, the window is poisoned by late
+-- pairings again; clearing it drops the lead back to the ping fallback until
+-- three fresh echoes rebuild it, instead of waiting for eight new samples
+-- to rotate the stale ones out.
+local ECHO_DIVERGENCE_RATIO: number = 1.5
 -- Transport + manual lead. A full second only happens when the session ping
 -- or the manual offset asks for it; the status line shows the real number.
 local MAX_HORIZON: number = 1.0
@@ -6389,6 +6400,7 @@ function Module.init(runtime: any): any
     local tracks: {[Player]: Track} =
         setmetatable({}, {__mode = "k"}) :: any
     local echoes: {number} = {}
+    local echoTimes: {number} = {}
     local elapsed: number = 0
 
     local function ensureTrack(player: Player): Track?
@@ -6881,18 +6893,38 @@ function Module.init(runtime: any): any
         -- (in the v103 session, pairings at 416-1840 ms entered the
         -- median and dragged it from the true 106 ms to 532 ms, which
         -- led every shot ~0.4 s long and then tripped the capped-
-        -- horizon refusal). Real round trips scale with the ping --
-        -- the historical 1007 ms echo rode a 270 ms ping -- so the
-        -- acceptance window scales with the measured RTT instead of
-        -- trusting the absolute 1.6 s pairing limit alone.
+        -- horizon refusal). Real round trips scale with the ping, so
+        -- the acceptance window scales with the measured RTT instead
+        -- of trusting the absolute 1.6 s pairing limit alone. v104 used
+        -- 4x RTT (~540 ms at a 135 ms ping) and the A5AACF6D session
+        -- still fed it 279-990 ms pairings that held the median at
+        -- 210 ms against a 131-143 ms ping; 2.5x + 50 ms (~388 ms at
+        -- that ping) closes that band while staying far above any
+        -- genuine round trip on the same connection.
         local plausible: number = math.clamp(
-            currentRtt() * 4, 0.35, MAX_ECHO_DELAY)
+            currentRtt() * 2.5 + 0.05, 0.3, MAX_ECHO_DELAY)
         if delay > plausible then
             return
         end
+        -- Expire stale samples by age, not only by count rotation.
+        while #echoes > 0 and receivedAt - echoTimes[1] > ECHO_MAX_AGE do
+            table.remove(echoes, 1)
+            table.remove(echoTimes, 1)
+        end
         table.insert(echoes, delay)
+        table.insert(echoTimes, receivedAt)
         while #echoes > MAX_ECHOES do
             table.remove(echoes, 1)
+            table.remove(echoTimes, 1)
+        end
+        -- Auto-reset on divergence: if the surviving median no longer
+        -- describes this connection's round trip, the window is
+        -- poisoned; drop it and let the ping fallback carry the lead
+        -- until fresh echoes rebuild the median.
+        local median: number? = echoMedian()
+        if median and median > currentRtt() * ECHO_DIVERGENCE_RATIO then
+            table.clear(echoes)
+            table.clear(echoTimes)
         end
     end
 
@@ -7365,6 +7397,7 @@ function Module.init(runtime: any): any
             state.mm2Prediction = nil
         end
         table.clear(echoes)
+        table.clear(echoTimes)
         table.clear(tracks)
     end
 

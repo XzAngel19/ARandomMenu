@@ -247,6 +247,28 @@ do
     local cappedText=prediction.status(nil)
     assert(cappedText:find("auto lead %(ping%)"),cappedText)
 
+    -- v105 auto-reset: samples inside the gate (300 ms at a 120 ms ping)
+    -- whose median still sits past 1.5x RTT are a poisoned window, not a
+    -- route change -- the A5AACF6D session held 210 ms against a ~135 ms
+    -- ping. The window clears itself and the lead falls back to ping
+    -- until three fresh echoes rebuild it.
+    prediction.reset()
+    for _=1,3 do prediction.noteEcho(0,0.30) end
+    assert(prediction.getEchoDelay()==nil,
+        "a median past 1.5x RTT must auto-reset the echo window")
+    assert(prediction.status(nil):find("auto lead %(ping%)"),
+        prediction.status(nil))
+
+    -- v105 age expiry: echoes older than 30 s expire even when no newer
+    -- shots push them out by count, so one fresh sample cannot resurrect
+    -- a median built on a previous round's connection.
+    prediction.reset()
+    for _=1,3 do prediction.noteEcho(0,0.18) end
+    near(prediction.getEchoDelay(),0.18,1e-9)
+    prediction.noteEcho(100,100.18)
+    assert(prediction.getEchoDelay()==nil,
+        "echoes older than 30 s must expire instead of forming a median")
+
     -- Turn: the chord over the horizon must beat the straight tangent.
     humanoid.GetState=function() return "Running" end
     prediction.reset()
