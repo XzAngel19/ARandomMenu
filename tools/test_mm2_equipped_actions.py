@@ -73,7 +73,7 @@ local function isProtectedTarget() return false end
 local function getPlayerRole() return 'Murderer' end
 local function validateGunShot() return true end
 local function isWeaponPathClear() return true end
-local function buildSilentShot() return CFrame.new(Vector3.zero),CFrame.new(endpoint),2.5 end
+local function buildSilentShot() return CFrame.new(Vector3.zero),CFrame.new(endpoint),2.5,0,'Front' end
 local function macroUnequip() end
 local info={endpoint=endpoint,targetPosition=endpoint,capturedPosition=endpoint,velocity=Vector3.zero,
     leadSeconds=.1,model='kinematic-v51',sampleAge=0,samples=4,rtt=.1,motionSource='fit'}

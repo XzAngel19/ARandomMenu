@@ -1,28 +1,48 @@
 #!/usr/bin/env python3
-"""Execute MM2 destinations and the universal dispatcher against mock services."""
+"""Execute MM2 destinations and immediate gun pickup against mock services."""
 import os
 import subprocess
 import tempfile
 from pathlib import Path
+
 from test_mm2_precision import PRELUDE, section
+
 ROOT = Path(__file__).resolve().parents[1]
-MM2 = (ROOT / 'src/games/MM2/Movement/Teleport.lua').read_text()
-UNIVERSAL = (ROOT / 'src/games/universal/Movement/ClickTeleport.lua').read_text()
+MM2 = (ROOT / "src/games/MM2/Movement/Teleport.lua").read_text()
+UNIVERSAL = (ROOT / "src/games/universal/Movement/ClickTeleport.lua").read_text()
+
+assert "Gun pickup delay" not in MM2
+assert "Gun pickup delay" not in UNIVERSAL
+assert "autoGetGunDelay" not in MM2
+assert "task.wait" not in MM2
+grab = section(MM2, "    local function grabDroppedGun()", "    local teleport =")
+assert "PivotTo" not in grab and "touchDroppedGun(gunDrop)" in grab
+
 script = PRELUDE + r'''
 Enum.KeyCode={Unknown='Unknown',J='J'};Enum.UserInputType={Keyboard='Keyboard'}
 local cf={__add=function(a,b) return CFrame.new(a.Position+b) end}
 CFrame.new=function(p) return setmetatable({Position=p},cf) end
 local initial=CFrame.new(Vector3.zero)
 local pivots={}
+local touches=0
+local hasGun=false
+local rootPart={Name='HumanoidRootPart'}
+local gunTool={Name='Gun'}
 local character={Parent=true,GetPivot=function() return initial end,
- PivotTo=function(_,p) table.insert(pivots,p.Position) end,FindFirstChild=function() end}
+ PivotTo=function(_,p) table.insert(pivots,p.Position) end}
+function character:FindFirstChild(name)
+ if name=='HumanoidRootPart' then return rootPart end
+ if name=='Gun' and hasGun then return gunTool end
+ return nil
+end
 local LocalPlayer={Character=character,FindFirstChildOfClass=function() end}
 local root={CFrame=CFrame.new(Vector3.new(30,0,0))}
 local target={Name='TargetGuy',Character={FindFirstChild=function() return root end}}
 local Players={GetPlayers=function() return {LocalPlayer,target} end}
 local mapSpawn={CFrame=CFrame.new(Vector3.new(10,0,0)),IsA=function(_,c) return c=='BasePart' end}
 local lobbySpawn={CFrame=CFrame.new(Vector3.new(20,0,0))}
-local drop={GetPivot=function() return CFrame.new(Vector3.new(40,0,0)) end}
+local drop={IsA=function(_,className) return className=='BasePart' end,
+ GetPivot=function() error('instant gun pickup must not read a teleport destination') end}
 local workspace={FindFirstChild=function(_,name)
  if name=='Lobby' then return {FindFirstChild=function() return {FindFirstChildWhichIsA=function() return lobbySpawn end} end} end
 end}
@@ -34,11 +54,12 @@ local TaskManager={Connect=function(_,fn) callbacks.auto=fn;return {Disconnect=f
 local function disconnectFeatureConnection(key)
  if featureConnections[key] then featureConnections[key]:Disconnect();featureConnections[key]=nil end
 end
-local task={spawn=function(fn) fn() end,wait=function() end}
+local task={spawn=function(fn) fn() end,wait=function() error('gun pickup must never wait') end}
 local keyHandler
 local UserInputService={GetFocusedTextBox=function() end,InputBegan={Connect=function(_,fn)
  keyHandler=fn;return {Disconnect=function() keyHandler=nil end}
 end}}
+-- Old configs may still contain the removed delay. It must simply be ignored.
 local configData={values={['MM2.Teleport.GetGunkey']='J',['MM2.Teleport.Gunpickupdelay']=.2},states={}}
 local tp={Options={Destination={Value='MM2'}},Notify=function(_,m) notify(m) end}
 local defs={}
@@ -52,38 +73,64 @@ local function option(_,d)
 end
 tp.CreateButton=function(_,d) defs[d.Name]=d;tp.Options[d.Name]={Value=nil} end
 tp.CreateDropdown=option;tp.CreateTextBox=option;tp.CreateBind=option;tp.CreateToggle=option;tp.CreateSlider=option
-local settings={getGunKey='Unknown',autoGetGunDelay=.1}
-local state={fireTouchInterest=function(_,_,toggle) touches+=1; if toggle==1 then hasGun=true end end,
+local settings={getGunKey='Unknown'}
+local role='Innocent'
+local roundActive=true
+local state={fireTouchInterest=function(first,second,toggle)
+ assert(first==rootPart and second==drop)
+ touches+=1
+ if toggle==1 then hasGun=true end
+end,
  framework={GetModule=function(_,name) assert(name=='Teleport');return tp end},mm2Core={
  findDroppedGun=function() return drop end,
  getPlayerRole=function() return role end,
  isRoundLifecycleActive=function() return roundActive end,
  findMM2Map=function() return {FindFirstChild=function() return {GetChildren=function() return {mapSpawn} end} end} end,
  mm2Settings=settings}}
-'''+ '\nlocal MM2=(function()\n'+MM2+'\nend)()\n'+r'''
+''' + "\nlocal MM2=(function()\n" + MM2 + "\nend)()\n" + r'''
 MM2.init({})
-assert(settings.getGunKey=='J' and settings.autoGetGunDelay==.2,'preserve old custom binding and delay')
+assert(settings.getGunKey=='J','preserve the old custom binding')
+assert(defs['Gun pickup delay']==nil and tp.Options['Gun pickup delay']==nil,
+ 'the pickup delay control and its persisted option are gone')
 assert(not tp.Options['MM2 target'])
 assert(not state.mm2TeleportRun, 'no second MM2 dispatcher')
 defs['Teleport to Map'].Function();near(pivots[#pivots].X,10);near(pivots[#pivots].Y,3)
 defs['Teleport to Lobby'].Function();near(pivots[#pivots].X,20)
 defs['Player name'].Function('target');defs['Teleport to Player'].Function();near(pivots[#pivots].X,30)
-local before=#pivots;defs['Get Gun'].Function()
-assert(#pivots==before+2);near(pivots[before+1].X,40);near(pivots[before+1].Y,2);near(pivots[#pivots].X,0)
+
+local before=#pivots
+hasGun=false;touches=0
+defs['Get Gun'].Function()
+assert(touches==2 and hasGun,'manual Get Gun pulses touch and confirms immediately')
+assert(#pivots==before,'manual Get Gun never teleports away or back')
+pass('MM2 Get Gun: immediate touch pickup, no delay and no travel')
+
 for name,d in pairs(defs) do assert(d.Show.Option=='Destination' and #d.Show.Values==1 and d.Show.Values[1]=='MM2',name..' is grouped under the sole MM2 entry') end
-defs['Auto Get Gun'].Function(true);assert(callbacks.auto)
-callbacks.auto(.5);near(pivots[#pivots-1].X,40)
+hasGun=false;touches=0;before=#pivots
+defs['Auto Get Gun'].Function(true)
+assert(callbacks.auto and touches==2 and hasGun,'enabling Auto Get Gun picks up in the same frame')
+assert(#pivots==before,'Auto Get Gun never pivots the character')
+callbacks.auto(.5)
+assert(touches==2,'an owned gun is not touched again')
+hasGun=false
+callbacks.auto(.5)
+assert(touches==4 and hasGun,'a later Heartbeat retries without a delay')
+assert(#pivots==before)
 defs['Auto Get Gun'].Function(false);assert(not callbacks.auto)
+pass('MM2 Auto Get Gun: immediate same-frame pickup and per-frame retry')
+
 local function characterRoot() error('MM2 route must not run the universal travel setup') end
 local Module={}
-'''+section(UNIVERSAL,'function Module.run(', 'function Module.destroy(')+r'''
+''' + section(UNIVERSAL, "function Module.run(", "function Module.destroy(") + r'''
 local context={host={state=state}}
 local previous=#pivots;Module.run(context,tp,{})
 assert(#pivots==previous and notices[#notices]=='Choose a MM2 teleport button below','MM2 actions belong together, not in another selector')
 MM2.destroy();assert(not state.mm2TeleportRun and not keyHandler and not callbacks.auto)
 Module.run(context,tp,{});assert(notices[#notices]=='Choose a MM2 teleport button below')
-print('PASS Teleport: one dispatcher; Map/Lobby/Player/Gun, auto pickup, custom key/delay migration, unload')
+print('PASS Teleport: destinations, instant manual/auto gun pickup, no delay option, unload')
 '''
-with tempfile.TemporaryDirectory(prefix='teleport-') as tmp:
-    path=Path(tmp)/'test.luau';path.write_text(script)
-    subprocess.run([os.environ.get('LUAU','luau'),str(path)],check=True)
+
+with tempfile.TemporaryDirectory(prefix="teleport-") as tmp:
+    path = Path(tmp) / "test.luau"
+    path.write_text(script)
+    subprocess.run([os.environ.get("LUAU", "luau"), str(path)], check=True)

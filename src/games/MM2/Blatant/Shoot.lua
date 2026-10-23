@@ -168,7 +168,7 @@ function Module.init(runtime: any): any
         info: any,
         muzzleOrigin: CFrame?,
         variant: string
-    ): (CFrame?, CFrame?, number)
+    ): (CFrame?, CFrame?, number, number, string)
         local predicted: Vector3 = info.endpoint
         local liftStuds: number = silentLift(info, predicted)
         local velocity: Vector3 = info.velocity
@@ -202,27 +202,31 @@ function Module.init(runtime: any): any
 
         local startPoint: Vector3
         local endPoint: Vector3
+        local resolvedVariant: string = variant
         if variant == "Through" and approach then
-
+            resolvedVariant = "Through"
             local captured: Vector3 = info.capturedPosition or predicted
             startPoint = captured - approach * 1.0 + sweepStart
             endPoint = predicted + approach * SILENT_PIERCE_STUDS + sweepEnd
         elseif variant == "Top" then
+            resolvedVariant = "Top"
             startPoint = predicted + Vector3.new(0, liftStuds, 0)
                 + sweepStart
             endPoint = predicted + sweepEnd
         elseif variant == "Behind" and approach then
+            resolvedVariant = "Behind"
             startPoint = predicted + approach * approachOffset + sweepStart
             endPoint = predicted + sweepEnd
         elseif approach then
-
+            resolvedVariant = "Front"
             startPoint = predicted - approach * approachOffset + sweepStart
             endPoint = predicted + sweepEnd
         elseif direction then
+            resolvedVariant = "Motion"
             startPoint = predicted + sweepStart
             endPoint = predicted + sweepEnd
         else
-
+            resolvedVariant = "Top"
             startPoint = predicted + Vector3.new(0, liftStuds, 0)
             endPoint = predicted
         end
@@ -230,23 +234,30 @@ function Module.init(runtime: any): any
         if (endPoint - startPoint).Magnitude <= 0.05 then
             startPoint = predicted + Vector3.new(0, liftStuds, 0)
             endPoint = predicted
+            resolvedVariant = "Top"
+            sweep = 0
         end
         -- Through has length even when the configurable extra sweep is zero.
+        -- Record the geometry actually authored, not just the requested
+        -- variant: a bystander fallback removes the sweep and can change a
+        -- Through/Behind request into the Front or lifted construction.
         if bystanderBlocks(target, startPoint, endPoint) then
-
+            sweep = 0
             if variant ~= "Top" and approach then
                 startPoint = predicted - approach * approachOffset
+                resolvedVariant = "Front"
             else
                 startPoint = predicted + Vector3.new(0, liftStuds, 0)
+                resolvedVariant = "Top"
             end
             endPoint = predicted
             if bystanderBlocks(target, startPoint, endPoint) then
-                return nil, nil, 0
+                return nil, nil, 0, 0, resolvedVariant
             end
         end
 
         return CFrame.lookAt(startPoint, endPoint), CFrame.new(endPoint),
-            approachOffset
+            approachOffset, sweep, resolvedVariant
     end
 
     type FireOptions = {
@@ -348,23 +359,15 @@ function Module.init(runtime: any): any
         -- seconds and received no GunFired echo for any of them; every request
         -- sent after an echo was answered. A second packet before the first
         -- resolves is not a second bullet -- it is a wasted attempt that also
-        -- inflates the attempt count the calibration reports. Every hold is
-        -- counted and surfaced (v109): a shot that did not go out must say
-        -- why on the card, not just vanish into the attempt counters.
+        -- inflates the attempt count the calibration reports. A held shot
+        -- still returns a useful status to Auto Shoot or the card; there is
+        -- no separate diagnostic counter or menu action to manage.
         local pendingShot: any = state.mm2ShotFeedback.pending
         if type(pendingShot) == "table"
             and type(pendingShot.queuedAt) == "number"
             and os.clock() - pendingShot.queuedAt < SHOT_CONFIRM_WINDOW then
             local remaining: number = SHOT_CONFIRM_WINDOW
                 - (os.clock() - pendingShot.queuedAt)
-            local gate: any = state.mm2ShotGateHold
-            if type(gate) ~= "table" then
-                gate = {holds = 0, lastRemaining = 0, lastAt = 0}
-                state.mm2ShotGateHold = gate
-            end
-            gate.holds += 1
-            gate.lastRemaining = remaining
-            gate.lastAt = os.clock()
             return reject(string.format(
                 "Shot gate: waiting for the previous shot (%.1f s left).",
                 remaining))
@@ -411,21 +414,23 @@ function Module.init(runtime: any): any
         if silent then
 
             local variant: string = mm2Settings.silentSpawn
-            local shotOrigin: CFrame?, shotEnd: CFrame?, offset: number =
+            local shotOrigin: CFrame?, shotEnd: CFrame?, offset: number,
+                sweep: number, resolvedVariant: string =
                 buildSilentShot(target, info, origin, variant)
             if not shotOrigin or not shotEnd then
                 return reject("Another player blocks the silent shot.")
             end
+            variant = resolvedVariant
             -- A near-target origin inside a body can make the engine miss that
             -- containing body. Fall back to the real muzzle, never a bypass.
             if not isWeaponPathClear(shotOrigin.Position,shotEnd.Position,targetCharacter,nil,{ignoreTarget=true}) then
                 shotOrigin,shotEnd = origin,CFrame.new(info.endpoint)
+                variant = "Muzzle"
+                offset = 0
+                sweep = 0
             end
             if not safeToSend(shotOrigin,shotEnd,origin) then return false end
             state.mm2ShotFeedback.queue(target, gun, shotOrigin, shotEnd)
-            if state.mm2ShotFeedback.pending then
-                state.mm2ShotFeedback.pending.silentSpawn = variant
-            end
 
             state.lastSilentShotInfo = {
                 variant = variant,
@@ -445,7 +450,7 @@ function Module.init(runtime: any): any
                 variant = variant,
                 offset = offset,
                 settings = {mode = "Silent", spawn = variant,
-                    sweep = mm2Settings.silentSweep, wallCheck = mm2Settings.shootWallCheck,
+                    sweep = sweep, wallCheck = mm2Settings.shootWallCheck,
                     leadSeconds = info.leadSeconds, motionSource = info.motionSource,
                     model = info.model,
                     sampleAge = info.sampleAge, samples = info.samples,
@@ -578,8 +583,8 @@ function Module.init(runtime: any): any
         end
         -- One pending slot: a second authored shot overwrites the first
         -- shot's record, its GunFired echo can no longer be matched and
-        -- the calibration gains an unmatched signal. Manual fire is the
-        -- user's explicit act and is not gated here.
+        -- the calibration gains an unmatched signal. fireGunAtTarget applies
+        -- the same gate to manual and automatic requests.
         if state and state.mm2ShotFeedback
             and state.mm2ShotFeedback.pending then
             autoStatus("Esperando confirmación")
@@ -659,38 +664,12 @@ function Module.init(runtime: any): any
     addToggleOption(ShootFeature, "Auto Shoot", false, toggleAutoShoot,
         "While SilentAIM is ON and you hold the gun: try every frame as soon as the current target is visible. No distance or prediction-confidence gate. Uses the Gun aim method.", true)
     local ShootTargetBox
-    local wallCheckRow: GuiObject? = nil
-    local silentSweepRow: GuiObject? = nil
-    local silentSpawnRow: GuiObject? = nil
-    local spawnStatsRow: GuiObject? = nil
-    local leadOffsetRow: GuiObject? = nil
     local function refreshShootOptions(): ()
         if ShootTargetBox then
             setOptionVisible(
                 ShootFeature,
                 ShootTargetBox.Parent :: GuiObject,
                 mm2Settings.shootMode == "Custom"
-            )
-        end
-        -- Silent-only controls stay hidden while the mode is Prediction.
-        local silent: boolean = mm2Settings.silentAim == true
-        if wallCheckRow then setOptionVisible(ShootFeature, wallCheckRow, true) end
-        if silentSweepRow then
-            setOptionVisible(ShootFeature, silentSweepRow :: GuiObject, silent)
-        end
-        if silentSpawnRow then
-            setOptionVisible(ShootFeature, silentSpawnRow :: GuiObject, silent)
-        end
-        if spawnStatsRow then
-            setOptionVisible(ShootFeature, spawnStatsRow :: GuiObject, silent)
-        end
-        -- The manual offset only exists as an advanced fallback; automatic
-        -- lead is the default and needs no tuning.
-        if leadOffsetRow then
-            setOptionVisible(
-                ShootFeature,
-                leadOffsetRow :: GuiObject,
-                prediction.settings.autoLead ~= true
             )
         end
     end
@@ -724,7 +703,7 @@ function Module.init(runtime: any): any
             triggerManualShot
         )
     end
-    local wallButton = addToggleOption(
+    addToggleOption(
         ShootFeature,
         "WallCheck",
         mm2Settings.shootWallCheck,
@@ -735,7 +714,6 @@ function Module.init(runtime: any): any
             .. "WeaponPassthrough tags and invisible layers are ignored and the "
             .. "first solid surface or player blocks the shot. Applies to gun and knife."
     )
-    wallCheckRow = wallButton and wallButton.Parent
     addToggleOption(
         ShootFeature,
         "Macro",
@@ -745,136 +723,6 @@ function Module.init(runtime: any): any
         end,
         "Pistol macro: hides the gun 0.01 seconds after every shot."
     )
-    silentSweepRow = addNumberOption(
-        ShootFeature,
-        "Silent sweep",
-        mm2Settings.silentSweep,
-        0,
-        MAX_SILENT_SWEEP,
-        function(value: number): ()
-            mm2Settings.silentSweep = math.clamp(value, 0, MAX_SILENT_SWEEP)
-        end,
-        "Exact extra distance in studs at each end of the silent shot ray, "
-            .. "along measured horizontal movement. 0 disables it; max 1.5. "
-            .. "No local physics change. Segments crossing another player are "
-            .. "shortened and checked again, or rejected.",
-        0.05
-    )
-    local silentSpawnValues: {string} = {"Front", "Through", "Top", "Behind"}
-    local silentSpawnIndex: number = 1
-    for valueIndex: number, value: string in ipairs(silentSpawnValues) do
-        if value == mm2Settings.silentSpawn then
-            silentSpawnIndex = valueIndex
-        end
-    end
-    local silentSpawnButton = addCycleOption(
-        ShootFeature,
-        "Silent spawn",
-        silentSpawnValues,
-        silentSpawnIndex,
-        function(value: string): ()
-            mm2Settings.silentSpawn = value
-        end,
-        "Where the silent bullet is authored: Front = in front of the torso "
-            .. "at torso height; Through = pierces the torso; Top = the old "
-            .. "geometry (1.6 studs above); Behind = far side. Check Spawn A/B "
-            .. "status to see which variant actually scores."
-    )
-    if silentSpawnButton then
-        silentSpawnRow = silentSpawnButton.Parent :: GuiObject
-    end
-    local function spawnStatsText(): string
-        local stats: any = state.mm2ShotFeedback and
-            state.mm2ShotFeedback.spawnStats or {}
-        local parts: {string} = {}
-        for _, variant: string in ipairs({"Front", "Through", "Top", "Behind"}) do
-            local s: any = stats[variant]
-            if s and s.shots > 0 then
-                table.insert(
-                    parts,
-                    string.format(
-                        "%s %d/%d",
-                        variant,
-                        s.hits,
-                        s.shots
-                    )
-                )
-            end
-        end
-        if #parts == 0 then
-            return "Spawn A/B: no silent shots counted yet."
-        end
-        return "Spawn A/B (hits/shots): " .. table.concat(parts, " · ")
-    end
-    local spawnStatsButton = addActionOption(ShootFeature, "Spawn A/B status", function(): ()
-        notify(spawnStatsText())
-    end)
-    if spawnStatsButton then
-        spawnStatsRow = spawnStatsButton.Parent :: GuiObject
-    end
-    addActionOption(ShootFeature, "Shot gate status", function(): ()
-        local gate: any = state.mm2ShotGateHold
-        local holds: number = type(gate) == "table" and gate.holds or 0
-        local pendingShot: any = state.mm2ShotFeedback
-            and state.mm2ShotFeedback.pending
-        local nowText: string = "no shot in flight"
-        if type(pendingShot) == "table"
-            and type(pendingShot.queuedAt) == "number" then
-            local left: number = SHOT_CONFIRM_WINDOW
-                - (os.clock() - pendingShot.queuedAt)
-            nowText = left > 0
-                and string.format("a shot is in flight (%.1f s of gate left)", left)
-                or "the in-flight shot is past the gate window"
-        end
-        notify(string.format(
-            "Shot gate: %d hold(s) this session · %.1f s window · %s.",
-            holds, SHOT_CONFIRM_WINDOW, nowText))
-    end)
-    local autoLeadButton = addToggleOption(
-        ShootFeature,
-        "Auto lead",
-        true,
-        function(value: boolean): ()
-            prediction.settings.autoLead = value
-            refreshShootOptions()
-        end,
-        "Recommended. Uses the measured FireServer -> GunFired echo (or your "
-            .. "ping while it learns), the replication window and the sample "
-            .. "age. It adapts to your FPS, device and network without manual "
-            .. "tuning. Turn it off only to test a fixed manual offset.",
-        false
-    )
-    if autoLeadButton then
-        setOptionVisible(ShootFeature, autoLeadButton.Parent :: GuiObject, true)
-    end
-    leadOffsetRow = addNumberOption(
-        ShootFeature,
-        "Lead offset ms",
-        math.round(prediction.settings.extraLead * 1000),
-        -300,
-        600,
-        function(value: number): ()
-            -- Typed values are not quantized by the UI, so 1 ms precision is
-            -- real. The predictor adds this on top of echo/RTT + interpolation.
-            prediction.settings.extraLead = math.clamp(value, -300, 600) / 1000
-        end,
-        "Manual timing correction in milliseconds, on top of the measured "
-            .. "FireServer -> GunFired echo (or ping) and the replication "
-            .. "interpolation. Type an exact value in the numeric box; the "
-            .. "slider moves in 1 ms steps. Positive aims further ahead, "
-            .. "negative closer, 0 keeps the measured model. Prediction status "
-            .. "shows the resulting lead; it saturates at the model's cap.",
-        1
-    )
-    addActionOption(ShootFeature, "Prediction status", function(): ()
-        notify(prediction.status(getSelectedShootTarget()))
-    end)
-    addActionOption(ShootFeature, "Reset prediction", function(): ()
-        if type(prediction.reset) == "function" then
-            prediction.reset()
-        end
-        notify("Prediction history and echo samples cleared.")
-    end)
     ShootTargetBox = addTextOption(ShootFeature, "Target player", "", function(
         value: string
     ): ()
@@ -891,7 +739,6 @@ function Module.init(runtime: any): any
         toggleShootMurderer(false)
         state.mm2SilentAimFeature = nil
         state.mm2FireSilentShot = nil
-        state.mm2ShotGateHold = nil
         toggleAutoShoot(false)
         state.mm2ShotFeedback.hide()
     end

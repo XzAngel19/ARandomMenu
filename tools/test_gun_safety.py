@@ -151,6 +151,7 @@ local endpoint=Vector3.new(20,0,0)
 local mm2Settings={silentAim=false,shootWallCheck=true,silentSpawn='Through',silentSweep=0}
 local remote={IsA=function() return true end}
 local sends,queues,notes=0,0,0
+local lastAuthored=nil
 remote.FireServer=function() sends+=1 end
 local gun={Parent=character,Enabled=true,GetAttribute=function() return nil end}
 function gun:FindFirstChild(name) return name=='Shoot' and remote or nil end
@@ -173,11 +174,12 @@ local aimInfo={endpoint=endpoint,targetPosition=endpoint,capturedPosition=endpoi
  leadSeconds=.1,model='kinematic-v51',sampleAge=0,samples=4,rtt=.1,motionSource='fit'}
 local function gunAim() return aimEndpoint,aimInfo,nil end
 local prediction={gunAim=gunAim}
-local function buildSilentShot() return CFrame.new(Vector3.zero),CFrame.new(endpoint),2.5 end
+local function buildSilentShot() return CFrame.new(Vector3.zero),CFrame.new(endpoint),2.5,0.5,'Front' end
 local function bystanderOnSegment() return false end
-local function isWeaponPathClear() return true end
+local nearPathClear=true
+local function isWeaponPathClear() return nearPathClear end
 local state={mm2ShotFeedback={queue=function() queues+=1 end,shootActive=true}}
-local trajectoryCalibration={noteAuthoredShot=function() notes+=1 end}
+local trajectoryCalibration={noteAuthoredShot=function(_,info) notes+=1;lastAuthored=info end}
 ''' + section(S, '    type FireOptions', '    local shootFeatureActive:') + r'''
 assert(fireGunAtTarget(target,{whenReady=true,quiet=true}))
 assert(sends==1 and queues==1 and notes==1,'normal shot sends one packet and queues feedback')
@@ -201,28 +203,35 @@ assert(seenMuzzle and seenMuzzle.Z==-10,
  'v106: the guard must see the real muzzle, never the near-target silent origin')
 assert(seenOrigin and seenOrigin.Z==0,
  'v106: the authored silent origin is still the origin argument')
-buildSilentShot=function() return nil,nil,0 end
+assert(lastAuthored and lastAuthored.settings.spawn=='Front'
+ and lastAuthored.settings.sweep==0.5,
+ 'silent telemetry records the actual resolved geometry and sweep')
+buildSilentShot=function() return nil,nil,0,0,'Front' end
 assert(not fireGunAtTarget(target,{whenReady=true,quiet=true}))
 assert(sends==2,'blocked silent geometry cannot send')
-buildSilentShot=function() return CFrame.new(Vector3.zero),CFrame.new(endpoint),2.5 end
+buildSilentShot=function() return CFrame.new(Vector3.zero),CFrame.new(endpoint),2.5,0.5,'Front' end
 state.mm2ShotFeedback.pending={queuedAt=os.clock()}
 assert(not fireGunAtTarget(target,{whenReady=true,quiet=true}))
 assert(sends==2,'v106: one authored request owns the gun until its echo resolves')
-assert(state.mm2ShotGateHold and state.mm2ShotGateHold.holds==1,
- 'v109: a gate hold is counted so the card status can surface it')
-assert(state.mm2ShotGateHold.lastRemaining>0
- and state.mm2ShotGateHold.lastRemaining<=1.5,
- 'v109: the hold records how much of the window was left')
+assert(lastRejectReason:find('Shot gate'),
+ 'a held shot explains itself without a separate diagnostic counter')
+assert(state.mm2ShotFeedback.pending~=nil,
+ 'a held request must not clear or replace the in-flight shot')
 state.mm2ShotFeedback.pending={queuedAt=os.clock()-2}
 assert(fireGunAtTarget(target,{whenReady=true,quiet=true}))
-assert(sends==3 and state.mm2ShotGateHold.holds==1,
- 'v109: a pending older than the window no longer holds the gun')
+assert(sends==3,'a pending older than the window no longer holds the gun')
 state.mm2ShotFeedback.pending=nil
 assert(fireGunAtTarget(target,{whenReady=true,quiet=true}))
 assert(sends==4,'v106: the gun is free again once the request resolves')
 gun.Enabled=false
 assert(not fireGunAtTarget(target,{whenReady=true,quiet=true}))
 gun.Enabled=true
+nearPathClear=false
+assert(fireGunAtTarget(target,{whenReady=true,quiet=true}))
+assert(sends==5 and lastAuthored.settings.spawn=='Muzzle'
+ and lastAuthored.settings.sweep==0,
+ 'real-muzzle fallback must not be mislabeled as a near-target silent shot')
+nearPathClear=true
 pass('actual fireGunAtTarget: normal/silent packets pass the final guard; no send on stale, unsafe or blocked geometry')
 end
 '''

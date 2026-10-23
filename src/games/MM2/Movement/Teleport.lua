@@ -41,10 +41,10 @@ function Module.init(runtime: any): any
         return true
     end
 
-    -- Instant pickup without moving the character: pulse the touch
-    -- between our root and the dropped gun's part, the same mechanism
-    -- the farm already uses for Coin_Server pickups. Returns true when
-    -- the gun actually arrived in the backpack or character.
+    -- Immediate pickup without moving the character: pulse the touch
+    -- between our root and the dropped gun's part, with no sleep or
+    -- configurable delay. The next Heartbeat can retry while weapon
+    -- replication is still catching up.
     local function touchDroppedGun(gunDrop: Instance): boolean
         if type(state.fireTouchInterest) ~= "function" then
             return false
@@ -67,7 +67,6 @@ function Module.init(runtime: any): any
         end
         pcall(state.fireTouchInterest, root, touchPart, 0)
         pcall(state.fireTouchInterest, root, touchPart, 1)
-        task.wait(mm2Settings.autoGetGunDelay)
         local backpack: Instance? =
             LocalPlayer:FindFirstChildOfClass("Backpack")
         return (backpack ~= nil and backpack:FindFirstChild("Gun") ~= nil)
@@ -189,16 +188,10 @@ function Module.init(runtime: any): any
         end
     end
 
-    local function teleportToDroppedGun()
+    local function grabDroppedGun()
         local gunDrop = findDroppedGun()
-        local character = LocalPlayer.Character
-        if gunDrop and character then
-            local savedCFrame = character:GetPivot()
-            character:PivotTo(gunDrop:GetPivot() + Vector3.new(0, 2, 0))
-            task.wait(mm2Settings.autoGetGunDelay)
-            if character.Parent then
-                character:PivotTo(savedCFrame)
-            end
+        if gunDrop and LocalPlayer.Character then
+            touchDroppedGun(gunDrop)
         else
             notify("No dropped gun was found.")
         end
@@ -206,7 +199,7 @@ function Module.init(runtime: any): any
 
     local teleport = state.framework:GetModule("Teleport")
     assert(teleport, "MM2 extends the universal Teleport module")
-    for _, id in ipairs({"GetGunkey", "Gunpickupdelay", "Playername"}) do
+    for _, id in ipairs({"GetGunkey", "Playername"}) do
         local key = "Universal.ClickTeleport." .. id
         if configData.values[key] == nil then configData.values[key] = configData.values["MM2.Teleport." .. id] end
     end
@@ -218,11 +211,11 @@ function Module.init(runtime: any): any
     teleport:CreateTextBox({Name = "Player name", Default = "", Show = show,
         Function = function(value) teleportTargetName = value end})
     teleport:CreateButton({Name = "Teleport to Player", Show = show, Function = teleportToPlayer})
-    teleport:CreateButton({Name = "Get Gun", Show = show, Function = teleportToDroppedGun})
+    teleport:CreateButton({Name = "Get Gun", Show = show, Function = grabDroppedGun})
     local key = teleport:CreateBind({Name = "Get Gun key", Default = mm2Settings.getGunKey, Show = show,
         Function = function(value) mm2Settings.getGunKey = value end})
     if state.bindMobileActionPlacement and key.Object then
-        state.bindMobileActionPlacement(key.Object, "MM2GetGun", "GUN", teleportToDroppedGun)
+        state.bindMobileActionPlacement(key.Object, "MM2GetGun", "GUN", grabDroppedGun)
     end
     featureConnections.MM2GetGunKey = UserInputService.InputBegan:Connect(
         function(input, gameProcessed)
@@ -234,14 +227,11 @@ function Module.init(runtime: any): any
             end
             if input.UserInputType == Enum.UserInputType.Keyboard
                 and input.KeyCode == mm2Settings.getGunKey then
-                task.spawn(teleportToDroppedGun)
+                task.spawn(grabDroppedGun)
             end
         end
     )
     teleport:CreateToggle({Name = "Auto Get Gun", Default = false, Show = show, Function = toggleAutoGetGun})
-    teleport:CreateSlider({Name = "Gun pickup delay", Default = mm2Settings.autoGetGunDelay,
-        Min = 0.05, Max = 2, Decimal = 2, Show = show,
-        Function = function(value) mm2Settings.autoGetGunDelay = value end})
 
     activeCleanup = function(): ()
         toggleAutoGetGun(false)

@@ -31,7 +31,11 @@ teleport = read("src/games/MM2/Movement/Teleport.lua")
 assert "elapsed < 0.5" not in teleport
 assert "TaskManager:Connect(autoGetGunTick)" in teleport
 assert "autoGetGunTick()" in teleport, "enable must react the same frame"
+assert "Gun pickup delay" not in teleport
+assert "autoGetGunDelay" not in teleport
+assert "task.wait" not in teleport, "manual and automatic gun pickup are immediate"
 base = read("src/games/MM2/base.lua")
+assert "autoGetGunDelay" not in base
 assert "droppedGunCache.at < 0.05" in base
 assert "droppedGunCache.at < 0.4" not in base
 
@@ -40,6 +44,10 @@ assert "droppedGunCache.at < 0.4" not in base
 farm = read("src/games/MM2/Other/AutoFarm.lua")
 assert "equipDeadline" in farm
 assert "task.wait(0.25)" not in farm.split("runFullSequence")[1]
+gun_touch = farm.split("local function touchDroppedGun(", 1)[1].split(
+    "local function grabGunAndShoot", 1
+)[0]
+assert "task.wait" not in gun_touch, "farm gun touch has no fixed pickup delay"
 
 # Deliberate delays stay. Removing these would not make anything
 # faster in reality -- it would desync the knife animation, re-open

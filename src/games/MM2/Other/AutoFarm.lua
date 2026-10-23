@@ -679,10 +679,9 @@ function Module.init(_runtime: any): any
         return true
     end
 
-    -- Instant pickup attempt: pulse the touch between our root and the
-    -- dropped gun's part (the mechanism the coin loop already uses for
-    -- Coin_Server) instead of travelling to the drop. True only when
-    -- the gun actually arrived.
+    -- Immediate pickup attempt: pulse the touch between our root and the
+    -- dropped gun's part instead of travelling or sleeping. True only
+    -- when the gun has already arrived; the farm can retry on a later frame.
     local function touchDroppedGun(
         drop: Instance,
         root: BasePart
@@ -702,7 +701,6 @@ function Module.init(_runtime: any): any
         end
         pcall(state.fireTouchInterest, root, touchPart, 0)
         pcall(state.fireTouchInterest, root, touchPart, 1)
-        task.wait(0.05)
         return type(getPlayerWeapon) == "function"
             and getPlayerWeapon(LocalPlayer, "Gun") ~= nil
     end

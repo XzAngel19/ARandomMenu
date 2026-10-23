@@ -259,15 +259,27 @@ do
     assert(prediction.status(nil):find("auto lead %(ping%)"),
         prediction.status(nil))
 
-    -- v105 age expiry: echoes older than 30 s expire even when no newer
-    -- shots push them out by count, so one fresh sample cannot resurrect
-    -- a median built on a previous round's connection.
+    -- Age expiry must happen on the first READ after a quiet round, not only
+    -- when another echo arrives. The uploaded v104/v105 sessions used cached
+    -- medians after gaps of 72-2765 seconds.
     prediction.reset()
     for _=1,3 do prediction.noteEcho(0,0.18) end
     near(prediction.getEchoDelay(),0.18,1e-9)
+    now=100
+    assert(prediction.getEchoDelay()==nil,
+        "the first shot after 30 s must not reuse the stale echo median")
+    assert(prediction.status(nil):find("auto lead %(ping%)"),
+        "expired echoes must immediately restore the ping fallback")
     prediction.noteEcho(100,100.18)
     assert(prediction.getEchoDelay()==nil,
-        "echoes older than 30 s must expire instead of forming a median")
+        "one fresh echo cannot resurrect an expired median")
+
+    -- Reset must clear timestamps as well as values. Otherwise new echoes are
+    -- appended behind old times and can be expired against a previous round.
+    prediction.reset()
+    now=200
+    for _=1,3 do prediction.noteEcho(now,now+0.15) end
+    near(prediction.getEchoDelay(),0.15,1e-9)
 
     -- Turn: the chord over the horizon must beat the straight tangent.
     humanoid.GetState=function() return "Running" end
@@ -817,7 +829,7 @@ def main() -> None:
     assert "bodyHalfWidth" not in SHOOT and "WurstHitbox" not in BASE
     assert "TaskManager:Connect(autoShootTick)" in SHOOT
     assert "task.delay(10, function()" in BASE
-    assert "candidate.silentSpawn" in BASE and "candidate.ambiguous" in BASE
+    assert "candidate.ambiguous" in BASE
     assert "GUN_PIERCE_STUDS" not in SHOOT
     assert "GUN_SERVER_COOLDOWN" not in SHOOT and "lastGunFireServer" not in SHOOT
     assert "autoSettings.fireDelay" not in SHOOT

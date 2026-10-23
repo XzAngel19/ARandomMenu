@@ -67,6 +67,14 @@ shootOptionsReady=true;updateAutoShootConnection();assert(loop and accepted==pre
 print('PASS nested Auto Shoot: immediate/current-frame, 1000 studs, current target, native readiness, master/option OFF, restart, held-only, status')
 '''
 assert 'local AutoShootFeature' not in S and '"Fire delay"' not in S
+for removed in (
+    'Silent sweep', 'Silent spawn', 'Spawn A/B status', 'Shot gate status',
+    'Auto lead', 'Lead offset ms', 'Prediction status', 'Reset prediction',
+):
+    assert f'"{removed}"' not in S, f'{removed} must not be an ordinary menu row'
+for retained in ('Auto Shoot', 'Aim method', 'Target', 'WallCheck', 'Macro'):
+    assert f'"{retained}"' in S
+assert 'mm2ShotGateHold' not in S and 'spawnStats' not in S
 with tempfile.TemporaryDirectory(prefix='auto-shoot-option-') as tmp:
     p=Path(tmp)/'test.luau'
     p.write_text(script)

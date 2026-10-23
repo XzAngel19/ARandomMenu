@@ -397,6 +397,23 @@ assert(type(ugcSlots.idle) == "table" and ugcSlots.idle[1] == "rbxassetid://901"
     and ugcSlots.idle[2] == "rbxassetid://904", "idle variants keep their order")
 assert(ugcSlots.swimidle == "rbxassetid://903")
 pass("animation pack: UGC item names resolve by keyword, idle variants ordered")
+
+-- 15) Some catalog responses omit BundleType and use lowercase/display-name
+--     fields. The named items are still sufficient to resolve every slot.
+host.MarketplaceService = {GetProductInfo = function()
+    return {Items = {
+        {name = "Creator Run", id = 1001},
+        {displayName = "Creator Walk", assetId = "rbxassetid://1002"},
+        {Type = "Jump", AssetId = 1003},
+    }}
+end}
+local variantSlots, variantError = bundleAnimationSlots(46)
+assert(variantSlots and not variantError, tostring(variantError))
+assert(variantSlots.walk == "rbxassetid://1002",
+    "Walk must come from the Walk item, not the bundle's first item")
+assert(variantSlots.run == "rbxassetid://1001")
+assert(variantSlots.jump == "rbxassetid://1003")
+pass("animation pack: field variants and omitted BundleType still resolve named slots")
 '''
 
 with tempfile.TemporaryDirectory(prefix='disguise-defaults-') as tmp:

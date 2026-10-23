@@ -16,8 +16,8 @@ local function notify(message) table.insert(notified,message) end
 local function status(message) activeCard.status=message end
 local function destroyInstance(instance) instance.destroyed=true end
 local emotesAppliedToHumanoid=false
-local settings={animationPack="Off"}
-local function packDisplayName() return settings.animationPack end
+local settings={customPackSlots=nil,customPackName=nil}
+local function packDisplayName() return settings.customPackName or "Custom" end
 -- Defined above the slice in the real module; the status line reads it.
 local function rigName() return "R6" end
 
@@ -125,12 +125,13 @@ activeCard.Enabled=true
 pass("Animation mode: partial success, rollback when the character changes")
 
 notified={};calls={};activeCard.status=nil
-settings.animationPack="Ninja"
+settings.customPackSlots={walk="rbxassetid://222"}
+settings.customPackName="Bundle 43"
 applyAnimationDisguise(1,character,{},7)
-assert(table.find(calls,"pack") and (activeCard.status or ""):find("pack Ninja"),
-    "a selected catalog pack is applied over the target's movement animations")
-settings.animationPack="Off"
-pass("Animation mode: catalog pack overrides movement animations")
+assert(table.find(calls,"pack") and (activeCard.status or ""):find("pack Bundle 43"),
+    "a resolved advanced pack is applied over the target's movement animations")
+settings.customPackSlots=nil;settings.customPackName=nil
+pass("Animation mode: advanced bundle overrides movement animations")
 
 assert(not SOURCE_MARKER)
 '''
@@ -161,14 +162,11 @@ emotes_toggle = SOURCE.split('Name = "Show target emotes"', 1)[1]
 assert 'Values = {"Character"}' in emotes_toggle.split('Tooltip', 1)[0]
 assert 'card:CreateButton' not in SOURCE, 'Show target emotes must be a check, not a run button'
 
-# Built-in catalog animation packs: static official ids, no downloads.
-assert 'ANIMATION_PACKS' in SOURCE and 'Name = "Animation Pack"' in SOURCE
-for pack_name in ('Ninja', 'Knight', 'Mage', 'Zombie', 'Toy', 'Bubbly',
-                  'Cartoony', 'Pirate', 'Vampire', 'Werewolf', 'Astronaut',
-                  'Elder', 'Levitation', 'Robot', 'Stylish', 'Superhero',
-                  'Rthro'):
-    assert f'name = "{pack_name}"' in SOURCE, f'missing pack {pack_name}'
-assert '"656117400"' in SOURCE and '"1083455352"' in SOURCE
+# Advanced bundles are the only pack route; the old catalog list is gone.
+assert 'ANIMATION_PACKS' not in SOURCE
+assert 'Name = "Animation Pack"' not in SOURCE
+assert 'settings.animationPack' not in SOURCE
+assert 'advancedPackArmed' not in SOURCE
 assert SOURCE.count('applyAnimationPack') >= 4
 assert 'Name = "Pack Bundle ID"' in SOURCE
 assert 'catalog.roblox.com/v1/bundles/' in SOURCE
@@ -178,7 +176,6 @@ assert 'applySlotsViaDescription' in SOURCE
 assert 'descAnimations' in SOURCE
 assert 'AnimationConstraint' in SOURCE  # probe-proven joint class on the modern rig
 assert 'writeAnimationSlots(animate, resolved)' in SOURCE  # slots write first: it retargets the running script
-assert 'advancedPackArmed' in SOURCE  # Show Advanced suspends the pack until an advanced ID is submitted
 assert 'poseDriven' in SOURCE  # held-pose clips count; identity joints do not
 
 with tempfile.TemporaryDirectory(prefix='disguise-animation-') as tmp:

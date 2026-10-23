@@ -69,7 +69,7 @@ function Module.init(context: Runtime): any
             if runtime.cancelTravel then runtime.cancelTravel() end
             local mm2Controls = { ["Teleport to Map"] = true, ["Teleport to Lobby"] = true,
                 ["Teleport to Player"] = true, ["Get Gun"] = true, ["Player name"] = true,
-                ["Get Gun key"] = true, ["Auto Get Gun"] = true, ["Gun pickup delay"] = true }
+                ["Get Gun key"] = true, ["Auto Get Gun"] = true }
             teleport.OptionFilter = function(name)
                 if name == "Destination" then return true end
                 return value == "MM2" and mm2Controls[name] == true or value ~= "MM2" and not mm2Controls[name]

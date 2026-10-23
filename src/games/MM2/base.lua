@@ -57,7 +57,6 @@ pcall(function()
 end)
 
 local mm2Settings = {
-    autoGetGunDelay = 0.25,
     shootMode = "Manual",
     shootWallCheck = true,
     silentAim = false,
@@ -67,7 +66,9 @@ local mm2Settings = {
     predictionRtt = 0.08,
     silentSweep = 0.5,
 
-    silentSpawn = "Through",
+    -- Front is the maintained silent construction. Experimental spawn and
+    -- sweep controls are internal calibration inputs, not ordinary menu rows.
+    silentSpawn = "Front",
     getGunKey = Enum.KeyCode.Unknown,
     instantRoleNotify = false,
     roleEspAll = false,
@@ -1412,9 +1413,9 @@ local lastLatencyReadAt: number = -math.huge
 -- confirmation echo was 152/164 ms, and it read 241 ms at session start when
 -- Data Ping read 130 and the echo came back in 144. Across 17 recorded shots
 -- Data Ping was within 30 ms of the echo in 12, GetNetworkPing in 3.
--- The lead takes the lower of the two: over-leading is the failure this data
--- shows (a stopped or turned target costs more than an early one), and the
--- median in Prediction still rejects a one-off dip.
+-- This legacy smoothed fallback takes the lower of the two: over-leading is
+-- the failure this data shows, and Prediction's median rejects a one-off dip.
+-- The live predictor itself prefers Data Ping when both readings are present.
 local function readLatencyReadings(): (number?, number?)
     local engine: number? = nil
     local data: number? = nil
@@ -3843,7 +3844,6 @@ type PendingShot = {
     targetedMurderer: boolean,
     queuedAt: number,
 
-    silentSpawn: string?,
     ambiguous: boolean?,
 }
 
@@ -3853,7 +3853,6 @@ state.mm2ShotFeedback = {
     pending = nil :: PendingShot?,
     lastAccepted = nil :: PendingShot?,
 
-    spawnStats = {} :: {[string]: {shots: number, hits: number, misses: number}},
     token = 0,
     defaultDuration = 5,
     gunFiredConnected = false,
@@ -4084,22 +4083,9 @@ state.mm2ShotFeedback.resolve = function(
             state.mm2ShotFeedback.hide()
         end
 
-        local variant: string? = candidate.silentSpawn
-        if variant then
-            local stats: any = state.mm2ShotFeedback.spawnStats[variant]
-                or {shots = 0, hits = 0, misses = 0}
-            stats.shots += 1
-            -- Only the server's own hit evidence counts as a hit here.
-            -- Disconnects, role changes and health drops are ambiguous: they
-            -- count as neither hit nor miss, so the A/B label stays honest.
-            if directHit then
-                stats.hits += 1
-            elseif not hitConfirmed then
-                stats.misses += 1
-            end
-            state.mm2ShotFeedback.spawnStats[variant] = stats
-        end
-
+        -- Per-spawn outcomes live in the calibration event stream, which also
+        -- records the actual geometry and target motion. A second A/B counter
+        -- here duplicated that data with a less informative hits/shots label.
         if not hitConfirmed and mm2Settings.showMissCooldown then
             state.mm2ShotFeedback.showMiss(candidate.gun, candidate)
         end
@@ -4160,14 +4146,10 @@ state.mm2ShotFeedback.handleGunFired = function(
     if eventTool and not weaponMatches then return end
     if not originMatches or not directionMatches or endpointPosition == nil then return end
 
-    -- Feed the measured FireServer -> GunFired round trip to the prediction
-    -- engine. It is the only transport sample the game exposes, and the
-    -- engine keeps a median so one delayed echo cannot move the next shot.
-    -- The echo is fed only from the confirmation path (finalizeGunCapture).
-    -- This second source measured from the feedback queue instead of from the
-    -- activation, and its samples were larger: at shot 9 of the v64 session the
-    -- median read 318 ms while the same shot's measured round trip was 150 ms,
-    -- and the lead built on it (381 ms) missed by 3.9 studs. One source.
+    -- Prediction receives the FireServer -> GunFired round trip only from
+    -- finalizeGunCapture. Do not feed a second sample from this feedback
+    -- queue: the v64 duplicate source read 318 ms against a measured 150 ms
+    -- and produced a 381 ms lead that missed by 3.9 studs.
 
     state.mm2ShotFeedback.pending = nil
     if candidate.ambiguous then return end

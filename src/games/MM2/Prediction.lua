@@ -32,8 +32,10 @@ local Module = {
         computed from two weighted fits 0.10 s apart, gated on clean residuals
         and a real speed, and capped at 45 degrees / the stop distance. A
         straight run leaves both at zero; nothing here guesses.
-      * No auto-tuned lead. The transport is the median of at least six fresh
-        echoes inside sane pairing limits, with the smoothed RTT as fallback.
+      * No unconstrained auto-tuned lead. Transport is the median of at least
+        three fresh echoes inside sane pairing limits, with smoothed RTT as
+        fallback; the separate residual correction is median-filtered and
+        capped at 60 ms.
       * No invented movement when the measured velocity is zero but
         MoveDirection is not. The server only knows replicated motion.
       * No distance/confidence gate before firing. Freshness of the sample,
@@ -93,7 +95,8 @@ type Motion = {
     accelZ: number,
     -- Seconds until the target stops when it is braking hard, else nil.
     brakeSeconds: number?,
-    -- How far behind `now` the fitted direction sits.
+    -- How far behind the newest position sample the fitted direction sits.
+    -- predictedRoot starts at that sample, not at the later gunAim call.
     fitLag: number,
     -- True only when the measured vertical speed is worth extrapolating. The
     -- humanoid state alone is not enough: a replicated "Jumping" pose can be a
@@ -142,14 +145,11 @@ local SAMPLE_HZ: number = 60
 local MAX_HORIZONTAL_SPEED: number = 60
 local DEFAULT_KNIFE_SPEED: number = 96
 local MAX_ECHOES: number = 8
--- A median of two echoes is just the mean of two mismatches. Six fresh
--- samples keep the transport estimate stable; before that the smoothed RTT is
--- the better number.
--- The echo now has one source (the confirmation path) and the v64 session
--- proved it matches the server clock to within 8 ms on 13 of 13 shots, so
--- three samples are enough to trust the round trip. At six, the 189 s session
--- never engaged it and led with an engine reading that was half the measured
--- round trip.
+-- A median of two echoes is just the mean of two mismatches. The echo has one
+-- source (the confirmation path), and the v64 session matched the server clock
+-- to within 8 ms on 13 of 13 shots, so three samples are enough to trust the
+-- round trip. Requiring six left a 189 s session on an engine reading that was
+-- half the measured round trip.
 local MIN_ECHO_SAMPLES: number = 3
 -- Pairing sanity limits. An echo only reaches noteEcho after base.lua matched
 -- the same gun, an origin within 3.5 studs and a direction within ~15 degrees,
@@ -442,7 +442,11 @@ function Module.init(runtime: any): any
             residual = math.sqrt(squared / #collected),
             count = #collected,
             span = collected[#collected].at - collected[1].at,
-            center = reference + meanT,
+            -- `dt` is relative to the newest sample in this window, not to
+            -- `reference`. Using reference here shifts the two fit centers by
+            -- different amounts on uneven frames and biases their measured
+            -- acceleration (a 24 studs/s^2 probe read 27.33 before this fix).
+            center = anchor + meanT,
         }
     end
 
@@ -454,7 +458,13 @@ function Module.init(runtime: any): any
         now: number,
         fit: Fit
     ): (number, number, number?, number, number, number)
-        local fitLag: number = math.max(0, now - fit.center)
+        local newest: Sample? = track.samples[#track.samples]
+        -- The extrapolation starts at the newest position sample. Measuring
+        -- from `now` instead would add sampleAge to every acceleration and
+        -- turn correction even though that age is already in the horizon.
+        local fitLag: number = newest
+            and math.max(0, newest.at - fit.center)
+            or 0
         if fit.count < 3 or fit.span < 0.06 then
             return 0, 0, nil, fitLag, 0, 0
         end
@@ -599,9 +609,10 @@ function Module.init(runtime: any): any
     end
 
     -- Lead displacement for a horizon, with the measured turn and braking.
-    -- The fitted direction sits `fitLag` behind now, and the chord over the
-    -- horizon points at the tangent halfway through it, so the rotation is
-    -- rate * (horizon/2 + fitLag). Capped at 45 degrees on purpose: a larger
+    -- The fitted direction sits `fitLag` behind the newest position sample,
+    -- and the chord over the horizon points at the tangent halfway through
+    -- it, so the rotation is rate * (horizon/2 + fitLag). The horizon already
+    -- includes the sample's age. Capped at 45 degrees on purpose: a larger
     -- correction is a turn the samples cannot describe anymore.
     local function leadHorizontal(motion: Motion, horizon: number): Vector3
         local speed: number = motion.horizontal.Magnitude
@@ -758,7 +769,21 @@ function Module.init(runtime: any): any
         return sorted[math.floor((#sorted + 1) / 2)]
     end
 
+    local function pruneEchoes(now: number): ()
+        if not finiteNumber(now) then
+            return
+        end
+        while #echoes > 0 and now - echoTimes[1] > ECHO_MAX_AGE do
+            table.remove(echoes, 1)
+            table.remove(echoTimes, 1)
+        end
+    end
+
     local function echoMedian(): number?
+        -- Expire on reads as well as writes. Otherwise the first shot after a
+        -- quiet round uses a median from the previous connection/round; the
+        -- v104/v105 files contain such shots after 72-2765 second gaps.
+        pruneEchoes(os.clock())
         local count: number = #echoes
         if count < MIN_ECHO_SAMPLES then
             return nil
@@ -797,11 +822,10 @@ function Module.init(runtime: any): any
         if delay > plausible then
             return
         end
-        -- Expire stale samples by age, not only by count rotation.
-        while #echoes > 0 and receivedAt - echoTimes[1] > ECHO_MAX_AGE do
-            table.remove(echoes, 1)
-            table.remove(echoTimes, 1)
-        end
+        -- Also prune against the arriving sample's clock. This keeps explicit
+        -- replayed timestamps ordered and prevents one fresh echo from
+        -- resurrecting samples that already expired.
+        pruneEchoes(receivedAt)
         table.insert(echoes, delay)
         table.insert(echoTimes, receivedAt)
         while #echoes > MAX_ECHOES do
@@ -1257,6 +1281,7 @@ function Module.init(runtime: any): any
         getLeadUncertainty = leadUncertainty,
         reset = function(): ()
             table.clear(echoes)
+            table.clear(echoTimes)
             table.clear(tracks)
             table.clear(rttSamples)
             table.clear(leadErrors)
