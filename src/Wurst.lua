@@ -219,7 +219,7 @@ local RUNTIME_RAW_BASE: string =
         .. RUNTIME_BRANCH
         .. "/"
 
-local SOURCE_STAMP: string = "v108-20261023-antifling-no-slider"
+local SOURCE_STAMP: string = "v109-20261023-shot-gate-status"
 
 local BOOT_STARTED_AT: number = os.clock()
 local BOOT_FINGERPRINT_SECONDS: number = 0

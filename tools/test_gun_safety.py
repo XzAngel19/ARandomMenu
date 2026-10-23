@@ -208,9 +208,18 @@ buildSilentShot=function() return CFrame.new(Vector3.zero),CFrame.new(endpoint),
 state.mm2ShotFeedback.pending={queuedAt=os.clock()}
 assert(not fireGunAtTarget(target,{whenReady=true,quiet=true}))
 assert(sends==2,'v106: one authored request owns the gun until its echo resolves')
+assert(state.mm2ShotGateHold and state.mm2ShotGateHold.holds==1,
+ 'v109: a gate hold is counted so the card status can surface it')
+assert(state.mm2ShotGateHold.lastRemaining>0
+ and state.mm2ShotGateHold.lastRemaining<=1.5,
+ 'v109: the hold records how much of the window was left')
+state.mm2ShotFeedback.pending={queuedAt=os.clock()-2}
+assert(fireGunAtTarget(target,{whenReady=true,quiet=true}))
+assert(sends==3 and state.mm2ShotGateHold.holds==1,
+ 'v109: a pending older than the window no longer holds the gun')
 state.mm2ShotFeedback.pending=nil
 assert(fireGunAtTarget(target,{whenReady=true,quiet=true}))
-assert(sends==3,'v106: the gun is free again once the request resolves')
+assert(sends==4,'v106: the gun is free again once the request resolves')
 gun.Enabled=false
 assert(not fireGunAtTarget(target,{whenReady=true,quiet=true}))
 gun.Enabled=true

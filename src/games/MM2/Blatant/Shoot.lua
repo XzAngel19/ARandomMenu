@@ -348,12 +348,26 @@ function Module.init(runtime: any): any
         -- seconds and received no GunFired echo for any of them; every request
         -- sent after an echo was answered. A second packet before the first
         -- resolves is not a second bullet -- it is a wasted attempt that also
-        -- inflates the attempt count the calibration reports.
+        -- inflates the attempt count the calibration reports. Every hold is
+        -- counted and surfaced (v109): a shot that did not go out must say
+        -- why on the card, not just vanish into the attempt counters.
         local pendingShot: any = state.mm2ShotFeedback.pending
         if type(pendingShot) == "table"
             and type(pendingShot.queuedAt) == "number"
             and os.clock() - pendingShot.queuedAt < SHOT_CONFIRM_WINDOW then
-            return reject("Waiting for the previous shot to be confirmed.")
+            local remaining: number = SHOT_CONFIRM_WINDOW
+                - (os.clock() - pendingShot.queuedAt)
+            local gate: any = state.mm2ShotGateHold
+            if type(gate) ~= "table" then
+                gate = {holds = 0, lastRemaining = 0, lastAt = 0}
+                state.mm2ShotGateHold = gate
+            end
+            gate.holds += 1
+            gate.lastRemaining = remaining
+            gate.lastAt = os.clock()
+            return reject(string.format(
+                "Shot gate: waiting for the previous shot (%.1f s left).",
+                remaining))
         end
 
         local function safeToSend(
@@ -798,6 +812,24 @@ function Module.init(runtime: any): any
     if spawnStatsButton then
         spawnStatsRow = spawnStatsButton.Parent :: GuiObject
     end
+    addActionOption(ShootFeature, "Shot gate status", function(): ()
+        local gate: any = state.mm2ShotGateHold
+        local holds: number = type(gate) == "table" and gate.holds or 0
+        local pendingShot: any = state.mm2ShotFeedback
+            and state.mm2ShotFeedback.pending
+        local nowText: string = "no shot in flight"
+        if type(pendingShot) == "table"
+            and type(pendingShot.queuedAt) == "number" then
+            local left: number = SHOT_CONFIRM_WINDOW
+                - (os.clock() - pendingShot.queuedAt)
+            nowText = left > 0
+                and string.format("a shot is in flight (%.1f s of gate left)", left)
+                or "the in-flight shot is past the gate window"
+        end
+        notify(string.format(
+            "Shot gate: %d hold(s) this session · %.1f s window · %s.",
+            holds, SHOT_CONFIRM_WINDOW, nowText))
+    end)
     local autoLeadButton = addToggleOption(
         ShootFeature,
         "Auto lead",
@@ -859,6 +891,7 @@ function Module.init(runtime: any): any
         toggleShootMurderer(false)
         state.mm2SilentAimFeature = nil
         state.mm2FireSilentShot = nil
+        state.mm2ShotGateHold = nil
         toggleAutoShoot(false)
         state.mm2ShotFeedback.hide()
     end
