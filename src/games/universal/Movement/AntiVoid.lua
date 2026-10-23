@@ -4,7 +4,7 @@ local cleanup
 function Module.init(context)
     local host, world = context.host, context.host.workspace
     local antiFling, velocityLimit, platform, token = false,120,nil,0
-    local previousCharacter, previousRoot, previousPlanar
+    local previousCharacter, previousRoot, previousVelocity, overLimitTicks
     local function removePlatform()
         token+=1
         if platform then platform:Destroy();platform=nil end
@@ -36,30 +36,45 @@ function Module.init(context)
         local velocity=root.AssemblyLinearVelocity
         local planar=Vector3.new(velocity.X,0,velocity.Z)
         if previousCharacter~=character or previousRoot~=root then
-            previousCharacter,previousRoot,previousPlanar=character,root,planar
+            previousCharacter,previousRoot,previousVelocity,overLimitTicks=character,root,velocity,0
             removePlatform()
         end
         local fly=module("Fly")
         if root.Anchored or humanoid.Sit or humanoid.SeatPart or active("fling") or active("ghost")
             or active("teleport") or fly and fly.Enabled then
-            previousPlanar=planar;return
+            previousVelocity=velocity;return
         end
         if antiFling then
             local speed=expectedSpeed(humanoid)
             local limit=math.max(velocityLimit,speed*1.75)
             local spin=root.AssemblyAngularVelocity.Magnitude>velocityLimit
-            local impulse=planar.Magnitude>limit and previousPlanar
-                and (planar-previousPlanar).Magnitude>limit*0.65
-            if (spin or impulse) and nearOtherCharacter(root,character) then
+            -- The old detector only saw a one-tick horizontal impulse.
+            -- Real contact flings (a spinning attacker parked on you)
+            -- accelerate over several physics frames and usually launch
+            -- UP as much as sideways, so three more signatures count:
+            -- a vertical launch no jump can produce, a shove sustained
+            -- past the limit, and the spin it already knew. All of them
+            -- still require another player close by: a distant scripted
+            -- launcher or pad is never guessed to be a fling, and pure
+            -- downward velocity (any fall) is never touched.
+            local jumpPower=humanoid.JumpPower or 50
+            local delta=previousVelocity and (velocity-previousVelocity) or Vector3.zero
+            local deltaPlanar=Vector3.new(delta.X,0,delta.Z).Magnitude
+            local impulse=planar.Magnitude>limit and deltaPlanar>limit*0.65
+            local launch=velocity.Y>math.max(limit,jumpPower*1.6) and delta.Y>limit*0.65
+            if planar.Magnitude>limit*1.5 then overLimitTicks=(overLimitTicks or 0)+1 else overLimitTicks=0 end
+            local sustained=overLimitTicks>=2
+            if (spin or impulse or launch or sustained) and nearOtherCharacter(root,character) then
                 -- Remove the contact impulse, not the player's position/input.
-                -- Ordinary downward velocity is never treated as a fling.
                 local desired=humanoid.MoveDirection*speed
-                root.AssemblyLinearVelocity=Vector3.new(desired.X,spin and math.min(velocity.Y,math.max(0,humanoid.JumpPower or 50)) or velocity.Y,desired.Z)
+                root.AssemblyLinearVelocity=Vector3.new(desired.X,(spin or launch) and math.min(velocity.Y,math.max(0,jumpPower)) or velocity.Y,desired.Z)
                 root.AssemblyAngularVelocity=Vector3.zero
+                velocity=root.AssemblyLinearVelocity
                 planar=Vector3.new(desired.X,0,desired.Z)
+                overLimitTicks=0
             end
         end
-        previousPlanar=planar
+        previousVelocity=velocity
         if humanoid.FloorMaterial~=Enum.Material.Air or velocity.Y>=0 or platform then return end
         local destroyHeight=world.FallenPartsDestroyHeight
         if destroyHeight~=destroyHeight or math.abs(destroyHeight)==math.huge then destroyHeight=-500 end
@@ -86,7 +101,7 @@ function Module.init(context)
     end
     local feature=host.createUniversalFeature("Anti Void","Rescue imminent falls into the destroy layer, not normal drops",4,function(enabled)
         host.disconnectFeatureConnection("AntiVoid");removePlatform()
-        previousCharacter,previousRoot,previousPlanar=nil,nil,nil
+        previousCharacter,previousRoot,previousVelocity,overLimitTicks=nil,nil,nil,0
         if enabled then host.featureConnections.AntiVoid=host.TaskManager:Connect(step) end
     end,{categoryName="Utilities"})
     local velocityRow
@@ -95,7 +110,7 @@ function Module.init(context)
         if host.setOptionVisible then host.setOptionVisible(feature,velocityRow,antiFling) else velocityRow.Visible=antiFling end
     end
     host.addToggleOption(feature,"Anti fling",false,function(value) antiFling=value;showLimit() end,
-        "Damp sudden sideways/spin impulses near other players. Never rolls you back or blocks normal falling.")
+        "Requires Anti Void ON. Damps sideways, upward and sustained contact impulses near other players. Never rolls you back or blocks normal falling.")
     velocityRow=host.addNumberOption(feature,"Velocity limit",120,40,1000,function(value) velocityLimit=math.max(1,value) end)
     showLimit()
     host.addFeatureTooltip(feature,"Only rescues a falling character near the void when there is no collidable floor below. Anti fling respects movement speed and never teleports you back.")

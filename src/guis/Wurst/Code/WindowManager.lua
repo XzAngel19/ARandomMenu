@@ -126,12 +126,36 @@ function Module.init(context: any): any
         return math.round(value * factor) / factor
     end
 
+    -- How much of a window must stay reachable when it cannot fit:
+    -- enough title bar to grab, move and close it.
+    local MIN_GRAB_X: number = 140
+    local MIN_GRAB_Y: number = 40
+
     local function clamp(position: Vector2, size: Vector2): Vector2
         local screen: Vector2 = logicalViewport()
-        return Vector2.new(
-            snapPixel(math.clamp(position.X, MARGIN, math.max(MARGIN, screen.X - size.X - MARGIN))),
-            snapPixel(math.clamp(position.Y, MARGIN, math.max(MARGIN, screen.Y - size.Y - MARGIN)))
-        )
+        -- When the window fits, keep it fully on screen. When it does
+        -- not (a small or resized viewport), the old full-fit clamp
+        -- pinned every oversized window to the same top-left corner and
+        -- they stacked into one pile; instead let the window extend
+        -- past the edge and only guarantee the grab strip stays
+        -- visible, so part of it simply shows, as requested.
+        local x: number
+        if size.X <= screen.X - MARGIN * 2 then
+            x = math.clamp(position.X, MARGIN, screen.X - size.X - MARGIN)
+        else
+            x = math.clamp(
+                position.X,
+                MARGIN - (size.X - MIN_GRAB_X),
+                screen.X - MIN_GRAB_X
+            )
+        end
+        local y: number
+        if size.Y <= screen.Y - MARGIN * 2 then
+            y = math.clamp(position.Y, MARGIN, screen.Y - size.Y - MARGIN)
+        else
+            y = math.clamp(position.Y, MARGIN, screen.Y - MIN_GRAB_Y)
+        end
+        return Vector2.new(snapPixel(x), snapPixel(y))
     end
 
     function manager.ClampWindow(window: any): ()
@@ -144,6 +168,68 @@ function Module.init(context: any): any
             Vector2.new(root.Size.X.Offset, root.Size.Y.Offset)
         )
         root.Position = UDim2.fromOffset(landed.X, landed.Y)
+    end
+
+    local function rectsOverlap(
+        aPos: Vector2,
+        aSize: Vector2,
+        bPos: Vector2,
+        bSize: Vector2
+    ): boolean
+        local overlapX: number = math.min(aPos.X + aSize.X, bPos.X + bSize.X)
+            - math.max(aPos.X, bPos.X)
+        local overlapY: number = math.min(aPos.Y + aSize.Y, bPos.Y + bSize.Y)
+            - math.max(aPos.Y, bPos.Y)
+        if overlapX <= 0 or overlapY <= 0 then
+            return false
+        end
+        return overlapX * overlapY > 0.3 * aSize.X * aSize.Y
+    end
+
+    -- A window that opens (nearly) on top of a visible one reads as
+    -- the two "glitching into each other": same landing spot, rows
+    -- bleeding through. Cascade it a step at a time until its body is
+    -- mostly its own, exactly like the reclamp cascade but at open.
+    function manager.Deoverlap(window: any): ()
+        local root: any = window and window.root
+        if not root then
+            return
+        end
+        local size: Vector2 = Vector2.new(
+            root.Size.X.Offset,
+            root.Size.Y.Offset
+        )
+        local position: Vector2 = Vector2.new(
+            root.Position.X.Offset,
+            root.Position.Y.Offset
+        )
+        for _ = 1, 10 do
+            local stacked: boolean = false
+            for _, other: any in ipairs(manager.list) do
+                if other ~= window and other.root and other.root.Visible then
+                    if rectsOverlap(
+                        position,
+                        size,
+                        Vector2.new(
+                            other.root.Position.X.Offset,
+                            other.root.Position.Y.Offset
+                        ),
+                        Vector2.new(
+                            other.root.Size.X.Offset,
+                            other.root.Size.Y.Offset
+                        )
+                    ) then
+                        stacked = true
+                        break
+                    end
+                end
+            end
+            if not stacked then
+                break
+            end
+            position = clamp(position + Vector2.new(30, 30), size)
+        end
+        root.Position = UDim2.fromOffset(position.X, position.Y)
     end
 
     function manager.MeasureWindow(window: any): Vector2
@@ -180,10 +266,18 @@ function Module.init(context: any): any
         end
     end
 
+    -- Each window's home position: where the user (or its default)
+    -- actually put it. A viewport shrink only borrows a clamped
+    -- position; it must never become the window's place, or growing
+    -- the screen again cannot put the window back (the pile-up in
+    -- the report). Reclamp below always derives from home.
+    local homePositions: {[string]: Vector2} = {}
+
     local function persist(window: any): ()
+        local home: Vector2? = homePositions[window.id]
         configData.ui.windows[window.id] = {
-            x = window.root.Position.X.Offset,
-            y = window.root.Position.Y.Offset,
+            x = home and home.X or window.root.Position.X.Offset,
+            y = home and home.Y or window.root.Position.Y.Offset,
             collapsed = window.collapsed,
             pinned = window.pinned,
         }
@@ -299,11 +393,16 @@ function Module.init(context: any): any
                 window.userMoved = true
             end
         end
+        homePositions[id] = Vector2.new(
+            root.Position.X.Offset,
+            root.Position.Y.Offset
+        )
 
         function window:SetVisible(visible: boolean): ()
             root.Visible = visible
             if visible then
                 raise(window)
+                manager.Deoverlap(window)
             end
         end
 
@@ -438,6 +537,10 @@ function Module.init(context: any): any
                 end
 
                 window.userMoved = true
+                homePositions[window.id] = Vector2.new(
+                    root.Position.X.Offset,
+                    root.Position.Y.Offset
+                )
                 persist(window)
             end
         end))
@@ -471,6 +574,7 @@ function Module.init(context: any): any
             )
         end
         position = clamp(position, definition.size)
+        homePositions[id] = position
 
         local root: Frame = create("Frame", {
             Parent = PopupLayer,
@@ -1121,9 +1225,35 @@ function Module.init(context: any): any
     end
 
     function manager.Reclamp(): ()
+        -- After landing, windows that ended on (nearly) the same spot
+        -- cascade a step down-right each, so a shrink never leaves a
+        -- pile of identical title bars in one corner.
+        local placed: {Vector2} = {}
         for _, window: any in ipairs(manager.list) do
             local x: number, y: number, w: number, h: number = windowRect(window)
-            local landed: Vector2 = clamp(Vector2.new(x, y), Vector2.new(w, h))
+            local home: Vector2? = homePositions[window.id]
+            local base: Vector2 = home or Vector2.new(x, y)
+            local landed: Vector2 = clamp(base, Vector2.new(w, h))
+            local attempts: number = 0
+            while attempts < 8 do
+                local stacked: boolean = false
+                for _, other: Vector2 in ipairs(placed) do
+                    if math.abs(other.X - landed.X) < 6
+                        and math.abs(other.Y - landed.Y) < 6 then
+                        stacked = true
+                        break
+                    end
+                end
+                if not stacked then
+                    break
+                end
+                attempts += 1
+                landed = clamp(
+                    landed + Vector2.new(26, 26),
+                    Vector2.new(w, h)
+                )
+            end
+            table.insert(placed, landed)
             window.root.Position = UDim2.fromOffset(landed.X, landed.Y)
         end
     end

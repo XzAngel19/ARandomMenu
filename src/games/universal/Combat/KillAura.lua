@@ -13,6 +13,27 @@ local Module = {
 
 local activeCleanup: (() -> ())? = nil
 
+-- Ignore list: names, display names or user ids, separated by commas. It is
+-- parsed outside the per-frame loop and applied to the entity list before any
+-- rotation or swing, so an ignored player is never picked.
+local function compileIgnoreList(text: string?): {[string]: boolean}
+    local ignored: {[string]: boolean} = {}
+    for name: string in string.gmatch(text or "", "[^,;%s]+") do
+        ignored[string.lower(name)] = true
+    end
+    return ignored
+end
+
+local function isIgnoredEntity(entity: any, ignored: {[string]: boolean}): boolean
+    local player: any = entity and entity.Player
+    if not player then
+        return false
+    end
+    return ignored[string.lower(player.Name or "")] == true
+        or ignored[string.lower(player.DisplayName or "")] == true
+        or ignored[tostring(player.UserId)] == true
+end
+
 local function collectTools(localPlayer: Player): {Tool}
     local tools: {Tool} = {}
     local character: Model? = localPlayer.Character
@@ -338,6 +359,19 @@ function Module.init(context: Runtime): any
                     end
                     targets = kept
                 end
+                local ignoreText: string = tostring(
+                    options["Ignore players"].Value or ""
+                )
+                if ignoreText ~= "" then
+                    local ignored: {[string]: boolean} = compileIgnoreList(ignoreText)
+                    local kept: {any} = {}
+                    for _, entity: any in ipairs(targets) do
+                        if not isIgnoredEntity(entity, ignored) then
+                            table.insert(kept, entity)
+                        end
+                    end
+                    targets = kept
+                end
                 updateTargetStatus(#targets)
                 if #targets == 0 then
                     clearHighlights()
@@ -585,6 +619,12 @@ function Module.init(context: Runtime): any
         Name = "Target NPCs",
         Default = false,
         Tooltip = "Include non-player humanoid models in the reach scan.",
+    })
+    aura:CreateTextBox({
+        Name = "Ignore players",
+        Default = "",
+        Tooltip = "Names, display names or user ids, separated by commas. "
+            .. "They are skipped by targeting: never picked, rotated to or hit.",
     })
     aura:CreateToggle({
         Name = "Highlight targets",

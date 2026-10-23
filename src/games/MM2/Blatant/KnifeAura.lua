@@ -20,7 +20,6 @@ function Module.init(runtime: any): any
     local isPlayerAlive: any = core.isPlayerAlive
     local isProtectedTarget: any = core.isProtectedTarget
     local trajectoryCalibration: any = core.trajectoryCalibration
-    local predictionMath: any = core.predictionMath
 
     type KnifeRuntimeState = {
         masterEnabled: boolean,
@@ -186,9 +185,11 @@ function Module.init(runtime: any): any
         local elapsed: number = 0
         featureConnections.MM2KnifeController =
             TaskManager:Connect(function(deltaTime: number): ()
-                local due: boolean
-                due, elapsed = predictionMath.sampleDue(elapsed, deltaTime, 20)
-                if due then processKnifeAura() end
+                elapsed += math.max(0, deltaTime)
+                local interval: number = 1 / 20
+                if elapsed + 1e-9 < interval then return end
+                elapsed = elapsed % interval
+                processKnifeAura()
             end)
     end
 

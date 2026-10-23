@@ -1,5 +1,5 @@
 return {
-    stamp = "v105-20261023-echo-auto-reset",
+    stamp = "v106-20261023-silent-muzzle-gate",
     files = {
         ["src/Profile/142823291.lua"] = [[
 --!strict
@@ -2994,6 +2994,11 @@ function Module.init(runtime: any): any
         whenReady: boolean?,
     }
 
+    -- How long an authored request owns the gun. The feedback queue resolves
+    -- or expires a shot at 1.6-1.8 s; keeping the window inside that bound
+    -- means the gate never outlives the pending state it reads.
+    local SHOT_CONFIRM_WINDOW: number = 1.5
+
     local ShootFeature: any = nil
     local lastRejectReason: string = ""
 
@@ -3077,13 +3082,37 @@ function Module.init(runtime: any): any
             )
         end
 
-        local function safeToSend(shotOrigin: CFrame, shotEnd: CFrame): boolean
+        -- One authored request at a time (v106). The v105 calibration sent
+        -- fourteen silent requests at roughly 0.1 s spacing inside eight
+        -- seconds and received no GunFired echo for any of them; every request
+        -- sent after an echo was answered. A second packet before the first
+        -- resolves is not a second bullet -- it is a wasted attempt that also
+        -- inflates the attempt count the calibration reports.
+        local pendingShot: any = state.mm2ShotFeedback.pending
+        if type(pendingShot) == "table"
+            and type(pendingShot.queuedAt) == "number"
+            and os.clock() - pendingShot.queuedAt < SHOT_CONFIRM_WINDOW then
+            return reject("Waiting for the previous shot to be confirmed.")
+        end
+
+        local function safeToSend(
+            shotOrigin: CFrame,
+            shotEnd: CFrame,
+            muzzle: CFrame?
+        ): boolean
             if gun.Parent ~= character or gun.Enabled == false or gun:GetAttribute("Disabled") == true
                 or gun:GetAttribute("Reloading") == true or gun:GetAttribute("IsReloading") == true then
                 return reject("The gun is disabled or reloading.")
             end
+            -- The muzzle is the character's gun, never the authored origin.
+            -- validateGunShot checks BOTH rays: the gun's line of sight and
+            -- the authored segment. Passing the silent origin twice made them
+            -- one ray, so a shot the gun could not see was cleared by a
+            -- near-target origin (the v105 silent map hits), and a body
+            -- between the gun and the target was never looked for.
+            local muzzlePosition: Vector3 = (muzzle or shotOrigin).Position
             local ok, allowed, why, blocker, occluder = pcall(validateGunShot,target,character,targetCharacter,
-                shotOrigin.Position,shotOrigin.Position,shotEnd.Position,mm2Settings.shootWallCheck)
+                muzzlePosition,shotOrigin.Position,shotEnd.Position,mm2Settings.shootWallCheck)
             if not ok or not allowed then
                 if type(blocker) == "table" and trajectoryCalibration
                     and type(trajectoryCalibration.noteBlockedShot) == "function" then
@@ -3117,7 +3146,7 @@ function Module.init(runtime: any): any
             if not isWeaponPathClear(shotOrigin.Position,shotEnd.Position,targetCharacter,nil,{ignoreTarget=true}) then
                 shotOrigin,shotEnd = origin,CFrame.new(info.endpoint)
             end
-            if not safeToSend(shotOrigin,shotEnd) then return false end
+            if not safeToSend(shotOrigin,shotEnd,origin) then return false end
             state.mm2ShotFeedback.queue(target, gun, shotOrigin, shotEnd)
             if state.mm2ShotFeedback.pending then
                 state.mm2ShotFeedback.pending.silentSpawn = variant

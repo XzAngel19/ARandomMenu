@@ -171,8 +171,8 @@ do
     -- A confirmation seconds late at a 120 ms ping is a stale pairing,
     -- not transport: the v103 session watched 416-1840 ms pairings drag
     -- the echo median from 106 ms to 532 ms and lead every shot long.
-    -- The acceptance window scales with RTT (4x, floored at 350 ms), so
-    -- this 1 s sample is now dropped instead of counted.
+    -- v105 scales the acceptance window with the measured RTT (2.5x +
+    -- 50 ms), so this 1 s sample is dropped instead of counted.
     prediction.noteEcho(0,1.0)
     near(prediction.getEchoDelay(),0.18,1e-9)
     assert(prediction.status(target):find("echo 180 ms %(4%)"),

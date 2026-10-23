@@ -1,0 +1,9 @@
+{
+  "commit": "42379f5",
+  "stamp": "v35-20261016-menu-motion",
+  "scope": "Reference only; not loaded as a runtime model. Revert exact sources from the named commit. Base filtering/latency/telemetry dependencies are available at that commit in src/games/MM2/base.lua.",
+  "snapshots": {
+    "Shoot.lua.txt": "0520bc4494c351f80863f5e43bf9dd1e84c5c6ddcbc72758b979cd5fd19db3a5",
+    "KnifeThrow.lua.txt": "050a7177050f6b5bb8a63f3fa54dbc4b52264fe5eecb6a2b0d30262be1e9cda5"
+  }
+}

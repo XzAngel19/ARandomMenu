@@ -16,6 +16,36 @@ local Module = {
 
 local activeCleanup: (() -> ())? = nil
 
+-- A game provider (Gun ESP, Trap ESP, ...) only draws while Item ESP is ON,
+-- and the card owns that switch. Turning the provider row ON with the card
+-- OFF used to leave the row ON and silently dead; now it brings the card
+-- with it, so ON always means drawn.
+local function setProviderEnabled(
+    render: any,
+    providerStates: {[string]: boolean},
+    provider: any,
+    value: boolean
+): ()
+    providerStates[provider.name] = value
+    if render.Enabled then
+        pcall(provider.setEnabled, value)
+        return
+    end
+    if not value then
+        return
+    end
+    -- The card's own switch, not the internal state: the user must see Item
+    -- ESP turn ON, not only behind the scenes.
+    local feature: any = render.Feature
+    if feature
+        and type(feature.activate) == "function"
+        and feature.enabled ~= true then
+        feature.activate()
+    else
+        render:Toggle(true)
+    end
+end
+
 -- Bounded template fingerprint, not semantic image recognition. Ignore names,
 -- world position and colour; compare geometry and mesh asset identity instead.
 function Module.appearanceSignature(object: Instance): string?
@@ -503,10 +533,7 @@ function Module.init(context: Runtime): any
             Default = false,
             Tooltip = provider.tooltip,
             Function = function(value: boolean): ()
-                providerStates[provider.name] = value
-                if render.Enabled then
-                    pcall(provider.setEnabled, value)
-                end
+                setProviderEnabled(render, providerStates, provider, value)
             end,
         })
     end
