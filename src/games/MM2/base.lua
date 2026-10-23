@@ -65,6 +65,11 @@ local mm2Settings = {
     shootTarget = "",
     showMissCooldown = false,
     predictionRtt = 0.08,
+    gunLeadBias = 0,
+    predictionModel = "66d",
+    autoTuneLead = false,
+
+    motionSampleHz = 60,
     silentSweep = 0.5,
 
     silentSpawn = "Through",
@@ -92,7 +97,7 @@ local mm2Settings = {
     blurtRepeat = false,
     blurtFake = false,
     coinColor = Color3.fromRGB(230, 220, 65),
-    coinTransparency = 0.35,
+    coinTransparency = 0.8,
     trapColor = Color3.fromRGB(145, 25, 25),
     trapTransparency = 0.7,
 
@@ -117,12 +122,9 @@ local function clearEffects(folder)
 end
 
 -- Match the recovered client's cursor filters, not an assertion about server rules.
--- Returns (clear, blocker). `blocker` describes the part that stopped the ray
--- (or the last transparent part that was skipped) so the caller can record what
--- the server disagreed about instead of guessing.
-local function isWeaponPathClear(origin: Vector3, endpoint: Vector3, target: Model?, strict: boolean?, options: {ignoreTarget: boolean?, requireTarget: boolean?}?): (boolean, any?)
+local function isWeaponPathClear(origin: Vector3, endpoint: Vector3, target: Model?, strict: boolean?, options: {ignoreTarget: boolean?, requireTarget: boolean?}?): boolean
     local direction: Vector3 = endpoint - origin
-    if direction.Magnitude < 0.05 then return true, nil end
+    if direction.Magnitude < 0.05 then return true end
     local excluded: {Instance} = {}
     if LocalPlayer.Character then table.insert(excluded, LocalPlayer.Character) end
     -- Projectile endpoints are future poses: the target's present body must
@@ -137,85 +139,15 @@ local function isWeaponPathClear(origin: Vector3, endpoint: Vector3, target: Mod
     for _ = 1, 32 do
         params.FilterDescendantsInstances = excluded
         local hit: RaycastResult? = workspace:Raycast(origin, direction, params)
-        if not hit then return not (options and options.requireTarget == true), nil end
-        if target and hit.Instance:IsDescendantOf(target) then return true, nil end
-        -- The gun uses the game's rule verbatim: every fully transparent part
-        -- is skipped. With strict (knife, and the second gun pass) only
-        -- transparent parts that cannot collide are skipped; an invisible
-        -- solid barrier stops the ray.
-        local part: Instance = hit.Instance
-        local info: any = {
-            name = nil,
-            className = nil,
-            transparency = nil,
-            canCollide = nil,
-            distance = nil,
-            skipped = false,
-        }
-        pcall(function(): ()
-            info.name = string.sub(part:GetFullName(), 1, 160)
-            info.className = part.ClassName
-            local hitPosition: any = (hit :: any).Position
-            if hitPosition then
-                info.distance = (hitPosition - origin).Magnitude
-            end
-        end)
-        if part:IsA("BasePart") then
-            info.transparency = part.Transparency
-            info.canCollide = part.CanCollide
-        end
-        if part:IsA("BasePart") and part.Transparency == 1
-            and (not strict or part.CanCollide == false) then
-            info.skipped = true
-            table.insert(excluded, part)
+        if not hit then return not (options and options.requireTarget == true) end
+        if target and hit.Instance:IsDescendantOf(target) then return true end
+        if not strict and hit.Instance:IsA("BasePart") and hit.Instance.Transparency == 1 then
+            table.insert(excluded, hit.Instance)
         else
-            return false, info
+            return false
         end
     end
-    return false, { name = "raycast budget", skipped = false } -- conservative
-end
-
--- What the ray meets when nothing is skipped. Recorded on every allowed
--- shot, not only on refusals: five shots of the v61 session passed every check
--- and still stopped 24-56 studs short of the aim, and without this there is no
--- way to tell whether transparent geometry was in the way.
-local function describeRayHit(origin: Vector3, endpoint: Vector3, target: Model?): any
-    local direction: Vector3 = endpoint - origin
-    if direction.Magnitude < 0.05 then
-        return nil
-    end
-    local excluded: {Instance} = {}
-    if LocalPlayer.Character then
-        table.insert(excluded, LocalPlayer.Character)
-    end
-    for _, object: Instance in ipairs(CollectionService:GetTagged("WeaponPassthrough")) do
-        table.insert(excluded, object)
-    end
-    local params: RaycastParams = RaycastParams.new()
-    params.FilterType = Enum.RaycastFilterType.Exclude
-    params.IgnoreWater = true
-    params.FilterDescendantsInstances = excluded
-    local hit: RaycastResult? = workspace:Raycast(origin, direction, params)
-    if not hit then
-        return nil
-    end
-    local part: Instance = hit.Instance
-    local info: any = {
-        onTarget = target ~= nil and part:IsDescendantOf(target),
-    }
-    pcall(function(): ()
-        info.name = string.sub(part:GetFullName(), 1, 160)
-        info.className = part.ClassName
-        local position: any = (hit :: any).Position
-        if position then
-            info.distance = (position - origin).Magnitude
-        end
-    end)
-    if part:IsA("BasePart") then
-        info.transparency = part.Transparency
-        info.canCollide = part.CanCollide
-    end
-    return info
+    return false -- bounded work, conservative if a map has many transparent layers
 end
 
 local function getWeaponFromContainer(
@@ -1373,6 +1305,16 @@ function predictionMath.finite(value: any): boolean
     return type(value) == "number" and value == value and math.abs(value) < math.huge
 end
 
+function predictionMath.sampleDue(elapsed: number, deltaTime: number, hz: number): (boolean, number)
+    local interval: number = 1 / math.clamp(hz, 1, 120)
+    local total: number = elapsed + math.max(0, deltaTime)
+    if total + 1e-9 < interval then
+        return false, total
+    end
+    -- Preserve fractional frames, but never issue catch-up shots after a stall.
+    return true, math.max(0, total - math.floor((total + 1e-9) / interval) * interval)
+end
+
 function predictionMath.interceptTime(offset: Vector3, velocity: Vector3, speed: number): number?
     if not predictionMath.finite(speed) or speed <= 1 then return nil end
     local a: number = velocity:Dot(velocity) - speed * speed
@@ -1399,77 +1341,290 @@ function predictionMath.interceptTime(offset: Vector3, velocity: Vector3, speed:
     return time and predictionMath.finite(time) and time <= 5 and time or nil
 end
 
-local lastLatencyReadAt: number = -math.huge
-
--- Two engine readings of the same path. They disagree: in the 2026-10-18
--- session GetNetworkPing read 314/342 ms on two shots whose measured
--- confirmation echo was 152/164 ms, and it read 241 ms at session start when
--- Data Ping read 130 and the echo came back in 144. Across 17 recorded shots
--- Data Ping was within 30 ms of the echo in 12, GetNetworkPing in 3.
--- The lead takes the lower of the two: over-leading is the failure this data
--- shows (a stopped or turned target costs more than an early one), and the
--- median in Prediction still rejects a one-off dip.
-local function readLatencyReadings(): (number?, number?)
-    local engine: number? = nil
-    local data: number? = nil
-    pcall(function(): ()
-        local direct: any = (LocalPlayer :: any).GetNetworkPing
-        if type(direct) == "function" then
-            local okDirect: boolean, seconds: any = pcall(direct, LocalPlayer)
-            if okDirect and predictionMath.finite(seconds)
-                and (seconds :: number) > 0.001 and (seconds :: number) <= 2 then
-                engine = seconds :: number
+function predictionMath.closestCrossing(samples: {{t: number, p: Vector3}}, point: Vector3): (number?, number)
+    local bestTime: number? = nil
+    local bestDistance: number = math.huge
+    for index: number = 2, #samples do
+        local first, last = samples[index - 1], samples[index]
+        local step: Vector3 = last.p - first.p
+        local lengthSquared: number = step:Dot(step)
+        if last.t > first.t and lengthSquared > 1e-8 then
+            local alpha: number = math.clamp((point - first.p):Dot(step) / lengthSquared, 0, 1)
+            local distance: number = (first.p + step * alpha - point).Magnitude
+            if distance < bestDistance then
+                bestDistance = distance
+                bestTime = first.t + (last.t - first.t) * alpha
             end
         end
+    end
+    return bestTime, bestDistance
+end
+
+local function isMotionGrounded(humanoid: Humanoid?, velocity: Vector3): boolean
+    -- Remote FloorMaterial can lag a jump (also visible in TestingStuff logs).
+    return humanoid ~= nil and humanoid.FloorMaterial ~= Enum.Material.Air
+        and humanoid:GetState() ~= Enum.HumanoidStateType.Jumping
+        and math.abs(velocity.Y) <= 6
+end
+
+type MotionSample = {
+    character: Model?,
+    position: Vector3,
+    sampledAt: number,
+    velocity: Vector3,
+    acceleration: Vector3,
+    stability: number,
+    grounded: boolean,
+
+    turnRate: number?,
+    turnReferenceAt: number?,
+}
+
+local motionSamples: {[Player]: MotionSample} =
+    setmetatable({}, {__mode = "k"}) :: any
+
+local GUN_LEAD = {
+    replicationRate = 20,
+    serverFrame = 1 / 60,
+    minimumHorizon = 0,
+    maximumHorizon = 0.25,
+    maximumManualBias = 0.15,
+    maximumAutoCorrection = 0.1,
+
+    -- Radians/second. The turn rate itself is measured per motion sample in
+    -- getFilteredVelocity; these are only its bounds and its fallback.
+    defaultTurnRate = math.pi * 0.5,
+    maxTurnRate = math.pi * 1.5,
+}
+local autoLeadCorrection: number = 0
+
+local function getActiveAutoLeadCorrection(): number
+    return mm2Settings.autoTuneLead and autoLeadCorrection or 0
+end
+
+local function resetAutoLeadCorrection(): ()
+    autoLeadCorrection = 0
+end
+
+local function getFilteredVelocity(player: Player, root: BasePart): Vector3
+    local now: number = os.clock()
+    local velocity: Vector3 = root.AssemblyLinearVelocity
+    if not predictionMath.finite(velocity.X) or not predictionMath.finite(velocity.Y)
+        or not predictionMath.finite(velocity.Z) then
+        motionSamples[player] = nil
+        return Vector3.zero
+    end
+    if velocity.Magnitude > 110 then
+        velocity = velocity.Unit * 110
+    end
+    local sample: MotionSample? = motionSamples[player]
+    local acceleration: Vector3 = Vector3.zero
+    local stability: number = 1
+    local turnRate: number? = nil
+    local turnReferenceAt: number? = nil
+    local character: Model? = player.Character
+    local humanoid: Humanoid? = character
+        and character:FindFirstChildOfClass("Humanoid")
+        :: Humanoid?
+    local grounded: boolean = isMotionGrounded(humanoid, velocity)
+
+    if sample and sample.character == character then
+        local deltaTime: number = now - sample.sampledAt
+        if deltaTime + 1e-9 < 1 / 120 then
+            return velocity
+        end
+        -- Teleports/respawns must not seed an acceleration estimate.
+        if deltaTime < 0.25 and (root.Position - sample.position).Magnitude < 32 then
+            acceleration = (velocity - sample.velocity) / deltaTime
+            if acceleration.Magnitude > 250 then
+                acceleration = acceleration.Unit * 250
+            end
+
+            local previousHorizontal: Vector3 = Vector3.new(
+                sample.velocity.X,
+                0,
+                sample.velocity.Z
+            )
+            local currentHorizontal: Vector3 = Vector3.new(
+                velocity.X,
+                0,
+                velocity.Z
+            )
+            if previousHorizontal.Magnitude > 1
+                and currentHorizontal.Magnitude > 1 then
+                stability = math.clamp(
+                    previousHorizontal.Unit:Dot(currentHorizontal.Unit),
+                    0,
+                    1
+                )
+            end
+
+            -- Time-normalized turn rate in radians/second. Measured over the
+            -- window since the last direction change, so it stays the same
+            -- whether Motion Hz is 20 or 120: replication updates are chunky
+            -- and per-sample deltas would scale with the sampling frequency.
+            local referenceAt: number = sample.turnReferenceAt
+                or sample.sampledAt
+            if stability < 0.99999 then
+                local window: number = now - referenceAt
+                if window >= 1 / 240 then
+                    turnRate = math.clamp(
+                        math.acos(stability) / window,
+                        0,
+                        GUN_LEAD.maxTurnRate
+                    )
+                end
+                turnReferenceAt = now
+            else
+                turnRate = sample.turnRate
+                turnReferenceAt = referenceAt
+                -- Straight-line motion decays any stale turn estimate.
+                if now - referenceAt > 0.2 then
+                    turnRate = 0
+                end
+            end
+        end
+    end
+
+    motionSamples[player] = {
+        character = character,
+        position = root.Position,
+        sampledAt = now,
+        velocity = velocity,
+        acceleration = acceleration,
+        stability = stability,
+        grounded = grounded,
+        turnRate = turnRate,
+        turnReferenceAt = turnReferenceAt,
+    }
+    return velocity
+end
+
+local lastLatencyReadAt: number = -math.huge
+local function getEstimatedLatency(): number
+    local now: number = os.clock()
+    if now - lastLatencyReadAt < 0.1 then
+        return math.clamp(mm2Settings.predictionRtt, 0.03, 0.3)
+    end
+    local elapsed: number = now - lastLatencyReadAt
+    lastLatencyReadAt = now
+    local measuredRtt: number = mm2Settings.predictionRtt
+    pcall(function(): ()
         local network: Instance? = Stats:FindFirstChild("Network")
         local serverItems: Instance? = network
             and network:FindFirstChild("ServerStatsItem")
         local pingItem: any = serverItems and serverItems:FindFirstChild("Data Ping")
         if pingItem and type(pingItem.GetValue) == "function" then
             local pingMilliseconds: number? = tonumber(pingItem:GetValue())
-            if predictionMath.finite(pingMilliseconds)
-                and pingMilliseconds >= 10 and pingMilliseconds <= 2000 then
-                data = pingMilliseconds / 1000
+            if predictionMath.finite(pingMilliseconds) and pingMilliseconds >= 0 then
+                measuredRtt = pingMilliseconds / 1000
             end
         end
     end)
-    return engine, data
-end
-
-local function getEstimatedLatency(): number
-    local now: number = os.clock()
-    if now - lastLatencyReadAt < 0.1 then
-        return math.clamp(mm2Settings.predictionRtt, 0.02, 0.6)
-    end
-    local elapsed: number = now - lastLatencyReadAt
-    lastLatencyReadAt = now
-    local measuredRtt: number = mm2Settings.predictionRtt
-    pcall(function(): ()
-        local engine: number?, data: number? = readLatencyReadings()
-        local lower: number? = nil
-        if engine and data then
-            lower = math.min(engine, data)
-        else
-            lower = engine or data
-        end
-        if lower then
-            measuredRtt = lower
-        end
-    end)
-    -- Time-based smoothing: sampling frequency must not change the RTT.
-    -- The upper bound covers the 400-500 ms sessions in TestingStuff; the
-    -- old 0.3 cap silently under-led every high-ping shot by 200+ ms.
+    -- Time-based smoothing: changing Motion/Throw Hz must not change the RTT.
     local alpha: number = 1 - math.exp(-math.min(elapsed, 1) / 0.5)
     mm2Settings.predictionRtt += (measuredRtt - mm2Settings.predictionRtt) * alpha
 
     return math.clamp(
         mm2Settings.predictionRtt,
-        0.02,
-        0.6
+        0.03,
+        0.3
     )
 end
 
 local trajectoryCalibration: any = nil
+
+local function getGunHorizonSeconds(): number
+    if mm2Settings.predictionModel == "66d" then
+        -- Legacy 66d timing, a rollback hypothesis, not measured server rewind.
+        local acceptance
+        if trajectoryCalibration and type(trajectoryCalibration.getEstimates) == "function" then
+            local ok, estimates = pcall(trajectoryCalibration.getEstimates,trajectoryCalibration)
+            if ok and type(estimates) == "table" and predictionMath.finite(estimates.confirmedShots) and estimates.confirmedShots >= 2
+                and predictionMath.finite(estimates.gunAcceptanceMs) and estimates.gunAcceptanceMs > 0 then
+                acceptance = estimates.gunAcceptanceMs/1000
+            end
+        end
+        return math.clamp((acceptance or math.max(getEstimatedLatency(),0.2)) + 1/40 + 1/120
+            + math.clamp(mm2Settings.gunLeadBias,-0.1,0.1) + math.clamp(getActiveAutoLeadCorrection(),-0.1,0.1),0.02,0.45)
+    end
+
+    -- Retain the reference timing hypothesis until reserved online data
+    -- identifies observation age/rewind. RTT is NOT itself proof of either.
+    local staleness: number = math.clamp(
+        getEstimatedLatency() * 1.0,
+        0,
+        0.15
+    )
+    local manualBias: number = math.clamp(
+        mm2Settings.gunLeadBias,
+        -GUN_LEAD.maximumManualBias,
+        GUN_LEAD.maximumManualBias
+    )
+    local autoCorrection: number = math.clamp(
+        getActiveAutoLeadCorrection(),
+        -GUN_LEAD.maximumAutoCorrection,
+        GUN_LEAD.maximumAutoCorrection
+    )
+    return math.clamp(
+        staleness + manualBias + autoCorrection,
+        GUN_LEAD.minimumHorizon,
+        GUN_LEAD.maximumHorizon
+    )
+end
+
+local function getGunTurnRate(sample: MotionSample?): number
+    -- Reads the time-normalized turn rate measured in getFilteredVelocity
+    -- (radians/second), so the lead discount no longer changes meaning when
+    -- Motion Hz changes. A missing or stale sample keeps the conservative
+    -- default.
+    if type(sample) ~= "table" then
+        return GUN_LEAD.defaultTurnRate
+    end
+    local measured: any = (sample :: any).turnRate
+    if type(measured) ~= "number" then
+        return GUN_LEAD.defaultTurnRate
+    end
+    return math.clamp(measured, 0, GUN_LEAD.maxTurnRate)
+end
+
+local function getGunTurnDiscount(horizon: number, turnRate: number?): number
+
+    local rate: number = turnRate or GUN_LEAD.defaultTurnRate
+    return math.clamp(
+        math.cos(math.min(horizon * rate * 0.5, math.pi * 0.5)),
+        0.25,
+        1
+    )
+end
+
+local function getGunLeadSensitivity(horizon: number, turnRate: number?): number
+
+    local rate: number = turnRate or GUN_LEAD.defaultTurnRate
+    local angle: number = horizon * rate * 0.5
+    if angle >= math.pi * 0.5 then
+        return 0.25
+    end
+    local rawDiscount: number = math.cos(angle)
+    if rawDiscount <= 0.25 then
+        return 0.25
+    end
+    return rawDiscount - horizon * math.sin(angle) * rate * 0.5
+end
+
+local function getGunLeadStatus(): {[string]: any}
+    return {
+        manualBias = math.clamp(
+            mm2Settings.gunLeadBias,
+            -GUN_LEAD.maximumManualBias,
+            GUN_LEAD.maximumManualBias
+        ),
+        autoCorrection = getActiveAutoLeadCorrection(),
+        storedAutoCorrection = autoLeadCorrection,
+        autoTuneEnabled = mm2Settings.autoTuneLead,
+        horizon = getGunHorizonSeconds(),
+    }
+end
 
 local function getGunOriginCFrame(character: Model, gun: Tool?): CFrame?
     local root: BasePart? = character:FindFirstChild("HumanoidRootPart") :: BasePart?
@@ -1514,24 +1669,6 @@ local function createTrajectoryCalibration(): any
         grounded: boolean,
         jumping: boolean,
     }
-    -- The movement window that ended at the shot. `dt` is negative (seconds
-    -- before the shot), unlike TrajectoryPoint's non-negative `dt`, so an
-    -- alternative predictor can be replayed from the same inputs offline.
-    type HistoryPoint = {
-        dt: number,
-        position: {number},
-        velocity: {number},
-        humanoidState: string,
-        grounded: boolean,
-        -- The replicated control input. It leads the velocity on a turn, so
-        -- recording it lets an offline replay test an input-based turn instead
-        -- of needing another session.
-        moveDirection: {number}?,
-        -- Offset from the root to the part the aim fell on. The v64 misses
-        -- passed 0.2-0.3 studs below the root, which is under the torso: a
-        -- replay needs this to test aiming at the torso instead of the root.
-        aimOffset: {number}?,
-    }
     type RunningStats = {
         count: number,
         mean: number,
@@ -1550,39 +1687,11 @@ local function createTrajectoryCalibration(): any
         targetUserId: number?,
         targetName: string?,
         targetTrajectory: {TrajectoryPoint},
-        targetHistory: {HistoryPoint},
         lastTrajectorySampleAt: number,
         confirmedAt: number?,
         latencyMs: number?,
         confirmedEndpoint: Vector3?,
         confirmedHitTarget: boolean?,
-        -- Everything below exists so a saved session can answer "did the shot
-        -- land, where, and when" without a second session: the server-clock
-        -- round trip, the part that was actually hit and its size, and the
-        -- target's health before and after.
-        serverActivatedAt: number?,
-        serverConfirmedAt: number?,
-        shotMode: string?,
-        silentSpawn: string?,
-        confirmedServerOrigin: Vector3?,
-        confirmedHitPart: string?,
-        confirmedHitPartPosition: Vector3?,
-        confirmedHitPartSize: Vector3?,
-        rootAtConfirmation: {[string]: any}?,
-        lastSeenPosition: Vector3?,
-        targetHealthAtAim: number?,
-        targetHealthAtConfirmation: number?,
-        targetHealthAfter: number?,
-        targetHealthDropAt: number?,
-        targetHealthDropServerTime: number?,
-        targetDiedAt: number?,
-        targetDiedServerTime: number?,
-        healthConnection: RBXScriptConnection?,
-        samplingStoppedAt: number?,
-        samplingStoppedReason: string?,
-        trajectoryCapped: boolean?,
-        rttEngineAtConfirmation: number?,
-        rttDataAtConfirmation: number?,
     }
     type PendingKnife = {
         shotId: string?,
@@ -1595,16 +1704,7 @@ local function createTrajectoryCalibration(): any
         targetUserId: number?,
         targetName: string?,
         targetTrajectory: {TrajectoryPoint},
-        targetHistory: {HistoryPoint},
         lastTrajectorySampleAt: number,
-        serverActivatedAt: number?,
-        samplingStoppedAt: number?,
-        samplingStoppedReason: string?,
-        trajectoryCapped: boolean?,
-        lastSeenPosition: Vector3?,
-        targetHealthAtAim: number?,
-        targetHealthAfter: number?,
-        healthConnection: RBXScriptConnection?,
     }
     type KnifeTrack = {
         shotId: string?,
@@ -1619,7 +1719,6 @@ local function createTrajectoryCalibration(): any
         targetUserId: number?,
         targetName: string?,
         targetTrajectory: {TrajectoryPoint},
-        targetHistory: {HistoryPoint},
         lastTrajectorySampleAt: number,
         destroyConnection: RBXScriptConnection?,
     }
@@ -1643,7 +1742,6 @@ local function createTrajectoryCalibration(): any
         targetState: string?,
         targetJumped: boolean?,
         targetTrajectory: {TrajectoryPoint}?,
-        targetHistory: {HistoryPoint}?,
         observedDisplacement: {number}?,
         constantVelocityResidual: {number}?,
         horizontalLeadSeconds: number?,
@@ -1661,14 +1759,6 @@ local function createTrajectoryCalibration(): any
         bestMotionModel: string?,
         motionModelErrors: {[string]: number}?,
         evaluationSeconds: number?,
-        blockedName: string?,
-        blockedTransparency: number?,
-        blockedCanCollide: boolean?,
-        blockedSkipped: boolean?,
-        blockedDistance: number?,
-        rttEngine: number?,
-        rttData: number?,
-        occluder: any?,
     }
     type Estimates = {
         gunAcceptanceMs: number?,
@@ -1680,13 +1770,6 @@ local function createTrajectoryCalibration(): any
         maxStabDistance: number?,
         knifeSpawnDelayMs: number?,
         confirmedSpawnDelays: number,
-        -- Direct endpoint error of our own predicted point, in studs,
-        -- measured against where the target really was at the scoring
-        -- instant. This is the number the accuracy question needs; it
-        -- used to require an offline replay of aim + trajectory.
-        predictionErrorSamples: number,
-        predictionErrorMedianStuds: number?,
-        predictionErrorMeanStuds: number?,
     }
     type Controller = {
         start: (self: Controller) -> (),
@@ -1705,12 +1788,6 @@ local function createTrajectoryCalibration(): any
         .. "/MM2_Trajectory_Calibration.json"
     local MAX_EVENTS: number = 2400
     local MAX_PENDING_AGE: number = 2.5
-    -- 30 Hz could not resolve a 0.02 s horizon, and the offline question is
-    -- exactly how the target moved in the last tens of milliseconds.
-    local TRAJECTORY_SAMPLE_HZ: number = 60
-    -- 2.5 s of pending life at 60 Hz needs 150; the margin covers a slow
-    -- frame without silently truncating the tail.
-    local MAX_TRAJECTORY_POINTS: number = 200
     local environment: {[string]: any} = getfenv() :: any
     local playerMouse: Mouse = LocalPlayer:GetMouse()
     local runtime: any = {
@@ -1730,13 +1807,9 @@ local function createTrajectoryCalibration(): any
         sessionStabAttempts = 0,
         sessionGunAttempts = 0,
         sessionGunConfirmed = 0,
-        sessionGunHitTarget = 0,
-        sessionGunKills = 0,
         sessionKnifeAttempts = 0,
         sessionKnifeConfirmed = 0,
         pendingGuns = {} :: {PendingGun},
-        lastBlockedAt = 0,
-        evictedEvents = 0,
         pendingKnives = {} :: {PendingKnife},
         tracks = {} :: {[Instance]: KnifeTrack},
         observedTools = setmetatable({}, {__mode = "k"}) :: {[Tool]: boolean},
@@ -1915,48 +1988,6 @@ local function createTrajectoryCalibration(): any
         }
     end
 
-    -- Health is the only client-visible proof that a shot did damage. The
-    -- `hitPart` of GunFired says a ray touched the target; a drop says the
-    -- server applied it. Both are recorded, with both clocks, per shot.
-    local function watchPendingHealth(pending: any, target: Player?): ()
-        pending.targetHealthAtAim = nil
-        pending.targetHealthAfter = nil
-        pending.targetHealthDropAt = nil
-        pending.targetDiedAt = nil
-        local character: Model? = target and target.Character
-        local humanoid: Humanoid? = character
-            and character:FindFirstChildOfClass("Humanoid")
-        if not humanoid then
-            return
-        end
-        pending.targetHealthAtAim = humanoid.Health
-        if pending.healthConnection then
-            pending.healthConnection:Disconnect()
-            pending.healthConnection = nil
-        end
-        pending.healthConnection = humanoid.HealthChanged:Connect(
-            function(health: number): ()
-                if not predictionMath.finite(health) then
-                    return
-                end
-                if pending.targetHealthAfter == nil
-                    or health < pending.targetHealthAfter then
-                    pending.targetHealthAfter = health
-                    if pending.targetHealthDropAt == nil then
-                        pending.targetHealthDropAt = os.clock()
-                        pending.targetHealthDropServerTime =
-                            workspace:GetServerTimeNow()
-                    end
-                    if health <= 0 and pending.targetDiedAt == nil then
-                        pending.targetDiedAt = os.clock()
-                        pending.targetDiedServerTime =
-                            workspace:GetServerTimeNow()
-                    end
-                end
-            end
-        )
-    end
-
     local function findKnifeAnalysisTarget(aimPosition: Vector3?): Player?
         local selected: Player? = nil
         local selectedScore: number = math.huge
@@ -1995,8 +2026,7 @@ local function createTrajectoryCalibration(): any
         local function sampleQueue(queue: {any}): ()
             for _, pending: any in ipairs(queue) do
                 if pending.targetUserId
-                    and now - pending.lastTrajectorySampleAt
-                        >= 1 / TRAJECTORY_SAMPLE_HZ then
+                    and now - pending.lastTrajectorySampleAt >= 1 / 30 then
                     local target: Player? = Players:GetPlayerByUserId(
                         pending.targetUserId
                     )
@@ -2007,27 +2037,8 @@ local function createTrajectoryCalibration(): any
                             pending.pingMs
                         )
                         or nil
-                    if point then
-                        if #pending.targetTrajectory < MAX_TRAJECTORY_POINTS then
-                            table.insert(pending.targetTrajectory, point)
-                        else
-                            pending.trajectoryCapped = true
-                        end
-                    elseif pending.samplingStoppedAt == nil then
-                        -- The only two ways this is nil: the character is gone
-                        -- or the humanoid is dead. Either way it is the reason
-                        -- a saved trajectory ends early, so it gets written
-                        -- down instead of being guessed at later.
-                        pending.samplingStoppedAt = now
-                        pending.samplingStoppedReason = target
-                                and "target-dead-or-missing"
-                            or "target-left"
-                    end
-                    if target then
-                        local root: BasePart? = getTargetRoot(target)
-                        if root then
-                            pending.lastSeenPosition = root.Position
-                        end
+                    if point and #pending.targetTrajectory < 120 then
+                        table.insert(pending.targetTrajectory, point)
                     end
                     pending.lastTrajectorySampleAt = now
                 end
@@ -2138,20 +2149,7 @@ local function createTrajectoryCalibration(): any
         record.sessionId = runtime.sessionId
         record.buildStamp = runtime.buildStamp
         if #runtime.events >= MAX_EVENTS then
-            -- A session that spams the knife (158 authored events on
-            -- 2026-10-18) evicted the gun records before their confirmations
-            -- could be matched, so a shot could no longer be scored. The knife
-            -- noise goes first; the gun record carries the settings.
-            local victim: number = 1
-            for index: number = 1, #runtime.events do
-                local candidate: CalibrationEvent = runtime.events[index]
-                if candidate.kind == "knife" and candidate.phase == "authored" then
-                    victim = index
-                    break
-                end
-            end
-            table.remove(runtime.events, victim)
-            runtime.evictedEvents = (runtime.evictedEvents or 0) + 1
+            table.remove(runtime.events, 1)
         end
         table.insert(runtime.events, record)
         runtime.revision += 1
@@ -2168,77 +2166,16 @@ local function createTrajectoryCalibration(): any
         end)
     end
 
-    -- Pre-shot movement window, straight from the predictor's ring buffer.
-    -- Without it a second predictor can only be scored on the shot it took;
-    -- with it the same slot can be replayed from the inputs.
-    local function captureTargetHistory(
-        player: Player?,
-        now: number
-    ): {HistoryPoint}
-        local points: {HistoryPoint} = {}
-        if not player or not state.mm2Prediction
-            or type(state.mm2Prediction.getHistory) ~= "function" then
-            return points
-        end
-        local ok: boolean, history: any, age: any = pcall(
-            state.mm2Prediction.getHistory,
-            player,
-            0.6
-        )
-        if not ok or type(history) ~= "table" then
-            return points
-        end
-        -- `at` is relative to the newest predictor sample and `age` is how old
-        -- that sample was at the shot. Clocks in the two modules do not share
-        -- an epoch, so the subtraction happens on the predictor's side only.
-        local sampleAge: number = predictionMath.finite(age) and age or 0
-        for _, sample: any in ipairs(history) do
-            if #points >= 36 then
-                break
-            end
-            local position: any = sample.position
-            local velocity: any = sample.velocity
-            if typeof(position) == "Vector3" and typeof(velocity) == "Vector3" then
-                local move: any = sample.moveDirection
-                local offset: any = sample.aimOffset
-                table.insert(points, {
-                    dt = (sample.at or 0) - sampleAge,
-                    position = {position.X, position.Y, position.Z},
-                    velocity = {velocity.X, velocity.Y, velocity.Z},
-                    humanoidState = tostring(sample.state or "Running"),
-                    grounded = sample.grounded == true,
-                    moveDirection = typeof(move) == "Vector3"
-                            and {move.X, move.Y, move.Z}
-                        or nil,
-                    aimOffset = typeof(offset) == "Vector3"
-                            and {offset.X, offset.Y, offset.Z}
-                        or nil,
-                })
-            end
-        end
-        return points
-    end
-
     local function trackConnection(connection: RBXScriptConnection): ()
         table.insert(runtime.connections, connection)
     end
 
     compactPending = function(queue: {any}, now: number): ()
-        local function drop(index: number): ()
-            local entry: any = queue[index]
-            if entry and entry.healthConnection then
-                pcall(function(): ()
-                    (entry.healthConnection :: RBXScriptConnection):Disconnect()
-                end)
-                entry.healthConnection = nil
-            end
-            table.remove(queue, index)
-        end
         while #queue > 0 and now - queue[1].activatedAt > MAX_PENDING_AGE do
-            drop(1)
+            table.remove(queue, 1)
         end
         while #queue > 12 do
-            drop(1)
+            table.remove(queue, 1)
         end
     end
 
@@ -2497,25 +2434,6 @@ local function createTrajectoryCalibration(): any
 
     local estimatesCache: Estimates? = nil
     local estimatesAt: number = -math.huge
-    local function endpointErrorStats(): (number, number?, number?)
-        local values: {number} = {}
-        for _, ev in ipairs(runtime.events) do
-            if ev.kind == "gun"
-                and predictionMath.finite(ev.endpointErrorStuds) then
-                table.insert(values, ev.endpointErrorStuds)
-            end
-        end
-        local mean: number? = nil
-        if #values > 0 then
-            local total: number = 0
-            for _, value in ipairs(values) do
-                total += value
-            end
-            mean = total / #values
-        end
-        return #values, median(values), mean
-    end
-
     local function estimates(): Estimates
         local now: number = os.clock()
         if estimatesCache and now - estimatesAt < 0.25 then return estimatesCache end
@@ -2535,12 +2453,7 @@ local function createTrajectoryCalibration(): any
                 end
             end
         end
-        local errCount: number, errMedian: number?, errMean: number? =
-            endpointErrorStats()
         estimatesCache = {
-            predictionErrorSamples = errCount,
-            predictionErrorMedianStuds = errMedian,
-            predictionErrorMeanStuds = errMean,
             gunAcceptanceMs = gunStats.count > 0 and gunStats.mean or nil,
             knifeSpeed = speedStats.count > 0 and speedStats.mean or nil,
             confirmedShots = gunStats.count,
@@ -2577,19 +2490,14 @@ local function createTrajectoryCalibration(): any
             sessionId = runtime.sessionId,
             historyBackup = runtime.historyBackup,
             settings = {
+                motionSampleHz = mm2Settings.motionSampleHz,
                 silentSpawn = mm2Settings.silentSpawn,
                 silentAim = mm2Settings.silentAim,
                 silentSweep = mm2Settings.silentSweep,
                 wallCheck = mm2Settings.shootWallCheck,
-                autoLead = state.mm2Prediction
-                    and state.mm2Prediction.settings.autoLead
-                    or true,
-                leadOffsetSeconds = state.mm2Prediction
-                    and state.mm2Prediction.settings.extraLead
-                    or 0,
-                replicationInterpolationSeconds = state.mm2Prediction
-                    and state.mm2Prediction.settings.interpolation
-                    or nil,
+                leadBias = mm2Settings.gunLeadBias,
+                autoTuneLead = mm2Settings.autoTuneLead,
+                predictionModel = mm2Settings.predictionModel,
             },
             placeId = game.PlaceId,
             savedAt = DateTime.now():ToIsoDate(),
@@ -2619,56 +2527,14 @@ local function createTrajectoryCalibration(): any
             session = {
                 startedAt = runtime.startedAtUnix,
                 countersScope = "this-session-only",
-                gunConfirmationMeaning = "matched GunFired signal; hitTarget means the ray reached the target, died means the humanoid reached 0 health",
-                evictedEvents = runtime.evictedEvents,
-                healthMeaning = "client-observed Humanoid.Health; healthDropServerTime is GetServerTimeNow at the drop",
+                gunConfirmationMeaning = "matched GunFired signal; not necessarily damage or death",
                 knifeConfirmationMeaning = "observed projectile with valid speed; not an impact",
                 rawKnifeActivations = runtime.rawKnifeActivations,
                 unmatchedGunSignals = runtime.unmatchedGunSignals,
                 stabAttempts = runtime.sessionStabAttempts,
                 elapsedSeconds = os.clock() - runtime.startedAt,
-                predictionError = (function(): {[string]: any}
-                    local ok: boolean, n: any, med: any, mean: any =
-                        pcall(endpointErrorStats)
-                    return {
-                        samples = ok and n or 0,
-                        medianStuds = ok and med or nil,
-                        meanStuds = ok and mean or nil,
-                        scope = "own predicted point vs target at scoring instant, confirmed gun shots",
-                    }
-                end)(),
-                gunByMode = (function(): {[string]: any}
-                    local modes: {[string]: any} = {}
-                    if type(runtime.events) == "table" then
-                        for _, ev in ipairs(runtime.events) do
-                            if ev.kind == "gun" then
-                                if ev.phase == "authored" then
-                                    local mode: string = type(ev.settings) == "table"
-                                            and tostring(ev.settings.mode or "?")
-                                        or "?"
-                                    local row: any = modes[mode]
-                                        or {attempts = 0, confirmed = 0, hits = 0, kills = 0}
-                                    row.attempts += 1
-                                    modes[mode] = row
-                                elseif ev.phase == "confirmation" then
-                                    local mode: string =
-                                        tostring(ev.shotMode or "?")
-                                    local row: any = modes[mode]
-                                        or {attempts = 0, confirmed = 0, hits = 0, kills = 0}
-                                    row.confirmed += 1
-                                    if ev.hitTarget then row.hits += 1 end
-                                    if ev.died then row.kills += 1 end
-                                    modes[mode] = row
-                                end
-                            end
-                        end
-                    end
-                    return modes
-                end)(),
                 gunAttempts = runtime.sessionGunAttempts,
                 gunConfirmed = runtime.sessionGunConfirmed,
-                gunHitTarget = runtime.sessionGunHitTarget,
-                gunKills = runtime.sessionGunKills,
                 knifeAttempts = runtime.sessionKnifeAttempts,
                 knifeConfirmed = runtime.sessionKnifeConfirmed,
                 events = runtime.events,
@@ -2719,185 +2585,7 @@ local function createTrajectoryCalibration(): any
         return value:FindFirstAncestorOfClass("Tool")
     end
 
-    -- Where the target really was when the server scored the shot, compared
-    -- with the point we aimed at, projected on the target's own horizontal
-    -- velocity. That projection is the lead error in seconds: positive means
-    -- the target was ahead of our aim (we under-led), negative means we led too
-    -- far. The server scores roughly one way into the measured round trip, so
-    -- the target's root is interpolated between the newest pre-shot sample and
-    -- the root captured at confirmation.
-    local function measureLeadErrorSeconds(pending: PendingGun): number?
-        local history: {HistoryPoint} = pending.targetHistory or {}
-        local newest: HistoryPoint? = history[#history]
-        local aim: Vector3? = pending.requestedAim
-        local latencyMs: any = pending.latencyMs
-        local confirmation: any = pending.rootAtConfirmation
-        if not newest or not aim or not confirmation then
-            return nil
-        end
-        if not predictionMath.finite(latencyMs) or latencyMs <= 0
-            or latencyMs > 1200 then
-            return nil
-        end
-        if not predictionMath.finite(pending.activatedAt) then
-            return nil
-        end
-        local beforeAt: number = pending.activatedAt + (newest.dt or 0)
-        local afterAt: number = pending.confirmedAt
-                and pending.confirmedAt
-            or (pending.activatedAt + latencyMs / 1000)
-        if not predictionMath.finite(afterAt) or afterAt <= beforeAt then
-            return nil
-        end
-        -- Score where the server actually scores. The saved sessions
-        -- separate hits from misses at the CONFIRMATION instant (a
-        -- full round trip after firing), not half-way: scoring at
-        -- activatedAt + latency/2 measured the aim ~55 ms AHEAD and
-        -- taught the feedback loop a capped -60 ms correction, which
-        -- then fought the (correct) full-transport lead on every
-        -- shot -- the recorded cause of the chronic under-lead.
-        local scoringAt: number = pending.activatedAt + latencyMs / 1000
-        local alpha: number = math.clamp(
-            (scoringAt - beforeAt) / (afterAt - beforeAt),
-            0,
-            1
-        )
-        local p0: {number}? = newest.position
-        local p1: {number}? = confirmation.position
-        if type(p0) ~= "table" or type(p1) ~= "table"
-            or #p0 < 3 or #p1 < 3 then
-            return nil
-        end
-        local rootX: number = p0[1] + (p1[1] - p0[1]) * alpha
-        local rootY: number = p0[2] + (p1[2] - p0[2]) * alpha
-        local rootZ: number = p0[3] + (p1[3] - p0[3]) * alpha
-        local offset: {number}? = newest.aimOffset
-        if type(offset) == "table" and #offset >= 3 then
-            rootX += offset[1]
-            rootY += offset[2]
-            rootZ += offset[3]
-        end
-        local velocity: {number}? = newest.velocity
-        if type(velocity) ~= "table" or #velocity < 3 then
-            return nil
-        end
-        local vx: number = velocity[1]
-        local vz: number = velocity[3]
-        local speed: number = math.sqrt(vx * vx + vz * vz)
-        -- A target that is not walking has no lead to correct; its aim error is
-        -- noise around a stationary body.
-        if speed < 3 then
-            return nil
-        end
-        local along: number = ((rootX - aim.X) * vx + (rootZ - aim.Z) * vz) / speed
-        -- Anything past this is not a lead error: a respawn, a teleport or the
-        -- aim landing on a different player.
-        if math.abs(along) > 6 then
-            return nil
-        end
-        return along / speed
-    end
-
-    -- Same scoring-instant interpolation as measureLeadErrorSeconds,
-    -- but the full 3D distance between the point we aimed at and where
-    -- the target's aim point really was -- the direct endpoint error.
-    -- No speed gate: a stationary target's error is real information
-    -- here (it isolates geometry/origin problems from lead problems).
-    local function measureEndpointErrorStuds(pending: PendingGun): number?
-        local history: {HistoryPoint} = pending.targetHistory or {}
-        local newest: HistoryPoint? = history[#history]
-        local aim: Vector3? = pending.requestedAim
-        local latencyMs: any = pending.latencyMs
-        local confirmation: any = pending.rootAtConfirmation
-        if not newest or not aim or not confirmation then
-            return nil
-        end
-        if not predictionMath.finite(latencyMs) or latencyMs <= 0
-            or latencyMs > 1200 then
-            return nil
-        end
-        if not predictionMath.finite(pending.activatedAt) then
-            return nil
-        end
-        local beforeAt: number = pending.activatedAt + (newest.dt or 0)
-        local afterAt: number = pending.confirmedAt
-                and pending.confirmedAt
-            or (pending.activatedAt + latencyMs / 1000)
-        if not predictionMath.finite(afterAt) or afterAt <= beforeAt then
-            return nil
-        end
-        local scoringAt: number = pending.activatedAt + latencyMs / 1000
-        local alpha: number = math.clamp(
-            (scoringAt - beforeAt) / (afterAt - beforeAt),
-            0,
-            1
-        )
-        local p0: {number}? = newest.position
-        local p1: {number}? = confirmation.position
-        if type(p0) ~= "table" or type(p1) ~= "table"
-            or #p0 < 3 or #p1 < 3 then
-            return nil
-        end
-        local rootX: number = p0[1] + (p1[1] - p0[1]) * alpha
-        local rootY: number = p0[2] + (p1[2] - p0[2]) * alpha
-        local rootZ: number = p0[3] + (p1[3] - p0[3]) * alpha
-        local offset: {number}? = newest.aimOffset
-        if type(offset) == "table" and #offset >= 3 then
-            rootX += offset[1]
-            rootY += offset[2]
-            rootZ += offset[3]
-        end
-        local dx: number = rootX - aim.X
-        local dy: number = rootY - aim.Y
-        local dz: number = rootZ - aim.Z
-        local distance: number = math.sqrt(dx * dx + dy * dy + dz * dz)
-        if not predictionMath.finite(distance) or distance > 30 then
-            return nil
-        end
-        return distance
-    end
-
     finalizeGunCapture = function(pending: PendingGun): ()
-        if pending.targetDiedAt then
-            runtime.sessionGunKills += 1
-        end
-        if pending.healthConnection then
-            pcall(function(): ()
-                (pending.healthConnection :: RBXScriptConnection):Disconnect()
-            end)
-            pending.healthConnection = nil
-        end
-        -- The echo lives here on purpose. The shot-feedback handler that used
-        -- to feed it depends on a connection made when the feature toggles;
-        -- the v61 log shows it never fired (echoDelay nil on all 13 shots
-        -- despite 9 confirmations). This handler is the one that produced
-        -- those 9 confirmations, so it is the reliable place to measure.
-        if state.mm2Prediction and type(state.mm2Prediction.noteEcho) == "function"
-            and predictionMath.finite(pending.latencyMs)
-            and predictionMath.finite(pending.activatedAt) then
-            state.mm2Prediction.noteEcho(
-                pending.activatedAt,
-                pending.activatedAt + pending.latencyMs / 1000
-            )
-        end
-        -- Feed the measured lead error back into the predictor before the
-        -- record is written, so the event can show what the next shot used.
-        local leadError: number? = measureLeadErrorSeconds(pending)
-        if leadError and state.mm2Prediction
-            and type(state.mm2Prediction.noteLeadError) == "function" then
-            pcall(state.mm2Prediction.noteLeadError, leadError)
-        end
-        local leadCorrection: number? = nil
-        if state.mm2Prediction
-            and type(state.mm2Prediction.getLeadCorrection) == "function" then
-            local ok: boolean, value: any = pcall(
-                state.mm2Prediction.getLeadCorrection
-            )
-            if ok and predictionMath.finite(value) then
-                leadCorrection = value
-            end
-        end
-        local endpointError: number? = measureEndpointErrorStuds(pending)
         local analysis: {[string]: any} = analyzeTargetTrajectory(
             pending.targetTrajectory,
             pending.pingMs,
@@ -2909,7 +2597,6 @@ local function createTrajectoryCalibration(): any
             phase = "confirmation",
             kind = "gun",
             serverTime = workspace:GetServerTimeNow(),
-            clock = os.clock(),
             pingMs = pending.pingMs,
             latencyMs = pending.latencyMs,
             targetUserId = pending.targetUserId,
@@ -2917,9 +2604,6 @@ local function createTrajectoryCalibration(): any
             targetState = analysis.initialState,
             targetJumped = analysis.jumped,
             targetTrajectory = pending.targetTrajectory,
-            targetHistory = #(pending.targetHistory or {}) > 0
-                    and pending.targetHistory
-                or nil,
             observedDisplacement = analysis.displacement,
             constantVelocityResidual = analysis.constantVelocityResidual,
             horizontalLeadSeconds = analysis.horizontalLeadSeconds,
@@ -2928,68 +2612,6 @@ local function createTrajectoryCalibration(): any
                     and vectorArray(pending.confirmedEndpoint)
                 or nil,
             hitTarget = pending.confirmedHitTarget,
-            shotMode = pending.shotMode,
-            silentSpawn = pending.silentSpawn,
-            -- Server-clock round trip: activation to GunFired, both stamped
-            -- with GetServerTimeNow. Independent of GetNetworkPing and of the
-            -- engine's Data Ping, so it settles which of them the lead needs.
-            serverEchoMs = (pending.serverConfirmedAt
-                    and pending.serverActivatedAt)
-                    and (pending.serverConfirmedAt - pending.serverActivatedAt)
-                        * 1000
-                or nil,
-            -- Anchor for the server-clock axis: every trajectory point carries
-            -- its own serverTime, so serverDt = point.serverTime - this.
-            serverActivatedAt = pending.serverActivatedAt,
-            serverConfirmedAt = pending.serverConfirmedAt,
-            serverOrigin = pending.confirmedServerOrigin
-                    and vectorArray(pending.confirmedServerOrigin)
-                or nil,
-            aimOffsetAtFire = (function(): {number}?
-                local history: {HistoryPoint} = pending.targetHistory or {}
-                local newest: HistoryPoint? = history[#history]
-                return newest and newest.aimOffset or nil
-            end)(),
-            -- Signed lead error measured from this very confirmation, and the
-            -- bounded correction the next shot will apply. Both are written in
-            -- seconds so a saved session can be replayed and audited without
-            -- rerunning the shot.
-            leadErrorSeconds = leadError,
-            leadCorrectionSeconds = leadCorrection,
-            endpointErrorStuds = endpointError,
-            trajectoryPoints = #pending.targetTrajectory,
-            trajectorySpanSeconds = (
-                    #pending.targetTrajectory > 1
-                    and (pending.targetTrajectory[#pending.targetTrajectory].dt
-                        - pending.targetTrajectory[1].dt)
-                )
-                or 0,
-            trajectoryCapped = pending.trajectoryCapped == true,
-            samplingStoppedReason = pending.samplingStoppedReason,
-            samplingStoppedAt = pending.samplingStoppedAt,
-            rttEngineAtConfirmation = pending.rttEngineAtConfirmation,
-            rttDataAtConfirmation = pending.rttDataAtConfirmation,
-            aim = pending.requestedAim and vectorArray(pending.requestedAim) or nil,
-            origin = pending.origin and vectorArray(pending.origin) or nil,
-            hitPart = pending.confirmedHitPart,
-            hitPartPosition = pending.confirmedHitPartPosition
-                    and vectorArray(pending.confirmedHitPartPosition)
-                or nil,
-            hitPartSize = pending.confirmedHitPartSize
-                    and vectorArray(pending.confirmedHitPartSize)
-                or nil,
-            rootAtConfirmation = pending.rootAtConfirmation,
-            lastSeenPosition = pending.lastSeenPosition
-                    and vectorArray(pending.lastSeenPosition)
-                or nil,
-            healthAtAim = pending.targetHealthAtAim,
-            healthAtConfirmation = pending.targetHealthAtConfirmation,
-            healthAfter = pending.targetHealthAfter,
-            healthDropAt = pending.targetHealthDropAt,
-            healthDropServerTime = pending.targetHealthDropServerTime,
-            diedAt = pending.targetDiedAt,
-            diedServerTime = pending.targetDiedServerTime,
-            died = pending.targetDiedAt ~= nil,
             pingBucket = analysis.pingBucket,
             bestMotionModel = analysis.bestMotionModel,
             motionModelErrors = analysis.motionModelErrors,
@@ -3076,42 +2698,6 @@ local function createTrajectoryCalibration(): any
         local hitTarget: boolean = typeof(hitPartValue) == "Instance"
             and targetCharacter ~= nil
             and hitPartValue:IsDescendantOf(targetCharacter)
-        -- Recorded at the moment the signal arrives, on the server clock, so
-        -- the round trip can be measured without either engine estimate.
-        pending.serverConfirmedAt = workspace:GetServerTimeNow()
-        pending.confirmedServerOrigin = eventOrigin
-        local engineNow: number?, dataNow: number? = readLatencyReadings()
-        pending.rttEngineAtConfirmation = engineNow
-        pending.rttDataAtConfirmation = dataNow
-        if typeof(hitPartValue) == "Instance" then
-            pcall(function(): ()
-                pending.confirmedHitPart = string.sub(hitPartValue.Name, 1, 80)
-                if hitPartValue:IsA("BasePart") then
-                    pending.confirmedHitPartPosition = hitPartValue.Position
-                    pending.confirmedHitPartSize = hitPartValue.Size
-                end
-            end)
-        end
-        if target then
-            local root: BasePart? = getTargetRoot(target)
-            local humanoid: Humanoid? = getTargetHumanoid(target)
-            if root then
-                local stateName: string? = nil
-                if humanoid then
-                    pcall(function(): ()
-                        stateName = humanoid:GetState().Name
-                    end)
-                end
-                pending.rootAtConfirmation = {
-                    position = vectorArray(root.Position),
-                    velocity = vectorArray(root.AssemblyLinearVelocity),
-                    state = stateName,
-                }
-            end
-            if humanoid then
-                pending.targetHealthAtConfirmation = humanoid.Health
-            end
-        end
         if latencyMs >= 30 and latencyMs <= 450 then
             table.insert(runtime.freshGunLatency, {at = now, ms = latencyMs})
             if #runtime.freshGunLatency > 24 then table.remove(runtime.freshGunLatency, 1) end
@@ -3119,9 +2705,6 @@ local function createTrajectoryCalibration(): any
         end
         addSample(runtime.gunAcceptance, latencyMs)
         runtime.sessionGunConfirmed += 1
-        if hitTarget then
-            runtime.sessionGunHitTarget += 1
-        end
         pending.confirmedAt = now
         pending.latencyMs = latencyMs
         pending.confirmedEndpoint = endpoint
@@ -3178,9 +2761,6 @@ local function createTrajectoryCalibration(): any
                 targetState = analysis.initialState,
                 targetJumped = analysis.jumped,
                 targetTrajectory = track.targetTrajectory,
-                targetHistory = #track.targetHistory > 0
-                        and track.targetHistory
-                    or nil,
                 observedDisplacement = analysis.displacement,
                 constantVelocityResidual = analysis.constantVelocityResidual,
                 horizontalLeadSeconds = analysis.horizontalLeadSeconds,
@@ -3317,7 +2897,6 @@ local function createTrajectoryCalibration(): any
                 targetUserId = pending.targetUserId,
                 targetName = pending.targetName,
                 targetTrajectory = pending.targetTrajectory,
-                targetHistory = pending.targetHistory or {},
                 lastTrajectorySampleAt = now,
                 destroyConnection = nil,
             }
@@ -3340,44 +2919,6 @@ local function createTrajectoryCalibration(): any
             or CollectionService:HasTag(tool, "Weapon_Knife")
             or (tool:FindFirstChild("Events") ~= nil
                 and tool.Events:FindFirstChild("KnifeThrown") ~= nil)
-    end
-
-    -- One constructor for every pending shot. The activation observer and the
-    -- authored-shot path used to build this table separately, and on
-    -- 2026-10-18 the authored copy was missing the health watcher and the
-    -- server-clock pair: 13 confirmations, healthAtAim nil on all of them and
-    -- no serverEchoMs. Duplicating the record was the bug; there is one now.
-    local function beginPendingShot(kind: string, entry: any, target: Player?): any
-        local now: number = entry.activatedAt or os.clock()
-        entry.activatedAt = now
-        entry.serverActivatedAt = workspace:GetServerTimeNow()
-        entry.targetUserId = target and target.UserId or entry.targetUserId
-        entry.targetName = target and target.Name or entry.targetName
-        if entry.targetTrajectory == nil then
-            entry.targetTrajectory = {}
-            if target then
-                local point: TrajectoryPoint? = captureTrajectoryPoint(
-                    target,
-                    now,
-                    entry.pingMs or 0
-                )
-                if point then
-                    table.insert(entry.targetTrajectory, point)
-                end
-            end
-        end
-        if entry.targetHistory == nil then
-            entry.targetHistory = captureTargetHistory(target, now)
-        end
-        entry.lastTrajectorySampleAt = entry.lastTrajectorySampleAt or now
-        watchPendingHealth(entry, target)
-        local queue: {any} = kind == "gun"
-                and runtime.pendingGuns
-            or runtime.pendingKnives
-        table.insert(queue, entry)
-        compactPending(queue, now)
-        ensureTrajectorySampler()
-        return entry
     end
 
     local function observeTool(tool: Tool): ()
@@ -3421,29 +2962,38 @@ local function createTrajectoryCalibration(): any
                 targetName = target and target.Name or nil, eventSource = "tool-activation"})
             if gun then
                 runtime.sessionGunAttempts += 1
-                beginPendingShot("gun", {
+                table.insert(runtime.pendingGuns, {
                     shotId = shotId,
-                    attemptCounted = true,
+                    attemptCounted = gun,
                     tool = tool,
                     activatedAt = now,
                     origin = toolOrigin(tool),
                     requestedAim = requestedAim,
                     pingMs = pingMs,
+                    targetUserId = target and target.UserId or nil,
+                    targetName = target and target.Name or nil,
                     targetTrajectory = targetTrajectory,
-                }, target)
+                    lastTrajectorySampleAt = now,
+                })
+                compactPending(runtime.pendingGuns, now)
             elseif knife then
                 runtime.rawKnifeActivations += 1
-                beginPendingShot("knife", {
+                table.insert(runtime.pendingKnives, {
                     shotId = shotId,
-                    attemptCounted = false,
+                    attemptCounted = gun,
                     tool = tool,
                     activatedAt = now,
                     origin = toolOrigin(tool),
                     requestedAim = requestedAim,
                     pingMs = pingMs,
+                    targetUserId = target and target.UserId or nil,
+                    targetName = target and target.Name or nil,
                     targetTrajectory = targetTrajectory,
-                }, target)
+                    lastTrajectorySampleAt = now,
+                })
+                compactPending(runtime.pendingKnives, now)
             end
+            ensureTrajectorySampler()
         end))
     end
 
@@ -3635,53 +3185,21 @@ local function createTrajectoryCalibration(): any
         })
     end
 
-    -- A shot the client refused. Recorded so the blocker that the server
-    -- respects (invisible wall, barrier, tagged part) can be identified
-    -- instead of being inferred from a miss. Throttled: a held auto-shoot
-    -- would otherwise flood the event ring.
-    function controller:noteBlockedShot(blocker: any): ()
-        if not runtime.active or type(blocker) ~= "table" then
-            return
-        end
-        local now: number = os.clock()
-        if now - runtime.lastBlockedAt < 1 then
-            return
-        end
-        runtime.lastBlockedAt = now
-        appendEvent({
-            kind = "gun",
-            phase = "blocked",
-            serverTime = workspace:GetServerTimeNow(),
-            pingMs = getPingMilliseconds(),
-            reason = "wall",
-            blockedName = type(blocker.name) == "string" and blocker.name or nil,
-            blockedTransparency = tonumber(blocker.transparency),
-            blockedCanCollide = blocker.canCollide == true,
-            blockedSkipped = blocker.skipped == true,
-            blockedDistance = tonumber(blocker.distance),
-        })
-    end
-
     function controller:noteAuthoredShot(info: any): ()
         if not runtime.active or type(info) ~= "table" then
             return
         end
         local kind: string = tostring(info.kind or "gun")
         local shotId: string = nextShotId()
+        if kind ~= "stab" then
+            appendEvent({kind = kind, shotId = shotId, phase = "authored",
+                serverTime = workspace:GetServerTimeNow(), pingMs = getPingMilliseconds(),
+                settings = info.settings, targetName = info.target and info.target.Name or nil})
+        end
         local now: number = os.clock()
         local pingMs: number = getPingMilliseconds()
         local target: Player? =
             info.target and info.target.Character ~= nil and info.target or nil
-        -- Captured before the authored event so the record carries the window
-        -- the predictor actually had, not a reconstruction.
-        local targetHistory: {HistoryPoint} = captureTargetHistory(target, now)
-        if kind ~= "stab" then
-            appendEvent({kind = kind, shotId = shotId, phase = "authored",
-                serverTime = workspace:GetServerTimeNow(), clock = now,
-                pingMs = pingMs,
-                settings = info.settings, targetName = info.target and info.target.Name or nil,
-                targetHistory = #targetHistory > 0 and targetHistory or nil})
-        end
         local targetTrajectory: {TrajectoryPoint} = {}
         if target then
             local initialPoint: TrajectoryPoint? = captureTrajectoryPoint(
@@ -3714,7 +3232,6 @@ local function createTrajectoryCalibration(): any
                     and targetTrajectory[1].humanoidState
                     or nil,
                 targetTrajectory = #targetTrajectory > 0 and targetTrajectory or nil,
-                targetHistory = #targetHistory > 0 and targetHistory or nil,
             })
         else
             local isGun: boolean = kind ~= "knife"
@@ -3729,21 +3246,23 @@ local function createTrajectoryCalibration(): any
                 else
                     runtime.sessionKnifeAttempts += 1
                 end
-                beginPendingShot(isGun and "gun" or "knife", {
+                local queue: {any} =
+                    isGun and runtime.pendingGuns or runtime.pendingKnives
+                table.insert(queue, {
                     shotId = shotId,
                     attemptCounted = true,
                     tool = authoredTool,
-                    shotMode = type(info.settings) == "table"
-                            and info.settings.mode
-                        or (info.silent and "Silent" or nil),
-                    silentSpawn = info.variant,
                     activatedAt = now,
                     origin = info.originPos,
                     requestedAim = info.aimPos,
                     pingMs = pingMs,
+                    targetUserId = target and target.UserId or nil,
+                    targetName = target and target.Name or nil,
                     targetTrajectory = targetTrajectory,
-                    targetHistory = targetHistory,
-                }, target)
+                    lastTrajectorySampleAt = now,
+                })
+                compactPending(queue, now)
+                ensureTrajectorySampler()
             end
         end
 
@@ -3837,8 +3356,26 @@ type PendingShot = {
     targetedMurderer: boolean,
     queuedAt: number,
 
+    aimRootOffset: Vector3?,
+    leadSeconds: number?,
+    leadSensitivity: number?,
+    velocity: Vector3?,
+    trajectory: {{t: number, p: Vector3}}?,
+
     silentSpawn: string?,
     ambiguous: boolean?,
+    model: string?,
+}
+
+type GunPrediction = {
+    model: string?,
+    aimRootOffset: Vector3?,
+    targetPosition: Vector3?,
+    endpoint: Vector3?,
+    velocity: Vector3?,
+    errorRadius: number?,
+    leadSeconds: number?,
+    leadSensitivity: number?,
 }
 
 state.mm2ShotFeedback = {
@@ -3934,11 +3471,113 @@ state.mm2ShotFeedback.getDuration = function(gun: Tool?): number
     return state.mm2ShotFeedback.defaultDuration
 end
 
+local leadTracking: PendingShot? = nil
+
+local function stopLeadTracking(): ()
+    leadTracking = nil
+    disconnectFeatureConnection("MM2LeadTuner")
+end
+
+local function startLeadTracking(candidate: PendingShot): ()
+    if not mm2Settings.autoTuneLead then
+        return
+    end
+    local root: BasePart? = candidate.targetCharacter
+        and candidate.targetCharacter:FindFirstChild("HumanoidRootPart")
+        :: BasePart?
+    if not root or candidate.velocity == nil then
+        return
+    end
+    stopLeadTracking()
+    leadTracking = candidate
+    local samples: {{t: number, p: Vector3}} = {{t = os.clock(), p = root.Position}}
+    candidate.trajectory = samples
+    local elapsed: number = 0
+    featureConnections.MM2LeadTuner = TaskManager:Connect(function(
+        deltaTime: number
+    ): ()
+        if leadTracking ~= candidate then
+            return
+        end
+        if state.mm2ShotFeedback.pending ~= candidate
+            and state.mm2ShotFeedback.lastAccepted ~= candidate then
+            stopLeadTracking()
+            return
+        end
+        local due: boolean
+        due, elapsed = predictionMath.sampleDue(elapsed, deltaTime, 30)
+        if not due then return end
+        table.insert(samples, {t = os.clock(), p = root.Position})
+        if #samples > 64 then
+            table.remove(samples, 1)
+        end
+    end)
+end
+
+local function tuneFromConfirmedShot(candidate: PendingShot): ()
+    if not mm2Settings.autoTuneLead or not candidate.aimPosition or candidate.silentSpawn
+        or candidate.ambiguous or candidate.model ~= (mm2Settings.predictionModel == "66d" and "classic-66d" or "reference-v41") then
+        return
+    end
+    local samples: {{t: number, p: Vector3}}? = candidate.trajectory
+    local velocity: Vector3? = candidate.velocity
+    local leadSeconds: number? = candidate.leadSeconds
+    local leadSensitivity: number? = candidate.leadSensitivity
+    if not samples
+        or #samples < 6
+        or velocity == nil
+        or leadSeconds == nil
+        or leadSensitivity == nil
+        or leadSensitivity < 0.15 then
+        return
+    end
+    local horizontal: Vector3 = Vector3.new(velocity.X, 0, velocity.Z)
+    if horizontal.Magnitude < 8 then
+        return
+    end
+    -- Interpolate between 30 Hz samples instead of quantizing to a frame.
+    local rootAim: Vector3 = candidate.aimPosition - (candidate.aimRootOffset or Vector3.zero)
+    local crossedAt: number?, closestDistance: number = predictionMath.closestCrossing(samples, rootAim)
+    if crossedAt == nil or closestDistance > 1 then return end
+    local leadMeasured: number = crossedAt - candidate.queuedAt
+    if leadMeasured < 0.03 or leadMeasured > 1.2 then
+        return
+    end
+
+    local firstSample: {t: number, p: Vector3} = samples[1]
+    local lastSample: {t: number, p: Vector3} = samples[#samples]
+    local span: number = lastSample.t - firstSample.t
+    if span < 0.05 then
+        return
+    end
+    local sampledVelocity: Vector3 = (lastSample.p - firstSample.p) / span
+    local sampledHorizontal: Vector3 = Vector3.new(
+        sampledVelocity.X,
+        0,
+        sampledVelocity.Z
+    )
+    if sampledHorizontal.Magnitude < 8 then
+        return
+    end
+    if sampledHorizontal.Unit:Dot(horizontal.Unit) < 0.75 then
+        return
+    end
+
+    local residual: number = (leadMeasured - leadSeconds) / leadSensitivity
+    local delta: number = residual * 0.25
+    autoLeadCorrection = math.clamp(
+        autoLeadCorrection + math.clamp(delta, -0.03, 0.03),
+        -GUN_LEAD.maximumAutoCorrection,
+        GUN_LEAD.maximumAutoCorrection
+    )
+end
+
 state.mm2ShotFeedback.queue = function(
     target: Player?,
     gun: Tool?,
     origin: CFrame?,
-    aim: CFrame?
+    aim: CFrame?,
+    prediction: GunPrediction?
 ): ()
     if not target or not gun or not origin then
         return
@@ -3952,16 +3591,22 @@ state.mm2ShotFeedback.queue = function(
         target = target,
         targetCharacter = targetCharacter,
         gun = gun,
+        model = prediction and prediction.model,
         -- A single pending slot cannot disambiguate rapid equal-geometry shots.
-        -- Exclude these echoes from statistics instead of guessing.
+        -- Exclude these echoes from tuning/statistics instead of guessing.
         ambiguous = state.mm2ShotFeedback.pending ~= nil,
         origin = origin.Position,
         aimPosition = aim and aim.Position,
         healthBefore = targetHumanoid and targetHumanoid.Health or 0,
         targetedMurderer = getPlayerRole(target) == "Murderer",
         queuedAt = os.clock(),
+        leadSeconds = prediction and prediction.leadSeconds or nil,
+        leadSensitivity = prediction and prediction.leadSensitivity or nil,
+        velocity = prediction and prediction.velocity or nil,
+        aimRootOffset = prediction and prediction.aimRootOffset or nil,
     }
     state.mm2ShotFeedback.pending = candidate
+    startLeadTracking(candidate)
 
     task.delay(1.8, function(): ()
         if state.mm2ShotFeedback.pending == candidate then
@@ -4074,7 +3719,8 @@ state.mm2ShotFeedback.resolve = function(
             )
 
         if hitConfirmed then
-            -- Disconnection/role changes are UI heuristics, not shot evidence.
+            -- Disconnection/role changes are UI heuristics, not tuning evidence.
+            if directHit then tuneFromConfirmedShot(candidate) end
             state.mm2ShotFeedback.hide()
         end
 
@@ -4153,15 +3799,6 @@ state.mm2ShotFeedback.handleGunFired = function(
     end
     if eventTool and not weaponMatches then return end
     if not originMatches or not directionMatches or endpointPosition == nil then return end
-
-    -- Feed the measured FireServer -> GunFired round trip to the prediction
-    -- engine. It is the only transport sample the game exposes, and the
-    -- engine keeps a median so one delayed echo cannot move the next shot.
-    -- The echo is fed only from the confirmation path (finalizeGunCapture).
-    -- This second source measured from the feedback queue instead of from the
-    -- activation, and its samples were larger: at shot 9 of the v64 session the
-    -- median read 318 ms while the same shot's measured round trip was 150 ms,
-    -- and the lead built on it (381 ms) missed by 3.9 studs. One source.
 
     state.mm2ShotFeedback.pending = nil
     if candidate.ambiguous then return end
@@ -4300,15 +3937,63 @@ moduleCleanup = function(): ()
     end
 end
 
--- WallCheck for the gun uses the SAME filter as the game's own WeaponService
--- (ClientServices.WeaponService): own character and every
--- "WeaponPassthrough"-tagged instance are excluded, and hits whose part is
--- fully transparent are skipped so the ray continues through them. The first
--- solid surface or other player blocks the shot. The target is excluded while
--- following the segment because the aim point is a future pose; seeing the
--- wall behind it is the point of the check.
+-- Gun rays deliberately do not share Knife's transparent/passthrough filters.
+-- A tagged or invisible player is still a player in front of the gun.
+local function isGunPathClear(origin: Vector3, endpoint: Vector3, target: Model?, requireTarget: boolean?): boolean
+    local direction = endpoint-origin
+    if not predictionMath.finite(direction.Magnitude) or direction.Magnitude < 0.05 then return false end
+    local params = RaycastParams.new()
+    params.FilterType = Enum.RaycastFilterType.Exclude
+    params.FilterDescendantsInstances = LocalPlayer.Character and {LocalPlayer.Character} or {}
+    params.IgnoreWater = true
+    params.RespectCanCollide = false
+    local hit = workspace:Raycast(origin,direction+direction.Unit*0.05,params)
+    if not hit then return requireTarget ~= true end
+    return target ~= nil and hit.Instance:IsDescendantOf(target)
+end
+
+-- Ray/OBB slab intersection, including CanQuery=false and transparent body parts.
+-- This guard is independent of the engine ray's filtering/collision groups.
+local function gunBoxEntry(origin: Vector3, direction: Vector3, frame: CFrame, size: Vector3, padding: number): number?
+    local p, d = frame:PointToObjectSpace(origin), frame:VectorToObjectSpace(direction)
+    local near, far = 0, math.huge
+    for _, axis in ipairs({"X","Y","Z"}) do
+        local extent = size[axis]*0.5+padding
+        if not predictionMath.finite(p[axis]) or not predictionMath.finite(d[axis])
+            or not predictionMath.finite(extent) then return 0 end -- uncertain geometry blocks
+        if math.abs(d[axis]) < 1e-8 then
+            if math.abs(p[axis]) > extent then return nil end
+        else
+            local a, b = (-extent-p[axis])/d[axis], (extent-p[axis])/d[axis]
+            near, far = math.max(near,math.min(a,b)), math.min(far,math.max(a,b))
+            if near > far then return nil end
+        end
+    end
+    return near
+end
+
+local function gunBystanderOnRay(target: Player, origin: Vector3, endpoint: Vector3, horizon: number): boolean
+    local direction = (endpoint-origin).Unit
+    for _, player in ipairs(Players:GetPlayers()) do
+        local character = player.Character
+        if player == LocalPlayer or player == target or not character then continue end
+        local root = character:FindFirstChild("HumanoidRootPart")
+        local speed = root and root.AssemblyLinearVelocity.Magnitude or 0
+        -- Account conservatively for a bystander entering the line during latency.
+        local padding = 0.15 + (predictionMath.finite(speed) and math.max(0,speed*horizon) or math.huge)
+        local frame, size = character:GetBoundingBox()
+        if gunBoxEntry(origin,direction,frame,size,padding) == nil then continue end
+        for _, part in ipairs(character:GetDescendants()) do
+            if part:IsA("BasePart") and gunBoxEntry(origin,direction,part.CFrame,part.Size,padding) ~= nil then
+                return true
+            end
+        end
+    end
+    return false
+end
+
 local function validateGunShot(target: Player, character: Model, targetCharacter: Model,
-    muzzle: Vector3, origin: Vector3, endpoint: Vector3, walls: boolean): (boolean, string?, any?, any?)
+    muzzle: Vector3, origin: Vector3, endpoint: Vector3, walls: boolean, lead: number): (boolean, string?)
     if LocalPlayer.Character ~= character or not target or target == LocalPlayer
         or target.Character ~= targetCharacter or not isPlayerAlive(target)
         or isProtectedTarget(target) or getPlayerRole(target) ~= "Murderer" then
@@ -4325,50 +4010,33 @@ local function validateGunShot(target: Player, character: Model, targetCharacter
     if not predictionMath.finite(muzzle.Magnitude) or not predictionMath.finite(origin.Magnitude)
         or not predictionMath.finite(endpoint.Magnitude) or (endpoint-origin).Magnitude < 0.05
         or (endpoint-muzzle).Magnitude < 0.05 then return false,"Invalid shot geometry." end
+    -- No remembered visibility, transparent-layer skipping, or open-air success.
     if walls then
-        local options = {ignoreTarget = true}
-        local clear, blocker = isWeaponPathClear(muzzle,endpoint,targetCharacter,nil,options)
-        if not clear then
-            return false,"A wall or another body blocks the shot.",blocker
+        if not isGunPathClear(muzzle,endpoint,targetCharacter,true)
+            or ((origin-muzzle).Magnitude > 0.05 and not isGunPathClear(origin,endpoint,targetCharacter,true)) then
+            return false,"A wall or another body blocks the shot."
         end
-        -- Second pass with the conservative rule: a fully transparent part
-        -- that still collides is an invisible barrier. The 2026-10-18 session
-        -- confirmed nine shots and five of them stopped 24-56 studs short of
-        -- the aim while this first pass was clear, so the skipped geometry is
-        -- real to the server even though the client's visual filter ignores it.
-        local solidClear, solidBlocker = isWeaponPathClear(muzzle,endpoint,targetCharacter,true,options)
-        if not solidClear then
-            return false,"An invisible wall blocks the shot.",solidBlocker
-        end
-        if (origin-muzzle).Magnitude > 0.05 then
-            local originClear, originBlocker = isWeaponPathClear(origin,endpoint,targetCharacter,nil,options)
-            if not originClear then
-                return false,"A wall or another body blocks the shot.",originBlocker
-            end
-            local originSolid, originSolidBlocker = isWeaponPathClear(origin,endpoint,targetCharacter,true,options)
-            if not originSolid then
-                return false,"An invisible wall blocks the shot.",originSolidBlocker
-            end
+    else
+        -- OFF permits map penetration, not shooting toward empty space/innocents.
+        local params = RaycastParams.new()
+        params.FilterType = Enum.RaycastFilterType.Include
+        params.FilterDescendantsInstances = {targetCharacter}
+        params.IgnoreWater = true
+        local delta = endpoint-origin
+        if not workspace:Raycast(origin,delta+delta.Unit*0.05,params) then
+            return false,"The final ray does not intersect the murderer."
         end
     end
-    -- Even a clear shot records the first thing the untouched ray meets: if it
-    -- is a transparent solid short of the aim, the server may stop the bullet
-    -- there while every client check passes.
-    local occluder: any = nil
-    if walls then
-        -- Never let the diagnostic decide a shot: it is wrapped, so a failure
-        -- here leaves the shot allowed and only loses the extra field.
-        pcall(function(): ()
-            local first: any = describeRayHit(muzzle, endpoint, targetCharacter)
-            local reach: number = (endpoint - muzzle).Magnitude
-            if first and not first.onTarget
-                and predictionMath.finite(first.distance)
-                and first.distance < reach - 0.5 then
-                occluder = first
-            end
-        end)
+    local horizon = predictionMath.finite(lead) and math.clamp(lead,0,0.45) or 0.45
+    local network = getEstimatedLatency()
+    if predictionMath.finite(network) then horizon = math.max(horizon,math.clamp(network,0,0.6)) end
+    -- Check the entire forward ray, including players BEHIND the aim point.
+    -- If the target moves and the shot misses, that player must not be ignored.
+    if gunBystanderOnRay(target,origin,endpoint,horizon)
+        or ((origin-muzzle).Magnitude > 0.05 and gunBystanderOnRay(target,muzzle,endpoint,horizon)) then
+        return false,"Another player is on the shot line."
     end
-    return true,nil,nil,occluder
+    return true,nil
 end
 
 local function disconnectGunFiredObserver(): ()
@@ -4424,10 +4092,19 @@ state.mm2Core = {
     findDroppedGun = findDroppedGun,
 
     isWeaponPathClear = isWeaponPathClear,
+    isGunPathClear = isGunPathClear,
     validateGunShot = validateGunShot,
     predictionMath = predictionMath,
+    isMotionGrounded = isMotionGrounded,
+    motionSamples = motionSamples,
+    getFilteredVelocity = getFilteredVelocity,
     getEstimatedLatency = getEstimatedLatency,
-    getLatencyReadings = readLatencyReadings,
+    getGunHorizonSeconds = getGunHorizonSeconds,
+    getGunTurnDiscount = getGunTurnDiscount,
+    getGunTurnRate = getGunTurnRate,
+    getGunLeadSensitivity = getGunLeadSensitivity,
+    getGunLeadStatus = getGunLeadStatus,
+    resetAutoLeadCorrection = resetAutoLeadCorrection,
     getGunOriginCFrame = getGunOriginCFrame,
     trajectoryCalibration = trajectoryCalibration,
 
@@ -4445,6 +4122,7 @@ cleanupMM2Runtime = function()
         state.gameTargetProvider = nil
     end
     trajectoryCalibration:destroy()
+    stopLeadTracking()
     disconnectGunFiredObserver()
     state.mm2ShotFeedback.hide()
     for player: Player, _ in pairs(roleWatchers) do

@@ -1,5 +1,5 @@
 return {
-    stamp = "v103-20261023-shoot-guards-rtt",
+    stamp = "v104-20261023-echo-poison-gate",
     files = {
         ["src/Profile/142823291.lua"] = [[
 --!strict
@@ -6874,6 +6874,20 @@ function Module.init(runtime: any): any
         end
         local delay: number = receivedAt - sentAt
         if delay < MIN_ECHO_DELAY or delay > MAX_ECHO_DELAY then
+            return
+        end
+        -- A confirmation matched hundreds of milliseconds late is not
+        -- transport: it is a stale pending paired with a later signal
+        -- (in the v103 session, pairings at 416-1840 ms entered the
+        -- median and dragged it from the true 106 ms to 532 ms, which
+        -- led every shot ~0.4 s long and then tripped the capped-
+        -- horizon refusal). Real round trips scale with the ping --
+        -- the historical 1007 ms echo rode a 270 ms ping -- so the
+        -- acceptance window scales with the measured RTT instead of
+        -- trusting the absolute 1.6 s pairing limit alone.
+        local plausible: number = math.clamp(
+            currentRtt() * 4, 0.35, MAX_ECHO_DELAY)
+        if delay > plausible then
             return
         end
         table.insert(echoes, delay)

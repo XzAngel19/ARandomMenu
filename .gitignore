@@ -11,5 +11,3 @@ local-profiles/
 .arena/
 build/
 __pycache__/
-tools/luau/node_modules/
-tools/luau/bin/

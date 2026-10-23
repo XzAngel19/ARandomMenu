@@ -168,12 +168,15 @@ do
     prediction.noteEcho(0,0.001)
     prediction.noteEcho(0,2)
     near(prediction.getEchoDelay(),0.18,1e-9)
-    -- A late confirmation that passed the gun/origin/direction match is real:
-    -- it must be accepted, but one sample must not move the median.
+    -- A confirmation seconds late at a 120 ms ping is a stale pairing,
+    -- not transport: the v103 session watched 416-1840 ms pairings drag
+    -- the echo median from 106 ms to 532 ms and lead every shot long.
+    -- The acceptance window scales with RTT (4x, floored at 350 ms), so
+    -- this 1 s sample is now dropped instead of counted.
     prediction.noteEcho(0,1.0)
     near(prediction.getEchoDelay(),0.18,1e-9)
-    assert(prediction.status(target):find("echo 180 ms %(5%)"),
-        "the 1 s echo must be counted without changing the median: "
+    assert(prediction.status(target):find("echo 180 ms %(4%)"),
+        "the implausible 1 s echo must be dropped, not counted: "
             ..prediction.status(target))
     prediction.settings.extraLead=0.05
     local _,automatic=prediction.gunAim(target,Vector3.new(0,0,-30))
@@ -231,14 +234,18 @@ do
     assert(blade.Y<falling.Y,"airborne blade aims at the projected impact, not a straight Y")
     pass("live predictor: weighted fit, echo median, freshness, teleport reset, gravity")
 
-    -- A sustained late echo set raises the median, but the automatic lead is
-    -- capped at 0.6 s and the status says so. This is the guard against the
-    -- cap becoming the normal value through a contaminated pairing.
+    -- A sustained set of implausibly late echoes (1 s at a 120 ms ping)
+    -- is a contaminated pairing, not a transport change: every sample
+    -- is dropped, the echo median never forms and the lead stays on
+    -- the ping fallback instead of climbing to the 0.6 s cap. This is
+    -- the v103 session failure, where late pairings dragged the true
+    -- 106 ms echo median to 532 ms.
     prediction.reset()
     for _=1,6 do prediction.noteEcho(0,1.0) end
-    near(prediction.getEchoDelay(),1.0,1e-9)
+    assert(prediction.getEchoDelay()==nil,
+        "implausible echoes must not form a median")
     local cappedText=prediction.status(nil)
-    assert(cappedText:find("lead 600 ms %(capped%)"),cappedText)
+    assert(cappedText:find("auto lead %(ping%)"),cappedText)
 
     -- Turn: the chord over the horizon must beat the straight tangent.
     humanoid.GetState=function() return "Running" end

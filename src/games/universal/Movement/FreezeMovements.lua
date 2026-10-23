@@ -534,10 +534,14 @@ function Module.init(context: Runtime): any
         refreshMotionOptions()
         if FreezeFeature and FreezeFeature.enabled then toggleFreezeMovements(true) end
     end)
-    -- The section widget renders its own caption and divider, so the card only
-    -- has to keep the row in its visibility group.
     local heading: any = host.addSectionOption and host.addSectionOption(FreezeFeature, "Motion settings")
     if heading then
+        if host.makeTextLabel then
+            heading.Size = UDim2.new(1, 0, 0, 20)
+            local title: any = host.makeTextLabel(heading, "Motion settings", 10)
+            title.Size = UDim2.fromScale(1, 1)
+            title.TextXAlignment = Enum.TextXAlignment.Left
+        end
         table.insert(motionRows, heading)
     end
     local emotes: any = addToggleOption(FreezeFeature, "Freeze Emotes", true, function(value: boolean): ()

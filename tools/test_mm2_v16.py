@@ -16,7 +16,7 @@ BASE = (ROOT / 'src/games/MM2/base.lua').read_text()
 
 
 def build():
-    chunks = [PRELUDE, section(BASE, 'local predictionMath = {}', 'local lastLatencyReadAt')]
+    chunks = [PRELUDE, section(BASE, 'local predictionMath = {}', 'type MotionSample')]
     chunks += [r'''
 do
 local localChar, target, tagged = {}, {}, {}

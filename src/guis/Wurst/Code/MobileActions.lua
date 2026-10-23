@@ -20,8 +20,6 @@ export type MobileActionRecord = {
     holdToken: number,
     size: number,
     opacity: number,
-    shape: string,
-    color: string,
     connections: {RBXScriptConnection},
 }
 
@@ -76,8 +74,6 @@ function Module.init(context: any): any
         holdToken: number,
         size: number,
         opacity: number,
-        shape: string,
-        color: string,
         connections: {RBXScriptConnection},
     }
 
@@ -114,103 +110,11 @@ function Module.init(context: any): any
     MobilePlacementLabel.Size = UDim2.new(0.84, 0, 0, 54)
     MobilePlacementLabel.ZIndex = 201
 
-    local MOBILE_SHAPES: {string} = {"Square", "Rounded", "Circle"}
-    local MOBILE_PALETTE: {string} = {
-        "#F2F2F2", "#2B2B2B", "#0A84FF", "#30D158",
-        "#FF9F0A", "#FF375F", "#BF5AF2", "#64D2FF",
-    }
-    local SHAPE_CORNERS: {[string]: UDim} = {
-        Square = UDim.new(0, 2),
-        Rounded = UDim.new(0, 12),
-        Circle = UDim.new(1, 0),
-    }
-    local changeListeners: {() -> ()} = {}
-
-    local function colorToHex(color: Color3): string
-        local ok: boolean, hex: any = pcall(function(): any
-            return (Color3 :: any).toHex(color)
-        end)
-        if ok and type(hex) == "string" then
-            if string.sub(hex, 1, 1) ~= "#" then
-                hex = "#" .. hex
-            end
-            return string.upper(hex)
-        end
-        return string.format(
-            "#%02X%02X%02X",
-            math.floor(color.R * 255 + 0.5),
-            math.floor(color.G * 255 + 0.5),
-            math.floor(color.B * 255 + 0.5)
-        )
-    end
-
-    local function colorFromHex(value: string): Color3?
-        if type(value) ~= "string" or value == "" then
-            return nil
-        end
-        if string.sub(value, 1, 1) ~= "#" then
-            value = "#" .. value
-        end
-        local ok: boolean, color: any = pcall(function(): any
-            return (Color3 :: any).fromHex(value)
-        end)
-        if ok and typeof(color) == "Color3" then
-            return color
-        end
-        return nil
-    end
-
-    local function readableTextColor(background: Color3): Color3
-        local luminance: number =
-            0.2126 * background.R + 0.7152 * background.G + 0.0722 * background.B
-        return luminance > 0.55
-            and Color3.fromRGB(18, 18, 18)
-            or Color3.fromRGB(242, 242, 242)
-    end
-
     local function ensureMobileConfig(): {[string]: any}
         if type(configData.ui.mobileActions) ~= "table" then
             configData.ui.mobileActions = {}
         end
         return configData.ui.mobileActions
-    end
-
-    -- Defaults for every button created from now on: shape and colour are
-    -- user choices, not hardcoded squares. Existing saved buttons keep their
-    -- own values (or fall back to these when they predate the feature).
-    local function ensureMobileDefaults(): {[string]: any}
-        if type(configData.ui.mobileButtons) ~= "table" then
-            configData.ui.mobileButtons = {}
-        end
-        local defaults: {[string]: any} = configData.ui.mobileButtons
-        if type(defaults.shape) ~= "string"
-            or not table.find(MOBILE_SHAPES, defaults.shape) then
-            defaults.shape = "Square"
-        end
-        if type(defaults.color) ~= "string"
-            or not colorFromHex(defaults.color) then
-            defaults.color = colorToHex(Theme.surfaceRaised)
-        end
-        return defaults
-    end
-
-    local function applyMobileStyle(record: MobileActionRecord): ()
-        local corner: UICorner? = record.button:FindFirstChildOfClass("UICorner")
-        if corner then
-            corner.CornerRadius = SHAPE_CORNERS[record.shape]
-                or SHAPE_CORNERS.Rounded
-        end
-        local color: Color3? = colorFromHex(record.color)
-        if color then
-            record.button.BackgroundColor3 = color
-            record.button.TextColor3 = readableTextColor(color)
-        end
-    end
-
-    local function notifyMobileChanged(): ()
-        for _, listener: () -> () in ipairs(changeListeners) do
-            pcall(listener)
-        end
     end
 
     local function clampMobileButtonPosition(
@@ -230,18 +134,13 @@ function Module.init(context: any): any
 
     local function saveMobileActionPosition(record: MobileActionRecord): ()
         local mobileConfig: {[string]: any} = ensureMobileConfig()
-        -- The first four slots keep the original saved format; shape and
-        -- colour are appended so older configs still load unchanged.
         mobileConfig[record.id] = {
             record.button.Position.X.Offset,
             record.button.Position.Y.Offset,
             record.size,
             record.opacity,
-            record.shape,
-            record.color,
         }
         queueConfigSave()
-        notifyMobileChanged()
     end
 
     local function removeMobileAction(id: string): ()
@@ -259,7 +158,6 @@ function Module.init(context: any): any
             record.button:Destroy()
         end
         queueConfigSave()
-        notifyMobileChanged()
         notify(record.label .. " mobile button removed.")
     end
 
@@ -283,7 +181,7 @@ function Module.init(context: any): any
         BackgroundTransparency = 0.04,
         BorderSizePixel = 0,
         Position = UDim2.fromScale(0.5, 0.5),
-        Size = UDim2.fromOffset(300, 300),
+        Size = UDim2.fromOffset(280, 190),
         ZIndex = 271,
     }) :: any) :: Frame
     create("UICorner", {
@@ -320,8 +218,6 @@ function Module.init(context: any): any
     end
     editorLabel("Size", 46)
     editorLabel("Opacity", 88)
-    editorLabel("Shape", 130)
-    editorLabel("Colour", 172)
 
     local function editorButton(
         name: string,
@@ -362,13 +258,10 @@ function Module.init(context: any): any
     local opacityValue: TextButton = editorButton("OpacityValue", "92%", 138, 89, 72)
     local opacityUp: TextButton = editorButton("OpacityUp", "+", 216, 89, 40)
     opacityValue.Active = false
-    local shapeButton: TextButton = editorButton("Shape", "Square", 92, 131, 164)
-    shapeButton.TextXAlignment = Enum.TextXAlignment.Center
-    local removeButton: TextButton = editorButton("Remove", "Remove", 14, 214, 78)
+    local removeButton: TextButton = editorButton("Remove", "Remove", 14, 140, 78)
     removeButton.BackgroundColor3 = Color3.fromRGB(120, 28, 28)
-    local resetButton: TextButton = editorButton("Reset", "Reset", 101, 214, 78)
-    local doneButton: TextButton = editorButton("Done", "Done", 188, 214, 78)
-    local applyAllButton: TextButton = editorButton("ApplyAll", "Apply to all buttons", 14, 256, 272)
+    local resetButton: TextButton = editorButton("Reset", "Reset", 101, 140, 78)
+    local doneButton: TextButton = editorButton("Done", "Done", 188, 140, 78)
     doneButton.BackgroundColor3 = Theme.enabled
     doneButton.TextColor3 = Theme.enabledText
     if ThemeEngine and type(ThemeEngine.Bind) == "function" then
@@ -381,63 +274,7 @@ function Module.init(context: any): any
         editorOverlay.Visible = false
     end
 
-    -- Forward declaration: the swatch handlers below repaint the editor, and
-    -- the editor body is defined after them.
-    local refreshEditor: () -> () = function(): () end
-    -- Colour swatches: eight presets, repainted with a live ring around the
-    -- one the button is currently using.
-    local swatches: {[string]: TextButton} = {}
-    for index: number, hex: string in ipairs(MOBILE_PALETTE) do
-        local color: Color3 = colorFromHex(hex) or Theme.surfaceRaised
-        local swatch: TextButton = (create("TextButton", {
-            Parent = editorPanel,
-            Name = "Colour" .. tostring(index),
-            Active = true,
-            AutoButtonColor = false,
-            BackgroundColor3 = color,
-            BorderSizePixel = 0,
-            Position = UDim2.fromOffset(92 + (index - 1) * 25, 168),
-            Size = UDim2.fromOffset(22, 22),
-            Text = "",
-            ZIndex = 272,
-        }) :: any) :: TextButton
-        create("UICorner", {
-            Parent = swatch,
-            CornerRadius = UDim.new(1, 0),
-        })
-        local ring: UIStroke = (create("UIStroke", {
-            Parent = swatch,
-            Name = "SelectedRing",
-            Color = Theme.text,
-            Thickness = 1,
-            Transparency = 0.85,
-        }) :: any) :: UIStroke
-        swatch:SetAttribute("Hex", hex)
-        swatches[hex] = swatch
-        trackUiConnection(swatch.MouseButton1Click:Connect(function(): ()
-            local record: MobileActionRecord? = editingRecord
-            if not record then
-                return
-            end
-            record.color = hex
-            refreshEditor()
-        end))
-        local _ = ring
-    end
-
-    local function refreshSwatches(selected: string): ()
-        for hex: string, swatch: TextButton in pairs(swatches) do
-            local ring: UIStroke? = swatch:FindFirstChild("SelectedRing") :: UIStroke?
-            if ring then
-                local active: boolean = string.upper(hex) == string.upper(selected)
-                ring.Thickness = active and 2 or 1
-                ring.Transparency = active and 0 or 0.85
-                ring.Color = active and Theme.text or Theme.outline
-            end
-        end
-    end
-
-    refreshEditor = function(): ()
+    local function refreshEditor(): ()
         local record: MobileActionRecord? = editingRecord
         if not record then
             return
@@ -445,11 +282,8 @@ function Module.init(context: any): any
         editorTitle.Text = record.label
         sizeValue.Text = tostring(math.round(record.size)) .. " px"
         opacityValue.Text = tostring(math.round(record.opacity * 100)) .. "%"
-        shapeButton.Text = record.shape
         record.button.Size = UDim2.fromOffset(record.size, record.size)
         record.button.BackgroundTransparency = 1 - record.opacity
-        applyMobileStyle(record)
-        refreshSwatches(record.color)
         local clamped: Vector2 = clampMobileButtonPosition(
             Vector2.new(record.button.Position.X.Offset, record.button.Position.Y.Offset),
             record.size
@@ -488,42 +322,12 @@ function Module.init(context: any): any
             refreshEditor()
         end
     end))
-    trackUiConnection(shapeButton.MouseButton1Click:Connect(function(): ()
-        local record: MobileActionRecord? = editingRecord
-        if not record then
-            return
-        end
-        local index: number = table.find(MOBILE_SHAPES, record.shape) or 1
-        record.shape = MOBILE_SHAPES[index % #MOBILE_SHAPES + 1]
-        refreshEditor()
-    end))
     trackUiConnection(resetButton.MouseButton1Click:Connect(function(): ()
-        local record: MobileActionRecord? = editingRecord
-        if record then
-            local defaults: {[string]: any} = ensureMobileDefaults()
-            record.size = 52
-            record.opacity = 0.92
-            record.shape = defaults.shape
-            record.color = defaults.color
+        if editingRecord then
+            editingRecord.size = 52
+            editingRecord.opacity = 0.92
             refreshEditor()
         end
-    end))
-    trackUiConnection(applyAllButton.MouseButton1Click:Connect(function(): ()
-        local source: MobileActionRecord? = editingRecord
-        if not source then
-            return
-        end
-        for _, record: MobileActionRecord in pairs(mobileActions) do
-            record.size = source.size
-            record.opacity = source.opacity
-            record.shape = source.shape
-            record.color = source.color
-            record.button.Size = UDim2.fromOffset(record.size, record.size)
-            record.button.BackgroundTransparency = 1 - record.opacity
-            applyMobileStyle(record)
-            saveMobileActionPosition(record)
-        end
-        notify("mobile button style applied to all.")
     end))
     trackUiConnection(removeButton.MouseButton1Click:Connect(function(): ()
         local record: MobileActionRecord? = editingRecord
@@ -575,17 +379,6 @@ function Module.init(context: any): any
             0.2,
             1
         )
-        local defaults: {[string]: any} = ensureMobileDefaults()
-        local shape: string = type(stored) == "table"
-            and type(stored[5]) == "string"
-            and table.find(MOBILE_SHAPES, stored[5])
-            and stored[5]
-            or defaults.shape
-        local color: string = type(stored) == "table"
-            and type(stored[6]) == "string"
-            and colorFromHex(stored[6])
-            and stored[6]
-            or defaults.color
         local actionCount: number = 0
         for _ in pairs(mobileActions) do
             actionCount += 1
@@ -667,12 +460,9 @@ function Module.init(context: any): any
             holdToken = 0,
             size = size,
             opacity = opacity,
-            shape = shape,
-            color = color,
             connections = {},
         }
         mobileActions[id] = record
-        applyMobileStyle(record)
         saveMobileActionPosition(record)
 
         table.insert(record.connections, trackUiConnection(
@@ -878,14 +668,7 @@ function Module.init(context: any): any
         end
 
         trackUiConnection(source.MouseButton1Click:Connect(function(): ()
-            -- A placed button opens its editor; only a missing one starts the
-            -- placement flow. Tapping the card slot is therefore "configure".
-            local existing: MobileActionRecord? = mobileActions[id]
-            if existing then
-                openEditor(existing)
-            else
-                beginMobileActionPlacement(id, label, callback, hold)
-            end
+            beginMobileActionPlacement(id, label, callback, hold)
         end))
 
         if ensureMobileConfig()[id] ~= nil then
@@ -914,20 +697,6 @@ function Module.init(context: any): any
         editor = editorOverlay,
         openEditor = openEditor,
         closeEditor = closeEditor,
-        place = beginMobileActionPlacement,
-        defaults = ensureMobileDefaults,
-        shapes = MOBILE_SHAPES,
-        palette = MOBILE_PALETTE,
-        style = applyMobileStyle,
-        colorFromHex = colorFromHex,
-        colorToHex = colorToHex,
-        notifyChanged = notifyMobileChanged,
-        onChanged = function(listener: () -> ()): ()
-            table.insert(changeListeners, listener)
-        end,
-        actionId = function(shortcutId: string): string
-            return "Shortcut" .. tostring(shortcutId):gsub("%W", "")
-        end,
     }
 
     state.addMenuVisibilityListener(setMobileActionVisibility)

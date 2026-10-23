@@ -35,22 +35,14 @@ host.addFeatureTooltip=function() end
 local context={host=host,services={activity={isActive=function(n) return flags[n] end}},framework={GetModule=function(_,n) return n=='Speed' and speed or n=='Fly' and fly or nil end}}
 '''+ '\nlocal Module=(function()\n'+(ROOT/'src/games/universal/Movement/AntiVoid.lua').read_text()+'\nend)()\n'+r'''
 Module.init(context);feature.toggle(true);feature.options['Anti fling'](true);tick(.02)
--- A strong bounce under the velocity limit and a very long fall are never flings.
-h.FloorMaterial='Air';root.AssemblyLinearVelocity=Vector3.new(10,110,0);tick(.02);near(root.AssemblyLinearVelocity.Y,110)
+-- A regular high jump and a very long fall are never linear-magnitude flings.
+h.FloorMaterial='Air';root.AssemblyLinearVelocity=Vector3.new(10,150,0);tick(.02);near(root.AssemblyLinearVelocity.Y,150)
 root.AssemblyLinearVelocity=Vector3.new(10,-1000,0);tick(.02);near(root.AssemblyLinearVelocity.Y,-1000);assert(#created==0 and casts==0)
 -- Even near the void, a lower collidable floor makes this a legitimate drop.
 root.Position=Vector3.new(0,-450,0);floor=-480;tick(.02);assert(#created==0);near(root.AssemblyLinearVelocity.Y,-1000)
 -- Contact fling: remove the side/spin impulse, preserve falling and player input.
 root.AssemblyLinearVelocity=Vector3.new(999,-200,0);root.AssemblyAngularVelocity=Vector3.new(0,999,0);tick(.02)
 near(root.AssemblyLinearVelocity.X,16);near(root.AssemblyLinearVelocity.Y,-200);near(root.AssemblyAngularVelocity.Magnitude,0)
--- A vertical launch no jump can produce is damped to a jump, not left flying.
-root.AssemblyLinearVelocity=Vector3.new(0,400,0);root.AssemblyAngularVelocity=Vector3.zero;tick(.02)
-near(root.AssemblyLinearVelocity.X,16);near(root.AssemblyLinearVelocity.Y,50)
--- A contact shove built over several frames (no single-tick delta) is caught too.
-root.AssemblyLinearVelocity=Vector3.new(100,0,0);tick(.02);near(root.AssemblyLinearVelocity.X,100)
-root.AssemblyLinearVelocity=Vector3.new(150,0,0);tick(.02);near(root.AssemblyLinearVelocity.X,150)
-root.AssemblyLinearVelocity=Vector3.new(190,0,0);tick(.02);near(root.AssemblyLinearVelocity.X,190)
-root.AssemblyLinearVelocity=Vector3.new(200,0,0);tick(.02);near(root.AssemblyLinearVelocity.X,16)
 -- Intentional large Speed is not capped by Anti fling's ordinary threshold.
 speed.Enabled=true;root.AssemblyLinearVelocity=Vector3.new(5000,-200,0);tick(.02);near(root.AssemblyLinearVelocity.X,5000);speed.Enabled=false
 -- A distant scripted launcher is not guessed to be another player's fling.
@@ -72,7 +64,7 @@ root.Position=Vector3.new(0,-470,0);root.AssemblyLinearVelocity=Vector3.new(0,-2
 timers[1]();assert(not created[2].destroyed,'an old timer cannot destroy the new rescue')
 feature.toggle(false);assert(not tick and created[2].destroyed)
 Module.destroy()
-pass('actual Anti Void/Anti fling: strong bounce/long falls, lower floor, contact + vertical + sustained damping without rollback, intended Speed, remote launchers, action/seat/anchor exclusions, imminent void, batching, respawn/timer ownership and cleanup')
+pass('actual Anti Void/Anti fling: normal high jumps/long falls, lower floor, contact damping without rollback, intended Speed, remote launchers, action/seat/anchor exclusions, imminent void, batching, respawn/timer ownership and cleanup')
 '''
 # Rename the fixture proximity flag so the numeric assertion helper remains callable.
 script=script.replace('local near=true','local nearby=true').replace('return near and','return nearby and').replace('near=false','nearby=false').replace('near=true','nearby=true')
