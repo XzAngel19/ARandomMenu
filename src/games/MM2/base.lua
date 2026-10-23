@@ -908,7 +908,13 @@ local function findDroppedGun(): (Model | BasePart)?
     if cached and cached.Parent and cached:IsDescendantOf(workspace) then
         return cached
     end
-    if os.clock() - droppedGunCache.at < 0.4 then
+    -- Negative results are only held for ~3 frames. The old 0.4 s
+    -- cache meant a gun dropped just after a scan stayed invisible
+    -- to Auto Get Gun for almost half a second; the cheap checks
+    -- (direct GunDrop child, Weapon_Gun tags, workspace children)
+    -- run first every call and the expensive descendant sweep keeps
+    -- its own 3 s gate below.
+    if os.clock() - droppedGunCache.at < 0.05 then
         return nil
     end
     droppedGunCache.at = os.clock()

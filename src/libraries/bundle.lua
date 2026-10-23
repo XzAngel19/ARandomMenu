@@ -1,5 +1,5 @@
 return {
-    stamp = "v111-20261023-farm-teleport-map-grab",
+    stamp = "v112-20261023-instant-action-audit",
     files = {
         ["src/Profile/142823291.lua"] = [[
 --!strict
@@ -4165,13 +4165,16 @@ function Module.init(runtime: any): any
             return
         end
 
-        local elapsed = 0
-        featureConnections.MM2AutoGetGun = TaskManager:Connect(function(deltaTime)
-            elapsed = elapsed + deltaTime
-            if elapsed < 0.5 or autoGetGunBusy then
+        -- No polling throttle: TaskManager already runs this on
+        -- Heartbeat, so checking every frame is the fastest the
+        -- client can react (one frame, never a 0.5 s wait). The tick
+        -- also runs once synchronously on enable, so a gun that is
+        -- already on the ground is grabbed in the same frame the
+        -- toggle turns on instead of waiting for the next Heartbeat.
+        local function autoGetGunTick(): ()
+            if autoGetGunBusy then
                 return
             end
-            elapsed = 0
 
             local character = LocalPlayer.Character
             local backpack = LocalPlayer:FindFirstChildOfClass("Backpack")
@@ -4185,14 +4188,17 @@ function Module.init(runtime: any): any
 
             -- Instant touch first: no PivotTo, no position the server
             -- can call invalid. If the touch does not deliver the gun,
-            -- stay put and let the next tick retry instead of falling
+            -- stay put and let the next frame retry instead of falling
             -- back to a teleport the user did not ask for.
             autoGetGunBusy = true
             task.spawn(function()
                 pcall(touchDroppedGun, gunDrop)
                 autoGetGunBusy = false
             end)
-        end)
+        end
+        featureConnections.MM2AutoGetGun =
+            TaskManager:Connect(autoGetGunTick)
+        autoGetGunTick()
     end
 
     local function teleportToMap()
@@ -4510,7 +4516,13 @@ function Module.init(_runtime: any): any
             pcall(function(): ()
                 humanoid:EquipTool(knife :: Tool)
             end)
-            task.wait(0.3)
+            -- Wait only until the equip lands (one frame normally),
+            -- never a fixed sleep: 0.3 s is the ceiling, not the cost.
+            local equipDeadline: number = os.clock() + 0.3
+            while knife.Parent ~= character
+                and os.clock() < equipDeadline do
+                task.wait()
+            end
         end
         if knife.Parent ~= character then
             return
@@ -4617,7 +4629,11 @@ function Module.init(_runtime: any): any
             pcall(function(): ()
                 humanoid:EquipTool(gun :: Tool)
             end)
-            task.wait(0.2)
+            local equipDeadline: number = os.clock() + 0.2
+            while gun.Parent ~= character
+                and os.clock() < equipDeadline do
+                task.wait()
+            end
         end
         if gun.Parent ~= character
             or gun:GetAttribute("Reloading") == true
@@ -5109,7 +5125,7 @@ function Module.init(_runtime: any): any
                     )
                 end
                 if remaining < 2.5 then
-                    task.wait(0.35)
+                    task.wait(0.05)
                     gun = getPlayerWeapon(LocalPlayer, "Gun")
                     if gun then
                         break
@@ -5155,7 +5171,7 @@ function Module.init(_runtime: any): any
                 -- during ordinary farming.
                 if settings.killAllOnFull then
                     killAll()
-                    task.wait(0.4)
+                    task.wait()
                 end
                 -- Back on the map properly before anything else: a
                 -- Teleport to Map onto a random spawn (restoreCharacter
@@ -5178,7 +5194,8 @@ function Module.init(_runtime: any): any
                             humanoid.Health = 0
                         end)
                     end
-                    -- Wait for the respawned character.
+                    -- Wait for the respawned character, checking
+                    -- every frame instead of four times a second.
                     local deadline: number = os.clock() + 10
                     while os.clock() < deadline do
                         local character: Model?, newHumanoid: Humanoid?,
@@ -5188,9 +5205,9 @@ function Module.init(_runtime: any): any
                             and newRoot then
                             break
                         end
-                        task.wait(0.25)
+                        task.wait()
                     end
-                    task.wait(0.6)
+                    task.wait(0.1)
                 end
                 -- Flings belong to the full bag too, reset or not: with
                 -- a reset they meet the fresh character first (above),
@@ -9576,7 +9593,13 @@ local function findDroppedGun(): (Model | BasePart)?
     if cached and cached.Parent and cached:IsDescendantOf(workspace) then
         return cached
     end
-    if os.clock() - droppedGunCache.at < 0.4 then
+    -- Negative results are only held for ~3 frames. The old 0.4 s
+    -- cache meant a gun dropped just after a scan stayed invisible
+    -- to Auto Get Gun for almost half a second; the cheap checks
+    -- (direct GunDrop child, Weapon_Gun tags, workspace children)
+    -- run first every call and the expensive descendant sweep keeps
+    -- its own 3 s gate below.
+    if os.clock() - droppedGunCache.at < 0.05 then
         return nil
     end
     droppedGunCache.at = os.clock()

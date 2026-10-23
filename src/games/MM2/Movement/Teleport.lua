@@ -84,13 +84,16 @@ function Module.init(runtime: any): any
             return
         end
 
-        local elapsed = 0
-        featureConnections.MM2AutoGetGun = TaskManager:Connect(function(deltaTime)
-            elapsed = elapsed + deltaTime
-            if elapsed < 0.5 or autoGetGunBusy then
+        -- No polling throttle: TaskManager already runs this on
+        -- Heartbeat, so checking every frame is the fastest the
+        -- client can react (one frame, never a 0.5 s wait). The tick
+        -- also runs once synchronously on enable, so a gun that is
+        -- already on the ground is grabbed in the same frame the
+        -- toggle turns on instead of waiting for the next Heartbeat.
+        local function autoGetGunTick(): ()
+            if autoGetGunBusy then
                 return
             end
-            elapsed = 0
 
             local character = LocalPlayer.Character
             local backpack = LocalPlayer:FindFirstChildOfClass("Backpack")
@@ -104,14 +107,17 @@ function Module.init(runtime: any): any
 
             -- Instant touch first: no PivotTo, no position the server
             -- can call invalid. If the touch does not deliver the gun,
-            -- stay put and let the next tick retry instead of falling
+            -- stay put and let the next frame retry instead of falling
             -- back to a teleport the user did not ask for.
             autoGetGunBusy = true
             task.spawn(function()
                 pcall(touchDroppedGun, gunDrop)
                 autoGetGunBusy = false
             end)
-        end)
+        end
+        featureConnections.MM2AutoGetGun =
+            TaskManager:Connect(autoGetGunTick)
+        autoGetGunTick()
     end
 
     local function teleportToMap()

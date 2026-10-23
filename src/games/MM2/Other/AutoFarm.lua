@@ -166,7 +166,13 @@ function Module.init(_runtime: any): any
             pcall(function(): ()
                 humanoid:EquipTool(knife :: Tool)
             end)
-            task.wait(0.3)
+            -- Wait only until the equip lands (one frame normally),
+            -- never a fixed sleep: 0.3 s is the ceiling, not the cost.
+            local equipDeadline: number = os.clock() + 0.3
+            while knife.Parent ~= character
+                and os.clock() < equipDeadline do
+                task.wait()
+            end
         end
         if knife.Parent ~= character then
             return
@@ -273,7 +279,11 @@ function Module.init(_runtime: any): any
             pcall(function(): ()
                 humanoid:EquipTool(gun :: Tool)
             end)
-            task.wait(0.2)
+            local equipDeadline: number = os.clock() + 0.2
+            while gun.Parent ~= character
+                and os.clock() < equipDeadline do
+                task.wait()
+            end
         end
         if gun.Parent ~= character
             or gun:GetAttribute("Reloading") == true
@@ -765,7 +775,7 @@ function Module.init(_runtime: any): any
                     )
                 end
                 if remaining < 2.5 then
-                    task.wait(0.35)
+                    task.wait(0.05)
                     gun = getPlayerWeapon(LocalPlayer, "Gun")
                     if gun then
                         break
@@ -811,7 +821,7 @@ function Module.init(_runtime: any): any
                 -- during ordinary farming.
                 if settings.killAllOnFull then
                     killAll()
-                    task.wait(0.4)
+                    task.wait()
                 end
                 -- Back on the map properly before anything else: a
                 -- Teleport to Map onto a random spawn (restoreCharacter
@@ -834,7 +844,8 @@ function Module.init(_runtime: any): any
                             humanoid.Health = 0
                         end)
                     end
-                    -- Wait for the respawned character.
+                    -- Wait for the respawned character, checking
+                    -- every frame instead of four times a second.
                     local deadline: number = os.clock() + 10
                     while os.clock() < deadline do
                         local character: Model?, newHumanoid: Humanoid?,
@@ -844,9 +855,9 @@ function Module.init(_runtime: any): any
                             and newRoot then
                             break
                         end
-                        task.wait(0.25)
+                        task.wait()
                     end
-                    task.wait(0.6)
+                    task.wait(0.1)
                 end
                 -- Flings belong to the full bag too, reset or not: with
                 -- a reset they meet the fresh character first (above),
