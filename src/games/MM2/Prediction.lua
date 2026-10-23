@@ -697,7 +697,24 @@ function Module.init(runtime: any): any
 
     local function currentRtt(): number
         local latency: any = nil
-        if type(core.getEstimatedLatency) == "function" then
+        -- Prefer Data Ping when both readings exist. The calibration
+        -- buckets are keyed by Data Ping for a reason: in the v102
+        -- session the smoothed lower-of-two estimate read 92-98 ms
+        -- while Data Ping read 109-118 ms and the server echo landed
+        -- at 110-130 ms, so taking the lower reading under-led every
+        -- shot until echoes accumulated. The combined estimate stays
+        -- as the fallback when Data Ping is unavailable.
+        if type(core.getLatencyReadings) == "function" then
+            local ok: boolean, engine: any, data: any =
+                pcall(core.getLatencyReadings)
+            if ok and finiteNumber(data) then
+                latency = data
+            elseif ok and finiteNumber(engine) then
+                latency = engine
+            end
+        end
+        if not finiteNumber(latency)
+            and type(core.getEstimatedLatency) == "function" then
             local ok: boolean, value: any = pcall(core.getEstimatedLatency)
             if ok then
                 latency = value

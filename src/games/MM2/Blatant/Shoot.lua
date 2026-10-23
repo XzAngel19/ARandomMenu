@@ -98,6 +98,44 @@ function Module.init(runtime: any): any
     local SILENT_PIERCE_STUDS: number = 1.0
     local SILENT_LIFT_STUDS: number = 1.6
     local MAX_SILENT_SWEEP: number = 1.5
+    local OVERSHOOT_PROBE_STUDS: number = 12
+    local MAX_AUTO_LEAD_SAFE: number = 0.6
+
+    -- The Top/fallback origin lift belongs to the target's rig, not to a
+    -- universal constant: R6 and R15 put the head at different heights
+    -- above the root, and an origin spawned inside the head can be
+    -- ignored by the shot. Predicted endpoint minus predicted root is
+    -- the same aim offset the predictor sampled from the live rig.
+    local function silentLift(info: any, predicted: Vector3): number
+        if type(info) == "table"
+            and typeof(info.rootPosition) == "Vector3" then
+            local aimOffsetY: number = predicted.Y - info.rootPosition.Y
+            if aimOffsetY > 0.5 then
+                return math.clamp(aimOffsetY + 0.35, 1.2, 2.4)
+            end
+        end
+        return SILENT_LIFT_STUDS
+    end
+
+    -- The server ray is not clipped at our authored endpoint, so the
+    -- bystander check covers the segment plus an overshoot probe: a
+    -- body just behind the target would take the continuing ray.
+    local function bystanderBlocks(
+        target: Player,
+        startPoint: Vector3,
+        endPoint: Vector3
+    ): boolean
+        if bystanderOnSegment(target, startPoint, endPoint) then
+            return true
+        end
+        local segment: Vector3 = endPoint - startPoint
+        if segment.Magnitude <= 0.05 then
+            return false
+        end
+        local beyond: Vector3 = endPoint
+            + segment.Unit * OVERSHOOT_PROBE_STUDS
+        return bystanderOnSegment(target, endPoint, beyond)
+    end
 
     -- The bypass segment runs along the target's own motion. A fixed extra
     -- length guesses; the confirmed shots already measure how far the aim
@@ -132,6 +170,7 @@ function Module.init(runtime: any): any
         variant: string
     ): (CFrame?, CFrame?, number)
         local predicted: Vector3 = info.endpoint
+        local liftStuds: number = silentLift(info, predicted)
         local velocity: Vector3 = info.velocity
         local horizontal: Vector3 = Vector3.new(velocity.X, 0, velocity.Z)
 
@@ -169,7 +208,7 @@ function Module.init(runtime: any): any
             startPoint = captured - approach * 1.0 + sweepStart
             endPoint = predicted + approach * SILENT_PIERCE_STUDS + sweepEnd
         elseif variant == "Top" then
-            startPoint = predicted + Vector3.new(0, SILENT_LIFT_STUDS, 0)
+            startPoint = predicted + Vector3.new(0, liftStuds, 0)
                 + sweepStart
             endPoint = predicted + sweepEnd
         elseif variant == "Behind" and approach then
@@ -184,24 +223,24 @@ function Module.init(runtime: any): any
             endPoint = predicted + sweepEnd
         else
 
-            startPoint = predicted + Vector3.new(0, SILENT_LIFT_STUDS, 0)
+            startPoint = predicted + Vector3.new(0, liftStuds, 0)
             endPoint = predicted
         end
 
         if (endPoint - startPoint).Magnitude <= 0.05 then
-            startPoint = predicted + Vector3.new(0, SILENT_LIFT_STUDS, 0)
+            startPoint = predicted + Vector3.new(0, liftStuds, 0)
             endPoint = predicted
         end
         -- Through has length even when the configurable extra sweep is zero.
-        if bystanderOnSegment(target, startPoint, endPoint) then
+        if bystanderBlocks(target, startPoint, endPoint) then
 
             if variant ~= "Top" and approach then
                 startPoint = predicted - approach * approachOffset
             else
-                startPoint = predicted + Vector3.new(0, SILENT_LIFT_STUDS, 0)
+                startPoint = predicted + Vector3.new(0, liftStuds, 0)
             end
             endPoint = predicted
-            if bystanderOnSegment(target, startPoint, endPoint) then
+            if bystanderBlocks(target, startPoint, endPoint) then
                 return nil, nil, 0
             end
         end
@@ -286,6 +325,17 @@ function Module.init(runtime: any): any
                         or "The murderer is unavailable or obstructed."
                 )
             return reject(message)
+        end
+        -- A capped horizon means the transport is longer than the model
+        -- will lead: firing anyway sends a shot known to fall short by
+        -- seconds of target travel. Manual lead is the user's explicit
+        -- choice and is not second-guessed here.
+        if prediction.settings and prediction.settings.autoLead
+            and type(info.leadSeconds) == "number"
+            and info.leadSeconds >= MAX_AUTO_LEAD_SAFE then
+            return reject(
+                "Prediction horizon is capped; refusing to fire short."
+            )
         end
 
         local function safeToSend(shotOrigin: CFrame, shotEnd: CFrame): boolean
@@ -481,6 +531,15 @@ function Module.init(runtime: any): any
         local gun: Tool? = getPlayerWeapon(LocalPlayer, "Gun", true)
         if not gun or gun.Parent ~= LocalPlayer.Character then
             autoStatus("Equip gun")
+            return
+        end
+        -- One pending slot: a second authored shot overwrites the first
+        -- shot's record, its GunFired echo can no longer be matched and
+        -- the calibration gains an unmatched signal. Manual fire is the
+        -- user's explicit act and is not gated here.
+        if state and state.mm2ShotFeedback
+            and state.mm2ShotFeedback.pending then
+            autoStatus("Esperando confirmación")
             return
         end
         local target: Player? = getSelectedShootTarget()

@@ -1,5 +1,5 @@
 return {
-    stamp = "v102-20261023-calibration-endpoint-error",
+    stamp = "v103-20261023-shoot-guards-rtt",
     files = {
         ["src/Profile/142823291.lua"] = [[
 --!strict
@@ -2837,6 +2837,44 @@ function Module.init(runtime: any): any
     local SILENT_PIERCE_STUDS: number = 1.0
     local SILENT_LIFT_STUDS: number = 1.6
     local MAX_SILENT_SWEEP: number = 1.5
+    local OVERSHOOT_PROBE_STUDS: number = 12
+    local MAX_AUTO_LEAD_SAFE: number = 0.6
+
+    -- The Top/fallback origin lift belongs to the target's rig, not to a
+    -- universal constant: R6 and R15 put the head at different heights
+    -- above the root, and an origin spawned inside the head can be
+    -- ignored by the shot. Predicted endpoint minus predicted root is
+    -- the same aim offset the predictor sampled from the live rig.
+    local function silentLift(info: any, predicted: Vector3): number
+        if type(info) == "table"
+            and typeof(info.rootPosition) == "Vector3" then
+            local aimOffsetY: number = predicted.Y - info.rootPosition.Y
+            if aimOffsetY > 0.5 then
+                return math.clamp(aimOffsetY + 0.35, 1.2, 2.4)
+            end
+        end
+        return SILENT_LIFT_STUDS
+    end
+
+    -- The server ray is not clipped at our authored endpoint, so the
+    -- bystander check covers the segment plus an overshoot probe: a
+    -- body just behind the target would take the continuing ray.
+    local function bystanderBlocks(
+        target: Player,
+        startPoint: Vector3,
+        endPoint: Vector3
+    ): boolean
+        if bystanderOnSegment(target, startPoint, endPoint) then
+            return true
+        end
+        local segment: Vector3 = endPoint - startPoint
+        if segment.Magnitude <= 0.05 then
+            return false
+        end
+        local beyond: Vector3 = endPoint
+            + segment.Unit * OVERSHOOT_PROBE_STUDS
+        return bystanderOnSegment(target, endPoint, beyond)
+    end
 
     -- The bypass segment runs along the target's own motion. A fixed extra
     -- length guesses; the confirmed shots already measure how far the aim
@@ -2871,6 +2909,7 @@ function Module.init(runtime: any): any
         variant: string
     ): (CFrame?, CFrame?, number)
         local predicted: Vector3 = info.endpoint
+        local liftStuds: number = silentLift(info, predicted)
         local velocity: Vector3 = info.velocity
         local horizontal: Vector3 = Vector3.new(velocity.X, 0, velocity.Z)
 
@@ -2908,7 +2947,7 @@ function Module.init(runtime: any): any
             startPoint = captured - approach * 1.0 + sweepStart
             endPoint = predicted + approach * SILENT_PIERCE_STUDS + sweepEnd
         elseif variant == "Top" then
-            startPoint = predicted + Vector3.new(0, SILENT_LIFT_STUDS, 0)
+            startPoint = predicted + Vector3.new(0, liftStuds, 0)
                 + sweepStart
             endPoint = predicted + sweepEnd
         elseif variant == "Behind" and approach then
@@ -2923,24 +2962,24 @@ function Module.init(runtime: any): any
             endPoint = predicted + sweepEnd
         else
 
-            startPoint = predicted + Vector3.new(0, SILENT_LIFT_STUDS, 0)
+            startPoint = predicted + Vector3.new(0, liftStuds, 0)
             endPoint = predicted
         end
 
         if (endPoint - startPoint).Magnitude <= 0.05 then
-            startPoint = predicted + Vector3.new(0, SILENT_LIFT_STUDS, 0)
+            startPoint = predicted + Vector3.new(0, liftStuds, 0)
             endPoint = predicted
         end
         -- Through has length even when the configurable extra sweep is zero.
-        if bystanderOnSegment(target, startPoint, endPoint) then
+        if bystanderBlocks(target, startPoint, endPoint) then
 
             if variant ~= "Top" and approach then
                 startPoint = predicted - approach * approachOffset
             else
-                startPoint = predicted + Vector3.new(0, SILENT_LIFT_STUDS, 0)
+                startPoint = predicted + Vector3.new(0, liftStuds, 0)
             end
             endPoint = predicted
-            if bystanderOnSegment(target, startPoint, endPoint) then
+            if bystanderBlocks(target, startPoint, endPoint) then
                 return nil, nil, 0
             end
         end
@@ -3025,6 +3064,17 @@ function Module.init(runtime: any): any
                         or "The murderer is unavailable or obstructed."
                 )
             return reject(message)
+        end
+        -- A capped horizon means the transport is longer than the model
+        -- will lead: firing anyway sends a shot known to fall short by
+        -- seconds of target travel. Manual lead is the user's explicit
+        -- choice and is not second-guessed here.
+        if prediction.settings and prediction.settings.autoLead
+            and type(info.leadSeconds) == "number"
+            and info.leadSeconds >= MAX_AUTO_LEAD_SAFE then
+            return reject(
+                "Prediction horizon is capped; refusing to fire short."
+            )
         end
 
         local function safeToSend(shotOrigin: CFrame, shotEnd: CFrame): boolean
@@ -3220,6 +3270,15 @@ function Module.init(runtime: any): any
         local gun: Tool? = getPlayerWeapon(LocalPlayer, "Gun", true)
         if not gun or gun.Parent ~= LocalPlayer.Character then
             autoStatus("Equip gun")
+            return
+        end
+        -- One pending slot: a second authored shot overwrites the first
+        -- shot's record, its GunFired echo can no longer be matched and
+        -- the calibration gains an unmatched signal. Manual fire is the
+        -- user's explicit act and is not gated here.
+        if state and state.mm2ShotFeedback
+            and state.mm2ShotFeedback.pending then
+            autoStatus("Esperando confirmación")
             return
         end
         local target: Player? = getSelectedShootTarget()
@@ -6747,7 +6806,24 @@ function Module.init(runtime: any): any
 
     local function currentRtt(): number
         local latency: any = nil
-        if type(core.getEstimatedLatency) == "function" then
+        -- Prefer Data Ping when both readings exist. The calibration
+        -- buckets are keyed by Data Ping for a reason: in the v102
+        -- session the smoothed lower-of-two estimate read 92-98 ms
+        -- while Data Ping read 109-118 ms and the server echo landed
+        -- at 110-130 ms, so taking the lower reading under-led every
+        -- shot until echoes accumulated. The combined estimate stays
+        -- as the fallback when Data Ping is unavailable.
+        if type(core.getLatencyReadings) == "function" then
+            local ok: boolean, engine: any, data: any =
+                pcall(core.getLatencyReadings)
+            if ok and finiteNumber(data) then
+                latency = data
+            elseif ok and finiteNumber(engine) then
+                latency = engine
+            end
+        end
+        if not finiteNumber(latency)
+            and type(core.getEstimatedLatency) == "function" then
             local ok: boolean, value: any = pcall(core.getEstimatedLatency)
             if ok then
                 latency = value
@@ -9771,6 +9847,8 @@ local function createTrajectoryCalibration(): any
         -- target's health before and after.
         serverActivatedAt: number?,
         serverConfirmedAt: number?,
+        shotMode: string?,
+        silentSpawn: string?,
         confirmedServerOrigin: Vector3?,
         confirmedHitPart: string?,
         confirmedHitPartPosition: Vector3?,
@@ -10844,6 +10922,34 @@ local function createTrajectoryCalibration(): any
                         scope = "own predicted point vs target at scoring instant, confirmed gun shots",
                     }
                 end)(),
+                gunByMode = (function(): {[string]: any}
+                    local modes: {[string]: any} = {}
+                    if type(runtime.events) == "table" then
+                        for _, ev in ipairs(runtime.events) do
+                            if ev.kind == "gun" then
+                                if ev.phase == "authored" then
+                                    local mode: string = type(ev.settings) == "table"
+                                            and tostring(ev.settings.mode or "?")
+                                        or "?"
+                                    local row: any = modes[mode]
+                                        or {attempts = 0, confirmed = 0, hits = 0, kills = 0}
+                                    row.attempts += 1
+                                    modes[mode] = row
+                                elseif ev.phase == "confirmation" then
+                                    local mode: string =
+                                        tostring(ev.shotMode or "?")
+                                    local row: any = modes[mode]
+                                        or {attempts = 0, confirmed = 0, hits = 0, kills = 0}
+                                    row.confirmed += 1
+                                    if ev.hitTarget then row.hits += 1 end
+                                    if ev.died then row.kills += 1 end
+                                    modes[mode] = row
+                                end
+                            end
+                        end
+                    end
+                    return modes
+                end)(),
                 gunAttempts = runtime.sessionGunAttempts,
                 gunConfirmed = runtime.sessionGunConfirmed,
                 gunHitTarget = runtime.sessionGunHitTarget,
@@ -11107,6 +11213,8 @@ local function createTrajectoryCalibration(): any
                     and vectorArray(pending.confirmedEndpoint)
                 or nil,
             hitTarget = pending.confirmedHitTarget,
+            shotMode = pending.shotMode,
+            silentSpawn = pending.silentSpawn,
             -- Server-clock round trip: activation to GunFired, both stamped
             -- with GetServerTimeNow. Independent of GetNetworkPing and of the
             -- engine's Data Ping, so it settles which of them the lead needs.
@@ -11910,6 +12018,10 @@ local function createTrajectoryCalibration(): any
                     shotId = shotId,
                     attemptCounted = true,
                     tool = authoredTool,
+                    shotMode = type(info.settings) == "table"
+                            and info.settings.mode
+                        or (info.silent and "Silent" or nil),
+                    silentSpawn = info.variant,
                     activatedAt = now,
                     origin = info.originPos,
                     requestedAim = info.aimPos,

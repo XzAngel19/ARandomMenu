@@ -1562,6 +1562,8 @@ local function createTrajectoryCalibration(): any
         -- target's health before and after.
         serverActivatedAt: number?,
         serverConfirmedAt: number?,
+        shotMode: string?,
+        silentSpawn: string?,
         confirmedServerOrigin: Vector3?,
         confirmedHitPart: string?,
         confirmedHitPartPosition: Vector3?,
@@ -2635,6 +2637,34 @@ local function createTrajectoryCalibration(): any
                         scope = "own predicted point vs target at scoring instant, confirmed gun shots",
                     }
                 end)(),
+                gunByMode = (function(): {[string]: any}
+                    local modes: {[string]: any} = {}
+                    if type(runtime.events) == "table" then
+                        for _, ev in ipairs(runtime.events) do
+                            if ev.kind == "gun" then
+                                if ev.phase == "authored" then
+                                    local mode: string = type(ev.settings) == "table"
+                                            and tostring(ev.settings.mode or "?")
+                                        or "?"
+                                    local row: any = modes[mode]
+                                        or {attempts = 0, confirmed = 0, hits = 0, kills = 0}
+                                    row.attempts += 1
+                                    modes[mode] = row
+                                elseif ev.phase == "confirmation" then
+                                    local mode: string =
+                                        tostring(ev.shotMode or "?")
+                                    local row: any = modes[mode]
+                                        or {attempts = 0, confirmed = 0, hits = 0, kills = 0}
+                                    row.confirmed += 1
+                                    if ev.hitTarget then row.hits += 1 end
+                                    if ev.died then row.kills += 1 end
+                                    modes[mode] = row
+                                end
+                            end
+                        end
+                    end
+                    return modes
+                end)(),
                 gunAttempts = runtime.sessionGunAttempts,
                 gunConfirmed = runtime.sessionGunConfirmed,
                 gunHitTarget = runtime.sessionGunHitTarget,
@@ -2898,6 +2928,8 @@ local function createTrajectoryCalibration(): any
                     and vectorArray(pending.confirmedEndpoint)
                 or nil,
             hitTarget = pending.confirmedHitTarget,
+            shotMode = pending.shotMode,
+            silentSpawn = pending.silentSpawn,
             -- Server-clock round trip: activation to GunFired, both stamped
             -- with GetServerTimeNow. Independent of GetNetworkPing and of the
             -- engine's Data Ping, so it settles which of them the lead needs.
@@ -3701,6 +3733,10 @@ local function createTrajectoryCalibration(): any
                     shotId = shotId,
                     attemptCounted = true,
                     tool = authoredTool,
+                    shotMode = type(info.settings) == "table"
+                            and info.settings.mode
+                        or (info.silent and "Silent" or nil),
+                    silentSpawn = info.variant,
                     activatedAt = now,
                     origin = info.originPos,
                     requestedAim = info.aimPos,

@@ -565,9 +565,32 @@ end
 local SILENT_ORIGIN_STUDS = 2.5
 local SILENT_PIERCE_STUDS = 1.0
 local SILENT_LIFT_STUDS = 1.6
+local OVERSHOOT_PROBE_STUDS = 12
+local MAX_AUTO_LEAD_SAFE = 0.6
+
+-- Lift derivado del rig: endpoint - root predicho es el aimOffset
+-- muestreado; R6 y R15 no comparten geometria.
+local function silentLift(info, predicted)
+    if type(info) == "table" and typeof(info.rootPosition) == "Vector3" then
+        local y = predicted.Y - info.rootPosition.Y
+        if y > 0.5 then return math.clamp(y + 0.35, 1.2, 2.4) end
+    end
+    return SILENT_LIFT_STUDS
+end
+
+-- El rayo del servidor no se recorta en el endpoint: sonda de
+-- sobrepaso de 12 studs detras del objetivo.
+local function bystanderBlocks(target, startPoint, endPoint)
+    if bystanderBlocks(target, startPoint, endPoint) then return true end
+    local segment = endPoint - startPoint
+    if segment.Magnitude <= 0.05 then return false end
+    return bystanderOnSegment(target, endPoint,
+        endPoint + segment.Unit * OVERSHOOT_PROBE_STUDS)
+end
 
 local function buildSilentShot(target, info, muzzleOrigin, variant)
     local predicted, velocity = info.endpoint, info.velocity
+    local liftStuds = silentLift(info, predicted)
     local horizontal = Vector3.new(velocity.X, 0, velocity.Z)
     local direction, sweep = nil, 0
     if horizontal.Magnitude > 1.5 then
@@ -590,7 +613,7 @@ local function buildSilentShot(target, info, muzzleOrigin, variant)
         startPoint = captured - approach * 1.0 + sweepStart
         endPoint = predicted + approach * SILENT_PIERCE_STUDS + sweepEnd
     elseif variant == "Top" then
-        startPoint = predicted + Vector3.new(0, SILENT_LIFT_STUDS, 0) + sweepStart
+        startPoint = predicted + Vector3.new(0, liftStuds, 0) + sweepStart
         endPoint = predicted + sweepEnd
     elseif variant == "Behind" and approach then
         startPoint = predicted + approach * approachOffset + sweepStart
@@ -602,21 +625,21 @@ local function buildSilentShot(target, info, muzzleOrigin, variant)
         startPoint = predicted + sweepStart
         endPoint = predicted + sweepEnd
     else
-        startPoint = predicted + Vector3.new(0, SILENT_LIFT_STUDS, 0)
+        startPoint = predicted + Vector3.new(0, liftStuds, 0)
         endPoint = predicted
     end
     if (endPoint - startPoint).Magnitude <= 0.05 then
-        startPoint = predicted + Vector3.new(0, SILENT_LIFT_STUDS, 0)
+        startPoint = predicted + Vector3.new(0, liftStuds, 0)
         endPoint = predicted
     end
     if bystanderOnSegment(target, startPoint, endPoint) then
         if variant ~= "Top" and approach then
             startPoint = predicted - approach * approachOffset
         else
-            startPoint = predicted + Vector3.new(0, SILENT_LIFT_STUDS, 0)
+            startPoint = predicted + Vector3.new(0, liftStuds, 0)
         end
         endPoint = predicted
-        if bystanderOnSegment(target, startPoint, endPoint) then return nil, nil, 0 end
+        if bystanderBlocks(target, startPoint, endPoint) then return nil, nil, 0 end
     end
     return CFrame.lookAt(startPoint, endPoint), CFrame.new(endPoint), approachOffset
 end
@@ -699,6 +722,9 @@ local function fireGunAtTarget(target, silent)
     if not origin then return reject("No gun origin") end
     local endpoint, info, reason = gunAim(target)
     if not endpoint then return reject("Aim: " .. tostring(reason)) end
+    if info.leadSeconds and info.leadSeconds >= MAX_AUTO_LEAD_SAFE then
+        return reject("Prediction horizon capped; refusing to fire short")
+    end
 
     local function safeToSend(shotOrigin, shotEnd)
         if gun.Parent ~= character or gun.Enabled == false then return reject("Gun state changed") end
