@@ -1,5 +1,5 @@
 return {
-    stamp = "v107-20261023-farm-roam-fling",
+    stamp = "v108-20261023-antifling-no-slider",
     files = {
         ["src/Profile/142823291.lua"] = [[
 --!strict
@@ -19103,8 +19103,15 @@ local Module={Name="AntiVoid",PlaceId=0,Initialized=false}
 local cleanup
 function Module.init(context)
     local host, world = context.host, context.host.workspace
-    local antiFling, velocityLimit, platform, token = false,120,nil,0
-    local previousCharacter, previousRoot, previousVelocity, overLimitTicks
+    local antiFling, voidGuard, platform, token = false, false, nil, 0
+    local previousCharacter, previousRoot, previousVelocity, overSpeedTicks
+    -- Fixed physical thresholds, measured against what the body itself can
+    -- produce. There is no user-facing velocity limit any more: a single
+    -- number has to be retuned per game and per speed setting, and when it
+    -- was wrong the protection silently did nothing.
+    local SPIN_LIMIT = 20      -- rad/s: a driven spin, not a turn
+    local SPEED_FACTOR = 2.2   -- multiples of the character's walking speed
+    local JUMP_FACTOR = 3      -- multiples of JumpPower no jump can reach
     local function removePlatform()
         token+=1
         if platform then platform:Destroy();platform=nil end
@@ -19115,20 +19122,13 @@ function Module.init(context)
     local function module(name)
         return context.framework and context.framework.GetModule and context.framework:GetModule(name)
     end
-    local function expectedSpeed(humanoid)
-        local speed=math.max(16,humanoid.WalkSpeed)
+    local function motionLimits(humanoid)
+        local walk=math.max(16,humanoid.WalkSpeed or 16)
         local feature=module("Speed")
-        if feature and feature.Enabled then speed=math.max(speed,feature.Options.Speed.Value) end
-        return speed
-    end
-    local function nearOtherCharacter(root,character)
-        if not host.Players then return false end
-        for _,player in ipairs(host.Players:GetPlayers()) do
-            local other=player.Character
-            local otherRoot=other and other~=character and other:FindFirstChild("HumanoidRootPart")
-            if otherRoot and (otherRoot.Position-root.Position).Magnitude<=10 then return true end
+        if feature and feature.Enabled and feature.Options and feature.Options.Speed then
+            walk=math.max(walk,feature.Options.Speed.Value)
         end
-        return false
+        return walk,math.max(50,humanoid.JumpPower or 50)
     end
     local function step(dt)
         local character,humanoid,root=host.getCharacterParts()
@@ -19136,45 +19136,43 @@ function Module.init(context)
         local velocity=root.AssemblyLinearVelocity
         local planar=Vector3.new(velocity.X,0,velocity.Z)
         if previousCharacter~=character or previousRoot~=root then
-            previousCharacter,previousRoot,previousVelocity,overLimitTicks=character,root,velocity,0
+            previousCharacter,previousRoot,previousVelocity,overSpeedTicks=character,root,velocity,0
             removePlatform()
         end
         local fly=module("Fly")
-        if root.Anchored or humanoid.Sit or humanoid.SeatPart or active("fling") or active("ghost")
-            or active("teleport") or fly and fly.Enabled then
-            previousVelocity=velocity;return
-        end
-        if antiFling then
-            local speed=expectedSpeed(humanoid)
-            local limit=math.max(velocityLimit,speed*1.75)
-            local spin=root.AssemblyAngularVelocity.Magnitude>velocityLimit
-            -- The old detector only saw a one-tick horizontal impulse.
-            -- Real contact flings (a spinning attacker parked on you)
-            -- accelerate over several physics frames and usually launch
-            -- UP as much as sideways, so three more signatures count:
-            -- a vertical launch no jump can produce, a shove sustained
-            -- past the limit, and the spin it already knew. All of them
-            -- still require another player close by: a distant scripted
-            -- launcher or pad is never guessed to be a fling, and pure
-            -- downward velocity (any fall) is never touched.
-            local jumpPower=humanoid.JumpPower or 50
+        local busy=root.Anchored or humanoid.Sit or humanoid.SeatPart or active("fling")
+            or active("ghost") or active("teleport") or fly and fly.Enabled
+        if antiFling and not busy then
+            -- Everything is compared to the body's own mobility, so a fast
+            -- walk or an intentional Speed never reads as a fling, and no
+            -- slider has to match it.
+            local walk,jump=motionLimits(humanoid)
+            local limit=walk*SPEED_FACTOR
+            local spin=root.AssemblyAngularVelocity.Magnitude>SPIN_LIMIT
+            local rise=velocity.Y>jump*JUMP_FACTOR
             local delta=previousVelocity and (velocity-previousVelocity) or Vector3.zero
-            local deltaPlanar=Vector3.new(delta.X,0,delta.Z).Magnitude
-            local impulse=planar.Magnitude>limit and deltaPlanar>limit*0.65
-            local launch=velocity.Y>math.max(limit,jumpPower*1.6) and delta.Y>limit*0.65
-            if planar.Magnitude>limit*1.5 then overLimitTicks=(overLimitTicks or 0)+1 else overLimitTicks=0 end
-            local sustained=overLimitTicks>=2
-            if (spin or impulse or launch or sustained) and nearOtherCharacter(root,character) then
-                -- Remove the contact impulse, not the player's position/input.
-                local desired=humanoid.MoveDirection*speed
-                root.AssemblyLinearVelocity=Vector3.new(desired.X,(spin or launch) and math.min(velocity.Y,math.max(0,jumpPower)) or velocity.Y,desired.Z)
+            local kick=math.max(planar.Magnitude,Vector3.new(delta.X,0,delta.Z).Magnitude)
+            if planar.Magnitude>limit then overSpeedTicks=(overSpeedTicks or 0)+1 else overSpeedTicks=0 end
+            -- Four signatures, any one of them enough: a driven spin, a rise
+            -- no jump can produce, a single-frame planar spike, and a shove
+            -- held over several frames (contact flings accelerate instead of
+            -- jumping in one tick). Proximity is not one of them: a fling
+            -- sent through a tool or a remote arrives from any distance, and
+            -- the old 10-stud gate is why it used to need several attempts.
+            if spin or rise or kick>limit or overSpeedTicks>=2 then
+                -- Remove the impulse, never the position or the input.
+                local desired=humanoid.MoveDirection*walk
+                local lifted=rise or spin
+                root.AssemblyLinearVelocity=Vector3.new(desired.X,
+                    lifted and math.min(velocity.Y,jump) or velocity.Y,desired.Z)
                 root.AssemblyAngularVelocity=Vector3.zero
                 velocity=root.AssemblyLinearVelocity
                 planar=Vector3.new(desired.X,0,desired.Z)
-                overLimitTicks=0
+                overSpeedTicks=0
             end
         end
         previousVelocity=velocity
+        if not voidGuard then return end
         if humanoid.FloorMaterial~=Enum.Material.Air or velocity.Y>=0 or platform then return end
         local destroyHeight=world.FallenPartsDestroyHeight
         if destroyHeight~=destroyHeight or math.abs(destroyHeight)==math.huge then destroyHeight=-500 end
@@ -19199,21 +19197,24 @@ function Module.init(context)
         token+=1;local mine=token
         task.delay(3,function() if mine==token then removePlatform() end end)
     end
-    local feature=host.createUniversalFeature("Anti Void","Rescue imminent falls into the destroy layer, not normal drops",4,function(enabled)
-        host.disconnectFeatureConnection("AntiVoid");removePlatform()
-        previousCharacter,previousRoot,previousVelocity,overLimitTicks=nil,nil,nil,0
-        if enabled then host.featureConnections.AntiVoid=host.TaskManager:Connect(step) end
-    end,{categoryName="Utilities"})
-    local velocityRow
-    local function showLimit()
-        if not velocityRow then return end
-        if host.setOptionVisible then host.setOptionVisible(feature,velocityRow,antiFling) else velocityRow.Visible=antiFling end
+    -- Anti fling owns its connection: it protects with Anti Void off, and
+    -- Anti Void keeps the rescue without ever turning the damping off.
+    local function refresh()
+        host.disconnectFeatureConnection("AntiVoid")
+        if not antiFling then overSpeedTicks=0 end
+        if voidGuard or antiFling then
+            host.featureConnections.AntiVoid=host.TaskManager:Connect(step)
+        end
     end
-    host.addToggleOption(feature,"Anti fling",false,function(value) antiFling=value;showLimit() end,
-        "Requires Anti Void ON. Damps sideways, upward and sustained contact impulses near other players. Never rolls you back or blocks normal falling.")
-    velocityRow=host.addNumberOption(feature,"Velocity limit",120,40,1000,function(value) velocityLimit=math.max(1,value) end)
-    showLimit()
-    host.addFeatureTooltip(feature,"Only rescues a falling character near the void when there is no collidable floor below. Anti fling respects movement speed and never teleports you back.")
+    local feature=host.createUniversalFeature("Anti Void","Rescue imminent falls into the destroy layer, not normal drops",4,function(enabled)
+        voidGuard=enabled
+        removePlatform()
+        previousCharacter,previousRoot,previousVelocity,overSpeedTicks=nil,nil,nil,0
+        refresh()
+    end,{categoryName="Utilities"})
+    host.addToggleOption(feature,"Anti fling",false,function(value) antiFling=value;refresh() end,
+        "Cancels a fling on contact: driven spin, impossible rise, single-frame shove or a sustained one, all measured against your own walk and jump. Works without Anti Void.")
+    host.addFeatureTooltip(feature,"Only rescues a falling character near the void when there is no collidable floor below. Anti fling never teleports you back and keeps your input.")
     cleanup=function() host.disconnectFeatureConnection("AntiVoid");removePlatform() end
     Module.Initialized=true;return feature
 end

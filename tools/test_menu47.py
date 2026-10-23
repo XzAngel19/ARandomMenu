@@ -129,7 +129,7 @@ root.CFrame='unsafe';root.AssemblyLinearVelocity=Vector3.new(999,0,0);humanoid.F
 assert(root.AssemblyLinearVelocity.Magnitude==0 and root.CFrame=='unsafe')
 character={};root.CFrame='new character';root.AssemblyLinearVelocity=Vector3.new(999,0,0);antiTick(.02);assert(root.CFrame=='new character','no stale rescue across respawn')
 flingActive=true;root.AssemblyLinearVelocity=Vector3.new(999,0,0);antiTick(.02);assert(root.AssemblyLinearVelocity.X==999,'do not fight explicit MM2 Fling')
-feature.fn(false);assert(not antiTick);AntiVoid.destroy();pass('Anti Void: anti-fling opt-in, no rollback, respawn ownership, explicit-fling exclusion and shared cleanup')
+feature.fn(false);assert(antiTick,'anti fling owns its tick with Anti Void off');feature.options['Anti fling'](false);assert(not antiTick);AntiVoid.destroy();pass('Anti Void: anti-fling independent of Anti Void, no rollback, respawn ownership, explicit-fling exclusion and shared cleanup')
 '''
 # Exercise the actual notification helper, not a copy of the filter.
 disguise=(ROOT/'src/games/universal/Other/Disguise.lua').read_text()

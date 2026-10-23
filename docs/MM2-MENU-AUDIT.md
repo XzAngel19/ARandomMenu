@@ -132,7 +132,7 @@ notify ("Instant Roles"), config save/load.
    `WURST_DEBUG == true`; a release boot does not build them. The recorder in
    `base.lua` still runs, because the prediction needs it.
 6. **Overlapping pairs, candidates to merge:** Gravity vs Anti Void
-   ("Velocity limit" applies velocity damping), Freeze Movements vs Disguise
+   (free-fall gravity vs displaced fling velocity), Freeze Movements vs Disguise
    (both stop the target animation state), and Spider vs the dead WallHop and
    Noclip (three ways to move through geometry).
 
