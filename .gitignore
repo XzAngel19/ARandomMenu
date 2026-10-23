@@ -11,3 +11,7 @@ local-profiles/
 .arena/
 build/
 __pycache__/
+
+# Vendored Luau toolchain unpacked by tools/luau/setup.sh
+tools/luau/bin/
+tools/luau/node_modules/

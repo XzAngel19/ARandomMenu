@@ -24,6 +24,8 @@ for tool in "$LUAU" "$LUAU_COMPILE"; do
     fi
 done
 export LUAU
+# The source tree is UTF-8; on Windows Python otherwise opens it as cp1252.
+export PYTHONUTF8=1
 
 stamp="$(python3 -c 'import re; from pathlib import Path; print(re.search(r"local SOURCE_STAMP: string = \"([^\"]+)\"", Path("src/Wurst.lua").read_text()).group(1))')"
 python3 tools/build_bundle.py --check --stamp "$stamp"
@@ -47,6 +49,9 @@ python3 tools/gen_full_boot_harness.py
 grep -F 'Load complete · failures=0' build/full_boot.log
 grep -F '[HARNESS] done' build/full_boot.log
 echo 'PASS bundle boot, silent startup, native controls and cleanup assertions'
+
+python3 tools/audit_module_api.py
+echo 'PASS cross-module API: every core.*/prediction.* call resolves'
 
 # The menu that the bundle builds, not the names that appear in the source: a
 # module can compile, ship and never register. Registering a card is a user

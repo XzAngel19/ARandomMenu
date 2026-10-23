@@ -1,5 +1,5 @@
 return {
-    stamp = "v106-20261023-silent-muzzle-gate",
+    stamp = "v107-20261023-farm-roam-fling",
     files = {
         ["src/Profile/142823291.lua"] = [[
 --!strict
@@ -1547,6 +1547,9 @@ function Module.init(runtime: any): any
 
     local FLING_DURATION: number = 6
     local FLING_POWER: number = 1
+    -- Ownership is retried, not spammed: SetNetworkOwner is a request the
+    -- server can refuse, and calling it every frame is noise.
+    local OWNERSHIP_RETRY: number = 10
 
     performFling = function(targetPlayer: Player): ()
         if not Module.Initialized then return end
@@ -1619,6 +1622,18 @@ function Module.init(runtime: any): any
                         break
                     end
 
+                    -- Done already? A fling that worked leaves the target
+                    -- moving fast; stop spending frames on it.
+                    local targetSpeed: number = 0
+                    pcall(function(): ()
+                        targetSpeed = targetRoot.AssemblyLinearVelocity.Magnitude
+                    end)
+                    if targetSpeed > 150 then
+                        touchedTarget = true
+                        reason = "flung"
+                        break
+                    end
+
                     local _, liveHumanoid: Humanoid?, liveRoot: BasePart? =
                         getCharacterParts()
                     if not liveHumanoid or not liveRoot then
@@ -1638,21 +1653,49 @@ function Module.init(runtime: any): any
 
                     step += 1
 
-                    local phase: number = (step % 6) / 6 * math.pi * 2
-                    local vertical: number = (step % 2 == 0) and 1.1 or -1.1
-                    liveRoot.CFrame = targetRoot.CFrame
-                        * CFrame.new(math.cos(phase) * 1.6, vertical, math.sin(phase) * 1.6)
-                    local sign: number = (step % 2 == 0) and 1 or -1
-                    liveRoot.AssemblyLinearVelocity =
-                        Vector3.new(power * sign, power, power * -sign)
-                    liveRoot.AssemblyAngularVelocity =
-                        Vector3.new(power, power, power)
-
-                    RunService.Stepped:Wait()
-                    if flingRunning and liveRoot.Parent then
-                        liveRoot.AssemblyLinearVelocity =
-                            Vector3.new(power * -sign, power, power * sign)
+                    -- Two layers, cheapest first. Roblox characters are
+                    -- jointed assemblies: one angular velocity on any part
+                    -- spins the whole body, so a client that owns the
+                    -- target's assembly only has to ask for it once and the
+                    -- target leaves without any contact dance.
+                    if step % OWNERSHIP_RETRY == 0 then
+                        pcall(function(): ()
+                            (targetRoot :: any):SetNetworkOwner(LocalPlayer)
+                        end)
                     end
+                    local owned: boolean = false
+                    pcall(function(): ()
+                        owned = (targetRoot :: any):GetNetworkOwner()
+                            == LocalPlayer
+                    end)
+
+                    if owned then
+                        pcall(function(): ()
+                            targetRoot.AssemblyAngularVelocity =
+                                Vector3.new(power, power, power)
+                            targetRoot.AssemblyLinearVelocity =
+                                Vector3.new(0, power * 0.01, 0)
+                        end)
+                    else
+                        -- No ownership: sit inside the target and spin.
+                        -- The solver ejects the interpenetration, and the
+                        -- target's own assembly takes the impulse. One
+                        -- contact write per frame is deliberate -- the old
+                        -- alternating velocity was cancelled by the next
+                        -- CFrame and the 1.6-stud orbit kept the bodies
+                        -- too far apart to overlap, which is why it needed
+                        -- so many attempts.
+                        pcall(function(): ()
+                            liveRoot.CFrame = targetRoot.CFrame
+                        end)
+                        pcall(function(): ()
+                            liveRoot.AssemblyAngularVelocity =
+                                Vector3.new(power, power, power)
+                            liveRoot.AssemblyLinearVelocity =
+                                Vector3.new(0, power * 0.02, 0)
+                        end)
+                    end
+
                     RunService.Heartbeat:Wait()
                 end
             end)
@@ -4997,6 +5040,23 @@ function Module.init(_runtime: any): any
                     return
                 end
 
+                -- Void guard. A Below flight that loses its coin (round
+                -- end, coin taken, map seam) can be under the floor with
+                -- PlatformStand + NoClip, and every continued frame takes
+                -- it further down. Nothing below is collectable, so put
+                -- the body back home upright instead of riding it out.
+                local destroyHeight: number = workspace.FallenPartsDestroyHeight
+                if destroyHeight ~= destroyHeight then
+                    destroyHeight = -500
+                end
+                if root.Position.Y <= destroyHeight + 60 then
+                    restoreCharacter(true)
+                    setStatus(
+                        "Auto Farm: recovered from the void - back home"
+                    )
+                    return
+                end
+
                 -- Nearest pickup, from Coin ESP's own detection.
                 if os.clock() - scanAt > 0.4 then
                     scanAt = os.clock()
@@ -5026,13 +5086,44 @@ function Module.init(_runtime: any): any
                     end
                 end
                 if not nearest or not nearestPosition then
-                    -- Nothing to collect (lobby, intermission, round
-                    -- over): hands off the character entirely.
+                    -- Nothing to collect (lobby, intermission, round over,
+                    -- or every coin blacklisted). Two rules here:
+                    --   * the body is never left standing up under the
+                    --     floor: restoreCharacter(true) returns home
+                    --     upright, which is the difference between
+                    --     waiting and falling into the void;
+                    --   * the farm keeps moving on a slow circle around
+                    --     that home point instead of parking, so the
+                    --     character is walking when the next coin spawns.
+                    local roamAnchor: Vector3 = homeCFrame
+                        and homeCFrame.Position
+                        or root.Position
                     if engaged then
-                        restoreCharacter(false)
+                        restoreCharacter(true)
+                        roamAnchor = homeCFrame
+                            and homeCFrame.Position
+                            or roamAnchor
+                    end
+                    local roamAngle: number = now * 0.45
+                    local roamTarget: Vector3 = roamAnchor
+                        + Vector3.new(
+                            math.cos(roamAngle) * 8,
+                            0,
+                            math.sin(roamAngle) * 8
+                        )
+                    local roamDelta: Vector3 = roamTarget - root.Position
+                    local roamFlat: Vector3 = Vector3.new(
+                        roamDelta.X,
+                        0,
+                        roamDelta.Z
+                    )
+                    if roamFlat.Magnitude > 0.1 then
+                        pcall(function(): ()
+                            humanoid:Move(roamFlat.Unit, false)
+                        end)
                     end
                     setStatus(string.format(
-                        "Auto Farm: waiting for coins - bag %d/%d - speed %d u/s - ping %dms",
+                        "Auto Farm: no coins - roaming - bag %d/%d - speed %d u/s - ping %dms",
                         bagAmount, bagLimit,
                         math.round(math.clamp(settings.speed, 5, 60)),
                         pingMillis()

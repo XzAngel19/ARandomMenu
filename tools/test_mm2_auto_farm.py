@@ -61,7 +61,13 @@ assert "CanCollide = false" in SOURCE  # Below NoClip
 
 # Lobby safety: hands off the character when there is no target.
 assert "restoreCharacter(false)" in SOURCE
-assert "waiting for coins" in SOURCE
+assert "no coins - roaming" in SOURCE
+# A coin-less tick must not park the body under the floor: it restores
+# home upright, then keeps walking a slow circle around it.
+assert "restoreCharacter(true)" in SOURCE
+assert "recovered from the void" in SOURCE
+assert "humanoid:Move(roamFlat.Unit, false)" in SOURCE
+assert "roamTarget" in SOURCE and "roamAnchor" in SOURCE
 
 # OFF restores everything and returns the character home, upright.
 assert "restoreCharacter(true)" in SOURCE
@@ -118,6 +124,6 @@ print("PASS MM2 Auto Farm: Walk (ground locomotion, slider WalkSpeed, "
       "hop on stall) and Below (Hitbox) (upright velocity flight, grown "
       "4x8x4 root hitbox, NoClip, no face-down tilt, no 267 teleports), "
       "collected coins dropped as targets at once, uncollectable coins "
-      "blacklisted, lobby hands-off, OFF restores hitbox/WalkSpeed and "
+      "blacklisted, lobby/coin-less roaming instead of parking under the floor, OFF restores hitbox/WalkSpeed and "
       "returns home upright, ping in status, full-bag reset/flings, "
       "YARHM Kill All, grab gun")

@@ -45,6 +45,9 @@ function Module.init(runtime: any): any
 
     local FLING_DURATION: number = 6
     local FLING_POWER: number = 1
+    -- Ownership is retried, not spammed: SetNetworkOwner is a request the
+    -- server can refuse, and calling it every frame is noise.
+    local OWNERSHIP_RETRY: number = 10
 
     performFling = function(targetPlayer: Player): ()
         if not Module.Initialized then return end
@@ -117,6 +120,18 @@ function Module.init(runtime: any): any
                         break
                     end
 
+                    -- Done already? A fling that worked leaves the target
+                    -- moving fast; stop spending frames on it.
+                    local targetSpeed: number = 0
+                    pcall(function(): ()
+                        targetSpeed = targetRoot.AssemblyLinearVelocity.Magnitude
+                    end)
+                    if targetSpeed > 150 then
+                        touchedTarget = true
+                        reason = "flung"
+                        break
+                    end
+
                     local _, liveHumanoid: Humanoid?, liveRoot: BasePart? =
                         getCharacterParts()
                     if not liveHumanoid or not liveRoot then
@@ -136,21 +151,49 @@ function Module.init(runtime: any): any
 
                     step += 1
 
-                    local phase: number = (step % 6) / 6 * math.pi * 2
-                    local vertical: number = (step % 2 == 0) and 1.1 or -1.1
-                    liveRoot.CFrame = targetRoot.CFrame
-                        * CFrame.new(math.cos(phase) * 1.6, vertical, math.sin(phase) * 1.6)
-                    local sign: number = (step % 2 == 0) and 1 or -1
-                    liveRoot.AssemblyLinearVelocity =
-                        Vector3.new(power * sign, power, power * -sign)
-                    liveRoot.AssemblyAngularVelocity =
-                        Vector3.new(power, power, power)
-
-                    RunService.Stepped:Wait()
-                    if flingRunning and liveRoot.Parent then
-                        liveRoot.AssemblyLinearVelocity =
-                            Vector3.new(power * -sign, power, power * sign)
+                    -- Two layers, cheapest first. Roblox characters are
+                    -- jointed assemblies: one angular velocity on any part
+                    -- spins the whole body, so a client that owns the
+                    -- target's assembly only has to ask for it once and the
+                    -- target leaves without any contact dance.
+                    if step % OWNERSHIP_RETRY == 0 then
+                        pcall(function(): ()
+                            (targetRoot :: any):SetNetworkOwner(LocalPlayer)
+                        end)
                     end
+                    local owned: boolean = false
+                    pcall(function(): ()
+                        owned = (targetRoot :: any):GetNetworkOwner()
+                            == LocalPlayer
+                    end)
+
+                    if owned then
+                        pcall(function(): ()
+                            targetRoot.AssemblyAngularVelocity =
+                                Vector3.new(power, power, power)
+                            targetRoot.AssemblyLinearVelocity =
+                                Vector3.new(0, power * 0.01, 0)
+                        end)
+                    else
+                        -- No ownership: sit inside the target and spin.
+                        -- The solver ejects the interpenetration, and the
+                        -- target's own assembly takes the impulse. One
+                        -- contact write per frame is deliberate -- the old
+                        -- alternating velocity was cancelled by the next
+                        -- CFrame and the 1.6-stud orbit kept the bodies
+                        -- too far apart to overlap, which is why it needed
+                        -- so many attempts.
+                        pcall(function(): ()
+                            liveRoot.CFrame = targetRoot.CFrame
+                        end)
+                        pcall(function(): ()
+                            liveRoot.AssemblyAngularVelocity =
+                                Vector3.new(power, power, power)
+                            liveRoot.AssemblyLinearVelocity =
+                                Vector3.new(0, power * 0.02, 0)
+                        end)
+                    end
+
                     RunService.Heartbeat:Wait()
                 end
             end)

@@ -784,6 +784,23 @@ function Module.init(_runtime: any): any
                     return
                 end
 
+                -- Void guard. A Below flight that loses its coin (round
+                -- end, coin taken, map seam) can be under the floor with
+                -- PlatformStand + NoClip, and every continued frame takes
+                -- it further down. Nothing below is collectable, so put
+                -- the body back home upright instead of riding it out.
+                local destroyHeight: number = workspace.FallenPartsDestroyHeight
+                if destroyHeight ~= destroyHeight then
+                    destroyHeight = -500
+                end
+                if root.Position.Y <= destroyHeight + 60 then
+                    restoreCharacter(true)
+                    setStatus(
+                        "Auto Farm: recovered from the void - back home"
+                    )
+                    return
+                end
+
                 -- Nearest pickup, from Coin ESP's own detection.
                 if os.clock() - scanAt > 0.4 then
                     scanAt = os.clock()
@@ -813,13 +830,44 @@ function Module.init(_runtime: any): any
                     end
                 end
                 if not nearest or not nearestPosition then
-                    -- Nothing to collect (lobby, intermission, round
-                    -- over): hands off the character entirely.
+                    -- Nothing to collect (lobby, intermission, round over,
+                    -- or every coin blacklisted). Two rules here:
+                    --   * the body is never left standing up under the
+                    --     floor: restoreCharacter(true) returns home
+                    --     upright, which is the difference between
+                    --     waiting and falling into the void;
+                    --   * the farm keeps moving on a slow circle around
+                    --     that home point instead of parking, so the
+                    --     character is walking when the next coin spawns.
+                    local roamAnchor: Vector3 = homeCFrame
+                        and homeCFrame.Position
+                        or root.Position
                     if engaged then
-                        restoreCharacter(false)
+                        restoreCharacter(true)
+                        roamAnchor = homeCFrame
+                            and homeCFrame.Position
+                            or roamAnchor
+                    end
+                    local roamAngle: number = now * 0.45
+                    local roamTarget: Vector3 = roamAnchor
+                        + Vector3.new(
+                            math.cos(roamAngle) * 8,
+                            0,
+                            math.sin(roamAngle) * 8
+                        )
+                    local roamDelta: Vector3 = roamTarget - root.Position
+                    local roamFlat: Vector3 = Vector3.new(
+                        roamDelta.X,
+                        0,
+                        roamDelta.Z
+                    )
+                    if roamFlat.Magnitude > 0.1 then
+                        pcall(function(): ()
+                            humanoid:Move(roamFlat.Unit, false)
+                        end)
                     end
                     setStatus(string.format(
-                        "Auto Farm: waiting for coins - bag %d/%d - speed %d u/s - ping %dms",
+                        "Auto Farm: no coins - roaming - bag %d/%d - speed %d u/s - ping %dms",
                         bagAmount, bagLimit,
                         math.round(math.clamp(settings.speed, 5, 60)),
                         pingMillis()
