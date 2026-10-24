@@ -30,7 +30,6 @@
 -- SnowToken, BeachBall, Egg) and the Workspace event attributes.
 local Module = {
     Name = "MM2 Coin ESP",
-    PlaceId = 142823291,
     Events = {} :: {[string]: any},
     Initialized = false,
     Runtime = nil :: any,

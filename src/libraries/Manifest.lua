@@ -4,12 +4,20 @@ export type ModuleEntry = {
     category: string,
 }
 
+export type GamePlaceEntry = {
+    placeId: number,
+    module: string,
+    displayName: string,
+}
+
 export type Manifest = {
     version: number,
     widgets: string,
     core: {string},
     libraries: {string},
     modules: {ModuleEntry},
+    gamePlaces: {GamePlaceEntry},
+    gameModules: {[string]: {string}},
 }
 
 local Manifest: Manifest = {
@@ -192,6 +200,52 @@ local Manifest: Manifest = {
             path = "src/games/universal/Other/ImproveFps.lua",
             name = "Improve FPS",
             category = "World",
+        },
+    },
+
+    gamePlaces = {
+        {placeId = 71480482338212, module = "BedFight", displayName = "Bed Fight"},
+        {placeId = 142823291, module = "MM2", displayName = "Murder Mystery 2"},
+        {placeId = 14315258385, module = "TRS", displayName = "The Regular Show"},
+        {placeId = 93978595733734, module = "VD", displayName = "Virtual Dealer"},
+        {placeId = 92876937625630, module = "X2Duels", displayName = "X2 Duels (Legacy)"},
+        {placeId = 135856908115931, module = "X2Duels", displayName = "X2 Duels"},
+    },
+
+    gameModules = {
+        MM2 = {
+            "src/games/MM2/base.lua",
+            "src/games/MM2/Prediction.lua",
+            "src/games/MM2/Blatant/Shoot.lua",
+            "src/games/MM2/Blatant/KnifeAura.lua",
+            "src/games/MM2/Blatant/KnifeThrow.lua",
+            "src/games/MM2/Render/RoundEsp.lua",
+            "src/games/MM2/Render/CoinEsp.lua",
+            "src/games/MM2/Movement/Sprint.lua",
+            "src/games/MM2/Blatant/Fling.lua",
+            "src/games/MM2/Movement/Teleport.lua",
+            "src/games/MM2/Fun/BlurtRoles.lua",
+            "src/games/MM2/Other/AutoUnbox.lua",
+            "src/games/MM2/Other/AutoFarm.lua",
+            "src/games/MM2/Other/CoinsAura.lua",
+            "src/games/MM2/Other/TrajectoryCalibration.lua",
+            "src/games/MM2/Other/CalibrationTrails.lua",
+        },
+        VD = {
+            "src/games/VD/base.lua",
+        },
+        BedFight = {
+            "src/games/BedFight/base.lua",
+            "src/games/BedFight/Combat/AutoSwing.lua",
+            "src/games/BedFight/Render/RoundInfo.lua",
+        },
+        X2Duels = {
+            "src/games/X2Duels/Rules.lua",
+            "src/games/X2Duels/base.lua",
+            "src/games/X2Duels/Other/AutoFarm.lua",
+        },
+        TRS = {
+            "src/games/TRS/base.lua",
         },
     },
 }

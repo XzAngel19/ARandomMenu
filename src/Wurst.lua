@@ -1109,6 +1109,7 @@ local state: any = {
     uiConnections = {} :: {RBXScriptConnection},
     styledButtons = {} :: {TextButton},
     styledTextBoxes = {} :: {TextBox},
+    gameModulePaths = {} :: {[string]: {string}},
 }
 
 state.activeGameName = ACTIVE_GAME_MODULE
@@ -5096,35 +5097,8 @@ local function loadGameModule(
     local moduleName: string = GAME_MODULES[placeId]
         or ACTIVE_GAME_MODULE
         or tostring(placeId)
-    local paths: {string} = if moduleName == "MM2" then {
-
-        "src/games/MM2/base.lua",
-        "src/games/MM2/Prediction.lua",
-        "src/games/MM2/Blatant/Shoot.lua",
-        "src/games/MM2/Blatant/KnifeAura.lua",
-        "src/games/MM2/Blatant/KnifeThrow.lua",
-        "src/games/MM2/Render/RoundEsp.lua",
-        "src/games/MM2/Render/CoinEsp.lua",
-        "src/games/MM2/Movement/Sprint.lua",
-        "src/games/MM2/Blatant/Fling.lua",
-        "src/games/MM2/Movement/Teleport.lua",
-        "src/games/MM2/Fun/BlurtRoles.lua",
-        "src/games/MM2/Other/AutoUnbox.lua",
-        "src/games/MM2/Other/AutoFarm.lua",
-        "src/games/MM2/Other/CoinsAura.lua",
-        "src/games/MM2/Other/TrajectoryCalibration.lua",
-        "src/games/MM2/Other/CalibrationTrails.lua",
-    } elseif moduleName == "VD" then {
-        "src/games/VD/base.lua",
-    } elseif moduleName == "BedFight" then {
-        "src/games/BedFight/base.lua",
-        "src/games/BedFight/Combat/AutoSwing.lua",
-        "src/games/BedFight/Render/RoundInfo.lua",
-    } elseif moduleName == "X2Duels" then {
-        "src/games/X2Duels/Rules.lua",
-        "src/games/X2Duels/base.lua",
-        "src/games/X2Duels/Other/AutoFarm.lua",
-    } else {"src/games/" .. moduleName .. "/base.lua"}
+    local paths: {string} = state.gameModulePaths[moduleName]
+        or {"src/games/" .. moduleName .. "/base.lua"}
     local moduleEnvironment: any = createGameModuleEnvironment(diagnostics)
     -- Game modules get the same services facade the framework environment
     -- uses, so game modules can access services.gameBridge consistently.
@@ -5971,6 +5945,52 @@ local fallbackManifest: any = {
         {path = "src/games/universal/Other/RejoinServer.lua", name = "Rejoin Server", category = "Utilities"},
         {path = "src/games/universal/Other/ImproveFps.lua", name = "Improve FPS", category = "World"},
     },
+
+    gamePlaces = {
+        {placeId = 71480482338212, module = "BedFight", displayName = "Bed Fight"},
+        {placeId = 142823291, module = "MM2", displayName = "Murder Mystery 2"},
+        {placeId = 14315258385, module = "TRS", displayName = "The Regular Show"},
+        {placeId = 93978595733734, module = "VD", displayName = "Virtual Dealer"},
+        {placeId = 92876937625630, module = "X2Duels", displayName = "X2 Duels (Legacy)"},
+        {placeId = 135856908115931, module = "X2Duels", displayName = "X2 Duels"},
+    },
+
+    gameModules = {
+        MM2 = {
+            "src/games/MM2/base.lua",
+            "src/games/MM2/Prediction.lua",
+            "src/games/MM2/Blatant/Shoot.lua",
+            "src/games/MM2/Blatant/KnifeAura.lua",
+            "src/games/MM2/Blatant/KnifeThrow.lua",
+            "src/games/MM2/Render/RoundEsp.lua",
+            "src/games/MM2/Render/CoinEsp.lua",
+            "src/games/MM2/Movement/Sprint.lua",
+            "src/games/MM2/Blatant/Fling.lua",
+            "src/games/MM2/Movement/Teleport.lua",
+            "src/games/MM2/Fun/BlurtRoles.lua",
+            "src/games/MM2/Other/AutoUnbox.lua",
+            "src/games/MM2/Other/AutoFarm.lua",
+            "src/games/MM2/Other/CoinsAura.lua",
+            "src/games/MM2/Other/TrajectoryCalibration.lua",
+            "src/games/MM2/Other/CalibrationTrails.lua",
+        },
+        VD = {
+            "src/games/VD/base.lua",
+        },
+        BedFight = {
+            "src/games/BedFight/base.lua",
+            "src/games/BedFight/Combat/AutoSwing.lua",
+            "src/games/BedFight/Render/RoundInfo.lua",
+        },
+        X2Duels = {
+            "src/games/X2Duels/Rules.lua",
+            "src/games/X2Duels/base.lua",
+            "src/games/X2Duels/Other/AutoFarm.lua",
+        },
+        TRS = {
+            "src/games/TRS/base.lua",
+        },
+    },
 }
 
 local bundleAt: number = os.clock()
@@ -6015,6 +6035,16 @@ if type(manifest) ~= "table" or type(manifest.modules) ~= "table" then
     manifest = fallbackManifest
 end
 state.markBoot("manifest", manifestAt)
+
+-- Derive game module paths and place IDs from the manifest so nothing is
+-- hardcoded in loadGameModule or GAME_MODULES.
+state.gameModulePaths = manifest.gameModules or {}
+for _, entry: any in ipairs(manifest.gamePlaces or {}) do
+    if type(entry) == "table" and type(entry.placeId) == "number"
+        and type(entry.module) == "string" then
+        GAME_MODULES[entry.placeId] = entry.module
+    end
+end
 
 local loadList: {string} = {}
 table.insert(loadList, manifest.widgets or "src/guis/Wurst/Code/Widgets.lua")

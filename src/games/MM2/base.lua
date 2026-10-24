@@ -1,6 +1,5 @@
 local Module = {
     Name = "MM2",
-    PlaceId = 142823291,
     Events = {} :: {[string]: any},
     Initialized = false,
     Menu = nil :: any,
@@ -3525,7 +3524,7 @@ local function createTrajectoryCalibration(): any
             return
         end
 
-        if not (GAME_CHECK.MM2Active or game.PlaceId == Module.PlaceId) then
+        if not GAME_CHECK.MM2Active then
             warn(trajectoryLogPrefix .. " Inicio omitido fuera de MM2.")
             return
         end

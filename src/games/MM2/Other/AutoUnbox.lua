@@ -27,7 +27,6 @@
 -- family onto the currencies the chosen box accepts.
 local Module = {
     Name = "MM2 Auto Unbox",
-    PlaceId = 142823291,
     Events = {} :: {[string]: any},
     Initialized = false,
     Runtime = nil :: any,

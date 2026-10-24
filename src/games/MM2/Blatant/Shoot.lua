@@ -1,6 +1,5 @@
 local Module = {
     Name = "MM2 Shoot",
-    PlaceId = 142823291,
     Events = {} :: {[string]: any},
     Initialized = false,
     Runtime = nil :: any,

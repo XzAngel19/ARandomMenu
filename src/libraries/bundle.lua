@@ -1,5 +1,5 @@
 return {
-    stamp = "v120-final",
+    stamp = "v121-manifest-refactor",
     files = {
         ["src/Profile/135856908115931.lua"] = [[
 --!strict
@@ -1567,7 +1567,6 @@ export type Runtime = {
 
 local Module = {
     Name = "MM2 Fling",
-    PlaceId = 142823291,
     Events = {} :: {[string]: any},
     Initialized = false,
 }
@@ -1921,7 +1920,6 @@ return Module
         ["src/games/MM2/Blatant/KnifeAura.lua"] = [=[
 local Module = {
     Name = "MM2 Knife Aura",
-    PlaceId = 142823291,
     Events = {} :: {[string]: any},
     Initialized = false,
     Runtime = nil :: any,
@@ -2206,7 +2204,6 @@ return Module
         ["src/games/MM2/Blatant/KnifeThrow.lua"] = [[
 local Module = {
     Name = "MM2 Knife Throw",
-    PlaceId = 142823291,
     Events = {} :: {[string]: any},
     Initialized = false,
     Runtime = nil :: any,
@@ -2840,7 +2837,6 @@ return Module
         ["src/games/MM2/Blatant/Shoot.lua"] = [[
 local Module = {
     Name = "MM2 Shoot",
-    PlaceId = 142823291,
     Events = {} :: {[string]: any},
     Initialized = false,
     Runtime = nil :: any,
@@ -3646,7 +3642,6 @@ return Module
         ["src/games/MM2/Fun/BlurtRoles.lua"] = [[
 local Module = {
     Name = "MM2 Blurt Roles",
-    PlaceId = 142823291,
     Events = {} :: {[string]: any},
     Initialized = false,
     Runtime = nil :: any,
@@ -3911,7 +3906,6 @@ return Module
         ["src/games/MM2/Movement/Sprint.lua"] = [[
 local Module = {
     Name = "MM2 Sprint",
-    PlaceId = 142823291,
     Events = {} :: {[string]: any},
     Initialized = false,
     Runtime = nil :: any,
@@ -4028,7 +4022,6 @@ return Module
         ["src/games/MM2/Movement/Teleport.lua"] = [[
 local Module = {
     Name = "MM2 Teleport",
-    PlaceId = 142823291,
     Events = {} :: {[string]: any},
     Initialized = false,
     Runtime = nil :: any,
@@ -4287,7 +4280,6 @@ return Module
         ["src/games/MM2/Other/AutoFarm.lua"] = [[
 local Module = {
     Name = "MM2 Auto Farm",
-    PlaceId = 142823291,
     Events = {},
     Initialized = false,
 }
@@ -5465,7 +5457,6 @@ return Module
 -- family onto the currencies the chosen box accepts.
 local Module = {
     Name = "MM2 Auto Unbox",
-    PlaceId = 142823291,
     Events = {} :: {[string]: any},
     Initialized = false,
     Runtime = nil :: any,
@@ -6311,7 +6302,6 @@ return Module
         ["src/games/MM2/Other/CoinsAura.lua"] = [[
 local Module = {
     Name = "MM2 Coins Aura",
-    PlaceId = 142823291,
     Events = {} :: {[string]: any},
     Initialized = false,
     Runtime = nil :: any,
@@ -6505,7 +6495,6 @@ return Module
         ["src/games/MM2/Other/TrajectoryCalibration.lua"] = [[
 local Module = {
     Name = "MM2 Trajectory Calibration",
-    PlaceId = 142823291,
     Events = {} :: {[string]: any},
     Initialized = false,
     Runtime = nil :: any,
@@ -6591,7 +6580,6 @@ return Module
         ["src/games/MM2/Prediction.lua"] = [=[
 local Module = {
     Name = "MM2 Prediction",
-    PlaceId = 142823291,
     Events = {} :: {[string]: any},
     Initialized = false,
     Runtime = nil :: any,
@@ -7967,7 +7955,6 @@ return Module
 -- SnowToken, BeachBall, Egg) and the Workspace event attributes.
 local Module = {
     Name = "MM2 Coin ESP",
-    PlaceId = 142823291,
     Events = {} :: {[string]: any},
     Initialized = false,
     Runtime = nil :: any,
@@ -8713,7 +8700,6 @@ return Module
         ["src/games/MM2/Render/RoundEsp.lua"] = [[
 local Module = {
     Name = "MM2 Round ESP",
-    PlaceId = 142823291,
     Events = {} :: {[string]: any},
     Initialized = false,
     Runtime = nil :: any,
@@ -8846,7 +8832,6 @@ return Module
         ["src/games/MM2/base.lua"] = [[
 local Module = {
     Name = "MM2",
-    PlaceId = 142823291,
     Events = {} :: {[string]: any},
     Initialized = false,
     Menu = nil :: any,
@@ -12371,7 +12356,7 @@ local function createTrajectoryCalibration(): any
             return
         end
 
-        if not (GAME_CHECK.MM2Active or game.PlaceId == Module.PlaceId) then
+        if not GAME_CHECK.MM2Active then
             warn(trajectoryLogPrefix .. " Inicio omitido fuera de MM2.")
             return
         end
@@ -46108,12 +46093,20 @@ export type ModuleEntry = {
     category: string,
 }
 
+export type GamePlaceEntry = {
+    placeId: number,
+    module: string,
+    displayName: string,
+}
+
 export type Manifest = {
     version: number,
     widgets: string,
     core: {string},
     libraries: {string},
     modules: {ModuleEntry},
+    gamePlaces: {GamePlaceEntry},
+    gameModules: {[string]: {string}},
 }
 
 local Manifest: Manifest = {
@@ -46296,6 +46289,52 @@ local Manifest: Manifest = {
             path = "src/games/universal/Other/ImproveFps.lua",
             name = "Improve FPS",
             category = "World",
+        },
+    },
+
+    gamePlaces = {
+        {placeId = 71480482338212, module = "BedFight", displayName = "Bed Fight"},
+        {placeId = 142823291, module = "MM2", displayName = "Murder Mystery 2"},
+        {placeId = 14315258385, module = "TRS", displayName = "The Regular Show"},
+        {placeId = 93978595733734, module = "VD", displayName = "Virtual Dealer"},
+        {placeId = 92876937625630, module = "X2Duels", displayName = "X2 Duels (Legacy)"},
+        {placeId = 135856908115931, module = "X2Duels", displayName = "X2 Duels"},
+    },
+
+    gameModules = {
+        MM2 = {
+            "src/games/MM2/base.lua",
+            "src/games/MM2/Prediction.lua",
+            "src/games/MM2/Blatant/Shoot.lua",
+            "src/games/MM2/Blatant/KnifeAura.lua",
+            "src/games/MM2/Blatant/KnifeThrow.lua",
+            "src/games/MM2/Render/RoundEsp.lua",
+            "src/games/MM2/Render/CoinEsp.lua",
+            "src/games/MM2/Movement/Sprint.lua",
+            "src/games/MM2/Blatant/Fling.lua",
+            "src/games/MM2/Movement/Teleport.lua",
+            "src/games/MM2/Fun/BlurtRoles.lua",
+            "src/games/MM2/Other/AutoUnbox.lua",
+            "src/games/MM2/Other/AutoFarm.lua",
+            "src/games/MM2/Other/CoinsAura.lua",
+            "src/games/MM2/Other/TrajectoryCalibration.lua",
+            "src/games/MM2/Other/CalibrationTrails.lua",
+        },
+        VD = {
+            "src/games/VD/base.lua",
+        },
+        BedFight = {
+            "src/games/BedFight/base.lua",
+            "src/games/BedFight/Combat/AutoSwing.lua",
+            "src/games/BedFight/Render/RoundInfo.lua",
+        },
+        X2Duels = {
+            "src/games/X2Duels/Rules.lua",
+            "src/games/X2Duels/base.lua",
+            "src/games/X2Duels/Other/AutoFarm.lua",
+        },
+        TRS = {
+            "src/games/TRS/base.lua",
         },
     },
 }

@@ -1,6 +1,5 @@
 local Module = {
     Name = "MM2 Auto Farm",
-    PlaceId = 142823291,
     Events = {},
     Initialized = false,
 }

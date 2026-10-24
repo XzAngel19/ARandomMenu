@@ -7,7 +7,6 @@ export type Runtime = {
 
 local Module = {
     Name = "MM2 Fling",
-    PlaceId = 142823291,
     Events = {} :: {[string]: any},
     Initialized = false,
 }
