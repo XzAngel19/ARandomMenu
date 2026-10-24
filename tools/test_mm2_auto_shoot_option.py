@@ -72,7 +72,7 @@ for removed in (
     'Auto lead', 'Lead offset ms', 'Prediction status', 'Reset prediction',
 ):
     assert f'"{removed}"' not in S, f'{removed} must not be an ordinary menu row'
-for retained in ('Auto Shoot', 'Aim method', 'Target', 'WallCheck', 'Macro'):
+for retained in ('Auto Shoot', 'Aim method', 'Target', 'Raw', 'Macro'):
     assert f'"{retained}"' in S
 assert 'mm2ShotGateHold' not in S and 'spawnStats' not in S
 with tempfile.TemporaryDirectory(prefix='auto-shoot-option-') as tmp:

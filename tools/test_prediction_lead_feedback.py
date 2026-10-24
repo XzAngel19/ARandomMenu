@@ -39,20 +39,21 @@ noteLeadError(0.05)
 near(leadCorrection(), 0)
 pass("lead feedback: two samples do not move the aim")
 
--- 3) Three samples of +120 ms mean the target was ahead: the horizon grows,
---    bounded by the 60 ms cap.
+-- 3) Three samples of +120 ms mean the target was ahead: the correction
+--    is recorded for calibration reporting, but the closed-loop was
+--    removed in v120 -- the horizon no longer adjusts adaptively.
 noteLeadError(0.12)
 noteLeadError(0.12)
 noteLeadError(0.12)
 near(leadCorrection(), 0.06)
-near(gunHorizon(), 0.2 + 1 / 40 + 0.06)
-pass("lead feedback: a consistent under-lead is added, capped at 60 ms")
+near(gunHorizon(), 0.2 + 1 / 40)
+pass("lead feedback: correction recorded but not applied to horizon (v120 closed-loop removal)")
 
 -- 4) Over-leading subtracts, and the same cap applies in the other direction.
 for _ = 1, 5 do noteLeadError(-0.09) end
 near(leadCorrection(), -0.06)
-near(gunHorizon(), 0.2 + 1 / 40 - 0.06)
-pass("lead feedback: over-lead is subtracted, capped symmetrically")
+near(gunHorizon(), 0.2 + 1 / 40)
+pass("lead feedback: over-lead recorded but not applied to horizon")
 
 -- 5) A single absurd measurement (teleport, target swap) is dropped, not
 --    stored, so it can never dominate the median.
@@ -63,11 +64,11 @@ noteLeadError(0 / 0)
 assert(leadCorrection() == before, "out-of-range samples must be ignored")
 pass("lead feedback: teleports, swaps and NaN are rejected")
 
--- 6) The knife uses the measured FireServer -> GunFired round trip when one
---    exists, exactly like the gun, and reports it for the calibration file.
+-- 6) The knife uses the same blended pipeline as the gun: rtt as the
+--    stable base, echo adding freshness when available.
 echo = 0.31
 local knifePipeline, knifeRtt, knifeEcho = knifeHorizon()
-near(knifePipeline, 0.31 + 1 / 40)
+near(knifePipeline, 0.2 * 0.6 + 0.31 * 0.4 + 1 / 40)
 near(knifeRtt, 0.2)
 near(knifeEcho, 0.31)
 echo = nil

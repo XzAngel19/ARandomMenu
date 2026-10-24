@@ -20,7 +20,12 @@ function Module.init(context)
         table.clear(original); table.clear(applied)
     end
     local function tick(dt)
-        write("Brightness",card.Options.Brightness.Value)
+        -- Roblox does not accept math.huge for Lighting.Brightness; clamp
+        -- the display value to a large finite number so infinity on the
+        -- slider still produces a fully white screen.
+        local brightness = card.Options.Brightness.Value
+        if brightness == math.huge then brightness = 1000 end
+        write("Brightness",brightness)
         write("GlobalShadows",false)
         write("FogEnd",100000)
         write("Ambient",Color3.fromRGB(178,178,178))
@@ -40,7 +45,7 @@ function Module.init(context)
             card:Clean(restore)
             tick(0);card:Loop(tick)
         end})
-    card:CreateSlider({Name="Brightness",Min=0,Max=10,Default=3})
+    card:CreateSlider({Name="Brightness",Min=-10,Max=math.huge,Default=3})
     card:CreateToggle({Name="Time Changer",Default=false,Function=function(value) if not value then restoreTime() end end})
     card:CreateSlider({Name="Time",Min=0,Max=24,Default=14,Show={Option="Time Changer",Values={true}}})
     card:CreateToggle({Name="Fast time",Default=false,Show={Option="Time Changer",Values={true}},Tooltip="Loop a full day every four seconds."})

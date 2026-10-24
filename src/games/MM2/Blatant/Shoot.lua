@@ -324,6 +324,36 @@ function Module.init(runtime: any): any
             end
         end
 
+        -- Raw mode: skip ALL prediction and wall gates. When gunAim
+        -- fails (no samples, stale, unreachable), use the target's
+        -- current root position as the endpoint so the shot still
+        -- fires. The gun must still be equipped and ready, and the
+        -- target must still be the Murderer.
+        if mm2Settings.shootRaw and not info and target.Character then
+            local targetRoot: BasePart? = target.Character:FindFirstChild("HumanoidRootPart")
+            if targetRoot then
+                local fallbackEndpoint: Vector3 = targetRoot.Position
+                info = {
+                    endpoint = fallbackEndpoint,
+                    velocity = Vector3.zero,
+                    leadSeconds = 0,
+                    motionSource = "raw",
+                    model = "raw",
+                    sampleAge = 0,
+                    samples = 0,
+                    capturedPosition = fallbackEndpoint,
+                    rtt = 0,
+                    echoDelay = 0,
+                    rttEngine = "raw",
+                    echoSamples = 0,
+                    turnRate = 0,
+                    brakeSeconds = 0,
+                    leadCorrection = 0,
+                    rootPosition = fallbackEndpoint,
+                }
+            end
+        end
+
         local rejectMessages: {[string]: string} = {
             ["no body"] = "The murderer has no usable body to aim at.",
             ["no samples"] = "The murderer has no fresh motion samples yet.",
@@ -346,7 +376,10 @@ function Module.init(runtime: any): any
         -- will lead: firing anyway sends a shot known to fall short by
         -- seconds of target travel. Manual lead is the user's explicit
         -- choice and is not second-guessed here.
-        if prediction.settings and prediction.settings.autoLead
+        -- Raw mode skips this gate entirely: the user asked to fire
+        -- regardless of target movement.
+        if not mm2Settings.shootRaw
+            and prediction.settings and prediction.settings.autoLead
             and type(info.leadSeconds) == "number"
             and info.leadSeconds >= MAX_AUTO_LEAD_SAFE then
             return reject(
@@ -381,6 +414,12 @@ function Module.init(runtime: any): any
             if gun.Parent ~= character or gun.Enabled == false or gun:GetAttribute("Disabled") == true
                 or gun:GetAttribute("Reloading") == true or gun:GetAttribute("IsReloading") == true then
                 return reject("The gun is disabled or reloading.")
+            end
+            -- Raw mode: skip the WeaponService wall filter entirely. The
+            -- shot fires regardless of walls, bystanders or occlusion.
+            -- The gun must still be equipped and ready.
+            if mm2Settings.shootRaw then
+                return true
             end
             -- The muzzle is the character's gun, never the authored origin.
             -- validateGunShot checks BOTH rays: the gun's line of sight and
@@ -423,7 +462,9 @@ function Module.init(runtime: any): any
             variant = resolvedVariant
             -- A near-target origin inside a body can make the engine miss that
             -- containing body. Fall back to the real muzzle, never a bypass.
-            if not isWeaponPathClear(shotOrigin.Position,shotEnd.Position,targetCharacter,nil,{ignoreTarget=true}) then
+            -- Raw mode skips this check: the shot fires regardless.
+            if not mm2Settings.shootRaw
+                and not isWeaponPathClear(shotOrigin.Position,shotEnd.Position,targetCharacter,nil,{ignoreTarget=true}) then
                 shotOrigin,shotEnd = origin,CFrame.new(info.endpoint)
                 variant = "Muzzle"
                 offset = 0
@@ -705,14 +746,15 @@ function Module.init(runtime: any): any
     end
     addToggleOption(
         ShootFeature,
-        "WallCheck",
-        mm2Settings.shootWallCheck,
+        "Raw",
+        mm2Settings.shootRaw,
         function(value: boolean): ()
-            mm2Settings.shootWallCheck = value
+            mm2Settings.shootRaw = value
         end,
-        "Check the fired segment with the game's own WeaponService filter: "
-            .. "WeaponPassthrough tags and invisible layers are ignored and the "
-            .. "first solid surface or player blocks the shot. Applies to gun and knife."
+        "Fires the shot regardless of walls, bystanders, target movement, or "
+            .. "prediction confidence. When ON, the WallCheck and all shot-safety "
+            .. "gates are skipped. The gun must still be equipped and ready, and "
+            .. "the target must still be the Murderer. Use with caution."
     )
     addToggleOption(
         ShootFeature,

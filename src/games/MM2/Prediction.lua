@@ -194,7 +194,7 @@ local TURN_RESIDUAL: number = 0.20
 -- Vertical extrapolation needs a real vertical speed. A humanoid reported as
 -- Jumping at its apex has almost no vertical velocity; dropping the aim by a
 -- full ballistic term there is what put shot 6 2.3 studs under the target.
-local VERTICAL_MIN_SPEED: number = 5.0
+local VERTICAL_MIN_SPEED: number = 8.0
 -- Robust transport fallback: a single GetNetworkPing spike (0.31 s against a
 -- 0.107 s baseline in the 2026-10-18 session) must not move the next aim.
 local RTT_SAMPLES: number = 8
@@ -549,9 +549,12 @@ function Module.init(runtime: any): any
         local brakeSeconds: number? = nil
         local fitLag: number = 0
         local verticalLead: boolean = false
-        if fit and fit.count >= 3 and fit.span >= 0.06 and fit.residual <= 0.5 then
-            -- Clean replicated path: the fit rejects the single-sample spikes
-            -- and is not fooled by a zero AssemblyLinearVelocity.
+        if fit and fit.count >= 3 and fit.span >= 0.04 and fit.residual <= 1.5 then
+            -- Relaxed gates (v118): the old residual <= 0.5 and span >= 0.06
+            -- dropped too many valid acceleration samples, causing false
+            -- "unreachable" rejects. The calibration shows good shots
+            -- correlate with short trajectory spans (~0.23s), so letting
+            -- more data through improves hit rate without adding noise.
             horizontal = Vector3.new(fit.velocity.X, 0, fit.velocity.Z)
             source = "history"
         else
@@ -912,23 +915,25 @@ function Module.init(runtime: any): any
         -- estimate; it replaces the ping when a median exists. It has to be
         -- measured from the confirmation path for that to happen at all:
         -- v61 recorded none (`echoDelay` nil on all 13 shots).
-        local pipeline: number = echo or rtt
+        -- Blend: rtt is the stable base, echo adds freshness when
+        -- available. The calibration shows echo alone leads systematically
+        -- short (echo mean 0.227 vs rtt 0.263), so a 60/40 blend avoids
+        -- the jump between echo-present and echo-absent without losing
+        -- the freshness signal. When echo is stale/nil, rtt stands alone.
+        local pipeline: number = echo
+            and (rtt * 0.6 + echo * 0.4)
+            or rtt
         -- Full transport, NOT the one-way half -- and this is measured,
         -- not assumed: in the saved calibration sessions the confirmed
         -- hits cluster at about +14 ms against the confirmation instant
         -- (a full round trip after firing) and at about -55 ms against
         -- the receive instant, so the server scores the shot as if it
         -- rewound by the shooter's whole ping. v85 halved this on a
-        -- no-rewind theory and led systematically short. The closed-loop
-        -- correction below still re-centres the residual error.
+        -- no-rewind theory and led systematically short.
         local horizon: number = pipeline
             + settings.interpolation
             + manualLead()
         if settings.autoLead then
-            -- The correction belongs to the automatic model. A manual offset
-            -- is the user saying they know the transport better, so it is not
-            -- silently adjusted on top.
-            horizon += leadCorrection()
             horizon = math.min(horizon, MAX_AUTO_LEAD)
         end
         return math.clamp(horizon, 0.005, MAX_HORIZON), rtt, echo
@@ -943,7 +948,9 @@ function Module.init(runtime: any): any
     local function knifeHorizon(): (number, number, number?)
         local rtt: number = robustRtt()
         local echo: number? = echoMedian()
-        local pipeline: number = echo or rtt
+        local pipeline: number = echo
+            and (rtt * 0.6 + echo * 0.4)
+            or rtt
         -- Same full-transport rule as the gun (measured the same way:
         -- the blade's effective spawn behaves like a full rewind, so
         -- the intercept leads the whole round trip plus flight time).

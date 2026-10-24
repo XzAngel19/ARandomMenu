@@ -164,7 +164,7 @@ do
     prediction.noteEcho(0,0.18)
     local _,echoed=prediction.gunAim(target,Vector3.new(0,0,-30))
     near(echoed.echoDelay,0.18,1e-9)
-    near(echoed.leadSeconds,0.205,1e-6)
+    near(echoed.leadSeconds,0.169,1e-6)
     prediction.noteEcho(0,0.001)
     prediction.noteEcho(0,2)
     near(prediction.getEchoDelay(),0.18,1e-9)
@@ -180,19 +180,19 @@ do
             ..prediction.status(target))
     prediction.settings.extraLead=0.05
     local _,automatic=prediction.gunAim(target,Vector3.new(0,0,-30))
-    near(automatic.leadSeconds,0.205,1e-6)
+    near(automatic.leadSeconds,0.169,1e-6)
     local autoText=prediction.status(target)
     assert(autoText:find("auto lead %(echo%)"),autoText)
     assert(autoText:find("interp 25 ms"),autoText)
     prediction.settings.autoLead=false
     local _,manual=prediction.gunAim(target,Vector3.new(0,0,-30))
-    near(manual.leadSeconds,0.255,1e-6)
+    near(manual.leadSeconds,0.219,1e-6)
     local statusText=prediction.status(target)
     assert(statusText:find("manual %+50 ms"),statusText)
     assert(not statusText:find("auto lead"),statusText)
     prediction.settings.extraLead=0.6
     local _,capped=prediction.gunAim(target,Vector3.new(0,0,-30))
-    near(capped.leadSeconds,0.805,1e-6)
+    near(capped.leadSeconds,0.769,1e-6)
     assert(prediction.status(target):find("manual %+600 ms"))
     prediction.settings.extraLead=1.5
     local _,clamped=prediction.gunAim(target,Vector3.new(0,0,-30))

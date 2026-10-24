@@ -50,7 +50,7 @@ function Module.init(context: Runtime): any
         toggleGravity,
         {categoryName = "World"}
     )
-    addNumberOption(GravityFeature, "Gravity value", gravitySettings.value, 0, 500, function(value)
+    addNumberOption(GravityFeature, "Gravity value", gravitySettings.value, -500, 500, function(value)
         gravitySettings.value = value
         if GravityFeature.enabled then
             GravityFeature:SetStatus(tostring(math.round(value)))

@@ -513,23 +513,23 @@ function Module.init(context: Runtime): any
     })
     fly:CreateSlider({
         Name = "Horizontal speed",
-        Min = 10,
+        Min = -500,
         Max = 500,
         Default = flySettings.speed,
         Function = function(value: number): ()
             flySettings.speed = value
         end,
-        Tooltip = "Studs per second while holding WASD.",
+        Tooltip = "Studs per second while holding WASD. Negative values reverse the direction.",
     })
     fly:CreateSlider({
         Name = "Vertical speed",
-        Min = 10,
+        Min = -350,
         Max = 350,
         Default = flySettings.verticalSpeed,
         Function = function(value: number): ()
             flySettings.verticalSpeed = value
         end,
-        Tooltip = "Studs per second while rising or descending.",
+        Tooltip = "Studs per second while rising or descending. Negative values reverse the direction.",
     })
     fly:CreateSlider({
         Name = "Response multiplier",

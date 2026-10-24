@@ -579,19 +579,41 @@ function Module.init(context: any): WidgetLibrary
         end
     end))
 
-    local function isFiniteNumber(value: any): boolean
-        return type(value) == "number"
-            and value == value
-            and value ~= math.huge
-            and value ~= -math.huge
+    -- Accepts all real numbers including +/- math.huge so sliders can
+    -- express "infinite" (e.g. Fullbright Brightness = inf → white screen).
+    local function isNumber(value: any): boolean
+        return type(value) == "number" and value == value
     end
 
     local function formatCompactNumber(value: number): string
+        if value == math.huge then return "inf" end
+        if value == -math.huge then return "-inf" end
         local magnitude: number = math.abs(value)
         if magnitude >= 1e9 or (magnitude > 0 and magnitude < 1e-4) then
             return string.format("%.3e", value)
         end
         return string.format("%.12g", value)
+    end
+
+    -- When a slider's maximum is infinite, the linear position formula
+    -- (value-min)/(max-min) collapses to 0 for every finite value. Use a
+    -- practical display cap so the knob still moves, while the actual
+    -- value (and any typed infinity) passes through untouched.
+    local function effectiveMax(minimum: number, maximum: number): number
+        if maximum ~= math.huge then return maximum end
+        return math.max(100, math.abs(minimum) * 10)
+    end
+
+    -- Parse text-box input that may contain infinity keywords.
+    local function parseNumericText(text: string): number?
+        local cleaned = string.lower(text:gsub("%s+", ""))
+        if cleaned == "inf" or cleaned == "infinity" or cleaned == "+inf" then
+            return math.huge
+        end
+        if cleaned == "-inf" or cleaned == "-infinity" then
+            return -math.huge
+        end
+        return tonumber(text)
     end
 
     local function addNumberOption(
@@ -609,7 +631,7 @@ function Module.init(context: any): WidgetLibrary
         local storedValue: number? = tonumber(configData.values[optionKey])
 
         -- The interval is a drag guide, not a limit on typed/profile values.
-        local value: number = isFiniteNumber(storedValue)
+        local value: number = isNumber(storedValue)
             and (storedValue :: number)
             or defaultValue
         local integerOnly: boolean = defaultValue % 1 == 0
@@ -759,12 +781,18 @@ function Module.init(context: any): WidgetLibrary
             (valueStroke :: UIStroke).Transparency = 1
         end
 
-        valueInput.PlaceholderText = "Any finite number"
+        valueInput.PlaceholderText = "Any number (type inf for infinity)"
 
         local editing: boolean = false
 
         local function quantize(raw: number, fromSlider: boolean): number
             if not fromSlider then return raw end
+            -- When maximum is infinite, skip the upper clamp and stepping
+            -- so an infinity typed or dragged in passes through untouched.
+            if maximum == math.huge then
+                if raw < minimum then raw = minimum end
+                return raw
+            end
             raw = math.clamp(raw, minimum, maximum)
             local stepped: number = minimum
                 + math.round((raw - minimum) / step) * step
@@ -776,13 +804,25 @@ function Module.init(context: any): WidgetLibrary
             persist: boolean,
             _fromSlider: boolean
         ): ()
-            if not isFiniteNumber(nextValue) then
+            if not isNumber(nextValue) then
+                return
+            end
+            -- Infinity is only valid when the slider explicitly opts in
+            -- by having an infinite maximum (e.g. Fullbright Brightness).
+            -- On finite-range sliders like Speed, reject it so a typed
+            -- "inf" or "1e999" does not corrupt the previous value.
+            if (nextValue == math.huge or nextValue == -math.huge)
+                and maximum ~= math.huge then
                 return
             end
             value = quantize(nextValue, _fromSlider)
-            local alpha: number = maximum == minimum
+            -- When the slider maximum is infinite, use the display cap
+            -- so the knob still moves for finite values. Infinity itself
+            -- snaps the knob to the far right.
+            local sliderMax: number = effectiveMax(minimum, maximum)
+            local alpha: number = sliderMax == minimum
                 and 0
-                or math.clamp((value - minimum) / (maximum - minimum), 0, 1)
+                or math.clamp((value - minimum) / (sliderMax - minimum), 0, 1)
             fill.Size = UDim2.fromScale(alpha, 1)
             knob.Position = UDim2.fromScale(alpha, 0.5)
             if not editing then
@@ -802,7 +842,7 @@ function Module.init(context: any): WidgetLibrary
                 0,
                 1
             )
-            setValue(minimum + (maximum - minimum) * alpha, true, true)
+            setValue(minimum + (effectiveMax(minimum, maximum) - minimum) * alpha, true, true)
         end
 
         if state.valueControls then
@@ -844,9 +884,9 @@ function Module.init(context: any): WidgetLibrary
         end))
 
         trackUiConnection(valueInput.FocusLost:Connect(function(): ()
-            local parsed: number? = tonumber(valueInput.Text)
+            local parsed: number? = parseNumericText(valueInput.Text)
             editing = false
-            if not isFiniteNumber(parsed) then
+            if not isNumber(parsed) then
                 valueInput.Text = formatCompactNumber(value)
                 notify(labelText .. ": invalid numeric value")
                 return
@@ -875,11 +915,11 @@ function Module.init(context: any): WidgetLibrary
         local storedLow: number? = tonumber(configData.values[baseKey .. ".Low"])
         local storedHigh: number? = tonumber(configData.values[baseKey .. ".High"])
 
-        local low: number = isFiniteNumber(storedLow)
+        local low: number = isNumber(storedLow)
             and (storedLow :: number)
             or tonumber(definition.defaultLow)
             or minimum
-        local high: number = isFiniteNumber(storedHigh)
+        local high: number = isNumber(storedHigh)
             and (storedHigh :: number)
             or tonumber(definition.defaultHigh)
             or maximum
@@ -1100,9 +1140,9 @@ function Module.init(context: any): WidgetLibrary
             lowBox.CursorPosition = #lowBox.Text + 1
         end))
         trackUiConnection(lowBox.FocusLost:Connect(function(): ()
-            local parsed: number? = tonumber(lowBox.Text)
+            local parsed: number? = parseNumericText(lowBox.Text)
             editingLow = false
-            if not isFiniteNumber(parsed) then
+            if not isNumber(parsed) then
                 lowBox.Text = formatCompactNumber(low)
                 notify(labelText .. ": invalid numeric value")
                 return
@@ -1118,9 +1158,9 @@ function Module.init(context: any): WidgetLibrary
             highBox.CursorPosition = #highBox.Text + 1
         end))
         trackUiConnection(highBox.FocusLost:Connect(function(): ()
-            local parsed: number? = tonumber(highBox.Text)
+            local parsed: number? = parseNumericText(highBox.Text)
             editingHigh = false
-            if not isFiniteNumber(parsed) then
+            if not isNumber(parsed) then
                 highBox.Text = formatCompactNumber(high)
                 notify(labelText .. ": invalid numeric value")
                 return

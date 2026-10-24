@@ -59,6 +59,7 @@ end)
 local mm2Settings = {
     shootMode = "Manual",
     shootWallCheck = true,
+    shootRaw = false,
     silentAim = false,
     shootKey = Enum.KeyCode.Unknown,
     shootTarget = "",

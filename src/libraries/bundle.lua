@@ -1,5 +1,5 @@
 return {
-    stamp = "v119-20261024-mvs-structure",
+    stamp = "v120-test",
     files = {
         ["src/Profile/135856908115931.lua"] = [[
 --!strict
@@ -3164,6 +3164,36 @@ function Module.init(runtime: any): any
             end
         end
 
+        -- Raw mode: skip ALL prediction and wall gates. When gunAim
+        -- fails (no samples, stale, unreachable), use the target's
+        -- current root position as the endpoint so the shot still
+        -- fires. The gun must still be equipped and ready, and the
+        -- target must still be the Murderer.
+        if mm2Settings.shootRaw and not info and target.Character then
+            local targetRoot: BasePart? = target.Character:FindFirstChild("HumanoidRootPart")
+            if targetRoot then
+                local fallbackEndpoint: Vector3 = targetRoot.Position
+                info = {
+                    endpoint = fallbackEndpoint,
+                    velocity = Vector3.zero,
+                    leadSeconds = 0,
+                    motionSource = "raw",
+                    model = "raw",
+                    sampleAge = 0,
+                    samples = 0,
+                    capturedPosition = fallbackEndpoint,
+                    rtt = 0,
+                    echoDelay = 0,
+                    rttEngine = "raw",
+                    echoSamples = 0,
+                    turnRate = 0,
+                    brakeSeconds = 0,
+                    leadCorrection = 0,
+                    rootPosition = fallbackEndpoint,
+                }
+            end
+        end
+
         local rejectMessages: {[string]: string} = {
             ["no body"] = "The murderer has no usable body to aim at.",
             ["no samples"] = "The murderer has no fresh motion samples yet.",
@@ -3186,7 +3216,10 @@ function Module.init(runtime: any): any
         -- will lead: firing anyway sends a shot known to fall short by
         -- seconds of target travel. Manual lead is the user's explicit
         -- choice and is not second-guessed here.
-        if prediction.settings and prediction.settings.autoLead
+        -- Raw mode skips this gate entirely: the user asked to fire
+        -- regardless of target movement.
+        if not mm2Settings.shootRaw
+            and prediction.settings and prediction.settings.autoLead
             and type(info.leadSeconds) == "number"
             and info.leadSeconds >= MAX_AUTO_LEAD_SAFE then
             return reject(
@@ -3221,6 +3254,12 @@ function Module.init(runtime: any): any
             if gun.Parent ~= character or gun.Enabled == false or gun:GetAttribute("Disabled") == true
                 or gun:GetAttribute("Reloading") == true or gun:GetAttribute("IsReloading") == true then
                 return reject("The gun is disabled or reloading.")
+            end
+            -- Raw mode: skip the WeaponService wall filter entirely. The
+            -- shot fires regardless of walls, bystanders or occlusion.
+            -- The gun must still be equipped and ready.
+            if mm2Settings.shootRaw then
+                return true
             end
             -- The muzzle is the character's gun, never the authored origin.
             -- validateGunShot checks BOTH rays: the gun's line of sight and
@@ -3263,7 +3302,9 @@ function Module.init(runtime: any): any
             variant = resolvedVariant
             -- A near-target origin inside a body can make the engine miss that
             -- containing body. Fall back to the real muzzle, never a bypass.
-            if not isWeaponPathClear(shotOrigin.Position,shotEnd.Position,targetCharacter,nil,{ignoreTarget=true}) then
+            -- Raw mode skips this check: the shot fires regardless.
+            if not mm2Settings.shootRaw
+                and not isWeaponPathClear(shotOrigin.Position,shotEnd.Position,targetCharacter,nil,{ignoreTarget=true}) then
                 shotOrigin,shotEnd = origin,CFrame.new(info.endpoint)
                 variant = "Muzzle"
                 offset = 0
@@ -3545,14 +3586,15 @@ function Module.init(runtime: any): any
     end
     addToggleOption(
         ShootFeature,
-        "WallCheck",
-        mm2Settings.shootWallCheck,
+        "Raw",
+        mm2Settings.shootRaw,
         function(value: boolean): ()
-            mm2Settings.shootWallCheck = value
+            mm2Settings.shootRaw = value
         end,
-        "Check the fired segment with the game's own WeaponService filter: "
-            .. "WeaponPassthrough tags and invisible layers are ignored and the "
-            .. "first solid surface or player blocks the shot. Applies to gun and knife."
+        "Fires the shot regardless of walls, bystanders, target movement, or "
+            .. "prediction confidence. When ON, the WallCheck and all shot-safety "
+            .. "gates are skipped. The gun must still be equipped and ready, and "
+            .. "the target must still be the Murderer. Use with caution."
     )
     addToggleOption(
         ShootFeature,
@@ -6266,6 +6308,200 @@ end
 return Module
 
 ]],
+        ["src/games/MM2/Other/CoinsAura.lua"] = [[
+local Module = {
+    Name = "MM2 Coins Aura",
+    PlaceId = 142823291,
+    Events = {} :: {[string]: any},
+    Initialized = false,
+    Runtime = nil :: any,
+}
+
+local activeCleanup: () -> () = function(): () end
+
+function Module.init(runtime: any): any
+    if Module.Initialized then
+        return Module
+    end
+    local core: any = state.mm2Core
+    assert(type(core) == "table", "MM2 Coins Aura requires the MM2 core module")
+    Module.Runtime = runtime
+
+    local settings = {
+        radius = 15,
+    }
+
+    -- Resolve the Coin_Server part that actually pays for a pickup.
+    -- Coin ESP hands out the visual part; the server part is either
+    -- the part itself (Name == "Coin_Server") or its parent.
+    local function serverPartOf(part: Instance): Instance?
+        if part.Name == "Coin_Server" then
+            return part
+        end
+        local parent: Instance? = part.Parent
+        if parent and parent.Name == "Coin_Server" then
+            return parent
+        end
+        return part
+    end
+
+    -- A coin that was already taken keeps its entry in the throttled
+    -- scan for a moment. Check the attribute/parent so a collected
+    -- coin stops being a target at once.
+    local function stillCollectable(part: Instance): boolean
+        if not part.Parent then
+            return false
+        end
+        local server: Instance? = serverPartOf(part)
+        local collected: any = nil
+        pcall(function(): ()
+            collected = (server :: any):GetAttribute("Collected")
+        end)
+        return collected ~= true
+    end
+
+    -- Pulse the touch between our root and the coin's server part,
+    -- exactly like AutoFarm's arrive-pulse and Teleport's
+    -- touchDroppedGun: fire 0 then 1 so the server sees the full
+    -- Touched/TouchEnded pair.
+    local function touchCoin(root: BasePart, coin: Instance): boolean
+        if type(state.fireTouchInterest) ~= "function" then
+            return false
+        end
+        local touchPart: Instance? = serverPartOf(coin)
+        if not touchPart then
+            return false
+        end
+        pcall(state.fireTouchInterest, root, touchPart, 0)
+        pcall(state.fireTouchInterest, root, touchPart, 1)
+        return true
+    end
+
+    local function characterRoot(): BasePart?
+        local character: Model? = LocalPlayer and LocalPlayer.Character
+        if not character then
+            return nil
+        end
+        return character:FindFirstChild("HumanoidRootPart") :: BasePart?
+    end
+
+    local function toggleCoinsAura(enabled: boolean): ()
+        disconnectFeatureConnection("MM2CoinsAura")
+
+        if not enabled then
+            return
+        end
+
+        local lastPulseAt: number = -math.huge
+
+        local function auraTick(): ()
+            local root: BasePart? = characterRoot()
+            if not root then
+                return
+            end
+
+            -- Throttle the pulse: 0.25 s matches AutoFarm's
+            -- lastTouchPulse interval and avoids hammering the server
+            -- with touch events every frame.
+            local now: number = os.clock()
+            if now - lastPulseAt < 0.25 then
+                return
+            end
+
+            -- Get the coin list from Coin ESP's cache, or fall back
+            -- to a direct CollectionService scan.
+            local coins: {Instance} = {}
+            if type(state.mm2CoinPickups) == "function" then
+                local ok: boolean, list: any = pcall(state.mm2CoinPickups)
+                if ok and type(list) == "table" then
+                    coins = list
+                end
+            end
+            if #coins == 0 then
+                local okTagged: boolean, tagged: any = pcall(function(): any
+                    return game:GetService("CollectionService"):GetTagged("CoinVisual")
+                end)
+                if okTagged and type(tagged) == "table" then
+                    coins = tagged
+                end
+            end
+
+            local rootPos: Vector3 = root.Position
+            local radius: number = settings.radius
+            local pulsed: boolean = false
+            for _, coin: Instance in ipairs(coins) do
+                if not stillCollectable(coin) then
+                    continue
+                end
+                local coinPos: Vector3? = nil
+                pcall(function(): ()
+                    if coin:IsA("BasePart") then
+                        coinPos = (coin :: BasePart).Position
+                    end
+                end)
+                if not coinPos then
+                    continue
+                end
+                if (coinPos - rootPos).Magnitude <= radius then
+                    touchCoin(root, coin)
+                    pulsed = true
+                end
+            end
+
+            if pulsed then
+                lastPulseAt = now
+            end
+        end
+
+        featureConnections.MM2CoinsAura =
+            TaskManager:Connect(auraTick)
+        auraTick()
+    end
+
+    local CoinsAuraFeature: any = createUniversalFeature(
+        "Coins Aura",
+        "Pulses the touch between your character and every coin within the aura radius, collecting them without moving.",
+        7,
+        toggleCoinsAura,
+        {
+            categoryName = "Utilities",
+            parent = MM2Scroll,
+            registry = mm2Features,
+        }
+    )
+    state.mm2CoinsAuraFeature = CoinsAuraFeature
+
+    addNumberOption(CoinsAuraFeature, "Aura Radius", 15, 5, 50,
+        function(value: number): ()
+            settings.radius = value
+            if CoinsAuraFeature.enabled then
+                CoinsAuraFeature:SetStatus(tostring(math.round(value)) .. " studs")
+            end
+        end,
+        "Distance from your character at which coins are touched and collected. Higher values reach more coins at once.", 1)
+
+    activeCleanup = function(): ()
+        toggleCoinsAura(false)
+    end
+    Module.Events = featureConnections
+    Module.Initialized = true
+    return Module
+end
+
+function Module.destroy(): ()
+    if not Module.Initialized then
+        return
+    end
+    Module.Initialized = false
+    pcall(activeCleanup)
+    activeCleanup = function(): () end
+    Module.Events = {}
+    Module.Runtime = nil
+end
+
+return Module
+
+]],
         ["src/games/MM2/Other/TrajectoryCalibration.lua"] = [[
 local Module = {
     Name = "MM2 Trajectory Calibration",
@@ -6549,7 +6785,7 @@ local TURN_RESIDUAL: number = 0.20
 -- Vertical extrapolation needs a real vertical speed. A humanoid reported as
 -- Jumping at its apex has almost no vertical velocity; dropping the aim by a
 -- full ballistic term there is what put shot 6 2.3 studs under the target.
-local VERTICAL_MIN_SPEED: number = 5.0
+local VERTICAL_MIN_SPEED: number = 8.0
 -- Robust transport fallback: a single GetNetworkPing spike (0.31 s against a
 -- 0.107 s baseline in the 2026-10-18 session) must not move the next aim.
 local RTT_SAMPLES: number = 8
@@ -6904,9 +7140,12 @@ function Module.init(runtime: any): any
         local brakeSeconds: number? = nil
         local fitLag: number = 0
         local verticalLead: boolean = false
-        if fit and fit.count >= 3 and fit.span >= 0.06 and fit.residual <= 0.5 then
-            -- Clean replicated path: the fit rejects the single-sample spikes
-            -- and is not fooled by a zero AssemblyLinearVelocity.
+        if fit and fit.count >= 3 and fit.span >= 0.04 and fit.residual <= 1.5 then
+            -- Relaxed gates (v118): the old residual <= 0.5 and span >= 0.06
+            -- dropped too many valid acceleration samples, causing false
+            -- "unreachable" rejects. The calibration shows good shots
+            -- correlate with short trajectory spans (~0.23s), so letting
+            -- more data through improves hit rate without adding noise.
             horizontal = Vector3.new(fit.velocity.X, 0, fit.velocity.Z)
             source = "history"
         else
@@ -7267,23 +7506,25 @@ function Module.init(runtime: any): any
         -- estimate; it replaces the ping when a median exists. It has to be
         -- measured from the confirmation path for that to happen at all:
         -- v61 recorded none (`echoDelay` nil on all 13 shots).
-        local pipeline: number = echo or rtt
+        -- Blend: rtt is the stable base, echo adds freshness when
+        -- available. The calibration shows echo alone leads systematically
+        -- short (echo mean 0.227 vs rtt 0.263), so a 60/40 blend avoids
+        -- the jump between echo-present and echo-absent without losing
+        -- the freshness signal. When echo is stale/nil, rtt stands alone.
+        local pipeline: number = echo
+            and (rtt * 0.6 + echo * 0.4)
+            or rtt
         -- Full transport, NOT the one-way half -- and this is measured,
         -- not assumed: in the saved calibration sessions the confirmed
         -- hits cluster at about +14 ms against the confirmation instant
         -- (a full round trip after firing) and at about -55 ms against
         -- the receive instant, so the server scores the shot as if it
         -- rewound by the shooter's whole ping. v85 halved this on a
-        -- no-rewind theory and led systematically short. The closed-loop
-        -- correction below still re-centres the residual error.
+        -- no-rewind theory and led systematically short.
         local horizon: number = pipeline
             + settings.interpolation
             + manualLead()
         if settings.autoLead then
-            -- The correction belongs to the automatic model. A manual offset
-            -- is the user saying they know the transport better, so it is not
-            -- silently adjusted on top.
-            horizon += leadCorrection()
             horizon = math.min(horizon, MAX_AUTO_LEAD)
         end
         return math.clamp(horizon, 0.005, MAX_HORIZON), rtt, echo
@@ -7298,7 +7539,9 @@ function Module.init(runtime: any): any
     local function knifeHorizon(): (number, number, number?)
         local rtt: number = robustRtt()
         local echo: number? = echoMedian()
-        local pipeline: number = echo or rtt
+        local pipeline: number = echo
+            and (rtt * 0.6 + echo * 0.4)
+            or rtt
         -- Same full-transport rule as the gun (measured the same way:
         -- the blade's effective spawn behaves like a full rewind, so
         -- the intercept leads the whole round trip plus flight time).
@@ -8662,6 +8905,7 @@ end)
 local mm2Settings = {
     shootMode = "Manual",
     shootWallCheck = true,
+    shootRaw = false,
     silentAim = false,
     shootKey = Enum.KeyCode.Unknown,
     shootTarget = "",
@@ -20125,23 +20369,23 @@ function Module.init(context: Runtime): any
     })
     fly:CreateSlider({
         Name = "Horizontal speed",
-        Min = 10,
+        Min = -500,
         Max = 500,
         Default = flySettings.speed,
         Function = function(value: number): ()
             flySettings.speed = value
         end,
-        Tooltip = "Studs per second while holding WASD.",
+        Tooltip = "Studs per second while holding WASD. Negative values reverse the direction.",
     })
     fly:CreateSlider({
         Name = "Vertical speed",
-        Min = 10,
+        Min = -350,
         Max = 350,
         Default = flySettings.verticalSpeed,
         Function = function(value: number): ()
             flySettings.verticalSpeed = value
         end,
-        Tooltip = "Studs per second while rising or descending.",
+        Tooltip = "Studs per second while rising or descending. Negative values reverse the direction.",
     })
     fly:CreateSlider({
         Name = "Response multiplier",
@@ -23187,7 +23431,7 @@ function Module.init(context: Runtime): any
         toggleGravity,
         {categoryName = "World"}
     )
-    addNumberOption(GravityFeature, "Gravity value", gravitySettings.value, 0, 500, function(value)
+    addNumberOption(GravityFeature, "Gravity value", gravitySettings.value, -500, 500, function(value)
         gravitySettings.value = value
         if GravityFeature.enabled then
             GravityFeature:SetStatus(tostring(math.round(value)))
@@ -23488,7 +23732,7 @@ function Module.init(context: Runtime): any
     jump:CreateSlider({
         Name = "Jump power",
         Show = {Option = "Custom jump power", Values = {true}},
-        Min = 0,
+        Min = -500,
         Max = 500,
         Default = 80,
         Function = function(value: number): ()
@@ -23496,7 +23740,7 @@ function Module.init(context: Runtime): any
                 jump:SetStatus(tostring(math.round(value)))
             end
         end,
-        Tooltip = "Character jump power (default Roblox jump is 50).",
+        Tooltip = "Character jump power (default Roblox jump is 50). Negative values launch the character downward.",
     })
 
     jump:CreateButton({
@@ -23510,10 +23754,10 @@ function Module.init(context: Runtime): any
 
     jump:CreateSlider({
         Name = "High jump velocity",
-        Min = 25,
+        Min = -250,
         Max = 250,
         Default = 72,
-        Tooltip = "Vertical velocity applied when High Jump button is pressed.",
+        Tooltip = "Vertical velocity applied when High Jump button is pressed. Negative values launch the character downward.",
     })
 
     jump:CreateToggle({
@@ -23538,10 +23782,10 @@ function Module.init(context: Runtime): any
             {Option = "Infinite jump", Values = {true}},
             {Option = "Infinite jump mode", Values = {"Normal", "Fall"}},
         },
-        Min = 10,
+        Min = -250,
         Max = 250,
         Default = 50,
-        Tooltip = "Vertical impulse applied during mid-air jumps.",
+        Tooltip = "Vertical impulse applied during mid-air jumps. Negative values push the character downward.",
     })
 
     jump:CreateSlider({
@@ -23550,10 +23794,10 @@ function Module.init(context: Runtime): any
             {Option = "Infinite jump", Values = {true}},
             {Option = "Infinite jump mode", Values = {"Rise"}},
         },
-        Min = 10,
+        Min = -350,
         Max = 350,
         Default = 75,
-        Tooltip = "Vertical speed while holding jump in Rise mode.",
+        Tooltip = "Vertical speed while holding jump in Rise mode. Negative values descend instead of rising.",
     })
 
     jump:CreateSlider({
@@ -28444,7 +28688,12 @@ function Module.init(context)
         table.clear(original); table.clear(applied)
     end
     local function tick(dt)
-        write("Brightness",card.Options.Brightness.Value)
+        -- Roblox does not accept math.huge for Lighting.Brightness; clamp
+        -- the display value to a large finite number so infinity on the
+        -- slider still produces a fully white screen.
+        local brightness = card.Options.Brightness.Value
+        if brightness == math.huge then brightness = 1000 end
+        write("Brightness",brightness)
         write("GlobalShadows",false)
         write("FogEnd",100000)
         write("Ambient",Color3.fromRGB(178,178,178))
@@ -28464,7 +28713,7 @@ function Module.init(context)
             card:Clean(restore)
             tick(0);card:Loop(tick)
         end})
-    card:CreateSlider({Name="Brightness",Min=0,Max=10,Default=3})
+    card:CreateSlider({Name="Brightness",Min=-10,Max=math.huge,Default=3})
     card:CreateToggle({Name="Time Changer",Default=false,Function=function(value) if not value then restoreTime() end end})
     card:CreateSlider({Name="Time",Min=0,Max=24,Default=14,Show={Option="Time Changer",Values={true}}})
     card:CreateToggle({Name="Fast time",Default=false,Show={Option="Time Changer",Values={true}},Tooltip="Loop a full day every four seconds."})
@@ -40494,19 +40743,41 @@ function Module.init(context: any): WidgetLibrary
         end
     end))
 
-    local function isFiniteNumber(value: any): boolean
-        return type(value) == "number"
-            and value == value
-            and value ~= math.huge
-            and value ~= -math.huge
+    -- Accepts all real numbers including +/- math.huge so sliders can
+    -- express "infinite" (e.g. Fullbright Brightness = inf → white screen).
+    local function isNumber(value: any): boolean
+        return type(value) == "number" and value == value
     end
 
     local function formatCompactNumber(value: number): string
+        if value == math.huge then return "inf" end
+        if value == -math.huge then return "-inf" end
         local magnitude: number = math.abs(value)
         if magnitude >= 1e9 or (magnitude > 0 and magnitude < 1e-4) then
             return string.format("%.3e", value)
         end
         return string.format("%.12g", value)
+    end
+
+    -- When a slider's maximum is infinite, the linear position formula
+    -- (value-min)/(max-min) collapses to 0 for every finite value. Use a
+    -- practical display cap so the knob still moves, while the actual
+    -- value (and any typed infinity) passes through untouched.
+    local function effectiveMax(minimum: number, maximum: number): number
+        if maximum ~= math.huge then return maximum end
+        return math.max(100, math.abs(minimum) * 10)
+    end
+
+    -- Parse text-box input that may contain infinity keywords.
+    local function parseNumericText(text: string): number?
+        local cleaned = string.lower(text:gsub("%s+", ""))
+        if cleaned == "inf" or cleaned == "infinity" or cleaned == "+inf" then
+            return math.huge
+        end
+        if cleaned == "-inf" or cleaned == "-infinity" then
+            return -math.huge
+        end
+        return tonumber(text)
     end
 
     local function addNumberOption(
@@ -40524,7 +40795,7 @@ function Module.init(context: any): WidgetLibrary
         local storedValue: number? = tonumber(configData.values[optionKey])
 
         -- The interval is a drag guide, not a limit on typed/profile values.
-        local value: number = isFiniteNumber(storedValue)
+        local value: number = isNumber(storedValue)
             and (storedValue :: number)
             or defaultValue
         local integerOnly: boolean = defaultValue % 1 == 0
@@ -40674,12 +40945,18 @@ function Module.init(context: any): WidgetLibrary
             (valueStroke :: UIStroke).Transparency = 1
         end
 
-        valueInput.PlaceholderText = "Any finite number"
+        valueInput.PlaceholderText = "Any number (type inf for infinity)"
 
         local editing: boolean = false
 
         local function quantize(raw: number, fromSlider: boolean): number
             if not fromSlider then return raw end
+            -- When maximum is infinite, skip the upper clamp and stepping
+            -- so an infinity typed or dragged in passes through untouched.
+            if maximum == math.huge then
+                if raw < minimum then raw = minimum end
+                return raw
+            end
             raw = math.clamp(raw, minimum, maximum)
             local stepped: number = minimum
                 + math.round((raw - minimum) / step) * step
@@ -40691,13 +40968,25 @@ function Module.init(context: any): WidgetLibrary
             persist: boolean,
             _fromSlider: boolean
         ): ()
-            if not isFiniteNumber(nextValue) then
+            if not isNumber(nextValue) then
+                return
+            end
+            -- Infinity is only valid when the slider explicitly opts in
+            -- by having an infinite maximum (e.g. Fullbright Brightness).
+            -- On finite-range sliders like Speed, reject it so a typed
+            -- "inf" or "1e999" does not corrupt the previous value.
+            if (nextValue == math.huge or nextValue == -math.huge)
+                and maximum ~= math.huge then
                 return
             end
             value = quantize(nextValue, _fromSlider)
-            local alpha: number = maximum == minimum
+            -- When the slider maximum is infinite, use the display cap
+            -- so the knob still moves for finite values. Infinity itself
+            -- snaps the knob to the far right.
+            local sliderMax: number = effectiveMax(minimum, maximum)
+            local alpha: number = sliderMax == minimum
                 and 0
-                or math.clamp((value - minimum) / (maximum - minimum), 0, 1)
+                or math.clamp((value - minimum) / (sliderMax - minimum), 0, 1)
             fill.Size = UDim2.fromScale(alpha, 1)
             knob.Position = UDim2.fromScale(alpha, 0.5)
             if not editing then
@@ -40717,7 +41006,7 @@ function Module.init(context: any): WidgetLibrary
                 0,
                 1
             )
-            setValue(minimum + (maximum - minimum) * alpha, true, true)
+            setValue(minimum + (effectiveMax(minimum, maximum) - minimum) * alpha, true, true)
         end
 
         if state.valueControls then
@@ -40759,9 +41048,9 @@ function Module.init(context: any): WidgetLibrary
         end))
 
         trackUiConnection(valueInput.FocusLost:Connect(function(): ()
-            local parsed: number? = tonumber(valueInput.Text)
+            local parsed: number? = parseNumericText(valueInput.Text)
             editing = false
-            if not isFiniteNumber(parsed) then
+            if not isNumber(parsed) then
                 valueInput.Text = formatCompactNumber(value)
                 notify(labelText .. ": invalid numeric value")
                 return
@@ -40790,11 +41079,11 @@ function Module.init(context: any): WidgetLibrary
         local storedLow: number? = tonumber(configData.values[baseKey .. ".Low"])
         local storedHigh: number? = tonumber(configData.values[baseKey .. ".High"])
 
-        local low: number = isFiniteNumber(storedLow)
+        local low: number = isNumber(storedLow)
             and (storedLow :: number)
             or tonumber(definition.defaultLow)
             or minimum
-        local high: number = isFiniteNumber(storedHigh)
+        local high: number = isNumber(storedHigh)
             and (storedHigh :: number)
             or tonumber(definition.defaultHigh)
             or maximum
@@ -41015,9 +41304,9 @@ function Module.init(context: any): WidgetLibrary
             lowBox.CursorPosition = #lowBox.Text + 1
         end))
         trackUiConnection(lowBox.FocusLost:Connect(function(): ()
-            local parsed: number? = tonumber(lowBox.Text)
+            local parsed: number? = parseNumericText(lowBox.Text)
             editingLow = false
-            if not isFiniteNumber(parsed) then
+            if not isNumber(parsed) then
                 lowBox.Text = formatCompactNumber(low)
                 notify(labelText .. ": invalid numeric value")
                 return
@@ -41033,9 +41322,9 @@ function Module.init(context: any): WidgetLibrary
             highBox.CursorPosition = #highBox.Text + 1
         end))
         trackUiConnection(highBox.FocusLost:Connect(function(): ()
-            local parsed: number? = tonumber(highBox.Text)
+            local parsed: number? = parseNumericText(highBox.Text)
             editingHigh = false
-            if not isFiniteNumber(parsed) then
+            if not isNumber(parsed) then
                 highBox.Text = formatCompactNumber(high)
                 notify(labelText .. ": invalid numeric value")
                 return

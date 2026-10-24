@@ -271,7 +271,7 @@ function Module.init(context: Runtime): any
     jump:CreateSlider({
         Name = "Jump power",
         Show = {Option = "Custom jump power", Values = {true}},
-        Min = 0,
+        Min = -500,
         Max = 500,
         Default = 80,
         Function = function(value: number): ()
@@ -279,7 +279,7 @@ function Module.init(context: Runtime): any
                 jump:SetStatus(tostring(math.round(value)))
             end
         end,
-        Tooltip = "Character jump power (default Roblox jump is 50).",
+        Tooltip = "Character jump power (default Roblox jump is 50). Negative values launch the character downward.",
     })
 
     jump:CreateButton({
@@ -293,10 +293,10 @@ function Module.init(context: Runtime): any
 
     jump:CreateSlider({
         Name = "High jump velocity",
-        Min = 25,
+        Min = -250,
         Max = 250,
         Default = 72,
-        Tooltip = "Vertical velocity applied when High Jump button is pressed.",
+        Tooltip = "Vertical velocity applied when High Jump button is pressed. Negative values launch the character downward.",
     })
 
     jump:CreateToggle({
@@ -321,10 +321,10 @@ function Module.init(context: Runtime): any
             {Option = "Infinite jump", Values = {true}},
             {Option = "Infinite jump mode", Values = {"Normal", "Fall"}},
         },
-        Min = 10,
+        Min = -250,
         Max = 250,
         Default = 50,
-        Tooltip = "Vertical impulse applied during mid-air jumps.",
+        Tooltip = "Vertical impulse applied during mid-air jumps. Negative values push the character downward.",
     })
 
     jump:CreateSlider({
@@ -333,10 +333,10 @@ function Module.init(context: Runtime): any
             {Option = "Infinite jump", Values = {true}},
             {Option = "Infinite jump mode", Values = {"Rise"}},
         },
-        Min = 10,
+        Min = -350,
         Max = 350,
         Default = 75,
-        Tooltip = "Vertical speed while holding jump in Rise mode.",
+        Tooltip = "Vertical speed while holding jump in Rise mode. Negative values descend instead of rising.",
     })
 
     jump:CreateSlider({

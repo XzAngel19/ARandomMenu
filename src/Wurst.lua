@@ -219,7 +219,7 @@ local RUNTIME_RAW_BASE: string =
         .. RUNTIME_BRANCH
         .. "/"
 
-local SOURCE_STAMP: string = "v119-20261024-mvs-structure"
+local SOURCE_STAMP: string = "v120-20261024-raw-coinsaura-negvals"
 
 local BOOT_STARTED_AT: number = os.clock()
 local BOOT_FINGERPRINT_SECONDS: number = 0
@@ -5111,6 +5111,7 @@ local function loadGameModule(
         "src/games/MM2/Fun/BlurtRoles.lua",
         "src/games/MM2/Other/AutoUnbox.lua",
         "src/games/MM2/Other/AutoFarm.lua",
+        "src/games/MM2/Other/CoinsAura.lua",
         "src/games/MM2/Other/TrajectoryCalibration.lua",
         "src/games/MM2/Other/CalibrationTrails.lua",
     } elseif moduleName == "VD" then {
