@@ -155,7 +155,62 @@ src/Wurst.lua               -- fingerprint, loader, registro y cleanup global
   se eliminan o migran de forma explícita; no se restaura automáticamente una
   automatización antigua solo porque su estado guardado era `true`.
 
-### 3. Cómo se crea una tarjeta y sus opciones
+### 3. Del archivo a una tarjeta visible: registro obligatorio
+
+Hay tres hechos distintos que no se deben confundir:
+
+```text
+Estar en bundle.lua  = la fuente está disponible para el loader.
+Estar en una load list = el loader ejecuta init del módulo.
+createUniversalFeature = ese init registra una tarjeta y sus opciones.
+```
+
+Que un archivo compile y viaje en el bundle **no significa que se ejecute**;
+que su `init` se ejecute tampoco significa necesariamente que cree una tarjeta.
+Sprint es el ejemplo: se carga como módulo técnico de MM2, pero registra una
+opción dentro de Speed mediante la tarjeta que ya existe.
+
+- **Módulo universal nuevo:** añade su `{path, name, category}` a
+  `src/libraries/Manifest.lua` y exactamente lo mismo al `fallbackManifest` de
+  `src/Wurst.lua`. El manifest normal y el fallback no pueden describir menús
+  distintos. El módulo debe devolver `init(context)` y `destroy()`; el loader
+  universal llama después a cada `init` en el orden del manifest.
+- **Módulo de un game:** añade la ruta a la lista explícita de
+  `loadGameModule` en `src/Wurst.lua`, respetando las dependencias. MM2 exige
+  que la lista cubra exactamente sus archivos; X2 carga Rules → base/core →
+  AutoFarm. Un archivo como Sprint necesita aparecer ahí aunque no añada una
+  tarjeta propia. Si sólo es un helper sin `init`/`destroy`, debe cargarlo su
+  dueño mediante la ruta existente, no fingir que es un módulo autónomo.
+- **Juego o PlaceId nuevo:** un archivo `src/Profile/<PlaceId>.lua` sólo declara
+  metadata y secciones; **no registra gameplay por sí solo**. Hay que revisar
+  el mapa `GAME_MODULES`, la rama de `loadGameModule`, `GAME_CHECK`, la llamada
+  `registerPlaceModule`, cleanup y, cuando proceda, fingerprint. Para añadir
+  otro PlaceId de un juego ya soportado, conserva el mismo module key y comprueba
+  también su perfil; no clones el árbol completo.
+- **Tarjeta:** dentro de un módulo ya cargado,
+  `src/guis/Wurst/Code/Cards.lua:createUniversalFeature` la inserta en el
+  `registry` elegido y en `allFeatures`, además de conectar búsqueda, UI y
+  restauración de configuración. Por eso hay que pasar el `parent`, `registry`
+  y `categoryName` correctos. El `category` del manifest identifica la entrada
+  del módulo, pero no sustituye la categoría configurada al crear la tarjeta.
+- **Opción dentro de una tarjeta existente:** no añadas otra entrada universal
+  si el archivo no es un módulo independiente. El módulo técnico sí necesita
+  una ruta de carga; después obtiene la tarjeta dueña y registra el widget, como
+  hace Sprint con Speed.
+
+Al retirar una función se aplica el recorrido inverso: quitar widget/tarjeta,
+cleanup, entrada de carga y entradas del manifest/fallback que correspondan;
+después regenerar el bundle. No dejar un archivo huérfano «por si acaso».
+
+Las pruebas de esta frontera ya existen: `tools/test_manifest_sync.py` detecta
+módulos universales sin registrar, paths ausentes/duplicados, divergencia del
+fallback y diferencias en la lista MM2. `tools/audit_menu.py` comprueba lo que
+realmente se registra al arrancar. Si se añade o retira una tarjeta, hay que
+revisar también el inventario 38/37 documentado y cualquier contrato de menú;
+si sólo se añade una opción, la prueba debe impedir que aparezca una tarjeta
+extra. La salida final sigue siendo `bash tools/validate.sh` con boot limpio.
+
+### 4. Cómo se crea una tarjeta y sus opciones
 
 La API común es `createUniversalFeature` con `parent`, `registry` y
 `categoryName`. Las opciones se añaden con los widgets compartidos:
@@ -190,7 +245,7 @@ existe.
   apagar el master se cancela la acción pendiente pero se conserva la
   preferencia de la subopción cuando eso sea útil.
 
-### 4. Adaptadores nativos y evidencia mínima
+### 5. Adaptadores nativos y evidencia mínima
 
 Antes de escribir un ataque se identifica la cadena real:
 **input/acción → Tool o controller → animación/estado → remote observado →
@@ -866,7 +921,7 @@ boot y las 61 suites:
   el comportamiento y `validate.sh` verde antes de pushear.
 
 ---
-*Última actualización: 2026-10-24 · guía de arquitectura, ubicación de funciones
-y toolchain reproducible ampliadas; el runtime sigue en v119. Al publicar una
-versión nueva, actualiza la línea de estado de arriba y cualquier sección que
-cambie.*
+*Última actualización: 2026-10-24 · arquitectura, registro de módulos, ubicación
+de funciones y toolchain reproducible documentados; el runtime sigue en v119.
+Al publicar una versión nueva, actualiza la línea de estado de arriba y cualquier
+sección que cambie.*
