@@ -17,6 +17,10 @@ ROOT = Path(__file__).resolve().parent.parent
 RULES = ROOT / "src" / "games" / "X2Duels" / "Rules.lua"
 BASE = ROOT / "src" / "games" / "X2Duels" / "base.lua"
 ESP = ROOT / "src" / "games" / "X2Duels" / "Render" / "TeamESP.lua"
+AUTOFARM = ROOT / "src" / "games" / "X2Duels" / "Other" / "AutoFarm.lua"
+TRIGGERBOT = ROOT / "src" / "games" / "universal" / "Combat" / "TriggerBot.lua"
+DECOMPILER = ROOT / "tools" / "X2DuelsDecompiler.luau"
+LUAU_COMPILE = os.environ.get("LUAU_COMPILE", str(ROOT / "tools" / "luau" / "bin" / "luau-compile"))
 LUAU = os.environ.get("LUAU", str(ROOT / "tools" / "luau" / "bin" / "luau"))
 
 PRELUDE = r'''
@@ -157,11 +161,14 @@ def forbid(source: str, needle: str, label: str) -> None:
 def run_integration_contracts() -> None:
     base = BASE.read_text(encoding="utf-8")
     esp = ESP.read_text(encoding="utf-8")
+    farm = AUTOFARM.read_text(encoding="utf-8")
+    trigger = TRIGGERBOT.read_text(encoding="utf-8")
+    decompiler = DECOMPILER.read_text(encoding="utf-8")
     wurst = (ROOT / "src" / "Wurst.lua").read_text(encoding="utf-8")
 
-    # The evidence does not contain combat schemas. Keep all combat on native
-    # activation and real GUI signals rather than fabricated FireServer calls.
+    # No combat or event argument schema is invented from remote names.
     forbid(base, ":FireServer(", "unverified combat/match remote request")
+    forbid(farm, ":FireServer(", "unverified pumpkin remote request")
     forbid(base, "host.mouse1press", "desktop-only firing")
     forbid(base, "pcall(mouse1press", "desktop-only firing")
     forbid(base, "VirtualInputManager", "mouse/touch injection substitute")
@@ -169,15 +176,28 @@ def run_integration_contracts() -> None:
     require(base, "tool:Activate()", "native mobile-compatible activation")
     require(base, 'settings.senderMode == "CFrame"', "CFrame sender")
     require(base, '{"Legit", "Silent"}', "Legit/Silent modes")
-    require(base, '"Target Nearest Player', "nearest-target card")
-    require(base, '"Pistol"', "dedicated gun Trigger Bot option")
-    require(base, '"Knife"', "dedicated knife Trigger Bot option")
+    require(base, '"Auto Shoot · "', "mode-labelled nested Auto Shoot")
+    require(base, "settings.silentAim and settings.autoShoot", "master-gated Auto Shoot")
+    require(base, 'host.addToggleOption(autoWinCard, "Play Again"', "Auto Win Play Again option")
+    require(base, '"Auto Win",', "Auto Win card")
+    forbid(base, '"Trigger Bot"', "duplicate X2 TriggerBot card")
+    forbid(base, '"Auto Shoot",\n        "Equip', "standalone Auto Shoot card")
+    require(base, '"Hitbox",', "singular Hitbox card")
+    require(base, '"Exploits"', "Hitbox Exploits category")
     require(base, "registerTeamProvider", "shared Wurst team provider")
     require(base, "restoreAllHitboxes()", "hitbox restoration")
     require(base, "uninstallHooks()", "silent-hook cleanup")
     require(base, "Packages/Networking/RE/Match/MatchResults", "results event")
+    require(base, "Packages/Networking/RE/Match/RemovePlayer", "round-ended event")
     require(base, "Packages/Networking/RE/Match/PlayerRespawned", "round event")
     require(base, "clickNativeButton", "real Play Again button path")
+
+    require(trigger, "host.state.x2duelsCore", "single TriggerBot X2 adapter")
+    require(trigger, "x2Core.equippedTool()", "TriggerBot equipped Gun/Knife")
+    require(trigger, "x2Core.activateNative(tool, target)", "TriggerBot native activation")
+    require(farm, "^PumpkinCurrency_%d+$", "Halloween spawnable discovery")
+    require(farm, "host.firetouchinterest", "native pumpkin contact")
+    require(farm, "restoreSavedPosition()", "farm position cleanup")
     require(esp, 'Enemy = Color3.fromRGB(255, 82, 82)', "enemy ESP color")
     require(esp, 'Teammate = Color3.fromRGB(75, 220, 135)', "team ESP color")
     require(esp, 'Unknown = Color3.fromRGB(255, 190, 75)', "unknown ESP color")
@@ -187,15 +207,29 @@ def run_integration_contracts() -> None:
     require(wurst, 'X2DuelsActive = ACTIVE_GAME_MODULE == "X2Duels"', "GAME_CHECK")
     require(wurst, '"src/games/X2Duels/Rules.lua"', "rules loader path")
     require(wurst, '"src/games/X2Duels/base.lua"', "base loader path")
+    require(wurst, '"src/games/X2Duels/Other/AutoFarm.lua"', "farm loader path")
     require(wurst, '"src/games/X2Duels/Render/TeamESP.lua"', "ESP loader path")
+
+    require(decompiler, "remote-calls.jsonl", "remote call capture")
+    require(decompiler, "parent = parentPath(remote)", "remote parent capture")
+    require(decompiler, "arguments = serialize(arguments)", "remote argument capture")
+    require(decompiler, "environment.decompile", "executor decompiler")
+    require(decompiler, "environment.getscriptbytecode", "bytecode fallback")
+    require(decompiler, "return oldNamecall(self, ...)", "unmodified remote forwarding")
+    forbid(decompiler, "loadstring(", "captured-code execution")
+    compiled = subprocess.run(
+        [LUAU_COMPILE, str(DECOMPILER)], cwd=ROOT,
+        capture_output=True, text=True, check=False,
+    )
+    if compiled.returncode:
+        raise SystemExit(compiled.stdout + compiled.stderr)
 
     for place_id in (92876937625630, 135856908115931):
         profile = ROOT / "src" / "Profile" / f"{place_id}.lua"
         text = profile.read_text(encoding="utf-8")
         require(text, 'key = "X2Duels"', f"profile {place_id}")
         require(text, '"MVSD"', f"existing MVS section {place_id}")
-    print("X2Duels native-combat and registration contracts: PASS")
-
+    print("X2Duels architecture, farm, TriggerBot and decompiler contracts: PASS")
 
 def run_bundle_boot() -> None:
     """Boot the real stamped bundle as X2 Duels and exercise card cleanup."""
@@ -211,43 +245,238 @@ def run_bundle_boot() -> None:
         "game = {\n    PlaceId = 92876937625630,\n    GameId = 20260716,",
         1,
     )
+    remote_setup = r'''
+local x2Replicated = game:GetService("ReplicatedStorage")
+local function x2Folder(parent, name)
+    local existing = parent:FindFirstChild(name)
+    if existing then return existing end
+    local folder = Instance.new("Folder")
+    folder.Name = name
+    folder.Parent = parent
+    return folder
+end
+local x2Packages = x2Folder(x2Replicated, "Packages")
+local x2Networking = x2Folder(x2Packages, "Networking")
+local x2RE = x2Folder(x2Networking, "RE")
+local x2Match = x2Folder(x2RE, "Match")
+local function x2Remote(name)
+    local remote = Instance.new("RemoteEvent")
+    remote.Name = name
+    remote.Parent = x2Match
+    return remote
+end
+X2MatchResults = x2Remote("MatchResults")
+X2RemovePlayer = x2Remote("RemovePlayer")
+X2WinNotification = x2Remote("WinNotification")
+X2PlayerRespawned = x2Remote("PlayerRespawned")
+local x2Local = game:GetService("Players").LocalPlayer
+-- Match Roblox's real hierarchy so WaitForChild scans this same PlayerGui.
+if x2Local.PlayerGui then x2Local.PlayerGui.Parent = x2Local end
+x2Local:SetAttribute("Team", "Red")
+x2Local:SetAttribute("Game", "HarnessMatchOne")
+'''
+    boot_anchor = "\nlocal ok, err = pcall(function()\n"
+    if generated.count(boot_anchor) != 1:
+        raise AssertionError("full-boot remote setup anchor changed")
+    generated = generated.replace(boot_anchor, "\n" + remote_setup + boot_anchor, 1)
     generated += r'''
 local expected = {
     ["Auto Farm"] = true,
+    ["Auto Win"] = true,
     ["Silent AIM"] = true,
-    ["Auto Shoot"] = true,
     ["Knife Throw"] = true,
     ["Kill Aura"] = true,
-    ["Trigger Bot"] = true,
-    ["Hitboxes"] = true,
+    ["Hitbox"] = true,
     ["Team ESP"] = true,
-    ["Play Again"] = true,
 }
 local seen = {}
+local featuresByName = {}
+local x2CardCount = 0
 for _, feature in ipairs(ex.allFeatures) do
-    if feature.sectionName == "MVSD" and expected[feature.name] then
+    if feature.sectionName == "MVSD" then
+        x2CardCount += 1
+        assert(expected[feature.name], "unexpected/duplicate X2 card: " .. feature.name)
         assert(not seen[feature.name], "duplicate X2 card: " .. feature.name)
         seen[feature.name] = true
+        featuresByName[feature.name] = feature
         local enabled, enableError = pcall(feature.onToggle, true)
         assert(enabled, "X2 enable " .. feature.name .. ": " .. tostring(enableError))
         local disabled, disableError = pcall(feature.onToggle, false)
         assert(disabled, "X2 disable " .. feature.name .. ": " .. tostring(disableError))
     end
 end
+assert(x2CardCount == 7, "expected exactly seven X2 cards, got " .. tostring(x2CardCount))
 for name, _ in pairs(expected) do
     assert(seen[name], "X2 card did not boot: " .. name)
 end
+assert(ex.state.toggleControls["MVSD.SilentAIM.AutoShoot"],
+    "Auto Shoot is not nested under Silent AIM")
+assert(ex.state.toggleControls["MVSD.AutoWin.PlayAgain"],
+    "Play Again is not nested under Auto Win")
 assert(ex.state.x2duelsCore and ex.state.x2duelsRules,
     "X2 shared core/rules were not published")
 assert(ex.state.gameBridge.teamProvider
     and ex.state.gameBridge.teamProvider.Name == "X2Duels",
     "X2 team provider was not registered")
+
+local silentFeature = featuresByName["Silent AIM"]
+local autoShootLabel = nil
+for _, row in ipairs(silentFeature.optionRows) do
+    for _, child in ipairs(row:GetChildren()) do
+        if child.Name == "OptionLabel" and string.sub(child.Text, 1, 10) == "Auto Shoot" then
+            autoShootLabel = child
+            break
+        end
+    end
+end
+assert(autoShootLabel, "Auto Shoot mode label was not created")
+local autoShootControl = ex.state.toggleControls["MVSD.SilentAIM.AutoShoot"]
+local modeControl = ex.state.valueControls["MVSD.SilentAIM.Mode"]
+assert(modeControl and modeControl.apply, "Silent AIM Mode control was not created")
+autoShootControl.setChecked(true)
+assert(silentFeature.status == nil, "master-off Auto Shoot exposed an active status")
+modeControl.apply("Silent")
+assert(autoShootLabel.Text == "Auto Shoot · Silent", "Silent mode label did not update")
+modeControl.apply("Legit")
+assert(autoShootLabel.Text == "Auto Shoot · Legit", "Legit mode label did not update")
+silentFeature.onToggle(true)
+assert(silentFeature.status == "Legit", "enabled Legit Auto Shoot status is wrong")
+silentFeature.onToggle(false)
+assert(silentFeature.status == nil, "disabled master left an active Auto Shoot status")
+assert(ex.configData.states["MVSD.SilentAIM.AutoShoot"] == true,
+    "master switch erased the Auto Shoot preference")
+modeControl.apply("Silent")
+assert(autoShootLabel.Text == "Auto Shoot · Silent" and silentFeature.status == nil,
+    "master-off Silent label/status are inconsistent")
+modeControl.apply("Legit")
+autoShootControl.setChecked(false)
+
+-- Synthetic event schemas exercise only the local state machine. They are not
+-- presented as recovered live MatchResults/WinNotification argument schemas.
+local core = ex.state.x2duelsCore
+local coreHandle = ex.featureConnections.X2DuelsCore
+local coreTask = nil
+for _, scheduled in pairs(ex.TaskManager.tasks) do
+    if scheduled.handle == coreHandle then
+        coreTask = scheduled
+        break
+    end
+end
+assert(coreTask, "Auto Win core callback was not registered")
+local autoWinFeature = featuresByName["Auto Win"]
+local playAgainButton = Instance.new("TextButton")
+playAgainButton.Name = "PlayAgainButton"
+playAgainButton.Text = "Play Again"
+playAgainButton.Visible = true
+playAgainButton.Parent = game:GetService("Players").LocalPlayer.PlayerGui
+local playAgainClicks = 0
+playAgainButton.Activated:Connect(function()
+    playAgainClicks += 1
+    playAgainButton.Visible = false -- Native UI normally disappears after the click.
+end)
+local previousFireSignal = firesignal
+firesignal = function(signal)
+    signal:Fire()
+end
+local realClock = os.clock
+local clockNow = math.max(realClock(), 10)
+os.clock = function()
+    return clockNow
+end
+autoWinFeature.activate()
+assert(core.settings.autoWin and autoWinFeature.enabled, "Auto Win did not really enable")
+X2WinNotification.OnClientEvent:Fire("Red")
+assert(core.getWins() == 1, "first confirmed win was not counted")
+X2WinNotification.OnClientEvent:Fire("Red")
+assert(core.getWins() == 1, "same-round win was counted twice")
+X2RemovePlayer.OnClientEvent:Fire()
+coreTask.callback(0.1)
+assert(playAgainClicks == 1, "RemovePlayer did not lead to native Play Again")
+X2MatchResults.OnClientEvent:Fire({Winner = "Red"})
+assert(core.getWins() == 1, "MatchResults duplicated the same-round win")
+clockNow += 1
+X2PlayerRespawned.OnClientEvent:Fire(game:GetService("Players").LocalPlayer)
+X2WinNotification.OnClientEvent:Fire("Red")
+assert(core.getWins() == 2, "second round win was not counted")
+X2RemovePlayer.OnClientEvent:Fire()
+clockNow += 1
+local x2Local = game:GetService("Players").LocalPlayer
+x2Local:SetAttribute("Game", nil)
+coreTask.callback(0.1)
+x2Local:SetAttribute("Game", "HarnessMatchTwo")
+coreTask.callback(0.1)
+X2WinNotification.OnClientEvent:Fire("Red")
+assert(core.getWins() == 3, "lobby transition suppressed the next match win")
+clockNow += 1
+X2PlayerRespawned.OnClientEvent:Fire(x2Local)
+X2WinNotification.OnClientEvent:Fire("Red")
+assert(core.getWins() == 4, "fourth confirmed win was not counted")
+clockNow += 1
+X2PlayerRespawned.OnClientEvent:Fire(x2Local)
+X2WinNotification.OnClientEvent:Fire("Red")
+assert(core.getWins() == 5, "fifth confirmed win was not counted")
+assert(not core.settings.autoWin and not autoWinFeature.enabled,
+    "Auto Win did not switch off at five wins")
+assert(ex.configData.states["MVSD.AutoWin"] == false,
+    "Auto Win completion was not persisted as disabled")
+X2WinNotification.OnClientEvent:Fire("Red")
+assert(core.getWins() == 5, "completed Auto Win accepted a sixth win")
+os.clock = realClock
+firesignal = previousFireSignal
+playAgainButton:Destroy()
+
+-- Offline behavior only: this proves discovery, a native contact attempt and
+-- position restoration. It does not prove that a live server awards currency.
+local character = game:GetService("Players").LocalPlayer.Character
+local root = character and character:FindFirstChild("HumanoidRootPart")
+assert(root, "farm harness has no HumanoidRootPart")
+local originalCFrame = root.CFrame
+local pumpkinModel = Instance.new("Model")
+pumpkinModel.Name = "PumpkinCurrency_99"
+pumpkinModel.Parent = workspace
+local pumpkin = Instance.new("Part")
+pumpkin.Name = "Pumpkin"
+pumpkin.Size = Vector3.new(2, 2, 2)
+pumpkin.Position = Vector3.new(30, 4, 30)
+pumpkin.CFrame = CFrame.new(pumpkin.Position)
+pumpkin.Transparency = 0
+pumpkin.CanTouch = false -- Matches the saved place evidence.
+pumpkin.Parent = pumpkinModel
+local previousFireTouch = firetouchinterest
+local touchCalls = {}
+firetouchinterest = function(rootPart, coinPart, touchState)
+    table.insert(touchCalls, {rootPart, coinPart, touchState})
+end
+featuresByName["Auto Farm"].onToggle(true)
+local farmHandle = ex.featureConnections.X2DuelsAutoFarm
+assert(farmHandle, "farm task was not connected")
+local farmTask = nil
+for _, scheduled in pairs(ex.TaskManager.tasks) do
+    if scheduled.handle == farmHandle then
+        farmTask = scheduled
+        break
+    end
+end
+assert(farmTask, "farm callback was not registered")
+farmTask.callback(0.1)
+assert(#touchCalls == 2, "expected one native touch begin/end pair")
+assert(touchCalls[1][1] == root and touchCalls[1][2] == pumpkin,
+    "farm touched the wrong instances")
+assert(touchCalls[1][3] == 0 and touchCalls[2][3] == 1,
+    "farm touch states were not begin/end")
+assert(root.CFrame.Position.X == 30 and root.CFrame.Position.Y == 5.25
+    and root.CFrame.Position.Z == 30, "farm did not move into pumpkin contact")
+featuresByName["Auto Farm"].onToggle(false)
+assert(root.CFrame == originalCFrame, "farm did not restore its saved CFrame")
+firetouchinterest = previousFireTouch
+pumpkinModel:Destroy()
+
 ex.state.destruct()
 assert(ex.state.x2duelsCore == nil, "X2 core survived destroy")
 assert(ex.state.x2duelsRules == nil, "X2 rules survived destroy")
 assert(ex.state.mvsdCore == nil, "X2 compatibility core survived destroy")
 assert(ex.state.gameBridge.teamProvider == nil, "X2 team provider survived destroy")
-print("[X2BOOT] 9 cards, toggle callbacks and cleanup: PASS")
+print("[X2BOOT] 7 cards, modes, Auto Win 5/5 + Play Again, pumpkin restore, cleanup: PASS")
 '''
     output_path = ROOT / "build" / "x2duels_boot.luau"
     output_path.write_text(generated, encoding="utf-8")
@@ -258,7 +487,7 @@ print("[X2BOOT] 9 cards, toggle callbacks and cleanup: PASS")
     if result.returncode:
         raise SystemExit(result.stdout + result.stderr)
     output = result.stdout
-    marker = "[X2BOOT] 9 cards, toggle callbacks and cleanup: PASS"
+    marker = "[X2BOOT] 7 cards, modes, Auto Win 5/5 + Play Again, pumpkin restore, cleanup: PASS"
     if marker not in output:
         raise AssertionError("X2 bundle boot marker missing\n" + output)
     print(marker)

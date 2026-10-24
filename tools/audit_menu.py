@@ -79,8 +79,8 @@ def build(debug: bool = True) -> Path:
     expose = (
         'do local __g = getgenv() if type(__g) == "table" '
         "then __g.__expose = {ThemeEngine = ThemeEngine, Theme = Theme, "
-        "state = state, configData = configData, "
-        "allFeatures = allFeatures} end end\n"
+        "state = state, configData = configData, TaskManager = TaskManager, "
+        "featureConnections = featureConnections, allFeatures = allFeatures} end end\n"
     )
     wurst = wurst.replace(anchor, expose + anchor)
 

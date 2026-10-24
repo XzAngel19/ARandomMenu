@@ -219,7 +219,7 @@ local RUNTIME_RAW_BASE: string =
         .. RUNTIME_BRANCH
         .. "/"
 
-local SOURCE_STAMP: string = "v115-20261024-x2duels-native"
+local SOURCE_STAMP: string = "v116-20261024-x2duels-halloween"
 
 local BOOT_STARTED_AT: number = os.clock()
 local BOOT_FINGERPRINT_SECONDS: number = 0
@@ -5086,6 +5086,7 @@ local function loadGameModule(
     } elseif moduleName == "X2Duels" then {
         "src/games/X2Duels/Rules.lua",
         "src/games/X2Duels/base.lua",
+        "src/games/X2Duels/Other/AutoFarm.lua",
         "src/games/X2Duels/Render/TeamESP.lua",
     } else {"src/games/" .. moduleName .. "/base.lua"}
     local moduleEnvironment: any = createGameModuleEnvironment(diagnostics)

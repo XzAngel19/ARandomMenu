@@ -143,6 +143,36 @@ function Module.init(context: Runtime): any
                 if protectedTargets and protectedTargets.isProtected(player) then
                     return
                 end
+
+                -- X2 Duels owns one native adapter here instead of registering
+                -- a second TriggerBot card/loop. Gun and Knife both use the
+                -- same core team filter and Tool:Activate() sender.
+                local x2Core: any = host.state and host.state.x2duelsCore
+                if x2Core and type(x2Core.isEnemy) == "function"
+                    and type(x2Core.activateNative) == "function" then
+                    if not x2Core.isEnemy(player, options["Teammates"].Value) then
+                        trigger:SetStatus("not opponent")
+                        return
+                    end
+                    local tool: Tool? = x2Core.equippedTool()
+                    local kind: string? = x2Core.toolKind(tool)
+                    if kind ~= "Gun" and kind ~= "Knife" then
+                        trigger:SetStatus("equip gun/knife")
+                        return
+                    end
+                    local target: any = x2Core.targetFor(player)
+                    if not target then
+                        trigger:SetStatus("no target")
+                        return
+                    end
+                    nextShotAt = now + options["Delay"].Value
+                    local fired: boolean = x2Core.activateNative(tool, target)
+                    trigger:SetStatus(
+                        fired and ("fired " .. string.lower(kind)) or "cooldown"
+                    )
+                    return
+                end
+
                 -- Advanced team check (always on): never fire at a teammate.
                 if not options["Teammates"].Value then
                     local friendly: boolean = false
@@ -185,9 +215,9 @@ function Module.init(context: Runtime): any
             .. "them while this is off.",
     })
     trigger:CreateNote(
-        "Clicks the mouse for you when the crosshair is over an enemy. It "
-            .. "never aims - point the crosshair yourself. Uses mouse1press "
-            .. "when the executor provides it, VirtualInputManager otherwise."
+        "Fires when the crosshair is over an enemy; it never aims for you. "
+            .. "X2 Duels uses native Gun/Knife Tool activation. Other games "
+            .. "use mouse1press or VirtualInputManager as before."
     )
 
     activeCard = trigger

@@ -177,7 +177,7 @@ local function buildTeamESP(runtime: any): ()
     local espCard: any = host.createUniversalFeature(
         "Team ESP",
         "Match-aware outlines: enemies red, teammates green and unknown sides amber",
-        8,
+        7,
         function(enabled: boolean): ()
             settings.enabled = enabled
             nextUpdateAt = 0

@@ -4,8 +4,8 @@
 > reglas del usuario, y los errores que ya se pagaron una vez. Si algo aquí
 > contradice lo que crees, gana este documento (y los datos de calibración).
 >
-> **Estado al escribir esto:** rama `arena/e412e3e8-arandommenu`, base
-> `1d9d66f`, build **`v115-20261024-x2duels-native`**.
+> **Estado al escribir esto:** rama `arena/e412e3e8-arandommenu`, sucesor de
+> `e9aa057`, build **`v116-20261024-x2duels-halloween`**.
 > El usuario se comunica en español. Respóndele en español.
 
 ---
@@ -20,7 +20,7 @@
   1. Edita en `src/…`, nunca directamente en `src/libraries/bundle.lua`.
   2. Sube `SOURCE_STAMP` en `src/Wurst.lua` (`vNNN-AAAAMMDD-descripcion`).
   3. `python3 tools/build_bundle.py --stamp <el mismo stamp>`
-  4. `bash tools/validate.sh` — debe terminar VERDE (80 fuentes, 60 suites,
+  4. `bash tools/validate.sh` — debe terminar VERDE (81 fuentes, 61 suites,
      boot `failures=0`, auditoría de menú 38/37 tarjetas).
   5. Commit + push **normales** a `arena/e412e3e8-arandommenu`. Sin force-push,
      sin reescribir historia, sin trabajar en otra rama.
@@ -30,20 +30,36 @@
 ## 1A. X2Duels (MVS): evidencia y contratos
 
 - PlaceIds registrados: `92876937625630` y el MVS anterior `135856908115931`.
-  Fuentes: `src/games/X2Duels/{Rules.lua,base.lua,Render/TeamESP.lua}` y sus dos
-  perfiles. La sección de menú existente se llama `MVSD`.
-- El log más reciente de TestingStuff no capturó Shoot/Throw/Hit/Damage. No se
-  deben inventar argumentos ni reintroducir los GUID/remotes de referencias
-  históricas. El combate actual usa `Tool:Activate()`; Sender CFrame/Button no
-  depende de `mouse1press` ni de inyección de mouse.
-- Play Again pulsa el botón GUI visible (incluidas etiquetas hijas Roact).
+  Fuentes: `Rules.lua`, `base.lua`, `Other/AutoFarm.lua` y `Render/TeamESP.lua`,
+  más sus dos perfiles. La sección de menú existente se llama `MVSD`.
+- Hay exactamente siete tarjetas X2: Auto Farm, Auto Win, Silent AIM, Knife
+  Throw, Kill Aura, Hitbox (Exploits) y Team ESP. El único TriggerBot es el
+  universal, adaptado al core X2 para Gun/Knife; no se debe crear otra tarjeta.
+- Auto Shoot es una subopción de Silent AIM, sigue el master y muestra
+  Legit/Silent. Play Again es una subopción de Auto Win. Sender CFrame/Button
+  usa `Tool:Activate()` y no depende de `mouse1press` ni inyección de mouse.
+- Auto Farm busca monedas Halloween `PumpkinCurrency_*` por contacto nativo,
+  reintenta y restaura el CFrame al apagarse. Un intento no se cuenta como
+  moneda confirmada. El RBXL guarda esas partes con `CanTouch=false`; la
+  recolección real sigue pendiente y no se inventan argumentos para
+  `CollectEventSpawnable`.
+- Auto Win controla el combate de ronda, dispara al inicio, cuenta solo
+  victorias locales explícitas y se apaga en 5/5. `RemovePlayer` marca el fin
+  de ronda y reactiva el escaneo de Play Again; no cuenta una victoria por sí
+  solo. Play Again pulsa el botón GUI visible, incluidas etiquetas hijas.
   `RematchTeleport("back_to_lobby")` no es un sustituto probado de Play Again.
 - Team Check falla cerrado: aliados y lados desconocidos no son objetivos; el
-  ESP usa rojo/verde/ámbar. Auto Farm cuenta solo victorias locales explícitas y
-  se detiene en 5/5. No convertir una pantalla ambigua en una victoria.
-- `python3 tools/test_x2duels.py` ejecuta 61 reglas, contratos estáticos y un
-  boot del bundle con 9 tarjetas/toggles/cleanup. Esto es validación mock y de
-  integración, no una afirmación de precisión o aceptación del servidor live.
+  ESP usa rojo/verde/ámbar. No convertir una pantalla ambigua en una victoria.
+- El log más reciente de TestingStuff no capturó Shoot/Throw/Hit/Damage. No se
+  deben inventar argumentos ni reintroducir GUID/remotes históricos. El
+  extractor independiente `tools/X2DuelsDecompiler.luau` vuelca fuentes,
+  bytecode, inventario con parents y argumentos entrantes/salientes; su guía es
+  `tools/X2DuelsDecompiler.md`.
+- `python3 tools/test_x2duels.py` ejecuta 61 reglas, contratos y un boot real
+  del bundle con siete tarjetas, modos, Auto Win 5/5, RemovePlayer→Play Again,
+  contacto/restauración de pumpkin y cleanup. `python3
+  tools/test_x2duels_decompiler.py` valida el extractor con DataModel simulado.
+  Todo ello es validación offline, no aceptación del servidor ni precisión live.
 
 ## 2. La trampa de los dos árboles Shoot (NO repetir)
 
@@ -226,7 +242,7 @@
 ## 9. Pendiente de verificación EN VIVO (no lo des por hecho)
 
 Nada de esto está probado en partida real todavía; está probado en estático,
-boot y las 56 suites:
+boot y las 61 suites:
 
 - Shoot v106–v112: si con el muzzle real desaparecen los impactos en geometría
   del mapa (`Smooth Block Model`), y si el gate de 1.5 s recupera los ecos.
@@ -238,6 +254,11 @@ boot y las 56 suites:
 - Fling por network ownership (v107) y Anti Fling (v108) contra un fling real.
 - Disguise v101: packs del objetivo / por ID, en servidor.
 - Salidas del standalone (Step 1 nil-parent, Step 4 origen) y TargetBot v5.
+- X2 v116: recolección real de Halloween, activación nativa de Gun/Knife,
+  precisión del throw, Team ESP/filtro con datos live, Sender CFrame en móvil,
+  y cinco victorias con RemovePlayer/Play Again. El harness cubre la máquina de
+  estados, no los argumentos ni la aceptación del servidor. La siguiente
+  evidencia debe obtenerse con `tools/X2DuelsDecompiler.luau`.
 
 ## 10. Cómo trabajar con este usuario
 

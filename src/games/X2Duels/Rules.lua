@@ -45,7 +45,7 @@ local function sameMatch(localMatch: any, otherMatch: any): boolean
     local mine: string? = normalizeToken(localMatch)
     if mine == nil then
         -- Manual features can still work in places without match attributes.
-        -- Auto Farm additionally requires its own active-match signal.
+        -- Auto Win additionally requires its own active-match signal.
         return true
     end
     local theirs: string? = normalizeToken(otherMatch)

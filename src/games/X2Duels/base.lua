@@ -36,16 +36,13 @@ local function buildX2Duels(runtime: any): ()
         or function(): () end
 
     local settings: {[string]: any} = {
-        autoFarm = false,
-        playAgain = false,
+        autoWin = false,
+        playAgain = true,
         silentAim = false,
         silentMode = "Legit",
         autoShoot = false,
         knifeThrow = false,
         killAura = false,
-        triggerBot = false,
-        triggerGun = true,
-        triggerKnife = true,
         hitboxes = false,
         teamCheck = true,
         wallCheck = true,
@@ -55,7 +52,6 @@ local function buildX2Duels(runtime: any): ()
         knifeInterval = 0.18,
         killAuraInterval = 0.12,
         killAuraRange = 12,
-        triggerInterval = 0.08,
         hitboxSize = 10,
     }
 
@@ -74,7 +70,6 @@ local function buildX2Duels(runtime: any): ()
         nextGunAt = 0,
         nextKnifeAt = 0,
         nextAuraAt = 0,
-        nextTriggerAt = 0,
         nextHitboxAt = 0,
         nextGuiAt = 0,
         nextRemoteAt = 0,
@@ -91,7 +86,7 @@ local function buildX2Duels(runtime: any): ()
         raycastWrapper = nil,
     }
 
-    local autoFarmCard: any = nil
+    local autoWinCard: any = nil
     local silentAimCard: any = nil
 
     local TEAM_ATTRIBUTES: {string} = {
@@ -211,14 +206,14 @@ local function buildX2Duels(runtime: any): ()
         return other ~= nil and other ~= localPlayer and relation(other) == "Teammate"
     end
 
-    local function isEnemy(other: Player?): boolean
+    local function isEnemy(other: Player?, allowTeammates: boolean?): boolean
         if not other or other == localPlayer or not isAlive(other)
             or isProtected(other) then
             return false
         end
         return rules.isOpponent(
             teamToken(localPlayer), teamToken(other), sharesMatch(other),
-            settings.teamCheck
+            settings.teamCheck and allowTeammates ~= true
         )
     end
 
@@ -603,18 +598,18 @@ local function buildX2Duels(runtime: any): ()
         return runtimeState.observedRound or matchToken(localPlayer) ~= nil
     end
 
-    local function completeAutoFarm(): ()
-        if not settings.autoFarm then
+    local function completeAutoWin(): ()
+        if not settings.autoWin then
             return
         end
-        settings.autoFarm = false
+        settings.autoWin = false
         restoreCamera()
-        forceCardOff(autoFarmCard)
-        pcall(notify, "X2 Duels · Auto Farm completado: 5/5 victorias")
+        forceCardOff(autoWinCard)
+        pcall(notify, "X2 Duels · Auto Win completado: 5/5 victorias")
     end
 
     local function registerWin(): boolean
-        if not settings.autoFarm then
+        if not settings.autoWin then
             return false
         end
         local now: number = os.clock()
@@ -631,7 +626,7 @@ local function buildX2Duels(runtime: any): ()
             "X2 Duels · victoria confirmada %d/5", runtimeState.wins
         ))
         if runtimeState.wins >= 5 then
-            completeAutoFarm()
+            completeAutoWin()
         end
         return true
     end
@@ -652,7 +647,7 @@ local function buildX2Duels(runtime: any): ()
         runtimeState.resultWinCounted = false
         runtimeState.selected = nil
         local arguments: {any} = {...}
-        if settings.autoFarm and rules.didLocalWin(
+        if settings.autoWin and rules.didLocalWin(
             arguments, resultIdentity(), false
         ) then
             runtimeState.resultWinCounted = true
@@ -660,9 +655,23 @@ local function buildX2Duels(runtime: any): ()
         end
     end
 
+    local function onRemovePlayer(...: any): ()
+        local arguments: {any} = {...}
+        if typeof(arguments[1]) == "Instance" and arguments[1]:IsA("Player")
+            and arguments[1] ~= localPlayer then
+            return
+        end
+        -- RemovePlayer is the match round-ended signal. It is not itself a
+        -- victory and it never substitutes RematchTeleport for Play Again.
+        runtimeState.resultsPending = true
+        runtimeState.observedRound = false
+        runtimeState.selected = nil
+        runtimeState.nextGuiAt = 0
+    end
+
     local function onWinNotification(...: any): ()
         local arguments: {any} = {...}
-        if settings.autoFarm and rules.didLocalWin(
+        if settings.autoWin and rules.didLocalWin(
             arguments, resultIdentity(), true
         ) then
             registerWin()
@@ -710,11 +719,13 @@ local function buildX2Duels(runtime: any): ()
 
     local function ensureRemoteEvents(): ()
         connectRemote("Packages/Networking/RE/Match/MatchResults", onMatchResults)
+        connectRemote("Packages/Networking/RE/Match/RemovePlayer", onRemovePlayer)
         connectRemote("Packages/Networking/RE/Match/WinNotification", onWinNotification)
         connectRemote("Packages/Networking/RE/Match/PlayerRespawned", onPlayerRespawned)
     end
 
     local function runGun(maxDistance: number, interval: number): ()
+        runtimeState.nextGunAt = os.clock() + interval
         local gun: Tool? = findWeapon("Gun")
         if not gun then
             return
@@ -722,11 +733,11 @@ local function buildX2Duels(runtime: any): ()
         local target: {[string]: any}? = nearestEnemy(maxDistance)
         if target and equip(gun) then
             activateNative(gun, target)
-            runtimeState.nextGunAt = os.clock() + interval
         end
     end
 
-    local function runKnife(maxDistance: number, interval: number): ()
+    local function runKnifeThrow(maxDistance: number, interval: number): ()
+        runtimeState.nextKnifeAt = os.clock() + interval
         local knife: Tool? = findWeapon("Knife")
         if not knife then
             return
@@ -734,11 +745,11 @@ local function buildX2Duels(runtime: any): ()
         local target: {[string]: any}? = nearestEnemy(maxDistance)
         if target and equip(knife) then
             activateNative(knife, target)
-            runtimeState.nextKnifeAt = os.clock() + interval
         end
     end
 
     local function runKillAura(): ()
+        runtimeState.nextAuraAt = os.clock() + settings.killAuraInterval
         local knife: Tool? = findWeapon("Knife")
         if not knife then
             return
@@ -746,63 +757,6 @@ local function buildX2Duels(runtime: any): ()
         local target: {[string]: any}? = nearestEnemy(settings.killAuraRange)
         if target and equip(knife) then
             activateNative(knife, target)
-            runtimeState.nextAuraAt = os.clock() + settings.killAuraInterval
-        end
-    end
-
-    local function characterOf(part: BasePart): Model?
-        local current: Instance? = part
-        while current and current ~= currentWorkspace do
-            if current:IsA("Model")
-                and current:FindFirstChildOfClass("Humanoid") then
-                return current :: Model
-            end
-            current = current.Parent
-        end
-        return nil
-    end
-
-    local function crosshairTarget(): {[string]: any}?
-        local camera: Camera? = currentWorkspace.CurrentCamera
-        if not camera then
-            return nil
-        end
-        local viewport: Vector2 = camera.ViewportSize
-        local ray: Ray = camera:ViewportPointToRay(viewport.X / 2, viewport.Y / 2)
-        local parameters: RaycastParams = RaycastParams.new()
-        parameters.FilterType = Enum.RaycastFilterType.Exclude
-        parameters.IgnoreWater = true
-        parameters.FilterDescendantsInstances = localPlayer.Character
-            and {localPlayer.Character} or {}
-        runtimeState.suppressRaycast = true
-        local ok: boolean, hit: any = pcall(function(): any
-            return currentWorkspace:Raycast(
-                ray.Origin, ray.Direction * settings.maxDistance, parameters
-            )
-        end)
-        runtimeState.suppressRaycast = false
-        if not ok or not hit then
-            return nil
-        end
-        local character: Model? = characterOf(hit.Instance)
-        local player: Player? = character and players:GetPlayerFromCharacter(character)
-        if not player or not isEnemy(player) then
-            return nil
-        end
-        return targetRecord(player)
-    end
-
-    local function runTriggerBot(): ()
-        local tool: Tool? = equippedTool()
-        local kind: string? = toolKind(tool)
-        if kind == "Gun" and not settings.triggerGun
-            or kind == "Knife" and not settings.triggerKnife
-            or kind == nil then
-            return
-        end
-        local target: {[string]: any}? = crosshairTarget()
-        if target and activateNative(tool, target) then
-            runtimeState.nextTriggerAt = os.clock() + settings.triggerInterval
         end
     end
 
@@ -943,14 +897,14 @@ local function buildX2Duels(runtime: any): ()
                 end)
                 if textOk and rules.isLocalVictoryLabel(text) and actuallyVisible(descendant) then
                     runtimeState.resultsPending = true
-                    if settings.autoFarm and not runtimeState.resultWinCounted then
+                    if settings.autoWin and not runtimeState.resultWinCounted then
                         runtimeState.resultWinCounted = true
                         registerWin()
                     end
                 end
             end
-            if not settings.playAgain and not settings.autoFarm then
-                return
+            if not settings.autoWin or not settings.playAgain then
+                continue
             end
             if not (descendant:IsA("TextButton") or descendant:IsA("ImageButton")) then
                 continue
@@ -974,14 +928,18 @@ local function buildX2Duels(runtime: any): ()
     local function updateMatchToken(): ()
         local token: string? = matchToken(localPlayer)
         if token ~= runtimeState.lastMatchToken then
-            if token ~= nil and runtimeState.lastMatchToken ~= nil then
+            if token ~= nil then
+                -- A lobby transition clears the old token before the next
+                -- match arrives. That still starts a new win-counting round.
                 runtimeState.resultsPending = false
                 runtimeState.resultWinCounted = false
                 runtimeState.observedRound = true
                 runtimeState.roundSerial += 1
-            end
-            if token == nil then
+                runtimeState.nextGunAt = 0
+                runtimeState.nextKnifeAt = 0
+            else
                 runtimeState.observedRound = false
+                runtimeState.selected = nil
             end
             runtimeState.lastMatchToken = token
         end
@@ -1001,31 +959,28 @@ local function buildX2Duels(runtime: any): ()
             runtimeState.selected = nil
         end
 
-        if settings.autoFarm and combatMatchActive() then
+        if settings.autoWin and combatMatchActive() then
             if now >= runtimeState.nextGunAt and findWeapon("Gun") then
                 runGun(settings.maxDistance, settings.shotInterval)
             elseif now >= runtimeState.nextKnifeAt and not findWeapon("Gun") then
-                runKnife(600, settings.knifeInterval)
+                runKnifeThrow(600, settings.knifeInterval)
             end
         else
-            if settings.autoShoot and now >= runtimeState.nextGunAt then
+            if settings.silentAim and settings.autoShoot and now >= runtimeState.nextGunAt then
                 runGun(settings.maxDistance, settings.shotInterval)
             end
             if settings.knifeThrow and now >= runtimeState.nextKnifeAt then
-                runKnife(600, settings.knifeInterval)
+                runKnifeThrow(600, settings.knifeInterval)
             end
             if settings.killAura and now >= runtimeState.nextAuraAt then
                 runKillAura()
             end
         end
-        if settings.triggerBot and now >= runtimeState.nextTriggerAt then
-            runTriggerBot()
-        end
         if settings.hitboxes and now >= runtimeState.nextHitboxAt then
             runtimeState.nextHitboxAt = now + 0.2
             updateHitboxes()
         end
-        if (settings.playAgain or settings.autoFarm) and now >= runtimeState.nextGuiAt then
+        if settings.autoWin and now >= runtimeState.nextGuiAt then
             runtimeState.nextGuiAt = now + 0.25
             scanMatchGui()
         end
@@ -1050,12 +1005,11 @@ local function buildX2Duels(runtime: any): ()
     local teamProvider: any = nil
 
     moduleCleanup = function(): ()
-        settings.autoFarm = false
+        settings.autoWin = false
         settings.silentAim = false
         settings.autoShoot = false
         settings.knifeThrow = false
         settings.killAura = false
-        settings.triggerBot = false
         settings.hitboxes = false
         settings.playAgain = false
         setAimActivity(false)
@@ -1096,8 +1050,11 @@ local function buildX2Duels(runtime: any): ()
         isTeammate = isTeammate,
         isEnemy = isEnemy,
         nearestEnemy = nearestEnemy,
+        targetFor = targetRecord,
         findGun = function(): Tool? return findWeapon("Gun") end,
         findKnife = function(): Tool? return findWeapon("Knife") end,
+        equippedTool = equippedTool,
+        toolKind = toolKind,
         equip = equip,
         activateNative = activateNative,
         isMatchActive = combatMatchActive,
@@ -1141,12 +1098,51 @@ local function buildX2Duels(runtime: any): ()
         return host.createUniversalFeature(name, description, order, callback, configuration)
     end
 
-    autoFarmCard = card(
-        "Auto Farm",
+    local configData: any = host.configData
+    if type(configData) == "table"
+        and configData.values["X2Duels.layout"] ~= "v116" then
+        local states: any = configData.states
+        local values: any = configData.values
+        if states["MVSD.SilentAIM.AutoShoot"] == nil
+            and states["MVSD.AutoShoot"] ~= nil then
+            states["MVSD.SilentAIM.AutoShoot"] = states["MVSD.AutoShoot"] == true
+            if states["MVSD.AutoShoot"] == true then
+                states["MVSD.SilentAIM"] = true
+            end
+        end
+        for _, optionKey: string in ipairs({"Sender", "Fireinterval"}) do
+            local oldKey: string = "MVSD.AutoShoot." .. optionKey
+            local newKey: string = "MVSD.SilentAIM." .. optionKey
+            if values[newKey] == nil and values[oldKey] ~= nil then
+                values[newKey] = values[oldKey]
+            end
+        end
+        if states["MVSD.AutoWin.PlayAgain"] == nil
+            and states["MVSD.PlayAgain"] ~= nil then
+            states["MVSD.AutoWin.PlayAgain"] = states["MVSD.PlayAgain"] == true
+        end
+        if states["MVSD.Hitbox"] == nil and states["MVSD.Hitboxes"] ~= nil then
+            states["MVSD.Hitbox"] = states["MVSD.Hitboxes"] == true
+        end
+        -- The old Auto Farm meant combat. Do not auto-enable either of the
+        -- two new, deliberately different features during this migration.
+        states["MVSD.AutoFarm"] = false
+        states["MVSD.AutoWin"] = false
+        states["MVSD.TriggerBot"] = nil
+        values["X2Duels.layout"] = "v116"
+        if type(host.queueConfigSave) == "function" then
+            host.queueConfigSave()
+        end
+    end
+
+    local refreshAutoShootMode: () -> () = function(): () end
+
+    autoWinCard = card(
+        "Auto Win",
         "Target nearest opponents, spam native weapons, click Play Again and stop at five wins",
-        1,
+        2,
         function(enabled: boolean): ()
-            settings.autoFarm = enabled
+            settings.autoWin = enabled
             runtimeState.nextGunAt = 0
             runtimeState.nextKnifeAt = 0
             runtimeState.nextGuiAt = 0
@@ -1158,23 +1154,27 @@ local function buildX2Duels(runtime: any): ()
                 restoreCamera()
             end
         end,
-        "Utilities"
+        "Combat"
     )
-    host.addActionOption(autoFarmCard, "Reset wins", function(): ()
+    host.addToggleOption(autoWinCard, "Play Again", true, function(value: boolean): ()
+        settings.playAgain = value
+        runtimeState.nextGuiAt = 0
+    end)
+    host.addActionOption(autoWinCard, "Reset wins", function(): ()
         runtimeState.wins = 0
         runtimeState.lastWinRound = -1
         runtimeState.lastWinAt = 0
         pcall(notify, "X2 Duels · contador reiniciado")
     end)
     host.addInformationOption(
-        autoFarmCard,
-        "Counts only explicit local wins. Five confirmed wins stop Auto Farm, not the other independent features."
+        autoWinCard,
+        "Counts only explicit local wins. Five confirmed wins stop Auto Win, not the other independent features."
     )
 
     silentAimCard = card(
         "Silent AIM",
         "Target Nearest Player with Legit camera aim or Silent local ray redirection",
-        2,
+        3,
         function(enabled: boolean): ()
             settings.silentAim = enabled
             setAimActivity(enabled)
@@ -1189,9 +1189,43 @@ local function buildX2Duels(runtime: any): ()
                 uninstallHooks()
                 restoreCamera()
             end
+            refreshAutoShootMode()
         end,
         "Combat"
     )
+    local autoShootOptionLabel: TextLabel? = nil
+    refreshAutoShootMode = function(): ()
+        if autoShootOptionLabel then
+            autoShootOptionLabel.Text = "Auto Shoot · " .. settings.silentMode
+        end
+        if silentAimCard and type(silentAimCard.SetStatus) == "function" then
+            silentAimCard:SetStatus(
+                settings.silentAim and settings.autoShoot and settings.silentMode or nil
+            )
+        end
+    end
+    if type(host.addSectionOption) == "function" then
+        host.addSectionOption(silentAimCard, "Gun")
+    end
+    local autoShootButton: TextButton = host.addToggleOption(
+        silentAimCard,
+        "Auto Shoot",
+        false,
+        function(enabled: boolean): ()
+            settings.autoShoot = enabled
+            runtimeState.nextGunAt = 0
+            if not enabled then
+                restoreCamera()
+            end
+            refreshAutoShootMode()
+        end,
+        "Runs only while Silent AIM is ON; the same Legit/Silent mode is used for every shot.",
+        true
+    )
+    if autoShootButton.Parent then
+        autoShootOptionLabel = autoShootButton.Parent:FindFirstChild("OptionLabel") :: TextLabel?
+    end
+    refreshAutoShootMode()
     host.addCycleOption(
         silentAimCard, "Mode", {"Legit", "Silent"}, 1,
         function(value: string): ()
@@ -1206,6 +1240,20 @@ local function buildX2Duels(runtime: any): ()
             else
                 uninstallHooks()
             end
+            refreshAutoShootMode()
+        end
+    )
+    host.addCycleOption(
+        silentAimCard, "Sender", {"CFrame", "Button"}, 1,
+        function(value: string): ()
+            settings.senderMode = value
+            restoreCamera()
+        end
+    )
+    host.addNumberOption(
+        silentAimCard, "Fire interval", 0.035, 0.02, 0.25,
+        function(value: number): ()
+            settings.shotInterval = value
         end
     )
     host.addToggleOption(silentAimCard, "Team Check", true, function(value: boolean): ()
@@ -1224,36 +1272,14 @@ local function buildX2Duels(runtime: any): ()
         silentAimCard,
         "Team Check rejects confirmed teammates and unknown sides. Wall Check never redirects a ray through geometry."
     )
-
-    local autoShootCard: any = card(
-        "Auto Shoot",
-        "Equip the pistol and activate it at the nearest living opponent",
-        3,
-        function(enabled: boolean): ()
-            settings.autoShoot = enabled
-            runtimeState.nextGunAt = 0
-            if not enabled then restoreCamera() end
-        end,
-        "Combat"
-    )
-    host.addCycleOption(
-        autoShootCard, "Sender", {"CFrame", "Button"}, 1,
-        function(value: string): ()
-            settings.senderMode = value
-            restoreCamera()
-        end
-    )
-    host.addNumberOption(autoShootCard, "Fire interval", 0.035, 0.02, 0.25, function(value: number): ()
-        settings.shotInterval = value
-    end)
     host.addInformationOption(
-        autoShootCard,
-        "CFrame aims and calls Tool:Activate() (mobile/touch compatible). Button calls the same native Tool without mouse1press."
+        silentAimCard,
+        "CFrame aims before native Tool:Activate() on mobile/touch. Button preserves your camera and uses the same native activation."
     )
 
     local knifeCard: any = card(
         "Knife Throw",
-        "Equip the knife and use its native activation against the nearest opponent",
+        "Only throw the equipped knife at the nearest opponent; no melee aura or hitbox logic",
         4,
         function(enabled: boolean): ()
             settings.knifeThrow = enabled
@@ -1265,7 +1291,7 @@ local function buildX2Duels(runtime: any): ()
     host.addNumberOption(knifeCard, "Throw interval", 0.18, 0.05, 1, function(value: number): ()
         settings.knifeInterval = value
     end)
-    host.addInformationOption(knifeCard, "Uses the shared Auto Shoot Sender mode; no invented ThrowEvent arguments.")
+    host.addInformationOption(knifeCard, "Throw only. Uses the Silent AIM Sender; no hitbox expansion, slash aura or invented ThrowEvent arguments.")
 
     local auraCard: any = card(
         "Kill Aura",
@@ -1285,57 +1311,21 @@ local function buildX2Duels(runtime: any): ()
         settings.killAuraInterval = value
     end)
 
-    local triggerCard: any = card(
-        "Trigger Bot",
-        "Dedicated pistol and knife activation only while the center crosshair is on an opponent",
-        6,
-        function(enabled: boolean): ()
-            settings.triggerBot = enabled
-            runtimeState.nextTriggerAt = 0
-            if not enabled then restoreCamera() end
-        end,
-        "Combat"
-    )
-    host.addToggleOption(triggerCard, "Pistol", true, function(value: boolean): ()
-        settings.triggerGun = value
-    end)
-    host.addToggleOption(triggerCard, "Knife", true, function(value: boolean): ()
-        settings.triggerKnife = value
-    end)
-    host.addNumberOption(triggerCard, "Interval", 0.08, 0.03, 0.5, function(value: number): ()
-        settings.triggerInterval = value
-    end)
-
     local hitboxCard: any = card(
-        "Hitboxes",
+        "Hitbox",
         "Expand only valid target roots and restore their original properties when disabled",
-        7,
+        6,
         function(enabled: boolean): ()
             settings.hitboxes = enabled
             runtimeState.nextHitboxAt = 0
             if not enabled then restoreAllHitboxes() end
         end,
-        "Combat"
+        "Exploits"
     )
     host.addNumberOption(hitboxCard, "Size", 10, 2, 30, function(value: number): ()
         settings.hitboxSize = value
         restoreAllHitboxes()
     end)
-
-    local playAgainCard: any = card(
-        "Play Again",
-        "Click the game's visible Play Again or Rematch button after results; no lobby teleport substitute",
-        9,
-        function(enabled: boolean): ()
-            settings.playAgain = enabled
-            runtimeState.nextGuiAt = 0
-        end,
-        "Utilities"
-    )
-    host.addInformationOption(
-        playAgainCard,
-        "Uses Activated/MouseButton1Click on the real GUI button. back_to_lobby is not treated as Play Again."
-    )
 
     runtimeState.lastMatchToken = matchToken(localPlayer)
     ensureRemoteEvents()
