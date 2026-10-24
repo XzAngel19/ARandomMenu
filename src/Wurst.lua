@@ -219,7 +219,7 @@ local RUNTIME_RAW_BASE: string =
         .. RUNTIME_BRANCH
         .. "/"
 
-local SOURCE_STAMP: string = "v118-20261024-mvs-team-hooks"
+local SOURCE_STAMP: string = "v119-20261024-mvs-structure"
 
 local BOOT_STARTED_AT: number = os.clock()
 local BOOT_FINGERPRINT_SECONDS: number = 0
@@ -5123,7 +5123,6 @@ local function loadGameModule(
         "src/games/X2Duels/Rules.lua",
         "src/games/X2Duels/base.lua",
         "src/games/X2Duels/Other/AutoFarm.lua",
-        "src/games/X2Duels/Render/TeamESP.lua",
     } else {"src/games/" .. moduleName .. "/base.lua"}
     local moduleEnvironment: any = createGameModuleEnvironment(diagnostics)
     -- Game modules get the same services facade the framework environment

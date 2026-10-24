@@ -4,8 +4,8 @@
 > reglas del usuario, y los errores que ya se pagaron una vez. Si algo aquí
 > contradice lo que crees, gana este documento (y los datos de calibración).
 >
-> **Estado al escribir esto:** rama `arena/e412e3e8-arandommenu`, sucesor de
-> `8e62b93`, build **`v118-20261024-mvs-team-hooks`**.
+> **Estado al escribir esto:** rama `arena/e412e3e8-arandommenu`, build
+> **`v119-20261024-mvs-structure`**.
 > El usuario se comunica en español. Respóndele en español.
 
 ---
@@ -20,26 +20,40 @@
   1. Edita en `src/…`, nunca directamente en `src/libraries/bundle.lua`.
   2. Sube `SOURCE_STAMP` en `src/Wurst.lua` (`vNNN-AAAAMMDD-descripcion`).
   3. `python3 tools/build_bundle.py --stamp <el mismo stamp>`
-  4. `bash tools/validate.sh` — debe terminar VERDE (81 fuentes, 61 suites,
+  4. `bash tools/validate.sh` — debe terminar VERDE (80 fuentes, 61 suites,
      boot `failures=0`, auditoría de menú 38/37 tarjetas).
   5. Commit + push **normales** a `arena/e412e3e8-arandommenu`. Sin force-push,
      sin reescribir historia, sin trabajar en otra rama.
 - Sin bundle regenerado + stamp, el cambio **no llega al usuario**. El watermark
   "UI Settings · vNNN" en el menú es como el usuario verifica la versión.
 
-## 1A. X2Duels (MVS): evidencia y contratos
+## 1A. X2Duels (MVS): estructura MM2, evidencia y contratos
 
 - PlaceIds registrados: `92876937625630` y el MVS anterior `135856908115931`.
-  Fuentes: `Rules.lua`, `base.lua`, `Other/AutoFarm.lua` y `Render/TeamESP.lua`,
-  más sus dos perfiles. La sección de menú existente se llama `MVSD`.
-- Hay exactamente siete tarjetas X2: Auto Farm, Auto Win, Silent AIM, Knife
-  Throw, Kill Aura, Hitbox (Exploits) y Team ESP. El único TriggerBot es el
-  universal, adaptado al core X2 para Gun/Knife; no se debe crear otra tarjeta.
-- Auto Shoot es una subopción de Silent AIM, sigue el master y muestra
-  Legit/Silent. Play Again es una subopción de Auto Win. Sender CFrame/Button
-  usa `Tool:Activate()` y no depende de `mouse1press` ni inyección de mouse
-  para combate. El click físico de Play Again puede usar VirtualInputManager
-  solo sobre el botón GUI; no es un sustituto de disparo.
+  Fuentes activas: `Rules.lua`, `base.lua`, `Other/AutoFarm.lua` y sus dos
+  perfiles. La sección de menú existente se llama `MVSD`; `Render/TeamESP.lua`
+  fue eliminado y no debe volver como módulo independiente.
+- Hay exactamente cinco tarjetas X2: **Auto Farm** y **Auto Win** en
+  **Utilities**, **Silent AIM**, **Kill Aura** en Combat y **Hitbox** en
+  Exploits. El único TriggerBot es el universal, adaptado al core X2 para
+  Gun/Knife; no se debe crear otra tarjeta.
+- Silent AIM contiene las secciones Gun y Knife. Auto Shoot sigue el master y
+  muestra Legit/Silent. Knife Throw es una subopción de Silent AIM: intenta la
+  activación nativa en cada tick, sin slider ni temporizador de intervalo;
+  solo espera el windup de la propia animación. Desktop usa mouse2 + Activate;
+  touch usa y restaura ForceThrow. No se inventan argumentos de ThrowEvent.
+- La keybind de Silent AIM se registra con `state.bindFeatureActivationKey` y
+  ejecuta la acción nativa solamente con `Sender = Button`; nunca cambia el
+  toggle maestro. Con `Sender = CFrame`, Auto Shoot/native activation funciona
+  sin esperar ese botón. La activación comparte ancestry del objetivo, Team
+  Check, Wall Check y raycast antes de disparar.
+- Auto Win es únicamente una tarjeta de estado de sesión: `Wins`, `Time Played`,
+  `Kills` y `Loses`. No tiene ráfagas, selección automática de combate, límite
+  de cinco victorias, Play Again, clicks GUI ni `RematchTeleport`. Las wins
+  provienen de resultados/notificaciones locales explícitos; kills usan el
+  tercer Player observado en `Combat/DestroyBody`; las muertes locales se
+  deduplican por ronda para Loses. Son contadores cliente observados, no una
+  garantía de autoridad del servidor.
 - Auto Farm busca monedas Halloween `PumpkinCurrency_*` y `Farms/PumpCoins`
   dinámicos por contacto nativo. Los podios resuelven `StringValue`/`ObjectValue`
   contra jugadores y equipos; sin una entrada enemiga no se farmean granjas y
@@ -49,21 +63,12 @@
   moneda confirmada. El RBXL guarda algunas partes con `CanTouch=false`; la
   recolección real sigue pendiente y no se inventan argumentos para
   `CollectEventSpawnable`.
-- Auto Win controla el combate de ronda: `fireGun(target)` comparte el objetivo
-  de Legit/Silent, encuentra y equipa la pistola aunque empiece en Backpack,
-  hace una ráfaga de 20 intentos nativos a 0.04 s y repite el ciclo tras 1.2 s.
-  El cooldown real del Tool sigue decidiendo los disparos. `fireKnife(target)`
-  separa el throw (mouse2 + Activate en desktop, ForceThrow + Activate en
-  touch) del melee de Kill Aura. Cuenta solo victorias locales explícitas y se
-  apaga en 5/5. `RemovePlayer` marca el fin de ronda y reactiva el escaneo de
-  Play Again; no cuenta una victoria por sí solo. Play Again pulsa el botón GUI
-  visible, incluidas etiquetas hijas. `RematchTeleport("back_to_lobby")` no es
-  un sustituto probado de Play Again.
 - Team Check falla cerrado: usa los atributos MVS `Team`/`Game`, rechaza FFA,
   lobby y lados desconocidos como objetivos y no cae al `Team` común de Roblox.
-  El mismo resolver alimenta combate, TeamESP y RoleColors de PlayerESP/Chams:
-  enemigo rojo, aliado verde y desconocido ámbar. No convertir una pantalla
-  ambigua en una victoria.
+  El mismo resolver alimenta combate y RoleColors del ESP universal
+  (PlayerESP/Chams/Nametags): enemigo rojo, aliado verde y desconocido ámbar.
+  Unknown sigue fail-closed para combate con Team Check activo; desactivarlo
+  debe ser explícito. No convertir una pantalla ambigua en una victoria.
 - El log `2026-10-24T16_49_55Z.log` de TestingStuff capturó `DefaultGun` (`fire`
   sin argumentos y `showBeam` con dos Vector3 + Handle), llamadas nativas de
   `DefaultKnife`, `PlayerRespawned` y `SetDead`. La réplica de Beam/PlaySound no
@@ -73,12 +78,12 @@
   bytecode, inventario con parents y argumentos entrantes/salientes; su guía es
   `tools/X2DuelsDecompiler.md`.
 - `python3 tools/test_x2duels.py` ejecuta 67 reglas, contratos y un boot real
-  del bundle con siete tarjetas, modos, ráfaga de 20 disparos desde Backpack,
-  ambos caminos nativos del cuchillo, click físico de Play Again, Auto Win 5/5,
-  RemovePlayer→Play Again, contacto/restauración de pumpkin, podios y granjas
-  amigas/enemigas con PumpCoins invisibles y cleanup. `python3
-  tools/test_x2duels_decompiler.py` valida el extractor con DataModel simulado.
-  Todo ello es validación offline, no aceptación del servidor ni precisión live.
+  del bundle con cinco tarjetas, keybind de acción sin toggle, CFrame sin
+  botón, ambos caminos nativos del cuchillo, estadísticas deduplicadas,
+  contacto/restauración de pumpkin, podios y granjas amigas/enemigas con
+  PumpCoins invisibles y cleanup. `python3 tools/test_x2duels_decompiler.py`
+  valida el extractor con DataModel simulado. Todo ello es validación offline,
+  no aceptación del servidor ni precisión live.
 
 ## 2. La trampa de los dos árboles Shoot (NO repetir)
 
@@ -273,11 +278,12 @@ boot y las 61 suites:
 - Fling por network ownership (v107) y Anti Fling (v108) contra un fling real.
 - Disguise v101: packs del objetivo / por ID, en servidor.
 - Salidas del standalone (Step 1 nil-parent, Step 4 origen) y TargetBot v5.
-- X2 v118: comprobar en vivo Gun/Knife, precisión del throw, Team ESP/filtro
-  con TeamRed/TeamBlue y FFA, Sender CFrame en móvil y cinco victorias con
-  RemovePlayer/Play Again. El harness cubre activaciones, estados, colores y
-  clicks; no prueba daño, monedas, rematch ni aceptación del servidor. La
-  siguiente evidencia debe obtenerse con `tools/X2DuelsDecompiler.luau`.
+- X2 v119: comprobar en vivo Gun/Knife, precisión del throw, el ESP universal
+  con TeamRed/TeamBlue y FFA, la keybind Button y Sender CFrame en móvil, y la
+  actualización de Wins/Time Played/Kills/Loses. El harness cubre activaciones,
+  estados, colores, contadores y contactos; no prueba daño, monedas ni
+  aceptación del servidor. La siguiente evidencia debe obtenerse con
+  `tools/X2DuelsDecompiler.luau`.
 
 ## 10. Cómo trabajar con este usuario
 
@@ -291,5 +297,5 @@ boot y las 61 suites:
   el comportamiento y `validate.sh` verde antes de pushear.
 
 ---
-*Última actualización: v118 (2026-10-24). Al publicar una versión nueva,
+*Última actualización: v119 (2026-10-24). Al publicar una versión nueva,
 actualiza la línea de estado de arriba y cualquier sección que cambie.*

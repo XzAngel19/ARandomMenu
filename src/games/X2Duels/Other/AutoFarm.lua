@@ -655,7 +655,7 @@ local function buildAutoFarm(runtime: any): ()
         {
             parent = state.mvsdScroll,
             registry = state.mvsdFeatures,
-            categoryName = "Exploits",
+            categoryName = "Utilities",
         }
     )
     host.addNumberOption(farmCard, "Step interval", 0.12, 0.06, 0.5, function(value: number): ()

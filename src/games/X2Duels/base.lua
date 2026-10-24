@@ -1,4 +1,4 @@
--- X2 Duels (MVS) native combat and match automation.
+-- X2 Duels (MVS) native combat and observed session statistics.
 --
 -- The supplied Cobalt log captures DefaultGun/DefaultKnife native calls,
 -- including fire/showBeam and the respawn/death events. Combat still goes
@@ -28,7 +28,6 @@ local function buildX2Duels(runtime: any): ()
     local replicated: ReplicatedStorage = game:GetService("ReplicatedStorage")
     local localPlayer: Player = players.LocalPlayer
     local currentWorkspace: Workspace = host.workspace or workspace
-    local playerGui: PlayerGui = localPlayer:WaitForChild("PlayerGui")
     local services: any = runtime.Services or {}
     local protectedTargets: any = services.protectedTargets
     local activity: any = services.activity
@@ -36,8 +35,8 @@ local function buildX2Duels(runtime: any): ()
         or function(): () end
 
     local settings: {[string]: any} = {
-        autoWin = false,
-        playAgain = true,
+        -- Auto Win is now a session-statistics card, not a combat driver.
+        stats = false,
         silentAim = false,
         silentMode = "Legit",
         autoShoot = false,
@@ -49,7 +48,6 @@ local function buildX2Duels(runtime: any): ()
         senderMode = "CFrame",
         maxDistance = 1000,
         shotInterval = 0.035,
-        knifeInterval = 0.18,
         killAuraInterval = 0.12,
         killAuraRange = 12,
         hitboxSize = 10,
@@ -64,23 +62,22 @@ local function buildX2Duels(runtime: any): ()
         lastMatchToken = nil,
         roundSerial = 0,
         lastWinRound = -1,
-        lastWinAt = 0,
+        lastWinAt = -math.huge,
         wins = 0,
+        kills = 0,
+        loses = 0,
+        lastLossRound = -1,
+        killVictims = setmetatable({}, {__mode = "k"}),
+        sessionStartedAt = os.clock(),
+        nextStatsAt = 0,
         nextSelectionAt = 0,
         nextGunAt = 0,
-        burstRemaining = 0,
-        nextBurstAt = 0,
-        nextBurstCycleAt = 0,
-        gunAvailable = nil,
-        nextKnifeAt = 0,
         knifeBusy = false,
         knifeToken = 0,
         knifePending = nil,
         nextAuraAt = 0,
         nextHitboxAt = 0,
-        nextGuiAt = 0,
         nextRemoteAt = 0,
-        lastPlayAgainAt = 0,
         remoteBound = {},
         deadPlayers = setmetatable({}, {__mode = "k"}),
         hitboxes = {},
@@ -733,37 +730,7 @@ local function buildX2Duels(runtime: any): ()
         end
     end
 
-    local function combatMatchActive(): boolean
-        if runtimeState.resultsPending or not isAlive(localPlayer) then
-            return false
-        end
-        return runtimeState.observedRound or matchToken(localPlayer) ~= nil
-    end
-
-    local function queueGunBurst(): ()
-        runtimeState.burstRemaining = 20
-        runtimeState.nextBurstAt = 0
-        runtimeState.nextBurstCycleAt = 0
-        runtimeState.nextGunAt = 0
-        runtimeState.gunAvailable = nil
-    end
-
-    local function completeAutoWin(): ()
-        if not settings.autoWin then
-            return
-        end
-        settings.autoWin = false
-        runtimeState.burstRemaining = 0
-        cancelKnifeThrow()
-        restoreCamera()
-        forceCardOff(autoWinCard)
-        pcall(notify, "X2 Duels · Auto Win completado: 5/5 victorias")
-    end
-
     local function registerWin(): boolean
-        if not settings.autoWin then
-            return false
-        end
         local now: number = os.clock()
         if runtimeState.lastWinRound == runtimeState.roundSerial then
             return false
@@ -774,13 +741,43 @@ local function buildX2Duels(runtime: any): ()
         runtimeState.lastWinAt = now
         runtimeState.lastWinRound = runtimeState.roundSerial
         runtimeState.wins += 1
-        pcall(notify, string.format(
-            "X2 Duels · victoria confirmada %d/5", runtimeState.wins
-        ))
-        if runtimeState.wins >= 5 then
-            completeAutoWin()
-        end
         return true
+    end
+
+    local function registerLoss(): boolean
+        if runtimeState.lastLossRound == runtimeState.roundSerial
+            or runtimeState.resultWinCounted then
+            return false
+        end
+        runtimeState.lastLossRound = runtimeState.roundSerial
+        runtimeState.loses += 1
+        return true
+    end
+
+    local function formatTimePlayed(seconds: number): string
+        local total: number = math.max(0, math.floor(seconds))
+        local hours: number = math.floor(total / 3600)
+        local minutes: number = math.floor((total % 3600) / 60)
+        local remainder: number = total % 60
+        return string.format("%02d:%02d:%02d", hours, minutes, remainder)
+    end
+
+    local function updateStats(): ()
+        if not autoWinCard or type(autoWinCard.SetStatus) ~= "function" then
+            return
+        end
+        if not settings.stats then
+            autoWinCard:SetStatus(nil)
+            return
+        end
+        local played: number = os.clock() - runtimeState.sessionStartedAt
+        autoWinCard:SetStatus(string.format(
+            "Wins: %d | Time Played: %s | Kills: %d | Loses: %d",
+            runtimeState.wins,
+            formatTimePlayed(played),
+            runtimeState.kills,
+            runtimeState.loses
+        ))
     end
 
     local function resultIdentity(): {[string]: any}
@@ -828,14 +825,12 @@ local function buildX2Duels(runtime: any): ()
         runtimeState.observedRound = false
         runtimeState.resultWinCounted = false
         runtimeState.selected = nil
-        runtimeState.burstRemaining = 0
         cancelKnifeThrow()
         local arguments: {any} = {...}
-        if settings.autoWin and rules.didLocalWin(
-            arguments, resultIdentity(), false
-        ) then
+        if rules.didLocalWin(arguments, resultIdentity(), false) then
             runtimeState.resultWinCounted = true
             registerWin()
+            updateStats()
         end
     end
 
@@ -845,22 +840,20 @@ local function buildX2Duels(runtime: any): ()
         if removed and removed ~= localPlayer then
             return
         end
-        -- RemovePlayer is the match round-ended signal. It is not itself a
-        -- victory and it never substitutes RematchTeleport for Play Again.
+        -- RemovePlayer ends a round; it is not itself a victory or loss.
         runtimeState.resultsPending = true
         runtimeState.observedRound = false
         runtimeState.selected = nil
-        runtimeState.burstRemaining = 0
         cancelKnifeThrow()
-        runtimeState.nextGuiAt = 0
     end
 
     local function onWinNotification(...: any): ()
         local arguments: {any} = {...}
-        if settings.autoWin and rules.didLocalWin(
-            arguments, resultIdentity(), true
-        ) then
-            registerWin()
+        if rules.didLocalWin(arguments, resultIdentity(), true) then
+            if registerWin() then
+                runtimeState.resultWinCounted = true
+            end
+            updateStats()
         end
     end
 
@@ -876,10 +869,27 @@ local function buildX2Duels(runtime: any): ()
             runtimeState.selected = nil
         end
         if dead == localPlayer then
-            -- SetDead is a death signal, never a win/round-result signal.
-            runtimeState.burstRemaining = 0
+            -- SetDead is a death signal, never a win signal. Count one local
+            -- loss per round and leave the other combat preferences alone.
+            registerLoss()
             cancelKnifeThrow()
             restoreCamera()
+            updateStats()
+        end
+    end
+
+    local function onDestroyBody(...: any): ()
+        local arguments: {any} = {...}
+        -- The captured MVS DestroyBody shape is victim, optional data, killer.
+        -- Only that observed third Player value is accepted as a local kill;
+        -- a remote name or a victim alone never fabricates a kill.
+        local victim: Player? = playerFromEventValue(arguments[1])
+        local killer: Player? = playerFromEventValue(arguments[3])
+        if victim and killer == localPlayer
+            and runtimeState.killVictims[victim] ~= runtimeState.roundSerial then
+            runtimeState.killVictims[victim] = runtimeState.roundSerial
+            runtimeState.kills += 1
+            updateStats()
         end
     end
 
@@ -888,9 +898,10 @@ local function buildX2Duels(runtime: any): ()
         local respawned: Player? = playerFromEvent(arguments)
         if respawned then
             runtimeState.deadPlayers[respawned] = nil
+            runtimeState.killVictims[respawned] = nil
         end
         if respawned and respawned ~= localPlayer then
-            -- Another player's respawn must not reset our round or Auto Win.
+            -- Another player's respawn must not reset our session statistics.
             return
         end
         runtimeState.deadPlayers[localPlayer] = nil
@@ -899,9 +910,7 @@ local function buildX2Duels(runtime: any): ()
         runtimeState.resultsPending = false
         runtimeState.resultWinCounted = false
         runtimeState.nextGunAt = 0
-        runtimeState.nextKnifeAt = 0
         cancelKnifeThrow()
-        if settings.autoWin then queueGunBurst() end
     end
 
     local function findRemote(path: string): Instance?
@@ -935,6 +944,7 @@ local function buildX2Duels(runtime: any): ()
         connectRemote("Packages/Networking/RE/Match/WinNotification", onWinNotification)
         connectRemote("Packages/Networking/RE/Match/SetDead", onSetDead)
         connectRemote("Packages/Networking/RE/Match/PlayerRespawned", onPlayerRespawned)
+        connectRemote("Packages/Networking/RE/Combat/DestroyBody", onDestroyBody)
     end
 
     local function runGun(maxDistance: number, interval: number): (boolean, boolean)
@@ -949,8 +959,9 @@ local function buildX2Duels(runtime: any): ()
         return fireGun(target)
     end
 
-    local function runKnifeThrow(maxDistance: number, interval: number): ()
-        runtimeState.nextKnifeAt = os.clock() + interval
+    local function runKnifeThrow(maxDistance: number): ()
+        -- No user interval: try on every scheduler tick. fireKnife only holds
+        -- the short native windup, so a new attempt starts as soon as it ends.
         local target: {[string]: any}? = nearestEnemy(maxDistance)
         fireKnife(target)
     end
@@ -1022,153 +1033,6 @@ local function buildX2Duels(runtime: any): ()
         end
     end
 
-    local function actuallyVisible(object: Instance): boolean
-        local current: Instance? = object
-        while current and current ~= playerGui do
-            if current:IsA("GuiObject") and not current.Visible then
-                return false
-            end
-            if current:IsA("LayerCollector") and not current.Enabled then
-                return false
-            end
-            current = current.Parent
-        end
-        return current == playerGui
-    end
-
-    local function clickWithVirtualInput(button: GuiButton): boolean
-        local input: any = host.UserInputService
-        if not input or not input.MouseEnabled then
-            return false
-        end
-        local ok: boolean, virtualInput: any, guiService: any = pcall(function(): (any, any)
-            return game:GetService("VirtualInputManager"), game:GetService("GuiService")
-        end)
-        if not ok or not virtualInput or not guiService then
-            return false
-        end
-        local geometryOk: boolean, position: any, size: any, inset: any = pcall(function(): (any, any, any)
-            return button.AbsolutePosition, button.AbsoluteSize, guiService:GetGuiInset()
-        end)
-        if not geometryOk or not position or not size or not inset
-            or size.X <= 0 or size.Y <= 0 then
-            return false
-        end
-        local centerX: number = position.X + size.X / 2 + inset.X
-        local centerY: number = position.Y + size.Y / 2 + inset.Y
-        local down: boolean = pcall(function(): ()
-            virtualInput:SendMouseButtonEvent(centerX, centerY, 0, true, game, 0)
-        end)
-        local up: boolean = pcall(function(): ()
-            virtualInput:SendMouseButtonEvent(centerX, centerY, 0, false, game, 0)
-        end)
-        if down and up then
-            runtimeState.lastPlayAgainMethod = "VirtualInputManager"
-            return true
-        end
-        return false
-    end
-
-    local function clickNativeButton(button: GuiButton): boolean
-        if clickWithVirtualInput(button) then
-            return true
-        end
-        if type(host.firesignal) == "function" then
-            for _, signalName: string in ipairs({"Activated", "MouseButton1Click"}) do
-                local signalOk: boolean, signal: any = pcall(function(): any
-                    return (button :: any)[signalName]
-                end)
-                if signalOk and signal then
-                    local fired: boolean = pcall(host.firesignal, signal)
-                    if fired then
-                        runtimeState.lastPlayAgainMethod = "firesignal"
-                        return true
-                    end
-                end
-            end
-        end
-        if type(host.getconnections) == "function" then
-            local ok: boolean, connections: any = pcall(
-                host.getconnections, button.Activated
-            )
-            if ok and type(connections) == "table" then
-                for _, connection: any in ipairs(connections) do
-                    local fired: boolean = pcall(function(): ()
-                        if type(connection.Fire) == "function" then
-                            connection:Fire()
-                        elseif type(connection.Function) == "function" then
-                            connection.Function()
-                        end
-                    end)
-                    if fired then
-                        return true
-                    end
-                end
-            end
-        end
-        return false
-    end
-
-    local function isPlayAgainButton(button: GuiButton): boolean
-        if rules.isPlayAgainText(button.Name) then
-            return true
-        end
-        local textOk: boolean, text: any = pcall(function(): any
-            return (button :: any).Text
-        end)
-        if textOk and rules.isPlayAgainText(text) then
-            return true
-        end
-        for _, child: Instance in ipairs(button:GetDescendants()) do
-            if child:IsA("TextLabel") or child:IsA("TextButton") then
-                local childOk: boolean, childText: any = pcall(function(): any
-                    return (child :: any).Text
-                end)
-                if childOk and rules.isPlayAgainText(childText) then
-                    return true
-                end
-            end
-        end
-        return false
-    end
-
-    local function scanMatchGui(): ()
-        local now: number = os.clock()
-        for _, descendant: Instance in ipairs(playerGui:GetDescendants()) do
-            if descendant:IsA("TextLabel") or descendant:IsA("TextButton") then
-                local textOk: boolean, text: any = pcall(function(): any
-                    return (descendant :: any).Text
-                end)
-                if textOk and rules.isLocalVictoryLabel(text) and actuallyVisible(descendant) then
-                    runtimeState.resultsPending = true
-                    if settings.autoWin and not runtimeState.resultWinCounted then
-                        runtimeState.resultWinCounted = true
-                        registerWin()
-                    end
-                end
-            end
-            if not settings.autoWin or not settings.playAgain then
-                continue
-            end
-            if not (descendant:IsA("TextButton") or descendant:IsA("ImageButton")) then
-                continue
-            end
-            local button: GuiButton = descendant :: GuiButton
-            if type(host.isMenuOwned) == "function" and host.isMenuOwned(button) then
-                continue
-            end
-            if not actuallyVisible(button) or not isPlayAgainButton(button) then
-                continue
-            end
-            if now - runtimeState.lastPlayAgainAt >= 1.5 then
-                runtimeState.lastPlayAgainAt = now
-                clickNativeButton(button)
-                -- RematchTeleport("back_to_lobby") is intentionally not used:
-                -- the capture proves a lobby transition, not Play Again.
-            end
-        end
-    end
-
     local function updateMatchToken(): ()
         local token: string? = matchToken(localPlayer)
         if token ~= runtimeState.lastMatchToken then
@@ -1181,8 +1045,6 @@ local function buildX2Duels(runtime: any): ()
                 runtimeState.observedRound = true
                 runtimeState.roundSerial += 1
                 runtimeState.nextGunAt = 0
-                runtimeState.nextKnifeAt = 0
-                if settings.autoWin then queueGunBurst() end
             else
                 runtimeState.observedRound = false
                 runtimeState.selected = nil
@@ -1205,54 +1067,23 @@ local function buildX2Duels(runtime: any): ()
             runtimeState.selected = nil
         end
 
-        if settings.autoWin and combatMatchActive() then
-            local gunAvailable: boolean? = runtimeState.gunAvailable
-            if (runtimeState.burstRemaining or 0) <= 0
-                and now >= (runtimeState.nextBurstCycleAt or 0) then
-                queueGunBurst()
-                gunAvailable = nil
-            end
-            if (runtimeState.burstRemaining or 0) > 0
-                and now >= (runtimeState.nextBurstAt or 0) then
-                -- fireGun owns discovery/equip; this loop must not reject a
-                -- Backpack gun before giving it a chance to equip.
-                local _fired: boolean, hasGun: boolean =
-                    runGun(settings.maxDistance, 0.04)
-                gunAvailable = hasGun
-                runtimeState.gunAvailable = hasGun
-                if hasGun then
-                    runtimeState.burstRemaining -= 1
-                    runtimeState.nextBurstAt = now + 0.04
-                    if runtimeState.burstRemaining == 0 then
-                        runtimeState.nextBurstCycleAt = now + 1.2
-                    end
-                else
-                    runtimeState.burstRemaining = 0
-                    runtimeState.nextBurstAt = now + 0.2
-                    runtimeState.nextBurstCycleAt = now + 0.2
-                end
-            end
-            if gunAvailable == false and now >= runtimeState.nextKnifeAt then
-                runKnifeThrow(600, settings.knifeInterval)
-            end
-        else
-            if settings.silentAim and settings.autoShoot and now >= runtimeState.nextGunAt then
-                runGun(settings.maxDistance, settings.shotInterval)
-            end
-            if settings.knifeThrow and now >= runtimeState.nextKnifeAt then
-                runKnifeThrow(600, settings.knifeInterval)
-            end
-            if settings.killAura and now >= runtimeState.nextAuraAt then
-                runKillAura()
-            end
+        if settings.silentAim and settings.autoShoot
+            and now >= runtimeState.nextGunAt then
+            runGun(settings.maxDistance, settings.shotInterval)
+        end
+        if settings.silentAim and settings.knifeThrow then
+            runKnifeThrow(600)
+        end
+        if settings.killAura and now >= runtimeState.nextAuraAt then
+            runKillAura()
         end
         if settings.hitboxes and now >= runtimeState.nextHitboxAt then
             runtimeState.nextHitboxAt = now + 0.2
             updateHitboxes()
         end
-        if settings.autoWin and now >= runtimeState.nextGuiAt then
-            runtimeState.nextGuiAt = now + 0.25
-            scanMatchGui()
+        if settings.stats and now >= runtimeState.nextStatsAt then
+            runtimeState.nextStatsAt = now + 0.25
+            updateStats()
         end
     end
 
@@ -1276,13 +1107,13 @@ local function buildX2Duels(runtime: any): ()
     local roleProvider: any = nil
 
     moduleCleanup = function(): ()
-        settings.autoWin = false
+        settings.stats = false
         settings.silentAim = false
         settings.autoShoot = false
         settings.knifeThrow = false
         settings.killAura = false
         settings.hitboxes = false
-        settings.playAgain = false
+        updateStats()
         setAimActivity(false)
         restoreAllHitboxes()
         cancelKnifeThrow()
@@ -1342,8 +1173,15 @@ local function buildX2Duels(runtime: any): ()
         activateNative = activateNative,
         fireGun = fireGun,
         fireKnife = fireKnife,
-        isMatchActive = combatMatchActive,
         getWins = function(): number return runtimeState.wins end,
+        getStats = function(): {[string]: number}
+            return {
+                Wins = runtimeState.wins,
+                TimePlayed = math.max(0, os.clock() - runtimeState.sessionStartedAt),
+                Kills = runtimeState.kills,
+                Loses = runtimeState.loses,
+            }
+        end,
     }
     state.x2duelsCore = core
     state.mvsdCore = core
@@ -1417,13 +1255,20 @@ local function buildX2Duels(runtime: any): ()
 
     local configData: any = host.configData
     if type(configData) == "table"
-        and configData.values["X2Duels.layout"] ~= "v116" then
+        and configData.values["X2Duels.layout"] ~= "v119" then
         local states: any = configData.states
         local values: any = configData.values
         if states["MVSD.SilentAIM.AutoShoot"] == nil
             and states["MVSD.AutoShoot"] ~= nil then
             states["MVSD.SilentAIM.AutoShoot"] = states["MVSD.AutoShoot"] == true
             if states["MVSD.AutoShoot"] == true then
+                states["MVSD.SilentAIM"] = true
+            end
+        end
+        if states["MVSD.SilentAIM.KnifeThrow"] == nil
+            and states["MVSD.KnifeThrow"] ~= nil then
+            states["MVSD.SilentAIM.KnifeThrow"] = states["MVSD.KnifeThrow"] == true
+            if states["MVSD.KnifeThrow"] == true then
                 states["MVSD.SilentAIM"] = true
             end
         end
@@ -1434,19 +1279,22 @@ local function buildX2Duels(runtime: any): ()
                 values[newKey] = values[oldKey]
             end
         end
-        if states["MVSD.AutoWin.PlayAgain"] == nil
-            and states["MVSD.PlayAgain"] ~= nil then
-            states["MVSD.AutoWin.PlayAgain"] = states["MVSD.PlayAgain"] == true
-        end
         if states["MVSD.Hitbox"] == nil and states["MVSD.Hitboxes"] ~= nil then
             states["MVSD.Hitbox"] = states["MVSD.Hitboxes"] == true
         end
-        -- The old Auto Farm meant combat. Do not auto-enable either of the
-        -- two new, deliberately different features during this migration.
+        -- The former Auto Win was a combat driver. Restore it as an opt-in
+        -- statistics card, never as the old automation or its GUI options.
         states["MVSD.AutoFarm"] = false
         states["MVSD.AutoWin"] = false
         states["MVSD.TriggerBot"] = nil
-        values["X2Duels.layout"] = "v116"
+        states["MVSD.AutoShoot"] = nil
+        states["MVSD.KnifeThrow"] = nil
+        states["MVSD.TeamESP"] = nil
+        states["MVSD.AutoWin.PlayAgain"] = nil
+        states["MVSD.PlayAgain"] = nil
+        values["MVSD.AutoShoot.Throwinterval"] = nil
+        values["MVSD.SilentAIM.Throwinterval"] = nil
+        values["X2Duels.layout"] = "v119"
         if type(host.queueConfigSave) == "function" then
             host.queueConfigSave()
         end
@@ -1456,44 +1304,23 @@ local function buildX2Duels(runtime: any): ()
 
     autoWinCard = card(
         "Auto Win",
-        "Target nearest opponents, spam native weapons, click Play Again and stop at five wins",
+        "Session statistics only: Wins, Time Played, Kills and Loses",
         2,
         function(enabled: boolean): ()
-            settings.autoWin = enabled
-            runtimeState.nextGunAt = 0
-            runtimeState.nextKnifeAt = 0
-            runtimeState.nextGuiAt = 0
-            if enabled then
-                runtimeState.wins = 0
-                runtimeState.lastWinRound = -1
-                runtimeState.lastWinAt = 0
-                queueGunBurst()
-            else
-                runtimeState.burstRemaining = 0
-                cancelKnifeThrow()
-                restoreCamera()
-            end
+            settings.stats = enabled
+            runtimeState.nextStatsAt = 0
+            updateStats()
         end,
-        "Combat"
+        "Utilities"
     )
-    host.addToggleOption(autoWinCard, "Play Again", true, function(value: boolean): ()
-        settings.playAgain = value
-        runtimeState.nextGuiAt = 0
-    end)
-    host.addActionOption(autoWinCard, "Reset wins", function(): ()
-        runtimeState.wins = 0
-        runtimeState.lastWinRound = -1
-        runtimeState.lastWinAt = 0
-        pcall(notify, "X2 Duels · contador reiniciado")
-    end)
     host.addInformationOption(
         autoWinCard,
-        "Counts only explicit local wins. Five confirmed wins stop Auto Win, not the other independent features."
+        "Status only. No automatic combat, rematch clicks or invented results; counters come from observed MVS events."
     )
 
     silentAimCard = card(
         "Silent AIM",
-        "Target Nearest Player with Legit camera aim or Silent local ray redirection",
+        "Nearest-player Gun/Knife combat with Legit camera aim or Silent local ray redirection",
         3,
         function(enabled: boolean): ()
             settings.silentAim = enabled
@@ -1506,6 +1333,7 @@ local function buildX2Duels(runtime: any): ()
             end
             if not settings.silentAim then
                 runtimeState.selected = nil
+                cancelKnifeThrow()
                 uninstallHooks()
                 restoreCamera()
             end
@@ -1594,24 +1422,43 @@ local function buildX2Duels(runtime: any): ()
     )
     host.addInformationOption(
         silentAimCard,
-        "CFrame aims before native Tool:Activate() on mobile/touch. Button preserves your camera and uses the same native activation."
+        "CFrame aims before native Tool:Activate() and needs no action button. Button preserves your camera; the assigned key fires without toggling Silent AIM."
     )
 
-    local knifeCard: any = card(
+    local function pressSenderButton(): ()
+        -- This is an action key, not the Silent AIM master toggle. CFrame is
+        -- driven by Auto Shoot/native activation and never needs this button.
+        if not settings.silentAim or settings.senderMode ~= "Button" then
+            return
+        end
+        local target: {[string]: any}? = selectedTarget()
+            or nearestEnemy(settings.maxDistance)
+        fireGun(target)
+    end
+    if type(state.bindFeatureActivationKey) == "function" then
+        state.bindFeatureActivationKey(
+            silentAimCard, Enum.KeyCode.Unknown, pressSenderButton
+        )
+    end
+
+    if type(host.addSectionOption) == "function" then
+        host.addSectionOption(silentAimCard, "Knife")
+    end
+    host.addToggleOption(
+        silentAimCard,
         "Knife Throw",
-        "Only throw the equipped knife at the nearest opponent; no melee aura or hitbox logic",
-        4,
+        false,
         function(enabled: boolean): ()
             settings.knifeThrow = enabled
-            runtimeState.nextKnifeAt = 0
             if not enabled then cancelKnifeThrow() end
         end,
-        "Combat"
+        "Requires Silent AIM ON. Attempts the native throw on every frame; there is no interval setting.",
+        true
     )
-    host.addNumberOption(knifeCard, "Throw interval", 0.18, 0.05, 1, function(value: number): ()
-        settings.knifeInterval = value
-    end)
-    host.addInformationOption(knifeCard, "Throw only. Uses the Silent AIM Sender; no hitbox expansion, slash aura or invented ThrowEvent arguments.")
+    host.addInformationOption(
+        silentAimCard,
+        "Knife Throw uses the native right-click/ForceThrow path and waits only for the native windup."
+    )
 
     local auraCard: any = card(
         "Kill Aura",
@@ -1653,7 +1500,6 @@ local function buildX2Duels(runtime: any): ()
         runtimeState.deadPlayers[localPlayer] = nil
         runtimeState.selected = nil
         runtimeState.nextGunAt = 0
-        runtimeState.nextKnifeAt = 0
         cancelKnifeThrow()
         restoreCamera()
     end))

@@ -16,7 +16,6 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 RULES = ROOT / "src" / "games" / "X2Duels" / "Rules.lua"
 BASE = ROOT / "src" / "games" / "X2Duels" / "base.lua"
-ESP = ROOT / "src" / "games" / "X2Duels" / "Render" / "TeamESP.lua"
 AUTOFARM = ROOT / "src" / "games" / "X2Duels" / "Other" / "AutoFarm.lua"
 TRIGGERBOT = ROOT / "src" / "games" / "universal" / "Combat" / "TriggerBot.lua"
 DECOMPILER = ROOT / "tools" / "X2DuelsDecompiler.luau"
@@ -166,7 +165,6 @@ def forbid(source: str, needle: str, label: str) -> None:
 
 def run_integration_contracts() -> None:
     base = BASE.read_text(encoding="utf-8")
-    esp = ESP.read_text(encoding="utf-8")
     farm = AUTOFARM.read_text(encoding="utf-8")
     trigger = TRIGGERBOT.read_text(encoding="utf-8")
     decompiler = DECOMPILER.read_text(encoding="utf-8")
@@ -177,24 +175,32 @@ def run_integration_contracts() -> None:
     forbid(farm, ":FireServer(", "unverified pumpkin remote request")
     forbid(base, "host.mouse1press", "desktop-only firing")
     forbid(base, "pcall(mouse1press", "desktop-only firing")
-    gui_click_at = base.index("local function clickWithVirtualInput")
-    forbid(base[:gui_click_at], "VirtualInputManager", "combat mouse/touch injection substitute")
-    require(base[gui_click_at:], "SendMouseButtonEvent", "physical Play Again click")
-    forbid(base, 'FireServer("back_to_lobby")', "lobby transition as Play Again")
+    forbid(base, "VirtualInputManager", "GUI automation in the combat module")
+    forbid(base, "Play Again", "removed Play Again automation")
+    forbid(base, "queueGunBurst", "removed Auto Win combat driver")
+    forbid(base, "burstRemaining", "removed Auto Win burst state")
+    forbid(base, "knifeInterval", "removed Knife Throw interval state")
+    forbid(base, "Throw interval", "removed Knife Throw interval option")
     require(base, "tool:Activate()", "native mobile-compatible activation")
     require(base, "local function fireGun", "shared native gun adapter")
     require(base, "local function fireKnife", "shared native knife adapter")
     require(base, "mouse2press", "desktop knife throw input")
     require(base, 'SetAttribute("ForceThrow", true)', "touch knife throw state")
-    require(base, "runtimeState.burstRemaining = 20", "Auto Win opening burst")
-    require(base, "runtimeState.nextBurstCycleAt = now + 1.2", "Auto Win recurring burst")
-    forbid(base, 'if now >= runtimeState.nextGunAt and findWeapon("Gun")', "gun pre-check before equip")
     require(base, 'settings.senderMode == "CFrame"', "CFrame sender")
     require(base, '{"Legit", "Silent"}', "Legit/Silent modes")
     require(base, '"Auto Shoot · "', "mode-labelled nested Auto Shoot")
     require(base, "settings.silentAim and settings.autoShoot", "master-gated Auto Shoot")
-    require(base, 'host.addToggleOption(autoWinCard, "Play Again"', "Auto Win Play Again option")
-    require(base, '"Auto Win",', "Auto Win card")
+    require(base, "state.bindFeatureActivationKey", "MM2-style action key binding")
+    require(base, 'settings.senderMode ~= "Button"', "CFrame does not require action key")
+    require(base, 'host.addSectionOption(silentAimCard, "Knife")', "Knife section inside Silent AIM")
+    require(base, '"Knife Throw",', "nested Knife Throw option")
+    require(base, "settings.silentAim and settings.knifeThrow", "master-gated Knife Throw")
+    require(base, "runKnifeThrow(600)", "frame-driven Knife Throw")
+    require(base, '"Auto Win",', "Auto Win status card")
+    require(base, '"Utilities"', "Utilities category")
+    require(base, "Wins: %d | Time Played: %s | Kills: %d | Loses: %d", "four status fields")
+    require(base, "local function registerLoss", "observed local loss counter")
+    require(base, "Packages/Networking/RE/Combat/DestroyBody", "observed kill event")
     forbid(base, '"Trigger Bot"', "duplicate X2 TriggerBot card")
     forbid(base, '"Auto Shoot",\n        "Equip', "standalone Auto Shoot card")
     require(base, '"Hitbox",', "singular Hitbox card")
@@ -211,7 +217,6 @@ def run_integration_contracts() -> None:
     require(base, "Packages/Networking/RE/Match/MatchResults", "results event")
     require(base, "Packages/Networking/RE/Match/RemovePlayer", "round-ended event")
     require(base, "Packages/Networking/RE/Match/PlayerRespawned", "round event")
-    require(base, "clickNativeButton", "real Play Again button path")
 
     require(trigger, "host.state.x2duelsCore", "single TriggerBot X2 adapter")
     require(trigger, "x2Core.equippedTool()", "TriggerBot equipped Gun/Knife")
@@ -226,9 +231,7 @@ def run_integration_contracts() -> None:
     require(farm, "TouchTransmitter", "invisible PumpCoins interaction")
     require(farm, "host.firetouchinterest", "native pumpkin contact")
     require(farm, "restoreSavedPosition()", "farm position cleanup")
-    require(esp, 'Enemy = Color3.fromRGB(255, 82, 82)', "enemy ESP color")
-    require(esp, 'Teammate = Color3.fromRGB(75, 220, 135)', "team ESP color")
-    require(esp, 'Unknown = Color3.fromRGB(255, 190, 75)', "unknown ESP color")
+    require(farm, 'categoryName = "Utilities"', "Auto Farm Utilities category")
 
     require(wurst, '[92876937625630] = "X2Duels"', "current PlaceId registration")
     require(wurst, '[135856908115931] = "X2Duels"', "legacy MVS PlaceId registration")
@@ -236,7 +239,7 @@ def run_integration_contracts() -> None:
     require(wurst, '"src/games/X2Duels/Rules.lua"', "rules loader path")
     require(wurst, '"src/games/X2Duels/base.lua"', "base loader path")
     require(wurst, '"src/games/X2Duels/Other/AutoFarm.lua"', "farm loader path")
-    require(wurst, '"src/games/X2Duels/Render/TeamESP.lua"', "ESP loader path")
+    forbid(wurst, '"src/games/X2Duels/Render/TeamESP.lua"', "separate Team ESP loader")
     require(wurst, '"SetDead"', "current MVS match fingerprint")
     require(wurst, '"LegacyClientScripts"', "current MVS client fingerprint")
     require(wurst, 'provider.GetRelation', "tri-state global team analysis")
@@ -260,7 +263,7 @@ def run_integration_contracts() -> None:
         text = profile.read_text(encoding="utf-8")
         require(text, 'key = "X2Duels"', f"profile {place_id}")
         require(text, '"MVSD"', f"existing MVS section {place_id}")
-    print("X2Duels architecture, farm, TriggerBot and decompiler contracts: PASS")
+    print("X2Duels architecture, MM2 structure, farm, TriggerBot and decompiler contracts: PASS")
 
 def run_bundle_boot() -> None:
     """Boot the real stamped bundle as X2 Duels and exercise card cleanup."""
@@ -301,6 +304,10 @@ X2RemovePlayer = x2Remote("RemovePlayer")
 X2WinNotification = x2Remote("WinNotification")
 X2SetDead = x2Remote("SetDead")
 X2PlayerRespawned = x2Remote("PlayerRespawned")
+local x2Combat = x2Folder(x2RE, "Combat")
+X2DestroyBody = Instance.new("RemoteEvent")
+X2DestroyBody.Name = "DestroyBody"
+X2DestroyBody.Parent = x2Combat
 local x2Local = game:GetService("Players").LocalPlayer
 -- Match Roblox's real hierarchy so WaitForChild scans this same PlayerGui.
 if x2Local.PlayerGui then x2Local.PlayerGui.Parent = x2Local end
@@ -316,10 +323,8 @@ local expected = {
     ["Auto Farm"] = true,
     ["Auto Win"] = true,
     ["Silent AIM"] = true,
-    ["Knife Throw"] = true,
     ["Kill Aura"] = true,
     ["Hitbox"] = true,
-    ["Team ESP"] = true,
 }
 local seen = {}
 local featuresByName = {}
@@ -337,14 +342,24 @@ for _, feature in ipairs(ex.allFeatures) do
         assert(disabled, "X2 disable " .. feature.name .. ": " .. tostring(disableError))
     end
 end
-assert(x2CardCount == 7, "expected exactly seven X2 cards, got " .. tostring(x2CardCount))
+assert(x2CardCount == 5, "expected exactly five X2 cards, got " .. tostring(x2CardCount))
 for name, _ in pairs(expected) do
     assert(seen[name], "X2 card did not boot: " .. name)
 end
 assert(ex.state.toggleControls["MVSD.SilentAIM.AutoShoot"],
     "Auto Shoot is not nested under Silent AIM")
-assert(ex.state.toggleControls["MVSD.AutoWin.PlayAgain"],
-    "Play Again is not nested under Auto Win")
+assert(ex.state.toggleControls["MVSD.SilentAIM.KnifeThrow"],
+    "Knife Throw is not nested under Silent AIM")
+assert(not ex.state.toggleControls["MVSD.KnifeThrow"],
+    "standalone Knife Throw card/control survived")
+assert(not ex.state.valueControls["MVSD.SilentAIM.Throwinterval"],
+    "Knife Throw interval control survived")
+assert(featuresByName["Auto Win"].categoryName == "Utilities",
+    "Auto Win is not in Utilities")
+assert(featuresByName["Auto Farm"].categoryName == "Utilities",
+    "Auto Farm is not in Utilities")
+assert(featuresByName["Silent AIM"].categoryName == "Combat",
+    "Silent AIM left Combat")
 assert(ex.state.x2duelsCore and ex.state.x2duelsRules,
     "X2 shared core/rules were not published")
 assert(ex.state.gameBridge.teamProvider
@@ -398,10 +413,10 @@ for _, scheduled in pairs(ex.TaskManager.tasks) do
         break
     end
 end
-assert(coreTask, "Auto Win core callback was not registered")
+assert(coreTask, "X2 core callback was not registered")
 
--- Native adapter behavior: a Backpack gun must be equipped by fireGun, not
--- rejected by an AutoWin pre-check. The mock Tool records real Activate calls.
+-- Native adapter behavior: a Backpack gun must be equipped by fireGun.
+-- The mock Tool records real Activate calls; it does not prove server damage.
 local nativeLocal = game:GetService("Players").LocalPlayer
 local nativeBackpack = nativeLocal:FindFirstChildOfClass("Backpack")
 local nativeHumanoid = nativeLocal.Character:FindFirstChildOfClass("Humanoid")
@@ -446,23 +461,42 @@ assert(core.isEnemy(HarnessHeroGuy),
     "second-argument Player respawn did not clear the dead state")
 local nativePreviousWallCheck = core.settings.wallCheck
 core.settings.wallCheck = false -- isolate native activation from the mock Raycast
-local nativeAutoWin = featuresByName["Auto Win"]
 local nativePreviousClock = os.clock
 local nativeNow = math.max(nativePreviousClock(), 10)
 os.clock = function() return nativeNow end
-nativeAutoWin.activate()
-for _ = 1, 20 do
-    coreTask.callback(0.04)
-    nativeNow += 0.041
-end
-assert(nativeGunShots == 20, "Auto Win opening burst did not fire 20 native shots")
+
+local silentFeature = featuresByName["Silent AIM"]
+local autoWinFeature = featuresByName["Auto Win"]
+silentFeature.activate()
+assert(silentFeature.enabled and core.settings.silentAim,
+    "Silent AIM did not enable through its card")
+core.settings.senderMode = "Button"
+core.settings.autoShoot = false
+core.settings.knifeThrow = false
+local senderBinding = ex.state.shortcutBindings["MVSD.SilentAIM"]
+assert(senderBinding and senderBinding.onPress, "Silent AIM action binding missing")
+local enabledBeforeKey = silentFeature.enabled
+senderBinding.onPress()
+assert(nativeGunShots == 1, "Button sender key did not fire the native gun")
 assert(nativeGun.Parent == nativeLocal.Character, "Backpack gun was not equipped")
-coreTask.callback(0.1)
-assert(nativeGunShots == 20, "Auto Win ignored the inter-burst interval")
-nativeNow += 1.21
-coreTask.callback(0.1)
-assert(nativeGunShots == 21, "Auto Win did not start its recurring burst")
-nativeAutoWin.activate() -- public toggle: also clears feature.enabled
+assert(silentFeature.enabled == enabledBeforeKey,
+    "Silent AIM keybind toggled the master feature")
+core.settings.senderMode = "CFrame"
+senderBinding.onPress()
+assert(nativeGunShots == 1, "CFrame sender unexpectedly required the action key")
+assert(silentFeature.enabled == enabledBeforeKey,
+    "CFrame keybind changed the master feature")
+core.settings.autoShoot = true
+core.settings.shotInterval = 0.04
+coreTask.callback(0.04)
+assert(nativeGunShots == 2, "CFrame Auto Shoot did not fire without a key press")
+nativeNow += 0.041
+coreTask.callback(0.04)
+assert(nativeGunShots == 3, "CFrame Auto Shoot did not continue on its interval")
+core.settings.autoShoot = false
+silentFeature.activate()
+assert(not silentFeature.enabled and not core.settings.silentAim,
+    "Silent AIM card did not disable cleanly")
 
 local oldMouse2Press = mouse2press
 local oldMouse2Release = mouse2release
@@ -480,87 +514,54 @@ assert(nativeKnifeShots == 2 and nativeKnife:GetAttribute("ForceThrow") == nil,
     "touch knife did not use and restore ForceThrow")
 mouse2press = oldMouse2Press
 mouse2release = oldMouse2Release
-os.clock = nativePreviousClock
-core.settings.wallCheck = nativePreviousWallCheck
-nativeGun:Destroy()
-nativeKnife:Destroy()
+assert(ex.state.toggleControls["MVSD.SilentAIM.KnifeThrow"],
+    "Knife Throw is not a Silent AIM option")
+assert(not ex.state.valueControls["MVSD.SilentAIM.Throwinterval"],
+    "Knife Throw still has an interval control")
 
-local autoWinFeature = featuresByName["Auto Win"]
-local playAgainButton = Instance.new("TextButton")
-playAgainButton.Name = "PlayAgainButton"
-playAgainButton.Text = "Play Again"
-playAgainButton.Visible = true
-playAgainButton.Parent = game:GetService("Players").LocalPlayer.PlayerGui
-local playAgainClicks = 0
-playAgainButton.Activated:Connect(function()
-    playAgainClicks += 1
-    playAgainButton.Visible = false -- Native UI normally disappears after the click.
-end)
-playAgainButton.AbsolutePosition = Vector2.new(100, 200)
-playAgainButton.AbsoluteSize = Vector2.new(80, 40)
-local vimEvents = {}
-local vim = game:GetService("VirtualInputManager")
-local guiService = game:GetService("GuiService")
-guiService.GetGuiInset = function() return Vector2.new(3, 4) end
-vim.SendMouseButtonEvent = function(_self, x, y, button, pressed)
-    table.insert(vimEvents, {x = x, y = y, button = button, pressed = pressed})
-    if not pressed then playAgainButton.Activated:Fire() end
-end
-game:GetService("UserInputService").MouseEnabled = true
-local previousFireSignal = firesignal
-firesignal = function(signal)
-    signal:Fire()
-end
-local realClock = os.clock
-local clockNow = math.max(realClock(), 10)
-os.clock = function()
-    return clockNow
-end
+-- Auto Win is a status-only card. Event fixtures test local accounting, not
+-- live server authority and not any GUI/rematch automation.
 autoWinFeature.activate()
-assert(core.settings.autoWin and autoWinFeature.enabled, "Auto Win did not really enable")
+assert(core.settings.stats and autoWinFeature.enabled, "statistics card did not enable")
+local shotsBeforeStats = nativeGunShots
+coreTask.callback(0.1)
+assert(nativeGunShots == shotsBeforeStats,
+    "statistics card unexpectedly drove native combat")
+assert(autoWinFeature.status
+    and string.find(autoWinFeature.status, "Wins:", 1, true)
+    and string.find(autoWinFeature.status, "Time Played:", 1, true)
+    and string.find(autoWinFeature.status, "Kills:", 1, true)
+    and string.find(autoWinFeature.status, "Loses:", 1, true),
+    "statistics card does not expose all four requested fields")
+X2DestroyBody.OnClientEvent:Fire(HarnessHeroGuy, nil, nativeLocal)
+assert(core.getStats().Kills == 1, "observed local killer was not counted")
+X2DestroyBody.OnClientEvent:Fire(HarnessHeroGuy, nil, nativeLocal)
+assert(core.getStats().Kills == 1, "duplicate DestroyBody counted twice")
+X2SetDead.OnClientEvent:Fire(nativeLocal)
+assert(core.getStats().Loses == 1, "local SetDead was not counted as a loss")
+X2SetDead.OnClientEvent:Fire(nativeLocal)
+assert(core.getStats().Loses == 1, "duplicate local death counted twice")
+nativeNow += 1
+X2PlayerRespawned.OnClientEvent:Fire(nativeLocal)
 X2WinNotification.OnClientEvent:Fire("Red")
 assert(core.getWins() == 1, "first confirmed win was not counted")
 X2WinNotification.OnClientEvent:Fire("Red")
 assert(core.getWins() == 1, "same-round win was counted twice")
-X2RemovePlayer.OnClientEvent:Fire()
-coreTask.callback(0.1)
-assert(playAgainClicks == 1, "RemovePlayer did not lead to native Play Again")
-assert(#vimEvents == 2 and vimEvents[1].pressed and not vimEvents[2].pressed,
-    "Play Again did not use a physical mouse down/up pair")
-assert(vimEvents[1].x == 143 and vimEvents[1].y == 224
-    and vimEvents[1].button == 0, "Play Again clicked the wrong screen point")
 X2MatchResults.OnClientEvent:Fire({Winner = "Red"})
 assert(core.getWins() == 1, "MatchResults duplicated the same-round win")
-clockNow += 1
-X2PlayerRespawned.OnClientEvent:Fire(game:GetService("Players").LocalPlayer)
+nativeNow += 1
+X2PlayerRespawned.OnClientEvent:Fire(nativeLocal)
 X2WinNotification.OnClientEvent:Fire("Red")
 assert(core.getWins() == 2, "second round win was not counted")
-X2RemovePlayer.OnClientEvent:Fire()
-clockNow += 1
-local x2Local = game:GetService("Players").LocalPlayer
-x2Local:SetAttribute("Game", nil)
-coreTask.callback(0.1)
-x2Local:SetAttribute("Game", "HarnessMatchTwo")
-coreTask.callback(0.1)
-X2WinNotification.OnClientEvent:Fire("Red")
-assert(core.getWins() == 3, "lobby transition suppressed the next match win")
-clockNow += 1
-X2PlayerRespawned.OnClientEvent:Fire(x2Local)
-X2WinNotification.OnClientEvent:Fire("Red")
-assert(core.getWins() == 4, "fourth confirmed win was not counted")
-clockNow += 1
-X2PlayerRespawned.OnClientEvent:Fire(x2Local)
-X2WinNotification.OnClientEvent:Fire("Red")
-assert(core.getWins() == 5, "fifth confirmed win was not counted")
-assert(not core.settings.autoWin and not autoWinFeature.enabled,
-    "Auto Win did not switch off at five wins")
-assert(ex.configData.states["MVSD.AutoWin"] == false,
-    "Auto Win completion was not persisted as disabled")
-X2WinNotification.OnClientEvent:Fire("Red")
-assert(core.getWins() == 5, "completed Auto Win accepted a sixth win")
-os.clock = realClock
-firesignal = previousFireSignal
-playAgainButton:Destroy()
+assert(core.settings.stats and autoWinFeature.enabled,
+    "statistics card switched itself off after a win")
+autoWinFeature.activate()
+assert(not core.settings.stats and autoWinFeature.status == nil,
+    "statistics card did not clear its status on disable")
+os.clock = nativePreviousClock
+core.settings.wallCheck = nativePreviousWallCheck
+nativeGun:Destroy()
+nativeKnife:Destroy()
 
 -- Offline behavior only: this proves discovery, a native contact attempt and
 -- position restoration. It does not prove that a live server awards currency.
@@ -703,7 +704,7 @@ assert(ex.state.x2duelsRules == nil, "X2 rules survived destroy")
 assert(ex.state.mvsdCore == nil, "X2 compatibility core survived destroy")
 assert(ex.state.gameBridge.teamProvider == nil, "X2 team provider survived destroy")
 assert(ex.state.gameBridge.roleProvider == nil, "X2 role provider survived destroy")
-print("[X2BOOT] 7 cards, modes, Auto Win 5/5 + Play Again, pumpkin restore, cleanup: PASS")
+print("[X2BOOT] 5 cards, MM2 structure, native sender, stats, pumpkin restore, cleanup: PASS")
 '''
     output_path = ROOT / "build" / "x2duels_boot.luau"
     output_path.write_text(generated, encoding="utf-8")
@@ -714,7 +715,7 @@ print("[X2BOOT] 7 cards, modes, Auto Win 5/5 + Play Again, pumpkin restore, clea
     if result.returncode:
         raise SystemExit(result.stdout + result.stderr)
     output = result.stdout
-    marker = "[X2BOOT] 7 cards, modes, Auto Win 5/5 + Play Again, pumpkin restore, cleanup: PASS"
+    marker = "[X2BOOT] 5 cards, MM2 structure, native sender, stats, pumpkin restore, cleanup: PASS"
     if marker not in output:
         raise AssertionError("X2 bundle boot marker missing\n" + output)
     print(marker)
