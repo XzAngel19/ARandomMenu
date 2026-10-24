@@ -194,7 +194,7 @@ local function computeLayoutMetrics(
     }
 end
 
-local RUNTIME_BRANCH: string = "arena/e412e3e8-arandommenu"
+local RUNTIME_BRANCH: string = "arena/dfe61ae0-arandommenu"
 do
     local override: any = nil
     local okGenv, genv = pcall(function()
@@ -219,7 +219,7 @@ local RUNTIME_RAW_BASE: string =
         .. RUNTIME_BRANCH
         .. "/"
 
-local SOURCE_STAMP: string = "v120-20261024-raw-coinsaura-negvals"
+local SOURCE_STAMP: string = "v121-manifest-refactor"
 
 local BOOT_STARTED_AT: number = os.clock()
 local BOOT_FINGERPRINT_SECONDS: number = 0
