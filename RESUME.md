@@ -1,4 +1,4 @@
-# RESUME — Wurst (MM2) · Handoff para el próximo agente
+# RESUME — Wurst · Handoff y guía de arquitectura de games
 
 > Léelo entero antes de tocar nada. Resume el estado real del proyecto, las
 > reglas del usuario, y los errores que ya se pagaron una vez. Si algo aquí
@@ -84,6 +84,288 @@
   PumpCoins invisibles y cleanup. `python3 tools/test_x2duels_decompiler.py`
   valida el extractor con DataModel simulado. Todo ello es validación offline,
   no aceptación del servidor ni precisión live.
+
+## 1B. Cómo construir un game sin mezclar responsabilidades
+
+Esta es la guía de diseño para MM2, X2Duels/MVS y cualquier juego nuevo. La
+referencia de estructura es `games/MM2`; no se copian sus remotes, tiempos ni
+argumentos a otro juego sin evidencia propia. La primera pregunta no es «¿qué
+nombre suena más potente?», sino **qué mecanismo controla el módulo, qué estado
+necesita y qué puede restaurar al apagarse**.
+
+### 1. El mapa de responsabilidades
+
+| Lugar | Responsabilidad | Ejemplos | No debe contener |
+| --- | --- | --- | --- |
+| **Silent AIM** | Seleccionar un objetivo y dirigir/activar ataques a distancia o proyectiles. | Shoot, Gun, Knife Throw, flechas, cohetes, lanzamientos y otras variantes de proyectil. | Swings cuerpo a cuerpo, un segundo selector de equipos, una tarjeta independiente por cada skin. |
+| **Kill Aura** | Ataques melee de corto alcance contra objetivos válidos. | Knife, machete, sword, bat, axe y cualquier arma cuyo ataque sea un swing/contacto cercano. | Redirección de proyectiles, Silent Ray, predicción de una trayectoria o un ThrowEvent inventado. |
+| **TriggerBot** | Reaccionar a una condición ya visible/validada y activar la acción correspondiente. | Disparar cuando el objetivo está bajo el crosshair, usando el adaptador nativo compartido. | Otro Silent AIM, otro bucle de selección o una copia del módulo de cada juego. |
+| **Utilities** | Automatizaciones y datos útiles que no son el control directo de un ataque o del cuerpo. | Auto Farm, Auto Win de solo estado, Auto Get Gun, Auto Unbox y ayudas de farmeo. | Hitbox, una expansión de colisiones o un módulo puesto ahí solo porque «es fuerte». |
+| **Exploits** | Cambiar una propiedad o aprovechar directamente una mecánica explotable del juego. | Hitbox y manipulaciones equivalentes que tengan una razón técnica clara. | Auto Farm/Auto Win por costumbre, o cualquier tarjeta que no se pueda explicar técnicamente. |
+| **Render** | Mostrar información sin decidir el combate. | PlayerESP, Chams, Nametags, HP, Arrows, Coin ESP. | Un TeamESP paralelo con otra resolución de equipos. |
+| **Movement/Blatant** | Movimiento, desplazamiento o acciones físicas directas. | Speed, Fly, Teleport, Fling cuando corresponda al juego. | Estadísticas de farm o lógica de proyectiles. |
+
+La distinción importante es **proyectil/distancia frente a melee**, no el nombre
+del arma. Un cuchillo que se lanza pertenece a Silent AIM; el mismo cuchillo
+cuando hace un swing cercano pertenece a Kill Aura. Si una herramienta tiene
+ambos ataques, comparte el descubrimiento/equipado del Tool, pero separa las
+dos rutas y sus opciones. No se duplican tarjetas ni se crean dos loops que
+equipan y activan el mismo arma a la vez.
+
+**Kill Aura no es un cajón para cualquier ataque automático.** Su alcance,
+animación, swing, hit window y recovery pertenecen a la mecánica melee del
+juego. **Silent AIM tampoco es sinónimo de “cualquier cosa con Silent en el
+nombre”**: debe existir una selección de objetivo y una acción a distancia que
+realmente se pueda redirigir o activar.
+
+### 2. Estructura de archivos y orden de inicialización
+
+Un game puede tener un `base.lua` pequeño o uno grande por razones históricas,
+pero debe mantener estas fronteras conceptuales:
+
+```text
+src/games/<Game>/
+  Rules.lua                 -- decisiones puras: equipos, Tools, resultados
+  base.lua                  -- core, providers, adaptadores y coordinación
+  Blatant/ o Combat/        -- ataques y módulos de combate del juego
+  Other/AutoFarm.lua        -- utilidad de farmeo, si existe
+  Render/                   -- presentación, nunca otra lógica de equipos
+src/Profile/<PlaceId>.lua   -- sección/perfil del PlaceId
+src/Wurst.lua               -- fingerprint, loader, registro y cleanup global
+```
+
+- `Rules.lua` no crea GUI ni conexiones. Expone funciones comprobables para
+  normalizar equipos, clasificar herramientas, resolver relaciones y evaluar
+  resultados. Un nombre de remote no es una regla suficiente.
+- `base.lua` publica un único `state.<game>Core` y, cuando exista,
+  `state.<game>Rules`. Los módulos usan ese core; no vuelven a escanear
+  Backpack, personajes o remotes de una forma incompatible.
+- El orden normal es **Rules → core/providers → módulos de combate →
+  utilidades/render**. El core debe existir antes de registrar un módulo que
+  lo consume. El loader debe enumerar explícitamente los archivos que realmente
+  existen; un archivo retirado también se retira del loader y del bundle.
+- `registerTeamProvider` y `registerRoleProvider` comparten la resolución de
+  equipos con Entity, Targeting y el ESP. No se crea un ESP específico para
+  arreglar colores que el provider ya puede resolver.
+- Cada módulo implementa `init(runtime)` y `destroy()`, guarda sus conexiones
+  en `featureConnections` o en su lista de cleanup y usa el `TaskManager`
+  compartido. Al destruir: desconectar, cancelar trabajos pendientes, restaurar
+  CFrame/cámara/atributos/propiedades y retirar providers que sean propios.
+- La configuración se migra con una versión de layout. Las opciones retiradas
+  se eliminan o migran de forma explícita; no se restaura automáticamente una
+  automatización antigua solo porque su estado guardado era `true`.
+
+### 3. Cómo se crea una tarjeta y sus opciones
+
+La API común es `createUniversalFeature` con `parent`, `registry` y
+`categoryName`. Las opciones se añaden con los widgets compartidos:
+`addSectionOption`, `addToggleOption`, `addNumberOption`, `addCycleOption`,
+`addActionOption` e `addInformationOption`. `SetStatus` es para estado corto y
+actualizable; no sustituye una explicación de seguridad ni un contador que no
+existe.
+
+- Una familia de ataques tiene **una tarjeta principal** y secciones por arma o
+  mecánica. Por ejemplo, Silent AIM puede contener `Gun` y `Knife`; no hace
+  falta una tarjeta `Knife Throw` separada si ambas comparten objetivo y
+  sender.
+- Las opciones dependen del mecanismo real. Un arma con carga puede necesitar
+  `Charge`; una con timing de impacto puede necesitar `Hit Time`; una con
+  críticos puede exponer `Critical` y sus ventanas `Miss/Bad/Okay` **solo si
+  esos estados existen y se pueden detectar**. No se rellenan tarjetas con
+  sliders genéricos que el juego no utiliza.
+- Las opciones de una mecánica especial deben explicar qué significan y qué
+  ocurre si el estado es desconocido. Un texto `Critical` no prueba que el
+  servidor haya aceptado un crítico; un resultado `Miss` tampoco debe contarse
+  como daño.
+- La keybind de una tarjeta puede ser de toggle o de acción, pero no ambas a la
+  vez. Para una acción como Shoot se usa `state.bindFeatureActivationKey` y se
+  asigna el callback de disparar; el callback no debe llamar al toggle maestro.
+  El valor `Unknown` deja la tecla sin asignar hasta que el usuario la capture.
+- Un sender `Button` espera la acción del botón/tecla. Un sender `CFrame` debe
+  poder trabajar por su ruta automática sin esperar ese botón. Esta diferencia
+  se prueba tanto en desktop como en touch, sin inyectar clicks para simular
+  combate si existe una activación nativa.
+- El estado de una opción hija no debe encender accidentalmente otra tarjeta.
+  Si una subopción requiere el master, se documenta y se comprueba el gate; al
+  apagar el master se cancela la acción pendiente pero se conserva la
+  preferencia de la subopción cuando eso sea útil.
+
+### 4. Adaptadores nativos y evidencia mínima
+
+Antes de escribir un ataque se identifica la cadena real:
+**input/acción → Tool o controller → animación/estado → remote observado →
+resultado visible**. Se prefiere `Tool:Activate()`, el input nativo o el
+controller que el juego ya usa. No se inventan `FireServer` ni argumentos por
+similitud con otro juego.
+
+- El objetivo se valida antes de activar: personaje y parte siguen en el
+  DataModel, está vivo, no es el jugador local ni un objetivo protegido, la
+  relación de equipo lo permite y, si existe Wall Check, el raycast no atraviesa
+  geometría. La parte usada para apuntar debe ser la parte vigente, no un
+  CFrame guardado de otro personaje.
+- Gun/hitscan y projectile físico no son intercambiables. El primero necesita
+  origen, dirección y filtro coherentes; el segundo puede necesitar posición de
+  release, velocidad, gravedad, windup y recuperación. La predicción es una
+  hipótesis medible, no una promesa de rewind del servidor.
+- En un throw se conserva la animación y el momento de release cuando forman
+  parte de la mecánica. Desktop y móvil pueden tener entradas distintas (por
+  ejemplo, mouse2 frente a un atributo como ForceThrow); ambas deben restaurar
+  su estado al cancelar.
+- La evidencia se clasifica como **observado**, **intentado**, **confirmado por
+  un evento local** o **desconocido**. Beam, PlaySound, DestroyBody, una
+  animación o una llamada saliente no demuestran por sí solos daño, kill,
+  recompensa ni aceptación del servidor.
+- El servidor sigue siendo autoritativo. Un mock puede comprobar que se llamó
+  `Activate`, que se hizo un raycast o que se restauró una propiedad; no puede
+  demostrar que el juego live otorgó una moneda o una victoria.
+
+## 1C. Cooldown, velocidad y mecánicas con timing
+
+Esta convención evita dos errores opuestos: poner un intervalo arbitrario que
+hace lento el módulo, o borrar un tiempo que la mecánica necesita para funcionar.
+
+### Regla de la opción Cooldown
+
+- Cuando un módulo de ataque permite añadir **delay artificial del usuario**,
+  la opción simple se llama **`Cooldown`**, está expresada en segundos y su
+  valor por defecto es **`0`**. No se presenta como `Throw interval`,
+  `Spam interval` ni como una sucesión de sliders escondidos.
+- `0` significa **cero espera adicional**: se vuelve a intentar en el siguiente
+  tick del scheduler o en cuanto la ruta nativa esté lista. Así se busca la
+  máxima frecuencia que el Tool, la animación, la replicación y el servidor
+  permitan. No significa que todos los intentos serán aceptados ni que se pueda
+  ignorar un cooldown real del juego.
+- Un valor positivo añade solamente la espera elegida por el usuario. Debe
+  existir una sola fuente de verdad para ese reloj, sin un `nextKnifeAt`,
+  `task.wait(interval)` y un timer de UI compitiendo entre sí. Al cambiar el
+  valor se define si afecta al siguiente intento; no se reinicia el contador de
+  estadísticas ni se duplica el trabajo pendiente.
+- El cooldown de usuario no sustituye **windup, recovery, animación, reload,
+  `Tool.Enabled`, hit window, cooldown replicado, RTT, rate limit ni un gate de
+  confirmación medido**. Esos tiempos se nombran por lo que son y se conservan
+  cuando hay evidencia. Tampoco se copia el `0.25` de MM2, el `0.86` de un swing
+  o el gate de Shoot a otro juego como si fueran universales.
+- Los refrescos de status/ESP no son cooldown de ataque. Un `Step interval` de
+  Auto Farm tampoco es el Cooldown de Knife Throw: son bucles y propósitos
+  distintos.
+- La prueba mínima de esta convención es: default `0`, un intento sin espera
+  artificial cuando la ruta está libre, un valor positivo que sí espera, y
+  cancelación sin timers ni atributos colgados. La prueba no debe afirmar una
+  tasa de aceptación del servidor que el harness no puede observar.
+
+**Estado actual frente a regla de diseño:** X2 v119 intenta Knife Throw en cada
+tick y no expone un slider; si se añade el control de delay descrito aquí, debe
+llamarse Cooldown y empezar en 0. Los delays documentados en MM2 son rutas
+históricas/medidas de ese juego, no una autorización para reintroducir un
+`Throw interval` genérico. Esta distinción queda escrita para que el próximo
+cambio no confunda documentación con una funcionalidad ya implementada.
+
+### Cuando el arma tiene críticos o calidad de impacto
+
+No todo se resuelve con «más rápido». Si el juego tiene estados como `Miss`,
+`Bad`, `Okay`, `Good`, `Critical`, `Perfect`, `Block` o `Parry`, primero se
+descubre dónde nace cada estado y qué lo confirma:
+
+1. Se registra la entrada y el instante de la ventana de impacto.
+2. Se identifica el estado nativo de carga/swing y su animación.
+3. Se observa el resultado sin convertir una etiqueta ambigua en daño.
+4. Se decide si la opción debe ser tiempo, modo, prioridad o simplemente status.
+5. Se prueban los límites: demasiado pronto, dentro de ventana, demasiado tarde,
+   objetivo muerto, cambio de Tool y respawn.
+
+Por ejemplo, `Hit Time` puede controlar cuándo se intenta el impacto, mientras
+`Critical` puede ser una prioridad o un modo; `Miss/Bad/Okay` pueden ser
+resultados que sólo se muestran. No se deben convertir todos en toggles ni
+prometer críticos si sólo se observó una animación. En Kill Aura estos detalles
+pertenecen a las opciones del melee correspondiente; en Knife Throw pertenecen
+a la sección del proyectil dentro de Silent AIM.
+
+## 1D. Auto Farm, Auto Win y estadísticas útiles
+
+Las utilidades deben explicar qué están haciendo y qué han conseguido. Una
+tarjeta de farm no debería obligar a mirar el output para saber si está
+esperando, moviéndose, reintentando o realmente recolectando.
+
+### Contrato de datos para Auto Farm
+
+Como regla de diseño, la tarjeta o su status de sesión debe poder representar,
+cuando el juego tenga evidencia para ello:
+
+- **`Coins collected`**: recolecciones confirmadas, no simples intentos de
+  `firetouchinterest`, teletransportes o ProximityPrompt.
+- **`Wins` y `Loses`**: resultados locales explícitos, deduplicados por ronda;
+  un respawn, una muerte o una pantalla ambigua no se convierte en victoria.
+- **`Time spent`**: tiempo de la sesión de farm, definiendo si cuenta sólo el
+  tiempo activo o también esperas. La opción recomendada es medir tiempo activo
+  con `os.clock()` y acumular delta al pausar/apagar, sin sumar dos veces al
+  cambiar de personaje.
+- **Contexto opcional**: `Coins/min`, rondas, monedas pendientes, reintentos,
+  objetivo actual, estado (`Waiting`, `Farming`, `Returning`, `No currency`) y
+  último error útil. Sólo se añaden si ayudan; no se inventan métricas para
+  llenar la tarjeta.
+
+Los contadores deben tener una fuente única. Si Auto Farm y Auto Win muestran
+las mismas wins/losses, leen el mismo store de sesión en lugar de incrementar
+cada uno su propia copia. Hay que separar **sesión**, **ronda** y **total
+persistente**, y documentar cuándo se reinicia cada uno. Las cifras del cliente
+no se presentan como saldo autoritativo del servidor.
+
+**Estado actual:** X2 v119 ya tiene en Auto Win `Wins`, `Time Played`, `Kills`
+y `Loses`; Auto Farm todavía reporta principalmente su estado de búsqueda y
+contacto. Por tanto, `Coins collected`, `Time spent` y demás campos anteriores
+son el contrato para completar/compartir el farm, no una afirmación de que ya
+estén implementados en X2. No se debe escribir en una prueba o en el status
+«collected» hasta tener una confirmación real.
+
+### Qué significa Utilities en este proyecto
+
+Auto Farm y Auto Win van en **Utilities** porque son ayudas de gestión,
+recolección, estado o farmeo, no una modificación directa de la hitbox del
+objetivo. Que una utilidad sea poderosa no la convierte en Exploits. En cambio,
+**Hitbox sí va en Exploits** porque altera una propiedad de colisión/tamaño y
+debe restaurar exactamente lo que cambió.
+
+La categoría no sustituye la seguridad: una utilidad puede seguir necesitando
+Team Check, comprobación de ronda, ownership y cleanup; un módulo Exploits no
+recibe permiso para inventar remotes. La pregunta de categoría es «qué tipo de
+ayuda ofrece», y la pregunta de seguridad es «qué puede cambiar y cómo se
+restaura».
+
+## 1E. Checklist de salida para un game
+
+Antes de dar un módulo por terminado, el próximo agente debe poder responder
+«sí» o dejar escrito por qué todavía no puede:
+
+1. **Identidad:** PlaceId, perfil, fingerprint y loader apuntan al juego correcto;
+   no se carga otro game por un nombre parecido.
+2. **Reglas:** equipos, relación Enemy/Teammate/Unknown/Outside, Tools y
+   resultados tienen funciones puras y pruebas; Unknown no se convierte en
+   enemigo por conveniencia.
+3. **Core:** existe un solo adaptador de objetivo/ataque y los módulos lo usan;
+   no hay dos árboles Shoot ni dos loops equipando el mismo Tool.
+4. **Silent AIM:** todos los ataques a distancia/proyectiles están bajo su
+   tarjeta, con secciones por arma y sus propias opciones; la keybind de acción
+   no cambia el toggle maestro.
+5. **Kill Aura:** sólo contiene melee; reach, swing, hit time, críticos,
+   miss/bad/okay, recovery y cooldown se modelan únicamente si la mecánica los
+   tiene y se pueden observar.
+6. **Cooldown:** el delay artificial nuevo se llama Cooldown, empieza en 0 y no
+   se duplica con otro intervalo; los tiempos nativos/medidos siguen explicados
+   por separado y no se promete aceptación del servidor.
+7. **Utilities:** Auto Farm/Auto Win muestran estado y datos reales; Coins
+   collected no se incrementa por un intento, y Wins/Loses/Time spent tienen
+   una definición de sesión/ronda y deduplicación.
+8. **Categorías:** Utilities no se usa como sinónimo de Exploits; Hitbox y
+   otras manipulaciones directas tienen cleanup y van en Exploits; ESP queda en
+   Render usando los providers compartidos.
+9. **Ciclo de vida:** OFF, cambio de Tool, muerte, respawn, salida del jugador,
+   cambio de PlaceId y destroy cancelan trabajos y restauran todo lo tocado.
+10. **Pruebas y publicación:** se actualizan los contratos afectados, se compila,
+    `bash tools/validate.sh` queda verde, se regenera el bundle con un stamp
+    nuevo para cambios de runtime y se publica en la rama de la sesión.
+11. **Límite de evidencia:** el handoff separa lo verificado offline de lo que
+    falta comprobar live. Nunca se escribe «funciona daño/monedas/wins» sólo
+    porque un mock llamó a Activate o porque apareció una animación.
 
 ## 2. La trampa de los dos árboles Shoot (NO repetir)
 
@@ -178,26 +460,34 @@
   guardado — tras Below ese punto puede estar bajo el suelo y el personaje se
   quedaba encajado. Sin mapa activo (lobby), el retorno a home sí aplica.
 
-## 6. Velocidad: qué significa "instantáneo" aquí (v112)
+## 6. Velocidad, Cooldown y delays: qué significa "instantáneo"
 
 - El suelo físico es **un frame** (Heartbeat ≈ 16.7 ms a 60 FPS) + ping. Todos
   los `TaskManager:Connect` corren por Heartbeat; los binds disparan en el evento.
 - Eliminado en v112: poll de 0.5 s de Auto Get Gun (ahora cada frame + tick
   inmediato al activar) y caché negativa de `findDroppedGun` 0.4 s → 0.05 s.
   Auto Farm espera *condiciones* frame a frame, no sleeps fijos.
-- **Delays deliberados que NO debes "optimizar"** (están fijados por
-  `tools/test_action_latency.py`, que falla si los quitas o si reintroduces
-  los de arriba):
-  - Shoot: gate 1.5 s entre disparos (ver §3).
-  - KnifeThrow: intervalo de paquete 0.25 s + ciclo de animación. **La animación
-    del throw debe verse** (sin ella es blatant); se eliminó "Throw with button".
-  - KnifeAura: ciclo de swing medido 0.86 s.
+- Para delay artificial de combate en módulos nuevos se usa **Cooldown = 0 por
+  defecto** (ver §1C): no hay espera extra y se intenta a la máxima frecuencia
+  que la ruta nativa permita. Un valor mayor es una preferencia del usuario, no
+  una prueba de que el servidor acepte más o menos acciones.
+- **Delays deliberados que NO debes "optimizar" sin evidencia** (están fijados
+  por `tools/test_action_latency.py` para las rutas actuales; no son una
+  plantilla de Cooldown para otros juegos):
+  - Shoot MM2: gate 1.5 s entre disparos (ver §3), ligado a confirmación y no a
+    un slider genérico de spam.
+  - KnifeThrow MM2: timing de paquete/animación de 0.25 s + ciclo de animación.
+    **La animación del throw debe verse** (sin ella es blatant); se eliminó
+    "Throw with button". Este valor histórico/medido no se copia a X2 ni se
+    confunde con el Cooldown opcional de una implementación nueva.
+  - KnifeAura MM2: ciclo de swing medido 0.86 s, propio de esa mecánica melee.
   - Auto Unbox: delay entre cajas **configurable y a propósito lento** — es el
     arreglo de la pantalla gris/negra al spamear. No lo aceleres.
   - Rates con slider del usuario (TriggerBot Delay, KillAura swings/s, etc.):
-    son suyos, no delays ocultos.
+    son suyos, no delays ocultos. Si se migra una opción a Cooldown, se conserva
+    el valor sólo cuando representa exactamente el mismo delay.
   - Refrescos de status/visuales a 0.2–5 s (ESP, Chams, Coin ESP): no retrasan
-    ninguna acción.
+    ninguna acción ni deben usarse como reloj de combate.
 
 ## 7. Otros módulos — decisiones ya tomadas
 
@@ -297,5 +587,6 @@ boot y las 61 suites:
   el comportamiento y `validate.sh` verde antes de pushear.
 
 ---
-*Última actualización: v119 (2026-10-24). Al publicar una versión nueva,
-actualiza la línea de estado de arriba y cualquier sección que cambie.*
+*Última actualización: 2026-10-24 · guía de arquitectura ampliada; el runtime
+sigue en v119. Al publicar una versión nueva, actualiza la línea de estado de
+arriba y cualquier sección que cambie.*
