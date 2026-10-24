@@ -1,5 +1,5 @@
 return {
-    stamp = "v117-20261024-x2duels-native-burst",
+    stamp = "v118-20261024-mvs-team-hooks",
     files = {
         ["src/Profile/135856908115931.lua"] = [[
 --!strict
@@ -16929,6 +16929,7 @@ local function buildAutoFarm(runtime: any): ()
     local players: Players = game:GetService("Players")
     local localPlayer: Player = players.LocalPlayer
     local currentWorkspace: Workspace = host.workspace or workspace
+    local core: any = state.x2duelsCore
     assert(state.mvsdScroll and state.mvsdFeatures,
         "X2Duels Auto Farm requires the MVS menu section")
 
@@ -17007,6 +17008,12 @@ local function buildAutoFarm(runtime: any): ()
     end
 
     local function teamOf(player: Player): string?
+        -- Share the MVS resolver with combat/ESP. In particular, do not use a
+        -- common Roblox lobby Team or an FFA sentinel as farm ownership.
+        if core and type(core.teamOf) == "function" then
+            local ok: boolean, token: any = pcall(core.teamOf, player)
+            return ok and token or nil
+        end
         for _, name: string in ipairs({
             "Team", "TeamName", "TeamId", "TeamID", "Side", "Faction", "MatchTeam",
         }) do
@@ -17651,7 +17658,7 @@ local function buildTeamESP(runtime: any): ()
     local container: Folder? = nil
     local nextUpdateAt: number = 0
 
-    local COLORS: {[string]: Color3} = {
+    local COLORS: {[string]: Color3} = core.RoleColors or {
         Enemy = Color3.fromRGB(255, 82, 82),
         Teammate = Color3.fromRGB(75, 220, 135),
         Unknown = Color3.fromRGB(255, 190, 75),
@@ -17913,6 +17920,34 @@ local function normalizeToken(value: any): string?
     return nil
 end
 
+-- MVS also uses Team for FFA/lobby state. A shared sentinel is not a
+-- team: treating it as one paints every player green and protects everyone.
+local NON_TEAM_TOKENS: {[string]: boolean} = {
+    ffa = true,
+    freeforall = true,
+    lobby = true,
+    neutral = true,
+    none = true,
+    spectator = true,
+    spectating = true,
+    unknown = true,
+    unassigned = true,
+    solo = true,
+    all = true,
+    everyone = true,
+    default = true,
+    team = true,
+    ["true"] = true,
+}
+
+local function normalizeTeamToken(value: any): string?
+    local token: string? = normalizeToken(value)
+    if token == nil or NON_TEAM_TOKENS[token] then
+        return nil
+    end
+    return token
+end
+
 local function sameMatch(localMatch: any, otherMatch: any): boolean
     local mine: string? = normalizeToken(localMatch)
     if mine == nil then
@@ -17932,8 +17967,8 @@ local function relation(
     if not sharesMatch then
         return "Outside"
     end
-    local mine: string? = normalizeToken(localTeam)
-    local theirs: string? = normalizeToken(otherTeam)
+    local mine: string? = normalizeTeamToken(localTeam)
+    local theirs: string? = normalizeTeamToken(otherTeam)
     if mine == nil or theirs == nil then
         return "Unknown"
     end
@@ -18245,6 +18280,7 @@ end
 
 Module.compact = compact
 Module.normalizeToken = normalizeToken
+Module.normalizeTeamToken = normalizeTeamToken
 Module.sameMatch = sameMatch
 Module.relation = relation
 Module.isOpponent = isOpponent
@@ -18282,9 +18318,9 @@ return Module
         ["src/games/X2Duels/base.lua"] = [[
 -- X2 Duels (MVS) native combat and match automation.
 --
--- The newest supplied Cobalt log contains matchmaking/rematch traffic, but no
--- Shoot, Throw, Hit or Damage request. Combat therefore goes through the
--- game's own Tool:Activate() path. No generated remote arguments are guessed.
+-- The supplied Cobalt log captures DefaultGun/DefaultKnife native calls,
+-- including fire/showBeam and the respawn/death events. Combat still goes
+-- through the game's own Tool:Activate() path; no remote arguments are guessed.
 
 local Module = {
     Name = "X2Duels",
@@ -18364,6 +18400,7 @@ local function buildX2Duels(runtime: any): ()
         nextRemoteAt = 0,
         lastPlayAgainAt = 0,
         remoteBound = {},
+        deadPlayers = setmetatable({}, {__mode = "k"}),
         hitboxes = {},
         suppressRaycast = false,
         cameraOverride = nil,
@@ -18378,9 +18415,16 @@ local function buildX2Duels(runtime: any): ()
     local autoWinCard: any = nil
     local silentAimCard: any = nil
 
+    -- MVS stores the real side in Team/TeamName/etc. Role is deliberately
+    -- excluded: a role is not proof that two players share a team.
     local TEAM_ATTRIBUTES: {string} = {
-        "Team", "TeamName", "TeamId", "TeamID", "Side", "Faction",
-        "MatchTeam", "Role", "PlayerRole", "GameRole",
+        "Team", "TeamName", "TeamId", "TeamID", "Side", "Faction", "MatchTeam",
+    }
+    local ROLE_COLORS: {[string]: Color3} = {
+        Enemy = Color3.fromRGB(255, 82, 82),
+        Teammate = Color3.fromRGB(75, 220, 135),
+        Unknown = Color3.fromRGB(255, 190, 75),
+        Outside = Color3.fromRGB(255, 190, 75),
     }
     local MATCH_ATTRIBUTES: {string} = {
         "Game", "Match", "MatchId", "MatchID",
@@ -18438,28 +18482,36 @@ local function buildX2Duels(runtime: any): ()
     end
 
     local function teamToken(player: Player): string?
-        local attribute: any = firstAttribute(player, TEAM_ATTRIBUTES)
-        local token: string? = rules.normalizeToken(attribute)
-        if token ~= nil then
-            return token
+        -- Do not fall back to player.Team here. MVS keeps players on a common
+        -- Roblox lobby team in some states; that fallback made everyone green.
+        -- Read every supported attribute so an FFA sentinel can be followed by
+        -- a real replicated side instead of hiding it.
+        local containers: {Instance?} = {player, player.Character}
+        for _, container: Instance? in ipairs(containers) do
+            if container then
+                for _, name: string in ipairs(TEAM_ATTRIBUTES) do
+                    local ok: boolean, value: any = pcall(
+                        container.GetAttribute, container, name
+                    )
+                    local token: string? = ok and rules.normalizeTeamToken(value) or nil
+                    if token ~= nil then
+                        return token
+                    end
+                end
+            end
         end
-
-        -- Duels historically keeps match participants Neutral. In that state
-        -- a lobby Team must not turn every opponent into a teammate.
-        local ok: boolean, neutral: any = pcall(function(): any
-            return player.Neutral
-        end)
-        if ok and neutral == true then
-            return nil
-        end
-        local teamOk: boolean, team: any = pcall(function(): any
-            return player.Team
-        end)
-        return teamOk and rules.normalizeToken(team) or nil
+        return nil
     end
 
     local function sharesMatch(other: Player): boolean
-        return rules.sameMatch(matchToken(localPlayer), matchToken(other))
+        local mine: string? = matchToken(localPlayer)
+        local theirs: string? = matchToken(other)
+        -- Once either side has a match id, a missing/different id is not the
+        -- same round. With no match API at all, retain manual-team compatibility.
+        if mine ~= nil or theirs ~= nil then
+            return mine ~= nil and mine == theirs
+        end
+        return true
     end
 
     local function relation(other: Player): string
@@ -18472,7 +18524,8 @@ local function buildX2Duels(runtime: any): ()
     end
 
     local function isAlive(player: Player): boolean
-        if firstAttribute(player, {"Died", "Dead"}) == true then
+        if runtimeState.deadPlayers[player] == true
+            or firstAttribute(player, {"Died", "Dead"}) == true then
             return false
         end
         local character: Model? = player.Character
@@ -18999,7 +19052,7 @@ local function buildX2Duels(runtime: any): ()
     end
 
     local function combatMatchActive(): boolean
-        if runtimeState.resultsPending then
+        if runtimeState.resultsPending or not isAlive(localPlayer) then
             return false
         end
         return runtimeState.observedRound or matchToken(localPlayer) ~= nil
@@ -19058,6 +19111,36 @@ local function buildX2Duels(runtime: any): ()
         }
     end
 
+    local function playerFromEventValue(value: any): Player?
+        if typeof(value) ~= "Instance" then
+            return nil
+        end
+        if value:IsA("Player") then
+            return value :: Player
+        end
+        if value:IsA("Model") then
+            local ok: boolean, player: any = pcall(function(): any
+                return players:GetPlayerFromCharacter(value :: Model)
+            end)
+            if ok and player then
+                return player :: Player
+            end
+        end
+        return nil
+    end
+
+    local function playerFromEvent(arguments: {any}): Player?
+        -- Cobalt captured PlayerRespawned with different argument layouts,
+        -- including nil, Player. Never assume the Player is argument one.
+        for _, value: any in pairs(arguments) do
+            local player: Player? = playerFromEventValue(value)
+            if player then
+                return player
+            end
+        end
+        return nil
+    end
+
     local function onMatchResults(...: any): ()
         runtimeState.resultsPending = true
         runtimeState.observedRound = false
@@ -19076,8 +19159,8 @@ local function buildX2Duels(runtime: any): ()
 
     local function onRemovePlayer(...: any): ()
         local arguments: {any} = {...}
-        if typeof(arguments[1]) == "Instance" and arguments[1]:IsA("Player")
-            and arguments[1] ~= localPlayer then
+        local removed: Player? = playerFromEvent(arguments)
+        if removed and removed ~= localPlayer then
             return
         end
         -- RemovePlayer is the match round-ended signal. It is not itself a
@@ -19099,12 +19182,36 @@ local function buildX2Duels(runtime: any): ()
         end
     end
 
-    local function onPlayerRespawned(...: any): ()
+    local function onSetDead(...: any): ()
         local arguments: {any} = {...}
-        if typeof(arguments[1]) == "Instance" and arguments[1]:IsA("Player")
-            and arguments[1] ~= localPlayer then
+        local dead: Player? = playerFromEvent(arguments)
+        if not dead then
             return
         end
+        runtimeState.deadPlayers[dead] = true
+        local selected: any = runtimeState.selected
+        if selected and selected.player == dead then
+            runtimeState.selected = nil
+        end
+        if dead == localPlayer then
+            -- SetDead is a death signal, never a win/round-result signal.
+            runtimeState.burstRemaining = 0
+            cancelKnifeThrow()
+            restoreCamera()
+        end
+    end
+
+    local function onPlayerRespawned(...: any): ()
+        local arguments: {any} = {...}
+        local respawned: Player? = playerFromEvent(arguments)
+        if respawned then
+            runtimeState.deadPlayers[respawned] = nil
+        end
+        if respawned and respawned ~= localPlayer then
+            -- Another player's respawn must not reset our round or Auto Win.
+            return
+        end
+        runtimeState.deadPlayers[localPlayer] = nil
         runtimeState.roundSerial += 1
         runtimeState.observedRound = true
         runtimeState.resultsPending = false
@@ -19144,6 +19251,7 @@ local function buildX2Duels(runtime: any): ()
         connectRemote("Packages/Networking/RE/Match/MatchResults", onMatchResults)
         connectRemote("Packages/Networking/RE/Match/RemovePlayer", onRemovePlayer)
         connectRemote("Packages/Networking/RE/Match/WinNotification", onWinNotification)
+        connectRemote("Packages/Networking/RE/Match/SetDead", onSetDead)
         connectRemote("Packages/Networking/RE/Match/PlayerRespawned", onPlayerRespawned)
     end
 
@@ -19382,6 +19490,7 @@ local function buildX2Duels(runtime: any): ()
     local function updateMatchToken(): ()
         local token: string? = matchToken(localPlayer)
         if token ~= runtimeState.lastMatchToken then
+            table.clear(runtimeState.deadPlayers)
             if token ~= nil then
                 -- A lobby transition clears the old token before the next
                 -- match arrives. That still starts a new win-counting round.
@@ -19482,6 +19591,7 @@ local function buildX2Duels(runtime: any): ()
 
     local core: any = nil
     local teamProvider: any = nil
+    local roleProvider: any = nil
 
     moduleCleanup = function(): ()
         settings.autoWin = false
@@ -19507,7 +19617,17 @@ local function buildX2Duels(runtime: any): ()
         end
         table.clear(runtimeState.connections)
         table.clear(runtimeState.remoteBound)
-        if state.gameBridge and state.gameBridge.teamProvider == teamProvider then
+        table.clear(runtimeState.deadPlayers)
+        if roleProvider and state.gameBridge
+            and state.gameBridge.roleProvider == roleProvider then
+            if type(state.unregisterRoleProvider) == "function" then
+                state.unregisterRoleProvider(roleProvider)
+            else
+                state.gameBridge.roleProvider = nil
+            end
+        end
+        if teamProvider and state.gameBridge
+            and state.gameBridge.teamProvider == teamProvider then
             state.gameBridge.teamProvider = nil
             state.teamProvider = nil
         end
@@ -19522,6 +19642,7 @@ local function buildX2Duels(runtime: any): ()
 
     core = {
         settings = settings,
+        RoleColors = ROLE_COLORS,
         teamOf = teamToken,
         matchIdOf = matchToken,
         relation = relation,
@@ -19545,16 +19666,28 @@ local function buildX2Duels(runtime: any): ()
     state.x2duelsCore = core
     state.mvsdCore = core
 
+    local function playerFromInstance(instance: Instance): Player?
+        if instance:IsA("Player") then
+            return instance :: Player
+        end
+        if instance:IsA("Model") then
+            local ok: boolean, player: any = pcall(function(): any
+                return players:GetPlayerFromCharacter(instance :: Model)
+            end)
+            return ok and player or nil
+        end
+        return nil
+    end
+
     teamProvider = {
         Name = "X2Duels",
         Get = function(instance: Instance): string?
-            local player: Player? = nil
-            if instance:IsA("Player") then
-                player = instance :: Player
-            elseif instance:IsA("Model") then
-                player = players:GetPlayerFromCharacter(instance :: Model)
-            end
+            local player: Player? = playerFromInstance(instance)
             return player and teamToken(player) or nil
+        end,
+        GetRelation = function(instance: Instance): string
+            local player: Player? = playerFromInstance(instance)
+            return player and relation(player) or "Unknown"
         end,
         IsFriendly = function(player: Player?): boolean
             return isTeammate(player)
@@ -19562,6 +19695,26 @@ local function buildX2Duels(runtime: any): ()
     }
     if type(host.registerTeamProvider) == "function" then
         host.registerTeamProvider(teamProvider)
+    end
+
+    -- Supply the same palette to universal PlayerESP/Chams/Nametags without
+    -- disabling their teammate filters. ReplacesTeams stays false: Team Check
+    -- must still reject confirmed teammates and fail closed on Unknown.
+    roleProvider = {
+        Name = "X2Duels",
+        ReplacesTeams = false,
+        Roles = {"Enemy", "Teammate", "Unknown", "Outside"},
+        Colors = ROLE_COLORS,
+        Get = function(player: Player): string?
+            local current: string = relation(player)
+            return current ~= "Local" and current or nil
+        end,
+        GetColor = function(roleName: string): Color3?
+            return ROLE_COLORS[roleName]
+        end,
+    }
+    if type(host.registerRoleProvider) == "function" then
+        host.registerRoleProvider(roleProvider)
     end
 
     local parentConfiguration: {[string]: any} = {
@@ -19815,11 +19968,19 @@ local function buildX2Duels(runtime: any): ()
     runtimeState.lastMatchToken = matchToken(localPlayer)
     ensureRemoteEvents()
     track(localPlayer.CharacterAdded:Connect(function(): ()
+        runtimeState.deadPlayers[localPlayer] = nil
         runtimeState.selected = nil
         runtimeState.nextGunAt = 0
         runtimeState.nextKnifeAt = 0
         cancelKnifeThrow()
         restoreCamera()
+    end))
+    track(players.PlayerRemoving:Connect(function(player: Player): ()
+        runtimeState.deadPlayers[player] = nil
+        if runtimeState.selected and runtimeState.selected.player == player then
+            runtimeState.selected = nil
+        end
+        restoreHitbox(player)
     end))
 
     host.featureConnections.X2DuelsCore = runtime.TaskManager:Connect(update)
@@ -44347,6 +44508,7 @@ export type EntityLibrary = {
     ForEach: (self: EntityLibrary, callback: (Entity) -> ()) -> (),
     IsFriendly: (self: EntityLibrary, player: Player?) -> boolean,
     IsFriendlyModel: (self: EntityLibrary, model: Model) -> boolean,
+    IsEnemy: (self: EntityLibrary, player: Player?) -> boolean?,
     IsProtected: (self: EntityLibrary, player: Player?) -> boolean,
     InRange: (self: EntityLibrary, query: RangeQuery) -> {Entity},
     ClosestToRay: (
@@ -44556,9 +44718,28 @@ function Module.init(context: any): EntityLibrary
         return nil
     end
 
+    local function providerRelation(instance: Instance): (boolean, string?)
+        local provider: any = teamResolver()
+        if not provider or type(provider.GetRelation) ~= "function" then
+            return false, nil
+        end
+        local ok: boolean, relation: any = pcall(provider.GetRelation, instance)
+        if ok and type(relation) == "string" then
+            return true, relation
+        end
+        -- A relation-aware provider owns the decision even when data is late;
+        -- falling back to a common lobby Team would reintroduce false friends.
+        return true, nil
+    end
+
     function library:IsFriendly(player: Player?): boolean
         if not player or player == localPlayer then
             return false
+        end
+
+        local handled: boolean, relation: string? = providerRelation(player)
+        if handled then
+            return relation == "Teammate"
         end
 
         local provider: any = teamResolver()
@@ -44590,6 +44771,10 @@ function Module.init(context: any): EntityLibrary
         if model == localPlayer.Character then
             return false
         end
+        local handled: boolean, relation: string? = providerRelation(model)
+        if handled then
+            return relation == "Teammate"
+        end
         local providerToken: string? = providerTeamToken(model)
         if providerToken ~= nil then
             local localProviderToken: string? = providerTeamToken(localPlayer)
@@ -44600,6 +44785,32 @@ function Module.init(context: any): EntityLibrary
         local localToken: string? = localTeamToken()
         local targetToken: string? = teamToken(model)
         return localToken ~= nil and targetToken ~= nil and localToken == targetToken
+    end
+
+    -- Tri-state target decision for relation-aware games. nil means that the
+    -- legacy provider has no relation API and callers keep their old fallback.
+    function library:IsEnemy(player: Player?): boolean?
+        if not player or player == localPlayer then
+            return false
+        end
+        local handled: boolean, relation: string? = providerRelation(player)
+        if handled then
+            return relation == "Enemy"
+        end
+        return nil
+    end
+
+    local function passesTeamFilter(entity: Entity, ignoreTeam: boolean?): boolean
+        if ignoreTeam then
+            return true
+        end
+        if entity.Player then
+            local hostile: boolean? = library:IsEnemy(entity.Player)
+            if hostile ~= nil then
+                return hostile
+            end
+        end
+        return not entity.IsFriendly
     end
 
     local function npcParts(model: Model): (Humanoid?, BasePart?)
@@ -44830,7 +45041,7 @@ function Module.init(context: any): EntityLibrary
             if entity.Distance > query.Range then
                 return
             end
-            if not query.IgnoreTeam and entity.IsFriendly then
+            if not passesTeamFilter(entity, query.IgnoreTeam) then
                 return
             end
             if not query.IgnoreFriends and library:IsProtected(entity.Player) then
@@ -44895,7 +45106,7 @@ function Module.init(context: any): EntityLibrary
         local bestScore: number = math.huge
 
         local function consider(entity: Entity): ()
-            if not options.IgnoreTeam and entity.IsFriendly then
+            if not passesTeamFilter(entity, options.IgnoreTeam) then
                 return
             end
             if entity.Distance > maxDistance then
@@ -46970,8 +47181,14 @@ function Module.init(context: any): Library
             if entity.Distance > maxDistance then
                 return
             end
-            if options.TeamCheck ~= false and entity.IsFriendly then
-                return
+            if options.TeamCheck ~= false then
+                local hostile: boolean? = nil
+                if entity.Player and type(entities.IsEnemy) == "function" then
+                    hostile = entities:IsEnemy(entity.Player)
+                end
+                if hostile == false or hostile == nil and entity.IsFriendly then
+                    return
+                end
             end
             if protected(entity.Player) then
                 return

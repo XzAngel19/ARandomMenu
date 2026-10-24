@@ -48,6 +48,7 @@ export type EntityLibrary = {
     ForEach: (self: EntityLibrary, callback: (Entity) -> ()) -> (),
     IsFriendly: (self: EntityLibrary, player: Player?) -> boolean,
     IsFriendlyModel: (self: EntityLibrary, model: Model) -> boolean,
+    IsEnemy: (self: EntityLibrary, player: Player?) -> boolean?,
     IsProtected: (self: EntityLibrary, player: Player?) -> boolean,
     InRange: (self: EntityLibrary, query: RangeQuery) -> {Entity},
     ClosestToRay: (
@@ -257,9 +258,28 @@ function Module.init(context: any): EntityLibrary
         return nil
     end
 
+    local function providerRelation(instance: Instance): (boolean, string?)
+        local provider: any = teamResolver()
+        if not provider or type(provider.GetRelation) ~= "function" then
+            return false, nil
+        end
+        local ok: boolean, relation: any = pcall(provider.GetRelation, instance)
+        if ok and type(relation) == "string" then
+            return true, relation
+        end
+        -- A relation-aware provider owns the decision even when data is late;
+        -- falling back to a common lobby Team would reintroduce false friends.
+        return true, nil
+    end
+
     function library:IsFriendly(player: Player?): boolean
         if not player or player == localPlayer then
             return false
+        end
+
+        local handled: boolean, relation: string? = providerRelation(player)
+        if handled then
+            return relation == "Teammate"
         end
 
         local provider: any = teamResolver()
@@ -291,6 +311,10 @@ function Module.init(context: any): EntityLibrary
         if model == localPlayer.Character then
             return false
         end
+        local handled: boolean, relation: string? = providerRelation(model)
+        if handled then
+            return relation == "Teammate"
+        end
         local providerToken: string? = providerTeamToken(model)
         if providerToken ~= nil then
             local localProviderToken: string? = providerTeamToken(localPlayer)
@@ -301,6 +325,32 @@ function Module.init(context: any): EntityLibrary
         local localToken: string? = localTeamToken()
         local targetToken: string? = teamToken(model)
         return localToken ~= nil and targetToken ~= nil and localToken == targetToken
+    end
+
+    -- Tri-state target decision for relation-aware games. nil means that the
+    -- legacy provider has no relation API and callers keep their old fallback.
+    function library:IsEnemy(player: Player?): boolean?
+        if not player or player == localPlayer then
+            return false
+        end
+        local handled: boolean, relation: string? = providerRelation(player)
+        if handled then
+            return relation == "Enemy"
+        end
+        return nil
+    end
+
+    local function passesTeamFilter(entity: Entity, ignoreTeam: boolean?): boolean
+        if ignoreTeam then
+            return true
+        end
+        if entity.Player then
+            local hostile: boolean? = library:IsEnemy(entity.Player)
+            if hostile ~= nil then
+                return hostile
+            end
+        end
+        return not entity.IsFriendly
     end
 
     local function npcParts(model: Model): (Humanoid?, BasePart?)
@@ -531,7 +581,7 @@ function Module.init(context: any): EntityLibrary
             if entity.Distance > query.Range then
                 return
             end
-            if not query.IgnoreTeam and entity.IsFriendly then
+            if not passesTeamFilter(entity, query.IgnoreTeam) then
                 return
             end
             if not query.IgnoreFriends and library:IsProtected(entity.Player) then
@@ -596,7 +646,7 @@ function Module.init(context: any): EntityLibrary
         local bestScore: number = math.huge
 
         local function consider(entity: Entity): ()
-            if not options.IgnoreTeam and entity.IsFriendly then
+            if not passesTeamFilter(entity, options.IgnoreTeam) then
                 return
             end
             if entity.Distance > maxDistance then

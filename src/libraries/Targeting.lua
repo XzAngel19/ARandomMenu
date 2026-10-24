@@ -186,8 +186,14 @@ function Module.init(context: any): Library
             if entity.Distance > maxDistance then
                 return
             end
-            if options.TeamCheck ~= false and entity.IsFriendly then
-                return
+            if options.TeamCheck ~= false then
+                local hostile: boolean? = nil
+                if entity.Player and type(entities.IsEnemy) == "function" then
+                    hostile = entities:IsEnemy(entity.Player)
+                end
+                if hostile == false or hostile == nil and entity.IsFriendly then
+                    return
+                end
             end
             if protected(entity.Player) then
                 return

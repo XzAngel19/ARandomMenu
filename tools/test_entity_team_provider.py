@@ -327,6 +327,48 @@ check("teams service: teammate friendly", teamsLibrary:IsFriendly(teammate), tru
 check("teams service: enemy not friendly", teamsLibrary:IsFriendly(enemy), false)
 teamsModule.destroy()
 
+-- Case 4: a relation-aware provider must not fall back to the shared Roblox
+-- lobby Team when its MVS side is Unknown. That fallback made everyone green.
+local unknown = makePlayer("Unknown", newVector3(15, 0, 0))
+unknown.Team = blueTeam
+unknown.Neutral = false
+table.insert(players.list, unknown)
+state.gameBridge.teamProvider = {
+    Name = "MVSD-relation",
+    GetRelation = function(instance)
+        if instance == teammate or instance == teammate.Character then
+            return "Teammate"
+        end
+        if instance == enemy or instance == enemy.Character then
+            return "Enemy"
+        end
+        return "Unknown"
+    end,
+}
+local relationModule, relationLibrary = loadEntityLibrary()
+check("relation provider: teammate friendly", relationLibrary:IsFriendly(teammate), true)
+check("relation provider: enemy not friendly", relationLibrary:IsFriendly(enemy), false)
+check("relation provider: unknown never uses lobby team", relationLibrary:IsFriendly(unknown), false)
+relationLibrary:Refresh(true)
+local relationTargets = relationLibrary:InRange({
+    Range = 100,
+    IgnoreTeam = false,
+    IgnoreWalls = true,
+    IgnoreFriends = true,
+})
+local relationEnemyFound = false
+local relationUnknownFound = false
+local relationTeammateFound = false
+for _, entity in ipairs(relationTargets) do
+    if entity.Player == enemy then relationEnemyFound = true end
+    if entity.Player == unknown then relationUnknownFound = true end
+    if entity.Player == teammate then relationTeammateFound = true end
+end
+check("relation targeting keeps confirmed enemy", relationEnemyFound, true)
+check("relation targeting rejects unknown", relationUnknownFound, false)
+check("relation targeting rejects teammate", relationTeammateFound, false)
+relationModule.destroy()
+
 print(string.format("%d check(s), %d failure(s)", checks, failures))
 if failures > 0 then
     error(failures .. " check(s) failed")

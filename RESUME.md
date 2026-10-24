@@ -5,7 +5,7 @@
 > contradice lo que crees, gana este documento (y los datos de calibración).
 >
 > **Estado al escribir esto:** rama `arena/e412e3e8-arandommenu`, sucesor de
-> `8e62b93`, build **`v117-20261024-x2duels-native-burst`**.
+> `8e62b93`, build **`v118-20261024-mvs-team-hooks`**.
 > El usuario se comunica en español. Respóndele en español.
 
 ---
@@ -59,14 +59,20 @@
   Play Again; no cuenta una victoria por sí solo. Play Again pulsa el botón GUI
   visible, incluidas etiquetas hijas. `RematchTeleport("back_to_lobby")` no es
   un sustituto probado de Play Again.
-- Team Check falla cerrado: aliados y lados desconocidos no son objetivos; el
-  ESP usa rojo/verde/ámbar. No convertir una pantalla ambigua en una victoria.
-- El log más reciente de TestingStuff no capturó Shoot/Throw/Hit/Damage. No se
-  deben inventar argumentos ni reintroducir GUID/remotes históricos. El
-  extractor independiente `tools/X2DuelsDecompiler.luau` vuelca fuentes,
+- Team Check falla cerrado: usa los atributos MVS `Team`/`Game`, rechaza FFA,
+  lobby y lados desconocidos como objetivos y no cae al `Team` común de Roblox.
+  El mismo resolver alimenta combate, TeamESP y RoleColors de PlayerESP/Chams:
+  enemigo rojo, aliado verde y desconocido ámbar. No convertir una pantalla
+  ambigua en una victoria.
+- El log `2026-10-24T16_49_55Z.log` de TestingStuff capturó `DefaultGun` (`fire`
+  sin argumentos y `showBeam` con dos Vector3 + Handle), llamadas nativas de
+  `DefaultKnife`, `PlayerRespawned` y `SetDead`. La réplica de Beam/PlaySound no
+  demuestra daño ni kills. No se inventan argumentos ni se reintroducen
+  GUID/remotes históricos; la activación sigue siendo la ruta nativa del Tool.
+  El extractor independiente `tools/X2DuelsDecompiler.luau` vuelca fuentes,
   bytecode, inventario con parents y argumentos entrantes/salientes; su guía es
   `tools/X2DuelsDecompiler.md`.
-- `python3 tools/test_x2duels.py` ejecuta 61 reglas, contratos y un boot real
+- `python3 tools/test_x2duels.py` ejecuta 67 reglas, contratos y un boot real
   del bundle con siete tarjetas, modos, ráfaga de 20 disparos desde Backpack,
   ambos caminos nativos del cuchillo, click físico de Play Again, Auto Win 5/5,
   RemovePlayer→Play Again, contacto/restauración de pumpkin, podios y granjas
@@ -267,12 +273,11 @@ boot y las 61 suites:
 - Fling por network ownership (v107) y Anti Fling (v108) contra un fling real.
 - Disguise v101: packs del objetivo / por ID, en servidor.
 - Salidas del standalone (Step 1 nil-parent, Step 4 origen) y TargetBot v5.
-- X2 v117: recolección real de Halloween, aceptación del servidor para
-  Gun/Knife, precisión del throw, Team ESP/filtro con datos live, Sender
-  CFrame en móvil y cinco victorias con RemovePlayer/Play Again. El harness
-  cubre activaciones, máquina de estados y clicks; no prueba daño, monedas,
-  rematch ni aceptación del servidor. La siguiente evidencia debe obtenerse
-  con `tools/X2DuelsDecompiler.luau`.
+- X2 v118: comprobar en vivo Gun/Knife, precisión del throw, Team ESP/filtro
+  con TeamRed/TeamBlue y FFA, Sender CFrame en móvil y cinco victorias con
+  RemovePlayer/Play Again. El harness cubre activaciones, estados, colores y
+  clicks; no prueba daño, monedas, rematch ni aceptación del servidor. La
+  siguiente evidencia debe obtenerse con `tools/X2DuelsDecompiler.luau`.
 
 ## 10. Cómo trabajar con este usuario
 
@@ -286,5 +291,5 @@ boot y las 61 suites:
   el comportamiento y `validate.sh` verde antes de pushear.
 
 ---
-*Última actualización: v117 (2026-10-24). Al publicar una versión nueva,
+*Última actualización: v118 (2026-10-24). Al publicar una versión nueva,
 actualiza la línea de estado de arriba y cualquier sección que cambie.*

@@ -41,6 +41,34 @@ local function normalizeToken(value: any): string?
     return nil
 end
 
+-- MVS also uses Team for FFA/lobby state. A shared sentinel is not a
+-- team: treating it as one paints every player green and protects everyone.
+local NON_TEAM_TOKENS: {[string]: boolean} = {
+    ffa = true,
+    freeforall = true,
+    lobby = true,
+    neutral = true,
+    none = true,
+    spectator = true,
+    spectating = true,
+    unknown = true,
+    unassigned = true,
+    solo = true,
+    all = true,
+    everyone = true,
+    default = true,
+    team = true,
+    ["true"] = true,
+}
+
+local function normalizeTeamToken(value: any): string?
+    local token: string? = normalizeToken(value)
+    if token == nil or NON_TEAM_TOKENS[token] then
+        return nil
+    end
+    return token
+end
+
 local function sameMatch(localMatch: any, otherMatch: any): boolean
     local mine: string? = normalizeToken(localMatch)
     if mine == nil then
@@ -60,8 +88,8 @@ local function relation(
     if not sharesMatch then
         return "Outside"
     end
-    local mine: string? = normalizeToken(localTeam)
-    local theirs: string? = normalizeToken(otherTeam)
+    local mine: string? = normalizeTeamToken(localTeam)
+    local theirs: string? = normalizeTeamToken(otherTeam)
     if mine == nil or theirs == nil then
         return "Unknown"
     end
@@ -373,6 +401,7 @@ end
 
 Module.compact = compact
 Module.normalizeToken = normalizeToken
+Module.normalizeTeamToken = normalizeTeamToken
 Module.sameMatch = sameMatch
 Module.relation = relation
 Module.isOpponent = isOpponent

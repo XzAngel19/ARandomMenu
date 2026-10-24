@@ -17,6 +17,7 @@ local function buildAutoFarm(runtime: any): ()
     local players: Players = game:GetService("Players")
     local localPlayer: Player = players.LocalPlayer
     local currentWorkspace: Workspace = host.workspace or workspace
+    local core: any = state.x2duelsCore
     assert(state.mvsdScroll and state.mvsdFeatures,
         "X2Duels Auto Farm requires the MVS menu section")
 
@@ -95,6 +96,12 @@ local function buildAutoFarm(runtime: any): ()
     end
 
     local function teamOf(player: Player): string?
+        -- Share the MVS resolver with combat/ESP. In particular, do not use a
+        -- common Roblox lobby Team or an FFA sentinel as farm ownership.
+        if core and type(core.teamOf) == "function" then
+            local ok: boolean, token: any = pcall(core.teamOf, player)
+            return ok and token or nil
+        end
         for _, name: string in ipairs({
             "Team", "TeamName", "TeamId", "TeamID", "Side", "Faction", "MatchTeam",
         }) do

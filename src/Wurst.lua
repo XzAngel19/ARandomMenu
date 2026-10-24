@@ -219,7 +219,7 @@ local RUNTIME_RAW_BASE: string =
         .. RUNTIME_BRANCH
         .. "/"
 
-local SOURCE_STAMP: string = "v117-20261024-x2duels-native-burst"
+local SOURCE_STAMP: string = "v118-20261024-mvs-team-hooks"
 
 local BOOT_STARTED_AT: number = os.clock()
 local BOOT_FINGERPRINT_SECONDS: number = 0
@@ -406,7 +406,7 @@ local GAME_FINGERPRINTS: {GameFingerprint} = {
                 end
                 local found: number = 0
                 for _, name: string in ipairs({
-                    "MatchResults", "WinNotification", "PlayerRespawned",
+                    "MatchResults", "WinNotification", "PlayerRespawned", "SetDead",
                 }) do
                     if match:FindFirstChild(name) then
                         found += 1
@@ -448,6 +448,27 @@ local GAME_FINGERPRINTS: {GameFingerprint} = {
                 return controllers ~= nil
                     and controllers:FindFirstChild("MatchController") ~= nil
                     and controllers:FindFirstChild("GunCrosshairController") ~= nil
+            end,
+            -- Current MVS capture: Packages.Networking RE/Combat plus the
+            -- legacy client controllers. These markers do not depend on the
+            -- hashed knife remote names or on the older X2 rematch schema.
+            function(replicated: ReplicatedStorage): boolean
+                local packages: Instance? = replicated:FindFirstChild("Packages")
+                local networking: Instance? = packages
+                    and packages:FindFirstChild("Networking")
+                local re: Instance? = networking and networking:FindFirstChild("RE")
+                local combat: Instance? = re and re:FindFirstChild("Combat")
+                return combat ~= nil
+                    and combat:FindFirstChild("Beam") ~= nil
+                    and combat:FindFirstChild("PlaySound") ~= nil
+            end,
+            function(replicated: ReplicatedStorage): boolean
+                local client: Instance? = replicated:FindFirstChild("Client")
+                local legacy: Instance? = client
+                    and client:FindFirstChild("LegacyClientScripts")
+                return legacy ~= nil
+                    and legacy:FindFirstChild("BeamHandle") ~= nil
+                    and client:FindFirstChild("ClientRuntime") ~= nil
             end,
         },
     },
@@ -4542,6 +4563,21 @@ function state.teamCheck.analyze(player: Player?): {[string]: any}
     end
 
     local provider: any = state.gameBridge.teamProvider
+    if provider and type(provider.GetRelation) == "function" then
+        local ok: boolean, relation: any = pcall(provider.GetRelation, player)
+        if ok and type(relation) == "string" then
+            if relation == "Teammate" then
+                return {sameTeam = true, method = "provider", hostile = false}
+            end
+            if relation == "Enemy" then
+                return {sameTeam = false, method = "provider", hostile = true}
+            end
+            -- Unknown/Outside are not hostile confirmations. In particular,
+            -- never reinterpret them using a shared Roblox lobby Team.
+            return {sameTeam = nil, method = "provider", hostile = nil}
+        end
+        return {sameTeam = nil, method = "provider-unknown", hostile = nil}
+    end
     if provider and type(provider.IsFriendly) == "function" then
         local ok: boolean, friendly: any = pcall(provider.IsFriendly, player)
         if ok and type(friendly) == "boolean" then

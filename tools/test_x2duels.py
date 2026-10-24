@@ -49,6 +49,10 @@ check("false match is absent", rules.normalizeToken(false), nil)
 check("false string is absent", rules.normalizeToken("false"), nil)
 check("numeric team token", rules.normalizeToken(2), "2")
 check("Team object token", rules.normalizeToken({Name = "Blue"}), "blue")
+check("valid MVS team token", rules.normalizeTeamToken("TeamRed"), "teamred")
+check("FFA is not a team", rules.normalizeTeamToken("FFA"), nil)
+check("lobby is not a team", rules.normalizeTeamToken("Lobby"), nil)
+check("neutral is not a team", rules.normalizeTeamToken("Neutral"), nil)
 
 check("known match requires same id", rules.sameMatch("match-a", "match-a"), true)
 check("known match rejects other id", rules.sameMatch("match-a", "match-b"), false)
@@ -57,6 +61,8 @@ check("missing local match permits manual aim", rules.sameMatch(nil, "match-a"),
 check("confirmed teammate", rules.relation("red", "red", true), "Teammate")
 check("confirmed enemy", rules.relation("red", "blue", true), "Enemy")
 check("unknown side", rules.relation("red", nil, true), "Unknown")
+check("shared FFA is unknown, not teammate", rules.relation("FFA", "FFA", true), "Unknown")
+check("shared lobby is unknown, not teammate", rules.relation("Lobby", "Lobby", true), "Unknown")
 check("outside match", rules.relation("red", "blue", false), "Outside")
 
 check("team check accepts enemy", rules.isOpponent("red", "blue", true, true), true)
@@ -194,6 +200,12 @@ def run_integration_contracts() -> None:
     require(base, '"Hitbox",', "singular Hitbox card")
     require(base, '"Exploits"', "Hitbox Exploits category")
     require(base, "registerTeamProvider", "shared Wurst team provider")
+    require(base, "registerRoleProvider", "MVS role colours for universal ESP")
+    require(base, "GetRelation", "tri-state MVS team relation")
+    require(base, "RoleColors = ROLE_COLORS", "shared MVS role palette")
+    require(base, "rules.normalizeTeamToken", "FFA/lobby team sentinel guard")
+    require(base, "playerFromEvent(arguments)", "respawn player argument discovery")
+    require(base, "RE/Match/SetDead", "native death event")
     require(base, "restoreAllHitboxes()", "hitbox restoration")
     require(base, "uninstallHooks()", "silent-hook cleanup")
     require(base, "Packages/Networking/RE/Match/MatchResults", "results event")
@@ -225,6 +237,9 @@ def run_integration_contracts() -> None:
     require(wurst, '"src/games/X2Duels/base.lua"', "base loader path")
     require(wurst, '"src/games/X2Duels/Other/AutoFarm.lua"', "farm loader path")
     require(wurst, '"src/games/X2Duels/Render/TeamESP.lua"', "ESP loader path")
+    require(wurst, '"SetDead"', "current MVS match fingerprint")
+    require(wurst, '"LegacyClientScripts"', "current MVS client fingerprint")
+    require(wurst, 'provider.GetRelation', "tri-state global team analysis")
 
     require(decompiler, "remote-calls.jsonl", "remote call capture")
     require(decompiler, "parent = parentPath(remote)", "remote parent capture")
@@ -284,6 +299,7 @@ end
 X2MatchResults = x2Remote("MatchResults")
 X2RemovePlayer = x2Remote("RemovePlayer")
 X2WinNotification = x2Remote("WinNotification")
+X2SetDead = x2Remote("SetDead")
 X2PlayerRespawned = x2Remote("PlayerRespawned")
 local x2Local = game:GetService("Players").LocalPlayer
 -- Match Roblox's real hierarchy so WaitForChild scans this same PlayerGui.
@@ -334,6 +350,10 @@ assert(ex.state.x2duelsCore and ex.state.x2duelsRules,
 assert(ex.state.gameBridge.teamProvider
     and ex.state.gameBridge.teamProvider.Name == "X2Duels",
     "X2 team provider was not registered")
+assert(ex.state.gameBridge.roleProvider
+    and ex.state.gameBridge.roleProvider.Name == "X2Duels"
+    and ex.state.gameBridge.roleProvider.ReplacesTeams == false,
+    "X2 role colours must preserve the Team Check filters")
 
 local silentFeature = featuresByName["Silent AIM"]
 local autoShootLabel = nil
@@ -406,6 +426,24 @@ HarnessHeroGuy:SetAttribute("Team", "Blue")
 HarnessHeroGuy:SetAttribute("Game", "HarnessMatchOne")
 nativeLocal:SetAttribute("Team", "Red")
 nativeLocal:SetAttribute("Game", "HarnessMatchOne")
+assert(core.relation(HarnessHeroGuy) == "Enemy", "MVS enemy side was not resolved")
+assert(core.isEnemy(HarnessHeroGuy), "resolved MVS enemy was rejected")
+assert(ex.state.teamCheck.analyze(HarnessHeroGuy).hostile == true,
+    "global team check did not accept a confirmed enemy")
+nativeLocal:SetAttribute("Team", "FFA")
+HarnessHeroGuy:SetAttribute("Team", "FFA")
+assert(core.relation(HarnessHeroGuy) == "Unknown",
+    "shared FFA sentinel was incorrectly treated as a team")
+assert(not core.isEnemy(HarnessHeroGuy), "unknown FFA side became a target")
+assert(ex.state.teamCheck.analyze(HarnessHeroGuy).hostile == nil,
+    "unknown FFA side became a confirmed hostile")
+nativeLocal:SetAttribute("Team", "Red")
+HarnessHeroGuy:SetAttribute("Team", "Blue")
+X2SetDead.OnClientEvent:Fire(HarnessHeroGuy)
+assert(not core.isEnemy(HarnessHeroGuy), "SetDead target remained selectable")
+X2PlayerRespawned.OnClientEvent:Fire(nil, HarnessHeroGuy)
+assert(core.isEnemy(HarnessHeroGuy),
+    "second-argument Player respawn did not clear the dead state")
 local nativePreviousWallCheck = core.settings.wallCheck
 core.settings.wallCheck = false -- isolate native activation from the mock Raycast
 local nativeAutoWin = featuresByName["Auto Win"]
@@ -664,6 +702,7 @@ assert(ex.state.x2duelsCore == nil, "X2 core survived destroy")
 assert(ex.state.x2duelsRules == nil, "X2 rules survived destroy")
 assert(ex.state.mvsdCore == nil, "X2 compatibility core survived destroy")
 assert(ex.state.gameBridge.teamProvider == nil, "X2 team provider survived destroy")
+assert(ex.state.gameBridge.roleProvider == nil, "X2 role provider survived destroy")
 print("[X2BOOT] 7 cards, modes, Auto Win 5/5 + Play Again, pumpkin restore, cleanup: PASS")
 '''
     output_path = ROOT / "build" / "x2duels_boot.luau"

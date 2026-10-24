@@ -31,7 +31,7 @@ local function buildTeamESP(runtime: any): ()
     local container: Folder? = nil
     local nextUpdateAt: number = 0
 
-    local COLORS: {[string]: Color3} = {
+    local COLORS: {[string]: Color3} = core.RoleColors or {
         Enemy = Color3.fromRGB(255, 82, 82),
         Teammate = Color3.fromRGB(75, 220, 135),
         Unknown = Color3.fromRGB(255, 190, 75),
