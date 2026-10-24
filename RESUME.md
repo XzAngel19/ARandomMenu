@@ -4,8 +4,8 @@
 > reglas del usuario, y los errores que ya se pagaron una vez. Si algo aquí
 > contradice lo que crees, gana este documento (y los datos de calibración).
 >
-> **Estado al escribir esto:** rama `arena/54045952-arandommenu`, commit
-> `78dcd07`, build **`v112-20261023-instant-action-audit`**.
+> **Estado al escribir esto:** rama `arena/e412e3e8-arandommenu`, base
+> `1d9d66f`, build **`v115-20261024-x2duels-native`**.
 > El usuario se comunica en español. Respóndele en español.
 
 ---
@@ -13,18 +13,37 @@
 ## 1. Qué es esto y cómo llega al usuario
 
 - Menú "Wurst" para Roblox, foco principal **MM2** (place id `142823291`).
-  También hay módulos universales y de otros juegos (BedFight, TRS, VD).
-- El loader carga el **bundle**: `getgenv().WURST_BRANCH = "arena/54045952-arandommenu"`.
+  También hay módulos universales y de otros juegos (BedFight, TRS, VD y
+  X2Duels/MVS).
+- El loader carga el **bundle**: `getgenv().WURST_BRANCH = "arena/e412e3e8-arandommenu"`.
 - **Protocolo de publicación (obligatorio, sin excepciones):**
   1. Edita en `src/…`, nunca directamente en `src/libraries/bundle.lua`.
   2. Sube `SOURCE_STAMP` en `src/Wurst.lua` (`vNNN-AAAAMMDD-descripcion`).
   3. `python3 tools/build_bundle.py --stamp <el mismo stamp>`
-  4. `bash tools/validate.sh` — debe terminar VERDE (75 fuentes, 56 suites,
+  4. `bash tools/validate.sh` — debe terminar VERDE (80 fuentes, 60 suites,
      boot `failures=0`, auditoría de menú 38/37 tarjetas).
-  5. Commit + push **normales** a `arena/54045952-arandommenu`. Sin force-push,
+  5. Commit + push **normales** a `arena/e412e3e8-arandommenu`. Sin force-push,
      sin reescribir historia, sin trabajar en otra rama.
 - Sin bundle regenerado + stamp, el cambio **no llega al usuario**. El watermark
   "UI Settings · vNNN" en el menú es como el usuario verifica la versión.
+
+## 1A. X2Duels (MVS): evidencia y contratos
+
+- PlaceIds registrados: `92876937625630` y el MVS anterior `135856908115931`.
+  Fuentes: `src/games/X2Duels/{Rules.lua,base.lua,Render/TeamESP.lua}` y sus dos
+  perfiles. La sección de menú existente se llama `MVSD`.
+- El log más reciente de TestingStuff no capturó Shoot/Throw/Hit/Damage. No se
+  deben inventar argumentos ni reintroducir los GUID/remotes de referencias
+  históricas. El combate actual usa `Tool:Activate()`; Sender CFrame/Button no
+  depende de `mouse1press` ni de inyección de mouse.
+- Play Again pulsa el botón GUI visible (incluidas etiquetas hijas Roact).
+  `RematchTeleport("back_to_lobby")` no es un sustituto probado de Play Again.
+- Team Check falla cerrado: aliados y lados desconocidos no son objetivos; el
+  ESP usa rojo/verde/ámbar. Auto Farm cuenta solo victorias locales explícitas y
+  se detiene en 5/5. No convertir una pantalla ambigua en una victoria.
+- `python3 tools/test_x2duels.py` ejecuta 61 reglas, contratos estáticos y un
+  boot del bundle con 9 tarjetas/toggles/cleanup. Esto es validación mock y de
+  integración, no una afirmación de precisión o aceptación del servidor live.
 
 ## 2. La trampa de los dos árboles Shoot (NO repetir)
 

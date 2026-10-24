@@ -219,7 +219,7 @@ local RUNTIME_RAW_BASE: string =
         .. RUNTIME_BRANCH
         .. "/"
 
-local SOURCE_STAMP: string = "v114-20261023-instant-gun-disguise"
+local SOURCE_STAMP: string = "v115-20261024-x2duels-native"
 
 local BOOT_STARTED_AT: number = os.clock()
 local BOOT_FINGERPRINT_SECONDS: number = 0
@@ -308,6 +308,8 @@ local GAME_MODULES: {[number]: string} = {
     [142823291] = "MM2",
     [14315258385] = "TRS",
     [93978595733734] = "VD",
+    [92876937625630] = "X2Duels",
+    [135856908115931] = "X2Duels",
 }
 
 type GameFingerprint = {
@@ -389,6 +391,66 @@ local GAME_FINGERPRINTS: {GameFingerprint} = {
             end,
         },
     },
+    {
+        module = "X2Duels",
+        required = 3,
+        markers = {
+            function(replicated: ReplicatedStorage): boolean
+                local packages: Instance? = replicated:FindFirstChild("Packages")
+                local networking: Instance? = packages
+                    and packages:FindFirstChild("Networking")
+                local re: Instance? = networking and networking:FindFirstChild("RE")
+                local match: Instance? = re and re:FindFirstChild("Match")
+                if not match then
+                    return false
+                end
+                local found: number = 0
+                for _, name: string in ipairs({
+                    "MatchResults", "WinNotification", "PlayerRespawned",
+                }) do
+                    if match:FindFirstChild(name) then
+                        found += 1
+                    end
+                end
+                return found >= 2
+            end,
+            function(replicated: ReplicatedStorage): boolean
+                local packages: Instance? = replicated:FindFirstChild("Packages")
+                local networking: Instance? = packages
+                    and packages:FindFirstChild("Networking")
+                local re: Instance? = networking and networking:FindFirstChild("RE")
+                local rematch: Instance? = re and re:FindFirstChild("Rematch")
+                return rematch ~= nil
+                    and rematch:FindFirstChild("RematchVote") ~= nil
+                    and rematch:FindFirstChild("RematchTeleport") ~= nil
+            end,
+            function(replicated: ReplicatedStorage): boolean
+                local packages: Instance? = replicated:FindFirstChild("Packages")
+                local net: Instance? = packages and packages:FindFirstChild("Net")
+                local re: Instance? = net and net:FindFirstChild("RE")
+                if not re then
+                    return false
+                end
+                local found: number = 0
+                for _, name: string in ipairs({
+                    "ThrowEvent", "SlashEvent", "GunKill", "KnifeKill",
+                }) do
+                    if re:FindFirstChild(name) then
+                        found += 1
+                    end
+                end
+                return found >= 3
+            end,
+            function(replicated: ReplicatedStorage): boolean
+                local client: Instance? = replicated:FindFirstChild("Client")
+                local controllers: Instance? = client
+                    and client:FindFirstChild("Controllers")
+                return controllers ~= nil
+                    and controllers:FindFirstChild("MatchController") ~= nil
+                    and controllers:FindFirstChild("GunCrosshairController") ~= nil
+            end,
+        },
+    },
 
 }
 
@@ -429,10 +491,12 @@ local GAME_CHECK = {
     BedFight = 71480482338212,
     TRS = 14315258385,
     VD = 93978595733734,
+    X2Duels = 92876937625630,
     MM2Active = ACTIVE_GAME_MODULE == "MM2",
     TRSActive = ACTIVE_GAME_MODULE == "TRS",
     VDActive = ACTIVE_GAME_MODULE == "VD",
     BedFightActive = ACTIVE_GAME_MODULE == "BedFight",
+    X2DuelsActive = ACTIVE_GAME_MODULE == "X2Duels",
 }
 
 function GAME_CHECK.matches(identifier: number): boolean
@@ -5019,6 +5083,10 @@ local function loadGameModule(
         "src/games/BedFight/base.lua",
         "src/games/BedFight/Combat/AutoSwing.lua",
         "src/games/BedFight/Render/RoundInfo.lua",
+    } elseif moduleName == "X2Duels" then {
+        "src/games/X2Duels/Rules.lua",
+        "src/games/X2Duels/base.lua",
+        "src/games/X2Duels/Render/TeamESP.lua",
     } else {"src/games/" .. moduleName .. "/base.lua"}
     local moduleEnvironment: any = createGameModuleEnvironment(diagnostics)
     -- Game modules get the same services facade the framework environment
@@ -5232,6 +5300,8 @@ local function registerPlaceModule(
             state.cleanupVDRuntime = destroyModule
         elseif tabName == "BedFight" then
             state.cleanupBedFightRuntime = destroyModule
+        elseif tabName == "X2Duels" then
+            state.cleanupX2DuelsRuntime = destroyModule
         end
     end)
 end
@@ -5247,6 +5317,7 @@ registerPlaceModule("MM2", GAME_CHECK.MM2)
 registerPlaceModule("TRS", GAME_CHECK.TRS)
 registerPlaceModule("VD", GAME_CHECK.VD)
 registerPlaceModule("BedFight", GAME_CHECK.BedFight)
+registerPlaceModule("X2Duels", GAME_CHECK.X2Duels)
 
 if PENDING_FINGERPRINT then
     task.spawn(function(): ()
@@ -5263,6 +5334,7 @@ if PENDING_FINGERPRINT then
                 GAME_CHECK.TRSActive = detected == "TRS"
                 GAME_CHECK.VDActive = detected == "VD"
                 GAME_CHECK.BedFightActive = detected == "BedFight"
+                GAME_CHECK.X2DuelsActive = detected == "X2Duels"
                 GAME_CHECK.source = ACTIVE_GAME_SOURCE
                 PENDING_FINGERPRINT = false
                 registerPlaceModule(detected, GAME_CHECK[detected] or 0)
@@ -6322,6 +6394,7 @@ local function cleanupRuntime(): ()
         "cleanupTRSRuntime",
         "cleanupVDRuntime",
         "cleanupBedFightRuntime",
+        "cleanupX2DuelsRuntime",
     }) do
         local cleanup: any = state[key]
         if type(cleanup) == "function" then
