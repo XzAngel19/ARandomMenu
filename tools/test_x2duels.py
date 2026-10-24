@@ -171,9 +171,18 @@ def run_integration_contracts() -> None:
     forbid(farm, ":FireServer(", "unverified pumpkin remote request")
     forbid(base, "host.mouse1press", "desktop-only firing")
     forbid(base, "pcall(mouse1press", "desktop-only firing")
-    forbid(base, "VirtualInputManager", "mouse/touch injection substitute")
+    gui_click_at = base.index("local function clickWithVirtualInput")
+    forbid(base[:gui_click_at], "VirtualInputManager", "combat mouse/touch injection substitute")
+    require(base[gui_click_at:], "SendMouseButtonEvent", "physical Play Again click")
     forbid(base, 'FireServer("back_to_lobby")', "lobby transition as Play Again")
     require(base, "tool:Activate()", "native mobile-compatible activation")
+    require(base, "local function fireGun", "shared native gun adapter")
+    require(base, "local function fireKnife", "shared native knife adapter")
+    require(base, "mouse2press", "desktop knife throw input")
+    require(base, 'SetAttribute("ForceThrow", true)', "touch knife throw state")
+    require(base, "runtimeState.burstRemaining = 20", "Auto Win opening burst")
+    require(base, "runtimeState.nextBurstCycleAt = now + 1.2", "Auto Win recurring burst")
+    forbid(base, 'if now >= runtimeState.nextGunAt and findWeapon("Gun")', "gun pre-check before equip")
     require(base, 'settings.senderMode == "CFrame"', "CFrame sender")
     require(base, '{"Legit", "Silent"}', "Legit/Silent modes")
     require(base, '"Auto Shoot · "', "mode-labelled nested Auto Shoot")
@@ -194,8 +203,15 @@ def run_integration_contracts() -> None:
 
     require(trigger, "host.state.x2duelsCore", "single TriggerBot X2 adapter")
     require(trigger, "x2Core.equippedTool()", "TriggerBot equipped Gun/Knife")
-    require(trigger, "x2Core.activateNative(tool, target)", "TriggerBot native activation")
+    require(trigger, "x2Core.fireGun(target)", "TriggerBot shared gun activation")
+    require(trigger, "x2Core.fireKnife(target)", "TriggerBot shared knife activation")
     require(farm, "^PumpkinCurrency_%d+$", "Halloween spawnable discovery")
+    require(farm, "claimRoundTeamFromPodiums", "podium team resolution")
+    require(farm, "playerFromValue", "StringValue/ObjectValue player resolution")
+    require(farm, "nearestOwned", "owned farm selection")
+    require(farm, "currencyCFrame: CFrame = part.CFrame", "currency CFrame teleport")
+    require(farm, "if not roundStarted then", "round team fail-closed gate")
+    require(farm, "TouchTransmitter", "invisible PumpCoins interaction")
     require(farm, "host.firetouchinterest", "native pumpkin contact")
     require(farm, "restoreSavedPosition()", "farm position cleanup")
     require(esp, 'Enemy = Color3.fromRGB(255, 82, 82)', "enemy ESP color")
@@ -363,6 +379,74 @@ for _, scheduled in pairs(ex.TaskManager.tasks) do
     end
 end
 assert(coreTask, "Auto Win core callback was not registered")
+
+-- Native adapter behavior: a Backpack gun must be equipped by fireGun, not
+-- rejected by an AutoWin pre-check. The mock Tool records real Activate calls.
+local nativeLocal = game:GetService("Players").LocalPlayer
+local nativeBackpack = nativeLocal:FindFirstChildOfClass("Backpack")
+local nativeHumanoid = nativeLocal.Character:FindFirstChildOfClass("Humanoid")
+nativeHumanoid.EquipTool = function(_self, tool)
+    tool.Parent = nativeLocal.Character
+end
+local nativeGun = Instance.new("Tool")
+nativeGun.Name = "Gun"
+nativeGun.Enabled = true
+local nativeGunShots = 0
+nativeGun.Activate = function() nativeGunShots += 1 end
+nativeGun.Parent = nativeBackpack
+local nativeKnife = Instance.new("Tool")
+nativeKnife.Name = "Knife"
+nativeKnife.Enabled = true
+local nativeKnifeShots = 0
+nativeKnife.Activate = function() nativeKnifeShots += 1 end
+nativeKnife.Parent = nativeBackpack
+local nativeTarget = core.targetFor(HarnessHeroGuy)
+assert(nativeTarget, "native target fixture missing")
+HarnessHeroGuy:SetAttribute("Team", "Blue")
+HarnessHeroGuy:SetAttribute("Game", "HarnessMatchOne")
+nativeLocal:SetAttribute("Team", "Red")
+nativeLocal:SetAttribute("Game", "HarnessMatchOne")
+local nativePreviousWallCheck = core.settings.wallCheck
+core.settings.wallCheck = false -- isolate native activation from the mock Raycast
+local nativeAutoWin = featuresByName["Auto Win"]
+local nativePreviousClock = os.clock
+local nativeNow = math.max(nativePreviousClock(), 10)
+os.clock = function() return nativeNow end
+nativeAutoWin.activate()
+for _ = 1, 20 do
+    coreTask.callback(0.04)
+    nativeNow += 0.041
+end
+assert(nativeGunShots == 20, "Auto Win opening burst did not fire 20 native shots")
+assert(nativeGun.Parent == nativeLocal.Character, "Backpack gun was not equipped")
+coreTask.callback(0.1)
+assert(nativeGunShots == 20, "Auto Win ignored the inter-burst interval")
+nativeNow += 1.21
+coreTask.callback(0.1)
+assert(nativeGunShots == 21, "Auto Win did not start its recurring burst")
+nativeAutoWin.activate() -- public toggle: also clears feature.enabled
+
+local oldMouse2Press = mouse2press
+local oldMouse2Release = mouse2release
+local nativeMouseDown = 0
+local nativeMouseUp = 0
+mouse2press = function() nativeMouseDown += 1 end
+mouse2release = function() nativeMouseUp += 1 end
+assert(core.fireKnife(nativeTarget), "desktop knife throw was not queued")
+assert(nativeKnifeShots == 1 and nativeMouseDown == 1 and nativeMouseUp == 1,
+    "desktop knife did not use the native right-click/Activate chain")
+mouse2press = nil
+mouse2release = nil
+assert(core.fireKnife(nativeTarget), "touch knife throw was not queued")
+assert(nativeKnifeShots == 2 and nativeKnife:GetAttribute("ForceThrow") == nil,
+    "touch knife did not use and restore ForceThrow")
+mouse2press = oldMouse2Press
+mouse2release = oldMouse2Release
+os.clock = nativePreviousClock
+core.settings.wallCheck = nativePreviousWallCheck
+nativeGun:Destroy()
+nativeKnife:Destroy()
+
 local autoWinFeature = featuresByName["Auto Win"]
 local playAgainButton = Instance.new("TextButton")
 playAgainButton.Name = "PlayAgainButton"
@@ -374,6 +458,17 @@ playAgainButton.Activated:Connect(function()
     playAgainClicks += 1
     playAgainButton.Visible = false -- Native UI normally disappears after the click.
 end)
+playAgainButton.AbsolutePosition = Vector2.new(100, 200)
+playAgainButton.AbsoluteSize = Vector2.new(80, 40)
+local vimEvents = {}
+local vim = game:GetService("VirtualInputManager")
+local guiService = game:GetService("GuiService")
+guiService.GetGuiInset = function() return Vector2.new(3, 4) end
+vim.SendMouseButtonEvent = function(_self, x, y, button, pressed)
+    table.insert(vimEvents, {x = x, y = y, button = button, pressed = pressed})
+    if not pressed then playAgainButton.Activated:Fire() end
+end
+game:GetService("UserInputService").MouseEnabled = true
 local previousFireSignal = firesignal
 firesignal = function(signal)
     signal:Fire()
@@ -392,6 +487,10 @@ assert(core.getWins() == 1, "same-round win was counted twice")
 X2RemovePlayer.OnClientEvent:Fire()
 coreTask.callback(0.1)
 assert(playAgainClicks == 1, "RemovePlayer did not lead to native Play Again")
+assert(#vimEvents == 2 and vimEvents[1].pressed and not vimEvents[2].pressed,
+    "Play Again did not use a physical mouse down/up pair")
+assert(vimEvents[1].x == 143 and vimEvents[1].y == 224
+    and vimEvents[1].button == 0, "Play Again clicked the wrong screen point")
 X2MatchResults.OnClientEvent:Fire({Winner = "Red"})
 assert(core.getWins() == 1, "MatchResults duplicated the same-round win")
 clockNow += 1
@@ -470,6 +569,95 @@ featuresByName["Auto Farm"].onToggle(false)
 assert(root.CFrame == originalCFrame, "farm did not restore its saved CFrame")
 firetouchinterest = previousFireTouch
 pumpkinModel:Destroy()
+
+-- Runtime Farms/PumpCoins: player entries, not distance to a character model,
+-- decide the round team. The closer enemy coin must never be selected.
+local function podiumFixture(name, team, player)
+    local model = Instance.new("Model")
+    model.Name = name
+    local members = Instance.new("Folder")
+    members.Name = "TeamMembers"
+    members.Parent = model
+    local teamValue = Instance.new("TeamValue")
+    teamValue.Name = "TeamValue"
+    teamValue.Value = team
+    teamValue.Parent = members
+    local entry = Instance.new("StringValue")
+    entry.Name = "PlayerEntry"
+    entry.Value = player.Name
+    entry.Parent = members
+    model.Parent = workspace
+    return model
+end
+local farmsFolder = Instance.new("Folder")
+farmsFolder.Name = "Farms"
+farmsFolder.Parent = workspace
+local function farmFixture(name, team, coinPosition)
+    local model = Instance.new("Model")
+    model.Name = name
+    model.Parent = farmsFolder
+    local teamValue = Instance.new("TeamValue")
+    teamValue.Name = "TeamValue"
+    teamValue.Value = team
+    teamValue.Parent = model
+    local ownerRoot = Instance.new("Part")
+    ownerRoot.Name = "HumanoidRootPart"
+    ownerRoot.Position = Vector3.new(0, 3, 0)
+    ownerRoot.CFrame = CFrame.new(ownerRoot.Position)
+    ownerRoot.Parent = model
+    local pumpCoins = Instance.new("Folder")
+    pumpCoins.Name = "PumpCoins"
+    pumpCoins.Parent = model
+    local coin = Instance.new("Part")
+    coin.Name = "InvisibleCoin"
+    coin.Transparency = 1
+    coin.CanTouch = false
+    coin.Position = coinPosition
+    coin.CFrame = CFrame.new(coinPosition)
+    coin.Parent = pumpCoins
+    local transmitter = Instance.new("TouchTransmitter")
+    transmitter.Parent = coin
+    return model, coin
+end
+local friendlyFarmModel, friendlyCoin = farmFixture(
+    "FriendlyFarm", "Red", Vector3.new(30, 4, 30)
+)
+local enemyFarmModel, enemyCoin = farmFixture(
+    "EnemyFarm", "Blue", Vector3.new(1, 3, 0)
+)
+local localPodium = podiumFixture("LocalPodium", "Red", nativeLocal)
+local enemyPodium = podiumFixture("EnemyPodium", "Blue", HarnessHeroGuy)
+local farmTouches = {}
+firetouchinterest = function(rootPart, coinPart, touchState)
+    table.insert(farmTouches, {rootPart, coinPart, touchState})
+end
+local farmOriginalCFrame = root.CFrame
+featuresByName["Auto Farm"].onToggle(true)
+farmTask.callback(0.1)
+assert(#farmTouches == 2 and farmTouches[1][2] == friendlyCoin,
+    "Auto Farm selected an enemy or owner proxy instead of the friendly currency")
+assert(farmTouches[1][2] ~= enemyCoin, "Auto Farm touched the closer enemy coin")
+assert(root.CFrame.Position.X == 30 and root.CFrame.Position.Y == 5.25
+    and root.CFrame.Position.Z == 30, "Auto Farm did not use the PumpCoin CFrame")
+featuresByName["Auto Farm"].onToggle(false)
+assert(root.CFrame == farmOriginalCFrame, "team farm did not restore its CFrame")
+local touchCountBeforeNoEnemy = #farmTouches
+enemyPodium:Destroy()
+featuresByName["Auto Farm"].onToggle(true)
+farmTask.callback(0.1)
+assert(#farmTouches == touchCountBeforeNoEnemy,
+    "Auto Farm farmed without an opposing podium entry")
+featuresByName["Auto Farm"].onToggle(false)
+localPodium:Destroy()
+featuresByName["Auto Farm"].onToggle(true)
+farmTask.callback(0.1)
+assert(#farmTouches == touchCountBeforeNoEnemy,
+    "Auto Farm farmed with no podium evidence at all")
+featuresByName["Auto Farm"].onToggle(false)
+firetouchinterest = previousFireTouch
+friendlyFarmModel:Destroy()
+enemyFarmModel:Destroy()
+farmsFolder:Destroy()
 
 ex.state.destruct()
 assert(ex.state.x2duelsCore == nil, "X2 core survived destroy")

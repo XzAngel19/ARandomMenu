@@ -5,7 +5,7 @@
 > contradice lo que crees, gana este documento (y los datos de calibración).
 >
 > **Estado al escribir esto:** rama `arena/e412e3e8-arandommenu`, sucesor de
-> `e9aa057`, build **`v116-20261024-x2duels-halloween`**.
+> `8e62b93`, build **`v117-20261024-x2duels-native-burst`**.
 > El usuario se comunica en español. Respóndele en español.
 
 ---
@@ -37,17 +37,28 @@
   universal, adaptado al core X2 para Gun/Knife; no se debe crear otra tarjeta.
 - Auto Shoot es una subopción de Silent AIM, sigue el master y muestra
   Legit/Silent. Play Again es una subopción de Auto Win. Sender CFrame/Button
-  usa `Tool:Activate()` y no depende de `mouse1press` ni inyección de mouse.
-- Auto Farm busca monedas Halloween `PumpkinCurrency_*` por contacto nativo,
-  reintenta y restaura el CFrame al apagarse. Un intento no se cuenta como
-  moneda confirmada. El RBXL guarda esas partes con `CanTouch=false`; la
+  usa `Tool:Activate()` y no depende de `mouse1press` ni inyección de mouse
+  para combate. El click físico de Play Again puede usar VirtualInputManager
+  solo sobre el botón GUI; no es un sustituto de disparo.
+- Auto Farm busca monedas Halloween `PumpkinCurrency_*` y `Farms/PumpCoins`
+  dinámicos por contacto nativo. Los podios resuelven `StringValue`/`ObjectValue`
+  contra jugadores y equipos; sin una entrada enemiga no se farmean granjas y
+  ningún modelo cercano se considera propio por proximidad. El teleport usa el
+  CFrame de la moneda invisible con TouchTransmitter, no el root del dueño.
+  Reintenta y restaura el CFrame al apagarse. Un intento no se cuenta como
+  moneda confirmada. El RBXL guarda algunas partes con `CanTouch=false`; la
   recolección real sigue pendiente y no se inventan argumentos para
   `CollectEventSpawnable`.
-- Auto Win controla el combate de ronda, dispara al inicio, cuenta solo
-  victorias locales explícitas y se apaga en 5/5. `RemovePlayer` marca el fin
-  de ronda y reactiva el escaneo de Play Again; no cuenta una victoria por sí
-  solo. Play Again pulsa el botón GUI visible, incluidas etiquetas hijas.
-  `RematchTeleport("back_to_lobby")` no es un sustituto probado de Play Again.
+- Auto Win controla el combate de ronda: `fireGun(target)` comparte el objetivo
+  de Legit/Silent, encuentra y equipa la pistola aunque empiece en Backpack,
+  hace una ráfaga de 20 intentos nativos a 0.04 s y repite el ciclo tras 1.2 s.
+  El cooldown real del Tool sigue decidiendo los disparos. `fireKnife(target)`
+  separa el throw (mouse2 + Activate en desktop, ForceThrow + Activate en
+  touch) del melee de Kill Aura. Cuenta solo victorias locales explícitas y se
+  apaga en 5/5. `RemovePlayer` marca el fin de ronda y reactiva el escaneo de
+  Play Again; no cuenta una victoria por sí solo. Play Again pulsa el botón GUI
+  visible, incluidas etiquetas hijas. `RematchTeleport("back_to_lobby")` no es
+  un sustituto probado de Play Again.
 - Team Check falla cerrado: aliados y lados desconocidos no son objetivos; el
   ESP usa rojo/verde/ámbar. No convertir una pantalla ambigua en una victoria.
 - El log más reciente de TestingStuff no capturó Shoot/Throw/Hit/Damage. No se
@@ -56,8 +67,10 @@
   bytecode, inventario con parents y argumentos entrantes/salientes; su guía es
   `tools/X2DuelsDecompiler.md`.
 - `python3 tools/test_x2duels.py` ejecuta 61 reglas, contratos y un boot real
-  del bundle con siete tarjetas, modos, Auto Win 5/5, RemovePlayer→Play Again,
-  contacto/restauración de pumpkin y cleanup. `python3
+  del bundle con siete tarjetas, modos, ráfaga de 20 disparos desde Backpack,
+  ambos caminos nativos del cuchillo, click físico de Play Again, Auto Win 5/5,
+  RemovePlayer→Play Again, contacto/restauración de pumpkin, podios y granjas
+  amigas/enemigas con PumpCoins invisibles y cleanup. `python3
   tools/test_x2duels_decompiler.py` valida el extractor con DataModel simulado.
   Todo ello es validación offline, no aceptación del servidor ni precisión live.
 
@@ -254,11 +267,12 @@ boot y las 61 suites:
 - Fling por network ownership (v107) y Anti Fling (v108) contra un fling real.
 - Disguise v101: packs del objetivo / por ID, en servidor.
 - Salidas del standalone (Step 1 nil-parent, Step 4 origen) y TargetBot v5.
-- X2 v116: recolección real de Halloween, activación nativa de Gun/Knife,
-  precisión del throw, Team ESP/filtro con datos live, Sender CFrame en móvil,
-  y cinco victorias con RemovePlayer/Play Again. El harness cubre la máquina de
-  estados, no los argumentos ni la aceptación del servidor. La siguiente
-  evidencia debe obtenerse con `tools/X2DuelsDecompiler.luau`.
+- X2 v117: recolección real de Halloween, aceptación del servidor para
+  Gun/Knife, precisión del throw, Team ESP/filtro con datos live, Sender
+  CFrame en móvil y cinco victorias con RemovePlayer/Play Again. El harness
+  cubre activaciones, máquina de estados y clicks; no prueba daño, monedas,
+  rematch ni aceptación del servidor. La siguiente evidencia debe obtenerse
+  con `tools/X2DuelsDecompiler.luau`.
 
 ## 10. Cómo trabajar con este usuario
 
@@ -272,5 +286,5 @@ boot y las 61 suites:
   el comportamiento y `validate.sh` verde antes de pushear.
 
 ---
-*Última actualización: v112 (2026-10-23). Al publicar una versión nueva,
+*Última actualización: v117 (2026-10-24). Al publicar una versión nueva,
 actualiza la línea de estado de arriba y cualquier sección que cambie.*

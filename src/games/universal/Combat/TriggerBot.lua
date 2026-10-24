@@ -144,12 +144,12 @@ function Module.init(context: Runtime): any
                     return
                 end
 
-                -- X2 Duels owns one native adapter here instead of registering
-                -- a second TriggerBot card/loop. Gun and Knife both use the
-                -- same core team filter and Tool:Activate() sender.
+                -- X2 owns one shared native path per weapon instead of
+                -- registering a second TriggerBot card/loop.
                 local x2Core: any = host.state and host.state.x2duelsCore
                 if x2Core and type(x2Core.isEnemy) == "function"
-                    and type(x2Core.activateNative) == "function" then
+                    and type(x2Core.fireGun) == "function"
+                    and type(x2Core.fireKnife) == "function" then
                     if not x2Core.isEnemy(player, options["Teammates"].Value) then
                         trigger:SetStatus("not opponent")
                         return
@@ -166,9 +166,15 @@ function Module.init(context: Runtime): any
                         return
                     end
                     nextShotAt = now + options["Delay"].Value
-                    local fired: boolean = x2Core.activateNative(tool, target)
+                    local fired: boolean = false
+                    if kind == "Gun" then
+                        fired = x2Core.fireGun(target)
+                    else
+                        fired = x2Core.fireKnife(target)
+                    end
                     trigger:SetStatus(
-                        fired and ("fired " .. string.lower(kind)) or "cooldown"
+                        fired and (kind == "Knife" and "throw queued" or "fired gun")
+                            or "cooldown"
                     )
                     return
                 end

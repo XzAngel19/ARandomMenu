@@ -68,7 +68,14 @@ local function buildX2Duels(runtime: any): ()
         wins = 0,
         nextSelectionAt = 0,
         nextGunAt = 0,
+        burstRemaining = 0,
+        nextBurstAt = 0,
+        nextBurstCycleAt = 0,
+        gunAvailable = nil,
         nextKnifeAt = 0,
+        knifeBusy = false,
+        knifeToken = 0,
+        knifePending = nil,
         nextAuraAt = 0,
         nextHitboxAt = 0,
         nextGuiAt = 0,
@@ -454,6 +461,124 @@ local function buildX2Duels(runtime: any): ()
         return target
     end
 
+    local function fireGun(target: {[string]: any}?): (boolean, boolean)
+        local gun: Tool? = findWeapon("Gun")
+        if not gun then
+            return false, false
+        end
+        if not target then
+            return false, true
+        end
+        -- The exact same target drives Legit rendering, Silent ray rewriting
+        -- and native activation; no hidden crosshair/mouse packet is involved.
+        runtimeState.selected = target
+        return activateNative(gun, target), true
+    end
+
+    local function cancelKnifeThrow(): ()
+        runtimeState.knifeToken = (runtimeState.knifeToken or 0) + 1
+        local pending: any = runtimeState.knifePending
+        runtimeState.knifePending = nil
+        runtimeState.knifeBusy = false
+        if pending then
+            if pending.rightDown and type(host.mouse2release) == "function" then
+                pcall(host.mouse2release)
+            end
+            if pending.forceThrow and pending.tool then
+                pcall(function(): ()
+                    pending.tool:SetAttribute("ForceThrow", pending.previousForceThrow)
+                end)
+            end
+        end
+        restoreCamera()
+    end
+
+    local function fireKnife(target: {[string]: any}?): boolean
+        if not target or runtimeState.knifeBusy then
+            return false
+        end
+        local knife: Tool? = findWeapon("Knife")
+        if not knife or not equip(knife) then
+            return false
+        end
+        local enabledOk: boolean, enabled: any = pcall(function(): any
+            return knife.Enabled
+        end)
+        if enabledOk and enabled == false then
+            return false
+        end
+
+        local token: number = (runtimeState.knifeToken or 0) + 1
+        runtimeState.knifeToken = token
+        runtimeState.knifeBusy = true
+        local pending: {[string]: any} = {
+            tool = knife,
+            rightDown = false,
+            forceThrow = false,
+            previousForceThrow = nil,
+        }
+        runtimeState.knifePending = pending
+
+        task.spawn(function(): ()
+            local ok: boolean, failure: any = pcall(function(): ()
+                if token ~= runtimeState.knifeToken then return end
+                if settings.senderMode == "CFrame" then
+                    aimWithCFrame(target.part.Position)
+                end
+
+                local usedMouse: boolean = false
+                if type(host.mouse2press) == "function"
+                    and type(host.mouse2release) == "function" then
+                    local pressed: boolean = pcall(host.mouse2press)
+                    if pressed then
+                        usedMouse = true
+                        pending.rightDown = true
+                        -- X2's desktop LocalScript enters its throwing state
+                        -- from MouseButton2 before Tool:Activate().
+                        task.wait(0.2)
+                        if token ~= runtimeState.knifeToken then return end
+                        if target.part.Parent then
+                            activateNative(knife, target)
+                        end
+                        pending.rightDown = false
+                        pcall(host.mouse2release)
+                    end
+                end
+
+                if not usedMouse then
+                    -- The touch/ForceThrow path is read by the same native
+                    -- controller. It does not manufacture remote arguments.
+                    pending.previousForceThrow = knife:GetAttribute("ForceThrow")
+                    knife:SetAttribute("ForceThrow", true)
+                    pending.forceThrow = true
+                    if token ~= runtimeState.knifeToken then return end
+                    if target.part.Parent then
+                        activateNative(knife, target)
+                    end
+                    task.wait()
+                end
+            end)
+
+            if token == runtimeState.knifeToken then
+                if pending.rightDown and type(host.mouse2release) == "function" then
+                    pcall(host.mouse2release)
+                end
+                if pending.forceThrow then
+                    pcall(function(): ()
+                        knife:SetAttribute("ForceThrow", pending.previousForceThrow)
+                    end)
+                end
+                runtimeState.knifePending = nil
+                runtimeState.knifeBusy = false
+                restoreCamera()
+            end
+            if not ok then
+                runtimeState.lastKnifeError = tostring(failure)
+            end
+        end)
+        return true
+    end
+
     local function redirectRay(origin: Vector3, direction: Vector3): Vector3?
         if runtimeState.suppressRaycast or not settings.silentAim
             or settings.silentMode ~= "Silent" then
@@ -598,11 +723,21 @@ local function buildX2Duels(runtime: any): ()
         return runtimeState.observedRound or matchToken(localPlayer) ~= nil
     end
 
+    local function queueGunBurst(): ()
+        runtimeState.burstRemaining = 20
+        runtimeState.nextBurstAt = 0
+        runtimeState.nextBurstCycleAt = 0
+        runtimeState.nextGunAt = 0
+        runtimeState.gunAvailable = nil
+    end
+
     local function completeAutoWin(): ()
         if not settings.autoWin then
             return
         end
         settings.autoWin = false
+        runtimeState.burstRemaining = 0
+        cancelKnifeThrow()
         restoreCamera()
         forceCardOff(autoWinCard)
         pcall(notify, "X2 Duels · Auto Win completado: 5/5 victorias")
@@ -646,6 +781,8 @@ local function buildX2Duels(runtime: any): ()
         runtimeState.observedRound = false
         runtimeState.resultWinCounted = false
         runtimeState.selected = nil
+        runtimeState.burstRemaining = 0
+        cancelKnifeThrow()
         local arguments: {any} = {...}
         if settings.autoWin and rules.didLocalWin(
             arguments, resultIdentity(), false
@@ -666,6 +803,8 @@ local function buildX2Duels(runtime: any): ()
         runtimeState.resultsPending = true
         runtimeState.observedRound = false
         runtimeState.selected = nil
+        runtimeState.burstRemaining = 0
+        cancelKnifeThrow()
         runtimeState.nextGuiAt = 0
     end
 
@@ -690,6 +829,8 @@ local function buildX2Duels(runtime: any): ()
         runtimeState.resultWinCounted = false
         runtimeState.nextGunAt = 0
         runtimeState.nextKnifeAt = 0
+        cancelKnifeThrow()
+        if settings.autoWin then queueGunBurst() end
     end
 
     local function findRemote(path: string): Instance?
@@ -724,28 +865,22 @@ local function buildX2Duels(runtime: any): ()
         connectRemote("Packages/Networking/RE/Match/PlayerRespawned", onPlayerRespawned)
     end
 
-    local function runGun(maxDistance: number, interval: number): ()
+    local function runGun(maxDistance: number, interval: number): (boolean, boolean)
         runtimeState.nextGunAt = os.clock() + interval
-        local gun: Tool? = findWeapon("Gun")
-        if not gun then
-            return
+        local target: {[string]: any}? = nil
+        if settings.silentAim then
+            target = selectedTarget()
         end
-        local target: {[string]: any}? = nearestEnemy(maxDistance)
-        if target and equip(gun) then
-            activateNative(gun, target)
+        if not target then
+            target = nearestEnemy(maxDistance)
         end
+        return fireGun(target)
     end
 
     local function runKnifeThrow(maxDistance: number, interval: number): ()
         runtimeState.nextKnifeAt = os.clock() + interval
-        local knife: Tool? = findWeapon("Knife")
-        if not knife then
-            return
-        end
         local target: {[string]: any}? = nearestEnemy(maxDistance)
-        if target and equip(knife) then
-            activateNative(knife, target)
-        end
+        fireKnife(target)
     end
 
     local function runKillAura(): ()
@@ -829,7 +964,43 @@ local function buildX2Duels(runtime: any): ()
         return current == playerGui
     end
 
+    local function clickWithVirtualInput(button: GuiButton): boolean
+        local input: any = host.UserInputService
+        if not input or not input.MouseEnabled then
+            return false
+        end
+        local ok: boolean, virtualInput: any, guiService: any = pcall(function(): (any, any)
+            return game:GetService("VirtualInputManager"), game:GetService("GuiService")
+        end)
+        if not ok or not virtualInput or not guiService then
+            return false
+        end
+        local geometryOk: boolean, position: any, size: any, inset: any = pcall(function(): (any, any, any)
+            return button.AbsolutePosition, button.AbsoluteSize, guiService:GetGuiInset()
+        end)
+        if not geometryOk or not position or not size or not inset
+            or size.X <= 0 or size.Y <= 0 then
+            return false
+        end
+        local centerX: number = position.X + size.X / 2 + inset.X
+        local centerY: number = position.Y + size.Y / 2 + inset.Y
+        local down: boolean = pcall(function(): ()
+            virtualInput:SendMouseButtonEvent(centerX, centerY, 0, true, game, 0)
+        end)
+        local up: boolean = pcall(function(): ()
+            virtualInput:SendMouseButtonEvent(centerX, centerY, 0, false, game, 0)
+        end)
+        if down and up then
+            runtimeState.lastPlayAgainMethod = "VirtualInputManager"
+            return true
+        end
+        return false
+    end
+
     local function clickNativeButton(button: GuiButton): boolean
+        if clickWithVirtualInput(button) then
+            return true
+        end
         if type(host.firesignal) == "function" then
             for _, signalName: string in ipairs({"Activated", "MouseButton1Click"}) do
                 local signalOk: boolean, signal: any = pcall(function(): any
@@ -838,6 +1009,7 @@ local function buildX2Duels(runtime: any): ()
                 if signalOk and signal then
                     local fired: boolean = pcall(host.firesignal, signal)
                     if fired then
+                        runtimeState.lastPlayAgainMethod = "firesignal"
                         return true
                     end
                 end
@@ -937,6 +1109,7 @@ local function buildX2Duels(runtime: any): ()
                 runtimeState.roundSerial += 1
                 runtimeState.nextGunAt = 0
                 runtimeState.nextKnifeAt = 0
+                if settings.autoWin then queueGunBurst() end
             else
                 runtimeState.observedRound = false
                 runtimeState.selected = nil
@@ -960,9 +1133,33 @@ local function buildX2Duels(runtime: any): ()
         end
 
         if settings.autoWin and combatMatchActive() then
-            if now >= runtimeState.nextGunAt and findWeapon("Gun") then
-                runGun(settings.maxDistance, settings.shotInterval)
-            elseif now >= runtimeState.nextKnifeAt and not findWeapon("Gun") then
+            local gunAvailable: boolean? = runtimeState.gunAvailable
+            if (runtimeState.burstRemaining or 0) <= 0
+                and now >= (runtimeState.nextBurstCycleAt or 0) then
+                queueGunBurst()
+                gunAvailable = nil
+            end
+            if (runtimeState.burstRemaining or 0) > 0
+                and now >= (runtimeState.nextBurstAt or 0) then
+                -- fireGun owns discovery/equip; this loop must not reject a
+                -- Backpack gun before giving it a chance to equip.
+                local _fired: boolean, hasGun: boolean =
+                    runGun(settings.maxDistance, 0.04)
+                gunAvailable = hasGun
+                runtimeState.gunAvailable = hasGun
+                if hasGun then
+                    runtimeState.burstRemaining -= 1
+                    runtimeState.nextBurstAt = now + 0.04
+                    if runtimeState.burstRemaining == 0 then
+                        runtimeState.nextBurstCycleAt = now + 1.2
+                    end
+                else
+                    runtimeState.burstRemaining = 0
+                    runtimeState.nextBurstAt = now + 0.2
+                    runtimeState.nextBurstCycleAt = now + 0.2
+                end
+            end
+            if gunAvailable == false and now >= runtimeState.nextKnifeAt then
                 runKnifeThrow(600, settings.knifeInterval)
             end
         else
@@ -1014,6 +1211,7 @@ local function buildX2Duels(runtime: any): ()
         settings.playAgain = false
         setAimActivity(false)
         restoreAllHitboxes()
+        cancelKnifeThrow()
         restoreCamera()
         uninstallHooks()
         if host.featureConnections.X2DuelsCore then
@@ -1057,6 +1255,8 @@ local function buildX2Duels(runtime: any): ()
         toolKind = toolKind,
         equip = equip,
         activateNative = activateNative,
+        fireGun = fireGun,
+        fireKnife = fireKnife,
         isMatchActive = combatMatchActive,
         getWins = function(): number return runtimeState.wins end,
     }
@@ -1150,7 +1350,10 @@ local function buildX2Duels(runtime: any): ()
                 runtimeState.wins = 0
                 runtimeState.lastWinRound = -1
                 runtimeState.lastWinAt = 0
+                queueGunBurst()
             else
+                runtimeState.burstRemaining = 0
+                cancelKnifeThrow()
                 restoreCamera()
             end
         end,
@@ -1284,7 +1487,7 @@ local function buildX2Duels(runtime: any): ()
         function(enabled: boolean): ()
             settings.knifeThrow = enabled
             runtimeState.nextKnifeAt = 0
-            if not enabled then restoreCamera() end
+            if not enabled then cancelKnifeThrow() end
         end,
         "Combat"
     )
@@ -1333,6 +1536,7 @@ local function buildX2Duels(runtime: any): ()
         runtimeState.selected = nil
         runtimeState.nextGunAt = 0
         runtimeState.nextKnifeAt = 0
+        cancelKnifeThrow()
         restoreCamera()
     end))
 
