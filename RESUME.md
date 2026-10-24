@@ -540,6 +540,107 @@ Evidencia y pruebas: <observado, offline, pendiente live>
 Si no se puede rellenar «Ubicación» o «Dueño del estado», todavía no toca crear
 la función.
 
+## 1G. Toolchain: qué hace falta y qué no hay que instalar
+
+No basta con escribir «usa Luau». Un agente que retoma el proyecto debe poder
+preparar un clone limpio, compilar, ejecutar las pruebas y saber qué evidencia
+sale de cada herramienta. Tampoco debe convertir nombres conocidos —Darklua,
+StyLua, Selene o Rojo— en dependencias obligatorias si el pipeline no los usa.
+
+### Requisitos del pipeline normal
+
+| Herramienta | Para qué se necesita | Estado y preparación |
+| --- | --- | --- |
+| **Bash** y utilidades Unix (`find`, `grep`, `cut`, `tar`) | `tools/validate.sh`, setup y comprobaciones de salida. | Ejecutar con `bash`, no con `sh`: el script usa `pipefail` y process substitution. En Windows usar WSL o Git Bash conservando LF. |
+| **Python 3** como `python3` | Build/check del bundle, harness, suites, auditorías y análisis offline. | El build y las suites de `validate.sh` usan la biblioteca estándar; no hace falta un `pip install` general. Comprobar con `python3 --version`. |
+| **Node.js** como `node` | Ejecutar el paquete Luau WASM vendored. | Es el único runtime externo del toolchain Luau. **No hace falta npm ni `npm install`** para el flujo normal. Comprobar con `node --version`. |
+| **Luau 0.739.0** (`luau` y `luau-compile`) | Ejecutar harnesses y compilar cada fuente `.lua`. | Está fijado en `tools/luau/vendor/luau-rs-luau-0.739.0.tgz`; `bash tools/luau/setup.sh` crea los wrappers en `tools/luau/bin/`. |
+| **Git** | Revisar el diff, preservar el alcance y publicar el commit correcto. | No interviene en las pruebas, pero sí en el protocolo de publicación. |
+| **GitHub CLI (`gh`)**, cuando haga falta | PR, issues, checks, releases o recuperación mediante API. | No es requisito de `validate.sh`; no sustituye a `git` para commit/push ni debe pedirse ninguna credencial al usuario. |
+
+`tools/luau/bin/` y `tools/luau/node_modules/` están ignorados porque son
+artefactos locales. Lo reproducible y versionado es el tarball de `vendor/` más
+`setup.sh`, `run.mjs` y `compile.mjs`. En un clone limpio, `validate.sh` intenta
+el setup automáticamente si falta el wrapper y existe el tarball; aun así, ante
+un fallo conviene ejecutar el setup explícitamente para ver el error real.
+
+### Arranque y comprobación desde la raíz
+
+```bash
+git status --short
+python3 --version
+node --version
+bash tools/luau/setup.sh
+tools/luau/bin/luau-compile src/Wurst.lua
+bash tools/validate.sh
+```
+
+El `luau-compile` aislado es un smoke test de sintaxis; el pase completo es
+`bash tools/validate.sh`. Ese runner comprueba que el bundle y el stamp no estén
+desincronizados, compila todas las fuentes, ejecuta todos los `tools/test_*.py`,
+genera y arranca el harness completo, audita exports `core.*`/`prediction.*` y
+vuelca el menú debug/release. No se declara éxito mirando sólo el final del log:
+cualquier comando fallido detiene el script.
+
+Si se usa otra instalación de Luau, se puede seleccionar sin editar el runner:
+
+```bash
+LUAU_DIR=/ruta/al/directorio bash tools/validate.sh
+# o rutas independientes:
+LUAU=/ruta/a/luau LUAU_COMPILE=/ruta/a/luau-compile bash tools/validate.sh
+```
+
+No se copian binarios al repositorio ni se cambia el PATH global del usuario.
+Si falta una herramienta, se arregla el entorno o el setup; no se omite la suite
+ni se relaja un assertion para obtener un falso verde.
+
+### Mapa de herramientas del propio repositorio
+
+| Herramienta | Cuándo usarla | Qué demuestra / qué no demuestra |
+| --- | --- | --- |
+| `python3 tools/build_bundle.py --stamp <stamp>` | Después de un cambio de runtime, con el mismo `SOURCE_STAMP` de `src/Wurst.lua`. | Regenera `src/libraries/bundle.lua` desde las fuentes. No valida por sí solo el comportamiento. |
+| `python3 tools/build_bundle.py --check --stamp <stamp>` | Antes de publicar y dentro de `validate.sh`. | Detecta fuentes ausentes, huérfanas o distintas y stamps incompatibles. |
+| `bash tools/validate.sh` | Antes de cualquier push de runtime y después de preparar el entorno. | Es la puerta offline completa; no prueba daño, recompensas ni aceptación de un servidor Roblox live. |
+| `python3 tools/test_<nombre>.py` | Durante el desarrollo, para iterar sobre el módulo afectado. | Da feedback focalizado; no reemplaza la validación completa final. Ejemplos: `test_mm2_sprint_option.py`, `test_speed_modes.py`, `test_x2duels.py`. |
+| `python3 tools/gen_full_boot_harness.py` | Normalmente mediante `validate.sh`; de forma directa para depurar el boot. | Genera `build/full_boot.luau`; el archivo generado no se edita como si fuera una fuente. |
+| `python3 tools/audit_menu.py` / `--release` | Cuando cambien tarjetas, categorías, opciones o visibilidad debug. | Arranca el bundle real y vuelca lo registrado, no sólo nombres encontrados por grep. `--release` debe excluir Calibration. |
+| `python3 tools/audit_module_api.py` | Al añadir o renombrar llamadas `core.*` o `prediction.*`. | Comprueba que cada llamada tenga un export; no demuestra que su comportamiento sea correcto. |
+| `python3 tools/replay_gun_prediction.py` y `analyze_*.py` / `audit_*.py` pertinentes | Sólo con capturas o fixtures relacionados con la pregunta investigada. | Reproducen o resumen evidencia cliente. Sus límites deben acompañar al resultado; no convierten muestras pequeñas en precisión live. |
+| `tools/X2DuelsDecompiler.luau` + `tools/X2DuelsDecompiler.md` | Para obtener evidencia específica de X2 en el entorno live apropiado. | El colector vuelca fuentes, inventario y llamadas observadas. `python3 tools/test_x2duels_decompiler.py` sólo valida sus contratos contra un DataModel simulado. |
+| `tools/diagnostics/*` | Sólo para un diagnóstico concreto y con el alcance indicado por su propia guía. | No son parte del arranque normal ni se deben cargar todos por rutina. |
+
+Roblox Studio, un executor y una sesión live **no son requisitos de las pruebas
+offline**, pero las pruebas offline tampoco los sustituyen cuando la pregunta es
+si el servidor aceptó una acción. Hay que nombrar siempre cuál de esos dos
+entornos produjo la evidencia.
+
+### Darklua, formato, lint y dependencias opcionales
+
+- **Darklua** (no «Darkluau») **no está instalado, configurado ni es necesario**.
+  Este repositorio no lo invoca: el empaquetador real es
+  `tools/build_bundle.py`, y `src/libraries/bundle.lua` contiene las fuentes
+  para el loader actual. No añadir un segundo bundler, minificador o reescritor
+  de `require` sólo porque existe; podría producir un artefacto distinto del que
+  prueban los harnesses.
+- **StyLua, Selene, luau-analyze, Lune y Rojo tampoco forman parte del pipeline
+  actual.** No hay configuración que los convierta en una puerta. Si una tarea
+  los necesita de verdad, se fija versión y configuración, se prueba el comando
+  y se documenta el motivo; no se formatea todo el árbol ni se introduce otra
+  cadena de build de manera incidental.
+- `tools/process_manga_assets.py` es una excepción opcional: importa **Pillow**
+  (`PIL`) y **NumPy**. Esas dependencias sólo se instalan para procesar esos
+  assets (`python3 -m pip install Pillow numpy`); no son necesarias para
+  compilar, generar el bundle ni ejecutar `validate.sh`.
+- Los mocks y herramientas ya incluidos son la primera opción. Antes de añadir
+  una dependencia nueva hay que explicar qué hueco cubre, cómo se instala de
+  forma reproducible, qué comando la ejecuta y qué prueba impide que quede
+  abandonada. Una herramienta experimental no se convierte en un paso que el
+  usuario tenga que arreglar manualmente.
+
+En resumen: **el toolchain obligatorio es Bash + Python 3 + Node.js + el Luau
+vendored; Git/gh cubren publicación. Darklua no es un requisito**. El comando
+que reúne la comprobación normal sigue siendo `bash tools/validate.sh`.
+
 ## 2. La trampa de los dos árboles Shoot (NO repetir)
 
 - Hubo una divergencia real: `src/games/MM2/Blatant/Shoot.lua` llegó a ser un
@@ -715,8 +816,9 @@ la función.
    ediciones** (pasó dos veces: el edit "exitoso" no estaba en el archivo).
    Ediciones al mismo archivo: **secuenciales**, y verifica con grep antes de
    compilar.
-4. La toolchain Luau no persiste entre sesiones: `bash tools/luau/setup.sh`
-   (hay `luau` y `luau-compile` en `tools/luau/bin`). Sin red a
+4. Los wrappers y `node_modules` de Luau no persisten entre sesiones: ejecuta
+   `bash tools/luau/setup.sh` y comprueba los requisitos de §1G. El tarball sí
+   está versionado; no uses npm ni instales Darklua para sustituirlo. Sin red a
    `raw.githubusercontent` (SSL): usa `gh api` o clone.
 5. `tools/audit_module_api.py` corre desde validate.sh: todo `core.*` /
    `prediction.*` llamado debe existir como export en `state.mm2Core` /
@@ -764,6 +866,7 @@ boot y las 61 suites:
   el comportamiento y `validate.sh` verde antes de pushear.
 
 ---
-*Última actualización: 2026-10-24 · guía de arquitectura y ubicación de
-funciones ampliada; el runtime sigue en v119. Al publicar una versión nueva,
-actualiza la línea de estado de arriba y cualquier sección que cambie.*
+*Última actualización: 2026-10-24 · guía de arquitectura, ubicación de funciones
+y toolchain reproducible ampliadas; el runtime sigue en v119. Al publicar una
+versión nueva, actualiza la línea de estado de arriba y cualquier sección que
+cambie.*
