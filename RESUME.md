@@ -367,6 +367,179 @@ Antes de dar un módulo por terminado, el próximo agente debe poder responder
     falta comprobar live. Nunca se escribe «funciona daño/monedas/wins» sólo
     porque un mock llamó a Activate o porque apareció una animación.
 
+## 1F. Antes de añadir una función: pensar, ubicar y después escribir
+
+No se empieza por `createUniversalFeature`. Se empieza por entender la función y
+buscar su dueño actual. El prefijo `Auto`, que la idea parezca pequeña o que el
+código quepa en un archivo nuevo **no justifica una tarjeta nueva**.
+
+### Archivo, tarjeta, opción y categoría no son lo mismo
+
+- **Archivo técnico:** separa código para mantenerlo legible. Puede existir sin
+  añadir ninguna entrada al menú.
+- **Tarjeta:** representa una intención de control independiente, con su master,
+  estado, opciones y ciclo de vida. Es lo que hay que limitar.
+- **Opción/acción:** una variante o paso dentro de una tarjeta que ya posee el
+  mecanismo. Puede ser toggle, dropdown, slider, botón hold o texto de estado.
+- **Categoría:** la ventana/grupo en que aparece la tarjeta: Combat, Utilities,
+  Exploits, Render, World, etc. No indica por sí sola quién debe ser el padre.
+
+El ejemplo canónico es **Sprint**: `src/games/MM2/Movement/Sprint.lua` es un
+archivo separado, pero registra su botón dentro de **Speed** y usa
+`SetSprintHeld`, `StepSprint`, `SprintFrame` y `ClearSprint`. No crea una tarjeta
+Sprint independiente. Si se añade **Auto Sprint**, la ubicación por defecto es
+una opción **dentro de Speed**, reutilizando ese mismo estado de locomoción;
+no una tarjeta `Auto Sprint` con otro Heartbeat y otra escritura de WalkSpeed.
+
+Esto también evita una simplificación incorrecta: no todo lo relacionado debe
+fusionarse. Aim Assist, Silent AIM y TriggerBot pueden compartir targeting sin
+ser la misma tarjeta porque su comportamiento de activación es distinto. Speed
+y Noclip comparten el personaje, pero WalkSpeed/velocidad y colisión tienen
+propósitos, riesgos y restores diferentes. La regla es compartir el **estado y
+el ciclo de vida real**, no solamente el tema.
+
+### El árbol de decisión obligatorio
+
+Antes de implementar, recorre estas preguntas en orden y escribe las respuestas
+en el análisis o en el resumen del cambio:
+
+1. **¿Qué quiere hacer el usuario, en una frase?** «mantener sprint al caminar»
+   no es lo mismo que «aumentar WalkSpeed», «saltar automáticamente» o «volar».
+2. **¿Ya existe una tarjeta que haga eso o controle el mismo estado?** Busca por
+   nombre, propiedad, Tool, cámara, target, remote, conexión y cleanup. Si la
+   respuesta es sí, la primera opción es una subopción, no otra tarjeta.
+3. **¿Qué recurso sería compartido?** WalkSpeed, Humanoid, cámara, Tool,
+   proyectil, selección de objetivo, lista de monedas, ventana de resultados,
+   scheduler o estadísticas. Dos dueños escribiendo el mismo recurso son un bug
+   aunque cada uno pase sus tests por separado.
+4. **¿Puede ser sólo una opción, una acción, un provider o un status?** No toda
+   función necesita master propio. Un contador puede ser status; Team/Role ESP
+   puede ser provider; un click puntual puede ser botón dentro de Teleport.
+5. **Si es una opción, ¿depende del master?** Define si Speed OFF detiene Auto
+   Sprint, si Silent AIM OFF cancela Auto Shoot, y si se conserva la preferencia
+   al volver a activar. «Independiente» debe significar independencia real, no
+   dos funciones modificando lo mismo sin coordinación.
+6. **¿Cuál es su mecanismo dominante?** Proyectil → Silent AIM; melee → Kill
+   Aura; locomoción → Speed/Jump/Fly/Teleport según la acción; información →
+   Render/status; farm o resultado automatizado → Utilities; alteración directa
+   de una propiedad explotable → Exploits. El nombre no decide por encima del
+   mecanismo.
+7. **¿Es universal o específica del juego?** Sólo es universal si el contrato es
+   realmente genérico. Un remote, animación, atributo o Tool particular pertenece
+   al game; el adaptador universal puede recibirlo mediante un provider.
+8. **¿Qué opciones necesita y cuáles sobran?** No añadir Range, Cooldown, Mode o
+   Team Check por plantilla. Para delay artificial nuevo, Cooldown empieza en 0;
+   para mecánicas especiales se usan sus términos reales, con evidencia.
+9. **¿Cuál es el comportamiento por defecto?** Lo seguro suele ser OFF, tecla
+   Unknown y sin restaurar automatizaciones antiguas. Un valor por defecto no
+   debe cambiar el movimiento, disparar o farmear al cargar el menú sin que el
+   usuario lo haya elegido.
+10. **¿Qué ocurre al apagar, morir, respawnear, cambiar de Tool/personaje,
+    teleportar o destruir el módulo?** Si no se pueden enumerar los restores y
+    las conexiones, todavía no está lista la función.
+11. **¿Cómo se prueba la ubicación y la propiedad?** Debe existir un contrato
+    que impida la tarjeta duplicada y compruebe que sólo hay un scheduler/dueño,
+    además de las pruebas funcionales y de cleanup.
+12. **¿Qué sigue siendo una suposición?** Si falta el mecanismo live, se pide
+    evidencia o se deja pendiente; no se rellena el hueco con un remote o un
+    comportamiento inventado.
+
+Si una respuesta cambia, hay que volver a las anteriores. Por ejemplo, si al
+responder «¿qué recurso comparte?» se descubre que Auto Sprint necesita
+WalkSpeed y el estado de Speed, ya no se puede justificar una tarjeta aislada
+sin explicar cómo se evita la doble escritura.
+
+### Ejemplos de ubicación antes de crear nada
+
+| Idea solicitada | Ubicación inicial que debe evaluar el agente | Motivo y límite |
+| --- | --- | --- |
+| **Auto Sprint / Sprint hold / sprint trail** | Opción o acción dentro de **Speed**. | Comparte Humanoid, velocidad, estados sentado/aire y restores. El archivo Sprint puede existir, pero no otra tarjeta ni otro escritor de velocidad. |
+| **Auto Jump / Bunny Hop** | Si mantiene el movimiento de Speed, dentro de **Speed**; si cambia impulso/altura de salto, dentro de **Jump**. | El nombre «jump» no basta: decide si el efecto principal es continuar desplazándose o modificar el salto. Si ambas lecturas cambian el comportamiento, preguntar. |
+| **Click Teleport / teleport a un marker** | Acción u opción de **Teleport**, reutilizando destinos y coordenadas. | No crear otro sistema de CFrame ni otra lista de puntos. Markers puede seguir siendo Render si su responsabilidad es mostrar/guardar marcadores. |
+| **Auto Shoot / Gun Throw / Knife Throw** | Secciones del arma dentro de **Silent AIM**. | Comparten target, Team/Wall Check y sender. La activación puede ser llamada por otra utilidad, pero no se duplica el solver. |
+| **Melee Reach / Hit Time / Critical** | Opciones del arma bajo **Kill Aura**. | Reach como distancia de selección no es Hitbox. Si se cambia el tamaño real de una parte, eso sí pertenece a Hitbox/Exploits y necesita restore. |
+| **Team ESP / Role ESP / Enemy ESP** | **PlayerESP** y los providers compartidos de equipos/roles. | No crear otro scanner, otra paleta incompatible ni otra lista de jugadores. Chams/Nametags pueden ser tarjetas distintas si renderizan objetos distintos, pero usan la misma relación. |
+| **Coin ESP / Gun ESP / otro pickup ESP** | Provider del **ItemESP/CoinESP** que ya descubre esa familia. | Añadir una fuente o un estilo no exige repetir el escaneo completo. Si el mecanismo visual es realmente distinto, se justifica antes de crear otra tarjeta. |
+| **Anti Fling** | Subopción de **Anti Void**, como ya ocurre, con su propia preferencia. | Comparte protección física y ciclo de vida, pero no se fuerza a depender del toggle de Anti Void. |
+| **Remove textures / particles / shadows / simple materials** | Opciones de **Improve FPS**. | Son variantes del mismo objetivo y cleanup; una tarjeta por propiedad sería ruido y multiplicaría restores. |
+| **Freeze Emotes / Freeze Animation** | Opciones de **Freeze Movements**. | Comparten personaje, Animator y snapshot; cada preferencia puede seguir siendo independiente. |
+| **Disguise packs / Body / Animation / Advanced** | Secciones y opciones de **Disguise**. | No una tarjeta por pack, bundle o slot. Las rutas de apariencia y animación comparten snapshot y restauración. |
+| **Auto Farm / Auto Win** | Tarjetas de **Utilities**, con estadísticas compartidas cuando midan lo mismo. | Tienen intenciones y ciclos diferentes, así que compartir datos no obliga a fusionarlas. Ninguna va en Exploits sólo por automatizar. |
+| **Auto Unbox** | **Utilities**, con sus propias opciones de caja/reveal/delay. | Es otra utilidad, no una subopción de Auto Farm ni una variante de Shoot. |
+| **Noclip** | Tarjeta propia en **Exploits**, no un modo de Speed por defecto. | Aunque afecta al movimiento, cambia colisiones y tiene otro riesgo/cleanup. Éste es un ejemplo válido de no anidar. |
+
+Estas ubicaciones son el punto de partida, no una excusa para ignorar el código.
+Si el módulo existente ya tiene un dueño distinto, hay que leerlo y explicar la
+migración antes de mover nada. Y si una nueva función sólo es un paso de una
+secuencia de farm, Auto Farm puede invocarla, pero la mecánica de combate debe
+delegar en el adaptador correspondiente: **llamar a Shoot no autoriza a copiar
+Shoot dentro de Auto Farm**.
+
+### Cuándo el agente debe preguntar al usuario
+
+No hay que interrumpir para lo obvio: `Auto Sprint → Speed`, `Knife Throw →
+Silent AIM`, `Team ESP → PlayerESP/providers` ya tienen respuesta estructural.
+El agente la aplica y deja la ubicación en el resumen.
+
+En cambio, **debe detenerse y preguntar antes de escribir** cuando ocurra
+cualquiera de estos casos:
+
+- quiere crear una **tarjeta nueva de nivel superior** o una **categoría nueva**
+  que el usuario no pidió explícitamente;
+- hay dos tarjetas existentes que podrían ser dueñas y la elección cambia el
+  comportamiento, las keybinds o los valores guardados;
+- quiere dividir una tarjeta actual, fusionar dos, mover una función de
+  categoría o convertir una opción existente en otra tarjeta;
+- la función necesita un nuevo bucle global, otro escritor del mismo recurso,
+  una automatización con efecto en servidor o un comportamiento activo por
+  defecto;
+- la evidencia no permite saber si es proyectil o melee, utilidad o exploit,
+  universal o específica del juego;
+- el cambio altera una decisión anterior del usuario o rompe compatibilidad de
+  configuración.
+
+La pregunta debe ser concreta y traer una recomendación, no «¿qué hago?». Usa
+este formato:
+
+```text
+La función controla <recurso> y comparte <estado/cleanup> con <tarjeta>.
+Propongo ponerla como <opción/acción/status> dentro de <tarjeta>, en
+<categoría>, porque <razón>. La alternativa sería una tarjeta independiente,
+pero duplicaría <coste/estado>. ¿Confirmas la ubicación propuesta?
+```
+
+Ejemplo:
+
+```text
+Auto Sprint controla la misma velocidad y estados Humanoid que Speed.
+Propongo añadirlo como toggle dentro de Speed, no como tarjeta nueva. Hay que
+definir si, como el Sprint hold actual, puede trabajar con Speed OFF o si
+depende del master, sin crear otro escritor de velocidad. ¿Confirmas esa
+ubicación y esa dependencia?
+```
+
+Si el usuario ya respondió esa pregunta para una familia, no se vuelve a pedir
+confirmación por cada skin o variante. Se conserva la decisión y se documenta.
+El control debe venir de una estructura comprensible, no de veinte preguntas
+repetidas ni de veinte tarjetas casi idénticas.
+
+### Nota mínima que debe acompañar a cada función nueva
+
+Antes de marcarla como terminada, deja estas seis líneas en el análisis, test o
+RESUME cuando sea una decisión durable:
+
+```text
+Función: <qué hace>
+Ubicación: <tarjeta padre / opción / acción / provider / status>
+Categoría: <Combat / Utilities / Exploits / Render / World / ...>
+Dueño del estado: <core, propiedad, scheduler y cleanup>
+Opciones/defaults: <sólo las necesarias; Cooldown = 0 si aplica>
+Evidencia y pruebas: <observado, offline, pendiente live>
+```
+
+Si no se puede rellenar «Ubicación» o «Dueño del estado», todavía no toca crear
+la función.
+
 ## 2. La trampa de los dos árboles Shoot (NO repetir)
 
 - Hubo una divergencia real: `src/games/MM2/Blatant/Shoot.lua` llegó a ser un
@@ -583,10 +756,14 @@ boot y las 61 suites:
   pequeña, dilo y pide la sesión que falta, con la configuración exacta.
 - Cuando algo no se puede verificar desde aquí, dilo explícitamente y separa
   "verificado" de "plausible" de "pendiente en vivo".
+- Antes de añadir cualquier función, aplica la puerta de §1F: explica dónde irá,
+  qué tarjeta/estado ya es dueño y por qué no duplica otro módulo. Si hará falta
+  una tarjeta/categoría nueva o hay dos ubicaciones razonables, pregunta con una
+  propuesta concreta antes de escribir; no crees `Auto Sprint` fuera de Speed.
 - Cambios pequeños, versionados (bump de stamp por cambio), con test que fije
   el comportamiento y `validate.sh` verde antes de pushear.
 
 ---
-*Última actualización: 2026-10-24 · guía de arquitectura ampliada; el runtime
-sigue en v119. Al publicar una versión nueva, actualiza la línea de estado de
-arriba y cualquier sección que cambie.*
+*Última actualización: 2026-10-24 · guía de arquitectura y ubicación de
+funciones ampliada; el runtime sigue en v119. Al publicar una versión nueva,
+actualiza la línea de estado de arriba y cualquier sección que cambie.*
