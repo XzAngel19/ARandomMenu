@@ -816,6 +816,20 @@ do
       assert(okFOff, "Freeze Movements OFF must not error: " .. tostring(errFOff))
     end
     print("[HARNESS] FREEZE MOVEMENTS TOGGLE CYCLES CLEAN")
+    local coinsAura = findFeature("Coins Aura")
+    assert(coinsAura, "Coins Aura feature must exist after boot")
+    assert(coinsAura.options:FindFirstChild("Option_Range"), "Coins Aura must expose Range option")
+    local okCAOn, errCAOn = pcall(coinsAura.onToggle, true)
+    assert(okCAOn, "Coins Aura ON must not error: " .. tostring(errCAOn))
+    local okCAOff, errCAOff = pcall(coinsAura.onToggle, false)
+    assert(okCAOff, "Coins Aura OFF must not error: " .. tostring(errCAOff))
+    local gunAura = findFeature("Gun Aura")
+    assert(gunAura, "Gun Aura feature must exist after boot")
+    local okGAOn, errGAOn = pcall(gunAura.onToggle, true)
+    assert(okGAOn, "Gun Aura ON must not error: " .. tostring(errGAOn))
+    local okGAOff, errGAOff = pcall(gunAura.onToggle, false)
+    assert(okGAOff, "Gun Aura OFF must not error: " .. tostring(errGAOff))
+    print("[HARNESS] COINS AURA + GUN AURA TOGGLE CYCLES CLEAN")
     local expected = {
       Render = {"ItemESP", "PlayerESP", "Chams", "Nametags", "HP", "Arrows", "NPCESP", "FOV", "Fullbright", "X-Ray", "Zoom", "Markers"},
       Combat = {"Aim Assist", "KillAura", "TriggerBot", "SilentAIM"},

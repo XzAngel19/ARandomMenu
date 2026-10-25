@@ -21,247 +21,338 @@ function Module.init(runtime: any): any
 
     local gunAuraActive = false
     local gunHitboxes: {[Instance]: BasePart} = {}
-    local espParts: {BasePart} = {}
+    local espParts: {[Player]: BasePart} = {}
+
+    local function resolveGunTouchPart(gun: Instance?): BasePart?
+        if not gun then
+            return nil
+        end
+        if gun:IsA("BasePart") then
+            return gun :: BasePart
+        end
+        local handle: Instance? = gun:FindFirstChild("Handle", true)
+            or gun:FindFirstChildWhichIsA("BasePart", true)
+        if handle and handle:IsA("BasePart") then
+            return handle :: BasePart
+        end
+        return nil
+    end
 
     local function canAct(): boolean
-        -- Check if we're in a valid state to act
-        local character = LocalPlayer.Character
-        if not character then return false end
-        
+        local character = LocalPlayer and LocalPlayer.Character
+        if not character then
+            return false
+        end
+
         local humanoid = character:FindFirstChildOfClass("Humanoid")
-        if not humanoid or humanoid.Health <= 0 then return false end
-        
-        -- Check if we're in lobby (no active map)
+        if not humanoid or humanoid.Health <= 0 then
+            return false
+        end
+
         if type(core.findMM2Map) == "function" then
             local map = core.findMM2Map()
             if not map then
-                -- No active map = we're in lobby
                 return false
             end
         end
-        
-        -- Check our role - only act if we're Innocent or Hero (can pick up gun)
+
+        if type(core.isRoundLifecycleActive) == "function"
+            and core.isRoundLifecycleActive() == false then
+            return false
+        end
+
         if type(core.getPlayerRole) == "function" then
-            local role = core.getPlayerRole()
-            if role == "Murderer" or role == "Sheriff" then
-                -- Don't auto-pickup if we're already murderer or sheriff
+            local role = core.getPlayerRole(LocalPlayer)
+            if role == "Murderer" or role == "Sheriff" or role == "Hero" then
                 return false
             end
         end
-        
+
+        local backpack = LocalPlayer:FindFirstChildOfClass("Backpack")
+        if (backpack and backpack:FindFirstChild("Gun"))
+            or character:FindFirstChild("Gun") then
+            return false
+        end
+
         return true
     end
 
-    -- Create a transparent square hitbox around a gun
     local function createGunHitbox(gun: Instance): BasePart?
-        local handle = gun:FindFirstChild("Handle")
-        if not handle or not handle:IsA("BasePart") then return nil end
-        
+        local handle = resolveGunTouchPart(gun)
+        if not handle then
+            return nil
+        end
+
         local part = Instance.new("Part")
-        part.Name = "WurstGunAuraHitbox_" .. gun:GetDebugId()
+        part.Name = "WurstGunAuraHitbox"
         part.Size = Vector3.new(settings.studs, settings.studs, settings.studs)
         part.Transparency = 0.7
         part.BrickColor = BrickColor.new("White")
         part.Material = Enum.Material.Neon
         part.CanCollide = false
+        part.CanQuery = false
+        part.CanTouch = false
         part.Anchored = true
         part.CFrame = handle.CFrame
         part.Parent = workspace
-        
+
         return part
     end
 
-    -- Find all dropped guns in the map
+    -- Find all dropped guns in the map using core.findDroppedGun + fast GunDrop/tag checks
     local function findDroppedGuns(): {Instance}
-        local guns = {}
-        
-        for _, obj in ipairs(workspace:GetDescendants()) do
-            if obj:IsA("Tool") and obj.Name == "Gun" then
-                -- Check if it's a dropped gun (not held by a character)
-                local parent = obj.Parent
-                if parent and not parent:IsA("Model") then
-                    -- Gun is in workspace directly (dropped)
-                    table.insert(guns, obj)
-                elseif parent and parent:IsA("Model") then
-                    -- Check if parent is a character with Humanoid
-                    local humanoid = parent:FindFirstChildOfClass("Humanoid")
-                    if not humanoid then
-                        -- Parent is not a character, so gun is dropped
-                        table.insert(guns, obj)
+        local guns: {Instance} = {}
+        local seen: {[Instance]: boolean} = {}
+
+        local function addGun(candidate: Instance?): ()
+            if not candidate or seen[candidate] or not candidate.Parent then
+                return
+            end
+            if resolveGunTouchPart(candidate) then
+                seen[candidate] = true
+                table.insert(guns, candidate)
+            end
+        end
+
+        if type(core.findDroppedGun) == "function" then
+            local ok: boolean, drop: any = pcall(core.findDroppedGun)
+            if ok and drop then
+                addGun(drop)
+            end
+        end
+
+        if type(core.findMM2Map) == "function" then
+            local okMap: boolean, map: any = pcall(core.findMM2Map)
+            if okMap and map then
+                local gunDrop = map:FindFirstChild("GunDrop")
+                if gunDrop then
+                    addGun(gunDrop)
+                end
+            end
+        end
+
+        local wsDrop = workspace:FindFirstChild("GunDrop")
+        if wsDrop then
+            addGun(wsDrop)
+        end
+
+        local okTagged: boolean, tagged: any = pcall(function(): any
+            return game:GetService("CollectionService"):GetTagged("Weapon_Gun")
+        end)
+        if okTagged and type(tagged) == "table" then
+            for _, obj: Instance in ipairs(tagged) do
+                if obj:IsA("Tool") and obj:IsDescendantOf(workspace)
+                    and not obj:FindFirstAncestorOfClass("Backpack") then
+                    local parent = obj.Parent
+                    if parent and not parent:FindFirstChildOfClass("Humanoid") then
+                        addGun(obj)
                     end
                 end
             end
         end
-        
+
         return guns
     end
 
-    -- Check if our character is touching a gun hitbox
     local function isTouchingHitbox(hitbox: BasePart): boolean
-        local character = LocalPlayer.Character
-        if not character then return false end
-        
+        local character = LocalPlayer and LocalPlayer.Character
+        if not character then
+            return false
+        end
+
         local root = character:FindFirstChild("HumanoidRootPart")
-        if not root then return false end
-        
-        -- Check if root is inside the hitbox bounds
+        if not root or not root:IsA("BasePart") then
+            return false
+        end
+
         local hitboxCFrame = hitbox.CFrame
         local hitboxSize = hitbox.Size
         local localPos = hitboxCFrame:PointToObjectSpace(root.Position)
-        
+
         return math.abs(localPos.X) <= hitboxSize.X / 2
             and math.abs(localPos.Y) <= hitboxSize.Y / 2
             and math.abs(localPos.Z) <= hitboxSize.Z / 2
     end
 
-    -- Try to grab a gun using firetouchinterest
     local function tryGrabGun(gun: Instance): boolean
-        local handle = gun:FindFirstChild("Handle")
-        if not handle or not handle:IsA("BasePart") then return false end
-        
-        local character = LocalPlayer.Character
-        if not character then return false end
-        
+        local handle = resolveGunTouchPart(gun)
+        if not handle then
+            return false
+        end
+
+        local character = LocalPlayer and LocalPlayer.Character
+        if not character then
+            return false
+        end
+
         local root = character:FindFirstChild("HumanoidRootPart")
-        if not root then return false end
-        
-        -- Use firetouchinterest to grab the gun
+        if not root or not root:IsA("BasePart") then
+            return false
+        end
+
         if type(state.fireTouchInterest) == "function" then
             pcall(state.fireTouchInterest, root, handle, 0)
             pcall(state.fireTouchInterest, root, handle, 1)
             return true
         end
-        
+
         return false
     end
 
-    -- Create ESP marker for dead sheriff (hacker detection)
-    local function createSheriffESP(player: Player): BasePart?
+    local function clearAllHitboxes(): ()
+        for gun, hitbox in pairs(gunHitboxes) do
+            if hitbox and hitbox.Parent then
+                pcall(function(): ()
+                    hitbox:Destroy()
+                end)
+            end
+            gunHitboxes[gun] = nil
+        end
+    end
+
+    local function clearAllEsp(): ()
+        for player, esp in pairs(espParts) do
+            if esp and esp.Parent then
+                pcall(function(): ()
+                    esp:Destroy()
+                end)
+            end
+            espParts[player] = nil
+        end
+    end
+
+    local function updateSheriffESP(player: Player): ()
         local character = player.Character
-        if not character then return nil end
-        
-        local root = character:FindFirstChild("HumanoidRootPart")
-        if not root then return nil end
-        
-        -- Check if this player is supposed to be sheriff but is dead in wrong location
-        local humanoid = character:FindFirstChildOfClass("Humanoid")
-        if not humanoid or humanoid.Health > 0 then return nil end
-        
-        -- Create white ESP marker
-        local esp = Instance.new("Part")
-        esp.Name = "WurstDeadSheriffESP_" .. player.Name
-        esp.Size = Vector3.new(3, 3, 3)
-        esp.Transparency = 0.3
-        esp.BrickColor = BrickColor.new("White")
-        esp.Material = Enum.Material.Neon
-        esp.CanCollide = false
-        esp.Anchored = true
-        esp.CFrame = root.CFrame
-        esp.Parent = workspace
-        
-        return esp
+        local root = character and character:FindFirstChild("HumanoidRootPart")
+        local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+        if not character or not root or not root:IsA("BasePart")
+            or not humanoid or humanoid.Health > 0 then
+            local existing = espParts[player]
+            if existing then
+                if existing.Parent then
+                    pcall(function(): ()
+                        existing:Destroy()
+                    end)
+                end
+                espParts[player] = nil
+            end
+            return
+        end
+
+        local esp = espParts[player]
+        if not esp or not esp.Parent then
+            esp = Instance.new("Part")
+            esp.Name = "WurstDeadSheriffESP_" .. player.Name
+            esp.Size = Vector3.new(3, 3, 3)
+            esp.Transparency = 0.3
+            esp.BrickColor = BrickColor.new("White")
+            esp.Material = Enum.Material.Neon
+            esp.CanCollide = false
+            esp.CanQuery = false
+            esp.CanTouch = false
+            esp.Anchored = true
+            esp.Parent = workspace
+            espParts[player] = esp
+        end
+        esp.CFrame = (root :: BasePart).CFrame
     end
 
     local function gunAuraTick(): ()
-        if not gunAuraActive then return end
-        
-        -- Check if we can act (not in lobby, not dead, correct role)
-        if not canAct() then
-            -- Clean up hitboxes when we can't act
-            for _, hitbox in pairs(gunHitboxes) do
-                if hitbox and hitbox.Parent then
-                    hitbox:Destroy()
-                end
-            end
-            gunHitboxes = {}
+        if not gunAuraActive then
             return
         end
-        
-        -- Find all dropped guns
+
+        if not canAct() then
+            clearAllHitboxes()
+            return
+        end
+
         local guns = findDroppedGuns()
-        
-        -- Update hitboxes for each gun
+        local activeGuns: {[Instance]: boolean} = {}
+
         for _, gun in ipairs(guns) do
             if gun and gun.Parent then
+                activeGuns[gun] = true
                 local hitbox = gunHitboxes[gun]
-                
-                -- Create hitbox if it doesn't exist
+
                 if not hitbox or not hitbox.Parent then
                     hitbox = createGunHitbox(gun)
                     if hitbox then
                         gunHitboxes[gun] = hitbox
                     end
                 else
-                    -- Update hitbox position to follow the gun
-                    local handle = gun:FindFirstChild("Handle")
-                    if handle and handle:IsA("BasePart") then
+                    local handle = resolveGunTouchPart(gun)
+                    if handle then
+                        hitbox.Size = Vector3.new(settings.studs, settings.studs, settings.studs)
                         hitbox.CFrame = handle.CFrame
                     end
                 end
-                
-                -- Check if we're touching this hitbox
+
                 if hitbox and isTouchingHitbox(hitbox) then
                     tryGrabGun(gun)
                 end
             end
         end
-        
-        -- Clean up hitboxes for guns that no longer exist
+
         for gun, hitbox in pairs(gunHitboxes) do
-            if not gun or not gun.Parent then
+            if not activeGuns[gun] or not gun or not gun.Parent then
                 if hitbox and hitbox.Parent then
-                    hitbox:Destroy()
+                    pcall(function(): ()
+                        hitbox:Destroy()
+                    end)
                 end
                 gunHitboxes[gun] = nil
             end
         end
-        
-        -- Check for dead sheriff ESP (hacker detection)
-        -- Only show ESP for players who appear to be sheriff but are dead
+
         if type(core.getPlayerRole) == "function" then
+            local seenSheriffs: {[Player]: boolean} = {}
             for _, player in ipairs(game:GetService("Players"):GetPlayers()) do
                 if player ~= LocalPlayer then
                     local role = core.getPlayerRole(player)
                     if role == "Sheriff" then
-                        local esp = createSheriffESP(player)
-                        if esp then
-                            table.insert(espParts, esp)
-                        end
+                        seenSheriffs[player] = true
+                        updateSheriffESP(player)
                     end
+                end
+            end
+            for player, esp in pairs(espParts) do
+                if not seenSheriffs[player] then
+                    if esp and esp.Parent then
+                        pcall(function(): ()
+                            esp:Destroy()
+                        end)
+                    end
+                    espParts[player] = nil
                 end
             end
         end
     end
 
+    local GunAuraFeature: any = nil
+
     local function toggleGunAura(enabled: boolean): ()
         gunAuraActive = enabled
-        
-        -- Clean up all hitboxes and ESP when disabled
+
         if not enabled then
-            for _, hitbox in pairs(gunHitboxes) do
-                if hitbox and hitbox.Parent then
-                    hitbox:Destroy()
-                end
-            end
-            gunHitboxes = {}
-            
-            for _, esp in ipairs(espParts) do
-                if esp and esp.Parent then
-                    esp:Destroy()
-                end
-            end
-            espParts = {}
-            
+            clearAllHitboxes()
+            clearAllEsp()
             disconnectFeatureConnection("MM2GunAura")
+            if GunAuraFeature then
+                GunAuraFeature:SetStatus(nil)
+            end
         else
+            if GunAuraFeature then
+                GunAuraFeature:SetStatus(tostring(math.round(settings.studs)) .. " studs")
+            end
             featureConnections.MM2GunAura = TaskManager:Connect(gunAuraTick)
             gunAuraTick()
         end
     end
 
-    local GunAuraFeature: any = createUniversalFeature(
+    GunAuraFeature = createUniversalFeature(
         "Gun Aura",
-        "Creates a transparent white square around dropped guns. When your character touches this square, automatically grabs the gun. Only works when you're alive, in-round, and an Innocent/Hero. Detects dead sheriff hackers with white ESP.",
+        "Creates a transparent white square around dropped guns. When your character touches this square, automatically grabs the gun. Only works when you're alive, in-round, and an Innocent. Detects dead sheriff hackers with white ESP.",
         7,
         toggleGunAura,
         {
@@ -276,7 +367,7 @@ function Module.init(runtime: any): any
         function(value: number): ()
             settings.studs = value
             if GunAuraFeature.enabled then
-                GunAuraFeature:SetStatus(tostring(value) .. " studs")
+                GunAuraFeature:SetStatus(tostring(math.round(value)) .. " studs")
             end
         end,
         "Size of the transparent hitbox square around each dropped gun. Your character must touch this square to auto-grab the gun.", 1)

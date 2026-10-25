@@ -15,51 +15,93 @@ function Module.init(runtime: any): any
     assert(type(core) == "table", "MM2 Coins Aura requires the MM2 core module")
     Module.Runtime = runtime
 
-    local settings = {}
+    local settings = {
+        range = 100,
+    }
 
-    -- Resolve the Coin_Server part that actually pays for a pickup.
-    -- Coin ESP hands out the visual part; the server part is either
-    -- the part itself (Name == "Coin_Server") or its parent.
-    local function serverPartOf(part: Instance): Instance?
-        if part.Name == "Coin_Server" then
-            return part
+    local function readAttribute(instance: Instance?, attrName: string): any
+        if not instance then
+            return nil
         end
-        local parent: Instance? = part.Parent
-        if parent and parent.Name == "Coin_Server" then
-            return parent
-        end
-        return part
-    end
-
-    -- A coin that was already taken keeps its entry in the throttled
-    -- scan for a moment. Check the attribute/parent so a collected
-    -- coin stops being a target at once.
-    local function stillCollectable(part: Instance): boolean
-        if not part.Parent then
-            return false
-        end
-        local server: Instance? = serverPartOf(part)
-        local collected: any = nil
-        pcall(function(): ()
-            collected = (server :: any):GetAttribute("Collected")
+        local ok: boolean, value: any = pcall(function(): any
+            return instance:GetAttribute(attrName)
         end)
-        return collected ~= true
+        if ok then
+            return value
+        end
+        return nil
     end
 
-    -- Pulse the touch between our root and the coin's server part,
-    -- exactly like AutoFarm's arrive-pulse and Teleport's
-    -- touchDroppedGun: fire 0 then 1 so the server sees the full
-    -- Touched/TouchEnded pair.
-    local function touchCoin(root: BasePart, coin: Instance): boolean
-        if type(state.fireTouchInterest) ~= "function" then
+    -- Resolve the Coin_Server BasePart that holds the server TouchTransmitter.
+    -- MM2 spawns pickups as: CoinContainer -> Coin_Server (Part) -> CoinVisual (Part) -> MainCoin.
+    local function serverPartOf(part: Instance): BasePart?
+        if part:IsA("BasePart") and part.Name == "Coin_Server" then
+            return part :: BasePart
+        end
+        local current: Instance? = part.Parent
+        local depth: number = 0
+        while current and current ~= workspace and depth < 4 do
+            if current:IsA("BasePart") and current.Name == "Coin_Server" then
+                return current :: BasePart
+            end
+            current = current.Parent
+            depth += 1
+        end
+        if part:IsA("Model") then
+            local childServer: Instance? = part:FindFirstChild("Coin_Server", true)
+            if childServer and childServer:IsA("BasePart") then
+                return childServer :: BasePart
+            end
+            local anyPart: Instance? = part:FindFirstChildWhichIsA("BasePart", true)
+            if anyPart then
+                return anyPart :: BasePart
+            end
+        end
+        if part:IsA("BasePart") then
+            local childServer: Instance? = part:FindFirstChild("Coin_Server")
+            if childServer and childServer:IsA("BasePart") then
+                return childServer :: BasePart
+            end
+            return part :: BasePart
+        end
+        return nil
+    end
+
+    local function visualPartOf(serverPart: BasePart): BasePart?
+        local visual: Instance? = serverPart:FindFirstChild("CoinVisual")
+        if visual and visual:IsA("BasePart") then
+            return visual :: BasePart
+        end
+        return nil
+    end
+
+    -- Check both Coin_Server and CoinVisual so a collected or deleted pickup
+    -- is skipped immediately before the container removes the instance.
+    local function stillCollectable(part: Instance): boolean
+        if not part or not part.Parent then
             return false
         end
-        local touchPart: Instance? = serverPartOf(coin)
-        if not touchPart then
+        local server: BasePart? = serverPartOf(part)
+        if not server or not server.Parent then
             return false
         end
-        pcall(state.fireTouchInterest, root, touchPart, 0)
-        pcall(state.fireTouchInterest, root, touchPart, 1)
+        if readAttribute(server, "Collected") == true
+            or readAttribute(server, "Delete") == true then
+            return false
+        end
+        local visual: BasePart? = visualPartOf(server)
+        if visual and (
+            readAttribute(visual, "Collected") == true
+            or readAttribute(visual, "Delete") == true
+        ) then
+            return false
+        end
+        if part ~= server and (
+            readAttribute(part, "Collected") == true
+            or readAttribute(part, "Delete") == true
+        ) then
+            return false
+        end
         return true
     end
 
@@ -68,45 +110,124 @@ function Module.init(runtime: any): any
         if not character then
             return nil
         end
+        local humanoid: Humanoid? = character:FindFirstChildOfClass("Humanoid") :: Humanoid?
+        if humanoid and humanoid.Health <= 0 then
+            return nil
+        end
         return character:FindFirstChild("HumanoidRootPart") :: BasePart?
     end
+
+    local function pulseCoinTouch(root: BasePart, serverPart: BasePart): boolean
+        local fireTouch: any = state.fireTouchInterest
+        if type(fireTouch) ~= "function" then
+            return false
+        end
+        pcall(fireTouch, root, serverPart, 0)
+        pcall(fireTouch, root, serverPart, 1)
+        local visual: BasePart? = visualPartOf(serverPart)
+        if visual and visual ~= serverPart then
+            local hasVisualTouch: boolean = false
+            pcall(function(): ()
+                hasVisualTouch = visual:FindFirstChildOfClass("TouchTransmitter") ~= nil
+            end)
+            if hasVisualTouch then
+                pcall(fireTouch, root, visual, 0)
+                pcall(fireTouch, root, visual, 1)
+            end
+        end
+        return true
+    end
+
+    local CoinsAuraFeature: any = nil
 
     local function toggleCoinsAura(enabled: boolean): ()
         disconnectFeatureConnection("MM2CoinsAura")
 
         if not enabled then
+            if CoinsAuraFeature then
+                CoinsAuraFeature:SetStatus(nil)
+            end
             return
         end
 
-        -- Optimized: cache the coin list and only refresh when dirty.
-        -- Pulse every frame (no throttle) — firetouchinterest is cheap
-        -- and the server expects per-frame contact for reliable pickup.
-        local cachedCoins: {Instance} = {}
+        local cachedServerCoins: {BasePart} = {}
         local lastCacheRefresh: number = -math.huge
-        local cachedRadiusSq: number = studs * studs
+        local lastStatus: string? = nil
+
+        local function setStatus(text: string): ()
+            if text == lastStatus then
+                return
+            end
+            lastStatus = text
+            if CoinsAuraFeature then
+                CoinsAuraFeature:SetStatus(text)
+            end
+        end
 
         local function refreshCache(): ()
             local now: number = os.clock()
-            if now - lastCacheRefresh < 0.1 then
+            if now - lastCacheRefresh < 0.15 then
                 return
             end
             lastCacheRefresh = now
 
-            -- Get the coin list from Coin ESP's cache (fast path).
-            if type(state.mm2CoinPickups) == "function" then
-                local ok: boolean, list: any = pcall(state.mm2CoinPickups)
-                if ok and type(list) == "table" and #list > 0 then
-                    cachedCoins = list
+            local seen: {[BasePart]: boolean} = {}
+            local list: {BasePart} = {}
+
+            local function addCandidate(candidate: Instance?): ()
+                if not candidate or not stillCollectable(candidate) then
                     return
                 end
+                local serverPart: BasePart? = serverPartOf(candidate)
+                if serverPart and not seen[serverPart] then
+                    seen[serverPart] = true
+                    table.insert(list, serverPart)
+                end
             end
-            -- Fallback: direct tag scan (slower but reliable).
+
+            -- 1. Direct map CoinContainer scan: sees every Coin_Server on the active map
+            --    even at the far end of the map, with O(coins) cost.
+            if type(core.findMM2Map) == "function" then
+                local okMap: boolean, map: any = pcall(core.findMM2Map)
+                if okMap and map then
+                    local okContainer: boolean, container: any = pcall(function(): any
+                        return map:FindFirstChild("CoinContainer")
+                    end)
+                    if okContainer and container then
+                        local okChildren: boolean, children: any = pcall(function(): any
+                            return container:GetChildren()
+                        end)
+                        if okChildren and type(children) == "table" then
+                            for _, child: Instance in ipairs(children) do
+                                addCandidate(child)
+                            end
+                        end
+                    end
+                end
+            end
+
+            -- 2. Shared Coin ESP pickup detector (3 signatures: CoinVisual tag,
+            --    CoinID attribute, Coin_Server/CoinVisual structure).
+            if type(state.mm2CoinPickups) == "function" then
+                local okPickups: boolean, pickups: any = pcall(state.mm2CoinPickups)
+                if okPickups and type(pickups) == "table" then
+                    for _, pickup: Instance in ipairs(pickups) do
+                        addCandidate(pickup)
+                    end
+                end
+            end
+
+            -- 3. Direct CollectionService CoinVisual tag list.
             local okTagged: boolean, tagged: any = pcall(function(): any
                 return game:GetService("CollectionService"):GetTagged("CoinVisual")
             end)
             if okTagged and type(tagged) == "table" then
-                cachedCoins = tagged
+                for _, obj: Instance in ipairs(tagged) do
+                    addCandidate(obj)
+                end
             end
+
+            cachedServerCoins = list
         end
 
         local function auraTick(): ()
@@ -117,43 +238,35 @@ function Module.init(runtime: any): any
 
             refreshCache()
 
+            local range: number = math.clamp(tonumber(settings.range) or 100, 5, 1000)
+            local rangeSq: number = range * range
             local rootPos: Vector3 = root.Position
-            local radius: number = studs
-            local radiusSq: number = radius * radius
-            local fireTouch = state.fireTouchInterest
 
-            if type(fireTouch) ~= "function" then
-                return
-            end
-
-            -- Batch touch all coins in range — no per-coin pcall overhead.
-            for i: number = 1, #cachedCoins do
-                local coin: Instance = cachedCoins[i]
-                if coin.Parent and coin:IsA("BasePart") then
-                    local coinPart: BasePart = coin :: BasePart
-                    local diff: Vector3 = coinPart.Position - rootPos
-                    -- Fast squared distance check (avoids sqrt).
-                    if diff.X * diff.X + diff.Y * diff.Y + diff.Z * diff.Z <= radiusSq then
-                        if stillCollectable(coin) then
-                            local touchPart: Instance? = serverPartOf(coin)
-                            if touchPart then
-                                fireTouch(root, touchPart, 0)
-                                fireTouch(root, touchPart, 1)
-                            end
+            for i: number = 1, #cachedServerCoins do
+                local serverCoin: BasePart = cachedServerCoins[i]
+                if stillCollectable(serverCoin) then
+                    local okPos: boolean, coinPos: any = pcall(function(): any
+                        return serverCoin.Position
+                    end)
+                    if okPos and typeof(coinPos) == "Vector3" then
+                        local diff: Vector3 = (coinPos :: Vector3) - rootPos
+                        if diff.X * diff.X + diff.Y * diff.Y + diff.Z * diff.Z <= rangeSq then
+                            pulseCoinTouch(root, serverCoin)
                         end
                     end
                 end
             end
+
+            setStatus(tostring(math.round(range)) .. " studs")
         end
 
-        featureConnections.MM2CoinsAura =
-            TaskManager:Connect(auraTick)
+        featureConnections.MM2CoinsAura = TaskManager:Connect(auraTick)
         auraTick()
     end
 
-    local CoinsAuraFeature: any = createUniversalFeature(
+    CoinsAuraFeature = createUniversalFeature(
         "Coins Aura",
-        "Pulses the touch between your character and every coin within the aura radius, collecting them without moving.",
+        "Detects coins within Range across the map and pulses firetouchinterest from your character root to Coin_Server without teleporting.",
         7,
         toggleCoinsAura,
         {
@@ -164,9 +277,21 @@ function Module.init(runtime: any): any
     )
     state.mm2CoinsAuraFeature = CoinsAuraFeature
 
-    -- Fixed at 1000 studs maximum detection range
-    -- No user adjustment - uses maximum detectable distance
-    local studs = 1000
+    addNumberOption(
+        CoinsAuraFeature,
+        "Range",
+        100,
+        5,
+        1000,
+        function(value: number): ()
+            settings.range = math.clamp(tonumber(value) or 100, 5, 1000)
+            if CoinsAuraFeature.enabled then
+                CoinsAuraFeature:SetStatus(tostring(math.round(settings.range)) .. " studs")
+            end
+        end,
+        "Distance in studs around your character to detect and pulse coins (up to 1000 studs across the entire map).",
+        5
+    )
 
     activeCleanup = function(): ()
         toggleCoinsAura(false)

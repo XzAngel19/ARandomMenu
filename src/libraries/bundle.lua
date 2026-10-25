@@ -1,5 +1,5 @@
 return {
-    stamp = "v127-20261024-fixes",
+    stamp = "v128-20261025-coins-aura-range",
     files = {
         ["src/Profile/135856908115931.lua"] = [[
 --!strict
@@ -6066,51 +6066,93 @@ function Module.init(runtime: any): any
     assert(type(core) == "table", "MM2 Coins Aura requires the MM2 core module")
     Module.Runtime = runtime
 
-    local settings = {}
+    local settings = {
+        range = 100,
+    }
 
-    -- Resolve the Coin_Server part that actually pays for a pickup.
-    -- Coin ESP hands out the visual part; the server part is either
-    -- the part itself (Name == "Coin_Server") or its parent.
-    local function serverPartOf(part: Instance): Instance?
-        if part.Name == "Coin_Server" then
-            return part
+    local function readAttribute(instance: Instance?, attrName: string): any
+        if not instance then
+            return nil
         end
-        local parent: Instance? = part.Parent
-        if parent and parent.Name == "Coin_Server" then
-            return parent
-        end
-        return part
-    end
-
-    -- A coin that was already taken keeps its entry in the throttled
-    -- scan for a moment. Check the attribute/parent so a collected
-    -- coin stops being a target at once.
-    local function stillCollectable(part: Instance): boolean
-        if not part.Parent then
-            return false
-        end
-        local server: Instance? = serverPartOf(part)
-        local collected: any = nil
-        pcall(function(): ()
-            collected = (server :: any):GetAttribute("Collected")
+        local ok: boolean, value: any = pcall(function(): any
+            return instance:GetAttribute(attrName)
         end)
-        return collected ~= true
+        if ok then
+            return value
+        end
+        return nil
     end
 
-    -- Pulse the touch between our root and the coin's server part,
-    -- exactly like AutoFarm's arrive-pulse and Teleport's
-    -- touchDroppedGun: fire 0 then 1 so the server sees the full
-    -- Touched/TouchEnded pair.
-    local function touchCoin(root: BasePart, coin: Instance): boolean
-        if type(state.fireTouchInterest) ~= "function" then
+    -- Resolve the Coin_Server BasePart that holds the server TouchTransmitter.
+    -- MM2 spawns pickups as: CoinContainer -> Coin_Server (Part) -> CoinVisual (Part) -> MainCoin.
+    local function serverPartOf(part: Instance): BasePart?
+        if part:IsA("BasePart") and part.Name == "Coin_Server" then
+            return part :: BasePart
+        end
+        local current: Instance? = part.Parent
+        local depth: number = 0
+        while current and current ~= workspace and depth < 4 do
+            if current:IsA("BasePart") and current.Name == "Coin_Server" then
+                return current :: BasePart
+            end
+            current = current.Parent
+            depth += 1
+        end
+        if part:IsA("Model") then
+            local childServer: Instance? = part:FindFirstChild("Coin_Server", true)
+            if childServer and childServer:IsA("BasePart") then
+                return childServer :: BasePart
+            end
+            local anyPart: Instance? = part:FindFirstChildWhichIsA("BasePart", true)
+            if anyPart then
+                return anyPart :: BasePart
+            end
+        end
+        if part:IsA("BasePart") then
+            local childServer: Instance? = part:FindFirstChild("Coin_Server")
+            if childServer and childServer:IsA("BasePart") then
+                return childServer :: BasePart
+            end
+            return part :: BasePart
+        end
+        return nil
+    end
+
+    local function visualPartOf(serverPart: BasePart): BasePart?
+        local visual: Instance? = serverPart:FindFirstChild("CoinVisual")
+        if visual and visual:IsA("BasePart") then
+            return visual :: BasePart
+        end
+        return nil
+    end
+
+    -- Check both Coin_Server and CoinVisual so a collected or deleted pickup
+    -- is skipped immediately before the container removes the instance.
+    local function stillCollectable(part: Instance): boolean
+        if not part or not part.Parent then
             return false
         end
-        local touchPart: Instance? = serverPartOf(coin)
-        if not touchPart then
+        local server: BasePart? = serverPartOf(part)
+        if not server or not server.Parent then
             return false
         end
-        pcall(state.fireTouchInterest, root, touchPart, 0)
-        pcall(state.fireTouchInterest, root, touchPart, 1)
+        if readAttribute(server, "Collected") == true
+            or readAttribute(server, "Delete") == true then
+            return false
+        end
+        local visual: BasePart? = visualPartOf(server)
+        if visual and (
+            readAttribute(visual, "Collected") == true
+            or readAttribute(visual, "Delete") == true
+        ) then
+            return false
+        end
+        if part ~= server and (
+            readAttribute(part, "Collected") == true
+            or readAttribute(part, "Delete") == true
+        ) then
+            return false
+        end
         return true
     end
 
@@ -6119,45 +6161,124 @@ function Module.init(runtime: any): any
         if not character then
             return nil
         end
+        local humanoid: Humanoid? = character:FindFirstChildOfClass("Humanoid") :: Humanoid?
+        if humanoid and humanoid.Health <= 0 then
+            return nil
+        end
         return character:FindFirstChild("HumanoidRootPart") :: BasePart?
     end
+
+    local function pulseCoinTouch(root: BasePart, serverPart: BasePart): boolean
+        local fireTouch: any = state.fireTouchInterest
+        if type(fireTouch) ~= "function" then
+            return false
+        end
+        pcall(fireTouch, root, serverPart, 0)
+        pcall(fireTouch, root, serverPart, 1)
+        local visual: BasePart? = visualPartOf(serverPart)
+        if visual and visual ~= serverPart then
+            local hasVisualTouch: boolean = false
+            pcall(function(): ()
+                hasVisualTouch = visual:FindFirstChildOfClass("TouchTransmitter") ~= nil
+            end)
+            if hasVisualTouch then
+                pcall(fireTouch, root, visual, 0)
+                pcall(fireTouch, root, visual, 1)
+            end
+        end
+        return true
+    end
+
+    local CoinsAuraFeature: any = nil
 
     local function toggleCoinsAura(enabled: boolean): ()
         disconnectFeatureConnection("MM2CoinsAura")
 
         if not enabled then
+            if CoinsAuraFeature then
+                CoinsAuraFeature:SetStatus(nil)
+            end
             return
         end
 
-        -- Optimized: cache the coin list and only refresh when dirty.
-        -- Pulse every frame (no throttle) — firetouchinterest is cheap
-        -- and the server expects per-frame contact for reliable pickup.
-        local cachedCoins: {Instance} = {}
+        local cachedServerCoins: {BasePart} = {}
         local lastCacheRefresh: number = -math.huge
-        local cachedRadiusSq: number = studs * studs
+        local lastStatus: string? = nil
+
+        local function setStatus(text: string): ()
+            if text == lastStatus then
+                return
+            end
+            lastStatus = text
+            if CoinsAuraFeature then
+                CoinsAuraFeature:SetStatus(text)
+            end
+        end
 
         local function refreshCache(): ()
             local now: number = os.clock()
-            if now - lastCacheRefresh < 0.1 then
+            if now - lastCacheRefresh < 0.15 then
                 return
             end
             lastCacheRefresh = now
 
-            -- Get the coin list from Coin ESP's cache (fast path).
-            if type(state.mm2CoinPickups) == "function" then
-                local ok: boolean, list: any = pcall(state.mm2CoinPickups)
-                if ok and type(list) == "table" and #list > 0 then
-                    cachedCoins = list
+            local seen: {[BasePart]: boolean} = {}
+            local list: {BasePart} = {}
+
+            local function addCandidate(candidate: Instance?): ()
+                if not candidate or not stillCollectable(candidate) then
                     return
                 end
+                local serverPart: BasePart? = serverPartOf(candidate)
+                if serverPart and not seen[serverPart] then
+                    seen[serverPart] = true
+                    table.insert(list, serverPart)
+                end
             end
-            -- Fallback: direct tag scan (slower but reliable).
+
+            -- 1. Direct map CoinContainer scan: sees every Coin_Server on the active map
+            --    even at the far end of the map, with O(coins) cost.
+            if type(core.findMM2Map) == "function" then
+                local okMap: boolean, map: any = pcall(core.findMM2Map)
+                if okMap and map then
+                    local okContainer: boolean, container: any = pcall(function(): any
+                        return map:FindFirstChild("CoinContainer")
+                    end)
+                    if okContainer and container then
+                        local okChildren: boolean, children: any = pcall(function(): any
+                            return container:GetChildren()
+                        end)
+                        if okChildren and type(children) == "table" then
+                            for _, child: Instance in ipairs(children) do
+                                addCandidate(child)
+                            end
+                        end
+                    end
+                end
+            end
+
+            -- 2. Shared Coin ESP pickup detector (3 signatures: CoinVisual tag,
+            --    CoinID attribute, Coin_Server/CoinVisual structure).
+            if type(state.mm2CoinPickups) == "function" then
+                local okPickups: boolean, pickups: any = pcall(state.mm2CoinPickups)
+                if okPickups and type(pickups) == "table" then
+                    for _, pickup: Instance in ipairs(pickups) do
+                        addCandidate(pickup)
+                    end
+                end
+            end
+
+            -- 3. Direct CollectionService CoinVisual tag list.
             local okTagged: boolean, tagged: any = pcall(function(): any
                 return game:GetService("CollectionService"):GetTagged("CoinVisual")
             end)
             if okTagged and type(tagged) == "table" then
-                cachedCoins = tagged
+                for _, obj: Instance in ipairs(tagged) do
+                    addCandidate(obj)
+                end
             end
+
+            cachedServerCoins = list
         end
 
         local function auraTick(): ()
@@ -6168,43 +6289,35 @@ function Module.init(runtime: any): any
 
             refreshCache()
 
+            local range: number = math.clamp(tonumber(settings.range) or 100, 5, 1000)
+            local rangeSq: number = range * range
             local rootPos: Vector3 = root.Position
-            local radius: number = studs
-            local radiusSq: number = radius * radius
-            local fireTouch = state.fireTouchInterest
 
-            if type(fireTouch) ~= "function" then
-                return
-            end
-
-            -- Batch touch all coins in range — no per-coin pcall overhead.
-            for i: number = 1, #cachedCoins do
-                local coin: Instance = cachedCoins[i]
-                if coin.Parent and coin:IsA("BasePart") then
-                    local coinPart: BasePart = coin :: BasePart
-                    local diff: Vector3 = coinPart.Position - rootPos
-                    -- Fast squared distance check (avoids sqrt).
-                    if diff.X * diff.X + diff.Y * diff.Y + diff.Z * diff.Z <= radiusSq then
-                        if stillCollectable(coin) then
-                            local touchPart: Instance? = serverPartOf(coin)
-                            if touchPart then
-                                fireTouch(root, touchPart, 0)
-                                fireTouch(root, touchPart, 1)
-                            end
+            for i: number = 1, #cachedServerCoins do
+                local serverCoin: BasePart = cachedServerCoins[i]
+                if stillCollectable(serverCoin) then
+                    local okPos: boolean, coinPos: any = pcall(function(): any
+                        return serverCoin.Position
+                    end)
+                    if okPos and typeof(coinPos) == "Vector3" then
+                        local diff: Vector3 = (coinPos :: Vector3) - rootPos
+                        if diff.X * diff.X + diff.Y * diff.Y + diff.Z * diff.Z <= rangeSq then
+                            pulseCoinTouch(root, serverCoin)
                         end
                     end
                 end
             end
+
+            setStatus(tostring(math.round(range)) .. " studs")
         end
 
-        featureConnections.MM2CoinsAura =
-            TaskManager:Connect(auraTick)
+        featureConnections.MM2CoinsAura = TaskManager:Connect(auraTick)
         auraTick()
     end
 
-    local CoinsAuraFeature: any = createUniversalFeature(
+    CoinsAuraFeature = createUniversalFeature(
         "Coins Aura",
-        "Pulses the touch between your character and every coin within the aura radius, collecting them without moving.",
+        "Detects coins within Range across the map and pulses firetouchinterest from your character root to Coin_Server without teleporting.",
         7,
         toggleCoinsAura,
         {
@@ -6215,9 +6328,21 @@ function Module.init(runtime: any): any
     )
     state.mm2CoinsAuraFeature = CoinsAuraFeature
 
-    -- Fixed at 1000 studs maximum detection range
-    -- No user adjustment - uses maximum detectable distance
-    local studs = 1000
+    addNumberOption(
+        CoinsAuraFeature,
+        "Range",
+        100,
+        5,
+        1000,
+        function(value: number): ()
+            settings.range = math.clamp(tonumber(value) or 100, 5, 1000)
+            if CoinsAuraFeature.enabled then
+                CoinsAuraFeature:SetStatus(tostring(math.round(settings.range)) .. " studs")
+            end
+        end,
+        "Distance in studs around your character to detect and pulse coins (up to 1000 studs across the entire map).",
+        5
+    )
 
     activeCleanup = function(): ()
         toggleCoinsAura(false)
@@ -6265,247 +6390,338 @@ function Module.init(runtime: any): any
 
     local gunAuraActive = false
     local gunHitboxes: {[Instance]: BasePart} = {}
-    local espParts: {BasePart} = {}
+    local espParts: {[Player]: BasePart} = {}
+
+    local function resolveGunTouchPart(gun: Instance?): BasePart?
+        if not gun then
+            return nil
+        end
+        if gun:IsA("BasePart") then
+            return gun :: BasePart
+        end
+        local handle: Instance? = gun:FindFirstChild("Handle", true)
+            or gun:FindFirstChildWhichIsA("BasePart", true)
+        if handle and handle:IsA("BasePart") then
+            return handle :: BasePart
+        end
+        return nil
+    end
 
     local function canAct(): boolean
-        -- Check if we're in a valid state to act
-        local character = LocalPlayer.Character
-        if not character then return false end
-        
+        local character = LocalPlayer and LocalPlayer.Character
+        if not character then
+            return false
+        end
+
         local humanoid = character:FindFirstChildOfClass("Humanoid")
-        if not humanoid or humanoid.Health <= 0 then return false end
-        
-        -- Check if we're in lobby (no active map)
+        if not humanoid or humanoid.Health <= 0 then
+            return false
+        end
+
         if type(core.findMM2Map) == "function" then
             local map = core.findMM2Map()
             if not map then
-                -- No active map = we're in lobby
                 return false
             end
         end
-        
-        -- Check our role - only act if we're Innocent or Hero (can pick up gun)
+
+        if type(core.isRoundLifecycleActive) == "function"
+            and core.isRoundLifecycleActive() == false then
+            return false
+        end
+
         if type(core.getPlayerRole) == "function" then
-            local role = core.getPlayerRole()
-            if role == "Murderer" or role == "Sheriff" then
-                -- Don't auto-pickup if we're already murderer or sheriff
+            local role = core.getPlayerRole(LocalPlayer)
+            if role == "Murderer" or role == "Sheriff" or role == "Hero" then
                 return false
             end
         end
-        
+
+        local backpack = LocalPlayer:FindFirstChildOfClass("Backpack")
+        if (backpack and backpack:FindFirstChild("Gun"))
+            or character:FindFirstChild("Gun") then
+            return false
+        end
+
         return true
     end
 
-    -- Create a transparent square hitbox around a gun
     local function createGunHitbox(gun: Instance): BasePart?
-        local handle = gun:FindFirstChild("Handle")
-        if not handle or not handle:IsA("BasePart") then return nil end
-        
+        local handle = resolveGunTouchPart(gun)
+        if not handle then
+            return nil
+        end
+
         local part = Instance.new("Part")
-        part.Name = "WurstGunAuraHitbox_" .. gun:GetDebugId()
+        part.Name = "WurstGunAuraHitbox"
         part.Size = Vector3.new(settings.studs, settings.studs, settings.studs)
         part.Transparency = 0.7
         part.BrickColor = BrickColor.new("White")
         part.Material = Enum.Material.Neon
         part.CanCollide = false
+        part.CanQuery = false
+        part.CanTouch = false
         part.Anchored = true
         part.CFrame = handle.CFrame
         part.Parent = workspace
-        
+
         return part
     end
 
-    -- Find all dropped guns in the map
+    -- Find all dropped guns in the map using core.findDroppedGun + fast GunDrop/tag checks
     local function findDroppedGuns(): {Instance}
-        local guns = {}
-        
-        for _, obj in ipairs(workspace:GetDescendants()) do
-            if obj:IsA("Tool") and obj.Name == "Gun" then
-                -- Check if it's a dropped gun (not held by a character)
-                local parent = obj.Parent
-                if parent and not parent:IsA("Model") then
-                    -- Gun is in workspace directly (dropped)
-                    table.insert(guns, obj)
-                elseif parent and parent:IsA("Model") then
-                    -- Check if parent is a character with Humanoid
-                    local humanoid = parent:FindFirstChildOfClass("Humanoid")
-                    if not humanoid then
-                        -- Parent is not a character, so gun is dropped
-                        table.insert(guns, obj)
+        local guns: {Instance} = {}
+        local seen: {[Instance]: boolean} = {}
+
+        local function addGun(candidate: Instance?): ()
+            if not candidate or seen[candidate] or not candidate.Parent then
+                return
+            end
+            if resolveGunTouchPart(candidate) then
+                seen[candidate] = true
+                table.insert(guns, candidate)
+            end
+        end
+
+        if type(core.findDroppedGun) == "function" then
+            local ok: boolean, drop: any = pcall(core.findDroppedGun)
+            if ok and drop then
+                addGun(drop)
+            end
+        end
+
+        if type(core.findMM2Map) == "function" then
+            local okMap: boolean, map: any = pcall(core.findMM2Map)
+            if okMap and map then
+                local gunDrop = map:FindFirstChild("GunDrop")
+                if gunDrop then
+                    addGun(gunDrop)
+                end
+            end
+        end
+
+        local wsDrop = workspace:FindFirstChild("GunDrop")
+        if wsDrop then
+            addGun(wsDrop)
+        end
+
+        local okTagged: boolean, tagged: any = pcall(function(): any
+            return game:GetService("CollectionService"):GetTagged("Weapon_Gun")
+        end)
+        if okTagged and type(tagged) == "table" then
+            for _, obj: Instance in ipairs(tagged) do
+                if obj:IsA("Tool") and obj:IsDescendantOf(workspace)
+                    and not obj:FindFirstAncestorOfClass("Backpack") then
+                    local parent = obj.Parent
+                    if parent and not parent:FindFirstChildOfClass("Humanoid") then
+                        addGun(obj)
                     end
                 end
             end
         end
-        
+
         return guns
     end
 
-    -- Check if our character is touching a gun hitbox
     local function isTouchingHitbox(hitbox: BasePart): boolean
-        local character = LocalPlayer.Character
-        if not character then return false end
-        
+        local character = LocalPlayer and LocalPlayer.Character
+        if not character then
+            return false
+        end
+
         local root = character:FindFirstChild("HumanoidRootPart")
-        if not root then return false end
-        
-        -- Check if root is inside the hitbox bounds
+        if not root or not root:IsA("BasePart") then
+            return false
+        end
+
         local hitboxCFrame = hitbox.CFrame
         local hitboxSize = hitbox.Size
         local localPos = hitboxCFrame:PointToObjectSpace(root.Position)
-        
+
         return math.abs(localPos.X) <= hitboxSize.X / 2
             and math.abs(localPos.Y) <= hitboxSize.Y / 2
             and math.abs(localPos.Z) <= hitboxSize.Z / 2
     end
 
-    -- Try to grab a gun using firetouchinterest
     local function tryGrabGun(gun: Instance): boolean
-        local handle = gun:FindFirstChild("Handle")
-        if not handle or not handle:IsA("BasePart") then return false end
-        
-        local character = LocalPlayer.Character
-        if not character then return false end
-        
+        local handle = resolveGunTouchPart(gun)
+        if not handle then
+            return false
+        end
+
+        local character = LocalPlayer and LocalPlayer.Character
+        if not character then
+            return false
+        end
+
         local root = character:FindFirstChild("HumanoidRootPart")
-        if not root then return false end
-        
-        -- Use firetouchinterest to grab the gun
+        if not root or not root:IsA("BasePart") then
+            return false
+        end
+
         if type(state.fireTouchInterest) == "function" then
             pcall(state.fireTouchInterest, root, handle, 0)
             pcall(state.fireTouchInterest, root, handle, 1)
             return true
         end
-        
+
         return false
     end
 
-    -- Create ESP marker for dead sheriff (hacker detection)
-    local function createSheriffESP(player: Player): BasePart?
+    local function clearAllHitboxes(): ()
+        for gun, hitbox in pairs(gunHitboxes) do
+            if hitbox and hitbox.Parent then
+                pcall(function(): ()
+                    hitbox:Destroy()
+                end)
+            end
+            gunHitboxes[gun] = nil
+        end
+    end
+
+    local function clearAllEsp(): ()
+        for player, esp in pairs(espParts) do
+            if esp and esp.Parent then
+                pcall(function(): ()
+                    esp:Destroy()
+                end)
+            end
+            espParts[player] = nil
+        end
+    end
+
+    local function updateSheriffESP(player: Player): ()
         local character = player.Character
-        if not character then return nil end
-        
-        local root = character:FindFirstChild("HumanoidRootPart")
-        if not root then return nil end
-        
-        -- Check if this player is supposed to be sheriff but is dead in wrong location
-        local humanoid = character:FindFirstChildOfClass("Humanoid")
-        if not humanoid or humanoid.Health > 0 then return nil end
-        
-        -- Create white ESP marker
-        local esp = Instance.new("Part")
-        esp.Name = "WurstDeadSheriffESP_" .. player.Name
-        esp.Size = Vector3.new(3, 3, 3)
-        esp.Transparency = 0.3
-        esp.BrickColor = BrickColor.new("White")
-        esp.Material = Enum.Material.Neon
-        esp.CanCollide = false
-        esp.Anchored = true
-        esp.CFrame = root.CFrame
-        esp.Parent = workspace
-        
-        return esp
+        local root = character and character:FindFirstChild("HumanoidRootPart")
+        local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+        if not character or not root or not root:IsA("BasePart")
+            or not humanoid or humanoid.Health > 0 then
+            local existing = espParts[player]
+            if existing then
+                if existing.Parent then
+                    pcall(function(): ()
+                        existing:Destroy()
+                    end)
+                end
+                espParts[player] = nil
+            end
+            return
+        end
+
+        local esp = espParts[player]
+        if not esp or not esp.Parent then
+            esp = Instance.new("Part")
+            esp.Name = "WurstDeadSheriffESP_" .. player.Name
+            esp.Size = Vector3.new(3, 3, 3)
+            esp.Transparency = 0.3
+            esp.BrickColor = BrickColor.new("White")
+            esp.Material = Enum.Material.Neon
+            esp.CanCollide = false
+            esp.CanQuery = false
+            esp.CanTouch = false
+            esp.Anchored = true
+            esp.Parent = workspace
+            espParts[player] = esp
+        end
+        esp.CFrame = (root :: BasePart).CFrame
     end
 
     local function gunAuraTick(): ()
-        if not gunAuraActive then return end
-        
-        -- Check if we can act (not in lobby, not dead, correct role)
-        if not canAct() then
-            -- Clean up hitboxes when we can't act
-            for _, hitbox in pairs(gunHitboxes) do
-                if hitbox and hitbox.Parent then
-                    hitbox:Destroy()
-                end
-            end
-            gunHitboxes = {}
+        if not gunAuraActive then
             return
         end
-        
-        -- Find all dropped guns
+
+        if not canAct() then
+            clearAllHitboxes()
+            return
+        end
+
         local guns = findDroppedGuns()
-        
-        -- Update hitboxes for each gun
+        local activeGuns: {[Instance]: boolean} = {}
+
         for _, gun in ipairs(guns) do
             if gun and gun.Parent then
+                activeGuns[gun] = true
                 local hitbox = gunHitboxes[gun]
-                
-                -- Create hitbox if it doesn't exist
+
                 if not hitbox or not hitbox.Parent then
                     hitbox = createGunHitbox(gun)
                     if hitbox then
                         gunHitboxes[gun] = hitbox
                     end
                 else
-                    -- Update hitbox position to follow the gun
-                    local handle = gun:FindFirstChild("Handle")
-                    if handle and handle:IsA("BasePart") then
+                    local handle = resolveGunTouchPart(gun)
+                    if handle then
+                        hitbox.Size = Vector3.new(settings.studs, settings.studs, settings.studs)
                         hitbox.CFrame = handle.CFrame
                     end
                 end
-                
-                -- Check if we're touching this hitbox
+
                 if hitbox and isTouchingHitbox(hitbox) then
                     tryGrabGun(gun)
                 end
             end
         end
-        
-        -- Clean up hitboxes for guns that no longer exist
+
         for gun, hitbox in pairs(gunHitboxes) do
-            if not gun or not gun.Parent then
+            if not activeGuns[gun] or not gun or not gun.Parent then
                 if hitbox and hitbox.Parent then
-                    hitbox:Destroy()
+                    pcall(function(): ()
+                        hitbox:Destroy()
+                    end)
                 end
                 gunHitboxes[gun] = nil
             end
         end
-        
-        -- Check for dead sheriff ESP (hacker detection)
-        -- Only show ESP for players who appear to be sheriff but are dead
+
         if type(core.getPlayerRole) == "function" then
+            local seenSheriffs: {[Player]: boolean} = {}
             for _, player in ipairs(game:GetService("Players"):GetPlayers()) do
                 if player ~= LocalPlayer then
                     local role = core.getPlayerRole(player)
                     if role == "Sheriff" then
-                        local esp = createSheriffESP(player)
-                        if esp then
-                            table.insert(espParts, esp)
-                        end
+                        seenSheriffs[player] = true
+                        updateSheriffESP(player)
                     end
+                end
+            end
+            for player, esp in pairs(espParts) do
+                if not seenSheriffs[player] then
+                    if esp and esp.Parent then
+                        pcall(function(): ()
+                            esp:Destroy()
+                        end)
+                    end
+                    espParts[player] = nil
                 end
             end
         end
     end
 
+    local GunAuraFeature: any = nil
+
     local function toggleGunAura(enabled: boolean): ()
         gunAuraActive = enabled
-        
-        -- Clean up all hitboxes and ESP when disabled
+
         if not enabled then
-            for _, hitbox in pairs(gunHitboxes) do
-                if hitbox and hitbox.Parent then
-                    hitbox:Destroy()
-                end
-            end
-            gunHitboxes = {}
-            
-            for _, esp in ipairs(espParts) do
-                if esp and esp.Parent then
-                    esp:Destroy()
-                end
-            end
-            espParts = {}
-            
+            clearAllHitboxes()
+            clearAllEsp()
             disconnectFeatureConnection("MM2GunAura")
+            if GunAuraFeature then
+                GunAuraFeature:SetStatus(nil)
+            end
         else
+            if GunAuraFeature then
+                GunAuraFeature:SetStatus(tostring(math.round(settings.studs)) .. " studs")
+            end
             featureConnections.MM2GunAura = TaskManager:Connect(gunAuraTick)
             gunAuraTick()
         end
     end
 
-    local GunAuraFeature: any = createUniversalFeature(
+    GunAuraFeature = createUniversalFeature(
         "Gun Aura",
-        "Creates a transparent white square around dropped guns. When your character touches this square, automatically grabs the gun. Only works when you're alive, in-round, and an Innocent/Hero. Detects dead sheriff hackers with white ESP.",
+        "Creates a transparent white square around dropped guns. When your character touches this square, automatically grabs the gun. Only works when you're alive, in-round, and an Innocent. Detects dead sheriff hackers with white ESP.",
         7,
         toggleGunAura,
         {
@@ -6520,7 +6736,7 @@ function Module.init(runtime: any): any
         function(value: number): ()
             settings.studs = value
             if GunAuraFeature.enabled then
-                GunAuraFeature:SetStatus(tostring(value) .. " studs")
+                GunAuraFeature:SetStatus(tostring(math.round(value)) .. " studs")
             end
         end,
         "Size of the transparent hitbox square around each dropped gun. Your character must touch this square to auto-grab the gun.", 1)
