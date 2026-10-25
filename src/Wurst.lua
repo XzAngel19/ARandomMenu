@@ -219,7 +219,7 @@ local RUNTIME_RAW_BASE: string =
         .. RUNTIME_BRANCH
         .. "/"
 
-local SOURCE_STAMP: string = "v122-negative-walkspeed-gun-aura"
+local SOURCE_STAMP: string = "v123-20261024-vapev4-modules"
 
 local BOOT_STARTED_AT: number = os.clock()
 local BOOT_FINGERPRINT_SECONDS: number = 0
@@ -5935,6 +5935,9 @@ local fallbackManifest: any = {
         {path = "src/games/universal/Blatant/Spider.lua", name = "Spider", category = "Exploits"},
         {path = "src/games/universal/Blatant/Fly.lua", name = "Fly", category = "Exploits"},
         {path = "src/games/universal/Blatant/Noclip.lua", name = "Noclip", category = "Exploits"},
+        {path = "src/games/universal/Blatant/Swim.lua", name = "Swim", category = "Exploits"},
+        {path = "src/games/universal/Blatant/Jesus.lua", name = "Jesus", category = "Exploits"},
+        {path = "src/games/universal/Blatant/LongJump.lua", name = "LongJump", category = "Exploits"},
         {path = "src/games/universal/Movement/AntiVoid.lua", name = "Anti Void", category = "Utilities"},
         {path = "src/games/universal/Movement/FreezeMovements.lua", name = "Freeze Movements", category = "Utilities"},
         {path = "src/games/universal/Movement/Gravity.lua", name = "Gravity", category = "World"},

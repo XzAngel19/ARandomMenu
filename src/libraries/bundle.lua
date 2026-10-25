@@ -1,5 +1,5 @@
 return {
-    stamp = "v122-negative-walkspeed-gun-aura",
+    stamp = "v123-20261024-vapev4-modules",
     files = {
         ["src/Profile/135856908115931.lua"] = [[
 --!strict
@@ -20853,7 +20853,7 @@ function Module.init(context)
         end})
     card:CreateToggle({Name="Ghost Fly",Default=false,Function=function(value) settings.fly=value end,
         Tooltip="OFF: native walking, falling and jumping; Left Shift runs at 32. ON: WASD, Space up, Ctrl down."})
-    card:CreateSlider({Name="Fly speed",Show={Option="Ghost Fly"},Min=16,Max=200,Default=55,Function=function(value) settings.speed=math.max(0,value) end})
+    card:CreateSlider({Name="Fly speed",Show={Option="Ghost Fly"},Min=-200,Max=200,Default=55,Function=function(value) settings.speed=value end})
     card:CreateSlider({Name="Void depth",Min=50,Max=350,Default=120,Function=function(value) settings.depth=math.max(0,value) end})
     card:CreateSlider({Name="Ghost transparency",Min=0.1,Max=0.9,Step=0.05,Default=0.5,Function=function(value)
         settings.transparency=math.clamp(value,0,1)
@@ -20867,6 +20867,234 @@ function Module.destroy()
     if cleanup then cleanup() end
     cleanup=nil;Module.Initialized=false
 end
+return Module
+
+]],
+        ["src/games/universal/Blatant/Jesus.lua"] = [[
+export type Runtime = {framework: any, entity: any, host: any, services: any}
+
+local Module = {Name = "Jesus", PlaceId = 0, Events = {} :: {[string]: any}, Initialized = false}
+local activeCleanup
+
+function Module.init(context: Runtime): any
+    local host, framework = context.host, context.framework
+    local player = host.LocalPlayer
+    
+    local settings = {
+        mode = "Velocity",
+        bounce = 0.5,
+    }
+    
+    local jesus
+
+    local function toggleJesus(enabled)
+        if not enabled then
+            return
+        end
+        
+        jesus:Clean(host.RunService.PreSimulation:Connect(function(dt)
+            local character = player.Character
+            if not character then return end
+            
+            local root = character:FindFirstChild("HumanoidRootPart")
+            local humanoid = character:FindFirstChild("Humanoid")
+            if not root or not humanoid or humanoid.Health <= 0 then return end
+
+            -- Raycast down to detect water
+            local params = RaycastParams.new()
+            params.FilterType = Enum.RaycastFilterType.Exclude
+            params.FilterDescendantsInstances = {character}
+            params.RespectCanCollide = false
+            params.IgnoreWater = false
+
+            local rayResult = workspace:Raycast(root.Position, Vector3.new(0, -10, 0), params)
+            
+            if rayResult and rayResult.Material == Enum.Material.Water then
+                local waterSurface = rayResult.Position.Y
+                
+                -- Keep character on water surface
+                if root.Position.Y < waterSurface + settings.bounce then
+                    if settings.mode == "Velocity" then
+                        root.AssemblyLinearVelocity = Vector3.new(
+                            root.AssemblyLinearVelocity.X,
+                            math.max(0, root.AssemblyLinearVelocity.Y),
+                            root.AssemblyLinearVelocity.Z
+                        )
+                        root.CFrame = CFrame.new(root.Position.X, waterSurface + settings.bounce, root.Position.Z)
+                    elseif settings.mode == "Impulse" then
+                        local targetY = waterSurface + settings.bounce
+                        local diff = targetY - root.Position.Y
+                        if diff > 0.1 then
+                            root:ApplyImpulse(Vector3.new(0, diff * 50, 0) * root.AssemblyMass)
+                        end
+                    else -- CFrame
+                        root.CFrame = CFrame.new(root.Position.X, waterSurface + settings.bounce, root.Position.Z)
+                    end
+                end
+            end
+        end))
+    end
+
+    jesus = framework.Categories.Exploits:CreateModule({
+        Name = "Jesus",
+        Category = "Exploits",
+        ConfigKey = "Universal.Jesus",
+        Order = 4,
+        Tooltip = "Walk on water by preventing you from sinking.",
+        Function = function(enabled)
+            if not enabled then
+                jesus:SetStatus(nil)
+                return
+            end
+            jesus:Clean(function() end)
+            toggleJesus(true)
+            jesus:SetStatus(settings.mode)
+        end,
+    })
+
+    jesus:CreateDropdown({Name = "Mode", List = {"Velocity", "Impulse", "CFrame"}, Index = 1,
+        Function = function(value)
+            settings.mode = value
+            if jesus.Enabled then jesus:SetStatus(value) end
+        end,
+        Tooltip = "Movement method: Velocity (smooth), Impulse (forces), or CFrame (direct position)."
+    })
+    
+    jesus:CreateSlider({Name = "Bounce", Min = 0, Max = 2, Default = 0.5, Decimal = 1,
+        Function = function(value)
+            settings.bounce = value
+        end,
+        Tooltip = "How far above water surface to stay (in studs)."
+    })
+
+    activeCleanup = function()
+        if jesus.Enabled then jesus:Toggle(false) end
+    end
+    
+    Module.Initialized = true
+    return jesus
+end
+
+function Module.destroy()
+    if activeCleanup then activeCleanup(); activeCleanup = nil end
+    Module.Initialized = false
+end
+
+return Module
+
+]],
+        ["src/games/universal/Blatant/LongJump.lua"] = [[
+export type Runtime = {framework: any, entity: any, host: any, services: any}
+
+local Module = {Name = "LongJump", PlaceId = 0, Events = {} :: {[string]: any}, Initialized = false}
+local activeCleanup
+
+function Module.init(context: Runtime): any
+    local host, framework = context.host, context.framework
+    local player = host.LocalPlayer
+    
+    local settings = {
+        mode = "Velocity",
+        speed = 50,
+        autoDisable = false,
+    }
+    
+    local longjump
+
+    local function toggleLongJump(enabled)
+        if not enabled then
+            return
+        end
+        
+        local enableTime = os.clock() + 0.1
+        
+        longjump:Clean(host.RunService.PreSimulation:Connect(function(dt)
+            local character = player.Character
+            if not character then return end
+            
+            local root = character:FindFirstChild("HumanoidRootPart")
+            local humanoid = character:FindFirstChild("Humanoid")
+            if not root or not humanoid or humanoid.Health <= 0 then return end
+
+            -- Jump if on ground
+            if humanoid.FloorMaterial ~= Enum.Material.Air then
+                if enableTime < os.clock() and settings.autoDisable then
+                    if longjump.Enabled then
+                        longjump:Toggle(false)
+                    end
+                    return
+                end
+                humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
+            end
+
+            -- Apply horizontal boost
+            local dir = humanoid.MoveDirection * settings.speed
+            
+            if settings.mode == "Velocity" then
+                root.AssemblyLinearVelocity = dir + Vector3.new(0, root.AssemblyLinearVelocity.Y, 0)
+            elseif settings.mode == "Impulse" then
+                local diff = (dir - root.AssemblyLinearVelocity) * Vector3.new(1, 0, 1)
+                if diff.Magnitude > (dir == Vector3.zero and 10 or 2) then
+                    root:ApplyImpulse(diff * root.AssemblyMass)
+                end
+            else -- CFrame
+                root.CFrame += dir * dt
+            end
+        end))
+    end
+
+    longjump = framework.Categories.Exploits:CreateModule({
+        Name = "LongJump",
+        Category = "Exploits",
+        ConfigKey = "Universal.LongJump",
+        Order = 5,
+        Tooltip = "Lets you jump farther with horizontal speed boost.",
+        Function = function(enabled)
+            if not enabled then
+                longjump:SetStatus(nil)
+                return
+            end
+            longjump:Clean(function() end)
+            toggleLongJump(true)
+            longjump:SetStatus(settings.mode)
+        end,
+    })
+
+    longjump:CreateDropdown({Name = "Mode", List = {"Velocity", "Impulse", "CFrame"}, Index = 1,
+        Function = function(value)
+            settings.mode = value
+            if longjump.Enabled then longjump:SetStatus(value) end
+        end,
+        Tooltip = "Movement method: Velocity (smooth), Impulse (forces), or CFrame (direct position)."
+    })
+    
+    longjump:CreateSlider({Name = "Speed", Min = 1, Max = 150, Default = 50,
+        Function = function(value)
+            settings.speed = value
+        end,
+        Tooltip = "Horizontal boost speed in studs/second."
+    })
+    
+    longjump:CreateToggle({Name = "Auto Disable", Default = false,
+        Function = function(value)
+            settings.autoDisable = value
+        end,
+        Tooltip = "Automatically disable after first jump."
+    })
+
+    activeCleanup = function()
+        if longjump.Enabled then longjump:Toggle(false) end
+    end
+    
+    Module.Initialized = true
+    return longjump
+end
+
+function Module.destroy()
+    if activeCleanup then activeCleanup(); activeCleanup = nil end
+    Module.Initialized = false
+end
+
 return Module
 
 ]],
@@ -21177,6 +21405,112 @@ function Module.destroy(): ()
         pcall(activeCleanup)
     end
     activeCleanup = nil
+    Module.Initialized = false
+end
+
+return Module
+
+]],
+        ["src/games/universal/Blatant/Swim.lua"] = [[
+export type Runtime = {framework: any, entity: any, host: any, services: any}
+
+local Module = {Name = "Swim", PlaceId = 0, Events = {} :: {[string]: any}, Initialized = false}
+local activeCleanup
+
+function Module.init(context: Runtime): any
+    local host, framework = context.host, context.framework
+    local player = host.LocalPlayer
+    
+    local terrain = workspace:FindFirstChildWhichIsA("Terrain")
+    local lastpos = nil
+    
+    local swim
+
+    local function toggleSwim(enabled)
+        if not enabled then
+            -- Restore terrain when disabled
+            if terrain and lastpos then
+                pcall(function()
+                    terrain:ReplaceMaterial(lastpos, 4, Enum.Material.Water, Enum.Material.Air)
+                end)
+                lastpos = nil
+            end
+            return
+        end
+        
+        swim:Clean(host.RunService.PreSimulation:Connect(function(dt)
+            local character = player.Character
+            if not character then return end
+            
+            local root = character:FindFirstChild("HumanoidRootPart")
+            local humanoid = character:FindFirstChild("Humanoid")
+            if not root or not humanoid or humanoid.Health <= 0 then return end
+
+            local moving = humanoid.MoveDirection ~= Vector3.zero
+            local space = host.UserInputService:IsKeyDown(Enum.KeyCode.Space)
+
+            if terrain then
+                local factor = (moving or space) and Vector3.new(6, 6, 6) or Vector3.new(2, 1, 2)
+                local pos = root.Position - Vector3.new(0, 1, 0)
+                local newpos = Region3.new(pos - factor, pos + factor)
+                
+                -- Restore previous position
+                if lastpos then
+                    pcall(function()
+                        terrain:ReplaceMaterial(lastpos, 4, Enum.Material.Water, Enum.Material.Air)
+                    end)
+                end
+                
+                -- Create water at new position
+                pcall(function()
+                    terrain:ReplaceMaterial(newpos, 4, Enum.Material.Air, Enum.Material.Water)
+                end)
+                
+                lastpos = newpos
+            end
+        end))
+    end
+
+    swim = framework.Categories.Exploits:CreateModule({
+        Name = "Swim",
+        Category = "Exploits",
+        ConfigKey = "Universal.Swim",
+        Order = 3,
+        Tooltip = "Lets you swim midair by converting terrain to water around your character.",
+        Function = function(enabled)
+            if not enabled then
+                swim:SetStatus(nil)
+                return
+            end
+            swim:Clean(function()
+                if terrain and lastpos then
+                    pcall(function()
+                        terrain:ReplaceMaterial(lastpos, 4, Enum.Material.Water, Enum.Material.Air)
+                    end)
+                    lastpos = nil
+                end
+            end)
+            toggleSwim(true)
+            swim:SetStatus("Active")
+        end,
+    })
+
+    activeCleanup = function()
+        if swim.Enabled then swim:Toggle(false) end
+        if terrain and lastpos then
+            pcall(function()
+                terrain:ReplaceMaterial(lastpos, 4, Enum.Material.Water, Enum.Material.Air)
+            end)
+            lastpos = nil
+        end
+    end
+    
+    Module.Initialized = true
+    return swim
+end
+
+function Module.destroy()
+    if activeCleanup then activeCleanup(); activeCleanup = nil end
     Module.Initialized = false
 end
 
@@ -28829,7 +29163,7 @@ function Module.init(context)
             end)
         end,
     })
-    card:CreateSlider({Name="Speed", Min=1, Max=150, Default=48})
+    card:CreateSlider({Name="Speed", Min=-150, Max=150, Default=48})
     card:CreateSlider({Name="Sensitivity", Min=0.05, Max=0.6, Default=0.2})
     Module.Initialized = true
     return card
@@ -46434,6 +46768,21 @@ local Manifest: Manifest = {
         {
             path = "src/games/universal/Blatant/Noclip.lua",
             name = "Noclip",
+            category = "Exploits",
+        },
+        {
+            path = "src/games/universal/Blatant/Swim.lua",
+            name = "Swim",
+            category = "Exploits",
+        },
+        {
+            path = "src/games/universal/Blatant/Jesus.lua",
+            name = "Jesus",
+            category = "Exploits",
+        },
+        {
+            path = "src/games/universal/Blatant/LongJump.lua",
+            name = "LongJump",
             category = "Exploits",
         },
         {

@@ -155,6 +155,21 @@ local Manifest: Manifest = {
             category = "Exploits",
         },
         {
+            path = "src/games/universal/Blatant/Swim.lua",
+            name = "Swim",
+            category = "Exploits",
+        },
+        {
+            path = "src/games/universal/Blatant/Jesus.lua",
+            name = "Jesus",
+            category = "Exploits",
+        },
+        {
+            path = "src/games/universal/Blatant/LongJump.lua",
+            name = "LongJump",
+            category = "Exploits",
+        },
+        {
             path = "src/games/universal/Movement/AntiVoid.lua",
             name = "Anti Void",
             category = "Utilities",

@@ -183,7 +183,7 @@ function Module.init(context)
         end})
     card:CreateToggle({Name="Ghost Fly",Default=false,Function=function(value) settings.fly=value end,
         Tooltip="OFF: native walking, falling and jumping; Left Shift runs at 32. ON: WASD, Space up, Ctrl down."})
-    card:CreateSlider({Name="Fly speed",Show={Option="Ghost Fly"},Min=16,Max=200,Default=55,Function=function(value) settings.speed=math.max(0,value) end})
+    card:CreateSlider({Name="Fly speed",Show={Option="Ghost Fly"},Min=-200,Max=200,Default=55,Function=function(value) settings.speed=value end})
     card:CreateSlider({Name="Void depth",Min=50,Max=350,Default=120,Function=function(value) settings.depth=math.max(0,value) end})
     card:CreateSlider({Name="Ghost transparency",Min=0.1,Max=0.9,Step=0.05,Default=0.5,Function=function(value)
         settings.transparency=math.clamp(value,0,1)
