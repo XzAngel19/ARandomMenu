@@ -7,7 +7,7 @@ from test_mm2_precision import PRELUDE, section
 ROOT = Path(__file__).resolve().parents[1]
 WIDGETS = (ROOT / 'src/guis/Wurst/Code/Widgets.lua').read_text()
 SHOOT = (ROOT / 'src/games/MM2/Blatant/Shoot.lua').read_text()
-KNIFE = (ROOT / 'src/games/MM2/Blatant/KnifeThrow.lua').read_text()
+KNIFE = (ROOT / 'src/games/MM2/Combat/KnifeThrow.lua').read_text()
 FREEZE = (ROOT / 'src/games/universal/Movement/FreezeMovementS.lua'.replace('MovementS', 'Movements')).read_text()
 
 header = section(
@@ -69,18 +69,28 @@ with tempfile.TemporaryDirectory(prefix='option-headers-') as tmp:
     path.write_text(script)
     subprocess.run([os.environ.get('LUAU', 'luau'), str(path)], check=True)
 
-# SilentAIM: one card, two sections, in creation order.
+# SilentAIM: one card, Gun section. Auto Shoot is now independent.
 gun = SHOOT.index('addSectionOption(ShootFeature, "Gun")')
-auto_shoot = SHOOT.index('addToggleOption(ShootFeature, "Auto Shoot"')
-assert gun < auto_shoot, 'the Gun header must precede the gun options'
-knife = KNIFE.index('addSectionOption(feature, "Knife")')
-knife_throw = KNIFE.index('addToggleOption(feature, "Knife Throw"')
-assert knife < knife_throw, 'the Knife header must precede the knife options'
+# Auto Shoot is now an independent module, not in Shoot.lua
+assert 'addToggleOption(ShootFeature, "Auto Shoot"' not in SHOOT, 'Auto Shoot moved to independent module'
+
+# Knife Throw is also independent now
+assert 'addToggleOption(feature, "Knife Throw"' not in KNIFE, 'Knife Throw moved to independent module'
+
+# Verify independent modules exist
+AUTO_SHOOT = (ROOT / 'src/games/MM2/Combat/AutoShoot.lua').read_text()
+assert 'createUniversalFeature' in AUTO_SHOOT
+assert '"Auto Shoot"' in AUTO_SHOOT
+
+INDEPENDENT_KNIFE = (ROOT / 'src/games/MM2/Combat/KnifeThrow.lua').read_text()
+assert 'createUniversalFeature' in INDEPENDENT_KNIFE
+assert '"Knife Throw"' in INDEPENDENT_KNIFE
+
 assert 'Throw with button' not in KNIFE, 'the button trigger option was removed'
 assert 'Lanzar con el boton' not in KNIFE, 'the menu is English'
 assert 'table.insert(feature.optionRows, 2, row)' not in KNIFE, \
     'headers replace the old row-reordering hack'
-print("PASS headers: Gun before gun rows, Knife before knife rows, English button label")
+print("PASS headers: Auto Shoot and Knife Throw are independent Combat modules")
 
 # The header widget renders its own caption, so cards must not draw another.
 assert 'makeTextLabel(heading' not in FREEZE

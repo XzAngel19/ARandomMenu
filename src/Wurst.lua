@@ -219,7 +219,7 @@ local RUNTIME_RAW_BASE: string =
         .. RUNTIME_BRANCH
         .. "/"
 
-local SOURCE_STAMP: string = "v125-20261024-proximity-warning"
+local SOURCE_STAMP: string = "v126-20261024-combat-modules"
 
 local BOOT_STARTED_AT: number = os.clock()
 local BOOT_FINGERPRINT_SECONDS: number = 0
@@ -5964,7 +5964,8 @@ local fallbackManifest: any = {
             "src/games/MM2/Prediction.lua",
             "src/games/MM2/Blatant/Shoot.lua",
             "src/games/MM2/Blatant/KnifeAura.lua",
-            "src/games/MM2/Blatant/KnifeThrow.lua",
+            "src/games/MM2/Combat/AutoShoot.lua",
+            "src/games/MM2/Combat/KnifeThrow.lua",
             "src/games/MM2/Render/RoundEsp.lua",
             "src/games/MM2/Render/CoinEsp.lua",
             "src/games/MM2/Movement/Sprint.lua",

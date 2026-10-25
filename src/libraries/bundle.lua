@@ -1,5 +1,5 @@
 return {
-    stamp = "v125-20261024-proximity-warning",
+    stamp = "v126-20261024-combat-modules",
     files = {
         ["src/Profile/135856908115931.lua"] = [[
 --!strict
@@ -2201,639 +2201,6 @@ end
 return Module
 
 ]=],
-        ["src/games/MM2/Blatant/KnifeThrow.lua"] = [[
-local Module = {
-    Name = "MM2 Knife Throw",
-    Events = {} :: {[string]: any},
-    Initialized = false,
-    Runtime = nil :: any,
-}
-
-local activeCleanup: () -> () = function(): () end
-
-function Module.init(runtime: any): any
-    if Module.Initialized then
-        return Module
-    end
-    local core: any = state.mm2Core
-    assert(type(core) == "table", "MM2 Knife Throw requires the MM2 core module")
-    Module.Runtime = runtime
-    local findMurderer: any = core.findMurderer
-    local getPlayerRole: any = core.getPlayerRole
-    local getPlayerWeapon: any = core.getPlayerWeapon
-    local isPlayerAlive: any = core.isPlayerAlive
-    local isProtectedTarget: any = core.isProtectedTarget
-    local prediction: any = state.mm2Prediction
-    assert(type(prediction) == "table", "MM2 Knife Throw requires MM2 Prediction")
-    local mm2Settings: any = core.mm2Settings
-    local lastKnifePrediction: any = nil
-    local lastKnifeError: string? = nil
-    local lastKnifeAimName: string? = nil
-    local lastKnifeAimHeight: number? = nil
-    local lastKnifeRadius: number? = nil
-    local isWeaponPathClear: any = core.isWeaponPathClear
-    local trajectoryCalibration: any = core.trajectoryCalibration
-
-    -- One preset: held knife, nearest visible target, normal origin,
-    -- always-on animation/LOS. The animation owns the throw cadence.
-    local knifeThrowSettings = {enabled = false}
-
-    local function isValidTarget(player: Player): boolean
-        if player == LocalPlayer
-            or isProtectedTarget(player)
-            or not isPlayerAlive(player)
-            or getPlayerRole(player) == "Murderer" then
-            return false
-        end
-        return player.Character ~= nil
-            and player.Character:FindFirstChild("HumanoidRootPart") ~= nil
-    end
-
-    local resolveKnifeAim: (Player, Vector3) -> Vector3?
-    local function findNearestTarget(origin: Vector3): Player?
-        local localRoot: BasePart? = LocalPlayer.Character
-            and LocalPlayer.Character:FindFirstChild("HumanoidRootPart") :: BasePart?
-        if not localRoot then
-            return nil
-        end
-        local candidates: {{player: Player, distance: number}} = {}
-        for _, player: Player in ipairs(Players:GetPlayers()) do
-            if isValidTarget(player) then
-                local targetRoot: BasePart? = player.Character
-                    and player.Character:FindFirstChild("HumanoidRootPart") :: BasePart?
-                if targetRoot then
-                    table.insert(candidates, {
-                        player = player,
-                        distance = (targetRoot.Position - localRoot.Position).Magnitude,
-                    })
-                end
-            end
-        end
-        table.sort(candidates, function(left: any, right: any): boolean
-            return left.distance < right.distance
-        end)
-        -- Corridor checks are rays: cap them per frame. The nearest three
-        -- visible targets are enough; blocked players do not starve the rest.
-        for index: number = 1, math.min(#candidates, 3) do
-            local candidate: any = candidates[index]
-            if resolveKnifeAim(candidate.player, origin) ~= nil then
-                return candidate.player
-            end
-        end
-        return nil
-    end
-
-    local function getReadyKnife(): Tool?
-        if state.mm2SilentAimEnabled ~= true then return nil end
-        if findMurderer() ~= LocalPlayer then
-            return nil
-        end
-        local character: Model? = LocalPlayer.Character
-        if not character then
-            return nil
-        end
-
-        local knife: Tool? = getPlayerWeapon(LocalPlayer, "Knife", true)
-        if not knife or knife.Parent ~= character or knife.Enabled == false or knife:GetAttribute("Disabled") == true then
-            return nil
-        end
-        return knife
-    end
-
-    local function readKnifeSpeed(knife: Tool?): number
-        -- ThrowingKnifeVisuals: position += Direction * ThrowSpeed * dt,
-        -- default 96 studs/s, no gravity term.
-        local speed: number = 96
-        if knife then
-            local measured: any = knife:GetAttribute("ThrowSpeed")
-            if type(measured) == "number"
-                and measured == measured
-                and measured >= 24
-                and measured <= 300 then
-                speed = measured
-            end
-        end
-        return speed
-    end
-
-    -- The blade is a physical projectile, so "clear" is not a ray question.
-    -- Its own thickness decides how much gap it needs, and a rail that covers
-    -- the chest still leaves the head exposed: the aim walks upward until a
-    -- blade-sized body actually reaches a part of the target.
-    local MIN_KNIFE_RADIUS: number = 0.12
-    local MAX_KNIFE_RADIUS: number = 0.6
-    -- The blade keeps flying until it hits something, so there is no range
-    -- limit: only an absurd lead (a vanished target, a broken sample) is
-    -- refused. Ordinary long throws stay available.
-    local MAX_KNIFE_DISTANCE: number = 400
-
-    local function finiteNumber(value: any): boolean
-        return type(value) == "number"
-            and value == value
-            and value > -math.huge
-            and value < math.huge
-    end
-
-    local function knifeRadius(knife: Tool?): number
-        local handle: Instance? = knife and knife:FindFirstChild("Handle")
-        if handle and handle:IsA("BasePart") then
-            local size: Vector3 = handle.Size
-            -- The long axis runs along the flight path; the gap the blade has
-            -- to fit through is bounded by the middle of its extents.
-            local extents: {number} = {
-                size.X * 0.5, size.Y * 0.5, size.Z * 0.5,
-            }
-            table.sort(extents)
-            local section: number = extents[2]
-            if finiteNumber(section) then
-                return math.clamp(section, MIN_KNIFE_RADIUS, MAX_KNIFE_RADIUS)
-            end
-        end
-        return 0.25
-    end
-
-    -- The same exclusions the game's own WeaponService uses, and no
-    -- transparency rule: the blade is a solid body, so an invisible part that
-    -- can collide still stops it.
-    local function knifeProbeParams(): RaycastParams
-        local excluded: {Instance} = {}
-        if LocalPlayer.Character then
-            table.insert(excluded, LocalPlayer.Character)
-        end
-        for _, object: Instance in ipairs(
-            CollectionService:GetTagged("WeaponPassthrough")
-        ) do
-            table.insert(excluded, object)
-        end
-        local params: RaycastParams = RaycastParams.new()
-        params.FilterType = Enum.RaycastFilterType.Exclude
-        params.FilterDescendantsInstances = excluded
-        params.IgnoreWater = true
-        return params
-    end
-
-    -- True when a blade of `radius` thrown from `origin` meets the target
-    -- before anything else. Spherecast is exactly that body; where the engine
-    -- has no Spherecast, a centre ray plus a ring at the radius proves the
-    -- same thing: nothing solid is closer than the target.
-    local function knifeReaches(
-        origin: Vector3,
-        aim: Vector3,
-        radius: number,
-        targetCharacter: Model
-    ): boolean
-        local delta: Vector3 = aim - origin
-        if delta.Magnitude < 0.05 then
-            return false
-        end
-        local params: RaycastParams = knifeProbeParams()
-        local ok: boolean, result: any = pcall(function(): any
-            return (workspace :: any):Spherecast(origin, radius, delta, params)
-        end)
-        if ok then
-            local part: any = result and result.Instance
-            return typeof(part) == "Instance"
-                and part:IsDescendantOf(targetCharacter)
-        end
-        local centre: RaycastResult? = workspace:Raycast(origin, delta, params)
-        if not centre or not centre.Instance:IsDescendantOf(targetCharacter) then
-            return false
-        end
-        local reach: number = (centre.Position - origin).Magnitude
-        local direction: Vector3 = delta.Unit
-        local right: Vector3 = direction:Cross(Vector3.new(0, 1, 0))
-        if right.Magnitude < 1e-3 then
-            right = Vector3.new(1, 0, 0)
-        else
-            right = right.Unit
-        end
-        local up: Vector3 = right:Cross(direction).Unit
-        for _, offset: Vector3 in ipairs({
-            right * radius, right * -radius, up * radius, up * -radius,
-        }) do
-            local side: RaycastResult? =
-                workspace:Raycast(origin + offset, delta, params)
-            if side and not side.Instance:IsDescendantOf(targetCharacter)
-                and (side.Position - origin).Magnitude < reach then
-                return false
-            end
-        end
-        return true
-    end
-
-    -- Chest first, then upward: a rail that covers the chest usually leaves
-    -- the head exposed. Below and sideways are the last resorts.
-    local KNIFE_AIM_LADDER: {{height: number, lateral: number, name: string}} = {
-        {height = 0, lateral = 0, name = "chest"},
-        {height = 0.55, lateral = 0, name = "upper chest"},
-        {height = 1.05, lateral = 0, name = "head"},
-        {height = 1.5, lateral = 0, name = "above head"},
-        {height = -0.6, lateral = 0, name = "legs"},
-        {height = 0.5, lateral = 0.6, name = "shoulder"},
-        {height = 0.5, lateral = -0.6, name = "shoulder"},
-    }
-
-    -- The blade is a straight projectile. The predictor solves the intercept
-    -- (including the measured transport delay); the probe then proves that a
-    -- blade of this size reaches that point and not a rail in front of it.
-    resolveKnifeAim = function(target: Player, origin: Vector3): Vector3?
-        lastKnifePrediction = nil
-        lastKnifeError = nil
-        lastKnifeAimName = nil
-        lastKnifeAimHeight = nil
-        lastKnifeRadius = nil
-        local knife: Tool? = getReadyKnife()
-        local endpoint: Vector3?, info: any, reason: string? =
-            prediction.knifeAim(target, origin, readKnifeSpeed(knife))
-        if not endpoint then
-            lastKnifeError = reason
-            return nil
-        end
-        local character: Model? = target.Character
-        if not character then
-            return nil
-        end
-        if (endpoint - origin).Magnitude > MAX_KNIFE_DISTANCE then
-            lastKnifeError = "too far"
-            return nil
-        end
-        local radius: number = knifeRadius(knife)
-        lastKnifeRadius = radius
-        local direction: Vector3 = (endpoint - origin).Unit
-        local right: Vector3 = direction:Cross(Vector3.new(0, 1, 0))
-        if right.Magnitude < 1e-3 then
-            right = Vector3.new(1, 0, 0)
-        else
-            right = right.Unit
-        end
-        -- Height is world-up on purpose: the ladder exists to clear a
-        -- horizontal rail, so "a bit higher" must mean higher, not merely
-        -- perpendicular to a steep throw.
-        for _, step: any in ipairs(KNIFE_AIM_LADDER) do
-            local aim: Vector3 = endpoint
-                + Vector3.new(0, 1, 0) * step.height
-                + right * step.lateral
-            if knifeReaches(origin, aim, radius, character) then
-                lastKnifePrediction = info
-                lastKnifeAimName = step.name
-                lastKnifeAimHeight = step.height
-                return aim
-            end
-        end
-        -- Every rung was stopped by geometry. The target is behind cover for
-        -- a blade of this size, so the throw is refused instead of wasted.
-        lastKnifeError = "covered"
-        return nil
-    end
-
-    type ThrowJoint = {
-        joint: Motor6D, c0: CFrame, transform: CFrame,
-        initial: CFrame, raised: CFrame, forward: CFrame,
-    }
-    -- One animation cycle: windup 0.3 s plus the 0.25 s recovery. Used both
-    -- for the render loop and for the no-pose timer so the packet cadence is
-    -- the same no matter which branch a rig takes.
-    local KNIFE_CYCLE_SECONDS: number = 0.55
-    -- A packet cannot leave twice inside a quarter second, whatever calls the
-    -- release path. This is the backstop for the capture that recorded ~77
-    -- throws in one second; the game needs the knife back in hand first.
-    local MIN_PACKET_INTERVAL: number = 0.25
-    local lastPacketAt: number = -math.huge
-    local throwPose: {ThrowJoint} = {}
-    local throwPending: boolean = false
-    local function stopThrowAnimation(): ()
-        disconnectFeatureConnection("MM2KnifeAnimation")
-        throwPending = false
-        for _, entry: ThrowJoint in ipairs(throwPose) do
-            pcall(function(): ()
-                if entry.joint.Parent then
-                    entry.joint.C0 = entry.c0
-                    entry.joint.Transform = entry.transform
-                end
-            end)
-        end
-        table.clear(throwPose)
-    end
-
-    local function playThrowAnimation(knife: Tool, onRelease: (() -> ())?): ()
-        stopThrowAnimation()
-        local character: Model? = LocalPlayer.Character
-        if not character or knife.Parent ~= character then return end
-        local function release(): ()
-            if onRelease then onRelease() end
-        end
-        -- Parent-space rotation is deliberate. R6 shoulders have a rotated
-        -- bind frame: post-multiplying an X rotation swings sideways, not up.
-        local function addJoint(partName: string, jointName: string, lift: number, forward: number, roll: number): ()
-            local part: Instance? = character:FindFirstChild(partName)
-            local joint: any = part and part:FindFirstChild(jointName)
-            if not joint or not joint:IsA("Motor6D") then return end
-            local c0: CFrame = joint.C0
-            local pivot: CFrame = CFrame.new(c0.Position)
-            local basis: CFrame = c0 - c0.Position
-            table.insert(throwPose, {
-                joint = joint, c0 = c0, transform = joint.Transform,
-                initial = c0 * joint.Transform,
-                raised = pivot * CFrame.Angles(math.rad(lift), 0, math.rad(roll)) * basis,
-                forward = pivot * CFrame.Angles(math.rad(forward), 0, 0) * basis,
-            })
-        end
-        if character:FindFirstChild("RightUpperArm") then
-            addJoint("RightUpperArm", "RightShoulder", 155, 85, -12)
-            addJoint("RightLowerArm", "RightElbow", -85, -8, 0)
-            addJoint("RightHand", "RightWrist", -15, 10, 0)
-        else
-            addJoint("Torso", "Right Shoulder", 155, 85, -12)
-        end
-        if #throwPose == 0 and type(character.GetDescendants) == "function" then
-            -- Rig parenting varies (MM2 spawns its own R15 bodies and
-            -- not every build parents the shoulder under the arm):
-            -- find the right-arm Motor6Ds wherever they sit, matched
-            -- by joint name or by the arm part they drive (Part1).
-            -- Without this the pose list came back empty in game and
-            -- the throw fired instantly, with no animation at all.
-            local wanted: {[string]: {lift: number, forward: number, roll: number}} = {
-                RightShoulder = {lift = 155, forward = 85, roll = -12},
-                ["Right Shoulder"] = {lift = 155, forward = 85, roll = -12},
-                RightElbow = {lift = -85, forward = -8, roll = 0},
-                ["Right Elbow"] = {lift = -85, forward = -8, roll = 0},
-                RightWrist = {lift = -15, forward = 10, roll = 0},
-                ["Right Wrist"] = {lift = -15, forward = 10, roll = 0},
-            }
-            local byPart1: {[string]: string} = {
-                RightUpperArm = "RightShoulder", ["Right Arm"] = "RightShoulder",
-                RightLowerArm = "RightElbow", RightHand = "RightWrist",
-            }
-            for _, object: Instance in ipairs(character:GetDescendants()) do
-                if object:IsA("Motor6D") then
-                    local key: string? = wanted[object.Name] and object.Name or nil
-                    if not key then
-                        local part1: any = (object :: any).Part1
-                        if part1 then
-                            key = byPart1[part1.Name]
-                        end
-                    end
-                    local spec: any = key and wanted[key :: string]
-                    if spec then
-                        local joint: any = object
-                        local c0: CFrame = joint.C0
-                        local pivot: CFrame = CFrame.new(c0.Position)
-                        local basis: CFrame = c0 - c0.Position
-                        table.insert(throwPose, {
-                            joint = joint, c0 = c0, transform = joint.Transform,
-                            initial = c0 * joint.Transform,
-                            raised = pivot * CFrame.Angles(math.rad(spec.lift), 0, math.rad(spec.roll)) * basis,
-                            forward = pivot * CFrame.Angles(math.rad(spec.forward), 0, 0) * basis,
-                        })
-                    end
-                end
-            end
-        end
-        -- The guard is armed before the pose is inspected. Releasing from the
-        -- "no joint to pose" branch without it turned a held knife into one
-        -- packet per frame: the 2026-10-18 capture holds 722 authored knife
-        -- events in 22 seconds, up to 77 in a single second, against a 0.55 s
-        -- animation. The server cannot use that: the blade leaves the hand
-        -- with whichever packet it accepted first.
-        throwPending = onRelease ~= nil
-        if #throwPose == 0 then
-            release()
-            task.delay(KNIFE_CYCLE_SECONDS, function(): ()
-                if throwPending then
-                    stopThrowAnimation()
-                end
-            end)
-            return
-        end
-        local elapsed: number = 0
-        local released: boolean = false
-        featureConnections.MM2KnifeAnimation = TaskManager:Connect(function(dt: number): ()
-            if LocalPlayer.Character ~= character or knife.Parent ~= character then
-                stopThrowAnimation()
-                return
-            end
-            elapsed += math.max(0, dt)
-            local phase: number = elapsed < 0.2 and 1 or (elapsed < 0.3 and 2 or 3)
-            local alpha: number = phase == 1 and elapsed / 0.2
-                or (phase == 2 and (elapsed - 0.2) / 0.1 or (elapsed - 0.3) / 0.25)
-            alpha = math.clamp(alpha, 0, 1)
-            alpha = alpha * alpha * (3 - 2 * alpha)
-            for _, entry: ThrowJoint in ipairs(throwPose) do
-                if not entry.joint.Parent then stopThrowAnimation(); return end
-                local from: CFrame = phase == 1 and entry.initial or (phase == 2 and entry.raised or entry.forward)
-                local to: CFrame = phase == 1 and entry.raised or (phase == 2 and entry.forward or entry.initial)
-                entry.joint.Transform = CFrame.new()
-                entry.joint.C0 = from:Lerp(to, alpha)
-            end
-            -- Apply the forward pose before authoring exactly one packet.
-            if elapsed >= 0.3 and not released then
-                released = true
-                pcall(release)
-            end
-            if elapsed >= KNIFE_CYCLE_SECONDS then stopThrowAnimation() end
-        end, "render")
-    end
-
-
-    -- The spawn point: the handle when it exists, the hand otherwise. The
-    -- position is always the real one; the rotation is completed below.
-    local function knifeOrigin(knife: Tool, character: Model?): CFrame?
-        if not character or character ~= LocalPlayer.Character then
-            return nil
-        end
-        local handle: Instance? = knife:FindFirstChild("Handle")
-        local hand: Instance? = character:FindFirstChild("RightHand")
-            or character:FindFirstChild("Right Arm")
-            or character:FindFirstChild("HumanoidRootPart")
-        local source: Instance? =
-            handle and handle:IsA("BasePart") and handle or hand
-        if not source or not source:IsA("BasePart") then
-            return nil
-        end
-        return (source :: BasePart).CFrame
-    end
-
-    -- One throw, one packet. The origin and the aim are resolved at the
-    -- moment of sending, so a windup cannot fire from a stale hand position.
-    local function performThrow(
-        knife: Tool,
-        remote: Instance
-    ): boolean
-        if not knifeThrowSettings.enabled or getReadyKnife() ~= knife then
-            return false
-        end
-        local character: Model? = LocalPlayer.Character
-        local origin: CFrame? = knifeOrigin(knife, character)
-        if not origin then
-            return false
-        end
-        -- Select again at release: do not cling to a target that closed its
-        -- peek during windup when another player is now visible.
-        local target: Player? = findNearestTarget(origin.Position)
-        if not target then
-            return false
-        end
-        local aim: Vector3? = resolveKnifeAim(target, origin.Position)
-        if not aim or (aim - origin.Position).Magnitude < 0.05 then
-            return false
-        end
-        -- The origin is a real CFrame, not a bare position. The native
-        -- KnifeClient sends the handle's pose with a non-identity rotation
-        -- (recorded in both native logs), so a server that reads LookVector
-        -- takes the blade's direction from here. Pointing that look vector at
-        -- the predicted point makes the packet coherent for both readings:
-        -- a server that uses (target - origin) gets the same aim it always
-        -- did, and a server that uses the rotation now gets the lead too,
-        -- instead of world -Z. The second argument stays a position: that is
-        -- where the blade has to end up.
-        local travel: Vector3 = aim - origin.Position
-        local originCFrame: CFrame = origin
-        if travel.Magnitude > 1e-3 then
-            originCFrame = CFrame.lookAt(origin.Position, aim)
-        end
-        -- Last gate before the wire: one packet per quarter second. The
-        -- capture of 2026-10-18 proves the callers alone cannot be trusted
-        -- with this (722 knife events in 22 s). Everything above is pure
-        -- reading, so a rejected packet costs nothing.
-        local now: number = os.clock()
-        if now - lastPacketAt < MIN_PACKET_INTERVAL then
-            return false
-        end
-        lastPacketAt = now
-        remote:FireServer(originCFrame, CFrame.new(aim))
-        pcall(trajectoryCalibration.noteAuthoredShot, trajectoryCalibration, {
-            kind = "knife", tool = knife, toolName = knife.Name,
-            originPos = origin.Position, aimPos = aim, target = target,
-            silent = false,
-            settings = {mode = "Normal", animation = true, wallCheck = true,
-                motionSource = lastKnifePrediction and lastKnifePrediction.motionSource,
-                cadence = "animation-cycle",
-                model = lastKnifePrediction and lastKnifePrediction.model or "kinematic-v51",
-                referencePoint = lastKnifePrediction and {lastKnifePrediction.capturedPosition.X, lastKnifePrediction.capturedPosition.Y, lastKnifePrediction.capturedPosition.Z},
-                predictedPoint = lastKnifePrediction and {lastKnifePrediction.endpoint.X, lastKnifePrediction.endpoint.Y, lastKnifePrediction.endpoint.Z},
-                sampledVelocity = lastKnifePrediction and {lastKnifePrediction.velocity.X, lastKnifePrediction.velocity.Y, lastKnifePrediction.velocity.Z},
-                leadSeconds = lastKnifePrediction and lastKnifePrediction.leadSeconds,
-                flightSeconds = lastKnifePrediction and lastKnifePrediction.flightSeconds,
-                sampleAge = lastKnifePrediction and lastKnifePrediction.sampleAge,
-                samples = lastKnifePrediction and lastKnifePrediction.samples,
-                rtt = lastKnifePrediction and lastKnifePrediction.rtt,
-                echoDelay = lastKnifePrediction and lastKnifePrediction.echoDelay,
-                echoSamples = lastKnifePrediction and lastKnifePrediction.echoSamples,
-                rttEngine = lastKnifePrediction and lastKnifePrediction.rttEngine,
-                rttData = lastKnifePrediction and lastKnifePrediction.rttData,
-                turnRate = lastKnifePrediction and lastKnifePrediction.turnRate,
-                brakeSeconds = lastKnifePrediction and lastKnifePrediction.brakeSeconds,
-                -- Where the blade went: the aim rung it took, how much it had
-                -- to clear and the body size the probe used.
-                aimHeight = lastKnifeAimName,
-                aimOffsetStuds = lastKnifeAimHeight,
-                knifeRadius = lastKnifeRadius,
-                throwSource = "auto",
-                -- The packet now carries a frame whose look vector points at
-                -- the aim; a capture can tell which build threw it.
-                originRotation = travel.Magnitude > 1e-3 and "look-at" or "handle",
-                windupSeconds = 0.3},
-        })
-        return true
-    end
-
-    local function throwKnife(): ()
-        if not knifeThrowSettings.enabled then
-            return
-        end
-        local knife: Tool? = getReadyKnife()
-        if not knife then
-            stopThrowAnimation()
-            return
-        end
-        local events: Instance? = knife:FindFirstChild("Events")
-        local remote: Instance? = events and events:FindFirstChild("KnifeThrown")
-        if not remote or not remote:IsA("RemoteEvent") then
-            return
-        end
-        if throwPending then
-            return
-        end
-        local character: Model? = LocalPlayer.Character
-        local origin: CFrame? = knifeOrigin(knife, character)
-        if not origin or not findNearestTarget(origin.Position) then
-            return
-        end
-        local ok: boolean = pcall(
-            playThrowAnimation,
-            knife,
-            function(): ()
-                performThrow(knife, remote)
-            end
-        )
-        if not ok then
-            stopThrowAnimation()
-        end
-    end
-
-    local function refreshKnifeThrow(): ()
-        disconnectFeatureConnection("MM2KnifeThrow")
-        if not knifeThrowSettings.enabled or state.mm2SilentAimEnabled ~= true then
-            stopThrowAnimation()
-            return
-        end
-        featureConnections.MM2KnifeThrow =
-            TaskManager:Connect(function(): ()
-                throwKnife()
-            end)
-    end
-    local function toggleKnifeThrow(enabled: boolean): ()
-        knifeThrowSettings.enabled = enabled
-        if state.mm2KnifeRuntime then state.mm2KnifeRuntime.throwWanted = enabled end
-        refreshKnifeThrow()
-    end
-
-    local feature: any = state.mm2SilentAimFeature
-    assert(feature, "Knife Throw requires SilentAIM")
-    local key = "MM2.Shoot.KnifeThrow"
-    if configData.states[key] == nil then
-        local previous = configData.states["Universal.KillAura.KnifeThrow"]
-        if previous == nil then previous = configData.states["MM2.Knife.KnifeThrow"] end
-        configData.states[key] = previous
-    end
-    local bind = "Shortcut.MM2ShootKnifeThrow"
-    if configData.values[bind] == nil then
-        configData.values[bind] = configData.values["Shortcut.UniversalKillAuraKnifeThrow"]
-            or configData.values["Shortcut.MM2KnifeKnifeThrow"]
-    end
-    state.mm2KnifeThrowRefresh = refreshKnifeThrow
-    state.mm2KnifeThrowOff = function(): () toggleKnifeThrow(false) end
-    -- The knife options open their own section, after the Gun rows that the
-    -- Shoot module already created: the two weapons never mix again.
-    if addSectionOption then addSectionOption(feature, "Knife") end
-    addToggleOption(feature, "Knife Throw", false, toggleKnifeThrow,
-        "SilentAIM ON + held knife: repeats throws at visible targets. Full animation and WallCheck are automatic.", true)
-    featureConnections.MM2KnifeThrowCharacter = LocalPlayer.CharacterAdded:Connect(stopThrowAnimation)
-    activeCleanup = function(): ()
-        toggleKnifeThrow(false)
-        disconnectFeatureConnection("MM2KnifeThrowCharacter")
-        state.mm2KnifeThrowOff = nil
-        state.mm2KnifeThrowRefresh = nil
-    end
-    Module.Events = featureConnections
-    Module.Initialized = true
-    return Module
-end
-
-function Module.destroy(): ()
-    if not Module.Initialized then
-        return
-    end
-    Module.Initialized = false
-    pcall(activeCleanup)
-    activeCleanup = function(): () end
-    Module.Events = {}
-    Module.Runtime = nil
-end
-
-return Module
-
-]],
         ["src/games/MM2/Blatant/Shoot.lua"] = [[
 local Module = {
     Name = "MM2 Shoot",
@@ -3538,8 +2905,6 @@ function Module.init(runtime: any): any
     -- One card, two weapons: the heading keeps the gun rows together and the
     -- knife module opens its own section further down.
     if addSectionOption then addSectionOption(ShootFeature, "Gun") end
-    addToggleOption(ShootFeature, "Auto Shoot", false, toggleAutoShoot,
-        "While SilentAIM is ON and you hold the gun: try every frame as soon as the current target is visible. No distance or prediction-confidence gate. Uses the Gun aim method.", true)
     local ShootTargetBox
     local function refreshShootOptions(): ()
         if ShootTargetBox then
@@ -3619,6 +2984,390 @@ function Module.init(runtime: any): any
         state.mm2FireSilentShot = nil
         toggleAutoShoot(false)
         state.mm2ShotFeedback.hide()
+    end
+    Module.Events = featureConnections
+    Module.Initialized = true
+    return Module
+end
+
+function Module.destroy(): ()
+    if not Module.Initialized then
+        return
+    end
+    Module.Initialized = false
+    pcall(activeCleanup)
+    activeCleanup = function(): () end
+    Module.Events = {}
+    Module.Runtime = nil
+end
+
+return Module
+
+]],
+        ["src/games/MM2/Combat/AutoShoot.lua"] = [[
+local Module = {
+    Name = "MM2 Auto Shoot",
+    Events = {} :: {[string]: any},
+    Initialized = false,
+    Runtime = nil :: any,
+}
+
+local activeCleanup: () -> () = function(): () end
+
+function Module.init(runtime: any): any
+    if Module.Initialized then
+        return Module
+    end
+    local core: any = state.mm2Core
+    assert(type(core) == "table", "MM2 Auto Shoot requires the MM2 core module")
+    local prediction: any = state.mm2Prediction
+    assert(type(prediction) == "table", "MM2 Auto Shoot requires MM2 Prediction")
+    Module.Runtime = runtime
+    
+    local findMurderer: any = core.findMurderer
+    local getPlayerRole: any = core.getPlayerRole
+    local getPlayerWeapon: any = core.getPlayerWeapon
+    local isPlayerAlive: any = core.isPlayerAlive
+    local isProtectedTarget: any = core.isProtectedTarget
+    local isWeaponPathClear: any = core.isWeaponPathClear
+    local validateGunShot: any = core.validateGunShot
+    local getGunOriginCFrame: any = core.getGunOriginCFrame
+    
+    local settings = {
+        mode = "Shoot",
+        wallCheck = true,
+        aura = 20,
+    }
+    
+    local autoShootActive = false
+    local lastShootAttempt = 0
+    
+    local function getGun(): Tool?
+        local character = LocalPlayer.Character
+        if not character then return nil end
+        return getPlayerWeapon(LocalPlayer, "Gun", true)
+    end
+    
+    local function findTarget(): Player?
+        local localRoot = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+        if not localRoot then return nil end
+        
+        local murderer = findMurderer()
+        if not murderer then return nil end
+        
+        local targetRoot = murderer.Character and murderer.Character:FindFirstChild("HumanoidRootPart")
+        if not targetRoot then return nil end
+        
+        local distance = (targetRoot.Position - localRoot.Position).Magnitude
+        if distance > settings.aura then return nil end
+        
+        if not isPlayerAlive(murderer) or isProtectedTarget(murderer) then
+            return nil
+        end
+        
+        return murderer
+    end
+    
+    local function tryCframeShoot(target: Player): boolean
+        local character = LocalPlayer.Character
+        local gun = getGun()
+        if not character or not gun then return false end
+        
+        local root = character:FindFirstChild("HumanoidRootPart")
+        local targetRoot = target.Character and target.Character:FindFirstChild("HumanoidRootPart")
+        if not root or not targetRoot then return false end
+        
+        -- Teleport near target (5 studs behind)
+        local offset = targetRoot.CFrame.LookVector * -5
+        local newCFrame = targetRoot.CFrame + offset
+        root.CFrame = newCFrame
+        
+        -- Wait a frame for position to sync
+        task.wait(0.05)
+        
+        -- Fire the gun
+        gun:Activate()
+        return true
+    end
+    
+    local function tryNormalShoot(target: Player): boolean
+        local gun = getGun()
+        if not gun then return false end
+        
+        local character = LocalPlayer.Character
+        if not character then return false end
+        
+        local root = character:FindFirstChild("HumanoidRootPart")
+        local targetRoot = target.Character and target.Character:FindFirstChild("HumanoidRootPart")
+        if not root or not targetRoot then return false end
+        
+        -- Wall check
+        if settings.wallCheck then
+            local origin = root.Position
+            local endpoint = targetRoot.Position
+            if not isWeaponPathClear(origin, endpoint, {}) then
+                return false
+            end
+        end
+        
+        -- Fire the gun
+        gun:Activate()
+        return true
+    end
+    
+    local function autoShootTick(): ()
+        if not autoShootActive then return end
+        
+        local now = os.clock()
+        if now - lastShootAttempt < 0.1 then return end
+        lastShootAttempt = now
+        
+        local gun = getGun()
+        if not gun then return end
+        
+        local target = findTarget()
+        if not target then return end
+        
+        if settings.mode == "Cframe" then
+            tryCframeShoot(target)
+        else
+            tryNormalShoot(target)
+        end
+    end
+    
+    local function toggleAutoShoot(enabled: boolean): ()
+        autoShootActive = enabled
+        
+        if enabled then
+            featureConnections.MM2AutoShoot = TaskManager:Connect(autoShootTick)
+            autoShootTick()
+        else
+            disconnectFeatureConnection("MM2AutoShoot")
+        end
+    end
+    
+    local AutoShootFeature: any = createUniversalFeature(
+        "Auto Shoot",
+        "Automatically shoots at the murderer when they're within aura range. Use CFrame mode to teleport near the target before shooting, or Shoot mode for normal silent aim.",
+        4,
+        toggleAutoShoot,
+        {
+            categoryName = "Combat",
+            parent = MM2Scroll,
+            registry = mm2Features,
+        }
+    )
+    state.mm2AutoShootFeature = AutoShootFeature
+    
+    addDropdownOption(AutoShootFeature, "Mode", {"Shoot", "Cframe"}, 1,
+        function(value: string): ()
+            settings.mode = value
+        end,
+        "Shoot: normal silent aim. CFrame: teleport near target before shooting.")
+    
+    addToggleOption(AutoShootFeature, "WallCheck", true,
+        function(value: boolean): ()
+            settings.wallCheck = value
+        end,
+        "Only shoot if there's a clear path to the target.")
+    
+    addNumberOption(AutoShootFeature, "Aura", 20, 5, 40,
+        function(value: number): ()
+            settings.aura = value
+            if AutoShootFeature.enabled then
+                AutoShootFeature:SetStatus(tostring(value) .. " studs")
+            end
+        end,
+        "Maximum distance in studs to automatically shoot at the murderer.", 1)
+    
+    activeCleanup = function(): ()
+        toggleAutoShoot(false)
+    end
+    Module.Events = featureConnections
+    Module.Initialized = true
+    return Module
+end
+
+function Module.destroy(): ()
+    if not Module.Initialized then
+        return
+    end
+    Module.Initialized = false
+    pcall(activeCleanup)
+    activeCleanup = function(): () end
+    Module.Events = {}
+    Module.Runtime = nil
+end
+
+return Module
+
+]],
+        ["src/games/MM2/Combat/KnifeThrow.lua"] = [[
+local Module = {
+    Name = "MM2 Knife Throw",
+    Events = {} :: {[string]: any},
+    Initialized = false,
+    Runtime = nil :: any,
+}
+
+local activeCleanup: () -> () = function(): () end
+
+function Module.init(runtime: any): any
+    if Module.Initialized then
+        return Module
+    end
+    local core: any = state.mm2Core
+    assert(type(core) == "table", "MM2 Knife Throw requires the MM2 core module")
+    local prediction: any = state.mm2Prediction
+    assert(type(prediction) == "table", "MM2 Knife Throw requires MM2 Prediction")
+    Module.Runtime = runtime
+    
+    local findMurderer: any = core.findMurderer
+    local getPlayerRole: any = core.getPlayerRole
+    local getPlayerWeapon: any = core.getPlayerWeapon
+    local isPlayerAlive: any = core.isPlayerAlive
+    local isProtectedTarget: any = core.isProtectedTarget
+    local isWeaponPathClear: any = core.isWeaponPathClear
+    
+    local settings = {
+        wallCheck = true,
+        delay = 0,
+    }
+    
+    local knifeThrowActive = false
+    local lastThrowAttempt = 0
+    
+    local function getKnife(): Tool?
+        local character = LocalPlayer.Character
+        if not character then return nil end
+        return getPlayerWeapon(LocalPlayer, "Knife", true)
+    end
+    
+    local function findTarget(): Player?
+        local murderer = findMurderer()
+        if murderer ~= LocalPlayer then return nil end
+        
+        local localRoot = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+        if not localRoot then return nil end
+        
+        local candidates = {}
+        for _, player in ipairs(game:GetService("Players"):GetPlayers()) do
+            if player ~= LocalPlayer 
+                and isPlayerAlive(player) 
+                and not isProtectedTarget(player)
+                and getPlayerRole(player) ~= "Murderer" then
+                
+                local targetRoot = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
+                if targetRoot then
+                    table.insert(candidates, {
+                        player = player,
+                        distance = (targetRoot.Position - localRoot.Position).Magnitude
+                    })
+                end
+            end
+        end
+        
+        table.sort(candidates, function(a, b) return a.distance < b.distance end)
+        
+        for _, candidate in ipairs(candidates) do
+            if not settings.wallCheck or isWeaponPathClear(localRoot.Position, candidate.player.Character.HumanoidRootPart.Position, {}) then
+                return candidate.player
+            end
+        end
+        
+        return nil
+    end
+    
+    local function throwKnife(target: Player): boolean
+        local knife = getKnife()
+        if not knife then return false end
+        
+        local character = LocalPlayer.Character
+        if not character then return false end
+        
+        local root = character:FindFirstChild("HumanoidRootPart")
+        local targetRoot = target.Character and target.Character:FindFirstChild("HumanoidRootPart")
+        if not root or not targetRoot then return false end
+        
+        -- Get the throw remote
+        local remotes = game:GetService("ReplicatedStorage"):FindFirstChild("Remotes")
+        if not remotes then return false end
+        
+        local event = remotes:FindFirstChild("Event")
+        if not event then return false end
+        
+        -- Calculate aim with prediction
+        local originCFrame = getGunOriginCFrame(knife)
+        local aimPosition = targetRoot.Position
+        
+        -- Invoke the remote directly to trigger natural throw animation
+        -- The game will handle the animation and throw naturally
+        pcall(function()
+            event:FireServer("Throw", {
+                Origin = originCFrame,
+                Direction = (aimPosition - originCFrame.Position).Unit,
+                Target = target
+            })
+        end)
+        
+        return true
+    end
+    
+    local function knifeThrowTick(): ()
+        if not knifeThrowActive then return end
+        
+        local now = os.clock()
+        local delay = settings.delay
+        if now - lastThrowAttempt < delay then return end
+        
+        local target = findTarget()
+        if not target then return end
+        
+        lastThrowAttempt = now
+        throwKnife(target)
+    end
+    
+    local function toggleKnifeThrow(enabled: boolean): ()
+        knifeThrowActive = enabled
+        
+        if enabled then
+            featureConnections.MM2KnifeThrow = TaskManager:Connect(knifeThrowTick)
+            knifeThrowTick()
+        else
+            disconnectFeatureConnection("MM2KnifeThrow")
+        end
+    end
+    
+    local KnifeThrowFeature: any = createUniversalFeature(
+        "Knife Throw",
+        "Automatically throws knives at targets using the game's natural throw animation. Invokes the Remote directly for authentic behavior with prediction.",
+        5,
+        toggleKnifeThrow,
+        {
+            categoryName = "Combat",
+            parent = MM2Scroll,
+            registry = mm2Features,
+        }
+    )
+    state.mm2KnifeThrowFeature = KnifeThrowFeature
+    
+    addToggleOption(KnifeThrowFeature, "WallCheck", true,
+        function(value: boolean): ()
+            settings.wallCheck = value
+        end,
+        "Only throw if there's a clear path to the target.")
+    
+    addNumberOption(KnifeThrowFeature, "Delay", 0, 0, 10,
+        function(value: number): ()
+            settings.delay = value
+            if KnifeThrowFeature.enabled then
+                KnifeThrowFeature:SetStatus(string.format("%.1fs", value))
+            end
+        end,
+        "Delay in seconds between each throw attempt. 0 = throw as fast as possible.", 0.1)
+    
+    activeCleanup = function(): ()
+        toggleKnifeThrow(false)
     end
     Module.Events = featureConnections
     Module.Initialized = true
@@ -6318,7 +6067,7 @@ function Module.init(runtime: any): any
     Module.Runtime = runtime
 
     local settings = {
-        radius = 15,
+        studs = 15,
     }
 
     -- Resolve the Coin_Server part that actually pays for a pickup.
@@ -6387,7 +6136,7 @@ function Module.init(runtime: any): any
         -- and the server expects per-frame contact for reliable pickup.
         local cachedCoins: {Instance} = {}
         local lastCacheRefresh: number = -math.huge
-        local cachedRadiusSq: number = settings.radius * settings.radius
+        local cachedRadiusSq: number = settings.studs * settings.studs
 
         local function refreshCache(): ()
             local now: number = os.clock()
@@ -6422,7 +6171,7 @@ function Module.init(runtime: any): any
             refreshCache()
 
             local rootPos: Vector3 = root.Position
-            local radius: number = settings.radius
+            local radius: number = settings.studs
             local radiusSq: number = radius * radius
             local fireTouch = state.fireTouchInterest
 
@@ -6468,14 +6217,14 @@ function Module.init(runtime: any): any
     )
     state.mm2CoinsAuraFeature = CoinsAuraFeature
 
-    addNumberOption(CoinsAuraFeature, "Aura Radius", 15, 5, 50,
+    addNumberOption(CoinsAuraFeature, "Studs", 15, 5, 1000,
         function(value: number): ()
-            settings.radius = value
+            settings.studs = value
             if CoinsAuraFeature.enabled then
                 CoinsAuraFeature:SetStatus(tostring(math.round(value)) .. " studs")
             end
         end,
-        "Distance from your character at which coins are touched and collected. Higher values reach more coins at once.", 1)
+        "Distance from your character at which coins are touched and collected. Can go up to 1000+ studs. Warning: very high values may cause kicks.", 1)
 
     activeCleanup = function(): ()
         toggleCoinsAura(false)
@@ -6518,130 +6267,112 @@ function Module.init(runtime: any): any
     Module.Runtime = runtime
 
     local settings = {
-        radius = 15,
+        studs = 15,
     }
 
-    -- Resolve the physical part of the gun that we can touch.
-    local function resolveGunPart(object: Instance): BasePart?
-        if object:IsA("BasePart") then
-            return object :: BasePart
-        end
-        local handle: Instance? = object:FindFirstChild("Handle")
-            or object:FindFirstChildWhichIsA("BasePart")
-        if handle and handle:IsA("BasePart") then
-            return handle :: BasePart
-        end
-        return nil
+    local gunAuraActive = false
+    local hitboxPart = nil
+
+    -- Create a white hitbox part that will be attached to the gun
+    local function createHitbox(): BasePart
+        local part = Instance.new("Part")
+        part.Name = "WurstGunAuraHitbox"
+        part.Size = Vector3.new(3, 3, 3)
+        part.Transparency = 0.5
+        part.BrickColor = BrickColor.new("White")
+        part.Material = Enum.Material.Neon
+        part.CanCollide = false
+        part.Anchored = false
+        part.Massless = true
+        return part
     end
 
-    -- Check if this is a loose gun (not in someone's inventory)
-    local function isLooseGun(object: Instance): boolean
-        if not object:IsA("Tool") then
-            return false
+    -- Find dropped guns within range
+    local function findDroppedGuns(): {BasePart}
+        local guns = {}
+        local localRoot = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+        if not localRoot then return guns end
+
+        for _, obj in ipairs(workspace:GetDescendants()) do
+            if obj:IsA("Tool") and obj.Name == "Gun" then
+                -- Check if it's a dropped gun (in workspace, not in a character)
+                if not obj:FindFirstAncestorOfClass("Model") or not obj:FindFirstAncestorOfClass("Model"):FindFirstChildOfClass("Humanoid") then
+                    local handle = obj:FindFirstChild("Handle")
+                    if handle and handle:IsA("BasePart") then
+                        local distance = (handle.Position - localRoot.Position).Magnitude
+                        if distance <= settings.studs then
+                            table.insert(guns, handle)
+                        end
+                    end
+                end
+            end
         end
-        if object.Name ~= "Gun" and not game:GetService("CollectionService"):HasTag(object, "Weapon_Gun") then
-            return false
-        end
-        return object:IsDescendantOf(workspace)
-            and not object:FindFirstAncestorOfClass("Backpack")
-            and (object.Parent == workspace
-                or object.Parent == game:GetService("Workspace"):FindFirstChildOfClass("Model")
-                or (object.Parent ~= nil and not object.Parent:FindFirstChildOfClass("Humanoid")))
+
+        return guns
     end
 
-    -- Pulse the touch between our root and the gun's handle,
-    -- like CoinsAura: fire 0 then 1 so the server sees the full
-    -- Touched/TouchEnded pair.
-    local function touchGun(root: BasePart, gunPart: BasePart): boolean
-        if type(state.fireTouchInterest) ~= "function" then
-            return false
+    -- Touch the gun with our hitbox to pick it up
+    local function touchGun(gunPart: BasePart): boolean
+        if not hitboxPart or not hitboxPart.Parent then return false end
+        
+        -- Position hitbox at gun location
+        hitboxPart.CFrame = gunPart.CFrame
+        
+        -- Use firetouchinterest to pick up the gun
+        if type(state.fireTouchInterest) == "function" then
+            local localRoot = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+            if localRoot then
+                pcall(state.fireTouchInterest, localRoot, gunPart, 0)
+                pcall(state.fireTouchInterest, localRoot, gunPart, 1)
+                return true
+            end
         end
-        pcall(state.fireTouchInterest, root, gunPart, 0)
-        pcall(state.fireTouchInterest, root, gunPart, 1)
-        return true
+        
+        return false
     end
 
-    local function characterRoot(): BasePart?
-        local character: Model? = LocalPlayer and LocalPlayer.Character
-        if not character then
-            return nil
+    local function gunAuraTick(): ()
+        if not gunAuraActive then return end
+        
+        local character = LocalPlayer.Character
+        if not character then return end
+        
+        local root = character:FindFirstChild("HumanoidRootPart")
+        if not root then return end
+        
+        -- Ensure hitbox exists and is parented to character
+        if not hitboxPart or not hitboxPart.Parent then
+            hitboxPart = createHitbox()
+            hitboxPart.Parent = character
         end
-        return character:FindFirstChild("HumanoidRootPart") :: BasePart?
+        
+        -- Find and touch all guns in range
+        local guns = findDroppedGuns()
+        for _, gun in ipairs(guns) do
+            touchGun(gun)
+        end
     end
 
     local function toggleGunAura(enabled: boolean): ()
-        disconnectFeatureConnection("MM2GunAura")
-
-        if not enabled then
-            return
+        gunAuraActive = enabled
+        
+        -- Clean up hitbox when disabled
+        if not enabled and hitboxPart then
+            hitboxPart:Destroy()
+            hitboxPart = nil
         end
-
-        local lastPulseAt: number = -math.huge
-
-        local function auraTick(): ()
-            local root: BasePart? = characterRoot()
-            if not root then
-                return
-            end
-
-            -- Throttle: 0.25 s matches CoinsAura and AutoFarm pulse intervals
-            local now: number = os.clock()
-            if now - lastPulseAt < 0.25 then
-                return
-            end
-
-            -- Collect all loose guns in the workspace
-            local guns: {BasePart} = {}
-            local tagged = game:GetService("CollectionService"):GetTagged("Weapon_Gun")
-            for _, object: Instance in ipairs(tagged) do
-                if isLooseGun(object) then
-                    local part = resolveGunPart(object)
-                    if part then
-                        table.insert(guns, part)
-                    end
-                end
-            end
-
-            -- Also check direct GunDrop children (faster path)
-            local map = game:GetService("Workspace"):FindFirstChildOfClass("Model")
-            if map then
-                local gunDrop = map:FindFirstChild("GunDrop")
-                if gunDrop and (gunDrop:IsA("Model") or gunDrop:IsA("BasePart")) then
-                    local part = resolveGunPart(gunDrop)
-                    if part then
-                        table.insert(guns, part)
-                    end
-                end
-            end
-
-            local rootPos: Vector3 = root.Position
-            local radius: number = settings.radius
-            local pulsed: boolean = false
-            
-            for _, gunPart: BasePart in ipairs(guns) do
-                if not gunPart.Parent then
-                    continue
-                end
-                local gunPos: Vector3 = gunPart.Position
-                if (gunPos - rootPos).Magnitude <= radius then
-                    if touchGun(root, gunPart) then
-                        pulsed = true
-                    end
-                end
-            end
-
-            if pulsed then
-                lastPulseAt = now
-            end
+        
+        if enabled then
+            featureConnections.MM2GunAura = TaskManager:Connect(gunAuraTick)
+            gunAuraTick()
+        else
+            disconnectFeatureConnection("MM2GunAura")
         end
-
-        featureConnections.MM2GunAura = TaskManager:Connect(auraTick)
-        auraTick()
     end
 
     local GunAuraFeature: any = createUniversalFeature(
         "Gun Aura",
-        "Pulses the touch between your character and every loose gun within the aura radius, grabbing them without moving.",
+        "Creates a white hitbox around dropped guns. When your character touches this hitbox, automatically picks up the gun. Works like Grab Gun but for all guns in range.",
         7,
         toggleGunAura,
         {
@@ -6652,14 +6383,14 @@ function Module.init(runtime: any): any
     )
     state.mm2GunAuraFeature = GunAuraFeature
 
-    addNumberOption(GunAuraFeature, "Aura Radius", 15, 5, 50,
+    addNumberOption(GunAuraFeature, "Studs", 15, 5, 100,
         function(value: number): ()
-            settings.radius = value
+            settings.studs = value
             if GunAuraFeature.enabled then
-                GunAuraFeature:SetStatus(tostring(math.round(value)) .. " studs")
+                GunAuraFeature:SetStatus(tostring(value) .. " studs")
             end
         end,
-        "Distance from your character at which guns are touched and grabbed. Higher values reach more guns at once.", 1)
+        "Distance in studs to detect and pick up dropped guns. Higher values can reach more guns but may cause kicks at extreme values.", 1)
 
     activeCleanup = function(): ()
         toggleGunAura(false)
@@ -47187,7 +46918,8 @@ local Manifest: Manifest = {
             "src/games/MM2/Prediction.lua",
             "src/games/MM2/Blatant/Shoot.lua",
             "src/games/MM2/Blatant/KnifeAura.lua",
-            "src/games/MM2/Blatant/KnifeThrow.lua",
+            "src/games/MM2/Combat/AutoShoot.lua",
+            "src/games/MM2/Combat/KnifeThrow.lua",
             "src/games/MM2/Render/RoundEsp.lua",
             "src/games/MM2/Render/CoinEsp.lua",
             "src/games/MM2/Movement/Sprint.lua",

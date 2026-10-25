@@ -16,7 +16,7 @@ function Module.init(runtime: any): any
     Module.Runtime = runtime
 
     local settings = {
-        radius = 15,
+        studs = 15,
     }
 
     -- Resolve the Coin_Server part that actually pays for a pickup.
@@ -85,7 +85,7 @@ function Module.init(runtime: any): any
         -- and the server expects per-frame contact for reliable pickup.
         local cachedCoins: {Instance} = {}
         local lastCacheRefresh: number = -math.huge
-        local cachedRadiusSq: number = settings.radius * settings.radius
+        local cachedRadiusSq: number = settings.studs * settings.studs
 
         local function refreshCache(): ()
             local now: number = os.clock()
@@ -120,7 +120,7 @@ function Module.init(runtime: any): any
             refreshCache()
 
             local rootPos: Vector3 = root.Position
-            local radius: number = settings.radius
+            local radius: number = settings.studs
             local radiusSq: number = radius * radius
             local fireTouch = state.fireTouchInterest
 
@@ -166,14 +166,14 @@ function Module.init(runtime: any): any
     )
     state.mm2CoinsAuraFeature = CoinsAuraFeature
 
-    addNumberOption(CoinsAuraFeature, "Aura Radius", 15, 5, 50,
+    addNumberOption(CoinsAuraFeature, "Studs", 15, 5, 1000,
         function(value: number): ()
-            settings.radius = value
+            settings.studs = value
             if CoinsAuraFeature.enabled then
                 CoinsAuraFeature:SetStatus(tostring(math.round(value)) .. " studs")
             end
         end,
-        "Distance from your character at which coins are touched and collected. Higher values reach more coins at once.", 1)
+        "Distance from your character at which coins are touched and collected. Can go up to 1000+ studs. Warning: very high values may cause kicks.", 1)
 
     activeCleanup = function(): ()
         toggleCoinsAura(false)

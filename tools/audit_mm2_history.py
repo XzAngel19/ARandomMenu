@@ -25,7 +25,7 @@ REVS = {
 }
 BASE = "src/games/MM2/base.lua"
 SHOOT = "src/games/MM2/Blatant/Shoot.lua"
-THROW = "src/games/MM2/Blatant/KnifeThrow.lua"
+THROW = "src/games/MM2/Combat/KnifeThrow.lua"
 AURA = "src/games/MM2/Blatant/KnifeAura.lua"
 LEARNING = "src/games/universal/Other/GameLearning.lua"
 

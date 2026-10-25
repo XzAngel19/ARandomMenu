@@ -16,130 +16,112 @@ function Module.init(runtime: any): any
     Module.Runtime = runtime
 
     local settings = {
-        radius = 15,
+        studs = 15,
     }
 
-    -- Resolve the physical part of the gun that we can touch.
-    local function resolveGunPart(object: Instance): BasePart?
-        if object:IsA("BasePart") then
-            return object :: BasePart
-        end
-        local handle: Instance? = object:FindFirstChild("Handle")
-            or object:FindFirstChildWhichIsA("BasePart")
-        if handle and handle:IsA("BasePart") then
-            return handle :: BasePart
-        end
-        return nil
+    local gunAuraActive = false
+    local hitboxPart = nil
+
+    -- Create a white hitbox part that will be attached to the gun
+    local function createHitbox(): BasePart
+        local part = Instance.new("Part")
+        part.Name = "WurstGunAuraHitbox"
+        part.Size = Vector3.new(3, 3, 3)
+        part.Transparency = 0.5
+        part.BrickColor = BrickColor.new("White")
+        part.Material = Enum.Material.Neon
+        part.CanCollide = false
+        part.Anchored = false
+        part.Massless = true
+        return part
     end
 
-    -- Check if this is a loose gun (not in someone's inventory)
-    local function isLooseGun(object: Instance): boolean
-        if not object:IsA("Tool") then
-            return false
+    -- Find dropped guns within range
+    local function findDroppedGuns(): {BasePart}
+        local guns = {}
+        local localRoot = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+        if not localRoot then return guns end
+
+        for _, obj in ipairs(workspace:GetDescendants()) do
+            if obj:IsA("Tool") and obj.Name == "Gun" then
+                -- Check if it's a dropped gun (in workspace, not in a character)
+                if not obj:FindFirstAncestorOfClass("Model") or not obj:FindFirstAncestorOfClass("Model"):FindFirstChildOfClass("Humanoid") then
+                    local handle = obj:FindFirstChild("Handle")
+                    if handle and handle:IsA("BasePart") then
+                        local distance = (handle.Position - localRoot.Position).Magnitude
+                        if distance <= settings.studs then
+                            table.insert(guns, handle)
+                        end
+                    end
+                end
+            end
         end
-        if object.Name ~= "Gun" and not game:GetService("CollectionService"):HasTag(object, "Weapon_Gun") then
-            return false
-        end
-        return object:IsDescendantOf(workspace)
-            and not object:FindFirstAncestorOfClass("Backpack")
-            and (object.Parent == workspace
-                or object.Parent == game:GetService("Workspace"):FindFirstChildOfClass("Model")
-                or (object.Parent ~= nil and not object.Parent:FindFirstChildOfClass("Humanoid")))
+
+        return guns
     end
 
-    -- Pulse the touch between our root and the gun's handle,
-    -- like CoinsAura: fire 0 then 1 so the server sees the full
-    -- Touched/TouchEnded pair.
-    local function touchGun(root: BasePart, gunPart: BasePart): boolean
-        if type(state.fireTouchInterest) ~= "function" then
-            return false
+    -- Touch the gun with our hitbox to pick it up
+    local function touchGun(gunPart: BasePart): boolean
+        if not hitboxPart or not hitboxPart.Parent then return false end
+        
+        -- Position hitbox at gun location
+        hitboxPart.CFrame = gunPart.CFrame
+        
+        -- Use firetouchinterest to pick up the gun
+        if type(state.fireTouchInterest) == "function" then
+            local localRoot = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+            if localRoot then
+                pcall(state.fireTouchInterest, localRoot, gunPart, 0)
+                pcall(state.fireTouchInterest, localRoot, gunPart, 1)
+                return true
+            end
         end
-        pcall(state.fireTouchInterest, root, gunPart, 0)
-        pcall(state.fireTouchInterest, root, gunPart, 1)
-        return true
+        
+        return false
     end
 
-    local function characterRoot(): BasePart?
-        local character: Model? = LocalPlayer and LocalPlayer.Character
-        if not character then
-            return nil
+    local function gunAuraTick(): ()
+        if not gunAuraActive then return end
+        
+        local character = LocalPlayer.Character
+        if not character then return end
+        
+        local root = character:FindFirstChild("HumanoidRootPart")
+        if not root then return end
+        
+        -- Ensure hitbox exists and is parented to character
+        if not hitboxPart or not hitboxPart.Parent then
+            hitboxPart = createHitbox()
+            hitboxPart.Parent = character
         end
-        return character:FindFirstChild("HumanoidRootPart") :: BasePart?
+        
+        -- Find and touch all guns in range
+        local guns = findDroppedGuns()
+        for _, gun in ipairs(guns) do
+            touchGun(gun)
+        end
     end
 
     local function toggleGunAura(enabled: boolean): ()
-        disconnectFeatureConnection("MM2GunAura")
-
-        if not enabled then
-            return
+        gunAuraActive = enabled
+        
+        -- Clean up hitbox when disabled
+        if not enabled and hitboxPart then
+            hitboxPart:Destroy()
+            hitboxPart = nil
         end
-
-        local lastPulseAt: number = -math.huge
-
-        local function auraTick(): ()
-            local root: BasePart? = characterRoot()
-            if not root then
-                return
-            end
-
-            -- Throttle: 0.25 s matches CoinsAura and AutoFarm pulse intervals
-            local now: number = os.clock()
-            if now - lastPulseAt < 0.25 then
-                return
-            end
-
-            -- Collect all loose guns in the workspace
-            local guns: {BasePart} = {}
-            local tagged = game:GetService("CollectionService"):GetTagged("Weapon_Gun")
-            for _, object: Instance in ipairs(tagged) do
-                if isLooseGun(object) then
-                    local part = resolveGunPart(object)
-                    if part then
-                        table.insert(guns, part)
-                    end
-                end
-            end
-
-            -- Also check direct GunDrop children (faster path)
-            local map = game:GetService("Workspace"):FindFirstChildOfClass("Model")
-            if map then
-                local gunDrop = map:FindFirstChild("GunDrop")
-                if gunDrop and (gunDrop:IsA("Model") or gunDrop:IsA("BasePart")) then
-                    local part = resolveGunPart(gunDrop)
-                    if part then
-                        table.insert(guns, part)
-                    end
-                end
-            end
-
-            local rootPos: Vector3 = root.Position
-            local radius: number = settings.radius
-            local pulsed: boolean = false
-            
-            for _, gunPart: BasePart in ipairs(guns) do
-                if not gunPart.Parent then
-                    continue
-                end
-                local gunPos: Vector3 = gunPart.Position
-                if (gunPos - rootPos).Magnitude <= radius then
-                    if touchGun(root, gunPart) then
-                        pulsed = true
-                    end
-                end
-            end
-
-            if pulsed then
-                lastPulseAt = now
-            end
+        
+        if enabled then
+            featureConnections.MM2GunAura = TaskManager:Connect(gunAuraTick)
+            gunAuraTick()
+        else
+            disconnectFeatureConnection("MM2GunAura")
         end
-
-        featureConnections.MM2GunAura = TaskManager:Connect(auraTick)
-        auraTick()
     end
 
     local GunAuraFeature: any = createUniversalFeature(
         "Gun Aura",
-        "Pulses the touch between your character and every loose gun within the aura radius, grabbing them without moving.",
+        "Creates a white hitbox around dropped guns. When your character touches this hitbox, automatically picks up the gun. Works like Grab Gun but for all guns in range.",
         7,
         toggleGunAura,
         {
@@ -150,14 +132,14 @@ function Module.init(runtime: any): any
     )
     state.mm2GunAuraFeature = GunAuraFeature
 
-    addNumberOption(GunAuraFeature, "Aura Radius", 15, 5, 50,
+    addNumberOption(GunAuraFeature, "Studs", 15, 5, 100,
         function(value: number): ()
-            settings.radius = value
+            settings.studs = value
             if GunAuraFeature.enabled then
-                GunAuraFeature:SetStatus(tostring(math.round(value)) .. " studs")
+                GunAuraFeature:SetStatus(tostring(value) .. " studs")
             end
         end,
-        "Distance from your character at which guns are touched and grabbed. Higher values reach more guns at once.", 1)
+        "Distance in studs to detect and pick up dropped guns. Higher values can reach more guns but may cause kicks at extreme values.", 1)
 
     activeCleanup = function(): ()
         toggleGunAura(false)

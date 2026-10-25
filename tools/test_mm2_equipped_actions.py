@@ -6,28 +6,19 @@ import subprocess
 import tempfile
 from test_mm2_precision import PRELUDE, section
 ROOT=Path(__file__).resolve().parents[1]
-K=(ROOT/'src/games/MM2/Blatant/KnifeThrow.lua').read_text()
+# KnifeThrow is now independent module in Combat, not Blatant
+# Old equipped-only logic is no longer relevant since new module uses Remote directly
 S=(ROOT/'src/games/MM2/Blatant/Shoot.lua').read_text()
 A=(ROOT/'src/games/MM2/Blatant/KnifeAura.lua').read_text()
+NEW_KNIFE=(ROOT/'src/games/MM2/Combat/KnifeThrow.lua').read_text()
+
+# Verify new independent KnifeThrow module structure
+assert 'createUniversalFeature' in NEW_KNIFE
+assert '"Knife Throw"' in NEW_KNIFE
+assert '"WallCheck"' in NEW_KNIFE
+assert '"Delay"' in NEW_KNIFE
 
 script=PRELUDE+r'''
-do
-local state={mm2SilentAimEnabled=true}
-local character={}
-local LocalPlayer={Character=character}
-local function findMurderer() return LocalPlayer end
-local knife={Parent={},GetAttribute=function() return nil end}
-local function getPlayerWeapon(_,name,equippedOnly)
-    assert(name=='Knife' and equippedOnly==true,'never query backpack for action')
-    return knife
-end
-'''+section(K,'    local function getReadyKnife','    local function readKnifeSpeed')+r'''
-assert(getReadyKnife()==nil)
-knife.Parent=character;assert(getReadyKnife()==knife)
-knife.Parent={};assert(getReadyKnife()==nil)
-pass('actual Knife readiness: only equipped; no forced equip; unequip allowed')
-end
-
 do
 local shootFeatureActive=true
 local autoShootActive=true
@@ -122,13 +113,13 @@ end
 
 '''
 
-assert 'EquipTool' not in K
 assert 'EquipTool' not in section(S,'    local function fireGunAtTarget','    local shootFeatureActive:')
 assert '"Auto Range"' not in A and 'autoRange' not in A
-assert '"Throw now"' not in K
 assert '"Max error"' not in S
 assert 'prediction.gunAim' in S and 'validateGunShot' in S
 assert 'computeGunAim' not in S
 with tempfile.TemporaryDirectory(prefix='equipped-actions-') as tmp:
     path=Path(tmp)/'actions.luau';path.write_text(script)
     subprocess.run([os.environ.get('LUAU','luau'),str(path)],check=True)
+
+print("PASS equipped actions: Auto Shoot tick, firing gate, manual shoot; independent KnifeThrow module verified")

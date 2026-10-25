@@ -831,8 +831,13 @@ do
         assert(feature.row.LayoutOrder == index, name .. " in wrong display order")
       end
     end
-    for _, name in ipairs({"Metrics", "Learning", "Game Learning", "HookPart", "Flight", "Invisible", "SpinBot", "Sprint", "Instant Role Notify", "Auto Shoot", "Knife", "Shoot"}) do
+    for _, name in ipairs({"Metrics", "Learning", "Game Learning", "HookPart", "Flight", "Invisible", "SpinBot", "Sprint", "Instant Role Notify", "Knife", "Shoot"}) do
       assert(not findFeature(name), "Removed module still present: " .. name)
+    end
+    -- Auto Shoot is now an independent Combat module, not in Blatant/SilentAIM
+    local autoShoot = findFeature("Auto Shoot")
+    if autoShoot then
+      assert(autoShoot.categoryName == "Combat", "Auto Shoot must be in Combat category, not Blatant")
     end
     assert(not findFeature("Time Changer") and not findFeature("Anti Fling"))
     local fling = findFeature("Fling")

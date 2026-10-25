@@ -15,7 +15,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 BASE = (ROOT / "src/games/MM2/base.lua").read_text()
 SHOOT = (ROOT / "src/games/MM2/Blatant/Shoot.lua").read_text()
-KNIFE = (ROOT / "src/games/MM2/Blatant/KnifeThrow.lua").read_text()
+KNIFE = (ROOT / "src/games/MM2/Combat/KnifeThrow.lua").read_text()
 PREDICTION = (ROOT / "src/games/MM2/Prediction.lua").read_text()
 
 
@@ -800,7 +800,10 @@ end
 
 def main() -> None:
     assert "state.mm2Prediction" in SHOOT and "prediction.gunAim" in SHOOT
-    assert "state.mm2Prediction" in KNIFE and "prediction.knifeAim" in KNIFE
+    # KnifeThrow is now independent and simpler - uses Remote directly
+    # It doesn't use prediction.knifeAim anymore
+    assert '"Knife Throw"' in KNIFE and "createUniversalFeature" in KNIFE
+    assert '"WallCheck"' in KNIFE and '"Delay"' in KNIFE
     assert "validateGunShot" in SHOOT and "isWeaponPathClear" in BASE
     # v62 invariants: the invisible-wall pass, the ping median, the vertical
     # speed gate and the "deceleration only" length correction.

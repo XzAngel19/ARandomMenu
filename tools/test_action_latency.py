@@ -55,8 +55,8 @@ assert "task.wait" not in gun_touch, "farm gun touch has no fixed pickup delay"
 # or bring back the Auto Unbox grey screen the user asked to avoid.
 shoot = read("src/games/MM2/Blatant/Shoot.lua")
 assert "SHOT_CONFIRM_WINDOW: number = 1.5" in shoot
-knife_throw = read("src/games/MM2/Blatant/KnifeThrow.lua")
-assert "MIN_PACKET_INTERVAL: number = 0.25" in knife_throw
+knife_throw = read("src/games/MM2/Combat/KnifeThrow.lua")
+assert '"Delay"' in knife_throw  # Independent module with user-controlled delay
 knife_aura = read("src/games/MM2/Blatant/KnifeAura.lua")
 assert "lastAuraSwing < 0.86" in knife_aura  # measured swing cycle
 unbox = read("src/games/MM2/Other/AutoUnbox.lua")
