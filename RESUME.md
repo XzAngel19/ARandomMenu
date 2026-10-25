@@ -5,7 +5,7 @@
 > contradice lo que crees, gana este documento (y los datos de calibración).
 >
 > **Estado al escribir esto:** rama `arena/9492e6b6-arandommenu`, build
-> **`v129-20261025-gun-and-coins-aura-fix`**.
+> **`v130-20261025-autovote-and-cpu-fix`**.
 > El usuario se comunica en español. Respóndele en español.
 
 ---

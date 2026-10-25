@@ -219,7 +219,7 @@ local RUNTIME_RAW_BASE: string =
         .. RUNTIME_BRANCH
         .. "/"
 
-local SOURCE_STAMP: string = "v129-20261025-gun-and-coins-aura-fix"
+local SOURCE_STAMP: string = "v130-20261025-autovote-and-cpu-fix"
 
 local BOOT_STARTED_AT: number = os.clock()
 local BOOT_FINGERPRINT_SECONDS: number = 0
@@ -5974,6 +5974,7 @@ local fallbackManifest: any = {
             "src/games/MM2/Fun/BlurtRoles.lua",
             "src/games/MM2/Other/AutoUnbox.lua",
             "src/games/MM2/Other/AutoFarm.lua",
+            "src/games/MM2/Other/AutoVote.lua",
             "src/games/MM2/Other/CoinsAura.lua",
             "src/games/MM2/Other/GunAura.lua",
             "src/games/MM2/Other/ProximityWarning.lua",

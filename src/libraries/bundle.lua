@@ -1,5 +1,5 @@
 return {
-    stamp = "v129-20261025-gun-and-coins-aura-fix",
+    stamp = "v130-20261025-autovote-and-cpu-fix",
     files = {
         ["src/Profile/135856908115931.lua"] = [[
 --!strict
@@ -5901,6 +5901,643 @@ end
 return Module
 
 ]=],
+        ["src/games/MM2/Other/AutoVote.lua"] = [[
+local Module = {
+    Name = "MM2 Auto Vote",
+    Events = {} :: {[string]: any},
+    Initialized = false,
+    Runtime = nil :: any,
+}
+
+local activeCleanup: () -> () = function(): () end
+
+function Module.init(runtime: any): any
+    if Module.Initialized then
+        return Module
+    end
+    local core: any = state.mm2Core
+    assert(type(core) == "table", "MM2 Auto Vote requires the MM2 core module")
+    Module.Runtime = runtime
+
+    local TICK_INTERVAL: number = 0.10
+    local MAP_REFRESH_INTERVAL: number = 0.50
+    local VOTE_HOLD_Before_RESET: number = 0.22
+
+    local mapChoices: {string} = {"Map 1", "Map 2", "Map 3"}
+    local selectedSlot: number = 1
+    local selectedMapName: string = mapChoices[1]
+    local selectMapButton: TextButton? = nil
+    local AutoVoteFeature: any = nil
+
+    local cachedLobby: Instance? = nil
+    local lastLobbyCheckAt: number = -math.huge
+    local lastMapRefreshAt: number = -math.huge
+    local savedDetectorCFrames: {[BasePart]: CFrame} = {}
+    local roundBlockingVote: boolean = false
+    local lastBillboardVotingState: boolean = false
+
+    local function trim(s: string): string
+        return (string.gsub(s, "^%s*(.-)%s*$", "%1"))
+    end
+
+    local function isValidMapTitle(title: string?): boolean
+        if type(title) ~= "string" then
+            return false
+        end
+        local clean = trim(title)
+        if clean == "" then
+            return false
+        end
+        local upper = string.upper(clean)
+        if upper == "MAP NAME" or upper == "LOADING" or upper == "NONE" then
+            return false
+        end
+        return true
+    end
+
+    local function findLobbyModel(): Instance?
+        local now: number = os.clock()
+        if cachedLobby and cachedLobby.Parent == workspace and now - lastLobbyCheckAt < 1.0 then
+            return cachedLobby
+        end
+        lastLobbyCheckAt = now
+
+        for _, name: string in ipairs({"RegularLobby", "Lobby", "MainLobby"}) do
+            local candidate: Instance? = workspace:FindFirstChild(name)
+            if candidate and (
+                candidate:FindFirstChild("VotePad1")
+                or candidate:FindFirstChild("VotePads")
+                or candidate:FindFirstChild("VoteIcons")
+            ) then
+                cachedLobby = candidate
+                return candidate
+            end
+        end
+
+        local okChildren: boolean, children: any = pcall(function(): any
+            return workspace:GetChildren()
+        end)
+        if okChildren and type(children) == "table" then
+            for _, child: Instance in ipairs(children) do
+                if child:IsA("Model") or child:IsA("Folder") then
+                    if child:FindFirstChild("VotePad1")
+                        or child:FindFirstChild("VotePads")
+                        or child:FindFirstChild("VoteIcons") then
+                        cachedLobby = child
+                        return child
+                    end
+                end
+            end
+        end
+
+        cachedLobby = nil
+        return nil
+    end
+
+    -- Read the map name displayed on billboard slot i (1..3) from RegularLobby.
+    local function readSlotMapName(lobby: Instance?, slot: number): string?
+        if not lobby then
+            return nil
+        end
+        local padModel: Instance? = lobby:FindFirstChild("VotePad" .. tostring(slot))
+        if padModel then
+            local voteInfoGui: Instance? = padModel:FindFirstChild("VoteInfoGui")
+            local container: Instance? = voteInfoGui and voteInfoGui:FindFirstChild("Container")
+            local mapLabel: Instance? = container and container:FindFirstChild("MapName")
+            if mapLabel and mapLabel:IsA("TextLabel") then
+                local text: string = (mapLabel :: TextLabel).Text
+                if isValidMapTitle(text) then
+                    return trim(text)
+                end
+            end
+        end
+
+        local voteIcons: Instance? = lobby:FindFirstChild("VoteIcons")
+        local iconPart: Instance? = voteIcons and voteIcons:FindFirstChild("VotePad" .. tostring(slot))
+        if iconPart then
+            local mapInfo: Instance? = iconPart:FindFirstChild("MapInfo")
+            local surface: Instance? = mapInfo and mapInfo:FindFirstChild("Surface")
+            local frame: Instance? = surface and surface:FindFirstChildWhichIsA("Frame")
+            local mapLabel: Instance? = frame and frame:FindFirstChild("MapName")
+            if mapLabel and mapLabel:IsA("TextLabel") then
+                local text: string = (mapLabel :: TextLabel).Text
+                if isValidMapTitle(text) then
+                    return trim(text)
+                end
+            end
+            local mapObj: Instance? = iconPart:FindFirstChild("Map")
+            if mapObj and mapObj:IsA("ObjectValue") then
+                local val: Instance? = (mapObj :: ObjectValue).Value
+                if val and isValidMapTitle(val.Name) then
+                    return trim(val.Name)
+                end
+            end
+        end
+
+        return nil
+    end
+
+    -- Read the current vote count on slot i (1..3).
+    local function readSlotVoteCount(lobby: Instance?, slot: number): number?
+        if not lobby then
+            return nil
+        end
+        local voteIcons: Instance? = lobby:FindFirstChild("VoteIcons")
+        local iconPart: Instance? = voteIcons and voteIcons:FindFirstChild("VotePad" .. tostring(slot))
+        if iconPart then
+            local votesVal: Instance? = iconPart:FindFirstChild("Votes")
+            if votesVal and votesVal:IsA("IntValue") then
+                return (votesVal :: IntValue).Value
+            end
+        end
+        local padModel: Instance? = lobby:FindFirstChild("VotePad" .. tostring(slot))
+        if padModel then
+            local voteInfoGui: Instance? = padModel:FindFirstChild("VoteInfoGui")
+            local container: Instance? = voteInfoGui and voteInfoGui:FindFirstChild("Container")
+            local votesLabel: Instance? = container and container:FindFirstChild("Votes")
+            if votesLabel and votesLabel:IsA("TextLabel") then
+                local numStr: string? = string.match((votesLabel :: TextLabel).Text, "(%d+)")
+                if numStr then
+                    return tonumber(numStr)
+                end
+            end
+        end
+        return nil
+    end
+
+    -- Refresh the 3 map choices in-place from the lobby billboard so the
+    -- "Select Map" dropdown always displays the 3 maps on the board.
+    local function refreshMapChoices(force: boolean?): ()
+        local now: number = os.clock()
+        if not force and now - lastMapRefreshAt < MAP_REFRESH_INTERVAL then
+            return
+        end
+        lastMapRefreshAt = now
+
+        local lobby: Instance? = findLobbyModel()
+        if not lobby then
+            return
+        end
+
+        local changed: boolean = false
+        for slot: number = 1, 3 do
+            local title: string? = readSlotMapName(lobby, slot)
+            local fallback: string = "Map " .. tostring(slot)
+            local nextLabel: string = title or mapChoices[slot] or fallback
+            if mapChoices[slot] ~= nextLabel then
+                mapChoices[slot] = nextLabel
+                changed = true
+            end
+        end
+
+        -- If the user previously selected a specific map name that is present
+        -- in one of the 3 slots, track that slot; otherwise follow selectedSlot.
+        if isValidMapTitle(selectedMapName) then
+            local matchedSlot: number? = nil
+            local targetLower: string = string.lower(selectedMapName)
+            for slot: number = 1, 3 do
+                if string.lower(mapChoices[slot]) == targetLower then
+                    matchedSlot = slot
+                    break
+                end
+            end
+            if matchedSlot then
+                selectedSlot = matchedSlot
+            end
+        end
+
+        selectedSlot = math.clamp(selectedSlot, 1, 3)
+        selectedMapName = mapChoices[selectedSlot]
+
+        if changed and selectMapButton then
+            pcall(function(): ()
+                selectMapButton.Text = mapChoices[selectedSlot]
+            end)
+        end
+    end
+
+    -- Resolve the wooden pad detector parts for slot (1..3):
+    -- RegularLobby.VotePads.Detector{slot} and RegularLobby.VotePad{slot}.Pad
+    local function getSlotDetectorParts(lobby: Instance?, slot: number): {BasePart}
+        local parts: {BasePart} = {}
+        if not lobby then
+            return parts
+        end
+
+        local votePads: Instance? = lobby:FindFirstChild("VotePads")
+        if votePads then
+            local detector: Instance? = votePads:FindFirstChild("Detector" .. tostring(slot))
+            if detector and detector:IsA("BasePart") then
+                parts[#parts + 1] = detector :: BasePart
+            end
+        end
+
+        local padModel: Instance? = lobby:FindFirstChild("VotePad" .. tostring(slot))
+        if padModel then
+            local padPart: Instance? = padModel:FindFirstChild("Pad")
+            if padPart and padPart:IsA("BasePart") then
+                parts[#parts + 1] = padPart :: BasePart
+            end
+        end
+
+        return parts
+    end
+
+    local function rememberDetectorPart(part: BasePart): ()
+        if savedDetectorCFrames[part] then
+            return
+        end
+        local ok: boolean, cf: any = pcall(function(): any
+            return part.CFrame
+        end)
+        if ok and cf then
+            savedDetectorCFrames[part] = cf
+        end
+    end
+
+    local function restoreAllDetectorParts(): ()
+        for part, cf in pairs(savedDetectorCFrames) do
+            if part and part.Parent then
+                pcall(function(): ()
+                    part.CFrame = cf
+                end)
+            end
+        end
+        table.clear(savedDetectorCFrames)
+    end
+
+    -- Check whether the lobby voting billboards are currently enabled.
+    -- In MM2 (place, source.rbxlx), VotePad{1..3}.VoteInfoGui.Enabled,
+    -- VotePad{1..3}.MapInfoGui.Enabled, and VoteIcons.VotePad{1..3}.Voting.Value
+    -- are true ONLY during the voting intermission and turn false as soon as
+    -- voting ends.
+    local function areVotingBillboardsActive(lobby: Instance?): boolean
+        if not lobby then
+            return false
+        end
+
+        for slot: number = 1, 3 do
+            local padModel: Instance? = lobby:FindFirstChild("VotePad" .. tostring(slot))
+            if padModel then
+                local voteGui: Instance? = padModel:FindFirstChild("VoteInfoGui")
+                if voteGui and voteGui:IsA("SurfaceGui") and (voteGui :: SurfaceGui).Enabled == true then
+                    return true
+                end
+                local mapGui: Instance? = padModel:FindFirstChild("MapInfoGui")
+                if mapGui and mapGui:IsA("SurfaceGui") and (mapGui :: SurfaceGui).Enabled == true then
+                    return true
+                end
+            end
+
+            local voteIcons: Instance? = lobby:FindFirstChild("VoteIcons")
+            local iconPart: Instance? = voteIcons and voteIcons:FindFirstChild("VotePad" .. tostring(slot))
+            if iconPart then
+                local votingFlag: Instance? = iconPart:FindFirstChild("Voting")
+                if votingFlag and votingFlag:IsA("BoolValue") and (votingFlag :: BoolValue).Value == true then
+                    return true
+                end
+                local surface: Instance? = iconPart:FindFirstChild("Surface")
+                if surface and surface:IsA("SurfaceGui") and (surface :: SurfaceGui).Enabled == true then
+                    return true
+                end
+                local mapInfo: Instance? = iconPart:FindFirstChild("MapInfo")
+                local infoSurface: Instance? = mapInfo and mapInfo:FindFirstChild("Surface")
+                if infoSurface and infoSurface:IsA("SurfaceGui") and (infoSurface :: SurfaceGui).Enabled == true then
+                    return true
+                end
+            end
+        end
+
+        return false
+    end
+
+    -- Strict check: returns true ONLY while the lobby voting intermission is
+    -- actively open. Returns false the instant voting ends or a map/round starts.
+    local function isVotingIntermissionActive(): boolean
+        local lobby: Instance? = findLobbyModel()
+        local billboardsOn: boolean = areVotingBillboardsActive(lobby)
+
+        -- If the voting billboards just turned on for a new intermission, clear
+        -- any previous round lock.
+        if billboardsOn and not lastBillboardVotingState then
+            roundBlockingVote = false
+        end
+        lastBillboardVotingState = billboardsOn
+
+        if not billboardsOn then
+            return false
+        end
+        if roundBlockingVote then
+            return false
+        end
+
+        if type(core.isRoundLifecycleActive) == "function"
+            and core.isRoundLifecycleActive() == true then
+            return false
+        end
+
+        if type(core.findMM2Map) == "function"
+            and core.findMM2Map() ~= nil then
+            return false
+        end
+
+        local timerPart: Instance? = workspace:FindFirstChild("RoundTimerPart")
+        if timerPart then
+            local okTime: boolean, roundTime: any = pcall(function(): any
+                return timerPart:GetAttribute("Time")
+            end)
+            if okTime and type(roundTime) == "number" and roundTime > 0 then
+                return false
+            end
+        end
+
+        return true
+    end
+
+    local function resolveTargetSlot(lobby: Instance?): number
+        refreshMapChoices(false)
+        if lobby and isValidMapTitle(selectedMapName) then
+            local targetLower: string = string.lower(selectedMapName)
+            for slot: number = 1, 3 do
+                local nameOnBoard: string? = readSlotMapName(lobby, slot)
+                if nameOnBoard and string.lower(nameOnBoard) == targetLower then
+                    selectedSlot = slot
+                    return slot
+                end
+            end
+        end
+        return math.clamp(selectedSlot, 1, 3)
+    end
+
+    -- Touch the wooden vote pad detectors without moving the local character.
+    local function pulseVotePad(root: BasePart, detectors: {BasePart}): ()
+        local fireTouch: any = state.fireTouchInterest
+        local rootCF: CFrame? = root.CFrame
+        for _, part: BasePart in ipairs(detectors) do
+            rememberDetectorPart(part)
+            pcall(function(): ()
+                part.CanCollide = false
+                if rootCF then
+                    part.CFrame = rootCF
+                end
+            end)
+            if type(fireTouch) == "function" then
+                pcall(fireTouch, root, part, 0)
+                pcall(fireTouch, root, part, 1)
+            end
+        end
+    end
+
+    local function resetLocalCharacter(character: Model, humanoid: Humanoid): ()
+        pcall(function(): ()
+            humanoid:ChangeState(Enum.HumanoidStateType.Dead)
+        end)
+        pcall(function(): ()
+            humanoid.Health = 0
+        end)
+        pcall(function(): ()
+            if humanoid.Health > 0 then
+                character:BreakJoints()
+            end
+        end)
+    end
+
+    local lastStatus: string? = nil
+    local function setStatus(text: string?): ()
+        if text == lastStatus then
+            return
+        end
+        lastStatus = text
+        if AutoVoteFeature then
+            AutoVoteFeature:SetStatus(text)
+        end
+    end
+
+    local function connectGameplayRemotes(): ()
+        local okRs: boolean, rs: any = pcall(function(): any
+            return game:GetService("ReplicatedStorage")
+        end)
+        if not okRs or not rs then
+            return
+        end
+        local remotes: Instance? = rs:FindFirstChild("Remotes")
+        local gameplay: Instance? = remotes and remotes:FindFirstChild("Gameplay")
+        if not gameplay then
+            return
+        end
+
+        for _, stopName: string in ipairs({
+            "LoadingMap",
+            "RoleSelect",
+            "ShowRoleSelect",
+            "ShowRoleSelectNew",
+            "RoundStart",
+            "CoinsStarted",
+        }) do
+            local rem: Instance? = gameplay:FindFirstChild(stopName)
+            if rem and rem:IsA("RemoteEvent") then
+                local key: string = "MM2AutoVoteStop_" .. stopName
+                disconnectFeatureConnection(key)
+                featureConnections[key] = (rem :: RemoteEvent).OnClientEvent:Connect(function(): ()
+                    roundBlockingVote = true
+                    restoreAllDetectorParts()
+                end)
+            end
+        end
+
+        for _, endName: string in ipairs({
+            "RoundEndFade",
+            "VictoryScreen",
+            "GameOver",
+        }) do
+            local rem: Instance? = gameplay:FindFirstChild(endName)
+            if rem and rem:IsA("RemoteEvent") then
+                local key: string = "MM2AutoVoteEnd_" .. endName
+                disconnectFeatureConnection(key)
+                featureConnections[key] = (rem :: RemoteEvent).OnClientEvent:Connect(function(): ()
+                    roundBlockingVote = false
+                    refreshMapChoices(true)
+                end)
+            end
+        end
+    end
+
+    local function disconnectAllAutoVoteConnections(): ()
+        disconnectFeatureConnection("MM2AutoVote")
+        for key in pairs(featureConnections) do
+            if string.sub(key, 1, 11) == "MM2AutoVote" then
+                disconnectFeatureConnection(key)
+            end
+        end
+    end
+
+    local function toggleAutoVote(enabled: boolean): ()
+        disconnectAllAutoVoteConnections()
+        restoreAllDetectorParts()
+
+        if not enabled then
+            setStatus(nil)
+            return
+        end
+
+        refreshMapChoices(true)
+        connectGameplayRemotes()
+
+        local lastTickAt: number = -math.huge
+        local currentChar: Model? = nil
+        local firstTouchAt: number = 0
+        local voteCountBeforeTouch: number? = nil
+        local resetSentForChar: boolean = false
+
+        local function autoVoteTick(): ()
+            local now: number = os.clock()
+            if now - lastTickAt < TICK_INTERVAL then
+                return
+            end
+            lastTickAt = now
+
+            refreshMapChoices(false)
+
+            -- Stop immediately if the voting intermission is not active or has ended!
+            if not isVotingIntermissionActive() then
+                restoreAllDetectorParts()
+                firstTouchAt = 0
+                resetSentForChar = false
+                setStatus("Waiting for vote · " .. tostring(mapChoices[selectedSlot] or "Map 1"))
+                return
+            end
+
+            local lobby: Instance? = findLobbyModel()
+            local slot: number = resolveTargetSlot(lobby)
+            local targetMapLabel: string = mapChoices[slot] or ("Map " .. tostring(slot))
+            local detectors: {BasePart} = getSlotDetectorParts(lobby, slot)
+            if #detectors == 0 then
+                setStatus("No vote pad")
+                return
+            end
+
+            local character: Model? = LocalPlayer and LocalPlayer.Character
+            if not character then
+                restoreAllDetectorParts()
+                return
+            end
+            local root: BasePart? = character:FindFirstChild("HumanoidRootPart") :: BasePart?
+            local humanoid: Humanoid? = character:FindFirstChildOfClass("Humanoid") :: Humanoid?
+            if not root or not humanoid or humanoid.Health <= 0 then
+                restoreAllDetectorParts()
+                return
+            end
+
+            if character ~= currentChar then
+                currentChar = character
+                firstTouchAt = 0
+                voteCountBeforeTouch = readSlotVoteCount(lobby, slot)
+                resetSentForChar = false
+            end
+
+            -- Cast vote for this character life via firetouchinterest + detector overlap
+            pulseVotePad(root, detectors)
+            if firstTouchAt == 0 then
+                firstTouchAt = now
+            end
+
+            local currentVotes: number? = readSlotVoteCount(lobby, slot)
+            local voteIncremented: boolean = (
+                currentVotes ~= nil
+                and voteCountBeforeTouch ~= nil
+                and currentVotes > voteCountBeforeTouch
+            )
+
+            setStatus(
+                "Voting " .. targetMapLabel
+                .. (currentVotes ~= nil and (" (" .. tostring(currentVotes) .. ")") or "")
+            )
+
+            -- Once this character life has cast its vote (either vote count incremented
+            -- or VOTE_HOLD_Before_RESET elapsed), re-verify voting intermission is STILL
+            -- active before resetting the character to vote again.
+            if not resetSentForChar and (voteIncremented or (now - firstTouchAt >= VOTE_HOLD_Before_RESET)) then
+                restoreAllDetectorParts()
+                if isVotingIntermissionActive() then
+                    resetSentForChar = true
+                    resetLocalCharacter(character, humanoid)
+                end
+            end
+        end
+
+        featureConnections.MM2AutoVote = TaskManager:Connect(autoVoteTick)
+        autoVoteTick()
+    end
+
+    -- Populate initial map names if already in the lobby
+    pcall(refreshMapChoices, true)
+
+    AutoVoteFeature = createUniversalFeature(
+        "Auto Vote",
+        "Detects the 3 maps on the lobby voting billboard, votes for your selected map via firetouchinterest without teleporting, and resets repeatedly until voting intermission ends.",
+        7,
+        toggleAutoVote,
+        {
+            categoryName = "Utilities",
+            parent = MM2Scroll,
+            registry = mm2Features,
+        }
+    )
+    state.mm2AutoVoteFeature = AutoVoteFeature
+
+    selectMapButton = addCycleOption(
+        AutoVoteFeature,
+        "Select Map",
+        mapChoices,
+        1,
+        function(value: string): ()
+            refreshMapChoices(false)
+            selectedMapName = tostring(value)
+            for slot: number = 1, 3 do
+                if mapChoices[slot] == selectedMapName then
+                    selectedSlot = slot
+                    break
+                end
+            end
+            if AutoVoteFeature and AutoVoteFeature.enabled then
+                setStatus("Voting " .. tostring(mapChoices[selectedSlot] or selectedMapName))
+            end
+        end,
+        "Select which of the 3 lobby billboard maps to vote for."
+    )
+
+    -- Refresh the 3 billboard map names whenever the user clicks "Select Map",
+    -- even before Auto Vote is toggled ON.
+    if selectMapButton and selectMapButton.MouseButton1Click then
+        pcall(function(): ()
+            selectMapButton.MouseButton1Click:Connect(function(): ()
+                refreshMapChoices(true)
+            end)
+        end)
+    end
+
+    activeCleanup = function(): ()
+        toggleAutoVote(false)
+    end
+    Module.Events = featureConnections
+    Module.Initialized = true
+    return Module
+end
+
+function Module.destroy(): ()
+    if not Module.Initialized then
+        return
+    end
+    Module.Initialized = false
+    pcall(activeCleanup)
+    activeCleanup = function(): () end
+    Module.Events = {}
+    Module.Runtime = nil
+end
+
+return Module
+
+]],
         ["src/games/MM2/Other/CalibrationTrails.lua"] = [[
 local Module = {Name = "MM2 Calibration Trails", Initialized = false}
 local activeCleanup = function() end
@@ -6066,242 +6703,118 @@ function Module.init(runtime: any): any
     assert(type(core) == "table", "MM2 Coins Aura requires the MM2 core module")
     Module.Runtime = runtime
 
-    local settings = {
-        range = 15,
-    }
+    -- Maximum coin pickup distance accepted by the MM2 server (~15 studs).
+    local MAX_SERVER_REACH: number = 15
+    local MAX_SERVER_REACH_SQ: number = MAX_SERVER_REACH * MAX_SERVER_REACH
+    local TICK_INTERVAL: number = 0.08
+    local CACHE_INTERVAL: number = 0.5
 
-    local savedServerStates: {[BasePart]: {cframe: CFrame, size: Vector3, canCollide: boolean}} = {}
+    local savedCFrames: {[BasePart]: CFrame} = {}
+    local savedPositions: {[BasePart]: Vector3} = {}
+    local activeCoin: BasePart? = nil
 
-    local function readAttribute(instance: Instance?, attrName: string): any
-        if not instance then
-            return nil
+    local function rememberCoin(serverPart: BasePart): Vector3?
+        local pos: Vector3? = savedPositions[serverPart]
+        if pos then
+            return pos
         end
-        local ok: boolean, value: any = pcall(function(): any
-            return instance:GetAttribute(attrName)
+        local ok: boolean, cf: any = pcall(function(): any
+            return serverPart.CFrame
         end)
-        if ok then
-            return value
+        if ok and cf then
+            savedCFrames[serverPart] = cf
+            local p: Vector3 = cf.Position
+            savedPositions[serverPart] = p
+            return p
         end
         return nil
     end
 
-    -- Resolve the Coin_Server BasePart that holds the server TouchTransmitter.
-    -- MM2 spawns pickups as: CoinContainer -> Coin_Server (Part) -> CoinVisual (Part) -> MainCoin,
-    -- or sibling Coin_Server / ServerCoinPart inside a coin model.
-    local function serverPartOf(part: Instance): BasePart?
-        if part:IsA("BasePart") and (part.Name == "Coin_Server" or part.Name == "ServerCoinPart") then
-            return part :: BasePart
-        end
-        local current: Instance? = part.Parent
-        local depth: number = 0
-        while current and current ~= workspace and depth < 4 do
-            if current:IsA("BasePart") and (current.Name == "Coin_Server" or current.Name == "ServerCoinPart") then
-                return current :: BasePart
-            end
-            if current:IsA("Model") or current:IsA("Folder") then
-                local sibling: Instance? = current:FindFirstChild("Coin_Server")
-                    or current:FindFirstChild("ServerCoinPart")
-                if sibling and sibling:IsA("BasePart") then
-                    return sibling :: BasePart
-                end
-            end
-            current = current.Parent
-            depth += 1
-        end
-        if part:IsA("Model") then
-            local childServer: Instance? = part:FindFirstChild("Coin_Server", true)
-                or part:FindFirstChild("ServerCoinPart", true)
-            if childServer and childServer:IsA("BasePart") then
-                return childServer :: BasePart
-            end
-            local anyPart: Instance? = part:FindFirstChildWhichIsA("BasePart", true)
-            if anyPart then
-                return anyPart :: BasePart
-            end
-        end
-        if part:IsA("BasePart") then
-            local childServer: Instance? = part:FindFirstChild("Coin_Server")
-                or part:FindFirstChild("ServerCoinPart")
-            if childServer and childServer:IsA("BasePart") then
-                return childServer :: BasePart
-            end
-            return part :: BasePart
-        end
-        return nil
-    end
-
-    local function visualPartOf(serverPart: BasePart): BasePart?
-        local visual: Instance? = serverPart:FindFirstChild("CoinVisual")
-        if visual and visual:IsA("BasePart") then
-            return visual :: BasePart
-        end
-        local parent: Instance? = serverPart.Parent
-        if parent and parent ~= workspace then
-            local siblingVisual: Instance? = parent:FindFirstChild("CoinVisual")
-            if siblingVisual and siblingVisual:IsA("BasePart") then
-                return siblingVisual :: BasePart
-            end
-        end
-        return nil
-    end
-
-    local function rememberServerState(serverPart: BasePart): {cframe: CFrame, size: Vector3, canCollide: boolean}?
-        local existing = savedServerStates[serverPart]
-        if existing then
-            return existing
-        end
-        local ok: boolean, snap: any = pcall(function(): any
-            return {
-                cframe = serverPart.CFrame,
-                size = serverPart.Size,
-                canCollide = serverPart.CanCollide,
-            }
-        end)
-        if ok and type(snap) == "table" then
-            savedServerStates[serverPart] = snap
-            return snap
-        end
-        return nil
-    end
-
-    local function restoreServerPart(serverPart: BasePart): ()
-        local snap = savedServerStates[serverPart]
-        if not snap then
+    local function restoreCoin(serverPart: BasePart?): ()
+        if not serverPart then
             return
         end
-        if serverPart and serverPart.Parent then
+        local cf: CFrame? = savedCFrames[serverPart]
+        if cf and serverPart.Parent then
             pcall(function(): ()
-                serverPart.CFrame = snap.cframe
-                serverPart.Size = snap.size
-                serverPart.CanCollide = snap.canCollide
+                serverPart.CFrame = cf
             end)
         end
-        savedServerStates[serverPart] = nil
-    end
-
-    local function restoreAllServerParts(): ()
-        for serverPart in pairs(savedServerStates) do
-            restoreServerPart(serverPart)
+        if activeCoin == serverPart then
+            activeCoin = nil
         end
-        table.clear(savedServerStates)
     end
 
-    -- True world position of the coin (from its saved spawn CFrame or CoinVisual),
-    -- never polluted if Coin_Server was pulled to root.CFrame.
-    local function trueCoinPosition(serverPart: BasePart): Vector3?
-        local snap = savedServerStates[serverPart]
-        if snap and snap.cframe then
-            local okSnap: boolean, pos: any = pcall(function(): any
-                return snap.cframe.Position
-            end)
-            if okSnap and typeof(pos) == "Vector3" then
-                return pos :: Vector3
+    local function restoreAllCoins(): ()
+        if activeCoin then
+            restoreCoin(activeCoin)
+        end
+        for serverPart, cf in pairs(savedCFrames) do
+            if serverPart and serverPart.Parent then
+                pcall(function(): ()
+                    serverPart.CFrame = cf
+                end)
             end
         end
-        local visual: BasePart? = visualPartOf(serverPart)
-        if visual and visual ~= serverPart then
-            local okVis: boolean, pos: any = pcall(function(): any
-                return visual.Position
-            end)
-            if okVis and typeof(pos) == "Vector3" then
-                return pos :: Vector3
-            end
-        end
-        local okPos: boolean, pos: any = pcall(function(): any
-            return serverPart.Position
-        end)
-        if okPos and typeof(pos) == "Vector3" then
-            return pos :: Vector3
-        end
-        return nil
+        table.clear(savedCFrames)
+        table.clear(savedPositions)
+        activeCoin = nil
     end
 
-    -- Check both Coin_Server and CoinVisual so a collected or deleted pickup
-    -- is skipped immediately before the container removes the instance.
-    local function stillCollectable(part: Instance): boolean
-        if not part or not part.Parent then
+    local function isCoinCollectable(serverPart: BasePart): boolean
+        if not serverPart or not serverPart.Parent then
             return false
         end
-        local server: BasePart? = serverPartOf(part)
-        if not server or not server.Parent then
+        if serverPart:GetAttribute("Collected") == true
+            or serverPart:GetAttribute("Delete") == true then
             return false
         end
-        if readAttribute(server, "Collected") == true
-            or readAttribute(server, "Delete") == true then
-            return false
-        end
-        local visual: BasePart? = visualPartOf(server)
+        local visual: Instance? = serverPart:FindFirstChild("CoinVisual")
         if visual and (
-            readAttribute(visual, "Collected") == true
-            or readAttribute(visual, "Delete") == true
-        ) then
-            return false
-        end
-        if part ~= server and (
-            readAttribute(part, "Collected") == true
-            or readAttribute(part, "Delete") == true
+            visual:GetAttribute("Collected") == true
+            or visual:GetAttribute("Delete") == true
         ) then
             return false
         end
         return true
     end
 
-    local function characterRoot(): BasePart?
-        local character: Model? = LocalPlayer and LocalPlayer.Character
-        if not character then
-            return nil
+    -- Detach CoinVisual's WeldConstraint once before pulling Coin_Server so
+    -- moving Coin_Server never triggers rigid-body weld recalculation or
+    -- fights CoinVisualizer's PreSimulation spin.
+    local function detachVisualWeld(serverPart: BasePart): ()
+        local visual: Instance? = serverPart:FindFirstChild("CoinVisual")
+        if not visual or not visual:IsA("BasePart") then
+            return
         end
-        local humanoid: Humanoid? = character:FindFirstChildOfClass("Humanoid") :: Humanoid?
-        if humanoid and humanoid.Health <= 0 then
-            return nil
+        local vPart: BasePart = visual :: BasePart
+        vPart.Anchored = true
+        local weld: Instance? = vPart:FindFirstChildOfClass("WeldConstraint")
+        if weld and weld:IsA("WeldConstraint") then
+            (weld :: WeldConstraint).Enabled = false
         end
-        return character:FindFirstChild("HumanoidRootPart") :: BasePart?
     end
 
-    -- Touch the coin using both physical overlap (pulling invisible Coin_Server
-    -- to root.CFrame while keeping CoinVisual fixed) and firetouchinterest.
-    -- This ensures executors where firetouchinterest requires bounding-box
-    -- intersection still trigger the server's TouchTransmitter immediately.
-    local function pulseCoinTouch(root: BasePart, serverPart: BasePart): boolean
-        rememberServerState(serverPart)
-        local visual: BasePart? = visualPartOf(serverPart)
-        local savedVisualCFrame: CFrame? = nil
-        if visual and visual ~= serverPart then
-            pcall(function(): ()
-                savedVisualCFrame = visual.CFrame
-            end)
+    local function pulseCoinTouch(root: BasePart, serverPart: BasePart): ()
+        rememberCoin(serverPart)
+        detachVisualWeld(serverPart)
+        serverPart.CanCollide = false
+        local rootCF: CFrame? = root.CFrame
+        if rootCF then
+            serverPart.CFrame = rootCF
         end
-
-        pcall(function(): ()
-            serverPart.CanCollide = false
-            if root.CFrame then
-                serverPart.CFrame = root.CFrame
-            end
-        end)
-
-        if visual and savedVisualCFrame then
-            pcall(function(): ()
-                visual.CFrame = savedVisualCFrame
-            end)
-        end
-
         local fireTouch: any = state.fireTouchInterest
         if type(fireTouch) == "function" then
             pcall(fireTouch, root, serverPart, 0)
             pcall(fireTouch, root, serverPart, 1)
-            if visual and visual ~= serverPart then
-                pcall(fireTouch, root, visual, 0)
-                pcall(fireTouch, root, visual, 1)
-            end
         end
-        return true
     end
 
     local CoinsAuraFeature: any = nil
 
     local function toggleCoinsAura(enabled: boolean): ()
         disconnectFeatureConnection("MM2CoinsAura")
-        restoreAllServerParts()
+        restoreAllCoins()
 
         if not enabled then
             if CoinsAuraFeature then
@@ -6310,145 +6823,131 @@ function Module.init(runtime: any): any
             return
         end
 
-        local cachedServerCoins: {BasePart} = {}
-        local lastCacheRefresh: number = -math.huge
-        local lastStatus: string? = nil
+        local cachedCoins: {BasePart} = {}
+        local lastCacheAt: number = -math.huge
+        local lastTickAt: number = -math.huge
 
-        local function setStatus(text: string): ()
-            if text == lastStatus then
-                return
-            end
-            lastStatus = text
-            if CoinsAuraFeature then
-                CoinsAuraFeature:SetStatus(text)
-            end
+        if CoinsAuraFeature then
+            CoinsAuraFeature:SetStatus("Max reach")
         end
 
-        local function refreshCache(): ()
-            local now: number = os.clock()
-            if now - lastCacheRefresh < 0.15 then
+        local function refreshCoins(now: number): ()
+            if now - lastCacheAt < CACHE_INTERVAL then
                 return
             end
-            lastCacheRefresh = now
+            lastCacheAt = now
 
-            local seen: {[BasePart]: boolean} = {}
             local list: {BasePart} = {}
+            local seen: {[BasePart]: boolean} = {}
 
-            local function addCandidate(candidate: Instance?): ()
-                if not candidate or not stillCollectable(candidate) then
+            local function addCoin(candidate: Instance?): ()
+                if not candidate then
                     return
                 end
-                local serverPart: BasePart? = serverPartOf(candidate)
-                if serverPart and not seen[serverPart] then
+                local serverPart: BasePart? = nil
+                if candidate:IsA("BasePart") then
+                    if candidate.Name == "Coin_Server" or candidate.Name == "ServerCoinPart" then
+                        serverPart = candidate :: BasePart
+                    elseif candidate.Parent and candidate.Parent:IsA("BasePart")
+                        and (candidate.Parent.Name == "Coin_Server" or candidate.Parent.Name == "ServerCoinPart") then
+                        serverPart = candidate.Parent :: BasePart
+                    else
+                        serverPart = candidate :: BasePart
+                    end
+                elseif candidate:IsA("Model") then
+                    local child: Instance? = candidate:FindFirstChild("Coin_Server")
+                        or candidate:FindFirstChildWhichIsA("BasePart")
+                    if child and child:IsA("BasePart") then
+                        serverPart = child :: BasePart
+                    end
+                end
+                if serverPart and not seen[serverPart] and isCoinCollectable(serverPart) then
                     seen[serverPart] = true
-                    rememberServerState(serverPart)
-                    table.insert(list, serverPart)
+                    rememberCoin(serverPart)
+                    list[#list + 1] = serverPart
                 end
             end
 
-            -- 1. Direct map CoinContainer / CoinAreas / Coins scan.
             if type(core.findMM2Map) == "function" then
-                local okMap: boolean, map: any = pcall(core.findMM2Map)
-                if okMap and map then
-                    for _, containerName: string in ipairs({"CoinContainer", "CoinAreas", "Coins"}) do
-                        local okContainer: boolean, container: any = pcall(function(): any
-                            return map:FindFirstChild(containerName)
-                        end)
-                        if okContainer and container then
-                            local okChildren: boolean, children: any = pcall(function(): any
-                                return container:GetChildren()
-                            end)
-                            if okChildren and type(children) == "table" then
-                                for _, child: Instance in ipairs(children) do
-                                    addCandidate(child)
-                                end
-                            end
+                local map: Instance? = core.findMM2Map()
+                if map then
+                    local container: Instance? = map:FindFirstChild("CoinContainer")
+                        or map:FindFirstChild("CoinAreas")
+                        or map:FindFirstChild("Coins")
+                    if container then
+                        for _, child: Instance in ipairs(container:GetChildren()) do
+                            addCoin(child)
                         end
                     end
                 end
             end
 
-            -- 2. Shared Coin ESP pickup detector (3 signatures: CoinVisual tag,
-            --    CoinID attribute, Coin_Server/CoinVisual structure).
-            if type(state.mm2CoinPickups) == "function" then
+            if #list == 0 and type(state.mm2CoinPickups) == "function" then
                 local okPickups: boolean, pickups: any = pcall(state.mm2CoinPickups)
                 if okPickups and type(pickups) == "table" then
                     for _, pickup: Instance in ipairs(pickups) do
-                        addCandidate(pickup)
+                        addCoin(pickup)
                     end
                 end
             end
 
-            -- 3. Direct CollectionService CoinVisual / ServerCoinPart tag lists.
-            local cs: any = game:GetService("CollectionService")
-            for _, tagName: string in ipairs({"CoinVisual", "ServerCoinPart"}) do
-                local okTagged: boolean, tagged: any = pcall(function(): any
-                    return cs:GetTagged(tagName)
-                end)
-                if okTagged and type(tagged) == "table" then
-                    for _, obj: Instance in ipairs(tagged) do
-                        addCandidate(obj)
-                    end
-                end
-            end
-
-            cachedServerCoins = list
+            cachedCoins = list
         end
 
         local function auraTick(): ()
-            local root: BasePart? = characterRoot()
+            local now: number = os.clock()
+            if now - lastTickAt < TICK_INTERVAL then
+                return
+            end
+            lastTickAt = now
+
+            local character: Model? = LocalPlayer and LocalPlayer.Character
+            local root: BasePart? = character and character:FindFirstChild("HumanoidRootPart") :: BasePart?
             if not root then
-                restoreAllServerParts()
+                if activeCoin then
+                    restoreCoin(activeCoin)
+                end
+                return
+            end
+            local humanoid: Humanoid? = character:FindFirstChildOfClass("Humanoid") :: Humanoid?
+            if humanoid and humanoid.Health <= 0 then
+                if activeCoin then
+                    restoreCoin(activeCoin)
+                end
                 return
             end
 
-            refreshCache()
+            refreshCoins(now)
 
-            local range: number = math.clamp(tonumber(settings.range) or 15, 4, 100)
-            local rangeSq: number = range * range
             local rootPos: Vector3 = root.Position
+            local bestCoin: BasePart? = nil
+            local bestDistSq: number = MAX_SERVER_REACH_SQ
 
-            -- Collect only coins within Range and sort nearest-first so distant
-            -- coins never trigger server touch debounce before close coins.
-            local candidates: {{part: BasePart, distSq: number}} = {}
-            local inRangeSet: {[BasePart]: boolean} = {}
-
-            for i: number = 1, #cachedServerCoins do
-                local serverCoin: BasePart = cachedServerCoins[i]
-                if stillCollectable(serverCoin) then
-                    local coinPos: Vector3? = trueCoinPosition(serverCoin)
+            for i: number = 1, #cachedCoins do
+                local coin: BasePart = cachedCoins[i]
+                if isCoinCollectable(coin) then
+                    local coinPos: Vector3? = savedPositions[coin] or rememberCoin(coin)
                     if coinPos then
                         local diff: Vector3 = coinPos - rootPos
                         local distSq: number = diff.X * diff.X + diff.Y * diff.Y + diff.Z * diff.Z
-                        if distSq <= rangeSq then
-                            table.insert(candidates, {part = serverCoin, distSq = distSq})
+                        if distSq <= bestDistSq then
+                            bestDistSq = distSq
+                            bestCoin = coin
                         end
                     end
-                else
-                    restoreServerPart(serverCoin)
+                elseif coin == activeCoin then
+                    restoreCoin(coin)
                 end
             end
 
-            table.sort(candidates, function(a, b): boolean
-                return a.distSq < b.distSq
-            end)
-
-            -- Touch the nearest coins in range (up to 3 closest per frame)
-            local limit: number = math.min(#candidates, 3)
-            for i: number = 1, limit do
-                local coin: BasePart = candidates[i].part
-                inRangeSet[coin] = true
-                pulseCoinTouch(root, coin)
+            if activeCoin and activeCoin ~= bestCoin then
+                restoreCoin(activeCoin)
             end
 
-            -- Restore any coin that moved out of active touch set
-            for serverPart in pairs(savedServerStates) do
-                if not inRangeSet[serverPart] or not stillCollectable(serverPart) then
-                    restoreServerPart(serverPart)
-                end
+            if bestCoin then
+                activeCoin = bestCoin
+                pcall(pulseCoinTouch, root, bestCoin)
             end
-
-            setStatus(tostring(math.round(range)) .. " studs")
         end
 
         featureConnections.MM2CoinsAura = TaskManager:Connect(auraTick)
@@ -6457,7 +6956,7 @@ function Module.init(runtime: any): any
 
     CoinsAuraFeature = createUniversalFeature(
         "Coins Aura",
-        "Collects nearby coins within Range by pulling the invisible Coin_Server trigger to your root and pulsing firetouchinterest (nearest coin first).",
+        "Automatically collects nearby coins at the maximum reach allowed by the MM2 server with minimal CPU usage.",
         7,
         toggleCoinsAura,
         {
@@ -6467,22 +6966,6 @@ function Module.init(runtime: any): any
         }
     )
     state.mm2CoinsAuraFeature = CoinsAuraFeature
-
-    addNumberOption(
-        CoinsAuraFeature,
-        "Range",
-        15,
-        4,
-        100,
-        function(value: number): ()
-            settings.range = math.clamp(tonumber(value) or 15, 4, 100)
-            if CoinsAuraFeature.enabled then
-                CoinsAuraFeature:SetStatus(tostring(math.round(settings.range)) .. " studs")
-            end
-        end,
-        "Effective distance in studs around your character to collect coins (nearest coin first; MM2 server caps coin reach around 10-15 studs).",
-        1
-    )
 
     activeCleanup = function(): ()
         toggleCoinsAura(false)
@@ -6528,29 +7011,18 @@ function Module.init(runtime: any): any
         studs = 25,
     }
 
+    local TICK_INTERVAL: number = 0.08
+    local SCAN_INTERVAL: number = 0.4
+    local ESP_INTERVAL: number = 0.5
+
     local gunAuraActive = false
     local gunHitboxes: {[Instance]: BasePart} = {}
     local espParts: {[Player]: BasePart} = {}
     local savedGunStates: {[BasePart]: {cframe: CFrame, canCollide: boolean}} = {}
     local trackedDrops: {[Instance]: boolean} = {}
-    local lastDeepScanAt: number = -math.huge
-
-    local function isInsideCharacterOrBackpack(instance: Instance): boolean
-        if instance:FindFirstAncestorOfClass("Backpack") then
-            return true
-        end
-        local current: Instance? = instance.Parent
-        while current and current ~= workspace do
-            local okHum: boolean, hum: any = pcall(function(): any
-                return current:FindFirstChildOfClass("Humanoid")
-            end)
-            if okHum and hum then
-                return true
-            end
-            current = current.Parent
-        end
-        return false
-    end
+    local lastScanAt: number = -math.huge
+    local lastTickAt: number = -math.huge
+    local lastEspAt: number = -math.huge
 
     local function resolveGunTouchPart(gun: Instance?): BasePart?
         if not gun then
@@ -6559,31 +7031,13 @@ function Module.init(runtime: any): any
         if gun:IsA("BasePart") then
             return gun :: BasePart
         end
-        local handle: Instance? = gun:FindFirstChild("Handle", true)
-            or gun:FindFirstChild("GunDrop", true)
-            or gun:FindFirstChildWhichIsA("BasePart", true)
+        local handle: Instance? = gun:FindFirstChild("Handle")
+            or gun:FindFirstChild("GunDrop")
+            or gun:FindFirstChildWhichIsA("BasePart")
         if handle and handle:IsA("BasePart") then
             return handle :: BasePart
         end
         return nil
-    end
-
-    local function collectGunBaseParts(gun: Instance): {BasePart}
-        local parts: {BasePart} = {}
-        if gun:IsA("BasePart") then
-            table.insert(parts, gun :: BasePart)
-        end
-        local okDesc: boolean, descendants: any = pcall(function(): any
-            return gun:GetDescendants()
-        end)
-        if okDesc and type(descendants) == "table" then
-            for _, obj: Instance in ipairs(descendants) do
-                if obj:IsA("BasePart") then
-                    table.insert(parts, obj :: BasePart)
-                end
-            end
-        end
-        return parts
     end
 
     local function rememberGunPartState(part: BasePart): {cframe: CFrame, canCollide: boolean}?
@@ -6628,12 +7082,7 @@ function Module.init(runtime: any): any
     local function trueGunPartPosition(part: BasePart): Vector3?
         local snap = savedGunStates[part]
         if snap and snap.cframe then
-            local okSnap: boolean, pos: any = pcall(function(): any
-                return snap.cframe.Position
-            end)
-            if okSnap and typeof(pos) == "Vector3" then
-                return pos :: Vector3
-            end
+            return snap.cframe.Position
         end
         local okPos: boolean, pos: any = pcall(function(): any
             return part.Position
@@ -6644,9 +7093,6 @@ function Module.init(runtime: any): any
         return nil
     end
 
-    -- Check if the local player is eligible to pick up the dropped gun.
-    -- Intentionally does NOT gate on findMM2Map() or isRoundLifecycleActive(),
-    -- because if a GunDrop physically exists in workspace, a round is active.
     local function canGrabGun(): boolean
         local character = LocalPlayer and LocalPlayer.Character
         if not character then
@@ -6675,32 +7121,16 @@ function Module.init(runtime: any): any
         return true
     end
 
-    local function isCandidateGunDrop(obj: Instance?): boolean
+    local function isValidGunDrop(obj: Instance?): boolean
         if not obj or not obj.Parent then
-            return false
-        end
-        if obj.Name == "WurstGunAuraHitbox" or string.sub(obj.Name, 1, 18) == "WurstDeadSheriffESP" then
-            return false
-        end
-        local okDesc: boolean, inWs: boolean = pcall(function(): boolean
-            return obj:IsDescendantOf(workspace)
-        end)
-        if okDesc and not inWs then
-            return false
-        end
-        if isInsideCharacterOrBackpack(obj) then
             return false
         end
         if obj.Name == "GunDrop" and (obj:IsA("BasePart") or obj:IsA("Model")) then
             return resolveGunTouchPart(obj) ~= nil
         end
-        if obj:IsA("Tool") and obj.Name == "Gun" then
-            return resolveGunTouchPart(obj) ~= nil
-        end
         return false
     end
 
-    -- Create an upright transparent white square around a dropped gun
     local function createGunHitbox(gun: Instance): BasePart?
         local handle = resolveGunTouchPart(gun)
         if not handle then
@@ -6728,96 +7158,41 @@ function Module.init(runtime: any): any
         return part
     end
 
-    -- Find all dropped guns in the map without relying solely on findMM2Map()
-    local function findDroppedGuns(): {Instance}
-        local guns: {Instance} = {}
-        local seen: {[Instance]: boolean} = {}
+    -- Lightweight GunDrop discovery: uses DescendantAdded events + top-level
+    -- workspace children every 0.4s (never recursive GetDescendants).
+    local function refreshTrackedDrops(now: number): ()
+        if now - lastScanAt < SCAN_INTERVAL then
+            return
+        end
+        lastScanAt = now
 
-        local function addGun(candidate: Instance?): ()
-            if not candidate or seen[candidate] or not isCandidateGunDrop(candidate) then
-                return
-            end
-            -- If a child part inside a GunDrop Model was passed, normalize to the GunDrop container
-            local parent = candidate.Parent
-            if parent and parent.Name == "GunDrop" and (parent:IsA("Model") or parent:IsA("BasePart")) then
-                candidate = parent
-                if seen[candidate] then
-                    return
-                end
-            end
-            local touchPart = resolveGunTouchPart(candidate)
-            if touchPart then
-                rememberGunPartState(touchPart)
-                seen[candidate] = true
-                trackedDrops[candidate] = true
-                table.insert(guns, candidate)
-            end
+        local wsDrop: Instance? = workspace:FindFirstChild("GunDrop")
+        if wsDrop and isValidGunDrop(wsDrop) then
+            trackedDrops[wsDrop] = true
         end
 
-        -- 1. Previously tracked drops from DescendantAdded or prior scans
-        for tracked in pairs(trackedDrops) do
-            if isCandidateGunDrop(tracked) then
-                addGun(tracked)
-            else
-                trackedDrops[tracked] = nil
-            end
-        end
-
-        -- 2. Core findDroppedGun
-        if type(core.findDroppedGun) == "function" then
-            local ok: boolean, drop: any = pcall(core.findDroppedGun)
-            if ok and drop then
-                addGun(drop)
-            end
-        end
-
-        -- 3. Direct workspace GunDrop + top-level Model/Folder children
-        local wsDrop = workspace:FindFirstChild("GunDrop")
-        if wsDrop then
-            addGun(wsDrop)
-        end
-        local okChildren: boolean, wsChildren: any = pcall(function(): any
+        local okChildren: boolean, children: any = pcall(function(): any
             return workspace:GetChildren()
         end)
-        if okChildren and type(wsChildren) == "table" then
-            for _, child: Instance in ipairs(wsChildren) do
-                if child:IsA("Model") or child:IsA("Folder") then
-                    local gd = child:FindFirstChild("GunDrop")
-                    if gd then
-                        addGun(gd)
+        if okChildren and type(children) == "table" then
+            for _, child: Instance in ipairs(children) do
+                if child.Name == "GunDrop" and isValidGunDrop(child) then
+                    trackedDrops[child] = true
+                elseif child:IsA("Model") or child:IsA("Folder") then
+                    local gd: Instance? = child:FindFirstChild("GunDrop")
+                    if gd and isValidGunDrop(gd) then
+                        trackedDrops[gd] = true
                     end
-                elseif isCandidateGunDrop(child) then
-                    addGun(child)
                 end
             end
         end
 
-        -- 4. CollectionService Weapon_Gun / GunDrop tags
-        local cs: any = game:GetService("CollectionService")
-        for _, tagName: string in ipairs({"Weapon_Gun", "GunDrop"}) do
-            local okTagged: boolean, tagged: any = pcall(function(): any
-                return cs:GetTagged(tagName)
-            end)
-            if okTagged and type(tagged) == "table" then
-                for _, obj: Instance in ipairs(tagged) do
-                    addGun(obj)
-                end
+        if type(core.findDroppedGun) == "function" then
+            local okCore: boolean, drop: any = pcall(core.findDroppedGun)
+            if okCore and drop and isValidGunDrop(drop) then
+                trackedDrops[drop] = true
             end
         end
-
-        -- 5. Throttled recursive workspace:FindFirstChild("GunDrop", true)
-        local now: number = os.clock()
-        if #guns == 0 and now - lastDeepScanAt >= 0.35 then
-            lastDeepScanAt = now
-            local okDeep: boolean, deepDrop: any = pcall(function(): any
-                return workspace:FindFirstChild("GunDrop", true)
-            end)
-            if okDeep and deepDrop then
-                addGun(deepDrop)
-            end
-        end
-
-        return guns
     end
 
     local function isWithinAura(truePos: Vector3, rootPos: Vector3): boolean
@@ -6832,42 +7207,18 @@ function Module.init(runtime: any): any
             and math.abs(diff.Z) <= half
     end
 
-    local function tryGrabGun(gun: Instance): boolean
-        local character = LocalPlayer and LocalPlayer.Character
-        if not character then
-            return false
+    local function tryGrabGun(root: BasePart, handle: BasePart): ()
+        rememberGunPartState(handle)
+        handle.CanCollide = false
+        local rootCF: CFrame? = root.CFrame
+        if rootCF then
+            handle.CFrame = rootCF
         end
-
-        local root = character:FindFirstChild("HumanoidRootPart")
-        if not root or not root:IsA("BasePart") then
-            return false
-        end
-
-        local parts = collectGunBaseParts(gun)
-        local primary = resolveGunTouchPart(gun)
-        if primary and not table.find(parts, primary) then
-            table.insert(parts, 1, primary)
-        end
-        if #parts == 0 then
-            return false
-        end
-
         local fireTouch: any = state.fireTouchInterest
-        for _, part: BasePart in ipairs(parts) do
-            rememberGunPartState(part)
-            pcall(function(): ()
-                part.CanCollide = false
-                if (root :: BasePart).CFrame then
-                    part.CFrame = (root :: BasePart).CFrame
-                end
-            end)
-            if type(fireTouch) == "function" then
-                pcall(fireTouch, root, part, 0)
-                pcall(fireTouch, root, part, 1)
-            end
+        if type(fireTouch) == "function" then
+            pcall(fireTouch, root, handle, 0)
+            pcall(fireTouch, root, handle, 1)
         end
-
-        return true
     end
 
     local function clearAllHitboxes(): ()
@@ -6945,44 +7296,54 @@ function Module.init(runtime: any): any
         if not gunAuraActive then
             return
         end
+        local now: number = os.clock()
+        if now - lastTickAt < TICK_INTERVAL then
+            return
+        end
+        lastTickAt = now
+
+        refreshTrackedDrops(now)
 
         local character = LocalPlayer and LocalPlayer.Character
         local root: BasePart? = character and character:FindFirstChild("HumanoidRootPart") :: BasePart?
-        local guns = findDroppedGuns()
-        local activeGuns: {[Instance]: boolean} = {}
         local canGrab = canGrabGun()
+        local activeGuns: {[Instance]: boolean} = {}
         local touchedParts: {[BasePart]: boolean} = {}
+        local gunCount: number = 0
 
-        for _, gun in ipairs(guns) do
-            if gun and gun.Parent then
-                activeGuns[gun] = true
-                local handle = resolveGunTouchPart(gun)
-                local truePos: Vector3? = handle and trueGunPartPosition(handle) or nil
+        for gun in pairs(trackedDrops) do
+            if isValidGunDrop(gun) then
+                local handle: BasePart? = resolveGunTouchPart(gun)
+                if handle then
+                    gunCount += 1
+                    activeGuns[gun] = true
+                    rememberGunPartState(handle)
+                    local truePos: Vector3? = trueGunPartPosition(handle)
 
-                local hitbox = gunHitboxes[gun]
-                if not hitbox or not hitbox.Parent then
-                    hitbox = createGunHitbox(gun)
-                    if hitbox then
-                        gunHitboxes[gun] = hitbox
+                    local hitbox = gunHitboxes[gun]
+                    if not hitbox or not hitbox.Parent then
+                        hitbox = createGunHitbox(gun)
+                        if hitbox then
+                            gunHitboxes[gun] = hitbox
+                        end
+                    elseif truePos then
+                        local targetSize = Vector3.new(settings.studs, settings.studs, settings.studs)
+                        if hitbox.Size ~= targetSize then
+                            hitbox.Size = targetSize
+                        end
+                        hitbox.CFrame = CFrame.new(truePos)
                     end
-                elseif truePos then
-                    hitbox.Size = Vector3.new(settings.studs, settings.studs, settings.studs)
-                    hitbox.CFrame = CFrame.new(truePos)
-                end
 
-                if canGrab and root and truePos and isWithinAura(truePos, root.Position) then
-                    for _, p in ipairs(collectGunBaseParts(gun)) do
-                        touchedParts[p] = true
-                    end
-                    if handle then
+                    if canGrab and root and truePos and isWithinAura(truePos, root.Position) then
                         touchedParts[handle] = true
+                        pcall(tryGrabGun, root, handle)
                     end
-                    tryGrabGun(gun)
                 end
+            else
+                trackedDrops[gun] = nil
             end
         end
 
-        -- Restore any gun part that is not actively being pulled this tick
         for part in pairs(savedGunStates) do
             if not touchedParts[part] then
                 restoreGunPartState(part)
@@ -6990,7 +7351,7 @@ function Module.init(runtime: any): any
         end
 
         for gun, hitbox in pairs(gunHitboxes) do
-            if not activeGuns[gun] or not gun or not gun.Parent then
+            if not activeGuns[gun] then
                 if hitbox and hitbox.Parent then
                     pcall(function(): ()
                         hitbox:Destroy()
@@ -7000,13 +7361,14 @@ function Module.init(runtime: any): any
             end
         end
 
-        if #guns > 0 then
+        if gunCount > 0 then
             setStatus("Gun detected · " .. tostring(math.round(settings.studs)) .. " studs")
         else
             setStatus(tostring(math.round(settings.studs)) .. " studs")
         end
 
-        if type(core.getPlayerRole) == "function" then
+        if now - lastEspAt >= ESP_INTERVAL and type(core.getPlayerRole) == "function" then
+            lastEspAt = now
             local seenSheriffs: {[Player]: boolean} = {}
             for _, player in ipairs(game:GetService("Players"):GetPlayers()) do
                 if player ~= LocalPlayer then
@@ -7044,20 +7406,13 @@ function Module.init(runtime: any): any
             return
         end
 
-        lastDeepScanAt = -math.huge
-        pcall(function(): ()
-            for _, obj: Instance in ipairs(workspace:GetDescendants()) do
-                if obj.Name == "GunDrop" or (obj:IsA("Tool") and obj.Name == "Gun") then
-                    if isCandidateGunDrop(obj) then
-                        trackedDrops[obj] = true
-                    end
-                end
-            end
-        end)
+        lastScanAt = -math.huge
+        lastTickAt = -math.huge
+        lastEspAt = -math.huge
 
         if workspace.DescendantAdded then
             featureConnections.MM2GunAuraDescendant = workspace.DescendantAdded:Connect(function(obj: Instance): ()
-                if obj.Name == "GunDrop" or (obj:IsA("Tool") and obj.Name == "Gun") then
+                if obj.Name == "GunDrop" then
                     trackedDrops[obj] = true
                 end
             end)
@@ -7070,7 +7425,7 @@ function Module.init(runtime: any): any
 
     GunAuraFeature = createUniversalFeature(
         "Gun Aura",
-        "Detects dropped guns anywhere in the map, draws a white aura hitbox around them, and automatically grabs the gun within Studs range.",
+        "Detects dropped guns in the map with event-driven tracking, draws a white aura box around them, and automatically grabs the gun within Studs range.",
         7,
         toggleGunAura,
         {
@@ -7088,7 +7443,7 @@ function Module.init(runtime: any): any
                 setStatus(tostring(math.round(settings.studs)) .. " studs")
             end
         end,
-        "Distance in studs around each dropped gun to automatically grab it (draws the visual aura square and pulls the gun trigger on enter).", 1)
+        "Distance in studs around each dropped gun to automatically grab it.", 1)
 
     activeCleanup = function(): ()
         toggleGunAura(false)
@@ -47638,6 +47993,7 @@ local Manifest: Manifest = {
             "src/games/MM2/Fun/BlurtRoles.lua",
             "src/games/MM2/Other/AutoUnbox.lua",
             "src/games/MM2/Other/AutoFarm.lua",
+            "src/games/MM2/Other/AutoVote.lua",
             "src/games/MM2/Other/CoinsAura.lua",
             "src/games/MM2/Other/GunAura.lua",
             "src/games/MM2/Other/ProximityWarning.lua",

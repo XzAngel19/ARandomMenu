@@ -243,6 +243,7 @@ local Manifest: Manifest = {
             "src/games/MM2/Fun/BlurtRoles.lua",
             "src/games/MM2/Other/AutoUnbox.lua",
             "src/games/MM2/Other/AutoFarm.lua",
+            "src/games/MM2/Other/AutoVote.lua",
             "src/games/MM2/Other/CoinsAura.lua",
             "src/games/MM2/Other/GunAura.lua",
             "src/games/MM2/Other/ProximityWarning.lua",

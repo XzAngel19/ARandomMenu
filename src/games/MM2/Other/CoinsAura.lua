@@ -15,242 +15,118 @@ function Module.init(runtime: any): any
     assert(type(core) == "table", "MM2 Coins Aura requires the MM2 core module")
     Module.Runtime = runtime
 
-    local settings = {
-        range = 15,
-    }
+    -- Maximum coin pickup distance accepted by the MM2 server (~15 studs).
+    local MAX_SERVER_REACH: number = 15
+    local MAX_SERVER_REACH_SQ: number = MAX_SERVER_REACH * MAX_SERVER_REACH
+    local TICK_INTERVAL: number = 0.08
+    local CACHE_INTERVAL: number = 0.5
 
-    local savedServerStates: {[BasePart]: {cframe: CFrame, size: Vector3, canCollide: boolean}} = {}
+    local savedCFrames: {[BasePart]: CFrame} = {}
+    local savedPositions: {[BasePart]: Vector3} = {}
+    local activeCoin: BasePart? = nil
 
-    local function readAttribute(instance: Instance?, attrName: string): any
-        if not instance then
-            return nil
+    local function rememberCoin(serverPart: BasePart): Vector3?
+        local pos: Vector3? = savedPositions[serverPart]
+        if pos then
+            return pos
         end
-        local ok: boolean, value: any = pcall(function(): any
-            return instance:GetAttribute(attrName)
+        local ok: boolean, cf: any = pcall(function(): any
+            return serverPart.CFrame
         end)
-        if ok then
-            return value
+        if ok and cf then
+            savedCFrames[serverPart] = cf
+            local p: Vector3 = cf.Position
+            savedPositions[serverPart] = p
+            return p
         end
         return nil
     end
 
-    -- Resolve the Coin_Server BasePart that holds the server TouchTransmitter.
-    -- MM2 spawns pickups as: CoinContainer -> Coin_Server (Part) -> CoinVisual (Part) -> MainCoin,
-    -- or sibling Coin_Server / ServerCoinPart inside a coin model.
-    local function serverPartOf(part: Instance): BasePart?
-        if part:IsA("BasePart") and (part.Name == "Coin_Server" or part.Name == "ServerCoinPart") then
-            return part :: BasePart
-        end
-        local current: Instance? = part.Parent
-        local depth: number = 0
-        while current and current ~= workspace and depth < 4 do
-            if current:IsA("BasePart") and (current.Name == "Coin_Server" or current.Name == "ServerCoinPart") then
-                return current :: BasePart
-            end
-            if current:IsA("Model") or current:IsA("Folder") then
-                local sibling: Instance? = current:FindFirstChild("Coin_Server")
-                    or current:FindFirstChild("ServerCoinPart")
-                if sibling and sibling:IsA("BasePart") then
-                    return sibling :: BasePart
-                end
-            end
-            current = current.Parent
-            depth += 1
-        end
-        if part:IsA("Model") then
-            local childServer: Instance? = part:FindFirstChild("Coin_Server", true)
-                or part:FindFirstChild("ServerCoinPart", true)
-            if childServer and childServer:IsA("BasePart") then
-                return childServer :: BasePart
-            end
-            local anyPart: Instance? = part:FindFirstChildWhichIsA("BasePart", true)
-            if anyPart then
-                return anyPart :: BasePart
-            end
-        end
-        if part:IsA("BasePart") then
-            local childServer: Instance? = part:FindFirstChild("Coin_Server")
-                or part:FindFirstChild("ServerCoinPart")
-            if childServer and childServer:IsA("BasePart") then
-                return childServer :: BasePart
-            end
-            return part :: BasePart
-        end
-        return nil
-    end
-
-    local function visualPartOf(serverPart: BasePart): BasePart?
-        local visual: Instance? = serverPart:FindFirstChild("CoinVisual")
-        if visual and visual:IsA("BasePart") then
-            return visual :: BasePart
-        end
-        local parent: Instance? = serverPart.Parent
-        if parent and parent ~= workspace then
-            local siblingVisual: Instance? = parent:FindFirstChild("CoinVisual")
-            if siblingVisual and siblingVisual:IsA("BasePart") then
-                return siblingVisual :: BasePart
-            end
-        end
-        return nil
-    end
-
-    local function rememberServerState(serverPart: BasePart): {cframe: CFrame, size: Vector3, canCollide: boolean}?
-        local existing = savedServerStates[serverPart]
-        if existing then
-            return existing
-        end
-        local ok: boolean, snap: any = pcall(function(): any
-            return {
-                cframe = serverPart.CFrame,
-                size = serverPart.Size,
-                canCollide = serverPart.CanCollide,
-            }
-        end)
-        if ok and type(snap) == "table" then
-            savedServerStates[serverPart] = snap
-            return snap
-        end
-        return nil
-    end
-
-    local function restoreServerPart(serverPart: BasePart): ()
-        local snap = savedServerStates[serverPart]
-        if not snap then
+    local function restoreCoin(serverPart: BasePart?): ()
+        if not serverPart then
             return
         end
-        if serverPart and serverPart.Parent then
+        local cf: CFrame? = savedCFrames[serverPart]
+        if cf and serverPart.Parent then
             pcall(function(): ()
-                serverPart.CFrame = snap.cframe
-                serverPart.Size = snap.size
-                serverPart.CanCollide = snap.canCollide
+                serverPart.CFrame = cf
             end)
         end
-        savedServerStates[serverPart] = nil
-    end
-
-    local function restoreAllServerParts(): ()
-        for serverPart in pairs(savedServerStates) do
-            restoreServerPart(serverPart)
+        if activeCoin == serverPart then
+            activeCoin = nil
         end
-        table.clear(savedServerStates)
     end
 
-    -- True world position of the coin (from its saved spawn CFrame or CoinVisual),
-    -- never polluted if Coin_Server was pulled to root.CFrame.
-    local function trueCoinPosition(serverPart: BasePart): Vector3?
-        local snap = savedServerStates[serverPart]
-        if snap and snap.cframe then
-            local okSnap: boolean, pos: any = pcall(function(): any
-                return snap.cframe.Position
-            end)
-            if okSnap and typeof(pos) == "Vector3" then
-                return pos :: Vector3
+    local function restoreAllCoins(): ()
+        if activeCoin then
+            restoreCoin(activeCoin)
+        end
+        for serverPart, cf in pairs(savedCFrames) do
+            if serverPart and serverPart.Parent then
+                pcall(function(): ()
+                    serverPart.CFrame = cf
+                end)
             end
         end
-        local visual: BasePart? = visualPartOf(serverPart)
-        if visual and visual ~= serverPart then
-            local okVis: boolean, pos: any = pcall(function(): any
-                return visual.Position
-            end)
-            if okVis and typeof(pos) == "Vector3" then
-                return pos :: Vector3
-            end
-        end
-        local okPos: boolean, pos: any = pcall(function(): any
-            return serverPart.Position
-        end)
-        if okPos and typeof(pos) == "Vector3" then
-            return pos :: Vector3
-        end
-        return nil
+        table.clear(savedCFrames)
+        table.clear(savedPositions)
+        activeCoin = nil
     end
 
-    -- Check both Coin_Server and CoinVisual so a collected or deleted pickup
-    -- is skipped immediately before the container removes the instance.
-    local function stillCollectable(part: Instance): boolean
-        if not part or not part.Parent then
+    local function isCoinCollectable(serverPart: BasePart): boolean
+        if not serverPart or not serverPart.Parent then
             return false
         end
-        local server: BasePart? = serverPartOf(part)
-        if not server or not server.Parent then
+        if serverPart:GetAttribute("Collected") == true
+            or serverPart:GetAttribute("Delete") == true then
             return false
         end
-        if readAttribute(server, "Collected") == true
-            or readAttribute(server, "Delete") == true then
-            return false
-        end
-        local visual: BasePart? = visualPartOf(server)
+        local visual: Instance? = serverPart:FindFirstChild("CoinVisual")
         if visual and (
-            readAttribute(visual, "Collected") == true
-            or readAttribute(visual, "Delete") == true
-        ) then
-            return false
-        end
-        if part ~= server and (
-            readAttribute(part, "Collected") == true
-            or readAttribute(part, "Delete") == true
+            visual:GetAttribute("Collected") == true
+            or visual:GetAttribute("Delete") == true
         ) then
             return false
         end
         return true
     end
 
-    local function characterRoot(): BasePart?
-        local character: Model? = LocalPlayer and LocalPlayer.Character
-        if not character then
-            return nil
+    -- Detach CoinVisual's WeldConstraint once before pulling Coin_Server so
+    -- moving Coin_Server never triggers rigid-body weld recalculation or
+    -- fights CoinVisualizer's PreSimulation spin.
+    local function detachVisualWeld(serverPart: BasePart): ()
+        local visual: Instance? = serverPart:FindFirstChild("CoinVisual")
+        if not visual or not visual:IsA("BasePart") then
+            return
         end
-        local humanoid: Humanoid? = character:FindFirstChildOfClass("Humanoid") :: Humanoid?
-        if humanoid and humanoid.Health <= 0 then
-            return nil
+        local vPart: BasePart = visual :: BasePart
+        vPart.Anchored = true
+        local weld: Instance? = vPart:FindFirstChildOfClass("WeldConstraint")
+        if weld and weld:IsA("WeldConstraint") then
+            (weld :: WeldConstraint).Enabled = false
         end
-        return character:FindFirstChild("HumanoidRootPart") :: BasePart?
     end
 
-    -- Touch the coin using both physical overlap (pulling invisible Coin_Server
-    -- to root.CFrame while keeping CoinVisual fixed) and firetouchinterest.
-    -- This ensures executors where firetouchinterest requires bounding-box
-    -- intersection still trigger the server's TouchTransmitter immediately.
-    local function pulseCoinTouch(root: BasePart, serverPart: BasePart): boolean
-        rememberServerState(serverPart)
-        local visual: BasePart? = visualPartOf(serverPart)
-        local savedVisualCFrame: CFrame? = nil
-        if visual and visual ~= serverPart then
-            pcall(function(): ()
-                savedVisualCFrame = visual.CFrame
-            end)
+    local function pulseCoinTouch(root: BasePart, serverPart: BasePart): ()
+        rememberCoin(serverPart)
+        detachVisualWeld(serverPart)
+        serverPart.CanCollide = false
+        local rootCF: CFrame? = root.CFrame
+        if rootCF then
+            serverPart.CFrame = rootCF
         end
-
-        pcall(function(): ()
-            serverPart.CanCollide = false
-            if root.CFrame then
-                serverPart.CFrame = root.CFrame
-            end
-        end)
-
-        if visual and savedVisualCFrame then
-            pcall(function(): ()
-                visual.CFrame = savedVisualCFrame
-            end)
-        end
-
         local fireTouch: any = state.fireTouchInterest
         if type(fireTouch) == "function" then
             pcall(fireTouch, root, serverPart, 0)
             pcall(fireTouch, root, serverPart, 1)
-            if visual and visual ~= serverPart then
-                pcall(fireTouch, root, visual, 0)
-                pcall(fireTouch, root, visual, 1)
-            end
         end
-        return true
     end
 
     local CoinsAuraFeature: any = nil
 
     local function toggleCoinsAura(enabled: boolean): ()
         disconnectFeatureConnection("MM2CoinsAura")
-        restoreAllServerParts()
+        restoreAllCoins()
 
         if not enabled then
             if CoinsAuraFeature then
@@ -259,145 +135,131 @@ function Module.init(runtime: any): any
             return
         end
 
-        local cachedServerCoins: {BasePart} = {}
-        local lastCacheRefresh: number = -math.huge
-        local lastStatus: string? = nil
+        local cachedCoins: {BasePart} = {}
+        local lastCacheAt: number = -math.huge
+        local lastTickAt: number = -math.huge
 
-        local function setStatus(text: string): ()
-            if text == lastStatus then
-                return
-            end
-            lastStatus = text
-            if CoinsAuraFeature then
-                CoinsAuraFeature:SetStatus(text)
-            end
+        if CoinsAuraFeature then
+            CoinsAuraFeature:SetStatus("Max reach")
         end
 
-        local function refreshCache(): ()
-            local now: number = os.clock()
-            if now - lastCacheRefresh < 0.15 then
+        local function refreshCoins(now: number): ()
+            if now - lastCacheAt < CACHE_INTERVAL then
                 return
             end
-            lastCacheRefresh = now
+            lastCacheAt = now
 
-            local seen: {[BasePart]: boolean} = {}
             local list: {BasePart} = {}
+            local seen: {[BasePart]: boolean} = {}
 
-            local function addCandidate(candidate: Instance?): ()
-                if not candidate or not stillCollectable(candidate) then
+            local function addCoin(candidate: Instance?): ()
+                if not candidate then
                     return
                 end
-                local serverPart: BasePart? = serverPartOf(candidate)
-                if serverPart and not seen[serverPart] then
+                local serverPart: BasePart? = nil
+                if candidate:IsA("BasePart") then
+                    if candidate.Name == "Coin_Server" or candidate.Name == "ServerCoinPart" then
+                        serverPart = candidate :: BasePart
+                    elseif candidate.Parent and candidate.Parent:IsA("BasePart")
+                        and (candidate.Parent.Name == "Coin_Server" or candidate.Parent.Name == "ServerCoinPart") then
+                        serverPart = candidate.Parent :: BasePart
+                    else
+                        serverPart = candidate :: BasePart
+                    end
+                elseif candidate:IsA("Model") then
+                    local child: Instance? = candidate:FindFirstChild("Coin_Server")
+                        or candidate:FindFirstChildWhichIsA("BasePart")
+                    if child and child:IsA("BasePart") then
+                        serverPart = child :: BasePart
+                    end
+                end
+                if serverPart and not seen[serverPart] and isCoinCollectable(serverPart) then
                     seen[serverPart] = true
-                    rememberServerState(serverPart)
-                    table.insert(list, serverPart)
+                    rememberCoin(serverPart)
+                    list[#list + 1] = serverPart
                 end
             end
 
-            -- 1. Direct map CoinContainer / CoinAreas / Coins scan.
             if type(core.findMM2Map) == "function" then
-                local okMap: boolean, map: any = pcall(core.findMM2Map)
-                if okMap and map then
-                    for _, containerName: string in ipairs({"CoinContainer", "CoinAreas", "Coins"}) do
-                        local okContainer: boolean, container: any = pcall(function(): any
-                            return map:FindFirstChild(containerName)
-                        end)
-                        if okContainer and container then
-                            local okChildren: boolean, children: any = pcall(function(): any
-                                return container:GetChildren()
-                            end)
-                            if okChildren and type(children) == "table" then
-                                for _, child: Instance in ipairs(children) do
-                                    addCandidate(child)
-                                end
-                            end
+                local map: Instance? = core.findMM2Map()
+                if map then
+                    local container: Instance? = map:FindFirstChild("CoinContainer")
+                        or map:FindFirstChild("CoinAreas")
+                        or map:FindFirstChild("Coins")
+                    if container then
+                        for _, child: Instance in ipairs(container:GetChildren()) do
+                            addCoin(child)
                         end
                     end
                 end
             end
 
-            -- 2. Shared Coin ESP pickup detector (3 signatures: CoinVisual tag,
-            --    CoinID attribute, Coin_Server/CoinVisual structure).
-            if type(state.mm2CoinPickups) == "function" then
+            if #list == 0 and type(state.mm2CoinPickups) == "function" then
                 local okPickups: boolean, pickups: any = pcall(state.mm2CoinPickups)
                 if okPickups and type(pickups) == "table" then
                     for _, pickup: Instance in ipairs(pickups) do
-                        addCandidate(pickup)
+                        addCoin(pickup)
                     end
                 end
             end
 
-            -- 3. Direct CollectionService CoinVisual / ServerCoinPart tag lists.
-            local cs: any = game:GetService("CollectionService")
-            for _, tagName: string in ipairs({"CoinVisual", "ServerCoinPart"}) do
-                local okTagged: boolean, tagged: any = pcall(function(): any
-                    return cs:GetTagged(tagName)
-                end)
-                if okTagged and type(tagged) == "table" then
-                    for _, obj: Instance in ipairs(tagged) do
-                        addCandidate(obj)
-                    end
-                end
-            end
-
-            cachedServerCoins = list
+            cachedCoins = list
         end
 
         local function auraTick(): ()
-            local root: BasePart? = characterRoot()
+            local now: number = os.clock()
+            if now - lastTickAt < TICK_INTERVAL then
+                return
+            end
+            lastTickAt = now
+
+            local character: Model? = LocalPlayer and LocalPlayer.Character
+            local root: BasePart? = character and character:FindFirstChild("HumanoidRootPart") :: BasePart?
             if not root then
-                restoreAllServerParts()
+                if activeCoin then
+                    restoreCoin(activeCoin)
+                end
+                return
+            end
+            local humanoid: Humanoid? = character:FindFirstChildOfClass("Humanoid") :: Humanoid?
+            if humanoid and humanoid.Health <= 0 then
+                if activeCoin then
+                    restoreCoin(activeCoin)
+                end
                 return
             end
 
-            refreshCache()
+            refreshCoins(now)
 
-            local range: number = math.clamp(tonumber(settings.range) or 15, 4, 100)
-            local rangeSq: number = range * range
             local rootPos: Vector3 = root.Position
+            local bestCoin: BasePart? = nil
+            local bestDistSq: number = MAX_SERVER_REACH_SQ
 
-            -- Collect only coins within Range and sort nearest-first so distant
-            -- coins never trigger server touch debounce before close coins.
-            local candidates: {{part: BasePart, distSq: number}} = {}
-            local inRangeSet: {[BasePart]: boolean} = {}
-
-            for i: number = 1, #cachedServerCoins do
-                local serverCoin: BasePart = cachedServerCoins[i]
-                if stillCollectable(serverCoin) then
-                    local coinPos: Vector3? = trueCoinPosition(serverCoin)
+            for i: number = 1, #cachedCoins do
+                local coin: BasePart = cachedCoins[i]
+                if isCoinCollectable(coin) then
+                    local coinPos: Vector3? = savedPositions[coin] or rememberCoin(coin)
                     if coinPos then
                         local diff: Vector3 = coinPos - rootPos
                         local distSq: number = diff.X * diff.X + diff.Y * diff.Y + diff.Z * diff.Z
-                        if distSq <= rangeSq then
-                            table.insert(candidates, {part = serverCoin, distSq = distSq})
+                        if distSq <= bestDistSq then
+                            bestDistSq = distSq
+                            bestCoin = coin
                         end
                     end
-                else
-                    restoreServerPart(serverCoin)
+                elseif coin == activeCoin then
+                    restoreCoin(coin)
                 end
             end
 
-            table.sort(candidates, function(a, b): boolean
-                return a.distSq < b.distSq
-            end)
-
-            -- Touch the nearest coins in range (up to 3 closest per frame)
-            local limit: number = math.min(#candidates, 3)
-            for i: number = 1, limit do
-                local coin: BasePart = candidates[i].part
-                inRangeSet[coin] = true
-                pulseCoinTouch(root, coin)
+            if activeCoin and activeCoin ~= bestCoin then
+                restoreCoin(activeCoin)
             end
 
-            -- Restore any coin that moved out of active touch set
-            for serverPart in pairs(savedServerStates) do
-                if not inRangeSet[serverPart] or not stillCollectable(serverPart) then
-                    restoreServerPart(serverPart)
-                end
+            if bestCoin then
+                activeCoin = bestCoin
+                pcall(pulseCoinTouch, root, bestCoin)
             end
-
-            setStatus(tostring(math.round(range)) .. " studs")
         end
 
         featureConnections.MM2CoinsAura = TaskManager:Connect(auraTick)
@@ -406,7 +268,7 @@ function Module.init(runtime: any): any
 
     CoinsAuraFeature = createUniversalFeature(
         "Coins Aura",
-        "Collects nearby coins within Range by pulling the invisible Coin_Server trigger to your root and pulsing firetouchinterest (nearest coin first).",
+        "Automatically collects nearby coins at the maximum reach allowed by the MM2 server with minimal CPU usage.",
         7,
         toggleCoinsAura,
         {
@@ -416,22 +278,6 @@ function Module.init(runtime: any): any
         }
     )
     state.mm2CoinsAuraFeature = CoinsAuraFeature
-
-    addNumberOption(
-        CoinsAuraFeature,
-        "Range",
-        15,
-        4,
-        100,
-        function(value: number): ()
-            settings.range = math.clamp(tonumber(value) or 15, 4, 100)
-            if CoinsAuraFeature.enabled then
-                CoinsAuraFeature:SetStatus(tostring(math.round(settings.range)) .. " studs")
-            end
-        end,
-        "Effective distance in studs around your character to collect coins (nearest coin first; MM2 server caps coin reach around 10-15 studs).",
-        1
-    )
 
     activeCleanup = function(): ()
         toggleCoinsAura(false)

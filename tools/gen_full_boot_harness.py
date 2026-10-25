@@ -818,7 +818,7 @@ do
     print("[HARNESS] FREEZE MOVEMENTS TOGGLE CYCLES CLEAN")
     local coinsAura = findFeature("Coins Aura")
     assert(coinsAura, "Coins Aura feature must exist after boot")
-    assert(coinsAura.options:FindFirstChild("Option_Range"), "Coins Aura must expose Range option")
+    assert(not coinsAura.options:FindFirstChild("Option_Range"), "Coins Aura must not expose a Range slider")
     local okCAOn, errCAOn = pcall(coinsAura.onToggle, true)
     assert(okCAOn, "Coins Aura ON must not error: " .. tostring(errCAOn))
     local okCAOff, errCAOff = pcall(coinsAura.onToggle, false)
@@ -829,7 +829,14 @@ do
     assert(okGAOn, "Gun Aura ON must not error: " .. tostring(errGAOn))
     local okGAOff, errGAOff = pcall(gunAura.onToggle, false)
     assert(okGAOff, "Gun Aura OFF must not error: " .. tostring(errGAOff))
-    print("[HARNESS] COINS AURA + GUN AURA TOGGLE CYCLES CLEAN")
+    local autoVote = findFeature("Auto Vote")
+    assert(autoVote, "Auto Vote feature must exist after boot")
+    assert(autoVote.options:FindFirstChild("Option_SelectMap"), "Auto Vote must expose Select Map option")
+    local okAVOn, errAVOn = pcall(autoVote.onToggle, true)
+    assert(okAVOn, "Auto Vote ON must not error: " .. tostring(errAVOn))
+    local okAVOff, errAVOff = pcall(autoVote.onToggle, false)
+    assert(okAVOff, "Auto Vote OFF must not error: " .. tostring(errAVOff))
+    print("[HARNESS] COINS AURA + GUN AURA + AUTO VOTE TOGGLE CYCLES CLEAN")
     local expected = {
       Render = {"ItemESP", "PlayerESP", "Chams", "Nametags", "HP", "Arrows", "NPCESP", "FOV", "Fullbright", "X-Ray", "Zoom", "Markers"},
       Combat = {"Aim Assist", "KillAura", "TriggerBot", "SilentAIM"},
