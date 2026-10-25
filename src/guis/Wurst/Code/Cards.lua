@@ -347,13 +347,16 @@ function Module.init(context: any): any
                     declaredHeight += optionRow.Size.Y.Offset
                 end
             end
-            local measuredHeight: number = optionsLayout.AbsoluteContentSize.Y
-            if visibleOptions > 0 and measuredHeight <= 0 then
-                measuredHeight = declaredHeight
-                    + math.max(0, visibleOptions - 1) * 4
-            end
+            local expectedHeight: number = if visibleOptions > 0
+                then declaredHeight + math.max(0, visibleOptions - 1) * 4
+                else 0
+            local measuredHeight: number = math.max(
+                optionsLayout.AbsoluteContentSize.Y,
+                expectedHeight
+            )
+            local singleOptionExtra: number = if visibleOptions == 1 then 8 else 0
 
-            local optionsHeight: number = measuredHeight + 8
+            local optionsHeight: number = measuredHeight + 8 + singleOptionExtra
             feature.optionsHeight = optionsHeight
             options.Size = UDim2.new(1, 0, 0, optionsHeight)
             syncArrow()

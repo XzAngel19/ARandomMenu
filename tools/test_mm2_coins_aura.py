@@ -48,12 +48,20 @@ Vector3 = {
         return setmetatable({ X = x or 0, Y = y or 0, Z = z or 0, __typeof = "Vector3" }, Vector3Mt)
     end,
 }
+local CFrameMt = {}
+CFrameMt.__index = CFrameMt
+function CFrameMt:__sub(vec)
+    return setmetatable({ Position = Vector3.new(0, 0, 0) }, CFrameMt)
+end
+function CFrameMt:__mul(other)
+    return self
+end
 CFrame = {
     new = function(posOrX, y, z)
         if type(posOrX) == "table" and posOrX.__typeof == "Vector3" then
-            return { Position = posOrX }
+            return setmetatable({ Position = posOrX }, CFrameMt)
         end
-        return { Position = Vector3.new(posOrX or 0, y or 0, z or 0) }
+        return setmetatable({ Position = Vector3.new(posOrX or 0, y or 0, z or 0) }, CFrameMt)
     end,
 }
 BrickColor = {
@@ -140,6 +148,14 @@ local function makeNode(name, className, parent, extra)
     end
     function node:GetChildren()
         return self.children
+    end
+    function node:IsDescendantOf(ancestor)
+        local cur = self.Parent
+        while cur do
+            if cur == ancestor then return true end
+            cur = cur.Parent
+        end
+        return false
     end
     if parent and parent.children then
         table.insert(parent.children, node)
@@ -361,11 +377,13 @@ selectMapCallback("House 2")
 touched = {}
 clockNow = 300
 humanoid.Health = 100
+rootPart.Position = Vector3.new(10, 506, 40)
+rootPart.CFrame = CFrame.new(rootPart.Position)
 voteCard.enabled = true
 voteCard.onToggle(true)
 
--- First tick pulses Detector2 and VotePad2.Pad without moving rootPart
-assert(rootPart.CFrame.Position.X == 0, "Auto Vote must never move/teleport rootPart")
+-- First tick steps onto the wooden pad (X=13.9) and pulses Detector2 and VotePad2.Pad
+assert(math.abs(rootPart.CFrame.Position.X - 13.9) < 0.2, "Auto Vote must step onto the wooden pad")
 assert(#touched >= 2, "Auto Vote must firetouchinterest on VotePad2 detector parts")
 assert(humanoid.Health == 100, "Character stays alive during initial vote hold window")
 

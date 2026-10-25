@@ -641,6 +641,7 @@ function Module.init(context: any): WidgetLibrary
         local option: Frame = createOptionRow(feature, labelText, hintText)
 
         option.Size = UDim2.new(1, 0, 0, 44)
+        feature.updateExpandedSize()
         local headerLabel: TextLabel? =
             option:FindFirstChild("OptionLabel") :: TextLabel?
         if headerLabel then
@@ -931,6 +932,7 @@ function Module.init(context: any): WidgetLibrary
         local option: Frame = createOptionRow(feature, labelText, definition.hint)
 
         option.Size = UDim2.new(1, 0, 0, 44)
+        feature.updateExpandedSize()
         local rangeLabel: TextLabel? =
             option:FindFirstChild("OptionLabel") :: TextLabel?
         if rangeLabel then
@@ -1956,11 +1958,21 @@ function Module.init(context: any): WidgetLibrary
         end
 
         local function refreshChoiceVisual(): ()
-            button.Text = values[index]
+            if #values > 0 then
+                index = math.clamp(index, 1, #values)
+            end
+            button.Text = values[index] or ""
         end
         refreshChoiceVisual()
 
         local function openList(): ()
+            local control: any = state.valueControls
+                and state.valueControls[optionKey]
+            if type(control) == "table"
+                and type(control.onBeforeOpen) == "function" then
+                pcall(control.onBeforeOpen)
+                refreshChoiceVisual()
+            end
             openChoiceList(button, values, index, function(picked: number): ()
                 index = picked
                 refreshChoiceVisual()
@@ -1986,6 +1998,11 @@ function Module.init(context: any): WidgetLibrary
                     configData.values[optionKey] = values[index]
                     queueConfigSave()
                 end,
+                setIndex = function(newIndex: number): ()
+                    index = math.clamp(newIndex, 1, math.max(1, #values))
+                    refreshChoiceVisual()
+                end,
+                refresh = refreshChoiceVisual,
                 default = values[initialIndex or 1],
             }
         end
@@ -2444,6 +2461,7 @@ function Module.init(context: any): WidgetLibrary
         local option = createOptionRow(feature, labelText, hintText)
 
         option.Size = UDim2.new(1, 0, 0, 44)
+        feature.updateExpandedSize()
         local colorLabel: TextLabel? =
             option:FindFirstChild("OptionLabel") :: TextLabel?
         if colorLabel then

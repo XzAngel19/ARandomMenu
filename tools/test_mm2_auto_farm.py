@@ -59,25 +59,30 @@ assert "humanoid.WalkSpeed" in SOURCE and "savedWalkSpeed" in SOURCE
 assert "humanoid.Jump = true" in SOURCE  # hop when walking stalls
 assert "CanCollide = false" in SOURCE  # Below NoClip
 
-# Lobby safety: hands off the character when there is no target.
+# Lobby safety: never activates or moves the character in the lobby,
+# and waits in place when 0 coins are in the server until the next coin
+# spawns (< 1s) instead of stopping before 50 coins.
 assert "restoreCharacter(false)" in SOURCE
-assert "no coins - roaming" in SOURCE
-# A coin-less tick must not park the body under the floor: it restores
-# home upright, then keeps walking a slow circle around it.
+assert "isCharacterInActiveRound" in SOURCE
+assert '"Auto Farm: waiting in lobby"' in SOURCE
+assert "waiting for coin" in SOURCE
 assert "restoreCharacter(true)" in SOURCE
 assert "recovered from the void" in SOURCE
-assert "humanoid:Move(roamFlat.Unit, false)" in SOURCE
-assert "roamTarget" in SOURCE and "roamAnchor" in SOURCE
+assert "roamTarget" not in SOURCE
 
-# OFF restores everything and returns the character home, upright.
+# OFF and full-bag restore return the character to the exact last
+# position before Auto Farm started (homeCFrame), never a random spawn.
 assert "restoreCharacter(true)" in SOURCE
 assert "PlatformStand = false" in SOURCE
 assert "AutoRotate = true" in SOURCE
 assert "homeCFrame" in SOURCE
+assert "teleportToRandomMapSpawn" not in SOURCE
+assert "character:PivotTo(targetCF)" in SOURCE
 
-# Full bag comes from the game's own CoinCollected report.
+# Full bag (50) comes from the game's own CoinCollected report.
 assert '"CoinCollected"' in SOURCE
-assert "bagAmount >= bagLimit" in SOURCE
+assert "bagAmount >= targetLimit" in SOURCE
+assert "local bagLimit: number = 50" in SOURCE
 
 # Reset + respawn wait, then the optional flings.
 assert "humanoid.Health = 0" in SOURCE
@@ -90,12 +95,12 @@ assert "victimRoot.Anchored = true" in SOURCE
 assert 'FireServer("Slash")' in SOURCE
 assert '"HandleTouched"' in SOURCE
 
-# Full-bag actions ONLY at 50: Kill All, grab gun + SilentAim shot,
+# Full-bag actions ONLY at 50: Kill All, grab gun + continuous shooting,
 # reset and flings all live in the full-bag sequence; the per-tick grab
 # is gone so nothing fires during ordinary farming.
 assert "state.mm2FireSilentShot" in SOURCE
 assert "grabGunAndShoot" in SOURCE
-assert "settings.grabGunShoot) then" in SOURCE
+assert "settings.grabGunShoot then" in SOURCE
 assert "during ordinary farming" in SOURCE
 assert "findDroppedGun" in SOURCE
 assert "humanoid:EquipTool(gun :: Tool)" in SOURCE
@@ -108,29 +113,23 @@ tick_body = SOURCE.rsplit("featureConnections.MM2AutoFarmTick", 1)[1]
 assert "findDroppedGun" not in tick_body.split("-- Nearest pickup")[0], \
     "the farming tick never looks for the dropped gun"
 
-# Gun grab guards (v110): Innocent only, active round only, never the
-# lobby -- and an instant touch attempt before any travel to the drop.
+# Gun grab guards: Innocent/Sheriff/Hero allowed (picking up the gun
+# promotes Innocent to Hero/Sheriff), active round only, never the lobby,
+# continuous shooting loop until the Murderer is eliminated.
 assert "local function canGrabGun(): boolean" in SOURCE
-assert 'getPlayerRole(LocalPlayer) ~= "Innocent"' in SOURCE
+assert 'role ~= "Innocent" and role ~= "Sheriff" and role ~= "Hero"' in SOURCE
 assert "isRoundLifecycleActive() ~= true" in SOURCE
 assert "if not canGrabGun() then" in SOURCE
 assert "local function touchDroppedGun(" in SOURCE
 assert "touchDroppedGun(firstDrop, startRoot)" in SOURCE
+assert "while os.clock() < shootLoopDeadline and enabled and settings.grabGunShoot do" in SOURCE
 
-# Return after a farm run (v111): never the stored home CFrame inside
-# an active map -- after Below that point can be under the floor and the
-# body wedged there. Teleport to Map onto a random map spawn instead,
-# then the full-bag grab + shot fires from that clean position.
-assert "local function teleportToRandomMapSpawn(" in SOURCE
-assert 'FindFirstChild("Spawns")' in SOURCE
-assert "math.random(1, #choices)" in SOURCE
-assert "character:PivotTo(" in SOURCE
 sequence_body = SOURCE.split("local function runFullSequence()", 1)[1]
 kill_index = sequence_body.index("killAll()")
 teleport_index = sequence_body.index("restoreCharacter(true)")
 grab_index = sequence_body.index("grabGunAndShoot()")
 assert kill_index < teleport_index < grab_index, \
-    "full-bag order: Kill All, Teleport to Map (random spawn), then Auto Grab + Shoot"
+    "full-bag order: Kill All, return to homeCFrame, then Auto Grab + Shoot"
 
 # A coin that never collects is skipped instead of trapping the farm.
 assert "BLACKLIST_SECONDS" in SOURCE

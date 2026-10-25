@@ -784,8 +784,20 @@ local function isLobbyName(name: string): boolean
     return string.find(string.lower(tostring(name)), "lobby", 1, true) ~= nil
 end
 
+local function isLobbyModel(object: Instance): boolean
+    if isLobbyName(object.Name) then
+        return true
+    end
+    if object:FindFirstChild("VotePad1")
+        or object:FindFirstChild("VotePads")
+        or object:FindFirstChild("VoteIcons") then
+        return true
+    end
+    return false
+end
+
 local function isMM2MapModel(object: Instance): boolean
-    if not object:IsA("Model") or isLobbyName(object.Name) then
+    if not object:IsA("Model") or isLobbyModel(object) then
         return false
     end
     for _, containerName: string in ipairs(MM2_MAP_COIN_CONTAINERS) do
@@ -810,7 +822,7 @@ local function findMM2MapUncached(): Instance?
 
     for _, object: Instance in ipairs(workspace:GetChildren()) do
         if object:IsA("Model")
-            and not isLobbyName(object.Name)
+            and not isLobbyModel(object)
             and object:FindFirstChild("Spawns") then
             return object
         end

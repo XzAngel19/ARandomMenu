@@ -17,15 +17,30 @@ function Module.init(runtime: any): any
 
     local TICK_INTERVAL: number = 0.10
     local MAP_REFRESH_INTERVAL: number = 0.50
-    local VOTE_HOLD_Before_RESET: number = 0.22
+    local VOTE_HOLD_BEFORE_RESET: number = 0.22
+    local RESET_RETRY_INTERVAL: number = 0.25
+    local MAX_LOBBY_PAD_DISTANCE: number = 250
 
-    local mapChoices: {string} = {"Map 1", "Map 2", "Map 3"}
+    local DEFAULT_MAP_CHOICES: {string} = {
+        "House 2",
+        "Hospital 3",
+        "Police Station",
+    }
+    local mapChoices: {string} = {
+        DEFAULT_MAP_CHOICES[1],
+        DEFAULT_MAP_CHOICES[2],
+        DEFAULT_MAP_CHOICES[3],
+    }
     local selectedSlot: number = 1
     local selectedMapName: string = mapChoices[1]
     local selectMapButton: TextButton? = nil
+    local selectMapOptionKey: string = "MM2.AutoVote.SelectMap"
     local AutoVoteFeature: any = nil
 
     local cachedLobby: Instance? = nil
+    local cachedPadModels: {[number]: Instance?} = {}
+    local cachedVotePadsFolder: Instance? = nil
+    local cachedVoteIconsFolder: Instance? = nil
     local lastLobbyCheckAt: number = -math.huge
     local lastMapRefreshAt: number = -math.huge
     local savedDetectorCFrames: {[BasePart]: CFrame} = {}
@@ -36,35 +51,44 @@ function Module.init(runtime: any): any
         return (string.gsub(s, "^%s*(.-)%s*$", "%1"))
     end
 
-    local function isValidMapTitle(title: string?): boolean
+    local function isPlaceholderMapLabel(title: string?): boolean
         if type(title) ~= "string" then
+            return true
+        end
+        local clean: string = string.upper(trim(title))
+        return clean == ""
+            or clean == "MAP NAME"
+            or clean == "LOADING"
+            or clean == "NONE"
+            or clean == "MAP 1"
+            or clean == "MAP 2"
+            or clean == "MAP 3"
+    end
+
+    local function isValidMapTitle(title: string?): boolean
+        return not isPlaceholderMapLabel(title)
+    end
+
+    local function isLobbyContainer(candidate: Instance?): boolean
+        if not candidate or not candidate.Parent then
             return false
         end
-        local clean = trim(title)
-        if clean == "" then
-            return false
-        end
-        local upper = string.upper(clean)
-        if upper == "MAP NAME" or upper == "LOADING" or upper == "NONE" then
-            return false
-        end
-        return true
+        return candidate:FindFirstChild("VotePad1") ~= nil
+            or candidate:FindFirstChild("VotePads") ~= nil
+            or candidate:FindFirstChild("VoteIcons") ~= nil
     end
 
     local function findLobbyModel(): Instance?
         local now: number = os.clock()
-        if cachedLobby and cachedLobby.Parent == workspace and now - lastLobbyCheckAt < 1.0 then
+        if cachedLobby and cachedLobby:IsDescendantOf(workspace) and now - lastLobbyCheckAt < 1.0 then
             return cachedLobby
         end
         lastLobbyCheckAt = now
 
-        for _, name: string in ipairs({"RegularLobby", "Lobby", "MainLobby"}) do
+        -- 1. Fast check on direct workspace children
+        for _, name: string in ipairs({"RegularLobby", "Lobby", "MainLobby", "HalloweenLobby"}) do
             local candidate: Instance? = workspace:FindFirstChild(name)
-            if candidate and (
-                candidate:FindFirstChild("VotePad1")
-                or candidate:FindFirstChild("VotePads")
-                or candidate:FindFirstChild("VoteIcons")
-            ) then
+            if isLobbyContainer(candidate) then
                 cachedLobby = candidate
                 return candidate
             end
@@ -75,31 +99,117 @@ function Module.init(runtime: any): any
         end)
         if okChildren and type(children) == "table" then
             for _, child: Instance in ipairs(children) do
-                if child:IsA("Model") or child:IsA("Folder") then
-                    if child:FindFirstChild("VotePad1")
-                        or child:FindFirstChild("VotePads")
-                        or child:FindFirstChild("VoteIcons") then
-                        cachedLobby = child
-                        return child
+                if (child:IsA("Model") or child:IsA("Folder")) and isLobbyContainer(child) then
+                    cachedLobby = child
+                    return child
+                end
+            end
+        end
+
+        -- 2. Check CollectionService "VotePad" tag (used on VotePad1..3 in MM2)
+        local okTagged: boolean, tagged: any = pcall(function(): any
+            return game:GetService("CollectionService"):GetTagged("VotePad")
+        end)
+        if okTagged and type(tagged) == "table" then
+            for _, inst: Instance in ipairs(tagged) do
+                if inst and inst:IsDescendantOf(workspace) then
+                    local slotNum: number? = tonumber(string.match(inst.Name, "^VotePad(%d)$"))
+                    if slotNum then
+                        cachedPadModels[slotNum] = inst
+                    end
+                    if inst.Parent and inst.Parent ~= workspace then
+                        cachedLobby = inst.Parent
                     end
                 end
             end
+            if cachedLobby and cachedLobby:IsDescendantOf(workspace) then
+                return cachedLobby
+            end
+        end
+
+        -- 3. Recursive fallback for nested seasonal/event lobbies
+        local okDeep: boolean, deepPad: any = pcall(function(): any
+            return workspace:FindFirstChild("VotePads", true)
+                or workspace:FindFirstChild("VotePad1", true)
+                or workspace:FindFirstChild("VoteIcons", true)
+        end)
+        if okDeep and deepPad and (deepPad :: Instance):IsDescendantOf(workspace) then
+            local parent: Instance? = (deepPad :: Instance).Parent
+            if parent and parent.Name == "VoteIcons" and parent.Parent then
+                parent = parent.Parent
+            end
+            cachedLobby = parent
+            return cachedLobby
         end
 
         cachedLobby = nil
         return nil
     end
 
-    -- Read the map name displayed on billboard slot i (1..3) from RegularLobby.
+    local function getPadModel(lobby: Instance?, slot: number): Instance?
+        local cached: Instance? = cachedPadModels[slot]
+        if cached and cached:IsDescendantOf(workspace) and not (cached.Parent and cached.Parent.Name == "VoteIcons") then
+            return cached
+        end
+        local padName: string = "VotePad" .. tostring(slot)
+        if lobby then
+            local direct: Instance? = lobby:FindFirstChild(padName)
+            if direct and not (direct.Parent and direct.Parent.Name == "VoteIcons") then
+                cachedPadModels[slot] = direct
+                return direct
+            end
+            local okDeep: boolean, deep: any = pcall(function(): any
+                return lobby:FindFirstChild(padName, true)
+            end)
+            if okDeep and deep and not ((deep :: Instance).Parent and (deep :: Instance).Parent.Name == "VoteIcons") then
+                cachedPadModels[slot] = deep :: Instance
+                return deep :: Instance
+            end
+        end
+        return nil
+    end
+
+    local function getVoteIconsFolder(lobby: Instance?): Instance?
+        if cachedVoteIconsFolder and cachedVoteIconsFolder:IsDescendantOf(workspace) then
+            return cachedVoteIconsFolder
+        end
+        if lobby then
+            local direct: Instance? = lobby:FindFirstChild("VoteIcons")
+                or lobby:FindFirstChild("VoteIcons", true)
+            if direct then
+                cachedVoteIconsFolder = direct
+                return direct
+            end
+        end
+        return nil
+    end
+
+    local function getVotePadsFolder(lobby: Instance?): Instance?
+        if cachedVotePadsFolder and cachedVotePadsFolder:IsDescendantOf(workspace) then
+            return cachedVotePadsFolder
+        end
+        if lobby then
+            local direct: Instance? = lobby:FindFirstChild("VotePads")
+                or lobby:FindFirstChild("VotePads", true)
+            if direct then
+                cachedVotePadsFolder = direct
+                return direct
+            end
+        end
+        return nil
+    end
+
+    -- Read the map name displayed on billboard slot i (1..3) from the lobby.
     local function readSlotMapName(lobby: Instance?, slot: number): string?
         if not lobby then
             return nil
         end
-        local padModel: Instance? = lobby:FindFirstChild("VotePad" .. tostring(slot))
+        local padModel: Instance? = getPadModel(lobby, slot)
         if padModel then
             local voteInfoGui: Instance? = padModel:FindFirstChild("VoteInfoGui")
             local container: Instance? = voteInfoGui and voteInfoGui:FindFirstChild("Container")
-            local mapLabel: Instance? = container and container:FindFirstChild("MapName")
+            local mapLabel: Instance? = (container and container:FindFirstChild("MapName"))
+                or padModel:FindFirstChild("MapName", true)
             if mapLabel and mapLabel:IsA("TextLabel") then
                 local text: string = (mapLabel :: TextLabel).Text
                 if isValidMapTitle(text) then
@@ -108,13 +218,10 @@ function Module.init(runtime: any): any
             end
         end
 
-        local voteIcons: Instance? = lobby:FindFirstChild("VoteIcons")
+        local voteIcons: Instance? = getVoteIconsFolder(lobby)
         local iconPart: Instance? = voteIcons and voteIcons:FindFirstChild("VotePad" .. tostring(slot))
         if iconPart then
-            local mapInfo: Instance? = iconPart:FindFirstChild("MapInfo")
-            local surface: Instance? = mapInfo and mapInfo:FindFirstChild("Surface")
-            local frame: Instance? = surface and surface:FindFirstChildWhichIsA("Frame")
-            local mapLabel: Instance? = frame and frame:FindFirstChild("MapName")
+            local mapLabel: Instance? = iconPart:FindFirstChild("MapName", true)
             if mapLabel and mapLabel:IsA("TextLabel") then
                 local text: string = (mapLabel :: TextLabel).Text
                 if isValidMapTitle(text) then
@@ -138,7 +245,7 @@ function Module.init(runtime: any): any
         if not lobby then
             return nil
         end
-        local voteIcons: Instance? = lobby:FindFirstChild("VoteIcons")
+        local voteIcons: Instance? = getVoteIconsFolder(lobby)
         local iconPart: Instance? = voteIcons and voteIcons:FindFirstChild("VotePad" .. tostring(slot))
         if iconPart then
             local votesVal: Instance? = iconPart:FindFirstChild("Votes")
@@ -146,11 +253,12 @@ function Module.init(runtime: any): any
                 return (votesVal :: IntValue).Value
             end
         end
-        local padModel: Instance? = lobby:FindFirstChild("VotePad" .. tostring(slot))
+        local padModel: Instance? = getPadModel(lobby, slot)
         if padModel then
             local voteInfoGui: Instance? = padModel:FindFirstChild("VoteInfoGui")
             local container: Instance? = voteInfoGui and voteInfoGui:FindFirstChild("Container")
-            local votesLabel: Instance? = container and container:FindFirstChild("Votes")
+            local votesLabel: Instance? = (container and container:FindFirstChild("Votes"))
+                or padModel:FindFirstChild("Votes", true)
             if votesLabel and votesLabel:IsA("TextLabel") then
                 local numStr: string? = string.match((votesLabel :: TextLabel).Text, "(%d+)")
                 if numStr then
@@ -161,8 +269,20 @@ function Module.init(runtime: any): any
         return nil
     end
 
+    local function syncSelectMapControl(): ()
+        local control: any = state.valueControls
+            and state.valueControls[selectMapOptionKey]
+        if type(control) == "table" and type(control.setIndex) == "function" then
+            pcall(control.setIndex, selectedSlot)
+        elseif selectMapButton then
+            pcall(function(): ()
+                selectMapButton.Text = mapChoices[selectedSlot]
+            end)
+        end
+    end
+
     -- Refresh the 3 map choices in-place from the lobby billboard so the
-    -- "Select Map" dropdown always displays the 3 maps on the board.
+    -- "Select Map" dropdown always displays the 3 real maps on the board.
     local function refreshMapChoices(force: boolean?): ()
         local now: number = os.clock()
         if not force and now - lastMapRefreshAt < MAP_REFRESH_INTERVAL then
@@ -171,23 +291,18 @@ function Module.init(runtime: any): any
         lastMapRefreshAt = now
 
         local lobby: Instance? = findLobbyModel()
-        if not lobby then
-            return
-        end
-
         local changed: boolean = false
         for slot: number = 1, 3 do
             local title: string? = readSlotMapName(lobby, slot)
-            local fallback: string = "Map " .. tostring(slot)
-            local nextLabel: string = title or mapChoices[slot] or fallback
+            local current: string? = mapChoices[slot]
+            local nextLabel: string = title
+                or (isValidMapTitle(current) and (current :: string) or DEFAULT_MAP_CHOICES[slot])
             if mapChoices[slot] ~= nextLabel then
                 mapChoices[slot] = nextLabel
                 changed = true
             end
         end
 
-        -- If the user previously selected a specific map name that is present
-        -- in one of the 3 slots, track that slot; otherwise follow selectedSlot.
         if isValidMapTitle(selectedMapName) then
             local matchedSlot: number? = nil
             local targetLower: string = string.lower(selectedMapName)
@@ -197,42 +312,43 @@ function Module.init(runtime: any): any
                     break
                 end
             end
-            if matchedSlot then
+            if matchedSlot and selectedSlot ~= matchedSlot then
                 selectedSlot = matchedSlot
+                changed = true
             end
         end
 
         selectedSlot = math.clamp(selectedSlot, 1, 3)
         selectedMapName = mapChoices[selectedSlot]
 
-        if changed and selectMapButton then
-            pcall(function(): ()
-                selectMapButton.Text = mapChoices[selectedSlot]
-            end)
+        if changed or force then
+            syncSelectMapControl()
         end
     end
 
     -- Resolve the wooden pad detector parts for slot (1..3):
-    -- RegularLobby.VotePads.Detector{slot} and RegularLobby.VotePad{slot}.Pad
+    -- VotePads.Detector{slot} and VotePad{slot}.Pad
     local function getSlotDetectorParts(lobby: Instance?, slot: number): {BasePart}
         local parts: {BasePart} = {}
         if not lobby then
             return parts
         end
 
-        local votePads: Instance? = lobby:FindFirstChild("VotePads")
-        if votePads then
-            local detector: Instance? = votePads:FindFirstChild("Detector" .. tostring(slot))
-            if detector and detector:IsA("BasePart") then
-                parts[#parts + 1] = detector :: BasePart
+        local padModel: Instance? = getPadModel(lobby, slot)
+        if padModel then
+            local padPart: Instance? = padModel:FindFirstChild("Pad")
+                or padModel:FindFirstChild("Pad", true)
+            if padPart and padPart:IsA("BasePart") then
+                parts[#parts + 1] = padPart :: BasePart
             end
         end
 
-        local padModel: Instance? = lobby:FindFirstChild("VotePad" .. tostring(slot))
-        if padModel then
-            local padPart: Instance? = padModel:FindFirstChild("Pad")
-            if padPart and padPart:IsA("BasePart") then
-                parts[#parts + 1] = padPart :: BasePart
+        local votePads: Instance? = getVotePadsFolder(lobby)
+        if votePads then
+            local detector: Instance? = votePads:FindFirstChild("Detector" .. tostring(slot))
+                or votePads:FindFirstChild("Detector" .. tostring(slot), true)
+            if detector and detector:IsA("BasePart") then
+                parts[#parts + 1] = detector :: BasePart
             end
         end
 
@@ -263,17 +379,13 @@ function Module.init(runtime: any): any
     end
 
     -- Check whether the lobby voting billboards are currently enabled.
-    -- In MM2 (place, source.rbxlx), VotePad{1..3}.VoteInfoGui.Enabled,
-    -- VotePad{1..3}.MapInfoGui.Enabled, and VoteIcons.VotePad{1..3}.Voting.Value
-    -- are true ONLY during the voting intermission and turn false as soon as
-    -- voting ends.
     local function areVotingBillboardsActive(lobby: Instance?): boolean
         if not lobby then
             return false
         end
 
         for slot: number = 1, 3 do
-            local padModel: Instance? = lobby:FindFirstChild("VotePad" .. tostring(slot))
+            local padModel: Instance? = getPadModel(lobby, slot)
             if padModel then
                 local voteGui: Instance? = padModel:FindFirstChild("VoteInfoGui")
                 if voteGui and voteGui:IsA("SurfaceGui") and (voteGui :: SurfaceGui).Enabled == true then
@@ -285,7 +397,7 @@ function Module.init(runtime: any): any
                 end
             end
 
-            local voteIcons: Instance? = lobby:FindFirstChild("VoteIcons")
+            local voteIcons: Instance? = getVoteIconsFolder(lobby)
             local iconPart: Instance? = voteIcons and voteIcons:FindFirstChild("VotePad" .. tostring(slot))
             if iconPart then
                 local votingFlag: Instance? = iconPart:FindFirstChild("Voting")
@@ -307,9 +419,9 @@ function Module.init(runtime: any): any
         return false
     end
 
-    -- Strict check: returns true ONLY while the lobby voting intermission is
-    -- actively open. Returns false the instant voting ends or a map/round starts.
-    local function isVotingIntermissionActive(): boolean
+    -- Returns true ONLY while the lobby voting intermission is open and the
+    -- player is in the lobby. Returns false the instant voting ends or a round starts.
+    local function isVotingIntermissionActive(root: BasePart?, detector: BasePart?): boolean
         local lobby: Instance? = findLobbyModel()
         local billboardsOn: boolean = areVotingBillboardsActive(lobby)
 
@@ -332,17 +444,21 @@ function Module.init(runtime: any): any
             return false
         end
 
-        if type(core.findMM2Map) == "function"
-            and core.findMM2Map() ~= nil then
-            return false
-        end
-
         local timerPart: Instance? = workspace:FindFirstChild("RoundTimerPart")
         if timerPart then
             local okTime: boolean, roundTime: any = pcall(function(): any
                 return timerPart:GetAttribute("Time")
             end)
             if okTime and type(roundTime) == "number" and roundTime > 0 then
+                return false
+            end
+        end
+
+        if root and detector then
+            local okDist: boolean, dist: any = pcall(function(): any
+                return (root.Position - detector.Position).Magnitude
+            end)
+            if okDist and type(dist) == "number" and dist > MAX_LOBBY_PAD_DISTANCE then
                 return false
             end
         end
@@ -365,8 +481,25 @@ function Module.init(runtime: any): any
         return math.clamp(selectedSlot, 1, 3)
     end
 
-    -- Touch the wooden vote pad detectors without moving the local character.
+    -- Step onto the wooden vote pad and pulse touch on its detectors so the
+    -- server registers the vote on VotePads.Detector{slot} and VotePad{slot}.Pad.
     local function pulseVotePad(root: BasePart, detectors: {BasePart}): ()
+        local primaryPad: BasePart? = detectors[1]
+        if primaryPad then
+            local okPos: boolean, padPos: any = pcall(function(): any
+                local saved: CFrame? = savedDetectorCFrames[primaryPad]
+                return saved and saved.Position or primaryPad.Position
+            end)
+            if okPos and typeof(padPos) == "Vector3" then
+                pcall(function(): ()
+                    local currentCF: CFrame = root.CFrame
+                    local rotOnly: CFrame = currentCF - currentCF.Position
+                    root.CFrame = CFrame.new(padPos) * rotOnly
+                    root.AssemblyLinearVelocity = Vector3.zero
+                end)
+            end
+        end
+
         local fireTouch: any = state.fireTouchInterest
         local rootCF: CFrame? = root.CFrame
         for _, part: BasePart in ipairs(detectors) do
@@ -424,6 +557,7 @@ function Module.init(runtime: any): any
 
         for _, stopName: string in ipairs({
             "LoadingMap",
+            "Fade",
             "RoleSelect",
             "ShowRoleSelect",
             "ShowRoleSelectNew",
@@ -461,7 +595,7 @@ function Module.init(runtime: any): any
     local function disconnectAllAutoVoteConnections(): ()
         disconnectFeatureConnection("MM2AutoVote")
         for key in pairs(featureConnections) do
-            if string.sub(key, 1, 11) == "MM2AutoVote" then
+            if string.sub(key, 1, 11) == "MM2AutoVote" and key ~= "MM2AutoVoteMapSync" then
                 disconnectFeatureConnection(key)
             end
         end
@@ -482,8 +616,8 @@ function Module.init(runtime: any): any
         local lastTickAt: number = -math.huge
         local currentChar: Model? = nil
         local firstTouchAt: number = 0
+        local lastResetAttemptAt: number = 0
         local voteCountBeforeTouch: number? = nil
-        local resetSentForChar: boolean = false
 
         local function autoVoteTick(): ()
             local now: number = os.clock()
@@ -494,32 +628,33 @@ function Module.init(runtime: any): any
 
             refreshMapChoices(false)
 
+            local lobby: Instance? = findLobbyModel()
+            local slot: number = resolveTargetSlot(lobby)
+            local targetMapLabel: string = mapChoices[slot] or DEFAULT_MAP_CHOICES[slot]
+            local detectors: {BasePart} = getSlotDetectorParts(lobby, slot)
+            local primaryDetector: BasePart? = detectors[1]
+
+            local character: Model? = LocalPlayer and LocalPlayer.Character
+            local root: BasePart? = character
+                and (character:FindFirstChild("HumanoidRootPart") :: BasePart?)
+            local humanoid: Humanoid? = character
+                and (character:FindFirstChildOfClass("Humanoid") :: Humanoid?)
+
             -- Stop immediately if the voting intermission is not active or has ended!
-            if not isVotingIntermissionActive() then
+            if not isVotingIntermissionActive(root, primaryDetector) then
                 restoreAllDetectorParts()
                 firstTouchAt = 0
-                resetSentForChar = false
-                setStatus("Waiting for vote · " .. tostring(mapChoices[selectedSlot] or "Map 1"))
+                lastResetAttemptAt = 0
+                setStatus("Waiting for vote · " .. tostring(targetMapLabel))
                 return
             end
 
-            local lobby: Instance? = findLobbyModel()
-            local slot: number = resolveTargetSlot(lobby)
-            local targetMapLabel: string = mapChoices[slot] or ("Map " .. tostring(slot))
-            local detectors: {BasePart} = getSlotDetectorParts(lobby, slot)
             if #detectors == 0 then
                 setStatus("No vote pad")
                 return
             end
 
-            local character: Model? = LocalPlayer and LocalPlayer.Character
-            if not character then
-                restoreAllDetectorParts()
-                return
-            end
-            local root: BasePart? = character:FindFirstChild("HumanoidRootPart") :: BasePart?
-            local humanoid: Humanoid? = character:FindFirstChildOfClass("Humanoid") :: Humanoid?
-            if not root or not humanoid or humanoid.Health <= 0 then
+            if not character or not root or not humanoid or humanoid.Health <= 0 then
                 restoreAllDetectorParts()
                 return
             end
@@ -527,11 +662,11 @@ function Module.init(runtime: any): any
             if character ~= currentChar then
                 currentChar = character
                 firstTouchAt = 0
+                lastResetAttemptAt = 0
                 voteCountBeforeTouch = readSlotVoteCount(lobby, slot)
-                resetSentForChar = false
             end
 
-            -- Cast vote for this character life via firetouchinterest + detector overlap
+            -- Step onto the wooden vote pad and pulse touch on its detectors
             pulseVotePad(root, detectors)
             if firstTouchAt == 0 then
                 firstTouchAt = now
@@ -549,13 +684,14 @@ function Module.init(runtime: any): any
                 .. (currentVotes ~= nil and (" (" .. tostring(currentVotes) .. ")") or "")
             )
 
-            -- Once this character life has cast its vote (either vote count incremented
-            -- or VOTE_HOLD_Before_RESET elapsed), re-verify voting intermission is STILL
-            -- active before resetting the character to vote again.
-            if not resetSentForChar and (voteIncremented or (now - firstTouchAt >= VOTE_HOLD_Before_RESET)) then
+            -- Once this character life has cast its vote on the wooden pad,
+            -- re-verify voting intermission is STILL active and reset the
+            -- character to stack another vote.
+            if (voteIncremented or (now - firstTouchAt >= VOTE_HOLD_BEFORE_RESET))
+                and (now - lastResetAttemptAt >= RESET_RETRY_INTERVAL) then
                 restoreAllDetectorParts()
-                if isVotingIntermissionActive() then
-                    resetSentForChar = true
+                if isVotingIntermissionActive(root, primaryDetector) then
+                    lastResetAttemptAt = now
                     resetLocalCharacter(character, humanoid)
                 end
             end
@@ -565,12 +701,22 @@ function Module.init(runtime: any): any
         autoVoteTick()
     end
 
+    -- Clear any legacy "Map 1..3" placeholder saved in config so real map names show.
+    pcall(function(): ()
+        if type(configData) == "table" and type(configData.values) == "table" then
+            local saved: any = configData.values[selectMapOptionKey]
+            if isPlaceholderMapLabel(saved) then
+                configData.values[selectMapOptionKey] = nil
+            end
+        end
+    end)
+
     -- Populate initial map names if already in the lobby
     pcall(refreshMapChoices, true)
 
     AutoVoteFeature = createUniversalFeature(
         "Auto Vote",
-        "Detects the 3 maps on the lobby voting billboard, votes for your selected map via firetouchinterest without teleporting, and resets repeatedly until voting intermission ends.",
+        "Detects the 3 maps on the lobby voting billboard, votes on the wooden floor pad for your selected map, and resets repeatedly to stack votes until voting intermission ends.",
         7,
         toggleAutoVote,
         {
@@ -602,17 +748,31 @@ function Module.init(runtime: any): any
         "Select which of the 3 lobby billboard maps to vote for."
     )
 
-    -- Refresh the 3 billboard map names whenever the user clicks "Select Map",
-    -- even before Auto Vote is toggled ON.
-    if selectMapButton and selectMapButton.MouseButton1Click then
-        pcall(function(): ()
-            selectMapButton.MouseButton1Click:Connect(function(): ()
+    -- Refresh the 3 billboard map names right BEFORE the dropdown opens
+    -- and keep the label synced with the lobby boards even while Auto Vote is OFF.
+    pcall(function(): ()
+        local control: any = state.valueControls
+            and state.valueControls[selectMapOptionKey]
+        if type(control) == "table" then
+            control.onBeforeOpen = function(): ()
                 refreshMapChoices(true)
-            end)
-        end)
-    end
+            end
+        end
+    end)
+
+    local lastBgSyncAt: number = -math.huge
+    disconnectFeatureConnection("MM2AutoVoteMapSync")
+    featureConnections.MM2AutoVoteMapSync = TaskManager:Connect(function(): ()
+        local now: number = os.clock()
+        if now - lastBgSyncAt < 1.0 then
+            return
+        end
+        lastBgSyncAt = now
+        refreshMapChoices(false)
+    end)
 
     activeCleanup = function(): ()
+        disconnectFeatureConnection("MM2AutoVoteMapSync")
         toggleAutoVote(false)
     end
     Module.Events = featureConnections

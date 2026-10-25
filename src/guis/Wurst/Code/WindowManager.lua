@@ -1083,6 +1083,9 @@ function Module.init(context: any): any
         feature.settingsWindow = window
 
         local options: any = feature.options
+        if feature.updateExpandedSize then
+            feature.updateExpandedSize(false)
+        end
         if options then
             options.Visible = true
             options.Position = UDim2.fromOffset(0, 0)
@@ -1097,6 +1100,9 @@ function Module.init(context: any): any
         end
 
         local function resizeToOptions(): ()
+            if options then
+                options.Size = UDim2.new(1, 0, 0, feature.optionsHeight or 40)
+            end
             local wanted: number = TITLE_HEIGHT + (feature.optionsHeight or 40)
             local limit: number = tonumber(state.uiMaxSettingsHeight) or 200
             if limit <= 0 then

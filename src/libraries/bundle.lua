@@ -1,5 +1,5 @@
 return {
-    stamp = "v130-20261025-autovote-and-cpu-fix",
+    stamp = "v131-20261025-autovote-autofarm-and-ui-fix",
     files = {
         ["src/Profile/135856908115931.lua"] = [[
 --!strict
@@ -4285,23 +4285,23 @@ function Module.init(_runtime: any): any
     end
 
     -- Auto grab gun + auto shoot: equip the dropped sheriff gun and
-    -- fire one predicted shot at the murderer (same gun remote and
+    -- fire predicted shots at the murderer (same gun remote and
     -- prediction the Shoot module authors).
     local lastShotAt: number = 0
-    local function shootMurderer(murderer: Player): ()
-        if os.clock() - lastShotAt < 1.1 then
-            return
+    local function shootMurderer(murderer: Player): boolean
+        if os.clock() - lastShotAt < 0.22 then
+            return false
         end
         local character: Model?, humanoid: Humanoid? = characterParts()
         if not character or not humanoid then
-            return
+            return false
         end
         local gun: Tool? = nil
         if type(getPlayerWeapon) == "function" then
             gun = getPlayerWeapon(LocalPlayer, "Gun")
         end
         if not gun then
-            return
+            return false
         end
         if gun.Parent ~= character then
             pcall(function(): ()
@@ -4316,11 +4316,11 @@ function Module.init(_runtime: any): any
         if gun.Parent ~= character
             or gun:GetAttribute("Reloading") == true
             or gun:GetAttribute("IsReloading") == true then
-            return
+            return false
         end
         local remote: Instance? = gun:FindFirstChild("Shoot")
         if not remote or not remote:IsA("RemoteEvent") then
-            return
+            return false
         end
         local origin: CFrame? = nil
         if type(getGunOriginCFrame) == "function" then
@@ -4331,7 +4331,7 @@ function Module.init(_runtime: any): any
             end
         end
         if not origin then
-            return
+            return false
         end
         local endpoint: Vector3? = nil
         local prediction: any = state.mm2Prediction
@@ -4345,7 +4345,7 @@ function Module.init(_runtime: any): any
         if not endpoint then
             local targetRoot: BasePart? = rootOf(murderer)
             if not targetRoot then
-                return
+                return false
             end
             endpoint = targetRoot.Position + Vector3.new(0, 0.6, 0)
         end
@@ -4356,6 +4356,7 @@ function Module.init(_runtime: any): any
                 CFrame.new(endpoint :: Vector3)
             )
         end)
+        return true
     end
 
     local function toggleAutoFarm(enabled: boolean): ()
@@ -4373,9 +4374,11 @@ function Module.init(_runtime: any): any
         end
 
         local bagAmount: number = 0
-        local bagLimit: number = 0
+        local bagLimit: number = 50
         local busy: boolean = false
         local fullHandled: boolean = false
+        local roundFullReached: boolean = false
+        local wasInActiveRound: boolean = false
         local scanCache: {Instance} = {}
         local scanAt: number = 0
         local stuckPart: Instance? = nil
@@ -4384,20 +4387,16 @@ function Module.init(_runtime: any): any
         local blacklist: {[Instance]: number} = {}
 
         -- Engagement state. The farm touches the character ONLY while
-        -- engaged (a target exists). In the lobby, between rounds, or
-        -- with no coins out, the character is left completely alone --
-        -- that was the camera glitch: noclip + prone applied in the
-        -- lobby made the character fall through the floor.
+        -- engaged inside an active round on a map. In the lobby or
+        -- between rounds, the character is left completely alone.
         local engaged: boolean = false
         local engagedCharacter: Model? = nil
         local homeCFrame: CFrame? = nil
+        local homeCharacter: Model? = nil
         local savedCollide: {[Instance]: boolean} = {}
         local engagedMode: string? = nil
         local savedWalkSpeed: number? = nil
         local savedRootSize: Vector3? = nil
-        -- Home survives a mid-farm mode switch (Below <-> Walk), which
-        -- restores the character in place; OFF still returns there.
-        local preservedHome: CFrame? = nil
         local walkLastDistance: number = math.huge
         local walkStuckSince: number = 0
 
@@ -4406,44 +4405,44 @@ function Module.init(_runtime: any): any
             return math.atan2(-look.X, -look.Z)
         end
 
-        -- Teleport to Map, AutoFarm edition: put the body on a random
-        -- BasePart of the active map's Spawns, upright and stopped.
-        -- Returning "home" or standing up in place is not safe after a
-        -- Below run -- the body can be under the floor, and writing an
-        -- upright CFrame there just wedges it into the geometry. A map
-        -- spawn is a surface the game itself chose, so it cannot be
-        -- under the map. False when there is no active map (lobby):
-        -- the caller falls back to the old home return there.
-        local function teleportToRandomMapSpawn(
-            character: Model,
-            root: BasePart
-        ): boolean
+        local function isCharacterInActiveRound(root: BasePart): boolean
+            if type(isRoundLifecycleActive) == "function"
+                and isRoundLifecycleActive() ~= true then
+                return false
+            end
             if type(findMM2Map) ~= "function" then
                 return false
             end
             local map: Instance? = findMM2Map()
-            local spawns: Instance? = map
-                and (map :: Instance):FindFirstChild("Spawns")
-            if not spawns then
+            if not map then
                 return false
             end
-            local choices: {BasePart} = {}
-            for _, object: Instance in ipairs(spawns:GetChildren()) do
-                if object:IsA("BasePart") then
-                    table.insert(choices, object :: BasePart)
+            if type(getPlayerRole) == "function" then
+                local role: any = getPlayerRole(LocalPlayer)
+                if role == "Dead" or role == "None" then
+                    return false
                 end
             end
-            if #choices == 0 then
-                return false
+            local refPart: BasePart? = nil
+            local spawns: Instance? = (map :: Instance):FindFirstChild("Spawns")
+            if spawns then
+                refPart = spawns:FindFirstChildWhichIsA("BasePart")
             end
-            local spawn: BasePart = choices[math.random(1, #choices)]
-            local ok: boolean = pcall(function(): ()
-                character:PivotTo(
-                    spawn.CFrame + Vector3.new(0, 3, 0))
-                root.AssemblyLinearVelocity = Vector3.zero
-                root.AssemblyAngularVelocity = Vector3.zero
-            end)
-            return ok
+            if not refPart then
+                local coinContainer: Instance? = (map :: Instance):FindFirstChild("CoinContainer")
+                if coinContainer then
+                    refPart = coinContainer:FindFirstChildWhichIsA("BasePart", true)
+                end
+            end
+            if refPart then
+                local okDist: boolean, dist: any = pcall(function(): any
+                    return (root.Position - refPart.Position).Magnitude
+                end)
+                if okDist and type(dist) == "number" and dist > 1500 then
+                    return false
+                end
+            end
+            return true
         end
 
         local function restoreCharacter(returnHome: boolean): ()
@@ -4477,25 +4476,18 @@ function Module.init(_runtime: any): any
                     end
                     root.AssemblyLinearVelocity = Vector3.zero
                     root.AssemblyAngularVelocity = Vector3.zero
-                    -- A "return" inside an active map is a Teleport to
-                    -- Map onto a random spawn, never the stored home
-                    -- CFrame: after Below the home point can sit under
-                    -- the floor and the upright write wedged the body
-                    -- into the map. Only with no active map (lobby)
-                    -- does the old home return still apply.
-                    local teleported: boolean = false
-                    if returnHome and character then
-                        teleported = teleportToRandomMapSpawn(
-                            character, root)
-                    end
-                    if teleported then
-                        -- On a real spawn, upright and stopped.
-                    elseif returnHome and homeCFrame then
-                        -- Back where the farm found us, upright: only
-                        -- the position and yaw survive, never the
-                        -- face-planted pitch.
-                        root.CFrame = CFrame.new(homeCFrame.Position)
+                    -- Return the character to the exact last position
+                    -- it had right before Auto Farm started (homeCFrame),
+                    -- never to a random spawn point.
+                    if returnHome and homeCFrame and (not homeCharacter or homeCharacter == character) then
+                        local targetCF: CFrame = CFrame.new(homeCFrame.Position)
                             * CFrame.Angles(0, yawOf(homeCFrame), 0)
+                        if character then
+                            pcall(function(): ()
+                                character:PivotTo(targetCF)
+                            end)
+                        end
+                        root.CFrame = targetCF
                     else
                         -- Stand back up exactly where we are.
                         root.CFrame = CFrame.new(root.Position)
@@ -4507,7 +4499,6 @@ function Module.init(_runtime: any): any
             engaged = false
             engagedMode = nil
             engagedCharacter = nil
-            homeCFrame = nil
         end
 
         local function engage(
@@ -4515,26 +4506,25 @@ function Module.init(_runtime: any): any
             humanoid: Humanoid,
             root: BasePart
         ): ()
+            if homeCharacter ~= character or not homeCFrame then
+                homeCFrame = root.CFrame
+                homeCharacter = character
+            end
             if engagedMode ~= settings.mode then
                 -- Mode switched (or first engage): undo the other
-                -- mode's body changes without losing home.
-                if homeCFrame then
-                    preservedHome = homeCFrame
-                end
+                -- mode's body changes without losing homeCFrame.
                 restoreCharacter(false)
                 engagedMode = settings.mode
-                if engagedCharacter == character then
-                    homeCFrame = preservedHome
-                    preservedHome = nil
-                end
             end
             if engagedCharacter ~= character then
                 -- New body (respawn): the previous restore belongs to
                 -- the old character; remember this one's start point.
                 restoreCharacter(false)
                 engagedMode = settings.mode
-                homeCFrame = preservedHome or root.CFrame
-                preservedHome = nil
+                if homeCharacter ~= character or not homeCFrame then
+                    homeCFrame = root.CFrame
+                    homeCharacter = character
+                end
                 engagedCharacter = character
             end
             if not engaged then
@@ -4688,13 +4678,18 @@ function Module.init(_runtime: any): any
             return collected ~= true
         end
 
-    -- The gun grab is an innocent-only, in-round action: as Murderer
-    -- it must never run, and in the lobby there is no round, no murderer
-    -- and no dropped gun to shoot with. Fail closed when the role or
-    -- the round state is not positively known.
+    -- The gun grab is an in-round action for non-Murderer roles: as
+    -- Murderer it must never run, and in the lobby there is no round,
+    -- no murderer and no dropped gun to shoot with. Note that once an
+    -- Innocent picks up the dropped gun, MM2 promotes their role to
+    -- "Hero" / "Sheriff", so those roles must remain allowed while
+    -- equipping and continuously shooting the Murderer.
     local function canGrabGun(): boolean
-        if type(getPlayerRole) ~= "function"
-            or getPlayerRole(LocalPlayer) ~= "Innocent" then
+        if type(getPlayerRole) ~= "function" then
+            return false
+        end
+        local role: any = getPlayerRole(LocalPlayer)
+        if role ~= "Innocent" and role ~= "Sheriff" and role ~= "Hero" then
             return false
         end
         if type(isRoundLifecycleActive) ~= "function"
@@ -4734,129 +4729,142 @@ function Module.init(_runtime: any): any
     end
 
     -- Full-bag Auto Grab gun and Shoot: fetch the dropped sheriff gun
-    -- if we do not already carry it, equip it, and fire ONE SilentAim
-    -- shot at the murderer through the Shoot module's own silent path
-    -- (state.mm2FireSilentShot). Only the direct predicted shot remains
-    -- as a fallback for builds where that export is unavailable.
+    -- if we do not already carry it, equip it, and continuously shoot
+    -- the murderer until the murderer is eliminated or the round ends.
     local function grabGunAndShoot(): ()
         if not canGrabGun() then
             return
         end
-        local murderer: Player? = nil
-        if type(findMurderer) == "function" then
-            murderer = findMurderer()
-        end
-        if not murderer
-            or (type(isPlayerAlive) == "function"
-                and not isPlayerAlive(murderer)) then
-            return
-        end
-        local gun: Tool? = nil
-        if type(getPlayerWeapon) == "function" then
-            gun = getPlayerWeapon(LocalPlayer, "Gun")
-        end
-        if not gun and type(findDroppedGun) == "function" then
-            -- Fastest first: an instant touch pulse from wherever we
-            -- stand. Only if that does not deliver the gun do we travel
-            -- to the drop with the active farm mode, up to a few
-            -- seconds; the bag sequence owns the character meanwhile.
-            local _, _, startRoot: BasePart? = characterParts()
-            local firstDrop: Instance? = findDroppedGun()
-            if startRoot and firstDrop
-                and touchDroppedGun(firstDrop, startRoot) then
+        local shootLoopDeadline: number = os.clock() + 30
+        while os.clock() < shootLoopDeadline and enabled and settings.grabGunShoot do
+            if not canGrabGun() then
+                return
+            end
+            local murderer: Player? = nil
+            if type(findMurderer) == "function" then
+                murderer = findMurderer()
+            end
+            if not murderer
+                or (type(isPlayerAlive) == "function"
+                    and not isPlayerAlive(murderer)) then
+                return
+            end
+            local character: Model?, humanoid: Humanoid?,
+                startRoot: BasePart? = characterParts()
+            if not character or not humanoid or not startRoot
+                or humanoid.Health <= 0 then
+                return
+            end
+
+            local gun: Tool? = nil
+            if type(getPlayerWeapon) == "function" then
                 gun = getPlayerWeapon(LocalPlayer, "Gun")
             end
-            local deadline: number = os.clock() + 5
-            while os.clock() < deadline and not gun do
-                if not canGrabGun() then
-                    return
-                end
-                local character: Model?, humanoid: Humanoid?,
-                    root: BasePart? = characterParts()
-                local drop: Instance? = findDroppedGun()
-                if not character or not humanoid or not root or not drop then
-                    break
-                end
-                local dropPosition: Vector3? = nil
-                pcall(function(): ()
-                    if drop:IsA("BasePart") then
-                        dropPosition = (drop :: BasePart).Position
-                    elseif drop:IsA("Model") then
-                        dropPosition = (drop :: Model):GetPivot().Position
-                    end
-                end)
-                if not dropPosition then
-                    break
-                end
-                engage(character, humanoid, root)
-                local remaining: number
-                if settings.mode == "Walk" then
-                    remaining = walkTowards(
-                        humanoid, root, dropPosition :: Vector3)
-                else
-                    remaining = moveTowards(
-                        root,
-                        (dropPosition :: Vector3) + Vector3.new(0, 1, 0),
-                        0.05
-                    )
-                end
-                if remaining < 2.5 then
-                    task.wait(0.05)
+            if not gun and type(findDroppedGun) == "function" then
+                local firstDrop: Instance? = findDroppedGun()
+                if firstDrop and touchDroppedGun(firstDrop, startRoot) then
                     gun = getPlayerWeapon(LocalPlayer, "Gun")
-                    if gun then
+                end
+                local pickupDeadline: number = os.clock() + 5
+                while os.clock() < pickupDeadline and not gun do
+                    if not canGrabGun() or not enabled or not settings.grabGunShoot then
+                        return
+                    end
+                    local curChar: Model?, curHum: Humanoid?,
+                        root: BasePart? = characterParts()
+                    local drop: Instance? = findDroppedGun()
+                    if not curChar or not curHum or not root or not drop then
                         break
                     end
+                    if touchDroppedGun(drop, root) then
+                        gun = getPlayerWeapon(LocalPlayer, "Gun")
+                        if gun then
+                            break
+                        end
+                    end
+                    local dropPosition: Vector3? = nil
+                    pcall(function(): ()
+                        if drop:IsA("BasePart") then
+                            dropPosition = (drop :: BasePart).Position
+                        elseif drop:IsA("Model") then
+                            dropPosition = (drop :: Model):GetPivot().Position
+                        end
+                    end)
+                    if not dropPosition then
+                        break
+                    end
+                    engage(curChar, curHum, root)
+                    local remaining: number
+                    if settings.mode == "Walk" then
+                        remaining = walkTowards(
+                            curHum, root, dropPosition :: Vector3)
+                    else
+                        remaining = moveTowards(
+                            root,
+                            (dropPosition :: Vector3) + Vector3.new(0, 1, 0),
+                            0.05
+                        )
+                    end
+                    if remaining < 2.5 then
+                        task.wait(0.05)
+                        gun = getPlayerWeapon(LocalPlayer, "Gun")
+                        if gun then
+                            break
+                        end
+                    end
+                    task.wait()
                 end
-                task.wait()
             end
-        end
-        if not gun then
-            return
-        end
-        local character: Model?, humanoid: Humanoid? = characterParts()
-        if not character or not humanoid then
-            return
-        end
-        if gun.Parent ~= character then
-            pcall(function(): ()
-                humanoid:EquipTool(gun :: Tool)
-            end)
-            task.wait(0.1)
-        end
-        if gun.Parent ~= character then
-            return
-        end
-        if not canGrabGun() then
-            return
-        end
-        if type(state.mm2FireSilentShot) == "function" then
-            pcall(state.mm2FireSilentShot, murderer)
-        else
-            shootMurderer(murderer)
+
+            if not gun then
+                -- Wait briefly for the gun to drop or become available while the round is active
+                task.wait(0.15)
+                continue
+            end
+
+            character, humanoid = characterParts()
+            if not character or not humanoid or humanoid.Health <= 0 then
+                return
+            end
+            if gun.Parent ~= character then
+                pcall(function(): ()
+                    humanoid:EquipTool(gun :: Tool)
+                end)
+                local equipWait: number = os.clock() + 0.15
+                while gun.Parent ~= character and os.clock() < equipWait do
+                    task.wait()
+                end
+            end
+            if gun.Parent == character and canGrabGun() then
+                local firedSilent: boolean = false
+                if type(state.mm2FireSilentShot) == "function" then
+                    local okShot: boolean, shotRes: any =
+                        pcall(state.mm2FireSilentShot, murderer)
+                    firedSilent = okShot and shotRes == true
+                end
+                if not firedSilent then
+                    shootMurderer(murderer)
+                end
+            end
+            task.wait(0.12)
         end
     end
 
         -- The full-bag sequence, in the user's order: Kill All,
-        -- reset, then the post-reset flings. Runs once per fill.
+        -- return to exact pre-farm position, Auto Grab gun and Shoot,
+        -- reset, then the post-reset flings. Runs once per 50-coin fill.
         local function runFullSequence(): ()
             busy = true
             local ok: boolean, err: any = pcall(function(): ()
                 -- Everything in this sequence happens ONLY when the
-                -- bag is full (50): Kill All, the gun grab + SilentAim
-                -- shot, the reset, and the flings. None of it runs
-                -- during ordinary farming.
+                -- bag is full (50): Kill All, return to the character's
+                -- last position before Auto Farm started (homeCFrame),
+                -- gun grab + continuous shooting, reset, and flings.
+                -- None of it runs during ordinary farming.
                 if settings.killAllOnFull then
                     killAll()
                     task.wait()
                 end
-                -- Back on the map properly before anything else: a
-                -- Teleport to Map onto a random spawn (restoreCharacter
-                -- with returnHome does exactly that while a map is
-                -- active), instead of standing the body up wherever
-                -- the farm left it -- under the floor after Below,
-                -- where it stayed bugged. Then the gun grab + shot
-                -- fires from that clean position, as fast as the
-                -- instant touch allows.
                 restoreCharacter(true)
                 if settings.grabGunShoot then
                     grabGunAndShoot()
@@ -4900,8 +4908,6 @@ function Module.init(_runtime: any): any
             if not ok then
                 warn("Auto Farm full-bag sequence failed: " .. tostring(err))
             end
-            bagAmount = 0
-            fullHandled = false
             busy = false
         end
 
@@ -4912,14 +4918,16 @@ function Module.init(_runtime: any): any
             featureConnections.MM2AutoFarmCoinCollected =
                 (collected :: any).OnClientEvent:Connect(
                     function(_bag: any, amount: any, limit: any): ()
-                        if type(amount) == "number" then
-                            bagAmount = amount
-                        end
                         if type(limit) == "number" and limit > 0 then
                             bagLimit = limit
                         end
-                        if bagLimit > 0 and bagAmount < bagLimit then
+                        if type(amount) == "number" then
+                            bagAmount = amount
+                        end
+                        local targetLimit: number = if bagLimit > 0 then bagLimit else 50
+                        if bagAmount < targetLimit then
                             fullHandled = false
+                            roundFullReached = false
                         end
                     end
                 )
@@ -4930,22 +4938,68 @@ function Module.init(_runtime: any): any
                 if busy then
                     return
                 end
-                -- Full bag (50): run the sequence once, then keep
-                -- farming. Any of its actions arms the trigger.
-                if bagLimit > 0 and bagAmount >= bagLimit
-                    and not fullHandled
-                    and (settings.killAllOnFull or settings.resetOnFull
-                        or settings.flingMurder or settings.flingSheriff
-                        or settings.grabGunShoot) then
-                    fullHandled = true
-                    restoreCharacter(false)
-                    task.spawn(runFullSequence)
-                    return
-                end
                 local character: Model?, humanoid: Humanoid?,
                     root: BasePart? = characterParts()
                 if not character or not humanoid or not root
                     or humanoid.Health <= 0 then
+                    return
+                end
+
+                -- Strict lobby & non-round guard: NEVER activate, move,
+                -- or farm in the lobby or outside an active round on a map.
+                local inActiveRound: boolean = isCharacterInActiveRound(root)
+                if not inActiveRound then
+                    if engaged then
+                        restoreCharacter(false)
+                    end
+                    if wasInActiveRound then
+                        wasInActiveRound = false
+                        bagAmount = 0
+                        fullHandled = false
+                        roundFullReached = false
+                        homeCFrame = nil
+                        homeCharacter = nil
+                    end
+                    setStatus("Auto Farm: waiting in lobby")
+                    stuckPart = nil
+                    return
+                end
+
+                if not wasInActiveRound then
+                    wasInActiveRound = true
+                    bagAmount = 0
+                    fullHandled = false
+                    roundFullReached = false
+                    homeCFrame = root.CFrame
+                    homeCharacter = character
+                end
+
+                local targetLimit: number = if bagLimit > 0 then bagLimit else 50
+
+                -- Stop farming ONLY when 50 coins (full bag) are detected!
+                if bagAmount >= targetLimit then
+                    if not fullHandled then
+                        fullHandled = true
+                        roundFullReached = true
+                        if settings.killAllOnFull or settings.resetOnFull
+                            or settings.flingMurder or settings.flingSheriff
+                            or settings.grabGunShoot then
+                            task.spawn(runFullSequence)
+                        else
+                            restoreCharacter(true)
+                        end
+                    elseif settings.grabGunShoot and canGrabGun() then
+                        task.spawn(runFullSequence)
+                    else
+                        setStatus(string.format(
+                            "Auto Farm: full bag (%d/%d) - stopped at start position",
+                            bagAmount, targetLimit
+                        ))
+                    end
+                    return
+                end
+
+                if roundFullReached then
                     return
                 end
 
@@ -4966,12 +5020,17 @@ function Module.init(_runtime: any): any
                     return
                 end
 
+                -- Capture pre-farm homeCFrame and stay engaged while
+                -- bagAmount < 50 inside the active round.
+                engage(character, humanoid, root)
+
                 -- Nearest pickup, from Coin ESP's own detection.
-                if os.clock() - scanAt > 0.4 then
-                    scanAt = os.clock()
+                local now: number = os.clock()
+                local scanInterval: number = if #scanCache == 0 then 0.12 else 0.35
+                if now - scanAt > scanInterval then
+                    scanAt = now
                     scanCache = coinPickups()
                 end
-                local now: number = os.clock()
                 local nearest: Instance? = nil
                 local nearestPosition: Vector3? = nil
                 local nearestDistance: number = math.huge
@@ -4995,52 +5054,30 @@ function Module.init(_runtime: any): any
                     end
                 end
                 if not nearest or not nearestPosition then
-                    -- Nothing to collect (lobby, intermission, round over,
-                    -- or every coin blacklisted). Two rules here:
-                    --   * the body is never left standing up under the
-                    --     floor: restoreCharacter(true) returns home
-                    --     upright, which is the difference between
-                    --     waiting and falling into the void;
-                    --   * the farm keeps moving on a slow circle around
-                    --     that home point instead of parking, so the
-                    --     character is walking when the next coin spawns.
-                    local roamAnchor: Vector3 = homeCFrame
-                        and homeCFrame.Position
-                        or root.Position
-                    if engaged then
-                        restoreCharacter(true)
-                        roamAnchor = homeCFrame
-                            and homeCFrame.Position
-                            or roamAnchor
-                    end
-                    local roamAngle: number = now * 0.45
-                    local roamTarget: Vector3 = roamAnchor
-                        + Vector3.new(
-                            math.cos(roamAngle) * 8,
-                            0,
-                            math.sin(roamAngle) * 8
-                        )
-                    local roamDelta: Vector3 = roamTarget - root.Position
-                    local roamFlat: Vector3 = Vector3.new(
-                        roamDelta.X,
-                        0,
-                        roamDelta.Z
-                    )
-                    if roamFlat.Magnitude > 0.1 then
+                    -- 0 coins currently in the server while bag < 50:
+                    -- Do NOT stop farming or teleport back home because
+                    -- the next coin spawns in < 1s. Hold steady right
+                    -- here and re-scan quickly for the next coin.
+                    scanAt = now - 0.25
+                    if settings.mode == "Walk" then
                         pcall(function(): ()
-                            humanoid:Move(roamFlat.Unit, false)
+                            humanoid:Move(Vector3.zero, false)
+                        end)
+                    else
+                        pcall(function(): ()
+                            root.AssemblyLinearVelocity = Vector3.zero
+                            root.AssemblyAngularVelocity = Vector3.zero
                         end)
                     end
                     setStatus(string.format(
-                        "Auto Farm: no coins - roaming - bag %d/%d - speed %d u/s - ping %dms",
-                        bagAmount, bagLimit,
+                        "Auto Farm (%s): waiting for coin - bag %d/%d - speed %d u/s - ping %dms",
+                        settings.mode, bagAmount, targetLimit,
                         math.round(math.clamp(settings.speed, 5, 60)),
                         pingMillis()
                     ))
                     stuckPart = nil
                     return
                 end
-                engage(character, humanoid, root)
                 local remaining: number
                 local arrived: boolean
                 if settings.mode == "Walk" then
@@ -5076,7 +5113,7 @@ function Module.init(_runtime: any): any
                 end
                 setStatus(string.format(
                     "Auto Farm (%s): %d coins - bag %d/%d - speed %d u/s - ping %dms",
-                    settings.mode, #scanCache, bagAmount, bagLimit,
+                    settings.mode, #scanCache, bagAmount, targetLimit,
                     math.round(math.clamp(settings.speed, 5, 60)),
                     pingMillis()
                 ))
@@ -5921,15 +5958,30 @@ function Module.init(runtime: any): any
 
     local TICK_INTERVAL: number = 0.10
     local MAP_REFRESH_INTERVAL: number = 0.50
-    local VOTE_HOLD_Before_RESET: number = 0.22
+    local VOTE_HOLD_BEFORE_RESET: number = 0.22
+    local RESET_RETRY_INTERVAL: number = 0.25
+    local MAX_LOBBY_PAD_DISTANCE: number = 250
 
-    local mapChoices: {string} = {"Map 1", "Map 2", "Map 3"}
+    local DEFAULT_MAP_CHOICES: {string} = {
+        "House 2",
+        "Hospital 3",
+        "Police Station",
+    }
+    local mapChoices: {string} = {
+        DEFAULT_MAP_CHOICES[1],
+        DEFAULT_MAP_CHOICES[2],
+        DEFAULT_MAP_CHOICES[3],
+    }
     local selectedSlot: number = 1
     local selectedMapName: string = mapChoices[1]
     local selectMapButton: TextButton? = nil
+    local selectMapOptionKey: string = "MM2.AutoVote.SelectMap"
     local AutoVoteFeature: any = nil
 
     local cachedLobby: Instance? = nil
+    local cachedPadModels: {[number]: Instance?} = {}
+    local cachedVotePadsFolder: Instance? = nil
+    local cachedVoteIconsFolder: Instance? = nil
     local lastLobbyCheckAt: number = -math.huge
     local lastMapRefreshAt: number = -math.huge
     local savedDetectorCFrames: {[BasePart]: CFrame} = {}
@@ -5940,35 +5992,44 @@ function Module.init(runtime: any): any
         return (string.gsub(s, "^%s*(.-)%s*$", "%1"))
     end
 
-    local function isValidMapTitle(title: string?): boolean
+    local function isPlaceholderMapLabel(title: string?): boolean
         if type(title) ~= "string" then
+            return true
+        end
+        local clean: string = string.upper(trim(title))
+        return clean == ""
+            or clean == "MAP NAME"
+            or clean == "LOADING"
+            or clean == "NONE"
+            or clean == "MAP 1"
+            or clean == "MAP 2"
+            or clean == "MAP 3"
+    end
+
+    local function isValidMapTitle(title: string?): boolean
+        return not isPlaceholderMapLabel(title)
+    end
+
+    local function isLobbyContainer(candidate: Instance?): boolean
+        if not candidate or not candidate.Parent then
             return false
         end
-        local clean = trim(title)
-        if clean == "" then
-            return false
-        end
-        local upper = string.upper(clean)
-        if upper == "MAP NAME" or upper == "LOADING" or upper == "NONE" then
-            return false
-        end
-        return true
+        return candidate:FindFirstChild("VotePad1") ~= nil
+            or candidate:FindFirstChild("VotePads") ~= nil
+            or candidate:FindFirstChild("VoteIcons") ~= nil
     end
 
     local function findLobbyModel(): Instance?
         local now: number = os.clock()
-        if cachedLobby and cachedLobby.Parent == workspace and now - lastLobbyCheckAt < 1.0 then
+        if cachedLobby and cachedLobby:IsDescendantOf(workspace) and now - lastLobbyCheckAt < 1.0 then
             return cachedLobby
         end
         lastLobbyCheckAt = now
 
-        for _, name: string in ipairs({"RegularLobby", "Lobby", "MainLobby"}) do
+        -- 1. Fast check on direct workspace children
+        for _, name: string in ipairs({"RegularLobby", "Lobby", "MainLobby", "HalloweenLobby"}) do
             local candidate: Instance? = workspace:FindFirstChild(name)
-            if candidate and (
-                candidate:FindFirstChild("VotePad1")
-                or candidate:FindFirstChild("VotePads")
-                or candidate:FindFirstChild("VoteIcons")
-            ) then
+            if isLobbyContainer(candidate) then
                 cachedLobby = candidate
                 return candidate
             end
@@ -5979,31 +6040,117 @@ function Module.init(runtime: any): any
         end)
         if okChildren and type(children) == "table" then
             for _, child: Instance in ipairs(children) do
-                if child:IsA("Model") or child:IsA("Folder") then
-                    if child:FindFirstChild("VotePad1")
-                        or child:FindFirstChild("VotePads")
-                        or child:FindFirstChild("VoteIcons") then
-                        cachedLobby = child
-                        return child
+                if (child:IsA("Model") or child:IsA("Folder")) and isLobbyContainer(child) then
+                    cachedLobby = child
+                    return child
+                end
+            end
+        end
+
+        -- 2. Check CollectionService "VotePad" tag (used on VotePad1..3 in MM2)
+        local okTagged: boolean, tagged: any = pcall(function(): any
+            return game:GetService("CollectionService"):GetTagged("VotePad")
+        end)
+        if okTagged and type(tagged) == "table" then
+            for _, inst: Instance in ipairs(tagged) do
+                if inst and inst:IsDescendantOf(workspace) then
+                    local slotNum: number? = tonumber(string.match(inst.Name, "^VotePad(%d)$"))
+                    if slotNum then
+                        cachedPadModels[slotNum] = inst
+                    end
+                    if inst.Parent and inst.Parent ~= workspace then
+                        cachedLobby = inst.Parent
                     end
                 end
             end
+            if cachedLobby and cachedLobby:IsDescendantOf(workspace) then
+                return cachedLobby
+            end
+        end
+
+        -- 3. Recursive fallback for nested seasonal/event lobbies
+        local okDeep: boolean, deepPad: any = pcall(function(): any
+            return workspace:FindFirstChild("VotePads", true)
+                or workspace:FindFirstChild("VotePad1", true)
+                or workspace:FindFirstChild("VoteIcons", true)
+        end)
+        if okDeep and deepPad and (deepPad :: Instance):IsDescendantOf(workspace) then
+            local parent: Instance? = (deepPad :: Instance).Parent
+            if parent and parent.Name == "VoteIcons" and parent.Parent then
+                parent = parent.Parent
+            end
+            cachedLobby = parent
+            return cachedLobby
         end
 
         cachedLobby = nil
         return nil
     end
 
-    -- Read the map name displayed on billboard slot i (1..3) from RegularLobby.
+    local function getPadModel(lobby: Instance?, slot: number): Instance?
+        local cached: Instance? = cachedPadModels[slot]
+        if cached and cached:IsDescendantOf(workspace) and not (cached.Parent and cached.Parent.Name == "VoteIcons") then
+            return cached
+        end
+        local padName: string = "VotePad" .. tostring(slot)
+        if lobby then
+            local direct: Instance? = lobby:FindFirstChild(padName)
+            if direct and not (direct.Parent and direct.Parent.Name == "VoteIcons") then
+                cachedPadModels[slot] = direct
+                return direct
+            end
+            local okDeep: boolean, deep: any = pcall(function(): any
+                return lobby:FindFirstChild(padName, true)
+            end)
+            if okDeep and deep and not ((deep :: Instance).Parent and (deep :: Instance).Parent.Name == "VoteIcons") then
+                cachedPadModels[slot] = deep :: Instance
+                return deep :: Instance
+            end
+        end
+        return nil
+    end
+
+    local function getVoteIconsFolder(lobby: Instance?): Instance?
+        if cachedVoteIconsFolder and cachedVoteIconsFolder:IsDescendantOf(workspace) then
+            return cachedVoteIconsFolder
+        end
+        if lobby then
+            local direct: Instance? = lobby:FindFirstChild("VoteIcons")
+                or lobby:FindFirstChild("VoteIcons", true)
+            if direct then
+                cachedVoteIconsFolder = direct
+                return direct
+            end
+        end
+        return nil
+    end
+
+    local function getVotePadsFolder(lobby: Instance?): Instance?
+        if cachedVotePadsFolder and cachedVotePadsFolder:IsDescendantOf(workspace) then
+            return cachedVotePadsFolder
+        end
+        if lobby then
+            local direct: Instance? = lobby:FindFirstChild("VotePads")
+                or lobby:FindFirstChild("VotePads", true)
+            if direct then
+                cachedVotePadsFolder = direct
+                return direct
+            end
+        end
+        return nil
+    end
+
+    -- Read the map name displayed on billboard slot i (1..3) from the lobby.
     local function readSlotMapName(lobby: Instance?, slot: number): string?
         if not lobby then
             return nil
         end
-        local padModel: Instance? = lobby:FindFirstChild("VotePad" .. tostring(slot))
+        local padModel: Instance? = getPadModel(lobby, slot)
         if padModel then
             local voteInfoGui: Instance? = padModel:FindFirstChild("VoteInfoGui")
             local container: Instance? = voteInfoGui and voteInfoGui:FindFirstChild("Container")
-            local mapLabel: Instance? = container and container:FindFirstChild("MapName")
+            local mapLabel: Instance? = (container and container:FindFirstChild("MapName"))
+                or padModel:FindFirstChild("MapName", true)
             if mapLabel and mapLabel:IsA("TextLabel") then
                 local text: string = (mapLabel :: TextLabel).Text
                 if isValidMapTitle(text) then
@@ -6012,13 +6159,10 @@ function Module.init(runtime: any): any
             end
         end
 
-        local voteIcons: Instance? = lobby:FindFirstChild("VoteIcons")
+        local voteIcons: Instance? = getVoteIconsFolder(lobby)
         local iconPart: Instance? = voteIcons and voteIcons:FindFirstChild("VotePad" .. tostring(slot))
         if iconPart then
-            local mapInfo: Instance? = iconPart:FindFirstChild("MapInfo")
-            local surface: Instance? = mapInfo and mapInfo:FindFirstChild("Surface")
-            local frame: Instance? = surface and surface:FindFirstChildWhichIsA("Frame")
-            local mapLabel: Instance? = frame and frame:FindFirstChild("MapName")
+            local mapLabel: Instance? = iconPart:FindFirstChild("MapName", true)
             if mapLabel and mapLabel:IsA("TextLabel") then
                 local text: string = (mapLabel :: TextLabel).Text
                 if isValidMapTitle(text) then
@@ -6042,7 +6186,7 @@ function Module.init(runtime: any): any
         if not lobby then
             return nil
         end
-        local voteIcons: Instance? = lobby:FindFirstChild("VoteIcons")
+        local voteIcons: Instance? = getVoteIconsFolder(lobby)
         local iconPart: Instance? = voteIcons and voteIcons:FindFirstChild("VotePad" .. tostring(slot))
         if iconPart then
             local votesVal: Instance? = iconPart:FindFirstChild("Votes")
@@ -6050,11 +6194,12 @@ function Module.init(runtime: any): any
                 return (votesVal :: IntValue).Value
             end
         end
-        local padModel: Instance? = lobby:FindFirstChild("VotePad" .. tostring(slot))
+        local padModel: Instance? = getPadModel(lobby, slot)
         if padModel then
             local voteInfoGui: Instance? = padModel:FindFirstChild("VoteInfoGui")
             local container: Instance? = voteInfoGui and voteInfoGui:FindFirstChild("Container")
-            local votesLabel: Instance? = container and container:FindFirstChild("Votes")
+            local votesLabel: Instance? = (container and container:FindFirstChild("Votes"))
+                or padModel:FindFirstChild("Votes", true)
             if votesLabel and votesLabel:IsA("TextLabel") then
                 local numStr: string? = string.match((votesLabel :: TextLabel).Text, "(%d+)")
                 if numStr then
@@ -6065,8 +6210,20 @@ function Module.init(runtime: any): any
         return nil
     end
 
+    local function syncSelectMapControl(): ()
+        local control: any = state.valueControls
+            and state.valueControls[selectMapOptionKey]
+        if type(control) == "table" and type(control.setIndex) == "function" then
+            pcall(control.setIndex, selectedSlot)
+        elseif selectMapButton then
+            pcall(function(): ()
+                selectMapButton.Text = mapChoices[selectedSlot]
+            end)
+        end
+    end
+
     -- Refresh the 3 map choices in-place from the lobby billboard so the
-    -- "Select Map" dropdown always displays the 3 maps on the board.
+    -- "Select Map" dropdown always displays the 3 real maps on the board.
     local function refreshMapChoices(force: boolean?): ()
         local now: number = os.clock()
         if not force and now - lastMapRefreshAt < MAP_REFRESH_INTERVAL then
@@ -6075,23 +6232,18 @@ function Module.init(runtime: any): any
         lastMapRefreshAt = now
 
         local lobby: Instance? = findLobbyModel()
-        if not lobby then
-            return
-        end
-
         local changed: boolean = false
         for slot: number = 1, 3 do
             local title: string? = readSlotMapName(lobby, slot)
-            local fallback: string = "Map " .. tostring(slot)
-            local nextLabel: string = title or mapChoices[slot] or fallback
+            local current: string? = mapChoices[slot]
+            local nextLabel: string = title
+                or (isValidMapTitle(current) and (current :: string) or DEFAULT_MAP_CHOICES[slot])
             if mapChoices[slot] ~= nextLabel then
                 mapChoices[slot] = nextLabel
                 changed = true
             end
         end
 
-        -- If the user previously selected a specific map name that is present
-        -- in one of the 3 slots, track that slot; otherwise follow selectedSlot.
         if isValidMapTitle(selectedMapName) then
             local matchedSlot: number? = nil
             local targetLower: string = string.lower(selectedMapName)
@@ -6101,42 +6253,43 @@ function Module.init(runtime: any): any
                     break
                 end
             end
-            if matchedSlot then
+            if matchedSlot and selectedSlot ~= matchedSlot then
                 selectedSlot = matchedSlot
+                changed = true
             end
         end
 
         selectedSlot = math.clamp(selectedSlot, 1, 3)
         selectedMapName = mapChoices[selectedSlot]
 
-        if changed and selectMapButton then
-            pcall(function(): ()
-                selectMapButton.Text = mapChoices[selectedSlot]
-            end)
+        if changed or force then
+            syncSelectMapControl()
         end
     end
 
     -- Resolve the wooden pad detector parts for slot (1..3):
-    -- RegularLobby.VotePads.Detector{slot} and RegularLobby.VotePad{slot}.Pad
+    -- VotePads.Detector{slot} and VotePad{slot}.Pad
     local function getSlotDetectorParts(lobby: Instance?, slot: number): {BasePart}
         local parts: {BasePart} = {}
         if not lobby then
             return parts
         end
 
-        local votePads: Instance? = lobby:FindFirstChild("VotePads")
-        if votePads then
-            local detector: Instance? = votePads:FindFirstChild("Detector" .. tostring(slot))
-            if detector and detector:IsA("BasePart") then
-                parts[#parts + 1] = detector :: BasePart
+        local padModel: Instance? = getPadModel(lobby, slot)
+        if padModel then
+            local padPart: Instance? = padModel:FindFirstChild("Pad")
+                or padModel:FindFirstChild("Pad", true)
+            if padPart and padPart:IsA("BasePart") then
+                parts[#parts + 1] = padPart :: BasePart
             end
         end
 
-        local padModel: Instance? = lobby:FindFirstChild("VotePad" .. tostring(slot))
-        if padModel then
-            local padPart: Instance? = padModel:FindFirstChild("Pad")
-            if padPart and padPart:IsA("BasePart") then
-                parts[#parts + 1] = padPart :: BasePart
+        local votePads: Instance? = getVotePadsFolder(lobby)
+        if votePads then
+            local detector: Instance? = votePads:FindFirstChild("Detector" .. tostring(slot))
+                or votePads:FindFirstChild("Detector" .. tostring(slot), true)
+            if detector and detector:IsA("BasePart") then
+                parts[#parts + 1] = detector :: BasePart
             end
         end
 
@@ -6167,17 +6320,13 @@ function Module.init(runtime: any): any
     end
 
     -- Check whether the lobby voting billboards are currently enabled.
-    -- In MM2 (place, source.rbxlx), VotePad{1..3}.VoteInfoGui.Enabled,
-    -- VotePad{1..3}.MapInfoGui.Enabled, and VoteIcons.VotePad{1..3}.Voting.Value
-    -- are true ONLY during the voting intermission and turn false as soon as
-    -- voting ends.
     local function areVotingBillboardsActive(lobby: Instance?): boolean
         if not lobby then
             return false
         end
 
         for slot: number = 1, 3 do
-            local padModel: Instance? = lobby:FindFirstChild("VotePad" .. tostring(slot))
+            local padModel: Instance? = getPadModel(lobby, slot)
             if padModel then
                 local voteGui: Instance? = padModel:FindFirstChild("VoteInfoGui")
                 if voteGui and voteGui:IsA("SurfaceGui") and (voteGui :: SurfaceGui).Enabled == true then
@@ -6189,7 +6338,7 @@ function Module.init(runtime: any): any
                 end
             end
 
-            local voteIcons: Instance? = lobby:FindFirstChild("VoteIcons")
+            local voteIcons: Instance? = getVoteIconsFolder(lobby)
             local iconPart: Instance? = voteIcons and voteIcons:FindFirstChild("VotePad" .. tostring(slot))
             if iconPart then
                 local votingFlag: Instance? = iconPart:FindFirstChild("Voting")
@@ -6211,9 +6360,9 @@ function Module.init(runtime: any): any
         return false
     end
 
-    -- Strict check: returns true ONLY while the lobby voting intermission is
-    -- actively open. Returns false the instant voting ends or a map/round starts.
-    local function isVotingIntermissionActive(): boolean
+    -- Returns true ONLY while the lobby voting intermission is open and the
+    -- player is in the lobby. Returns false the instant voting ends or a round starts.
+    local function isVotingIntermissionActive(root: BasePart?, detector: BasePart?): boolean
         local lobby: Instance? = findLobbyModel()
         local billboardsOn: boolean = areVotingBillboardsActive(lobby)
 
@@ -6236,17 +6385,21 @@ function Module.init(runtime: any): any
             return false
         end
 
-        if type(core.findMM2Map) == "function"
-            and core.findMM2Map() ~= nil then
-            return false
-        end
-
         local timerPart: Instance? = workspace:FindFirstChild("RoundTimerPart")
         if timerPart then
             local okTime: boolean, roundTime: any = pcall(function(): any
                 return timerPart:GetAttribute("Time")
             end)
             if okTime and type(roundTime) == "number" and roundTime > 0 then
+                return false
+            end
+        end
+
+        if root and detector then
+            local okDist: boolean, dist: any = pcall(function(): any
+                return (root.Position - detector.Position).Magnitude
+            end)
+            if okDist and type(dist) == "number" and dist > MAX_LOBBY_PAD_DISTANCE then
                 return false
             end
         end
@@ -6269,8 +6422,25 @@ function Module.init(runtime: any): any
         return math.clamp(selectedSlot, 1, 3)
     end
 
-    -- Touch the wooden vote pad detectors without moving the local character.
+    -- Step onto the wooden vote pad and pulse touch on its detectors so the
+    -- server registers the vote on VotePads.Detector{slot} and VotePad{slot}.Pad.
     local function pulseVotePad(root: BasePart, detectors: {BasePart}): ()
+        local primaryPad: BasePart? = detectors[1]
+        if primaryPad then
+            local okPos: boolean, padPos: any = pcall(function(): any
+                local saved: CFrame? = savedDetectorCFrames[primaryPad]
+                return saved and saved.Position or primaryPad.Position
+            end)
+            if okPos and typeof(padPos) == "Vector3" then
+                pcall(function(): ()
+                    local currentCF: CFrame = root.CFrame
+                    local rotOnly: CFrame = currentCF - currentCF.Position
+                    root.CFrame = CFrame.new(padPos) * rotOnly
+                    root.AssemblyLinearVelocity = Vector3.zero
+                end)
+            end
+        end
+
         local fireTouch: any = state.fireTouchInterest
         local rootCF: CFrame? = root.CFrame
         for _, part: BasePart in ipairs(detectors) do
@@ -6328,6 +6498,7 @@ function Module.init(runtime: any): any
 
         for _, stopName: string in ipairs({
             "LoadingMap",
+            "Fade",
             "RoleSelect",
             "ShowRoleSelect",
             "ShowRoleSelectNew",
@@ -6365,7 +6536,7 @@ function Module.init(runtime: any): any
     local function disconnectAllAutoVoteConnections(): ()
         disconnectFeatureConnection("MM2AutoVote")
         for key in pairs(featureConnections) do
-            if string.sub(key, 1, 11) == "MM2AutoVote" then
+            if string.sub(key, 1, 11) == "MM2AutoVote" and key ~= "MM2AutoVoteMapSync" then
                 disconnectFeatureConnection(key)
             end
         end
@@ -6386,8 +6557,8 @@ function Module.init(runtime: any): any
         local lastTickAt: number = -math.huge
         local currentChar: Model? = nil
         local firstTouchAt: number = 0
+        local lastResetAttemptAt: number = 0
         local voteCountBeforeTouch: number? = nil
-        local resetSentForChar: boolean = false
 
         local function autoVoteTick(): ()
             local now: number = os.clock()
@@ -6398,32 +6569,33 @@ function Module.init(runtime: any): any
 
             refreshMapChoices(false)
 
+            local lobby: Instance? = findLobbyModel()
+            local slot: number = resolveTargetSlot(lobby)
+            local targetMapLabel: string = mapChoices[slot] or DEFAULT_MAP_CHOICES[slot]
+            local detectors: {BasePart} = getSlotDetectorParts(lobby, slot)
+            local primaryDetector: BasePart? = detectors[1]
+
+            local character: Model? = LocalPlayer and LocalPlayer.Character
+            local root: BasePart? = character
+                and (character:FindFirstChild("HumanoidRootPart") :: BasePart?)
+            local humanoid: Humanoid? = character
+                and (character:FindFirstChildOfClass("Humanoid") :: Humanoid?)
+
             -- Stop immediately if the voting intermission is not active or has ended!
-            if not isVotingIntermissionActive() then
+            if not isVotingIntermissionActive(root, primaryDetector) then
                 restoreAllDetectorParts()
                 firstTouchAt = 0
-                resetSentForChar = false
-                setStatus("Waiting for vote · " .. tostring(mapChoices[selectedSlot] or "Map 1"))
+                lastResetAttemptAt = 0
+                setStatus("Waiting for vote · " .. tostring(targetMapLabel))
                 return
             end
 
-            local lobby: Instance? = findLobbyModel()
-            local slot: number = resolveTargetSlot(lobby)
-            local targetMapLabel: string = mapChoices[slot] or ("Map " .. tostring(slot))
-            local detectors: {BasePart} = getSlotDetectorParts(lobby, slot)
             if #detectors == 0 then
                 setStatus("No vote pad")
                 return
             end
 
-            local character: Model? = LocalPlayer and LocalPlayer.Character
-            if not character then
-                restoreAllDetectorParts()
-                return
-            end
-            local root: BasePart? = character:FindFirstChild("HumanoidRootPart") :: BasePart?
-            local humanoid: Humanoid? = character:FindFirstChildOfClass("Humanoid") :: Humanoid?
-            if not root or not humanoid or humanoid.Health <= 0 then
+            if not character or not root or not humanoid or humanoid.Health <= 0 then
                 restoreAllDetectorParts()
                 return
             end
@@ -6431,11 +6603,11 @@ function Module.init(runtime: any): any
             if character ~= currentChar then
                 currentChar = character
                 firstTouchAt = 0
+                lastResetAttemptAt = 0
                 voteCountBeforeTouch = readSlotVoteCount(lobby, slot)
-                resetSentForChar = false
             end
 
-            -- Cast vote for this character life via firetouchinterest + detector overlap
+            -- Step onto the wooden vote pad and pulse touch on its detectors
             pulseVotePad(root, detectors)
             if firstTouchAt == 0 then
                 firstTouchAt = now
@@ -6453,13 +6625,14 @@ function Module.init(runtime: any): any
                 .. (currentVotes ~= nil and (" (" .. tostring(currentVotes) .. ")") or "")
             )
 
-            -- Once this character life has cast its vote (either vote count incremented
-            -- or VOTE_HOLD_Before_RESET elapsed), re-verify voting intermission is STILL
-            -- active before resetting the character to vote again.
-            if not resetSentForChar and (voteIncremented or (now - firstTouchAt >= VOTE_HOLD_Before_RESET)) then
+            -- Once this character life has cast its vote on the wooden pad,
+            -- re-verify voting intermission is STILL active and reset the
+            -- character to stack another vote.
+            if (voteIncremented or (now - firstTouchAt >= VOTE_HOLD_BEFORE_RESET))
+                and (now - lastResetAttemptAt >= RESET_RETRY_INTERVAL) then
                 restoreAllDetectorParts()
-                if isVotingIntermissionActive() then
-                    resetSentForChar = true
+                if isVotingIntermissionActive(root, primaryDetector) then
+                    lastResetAttemptAt = now
                     resetLocalCharacter(character, humanoid)
                 end
             end
@@ -6469,12 +6642,22 @@ function Module.init(runtime: any): any
         autoVoteTick()
     end
 
+    -- Clear any legacy "Map 1..3" placeholder saved in config so real map names show.
+    pcall(function(): ()
+        if type(configData) == "table" and type(configData.values) == "table" then
+            local saved: any = configData.values[selectMapOptionKey]
+            if isPlaceholderMapLabel(saved) then
+                configData.values[selectMapOptionKey] = nil
+            end
+        end
+    end)
+
     -- Populate initial map names if already in the lobby
     pcall(refreshMapChoices, true)
 
     AutoVoteFeature = createUniversalFeature(
         "Auto Vote",
-        "Detects the 3 maps on the lobby voting billboard, votes for your selected map via firetouchinterest without teleporting, and resets repeatedly until voting intermission ends.",
+        "Detects the 3 maps on the lobby voting billboard, votes on the wooden floor pad for your selected map, and resets repeatedly to stack votes until voting intermission ends.",
         7,
         toggleAutoVote,
         {
@@ -6506,17 +6689,31 @@ function Module.init(runtime: any): any
         "Select which of the 3 lobby billboard maps to vote for."
     )
 
-    -- Refresh the 3 billboard map names whenever the user clicks "Select Map",
-    -- even before Auto Vote is toggled ON.
-    if selectMapButton and selectMapButton.MouseButton1Click then
-        pcall(function(): ()
-            selectMapButton.MouseButton1Click:Connect(function(): ()
+    -- Refresh the 3 billboard map names right BEFORE the dropdown opens
+    -- and keep the label synced with the lobby boards even while Auto Vote is OFF.
+    pcall(function(): ()
+        local control: any = state.valueControls
+            and state.valueControls[selectMapOptionKey]
+        if type(control) == "table" then
+            control.onBeforeOpen = function(): ()
                 refreshMapChoices(true)
-            end)
-        end)
-    end
+            end
+        end
+    end)
+
+    local lastBgSyncAt: number = -math.huge
+    disconnectFeatureConnection("MM2AutoVoteMapSync")
+    featureConnections.MM2AutoVoteMapSync = TaskManager:Connect(function(): ()
+        local now: number = os.clock()
+        if now - lastBgSyncAt < 1.0 then
+            return
+        end
+        lastBgSyncAt = now
+        refreshMapChoices(false)
+    end)
 
     activeCleanup = function(): ()
+        disconnectFeatureConnection("MM2AutoVoteMapSync")
         toggleAutoVote(false)
     end
     Module.Events = featureConnections
@@ -10793,8 +10990,20 @@ local function isLobbyName(name: string): boolean
     return string.find(string.lower(tostring(name)), "lobby", 1, true) ~= nil
 end
 
+local function isLobbyModel(object: Instance): boolean
+    if isLobbyName(object.Name) then
+        return true
+    end
+    if object:FindFirstChild("VotePad1")
+        or object:FindFirstChild("VotePads")
+        or object:FindFirstChild("VoteIcons") then
+        return true
+    end
+    return false
+end
+
 local function isMM2MapModel(object: Instance): boolean
-    if not object:IsA("Model") or isLobbyName(object.Name) then
+    if not object:IsA("Model") or isLobbyModel(object) then
         return false
     end
     for _, containerName: string in ipairs(MM2_MAP_COIN_CONTAINERS) do
@@ -10819,7 +11028,7 @@ local function findMM2MapUncached(): Instance?
 
     for _, object: Instance in ipairs(workspace:GetChildren()) do
         if object:IsA("Model")
-            and not isLobbyName(object.Name)
+            and not isLobbyModel(object)
             and object:FindFirstChild("Spawns") then
             return object
         end
@@ -34469,13 +34678,16 @@ function Module.init(context: any): any
                     declaredHeight += optionRow.Size.Y.Offset
                 end
             end
-            local measuredHeight: number = optionsLayout.AbsoluteContentSize.Y
-            if visibleOptions > 0 and measuredHeight <= 0 then
-                measuredHeight = declaredHeight
-                    + math.max(0, visibleOptions - 1) * 4
-            end
+            local expectedHeight: number = if visibleOptions > 0
+                then declaredHeight + math.max(0, visibleOptions - 1) * 4
+                else 0
+            local measuredHeight: number = math.max(
+                optionsLayout.AbsoluteContentSize.Y,
+                expectedHeight
+            )
+            local singleOptionExtra: number = if visibleOptions == 1 then 8 else 0
 
-            local optionsHeight: number = measuredHeight + 8
+            local optionsHeight: number = measuredHeight + 8 + singleOptionExtra
             feature.optionsHeight = optionsHeight
             options.Size = UDim2.new(1, 0, 0, optionsHeight)
             syncArrow()
@@ -42451,6 +42663,7 @@ function Module.init(context: any): WidgetLibrary
         local option: Frame = createOptionRow(feature, labelText, hintText)
 
         option.Size = UDim2.new(1, 0, 0, 44)
+        feature.updateExpandedSize()
         local headerLabel: TextLabel? =
             option:FindFirstChild("OptionLabel") :: TextLabel?
         if headerLabel then
@@ -42741,6 +42954,7 @@ function Module.init(context: any): WidgetLibrary
         local option: Frame = createOptionRow(feature, labelText, definition.hint)
 
         option.Size = UDim2.new(1, 0, 0, 44)
+        feature.updateExpandedSize()
         local rangeLabel: TextLabel? =
             option:FindFirstChild("OptionLabel") :: TextLabel?
         if rangeLabel then
@@ -43766,11 +43980,21 @@ function Module.init(context: any): WidgetLibrary
         end
 
         local function refreshChoiceVisual(): ()
-            button.Text = values[index]
+            if #values > 0 then
+                index = math.clamp(index, 1, #values)
+            end
+            button.Text = values[index] or ""
         end
         refreshChoiceVisual()
 
         local function openList(): ()
+            local control: any = state.valueControls
+                and state.valueControls[optionKey]
+            if type(control) == "table"
+                and type(control.onBeforeOpen) == "function" then
+                pcall(control.onBeforeOpen)
+                refreshChoiceVisual()
+            end
             openChoiceList(button, values, index, function(picked: number): ()
                 index = picked
                 refreshChoiceVisual()
@@ -43796,6 +44020,11 @@ function Module.init(context: any): WidgetLibrary
                     configData.values[optionKey] = values[index]
                     queueConfigSave()
                 end,
+                setIndex = function(newIndex: number): ()
+                    index = math.clamp(newIndex, 1, math.max(1, #values))
+                    refreshChoiceVisual()
+                end,
+                refresh = refreshChoiceVisual,
                 default = values[initialIndex or 1],
             }
         end
@@ -44254,6 +44483,7 @@ function Module.init(context: any): WidgetLibrary
         local option = createOptionRow(feature, labelText, hintText)
 
         option.Size = UDim2.new(1, 0, 0, 44)
+        feature.updateExpandedSize()
         local colorLabel: TextLabel? =
             option:FindFirstChild("OptionLabel") :: TextLabel?
         if colorLabel then
@@ -45675,6 +45905,9 @@ function Module.init(context: any): any
         feature.settingsWindow = window
 
         local options: any = feature.options
+        if feature.updateExpandedSize then
+            feature.updateExpandedSize(false)
+        end
         if options then
             options.Visible = true
             options.Position = UDim2.fromOffset(0, 0)
@@ -45689,6 +45922,9 @@ function Module.init(context: any): any
         end
 
         local function resizeToOptions(): ()
+            if options then
+                options.Size = UDim2.new(1, 0, 0, feature.optionsHeight or 40)
+            end
             local wanted: number = TITLE_HEIGHT + (feature.optionsHeight or 40)
             local limit: number = tonumber(state.uiMaxSettingsHeight) or 200
             if limit <= 0 then
