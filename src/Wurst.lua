@@ -219,7 +219,7 @@ local RUNTIME_RAW_BASE: string =
         .. RUNTIME_BRANCH
         .. "/"
 
-local SOURCE_STAMP: string = "v124-20261024-optimized-unique"
+local SOURCE_STAMP: string = "v125-20261024-proximity-warning"
 
 local BOOT_STARTED_AT: number = os.clock()
 local BOOT_FINGERPRINT_SECONDS: number = 0
@@ -5975,6 +5975,7 @@ local fallbackManifest: any = {
             "src/games/MM2/Other/AutoFarm.lua",
             "src/games/MM2/Other/CoinsAura.lua",
             "src/games/MM2/Other/GunAura.lua",
+            "src/games/MM2/Other/ProximityWarning.lua",
             "src/games/MM2/Other/TrajectoryCalibration.lua",
             "src/games/MM2/Other/CalibrationTrails.lua",
         },
