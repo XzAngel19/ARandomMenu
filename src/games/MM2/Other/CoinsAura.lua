@@ -80,7 +80,36 @@ function Module.init(runtime: any): any
             return
         end
 
-        local lastPulseAt: number = -math.huge
+        -- Optimized: cache the coin list and only refresh when dirty.
+        -- Pulse every frame (no throttle) — firetouchinterest is cheap
+        -- and the server expects per-frame contact for reliable pickup.
+        local cachedCoins: {Instance} = {}
+        local lastCacheRefresh: number = -math.huge
+        local cachedRadiusSq: number = settings.radius * settings.radius
+
+        local function refreshCache(): ()
+            local now: number = os.clock()
+            if now - lastCacheRefresh < 0.1 then
+                return
+            end
+            lastCacheRefresh = now
+
+            -- Get the coin list from Coin ESP's cache (fast path).
+            if type(state.mm2CoinPickups) == "function" then
+                local ok: boolean, list: any = pcall(state.mm2CoinPickups)
+                if ok and type(list) == "table" and #list > 0 then
+                    cachedCoins = list
+                    return
+                end
+            end
+            -- Fallback: direct tag scan (slower but reliable).
+            local okTagged: boolean, tagged: any = pcall(function(): any
+                return game:GetService("CollectionService"):GetTagged("CoinVisual")
+            end)
+            if okTagged and type(tagged) == "table" then
+                cachedCoins = tagged
+            end
+        end
 
         local function auraTick(): ()
             local root: BasePart? = characterRoot()
@@ -88,56 +117,34 @@ function Module.init(runtime: any): any
                 return
             end
 
-            -- Throttle the pulse: 0.25 s matches AutoFarm's
-            -- lastTouchPulse interval and avoids hammering the server
-            -- with touch events every frame.
-            local now: number = os.clock()
-            if now - lastPulseAt < 0.25 then
-                return
-            end
-
-            -- Get the coin list from Coin ESP's cache, or fall back
-            -- to a direct CollectionService scan.
-            local coins: {Instance} = {}
-            if type(state.mm2CoinPickups) == "function" then
-                local ok: boolean, list: any = pcall(state.mm2CoinPickups)
-                if ok and type(list) == "table" then
-                    coins = list
-                end
-            end
-            if #coins == 0 then
-                local okTagged: boolean, tagged: any = pcall(function(): any
-                    return game:GetService("CollectionService"):GetTagged("CoinVisual")
-                end)
-                if okTagged and type(tagged) == "table" then
-                    coins = tagged
-                end
-            end
+            refreshCache()
 
             local rootPos: Vector3 = root.Position
             local radius: number = settings.radius
-            local pulsed: boolean = false
-            for _, coin: Instance in ipairs(coins) do
-                if not stillCollectable(coin) then
-                    continue
-                end
-                local coinPos: Vector3? = nil
-                pcall(function(): ()
-                    if coin:IsA("BasePart") then
-                        coinPos = (coin :: BasePart).Position
-                    end
-                end)
-                if not coinPos then
-                    continue
-                end
-                if (coinPos - rootPos).Magnitude <= radius then
-                    touchCoin(root, coin)
-                    pulsed = true
-                end
+            local radiusSq: number = radius * radius
+            local fireTouch = state.fireTouchInterest
+
+            if type(fireTouch) ~= "function" then
+                return
             end
 
-            if pulsed then
-                lastPulseAt = now
+            -- Batch touch all coins in range — no per-coin pcall overhead.
+            for i: number = 1, #cachedCoins do
+                local coin: Instance = cachedCoins[i]
+                if coin.Parent and coin:IsA("BasePart") then
+                    local coinPart: BasePart = coin :: BasePart
+                    local diff: Vector3 = coinPart.Position - rootPos
+                    -- Fast squared distance check (avoids sqrt).
+                    if diff.X * diff.X + diff.Y * diff.Y + diff.Z * diff.Z <= radiusSq then
+                        if stillCollectable(coin) then
+                            local touchPart: Instance? = serverPartOf(coin)
+                            if touchPart then
+                                fireTouch(root, touchPart, 0)
+                                fireTouch(root, touchPart, 1)
+                            end
+                        end
+                    end
+                end
             end
         end
 

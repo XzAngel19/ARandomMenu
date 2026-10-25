@@ -112,7 +112,7 @@ local FAMILY_PHRASES: {[string]: {string}} = {
 }
 
 -- Safety-net rescan; the signals do the real work.
-local RESCAN_PERIOD: number = 5
+local RESCAN_PERIOD: number = 2
 
 local function lower(value: string): string
     return string.lower(value)
@@ -417,7 +417,7 @@ function Module.init(runtime: any): any
     -- CACHED: this used to run a full collectAll() per call, and Auto
     -- Farm polls every 0.4 s -- each poll re-scanned every descendant
     -- of Workspace and hitch-spiked the frame. The cache refreshes on
-    -- the ESP's own scans, or at most every 1.5 s when polled.
+    -- the ESP's own scans, or at most every 0.5 s when polled.
     local pickupCache: {at: number, list: {Instance}} = {at = -math.huge, list = {}}
     local function refreshPickupCache(found: {[Instance]: string}): ()
         local list: {Instance} = {}
@@ -429,7 +429,7 @@ function Module.init(runtime: any): any
         pickupCache = {at = os.clock(), list = list}
     end
     state.mm2CoinPickups = function(): {Instance}
-        if os.clock() - pickupCache.at < 1.5 then
+        if os.clock() - pickupCache.at < 0.5 then
             return pickupCache.list
         end
         local found: {[Instance]: string} = collectAll()

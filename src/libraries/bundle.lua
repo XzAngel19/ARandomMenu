@@ -1,5 +1,5 @@
 return {
-    stamp = "v123-20261024-vapev4-modules",
+    stamp = "v124-20261024-optimized-unique",
     files = {
         ["src/Profile/135856908115931.lua"] = [[
 --!strict
@@ -6382,7 +6382,36 @@ function Module.init(runtime: any): any
             return
         end
 
-        local lastPulseAt: number = -math.huge
+        -- Optimized: cache the coin list and only refresh when dirty.
+        -- Pulse every frame (no throttle) — firetouchinterest is cheap
+        -- and the server expects per-frame contact for reliable pickup.
+        local cachedCoins: {Instance} = {}
+        local lastCacheRefresh: number = -math.huge
+        local cachedRadiusSq: number = settings.radius * settings.radius
+
+        local function refreshCache(): ()
+            local now: number = os.clock()
+            if now - lastCacheRefresh < 0.1 then
+                return
+            end
+            lastCacheRefresh = now
+
+            -- Get the coin list from Coin ESP's cache (fast path).
+            if type(state.mm2CoinPickups) == "function" then
+                local ok: boolean, list: any = pcall(state.mm2CoinPickups)
+                if ok and type(list) == "table" and #list > 0 then
+                    cachedCoins = list
+                    return
+                end
+            end
+            -- Fallback: direct tag scan (slower but reliable).
+            local okTagged: boolean, tagged: any = pcall(function(): any
+                return game:GetService("CollectionService"):GetTagged("CoinVisual")
+            end)
+            if okTagged and type(tagged) == "table" then
+                cachedCoins = tagged
+            end
+        end
 
         local function auraTick(): ()
             local root: BasePart? = characterRoot()
@@ -6390,56 +6419,34 @@ function Module.init(runtime: any): any
                 return
             end
 
-            -- Throttle the pulse: 0.25 s matches AutoFarm's
-            -- lastTouchPulse interval and avoids hammering the server
-            -- with touch events every frame.
-            local now: number = os.clock()
-            if now - lastPulseAt < 0.25 then
-                return
-            end
-
-            -- Get the coin list from Coin ESP's cache, or fall back
-            -- to a direct CollectionService scan.
-            local coins: {Instance} = {}
-            if type(state.mm2CoinPickups) == "function" then
-                local ok: boolean, list: any = pcall(state.mm2CoinPickups)
-                if ok and type(list) == "table" then
-                    coins = list
-                end
-            end
-            if #coins == 0 then
-                local okTagged: boolean, tagged: any = pcall(function(): any
-                    return game:GetService("CollectionService"):GetTagged("CoinVisual")
-                end)
-                if okTagged and type(tagged) == "table" then
-                    coins = tagged
-                end
-            end
+            refreshCache()
 
             local rootPos: Vector3 = root.Position
             local radius: number = settings.radius
-            local pulsed: boolean = false
-            for _, coin: Instance in ipairs(coins) do
-                if not stillCollectable(coin) then
-                    continue
-                end
-                local coinPos: Vector3? = nil
-                pcall(function(): ()
-                    if coin:IsA("BasePart") then
-                        coinPos = (coin :: BasePart).Position
-                    end
-                end)
-                if not coinPos then
-                    continue
-                end
-                if (coinPos - rootPos).Magnitude <= radius then
-                    touchCoin(root, coin)
-                    pulsed = true
-                end
+            local radiusSq: number = radius * radius
+            local fireTouch = state.fireTouchInterest
+
+            if type(fireTouch) ~= "function" then
+                return
             end
 
-            if pulsed then
-                lastPulseAt = now
+            -- Batch touch all coins in range — no per-coin pcall overhead.
+            for i: number = 1, #cachedCoins do
+                local coin: Instance = cachedCoins[i]
+                if coin.Parent and coin:IsA("BasePart") then
+                    local coinPart: BasePart = coin :: BasePart
+                    local diff: Vector3 = coinPart.Position - rootPos
+                    -- Fast squared distance check (avoids sqrt).
+                    if diff.X * diff.X + diff.Y * diff.Y + diff.Z * diff.Z <= radiusSq then
+                        if stillCollectable(coin) then
+                            local touchPart: Instance? = serverPartOf(coin)
+                            if touchPart then
+                                fireTouch(root, touchPart, 0)
+                                fireTouch(root, touchPart, 1)
+                            end
+                        end
+                    end
+                end
             end
         end
 
@@ -8221,7 +8228,7 @@ local FAMILY_PHRASES: {[string]: {string}} = {
 }
 
 -- Safety-net rescan; the signals do the real work.
-local RESCAN_PERIOD: number = 5
+local RESCAN_PERIOD: number = 2
 
 local function lower(value: string): string
     return string.lower(value)
@@ -8526,7 +8533,7 @@ function Module.init(runtime: any): any
     -- CACHED: this used to run a full collectAll() per call, and Auto
     -- Farm polls every 0.4 s -- each poll re-scanned every descendant
     -- of Workspace and hitch-spiked the frame. The cache refreshes on
-    -- the ESP's own scans, or at most every 1.5 s when polled.
+    -- the ESP's own scans, or at most every 0.5 s when polled.
     local pickupCache: {at: number, list: {Instance}} = {at = -math.huge, list = {}}
     local function refreshPickupCache(found: {[Instance]: string}): ()
         local list: {Instance} = {}
@@ -8538,7 +8545,7 @@ function Module.init(runtime: any): any
         pickupCache = {at = os.clock(), list = list}
     end
     state.mm2CoinPickups = function(): {Instance}
-        if os.clock() - pickupCache.at < 1.5 then
+        if os.clock() - pickupCache.at < 0.5 then
             return pickupCache.list
         end
         local found: {[Instance]: string} = collectAll()
@@ -20983,121 +20990,6 @@ end
 return Module
 
 ]],
-        ["src/games/universal/Blatant/LongJump.lua"] = [[
-export type Runtime = {framework: any, entity: any, host: any, services: any}
-
-local Module = {Name = "LongJump", PlaceId = 0, Events = {} :: {[string]: any}, Initialized = false}
-local activeCleanup
-
-function Module.init(context: Runtime): any
-    local host, framework = context.host, context.framework
-    local player = host.LocalPlayer
-    
-    local settings = {
-        mode = "Velocity",
-        speed = 50,
-        autoDisable = false,
-    }
-    
-    local longjump
-
-    local function toggleLongJump(enabled)
-        if not enabled then
-            return
-        end
-        
-        local enableTime = os.clock() + 0.1
-        
-        longjump:Clean(host.RunService.PreSimulation:Connect(function(dt)
-            local character = player.Character
-            if not character then return end
-            
-            local root = character:FindFirstChild("HumanoidRootPart")
-            local humanoid = character:FindFirstChild("Humanoid")
-            if not root or not humanoid or humanoid.Health <= 0 then return end
-
-            -- Jump if on ground
-            if humanoid.FloorMaterial ~= Enum.Material.Air then
-                if enableTime < os.clock() and settings.autoDisable then
-                    if longjump.Enabled then
-                        longjump:Toggle(false)
-                    end
-                    return
-                end
-                humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
-            end
-
-            -- Apply horizontal boost
-            local dir = humanoid.MoveDirection * settings.speed
-            
-            if settings.mode == "Velocity" then
-                root.AssemblyLinearVelocity = dir + Vector3.new(0, root.AssemblyLinearVelocity.Y, 0)
-            elseif settings.mode == "Impulse" then
-                local diff = (dir - root.AssemblyLinearVelocity) * Vector3.new(1, 0, 1)
-                if diff.Magnitude > (dir == Vector3.zero and 10 or 2) then
-                    root:ApplyImpulse(diff * root.AssemblyMass)
-                end
-            else -- CFrame
-                root.CFrame += dir * dt
-            end
-        end))
-    end
-
-    longjump = framework.Categories.Exploits:CreateModule({
-        Name = "LongJump",
-        Category = "Exploits",
-        ConfigKey = "Universal.LongJump",
-        Order = 5,
-        Tooltip = "Lets you jump farther with horizontal speed boost.",
-        Function = function(enabled)
-            if not enabled then
-                longjump:SetStatus(nil)
-                return
-            end
-            longjump:Clean(function() end)
-            toggleLongJump(true)
-            longjump:SetStatus(settings.mode)
-        end,
-    })
-
-    longjump:CreateDropdown({Name = "Mode", List = {"Velocity", "Impulse", "CFrame"}, Index = 1,
-        Function = function(value)
-            settings.mode = value
-            if longjump.Enabled then longjump:SetStatus(value) end
-        end,
-        Tooltip = "Movement method: Velocity (smooth), Impulse (forces), or CFrame (direct position)."
-    })
-    
-    longjump:CreateSlider({Name = "Speed", Min = 1, Max = 150, Default = 50,
-        Function = function(value)
-            settings.speed = value
-        end,
-        Tooltip = "Horizontal boost speed in studs/second."
-    })
-    
-    longjump:CreateToggle({Name = "Auto Disable", Default = false,
-        Function = function(value)
-            settings.autoDisable = value
-        end,
-        Tooltip = "Automatically disable after first jump."
-    })
-
-    activeCleanup = function()
-        if longjump.Enabled then longjump:Toggle(false) end
-    end
-    
-    Module.Initialized = true
-    return longjump
-end
-
-function Module.destroy()
-    if activeCleanup then activeCleanup(); activeCleanup = nil end
-    Module.Initialized = false
-end
-
-return Module
-
-]],
         ["src/games/universal/Blatant/Noclip.lua"] = [[
 export type Runtime = {
     framework: any,
@@ -22461,6 +22353,195 @@ function Module.destroy(): ()
         pcall(activeCleanup)
     end
     activeCleanup = nil
+    Module.Initialized = false
+end
+
+return Module
+
+]],
+        ["src/games/universal/Combat/TargetStrafe.lua"] = [[
+export type Runtime = {framework: any, entity: any, host: any, services: any}
+
+local Module = {Name = "Target Strafe", PlaceId = 0, Events = {} :: {[string]: any}, Initialized = false}
+local activeCleanup
+
+function Module.init(context: Runtime): any
+    local host, framework = context.host, context.framework
+    local player = host.LocalPlayer
+    local UserInputService = host.UserInputService or game:GetService("UserInputService")
+    local RunService = host.RunService or game:GetService("RunService")
+    
+    local settings = {
+        radius = 5,
+        speed = 100,
+        mode = "Circle",
+        smartDodge = true,
+    }
+    
+    local targetStrafe
+    local lastTarget: Model? = nil
+
+    local function getTarget(): Model?
+        -- Find the nearest enemy within range using the targeting system
+        local targeting = state.targeting
+        if not targeting or type(targeting.getNearest) ~= "function" then
+            return nil
+        end
+        local result = targeting.getNearest({
+            maxDistance = 100,
+            teamCheck = true,
+            wallCheck = false,
+            aliveOnly = true,
+        })
+        return result and result.character or nil
+    end
+
+    local function toggleTargetStrafe(enabled)
+        if not enabled then
+            lastTarget = nil
+            return
+        end
+        
+        targetStrafe:Clean(RunService.PreSimulation:Connect(function(dt)
+            local character = player.Character
+            if not character then return end
+            
+            local root = character:FindFirstChild("HumanoidRootPart")
+            local humanoid = character:FindFirstChild("Humanoid")
+            if not root or not humanoid or humanoid.Health <= 0 then return end
+
+            local target = getTarget()
+            if not target or not target.Parent then
+                lastTarget = nil
+                return
+            end
+
+            local targetRoot = target:FindFirstChild("HumanoidRootPart")
+            if not targetRoot then return end
+
+            lastTarget = target
+            local targetPos = targetRoot.Position
+            local myPos = root.Position
+            
+            -- Calculate vector from target to us
+            local toMe = myPos - targetPos
+            local horizontal = Vector3.new(toMe.X, 0, toMe.Z)
+            
+            if horizontal.Magnitude < 0.1 then
+                -- We're on top of the target, pick a random direction
+                horizontal = Vector3.new(1, 0, 0)
+            end
+            
+            local distance = horizontal.Magnitude
+            local direction = horizontal.Unit
+            
+            -- Strafe mode: move in a circle around the target
+            local moveVector: Vector3
+            if settings.mode == "Circle" then
+                -- Perpendicular to the direction to target (circular motion)
+                local perp = Vector3.new(-direction.Z, 0, direction.X)
+                -- Adjust radius to maintain desired distance
+                local radiusDiff = settings.radius - distance
+                local radial = direction * radiusDiff * 2
+                moveVector = perp * settings.speed + radial
+            elseif settings.mode == "Figure8" then
+                -- Figure-8 pattern for unpredictable movement
+                local time = os.clock() * 2
+                local perp = Vector3.new(-direction.Z, 0, direction.X)
+                local figure8 = perp * math.sin(time) * settings.speed + direction * math.cos(time) * settings.speed * 0.5
+                local radiusDiff = settings.radius - distance
+                moveVector = figure8 + direction * radiusDiff * 2
+            else -- ZigZag
+                -- Zig-zag pattern
+                local perp = Vector3.new(-direction.Z, 0, direction.X)
+                local time = os.clock() * 3
+                local zigzag = perp * (math.sign(math.sin(time)) * settings.speed)
+                local radiusDiff = settings.radius - distance
+                moveVector = zigzag + direction * radiusDiff * 2
+            end
+            
+            -- Smart dodge: add random vertical movement to avoid predictable aim
+            if settings.smartDodge then
+                local state = humanoid:GetState()
+                if state == Enum.HumanoidStateType.Freefall or state == Enum.HumanoidStateType.Jumping then
+                    -- Add slight vertical variation while airborne
+                    local vertical = Vector3.new(0, math.sin(os.clock() * 5) * 20, 0)
+                    root.AssemblyLinearVelocity = Vector3.new(moveVector.X, root.AssemblyLinearVelocity.Y + vertical.Y, moveVector.Z)
+                    return
+                end
+            end
+            
+            -- Apply horizontal movement, preserve vertical
+            root.AssemblyLinearVelocity = Vector3.new(moveVector.X, root.AssemblyLinearVelocity.Y, moveVector.Z)
+        end))
+    end
+
+    targetStrafe = framework.Categories.Combat:CreateModule({
+        Name = "Target Strafe",
+        Category = "Combat",
+        ConfigKey = "Universal.TargetStrafe",
+        Order = 4,
+        Tooltip = "Automatically strafe around your target in circular, figure-8, or zig-zag patterns. Makes you much harder to hit in combat.",
+        Function = function(enabled)
+            if not enabled then
+                targetStrafe:SetStatus(nil)
+                return
+            end
+            targetStrafe:Clean(function() lastTarget = nil end)
+            toggleTargetStrafe(true)
+            targetStrafe:SetStatus(settings.mode)
+        end,
+    })
+
+    targetStrafe:CreateDropdown({
+        Name = "Mode",
+        List = {"Circle", "Figure8", "ZigZag"},
+        Index = 1,
+        Function = function(value)
+            settings.mode = value
+            if targetStrafe.Enabled then targetStrafe:SetStatus(value) end
+        end,
+        Tooltip = "Circle = constant orbit; Figure8 = unpredictable loops; ZigZag = rapid direction changes."
+    })
+    
+    targetStrafe:CreateSlider({
+        Name = "Radius",
+        Min = 2,
+        Max = 20,
+        Default = 5,
+        Function = function(value)
+            settings.radius = value
+        end,
+        Tooltip = "Distance to maintain from the target (in studs)."
+    })
+    
+    targetStrafe:CreateSlider({
+        Name = "Speed",
+        Min = 30,
+        Max = 300,
+        Default = 100,
+        Function = function(value)
+            settings.speed = value
+        end,
+        Tooltip = "How fast to strafe around the target."
+    })
+    
+    targetStrafe:CreateToggle({
+        Name = "Smart dodge",
+        Default = true,
+        Tooltip = "Adds vertical movement variation while airborne to dodge aim."
+    })
+
+    activeCleanup = function()
+        if targetStrafe.Enabled then targetStrafe:Toggle(false) end
+    end
+    
+    Module.Initialized = true
+    return targetStrafe
+end
+
+function Module.destroy()
+    if activeCleanup then activeCleanup(); activeCleanup = nil end
     Module.Initialized = false
 end
 
@@ -24213,6 +24294,24 @@ function Module.init(context: Runtime): any
                     end
                 end
 
+                -- Long Jump: horizontal boost when jumping
+                if canMove and longJumpEnabled and humanoid.FloorMaterial ~= Enum.Material.Air then
+                    local moveDir: Vector3 = humanoid.MoveDirection
+                    if moveDir.Magnitude > 0.05 then
+                        local dir: Vector3 = moveDir * longJumpSpeed
+                        if longJumpMode == "Velocity" then
+                            root.AssemblyLinearVelocity = dir + Vector3.new(0, root.AssemblyLinearVelocity.Y, 0)
+                        elseif longJumpMode == "Impulse" then
+                            local diff: Vector3 = (dir - root.AssemblyLinearVelocity) * Vector3.new(1, 0, 1)
+                            if diff.Magnitude > 2 then
+                                root:ApplyImpulse(diff * root.AssemblyMass)
+                            end
+                        else -- CFrame
+                            root.CFrame += dir * (1/60)
+                        end
+                    end
+                end
+
                 if canMove and opts["Infinite jump"] and opts["Infinite jump"].Value then
                     local mode: string = opts["Infinite jump mode"] and opts["Infinite jump mode"].Value or "Normal"
                     if mode == "Rise" and movementInput and type(movementInput.isJumpHeld) == "function" and movementInput.isJumpHeld() then
@@ -24319,6 +24418,43 @@ function Module.init(context: Runtime): any
         Name = "Auto jump",
         Default = false,
         Tooltip = "Continuously jumps while walking on the ground.",
+    })
+
+    -- Long Jump: horizontal boost when jumping (from VapeV4)
+    local longJumpEnabled = false
+    local longJumpSpeed = 50
+    local longJumpMode = "Velocity"
+
+    jump:CreateToggle({
+        Name = "Long jump",
+        Default = false,
+        Function = function(value: boolean): ()
+            longJumpEnabled = value
+        end,
+        Tooltip = "Adds horizontal speed boost in your move direction when jumping.",
+    })
+
+    jump:CreateDropdown({
+        Name = "Long jump mode",
+        Show = {Option = "Long jump", Values = {true}},
+        List = {"Velocity", "Impulse", "CFrame"},
+        Index = 1,
+        Function = function(value: string): ()
+            longJumpMode = value
+        end,
+        Tooltip = "How the horizontal boost is applied: Velocity (smooth), Impulse (forces), or CFrame (direct position).",
+    })
+
+    jump:CreateSlider({
+        Name = "Long jump speed",
+        Show = {Option = "Long jump", Values = {true}},
+        Min = -150,
+        Max = 150,
+        Default = 50,
+        Function = function(value: number): ()
+            longJumpSpeed = value
+        end,
+        Tooltip = "Horizontal boost speed in studs/second. Negative values boost backwards.",
     })
 
     activeCleanup = function(): ()
@@ -46729,6 +46865,11 @@ local Manifest: Manifest = {
             category = "Combat",
         },
         {
+            path = "src/games/universal/Combat/TargetStrafe.lua",
+            name = "Target Strafe",
+            category = "Combat",
+        },
+        {
             path = "src/games/universal/Combat/TriggerBot.lua",
             name = "TriggerBot",
             category = "Combat",
@@ -46778,11 +46919,6 @@ local Manifest: Manifest = {
         {
             path = "src/games/universal/Blatant/Jesus.lua",
             name = "Jesus",
-            category = "Exploits",
-        },
-        {
-            path = "src/games/universal/Blatant/LongJump.lua",
-            name = "LongJump",
             category = "Exploits",
         },
         {

@@ -113,6 +113,11 @@ local Manifest: Manifest = {
             category = "Combat",
         },
         {
+            path = "src/games/universal/Combat/TargetStrafe.lua",
+            name = "Target Strafe",
+            category = "Combat",
+        },
+        {
             path = "src/games/universal/Combat/TriggerBot.lua",
             name = "TriggerBot",
             category = "Combat",
@@ -162,11 +167,6 @@ local Manifest: Manifest = {
         {
             path = "src/games/universal/Blatant/Jesus.lua",
             name = "Jesus",
-            category = "Exploits",
-        },
-        {
-            path = "src/games/universal/Blatant/LongJump.lua",
-            name = "LongJump",
             category = "Exploits",
         },
         {

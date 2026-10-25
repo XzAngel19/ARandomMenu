@@ -249,6 +249,24 @@ function Module.init(context: Runtime): any
                     end
                 end
 
+                -- Long Jump: horizontal boost when jumping
+                if canMove and longJumpEnabled and humanoid.FloorMaterial ~= Enum.Material.Air then
+                    local moveDir: Vector3 = humanoid.MoveDirection
+                    if moveDir.Magnitude > 0.05 then
+                        local dir: Vector3 = moveDir * longJumpSpeed
+                        if longJumpMode == "Velocity" then
+                            root.AssemblyLinearVelocity = dir + Vector3.new(0, root.AssemblyLinearVelocity.Y, 0)
+                        elseif longJumpMode == "Impulse" then
+                            local diff: Vector3 = (dir - root.AssemblyLinearVelocity) * Vector3.new(1, 0, 1)
+                            if diff.Magnitude > 2 then
+                                root:ApplyImpulse(diff * root.AssemblyMass)
+                            end
+                        else -- CFrame
+                            root.CFrame += dir * (1/60)
+                        end
+                    end
+                end
+
                 if canMove and opts["Infinite jump"] and opts["Infinite jump"].Value then
                     local mode: string = opts["Infinite jump mode"] and opts["Infinite jump mode"].Value or "Normal"
                     if mode == "Rise" and movementInput and type(movementInput.isJumpHeld) == "function" and movementInput.isJumpHeld() then
@@ -355,6 +373,43 @@ function Module.init(context: Runtime): any
         Name = "Auto jump",
         Default = false,
         Tooltip = "Continuously jumps while walking on the ground.",
+    })
+
+    -- Long Jump: horizontal boost when jumping (from VapeV4)
+    local longJumpEnabled = false
+    local longJumpSpeed = 50
+    local longJumpMode = "Velocity"
+
+    jump:CreateToggle({
+        Name = "Long jump",
+        Default = false,
+        Function = function(value: boolean): ()
+            longJumpEnabled = value
+        end,
+        Tooltip = "Adds horizontal speed boost in your move direction when jumping.",
+    })
+
+    jump:CreateDropdown({
+        Name = "Long jump mode",
+        Show = {Option = "Long jump", Values = {true}},
+        List = {"Velocity", "Impulse", "CFrame"},
+        Index = 1,
+        Function = function(value: string): ()
+            longJumpMode = value
+        end,
+        Tooltip = "How the horizontal boost is applied: Velocity (smooth), Impulse (forces), or CFrame (direct position).",
+    })
+
+    jump:CreateSlider({
+        Name = "Long jump speed",
+        Show = {Option = "Long jump", Values = {true}},
+        Min = -150,
+        Max = 150,
+        Default = 50,
+        Function = function(value: number): ()
+            longJumpSpeed = value
+        end,
+        Tooltip = "Horizontal boost speed in studs/second. Negative values boost backwards.",
     })
 
     activeCleanup = function(): ()
