@@ -24,8 +24,17 @@ function Module.init(context: Runtime): any
         if walk and walk.humanoid ~= humanoid then restoreWalk() end
         if not walk then walk = {humanoid=humanoid,base=humanoid.WalkSpeed} end
         if walk.applied and humanoid.WalkSpeed ~= walk.applied then walk.base = humanoid.WalkSpeed end
+        -- Negative WalkSpeed inverts controls (Roblox legacy behavior)
         humanoid.WalkSpeed = value
         walk.applied = value
+        -- When WalkSpeed is negative, invert the move direction by setting
+        -- the Humanoid's MoveDirection opposite to input
+        if value < 0 then
+            local moveDir = humanoid.MoveDirection
+            if moveDir.Magnitude > 0.01 then
+                humanoid:Move(-moveDir, false)
+            end
+        end
     end
     local function write(record, object, property, value)
         local field = record[property]
@@ -223,7 +232,7 @@ function Module.init(context: Runtime): any
         if speed.Enabled then speed:SetStatus(speed.Options.Mode.Value) end
     end
     speed:CreateDropdown({Name="Mode",List={"WalkSpeed","Velocity","Impulse","CFrame","Teleport"},Index=1,Function=changed})
-    speed:CreateSlider({Name="Speed",Min=16,Max=200,Default=32})
+    speed:CreateSlider({Name="Speed",Min=-200,Max=200,Default=32})
     speed:CreateToggle({Name="Wall check",Default=true,Show={Option="Mode",Values={"CFrame","Teleport"}}})
     speed:CreateSlider({Name="Burst delay",Min=0.05,Max=1,Default=0.2,Show={Option="Mode",Values={"Teleport"}}})
     speed:CreateToggle({Name="Auto jump",Default=false})

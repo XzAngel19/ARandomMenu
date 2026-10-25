@@ -50,8 +50,8 @@ assert fallback == manifest, (
 )
 
 # 4) The MM2 load list covers every MM2 file, and points at real files.
-mm2_start = wurst.index('if moduleName == "MM2" then {')
-mm2_block = wurst[mm2_start:wurst.index('} elseif moduleName == "VD" then', mm2_start)]
+mm2_start = wurst.index('MM2 = {')
+mm2_block = wurst[mm2_start:wurst.index('VD = {', mm2_start)]
 mm2_paths = re.findall(r'"(src/games/MM2/[^"]+)"', mm2_block)
 mm2_disk = {
     p.relative_to(ROOT).as_posix() for p in (ROOT / 'src/games/MM2').rglob('*.lua')
