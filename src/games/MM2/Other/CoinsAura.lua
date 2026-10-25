@@ -15,9 +15,7 @@ function Module.init(runtime: any): any
     assert(type(core) == "table", "MM2 Coins Aura requires the MM2 core module")
     Module.Runtime = runtime
 
-    local settings = {
-        studs = 15,
-    }
+    local settings = {}
 
     -- Resolve the Coin_Server part that actually pays for a pickup.
     -- Coin ESP hands out the visual part; the server part is either
@@ -85,7 +83,7 @@ function Module.init(runtime: any): any
         -- and the server expects per-frame contact for reliable pickup.
         local cachedCoins: {Instance} = {}
         local lastCacheRefresh: number = -math.huge
-        local cachedRadiusSq: number = settings.studs * settings.studs
+        local cachedRadiusSq: number = studs * studs
 
         local function refreshCache(): ()
             local now: number = os.clock()
@@ -120,7 +118,7 @@ function Module.init(runtime: any): any
             refreshCache()
 
             local rootPos: Vector3 = root.Position
-            local radius: number = settings.studs
+            local radius: number = studs
             local radiusSq: number = radius * radius
             local fireTouch = state.fireTouchInterest
 
@@ -166,14 +164,9 @@ function Module.init(runtime: any): any
     )
     state.mm2CoinsAuraFeature = CoinsAuraFeature
 
-    addNumberOption(CoinsAuraFeature, "Studs", 15, 5, 1000,
-        function(value: number): ()
-            settings.studs = value
-            if CoinsAuraFeature.enabled then
-                CoinsAuraFeature:SetStatus(tostring(math.round(value)) .. " studs")
-            end
-        end,
-        "Distance from your character at which coins are touched and collected. Can go up to 1000+ studs. Warning: very high values may cause kicks.", 1)
+    -- Fixed at 1000 studs maximum detection range
+    -- No user adjustment - uses maximum detectable distance
+    local studs = 1000
 
     activeCleanup = function(): ()
         toggleCoinsAura(false)

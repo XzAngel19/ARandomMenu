@@ -152,7 +152,7 @@ function Module.init(runtime: any): any
     )
     state.mm2AutoShootFeature = AutoShootFeature
     
-    addDropdownOption(AutoShootFeature, "Mode", {"Shoot", "Cframe"}, 1,
+    addCycleOption(AutoShootFeature, "Mode", {"Shoot", "Cframe"}, 1,
         function(value: string): ()
             settings.mode = value
         end,
