@@ -781,7 +781,7 @@ local function isLobbyName(name: string): boolean
             return true
         end
     end
-    return false
+    return string.find(string.lower(tostring(name)), "lobby", 1, true) ~= nil
 end
 
 local function isMM2MapModel(object: Instance): boolean
@@ -792,6 +792,9 @@ local function isMM2MapModel(object: Instance): boolean
         if object:FindFirstChild(containerName) then
             return true
         end
+    end
+    if object:FindFirstChild("GunDrop") then
+        return true
     end
     return false
 end
@@ -817,11 +820,11 @@ end
 
 local function findMM2Map(): Instance?
     local cached: Instance? = mm2MapCache.map
-    if cached and cached.Parent == workspace then
+    if cached and cached.Parent == workspace and isMM2MapModel(cached) then
         return cached
     end
     if os.clock() - mm2MapCache.at < 1 then
-        return cached
+        return (cached and cached.Parent == workspace) and cached or nil
     end
     mm2MapCache.at = os.clock()
     mm2MapCache.map = findMM2MapUncached()
@@ -865,6 +868,15 @@ local function findDroppedGunUncached(): (Model | BasePart)?
         return candidate :: any
     end
 
+    for _, object: Instance in ipairs(workspace:GetChildren()) do
+        if object:IsA("Model") or object:IsA("Folder") then
+            local childDrop: Instance? = object:FindFirstChild("GunDrop")
+            if childDrop and (childDrop:IsA("Model") or childDrop:IsA("BasePart")) then
+                return childDrop :: any
+            end
+        end
+    end
+
     for _, object: Instance in ipairs(CollectionService:GetTagged("Weapon_Gun")) do
         if isLooseGun(object) then
             local part: (Model | BasePart)? = resolveGunPart(object)
@@ -883,7 +895,7 @@ local function findDroppedGunUncached(): (Model | BasePart)?
         end
     end
 
-    if os.clock() - lastGunSweepAt < 3 then
+    if os.clock() - lastGunSweepAt < 0.5 then
         return nil
     end
     lastGunSweepAt = os.clock()
