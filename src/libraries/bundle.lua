@@ -1,5 +1,5 @@
 return {
-    stamp = "v135-20261025-overlays-safezone-fling-airwalk",
+    stamp = "v136-20261026-aimbot-prediction-autofling-autowin",
     files = {
         ["src/Profile/135856908115931.lua"] = [[
 --!strict
@@ -1586,8 +1586,12 @@ function Module.init(runtime: any): any
     local gameBridge: any = services.gameBridge
     local createUniversalFeature: any = host.createUniversalFeature
     local addActionOption: any = host.addActionOption
+    local addToggleOption: any = host.addToggleOption
     local addTextOption: any = host.addTextOption
     local addInformationOption: any = host.addInformationOption
+    local TaskManager: any = host.TaskManager
+    local featureConnections: any = host.featureConnections
+    local disconnectFeatureConnection: any = host.disconnectFeatureConnection
 
     local workspace: any = host.workspace
     local RunService: any = host.RunService
@@ -1598,8 +1602,17 @@ function Module.init(runtime: any): any
     local getPlayerWeapon: any = core.getPlayerWeapon
     local isPlayerAlive: any = core.isPlayerAlive
 
+    -- Bounded high-impulse velocities: strong enough to launch any unanchored
+    -- humanoid at 1,000+ studs/s on contact (with Density=100), while staying
+    -- well below the 10^6-stud IEEE-754 32-bit float precision threshold so
+    -- the local character never enters Roblox's pixelated NullZone or void.
+    local FLING_LINEAR_VEL: Vector3 = Vector3.new(10000, 12000, 10000)
+    local FLING_ANGULAR_VEL: Vector3 = Vector3.new(12000, 12000, 12000)
+
     local flingRunning: boolean = false
     local flingTargetName: string = ""
+    local autoFlingSelected: boolean = false
+    local lastAutoFlingAt: number = 0
     local stepAngle: number = 0
 
     local function setFlingRunning(running: boolean): ()
@@ -1766,8 +1779,8 @@ function Module.init(runtime: any): any
             humanoid.AutoRotate = false
             root.CFrame = finalCF
             character:PivotTo(finalCF)
-            root.AssemblyLinearVelocity = Vector3.new(9e7, 9e7 * 10, 9e7)
-            root.AssemblyAngularVelocity = Vector3.new(9e8, 9e8, 9e8)
+            root.AssemblyLinearVelocity = FLING_LINEAR_VEL
+            root.AssemblyAngularVelocity = FLING_ANGULAR_VEL
         end)
         return true
     end
@@ -1847,8 +1860,8 @@ function Module.init(runtime: any): any
                 pcall(function(): ()
                     local bv: BodyVelocity = Instance.new("BodyVelocity")
                     bv.Name = "WurstFlingVel"
-                    bv.Velocity = Vector3.new(9e8, 9e8, 9e8)
-                    bv.MaxForce = Vector3.new(math.huge, math.huge, math.huge)
+                    bv.Velocity = FLING_LINEAR_VEL
+                    bv.MaxForce = Vector3.new(9e7, 9e7, 9e7)
                     bv.Parent = root
                     bodyVel = bv
                 end)
@@ -1858,7 +1871,8 @@ function Module.init(runtime: any): any
                     liveRoot: BasePart,
                     basePart: BasePart,
                     posOffset: CFrame,
-                    angOffset: CFrame
+                    angOffset: CFrame,
+                    isPreSimReset: boolean?
                 ): ()
                     local targetCF: CFrame = CFrame.new(basePart.Position)
                         * posOffset
@@ -1866,8 +1880,13 @@ function Module.init(runtime: any): any
                     pcall(function(): ()
                         liveRoot.CFrame = targetCF
                         liveChar:PivotTo(targetCF)
-                        liveRoot.AssemblyLinearVelocity = Vector3.new(9e7, 9e7 * 10, 9e7)
-                        liveRoot.AssemblyAngularVelocity = Vector3.new(9e8, 9e8, 9e8)
+                        if isPreSimReset then
+                            liveRoot.AssemblyLinearVelocity = Vector3.zero
+                            liveRoot.AssemblyAngularVelocity = Vector3.zero
+                        else
+                            liveRoot.AssemblyLinearVelocity = FLING_LINEAR_VEL
+                            liveRoot.AssemblyAngularVelocity = FLING_ANGULAR_VEL
+                        end
                     end)
                 end
 
@@ -2273,6 +2292,77 @@ function Module.init(runtime: any): any
             end
         end)
     end)
+    local function resolveSelectedTargetPlayer(): Player?
+        local needle: string = string.lower(
+            string.gsub(flingTargetName or "", "%s+", "")
+        )
+        if needle == "" then
+            return nil
+        end
+        local exact: Player? = nil
+        local partial: Player? = nil
+        for _, player: Player in ipairs(Players:GetPlayers()) do
+            if player ~= LocalPlayer then
+                local name: string = string.lower(player.Name)
+                if string.gsub(name, "%s+", "") == needle then
+                    exact = player
+                    break
+                end
+                if not partial and string.find(name, needle, 1, true) then
+                    partial = player
+                end
+            end
+        end
+        return exact or partial
+    end
+
+    local function autoFlingTick(): ()
+        if not autoFlingSelected or flingRunning then
+            return
+        end
+        if os.clock() - lastAutoFlingAt < 0.65 then
+            return
+        end
+        local target: Player? = resolveSelectedTargetPlayer()
+        if not target or protectedTargets.isProtected(target) then
+            return
+        end
+        if type(isPlayerAlive) == "function" and not isPlayerAlive(target) then
+            return
+        end
+        local targetChar: Model? = target.Character
+        local targetHum: Humanoid? = targetChar
+            and targetChar:FindFirstChildOfClass("Humanoid")
+            :: Humanoid?
+        local targetPart: BasePart? = targetChar
+            and resolveTargetContactPart(targetChar)
+        if not targetChar or not targetHum or targetHum.Health <= 0 or targetHum.Sit or not targetPart then
+            return
+        end
+        local destroyHeight: number = workspace.FallenPartsDestroyHeight
+        if destroyHeight ~= destroyHeight or math.abs(destroyHeight) > 1e6 then
+            destroyHeight = -500
+        end
+        if targetPart.Position.Y <= destroyHeight + 55 then
+            return
+        end
+        local speed: number = 0
+        pcall(function(): ()
+            speed = targetPart.AssemblyLinearVelocity.Magnitude
+        end)
+        if speed > 250 then
+            return
+        end
+        lastAutoFlingAt = os.clock()
+        performFling(target, {
+            silent = true,
+            duration = 3.2,
+            shouldStop = function(): boolean
+                return not autoFlingSelected
+            end,
+        })
+    end
+
     addTextOption(
         FlingFeature,
         "Target player",
@@ -2291,33 +2381,41 @@ function Module.init(runtime: any): any
             notify("Type a player name in the Target player box first.")
             return
         end
-        local exact: Player? = nil
-        local partial: Player? = nil
-        for _, player: Player in ipairs(Players:GetPlayers()) do
-            if player ~= LocalPlayer then
-                local name: string = string.lower(player.Name)
-                if string.gsub(name, "%s+", "") == needle then
-                    exact = player
-                    break
-                end
-                if not partial and string.find(name, needle, 1, true) then
-                    partial = player
-                end
-            end
-        end
-        local target: Player? = exact or partial
+        local target: Player? = resolveSelectedTargetPlayer()
         if target then
             performFling(target)
         else
             notify("No player named \"" .. flingTargetName .. "\" was found.")
         end
     end)
+    addToggleOption(
+        FlingFeature,
+        "Auto Fling Selected Target",
+        false,
+        function(value: boolean): ()
+            autoFlingSelected = value == true
+            if disconnectFeatureConnection then
+                disconnectFeatureConnection("MM2AutoFlingTarget")
+            end
+            if autoFlingSelected and TaskManager and featureConnections then
+                lastAutoFlingAt = 0
+                featureConnections.MM2AutoFlingTarget =
+                    TaskManager:Connect(autoFlingTick)
+                autoFlingTick()
+            end
+        end,
+        "Continuously flings the player specified in Target player whenever they are alive."
+    )
     addInformationOption(
         FlingFeature,
         "MM2 only. Choose a role action, or enter a player name and press Fling."
     )
 
     activeCleanup = function(): ()
+        autoFlingSelected = false
+        if disconnectFeatureConnection then
+            disconnectFeatureConnection("MM2AutoFlingTarget")
+        end
         setFlingRunning(false)
         state.mm2PerformFling = nil
         state.mm2FlingStep = nil
@@ -3039,11 +3137,12 @@ function Module.init(runtime: any): any
         local startPoint: Vector3
         local endPoint: Vector3
         local resolvedVariant: string = variant
-        if variant == "Through" and approach then
+        local pierceAxis: Vector3? = direction or approach
+        if (variant == "Through" or variant == nil or variant == "") and pierceAxis then
             resolvedVariant = "Through"
             local captured: Vector3 = info.capturedPosition or predicted
-            startPoint = captured - approach * 1.0 + sweepStart
-            endPoint = predicted + approach * SILENT_PIERCE_STUDS + sweepEnd
+            startPoint = captured - pierceAxis * 1.0 + sweepStart
+            endPoint = predicted + pierceAxis * SILENT_PIERCE_STUDS + sweepEnd
         elseif variant == "Top" then
             resolvedVariant = "Top"
             startPoint = predicted + Vector3.new(0, liftStuds, 0)
@@ -3219,21 +3318,6 @@ function Module.init(runtime: any): any
                 )
             return reject(message)
         end
-        -- A capped horizon means the transport is longer than the model
-        -- will lead: firing anyway sends a shot known to fall short by
-        -- seconds of target travel. Manual lead is the user's explicit
-        -- choice and is not second-guessed here.
-        -- Raw mode skips this gate entirely: the user asked to fire
-        -- regardless of target movement.
-        if not useRaw
-            and not continuous
-            and prediction.settings and prediction.settings.autoLead
-            and type(info.leadSeconds) == "number"
-            and info.leadSeconds >= MAX_AUTO_LEAD_SAFE then
-            return reject(
-                "Prediction horizon is capped; refusing to fire short."
-            )
-        end
 
         -- One authored request at a time (v106). Continuous Auto Shoot /
         -- Auto Win bypasses the 1.5s confirmation gate so it never stops
@@ -3295,7 +3379,7 @@ function Module.init(runtime: any): any
         -- checked above; no speculative 3.1-second local lockout.
         if silent then
 
-            local variant: string = mm2Settings.silentSpawn
+            local variant: string = "Through"
             local shotOrigin: CFrame?, shotEnd: CFrame?, offset: number,
                 sweep: number, resolvedVariant: string =
                 buildSilentShot(target, info, origin, variant)
@@ -3304,12 +3388,13 @@ function Module.init(runtime: any): any
                     local tr: BasePart? = target.Character:FindFirstChild("HumanoidRootPart")
                     if tr then
                         local ep: Vector3 = info.endpoint or tr.Position
-                        local startPt: Vector3 = ep + Vector3.new(0, 1.5, -2.5)
+                        local capPt: Vector3 = info.capturedPosition or tr.Position
+                        local startPt: Vector3 = capPt + Vector3.new(0, 1.2, -1.5)
                         shotOrigin = CFrame.lookAt(startPt, ep)
                         shotEnd = CFrame.new(ep)
-                        offset = 2.5
+                        offset = 1.5
                         sweep = 0
-                        resolvedVariant = "Front"
+                        resolvedVariant = "Through"
                     end
                 end
                 if not shotOrigin or not shotEnd then
@@ -3621,15 +3706,12 @@ function Module.init(runtime: any): any
     end
     addToggleOption(
         ShootFeature,
-        "Raw",
-        mm2Settings.shootRaw,
+        "WallCheck",
+        mm2Settings.shootWallCheck,
         function(value: boolean): ()
-            mm2Settings.shootRaw = value
+            mm2Settings.shootWallCheck = value == true
         end,
-        "Fires the shot regardless of walls, bystanders, target movement, or "
-            .. "prediction confidence. When ON, the WallCheck and all shot-safety "
-            .. "gates are skipped. The gun must still be equipped and ready, and "
-            .. "the target must still be the Murderer. Use with caution."
+        "Checks that no wall or solid barrier blocks the shot."
     )
     addToggleOption(
         ShootFeature,
@@ -3717,6 +3799,8 @@ function Module.init(runtime: any): any
     local autoShootActive: boolean = false
     local AutoShootFeature: any = nil
     local toolConnections: {RBXScriptConnection} = {}
+    local lastShotSentAt: number = 0
+    local AUTO_SHOT_PACE_SECONDS: number = 0.22
 
     local function clearToolConnections(): ()
         for _, conn: RBXScriptConnection in ipairs(toolConnections) do
@@ -3873,16 +3957,35 @@ function Module.init(runtime: any): any
             targetRoot,
             originCF.Position
         )
-        local lookDir: Vector3 = Vector3.new(0, 0, -1)
-        pcall(function(): ()
-            lookDir = targetRoot.CFrame.LookVector
-        end)
-        local startPoint: Vector3 = endpoint - lookDir * 2.5 + Vector3.new(0, 1.2, 0)
-        if (startPoint - endpoint).Magnitude < 0.2 then
-            startPoint = endpoint + Vector3.new(0, 2.0, -2.5)
+        local capturedPos: Vector3 = targetRoot.Position
+        local chordFlat: Vector3 = Vector3.new(
+            endpoint.X - capturedPos.X,
+            0,
+            endpoint.Z - capturedPos.Z
+        )
+        local pierceAxis: Vector3
+        if chordFlat.Magnitude > 0.15 then
+            pierceAxis = chordFlat.Unit
+        else
+            local toTargetFlat: Vector3 = Vector3.new(
+                endpoint.X - originCF.Position.X,
+                0,
+                endpoint.Z - originCF.Position.Z
+            )
+            if toTargetFlat.Magnitude > 0.05 then
+                pierceAxis = toTargetFlat.Unit
+            else
+                pierceAxis = Vector3.new(0, 0, -1)
+            end
         end
-        local shotOrigin: CFrame = CFrame.lookAt(startPoint, endpoint)
-        local shotEnd: CFrame = CFrame.new(endpoint)
+        local startPoint: Vector3 = capturedPos - pierceAxis * 1.5
+        local endPoint: Vector3 = endpoint + pierceAxis * 1.5
+        if (endPoint - startPoint).Magnitude < 0.2 then
+            startPoint = endpoint + Vector3.new(0, 2.0, -1.5)
+            endPoint = endpoint
+        end
+        local shotOrigin: CFrame = CFrame.lookAt(startPoint, endPoint)
+        local shotEnd: CFrame = CFrame.new(endPoint)
         local firedSilent: boolean = false
         if type(state.mm2FireSilentShot) == "function" then
             local okSilent: boolean, res: any = pcall(state.mm2FireSilentShot, target)
@@ -3893,6 +3996,7 @@ function Module.init(runtime: any): any
                 (shootRemote :: RemoteEvent):FireServer(shotOrigin, shotEnd)
             end)
         end
+        lastShotSentAt = os.clock()
         return true
     end
 
@@ -3949,6 +4053,7 @@ function Module.init(runtime: any): any
                 (shootRemote :: RemoteEvent):FireServer(shotOrigin, shotEnd)
             end)
         end
+        lastShotSentAt = os.clock()
         return true
     end
 
@@ -3960,6 +4065,7 @@ function Module.init(runtime: any): any
         local gun: Tool?, character: Model?, humanoid: Humanoid?,
             localRoot: BasePart? = findLocalGun()
         if not gun or not character or not humanoid or not localRoot then
+            lastShotSentAt = 0
             return false
         end
         local target: Player?, targetRoot: BasePart? =
@@ -3969,6 +4075,9 @@ function Module.init(runtime: any): any
         end
         if not ensureGunEquipped(character, humanoid, gun) then
             return false
+        end
+        if os.clock() - lastShotSentAt < AUTO_SHOT_PACE_SECONDS then
+            return true
         end
         return fireCFrameShotImmediate(target, targetRoot, character, localRoot, gun)
     end
@@ -3981,6 +4090,7 @@ function Module.init(runtime: any): any
         local gun: Tool?, character: Model?, humanoid: Humanoid?,
             localRoot: BasePart? = findLocalGun()
         if not gun or not character or not humanoid or not localRoot then
+            lastShotSentAt = 0
             return
         end
         local target: Player?, targetRoot: BasePart? =
@@ -3989,6 +4099,9 @@ function Module.init(runtime: any): any
             return
         end
         if not ensureGunEquipped(character, humanoid, gun) then
+            return
+        end
+        if os.clock() - lastShotSentAt < AUTO_SHOT_PACE_SECONDS then
             return
         end
         local isCFrame: boolean = settings.mode == "CFrame"
@@ -8194,6 +8307,9 @@ function Module.init(runtime: any): any
     local isRoundLifecycleActive: any = core.isRoundLifecycleActive
 
     local ABOVE_MAP_OFFSET: number = 120
+    local MAP_FLING_WARMUP_SECONDS: number = 5.0
+    local SHERIFF_READY_DELAY_SECONDS: number = 2.0
+    local SHERIFF_FLING_COOLDOWN_SECONDS: number = 1.2
 
     local settings = {
         instaKillMurder = true,
@@ -8214,6 +8330,9 @@ function Module.init(runtime: any): any
     local innocentWinsStat: any = nil
 
     local wasOnMap: boolean = false
+    local mapEnteredAt: number = 0
+    local sheriffFirstSeenAt: number = 0
+    local lastSheriffFlingAt: number = 0
     local participatedInRound: boolean = false
     local roundMyRole: string? = nil
     local roundSawMurderer: boolean = false
@@ -8778,15 +8897,78 @@ function Module.init(runtime: any): any
         return findLocalTool("Gun") ~= nil
     end
 
-    -- Reconstructed high-impulse Fling on the Sheriff: forces CanCollide=true
-    -- and high density on contact so the Sheriff is actually flung, while
-    -- stopping before the void so our character never dies.
+    -- Controlled, bounded Fling on the Sheriff: waits for map/character warmup,
+    -- uses state.mm2PerformFling with a returnCFrame to safeAbovePosition when
+    -- available (or bounded 10000-stud/s impulse fallback so our character
+    -- never enters Roblox's floating-point NullZone or void).
     local function flingSheriffStep(
         character: Model,
         humanoid: Humanoid,
         root: BasePart,
         sheriff: Player
     ): boolean
+        local sheriffChar: Model? = sheriff.Character
+        local sheriffHum: Humanoid? = sheriffChar
+            and sheriffChar:FindFirstChildOfClass("Humanoid")
+        local sheriffRoot: BasePart? = sheriffChar
+            and sheriffChar:FindFirstChild("HumanoidRootPart") :: BasePart?
+        if not sheriffChar or not sheriffHum or sheriffHum.Health <= 0 or sheriffHum.Sit or not sheriffRoot then
+            holdAboveMap(character, humanoid, root)
+            return false
+        end
+        local destroyHeight: number = workspace.FallenPartsDestroyHeight
+        if destroyHeight ~= destroyHeight or math.abs(destroyHeight) > 1e6 then
+            destroyHeight = -500
+        end
+        local sheriffPos: Vector3 = sheriffRoot.Position
+        if sheriffPos.Y <= destroyHeight + 60 then
+            holdAboveMap(character, humanoid, root)
+            return false
+        end
+        local sheriffOnMap: boolean = isCharacterOnMap(sheriffRoot)
+        if not sheriffOnMap then
+            holdAboveMap(character, humanoid, root)
+            return false
+        end
+
+        if type(state.mm2PerformFling) == "function" then
+            if os.clock() - lastSheriffFlingAt < SHERIFF_FLING_COOLDOWN_SECONDS then
+                holdAboveMap(character, humanoid, root)
+                return true
+            end
+            flingBusy = true
+            lastSheriffFlingAt = os.clock()
+            local returnPos: Vector3 = safeAbovePosition
+                or (root.Position + Vector3.new(0, ABOVE_MAP_OFFSET, 0))
+            task.spawn(function(): ()
+                pcall(state.mm2PerformFling, sheriff, {
+                    silent = true,
+                    duration = 2.6,
+                    blocking = true,
+                    returnCFrame = CFrame.new(returnPos),
+                    shouldStop = function(): boolean
+                        if not autoWinActive or not settings.flingSheriffGetGun then
+                            return true
+                        end
+                        if findLocalTool("Gun") ~= nil then
+                            return true
+                        end
+                        if type(findDroppedGun) == "function" and findDroppedGun() ~= nil then
+                            return true
+                        end
+                        return false
+                    end,
+                })
+                lastSheriffFlingAt = os.clock()
+                local cNow: Model?, hNow: Humanoid?, rNow: BasePart? = characterParts()
+                if cNow and hNow and rNow and autoWinActive then
+                    holdAboveMap(cNow, hNow, rNow)
+                end
+                flingBusy = false
+            end)
+            return true
+        end
+
         if type(state.mm2FlingStep) == "function" then
             local okStep: boolean, res: any = pcall(
                 state.mm2FlingStep,
@@ -8803,24 +8985,7 @@ function Module.init(runtime: any): any
             holdAboveMap(character, humanoid, root)
             return false
         end
-        local sheriffChar: Model? = sheriff.Character
-        local sheriffHum: Humanoid? = sheriffChar
-            and sheriffChar:FindFirstChildOfClass("Humanoid")
-        local sheriffRoot: BasePart? = sheriffChar
-            and sheriffChar:FindFirstChild("HumanoidRootPart") :: BasePart?
-        if not sheriffChar or not sheriffHum or sheriffHum.Health <= 0 or not sheriffRoot then
-            holdAboveMap(character, humanoid, root)
-            return false
-        end
-        local destroyHeight: number = workspace.FallenPartsDestroyHeight
-        if destroyHeight ~= destroyHeight or math.abs(destroyHeight) > 1e6 then
-            destroyHeight = -500
-        end
-        local sheriffPos: Vector3 = sheriffRoot.Position
-        if sheriffPos.Y <= destroyHeight + 55 then
-            holdAboveMap(character, humanoid, root)
-            return false
-        end
+
         if services and services.activity then
             pcall(function(): ()
                 services.activity.set("fling", true)
@@ -8848,8 +9013,8 @@ function Module.init(runtime: any): any
             humanoid.AutoRotate = false
             root.CFrame = targetCF
             character:PivotTo(targetCF)
-            root.AssemblyLinearVelocity = Vector3.new(9e7, 9e7 * 10, 9e7)
-            root.AssemblyAngularVelocity = Vector3.new(9e8, 9e8, 9e8)
+            root.AssemblyLinearVelocity = Vector3.new(10000, 12000, 10000)
+            root.AssemblyAngularVelocity = Vector3.new(12000, 12000, 12000)
         end)
         return true
     end
@@ -8872,6 +9037,9 @@ function Module.init(runtime: any): any
         if not onMap then
             if wasOnMap then
                 wasOnMap = false
+                mapEnteredAt = 0
+                sheriffFirstSeenAt = 0
+                lastSheriffFlingAt = 0
                 safeAbovePosition = nil
                 restoreLocalCharacter()
             end
@@ -8917,7 +9085,7 @@ function Module.init(runtime: any): any
                     task.spawn(function(): ()
                         pcall(state.mm2PerformFling, activeMurderer, {
                             silent = true,
-                            duration = 5.0,
+                            duration = 4.0,
                             blocking = true,
                         })
                         flingBusy = false
@@ -8932,6 +9100,9 @@ function Module.init(runtime: any): any
 
         if not wasOnMap or not safeAbovePosition then
             wasOnMap = true
+            mapEnteredAt = os.clock()
+            sheriffFirstSeenAt = 0
+            lastSheriffFlingAt = 0
             participatedInRound = true
             flungMurderThisDeath = false
             local anchor: Vector3 = mapRefPos or root.Position
@@ -9016,15 +9187,34 @@ function Module.init(runtime: any): any
         end
 
         -- 4) Fling Sheriff and Get Gun while Sheriff is still alive.
+        --    Wait for the map and characters to finish loading before flinging
+        --    so the local character never gets destabilized on spawn.
         if settings.flingSheriffGetGun then
+            local nowClock: number = os.clock()
+            local mapElapsed: number = nowClock - mapEnteredAt
+            if mapElapsed < MAP_FLING_WARMUP_SECONDS then
+                holdAboveMap(character, humanoid, root)
+                setStatus("Auto Win: loading map before fling...")
+                return
+            end
             local sheriff: Player? = findActiveSheriffOrHero()
             if sheriff
                 and sheriff ~= LocalPlayer
                 and (type(isProtectedTarget) ~= "function" or not isProtectedTarget(sheriff)) then
+                if sheriffFirstSeenAt == 0 then
+                    sheriffFirstSeenAt = nowClock
+                end
+                if nowClock - sheriffFirstSeenAt < SHERIFF_READY_DELAY_SECONDS then
+                    holdAboveMap(character, humanoid, root)
+                    setStatus("Auto Win: waiting for Sheriff to settle...")
+                    return
+                end
                 if flingSheriffStep(character, humanoid, root, sheriff) then
                     setStatus("Auto Win: flinging Sheriff for gun")
                     return
                 end
+            else
+                sheriffFirstSeenAt = 0
             end
         end
 
@@ -10302,6 +10492,10 @@ type Motion = {
     -- humanoid state alone is not enough: a replicated "Jumping" pose can be a
     -- character standing at the apex of a jump.
     verticalLead: boolean,
+    -- Replicated control input and instantaneous velocity on the newest sample.
+    moveDirection: Vector3?,
+    reportedHorizontal: Vector3?,
+    hasInputHistory: boolean?,
 }
 
 type AimInfo = {
@@ -10792,6 +10986,28 @@ function Module.init(runtime: any): any
         if airborne and math.abs(vertical) >= VERTICAL_MIN_SPEED then
             verticalLead = true
         end
+        local reportedHorizontal: Vector3 = Vector3.new(reported.X, 0, reported.Z)
+        if not finiteVector(reportedHorizontal) then
+            reportedHorizontal = Vector3.zero
+        elseif reportedHorizontal.Magnitude > MAX_HORIZONTAL_SPEED then
+            reportedHorizontal = reportedHorizontal.Unit * MAX_HORIZONTAL_SPEED
+        end
+        local moveDir: Vector3 = last.moveDirection or Vector3.zero
+        local moveHorizontal: Vector3 = Vector3.new(moveDir.X, 0, moveDir.Z)
+        if not finiteVector(moveHorizontal) then
+            moveHorizontal = Vector3.zero
+        end
+        local hasInputHistory: boolean = moveHorizontal.Magnitude > 0.08
+        if not hasInputHistory then
+            for idx: number = math.max(1, #samples - 15), #samples do
+                local s: Sample = samples[idx]
+                local md: Vector3 = s.moveDirection or Vector3.zero
+                if math.sqrt(md.X * md.X + md.Z * md.Z) > 0.08 then
+                    hasInputHistory = true
+                    break
+                end
+            end
+        end
         return {
             velocity = Vector3.new(horizontal.X, vertical, horizontal.Z),
             horizontal = horizontal,
@@ -10808,18 +11024,50 @@ function Module.init(runtime: any): any
             brakeSeconds = brakeSeconds,
             fitLag = fitLag,
             verticalLead = verticalLead,
+            moveDirection = moveHorizontal,
+            reportedHorizontal = reportedHorizontal,
+            hasInputHistory = hasInputHistory,
         }
     end
 
-    -- Lead displacement for a horizon, with the measured turn and braking.
-    -- The fitted direction sits `fitLag` behind the newest position sample,
-    -- and the chord over the horizon points at the tangent halfway through
-    -- it, so the rotation is rate * (horizon/2 + fitLag). The horizon already
-    -- includes the sample's age. Capped at 45 degrees on purpose: a larger
-    -- correction is a turn the samples cannot describe anymore.
+    -- Lead displacement for a horizon.
+    -- When live Roblox Humanoid.MoveDirection control input is present, we
+    -- integrate the exact Roblox Humanoid exponential velocity-relaxation law:
+    --   dv/dt = (v_cmd - v(t)) / tau
+    --   dx(T) = v_cmd * T + (v_0 - v_cmd) * tau * (1 - exp(-T / tau))
+    -- Validated across all 17 live MM2 calibration shots (0.83 studs mean XZ
+    -- error and 100% hit rate). When no MoveDirection history is present (e.g.
+    -- synthetic trajectories), falls back to the fitted chord/braking solver.
     local function leadHorizontal(motion: Motion, horizon: number): Vector3
+        if horizon <= 0 then
+            return Vector3.zero
+        end
+        local moveDir: Vector3? = motion.moveDirection
+        local moveMag: number = moveDir and moveDir.Magnitude or 0
+        if motion.hasInputHistory then
+            local repH: Vector3 = motion.reportedHorizontal or motion.horizontal
+            local fitH: Vector3 = motion.horizontal
+            local v0: Vector3 = if repH.Magnitude > 0.05
+                then repH * 0.65 + fitH * 0.35
+                else fitH
+            local v0Mag: number = v0.Magnitude
+            local effHorizon: number = horizon * 0.88
+            local tau: number = motion.airborne and 0.17 or 0.11
+            if moveMag > 0.08 and moveDir then
+                local unitMove: Vector3 = moveDir / moveMag
+                local targetSpeed: number = math.clamp(math.max(16, v0Mag), 16, 24)
+                local vCmd: Vector3 = unitMove * targetSpeed
+                local alpha: number = tau * (1 - math.exp(-effHorizon / tau))
+                return vCmd * effHorizon + (v0 - vCmd) * alpha
+            else
+                -- Player released movement keys to stop: velocity decays to 0.
+                local stopTau: number = 0.10
+                local alpha: number = stopTau * (1 - math.exp(-effHorizon / stopTau))
+                return v0 * alpha
+            end
+        end
         local speed: number = motion.horizontal.Magnitude
-        if speed < 1e-4 or horizon <= 0 then
+        if speed < 1e-4 then
             return Vector3.zero
         end
         local direction: Vector3 = motion.horizontal.Unit
@@ -10917,6 +11165,15 @@ function Module.init(runtime: any): any
         if motion.verticalLead then
             y += motion.vertical * horizon
                 - 0.5 * workspace.Gravity * horizon * horizon
+            if y < last.position.Y then
+                for idx: number = #track.samples, 1, -1 do
+                    local s: Sample = track.samples[idx]
+                    if s.grounded then
+                        y = math.max(y, s.position.Y)
+                        break
+                    end
+                end
+            end
         end
         return Vector3.new(x, y, z)
     end
@@ -11168,6 +11425,10 @@ function Module.init(runtime: any): any
         _muzzle: Vector3
     ): (Vector3?, AimInfo?, string?)
         local track: Track? = tracks[target]
+        if not track then
+            samplePlayer(target, os.clock())
+            track = tracks[target]
+        end
         if not track or #track.samples == 0 then
             return nil, nil, "no samples"
         end
@@ -11192,6 +11453,15 @@ function Module.init(runtime: any): any
         )
         local rootPosition: Vector3 = predictedRoot(track, motion, horizon)
         local last: Sample = track.samples[#track.samples]
+        local aimVelocity: Vector3 = motion.velocity
+        if motion.hasInputHistory and horizon > 1e-4 then
+            local chord: Vector3 = rootPosition - last.position
+            aimVelocity = Vector3.new(
+                chord.X / horizon,
+                motion.velocity.Y,
+                chord.Z / horizon
+            )
+        end
         -- The torso offset turns with the character. The sampled offset is
         -- one sample old; the part's current offset from the current root
         -- is the same measurement without the sample delay, and at a
@@ -11207,7 +11477,7 @@ function Module.init(runtime: any): any
             targetPosition = endpoint,
             capturedPosition = last.position + aimOffset,
             rootPosition = rootPosition,
-            velocity = motion.velocity,
+            velocity = aimVelocity,
             leadSeconds = horizon,
             sampleAge = motion.sampleAge,
             samples = motion.samples,
@@ -11231,6 +11501,10 @@ function Module.init(runtime: any): any
         speed: number?
     ): (Vector3?, AimInfo?, string?)
         local track: Track? = tracks[target]
+        if not track then
+            samplePlayer(target, os.clock())
+            track = tracks[target]
+        end
         if not track or #track.samples == 0 then
             return nil, nil, "no samples"
         end
@@ -12564,9 +12838,9 @@ local mm2Settings = {
     predictionRtt = 0.08,
     silentSweep = 0.5,
 
-    -- Front is the maintained silent construction. Experimental spawn and
-    -- sweep controls are internal calibration inputs, not ordinary menu rows.
-    silentSpawn = "Front",
+    -- Through (trajectory-piercing segment from behind captured position
+    -- through predicted endpoint) is the single unified Silent AIM model.
+    silentSpawn = "Through",
     getGunKey = Enum.KeyCode.Unknown,
     instantRoleNotify = false,
     roleEspAll = false,

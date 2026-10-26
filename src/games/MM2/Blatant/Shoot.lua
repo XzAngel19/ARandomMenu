@@ -202,11 +202,12 @@ function Module.init(runtime: any): any
         local startPoint: Vector3
         local endPoint: Vector3
         local resolvedVariant: string = variant
-        if variant == "Through" and approach then
+        local pierceAxis: Vector3? = direction or approach
+        if (variant == "Through" or variant == nil or variant == "") and pierceAxis then
             resolvedVariant = "Through"
             local captured: Vector3 = info.capturedPosition or predicted
-            startPoint = captured - approach * 1.0 + sweepStart
-            endPoint = predicted + approach * SILENT_PIERCE_STUDS + sweepEnd
+            startPoint = captured - pierceAxis * 1.0 + sweepStart
+            endPoint = predicted + pierceAxis * SILENT_PIERCE_STUDS + sweepEnd
         elseif variant == "Top" then
             resolvedVariant = "Top"
             startPoint = predicted + Vector3.new(0, liftStuds, 0)
@@ -382,21 +383,6 @@ function Module.init(runtime: any): any
                 )
             return reject(message)
         end
-        -- A capped horizon means the transport is longer than the model
-        -- will lead: firing anyway sends a shot known to fall short by
-        -- seconds of target travel. Manual lead is the user's explicit
-        -- choice and is not second-guessed here.
-        -- Raw mode skips this gate entirely: the user asked to fire
-        -- regardless of target movement.
-        if not useRaw
-            and not continuous
-            and prediction.settings and prediction.settings.autoLead
-            and type(info.leadSeconds) == "number"
-            and info.leadSeconds >= MAX_AUTO_LEAD_SAFE then
-            return reject(
-                "Prediction horizon is capped; refusing to fire short."
-            )
-        end
 
         -- One authored request at a time (v106). Continuous Auto Shoot /
         -- Auto Win bypasses the 1.5s confirmation gate so it never stops
@@ -458,7 +444,7 @@ function Module.init(runtime: any): any
         -- checked above; no speculative 3.1-second local lockout.
         if silent then
 
-            local variant: string = mm2Settings.silentSpawn
+            local variant: string = "Through"
             local shotOrigin: CFrame?, shotEnd: CFrame?, offset: number,
                 sweep: number, resolvedVariant: string =
                 buildSilentShot(target, info, origin, variant)
@@ -467,12 +453,13 @@ function Module.init(runtime: any): any
                     local tr: BasePart? = target.Character:FindFirstChild("HumanoidRootPart")
                     if tr then
                         local ep: Vector3 = info.endpoint or tr.Position
-                        local startPt: Vector3 = ep + Vector3.new(0, 1.5, -2.5)
+                        local capPt: Vector3 = info.capturedPosition or tr.Position
+                        local startPt: Vector3 = capPt + Vector3.new(0, 1.2, -1.5)
                         shotOrigin = CFrame.lookAt(startPt, ep)
                         shotEnd = CFrame.new(ep)
-                        offset = 2.5
+                        offset = 1.5
                         sweep = 0
-                        resolvedVariant = "Front"
+                        resolvedVariant = "Through"
                     end
                 end
                 if not shotOrigin or not shotEnd then
@@ -784,15 +771,12 @@ function Module.init(runtime: any): any
     end
     addToggleOption(
         ShootFeature,
-        "Raw",
-        mm2Settings.shootRaw,
+        "WallCheck",
+        mm2Settings.shootWallCheck,
         function(value: boolean): ()
-            mm2Settings.shootRaw = value
+            mm2Settings.shootWallCheck = value == true
         end,
-        "Fires the shot regardless of walls, bystanders, target movement, or "
-            .. "prediction confidence. When ON, the WallCheck and all shot-safety "
-            .. "gates are skipped. The gun must still be equipped and ready, and "
-            .. "the target must still be the Murderer. Use with caution."
+        "Checks that no wall or solid barrier blocks the shot."
     )
     addToggleOption(
         ShootFeature,

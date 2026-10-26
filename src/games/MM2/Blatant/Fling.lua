@@ -26,8 +26,12 @@ function Module.init(runtime: any): any
     local gameBridge: any = services.gameBridge
     local createUniversalFeature: any = host.createUniversalFeature
     local addActionOption: any = host.addActionOption
+    local addToggleOption: any = host.addToggleOption
     local addTextOption: any = host.addTextOption
     local addInformationOption: any = host.addInformationOption
+    local TaskManager: any = host.TaskManager
+    local featureConnections: any = host.featureConnections
+    local disconnectFeatureConnection: any = host.disconnectFeatureConnection
 
     local workspace: any = host.workspace
     local RunService: any = host.RunService
@@ -38,8 +42,17 @@ function Module.init(runtime: any): any
     local getPlayerWeapon: any = core.getPlayerWeapon
     local isPlayerAlive: any = core.isPlayerAlive
 
+    -- Bounded high-impulse velocities: strong enough to launch any unanchored
+    -- humanoid at 1,000+ studs/s on contact (with Density=100), while staying
+    -- well below the 10^6-stud IEEE-754 32-bit float precision threshold so
+    -- the local character never enters Roblox's pixelated NullZone or void.
+    local FLING_LINEAR_VEL: Vector3 = Vector3.new(10000, 12000, 10000)
+    local FLING_ANGULAR_VEL: Vector3 = Vector3.new(12000, 12000, 12000)
+
     local flingRunning: boolean = false
     local flingTargetName: string = ""
+    local autoFlingSelected: boolean = false
+    local lastAutoFlingAt: number = 0
     local stepAngle: number = 0
 
     local function setFlingRunning(running: boolean): ()
@@ -206,8 +219,8 @@ function Module.init(runtime: any): any
             humanoid.AutoRotate = false
             root.CFrame = finalCF
             character:PivotTo(finalCF)
-            root.AssemblyLinearVelocity = Vector3.new(9e7, 9e7 * 10, 9e7)
-            root.AssemblyAngularVelocity = Vector3.new(9e8, 9e8, 9e8)
+            root.AssemblyLinearVelocity = FLING_LINEAR_VEL
+            root.AssemblyAngularVelocity = FLING_ANGULAR_VEL
         end)
         return true
     end
@@ -287,8 +300,8 @@ function Module.init(runtime: any): any
                 pcall(function(): ()
                     local bv: BodyVelocity = Instance.new("BodyVelocity")
                     bv.Name = "WurstFlingVel"
-                    bv.Velocity = Vector3.new(9e8, 9e8, 9e8)
-                    bv.MaxForce = Vector3.new(math.huge, math.huge, math.huge)
+                    bv.Velocity = FLING_LINEAR_VEL
+                    bv.MaxForce = Vector3.new(9e7, 9e7, 9e7)
                     bv.Parent = root
                     bodyVel = bv
                 end)
@@ -298,7 +311,8 @@ function Module.init(runtime: any): any
                     liveRoot: BasePart,
                     basePart: BasePart,
                     posOffset: CFrame,
-                    angOffset: CFrame
+                    angOffset: CFrame,
+                    isPreSimReset: boolean?
                 ): ()
                     local targetCF: CFrame = CFrame.new(basePart.Position)
                         * posOffset
@@ -306,8 +320,13 @@ function Module.init(runtime: any): any
                     pcall(function(): ()
                         liveRoot.CFrame = targetCF
                         liveChar:PivotTo(targetCF)
-                        liveRoot.AssemblyLinearVelocity = Vector3.new(9e7, 9e7 * 10, 9e7)
-                        liveRoot.AssemblyAngularVelocity = Vector3.new(9e8, 9e8, 9e8)
+                        if isPreSimReset then
+                            liveRoot.AssemblyLinearVelocity = Vector3.zero
+                            liveRoot.AssemblyAngularVelocity = Vector3.zero
+                        else
+                            liveRoot.AssemblyLinearVelocity = FLING_LINEAR_VEL
+                            liveRoot.AssemblyAngularVelocity = FLING_ANGULAR_VEL
+                        end
                     end)
                 end
 
@@ -713,6 +732,77 @@ function Module.init(runtime: any): any
             end
         end)
     end)
+    local function resolveSelectedTargetPlayer(): Player?
+        local needle: string = string.lower(
+            string.gsub(flingTargetName or "", "%s+", "")
+        )
+        if needle == "" then
+            return nil
+        end
+        local exact: Player? = nil
+        local partial: Player? = nil
+        for _, player: Player in ipairs(Players:GetPlayers()) do
+            if player ~= LocalPlayer then
+                local name: string = string.lower(player.Name)
+                if string.gsub(name, "%s+", "") == needle then
+                    exact = player
+                    break
+                end
+                if not partial and string.find(name, needle, 1, true) then
+                    partial = player
+                end
+            end
+        end
+        return exact or partial
+    end
+
+    local function autoFlingTick(): ()
+        if not autoFlingSelected or flingRunning then
+            return
+        end
+        if os.clock() - lastAutoFlingAt < 0.65 then
+            return
+        end
+        local target: Player? = resolveSelectedTargetPlayer()
+        if not target or protectedTargets.isProtected(target) then
+            return
+        end
+        if type(isPlayerAlive) == "function" and not isPlayerAlive(target) then
+            return
+        end
+        local targetChar: Model? = target.Character
+        local targetHum: Humanoid? = targetChar
+            and targetChar:FindFirstChildOfClass("Humanoid")
+            :: Humanoid?
+        local targetPart: BasePart? = targetChar
+            and resolveTargetContactPart(targetChar)
+        if not targetChar or not targetHum or targetHum.Health <= 0 or targetHum.Sit or not targetPart then
+            return
+        end
+        local destroyHeight: number = workspace.FallenPartsDestroyHeight
+        if destroyHeight ~= destroyHeight or math.abs(destroyHeight) > 1e6 then
+            destroyHeight = -500
+        end
+        if targetPart.Position.Y <= destroyHeight + 55 then
+            return
+        end
+        local speed: number = 0
+        pcall(function(): ()
+            speed = targetPart.AssemblyLinearVelocity.Magnitude
+        end)
+        if speed > 250 then
+            return
+        end
+        lastAutoFlingAt = os.clock()
+        performFling(target, {
+            silent = true,
+            duration = 3.2,
+            shouldStop = function(): boolean
+                return not autoFlingSelected
+            end,
+        })
+    end
+
     addTextOption(
         FlingFeature,
         "Target player",
@@ -731,33 +821,41 @@ function Module.init(runtime: any): any
             notify("Type a player name in the Target player box first.")
             return
         end
-        local exact: Player? = nil
-        local partial: Player? = nil
-        for _, player: Player in ipairs(Players:GetPlayers()) do
-            if player ~= LocalPlayer then
-                local name: string = string.lower(player.Name)
-                if string.gsub(name, "%s+", "") == needle then
-                    exact = player
-                    break
-                end
-                if not partial and string.find(name, needle, 1, true) then
-                    partial = player
-                end
-            end
-        end
-        local target: Player? = exact or partial
+        local target: Player? = resolveSelectedTargetPlayer()
         if target then
             performFling(target)
         else
             notify("No player named \"" .. flingTargetName .. "\" was found.")
         end
     end)
+    addToggleOption(
+        FlingFeature,
+        "Auto Fling Selected Target",
+        false,
+        function(value: boolean): ()
+            autoFlingSelected = value == true
+            if disconnectFeatureConnection then
+                disconnectFeatureConnection("MM2AutoFlingTarget")
+            end
+            if autoFlingSelected and TaskManager and featureConnections then
+                lastAutoFlingAt = 0
+                featureConnections.MM2AutoFlingTarget =
+                    TaskManager:Connect(autoFlingTick)
+                autoFlingTick()
+            end
+        end,
+        "Continuously flings the player specified in Target player whenever they are alive."
+    )
     addInformationOption(
         FlingFeature,
         "MM2 only. Choose a role action, or enter a player name and press Fling."
     )
 
     activeCleanup = function(): ()
+        autoFlingSelected = false
+        if disconnectFeatureConnection then
+            disconnectFeatureConnection("MM2AutoFlingTarget")
+        end
         setFlingRunning(false)
         state.mm2PerformFling = nil
         state.mm2FlingStep = nil

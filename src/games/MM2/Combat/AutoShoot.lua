@@ -35,6 +35,8 @@ function Module.init(runtime: any): any
     local autoShootActive: boolean = false
     local AutoShootFeature: any = nil
     local toolConnections: {RBXScriptConnection} = {}
+    local lastShotSentAt: number = 0
+    local AUTO_SHOT_PACE_SECONDS: number = 0.22
 
     local function clearToolConnections(): ()
         for _, conn: RBXScriptConnection in ipairs(toolConnections) do
@@ -191,16 +193,35 @@ function Module.init(runtime: any): any
             targetRoot,
             originCF.Position
         )
-        local lookDir: Vector3 = Vector3.new(0, 0, -1)
-        pcall(function(): ()
-            lookDir = targetRoot.CFrame.LookVector
-        end)
-        local startPoint: Vector3 = endpoint - lookDir * 2.5 + Vector3.new(0, 1.2, 0)
-        if (startPoint - endpoint).Magnitude < 0.2 then
-            startPoint = endpoint + Vector3.new(0, 2.0, -2.5)
+        local capturedPos: Vector3 = targetRoot.Position
+        local chordFlat: Vector3 = Vector3.new(
+            endpoint.X - capturedPos.X,
+            0,
+            endpoint.Z - capturedPos.Z
+        )
+        local pierceAxis: Vector3
+        if chordFlat.Magnitude > 0.15 then
+            pierceAxis = chordFlat.Unit
+        else
+            local toTargetFlat: Vector3 = Vector3.new(
+                endpoint.X - originCF.Position.X,
+                0,
+                endpoint.Z - originCF.Position.Z
+            )
+            if toTargetFlat.Magnitude > 0.05 then
+                pierceAxis = toTargetFlat.Unit
+            else
+                pierceAxis = Vector3.new(0, 0, -1)
+            end
         end
-        local shotOrigin: CFrame = CFrame.lookAt(startPoint, endpoint)
-        local shotEnd: CFrame = CFrame.new(endpoint)
+        local startPoint: Vector3 = capturedPos - pierceAxis * 1.5
+        local endPoint: Vector3 = endpoint + pierceAxis * 1.5
+        if (endPoint - startPoint).Magnitude < 0.2 then
+            startPoint = endpoint + Vector3.new(0, 2.0, -1.5)
+            endPoint = endpoint
+        end
+        local shotOrigin: CFrame = CFrame.lookAt(startPoint, endPoint)
+        local shotEnd: CFrame = CFrame.new(endPoint)
         local firedSilent: boolean = false
         if type(state.mm2FireSilentShot) == "function" then
             local okSilent: boolean, res: any = pcall(state.mm2FireSilentShot, target)
@@ -211,6 +232,7 @@ function Module.init(runtime: any): any
                 (shootRemote :: RemoteEvent):FireServer(shotOrigin, shotEnd)
             end)
         end
+        lastShotSentAt = os.clock()
         return true
     end
 
@@ -267,6 +289,7 @@ function Module.init(runtime: any): any
                 (shootRemote :: RemoteEvent):FireServer(shotOrigin, shotEnd)
             end)
         end
+        lastShotSentAt = os.clock()
         return true
     end
 
@@ -278,6 +301,7 @@ function Module.init(runtime: any): any
         local gun: Tool?, character: Model?, humanoid: Humanoid?,
             localRoot: BasePart? = findLocalGun()
         if not gun or not character or not humanoid or not localRoot then
+            lastShotSentAt = 0
             return false
         end
         local target: Player?, targetRoot: BasePart? =
@@ -287,6 +311,9 @@ function Module.init(runtime: any): any
         end
         if not ensureGunEquipped(character, humanoid, gun) then
             return false
+        end
+        if os.clock() - lastShotSentAt < AUTO_SHOT_PACE_SECONDS then
+            return true
         end
         return fireCFrameShotImmediate(target, targetRoot, character, localRoot, gun)
     end
@@ -299,6 +326,7 @@ function Module.init(runtime: any): any
         local gun: Tool?, character: Model?, humanoid: Humanoid?,
             localRoot: BasePart? = findLocalGun()
         if not gun or not character or not humanoid or not localRoot then
+            lastShotSentAt = 0
             return
         end
         local target: Player?, targetRoot: BasePart? =
@@ -307,6 +335,9 @@ function Module.init(runtime: any): any
             return
         end
         if not ensureGunEquipped(character, humanoid, gun) then
+            return
+        end
+        if os.clock() - lastShotSentAt < AUTO_SHOT_PACE_SECONDS then
             return
         end
         local isCFrame: boolean = settings.mode == "CFrame"

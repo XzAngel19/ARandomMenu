@@ -28,6 +28,9 @@ function Module.init(runtime: any): any
     local isRoundLifecycleActive: any = core.isRoundLifecycleActive
 
     local ABOVE_MAP_OFFSET: number = 120
+    local MAP_FLING_WARMUP_SECONDS: number = 5.0
+    local SHERIFF_READY_DELAY_SECONDS: number = 2.0
+    local SHERIFF_FLING_COOLDOWN_SECONDS: number = 1.2
 
     local settings = {
         instaKillMurder = true,
@@ -48,6 +51,9 @@ function Module.init(runtime: any): any
     local innocentWinsStat: any = nil
 
     local wasOnMap: boolean = false
+    local mapEnteredAt: number = 0
+    local sheriffFirstSeenAt: number = 0
+    local lastSheriffFlingAt: number = 0
     local participatedInRound: boolean = false
     local roundMyRole: string? = nil
     local roundSawMurderer: boolean = false
@@ -612,15 +618,78 @@ function Module.init(runtime: any): any
         return findLocalTool("Gun") ~= nil
     end
 
-    -- Reconstructed high-impulse Fling on the Sheriff: forces CanCollide=true
-    -- and high density on contact so the Sheriff is actually flung, while
-    -- stopping before the void so our character never dies.
+    -- Controlled, bounded Fling on the Sheriff: waits for map/character warmup,
+    -- uses state.mm2PerformFling with a returnCFrame to safeAbovePosition when
+    -- available (or bounded 10000-stud/s impulse fallback so our character
+    -- never enters Roblox's floating-point NullZone or void).
     local function flingSheriffStep(
         character: Model,
         humanoid: Humanoid,
         root: BasePart,
         sheriff: Player
     ): boolean
+        local sheriffChar: Model? = sheriff.Character
+        local sheriffHum: Humanoid? = sheriffChar
+            and sheriffChar:FindFirstChildOfClass("Humanoid")
+        local sheriffRoot: BasePart? = sheriffChar
+            and sheriffChar:FindFirstChild("HumanoidRootPart") :: BasePart?
+        if not sheriffChar or not sheriffHum or sheriffHum.Health <= 0 or sheriffHum.Sit or not sheriffRoot then
+            holdAboveMap(character, humanoid, root)
+            return false
+        end
+        local destroyHeight: number = workspace.FallenPartsDestroyHeight
+        if destroyHeight ~= destroyHeight or math.abs(destroyHeight) > 1e6 then
+            destroyHeight = -500
+        end
+        local sheriffPos: Vector3 = sheriffRoot.Position
+        if sheriffPos.Y <= destroyHeight + 60 then
+            holdAboveMap(character, humanoid, root)
+            return false
+        end
+        local sheriffOnMap: boolean = isCharacterOnMap(sheriffRoot)
+        if not sheriffOnMap then
+            holdAboveMap(character, humanoid, root)
+            return false
+        end
+
+        if type(state.mm2PerformFling) == "function" then
+            if os.clock() - lastSheriffFlingAt < SHERIFF_FLING_COOLDOWN_SECONDS then
+                holdAboveMap(character, humanoid, root)
+                return true
+            end
+            flingBusy = true
+            lastSheriffFlingAt = os.clock()
+            local returnPos: Vector3 = safeAbovePosition
+                or (root.Position + Vector3.new(0, ABOVE_MAP_OFFSET, 0))
+            task.spawn(function(): ()
+                pcall(state.mm2PerformFling, sheriff, {
+                    silent = true,
+                    duration = 2.6,
+                    blocking = true,
+                    returnCFrame = CFrame.new(returnPos),
+                    shouldStop = function(): boolean
+                        if not autoWinActive or not settings.flingSheriffGetGun then
+                            return true
+                        end
+                        if findLocalTool("Gun") ~= nil then
+                            return true
+                        end
+                        if type(findDroppedGun) == "function" and findDroppedGun() ~= nil then
+                            return true
+                        end
+                        return false
+                    end,
+                })
+                lastSheriffFlingAt = os.clock()
+                local cNow: Model?, hNow: Humanoid?, rNow: BasePart? = characterParts()
+                if cNow and hNow and rNow and autoWinActive then
+                    holdAboveMap(cNow, hNow, rNow)
+                end
+                flingBusy = false
+            end)
+            return true
+        end
+
         if type(state.mm2FlingStep) == "function" then
             local okStep: boolean, res: any = pcall(
                 state.mm2FlingStep,
@@ -637,24 +706,7 @@ function Module.init(runtime: any): any
             holdAboveMap(character, humanoid, root)
             return false
         end
-        local sheriffChar: Model? = sheriff.Character
-        local sheriffHum: Humanoid? = sheriffChar
-            and sheriffChar:FindFirstChildOfClass("Humanoid")
-        local sheriffRoot: BasePart? = sheriffChar
-            and sheriffChar:FindFirstChild("HumanoidRootPart") :: BasePart?
-        if not sheriffChar or not sheriffHum or sheriffHum.Health <= 0 or not sheriffRoot then
-            holdAboveMap(character, humanoid, root)
-            return false
-        end
-        local destroyHeight: number = workspace.FallenPartsDestroyHeight
-        if destroyHeight ~= destroyHeight or math.abs(destroyHeight) > 1e6 then
-            destroyHeight = -500
-        end
-        local sheriffPos: Vector3 = sheriffRoot.Position
-        if sheriffPos.Y <= destroyHeight + 55 then
-            holdAboveMap(character, humanoid, root)
-            return false
-        end
+
         if services and services.activity then
             pcall(function(): ()
                 services.activity.set("fling", true)
@@ -682,8 +734,8 @@ function Module.init(runtime: any): any
             humanoid.AutoRotate = false
             root.CFrame = targetCF
             character:PivotTo(targetCF)
-            root.AssemblyLinearVelocity = Vector3.new(9e7, 9e7 * 10, 9e7)
-            root.AssemblyAngularVelocity = Vector3.new(9e8, 9e8, 9e8)
+            root.AssemblyLinearVelocity = Vector3.new(10000, 12000, 10000)
+            root.AssemblyAngularVelocity = Vector3.new(12000, 12000, 12000)
         end)
         return true
     end
@@ -706,6 +758,9 @@ function Module.init(runtime: any): any
         if not onMap then
             if wasOnMap then
                 wasOnMap = false
+                mapEnteredAt = 0
+                sheriffFirstSeenAt = 0
+                lastSheriffFlingAt = 0
                 safeAbovePosition = nil
                 restoreLocalCharacter()
             end
@@ -751,7 +806,7 @@ function Module.init(runtime: any): any
                     task.spawn(function(): ()
                         pcall(state.mm2PerformFling, activeMurderer, {
                             silent = true,
-                            duration = 5.0,
+                            duration = 4.0,
                             blocking = true,
                         })
                         flingBusy = false
@@ -766,6 +821,9 @@ function Module.init(runtime: any): any
 
         if not wasOnMap or not safeAbovePosition then
             wasOnMap = true
+            mapEnteredAt = os.clock()
+            sheriffFirstSeenAt = 0
+            lastSheriffFlingAt = 0
             participatedInRound = true
             flungMurderThisDeath = false
             local anchor: Vector3 = mapRefPos or root.Position
@@ -850,15 +908,34 @@ function Module.init(runtime: any): any
         end
 
         -- 4) Fling Sheriff and Get Gun while Sheriff is still alive.
+        --    Wait for the map and characters to finish loading before flinging
+        --    so the local character never gets destabilized on spawn.
         if settings.flingSheriffGetGun then
+            local nowClock: number = os.clock()
+            local mapElapsed: number = nowClock - mapEnteredAt
+            if mapElapsed < MAP_FLING_WARMUP_SECONDS then
+                holdAboveMap(character, humanoid, root)
+                setStatus("Auto Win: loading map before fling...")
+                return
+            end
             local sheriff: Player? = findActiveSheriffOrHero()
             if sheriff
                 and sheriff ~= LocalPlayer
                 and (type(isProtectedTarget) ~= "function" or not isProtectedTarget(sheriff)) then
+                if sheriffFirstSeenAt == 0 then
+                    sheriffFirstSeenAt = nowClock
+                end
+                if nowClock - sheriffFirstSeenAt < SHERIFF_READY_DELAY_SECONDS then
+                    holdAboveMap(character, humanoid, root)
+                    setStatus("Auto Win: waiting for Sheriff to settle...")
+                    return
+                end
                 if flingSheriffStep(character, humanoid, root, sheriff) then
                     setStatus("Auto Win: flinging Sheriff for gun")
                     return
                 end
+            else
+                sheriffFirstSeenAt = 0
             end
         end
 

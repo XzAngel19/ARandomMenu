@@ -220,7 +220,7 @@ local RUNTIME_RAW_BASE: string =
         .. RUNTIME_BRANCH
         .. "/"
 
-local SOURCE_STAMP: string = "v135-20261025-overlays-safezone-fling-airwalk"
+local SOURCE_STAMP: string = "v136-20261026-aimbot-prediction-autofling-autowin"
 
 local BOOT_STARTED_AT: number = os.clock()
 local BOOT_FINGERPRINT_SECONDS: number = 0

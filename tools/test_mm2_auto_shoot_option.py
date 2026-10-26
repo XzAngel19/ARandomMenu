@@ -36,10 +36,14 @@ assert 'categoryName = "Combat"' in knife_throw
 assert '"WallCheck"' in knife_throw
 assert '"Delay"' in knife_throw
 
-# Gun Aimbot (formerly SilentAIM) should have Bullet/CFrame modes and retained options
+# Gun Aimbot (formerly SilentAIM) should have Bullet/CFrame modes and WallCheck as the single gate
 assert '"Gun Aimbot"' in S
 assert '"Bullet"' in S and '"CFrame"' in S
-for retained in ('Aim method', 'Target', 'Raw', 'Macro'):
+for retained in ('Aim method', 'Target', 'WallCheck', 'Macro'):
     assert f'"{retained}"' in S, f'{retained} must still be in Gun Aimbot'
+
+fling = (ROOT / 'src/games/MM2/Blatant/Fling.lua').read_text()
+assert '"Auto Fling Selected Target"' in fling, 'Fling must expose Auto Fling Selected Target'
+assert 'MAP_FLING_WARMUP_SECONDS' in auto_win, 'Auto Win must wait for map load before Fling Sheriff'
 
 print('PASS Auto Shoot and Knife Throw are now independent Combat modules with required options')

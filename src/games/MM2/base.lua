@@ -66,9 +66,9 @@ local mm2Settings = {
     predictionRtt = 0.08,
     silentSweep = 0.5,
 
-    -- Front is the maintained silent construction. Experimental spawn and
-    -- sweep controls are internal calibration inputs, not ordinary menu rows.
-    silentSpawn = "Front",
+    -- Through (trajectory-piercing segment from behind captured position
+    -- through predicted endpoint) is the single unified Silent AIM model.
+    silentSpawn = "Through",
     getGunKey = Enum.KeyCode.Unknown,
     instantRoleNotify = false,
     roleEspAll = false,
