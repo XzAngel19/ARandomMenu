@@ -58,6 +58,8 @@ type Track = {
     character: Model,
     humanoid: Humanoid,
     root: BasePart,
+    aimPart: BasePart?,
+    aimPartName: string?,
     samples: {Sample},
 }
 
@@ -303,6 +305,14 @@ function Module.init(runtime: any): any
             tracks[player] = nil
             return nil
         end
+        local track: Track? = tracks[player]
+        -- Keep the same 60 Hz samples and prediction math, but avoid two
+        -- instance searches per player per frame while the rig is unchanged.
+        if track and track.character == character
+            and track.humanoid.Parent == character and track.humanoid.Health > 0
+            and track.root.Parent == character and track.root.Name == "HumanoidRootPart" then
+            return track
+        end
         local humanoid: Humanoid? = character:FindFirstChildOfClass("Humanoid")
             :: Humanoid?
         local root: BasePart? = character:FindFirstChild("HumanoidRootPart")
@@ -311,12 +321,13 @@ function Module.init(runtime: any): any
             tracks[player] = nil
             return nil
         end
-        local track: Track? = tracks[player]
         if not track or track.character ~= character then
             track = {
                 character = character,
                 humanoid = humanoid,
                 root = root,
+                aimPart = nil,
+                aimPartName = nil,
                 samples = {},
             }
             tracks[player] = track
@@ -349,7 +360,17 @@ function Module.init(runtime: any): any
                 moveDirection = move
             end
         end)
-        local aimPart: BasePart?, aimPartName: string = findAimPart(track.character)
+        local aimPart: BasePart? = track.aimPart
+        local aimPartName: string = track.aimPartName or ""
+        -- UpperTorso is the highest-priority aim part. Cache only that case;
+        -- for lower-priority parts keep searching so a streamed-in torso is
+        -- adopted immediately, exactly as before.
+        if not aimPart or aimPart.Parent ~= track.character
+            or aimPartName ~= "UpperTorso" or aimPart.Name ~= "UpperTorso" then
+            aimPart, aimPartName = findAimPart(track.character)
+            track.aimPart = aimPart
+            track.aimPartName = aimPartName
+        end
         local aimOffset: Vector3 = aimPart
             and (aimPart.Position - position)
             or Vector3.zero

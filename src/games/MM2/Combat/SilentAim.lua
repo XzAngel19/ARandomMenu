@@ -77,6 +77,34 @@ function Module.init(runtime: any): any
     local hookedWeaponService: any = nil
     local origGetMouseTargetCFrame: any = nil
     local origGetTargetPosition: any = nil
+    local installedGetMouseTargetCFrame: any = nil
+    local installedGetTargetPosition: any = nil
+    -- Shared with Knife Throw so either toggle order can unwind inactive
+    -- wrappers without replacing hooks installed by unrelated scripts.
+    if type(state.mm2WeaponRedirectChain) ~= "table" then
+        state.mm2WeaponRedirectChain = setmetatable({}, {__mode = "k"})
+    end
+    local weaponRedirectChain: any = state.mm2WeaponRedirectChain
+    local function rememberWeaponRedirect(wrapper: any, previous: any): ()
+        weaponRedirectChain[wrapper] = {previous = previous, active = true}
+    end
+    local function retireWeaponRedirect(current: any, wrapper: any, previous: any): any
+        local own: any = weaponRedirectChain[wrapper]
+        if own then
+            own.active = false
+        end
+        if current ~= wrapper then
+            return current
+        end
+        weaponRedirectChain[wrapper] = nil
+        local restored: any = previous
+        while weaponRedirectChain[restored] and not weaponRedirectChain[restored].active do
+            local inactive: any = weaponRedirectChain[restored]
+            weaponRedirectChain[restored] = nil
+            restored = inactive.previous
+        end
+        return restored
+    end
     local toolConnections: {RBXScriptConnection} = {}
     local lastNamecallRewriteAt: number = 0
     local lastCFrameHelperAt: number = 0
@@ -402,23 +430,29 @@ function Module.init(runtime: any): any
             hookedWeaponService = wsTable
 
             if type(origGetMouseTargetCFrame) == "function" then
-                wsTable.GetMouseTargetCFrame = function(self: any, ...: any): any
+                local previous: any = origGetMouseTargetCFrame
+                installedGetMouseTargetCFrame = function(self: any, ...: any): any
                     local redirected: CFrame? = redirectWeaponServiceAim(self, ...)
                     if redirected then
                         return redirected
                     end
-                    return origGetMouseTargetCFrame(self, ...)
+                    return previous(self, ...)
                 end
+                rememberWeaponRedirect(installedGetMouseTargetCFrame, previous)
+                wsTable.GetMouseTargetCFrame = installedGetMouseTargetCFrame
             end
 
             if type(origGetTargetPosition) == "function" then
-                wsTable.GetTargetPosition = function(self: any, ...: any): any
+                local previous: any = origGetTargetPosition
+                installedGetTargetPosition = function(self: any, ...: any): any
                     local redirected: CFrame? = redirectWeaponServiceAim(self, ...)
                     if redirected then
                         return redirected
                     end
-                    return origGetTargetPosition(self, ...)
+                    return previous(self, ...)
                 end
+                rememberWeaponRedirect(installedGetTargetPosition, previous)
+                wsTable.GetTargetPosition = installedGetTargetPosition
             end
         end)
     end
@@ -428,52 +462,149 @@ function Module.init(runtime: any): any
             return
         end
         pcall(function(): ()
-            if origGetMouseTargetCFrame then
-                hookedWeaponService.GetMouseTargetCFrame = origGetMouseTargetCFrame
+            -- Knife Throw (or another script) may have installed a wrapper
+            -- afterwards; never replace a function that is no longer ours.
+            if installedGetMouseTargetCFrame then
+                hookedWeaponService.GetMouseTargetCFrame = retireWeaponRedirect(
+                    hookedWeaponService.GetMouseTargetCFrame,
+                    installedGetMouseTargetCFrame, origGetMouseTargetCFrame
+                )
             end
-            if origGetTargetPosition then
-                hookedWeaponService.GetTargetPosition = origGetTargetPosition
+            if installedGetTargetPosition then
+                hookedWeaponService.GetTargetPosition = retireWeaponRedirect(
+                    hookedWeaponService.GetTargetPosition,
+                    installedGetTargetPosition, origGetTargetPosition
+                )
             end
         end)
         hookedWeaponService = nil
         origGetMouseTargetCFrame = nil
         origGetTargetPosition = nil
+        installedGetMouseTargetCFrame = nil
+        installedGetTargetPosition = nil
     end
 
-    -- Optional __namecall hook for executors supporting hookmetamethod:
-    -- rewrites native Gun.Shoot:FireServer(originCF, endCF) on both PC and Mobile.
-    pcall(function(): ()
-        local g: any = (type(getgenv) == "function" and getgenv()) or _G
-        local hookmm: any = (g and g.hookmetamethod) or (_G and (_G :: any).hookmetamethod)
-        local getncm: any = (g and g.getnamecallmethod) or (_G and (_G :: any).getnamecallmethod)
+    -- A namecall hook sees *every* Roblox method call, not only gun shots.
+    -- Install it only while requested; otherwise merely loading the menu
+    -- adds overhead to the entire game. The shared bridge also prevents an
+    -- old, nested hook being stacked again after unload/reinjection.
+    local HOOK_KEY: string = "__WURST_MM2_SILENT_NAMECALL_V1"
+    local privateBridge: any = {}
+    local ownedBridge: any = nil
+    local bridgeOwner: any = {}
+
+    local function installNamecallHook(): boolean
+        local genv: any = nil
+        if type(getgenv) == "function" then
+            local ok: boolean, result: any = pcall(getgenv)
+            if ok and type(result) == "table" then
+                genv = result
+            end
+        end
+        local globals: any = type(_G) == "table" and _G or nil
+        local hookmm: any = state.hookMetamethod or (genv and genv.hookmetamethod)
+            or (globals and globals.hookmetamethod)
+        local getncm: any = state.getNamecallMethod or (genv and genv.getnamecallmethod)
+            or (globals and globals.getnamecallmethod)
         if type(hookmm) ~= "function" or type(getncm) ~= "function" then
-            return
+            return false
         end
-        if state.mm2SilentAimNamecallHooked then
-            return
+
+        local bridge: any = privateBridge
+        if genv then
+            local okBridge: boolean, shared: any = pcall(function(): any
+                if type(genv[HOOK_KEY]) ~= "table" then
+                    genv[HOOK_KEY] = {}
+                end
+                return genv[HOOK_KEY]
+            end)
+            if okBridge and type(shared) == "table" then
+                bridge = shared
+            end
         end
-        state.mm2SilentAimNamecallHooked = true
-        local oldNamecall: any = nil
-        oldNamecall = hookmm(game, "__namecall", function(self: any, ...: any): any
-            if not insideSilentDispatch
-                and state.mm2SilentAimNativeActive == true
-                and type(state.mm2SilentAimRewriteFireServer) == "function" then
-                local method: string = getncm()
-                if method == "FireServer" and typeof(self) == "Instance" and self.Name == "Shoot" then
-                    local parentTool: Instance? = self.Parent
-                    local character: Model? = LocalPlayer and LocalPlayer.Character
-                    if parentTool and character and parentTool.Parent == character then
-                        local okRewrite: boolean, newOrigin: any, newEnd: any =
-                            pcall(state.mm2SilentAimRewriteFireServer)
+        if bridge.installed ~= true then
+            local callback: any = function(self: any, ...: any): any
+                local handler: any = bridge.dispatch
+                -- Avoid invoking getnamecallmethod or the aim solver for
+                -- unrelated instances, even while Silent AIM is enabled.
+                if type(handler) == "function" and typeof(self) == "Instance"
+                    and self.Name == "Shoot" then
+                    local okMethod: boolean, method: any = pcall(bridge.getMethod)
+                    if okMethod and method == "FireServer" then
+                        local okRewrite: boolean, newOrigin: any, newEnd: any = pcall(handler, self)
                         if okRewrite and typeof(newOrigin) == "CFrame" and typeof(newEnd) == "CFrame" then
-                            return oldNamecall(self, newOrigin, newEnd)
+                            return bridge.previous(self, newOrigin, newEnd)
                         end
                     end
                 end
+                return bridge.previous(self, ...)
             end
-            return oldNamecall(self, ...)
-        end)
-    end)
+            local newClosure: any = state.newCClosure or (genv and genv.newcclosure)
+                or (globals and globals.newcclosure)
+            if type(newClosure) == "function" then
+                local okClosure: boolean, wrapped: any = pcall(newClosure, callback)
+                if okClosure and type(wrapped) == "function" then
+                    callback = wrapped
+                end
+            end
+            local okHook: boolean, previous: any = pcall(hookmm, game, "__namecall", callback)
+            if not okHook or type(previous) ~= "function" then
+                return false
+            end
+            bridge.previous = previous
+            bridge.wrapper = callback
+            bridge.hook = hookmm
+            bridge.getMethod = getncm
+            bridge.installed = true
+        end
+
+        bridge.owner = bridgeOwner
+        bridge.dispatch = function(remote: Instance): (CFrame?, CFrame?)
+            if insideSilentDispatch or state.mm2SilentAimNativeActive ~= true
+                or type(state.mm2SilentAimRewriteFireServer) ~= "function" then
+                return nil, nil
+            end
+            local parentTool: Instance? = remote.Parent
+            local character: Model? = LocalPlayer and LocalPlayer.Character
+            if not parentTool or not character or parentTool.Parent ~= character then
+                return nil, nil
+            end
+            return state.mm2SilentAimRewriteFireServer()
+        end
+        ownedBridge = bridge
+        state.mm2SilentAimNamecallHooked = true
+        return true
+    end
+
+    local function uninstallNamecallHook(): ()
+        local bridge: any = ownedBridge
+        ownedBridge = nil
+        state.mm2SilentAimNamecallHooked = false
+        if not bridge or bridge.owner ~= bridgeOwner then
+            return
+        end
+        -- Release the current module's closures even if another script has
+        -- wrapped our hook and prevents safe removal.
+        bridge.dispatch = nil
+        bridge.owner = nil
+        if bridge.installed and type(bridge.hook) == "function"
+            and type(bridge.previous) == "function" then
+            local okRestore: boolean, displaced: any = pcall(
+                bridge.hook, game, "__namecall", bridge.previous
+            )
+            if okRestore and displaced == bridge.wrapper then
+                bridge.installed = false
+                bridge.previous = nil
+                bridge.wrapper = nil
+                bridge.hook = nil
+                bridge.getMethod = nil
+            elseif okRestore and type(displaced) == "function" then
+                -- A different script hooked after us. Put its hook back;
+                -- our now-inert bridge stays available for the next enable.
+                pcall(bridge.hook, game, "__namecall", displaced)
+            end
+        end
+    end
 
     state.mm2SilentAimRewriteFireServer = function(): (CFrame?, CFrame?)
         if not settings.enabled then
@@ -554,10 +685,14 @@ function Module.init(runtime: any): any
         state.mm2SilentAimNativeActive = settings.enabled
         if settings.enabled then
             installWeaponServiceRedirect()
+            -- The executor hook is optional; a restricted/read-only executor
+            -- must not break the native WeaponService redirect or the toggle.
+            pcall(installNamecallHook)
             watchCharacterGuns()
             updateStatus()
         else
             clearToolConnections()
+            uninstallNamecallHook()
             uninstallWeaponServiceRedirect()
             if SilentAimFeature then
                 SilentAimFeature:SetStatus(nil)

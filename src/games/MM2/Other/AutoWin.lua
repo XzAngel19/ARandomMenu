@@ -18,6 +18,7 @@ function Module.init(runtime: any): any
 
     local findDroppedGun: any = core.findDroppedGun
     local findMM2Map: any = core.findMM2Map
+    local findLobbyReferencePart: any = core.findLobbyReferencePart
     local findMurderer: any = core.findMurderer
     local findSheriff: any = core.findSheriff
     local getGunOriginCFrame: any = core.getGunOriginCFrame
@@ -124,37 +125,6 @@ function Module.init(runtime: any): any
         return character, humanoid, root
     end
 
-    local function findLobbyReferencePart(): BasePart?
-        for _, child: Instance in ipairs(workspace:GetChildren()) do
-            local lowerName: string = string.lower(tostring(child.Name))
-            local isLobby: boolean = string.find(lowerName, "lobby", 1, true) ~= nil
-                or child:FindFirstChild("VotePads", true) ~= nil
-                or child:FindFirstChild("VotePad1", true) ~= nil
-                or child:FindFirstChild("VoteIcons", true) ~= nil
-            if isLobby then
-                local votePads: Instance? = child:FindFirstChild("VotePads", true)
-                if votePads then
-                    local padPart: BasePart? = votePads:FindFirstChildWhichIsA("BasePart", true)
-                    if padPart then
-                        return padPart
-                    end
-                end
-                local spawns: Instance? = child:FindFirstChild("Spawns", true)
-                if spawns then
-                    local spawnPart: BasePart? = spawns:FindFirstChildWhichIsA("BasePart", true)
-                    if spawnPart then
-                        return spawnPart
-                    end
-                end
-                local anyPart: BasePart? = child:FindFirstChildWhichIsA("BasePart", true)
-                if anyPart then
-                    return anyPart
-                end
-            end
-        end
-        return nil
-    end
-
     -- True as soon as the player's character is on the MM2 map, even during
     -- the pre-round countdown before roles or weapons have been handed out.
     local function isCharacterOnMap(root: BasePart): (boolean, Vector3?)
@@ -171,7 +141,8 @@ function Module.init(runtime: any): any
         if not okRoot or typeof(rootPos) ~= "Vector3" then
             return false, nil
         end
-        local lobbyPart: BasePart? = findLobbyReferencePart()
+        local lobbyPart: BasePart? = type(findLobbyReferencePart) == "function"
+            and findLobbyReferencePart() or nil
         if lobbyPart then
             local okLobbyDist: boolean, lobbyDist: any = pcall(function(): any
                 return ((rootPos :: Vector3) - lobbyPart.Position).Magnitude

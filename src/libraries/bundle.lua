@@ -1,5 +1,5 @@
 return {
-    stamp = "v140-20261026-touchfling-silentaim-sorted-ui",
+    stamp = "v141-20261026-mm2-performance",
     files = {
         ["src/Profile/135856908115931.lua"] = [[
 --!strict
@@ -4401,6 +4401,32 @@ function Module.init(runtime: any): any
     local hookedWeaponService: any = nil
     local origGetMouseTargetCFrame: any = nil
     local origGetTargetPosition: any = nil
+    local installedGetMouseTargetCFrame: any = nil
+    local installedGetTargetPosition: any = nil
+    if type(state.mm2WeaponRedirectChain) ~= "table" then
+        state.mm2WeaponRedirectChain = setmetatable({}, {__mode = "k"})
+    end
+    local weaponRedirectChain: any = state.mm2WeaponRedirectChain
+    local function rememberWeaponRedirect(wrapper: any, previous: any): ()
+        weaponRedirectChain[wrapper] = {previous = previous, active = true}
+    end
+    local function retireWeaponRedirect(current: any, wrapper: any, previous: any): any
+        local own: any = weaponRedirectChain[wrapper]
+        if own then
+            own.active = false
+        end
+        if current ~= wrapper then
+            return current
+        end
+        weaponRedirectChain[wrapper] = nil
+        local restored: any = previous
+        while weaponRedirectChain[restored] and not weaponRedirectChain[restored].active do
+            local inactive: any = weaponRedirectChain[restored]
+            weaponRedirectChain[restored] = nil
+            restored = inactive.previous
+        end
+        return restored
+    end
 
     local function destroyTracerVisuals(): ()
         if tracerPart then
@@ -4812,7 +4838,8 @@ function Module.init(runtime: any): any
             hookedWeaponService = wsTable
 
             if type(origGetMouseTargetCFrame) == "function" then
-                wsTable.GetMouseTargetCFrame = function(self: any, ...: any): any
+                local previous: any = origGetMouseTargetCFrame
+                installedGetMouseTargetCFrame = function(self: any, ...: any): any
                     if settings.enabled then
                         local knife: Tool? = getKnife()
                         local character: Model? = LocalPlayer and LocalPlayer.Character
@@ -4833,12 +4860,15 @@ function Module.init(runtime: any): any
                             return saCF
                         end
                     end
-                    return origGetMouseTargetCFrame(self, ...)
+                    return previous(self, ...)
                 end
+                rememberWeaponRedirect(installedGetMouseTargetCFrame, previous)
+                wsTable.GetMouseTargetCFrame = installedGetMouseTargetCFrame
             end
 
             if type(origGetTargetPosition) == "function" then
-                wsTable.GetTargetPosition = function(self: any, ...: any): any
+                local previous: any = origGetTargetPosition
+                installedGetTargetPosition = function(self: any, ...: any): any
                     if settings.enabled then
                         local knife: Tool? = getKnife()
                         local character: Model? = LocalPlayer and LocalPlayer.Character
@@ -4859,8 +4889,10 @@ function Module.init(runtime: any): any
                             return saCF
                         end
                     end
-                    return origGetTargetPosition(self, ...)
+                    return previous(self, ...)
                 end
+                rememberWeaponRedirect(installedGetTargetPosition, previous)
+                wsTable.GetTargetPosition = installedGetTargetPosition
             end
         end)
     end
@@ -4869,20 +4901,26 @@ function Module.init(runtime: any): any
         if not hookedWeaponService then
             return
         end
-        if state.mm2SilentAimNativeActive == true then
-            return
-        end
         pcall(function(): ()
-            if origGetMouseTargetCFrame then
-                hookedWeaponService.GetMouseTargetCFrame = origGetMouseTargetCFrame
+            -- Preserve Silent AIM or any other wrapper installed after us.
+            if installedGetMouseTargetCFrame then
+                hookedWeaponService.GetMouseTargetCFrame = retireWeaponRedirect(
+                    hookedWeaponService.GetMouseTargetCFrame,
+                    installedGetMouseTargetCFrame, origGetMouseTargetCFrame
+                )
             end
-            if origGetTargetPosition then
-                hookedWeaponService.GetTargetPosition = origGetTargetPosition
+            if installedGetTargetPosition then
+                hookedWeaponService.GetTargetPosition = retireWeaponRedirect(
+                    hookedWeaponService.GetTargetPosition,
+                    installedGetTargetPosition, origGetTargetPosition
+                )
             end
         end)
         hookedWeaponService = nil
         origGetMouseTargetCFrame = nil
         origGetTargetPosition = nil
+        installedGetMouseTargetCFrame = nil
+        installedGetTargetPosition = nil
     end
 
     -- Main loop for Knife Tracer and Auto Knife Throw
@@ -5105,6 +5143,34 @@ function Module.init(runtime: any): any
     local hookedWeaponService: any = nil
     local origGetMouseTargetCFrame: any = nil
     local origGetTargetPosition: any = nil
+    local installedGetMouseTargetCFrame: any = nil
+    local installedGetTargetPosition: any = nil
+    -- Shared with Knife Throw so either toggle order can unwind inactive
+    -- wrappers without replacing hooks installed by unrelated scripts.
+    if type(state.mm2WeaponRedirectChain) ~= "table" then
+        state.mm2WeaponRedirectChain = setmetatable({}, {__mode = "k"})
+    end
+    local weaponRedirectChain: any = state.mm2WeaponRedirectChain
+    local function rememberWeaponRedirect(wrapper: any, previous: any): ()
+        weaponRedirectChain[wrapper] = {previous = previous, active = true}
+    end
+    local function retireWeaponRedirect(current: any, wrapper: any, previous: any): any
+        local own: any = weaponRedirectChain[wrapper]
+        if own then
+            own.active = false
+        end
+        if current ~= wrapper then
+            return current
+        end
+        weaponRedirectChain[wrapper] = nil
+        local restored: any = previous
+        while weaponRedirectChain[restored] and not weaponRedirectChain[restored].active do
+            local inactive: any = weaponRedirectChain[restored]
+            weaponRedirectChain[restored] = nil
+            restored = inactive.previous
+        end
+        return restored
+    end
     local toolConnections: {RBXScriptConnection} = {}
     local lastNamecallRewriteAt: number = 0
     local lastCFrameHelperAt: number = 0
@@ -5430,23 +5496,29 @@ function Module.init(runtime: any): any
             hookedWeaponService = wsTable
 
             if type(origGetMouseTargetCFrame) == "function" then
-                wsTable.GetMouseTargetCFrame = function(self: any, ...: any): any
+                local previous: any = origGetMouseTargetCFrame
+                installedGetMouseTargetCFrame = function(self: any, ...: any): any
                     local redirected: CFrame? = redirectWeaponServiceAim(self, ...)
                     if redirected then
                         return redirected
                     end
-                    return origGetMouseTargetCFrame(self, ...)
+                    return previous(self, ...)
                 end
+                rememberWeaponRedirect(installedGetMouseTargetCFrame, previous)
+                wsTable.GetMouseTargetCFrame = installedGetMouseTargetCFrame
             end
 
             if type(origGetTargetPosition) == "function" then
-                wsTable.GetTargetPosition = function(self: any, ...: any): any
+                local previous: any = origGetTargetPosition
+                installedGetTargetPosition = function(self: any, ...: any): any
                     local redirected: CFrame? = redirectWeaponServiceAim(self, ...)
                     if redirected then
                         return redirected
                     end
-                    return origGetTargetPosition(self, ...)
+                    return previous(self, ...)
                 end
+                rememberWeaponRedirect(installedGetTargetPosition, previous)
+                wsTable.GetTargetPosition = installedGetTargetPosition
             end
         end)
     end
@@ -5456,52 +5528,149 @@ function Module.init(runtime: any): any
             return
         end
         pcall(function(): ()
-            if origGetMouseTargetCFrame then
-                hookedWeaponService.GetMouseTargetCFrame = origGetMouseTargetCFrame
+            -- Knife Throw (or another script) may have installed a wrapper
+            -- afterwards; never replace a function that is no longer ours.
+            if installedGetMouseTargetCFrame then
+                hookedWeaponService.GetMouseTargetCFrame = retireWeaponRedirect(
+                    hookedWeaponService.GetMouseTargetCFrame,
+                    installedGetMouseTargetCFrame, origGetMouseTargetCFrame
+                )
             end
-            if origGetTargetPosition then
-                hookedWeaponService.GetTargetPosition = origGetTargetPosition
+            if installedGetTargetPosition then
+                hookedWeaponService.GetTargetPosition = retireWeaponRedirect(
+                    hookedWeaponService.GetTargetPosition,
+                    installedGetTargetPosition, origGetTargetPosition
+                )
             end
         end)
         hookedWeaponService = nil
         origGetMouseTargetCFrame = nil
         origGetTargetPosition = nil
+        installedGetMouseTargetCFrame = nil
+        installedGetTargetPosition = nil
     end
 
-    -- Optional __namecall hook for executors supporting hookmetamethod:
-    -- rewrites native Gun.Shoot:FireServer(originCF, endCF) on both PC and Mobile.
-    pcall(function(): ()
-        local g: any = (type(getgenv) == "function" and getgenv()) or _G
-        local hookmm: any = (g and g.hookmetamethod) or (_G and (_G :: any).hookmetamethod)
-        local getncm: any = (g and g.getnamecallmethod) or (_G and (_G :: any).getnamecallmethod)
+    -- A namecall hook sees *every* Roblox method call, not only gun shots.
+    -- Install it only while requested; otherwise merely loading the menu
+    -- adds overhead to the entire game. The shared bridge also prevents an
+    -- old, nested hook being stacked again after unload/reinjection.
+    local HOOK_KEY: string = "__WURST_MM2_SILENT_NAMECALL_V1"
+    local privateBridge: any = {}
+    local ownedBridge: any = nil
+    local bridgeOwner: any = {}
+
+    local function installNamecallHook(): boolean
+        local genv: any = nil
+        if type(getgenv) == "function" then
+            local ok: boolean, result: any = pcall(getgenv)
+            if ok and type(result) == "table" then
+                genv = result
+            end
+        end
+        local globals: any = type(_G) == "table" and _G or nil
+        local hookmm: any = state.hookMetamethod or (genv and genv.hookmetamethod)
+            or (globals and globals.hookmetamethod)
+        local getncm: any = state.getNamecallMethod or (genv and genv.getnamecallmethod)
+            or (globals and globals.getnamecallmethod)
         if type(hookmm) ~= "function" or type(getncm) ~= "function" then
-            return
+            return false
         end
-        if state.mm2SilentAimNamecallHooked then
-            return
+
+        local bridge: any = privateBridge
+        if genv then
+            local okBridge: boolean, shared: any = pcall(function(): any
+                if type(genv[HOOK_KEY]) ~= "table" then
+                    genv[HOOK_KEY] = {}
+                end
+                return genv[HOOK_KEY]
+            end)
+            if okBridge and type(shared) == "table" then
+                bridge = shared
+            end
         end
-        state.mm2SilentAimNamecallHooked = true
-        local oldNamecall: any = nil
-        oldNamecall = hookmm(game, "__namecall", function(self: any, ...: any): any
-            if not insideSilentDispatch
-                and state.mm2SilentAimNativeActive == true
-                and type(state.mm2SilentAimRewriteFireServer) == "function" then
-                local method: string = getncm()
-                if method == "FireServer" and typeof(self) == "Instance" and self.Name == "Shoot" then
-                    local parentTool: Instance? = self.Parent
-                    local character: Model? = LocalPlayer and LocalPlayer.Character
-                    if parentTool and character and parentTool.Parent == character then
-                        local okRewrite: boolean, newOrigin: any, newEnd: any =
-                            pcall(state.mm2SilentAimRewriteFireServer)
+        if bridge.installed ~= true then
+            local callback: any = function(self: any, ...: any): any
+                local handler: any = bridge.dispatch
+                -- Avoid invoking getnamecallmethod or the aim solver for
+                -- unrelated instances, even while Silent AIM is enabled.
+                if type(handler) == "function" and typeof(self) == "Instance"
+                    and self.Name == "Shoot" then
+                    local okMethod: boolean, method: any = pcall(bridge.getMethod)
+                    if okMethod and method == "FireServer" then
+                        local okRewrite: boolean, newOrigin: any, newEnd: any = pcall(handler, self)
                         if okRewrite and typeof(newOrigin) == "CFrame" and typeof(newEnd) == "CFrame" then
-                            return oldNamecall(self, newOrigin, newEnd)
+                            return bridge.previous(self, newOrigin, newEnd)
                         end
                     end
                 end
+                return bridge.previous(self, ...)
             end
-            return oldNamecall(self, ...)
-        end)
-    end)
+            local newClosure: any = state.newCClosure or (genv and genv.newcclosure)
+                or (globals and globals.newcclosure)
+            if type(newClosure) == "function" then
+                local okClosure: boolean, wrapped: any = pcall(newClosure, callback)
+                if okClosure and type(wrapped) == "function" then
+                    callback = wrapped
+                end
+            end
+            local okHook: boolean, previous: any = pcall(hookmm, game, "__namecall", callback)
+            if not okHook or type(previous) ~= "function" then
+                return false
+            end
+            bridge.previous = previous
+            bridge.wrapper = callback
+            bridge.hook = hookmm
+            bridge.getMethod = getncm
+            bridge.installed = true
+        end
+
+        bridge.owner = bridgeOwner
+        bridge.dispatch = function(remote: Instance): (CFrame?, CFrame?)
+            if insideSilentDispatch or state.mm2SilentAimNativeActive ~= true
+                or type(state.mm2SilentAimRewriteFireServer) ~= "function" then
+                return nil, nil
+            end
+            local parentTool: Instance? = remote.Parent
+            local character: Model? = LocalPlayer and LocalPlayer.Character
+            if not parentTool or not character or parentTool.Parent ~= character then
+                return nil, nil
+            end
+            return state.mm2SilentAimRewriteFireServer()
+        end
+        ownedBridge = bridge
+        state.mm2SilentAimNamecallHooked = true
+        return true
+    end
+
+    local function uninstallNamecallHook(): ()
+        local bridge: any = ownedBridge
+        ownedBridge = nil
+        state.mm2SilentAimNamecallHooked = false
+        if not bridge or bridge.owner ~= bridgeOwner then
+            return
+        end
+        -- Release the current module's closures even if another script has
+        -- wrapped our hook and prevents safe removal.
+        bridge.dispatch = nil
+        bridge.owner = nil
+        if bridge.installed and type(bridge.hook) == "function"
+            and type(bridge.previous) == "function" then
+            local okRestore: boolean, displaced: any = pcall(
+                bridge.hook, game, "__namecall", bridge.previous
+            )
+            if okRestore and displaced == bridge.wrapper then
+                bridge.installed = false
+                bridge.previous = nil
+                bridge.wrapper = nil
+                bridge.hook = nil
+                bridge.getMethod = nil
+            elseif okRestore and type(displaced) == "function" then
+                -- A different script hooked after us. Put its hook back;
+                -- our now-inert bridge stays available for the next enable.
+                pcall(bridge.hook, game, "__namecall", displaced)
+            end
+        end
+    end
 
     state.mm2SilentAimRewriteFireServer = function(): (CFrame?, CFrame?)
         if not settings.enabled then
@@ -5582,10 +5751,14 @@ function Module.init(runtime: any): any
         state.mm2SilentAimNativeActive = settings.enabled
         if settings.enabled then
             installWeaponServiceRedirect()
+            -- The executor hook is optional; a restricted/read-only executor
+            -- must not break the native WeaponService redirect or the toggle.
+            pcall(installNamecallHook)
             watchCharacterGuns()
             updateStatus()
         else
             clearToolConnections()
+            uninstallNamecallHook()
             uninstallWeaponServiceRedirect()
             if SilentAimFeature then
                 SilentAimFeature:SetStatus(nil)
@@ -6535,6 +6708,7 @@ function Module.init(_runtime: any): any
     local findDroppedGun: any = core.findDroppedGun
     local isRoundLifecycleActive: any = core.isRoundLifecycleActive
     local findMM2Map: any = core.findMM2Map
+    local findLobbyReferencePart: any = core.findLobbyReferencePart
     local getEstimatedLatency: any = core.getEstimatedLatency
     local getGunOriginCFrame: any = core.getGunOriginCFrame
 
@@ -7041,43 +7215,6 @@ function Module.init(_runtime: any): any
             end)
         end
 
-        local function findLobbyReferencePart(): BasePart?
-            local okChildren: boolean, children: any = pcall(function(): any
-                return workspace:GetChildren()
-            end)
-            if not okChildren or type(children) ~= "table" then
-                return nil
-            end
-            for _, child: Instance in ipairs(children) do
-                local lowerName: string = string.lower(tostring(child.Name))
-                local isLobby: boolean = string.find(lowerName, "lobby", 1, true) ~= nil
-                    or child:FindFirstChild("VotePads", true) ~= nil
-                    or child:FindFirstChild("VotePad1", true) ~= nil
-                    or child:FindFirstChild("VoteIcons", true) ~= nil
-                if isLobby then
-                    local votePads: Instance? = child:FindFirstChild("VotePads", true)
-                    if votePads then
-                        local padPart: BasePart? = votePads:FindFirstChildWhichIsA("BasePart", true)
-                        if padPart then
-                            return padPart
-                        end
-                    end
-                    local spawns: Instance? = child:FindFirstChild("Spawns", true)
-                    if spawns then
-                        local spawnPart: BasePart? = spawns:FindFirstChildWhichIsA("BasePart", true)
-                        if spawnPart then
-                            return spawnPart
-                        end
-                    end
-                    local anyPart: BasePart? = child:FindFirstChildWhichIsA("BasePart", true)
-                    if anyPart then
-                        return anyPart
-                    end
-                end
-            end
-            return nil
-        end
-
         -- Resolves a safe indoor floor position without ever raycasting from
         -- above the building roof (which would put the player on top of the map).
         local function resolveSafeAboveGroundPosition(
@@ -7206,21 +7343,9 @@ function Module.init(_runtime: any): any
                 if role == "Dead" then
                     return false
                 end
-                if (role == "None" or role == nil)
-                    and type(isRoundLifecycleActive) == "function"
-                    and isRoundLifecycleActive() == false then
-                    local lobbyPartCheck: BasePart? = findLobbyReferencePart()
-                    if lobbyPartCheck then
-                        local okLD: boolean, ld: any = pcall(function(): any
-                            return (root.Position - lobbyPartCheck.Position).Magnitude
-                        end)
-                        if okLD and type(ld) == "number" and ld <= 350 then
-                            return false
-                        end
-                    end
-                end
             end
-            local lobbyPart: BasePart? = findLobbyReferencePart()
+            local lobbyPart: BasePart? = type(findLobbyReferencePart) == "function"
+                and findLobbyReferencePart() or nil
             if lobbyPart then
                 local okLobbyDist: boolean, lobbyDist: any = pcall(function(): any
                     return (root.Position - lobbyPart.Position).Magnitude
@@ -8101,7 +8226,8 @@ function Module.init(_runtime: any): any
                             )
                         end
                     end
-                    scanAt = now - 0.20
+                    -- Keep the scan deadline intact: moving it backwards here
+                    -- made an empty/blacklisted coin list rescan every frame.
                     if not firstCoinSeenThisRound then
                         if settings.stayUnderOnStart then
                             holdHiddenUnderMap(character, humanoid, root)
@@ -10150,6 +10276,7 @@ function Module.init(runtime: any): any
 
     local findDroppedGun: any = core.findDroppedGun
     local findMM2Map: any = core.findMM2Map
+    local findLobbyReferencePart: any = core.findLobbyReferencePart
     local findMurderer: any = core.findMurderer
     local findSheriff: any = core.findSheriff
     local getGunOriginCFrame: any = core.getGunOriginCFrame
@@ -10256,37 +10383,6 @@ function Module.init(runtime: any): any
         return character, humanoid, root
     end
 
-    local function findLobbyReferencePart(): BasePart?
-        for _, child: Instance in ipairs(workspace:GetChildren()) do
-            local lowerName: string = string.lower(tostring(child.Name))
-            local isLobby: boolean = string.find(lowerName, "lobby", 1, true) ~= nil
-                or child:FindFirstChild("VotePads", true) ~= nil
-                or child:FindFirstChild("VotePad1", true) ~= nil
-                or child:FindFirstChild("VoteIcons", true) ~= nil
-            if isLobby then
-                local votePads: Instance? = child:FindFirstChild("VotePads", true)
-                if votePads then
-                    local padPart: BasePart? = votePads:FindFirstChildWhichIsA("BasePart", true)
-                    if padPart then
-                        return padPart
-                    end
-                end
-                local spawns: Instance? = child:FindFirstChild("Spawns", true)
-                if spawns then
-                    local spawnPart: BasePart? = spawns:FindFirstChildWhichIsA("BasePart", true)
-                    if spawnPart then
-                        return spawnPart
-                    end
-                end
-                local anyPart: BasePart? = child:FindFirstChildWhichIsA("BasePart", true)
-                if anyPart then
-                    return anyPart
-                end
-            end
-        end
-        return nil
-    end
-
     -- True as soon as the player's character is on the MM2 map, even during
     -- the pre-round countdown before roles or weapons have been handed out.
     local function isCharacterOnMap(root: BasePart): (boolean, Vector3?)
@@ -10303,7 +10399,8 @@ function Module.init(runtime: any): any
         if not okRoot or typeof(rootPos) ~= "Vector3" then
             return false, nil
         end
-        local lobbyPart: BasePart? = findLobbyReferencePart()
+        local lobbyPart: BasePart? = type(findLobbyReferencePart) == "function"
+            and findLobbyReferencePart() or nil
         if lobbyPart then
             local okLobbyDist: boolean, lobbyDist: any = pcall(function(): any
                 return ((rootPos :: Vector3) - lobbyPart.Position).Magnitude
@@ -12651,6 +12748,8 @@ type Track = {
     character: Model,
     humanoid: Humanoid,
     root: BasePart,
+    aimPart: BasePart?,
+    aimPartName: string?,
     samples: {Sample},
 }
 
@@ -12896,6 +12995,14 @@ function Module.init(runtime: any): any
             tracks[player] = nil
             return nil
         end
+        local track: Track? = tracks[player]
+        -- Keep the same 60 Hz samples and prediction math, but avoid two
+        -- instance searches per player per frame while the rig is unchanged.
+        if track and track.character == character
+            and track.humanoid.Parent == character and track.humanoid.Health > 0
+            and track.root.Parent == character and track.root.Name == "HumanoidRootPart" then
+            return track
+        end
         local humanoid: Humanoid? = character:FindFirstChildOfClass("Humanoid")
             :: Humanoid?
         local root: BasePart? = character:FindFirstChild("HumanoidRootPart")
@@ -12904,12 +13011,13 @@ function Module.init(runtime: any): any
             tracks[player] = nil
             return nil
         end
-        local track: Track? = tracks[player]
         if not track or track.character ~= character then
             track = {
                 character = character,
                 humanoid = humanoid,
                 root = root,
+                aimPart = nil,
+                aimPartName = nil,
                 samples = {},
             }
             tracks[player] = track
@@ -12942,7 +13050,17 @@ function Module.init(runtime: any): any
                 moveDirection = move
             end
         end)
-        local aimPart: BasePart?, aimPartName: string = findAimPart(track.character)
+        local aimPart: BasePart? = track.aimPart
+        local aimPartName: string = track.aimPartName or ""
+        -- UpperTorso is the highest-priority aim part. Cache only that case;
+        -- for lower-priority parts keep searching so a streamed-in torso is
+        -- adopted immediately, exactly as before.
+        if not aimPart or aimPart.Parent ~= track.character
+            or aimPartName ~= "UpperTorso" or aimPart.Name ~= "UpperTorso" then
+            aimPart, aimPartName = findAimPart(track.character)
+            track.aimPart = aimPart
+            track.aimPartName = aimPartName
+        end
         local aimOffset: Vector3 = aimPart
             and (aimPart.Position - position)
             or Vector3.zero
@@ -16337,14 +16455,133 @@ local function onRoundPhase(listener: (string, string) -> ()): () -> ()
     end
 end
 
+-- Round detection, Auto Farm and Auto Win all need the same lobby reference.
+-- Searching every top-level subtree recursively on every physics frame is very
+-- expensive in large maps, so share a validated reference and cache misses too.
+local lobbyCache: {
+    model: Instance?, fallback: Instance?, reference: BasePart?, referenceModel: Instance?,
+    checkedAt: number, fallbackAt: number, referenceAt: number,
+} = {
+    model = nil,
+    fallback = nil,
+    reference = nil,
+    referenceModel = nil,
+    checkedAt = -math.huge,
+    fallbackAt = -math.huge,
+    referenceAt = -math.huge,
+}
+local LOBBY_MISS_RETRY: number = 0.25
+
+local function invalidateLobbyCache(): ()
+    lobbyCache.model = nil
+    lobbyCache.fallback = nil
+    lobbyCache.reference = nil
+    lobbyCache.referenceModel = nil
+    lobbyCache.checkedAt = -math.huge
+    lobbyCache.fallbackAt = -math.huge
+    lobbyCache.referenceAt = -math.huge
+end
+
 local function findLobbyModel(): Instance?
+    local cached: Instance? = lobbyCache.model
+    if cached and cached.Parent == workspace then
+        return cached
+    end
+    if os.clock() - lobbyCache.checkedAt < LOBBY_MISS_RETRY then
+        return nil
+    end
+    lobbyCache.checkedAt = os.clock()
+    lobbyCache.model = nil
+    -- Preserve round detection's original direct-child classification.
     for _, object: Instance in ipairs(workspace:GetChildren()) do
         if isLobbyName(object.Name) or isLobbyModel(object) then
+            lobbyCache.model = object
             return object
         end
     end
     return nil
 end
+
+local function findNestedLobbyFallback(): Instance?
+    if lobbyCache.fallback and lobbyCache.fallback.Parent == workspace then
+        return lobbyCache.fallback
+    end
+    if os.clock() - lobbyCache.fallbackAt < LOBBY_MISS_RETRY then
+        return nil
+    end
+    lobbyCache.fallbackAt = os.clock()
+    lobbyCache.fallback = nil
+    -- Auto Farm/Auto Win historically also recognized seasonal lobbies whose
+    -- vote pads are nested inside an otherwise unnamed top-level folder.
+    for _, object: Instance in ipairs(workspace:GetChildren()) do
+        if object:FindFirstChild("VotePads", true)
+            or object:FindFirstChild("VotePad1", true)
+            or object:FindFirstChild("VoteIcons", true) then
+            lobbyCache.fallback = object
+            return object
+        end
+    end
+    return nil
+end
+
+local function findLobbyReferencePart(lobby: Instance?): BasePart?
+    local resolved: Instance? = lobby or findLobbyModel() or findNestedLobbyFallback()
+    if not resolved then
+        return nil
+    end
+    local reference: BasePart? = lobbyCache.reference
+    if lobbyCache.referenceModel == resolved and reference and reference.Parent
+        and reference:IsDescendantOf(resolved) then
+        return reference
+    end
+    if lobbyCache.referenceModel == resolved and reference then
+        -- Removed/reparented references are invalid immediately, unlike a
+        -- genuine miss, which may safely be throttled.
+        lobbyCache.reference = nil
+        lobbyCache.referenceAt = -math.huge
+    end
+    if lobbyCache.referenceModel == resolved
+        and os.clock() - lobbyCache.referenceAt < LOBBY_MISS_RETRY then
+        return nil
+    end
+    lobbyCache.referenceModel = resolved
+    lobbyCache.referenceAt = os.clock()
+    local votePads: Instance? = resolved:FindFirstChild("VotePads", true)
+    reference = votePads and votePads:FindFirstChildWhichIsA("BasePart", true) or nil
+    if not reference then
+        local spawns: Instance? = resolved:FindFirstChild("Spawns", true)
+        reference = spawns and spawns:FindFirstChildWhichIsA("BasePart", true) or nil
+    end
+    if not reference then
+        reference = resolved:FindFirstChildWhichIsA("BasePart", true)
+    end
+    lobbyCache.reference = reference
+    return reference
+end
+
+-- Streaming can create the lobby or its reference after an earlier miss.
+-- Invalidate on relevant arrivals/removals rather than delaying detection.
+featureConnections.MM2LobbyAdded = workspace.ChildAdded:Connect(invalidateLobbyCache)
+featureConnections.MM2LobbyRemoved = workspace.ChildRemoved:Connect(invalidateLobbyCache)
+local function isLobbyMarker(object: Instance): boolean
+    return object.Name == "VotePads" or object.Name == "VotePad1"
+        or object.Name == "VoteIcons" or object.Name == "Spawns"
+end
+featureConnections.MM2LobbyDescendantAdded = workspace.DescendantAdded:Connect(function(object: Instance): ()
+    if isLobbyMarker(object) then
+        invalidateLobbyCache()
+    elseif lobbyCache.referenceModel and object:IsA("BasePart")
+        and object:IsDescendantOf(lobbyCache.referenceModel) then
+        -- A pad can appear after a lower-priority spawn/generic part.
+        lobbyCache.reference = nil
+        lobbyCache.referenceAt = -math.huge
+    end
+end)
+featureConnections.MM2LobbyDescendantRemoving = workspace.DescendantRemoving:Connect(function(object: Instance): ()
+    if isLobbyMarker(object) then
+        invalidateLobbyCache()
+    end
+end)
 
 local function isRootNearLobby(root: BasePart, lobby: Instance): boolean
     local okRoot: boolean, rootPos: any = pcall(function(): any
@@ -16353,20 +16590,7 @@ local function isRootNearLobby(root: BasePart, lobby: Instance): boolean
     if not okRoot or typeof(rootPos) ~= "Vector3" then
         return false
     end
-    local votePads: Instance? = lobby:FindFirstChild("VotePads", true)
-    local refPart: BasePart? = nil
-    if votePads then
-        refPart = votePads:FindFirstChildWhichIsA("BasePart", true)
-    end
-    if not refPart then
-        local spawns: Instance? = lobby:FindFirstChild("Spawns", true)
-        if spawns then
-            refPart = spawns:FindFirstChildWhichIsA("BasePart", true)
-        end
-    end
-    if not refPart then
-        refPart = lobby:FindFirstChildWhichIsA("BasePart", true)
-    end
+    local refPart: BasePart? = findLobbyReferencePart(lobby)
     if refPart then
         local okDist: boolean, dist: any = pcall(function(): any
             return (rootPos - refPart.Position).Magnitude
@@ -19620,6 +19844,7 @@ state.mm2Core = {
     isProtectedTarget = isProtectedTarget,
 
     findMM2Map = findMM2Map,
+    findLobbyReferencePart = findLobbyReferencePart,
     findDroppedGun = findDroppedGun,
 
     isWeaponPathClear = isWeaponPathClear,
@@ -19656,6 +19881,10 @@ cleanupMM2Runtime = function()
         "MM2TimerTrackerEnd",
         "MM2RoundPhase",
         "MM2RoundClock",
+        "MM2LobbyAdded",
+        "MM2LobbyRemoved",
+        "MM2LobbyDescendantAdded",
+        "MM2LobbyDescendantRemoving",
         "MM2RoleWatchAdded",
         "MM2RoleWatchRemoving",
         "MM2RoleTagAddedWeapon_Knife",

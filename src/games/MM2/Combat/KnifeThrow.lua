@@ -39,6 +39,32 @@ function Module.init(runtime: any): any
     local hookedWeaponService: any = nil
     local origGetMouseTargetCFrame: any = nil
     local origGetTargetPosition: any = nil
+    local installedGetMouseTargetCFrame: any = nil
+    local installedGetTargetPosition: any = nil
+    if type(state.mm2WeaponRedirectChain) ~= "table" then
+        state.mm2WeaponRedirectChain = setmetatable({}, {__mode = "k"})
+    end
+    local weaponRedirectChain: any = state.mm2WeaponRedirectChain
+    local function rememberWeaponRedirect(wrapper: any, previous: any): ()
+        weaponRedirectChain[wrapper] = {previous = previous, active = true}
+    end
+    local function retireWeaponRedirect(current: any, wrapper: any, previous: any): any
+        local own: any = weaponRedirectChain[wrapper]
+        if own then
+            own.active = false
+        end
+        if current ~= wrapper then
+            return current
+        end
+        weaponRedirectChain[wrapper] = nil
+        local restored: any = previous
+        while weaponRedirectChain[restored] and not weaponRedirectChain[restored].active do
+            local inactive: any = weaponRedirectChain[restored]
+            weaponRedirectChain[restored] = nil
+            restored = inactive.previous
+        end
+        return restored
+    end
 
     local function destroyTracerVisuals(): ()
         if tracerPart then
@@ -450,7 +476,8 @@ function Module.init(runtime: any): any
             hookedWeaponService = wsTable
 
             if type(origGetMouseTargetCFrame) == "function" then
-                wsTable.GetMouseTargetCFrame = function(self: any, ...: any): any
+                local previous: any = origGetMouseTargetCFrame
+                installedGetMouseTargetCFrame = function(self: any, ...: any): any
                     if settings.enabled then
                         local knife: Tool? = getKnife()
                         local character: Model? = LocalPlayer and LocalPlayer.Character
@@ -471,12 +498,15 @@ function Module.init(runtime: any): any
                             return saCF
                         end
                     end
-                    return origGetMouseTargetCFrame(self, ...)
+                    return previous(self, ...)
                 end
+                rememberWeaponRedirect(installedGetMouseTargetCFrame, previous)
+                wsTable.GetMouseTargetCFrame = installedGetMouseTargetCFrame
             end
 
             if type(origGetTargetPosition) == "function" then
-                wsTable.GetTargetPosition = function(self: any, ...: any): any
+                local previous: any = origGetTargetPosition
+                installedGetTargetPosition = function(self: any, ...: any): any
                     if settings.enabled then
                         local knife: Tool? = getKnife()
                         local character: Model? = LocalPlayer and LocalPlayer.Character
@@ -497,8 +527,10 @@ function Module.init(runtime: any): any
                             return saCF
                         end
                     end
-                    return origGetTargetPosition(self, ...)
+                    return previous(self, ...)
                 end
+                rememberWeaponRedirect(installedGetTargetPosition, previous)
+                wsTable.GetTargetPosition = installedGetTargetPosition
             end
         end)
     end
@@ -507,20 +539,26 @@ function Module.init(runtime: any): any
         if not hookedWeaponService then
             return
         end
-        if state.mm2SilentAimNativeActive == true then
-            return
-        end
         pcall(function(): ()
-            if origGetMouseTargetCFrame then
-                hookedWeaponService.GetMouseTargetCFrame = origGetMouseTargetCFrame
+            -- Preserve Silent AIM or any other wrapper installed after us.
+            if installedGetMouseTargetCFrame then
+                hookedWeaponService.GetMouseTargetCFrame = retireWeaponRedirect(
+                    hookedWeaponService.GetMouseTargetCFrame,
+                    installedGetMouseTargetCFrame, origGetMouseTargetCFrame
+                )
             end
-            if origGetTargetPosition then
-                hookedWeaponService.GetTargetPosition = origGetTargetPosition
+            if installedGetTargetPosition then
+                hookedWeaponService.GetTargetPosition = retireWeaponRedirect(
+                    hookedWeaponService.GetTargetPosition,
+                    installedGetTargetPosition, origGetTargetPosition
+                )
             end
         end)
         hookedWeaponService = nil
         origGetMouseTargetCFrame = nil
         origGetTargetPosition = nil
+        installedGetMouseTargetCFrame = nil
+        installedGetTargetPosition = nil
     end
 
     -- Main loop for Knife Tracer and Auto Knife Throw

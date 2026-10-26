@@ -1363,14 +1363,133 @@ local function onRoundPhase(listener: (string, string) -> ()): () -> ()
     end
 end
 
+-- Round detection, Auto Farm and Auto Win all need the same lobby reference.
+-- Searching every top-level subtree recursively on every physics frame is very
+-- expensive in large maps, so share a validated reference and cache misses too.
+local lobbyCache: {
+    model: Instance?, fallback: Instance?, reference: BasePart?, referenceModel: Instance?,
+    checkedAt: number, fallbackAt: number, referenceAt: number,
+} = {
+    model = nil,
+    fallback = nil,
+    reference = nil,
+    referenceModel = nil,
+    checkedAt = -math.huge,
+    fallbackAt = -math.huge,
+    referenceAt = -math.huge,
+}
+local LOBBY_MISS_RETRY: number = 0.25
+
+local function invalidateLobbyCache(): ()
+    lobbyCache.model = nil
+    lobbyCache.fallback = nil
+    lobbyCache.reference = nil
+    lobbyCache.referenceModel = nil
+    lobbyCache.checkedAt = -math.huge
+    lobbyCache.fallbackAt = -math.huge
+    lobbyCache.referenceAt = -math.huge
+end
+
 local function findLobbyModel(): Instance?
+    local cached: Instance? = lobbyCache.model
+    if cached and cached.Parent == workspace then
+        return cached
+    end
+    if os.clock() - lobbyCache.checkedAt < LOBBY_MISS_RETRY then
+        return nil
+    end
+    lobbyCache.checkedAt = os.clock()
+    lobbyCache.model = nil
+    -- Preserve round detection's original direct-child classification.
     for _, object: Instance in ipairs(workspace:GetChildren()) do
         if isLobbyName(object.Name) or isLobbyModel(object) then
+            lobbyCache.model = object
             return object
         end
     end
     return nil
 end
+
+local function findNestedLobbyFallback(): Instance?
+    if lobbyCache.fallback and lobbyCache.fallback.Parent == workspace then
+        return lobbyCache.fallback
+    end
+    if os.clock() - lobbyCache.fallbackAt < LOBBY_MISS_RETRY then
+        return nil
+    end
+    lobbyCache.fallbackAt = os.clock()
+    lobbyCache.fallback = nil
+    -- Auto Farm/Auto Win historically also recognized seasonal lobbies whose
+    -- vote pads are nested inside an otherwise unnamed top-level folder.
+    for _, object: Instance in ipairs(workspace:GetChildren()) do
+        if object:FindFirstChild("VotePads", true)
+            or object:FindFirstChild("VotePad1", true)
+            or object:FindFirstChild("VoteIcons", true) then
+            lobbyCache.fallback = object
+            return object
+        end
+    end
+    return nil
+end
+
+local function findLobbyReferencePart(lobby: Instance?): BasePart?
+    local resolved: Instance? = lobby or findLobbyModel() or findNestedLobbyFallback()
+    if not resolved then
+        return nil
+    end
+    local reference: BasePart? = lobbyCache.reference
+    if lobbyCache.referenceModel == resolved and reference and reference.Parent
+        and reference:IsDescendantOf(resolved) then
+        return reference
+    end
+    if lobbyCache.referenceModel == resolved and reference then
+        -- Removed/reparented references are invalid immediately, unlike a
+        -- genuine miss, which may safely be throttled.
+        lobbyCache.reference = nil
+        lobbyCache.referenceAt = -math.huge
+    end
+    if lobbyCache.referenceModel == resolved
+        and os.clock() - lobbyCache.referenceAt < LOBBY_MISS_RETRY then
+        return nil
+    end
+    lobbyCache.referenceModel = resolved
+    lobbyCache.referenceAt = os.clock()
+    local votePads: Instance? = resolved:FindFirstChild("VotePads", true)
+    reference = votePads and votePads:FindFirstChildWhichIsA("BasePart", true) or nil
+    if not reference then
+        local spawns: Instance? = resolved:FindFirstChild("Spawns", true)
+        reference = spawns and spawns:FindFirstChildWhichIsA("BasePart", true) or nil
+    end
+    if not reference then
+        reference = resolved:FindFirstChildWhichIsA("BasePart", true)
+    end
+    lobbyCache.reference = reference
+    return reference
+end
+
+-- Streaming can create the lobby or its reference after an earlier miss.
+-- Invalidate on relevant arrivals/removals rather than delaying detection.
+featureConnections.MM2LobbyAdded = workspace.ChildAdded:Connect(invalidateLobbyCache)
+featureConnections.MM2LobbyRemoved = workspace.ChildRemoved:Connect(invalidateLobbyCache)
+local function isLobbyMarker(object: Instance): boolean
+    return object.Name == "VotePads" or object.Name == "VotePad1"
+        or object.Name == "VoteIcons" or object.Name == "Spawns"
+end
+featureConnections.MM2LobbyDescendantAdded = workspace.DescendantAdded:Connect(function(object: Instance): ()
+    if isLobbyMarker(object) then
+        invalidateLobbyCache()
+    elseif lobbyCache.referenceModel and object:IsA("BasePart")
+        and object:IsDescendantOf(lobbyCache.referenceModel) then
+        -- A pad can appear after a lower-priority spawn/generic part.
+        lobbyCache.reference = nil
+        lobbyCache.referenceAt = -math.huge
+    end
+end)
+featureConnections.MM2LobbyDescendantRemoving = workspace.DescendantRemoving:Connect(function(object: Instance): ()
+    if isLobbyMarker(object) then
+        invalidateLobbyCache()
+    end
+end)
 
 local function isRootNearLobby(root: BasePart, lobby: Instance): boolean
     local okRoot: boolean, rootPos: any = pcall(function(): any
@@ -1379,20 +1498,7 @@ local function isRootNearLobby(root: BasePart, lobby: Instance): boolean
     if not okRoot or typeof(rootPos) ~= "Vector3" then
         return false
     end
-    local votePads: Instance? = lobby:FindFirstChild("VotePads", true)
-    local refPart: BasePart? = nil
-    if votePads then
-        refPart = votePads:FindFirstChildWhichIsA("BasePart", true)
-    end
-    if not refPart then
-        local spawns: Instance? = lobby:FindFirstChild("Spawns", true)
-        if spawns then
-            refPart = spawns:FindFirstChildWhichIsA("BasePart", true)
-        end
-    end
-    if not refPart then
-        refPart = lobby:FindFirstChildWhichIsA("BasePart", true)
-    end
+    local refPart: BasePart? = findLobbyReferencePart(lobby)
     if refPart then
         local okDist: boolean, dist: any = pcall(function(): any
             return (rootPos - refPart.Position).Magnitude
@@ -4646,6 +4752,7 @@ state.mm2Core = {
     isProtectedTarget = isProtectedTarget,
 
     findMM2Map = findMM2Map,
+    findLobbyReferencePart = findLobbyReferencePart,
     findDroppedGun = findDroppedGun,
 
     isWeaponPathClear = isWeaponPathClear,
@@ -4682,6 +4789,10 @@ cleanupMM2Runtime = function()
         "MM2TimerTrackerEnd",
         "MM2RoundPhase",
         "MM2RoundClock",
+        "MM2LobbyAdded",
+        "MM2LobbyRemoved",
+        "MM2LobbyDescendantAdded",
+        "MM2LobbyDescendantRemoving",
         "MM2RoleWatchAdded",
         "MM2RoleWatchRemoving",
         "MM2RoleTagAddedWeapon_Knife",

@@ -18,6 +18,7 @@ function Module.init(_runtime: any): any
     local findDroppedGun: any = core.findDroppedGun
     local isRoundLifecycleActive: any = core.isRoundLifecycleActive
     local findMM2Map: any = core.findMM2Map
+    local findLobbyReferencePart: any = core.findLobbyReferencePart
     local getEstimatedLatency: any = core.getEstimatedLatency
     local getGunOriginCFrame: any = core.getGunOriginCFrame
 
@@ -524,43 +525,6 @@ function Module.init(_runtime: any): any
             end)
         end
 
-        local function findLobbyReferencePart(): BasePart?
-            local okChildren: boolean, children: any = pcall(function(): any
-                return workspace:GetChildren()
-            end)
-            if not okChildren or type(children) ~= "table" then
-                return nil
-            end
-            for _, child: Instance in ipairs(children) do
-                local lowerName: string = string.lower(tostring(child.Name))
-                local isLobby: boolean = string.find(lowerName, "lobby", 1, true) ~= nil
-                    or child:FindFirstChild("VotePads", true) ~= nil
-                    or child:FindFirstChild("VotePad1", true) ~= nil
-                    or child:FindFirstChild("VoteIcons", true) ~= nil
-                if isLobby then
-                    local votePads: Instance? = child:FindFirstChild("VotePads", true)
-                    if votePads then
-                        local padPart: BasePart? = votePads:FindFirstChildWhichIsA("BasePart", true)
-                        if padPart then
-                            return padPart
-                        end
-                    end
-                    local spawns: Instance? = child:FindFirstChild("Spawns", true)
-                    if spawns then
-                        local spawnPart: BasePart? = spawns:FindFirstChildWhichIsA("BasePart", true)
-                        if spawnPart then
-                            return spawnPart
-                        end
-                    end
-                    local anyPart: BasePart? = child:FindFirstChildWhichIsA("BasePart", true)
-                    if anyPart then
-                        return anyPart
-                    end
-                end
-            end
-            return nil
-        end
-
         -- Resolves a safe indoor floor position without ever raycasting from
         -- above the building roof (which would put the player on top of the map).
         local function resolveSafeAboveGroundPosition(
@@ -689,21 +653,9 @@ function Module.init(_runtime: any): any
                 if role == "Dead" then
                     return false
                 end
-                if (role == "None" or role == nil)
-                    and type(isRoundLifecycleActive) == "function"
-                    and isRoundLifecycleActive() == false then
-                    local lobbyPartCheck: BasePart? = findLobbyReferencePart()
-                    if lobbyPartCheck then
-                        local okLD: boolean, ld: any = pcall(function(): any
-                            return (root.Position - lobbyPartCheck.Position).Magnitude
-                        end)
-                        if okLD and type(ld) == "number" and ld <= 350 then
-                            return false
-                        end
-                    end
-                end
             end
-            local lobbyPart: BasePart? = findLobbyReferencePart()
+            local lobbyPart: BasePart? = type(findLobbyReferencePart) == "function"
+                and findLobbyReferencePart() or nil
             if lobbyPart then
                 local okLobbyDist: boolean, lobbyDist: any = pcall(function(): any
                     return (root.Position - lobbyPart.Position).Magnitude
@@ -1584,7 +1536,8 @@ function Module.init(_runtime: any): any
                             )
                         end
                     end
-                    scanAt = now - 0.20
+                    -- Keep the scan deadline intact: moving it backwards here
+                    -- made an empty/blacklisted coin list rescan every frame.
                     if not firstCoinSeenThisRound then
                         if settings.stayUnderOnStart then
                             holdHiddenUnderMap(character, humanoid, root)

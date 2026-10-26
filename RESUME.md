@@ -5,7 +5,7 @@
 > contradice lo que crees, gana este documento (y los datos de calibración).
 >
 > **Estado al escribir esto:** rama `arena/9492e6b6-arandommenu`, build
-> **`v140-20261026-touchfling-silentaim-sorted-ui`**.
+> **`v141-20261026-mm2-performance`**.
 > El usuario se comunica en español. Respóndele en español.
 
 ---
@@ -20,12 +20,53 @@
   1. Edita en `src/…`, nunca directamente en `src/libraries/bundle.lua`.
   2. Sube `SOURCE_STAMP` en `src/Wurst.lua` (`vNNN-AAAAMMDD-descripcion`).
   3. `python3 tools/build_bundle.py --stamp <el mismo stamp>`
-  4. `bash tools/validate.sh` — debe terminar VERDE (87 fuentes, 62 suites,
-     boot `failures=0`, auditoría de menú 46/45 tarjetas).
+  4. `bash tools/validate.sh` — debe terminar VERDE (v141: 92 fuentes,
+     64 suites, boot `failures=0`, auditoría de menú 51/50 tarjetas).
   5. Commit + push **normales** a `arena/9492e6b6-arandommenu`. Sin force-push,
      sin reescribir historia, sin trabajar en otra rama.
 - Sin bundle regenerado + stamp, el cambio **no llega al usuario**. El watermark
   "UI Settings · vNNN" en el menú es como el usuario verifica la versión.
+
+## 1P. Rendimiento MM2 v141 — evidencia y límites
+
+- La queja era CPU alta y carga lenta. Sin MicroProfiler/F9 del dispositivo no
+  se conoce la causa exacta ni hay porcentaje de mejora en Roblox. El boot mock
+  y los conteos siguientes no son tiempos, consumo real ni aceptación del juego.
+- `Prediction.lua` conserva los **60 Hz**, el historial y la calibración pasiva
+  con todo apagado; no bajar la frecuencia para ahorrar CPU sin probar la
+  precisión inmediata. Ahora cachea Humanoid, root y UpperTorso mientras sigan
+  válidos y vuelve a buscar ante reemplazo/respawn. Mismo mock y 60 ticks por un
+  jugador R15: v140 hizo 60+60+60 búsquedas, v141 hizo 1+1+1.
+- `base.lua` comparte un cache de lobby y referencia para core/Auto Farm/Auto Win,
+  con invalidación por llegada/remoción/streaming y 0,25 s de retry en ausencia.
+  El core mantiene su clasificación de lobby directo; farm/win mantienen además
+  el fallback estacional anidado. En un mock con lobby estable, 120 consultas de
+  Auto Farm pasaron de 120 `GetChildren` y 240 búsquedas recursivas a 1 y 2.
+  La caché no debe retrasar detección del mapa en countdown ni activar farm en
+  lobby. Las señales se desconectan al descargar.
+- Auto Farm ya no retrocede `scanAt` si no encuentra objetivo: con lista vacía
+  consulta cada ~0,1 s en vez de cada frame, y con lista no vacía cada ~0,25 s.
+  En el mismo mock de 120 frames vacíos pasó de 119 consultas a 18; una moneda
+  nueva aparece en la siguiente ventana. Coin ESP conserva los tres mecanismos
+  reales de detección y su escaneo, no reintroducir el cheap-scan v84.
+- Silent AIM instala el hook global `__namecall` solo al habilitarlo y lo
+  desmonta si sigue siendo el hook superior. Si otro script lo envuelve, deja
+  un bridge inerte y reutilizable sin desplazar ese hook. La versión v140 ya
+  inyectada puede haber dejado su hook anterior, que no se puede retirar de modo
+  fiable: para comparar v141 se debe reiniciar Roblox o volver a entrar. Los
+  wrappers PC/móvil de WeaponService de Silent AIM y Knife Throw se retiran por
+  identidad, conservan scripts ajenos y se desenrollan en ambos órdenes.
+- El JSON de calibración aportado mide 4.917.941 bytes y 648 eventos: se lee,
+  respalda byte a byte y decodifica al inyectar; con cambios se guarda cada 10 s.
+  Puede aportar demora/picos, no demuestra por sí solo CPU al 100 %. No diferir
+  lectura/backup ni borrar datos sin resolver sincronización, reset y fallos;
+  `tools/test_mm2_v16.py` exige respaldo exacto y persistencia bloqueada si falla.
+- `tools/test_mm2_performance.py` comprueba conteos, invalidación de rigs y
+  lobby, countdown y monedas; `tools/test_mm2_hook_lifecycle.py` prueba OFF/ON,
+  config restaurada, reinyección, hooks ajenos y PC/móvil + Knife en ambos
+  órdenes. Validación completa v141: 92 fuentes, 64 suites, boot `failures=0`,
+  51/50 tarjetas. Falta prueba live: perfil CPU por fase, menú apagado/activo,
+  PC/móvil, executor, tiempo de inyección y revisión F9/MicroProfiler.
 
 ## 1A. X2Duels (MVS): estructura MM2, evidencia y contratos
 
@@ -885,9 +926,12 @@ que reúne la comprobación normal sigue siendo `bash tools/validate.sh`.
 
 ## 9. Pendiente de verificación EN VIVO (no lo des por hecho)
 
-Nada de esto está probado en partida real todavía; está probado en estático,
-boot y las 61 suites:
+Nada de esto está probado en partida real todavía; v141 pasó las 64 suites,
+el boot simulado y las auditorías, que no sustituyen una prueba en juego:
 
+- v141: consumo real al inyectar y en reposo/con funciones activas, Auto Farm y
+  Auto Win en lobby/countdown, detección de monedas y Silent AIM/Knife PC/móvil;
+  reiniciar Roblox antes de comparar para retirar hooks anteriores de v140.
 - Shoot v106–v112: si con el muzzle real desaparecen los impactos en geometría
   del mapa (`Smooth Block Model`), y si el gate de 1.5 s recupera los ecos.
 - La sesión limpia que falta: bot en el suelo de verdad (Difícil/Auto/Saltos
@@ -921,7 +965,7 @@ boot y las 61 suites:
   el comportamiento y `validate.sh` verde antes de pushear.
 
 ---
-*Última actualización: 2026-10-24 · arquitectura, registro de módulos, ubicación
-de funciones y toolchain reproducible documentados; el runtime sigue en v119.
+*Última actualización: 2026-10-26 · v141, investigación y optimizaciones de
+rendimiento MM2; la aceptación y el perfil de CPU en Roblox siguen pendientes.
 Al publicar una versión nueva, actualiza la línea de estado de arriba y cualquier
 sección que cambie.*

@@ -224,7 +224,7 @@ local RUNTIME_RAW_BASE: string =
         .. RUNTIME_BRANCH
         .. "/"
 
-local SOURCE_STAMP: string = "v140-20261026-touchfling-silentaim-sorted-ui"
+local SOURCE_STAMP: string = "v141-20261026-mm2-performance"
 
 local BOOT_STARTED_AT: number = os.clock()
 local BOOT_FINGERPRINT_SECONDS: number = 0
