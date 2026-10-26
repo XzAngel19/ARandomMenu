@@ -1,10 +1,3 @@
-export type Runtime = {
-    framework: any,
-    entity: any,
-    host: any,
-    services: any,
-}
-
 local Module = {
     Name = "MM2 Fling",
     Events = {} :: {[string]: any},
@@ -16,12 +9,14 @@ local activeCleanup: (() -> ())? = nil
 function Module.init(runtime: any): any
     local host: any = state.frameworkEnvironment
     local core: any = state.mm2Core
+    local physics: any = state.flingPhysics
     assert(core, "MM2 Fling requires the MM2 core")
+    assert(physics, "MM2 Fling requires the shared physics library")
+
     local Players: any = host.Players
     local LocalPlayer: any = host.LocalPlayer
     local getCharacterParts: any = host.getCharacterParts
     local notify: any = host.notify
-    local activity: any = services.activity
     local protectedTargets: any = services.protectedTargets
     local gameBridge: any = services.gameBridge
     local createUniversalFeature: any = host.createUniversalFeature
@@ -35,376 +30,139 @@ function Module.init(runtime: any): any
     local findPlayerByText: any = host.findPlayerByText
     local configData: any = host.configData
 
-    local workspace: any = host.workspace
-
     local findMurderer: any = core.findMurderer
     local findSheriff: any = core.findSheriff
     local getPlayerRole: any = core.getPlayerRole
     local getPlayerWeapon: any = core.getPlayerWeapon
     local isPlayerAlive: any = core.isPlayerAlive
 
-    local flingRunning: boolean = false
     local flingTargetName: string = ""
     local autoFlingSelected: boolean = false
     local lastAutoFlingAt: number = 0
-    local lastSafeOldPos: CFrame? = nil
-    local stepAngle: number = 0
+    local sequenceNumber: number = 0
 
-    local function setFlingRunning(running: boolean): ()
-        flingRunning = running
-        activity.set("fling", running)
-    end
-
-    -- Single-step helper using YARHM's FPos values for callers that step per frame.
-    local function flingSingleStep(
-        character: Model,
-        humanoid: Humanoid,
-        root: BasePart,
-        targetPlayer: Player
-    ): boolean
-        local tChar: Model? = targetPlayer and targetPlayer.Character
-        if not tChar then
+    local function roundIsActive(): boolean
+        if type(core.isRoundLifecycleActive) ~= "function" then
             return false
         end
-        local tHum: Humanoid? = tChar:FindFirstChildOfClass("Humanoid")
-        local tRoot: BasePart? = (tHum and tHum.RootPart)
-            or (tChar:FindFirstChild("HumanoidRootPart") :: BasePart?)
-            or (tChar:FindFirstChild("Head") :: BasePart?)
-        if not tRoot or (tHum and tHum.Health <= 0) then
+        local ok: boolean, active: any = pcall(core.isRoundLifecycleActive)
+        if not ok or active ~= true then
             return false
         end
-        activity.set("fling", true)
-        stepAngle = (stepAngle + 100) % 360
-        local moveDir: Vector3 = if tHum then tHum.MoveDirection else Vector3.zero
-        local posOffset: CFrame = CFrame.new(0, 1.5, 0) + moveDir * (tRoot.Velocity.Magnitude / 1.25)
-        local angOffset: CFrame = CFrame.Angles(math.rad(stepAngle), 0, 0)
-        local targetCF: CFrame = CFrame.new(tRoot.Position) * posOffset * angOffset
-        pcall(function(): ()
-            humanoid:SetStateEnabled(Enum.HumanoidStateType.Seated, false)
-            root.CFrame = targetCF
-            character:SetPrimaryPartCFrame(targetCF)
-            root.Velocity = Vector3.new(9e7, 9e7 * 10, 9e7)
-            root.RotVelocity = Vector3.new(9e8, 9e8, 9e8)
-        end)
+        if type(core.findMM2Map) == "function" then
+            local okMap: boolean, map: any = pcall(core.findMM2Map)
+            return okMap and map ~= nil
+        end
         return true
     end
 
-    -- YARHM SkidFling / miniFling implementation with return/void safety checks
-    -- so the local player is never left flying or killed in the void.
+    local function localIsAlive(): boolean
+        local character: Model?, humanoid: Humanoid?, root: BasePart? =
+            getCharacterParts()
+        return character ~= nil and humanoid ~= nil and root ~= nil
+            and humanoid.Health > 0 and root.Parent ~= nil
+    end
+
+    local function targetIsValid(target: Player?): boolean
+        if not target or target == LocalPlayer or target.Parent ~= Players
+            or protectedTargets.isProtected(target) then
+            return false
+        end
+        if type(isPlayerAlive) == "function" and not isPlayerAlive(target) then
+            return false
+        end
+        local character: Model? = target.Character
+        local humanoid: Humanoid? = character
+            and character:FindFirstChildOfClass("Humanoid") :: Humanoid?
+        local root: BasePart? = (humanoid and humanoid.RootPart)
+            or (character and character:FindFirstChild("HumanoidRootPart") :: BasePart?)
+        return character ~= nil and humanoid ~= nil and root ~= nil
+            and humanoid.Health > 0 and root.Parent ~= nil and not root.Anchored
+    end
+
+    local function canAct(target: Player?): boolean
+        return Module.Initialized and roundIsActive() and localIsAlive()
+            and targetIsValid(target)
+    end
+
     local function performFling(targetPlayer: Player?, options: {[string]: any}?): boolean
-        if not Module.Initialized or not targetPlayer then
-            return false
-        end
-        if protectedTargets.isProtected(targetPlayer) then
-            notify("player protected")
-            return false
-        end
         local silent: boolean = type(options) == "table" and options.silent == true
-        local TimeToWait: number = (type(options) == "table" and tonumber(options.duration)) or 2.0
-        local shouldStop: (() -> boolean)? = type(options) == "table"
-            and type(options.shouldStop) == "function"
-            and options.shouldStop
-            or nil
-
-        if flingRunning then
-            if not silent then
-                notify("fling already running")
+        if not canAct(targetPlayer) then
+            if not silent and Module.Initialized and not roundIsActive() then
+                notify("Fling requires an active MM2 round.")
+            elseif not silent then
+                notify("No living, valid fling target is available.")
             end
             return false
         end
-
-        setFlingRunning(true)
-
-        local function runSkidFling(): boolean
-            local Character: Model?, Humanoid: Humanoid?, RootPart: BasePart? = getCharacterParts()
-            if Character and Humanoid and not RootPart then
-                RootPart = Humanoid.RootPart
+        if physics.isRunning() then
+            if not silent then
+                notify("A fling is already running.")
             end
-            if not Character or not Humanoid or not RootPart or Humanoid.Health <= 0 then
-                setFlingRunning(false)
-                if not silent then
-                    notify("character not ready")
-                end
-                return false
-            end
-
-            local TCharacter: Model? = targetPlayer.Character
-            if not TCharacter then
-                setFlingRunning(false)
-                if not silent then
-                    notify("No valid character of said target player. May have died.")
-                end
-                return false
-            end
-
-            local THumanoid: Humanoid? = TCharacter:FindFirstChildOfClass("Humanoid")
-            local TRootPart: BasePart? = (THumanoid and THumanoid.RootPart)
-                or (TCharacter:FindFirstChild("HumanoidRootPart") :: BasePart?)
-            local THead: BasePart? = TCharacter:FindFirstChild("Head") :: BasePart?
-            local Accessory: Accessory? = TCharacter:FindFirstChildOfClass("Accessory")
-            local Handle: BasePart? = (Accessory and Accessory:FindFirstChild("Handle")) :: BasePart?
-
-            if not TCharacter:FindFirstChildWhichIsA("BasePart") then
-                setFlingRunning(false)
-                return false
-            end
-
-            local OldPos: CFrame
-            if type(options) == "table" and typeof(options.returnCFrame) == "CFrame" then
-                OldPos = options.returnCFrame
-                lastSafeOldPos = OldPos
-            elseif RootPart.Velocity.Magnitude < 50 then
-                OldPos = RootPart.CFrame
-                lastSafeOldPos = OldPos
+            return false
+        end
+        if physics.isTouchEnabled() then
+            if type(state.setTouchFlingEnabled) == "function" then
+                state.setTouchFlingEnabled(false)
             else
-                OldPos = lastSafeOldPos or RootPart.CFrame
+                physics.setTouchEnabled(false)
             end
+        end
 
-            local savedDestroyHeight: number = workspace.FallenPartsDestroyHeight
-            if savedDestroyHeight ~= savedDestroyHeight or math.abs(savedDestroyHeight) > 1e6 then
-                savedDestroyHeight = -500
-            end
-
-            local camera: Camera? = workspace.CurrentCamera
-            local savedCameraSubject: any = camera and camera.CameraSubject or nil
-            local BV: BodyVelocity? = nil
-            local flungTarget: boolean = false
-
-            local ok: boolean, err: any = pcall(function(): ()
-                if camera then
-                    if THead then
-                        camera.CameraSubject = THead
-                    elseif not THead and Handle then
-                        camera.CameraSubject = Handle
-                    elseif THumanoid and TRootPart then
-                        camera.CameraSubject = THumanoid
-                    end
-                end
-
-                -- YARHM FPos: exact CFrame + PrimaryPartCFrame + 9e7/9e8 Velocity & RotVelocity,
-                -- guarded so we never teleport our own RootPart into the void/sky after the target
-                -- has already been launched.
-                local function FPos(BasePart: BasePart, Pos: CFrame, Ang: CFrame): boolean
-                    if not flingRunning then
-                        return false
-                    end
-                    if shouldStop and shouldStop() then
-                        return false
-                    end
-                    if not RootPart or not RootPart.Parent or not Character or not Character.Parent then
-                        return false
-                    end
-                    if not BasePart or not BasePart.Parent or BasePart.Parent ~= targetPlayer.Character then
-                        return false
-                    end
-                    local bPos: Vector3 = BasePart.Position
-                    if bPos.Y <= savedDestroyHeight + 25 or bPos.Y >= 2500 then
-                        flungTarget = true
-                        return false
-                    end
-                    if (bPos - OldPos.Position).Magnitude > 650 then
-                        flungTarget = true
-                        return false
-                    end
-                    local targetCF: CFrame = CFrame.new(bPos) * Pos * Ang
-                    RootPart.CFrame = targetCF
-                    if Character.PrimaryPart == nil then
-                        Character.PrimaryPart = RootPart
-                    end
-                    Character:SetPrimaryPartCFrame(targetCF)
-                    RootPart.Velocity = Vector3.new(9e7, 9e7 * 10, 9e7)
-                    RootPart.RotVelocity = Vector3.new(9e8, 9e8, 9e8)
+        local externalStop: any = type(options) == "table"
+            and options.shouldStop or nil
+        local duration: number = if type(options) == "table"
+            then tonumber(options.duration) or 1.4
+            else 1.4
+        if duration ~= duration or math.abs(duration) == math.huge then
+            duration = 1.4
+        end
+        duration = math.clamp(duration, 0.1, 3)
+        local started: boolean = physics.start(targetPlayer, {
+            duration = duration,
+            blocking = type(options) == "table" and options.blocking == true,
+            returnCFrame = type(options) == "table"
+                and options.returnCFrame or nil,
+            restorePosition = if type(options) == "table"
+                then options.restorePosition else nil,
+            shouldStop = function(): boolean
+                if not canAct(targetPlayer) then
                     return true
                 end
-
-                local function shouldStopLoop(BasePart: BasePart, startTime: number): boolean
-                    if not flingRunning then
-                        return true
-                    end
-                    if shouldStop and shouldStop() then
-                        return true
-                    end
-                    if not BasePart or BasePart.Parent ~= targetPlayer.Character then
-                        return true
-                    end
-                    if targetPlayer.Parent ~= Players or targetPlayer.Character ~= TCharacter then
-                        return true
-                    end
-                    if not THumanoid or THumanoid.Sit or THumanoid.Health <= 0 then
-                        if THumanoid and THumanoid.Health <= 0 then
-                            flungTarget = true
-                        end
-                        return true
-                    end
-                    if not RootPart or not RootPart.Parent or not Humanoid or Humanoid.Health <= 0 then
-                        return true
-                    end
-                    if BasePart.Velocity.Magnitude > 500 then
-                        flungTarget = true
-                        return true
-                    end
-                    local bPos: Vector3 = BasePart.Position
-                    if bPos.Y <= savedDestroyHeight + 25 or bPos.Y >= 2500 or (bPos - OldPos.Position).Magnitude > 650 then
-                        flungTarget = true
-                        return true
-                    end
-                    if tick() > startTime + TimeToWait then
-                        return true
-                    end
-                    return false
+                if type(externalStop) == "function" then
+                    local ok: boolean, stop: any = pcall(externalStop)
+                    return not ok or stop == true
                 end
-
-                local function stepFPos(
-                    BasePart: BasePart,
-                    Pos: CFrame,
-                    Ang: CFrame,
-                    startTime: number
-                ): boolean
-                    if shouldStopLoop(BasePart, startTime) then
-                        return false
-                    end
-                    if not FPos(BasePart, Pos, Ang) then
-                        return false
-                    end
-                    task.wait()
-                    return not shouldStopLoop(BasePart, startTime)
+                return false
+            end,
+        })
+        if started and type(options) == "table" and options.blocking == true then
+            local deadline: number = os.clock() + math.clamp(duration, 0.1, 3) + 0.5
+            while physics.isRunning() and os.clock() < deadline do
+                if not canAct(targetPlayer) then
+                    physics.cancel()
+                    break
                 end
-
-                -- YARHM SFBasePart
-                local function SFBasePart(BasePart: BasePart): ()
-                    local Time: number = tick()
-                    local Angle: number = 0
-
-                    repeat
-                        if RootPart and THumanoid then
-                            if BasePart.Velocity.Magnitude < 50 then
-                                Angle = Angle + 100
-
-                                if not stepFPos(BasePart, CFrame.new(0, 1.5, 0) + THumanoid.MoveDirection * BasePart.Velocity.Magnitude / 1.25, CFrame.Angles(math.rad(Angle), 0, 0), Time) then break end
-                                if not stepFPos(BasePart, CFrame.new(0, -1.5, 0) + THumanoid.MoveDirection * BasePart.Velocity.Magnitude / 1.25, CFrame.Angles(math.rad(Angle), 0, 0), Time) then break end
-                                if not stepFPos(BasePart, CFrame.new(2.25, 1.5, -2.25) + THumanoid.MoveDirection * BasePart.Velocity.Magnitude / 1.25, CFrame.Angles(math.rad(Angle), 0, 0), Time) then break end
-                                if not stepFPos(BasePart, CFrame.new(-2.25, -1.5, 2.25) + THumanoid.MoveDirection * BasePart.Velocity.Magnitude / 1.25, CFrame.Angles(math.rad(Angle), 0, 0), Time) then break end
-                                if not stepFPos(BasePart, CFrame.new(0, 1.5, 0) + THumanoid.MoveDirection, CFrame.Angles(math.rad(Angle), 0, 0), Time) then break end
-                                if not stepFPos(BasePart, CFrame.new(0, -1.5, 0) + THumanoid.MoveDirection, CFrame.Angles(math.rad(Angle), 0, 0), Time) then break end
-                            else
-                                local walkSpd: number = THumanoid.WalkSpeed
-                                local tRootVelMag: number = if TRootPart then TRootPart.Velocity.Magnitude else BasePart.Velocity.Magnitude
-
-                                if not stepFPos(BasePart, CFrame.new(0, 1.5, walkSpd), CFrame.Angles(math.rad(90), 0, 0), Time) then break end
-                                if not stepFPos(BasePart, CFrame.new(0, -1.5, -walkSpd), CFrame.Angles(0, 0, 0), Time) then break end
-                                if not stepFPos(BasePart, CFrame.new(0, 1.5, walkSpd), CFrame.Angles(math.rad(90), 0, 0), Time) then break end
-                                if not stepFPos(BasePart, CFrame.new(0, 1.5, tRootVelMag / 1.25), CFrame.Angles(math.rad(90), 0, 0), Time) then break end
-                                if not stepFPos(BasePart, CFrame.new(0, -1.5, -tRootVelMag / 1.25), CFrame.Angles(0, 0, 0), Time) then break end
-                                if not stepFPos(BasePart, CFrame.new(0, 1.5, tRootVelMag / 1.25), CFrame.Angles(math.rad(90), 0, 0), Time) then break end
-                                if not stepFPos(BasePart, CFrame.new(0, -1.5, 0), CFrame.Angles(math.rad(90), 0, 0), Time) then break end
-                                if not stepFPos(BasePart, CFrame.new(0, -1.5, 0), CFrame.Angles(0, 0, 0), Time) then break end
-                                if not stepFPos(BasePart, CFrame.new(0, -1.5, 0), CFrame.Angles(math.rad(-90), 0, 0), Time) then break end
-                                if not stepFPos(BasePart, CFrame.new(0, -1.5, 0), CFrame.Angles(0, 0, 0), Time) then break end
-                            end
-                        else
-                            break
-                        end
-                    until shouldStopLoop(BasePart, Time)
-                end
-
-                workspace.FallenPartsDestroyHeight = 0 / 0
-
-                local epixVel: BodyVelocity = Instance.new("BodyVelocity")
-                epixVel.Name = "EpixVel"
-                epixVel.Parent = RootPart
-                epixVel.Velocity = Vector3.new(9e8, 9e8, 9e8)
-                epixVel.MaxForce = Vector3.new(1 / 0, 1 / 0, 1 / 0)
-                BV = epixVel
-
-                Humanoid:SetStateEnabled(Enum.HumanoidStateType.Seated, false)
-
-                if TRootPart and THead then
-                    if (TRootPart.CFrame.p - THead.CFrame.p).Magnitude > 5 then
-                        SFBasePart(THead)
-                    else
-                        SFBasePart(TRootPart)
+                if type(externalStop) == "function" then
+                    local ok: boolean, stop: any = pcall(externalStop)
+                    if not ok or stop == true then
+                        physics.cancel()
+                        break
                     end
-                elseif TRootPart and not THead then
-                    SFBasePart(TRootPart)
-                elseif not TRootPart and THead then
-                    SFBasePart(THead)
-                elseif not TRootPart and not THead and Accessory and Handle then
-                    SFBasePart(Handle)
-                elseif not silent then
-                    notify("Can't find a proper part of target player to fling.")
                 end
-            end)
-
-            if BV then
-                pcall(function(): ()
-                    BV:Destroy()
-                end)
-                BV = nil
+                task.wait()
             end
-
-            local finalChar: Model?, finalHumanoid: Humanoid?, finalRoot: BasePart? =
-                getCharacterParts()
-            if finalHumanoid then
-                pcall(function(): ()
-                    finalHumanoid:SetStateEnabled(Enum.HumanoidStateType.Seated, true)
-                end)
-                if camera then
-                    pcall(function(): ()
-                        camera.CameraSubject = savedCameraSubject or finalHumanoid
-                    end)
-                end
+            if physics.isRunning() then
+                physics.cancel()
             end
-
-            if finalChar and finalHumanoid and finalRoot and finalRoot.Parent then
-                local returnStart: number = tick()
-                local returnTargetCF: CFrame = OldPos * CFrame.new(0, 0.5, 0)
-                repeat
-                    pcall(function(): ()
-                        finalRoot.CFrame = returnTargetCF
-                        if finalChar.PrimaryPart == nil then
-                            finalChar.PrimaryPart = finalRoot
-                        end
-                        finalChar:SetPrimaryPartCFrame(returnTargetCF)
-                        finalHumanoid:ChangeState("GettingUp")
-                        for _, x: Instance in ipairs(finalChar:GetDescendants()) do
-                            if x:IsA("BasePart") then
-                                (x :: BasePart).Velocity = Vector3.new();
-                                (x :: BasePart).RotVelocity = Vector3.new();
-                                (x :: BasePart).AssemblyLinearVelocity = Vector3.new();
-                                (x :: BasePart).AssemblyAngularVelocity = Vector3.new()
-                            end
-                        end
-                    end)
-                    task.wait()
-                    finalChar, finalHumanoid, finalRoot = getCharacterParts()
-                until not finalRoot
-                    or not finalRoot.Parent
-                    or not finalHumanoid
-                    or finalHumanoid.Health <= 0
-                    or (finalRoot.Position - OldPos.p).Magnitude < 25
-                    or tick() - returnStart > 1.5
-            end
-
-            pcall(function(): ()
-                workspace.FallenPartsDestroyHeight = savedDestroyHeight
-            end)
-
-            setFlingRunning(false)
-            if not silent and not ok then
-                notify("fling failed: " .. tostring(err))
-            end
-            return flungTarget
         end
-
-        if type(options) == "table" and options.blocking == true then
-            return runSkidFling()
+        if not started and not silent then
+            notify("The fling could not start safely.")
         end
-        task.spawn(runSkidFling)
-        return true
+        return started
     end
 
     state.mm2PerformFling = performFling
-    state.mm2FlingStep = flingSingleStep
 
     local function refreshRoles(): ()
         if type(state.clearRoleMemo) == "function" then
@@ -419,8 +177,7 @@ function Module.init(runtime: any): any
         refreshRoles()
         if type(getPlayerWeapon) == "function" then
             for _, player: Player in ipairs(Players:GetPlayers()) do
-                if player ~= LocalPlayer
-                    and (type(isPlayerAlive) ~= "function" or isPlayerAlive(player))
+                if player ~= LocalPlayer and targetIsValid(player)
                     and getPlayerWeapon(player, "Gun", false) == nil
                     and getPlayerWeapon(player, "Knife", false) ~= nil then
                     return player
@@ -429,31 +186,27 @@ function Module.init(runtime: any): any
         end
         if type(findMurderer) == "function" then
             local target: Player? = findMurderer()
-            if target
-                and target ~= LocalPlayer
-                and (type(isPlayerAlive) ~= "function" or isPlayerAlive(target))
+            if target and targetIsValid(target)
                 and (type(getPlayerWeapon) ~= "function"
                     or getPlayerWeapon(target, "Gun", false) == nil) then
                 local role: any = type(getPlayerRole) == "function"
-                    and getPlayerRole(target)
-                    or "Murderer"
+                    and getPlayerRole(target) or "Murderer"
                 if role ~= "Hero" and role ~= "Sheriff" and role ~= "Dead" then
                     return target
                 end
             end
         end
         for _, player: Player in ipairs(Players:GetPlayers()) do
-            if player ~= LocalPlayer
-                and (type(isPlayerAlive) ~= "function" or isPlayerAlive(player))
+            if player ~= LocalPlayer and targetIsValid(player)
                 and (type(getPlayerWeapon) ~= "function"
                     or getPlayerWeapon(player, "Gun", false) == nil) then
                 local role: any = type(getPlayerRole) == "function"
-                    and getPlayerRole(player)
-                    or nil
+                    and getPlayerRole(player) or nil
                 if not role and type(gameBridge.playerRole) == "function" then
-                    local okRole: boolean, r: any = pcall(gameBridge.playerRole, player)
+                    local okRole: boolean, resolved: any =
+                        pcall(gameBridge.playerRole, player)
                     if okRole then
-                        role = r
+                        role = resolved
                     end
                 end
                 if role == "Murderer" then
@@ -468,8 +221,7 @@ function Module.init(runtime: any): any
         refreshRoles()
         if type(getPlayerWeapon) == "function" then
             for _, player: Player in ipairs(Players:GetPlayers()) do
-                if player ~= LocalPlayer
-                    and (type(isPlayerAlive) ~= "function" or isPlayerAlive(player))
+                if player ~= LocalPlayer and targetIsValid(player)
                     and getPlayerWeapon(player, "Knife", false) == nil
                     and getPlayerWeapon(player, "Gun", false) ~= nil then
                     return player
@@ -478,31 +230,27 @@ function Module.init(runtime: any): any
         end
         if type(findSheriff) == "function" then
             local target: Player? = findSheriff()
-            if target
-                and target ~= LocalPlayer
-                and (type(isPlayerAlive) ~= "function" or isPlayerAlive(target))
+            if target and targetIsValid(target)
                 and (type(getPlayerWeapon) ~= "function"
                     or getPlayerWeapon(target, "Knife", false) == nil) then
                 local role: any = type(getPlayerRole) == "function"
-                    and getPlayerRole(target)
-                    or "Sheriff"
+                    and getPlayerRole(target) or "Sheriff"
                 if role ~= "Murderer" and role ~= "Dead" then
                     return target
                 end
             end
         end
         for _, player: Player in ipairs(Players:GetPlayers()) do
-            if player ~= LocalPlayer
-                and (type(isPlayerAlive) ~= "function" or isPlayerAlive(player))
+            if player ~= LocalPlayer and targetIsValid(player)
                 and (type(getPlayerWeapon) ~= "function"
                     or getPlayerWeapon(player, "Knife", false) == nil) then
                 local role: any = type(getPlayerRole) == "function"
-                    and getPlayerRole(player)
-                    or nil
+                    and getPlayerRole(player) or nil
                 if not role and type(gameBridge.playerRole) == "function" then
-                    local okRole: boolean, r: any = pcall(gameBridge.playerRole, player)
+                    local okRole: boolean, resolved: any =
+                        pcall(gameBridge.playerRole, player)
                     if okRole then
-                        role = r
+                        role = resolved
                     end
                 end
                 if role == "Sheriff" or role == "Hero" then
@@ -514,7 +262,9 @@ function Module.init(runtime: any): any
     end
 
     local function resolveSelectedTargetPlayer(): Player?
-        local query: string = string.lower(string.gsub(flingTargetName or "", "^%s*(.-)%s*$", "%1"))
+        local query: string = string.lower(string.gsub(
+            flingTargetName or "", "^%s*(.-)%s*$", "%1"
+        ))
         if query == "" then
             return nil
         end
@@ -526,7 +276,7 @@ function Module.init(runtime: any): any
         end
         if type(findPlayerByText) == "function" then
             local okFind: boolean, found: any = pcall(findPlayerByText, flingTargetName)
-            if okFind and found and found ~= LocalPlayer then
+            if okFind and targetIsValid(found) then
                 return found :: Player
             end
         end
@@ -535,24 +285,28 @@ function Module.init(runtime: any): any
         local partialMatch: Player? = nil
         for _, player: Player in ipairs(Players:GetPlayers()) do
             if player ~= LocalPlayer then
-                local uName: string = string.lower(tostring(player.Name or ""))
-                local dName: string = string.lower(tostring((player :: any).DisplayName or player.Name or ""))
-                local uCompact: string = string.gsub(uName, "%s+", "")
-                local dCompact: string = string.gsub(dName, "%s+", "")
-                if uName == query or dName == query or uCompact == compactQuery or dCompact == compactQuery then
+                local userName: string = string.lower(tostring(player.Name or ""))
+                local displayName: string = string.lower(tostring(
+                    (player :: any).DisplayName or player.Name or ""
+                ))
+                local userCompact: string = string.gsub(userName, "%s+", "")
+                local displayCompact: string = string.gsub(displayName, "%s+", "")
+                if userName == query or displayName == query
+                    or userCompact == compactQuery
+                    or displayCompact == compactQuery then
                     return player
                 end
                 if not prefixMatch and (
-                    string.sub(uName, 1, #query) == query
-                    or string.sub(dName, 1, #query) == query
+                    string.sub(userName, 1, #query) == query
+                    or string.sub(displayName, 1, #query) == query
                 ) then
                     prefixMatch = player
                 end
                 if not partialMatch and (
-                    string.find(uName, query, 1, true) ~= nil
-                    or string.find(dName, query, 1, true) ~= nil
-                    or string.find(uCompact, compactQuery, 1, true) ~= nil
-                    or string.find(dCompact, compactQuery, 1, true) ~= nil
+                    string.find(userName, query, 1, true) ~= nil
+                    or string.find(displayName, query, 1, true) ~= nil
+                    or string.find(userCompact, compactQuery, 1, true) ~= nil
+                    or string.find(displayCompact, compactQuery, 1, true) ~= nil
                 ) then
                     partialMatch = player
                 end
@@ -561,14 +315,17 @@ function Module.init(runtime: any): any
         return prefixMatch or partialMatch
     end
 
-    -- IMPORTANT: FlingFeature has category = true (group card), so its onToggle
-    -- MUST be a no-op because Cards.lua invokes onToggle(true) on group cards at boot!
     local FlingFeature: any = createUniversalFeature(
         "Fling",
-        "MM2 only: fling the murderer, sheriff or innocents",
+        "MM2 only: bounded physical contact against a round target",
         2,
         function(): () end,
-        {category = true, categoryName = "Exploits", registry = mm2Features, configKey = "MM2.Fling"}
+        {
+            category = true,
+            categoryName = "Exploits",
+            registry = mm2Features,
+            configKey = "MM2.Fling",
+        }
     )
 
     addActionOption(FlingFeature, "Fling Murderer", function(): ()
@@ -576,7 +333,7 @@ function Module.init(runtime: any): any
         if target then
             performFling(target)
         else
-            notify("No murderer was found.")
+            notify("No living murderer was found in this round.")
         end
     end)
     addActionOption(FlingFeature, "Fling Sheriff", function(): ()
@@ -584,30 +341,39 @@ function Module.init(runtime: any): any
         if target then
             performFling(target)
         else
-            notify("No sheriff or hero was found.")
+            notify("No living sheriff or hero was found in this round.")
         end
     end)
     addActionOption(FlingFeature, "Fling All Innocents", function(): ()
+        if not roundIsActive() or not localIsAlive() then
+            notify("Fling requires an active MM2 round and a living character.")
+            return
+        end
+        sequenceNumber += 1
+        local sequence: number = sequenceNumber
         refreshRoles()
         task.spawn(function(): ()
             for _, player: Player in ipairs(Players:GetPlayers()) do
-                if player ~= LocalPlayer
-                    and (type(isPlayerAlive) ~= "function" or isPlayerAlive(player)) then
+                if sequence ~= sequenceNumber or not roundIsActive()
+                    or not localIsAlive() then
+                    break
+                end
+                if targetIsValid(player) then
                     local hasKnife: boolean = type(getPlayerWeapon) == "function"
                         and getPlayerWeapon(player, "Knife", false) ~= nil
                     local hasGun: boolean = type(getPlayerWeapon) == "function"
                         and getPlayerWeapon(player, "Gun", false) ~= nil
                     local role: any = type(getPlayerRole) == "function"
-                        and getPlayerRole(player)
-                        or nil
+                        and getPlayerRole(player) or nil
                     if not role and type(gameBridge.playerRole) == "function" then
-                        local okRole: boolean, r: any = pcall(gameBridge.playerRole, player)
+                        local okRole: boolean, resolved: any =
+                            pcall(gameBridge.playerRole, player)
                         if okRole then
-                            role = r
+                            role = resolved
                         end
                     end
                     if not hasKnife and not hasGun and role == "Innocent" then
-                        performFling(player, {blocking = true})
+                        performFling(player, {blocking = true, silent = true})
                         task.wait(0.05)
                     end
                 end
@@ -616,43 +382,19 @@ function Module.init(runtime: any): any
     end)
 
     local function autoFlingTick(): ()
-        if not autoFlingSelected or flingRunning then
-            return
-        end
-        if os.clock() - lastAutoFlingAt < 0.35 then
-            return
-        end
-        local localChar: Model?, localHum: Humanoid?, localRoot: BasePart? = getCharacterParts()
-        if not localChar or not localHum or not localRoot or localHum.Health <= 0 then
+        if not autoFlingSelected or physics.isRunning() or physics.isTouchEnabled()
+            or os.clock() - lastAutoFlingAt < 0.35
+            or not roundIsActive() or not localIsAlive() then
             return
         end
         local target: Player? = resolveSelectedTargetPlayer()
-        if not target or protectedTargets.isProtected(target) then
-            return
-        end
-        if type(isPlayerAlive) == "function" and not isPlayerAlive(target) then
-            return
-        end
-        local targetChar: Model? = target.Character
-        local targetHum: Humanoid? = targetChar
-            and targetChar:FindFirstChildOfClass("Humanoid")
-            :: Humanoid?
-        local targetRoot: BasePart? = (targetHum and targetHum.RootPart)
-            or (targetChar and targetChar:FindFirstChild("HumanoidRootPart") :: BasePart?)
-        if not targetChar or not targetHum or targetHum.Health <= 0 or targetHum.Sit or not targetRoot then
-            return
-        end
-        local destroyHeight: number = workspace.FallenPartsDestroyHeight
-        if destroyHeight ~= destroyHeight or math.abs(destroyHeight) > 1e6 then
-            destroyHeight = -500
-        end
-        if targetRoot.Position.Y <= destroyHeight + 45 or targetRoot.Position.Y >= 2500 then
+        if not targetIsValid(target) then
             return
         end
         lastAutoFlingAt = os.clock()
         performFling(target, {
             silent = true,
-            duration = 2.0,
+            duration = 1.4,
             shouldStop = function(): boolean
                 return not autoFlingSelected
             end,
@@ -678,8 +420,8 @@ function Module.init(runtime: any): any
         end
     end)
 
-    -- Never auto-enable Auto Fling Selected Target or Touch Fling from a persisted config on injection:
-    -- they must only turn on when the user explicitly toggles them during the session.
+    -- These two options are deliberate session actions, never restored ON at
+    -- injection from a persisted configuration.
     if configData and type(configData.states) == "table" then
         configData.states["MM2.Fling.AutoFlingSelectedTarget"] = false
         configData.states["MM2.Fling.TouchFling"] = false
@@ -691,12 +433,11 @@ function Module.init(runtime: any): any
         false,
         function(value: boolean): ()
             if type(state.setTouchFlingEnabled) == "function" then
-                pcall(state.setTouchFlingEnabled, value == true)
+                state.setTouchFlingEnabled(value == true)
             end
         end,
-        "Walk into any player to send them flying on body contact (only active while enabled)."
+        "Walk into a player to transfer a bounded contact pulse. No teleport."
     )
-
     addToggleOption(
         FlingFeature,
         "Auto Fling Selected Target",
@@ -706,28 +447,30 @@ function Module.init(runtime: any): any
             if disconnectFeatureConnection then
                 disconnectFeatureConnection("MM2AutoFlingTarget")
             end
-            if autoFlingSelected and TaskManager and featureConnections then
+            if not autoFlingSelected then
+                physics.cancel()
+            elseif TaskManager and featureConnections then
                 lastAutoFlingAt = 0
                 featureConnections.MM2AutoFlingTarget =
                     TaskManager:Connect(autoFlingTick)
                 autoFlingTick()
             end
         end,
-        "Continuously flings the target entered in Target player whenever they are alive."
+        "Retries the selected living target only during an active MM2 round."
     )
     addInformationOption(
         FlingFeature,
-        "MM2 only. Pick a role action or enter a target player name."
+        "Active rounds only. Death, round end, target loss or OFF cancels the session."
     )
 
     activeCleanup = function(): ()
+        sequenceNumber += 1
         autoFlingSelected = false
         if disconnectFeatureConnection then
             disconnectFeatureConnection("MM2AutoFlingTarget")
         end
-        setFlingRunning(false)
+        physics.cancel()
         state.mm2PerformFling = nil
-        state.mm2FlingStep = nil
     end
     Module.Initialized = true
     return FlingFeature

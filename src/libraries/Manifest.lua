@@ -34,6 +34,7 @@ local Manifest: Manifest = {
         "src/libraries/Render.lua",
         "src/libraries/GameRoles.lua",
         "src/libraries/CameraAccess.lua",
+        "src/libraries/Fling.lua",
 
         "src/guis/Wurst/Code/Cards.lua",
 
@@ -194,13 +195,6 @@ local Manifest: Manifest = {
             name = "Gravity",
             category = "World",
         },
-        {
-            path = "src/games/universal/Movement/SafeWalk.lua",
-            name = "Safe Walk",
-            category = "World",
-        },
-
-
         {
             path = "src/games/universal/Other/Disguise.lua",
             name = "Disguise",

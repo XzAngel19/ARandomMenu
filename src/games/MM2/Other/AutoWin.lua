@@ -63,10 +63,8 @@ function Module.init(runtime: any): any
 
     local safeAbovePosition: Vector3? = nil
     local savedCollide: {[Instance]: boolean} = {}
-    local savedCustomProps: {[BasePart]: PhysicalProperties?} = {}
     local victimSnapshots: {[BasePart]: {cframe: CFrame, anchored: boolean, canCollide: boolean}} = {}
     local toolConnections: {RBXScriptConnection} = {}
-    local flingAngle: number = 0
 
     local function updateWinOverlay(): ()
         if sheriffWinsStat and type(sheriffWinsStat.set) == "function" then
@@ -234,14 +232,6 @@ function Module.init(runtime: any): any
             end
         end
         table.clear(savedCollide)
-        for part: BasePart, oldProps: PhysicalProperties? in pairs(savedCustomProps) do
-            if part and part.Parent then
-                pcall(function(): ()
-                    part.CustomPhysicalProperties = oldProps
-                end)
-            end
-        end
-        table.clear(savedCustomProps)
 
         local character: Model?, humanoid: Humanoid?, root: BasePart? = characterParts()
         if humanoid then
@@ -280,27 +270,6 @@ function Module.init(runtime: any): any
                 end
                 pcall(function(): ()
                     (object :: BasePart).CanCollide = false
-                end)
-            end
-        end
-    end
-
-    local function enableCharacterFlingCollisions(character: Model): ()
-        local heavyProps: PhysicalProperties = PhysicalProperties.new(100, 0.3, 0.5, 1, 1)
-        for _, object: Instance in ipairs(character:GetChildren()) do
-            if object:IsA("BasePart") then
-                local part: BasePart = object :: BasePart
-                if savedCollide[part] == nil then
-                    savedCollide[part] = part.CanCollide
-                end
-                if savedCustomProps[part] == nil then
-                    pcall(function(): ()
-                        savedCustomProps[part] = part.CustomPhysicalProperties
-                    end)
-                end
-                pcall(function(): ()
-                    part.CanCollide = true
-                    part.CustomPhysicalProperties = heavyProps
                 end)
             end
         end
@@ -618,10 +587,8 @@ function Module.init(runtime: any): any
         return findLocalTool("Gun") ~= nil
     end
 
-    -- Controlled, bounded Fling on the Sheriff: waits for map/character warmup,
-    -- uses state.mm2PerformFling with a returnCFrame to safeAbovePosition when
-    -- available (or bounded 10000-stud/s impulse fallback so our character
-    -- never enters Roblox's floating-point NullZone or void).
+    -- Controlled, bounded Fling on the Sheriff. The shared MM2 controller
+    -- owns the contact session and return; there is no local physics fallback.
     local function flingSheriffStep(
         character: Model,
         humanoid: Humanoid,
@@ -690,54 +657,10 @@ function Module.init(runtime: any): any
             return true
         end
 
-        if type(state.mm2FlingStep) == "function" then
-            local okStep: boolean, res: any = pcall(
-                state.mm2FlingStep,
-                character,
-                humanoid,
-                root,
-                sheriff,
-                savedCollide,
-                savedCustomProps
-            )
-            if okStep and res == true then
-                return true
-            end
-            holdAboveMap(character, humanoid, root)
-            return false
-        end
-
-        if services and services.activity then
-            pcall(function(): ()
-                services.activity.set("fling", true)
-            end)
-        end
-        enableCharacterFlingCollisions(character)
-        flingAngle = (flingAngle + 100) % 360
-        local phase: number = math.floor(flingAngle / 100) % 4
-        local sweepOffset: CFrame = if phase == 0
-            then CFrame.new(0, 1.5, 0)
-            elseif phase == 1 then CFrame.new(0, -1.5, 0)
-            elseif phase == 2 then CFrame.new(2.0, 1.2, -2.0)
-            else CFrame.new(-2.0, -1.2, 2.0)
-        local sheriffVel: Vector3 = Vector3.zero
-        pcall(function(): ()
-            sheriffVel = sheriffRoot.AssemblyLinearVelocity
-        end)
-        local targetCF: CFrame = CFrame.new(sheriffPos + sheriffVel * 0.08)
-            * sweepOffset
-            * CFrame.Angles(math.rad(flingAngle), math.rad(flingAngle), 0)
-        pcall(function(): ()
-            if humanoid.Sit then
-                humanoid.Sit = false
-            end
-            humanoid.AutoRotate = false
-            root.CFrame = targetCF
-            character:PivotTo(targetCF)
-            root.AssemblyLinearVelocity = Vector3.new(10000, 12000, 10000)
-            root.AssemblyAngularVelocity = Vector3.new(12000, 12000, 12000)
-        end)
-        return true
+        -- No shared controller means no Fling action. Never fall back to
+        -- extreme local velocities or a second CFrame writer.
+        holdAboveMap(character, humanoid, root)
+        return false
     end
 
     local function autoWinTick(): ()

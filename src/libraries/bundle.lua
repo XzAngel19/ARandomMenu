@@ -1,5 +1,5 @@
 return {
-    stamp = "v140-20261026-touchfling-silentaim-sorted-ui",
+    stamp = "v141-20261026-fling-autofarm-safewalk-cleanup",
     files = {
         ["src/Profile/135856908115931.lua"] = [[
 --!strict
@@ -1558,13 +1558,6 @@ return Module
 
 ]],
         ["src/games/MM2/Blatant/Fling.lua"] = [[
-export type Runtime = {
-    framework: any,
-    entity: any,
-    host: any,
-    services: any,
-}
-
 local Module = {
     Name = "MM2 Fling",
     Events = {} :: {[string]: any},
@@ -1576,12 +1569,14 @@ local activeCleanup: (() -> ())? = nil
 function Module.init(runtime: any): any
     local host: any = state.frameworkEnvironment
     local core: any = state.mm2Core
+    local physics: any = state.flingPhysics
     assert(core, "MM2 Fling requires the MM2 core")
+    assert(physics, "MM2 Fling requires the shared physics library")
+
     local Players: any = host.Players
     local LocalPlayer: any = host.LocalPlayer
     local getCharacterParts: any = host.getCharacterParts
     local notify: any = host.notify
-    local activity: any = services.activity
     local protectedTargets: any = services.protectedTargets
     local gameBridge: any = services.gameBridge
     local createUniversalFeature: any = host.createUniversalFeature
@@ -1595,376 +1590,139 @@ function Module.init(runtime: any): any
     local findPlayerByText: any = host.findPlayerByText
     local configData: any = host.configData
 
-    local workspace: any = host.workspace
-
     local findMurderer: any = core.findMurderer
     local findSheriff: any = core.findSheriff
     local getPlayerRole: any = core.getPlayerRole
     local getPlayerWeapon: any = core.getPlayerWeapon
     local isPlayerAlive: any = core.isPlayerAlive
 
-    local flingRunning: boolean = false
     local flingTargetName: string = ""
     local autoFlingSelected: boolean = false
     local lastAutoFlingAt: number = 0
-    local lastSafeOldPos: CFrame? = nil
-    local stepAngle: number = 0
+    local sequenceNumber: number = 0
 
-    local function setFlingRunning(running: boolean): ()
-        flingRunning = running
-        activity.set("fling", running)
-    end
-
-    -- Single-step helper using YARHM's FPos values for callers that step per frame.
-    local function flingSingleStep(
-        character: Model,
-        humanoid: Humanoid,
-        root: BasePart,
-        targetPlayer: Player
-    ): boolean
-        local tChar: Model? = targetPlayer and targetPlayer.Character
-        if not tChar then
+    local function roundIsActive(): boolean
+        if type(core.isRoundLifecycleActive) ~= "function" then
             return false
         end
-        local tHum: Humanoid? = tChar:FindFirstChildOfClass("Humanoid")
-        local tRoot: BasePart? = (tHum and tHum.RootPart)
-            or (tChar:FindFirstChild("HumanoidRootPart") :: BasePart?)
-            or (tChar:FindFirstChild("Head") :: BasePart?)
-        if not tRoot or (tHum and tHum.Health <= 0) then
+        local ok: boolean, active: any = pcall(core.isRoundLifecycleActive)
+        if not ok or active ~= true then
             return false
         end
-        activity.set("fling", true)
-        stepAngle = (stepAngle + 100) % 360
-        local moveDir: Vector3 = if tHum then tHum.MoveDirection else Vector3.zero
-        local posOffset: CFrame = CFrame.new(0, 1.5, 0) + moveDir * (tRoot.Velocity.Magnitude / 1.25)
-        local angOffset: CFrame = CFrame.Angles(math.rad(stepAngle), 0, 0)
-        local targetCF: CFrame = CFrame.new(tRoot.Position) * posOffset * angOffset
-        pcall(function(): ()
-            humanoid:SetStateEnabled(Enum.HumanoidStateType.Seated, false)
-            root.CFrame = targetCF
-            character:SetPrimaryPartCFrame(targetCF)
-            root.Velocity = Vector3.new(9e7, 9e7 * 10, 9e7)
-            root.RotVelocity = Vector3.new(9e8, 9e8, 9e8)
-        end)
+        if type(core.findMM2Map) == "function" then
+            local okMap: boolean, map: any = pcall(core.findMM2Map)
+            return okMap and map ~= nil
+        end
         return true
     end
 
-    -- YARHM SkidFling / miniFling implementation with return/void safety checks
-    -- so the local player is never left flying or killed in the void.
+    local function localIsAlive(): boolean
+        local character: Model?, humanoid: Humanoid?, root: BasePart? =
+            getCharacterParts()
+        return character ~= nil and humanoid ~= nil and root ~= nil
+            and humanoid.Health > 0 and root.Parent ~= nil
+    end
+
+    local function targetIsValid(target: Player?): boolean
+        if not target or target == LocalPlayer or target.Parent ~= Players
+            or protectedTargets.isProtected(target) then
+            return false
+        end
+        if type(isPlayerAlive) == "function" and not isPlayerAlive(target) then
+            return false
+        end
+        local character: Model? = target.Character
+        local humanoid: Humanoid? = character
+            and character:FindFirstChildOfClass("Humanoid") :: Humanoid?
+        local root: BasePart? = (humanoid and humanoid.RootPart)
+            or (character and character:FindFirstChild("HumanoidRootPart") :: BasePart?)
+        return character ~= nil and humanoid ~= nil and root ~= nil
+            and humanoid.Health > 0 and root.Parent ~= nil and not root.Anchored
+    end
+
+    local function canAct(target: Player?): boolean
+        return Module.Initialized and roundIsActive() and localIsAlive()
+            and targetIsValid(target)
+    end
+
     local function performFling(targetPlayer: Player?, options: {[string]: any}?): boolean
-        if not Module.Initialized or not targetPlayer then
-            return false
-        end
-        if protectedTargets.isProtected(targetPlayer) then
-            notify("player protected")
-            return false
-        end
         local silent: boolean = type(options) == "table" and options.silent == true
-        local TimeToWait: number = (type(options) == "table" and tonumber(options.duration)) or 2.0
-        local shouldStop: (() -> boolean)? = type(options) == "table"
-            and type(options.shouldStop) == "function"
-            and options.shouldStop
-            or nil
-
-        if flingRunning then
-            if not silent then
-                notify("fling already running")
+        if not canAct(targetPlayer) then
+            if not silent and Module.Initialized and not roundIsActive() then
+                notify("Fling requires an active MM2 round.")
+            elseif not silent then
+                notify("No living, valid fling target is available.")
             end
             return false
         end
-
-        setFlingRunning(true)
-
-        local function runSkidFling(): boolean
-            local Character: Model?, Humanoid: Humanoid?, RootPart: BasePart? = getCharacterParts()
-            if Character and Humanoid and not RootPart then
-                RootPart = Humanoid.RootPart
+        if physics.isRunning() then
+            if not silent then
+                notify("A fling is already running.")
             end
-            if not Character or not Humanoid or not RootPart or Humanoid.Health <= 0 then
-                setFlingRunning(false)
-                if not silent then
-                    notify("character not ready")
-                end
-                return false
-            end
-
-            local TCharacter: Model? = targetPlayer.Character
-            if not TCharacter then
-                setFlingRunning(false)
-                if not silent then
-                    notify("No valid character of said target player. May have died.")
-                end
-                return false
-            end
-
-            local THumanoid: Humanoid? = TCharacter:FindFirstChildOfClass("Humanoid")
-            local TRootPart: BasePart? = (THumanoid and THumanoid.RootPart)
-                or (TCharacter:FindFirstChild("HumanoidRootPart") :: BasePart?)
-            local THead: BasePart? = TCharacter:FindFirstChild("Head") :: BasePart?
-            local Accessory: Accessory? = TCharacter:FindFirstChildOfClass("Accessory")
-            local Handle: BasePart? = (Accessory and Accessory:FindFirstChild("Handle")) :: BasePart?
-
-            if not TCharacter:FindFirstChildWhichIsA("BasePart") then
-                setFlingRunning(false)
-                return false
-            end
-
-            local OldPos: CFrame
-            if type(options) == "table" and typeof(options.returnCFrame) == "CFrame" then
-                OldPos = options.returnCFrame
-                lastSafeOldPos = OldPos
-            elseif RootPart.Velocity.Magnitude < 50 then
-                OldPos = RootPart.CFrame
-                lastSafeOldPos = OldPos
+            return false
+        end
+        if physics.isTouchEnabled() then
+            if type(state.setTouchFlingEnabled) == "function" then
+                state.setTouchFlingEnabled(false)
             else
-                OldPos = lastSafeOldPos or RootPart.CFrame
+                physics.setTouchEnabled(false)
             end
+        end
 
-            local savedDestroyHeight: number = workspace.FallenPartsDestroyHeight
-            if savedDestroyHeight ~= savedDestroyHeight or math.abs(savedDestroyHeight) > 1e6 then
-                savedDestroyHeight = -500
-            end
-
-            local camera: Camera? = workspace.CurrentCamera
-            local savedCameraSubject: any = camera and camera.CameraSubject or nil
-            local BV: BodyVelocity? = nil
-            local flungTarget: boolean = false
-
-            local ok: boolean, err: any = pcall(function(): ()
-                if camera then
-                    if THead then
-                        camera.CameraSubject = THead
-                    elseif not THead and Handle then
-                        camera.CameraSubject = Handle
-                    elseif THumanoid and TRootPart then
-                        camera.CameraSubject = THumanoid
-                    end
-                end
-
-                -- YARHM FPos: exact CFrame + PrimaryPartCFrame + 9e7/9e8 Velocity & RotVelocity,
-                -- guarded so we never teleport our own RootPart into the void/sky after the target
-                -- has already been launched.
-                local function FPos(BasePart: BasePart, Pos: CFrame, Ang: CFrame): boolean
-                    if not flingRunning then
-                        return false
-                    end
-                    if shouldStop and shouldStop() then
-                        return false
-                    end
-                    if not RootPart or not RootPart.Parent or not Character or not Character.Parent then
-                        return false
-                    end
-                    if not BasePart or not BasePart.Parent or BasePart.Parent ~= targetPlayer.Character then
-                        return false
-                    end
-                    local bPos: Vector3 = BasePart.Position
-                    if bPos.Y <= savedDestroyHeight + 25 or bPos.Y >= 2500 then
-                        flungTarget = true
-                        return false
-                    end
-                    if (bPos - OldPos.Position).Magnitude > 650 then
-                        flungTarget = true
-                        return false
-                    end
-                    local targetCF: CFrame = CFrame.new(bPos) * Pos * Ang
-                    RootPart.CFrame = targetCF
-                    if Character.PrimaryPart == nil then
-                        Character.PrimaryPart = RootPart
-                    end
-                    Character:SetPrimaryPartCFrame(targetCF)
-                    RootPart.Velocity = Vector3.new(9e7, 9e7 * 10, 9e7)
-                    RootPart.RotVelocity = Vector3.new(9e8, 9e8, 9e8)
+        local externalStop: any = type(options) == "table"
+            and options.shouldStop or nil
+        local duration: number = if type(options) == "table"
+            then tonumber(options.duration) or 1.4
+            else 1.4
+        if duration ~= duration or math.abs(duration) == math.huge then
+            duration = 1.4
+        end
+        duration = math.clamp(duration, 0.1, 3)
+        local started: boolean = physics.start(targetPlayer, {
+            duration = duration,
+            blocking = type(options) == "table" and options.blocking == true,
+            returnCFrame = type(options) == "table"
+                and options.returnCFrame or nil,
+            restorePosition = if type(options) == "table"
+                then options.restorePosition else nil,
+            shouldStop = function(): boolean
+                if not canAct(targetPlayer) then
                     return true
                 end
-
-                local function shouldStopLoop(BasePart: BasePart, startTime: number): boolean
-                    if not flingRunning then
-                        return true
-                    end
-                    if shouldStop and shouldStop() then
-                        return true
-                    end
-                    if not BasePart or BasePart.Parent ~= targetPlayer.Character then
-                        return true
-                    end
-                    if targetPlayer.Parent ~= Players or targetPlayer.Character ~= TCharacter then
-                        return true
-                    end
-                    if not THumanoid or THumanoid.Sit or THumanoid.Health <= 0 then
-                        if THumanoid and THumanoid.Health <= 0 then
-                            flungTarget = true
-                        end
-                        return true
-                    end
-                    if not RootPart or not RootPart.Parent or not Humanoid or Humanoid.Health <= 0 then
-                        return true
-                    end
-                    if BasePart.Velocity.Magnitude > 500 then
-                        flungTarget = true
-                        return true
-                    end
-                    local bPos: Vector3 = BasePart.Position
-                    if bPos.Y <= savedDestroyHeight + 25 or bPos.Y >= 2500 or (bPos - OldPos.Position).Magnitude > 650 then
-                        flungTarget = true
-                        return true
-                    end
-                    if tick() > startTime + TimeToWait then
-                        return true
-                    end
-                    return false
+                if type(externalStop) == "function" then
+                    local ok: boolean, stop: any = pcall(externalStop)
+                    return not ok or stop == true
                 end
-
-                local function stepFPos(
-                    BasePart: BasePart,
-                    Pos: CFrame,
-                    Ang: CFrame,
-                    startTime: number
-                ): boolean
-                    if shouldStopLoop(BasePart, startTime) then
-                        return false
-                    end
-                    if not FPos(BasePart, Pos, Ang) then
-                        return false
-                    end
-                    task.wait()
-                    return not shouldStopLoop(BasePart, startTime)
+                return false
+            end,
+        })
+        if started and type(options) == "table" and options.blocking == true then
+            local deadline: number = os.clock() + math.clamp(duration, 0.1, 3) + 0.5
+            while physics.isRunning() and os.clock() < deadline do
+                if not canAct(targetPlayer) then
+                    physics.cancel()
+                    break
                 end
-
-                -- YARHM SFBasePart
-                local function SFBasePart(BasePart: BasePart): ()
-                    local Time: number = tick()
-                    local Angle: number = 0
-
-                    repeat
-                        if RootPart and THumanoid then
-                            if BasePart.Velocity.Magnitude < 50 then
-                                Angle = Angle + 100
-
-                                if not stepFPos(BasePart, CFrame.new(0, 1.5, 0) + THumanoid.MoveDirection * BasePart.Velocity.Magnitude / 1.25, CFrame.Angles(math.rad(Angle), 0, 0), Time) then break end
-                                if not stepFPos(BasePart, CFrame.new(0, -1.5, 0) + THumanoid.MoveDirection * BasePart.Velocity.Magnitude / 1.25, CFrame.Angles(math.rad(Angle), 0, 0), Time) then break end
-                                if not stepFPos(BasePart, CFrame.new(2.25, 1.5, -2.25) + THumanoid.MoveDirection * BasePart.Velocity.Magnitude / 1.25, CFrame.Angles(math.rad(Angle), 0, 0), Time) then break end
-                                if not stepFPos(BasePart, CFrame.new(-2.25, -1.5, 2.25) + THumanoid.MoveDirection * BasePart.Velocity.Magnitude / 1.25, CFrame.Angles(math.rad(Angle), 0, 0), Time) then break end
-                                if not stepFPos(BasePart, CFrame.new(0, 1.5, 0) + THumanoid.MoveDirection, CFrame.Angles(math.rad(Angle), 0, 0), Time) then break end
-                                if not stepFPos(BasePart, CFrame.new(0, -1.5, 0) + THumanoid.MoveDirection, CFrame.Angles(math.rad(Angle), 0, 0), Time) then break end
-                            else
-                                local walkSpd: number = THumanoid.WalkSpeed
-                                local tRootVelMag: number = if TRootPart then TRootPart.Velocity.Magnitude else BasePart.Velocity.Magnitude
-
-                                if not stepFPos(BasePart, CFrame.new(0, 1.5, walkSpd), CFrame.Angles(math.rad(90), 0, 0), Time) then break end
-                                if not stepFPos(BasePart, CFrame.new(0, -1.5, -walkSpd), CFrame.Angles(0, 0, 0), Time) then break end
-                                if not stepFPos(BasePart, CFrame.new(0, 1.5, walkSpd), CFrame.Angles(math.rad(90), 0, 0), Time) then break end
-                                if not stepFPos(BasePart, CFrame.new(0, 1.5, tRootVelMag / 1.25), CFrame.Angles(math.rad(90), 0, 0), Time) then break end
-                                if not stepFPos(BasePart, CFrame.new(0, -1.5, -tRootVelMag / 1.25), CFrame.Angles(0, 0, 0), Time) then break end
-                                if not stepFPos(BasePart, CFrame.new(0, 1.5, tRootVelMag / 1.25), CFrame.Angles(math.rad(90), 0, 0), Time) then break end
-                                if not stepFPos(BasePart, CFrame.new(0, -1.5, 0), CFrame.Angles(math.rad(90), 0, 0), Time) then break end
-                                if not stepFPos(BasePart, CFrame.new(0, -1.5, 0), CFrame.Angles(0, 0, 0), Time) then break end
-                                if not stepFPos(BasePart, CFrame.new(0, -1.5, 0), CFrame.Angles(math.rad(-90), 0, 0), Time) then break end
-                                if not stepFPos(BasePart, CFrame.new(0, -1.5, 0), CFrame.Angles(0, 0, 0), Time) then break end
-                            end
-                        else
-                            break
-                        end
-                    until shouldStopLoop(BasePart, Time)
-                end
-
-                workspace.FallenPartsDestroyHeight = 0 / 0
-
-                local epixVel: BodyVelocity = Instance.new("BodyVelocity")
-                epixVel.Name = "EpixVel"
-                epixVel.Parent = RootPart
-                epixVel.Velocity = Vector3.new(9e8, 9e8, 9e8)
-                epixVel.MaxForce = Vector3.new(1 / 0, 1 / 0, 1 / 0)
-                BV = epixVel
-
-                Humanoid:SetStateEnabled(Enum.HumanoidStateType.Seated, false)
-
-                if TRootPart and THead then
-                    if (TRootPart.CFrame.p - THead.CFrame.p).Magnitude > 5 then
-                        SFBasePart(THead)
-                    else
-                        SFBasePart(TRootPart)
+                if type(externalStop) == "function" then
+                    local ok: boolean, stop: any = pcall(externalStop)
+                    if not ok or stop == true then
+                        physics.cancel()
+                        break
                     end
-                elseif TRootPart and not THead then
-                    SFBasePart(TRootPart)
-                elseif not TRootPart and THead then
-                    SFBasePart(THead)
-                elseif not TRootPart and not THead and Accessory and Handle then
-                    SFBasePart(Handle)
-                elseif not silent then
-                    notify("Can't find a proper part of target player to fling.")
                 end
-            end)
-
-            if BV then
-                pcall(function(): ()
-                    BV:Destroy()
-                end)
-                BV = nil
+                task.wait()
             end
-
-            local finalChar: Model?, finalHumanoid: Humanoid?, finalRoot: BasePart? =
-                getCharacterParts()
-            if finalHumanoid then
-                pcall(function(): ()
-                    finalHumanoid:SetStateEnabled(Enum.HumanoidStateType.Seated, true)
-                end)
-                if camera then
-                    pcall(function(): ()
-                        camera.CameraSubject = savedCameraSubject or finalHumanoid
-                    end)
-                end
+            if physics.isRunning() then
+                physics.cancel()
             end
-
-            if finalChar and finalHumanoid and finalRoot and finalRoot.Parent then
-                local returnStart: number = tick()
-                local returnTargetCF: CFrame = OldPos * CFrame.new(0, 0.5, 0)
-                repeat
-                    pcall(function(): ()
-                        finalRoot.CFrame = returnTargetCF
-                        if finalChar.PrimaryPart == nil then
-                            finalChar.PrimaryPart = finalRoot
-                        end
-                        finalChar:SetPrimaryPartCFrame(returnTargetCF)
-                        finalHumanoid:ChangeState("GettingUp")
-                        for _, x: Instance in ipairs(finalChar:GetDescendants()) do
-                            if x:IsA("BasePart") then
-                                (x :: BasePart).Velocity = Vector3.new();
-                                (x :: BasePart).RotVelocity = Vector3.new();
-                                (x :: BasePart).AssemblyLinearVelocity = Vector3.new();
-                                (x :: BasePart).AssemblyAngularVelocity = Vector3.new()
-                            end
-                        end
-                    end)
-                    task.wait()
-                    finalChar, finalHumanoid, finalRoot = getCharacterParts()
-                until not finalRoot
-                    or not finalRoot.Parent
-                    or not finalHumanoid
-                    or finalHumanoid.Health <= 0
-                    or (finalRoot.Position - OldPos.p).Magnitude < 25
-                    or tick() - returnStart > 1.5
-            end
-
-            pcall(function(): ()
-                workspace.FallenPartsDestroyHeight = savedDestroyHeight
-            end)
-
-            setFlingRunning(false)
-            if not silent and not ok then
-                notify("fling failed: " .. tostring(err))
-            end
-            return flungTarget
         end
-
-        if type(options) == "table" and options.blocking == true then
-            return runSkidFling()
+        if not started and not silent then
+            notify("The fling could not start safely.")
         end
-        task.spawn(runSkidFling)
-        return true
+        return started
     end
 
     state.mm2PerformFling = performFling
-    state.mm2FlingStep = flingSingleStep
 
     local function refreshRoles(): ()
         if type(state.clearRoleMemo) == "function" then
@@ -1979,8 +1737,7 @@ function Module.init(runtime: any): any
         refreshRoles()
         if type(getPlayerWeapon) == "function" then
             for _, player: Player in ipairs(Players:GetPlayers()) do
-                if player ~= LocalPlayer
-                    and (type(isPlayerAlive) ~= "function" or isPlayerAlive(player))
+                if player ~= LocalPlayer and targetIsValid(player)
                     and getPlayerWeapon(player, "Gun", false) == nil
                     and getPlayerWeapon(player, "Knife", false) ~= nil then
                     return player
@@ -1989,31 +1746,27 @@ function Module.init(runtime: any): any
         end
         if type(findMurderer) == "function" then
             local target: Player? = findMurderer()
-            if target
-                and target ~= LocalPlayer
-                and (type(isPlayerAlive) ~= "function" or isPlayerAlive(target))
+            if target and targetIsValid(target)
                 and (type(getPlayerWeapon) ~= "function"
                     or getPlayerWeapon(target, "Gun", false) == nil) then
                 local role: any = type(getPlayerRole) == "function"
-                    and getPlayerRole(target)
-                    or "Murderer"
+                    and getPlayerRole(target) or "Murderer"
                 if role ~= "Hero" and role ~= "Sheriff" and role ~= "Dead" then
                     return target
                 end
             end
         end
         for _, player: Player in ipairs(Players:GetPlayers()) do
-            if player ~= LocalPlayer
-                and (type(isPlayerAlive) ~= "function" or isPlayerAlive(player))
+            if player ~= LocalPlayer and targetIsValid(player)
                 and (type(getPlayerWeapon) ~= "function"
                     or getPlayerWeapon(player, "Gun", false) == nil) then
                 local role: any = type(getPlayerRole) == "function"
-                    and getPlayerRole(player)
-                    or nil
+                    and getPlayerRole(player) or nil
                 if not role and type(gameBridge.playerRole) == "function" then
-                    local okRole: boolean, r: any = pcall(gameBridge.playerRole, player)
+                    local okRole: boolean, resolved: any =
+                        pcall(gameBridge.playerRole, player)
                     if okRole then
-                        role = r
+                        role = resolved
                     end
                 end
                 if role == "Murderer" then
@@ -2028,8 +1781,7 @@ function Module.init(runtime: any): any
         refreshRoles()
         if type(getPlayerWeapon) == "function" then
             for _, player: Player in ipairs(Players:GetPlayers()) do
-                if player ~= LocalPlayer
-                    and (type(isPlayerAlive) ~= "function" or isPlayerAlive(player))
+                if player ~= LocalPlayer and targetIsValid(player)
                     and getPlayerWeapon(player, "Knife", false) == nil
                     and getPlayerWeapon(player, "Gun", false) ~= nil then
                     return player
@@ -2038,31 +1790,27 @@ function Module.init(runtime: any): any
         end
         if type(findSheriff) == "function" then
             local target: Player? = findSheriff()
-            if target
-                and target ~= LocalPlayer
-                and (type(isPlayerAlive) ~= "function" or isPlayerAlive(target))
+            if target and targetIsValid(target)
                 and (type(getPlayerWeapon) ~= "function"
                     or getPlayerWeapon(target, "Knife", false) == nil) then
                 local role: any = type(getPlayerRole) == "function"
-                    and getPlayerRole(target)
-                    or "Sheriff"
+                    and getPlayerRole(target) or "Sheriff"
                 if role ~= "Murderer" and role ~= "Dead" then
                     return target
                 end
             end
         end
         for _, player: Player in ipairs(Players:GetPlayers()) do
-            if player ~= LocalPlayer
-                and (type(isPlayerAlive) ~= "function" or isPlayerAlive(player))
+            if player ~= LocalPlayer and targetIsValid(player)
                 and (type(getPlayerWeapon) ~= "function"
                     or getPlayerWeapon(player, "Knife", false) == nil) then
                 local role: any = type(getPlayerRole) == "function"
-                    and getPlayerRole(player)
-                    or nil
+                    and getPlayerRole(player) or nil
                 if not role and type(gameBridge.playerRole) == "function" then
-                    local okRole: boolean, r: any = pcall(gameBridge.playerRole, player)
+                    local okRole: boolean, resolved: any =
+                        pcall(gameBridge.playerRole, player)
                     if okRole then
-                        role = r
+                        role = resolved
                     end
                 end
                 if role == "Sheriff" or role == "Hero" then
@@ -2074,7 +1822,9 @@ function Module.init(runtime: any): any
     end
 
     local function resolveSelectedTargetPlayer(): Player?
-        local query: string = string.lower(string.gsub(flingTargetName or "", "^%s*(.-)%s*$", "%1"))
+        local query: string = string.lower(string.gsub(
+            flingTargetName or "", "^%s*(.-)%s*$", "%1"
+        ))
         if query == "" then
             return nil
         end
@@ -2086,7 +1836,7 @@ function Module.init(runtime: any): any
         end
         if type(findPlayerByText) == "function" then
             local okFind: boolean, found: any = pcall(findPlayerByText, flingTargetName)
-            if okFind and found and found ~= LocalPlayer then
+            if okFind and targetIsValid(found) then
                 return found :: Player
             end
         end
@@ -2095,24 +1845,28 @@ function Module.init(runtime: any): any
         local partialMatch: Player? = nil
         for _, player: Player in ipairs(Players:GetPlayers()) do
             if player ~= LocalPlayer then
-                local uName: string = string.lower(tostring(player.Name or ""))
-                local dName: string = string.lower(tostring((player :: any).DisplayName or player.Name or ""))
-                local uCompact: string = string.gsub(uName, "%s+", "")
-                local dCompact: string = string.gsub(dName, "%s+", "")
-                if uName == query or dName == query or uCompact == compactQuery or dCompact == compactQuery then
+                local userName: string = string.lower(tostring(player.Name or ""))
+                local displayName: string = string.lower(tostring(
+                    (player :: any).DisplayName or player.Name or ""
+                ))
+                local userCompact: string = string.gsub(userName, "%s+", "")
+                local displayCompact: string = string.gsub(displayName, "%s+", "")
+                if userName == query or displayName == query
+                    or userCompact == compactQuery
+                    or displayCompact == compactQuery then
                     return player
                 end
                 if not prefixMatch and (
-                    string.sub(uName, 1, #query) == query
-                    or string.sub(dName, 1, #query) == query
+                    string.sub(userName, 1, #query) == query
+                    or string.sub(displayName, 1, #query) == query
                 ) then
                     prefixMatch = player
                 end
                 if not partialMatch and (
-                    string.find(uName, query, 1, true) ~= nil
-                    or string.find(dName, query, 1, true) ~= nil
-                    or string.find(uCompact, compactQuery, 1, true) ~= nil
-                    or string.find(dCompact, compactQuery, 1, true) ~= nil
+                    string.find(userName, query, 1, true) ~= nil
+                    or string.find(displayName, query, 1, true) ~= nil
+                    or string.find(userCompact, compactQuery, 1, true) ~= nil
+                    or string.find(displayCompact, compactQuery, 1, true) ~= nil
                 ) then
                     partialMatch = player
                 end
@@ -2121,14 +1875,17 @@ function Module.init(runtime: any): any
         return prefixMatch or partialMatch
     end
 
-    -- IMPORTANT: FlingFeature has category = true (group card), so its onToggle
-    -- MUST be a no-op because Cards.lua invokes onToggle(true) on group cards at boot!
     local FlingFeature: any = createUniversalFeature(
         "Fling",
-        "MM2 only: fling the murderer, sheriff or innocents",
+        "MM2 only: bounded physical contact against a round target",
         2,
         function(): () end,
-        {category = true, categoryName = "Exploits", registry = mm2Features, configKey = "MM2.Fling"}
+        {
+            category = true,
+            categoryName = "Exploits",
+            registry = mm2Features,
+            configKey = "MM2.Fling",
+        }
     )
 
     addActionOption(FlingFeature, "Fling Murderer", function(): ()
@@ -2136,7 +1893,7 @@ function Module.init(runtime: any): any
         if target then
             performFling(target)
         else
-            notify("No murderer was found.")
+            notify("No living murderer was found in this round.")
         end
     end)
     addActionOption(FlingFeature, "Fling Sheriff", function(): ()
@@ -2144,30 +1901,39 @@ function Module.init(runtime: any): any
         if target then
             performFling(target)
         else
-            notify("No sheriff or hero was found.")
+            notify("No living sheriff or hero was found in this round.")
         end
     end)
     addActionOption(FlingFeature, "Fling All Innocents", function(): ()
+        if not roundIsActive() or not localIsAlive() then
+            notify("Fling requires an active MM2 round and a living character.")
+            return
+        end
+        sequenceNumber += 1
+        local sequence: number = sequenceNumber
         refreshRoles()
         task.spawn(function(): ()
             for _, player: Player in ipairs(Players:GetPlayers()) do
-                if player ~= LocalPlayer
-                    and (type(isPlayerAlive) ~= "function" or isPlayerAlive(player)) then
+                if sequence ~= sequenceNumber or not roundIsActive()
+                    or not localIsAlive() then
+                    break
+                end
+                if targetIsValid(player) then
                     local hasKnife: boolean = type(getPlayerWeapon) == "function"
                         and getPlayerWeapon(player, "Knife", false) ~= nil
                     local hasGun: boolean = type(getPlayerWeapon) == "function"
                         and getPlayerWeapon(player, "Gun", false) ~= nil
                     local role: any = type(getPlayerRole) == "function"
-                        and getPlayerRole(player)
-                        or nil
+                        and getPlayerRole(player) or nil
                     if not role and type(gameBridge.playerRole) == "function" then
-                        local okRole: boolean, r: any = pcall(gameBridge.playerRole, player)
+                        local okRole: boolean, resolved: any =
+                            pcall(gameBridge.playerRole, player)
                         if okRole then
-                            role = r
+                            role = resolved
                         end
                     end
                     if not hasKnife and not hasGun and role == "Innocent" then
-                        performFling(player, {blocking = true})
+                        performFling(player, {blocking = true, silent = true})
                         task.wait(0.05)
                     end
                 end
@@ -2176,43 +1942,19 @@ function Module.init(runtime: any): any
     end)
 
     local function autoFlingTick(): ()
-        if not autoFlingSelected or flingRunning then
-            return
-        end
-        if os.clock() - lastAutoFlingAt < 0.35 then
-            return
-        end
-        local localChar: Model?, localHum: Humanoid?, localRoot: BasePart? = getCharacterParts()
-        if not localChar or not localHum or not localRoot or localHum.Health <= 0 then
+        if not autoFlingSelected or physics.isRunning() or physics.isTouchEnabled()
+            or os.clock() - lastAutoFlingAt < 0.35
+            or not roundIsActive() or not localIsAlive() then
             return
         end
         local target: Player? = resolveSelectedTargetPlayer()
-        if not target or protectedTargets.isProtected(target) then
-            return
-        end
-        if type(isPlayerAlive) == "function" and not isPlayerAlive(target) then
-            return
-        end
-        local targetChar: Model? = target.Character
-        local targetHum: Humanoid? = targetChar
-            and targetChar:FindFirstChildOfClass("Humanoid")
-            :: Humanoid?
-        local targetRoot: BasePart? = (targetHum and targetHum.RootPart)
-            or (targetChar and targetChar:FindFirstChild("HumanoidRootPart") :: BasePart?)
-        if not targetChar or not targetHum or targetHum.Health <= 0 or targetHum.Sit or not targetRoot then
-            return
-        end
-        local destroyHeight: number = workspace.FallenPartsDestroyHeight
-        if destroyHeight ~= destroyHeight or math.abs(destroyHeight) > 1e6 then
-            destroyHeight = -500
-        end
-        if targetRoot.Position.Y <= destroyHeight + 45 or targetRoot.Position.Y >= 2500 then
+        if not targetIsValid(target) then
             return
         end
         lastAutoFlingAt = os.clock()
         performFling(target, {
             silent = true,
-            duration = 2.0,
+            duration = 1.4,
             shouldStop = function(): boolean
                 return not autoFlingSelected
             end,
@@ -2238,8 +1980,8 @@ function Module.init(runtime: any): any
         end
     end)
 
-    -- Never auto-enable Auto Fling Selected Target or Touch Fling from a persisted config on injection:
-    -- they must only turn on when the user explicitly toggles them during the session.
+    -- These two options are deliberate session actions, never restored ON at
+    -- injection from a persisted configuration.
     if configData and type(configData.states) == "table" then
         configData.states["MM2.Fling.AutoFlingSelectedTarget"] = false
         configData.states["MM2.Fling.TouchFling"] = false
@@ -2251,12 +1993,11 @@ function Module.init(runtime: any): any
         false,
         function(value: boolean): ()
             if type(state.setTouchFlingEnabled) == "function" then
-                pcall(state.setTouchFlingEnabled, value == true)
+                state.setTouchFlingEnabled(value == true)
             end
         end,
-        "Walk into any player to send them flying on body contact (only active while enabled)."
+        "Walk into a player to transfer a bounded contact pulse. No teleport."
     )
-
     addToggleOption(
         FlingFeature,
         "Auto Fling Selected Target",
@@ -2266,28 +2007,30 @@ function Module.init(runtime: any): any
             if disconnectFeatureConnection then
                 disconnectFeatureConnection("MM2AutoFlingTarget")
             end
-            if autoFlingSelected and TaskManager and featureConnections then
+            if not autoFlingSelected then
+                physics.cancel()
+            elseif TaskManager and featureConnections then
                 lastAutoFlingAt = 0
                 featureConnections.MM2AutoFlingTarget =
                     TaskManager:Connect(autoFlingTick)
                 autoFlingTick()
             end
         end,
-        "Continuously flings the target entered in Target player whenever they are alive."
+        "Retries the selected living target only during an active MM2 round."
     )
     addInformationOption(
         FlingFeature,
-        "MM2 only. Pick a role action or enter a target player name."
+        "Active rounds only. Death, round end, target loss or OFF cancels the session."
     )
 
     activeCleanup = function(): ()
+        sequenceNumber += 1
         autoFlingSelected = false
         if disconnectFeatureConnection then
             disconnectFeatureConnection("MM2AutoFlingTarget")
         end
-        setFlingRunning(false)
+        physics.cancel()
         state.mm2PerformFling = nil
-        state.mm2FlingStep = nil
     end
     Module.Initialized = true
     return FlingFeature
@@ -6556,6 +6299,12 @@ function Module.init(_runtime: any): any
     local coinsCollectedStat: any = nil
     local farmTimeStat: any = nil
     local safeZonePlatform: Part? = nil
+    local enableGeneration: number = 0
+    local roundGeneration: number = 0
+    local rememberedBagAmount: number = 0
+    local rememberedBagLimit: number = 50
+    local rememberedFullHandled: boolean = false
+    local unsubscribeRoundPhase: (() -> ())? = nil
 
     local function formatFarmTime(totalSeconds: number): string
         local whole: number = math.max(0, math.floor(totalSeconds))
@@ -6660,12 +6409,41 @@ function Module.init(_runtime: any): any
         return character, humanoid, root
     end
 
+    local function livingRoundParts(): (Model?, Humanoid?, BasePart?)
+        local character: Model?, humanoid: Humanoid?, root: BasePart? = characterParts()
+        if not character or not humanoid or not root or humanoid.Health <= 0
+            or not root.Parent then
+            return character, humanoid, nil
+        end
+        if type(isRoundLifecycleActive) ~= "function"
+            or isRoundLifecycleActive() ~= true
+            or type(findMM2Map) ~= "function" or not findMM2Map() then
+            return character, humanoid, nil
+        end
+        return character, humanoid, root
+    end
+
     local function rootOf(player: Player?): BasePart?
         local character: Model? = player and player.Character
         if not character then
             return nil
         end
         return character:FindFirstChild("HumanoidRootPart") :: BasePart?
+    end
+
+    local function resetRememberedRound(): ()
+        rememberedBagAmount = 0
+        rememberedBagLimit = 50
+        rememberedFullHandled = false
+        roundGeneration += 1
+    end
+
+    if type(core.onRoundPhase) == "function" then
+        unsubscribeRoundPhase = core.onRoundPhase(function(phase: string): ()
+            if phase == "lobby" or phase == "map" then
+                resetRememberedRound()
+            end
+        end)
     end
 
     -- The pickup parts of the family in use, shared with Coin ESP.
@@ -6731,15 +6509,18 @@ function Module.init(_runtime: any): any
     -- of us (anchored), then slash. The slash uses the repo's own
     -- knife path (Events.HandleTouched per victim, as KnifeAura
     -- does) and falls back to the game's Stab remote like YARHM.
-    local function killAll(): ()
-        if type(getPlayerRole) ~= "function"
+    local function killAll(shouldContinue: (() -> boolean)?): ()
+        local function allowed(): boolean
+            return shouldContinue == nil or shouldContinue() == true
+        end
+        if not allowed() or type(getPlayerRole) ~= "function"
             or getPlayerRole(LocalPlayer) ~= "Murderer" then
             notify("Auto Farm: Kill All only works as the Murderer.")
             return
         end
         local character: Model?, humanoid: Humanoid?, myRoot: BasePart? =
-            characterParts()
-        if not character or not humanoid or not myRoot then
+            livingRoundParts()
+        if not character or not humanoid or not myRoot or not allowed() then
             return
         end
         local knife: Tool? = nil
@@ -6758,7 +6539,7 @@ function Module.init(_runtime: any): any
             -- never a fixed sleep: 0.3 s is the ceiling, not the cost.
             local equipDeadline: number = os.clock() + 0.3
             while knife.Parent ~= character
-                and os.clock() < equipDeadline do
+                and os.clock() < equipDeadline and allowed() do
                 task.wait()
             end
         end
@@ -6767,6 +6548,9 @@ function Module.init(_runtime: any): any
         end
         local victims: {BasePart} = {}
         for _, player: Player in ipairs(Players:GetPlayers()) do
+            if not allowed() then
+                break
+            end
             if player ~= LocalPlayer
                 and (type(isPlayerAlive) ~= "function" or isPlayerAlive(player)) then
                 local victimRoot: BasePart? = rootOf(player)
@@ -6780,10 +6564,25 @@ function Module.init(_runtime: any): any
                 end
             end
         end
+        local function releaseVictims(): ()
+            for _, victimRoot: BasePart in ipairs(victims) do
+                pcall(function(): ()
+                    victimRoot.Anchored = false
+                end)
+            end
+        end
         if #victims == 0 then
             return
         end
+        if not allowed() then
+            releaseVictims()
+            return
+        end
         task.wait(0.15)
+        if not allowed() then
+            releaseVictims()
+            return
+        end
         local stab: Instance? = knife:FindFirstChild("Stab")
         if stab and stab:IsA("RemoteEvent") then
             pcall(function(): ()
@@ -6797,6 +6596,10 @@ function Module.init(_runtime: any): any
             (knife :: Tool):Activate()
         end)
         for _, victimRoot: BasePart in ipairs(victims) do
+            if not allowed() then
+                releaseVictims()
+                return
+            end
             if handleTouched and handleTouched:IsA("RemoteEvent") then
                 pcall(function(): ()
                     (handleTouched :: RemoteEvent):FireServer(victimRoot)
@@ -6804,52 +6607,31 @@ function Module.init(_runtime: any): any
             end
             task.wait(0.05)
         end
-        task.delay(0.5, function(): ()
-            for _, victimRoot: BasePart in ipairs(victims) do
-                pcall(function(): ()
-                    victimRoot.Anchored = false
-                end)
-            end
-        end)
+        task.delay(0.5, releaseVictims)
         notify("Auto Farm: Kill All fired at " .. #victims .. " players.")
     end
 
-    -- Compact spin fling: park on the target spinning hard for a
-    -- couple of seconds; contact physics does the rest.
-    local function flingPlayer(target: Player?): ()
-        if not target then
+    local function flingPlayer(
+        target: Player?,
+        shouldContinue: (() -> boolean)?
+    ): ()
+        if not target or type(state.mm2PerformFling) ~= "function" then
             return
         end
-        if type(state.mm2PerformFling) == "function" then
-            pcall(state.mm2PerformFling, target, {
-                silent = true,
-                duration = 3.5,
-                blocking = true,
-            })
+        local character: Model?, humanoid: Humanoid?, root: BasePart? =
+            livingRoundParts()
+        if not character or not humanoid or not root then
             return
         end
-        local _, _, myRoot: BasePart? = characterParts()
-        if not myRoot then
-            return
-        end
-        local saved: CFrame = myRoot.CFrame
-        local startedAt: number = os.clock()
-        while os.clock() - startedAt < 2.2 do
-            local targetRoot: BasePart? = rootOf(target)
-            if not targetRoot then
-                break
-            end
-            pcall(function(): ()
-                myRoot.CFrame = targetRoot.CFrame
-                myRoot.AssemblyAngularVelocity = Vector3.new(0, 400, 0)
-                myRoot.AssemblyLinearVelocity = Vector3.zero
-            end)
-            task.wait()
-        end
-        pcall(function(): ()
-            myRoot.AssemblyAngularVelocity = Vector3.zero
-            myRoot.CFrame = saved
-        end)
+        pcall(state.mm2PerformFling, target, {
+            silent = true,
+            duration = 1.4,
+            blocking = true,
+            restorePosition = false,
+            shouldStop = function(): boolean
+                return shouldContinue ~= nil and shouldContinue() ~= true
+            end,
+        })
     end
 
     -- Auto grab gun + auto shoot: equip the dropped sheriff gun and
@@ -6860,8 +6642,9 @@ function Module.init(_runtime: any): any
         if os.clock() - lastShotAt < 0.22 then
             return false
         end
-        local character: Model?, humanoid: Humanoid? = characterParts()
-        if not character or not humanoid then
+        local character: Model?, humanoid: Humanoid?, root: BasePart? =
+            livingRoundParts()
+        if not character or not humanoid or not root then
             return false
         end
         local gun: Tool? = nil
@@ -6928,6 +6711,8 @@ function Module.init(_runtime: any): any
     end
 
     local function toggleAutoFarm(enabled: boolean): ()
+        enableGeneration += 1
+        local thisEnable: number = enableGeneration
         disconnectFeatureConnection("MM2AutoFarmTick")
         disconnectFeatureConnection("MM2AutoFarmStepped")
         disconnectFeatureConnection("MM2AutoFarmPreSim")
@@ -6943,11 +6728,11 @@ function Module.init(_runtime: any): any
             return
         end
 
-        local bagAmount: number = 0
-        local bagLimit: number = 50
+        local bagAmount: number = rememberedBagAmount
+        local bagLimit: number = rememberedBagLimit
         local busy: boolean = false
-        local fullHandled: boolean = false
-        local roundFullReached: boolean = false
+        local fullHandled: boolean = rememberedFullHandled
+        local roundFullReached: boolean = rememberedFullHandled
         local teleportedHomeThisRound: boolean = false
         local wasInActiveRound: boolean = false
         local scanCache: {Instance} = {}
@@ -6971,8 +6756,12 @@ function Module.init(_runtime: any): any
         local currentTargetCoin: Instance? = nil
         local activeWalkDir: Vector3? = nil
         local activeWalkTarget: Vector3? = nil
-        local farmBodyVelocity: BodyVelocity? = nil
-        local farmBodyGyro: BodyGyro? = nil
+        local belowDestination: Vector3? = nil
+        local belowHold: boolean = false
+        local belowDeltaTime: number = 1 / 60
+        local farmAttachment: Attachment? = nil
+        local farmLinearVelocity: LinearVelocity? = nil
+        local farmAlignOrientation: AlignOrientation? = nil
         local savedCollide: {[Instance]: boolean} = {}
         local engagedMode: string? = nil
         local savedWalkSpeed: number? = nil
@@ -6985,59 +6774,62 @@ function Module.init(_runtime: any): any
             return math.atan2(-look.X, -look.Z)
         end
 
-        local function destroyFarmBodyMover(): ()
-            if farmBodyVelocity then
-                pcall(function(): ()
-                    farmBodyVelocity:Destroy()
-                end)
-                farmBodyVelocity = nil
+        local function destroyFarmConstraints(): ()
+            for _, constraint: any in ipairs({farmLinearVelocity, farmAlignOrientation}) do
+                if constraint then
+                    pcall(function(): ()
+                        constraint:Destroy()
+                    end)
+                end
             end
-            if farmBodyGyro then
+            farmLinearVelocity = nil
+            farmAlignOrientation = nil
+            if farmAttachment then
                 pcall(function(): ()
-                    farmBodyGyro:Destroy()
+                    farmAttachment:Destroy()
                 end)
-                farmBodyGyro = nil
+                farmAttachment = nil
             end
         end
 
-        local function ensureFarmBodyMover(
+        -- Roblox constraint model: LinearVelocity owns translation and
+        -- AlignOrientation owns upright yaw. They are the only per-frame
+        -- Below writers; no CFrame/Velocity racing with the solver.
+        local function ensureFarmConstraints(
             root: BasePart,
             velocity: Vector3,
             yaw: number
         ): ()
             pcall(function(): ()
-                if not farmBodyVelocity or farmBodyVelocity.Parent ~= root then
-                    if farmBodyVelocity then
-                        farmBodyVelocity:Destroy()
-                    end
-                    local bv: BodyVelocity = Instance.new("BodyVelocity")
-                    bv.Name = "WurstAutoFarmBV"
-                    bv.MaxForce = Vector3.new(math.huge, math.huge, math.huge)
-                    bv.P = 25000
-                    bv.Velocity = velocity
-                    bv.Parent = root
-                    farmBodyVelocity = bv
-                else
-                    farmBodyVelocity.MaxForce = Vector3.new(math.huge, math.huge, math.huge)
-                    farmBodyVelocity.Velocity = velocity
+                if not farmAttachment or farmAttachment.Parent ~= root then
+                    destroyFarmConstraints()
+                    local attachment: Attachment = Instance.new("Attachment")
+                    attachment.Name = "WurstAutoFarmAttachment"
+                    attachment.Parent = root
+                    farmAttachment = attachment
                 end
-
-                if not farmBodyGyro or farmBodyGyro.Parent ~= root then
-                    if farmBodyGyro then
-                        farmBodyGyro:Destroy()
-                    end
-                    local bg: BodyGyro = Instance.new("BodyGyro")
-                    bg.Name = "WurstAutoFarmBG"
-                    bg.MaxTorque = Vector3.new(math.huge, math.huge, math.huge)
-                    bg.P = 50000
-                    bg.D = 500
-                    bg.CFrame = CFrame.Angles(0, yaw, 0)
-                    bg.Parent = root
-                    farmBodyGyro = bg
-                else
-                    farmBodyGyro.MaxTorque = Vector3.new(math.huge, math.huge, math.huge)
-                    farmBodyGyro.CFrame = CFrame.Angles(0, yaw, 0)
+                if not farmLinearVelocity or farmLinearVelocity.Parent ~= root then
+                    local lv: LinearVelocity = Instance.new("LinearVelocity")
+                    lv.Name = "WurstAutoFarmLV"
+                    lv.Attachment0 = farmAttachment
+                    lv.VelocityConstraintMode = Enum.VelocityConstraintMode.Vector
+                    lv.RelativeTo = Enum.ActuatorRelativeTo.World
+                    lv.MaxForce = math.huge
+                    lv.Parent = root
+                    farmLinearVelocity = lv
                 end
+                if not farmAlignOrientation or farmAlignOrientation.Parent ~= root then
+                    local ao: AlignOrientation = Instance.new("AlignOrientation")
+                    ao.Name = "WurstAutoFarmAO"
+                    ao.Attachment0 = farmAttachment
+                    ao.Mode = Enum.OrientationAlignmentMode.OneAttachment
+                    ao.MaxTorque = math.huge
+                    ao.Responsiveness = 50
+                    ao.Parent = root
+                    farmAlignOrientation = ao
+                end
+                farmLinearVelocity.VectorVelocity = velocity
+                farmAlignOrientation.CFrame = CFrame.Angles(0, yaw, 0)
             end)
         end
 
@@ -7170,23 +6962,31 @@ function Module.init(_runtime: any): any
             humanoid: Humanoid,
             root: BasePart
         ): ()
+            local initialPlacement: boolean =
+                not hiddenUnderMap and not firstCoinSeenThisRound
+            if not hiddenUnderMap and firstCoinSeenThisRound then
+                -- Once farming has started, losing a target means holding
+                -- the current pose, never jumping back to a coin anchor.
+                hideAnchorPosition = root.Position
+            end
             hiddenUnderMap = true
+            belowHold = true
+            belowDestination = nil
             activeWalkDir = nil
             activeWalkTarget = nil
-            forceNoClipCharacter(character)
-            local hidePos: Vector3 = getHiddenUnderMapPosition(root)
-            local curYaw: number = yawOf(root.CFrame)
-            ensureFarmBodyMover(root, Vector3.zero, curYaw)
             pcall(function(): ()
                 humanoid.PlatformStand = true
                 humanoid.AutoRotate = false
                 humanoid:Move(Vector3.zero, false)
-                root.Velocity = Vector3.zero
-                root.AssemblyLinearVelocity = Vector3.zero
-                root.AssemblyAngularVelocity = Vector3.zero
-                local holdCF: CFrame = CFrame.new(hidePos) * CFrame.Angles(0, curYaw, 0)
-                root.CFrame = holdCF
-                character:PivotTo(holdCF)
+                if initialPlacement then
+                    local hidePos: Vector3 = getHiddenUnderMapPosition(root)
+                    local holdCF: CFrame = CFrame.new(hidePos)
+                        * CFrame.Angles(0, yawOf(root.CFrame), 0)
+                    root.CFrame = holdCF
+                    character:PivotTo(holdCF)
+                    root.AssemblyLinearVelocity = Vector3.zero
+                    root.AssemblyAngularVelocity = Vector3.zero
+                end
             end)
         end
 
@@ -7199,6 +6999,12 @@ function Module.init(_runtime: any): any
             end
             local map: Instance? = findMM2Map()
             if not map then
+                return false
+            end
+            -- Proximity is only a secondary check. A loaded map or a
+            -- nearby spawn must never make lobby/ended-round actions legal.
+            if type(isRoundLifecycleActive) ~= "function"
+                or isRoundLifecycleActive() ~= true then
                 return false
             end
             if type(getPlayerRole) == "function" then
@@ -7267,68 +7073,64 @@ function Module.init(_runtime: any): any
             return true
         end
 
-        local function restoreCharacter(returnHome: boolean): ()
+        local function restoreCharacter(
+            returnHome: boolean,
+            repositionActive: boolean?
+        ): ()
             local wasMovedByFarm: boolean = engaged or hiddenUnderMap
             activeWalkDir = nil
             activeWalkTarget = nil
-            destroyFarmBodyMover()
+            belowDestination = nil
+            belowHold = false
+            destroyFarmConstraints()
             local character: Model?, humanoid: Humanoid?, root: BasePart? =
                 characterParts()
+            local canReposition: boolean = root ~= nil and humanoid ~= nil
+                and humanoid.Health > 0 and isCharacterInActiveRound(root :: BasePart)
             if root and wasMovedByFarm then
                 pcall(function(): ()
                     if savedRootSize then
                         root.Size = savedRootSize
                     end
-                    root.Velocity = Vector3.zero
                     root.AssemblyLinearVelocity = Vector3.zero
                     root.AssemblyAngularVelocity = Vector3.zero
-                    local allowReturnHome: boolean = returnHome
-                        and not teleportedHomeThisRound
-                        and (bagAmount >= 50 or not enabled)
-                        and homeCFrame ~= nil
-                        and (not homeCharacter or homeCharacter == character)
-                    if allowReturnHome and homeCFrame then
-                        local destPosition: Vector3 = resolveSafeAboveGroundPosition(
-                            homeCFrame.Position,
-                            character
-                        )
-                        if enabled and settings.safeZone and bagAmount >= 50 then
-                            destPosition = ensureSafeZonePlatform(homeCFrame.Position)
-                        end
-                        local targetCF: CFrame = CFrame.new(destPosition)
-                            * CFrame.Angles(0, yawOf(homeCFrame), 0)
-                        if character then
-                            pcall(function(): ()
-                                character:PivotTo(targetCF)
-                            end)
-                        end
-                        root.CFrame = targetCF
-                        if bagAmount >= 50 then
-                            teleportedHomeThisRound = true
-                            homeCFrame = nil
-                        end
-                    elseif not teleportedHomeThisRound then
-                        -- If we were underground (e.g. Stay Under When Round starts
-                        -- transitioning to Walk mode), return directly to homeCFrame
-                        -- on top of the floor BEFORE restoring collisions so we never
-                        -- get trapped under the floor ceiling!
-                        local safePos: Vector3
-                        if (hiddenUnderMap or engagedMode == "Below") and homeCFrame then
-                            safePos = homeCFrame.Position
-                        else
-                            safePos = resolveSafeAboveGroundPosition(
-                                root.Position,
-                                character
+                    if canReposition and not teleportedHomeThisRound
+                        and (returnHome or repositionActive == true) then
+                        local targetCF: CFrame? = nil
+                        local full: boolean = bagAmount >= math.max(50, bagLimit)
+                        if returnHome and homeCFrame
+                            and (full or not enabled)
+                            and (not homeCharacter or homeCharacter == character) then
+                            local destPosition: Vector3 = resolveSafeAboveGroundPosition(
+                                homeCFrame.Position, character
                             )
+                            if enabled and settings.safeZone and full then
+                                destPosition = ensureSafeZonePlatform(homeCFrame.Position)
+                            end
+                            targetCF = CFrame.new(destPosition)
+                                * CFrame.Angles(0, yawOf(homeCFrame), 0)
+                            if full then
+                                teleportedHomeThisRound = true
+                                homeCFrame = nil
+                            end
+                        elseif not returnHome then
+                            local safePos: Vector3
+                            if (hiddenUnderMap or engagedMode == "Below") and homeCFrame then
+                                safePos = homeCFrame.Position
+                            else
+                                safePos = resolveSafeAboveGroundPosition(
+                                    root.Position, character
+                                )
+                            end
+                            targetCF = CFrame.new(safePos)
+                                * CFrame.Angles(0, yawOf(root.CFrame), 0)
                         end
-                        local targetCF: CFrame = CFrame.new(safePos)
-                            * CFrame.Angles(0, yawOf(root.CFrame), 0)
-                        if character then
-                            pcall(function(): ()
+                        if targetCF then
+                            if character then
                                 character:PivotTo(targetCF)
-                            end)
+                            end
+                            root.CFrame = targetCF
                         end
-                        root.CFrame = targetCF
                     end
                 end)
             end
@@ -7348,9 +7150,11 @@ function Module.init(_runtime: any): any
                     if savedWalkSpeed then
                         humanoid.WalkSpeed = savedWalkSpeed
                     end
-                    humanoid:Move(Vector3.zero, false)
-                    humanoid:ChangeState(Enum.HumanoidStateType.GettingUp)
-                    humanoid:ChangeState(Enum.HumanoidStateType.Running)
+                    if humanoid.Health > 0 then
+                        humanoid:Move(Vector3.zero, false)
+                        humanoid:ChangeState(Enum.HumanoidStateType.GettingUp)
+                        humanoid:ChangeState(Enum.HumanoidStateType.Running)
+                    end
                 end)
             end
             savedWalkSpeed = nil
@@ -7376,11 +7180,11 @@ function Module.init(_runtime: any): any
                 homeCharacter = character
             end
             if engaged and engagedMode ~= nil and engagedMode ~= settings.mode then
-                restoreCharacter(false)
+                restoreCharacter(false, true)
             end
             engagedMode = settings.mode
             if engagedCharacter ~= nil and engagedCharacter ~= character then
-                restoreCharacter(false)
+                restoreCharacter(false, true)
                 engagedMode = settings.mode
                 if homeCharacter ~= character or not homeCFrame then
                     homeCFrame = root.CFrame
@@ -7395,6 +7199,8 @@ function Module.init(_runtime: any): any
                 walkStuckSince = os.clock()
                 if settings.mode ~= "Walk" then
                     hiddenUnderMap = false
+                    belowHold = true
+                    belowDestination = nil
                     activeWalkDir = nil
                     activeWalkTarget = nil
                     forceNoClipCharacter(character)
@@ -7411,7 +7217,6 @@ function Module.init(_runtime: any): any
                             )
                         end
                         local curYaw: number = yawOf(root.CFrame)
-                        ensureFarmBodyMover(root, Vector3.zero, curYaw)
                         local startCF: CFrame = CFrame.new(startPos) * CFrame.Angles(0, curYaw, 0)
                         root.CFrame = startCF
                         character:PivotTo(startCF)
@@ -7423,11 +7228,13 @@ function Module.init(_runtime: any): any
                         root.Size = HITBOX_SIZE
                     end)
                 else
-                    destroyFarmBodyMover()
+                    destroyFarmConstraints()
                 end
             end
             if settings.mode == "Walk" then
-                destroyFarmBodyMover()
+                belowDestination = nil
+                belowHold = false
+                destroyFarmConstraints()
                 if savedWalkSpeed == nil then
                     savedWalkSpeed = humanoid.WalkSpeed
                 end
@@ -7441,9 +7248,9 @@ function Module.init(_runtime: any): any
             forceNoClipCharacter(character)
         end
 
-        -- Fly the root at a destination with PHYSICS velocity + anti-gravity
-        -- BodyVelocity so gravity never pulls the character into the void and
-        -- MM2 never kicks for "Invalid position" (kick 267).
+        -- Called only by PreSimulation for Below. LinearVelocity removes
+        -- gravity drift without teleporting; near the target its speed is
+        -- reduced from the remaining distance instead of snapping CFrame.
         local function moveTowards(
             root: BasePart,
             destination: Vector3,
@@ -7453,39 +7260,15 @@ function Module.init(_runtime: any): any
             local distance: number = delta.Magnitude
             local curYaw: number = yawOf(root.CFrame)
             if distance < 0.05 then
-                ensureFarmBodyMover(root, Vector3.zero, curYaw)
-                pcall(function(): ()
-                    root.Velocity = Vector3.zero
-                    root.AssemblyLinearVelocity = Vector3.zero
-                    root.AssemblyAngularVelocity = Vector3.zero
-                end)
+                ensureFarmConstraints(root, Vector3.zero, curYaw)
                 return 0
             end
             local speed: number = math.clamp(settings.speed, 5, 60)
             local dt: number = math.clamp(tonumber(deltaTime) or (1 / 60), 1 / 240, 0.1)
-            if distance <= math.max(0.5, speed * dt) then
-                ensureFarmBodyMover(root, Vector3.zero, curYaw)
-                pcall(function(): ()
-                    local destCF: CFrame = CFrame.new(destination)
-                        * CFrame.Angles(0, curYaw, 0)
-                    root.CFrame = destCF
-                    root.Velocity = Vector3.zero
-                    root.AssemblyLinearVelocity = Vector3.zero
-                    root.AssemblyAngularVelocity = Vector3.zero
-                end)
-                return 0
-            end
-            local targetVel: Vector3 = delta.Unit * speed
-            ensureFarmBodyMover(root, targetVel, curYaw)
-            pcall(function(): ()
-                local nextPos: Vector3 = root.Position + delta.Unit * (speed * dt)
-                local nextCF: CFrame = CFrame.new(nextPos)
-                    * CFrame.Angles(0, curYaw, 0)
-                root.CFrame = nextCF
-                root.Velocity = targetVel
-                root.AssemblyLinearVelocity = delta.Unit * speed
-                root.AssemblyAngularVelocity = Vector3.zero
-            end)
+            local targetVel: Vector3 = if distance <= speed * dt
+                then delta / dt
+                else delta.Unit * speed
+            ensureFarmConstraints(root, targetVel, curYaw)
             return distance
         end
 
@@ -7523,24 +7306,11 @@ function Module.init(_runtime: any): any
                 end)
             end
             local speed: number = math.clamp(settings.speed, 5, 60)
-            local dt: number = math.clamp(tonumber(deltaTime) or (1 / 60), 1 / 240, 0.1)
             pcall(function(): ()
                 humanoid.WalkSpeed = speed
-                humanoid:Move(flat.Unit, false)
-                humanoid:MoveTo(destination)
-                local lookYaw: number = math.atan2(-unitDir.X, -unitDir.Z)
-                local stepLen: number = math.min(distance, speed * dt)
-                local nextXZ: Vector3 = Vector3.new(
-                    root.Position.X + unitDir.X * stepLen,
-                    root.Position.Y,
-                    root.Position.Z + unitDir.Z * stepLen
-                )
-                root.CFrame = CFrame.new(nextXZ) * CFrame.Angles(0, lookYaw, 0)
-                root.AssemblyLinearVelocity = Vector3.new(
-                    unitDir.X * speed,
-                    root.AssemblyLinearVelocity.Y,
-                    unitDir.Z * speed
-                )
+                -- Humanoid locomotion is the sole Walk writer. The solver
+                -- owns gravity, grounding and collision response.
+                humanoid:Move(unitDir, false)
             end)
             return distance
         end
@@ -7662,7 +7432,10 @@ function Module.init(_runtime: any): any
         if type(findMM2Map) ~= "function" or not findMM2Map() then
             return false
         end
-        return true
+        local character: Model?, humanoid: Humanoid?, root: BasePart? =
+            livingRoundParts()
+        return character ~= nil and humanoid ~= nil and root ~= nil
+            and isCharacterInActiveRound(root :: BasePart)
     end
 
     -- Immediate pickup attempt: pulse the touch between our root and the
@@ -7694,13 +7467,17 @@ function Module.init(_runtime: any): any
     -- Full-bag Auto Grab gun and Shoot: fetch the dropped sheriff gun
     -- if we do not already carry it, equip it, and continuously shoot
     -- the murderer until the murderer is eliminated or the round ends.
-    local function grabGunAndShoot(): ()
-        if not canGrabGun() then
+    local function grabGunAndShoot(shouldContinue: (() -> boolean)?): ()
+        local function allowed(): boolean
+            return (shouldContinue == nil or shouldContinue() == true)
+                and canGrabGun()
+        end
+        if not allowed() then
             return
         end
         local shootLoopDeadline: number = os.clock() + 30
         while os.clock() < shootLoopDeadline and enabled and settings.grabGunShoot do
-            if not canGrabGun() then
+            if not allowed() then
                 return
             end
             local murderer: Player? = nil
@@ -7730,7 +7507,7 @@ function Module.init(_runtime: any): any
                 end
                 local pickupDeadline: number = os.clock() + 5
                 while os.clock() < pickupDeadline and not gun do
-                    if not canGrabGun() or not enabled or not settings.grabGunShoot then
+                    if not allowed() or not settings.grabGunShoot then
                         return
                     end
                     local curChar: Model?, curHum: Humanoid?,
@@ -7745,7 +7522,7 @@ function Module.init(_runtime: any): any
                             break
                         end
                     end
-                    if teleportedHomeThisRound or roundFullReached then
+                    if not allowed() then
                         break
                     end
                     local dropPosition: Vector3? = nil
@@ -7765,11 +7542,12 @@ function Module.init(_runtime: any): any
                         remaining = walkTowards(
                             curHum, root, dropPosition :: Vector3)
                     else
-                        remaining = moveTowards(
-                            root,
-                            (dropPosition :: Vector3) + Vector3.new(0, 1, 0),
-                            0.05
-                        )
+                        local destination: Vector3 =
+                            (dropPosition :: Vector3) + Vector3.new(0, 1, 0)
+                        belowHold = false
+                        belowDestination = destination
+                        belowDeltaTime = 0.05
+                        remaining = (destination - root.Position).Magnitude
                     end
                     if remaining < 2.5 then
                         task.wait(0.05)
@@ -7797,11 +7575,12 @@ function Module.init(_runtime: any): any
                     humanoid:EquipTool(gun :: Tool)
                 end)
                 local equipWait: number = os.clock() + 0.15
-                while gun.Parent ~= character and os.clock() < equipWait do
+                while gun.Parent ~= character and os.clock() < equipWait
+                    and allowed() do
                     task.wait()
                 end
             end
-            if gun.Parent == character and canGrabGun() then
+            if gun.Parent == character and allowed() then
                 local firedSilent: boolean = false
                 if type(state.mm2FireSilentShot) == "function" then
                     local okShot: boolean, shotRes: any =
@@ -7816,27 +7595,51 @@ function Module.init(_runtime: any): any
         end
     end
 
-        -- The full-bag sequence, in the user's order: Kill All,
-        -- return to exact pre-farm position, Auto Grab gun and Shoot,
-        -- reset, then the post-reset flings. Runs once per 50-coin fill.
-        local function runFullSequence(): ()
+        -- One terminal sequence per fill. Tokens invalidate every later
+        -- phase on OFF, respawn/round transition or a dead character.
+        local function runFullSequence(thisEnable: number, thisRound: number): ()
             busy = true
+            local function current(): boolean
+                return enabled and thisEnable == enableGeneration
+                    and thisRound == roundGeneration
+                    and type(isRoundLifecycleActive) == "function"
+                    and isRoundLifecycleActive() == true
+            end
+            local function alive(): boolean
+                if not current() then
+                    return false
+                end
+                local character: Model?, humanoid: Humanoid?, root: BasePart? =
+                    livingRoundParts()
+                return character ~= nil and humanoid ~= nil and root ~= nil
+                    and isCharacterInActiveRound(root :: BasePart)
+            end
             local ok: boolean, err: any = pcall(function(): ()
-                -- Everything in this sequence happens ONLY when the
-                -- bag is full (50): Kill All, return to the character's
-                -- last position before Auto Farm started (homeCFrame),
-                -- gun grab + continuous shooting, reset, and flings.
-                -- None of it runs during ordinary farming.
+                if not alive() then
+                    return
+                end
                 if settings.killAllOnFull then
-                    killAll()
+                    killAll(alive)
+                    if not alive() then
+                        return
+                    end
                     task.wait()
+                end
+                if not alive() then
+                    return
                 end
                 restoreCharacter(true)
                 if settings.grabGunShoot then
-                    grabGunAndShoot()
+                    grabGunAndShoot(alive)
+                    if not current() then
+                        return
+                    end
                     task.wait(0.15)
                 end
                 if settings.resetOnFull then
+                    if not alive() then
+                        return
+                    end
                     local oldCharacter: Model? = LocalPlayer.Character
                     local _, humanoid: Humanoid? = characterParts()
                     if humanoid then
@@ -7844,10 +7647,8 @@ function Module.init(_runtime: any): any
                             humanoid.Health = 0
                         end)
                     end
-                    -- Wait for the respawned character, checking
-                    -- every frame instead of four times a second.
                     local deadline: number = os.clock() + 10
-                    while os.clock() < deadline do
+                    while os.clock() < deadline and current() do
                         local character: Model?, newHumanoid: Humanoid?,
                             newRoot: BasePart? = characterParts()
                         if character and character ~= oldCharacter
@@ -7859,16 +7660,15 @@ function Module.init(_runtime: any): any
                     end
                     task.wait(0.1)
                 end
-                -- Flings belong to the full bag too, reset or not: with
-                -- a reset they meet the fresh character first (above),
-                -- without one they simply happen now.
-                if settings.flingMurder
-                    and type(findMurderer) == "function" then
-                    flingPlayer(findMurderer())
+                if not alive() then
+                    return
                 end
-                if settings.flingSheriff
+                if settings.flingMurder and type(findMurderer) == "function" then
+                    flingPlayer(findMurderer(), alive)
+                end
+                if alive() and settings.flingSheriff
                     and type(findSheriff) == "function" then
-                    flingPlayer(findSheriff())
+                    flingPlayer(findSheriff(), alive)
                 end
             end)
             if not ok then
@@ -7886,6 +7686,7 @@ function Module.init(_runtime: any): any
                     function(_bag: any, amount: any, limit: any): ()
                         if type(limit) == "number" and limit >= 50 then
                             bagLimit = limit
+                            rememberedBagLimit = limit
                         end
                         if type(amount) == "number" then
                             if amount > bagAmount then
@@ -7898,30 +7699,60 @@ function Module.init(_runtime: any): any
                                 scanAt = 0
                             end
                             bagAmount = amount
+                            rememberedBagAmount = amount
                         end
                         local targetLimit: number = math.max(50, bagLimit)
                         if bagAmount < targetLimit then
                             fullHandled = false
                             roundFullReached = false
+                            rememberedFullHandled = false
                         end
                     end
                 )
         end
 
         local function stepFarmPhysicsOverride(): ()
-            local character: Model?, humanoid: Humanoid?, _root: BasePart? = characterParts()
-            if not character then
+            if not engaged or settings.mode ~= "Walk" then
                 return
             end
-            if hiddenUnderMap or (engaged and settings.mode ~= "Walk") then
-                forceNoClipCharacter(character)
-            elseif engaged and settings.mode == "Walk" and humanoid and activeWalkDir then
+            local character: Model?, humanoid: Humanoid?, root: BasePart? =
+                characterParts()
+            if not character or not humanoid or not root or humanoid.Health <= 0
+                or not isCharacterInActiveRound(root) then
+                restoreCharacter(false)
+                return
+            end
+            if activeWalkDir then
                 pcall(function(): ()
                     humanoid:Move(activeWalkDir :: Vector3, false)
-                    if activeWalkTarget then
-                        humanoid:MoveTo(activeWalkTarget :: Vector3)
-                    end
                 end)
+            end
+        end
+
+        local function preFarmPhysics(deltaTime: number): ()
+            if settings.mode == "Walk" or (not engaged and not hiddenUnderMap) then
+                return
+            end
+            local character: Model?, humanoid: Humanoid?, root: BasePart? =
+                characterParts()
+            if not character or not humanoid or not root or humanoid.Health <= 0 then
+                if engaged or hiddenUnderMap then
+                    restoreCharacter(false)
+                end
+                return
+            end
+            if not isCharacterInActiveRound(root) then
+                if engaged or hiddenUnderMap then
+                    restoreCharacter(false)
+                end
+                return
+            end
+            forceNoClipCharacter(character)
+            if belowHold then
+                ensureFarmConstraints(root, Vector3.zero, yawOf(root.CFrame))
+            elseif belowDestination then
+                moveTowards(root, belowDestination :: Vector3,
+                    if type(deltaTime) == "number" then deltaTime else belowDeltaTime)
             end
         end
 
@@ -7931,7 +7762,7 @@ function Module.init(_runtime: any): any
         pcall(function(): ()
             if RunService and (RunService :: any).PreSimulation then
                 featureConnections.MM2AutoFarmPreSim =
-                    (RunService :: any).PreSimulation:Connect(stepFarmPhysicsOverride)
+                    (RunService :: any).PreSimulation:Connect(preFarmPhysics)
             end
         end)
 
@@ -7941,13 +7772,15 @@ function Module.init(_runtime: any): any
                     farmElapsedSeconds += deltaTime
                     refreshFarmOverlay()
                 end
-                if busy then
-                    return
-                end
                 local character: Model?, humanoid: Humanoid?,
                     root: BasePart? = characterParts()
                 if not character or not humanoid or not root
                     or humanoid.Health <= 0 then
+                    if engaged or hiddenUnderMap then
+                        -- Death is cleanup-only: restoreCharacter(false)
+                        -- cannot reposition without a living active round.
+                        restoreCharacter(false)
+                    end
                     return
                 end
 
@@ -7960,6 +7793,10 @@ function Module.init(_runtime: any): any
                     end
                     if wasInActiveRound then
                         wasInActiveRound = false
+                        roundGeneration += 1
+                        rememberedBagAmount = 0
+                        rememberedBagLimit = 50
+                        rememberedFullHandled = false
                         bagAmount = 0
                         fullHandled = false
                         roundFullReached = false
@@ -7976,12 +7813,17 @@ function Module.init(_runtime: any): any
                     stuckPart = nil
                     return
                 end
+                if busy then
+                    return
+                end
 
                 if not wasInActiveRound then
                     wasInActiveRound = true
-                    bagAmount = 0
-                    fullHandled = false
-                    roundFullReached = false
+                    roundGeneration += 1
+                    bagAmount = rememberedBagAmount
+                    bagLimit = rememberedBagLimit
+                    fullHandled = rememberedFullHandled
+                    roundFullReached = rememberedFullHandled
                     teleportedHomeThisRound = false
                     firstCoinSeenThisRound = false
                     currentTargetCoin = nil
@@ -8002,23 +7844,16 @@ function Module.init(_runtime: any): any
                 if bagAmount >= targetLimit then
                     if not fullHandled then
                         fullHandled = true
+                        rememberedFullHandled = true
+                        rememberedBagAmount = bagAmount
                         roundFullReached = true
                         if settings.killAllOnFull or settings.resetOnFull
                             or settings.flingMurder or settings.flingSheriff
                             or settings.grabGunShoot then
-                            task.spawn(runFullSequence)
+                            task.spawn(runFullSequence, thisEnable, roundGeneration)
                         else
                             restoreCharacter(true)
                         end
-                    elseif settings.grabGunShoot and canGrabGun() then
-                        task.spawn(function(): ()
-                            if busy then
-                                return
-                            end
-                            busy = true
-                            pcall(grabGunAndShoot)
-                            busy = false
-                        end)
                     else
                         setStatus(string.format(
                             "Auto Farm: full bag (%d/%d) - stopped at start position",
@@ -8106,7 +7941,7 @@ function Module.init(_runtime: any): any
                         if settings.stayUnderOnStart then
                             holdHiddenUnderMap(character, humanoid, root)
                         elseif hiddenUnderMap or engaged then
-                            restoreCharacter(false)
+                            restoreCharacter(false, true)
                         end
                     else
                         if settings.mode == "Walk" then
@@ -8134,19 +7969,16 @@ function Module.init(_runtime: any): any
                 firstCoinSeenThisRound = true
                 currentTargetCoin = nearest
                 if hiddenUnderMap and settings.mode == "Walk" then
-                    restoreCharacter(false)
+                    restoreCharacter(false, true)
                 end
                 -- Capture pre-farm homeCFrame and stay engaged while
                 -- bagAmount < 50 inside the active round.
                 engage(character, humanoid, root)
-                hideAnchorPosition = Vector3.new(
-                    (nearestPosition :: Vector3).X,
-                    (nearestPosition :: Vector3).Y - (BELOW_OFFSET + 3.5),
-                    (nearestPosition :: Vector3).Z
-                )
                 local remaining: number
                 local arrived: boolean
                 if settings.mode == "Walk" then
+                    belowHold = false
+                    belowDestination = nil
                     remaining = walkTowards(
                         humanoid,
                         root,
@@ -8155,32 +7987,17 @@ function Module.init(_runtime: any): any
                     )
                     arrived = remaining < 1.6
                 else
+                    -- One fixed contact pose per coin. The 4x8x4 hitbox
+                    -- reaches the server coin from this single offset;
+                    -- there is no far/near height alternation.
                     local destination: Vector3 =
-                        (nearestPosition :: Vector3)
-                        + Vector3.new(0, -BELOW_OFFSET, 0)
-                    local flatDX: number = (nearestPosition :: Vector3).X - root.Position.X
-                    local flatDZ: number = (nearestPosition :: Vector3).Z - root.Position.Z
-                    local flatDist: number = math.sqrt(flatDX * flatDX + flatDZ * flatDZ)
-                    local stepDestination: Vector3
-                    if flatDist > 2.2 then
-                        if savedRootSize then
-                            pcall(function(): ()
-                                root.Size = savedRootSize
-                            end)
-                        end
-                        stepDestination = Vector3.new(
-                            (nearestPosition :: Vector3).X,
-                            (nearestPosition :: Vector3).Y - (BELOW_OFFSET + 3.5),
-                            (nearestPosition :: Vector3).Z
-                        )
-                    else
-                        pcall(function(): ()
-                            root.Size = HITBOX_SIZE
-                        end)
-                        stepDestination = destination
-                    end
-                    remaining = moveTowards(root, stepDestination, deltaTime)
-                    arrived = flatDist <= 2.4 and remaining < 2.2
+                        (nearestPosition :: Vector3) - Vector3.new(0, BELOW_OFFSET, 0)
+                    belowHold = false
+                    belowDestination = destination
+                    belowDeltaTime = if type(deltaTime) == "number"
+                        then deltaTime else belowDeltaTime
+                    remaining = (destination - root.Position).Magnitude
+                    arrived = remaining < 1.0
                 end
                 if arrived or remaining < 3.5 then
                     -- Pulse the touch directly against the Coin_Server part
@@ -8383,12 +8200,16 @@ function Module.init(_runtime: any): any
         end, "As Murderer, when the bag fills: pull everyone in front of you and slash (YARHM Kill All).")
     addInformationOption(
         AutoFarmFeature,
-        "Walk walks your character on the ground to the nearest pickup Coin ESP sees (safest, and the body's own touch collects). Below (Hitbox) flies upright under the floor by physics velocity (never position teleports) with NoClip and the root hitbox grown to 4x8x4, so the coin pays from underneath without lying the character face-down. Already-collected coins are dropped as targets the moment they are collected. If Below kicks you for Invalid position, lower Farm Speed and raise it little by little. Turning it off restores collisions, hitbox and WalkSpeed, and returns you upright to where you started."
+        "Walk uses Humanoid locomotion on the ground. Below (Hitbox) uses upright LinearVelocity + AlignOrientation constraints with NoClip and a 4x8x4 root hitbox, with one fixed contact offset per coin and a stationary wait when no target exists. Collected coins are dropped as targets immediately. Only explicit startup/return cleanup uses a guarded CFrame reposition, never a dead/lobby/ended-round action. If Below kicks you for Invalid position, lower Farm Speed and raise it little by little. OFF restores collisions, hitbox and WalkSpeed."
     )
 
     activeCleanup = function(): ()
         state.mm2AutoFarmFeature = nil
         toggleAutoFarm(false)
+        if unsubscribeRoundPhase then
+            pcall(unsubscribeRoundPhase)
+            unsubscribeRoundPhase = nil
+        end
     end
     Module.Events = featureConnections
     Module.Initialized = true
@@ -10195,10 +10016,8 @@ function Module.init(runtime: any): any
 
     local safeAbovePosition: Vector3? = nil
     local savedCollide: {[Instance]: boolean} = {}
-    local savedCustomProps: {[BasePart]: PhysicalProperties?} = {}
     local victimSnapshots: {[BasePart]: {cframe: CFrame, anchored: boolean, canCollide: boolean}} = {}
     local toolConnections: {RBXScriptConnection} = {}
-    local flingAngle: number = 0
 
     local function updateWinOverlay(): ()
         if sheriffWinsStat and type(sheriffWinsStat.set) == "function" then
@@ -10366,14 +10185,6 @@ function Module.init(runtime: any): any
             end
         end
         table.clear(savedCollide)
-        for part: BasePart, oldProps: PhysicalProperties? in pairs(savedCustomProps) do
-            if part and part.Parent then
-                pcall(function(): ()
-                    part.CustomPhysicalProperties = oldProps
-                end)
-            end
-        end
-        table.clear(savedCustomProps)
 
         local character: Model?, humanoid: Humanoid?, root: BasePart? = characterParts()
         if humanoid then
@@ -10412,27 +10223,6 @@ function Module.init(runtime: any): any
                 end
                 pcall(function(): ()
                     (object :: BasePart).CanCollide = false
-                end)
-            end
-        end
-    end
-
-    local function enableCharacterFlingCollisions(character: Model): ()
-        local heavyProps: PhysicalProperties = PhysicalProperties.new(100, 0.3, 0.5, 1, 1)
-        for _, object: Instance in ipairs(character:GetChildren()) do
-            if object:IsA("BasePart") then
-                local part: BasePart = object :: BasePart
-                if savedCollide[part] == nil then
-                    savedCollide[part] = part.CanCollide
-                end
-                if savedCustomProps[part] == nil then
-                    pcall(function(): ()
-                        savedCustomProps[part] = part.CustomPhysicalProperties
-                    end)
-                end
-                pcall(function(): ()
-                    part.CanCollide = true
-                    part.CustomPhysicalProperties = heavyProps
                 end)
             end
         end
@@ -10750,10 +10540,8 @@ function Module.init(runtime: any): any
         return findLocalTool("Gun") ~= nil
     end
 
-    -- Controlled, bounded Fling on the Sheriff: waits for map/character warmup,
-    -- uses state.mm2PerformFling with a returnCFrame to safeAbovePosition when
-    -- available (or bounded 10000-stud/s impulse fallback so our character
-    -- never enters Roblox's floating-point NullZone or void).
+    -- Controlled, bounded Fling on the Sheriff. The shared MM2 controller
+    -- owns the contact session and return; there is no local physics fallback.
     local function flingSheriffStep(
         character: Model,
         humanoid: Humanoid,
@@ -10822,54 +10610,10 @@ function Module.init(runtime: any): any
             return true
         end
 
-        if type(state.mm2FlingStep) == "function" then
-            local okStep: boolean, res: any = pcall(
-                state.mm2FlingStep,
-                character,
-                humanoid,
-                root,
-                sheriff,
-                savedCollide,
-                savedCustomProps
-            )
-            if okStep and res == true then
-                return true
-            end
-            holdAboveMap(character, humanoid, root)
-            return false
-        end
-
-        if services and services.activity then
-            pcall(function(): ()
-                services.activity.set("fling", true)
-            end)
-        end
-        enableCharacterFlingCollisions(character)
-        flingAngle = (flingAngle + 100) % 360
-        local phase: number = math.floor(flingAngle / 100) % 4
-        local sweepOffset: CFrame = if phase == 0
-            then CFrame.new(0, 1.5, 0)
-            elseif phase == 1 then CFrame.new(0, -1.5, 0)
-            elseif phase == 2 then CFrame.new(2.0, 1.2, -2.0)
-            else CFrame.new(-2.0, -1.2, 2.0)
-        local sheriffVel: Vector3 = Vector3.zero
-        pcall(function(): ()
-            sheriffVel = sheriffRoot.AssemblyLinearVelocity
-        end)
-        local targetCF: CFrame = CFrame.new(sheriffPos + sheriffVel * 0.08)
-            * sweepOffset
-            * CFrame.Angles(math.rad(flingAngle), math.rad(flingAngle), 0)
-        pcall(function(): ()
-            if humanoid.Sit then
-                humanoid.Sit = false
-            end
-            humanoid.AutoRotate = false
-            root.CFrame = targetCF
-            character:PivotTo(targetCF)
-            root.AssemblyLinearVelocity = Vector3.new(10000, 12000, 10000)
-            root.AssemblyAngularVelocity = Vector3.new(12000, 12000, 12000)
-        end)
-        return true
+        -- No shared controller means no Fling action. Never fall back to
+        -- extreme local velocities or a second CFrame writer.
+        holdAboveMap(character, humanoid, root)
+        return false
     end
 
     local function autoWinTick(): ()
@@ -27624,159 +27368,57 @@ function Module.init(context: Runtime): any
     local host: any = context.host
     local state: any = host.state
     local configData: any = host.configData
-    local LocalPlayer: any = host.LocalPlayer
-    local RunService: any = host.RunService or game:GetService("RunService")
     local createUniversalFeature: any = host.createUniversalFeature
     local addFeatureTooltip: any = host.addFeatureTooltip
+    local physics: any = state.flingPhysics
+    assert(physics, "Touch Fling requires the shared Fling physics library")
 
-    -- Never auto-enable Touch Fling on script injection from a stale config state.
+    -- Contact physics is a deliberate per-session action, never restored ON.
     if type(configData) == "table" and type(configData.states) == "table" then
         configData.states["Universal.TouchFling"] = false
     end
 
-    local originalCollision = setmetatable({}, {__mode = "k"})
     local touchFlingActive: boolean = false
-    local touchFlingSession: number = 0
-    local lastSafeVelocity: Vector3 = Vector3.zero
+    local syncing: boolean = false
     local TouchFlingFeature: any = nil
 
-    local function restoreCollision(): ()
-        for part: any, canCollide: any in pairs(originalCollision) do
-            if part and part.Parent then
-                pcall(function(): ()
-                    part.CanCollide = canCollide
-                end)
-            end
-        end
-        originalCollision = setmetatable({}, {__mode = "k"})
-    end
-
-    local function getCharacterRoot(): (Model?, Humanoid?, BasePart?)
-        local character: Model? = LocalPlayer and LocalPlayer.Character
-        if not character or not character.Parent then
-            return nil, nil, nil
-        end
-        local humanoid: Humanoid? = character:FindFirstChildOfClass("Humanoid")
-        local root: BasePart? = (character:FindFirstChild("HumanoidRootPart")
-            or character:FindFirstChild("Torso")
-            or character:FindFirstChild("UpperTorso")) :: BasePart?
-        if not humanoid or humanoid.Health <= 0 or not root then
-            return character, humanoid, nil
-        end
-        return character, humanoid, root
-    end
-
-    local function waitSignal(sig: any): ()
-        if sig and (type(sig) == "table" or typeof(sig) == "RBXScriptSignal") and type(sig.Wait) == "function" then
-            local ok: boolean = pcall(function(): ()
-                sig:Wait()
-            end)
-            if ok then
-                return
-            end
-        end
-        task.wait()
-    end
-
     local function toggleTouchFling(enabled: boolean): ()
+        if syncing then
+            return
+        end
         local wanted: boolean = enabled == true
         touchFlingActive = wanted
-        touchFlingSession += 1
-        local mySession: number = touchFlingSession
+        physics.setTouchEnabled(wanted)
+        if TouchFlingFeature then
+            TouchFlingFeature:SetStatus(if wanted then "ON" else nil)
+        end
 
         if state and type(state.toggleControls) == "table" then
             local mm2Control: any = state.toggleControls["MM2.Fling.TouchFling"]
             if mm2Control and type(mm2Control.setChecked) == "function" then
+                syncing = true
                 pcall(mm2Control.setChecked, wanted)
+                syncing = false
             end
         end
-
-        if not wanted then
-            local _char: Model?, _hum: Humanoid?, root: BasePart? = getCharacterRoot()
-            if root and root.Parent then
-                pcall(function(): ()
-                    root.Velocity = lastSafeVelocity
-                    root.AssemblyLinearVelocity = lastSafeVelocity
-                end)
-            end
-            restoreCollision()
-            if TouchFlingFeature then
-                TouchFlingFeature:SetStatus(nil)
-            end
-            return
-        end
-
-        if TouchFlingFeature then
-            TouchFlingFeature:SetStatus("ON")
-        end
-
-        task.spawn(function(): ()
-            local movel: number = 0.1
-            while touchFlingActive and touchFlingSession == mySession do
-                waitSignal(RunService and RunService.Heartbeat)
-                if not touchFlingActive or touchFlingSession ~= mySession then
-                    break
-                end
-                local character: Model?, _humanoid: Humanoid?, root: BasePart? = getCharacterRoot()
-                if character and root and root.Parent then
-                    local savedVel: Vector3 = root.AssemblyLinearVelocity
-                    lastSafeVelocity = savedVel
-                    for _, part: Instance in ipairs(character:GetChildren()) do
-                        if part:IsA("BasePart") then
-                            if originalCollision[part] == nil then
-                                originalCollision[part] = part.CanCollide
-                            end
-                            part.CanCollide = false
-                        end
-                    end
-                    local spike: Vector3 = savedVel * 10000 + Vector3.new(0, 10000, 0)
-                    pcall(function(): ()
-                        root.Velocity = spike
-                        root.AssemblyLinearVelocity = spike
-                    end)
-                    waitSignal(RunService and RunService.RenderStepped)
-                    if touchFlingActive and touchFlingSession == mySession and character.Parent and root.Parent then
-                        pcall(function(): ()
-                            root.Velocity = savedVel
-                            root.AssemblyLinearVelocity = savedVel
-                        end)
-                    end
-                    waitSignal(RunService and RunService.Stepped)
-                    if touchFlingActive and touchFlingSession == mySession and character.Parent and root.Parent then
-                        local osc: Vector3 = savedVel + Vector3.new(0, movel, 0)
-                        pcall(function(): ()
-                            root.Velocity = osc
-                            root.AssemblyLinearVelocity = osc
-                        end)
-                        movel = -movel
-                    end
-                else
-                    task.wait(0.05)
-                end
-            end
-        end)
     end
 
     TouchFlingFeature = createUniversalFeature(
         "Touch Fling",
-        "Walk into any player to fling them on body contact (Infinite Yield walkfling)",
+        "Walk into a player to transfer a bounded physics contact pulse",
         14,
         toggleTouchFling,
         {noOptions = true, categoryName = "Exploits"}
     )
     addFeatureTooltip(
         TouchFlingFeature,
-        "Spikes physics velocity between Heartbeat and RenderStepped so touching any player's character with your body sends them flying."
+        "Uses recent body contact only. Velocity is pulsed during physics and restored immediately afterwards; there are no teleports or ownership requests."
     )
 
     if state then
         state.touchFlingFeature = TouchFlingFeature
         state.setTouchFlingEnabled = function(on: boolean): ()
-            if TouchFlingFeature and type(TouchFlingFeature.setEnabled) == "function" then
-                TouchFlingFeature.setEnabled(on == true, true)
-            else
-                toggleTouchFling(on == true)
-            end
+            toggleTouchFling(on == true)
         end
     end
 
@@ -31328,248 +30970,6 @@ function Module.init(context: Runtime): any
     end
     Module.Initialized = true
     return jump
-end
-
-function Module.destroy(): ()
-    if activeCleanup then
-        pcall(activeCleanup)
-    end
-    activeCleanup = nil
-    Module.Initialized = false
-end
-
-return Module
-
-]],
-        ["src/games/universal/Movement/SafeWalk.lua"] = [[
-export type Runtime = {
-    framework: any,
-    entity: any,
-    host: any,
-}
-
-local Module = {
-    Name = "Safe Walk",
-    PlaceId = 0,
-    Events = {} :: {[string]: any},
-    Initialized = false,
-}
-
-local activeCleanup: (() -> ())? = nil
-
-function Module.init(context: Runtime): any
-    local host: any = context.host
-    local TaskManager: any = host.TaskManager
-    local featureConnections: any = host.featureConnections
-    local disconnectFeatureConnection: any = host.disconnectFeatureConnection
-    local getCharacterParts: any = host.getCharacterParts
-    local createUniversalFeature: any = host.createUniversalFeature
-    local addNumberOption: any = host.addNumberOption
-    local currentWorkspace: Workspace = host.workspace or workspace
-
-    local safeWalkSettings: {
-        lookAhead: number,
-        barrierHeight: number,
-    } = {
-        lookAhead = 2.8,
-        barrierHeight = 4.5,
-    }
-
-    local barrierFolder: Folder? = nil
-    local barrier: BasePart? = nil
-    local SafeWalkFeature: any = nil
-
-    -- Geometry rules (studs). A barrier closer than MIN_EDGE would sit inside the
-    -- character's body, which pushes it back every frame; such edges are not guarded.
-    -- A gap must be at least MIN_GAP wide to count as a drop, so stair treads and
-    -- rail seams never place a barrier.
-    local MIN_EDGE: number = 1.25
-    local MIN_GAP: number = 1.5
-    local PROBE_STEP: number = 0.5
-    local PROBE_DEPTH: number = 6
-
-    local function getBarrier(): BasePart
-        local existing: BasePart? = barrier
-        if existing and existing.Parent then
-            return existing
-        end
-        if not barrierFolder or not barrierFolder.Parent then
-            barrierFolder = Instance.new("Folder")
-            barrierFolder.Name = "WurstSafeWalk"
-            barrierFolder.Parent = currentWorkspace
-        end
-        local part: BasePart = Instance.new("Part")
-        part.Name = "SafeWalkBarrier"
-        part.Anchored = true
-        part.CanCollide = false
-        part.CanQuery = false
-        part.CanTouch = false
-        part.Massless = true
-        part.CastShadow = false
-        part.Transparency = 1
-        part.Material = Enum.Material.SmoothPlastic
-        part:SetAttribute("WurstSafeWalk", true)
-        part.Parent = barrierFolder
-        barrier = part
-        return part
-    end
-
-    -- Turns the single barrier off in place: no destroy/recreate, so a part never
-    -- appears on top of the character.
-    local function releaseBarrier(): ()
-        local existing: BasePart? = barrier
-        if existing and existing.Parent then
-            existing.CanCollide = false
-        end
-    end
-
-    local function destroyBarrier(): ()
-        if barrierFolder then
-            barrierFolder:Destroy()
-        end
-        barrierFolder = nil
-        barrier = nil
-    end
-
-    -- Distance along moveDirection to the last ground before a confirmed drop
-    -- (a gap of at least MIN_GAP with no floor below). nil when none is ahead.
-    local function findDrop(root: BasePart, moveDirection: Vector3, parameters: RaycastParams): number?
-        -- Scan far enough to confirm a MIN_GAP-wide gap that starts inside the reach.
-        local reach: number = 1.0 + safeWalkSettings.lookAhead + MIN_GAP
-        local lastGround: number? = nil
-        local groundBeforeGap: number? = nil
-        local gapStart: number? = nil
-        local distance: number = PROBE_STEP
-        while distance <= reach do
-            local ground: RaycastResult? = currentWorkspace:Raycast(
-                root.Position + moveDirection * distance,
-                Vector3.new(0, -PROBE_DEPTH, 0),
-                parameters
-            )
-            if ground then
-                lastGround = distance
-                gapStart = nil
-                groundBeforeGap = nil
-            else
-                if gapStart == nil then
-                    gapStart = distance
-                    groundBeforeGap = lastGround
-                end
-                if distance - gapStart >= MIN_GAP then
-                    return groundBeforeGap
-                end
-            end
-            distance += PROBE_STEP
-        end
-        return nil
-    end
-
-    local function toggleSafeWalk(enabled: boolean): ()
-        disconnectFeatureConnection("SafeWalk")
-        destroyBarrier()
-        if not enabled then
-            if SafeWalkFeature then
-                SafeWalkFeature:SetStatus(nil)
-            end
-            return
-        end
-
-        featureConnections.SafeWalk = TaskManager:Connect(function(): ()
-            local character: Model?, humanoid: Humanoid?, root: BasePart? = getCharacterParts()
-            if not character or not humanoid or not root
-                or humanoid.Health <= 0 then
-                releaseBarrier()
-                return
-            end
-
-            -- Jumping or falling is a deliberate choice to leave the ledge: the barrier
-            -- is off for the whole airborne phase.
-            local state = humanoid:GetState()
-            if humanoid.FloorMaterial == Enum.Material.Air
-                or state == Enum.HumanoidStateType.Jumping
-                or state == Enum.HumanoidStateType.Freefall then
-                releaseBarrier()
-                return
-            end
-
-            local move: Vector3 = humanoid.MoveDirection
-            local flat: Vector3 = Vector3.new(move.X, 0, move.Z)
-            if flat.Magnitude < 0.05 then
-                return
-            end
-            local moveDirection: Vector3 = flat.Unit
-
-            local parameters: RaycastParams = RaycastParams.new()
-            parameters.FilterType = Enum.RaycastFilterType.Exclude
-            parameters.FilterDescendantsInstances = {character}
-            parameters.IgnoreWater = true
-
-            local edge: number? = findDrop(root :: BasePart, moveDirection, parameters)
-            if edge == nil then
-                releaseBarrier()
-                if SafeWalkFeature then
-                    SafeWalkFeature:SetStatus(nil)
-                end
-                return
-            end
-
-            if edge < MIN_EDGE then
-                -- Already at the lip: keep whatever barrier was placed on approach,
-                -- never place a new one this close.
-                return
-            end
-
-            local part: BasePart = getBarrier()
-            local barrierHeight: number = math.max(safeWalkSettings.barrierHeight, 3)
-            local feetY: number = root.Position.Y - (root.Size.Y * 0.5 + humanoid.HipHeight)
-            local center: Vector3 = root.Position + moveDirection * edge
-            local wallCenter: Vector3 = Vector3.new(center.X, feetY + barrierHeight * 0.5, center.Z)
-            part.Size = Vector3.new(7, barrierHeight, 0.35)
-            part.CFrame = CFrame.lookAt(wallCenter, wallCenter + moveDirection)
-            part.CanCollide = true
-            if SafeWalkFeature then
-                SafeWalkFeature:SetStatus("edge")
-            end
-        end)
-    end
-
-    SafeWalkFeature = createUniversalFeature(
-        "Safe Walk",
-        "Place an invisible barrier at edges so you cannot walk off ledges",
-        21,
-        toggleSafeWalk,
-        {
-            configKey = "Universal.SafeWalk",
-            categoryName = "World",
-        }
-    )
-    addNumberOption(
-        SafeWalkFeature,
-        "Edge look-ahead",
-        safeWalkSettings.lookAhead,
-        1.5,
-        6,
-        function(value: number): ()
-            safeWalkSettings.lookAhead = value
-        end
-    )
-    addNumberOption(
-        SafeWalkFeature,
-        "Barrier height",
-        safeWalkSettings.barrierHeight,
-        3,
-        10,
-        function(value: number): ()
-            safeWalkSettings.barrierHeight = value
-        end
-    )
-
-    activeCleanup = function(): ()
-        disconnectFeatureConnection("SafeWalk")
-        destroyBarrier()
-    end
-    Module.Initialized = true
-    return SafeWalkFeature
 end
 
 function Module.destroy(): ()
@@ -52690,6 +52090,483 @@ end
 return Module
 
 ]],
+        ["src/libraries/Fling.lua"] = [[
+local Module = {
+    Name = "FlingPhysics",
+    PlaceId = 0,
+    Events = {} :: {[string]: any},
+    Initialized = false,
+}
+
+local activeLibrary: any = nil
+
+-- Shared owner for directed MM2 contact and universal Touch Fling. High
+-- velocities exist only between PreSimulation and PostSimulation, so physics
+-- can transfer momentum without accumulating a launch on the local assembly.
+-- No ownership requests, remotes, camera writes, global destroy-height changes,
+-- deprecated body movers or target-humanoid velocity writes are used.
+function Module.init(context: any): any
+    local host: any = context.host or context
+    local RunService: any = host.RunService
+    local Players: any = host.Players
+    local LocalPlayer: Player = host.LocalPlayer
+    local services: any = context.services or host.services
+    local activity: any = services and services.activity
+
+    assert(RunService and RunService.PreSimulation and RunService.PostSimulation,
+        "Fling physics requires PreSimulation and PostSimulation")
+
+    local currentSession: any = nil
+    local pulseBackup: any = nil
+    local destroyed: boolean = false
+
+    local touchEnabled: boolean = false
+    local touchCharacter: Model? = nil
+    local touchConnections: {RBXScriptConnection} = {}
+    local touchContacts: {[Player]: number} = {}
+
+    local function setActivity(): ()
+        if activity and type(activity.set) == "function" then
+            pcall(activity.set, "fling", currentSession ~= nil or touchEnabled)
+        end
+    end
+
+    local function finiteVector(value: any): boolean
+        local ok: boolean, x: any, y: any, z: any = pcall(function(): any
+            return value.X, value.Y, value.Z
+        end)
+        return ok and type(x) == "number" and type(y) == "number"
+            and type(z) == "number" and x == x and y == y and z == z
+            and math.abs(x) ~= math.huge and math.abs(y) ~= math.huge
+            and math.abs(z) ~= math.huge
+    end
+
+    local function getParts(player: Player?): (Model?, Humanoid?, BasePart?)
+        local character: Model? = player and player.Character
+        if not character or not character.Parent then
+            return nil, nil, nil
+        end
+        local humanoid: Humanoid? =
+            character:FindFirstChildOfClass("Humanoid") :: Humanoid?
+        if not humanoid then
+            return character, nil, nil
+        end
+        local root: BasePart? = (humanoid.RootPart
+            or character:FindFirstChild("HumanoidRootPart")) :: BasePart?
+        return character, humanoid, root
+    end
+
+    local function livingParts(player: Player?): (Model?, Humanoid?, BasePart?)
+        local character: Model?, humanoid: Humanoid?, root: BasePart? = getParts(player)
+        if not character or not humanoid or not root or humanoid.Health <= 0
+            or not root.Parent or root.Anchored then
+            return character, humanoid, nil
+        end
+        return character, humanoid, root
+    end
+
+    local function restorePulse(): ()
+        local backup: any = pulseBackup
+        pulseBackup = nil
+        if backup and backup.root and backup.root.Parent then
+            pcall(function(): ()
+                backup.root.AssemblyLinearVelocity = backup.linear
+                backup.root.AssemblyAngularVelocity = backup.angular
+            end)
+        end
+    end
+
+    local function savePulse(kind: string, root: BasePart): boolean
+        if pulseBackup then
+            return false
+        end
+        local linear: Vector3 = root.AssemblyLinearVelocity
+        local angular: Vector3 = root.AssemblyAngularVelocity
+        if not finiteVector(linear) or not finiteVector(angular) then
+            return false
+        end
+        pulseBackup = {
+            kind = kind,
+            root = root,
+            linear = linear,
+            angular = angular,
+        }
+        return true
+    end
+
+    local function finishSession(reason: string): ()
+        local session: any = currentSession
+        if not session then
+            return
+        end
+        currentSession = nil
+        if pulseBackup and pulseBackup.kind == "target" then
+            restorePulse()
+        end
+
+        for part: BasePart, canCollide: boolean in pairs(session.collisions) do
+            if part.Parent then
+                pcall(function(): ()
+                    part.CanCollide = canCollide
+                end)
+            end
+        end
+        table.clear(session.collisions)
+
+        local humanoid: Humanoid? = session.humanoid
+        if humanoid and humanoid.Parent then
+            pcall(function(): ()
+                humanoid.AutoRotate = session.autoRotate
+                humanoid:SetStateEnabled(
+                    Enum.HumanoidStateType.Seated,
+                    session.seatedEnabled
+                )
+                humanoid:ChangeState(Enum.HumanoidStateType.GettingUp)
+            end)
+        end
+
+        local _, livingHumanoid: Humanoid?, root: BasePart? = livingParts(LocalPlayer)
+        if root and livingHumanoid and LocalPlayer.Character == session.character
+            and root == session.root then
+            pcall(function(): ()
+                root.AssemblyLinearVelocity = Vector3.zero
+                root.AssemblyAngularVelocity = Vector3.zero
+                if reason ~= "lost-local" and session.restorePosition ~= false then
+                    session.character:PivotTo(session.returnCFrame)
+                end
+            end)
+        end
+        setActivity()
+    end
+
+    local function cancel(): ()
+        finishSession("cancelled")
+    end
+
+    local function start(target: Player?, options: {[string]: any}?): boolean
+        if destroyed or currentSession or not target or target == LocalPlayer then
+            return false
+        end
+        local targetCharacter: Model?, targetHumanoid: Humanoid?, targetRoot: BasePart? =
+            livingParts(target)
+        local character: Model?, humanoid: Humanoid?, root: BasePart? =
+            livingParts(LocalPlayer)
+        if not targetCharacter or not targetHumanoid or not targetRoot
+            or not character or not humanoid or not root then
+            return false
+        end
+
+        local settings: any = options or {}
+        local duration: number = tonumber(settings.duration) or 1.4
+        if duration ~= duration or math.abs(duration) == math.huge then
+            duration = 1.4
+        end
+        local seatedEnabled: boolean = true
+        pcall(function(): ()
+            seatedEnabled = humanoid:GetStateEnabled(Enum.HumanoidStateType.Seated)
+        end)
+        local session: any = {
+            target = target,
+            targetCharacter = targetCharacter,
+            targetHumanoid = targetHumanoid,
+            targetRoot = targetRoot,
+            character = character,
+            humanoid = humanoid,
+            root = root,
+            returnCFrame = if typeof(settings.returnCFrame) == "CFrame"
+                then settings.returnCFrame else root.CFrame,
+            restorePosition = settings.restorePosition ~= false,
+            shouldStop = settings.shouldStop,
+            duration = math.clamp(duration, 0.1, 3),
+            startedAt = os.clock(),
+            collisions = {},
+            autoRotate = humanoid.AutoRotate,
+            seatedEnabled = seatedEnabled,
+        }
+
+        for _, object: Instance in ipairs(character:GetChildren()) do
+            if object:IsA("BasePart") then
+                local part: BasePart = object :: BasePart
+                session.collisions[part] = part.CanCollide
+                part.CanCollide = true
+            end
+        end
+        humanoid.AutoRotate = false
+        humanoid:SetStateEnabled(Enum.HumanoidStateType.Seated, false)
+        humanoid:ChangeState(Enum.HumanoidStateType.Physics)
+        currentSession = session
+        setActivity()
+        return true
+    end
+
+    local function disconnectTouch(): ()
+        for _, connection: RBXScriptConnection in ipairs(touchConnections) do
+            connection:Disconnect()
+        end
+        table.clear(touchConnections)
+        table.clear(touchContacts)
+        touchCharacter = nil
+    end
+
+    local function noteTouch(hit: BasePart): ()
+        if not touchEnabled or not hit then
+            return
+        end
+        local model: any = hit.Parent
+        for _ = 1, 3 do
+            if not model or typeof(model) ~= "Instance" then
+                return
+            end
+            if model:FindFirstChildOfClass("Humanoid") then
+                break
+            end
+            model = model.Parent
+        end
+        if not model or typeof(model) ~= "Instance" then
+            return
+        end
+        local ok: boolean, player: any = pcall(function(): any
+            return Players:GetPlayerFromCharacter(model)
+        end)
+        if ok and player and player ~= LocalPlayer then
+            touchContacts[player] = os.clock()
+        end
+    end
+
+    local function bindTouchPart(part: BasePart): ()
+        table.insert(touchConnections, part.Touched:Connect(noteTouch))
+    end
+
+    local function bindTouchCharacter(): ()
+        disconnectTouch()
+        if not touchEnabled then
+            return
+        end
+        local character: Model?, humanoid: Humanoid?, root: BasePart? =
+            livingParts(LocalPlayer)
+        if not character or not humanoid or not root then
+            return
+        end
+        touchCharacter = character
+        for _, object: Instance in ipairs(character:GetDescendants()) do
+            if object:IsA("BasePart") then
+                bindTouchPart(object :: BasePart)
+            end
+        end
+        table.insert(touchConnections, character.DescendantAdded:Connect(function(object: Instance): ()
+            if touchEnabled and object:IsA("BasePart") then
+                bindTouchPart(object :: BasePart)
+            end
+        end))
+        table.insert(touchConnections, humanoid.Died:Connect(function(): ()
+            table.clear(touchContacts)
+            if pulseBackup and pulseBackup.kind == "touch" then
+                restorePulse()
+            end
+        end))
+    end
+
+    local function setTouchEnabled(enabled: boolean): ()
+        local wanted: boolean = enabled == true
+        if touchEnabled == wanted then
+            return
+        end
+        touchEnabled = wanted
+        if touchEnabled then
+            bindTouchCharacter()
+        else
+            disconnectTouch()
+            if pulseBackup and pulseBackup.kind == "touch" then
+                restorePulse()
+            end
+        end
+        setActivity()
+    end
+
+    local function stepTarget(session: any): ()
+        if os.clock() - session.startedAt >= session.duration then
+            finishSession("completed")
+            return
+        end
+        if type(session.shouldStop) == "function" then
+            local ok: boolean, stop: any = pcall(session.shouldStop)
+            if not ok or stop == true then
+                finishSession("cancelled")
+                return
+            end
+        end
+        local character: Model?, humanoid: Humanoid?, root: BasePart? =
+            livingParts(LocalPlayer)
+        if not character or character ~= session.character or not humanoid
+            or humanoid ~= session.humanoid or not root or root ~= session.root then
+            finishSession("lost-local")
+            return
+        end
+        if session.target.Parent ~= Players
+            or session.target.Character ~= session.targetCharacter
+            or session.targetHumanoid.Health <= 0
+            or not session.targetRoot.Parent then
+            finishSession("lost-target")
+            return
+        end
+
+        local targetPosition: Vector3 = session.targetRoot.Position
+        local contactPosition: Vector3 =
+            (session.targetRoot.CFrame * CFrame.new(0, 0, 2.2)).Position
+        if not finiteVector(targetPosition) or not finiteVector(contactPosition)
+            or not finiteVector(root.Position) then
+            finishSession("invalid-target")
+            return
+        end
+        local toContact: Vector3 = contactPosition - root.Position
+        local distance: number = toContact.Magnitude
+        if not savePulse("target", root) then
+            return
+        end
+        if distance > 4.5 then
+            -- Approach through the physics step only. Never solve contact by
+            -- teleporting the local assembly to the target every frame.
+            local approachSpeed: number = math.min(220, math.max(40, distance * 10))
+            root.AssemblyLinearVelocity = toContact.Unit * approachSpeed
+            root.AssemblyAngularVelocity = Vector3.zero
+            return
+        end
+        local towards: Vector3 = targetPosition - root.Position
+        if towards.Magnitude <= 0.001 then
+            towards = session.targetRoot.CFrame.LookVector
+        end
+        if towards.Magnitude <= 0.001 then
+            restorePulse()
+            return
+        end
+        root.AssemblyLinearVelocity = towards.Unit * 180 + Vector3.new(0, 50, 0)
+        root.AssemblyAngularVelocity = Vector3.new(0, 140, 0)
+    end
+
+    local function stepTouch(): ()
+        if not touchEnabled or pulseBackup then
+            return
+        end
+        if touchCharacter ~= LocalPlayer.Character then
+            bindTouchCharacter()
+        end
+        local _, humanoid: Humanoid?, root: BasePart? = livingParts(LocalPlayer)
+        if not humanoid or not root then
+            return
+        end
+
+        local now: number = os.clock()
+        local contactRoot: BasePart? = nil
+        local newest: number = 0
+        for player: Player, touchedAt: number in pairs(touchContacts) do
+            local _, targetHumanoid: Humanoid?, targetRoot: BasePart? =
+                livingParts(player)
+            if now - touchedAt <= 0.3 and targetHumanoid and targetRoot
+                and (targetRoot.Position - root.Position).Magnitude <= 8 then
+                if touchedAt > newest then
+                    newest = touchedAt
+                    contactRoot = targetRoot
+                end
+            else
+                touchContacts[player] = nil
+            end
+        end
+        if not contactRoot then
+            return
+        end
+
+        local direction: Vector3 = contactRoot.Position - root.Position
+        direction = Vector3.new(direction.X, 0, direction.Z)
+        if direction.Magnitude <= 0.001 then
+            local look: Vector3 = root.CFrame.LookVector
+            direction = Vector3.new(look.X, 0, look.Z)
+        end
+        if direction.Magnitude <= 0.001 or not savePulse("touch", root) then
+            return
+        end
+        root.AssemblyLinearVelocity = direction.Unit * 150 + Vector3.new(0, 70, 0)
+        root.AssemblyAngularVelocity = Vector3.new(0, 120, 0)
+    end
+
+    local preConnection: RBXScriptConnection = RunService.PreSimulation:Connect(function(): ()
+        if destroyed then
+            return
+        end
+        if currentSession then
+            local session: any = currentSession
+            local ok: boolean = pcall(stepTarget, session)
+            if not ok and currentSession == session then
+                finishSession("error")
+            end
+        elseif touchEnabled then
+            local ok: boolean = pcall(stepTouch)
+            if not ok then
+                setTouchEnabled(false)
+                restorePulse()
+            end
+        end
+    end)
+    local postConnection: RBXScriptConnection = RunService.PostSimulation:Connect(function(): ()
+        restorePulse()
+    end)
+    local characterConnection: RBXScriptConnection = LocalPlayer.CharacterAdded:Connect(function(): ()
+        if currentSession then
+            finishSession("lost-local")
+        end
+        if touchEnabled then
+            bindTouchCharacter()
+        end
+    end)
+
+    local library: any = {}
+    function library.start(target: Player?, options: {[string]: any}?): boolean
+        return start(target, options)
+    end
+    function library.cancel(): ()
+        cancel()
+    end
+    function library.isRunning(): boolean
+        return currentSession ~= nil
+    end
+    function library.setTouchEnabled(enabled: boolean): ()
+        setTouchEnabled(enabled)
+    end
+    function library.isTouchEnabled(): boolean
+        return touchEnabled
+    end
+    function library.destroy(): ()
+        if destroyed then
+            return
+        end
+        destroyed = true
+        setTouchEnabled(false)
+        finishSession("destroyed")
+        restorePulse()
+        preConnection:Disconnect()
+        postConnection:Disconnect()
+        characterConnection:Disconnect()
+        setActivity()
+        if activeLibrary == library then
+            activeLibrary = nil
+        end
+    end
+
+    activeLibrary = library
+    Module.Initialized = true
+    return library
+end
+
+function Module.destroy(): ()
+    if activeLibrary then
+        activeLibrary.destroy()
+    end
+    activeLibrary = nil
+    Module.Initialized = false
+end
+
+return Module
+
+]],
         ["src/libraries/Framework.lua"] = [[
 export type CleanupItem = any
 
@@ -53710,6 +53587,7 @@ local Manifest: Manifest = {
         "src/libraries/Render.lua",
         "src/libraries/GameRoles.lua",
         "src/libraries/CameraAccess.lua",
+        "src/libraries/Fling.lua",
 
         "src/guis/Wurst/Code/Cards.lua",
 
@@ -53870,13 +53748,6 @@ local Manifest: Manifest = {
             name = "Gravity",
             category = "World",
         },
-        {
-            path = "src/games/universal/Movement/SafeWalk.lua",
-            name = "Safe Walk",
-            category = "World",
-        },
-
-
         {
             path = "src/games/universal/Other/Disguise.lua",
             name = "Disguise",

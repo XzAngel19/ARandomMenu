@@ -899,7 +899,7 @@ do
       Combat = {"Aim Assist", "Auto Shoot", "Gun Aimbot Buttons", "Knife Combat", "Knife Throw", "Silent AIM", "TriggerBot"},
       Exploits = {"AirWalk", "Fling", "Fly", "Infinite Jump", "Interact Extender", "Jesus", "Jump", "Noclip", "Speed", "Spider", "Swim", "Touch Fling"},
       Utilities = {"Anti Void", "Auto Farm", "Auto Unbox", "Auto Vote", "Auto Win", "Coins Aura", "Freeze Movements", "Get All Emotes", "Ghost", "Gun Aura", "Teleport"},
-      World = {"Anti AFK", "Blurt Roles", "Disguise", "FreeCam", "Gravity", "Improve FPS", "Safe Walk"},
+      World = {"Anti AFK", "Blurt Roles", "Disguise", "FreeCam", "Gravity", "Improve FPS"},
     }
     for category, names in pairs(expectedCategories) do
       for _, name in ipairs(names) do

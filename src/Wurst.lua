@@ -56,8 +56,6 @@ local FEATURE_CATEGORIES: {[string]: string} = {
     ["Freeze Movements"] = "Utilities",
     ["Anti-Fling"] = "Movement",
     ["Anti-Void"] = "Movement",
-    ["Safe Walk"] = "World",
-    ["SafeWalk"] = "Movement",
     ["Gravity"] = "World",
 
 
@@ -224,7 +222,7 @@ local RUNTIME_RAW_BASE: string =
         .. RUNTIME_BRANCH
         .. "/"
 
-local SOURCE_STAMP: string = "v140-20261026-touchfling-silentaim-sorted-ui"
+local SOURCE_STAMP: string = "v141-20261026-fling-autofarm-safewalk-cleanup"
 
 local BOOT_STARTED_AT: number = os.clock()
 local BOOT_FINGERPRINT_SECONDS: number = 0
@@ -5907,6 +5905,7 @@ local fallbackManifest: any = {
         "src/libraries/Render.lua",
         "src/libraries/GameRoles.lua",
         "src/libraries/CameraAccess.lua",
+        "src/libraries/Fling.lua",
         "src/guis/Wurst/Code/Cards.lua",
         "src/guis/Wurst/Code/WindowManager.lua",
         "src/guis/Wurst/Code/ClickGui.lua",
@@ -5948,7 +5947,6 @@ local fallbackManifest: any = {
         {path = "src/games/universal/Movement/AntiVoid.lua", name = "Anti Void", category = "Utilities"},
         {path = "src/games/universal/Movement/FreezeMovements.lua", name = "Freeze Movements", category = "Utilities"},
         {path = "src/games/universal/Movement/Gravity.lua", name = "Gravity", category = "World"},
-        {path = "src/games/universal/Movement/SafeWalk.lua", name = "Safe Walk", category = "World"},
         {path = "src/games/universal/Other/Disguise.lua", name = "Disguise", category = "World"},
         {path = "src/games/universal/Other/AntiAfk.lua", name = "Anti AFK", category = "World"},
         {path = "src/games/universal/Other/InteractExtender.lua", name = "Interact Extender", category = "Exploits"},
@@ -6180,6 +6178,7 @@ end
 local entityLibrary: any = libraries.entity
 state.weaponLibrary = libraries.weapons
 state.renderLibrary = libraries.render
+state.flingPhysics = libraries.fling
 state.markBoot("libraries", librariesAt)
 
 local context: any = {
@@ -6234,6 +6233,7 @@ state.cleanupFrameworkRuntime = function(): ()
     table.clear(loaded)
     state.framework = nil
     state.renderLibrary = nil
+    state.flingPhysics = nil
 end
 state.summarizeBoot()
 end)()

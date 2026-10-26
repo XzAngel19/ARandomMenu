@@ -1,26 +1,18 @@
 #!/usr/bin/env python3
-"""Static contract for the MM2 Auto Farm module.
+"""Static architecture contract for the current MM2 Auto Farm source.
 
-v83 fixes from live play: the server kicked with "Invalid position"
-(267) because the root was CFrame-teleported every tick, the camera
-glitched because prone/noclip were applied even in the lobby, and
-turning the feature off left the character lying in geometry. The
-farm now moves by physics velocity at a user-tunable Farm Speed,
-engages only when a target exists, NoClips while engaged, and
-restores everything (returning home upright) on OFF.
+Dynamic lifecycle/physics checks live in test_mm2_auto_farm_dynamics.py.
+No assertion here is evidence of live coins, damage or wins.
 """
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-SOURCE = (ROOT / 'src/games/MM2/Other/AutoFarm.lua').read_text()
-WURST = (ROOT / 'src/Wurst.lua').read_text()
+SOURCE = (ROOT / "src/games/MM2/Other/AutoFarm.lua").read_text()
+WURST = (ROOT / "src/Wurst.lua").read_text()
 
-# Registered in the MM2 module load list.
 assert '"src/games/MM2/Other/AutoFarm.lua"' in WURST
-
-# Feature + Farm Speed slider + the five requested options.
 assert '"Auto Farm"' in SOURCE
-assert '"Farm Speed", 16, 5, 60' in SOURCE, "user-tunable speed slider, slow default"
+assert '"Farm Speed", 16, 5, 60' in SOURCE
 for option, default in (
     ("Reset When Full Coin Bag", "true"),
     ("Fling Murder after reset", "false"),
@@ -28,132 +20,76 @@ for option, default in (
     ("Auto Grab gun and Shoot", "false"),
     ("Auto Kill All When full coin bag", "false"),
 ):
-    needle = f'"{option}", {default}'
-    assert needle in SOURCE, f"missing option: {option}"
+    assert f'"{option}", {default}' in SOURCE
 
-# Movement is physics velocity, never per-tick CFrame teleports.
-assert "root.AssemblyLinearVelocity = delta.Unit * speed" in SOURCE
-assert "Invalid position" in SOURCE  # documented in the module
-assert "settings.speed" in SOURCE
-
-# Coins come from Coin ESP's detection, shared through state.
-assert "state.mm2CoinPickups" in SOURCE
-assert '"Coin_Server"' in SOURCE  # fallback scan if Coin ESP is off
-
-# Two farm modes: Walk on the ground, or Below with a grown hitbox.
-assert '"Farm Mode"' in SOURCE and '"Walk"' in SOURCE
-assert '"Below (Hitbox)"' in SOURCE
-# Below: Coin_Server is 1.2x2x2 (one stud either side of its centre);
-# riding 3 studs under it with an 8-tall root hitbox overlaps that
-# volume without ever lying the character face-down.
+# Below has one fixed contact pose and one PreSimulation constraint writer.
 assert "local BELOW_OFFSET: number = 3.0" in SOURCE
 assert "Vector3.new(4, 8, 4)" in SOURCE
 assert "root.Size = HITBOX_SIZE" in SOURCE
-assert "savedRootSize" in SOURCE  # hitbox restored on OFF
-# The face-down tilt is gone for good (that fight glitched the camera).
-assert "math.rad(90)" not in SOURCE
-assert "PlatformStand = true" in SOURCE  # Below only, upright
-# Walk: plain humanoid locomotion at slider WalkSpeed, restored after.
-assert "humanoid:Move(flat.Unit, false)" in SOURCE
-assert "humanoid.WalkSpeed" in SOURCE and "savedWalkSpeed" in SOURCE
-assert "humanoid.Jump = true" in SOURCE  # hop when walking stalls
-assert "CanCollide = false" in SOURCE  # Below NoClip
+assert "LinearVelocity" in SOURCE and "AlignOrientation" in SOURCE
+assert "BodyVelocity" not in SOURCE and "BodyGyro" not in SOURCE
+assert "local function preFarmPhysics" in SOURCE
+assert "moveTowards(root, belowDestination" in SOURCE
+assert "nearestPosition :: Vector3) - Vector3.new(0, BELOW_OFFSET, 0)" in SOURCE
+assert "BELOW_OFFSET + 3.5" not in SOURCE
+assert "initialPlacement" in SOURCE
+assert "hideAnchorPosition = root.Position" in SOURCE
+assert "nextCF" not in SOURCE and "root.CFrame = destCF" not in SOURCE
 
-# Lobby safety: never activates or moves the character in the lobby,
-# stays hidden under the map when a round is starting or 0 coins are in
-# the server until the next coin spawns (< 1s), and strictly requires 50
-# coins before returning to homeCFrame during active farming.
-assert "restoreCharacter(false)" in SOURCE
-assert "isCharacterInActiveRound" in SOURCE
-assert '"Auto Farm: waiting in lobby"' in SOURCE
-assert "waiting for coin" in SOURCE
-assert "holdHiddenUnderMap" in SOURCE
-assert "getHiddenUnderMapPosition" in SOURCE
-assert "bagAmount >= 50 or not enabled" in SOURCE
-assert "restoreCharacter(true)" in SOURCE
-assert "recovered from the void" in SOURCE
-assert "roamTarget" not in SOURCE
+# Walk uses Humanoid locomotion, not a parallel CFrame/velocity writer.
+assert "humanoid:Move(unitDir, false)" in SOURCE
+assert "humanoid.WalkSpeed = speed" in SOURCE
+assert "humanoid.Jump = true" in SOURCE
+walk_body = SOURCE.split("local function walkTowards", 1)[1].split(
+    "-- The Coin_Server part", 1
+)[0]
+assert "root.CFrame" not in walk_body
+assert "AssemblyLinearVelocity" not in walk_body
+assert "MoveTo" not in walk_body
 
-# OFF and full-bag restore return the character to the exact last
-# position before Auto Farm started (homeCFrame), never a random spawn.
-assert "restoreCharacter(true)" in SOURCE
-assert "PlatformStand = false" in SOURCE
-assert "AutoRotate = true" in SOURCE
-assert "homeCFrame" in SOURCE
-assert "teleportToRandomMapSpawn" not in SOURCE
-assert "character:PivotTo(targetCF)" in SOURCE
-
-# Full bag (50) comes from the game's own CoinCollected report.
-assert '"CoinCollected"' in SOURCE
-assert "bagAmount >= targetLimit" in SOURCE
-assert "local bagLimit: number = 50" in SOURCE
-
-# Reset + respawn wait, then the optional flings.
-assert "humanoid.Health = 0" in SOURCE
-assert "findMurderer" in SOURCE and "findSheriff" in SOURCE
-assert "AssemblyAngularVelocity = Vector3.new(0, 400, 0)" in SOURCE
-
-# Kill All, YARHM-style: victims anchored in front, then the slash.
-assert 'getPlayerRole(LocalPlayer) ~= "Murderer"' in SOURCE
-assert "victimRoot.Anchored = true" in SOURCE
-assert 'FireServer("Slash")' in SOURCE
-assert '"HandleTouched"' in SOURCE
-
-# Full-bag actions ONLY at 50: Kill All, grab gun + continuous shooting,
-# reset and flings all live in the full-bag sequence; the per-tick grab
-# is gone so nothing fires during ordinary farming.
-assert "state.mm2FireSilentShot" in SOURCE
-assert "grabGunAndShoot" in SOURCE
-assert "settings.grabGunShoot then" in SOURCE
-assert "during ordinary farming" in SOURCE
-assert "findDroppedGun" in SOURCE
-assert "humanoid:EquipTool(gun :: Tool)" in SOURCE
-assert 'gun:FindFirstChild("Shoot")' in SOURCE  # direct fallback shot
-assert "prediction.gunAim" in SOURCE
-assert "or settings.flingMurder or settings.flingSheriff" in SOURCE
-assert "going for the dropped gun" not in SOURCE, \
-    "no gun grab in the ordinary farming tick"
-tick_body = SOURCE.rsplit("featureConnections.MM2AutoFarmTick", 1)[1]
-assert "findDroppedGun" not in tick_body.split("-- Nearest pickup")[0], \
-    "the farming tick never looks for the dropped gun"
-
-# Gun grab guards: Innocent/Sheriff/Hero allowed (picking up the gun
-# promotes Innocent to Hero/Sheriff), active round only, never the lobby,
-# continuous shooting loop until the Murderer is eliminated.
-assert "local function canGrabGun(): boolean" in SOURCE
-assert 'role ~= "Innocent" and role ~= "Sheriff" and role ~= "Hero"' in SOURCE
+# Active-round and living-character gates cover ordinary and terminal work.
 assert "isRoundLifecycleActive() ~= true" in SOURCE
-assert "if not canGrabGun() then" in SOURCE
-assert "local function touchDroppedGun(" in SOURCE
-assert "touchDroppedGun(firstDrop, startRoot)" in SOURCE
-assert "while os.clock() < shootLoopDeadline and enabled and settings.grabGunShoot do" in SOURCE
+assert "local function livingRoundParts" in SOURCE
+assert "canReposition" in SOURCE
+assert "humanoid.Health <= 0" in SOURCE
+assert "enableGeneration" in SOURCE and "roundGeneration" in SOURCE
+assert "rememberedFullHandled" in SOURCE
+assert "thisEnable == enableGeneration" in SOURCE
+assert "thisRound == roundGeneration" in SOURCE
+assert "task.spawn(runFullSequence, thisEnable, roundGeneration)" in SOURCE
+assert "elseif settings.grabGunShoot and canGrabGun()" not in SOURCE
+assert "local function runFullSequence(thisEnable: number, thisRound: number)" in SOURCE
+assert "killAll(alive)" in SOURCE
+assert "grabGunAndShoot(alive)" in SOURCE
+assert "flingPlayer(findMurderer(), alive)" in SOURCE
+assert "flingPlayer(findSheriff(), alive)" in SOURCE
 
-sequence_body = SOURCE.split("local function runFullSequence()", 1)[1]
-kill_index = sequence_body.index("killAll()")
-teleport_index = sequence_body.index("restoreCharacter(true)")
-grab_index = sequence_body.index("grabGunAndShoot()")
-assert kill_index < teleport_index < grab_index, \
-    "full-bag order: Kill All, return to homeCFrame, then Auto Grab + Shoot"
+# Fling is only a shared API call; there is no local fallback.
+assert "state.mm2PerformFling" in SOURCE
+assert "AssemblyAngularVelocity = Vector3.new(0, 400, 0)" not in SOURCE
+assert "mm2FlingStep" not in SOURCE
+assert "10000" not in SOURCE and "12000" not in SOURCE
 
-# A coin that never collects is skipped instead of trapping the farm.
+# Coin detection, touch pickup, blacklist and cleanup remain intact.
+assert "state.mm2CoinPickups" in SOURCE
+assert '"Coin_Server"' in SOURCE
+assert '"CoinCollected"' in SOURCE
 assert "BLACKLIST_SECONDS" in SOURCE
-
-# Already-collected coins stop being targets immediately (the old farm
-# flew up to a ghost coin and hovered over it).
 assert "stillCollectable" in SOURCE
-assert 'GetAttribute("Collected")' in SOURCE
-
-# Parked collections also pulse the touch directly (physics Touched
-# is not guaranteed for a fully NoClipped body).
 assert "state.fireTouchInterest" in SOURCE
-assert '"Stay Under When Round starts"' in SOURCE
-assert "settings.stayUnderOnStart" in SOURCE
-assert "resolveSafeAboveGroundPosition" in SOURCE
+assert "savedRootSize" in SOURCE and "savedCollide" in SOURCE
+assert "destroyFarmConstraints" in SOURCE
+assert "restoreCharacter(false)" in SOURCE
+assert "restoreCharacter(true)" in SOURCE
+assert '"Auto Farm: waiting in lobby"' in SOURCE
 
-print("PASS MM2 Auto Farm: Walk (ground locomotion, slider WalkSpeed, "
-      "hop on stall) and Below (Hitbox) (upright velocity flight, grown "
-      "4x8x4 root hitbox, NoClip, no face-down tilt, no 267 teleports), "
-      "collected coins dropped as targets at once, uncollectable coins "
-      "blacklisted, lobby/coin-less roaming instead of parking under the floor, OFF restores hitbox/WalkSpeed and "
-      "returns home upright, ping in status, full-bag reset/flings, "
-      "YARHM Kill All, grab gun")
+# Full-bag ordering remains Kill All -> return -> gun -> reset -> flings.
+sequence = SOURCE.split("local function runFullSequence", 1)[1]
+assert sequence.index("killAll(alive)") < sequence.index("restoreCharacter(true)")
+assert sequence.index("restoreCharacter(true)") < sequence.index("grabGunAndShoot(alive)")
+assert sequence.index("grabGunAndShoot(alive)") < sequence.index("humanoid.Health = 0")
+assert sequence.index("humanoid.Health = 0") < sequence.index("flingPlayer(findMurderer(), alive)")
+
+print("PASS MM2 Auto Farm static: fixed Below contact, constraint-owned movement, "
+      "Humanoid Walk, strict alive/round guards, one terminal sequence, "
+      "remembered full-bag idempotence and shared Fling only")
