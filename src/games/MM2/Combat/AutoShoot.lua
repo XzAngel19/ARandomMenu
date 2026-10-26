@@ -173,7 +173,8 @@ function Module.init(runtime: any): any
         targetRoot: BasePart,
         character: Model,
         localRoot: BasePart,
-        gun: Tool
+        gun: Tool,
+        checkWalls: boolean?
     ): boolean
         local shootRemote: Instance? = gun:FindFirstChild("Shoot")
         if not (shootRemote and shootRemote:IsA("RemoteEvent")) then
@@ -193,6 +194,17 @@ function Module.init(runtime: any): any
             targetRoot,
             originCF.Position
         )
+        if checkWalls == true and type(isWeaponPathClear) == "function" then
+            local okClear: boolean, clear: any = pcall(
+                isWeaponPathClear,
+                originCF.Position,
+                endpoint,
+                target.Character
+            )
+            if not okClear or clear ~= true then
+                return false
+            end
+        end
         local capturedPos: Vector3 = targetRoot.Position
         local chordFlat: Vector3 = Vector3.new(
             endpoint.X - capturedPos.X,
@@ -344,7 +356,7 @@ function Module.init(runtime: any): any
             or settings.mode == "Cframe"
             or settings.mode == "Silent AIM"
         if isCFrame then
-            fireCFrameShotImmediate(target, targetRoot, character, localRoot, gun)
+            fireCFrameShotImmediate(target, targetRoot, character, localRoot, gun, settings.wallCheck == true)
         else
             fireBulletShotImmediate(target, targetRoot, character, localRoot, gun)
         end
@@ -440,6 +452,32 @@ function Module.init(runtime: any): any
     state.mm2AutoShootFeature = AutoShootFeature
 
     local auraSlider: GuiObject? = nil
+    local modeConfigs: {[string]: {wallCheck: boolean, proximity: boolean, aura: number}} = {
+        Bullet = {
+            wallCheck = if type(configData) == "table" and configData.states["MM2.AutoShoot.Bullet.WallCheck"] ~= nil
+                then configData.states["MM2.AutoShoot.Bullet.WallCheck"] == true
+                else true,
+            proximity = if type(configData) == "table" and configData.states["MM2.AutoShoot.Bullet.Proximity"] ~= nil
+                then configData.states["MM2.AutoShoot.Bullet.Proximity"] == true
+                else false,
+            aura = if type(configData) == "table" and type(configData.values["MM2.AutoShoot.Bullet.Aura"]) == "number"
+                then configData.values["MM2.AutoShoot.Bullet.Aura"]
+                else 25,
+        },
+        CFrame = {
+            wallCheck = if type(configData) == "table" and configData.states["MM2.AutoShoot.CFrame.WallCheck"] ~= nil
+                then configData.states["MM2.AutoShoot.CFrame.WallCheck"] == true
+                else false,
+            proximity = if type(configData) == "table" and configData.states["MM2.AutoShoot.CFrame.Proximity"] ~= nil
+                then configData.states["MM2.AutoShoot.CFrame.Proximity"] == true
+                else false,
+            aura = if type(configData) == "table" and type(configData.values["MM2.AutoShoot.CFrame.Aura"]) == "number"
+                then configData.values["MM2.AutoShoot.CFrame.Aura"]
+                else 25,
+        },
+    }
+    local switchingMode: boolean = false
+
     local function refreshProximityOption(): ()
         if auraSlider and type(setOptionVisible) == "function" then
             setOptionVisible(
@@ -451,36 +489,95 @@ function Module.init(runtime: any): any
         updateStatus()
     end
 
+    local function syncAutoShootModeControls(): ()
+        local modeKey: string = (settings.mode == "CFrame") and "CFrame" or "Bullet"
+        local cfg = modeConfigs[modeKey] or modeConfigs.Bullet
+        switchingMode = true
+        settings.wallCheck = cfg.wallCheck == true
+        settings.proximity = cfg.proximity == true
+        settings.aura = cfg.aura or 25
+        if state and type(state.toggleControls) == "table" then
+            local wc = state.toggleControls["MM2.AutoShoot.WallCheck"]
+            if wc and type(wc.setChecked) == "function" then
+                pcall(wc.setChecked, cfg.wallCheck == true)
+            end
+            local px = state.toggleControls["MM2.AutoShoot.Proximity"]
+            if px and type(px.setChecked) == "function" then
+                pcall(px.setChecked, cfg.proximity == true)
+            end
+        end
+        if state and type(state.valueControls) == "table" then
+            local au = state.valueControls["MM2.AutoShoot.Aura"]
+            if au and type(au.apply) == "function" then
+                pcall(au.apply, cfg.aura or 25)
+            end
+        end
+        switchingMode = false
+        refreshProximityOption()
+    end
+
     addCycleOption(AutoShootFeature, "Mode", {"Bullet", "CFrame"}, 1,
         function(value: string): ()
             settings.mode = value
-            updateStatus()
+            syncAutoShootModeControls()
         end,
-        "Bullet: shoots continuously while respecting WallCheck. CFrame: shoots immediately with Silent AIM CFrame upon receiving the gun.")
+        "Bullet: shoots continuously while respecting WallCheck. CFrame: shoots immediately with Silent AIM CFrame upon receiving the gun. Each mode keeps independent options.")
 
     addToggleOption(AutoShootFeature, "WallCheck", true,
         function(value: boolean): ()
-            settings.wallCheck = value
+            local on: boolean = value == true
+            settings.wallCheck = on
+            if not switchingMode then
+                local modeKey: string = (settings.mode == "CFrame") and "CFrame" or "Bullet"
+                local cfg = modeConfigs[modeKey]
+                if cfg then
+                    cfg.wallCheck = on
+                end
+                if type(configData) == "table" and type(configData.states) == "table" then
+                    configData.states["MM2.AutoShoot." .. modeKey .. ".WallCheck"] = on
+                end
+            end
         end,
-        "In Bullet mode, only shoot when there is a clear line of sight to the Murderer.")
+        "Only shoot when there is a clear line of sight to the Murderer (independent per mode).")
 
     addToggleOption(AutoShootFeature, "Proximity", false,
         function(value: boolean): ()
-            settings.proximity = value == true
+            local on: boolean = value == true
+            settings.proximity = on
+            if not switchingMode then
+                local modeKey: string = (settings.mode == "CFrame") and "CFrame" or "Bullet"
+                local cfg = modeConfigs[modeKey]
+                if cfg then
+                    cfg.proximity = on
+                end
+                if type(configData) == "table" and type(configData.states) == "table" then
+                    configData.states["MM2.AutoShoot." .. modeKey .. ".Proximity"] = on
+                end
+            end
             refreshProximityOption()
         end,
-        "When enabled, only shoot when the Murderer enters the configured radius.")
+        "When enabled, only shoot when the Murderer enters the configured radius (independent per mode).")
 
     auraSlider = addNumberOption(AutoShootFeature, "Aura", 25, 5, 150,
         function(value: number): ()
             settings.aura = value
+            if not switchingMode then
+                local modeKey: string = (settings.mode == "CFrame") and "CFrame" or "Bullet"
+                local cfg = modeConfigs[modeKey]
+                if cfg then
+                    cfg.aura = value
+                end
+                if type(configData) == "table" and type(configData.values) == "table" then
+                    configData.values["MM2.AutoShoot." .. modeKey .. ".Aura"] = value
+                end
+            end
             if AutoShootFeature.enabled then
                 AutoShootFeature:SetStatus(tostring(value) .. " studs")
             end
         end,
         "Maximum distance in studs to automatically shoot at the Murderer while Proximity is ON.", 1)
 
-    refreshProximityOption()
+    syncAutoShootModeControls()
 
     activeCleanup = function(): ()
         toggleAutoShoot(false)

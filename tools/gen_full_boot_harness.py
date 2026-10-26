@@ -872,28 +872,58 @@ do
     assert(okEmOn, "Get All Emotes ON must not error: " .. tostring(errEmOn))
     local okEmOff, errEmOff = pcall(getAllEmotes.onToggle, false)
     assert(okEmOff, "Get All Emotes OFF must not error: " .. tostring(errEmOff))
-    local strafeBot = findFeature("StrafeBot")
-    assert(strafeBot and strafeBot.categoryName == "Combat", "StrafeBot module must exist in Combat")
-    assert(not findFeature("Target Strafe"), "Target Strafe must be renamed to StrafeBot")
+    assert( not findFeature("StrafeBot") and not findFeature("Target Strafe"), "StrafeBot must be removed")
+    local touchFling = findFeature("Touch Fling")
+    assert(touchFling and touchFling.categoryName == "Exploits", "Touch Fling module must exist in Exploits")
+    assert(not touchFling.enabled, "Touch Fling must not auto-enable on startup")
+    local gunAimbotButtons = findFeature("Gun Aimbot Buttons")
+    assert(gunAimbotButtons and gunAimbotButtons.categoryName == "Combat", "Gun Aimbot Buttons must exist in Combat")
+    local silentAimMod = findFeature("Silent AIM")
+    assert(silentAimMod and silentAimMod.categoryName == "Combat", "Silent AIM must exist in Combat")
+    -- Verify per-mode independent options on Silent AIM and Gun Aimbot Buttons
+    ex.state.valueControls["MM2.SilentAIM.Aimmethod"].apply("CFrame")
+    ex.state.toggleControls["MM2.SilentAIM.WallCheck"].setChecked(true)
+    ex.state.valueControls["MM2.SilentAIM.Aimmethod"].apply("Bullet")
+    ex.state.toggleControls["MM2.SilentAIM.WallCheck"].setChecked(false)
+    ex.state.valueControls["MM2.SilentAIM.Aimmethod"].apply("CFrame")
+    assert(ex.configData.states["MM2.SilentAIM.WallCheck"] == true, "CFrame mode must keep its independent WallCheck=true when switching back from Bullet")
+    ex.state.valueControls["MM2.SilentAIM.Aimmethod"].apply("Bullet")
+    assert(ex.configData.states["MM2.SilentAIM.WallCheck"] == false, "Bullet mode must keep its independent WallCheck=false when switching back from CFrame")
     local killAuraModule = ex.state.framework:GetModule("KillAura")
     assert(killAuraModule and killAuraModule.Options["Kill All"] and killAuraModule.Options["Kill Player"],
-      "KillAura must expose Kill All button and Kill Player living-Innocent selector")
-    local expected = {
-      Render = {"ItemESP", "PlayerESP", "Chams", "Nametags", "HP", "Arrows", "NPCESP", "FOV", "Fullbright", "X-Ray", "Zoom", "Markers"},
-      Combat = {"Aim Assist", "KillAura", "TriggerBot", "Gun Aimbot"},
-      Exploits = {"Fly", "Noclip", "Spider", "Speed", "Jump", "Interact Extender", "Fling"},
-      Utilities = {"Anti Void", "Teleport", "Freeze Movements", "Ghost"},
-      World = {"Improve FPS", "Gravity", "Anti AFK", "Safe Walk", "Blurt Roles", "FreeCam", "Disguise"},
+      "KillAura/Knife Combat must expose Kill All button and Kill Player living-Innocent selector")
+    local knifeCombat = findFeature("Knife Combat")
+    assert(knifeCombat and knifeCombat.categoryName == "Combat", "MM2 Knife Combat card must exist in Combat")
+    local expectedCategories = {
+      Render = {"Arrows", "Chams", "Coin ESP", "FOV", "Fullbright", "HP", "ItemESP", "Markers", "Nametags", "NPCESP", "PlayerESP", "X-Ray", "Zoom"},
+      Combat = {"Aim Assist", "Auto Shoot", "Gun Aimbot Buttons", "Knife Combat", "Knife Throw", "Silent AIM", "TriggerBot"},
+      Exploits = {"AirWalk", "Fling", "Fly", "Infinite Jump", "Interact Extender", "Jesus", "Jump", "Noclip", "Speed", "Spider", "Swim", "Touch Fling"},
+      Utilities = {"Anti Void", "Auto Farm", "Auto Unbox", "Auto Vote", "Auto Win", "Coins Aura", "Freeze Movements", "Get All Emotes", "Ghost", "Gun Aura", "Teleport"},
+      World = {"Anti AFK", "Blurt Roles", "Disguise", "FreeCam", "Gravity", "Improve FPS", "Safe Walk"},
     }
-    for category, names in pairs(expected) do
-      for index, name in ipairs(names) do
+    for category, names in pairs(expectedCategories) do
+      for _, name in ipairs(names) do
         local feature = findFeature(name)
         assert(feature, "Missing requested menu module: " .. name)
         assert(feature.categoryName == category, name .. " in wrong window: " .. tostring(feature.categoryName))
-        assert(feature.row.LayoutOrder == index, name .. " in wrong display order")
       end
     end
-    for _, name in ipairs({"Metrics", "Learning", "Game Learning", "HookPart", "Flight", "Invisible", "SpinBot", "Sprint", "Instant Role Notify", "Knife", "Shoot"}) do
+    for catName, catRecord in pairs(ex.state.clickGui.categories) do
+      local orderedRows = {}
+      for _, child in ipairs(catRecord.window.body:GetChildren()) do
+        local sortKey = child:GetAttribute("FeatureSortName")
+        if type(sortKey) == "string" then
+          table.insert(orderedRows, child)
+        end
+      end
+      table.sort(orderedRows, function(a, b) return a.LayoutOrder < b.LayoutOrder end)
+      for i = 2, #orderedRows do
+        local prevKey = tostring(orderedRows[i - 1]:GetAttribute("FeatureSortName") or "")
+        local currKey = tostring(orderedRows[i]:GetAttribute("FeatureSortName") or "")
+        assert(prevKey <= currKey, "Window " .. tostring(catName) .. " not sorted alphabetically: " .. prevKey .. " before " .. currKey)
+      end
+    end
+    for _, name in ipairs({"Metrics", "Learning", "Game Learning", "HookPart", "Flight", "Invisible", "SpinBot", "Sprint", "Instant Role Notify", "Knife", "Shoot", "StrafeBot"}) do
       assert(not findFeature(name), "Removed module still present: " .. name)
     end
     -- Auto Shoot is now an independent Combat module, not in Blatant/SilentAIM
@@ -998,7 +1028,7 @@ do
     
     -- GUI visibility and section tests wrapped in pcall due to mock limitations
     pcall(function()
-    local shoot = findFeature("Gun Aimbot") or findFeature("SilentAIM")
+    local shoot = findFeature("Gun Aimbot Buttons") or findFeature("Gun Aimbot") or findFeature("SilentAIM")
     local aimMethod = ex.state.valueControls["MM2.Shoot.Aimmethod"]
     assert(aimMethod, "Gun method must be configurable")
     aimMethod.apply("CFrame")
@@ -1007,7 +1037,7 @@ do
     assert(ex.state.shortcutBindings["MM2.Shoot"], "Shoot keeps its main activation shortcut")
     assert(not shoot.options:FindFirstChild("Option_Shootnow"), "Shoot now duplicates its main keybind")
     assert(not ex.state.shortcutBindings["MM2.ShootShoot now"], "duplicate Shoot now shortcut must not register")
-    local knife = findFeature("KillAura")
+    local knife = findFeature("Knife Combat") or findFeature("KillAura")
     for _, name in ipairs({"Mode", "ThrowRange", "Firedelay", "Spawnoffset", "WallCheck", "Throwanimation", "ThrowHz", "Thrownow"}) do
       assert(not knife.options:FindFirstChild("Option_" .. name), "redundant Knife setting: " .. name)
     end

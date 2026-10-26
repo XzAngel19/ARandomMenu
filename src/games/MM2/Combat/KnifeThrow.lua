@@ -465,6 +465,12 @@ function Module.init(runtime: any): any
                             end
                         end
                     end
+                    if type(state.mm2SilentAimRedirectCFrame) == "function" then
+                        local okSA: boolean, saCF: any = pcall(state.mm2SilentAimRedirectCFrame, self, ...)
+                        if okSA and typeof(saCF) == "CFrame" then
+                            return saCF
+                        end
+                    end
                     return origGetMouseTargetCFrame(self, ...)
                 end
             end
@@ -480,9 +486,15 @@ function Module.init(runtime: any): any
                             if originCF and target then
                                 local aim: Vector3? = resolveKnifeAim(target, originCF.Position, knife)
                                 if aim then
-                                    return aim
+                                    return CFrame.new(aim)
                                 end
                             end
+                        end
+                    end
+                    if type(state.mm2SilentAimRedirectCFrame) == "function" then
+                        local okSA: boolean, saCF: any = pcall(state.mm2SilentAimRedirectCFrame, self, ...)
+                        if okSA and typeof(saCF) == "CFrame" then
+                            return saCF
                         end
                     end
                     return origGetTargetPosition(self, ...)
@@ -493,6 +505,9 @@ function Module.init(runtime: any): any
 
     local function uninstallWeaponServiceRedirect(): ()
         if not hookedWeaponService then
+            return
+        end
+        if state.mm2SilentAimNativeActive == true then
             return
         end
         pcall(function(): ()

@@ -373,11 +373,15 @@ function Module.init(runtime: any): any
     end
     if wasEnabled then aura:Toggle(false) end
     local KnifeFeature: any = aura.Feature
+    local originalTitle: string = KnifeFeature.name or "KillAura"
     local originalDescription: string = KnifeFeature.description
     local originalSearch: string = KnifeFeature.searchText
-    KnifeFeature.description = "MM2 melee combat: Knife Aura stabs with your held knife. Includes Kill All and Kill Player."
+    if type(KnifeFeature.SetTitle) == "function" then
+        KnifeFeature:SetTitle("Knife Combat")
+    end
+    KnifeFeature.description = "MM2 melee knife options (Knife.Stab & Knife.Events.HandleTouched): Knife Aura, Aura Range, Kill All, and Kill Player."
     KnifeFeature.tooltipText = KnifeFeature.description
-    KnifeFeature.searchText = "killaura combat mm2 knife aura range kill all kill player"
+    KnifeFeature.searchText = "knife combat knife options killaura combat mm2 knife aura range kill all kill player stab handletouched"
     aura.CombatAdapter = function(enabled: boolean): ()
         state.mm2KnifeRuntime.masterEnabled = enabled
         refreshKnifeController()
@@ -462,6 +466,9 @@ function Module.init(runtime: any): any
         state.mm2KnifeFeature = nil
         state.mm2KnifeAuraModule = nil
         aura.CombatAdapter = nil
+        if type(KnifeFeature.SetTitle) == "function" then
+            KnifeFeature:SetTitle(originalTitle)
+        end
         KnifeFeature.description = originalDescription
         KnifeFeature.tooltipText = originalDescription
         KnifeFeature.searchText = originalSearch

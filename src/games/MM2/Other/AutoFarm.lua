@@ -1733,41 +1733,136 @@ function Module.init(_runtime: any): any
         farmTimeStat = state.addStatOption(AutoFarmFeature, "Time", "00:00")
     end
 
+    local modeConfigs: {[string]: {[string]: any}} = {
+        Walk = {
+            speed = 16,
+            stayUnderOnStart = false,
+            safeZone = true,
+            resetOnFull = true,
+            flingMurder = false,
+            flingSheriff = false,
+            grabGunShoot = false,
+            killAllOnFull = false,
+        },
+        Below = {
+            speed = 16,
+            stayUnderOnStart = true,
+            safeZone = true,
+            resetOnFull = true,
+            flingMurder = false,
+            flingSheriff = false,
+            grabGunShoot = false,
+            killAllOnFull = false,
+        },
+    }
+    local switchingFarmMode: boolean = false
+
+    local function syncFarmModeOptions(): ()
+        local modeKey: string = (settings.mode == "Walk") and "Walk" or "Below"
+        local cfg = modeConfigs[modeKey] or modeConfigs.Walk
+        switchingFarmMode = true
+        settings.speed = cfg.speed or 16
+        settings.stayUnderOnStart = cfg.stayUnderOnStart == true
+        settings.safeZone = cfg.safeZone == true
+        settings.resetOnFull = cfg.resetOnFull == true
+        settings.flingMurder = cfg.flingMurder == true
+        settings.flingSheriff = cfg.flingSheriff == true
+        settings.grabGunShoot = cfg.grabGunShoot == true
+        settings.killAllOnFull = cfg.killAllOnFull == true
+        if state and type(state.valueControls) == "table" then
+            local sp = state.valueControls["MM2.AutoFarm.FarmSpeed"]
+            if sp and type(sp.apply) == "function" then
+                pcall(sp.apply, settings.speed)
+            end
+        end
+        if state and type(state.toggleControls) == "table" then
+            local pairsToSync: {{any}} = {
+                {"MM2.AutoFarm.StayUnderWhenRoundstarts", settings.stayUnderOnStart},
+                {"MM2.AutoFarm.SafeZone", settings.safeZone},
+                {"MM2.AutoFarm.ResetWhenFullCoinBag", settings.resetOnFull},
+                {"MM2.AutoFarm.FlingMurderafterreset", settings.flingMurder},
+                {"MM2.AutoFarm.FlingSheriffafterreset", settings.flingSheriff},
+                {"MM2.AutoFarm.AutoGrabgunandShoot", settings.grabGunShoot},
+                {"MM2.AutoFarm.AutoKillAllWhenfullcoinbag", settings.killAllOnFull},
+            }
+            for _, entry: {any} in ipairs(pairsToSync) do
+                local ctrl = state.toggleControls[entry[1]]
+                if ctrl and type(ctrl.setChecked) == "function" then
+                    pcall(ctrl.setChecked, entry[2] == true)
+                end
+            end
+        end
+        switchingFarmMode = false
+    end
+
     addCycleOption(AutoFarmFeature, "Farm Mode", {"Walk", "Below (Hitbox)"}, 1,
         function(value: string): ()
             settings.mode = if value == "Walk" then "Walk" else "Below"
+            syncFarmModeOptions()
         end, "Walk: your character walks on the ground to each coin (nothing about the body is changed; the slider is WalkSpeed). Below (Hitbox): upright, NoClip, flying under the floor with the root hitbox grown so it still touches the coin from below.")
     addNumberOption(AutoFarmFeature, "Farm Speed", 16, 5, 60,
         function(value: number): ()
             settings.speed = value
+            if not switchingFarmMode then
+                local cfg = modeConfigs[(settings.mode == "Walk") and "Walk" or "Below"]
+                if cfg then cfg.speed = value end
+            end
         end, "Walk mode: WalkSpeed. Below mode: flight speed in studs/second -- if the server kicks you (Invalid position), lower it; raise it slowly to find your fastest safe speed.", 1)
     addToggleOption(AutoFarmFeature, "Stay Under When Round starts", true,
         function(value: boolean): ()
             settings.stayUnderOnStart = value == true
+            if not switchingFarmMode then
+                local cfg = modeConfigs[(settings.mode == "Walk") and "Walk" or "Below"]
+                if cfg then cfg.stayUnderOnStart = value == true end
+            end
         end, "When enabled, hides your character safely underneath the map at the start of the round until coins spawn. When disabled, your character stays naturally on the map at the random spawn point where you spawned.")
     addToggleOption(AutoFarmFeature, "Safe Zone", true,
         function(value: boolean): ()
             settings.safeZone = value == true
+            if not switchingFarmMode then
+                local cfg = modeConfigs[(settings.mode == "Walk") and "Walk" or "Below"]
+                if cfg then cfg.safeZone = value == true end
+            end
         end, "When you reach 50 coins, teleports you to a platform in the void so the Murderer cannot reach or kill you.")
     addToggleOption(AutoFarmFeature, "Reset When Full Coin Bag", true,
         function(value: boolean): ()
             settings.resetOnFull = value
+            if not switchingFarmMode then
+                local cfg = modeConfigs[(settings.mode == "Walk") and "Walk" or "Below"]
+                if cfg then cfg.resetOnFull = value == true end
+            end
         end, "Reset the character as soon as the coin bag fills.")
     addToggleOption(AutoFarmFeature, "Fling Murder after reset", false,
         function(value: boolean): ()
             settings.flingMurder = value
+            if not switchingFarmMode then
+                local cfg = modeConfigs[(settings.mode == "Walk") and "Walk" or "Below"]
+                if cfg then cfg.flingMurder = value == true end
+            end
         end, "When the coin bag fills (50): fling the Murderer (after the reset above, if it is on).")
     addToggleOption(AutoFarmFeature, "Fling Sheriff after reset", false,
         function(value: boolean): ()
             settings.flingSheriff = value
+            if not switchingFarmMode then
+                local cfg = modeConfigs[(settings.mode == "Walk") and "Walk" or "Below"]
+                if cfg then cfg.flingSheriff = value == true end
+            end
         end, "When the coin bag fills (50): fling the Sheriff (after the reset above, if it is on).")
     addToggleOption(AutoFarmFeature, "Auto Grab gun and Shoot", false,
         function(value: boolean): ()
             settings.grabGunShoot = value
+            if not switchingFarmMode then
+                local cfg = modeConfigs[(settings.mode == "Walk") and "Walk" or "Below"]
+                if cfg then cfg.grabGunShoot = value == true end
+            end
         end, "Only when the coin bag fills (50), only as Innocent and only during an active round (never as Murderer, never in the lobby): try an instant touch for the dropped sheriff gun, otherwise walk/fly to it, equip it, and fire one SilentAim shot at the Murderer. Never during ordinary farming.")
     addToggleOption(AutoFarmFeature, "Auto Kill All When full coin bag", false,
         function(value: boolean): ()
             settings.killAllOnFull = value
+            if not switchingFarmMode then
+                local cfg = modeConfigs[(settings.mode == "Walk") and "Walk" or "Below"]
+                if cfg then cfg.killAllOnFull = value == true end
+            end
         end, "As Murderer, when the bag fills: pull everyone in front of you and slash (YARHM Kill All).")
     addInformationOption(
         AutoFarmFeature,

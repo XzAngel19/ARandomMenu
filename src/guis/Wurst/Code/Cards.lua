@@ -61,36 +61,6 @@ function Module.init(context: any): any
         configuration: any?
     ): any
         configuration = configuration or {}
-        local ordered: {[string]: number} = {
-            ["ItemESP"] = 1, ["PlayerESP"] = 2, ["Chams"] = 3,
-            ["Nametags"] = 4, ["HP"] = 5, ["Arrows"] = 6, ["NPCESP"] = 7,
-            ["FOV"] = 8, ["Fullbright"] = 9,
-            ["X-Ray"] = 10, ["Zoom"] = 11, ["Markers"] = 12,
-            ["Aim Assist"] = 1,
-            ["KillAura"] = 2,
-            ["TriggerBot"] = 3,
-            ["SilentAIM"] = 4,
-            ["Gun Aimbot"] = 4,
-            ["Fly"] = 1,
-            ["Fling"] = 7,
-            ["Noclip"] = 2,
-            ["Spider"] = 3,
-            ["Speed"] = 4,
-            ["Jump"] = 5,
-            ["Interact Extender"] = 6,
-            ["Anti Void"] = 1,
-            ["Teleport"] = 2,
-            ["Freeze Movements"] = 3,
-            ["Ghost"] = 4,
-            ["Improve FPS"] = 1,
-            ["Gravity"] = 2,
-            ["Anti AFK"] = 3,
-            ["Safe Walk"] = 4,
-            ["Blurt Roles"] = 5,
-            ["FreeCam"] = 6,
-            ["Disguise"] = 7,
-        }
-        layoutOrder = ordered[name] or (100 + layoutOrder)
         local registry: any = configuration.registry or universalFeatures
         local sectionName: string = configuration.section
             or (registry == mm2Features and "MM2")
@@ -175,7 +145,6 @@ function Module.init(context: any): any
         feature.row = row
 
         row:SetAttribute("FeatureCategory", categoryName)
-        row:SetAttribute("FeatureSortOrder", ordered[name])
         row:SetAttribute("FeatureSortName", string.lower(name))
 
         local bitmapText: any = state.bitmapText
@@ -190,7 +159,7 @@ function Module.init(context: any): any
                 end
                 bitmapText.draw(row, {
                     {
-                        text = name,
+                        text = feature.name or name,
                         color = feature.titleColor or Theme.text,
                     },
                 }, {
@@ -217,6 +186,22 @@ function Module.init(context: any): any
                 and Theme.text
                 or Theme.text
             feature.title = label
+        end
+
+        function feature:SetTitle(newName: string): ()
+            if type(newName) ~= "string" or newName == "" then
+                return
+            end
+            feature.name = newName
+            row:SetAttribute("FeatureSortName", string.lower(newName))
+            if type(feature.drawTitle) == "function" then
+                feature.drawTitle(feature.titleColor, feature.titleTransparency)
+            elseif feature.title then
+                feature.title.Text = newName
+            end
+            if state.clickGui and type(state.clickGui.resort) == "function" then
+                pcall(state.clickGui.resort, categoryName)
+            end
         end
 
         local arrow: TextButton? = nil

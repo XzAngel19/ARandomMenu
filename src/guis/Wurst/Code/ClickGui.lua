@@ -215,9 +215,6 @@ function Module.init(context: any): any
             end
         end
         table.sort(rows, function(left: GuiObject, right: GuiObject): boolean
-            local leftOrder: number = tonumber(left:GetAttribute("FeatureSortOrder")) or math.huge
-            local rightOrder: number = tonumber(right:GetAttribute("FeatureSortOrder")) or math.huge
-            if leftOrder ~= rightOrder then return leftOrder < rightOrder end
             local leftKey: string = tostring(left:GetAttribute("FeatureSortName") or "")
             local rightKey: string = tostring(right:GetAttribute("FeatureSortName") or "")
             if leftKey == rightKey then
@@ -227,6 +224,16 @@ function Module.init(context: any): any
         end)
         for index: number, row: GuiObject in ipairs(rows) do
             row.LayoutOrder = index
+        end
+    end
+
+    function ClickGui.resort(categoryName: string?): ()
+        if type(categoryName) == "string" and ClickGui.categories[categoryName] then
+            sortCategoryRows(ClickGui.categories[categoryName])
+            return
+        end
+        for _, record: CategoryWindow in pairs(ClickGui.categories) do
+            sortCategoryRows(record)
         end
     end
 

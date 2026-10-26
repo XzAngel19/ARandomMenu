@@ -1,5 +1,5 @@
 return {
-    stamp = "v139-20261026-yarhm-fling-autofarm-fixes",
+    stamp = "v140-20261026-touchfling-silentaim-sorted-ui",
     files = {
         ["src/Profile/135856908115931.lua"] = [[
 --!strict
@@ -2238,11 +2238,24 @@ function Module.init(runtime: any): any
         end
     end)
 
-    -- Never auto-enable Auto Fling Selected Target from a persisted config on injection:
-    -- it must only turn on when the user explicitly toggles it during the session.
+    -- Never auto-enable Auto Fling Selected Target or Touch Fling from a persisted config on injection:
+    -- they must only turn on when the user explicitly toggles them during the session.
     if configData and type(configData.states) == "table" then
         configData.states["MM2.Fling.AutoFlingSelectedTarget"] = false
+        configData.states["MM2.Fling.TouchFling"] = false
     end
+
+    addToggleOption(
+        FlingFeature,
+        "Touch Fling",
+        false,
+        function(value: boolean): ()
+            if type(state.setTouchFlingEnabled) == "function" then
+                pcall(state.setTouchFlingEnabled, value == true)
+            end
+        end,
+        "Walk into any player to send them flying on body contact (only active while enabled)."
+    )
 
     addToggleOption(
         FlingFeature,
@@ -2667,11 +2680,15 @@ function Module.init(runtime: any): any
     end
     if wasEnabled then aura:Toggle(false) end
     local KnifeFeature: any = aura.Feature
+    local originalTitle: string = KnifeFeature.name or "KillAura"
     local originalDescription: string = KnifeFeature.description
     local originalSearch: string = KnifeFeature.searchText
-    KnifeFeature.description = "MM2 melee combat: Knife Aura stabs with your held knife. Includes Kill All and Kill Player."
+    if type(KnifeFeature.SetTitle) == "function" then
+        KnifeFeature:SetTitle("Knife Combat")
+    end
+    KnifeFeature.description = "MM2 melee knife options (Knife.Stab & Knife.Events.HandleTouched): Knife Aura, Aura Range, Kill All, and Kill Player."
     KnifeFeature.tooltipText = KnifeFeature.description
-    KnifeFeature.searchText = "killaura combat mm2 knife aura range kill all kill player"
+    KnifeFeature.searchText = "knife combat knife options killaura combat mm2 knife aura range kill all kill player stab handletouched"
     aura.CombatAdapter = function(enabled: boolean): ()
         state.mm2KnifeRuntime.masterEnabled = enabled
         refreshKnifeController()
@@ -2756,6 +2773,9 @@ function Module.init(runtime: any): any
         state.mm2KnifeFeature = nil
         state.mm2KnifeAuraModule = nil
         aura.CombatAdapter = nil
+        if type(KnifeFeature.SetTitle) == "function" then
+            KnifeFeature:SetTitle(originalTitle)
+        end
         KnifeFeature.description = originalDescription
         KnifeFeature.tooltipText = originalDescription
         KnifeFeature.searchText = originalSearch
@@ -3487,8 +3507,8 @@ function Module.init(runtime: any): any
         configData.values["MM2.Shoot.Aimmethod"] = configData.values["MM2.Shoot.Mode"]
     end
     ShootFeature = createUniversalFeature(
-        "Gun Aimbot",
-        "Gun aimbot with Bullet and CFrame modes. The main assigned key fires/equips Gun. Every shot uses the kinematic predictor with the game-filter WallCheck.",
+        "Gun Aimbot Buttons",
+        "Button/key-triggered Gun aimbot (Gun.Shoot:FireServer) with independent Bullet and CFrame mode settings. Pressing the assigned key or mobile button equips the Gun and fires at the Murderer.",
         4,
         toggleShootMurderer,
         {
@@ -3498,8 +3518,10 @@ function Module.init(runtime: any): any
             registry = mm2Features,
         }
     )
+    ShootFeature.searchText ..= " gun aimbot buttons shoot"
     state.mm2SilentAimFeature = ShootFeature
-    -- Other modules (Auto Shoot, Auto Farm's full-bag grab, Auto Win) fire
+    state.mm2GunAimbotButtonsFeature = ShootFeature
+    -- Other modules (Auto Shoot, Auto Farm's full-bag grab, Auto Win, Silent AIM) fire
     -- through the exact Gun Aimbot path instead of hand-rolling their own shot.
     state.mm2FireSilentShot = function(target: Player?): boolean
         return fireGunAtTarget(target, {
@@ -3517,9 +3539,47 @@ function Module.init(runtime: any): any
             continuous = opts.continuous ~= false,
         })
     end
+    state.mm2BuildSilentShot = buildSilentShot
+    state.mm2PlanGunEndpoint = planGunEndpoint
+    state.mm2CanDirectHitTarget = canDirectHitTarget
     -- One card, two weapons: the heading keeps the gun rows together and the
     -- knife module opens its own section further down.
     if addSectionOption then addSectionOption(ShootFeature, "Gun") end
+
+    local modeConfigs: {[string]: {wallCheck: boolean, macro: boolean, targetMode: string, targetName: string}} = {
+        Bullet = {
+            wallCheck = if type(configData) == "table" and configData.states["MM2.Shoot.Bullet.WallCheck"] ~= nil
+                then configData.states["MM2.Shoot.Bullet.WallCheck"] == true
+                else (mm2Settings.shootWallCheck ~= false),
+            macro = if type(configData) == "table" and configData.states["MM2.Shoot.Bullet.Macro"] ~= nil
+                then configData.states["MM2.Shoot.Bullet.Macro"] == true
+                else false,
+            targetMode = if type(configData) == "table" and type(configData.values["MM2.Shoot.Bullet.Target"]) == "string"
+                then configData.values["MM2.Shoot.Bullet.Target"]
+                else (mm2Settings.shootMode or "Murder"),
+            targetName = if type(configData) == "table" and type(configData.values["MM2.Shoot.Bullet.TargetPlayer"]) == "string"
+                then configData.values["MM2.Shoot.Bullet.TargetPlayer"]
+                else (mm2Settings.shootTarget or ""),
+        },
+        CFrame = {
+            wallCheck = if type(configData) == "table" and configData.states["MM2.Shoot.CFrame.WallCheck"] ~= nil
+                then configData.states["MM2.Shoot.CFrame.WallCheck"] == true
+                else false,
+            macro = if type(configData) == "table" and configData.states["MM2.Shoot.CFrame.Macro"] ~= nil
+                then configData.states["MM2.Shoot.CFrame.Macro"] == true
+                else false,
+            targetMode = if type(configData) == "table" and type(configData.values["MM2.Shoot.CFrame.Target"]) == "string"
+                then configData.values["MM2.Shoot.CFrame.Target"]
+                else "Murder",
+            targetName = if type(configData) == "table" and type(configData.values["MM2.Shoot.CFrame.TargetPlayer"]) == "string"
+                then configData.values["MM2.Shoot.CFrame.TargetPlayer"]
+                else "",
+        },
+    }
+
+    local activeModeKey: string = (mm2Settings.silentAim and "CFrame") or "Bullet"
+    local switchingShootMode: boolean = false
+
     local ShootTargetBox
     local function refreshShootOptions(): ()
         if ShootTargetBox then
@@ -3530,25 +3590,68 @@ function Module.init(runtime: any): any
             )
         end
     end
+
+    local function syncShootModeControls(): ()
+        local cfg = modeConfigs[activeModeKey] or modeConfigs.Bullet
+        switchingShootMode = true
+        mm2Settings.shootWallCheck = cfg.wallCheck == true
+        shootMacro = cfg.macro == true
+        mm2Settings.shootMode = cfg.targetMode
+        mm2Settings.shootTarget = cfg.targetName
+        if state and type(state.toggleControls) == "table" then
+            local wc = state.toggleControls["MM2.Shoot.WallCheck"]
+            if wc and type(wc.setChecked) == "function" then
+                pcall(wc.setChecked, cfg.wallCheck == true)
+            end
+            local mc = state.toggleControls["MM2.Shoot.Macro"]
+            if mc and type(mc.setChecked) == "function" then
+                pcall(mc.setChecked, cfg.macro == true)
+            end
+        end
+        if state and type(state.valueControls) == "table" then
+            local tc = state.valueControls["MM2.Shoot.Target"]
+            if tc and type(tc.apply) == "function" then
+                pcall(tc.apply, cfg.targetMode)
+            end
+            local tp = state.valueControls["MM2.Shoot.Targetplayer"]
+            if tp and type(tp.apply) == "function" then
+                pcall(tp.apply, cfg.targetName)
+            end
+        end
+        switchingShootMode = false
+        refreshShootOptions()
+    end
+
     addCycleOption(
         ShootFeature,
         "Aim method",
         {"Bullet", "CFrame"},
         mm2Settings.silentAim and 2 or 1,
         function(value: string): ()
-            mm2Settings.silentAim = value == "CFrame" or value == "Silent AIM"
-            refreshShootOptions()
+            local isCF: boolean = value == "CFrame" or value == "Silent AIM"
+            mm2Settings.silentAim = isCF
+            activeModeKey = isCF and "CFrame" or "Bullet"
+            syncShootModeControls()
         end,
-        "Bullet fires from the gun; CFrame uses a near-target silent origin. "
-            .. "Both respect WallCheck and always protect other players."
+        "Bullet fires from the gun barrel; CFrame spoofs the Gun.Shoot origin CFrame beside the target. "
+            .. "Each mode maintains independent WallCheck and Macro settings."
     )
     addCycleOption(
         ShootFeature,
         "Target",
         {"Murder", "Custom"},
-        mm2Settings.shootMode == "Custom" and 2 or 1,
+        (modeConfigs[activeModeKey].targetMode == "Custom") and 2 or 1,
         function(value: string): ()
             mm2Settings.shootMode = value
+            if not switchingShootMode then
+                local cfg = modeConfigs[activeModeKey]
+                if cfg then
+                    cfg.targetMode = value
+                end
+                if type(configData) == "table" and type(configData.values) == "table" then
+                    configData.values["MM2.Shoot." .. activeModeKey .. ".Target"] = value
+                end
+            end
             refreshShootOptions()
         end
     )
@@ -3563,27 +3666,56 @@ function Module.init(runtime: any): any
     addToggleOption(
         ShootFeature,
         "WallCheck",
-        mm2Settings.shootWallCheck,
+        modeConfigs[activeModeKey].wallCheck,
         function(value: boolean): ()
-            mm2Settings.shootWallCheck = value == true
+            local on: boolean = value == true
+            mm2Settings.shootWallCheck = on
+            if not switchingShootMode then
+                local cfg = modeConfigs[activeModeKey]
+                if cfg then
+                    cfg.wallCheck = on
+                end
+                if type(configData) == "table" and type(configData.states) == "table" then
+                    configData.states["MM2.Shoot." .. activeModeKey .. ".WallCheck"] = on
+                end
+            end
         end,
-        "Checks that no wall or solid barrier blocks the shot."
+        "Checks that no wall or solid barrier blocks the shot (independent per mode)."
     )
     addToggleOption(
         ShootFeature,
         "Macro",
-        shootMacro,
+        modeConfigs[activeModeKey].macro,
         function(value: boolean): ()
-            shootMacro = value
+            local on: boolean = value == true
+            shootMacro = on
+            if not switchingShootMode then
+                local cfg = modeConfigs[activeModeKey]
+                if cfg then
+                    cfg.macro = on
+                end
+                if type(configData) == "table" and type(configData.states) == "table" then
+                    configData.states["MM2.Shoot." .. activeModeKey .. ".Macro"] = on
+                end
+            end
         end,
-        "Pistol macro: hides the gun 0.01 seconds after every shot."
+        "Pistol macro: hides the gun 0.01 seconds after every shot (independent per mode)."
     )
-    ShootTargetBox = addTextOption(ShootFeature, "Target player", "", function(
+    ShootTargetBox = addTextOption(ShootFeature, "Target player", modeConfigs[activeModeKey].targetName, function(
         value: string
     ): ()
         mm2Settings.shootTarget = value
+        if not switchingShootMode then
+            local cfg = modeConfigs[activeModeKey]
+            if cfg then
+                cfg.targetName = value
+            end
+            if type(configData) == "table" and type(configData.values) == "table" then
+                configData.values["MM2.Shoot." .. activeModeKey .. ".TargetPlayer"] = value
+            end
+        end
     end, false)
-    refreshShootOptions()
+    syncShootModeControls()
 
     -- The visible Auto control is at the top, but arming waits until saved
     -- aim method/target options below have all been restored.
@@ -3593,8 +3725,12 @@ function Module.init(runtime: any): any
     activeCleanup = function(): ()
         toggleShootMurderer(false)
         state.mm2SilentAimFeature = nil
+        state.mm2GunAimbotButtonsFeature = nil
         state.mm2FireSilentShot = nil
         state.mm2FireGunShot = nil
+        state.mm2BuildSilentShot = nil
+        state.mm2PlanGunEndpoint = nil
+        state.mm2CanDirectHitTarget = nil
         toggleAutoShoot(false)
         state.mm2ShotFeedback.hide()
     end
@@ -3793,7 +3929,8 @@ function Module.init(runtime: any): any
         targetRoot: BasePart,
         character: Model,
         localRoot: BasePart,
-        gun: Tool
+        gun: Tool,
+        checkWalls: boolean?
     ): boolean
         local shootRemote: Instance? = gun:FindFirstChild("Shoot")
         if not (shootRemote and shootRemote:IsA("RemoteEvent")) then
@@ -3813,6 +3950,17 @@ function Module.init(runtime: any): any
             targetRoot,
             originCF.Position
         )
+        if checkWalls == true and type(isWeaponPathClear) == "function" then
+            local okClear: boolean, clear: any = pcall(
+                isWeaponPathClear,
+                originCF.Position,
+                endpoint,
+                target.Character
+            )
+            if not okClear or clear ~= true then
+                return false
+            end
+        end
         local capturedPos: Vector3 = targetRoot.Position
         local chordFlat: Vector3 = Vector3.new(
             endpoint.X - capturedPos.X,
@@ -3964,7 +4112,7 @@ function Module.init(runtime: any): any
             or settings.mode == "Cframe"
             or settings.mode == "Silent AIM"
         if isCFrame then
-            fireCFrameShotImmediate(target, targetRoot, character, localRoot, gun)
+            fireCFrameShotImmediate(target, targetRoot, character, localRoot, gun, settings.wallCheck == true)
         else
             fireBulletShotImmediate(target, targetRoot, character, localRoot, gun)
         end
@@ -4060,6 +4208,32 @@ function Module.init(runtime: any): any
     state.mm2AutoShootFeature = AutoShootFeature
 
     local auraSlider: GuiObject? = nil
+    local modeConfigs: {[string]: {wallCheck: boolean, proximity: boolean, aura: number}} = {
+        Bullet = {
+            wallCheck = if type(configData) == "table" and configData.states["MM2.AutoShoot.Bullet.WallCheck"] ~= nil
+                then configData.states["MM2.AutoShoot.Bullet.WallCheck"] == true
+                else true,
+            proximity = if type(configData) == "table" and configData.states["MM2.AutoShoot.Bullet.Proximity"] ~= nil
+                then configData.states["MM2.AutoShoot.Bullet.Proximity"] == true
+                else false,
+            aura = if type(configData) == "table" and type(configData.values["MM2.AutoShoot.Bullet.Aura"]) == "number"
+                then configData.values["MM2.AutoShoot.Bullet.Aura"]
+                else 25,
+        },
+        CFrame = {
+            wallCheck = if type(configData) == "table" and configData.states["MM2.AutoShoot.CFrame.WallCheck"] ~= nil
+                then configData.states["MM2.AutoShoot.CFrame.WallCheck"] == true
+                else false,
+            proximity = if type(configData) == "table" and configData.states["MM2.AutoShoot.CFrame.Proximity"] ~= nil
+                then configData.states["MM2.AutoShoot.CFrame.Proximity"] == true
+                else false,
+            aura = if type(configData) == "table" and type(configData.values["MM2.AutoShoot.CFrame.Aura"]) == "number"
+                then configData.values["MM2.AutoShoot.CFrame.Aura"]
+                else 25,
+        },
+    }
+    local switchingMode: boolean = false
+
     local function refreshProximityOption(): ()
         if auraSlider and type(setOptionVisible) == "function" then
             setOptionVisible(
@@ -4071,36 +4245,95 @@ function Module.init(runtime: any): any
         updateStatus()
     end
 
+    local function syncAutoShootModeControls(): ()
+        local modeKey: string = (settings.mode == "CFrame") and "CFrame" or "Bullet"
+        local cfg = modeConfigs[modeKey] or modeConfigs.Bullet
+        switchingMode = true
+        settings.wallCheck = cfg.wallCheck == true
+        settings.proximity = cfg.proximity == true
+        settings.aura = cfg.aura or 25
+        if state and type(state.toggleControls) == "table" then
+            local wc = state.toggleControls["MM2.AutoShoot.WallCheck"]
+            if wc and type(wc.setChecked) == "function" then
+                pcall(wc.setChecked, cfg.wallCheck == true)
+            end
+            local px = state.toggleControls["MM2.AutoShoot.Proximity"]
+            if px and type(px.setChecked) == "function" then
+                pcall(px.setChecked, cfg.proximity == true)
+            end
+        end
+        if state and type(state.valueControls) == "table" then
+            local au = state.valueControls["MM2.AutoShoot.Aura"]
+            if au and type(au.apply) == "function" then
+                pcall(au.apply, cfg.aura or 25)
+            end
+        end
+        switchingMode = false
+        refreshProximityOption()
+    end
+
     addCycleOption(AutoShootFeature, "Mode", {"Bullet", "CFrame"}, 1,
         function(value: string): ()
             settings.mode = value
-            updateStatus()
+            syncAutoShootModeControls()
         end,
-        "Bullet: shoots continuously while respecting WallCheck. CFrame: shoots immediately with Silent AIM CFrame upon receiving the gun.")
+        "Bullet: shoots continuously while respecting WallCheck. CFrame: shoots immediately with Silent AIM CFrame upon receiving the gun. Each mode keeps independent options.")
 
     addToggleOption(AutoShootFeature, "WallCheck", true,
         function(value: boolean): ()
-            settings.wallCheck = value
+            local on: boolean = value == true
+            settings.wallCheck = on
+            if not switchingMode then
+                local modeKey: string = (settings.mode == "CFrame") and "CFrame" or "Bullet"
+                local cfg = modeConfigs[modeKey]
+                if cfg then
+                    cfg.wallCheck = on
+                end
+                if type(configData) == "table" and type(configData.states) == "table" then
+                    configData.states["MM2.AutoShoot." .. modeKey .. ".WallCheck"] = on
+                end
+            end
         end,
-        "In Bullet mode, only shoot when there is a clear line of sight to the Murderer.")
+        "Only shoot when there is a clear line of sight to the Murderer (independent per mode).")
 
     addToggleOption(AutoShootFeature, "Proximity", false,
         function(value: boolean): ()
-            settings.proximity = value == true
+            local on: boolean = value == true
+            settings.proximity = on
+            if not switchingMode then
+                local modeKey: string = (settings.mode == "CFrame") and "CFrame" or "Bullet"
+                local cfg = modeConfigs[modeKey]
+                if cfg then
+                    cfg.proximity = on
+                end
+                if type(configData) == "table" and type(configData.states) == "table" then
+                    configData.states["MM2.AutoShoot." .. modeKey .. ".Proximity"] = on
+                end
+            end
             refreshProximityOption()
         end,
-        "When enabled, only shoot when the Murderer enters the configured radius.")
+        "When enabled, only shoot when the Murderer enters the configured radius (independent per mode).")
 
     auraSlider = addNumberOption(AutoShootFeature, "Aura", 25, 5, 150,
         function(value: number): ()
             settings.aura = value
+            if not switchingMode then
+                local modeKey: string = (settings.mode == "CFrame") and "CFrame" or "Bullet"
+                local cfg = modeConfigs[modeKey]
+                if cfg then
+                    cfg.aura = value
+                end
+                if type(configData) == "table" and type(configData.values) == "table" then
+                    configData.values["MM2.AutoShoot." .. modeKey .. ".Aura"] = value
+                end
+            end
             if AutoShootFeature.enabled then
                 AutoShootFeature:SetStatus(tostring(value) .. " studs")
             end
         end,
         "Maximum distance in studs to automatically shoot at the Murderer while Proximity is ON.", 1)
 
-    refreshProximityOption()
+    syncAutoShootModeControls()
 
     activeCleanup = function(): ()
         toggleAutoShoot(false)
@@ -4594,6 +4827,12 @@ function Module.init(runtime: any): any
                             end
                         end
                     end
+                    if type(state.mm2SilentAimRedirectCFrame) == "function" then
+                        local okSA: boolean, saCF: any = pcall(state.mm2SilentAimRedirectCFrame, self, ...)
+                        if okSA and typeof(saCF) == "CFrame" then
+                            return saCF
+                        end
+                    end
                     return origGetMouseTargetCFrame(self, ...)
                 end
             end
@@ -4609,9 +4848,15 @@ function Module.init(runtime: any): any
                             if originCF and target then
                                 local aim: Vector3? = resolveKnifeAim(target, originCF.Position, knife)
                                 if aim then
-                                    return aim
+                                    return CFrame.new(aim)
                                 end
                             end
+                        end
+                    end
+                    if type(state.mm2SilentAimRedirectCFrame) == "function" then
+                        local okSA: boolean, saCF: any = pcall(state.mm2SilentAimRedirectCFrame, self, ...)
+                        if okSA and typeof(saCF) == "CFrame" then
+                            return saCF
                         end
                     end
                     return origGetTargetPosition(self, ...)
@@ -4622,6 +4867,9 @@ function Module.init(runtime: any): any
 
     local function uninstallWeaponServiceRedirect(): ()
         if not hookedWeaponService then
+            return
+        end
+        if state.mm2SilentAimNativeActive == true then
             return
         end
         pcall(function(): ()
@@ -4757,6 +5005,753 @@ function Module.init(runtime: any): any
 
     activeCleanup = function(): ()
         toggleKnifeThrow(false)
+    end
+    Module.Events = featureConnections
+    Module.Initialized = true
+    return Module
+end
+
+function Module.destroy(): ()
+    if not Module.Initialized then
+        return
+    end
+    Module.Initialized = false
+    pcall(activeCleanup)
+    activeCleanup = function(): () end
+    Module.Events = {}
+    Module.Runtime = nil
+end
+
+return Module
+
+]],
+        ["src/games/MM2/Combat/SilentAim.lua"] = [[
+local Module = {
+    Name = "MM2 Silent AIM",
+    Events = {} :: {[string]: any},
+    Initialized = false,
+    Runtime = nil :: any,
+}
+
+local activeCleanup: () -> () = function(): () end
+
+function Module.init(runtime: any): any
+    if Module.Initialized then
+        return Module
+    end
+    local core: any = state.mm2Core
+    assert(type(core) == "table", "MM2 Silent AIM requires the MM2 core module")
+    local prediction: any = state.mm2Prediction
+    assert(type(prediction) == "table", "MM2 Silent AIM requires MM2 Prediction")
+    Module.Runtime = runtime
+
+    local findMurderer: any = core.findMurderer
+    local getPlayerRole: any = core.getPlayerRole
+    local getPlayerWeapon: any = core.getPlayerWeapon
+    local isPlayerAlive: any = core.isPlayerAlive
+    local isProtectedTarget: any = core.isProtectedTarget
+    local isWeaponPathClear: any = core.isWeaponPathClear
+    local getGunOriginCFrame: any = core.getGunOriginCFrame
+    local getWeaponServiceModule: any = core.getWeaponServiceModule
+
+    local modeConfigs: {[string]: {wallCheck: boolean, macro: boolean, targetMode: string, targetName: string}} = {
+        Bullet = {
+            wallCheck = if type(configData) == "table" and configData.states["MM2.SilentAIM.Bullet.WallCheck"] ~= nil
+                then configData.states["MM2.SilentAIM.Bullet.WallCheck"] == true
+                else true,
+            macro = if type(configData) == "table" and configData.states["MM2.SilentAIM.Bullet.Macro"] ~= nil
+                then configData.states["MM2.SilentAIM.Bullet.Macro"] == true
+                else false,
+            targetMode = if type(configData) == "table" and type(configData.values["MM2.SilentAIM.Bullet.Target"]) == "string"
+                then configData.values["MM2.SilentAIM.Bullet.Target"]
+                else "Murder",
+            targetName = if type(configData) == "table" and type(configData.values["MM2.SilentAIM.Bullet.TargetPlayer"]) == "string"
+                then configData.values["MM2.SilentAIM.Bullet.TargetPlayer"]
+                else "",
+        },
+        CFrame = {
+            wallCheck = if type(configData) == "table" and configData.states["MM2.SilentAIM.CFrame.WallCheck"] ~= nil
+                then configData.states["MM2.SilentAIM.CFrame.WallCheck"] == true
+                else false,
+            macro = if type(configData) == "table" and configData.states["MM2.SilentAIM.CFrame.Macro"] ~= nil
+                then configData.states["MM2.SilentAIM.CFrame.Macro"] == true
+                else false,
+            targetMode = if type(configData) == "table" and type(configData.values["MM2.SilentAIM.CFrame.Target"]) == "string"
+                then configData.values["MM2.SilentAIM.CFrame.Target"]
+                else "Murder",
+            targetName = if type(configData) == "table" and type(configData.values["MM2.SilentAIM.CFrame.TargetPlayer"]) == "string"
+                then configData.values["MM2.SilentAIM.CFrame.TargetPlayer"]
+                else "",
+        },
+    }
+
+    local activeMode: string = "Bullet"
+    if type(configData) == "table" and type(configData.values["MM2.SilentAIM.Aimmethod"]) == "string" then
+        if configData.values["MM2.SilentAIM.Aimmethod"] == "CFrame" then
+            activeMode = "CFrame"
+        end
+    end
+
+    local settings = {
+        enabled = false,
+        mode = activeMode,
+        wallCheck = modeConfigs[activeMode].wallCheck,
+        macro = modeConfigs[activeMode].macro,
+        targetMode = modeConfigs[activeMode].targetMode,
+        targetName = modeConfigs[activeMode].targetName,
+    }
+
+    local SilentAimFeature: any = nil
+    local hookedWeaponService: any = nil
+    local origGetMouseTargetCFrame: any = nil
+    local origGetTargetPosition: any = nil
+    local toolConnections: {RBXScriptConnection} = {}
+    local lastNamecallRewriteAt: number = 0
+    local lastCFrameHelperAt: number = 0
+    local insideSilentDispatch: boolean = false
+
+    local function clearToolConnections(): ()
+        for _, conn: RBXScriptConnection in ipairs(toolConnections) do
+            pcall(function(): ()
+                conn:Disconnect()
+            end)
+        end
+        table.clear(toolConnections)
+    end
+
+    local function getEquippedGun(): (Tool?, Model?, Humanoid?, BasePart?)
+        local character: Model? = LocalPlayer and LocalPlayer.Character
+        if not character then
+            return nil, nil, nil, nil
+        end
+        local humanoid: Humanoid? = character:FindFirstChildOfClass("Humanoid")
+        local root: BasePart? = character:FindFirstChild("HumanoidRootPart") :: BasePart?
+        if not humanoid or humanoid.Health <= 0 or not root then
+            return nil, character, humanoid, root
+        end
+        local gun: Tool? = nil
+        if type(getPlayerWeapon) == "function" then
+            gun = getPlayerWeapon(LocalPlayer, "Gun", true)
+        end
+        if not gun then
+            local childGun: Instance? = character:FindFirstChild("Gun")
+            if childGun and childGun:IsA("Tool") then
+                gun = childGun
+            end
+        end
+        if not gun or gun.Parent ~= character then
+            return nil, character, humanoid, root
+        end
+        return gun, character, humanoid, root
+    end
+
+    local function resolveActiveTarget(): (Player?, BasePart?)
+        local target: Player? = nil
+        if settings.targetMode == "Custom" then
+            if type(resolveTargetPlayer) == "function" then
+                target = resolveTargetPlayer(settings.targetName)
+            end
+        else
+            if type(findMurderer) == "function" then
+                target = findMurderer()
+            end
+            if not target then
+                for _, player: Player in ipairs(Players:GetPlayers()) do
+                    if player ~= LocalPlayer then
+                        local role: any = type(getPlayerRole) == "function"
+                            and getPlayerRole(player)
+                            or nil
+                        local hasKnife: boolean = type(getPlayerWeapon) == "function"
+                            and getPlayerWeapon(player, "Knife", false) ~= nil
+                        if role == "Murderer" or hasKnife then
+                            target = player
+                            break
+                        end
+                    end
+                end
+            end
+        end
+        if not target or target == LocalPlayer then
+            return nil, nil
+        end
+        if type(isPlayerAlive) == "function" and not isPlayerAlive(target) then
+            return nil, nil
+        end
+        if type(isProtectedTarget) == "function" and isProtectedTarget(target) then
+            return nil, nil
+        end
+        local targetChar: Model? = target.Character
+        local targetRoot: BasePart? = targetChar
+            and targetChar:FindFirstChild("HumanoidRootPart") :: BasePart?
+        if not targetRoot then
+            return nil, nil
+        end
+        return target, targetRoot
+    end
+
+    local function computePredictedEndpoint(
+        target: Player,
+        targetRoot: BasePart,
+        originPos: Vector3
+    ): Vector3
+        if type(state.mm2PlanGunEndpoint) == "function" then
+            local okPlan: boolean, info: any = pcall(state.mm2PlanGunEndpoint, target, originPos)
+            if okPlan and type(info) == "table" and typeof(info.endpoint) == "Vector3" then
+                return info.endpoint
+            end
+        end
+        if type(prediction) == "table" and type(prediction.gunAim) == "function" then
+            local okPred: boolean, endpoint: any = pcall(prediction.gunAim, target, originPos)
+            if okPred and typeof(endpoint) == "Vector3" then
+                return endpoint
+            end
+        end
+        local vel: Vector3 = Vector3.zero
+        pcall(function(): ()
+            vel = targetRoot.AssemblyLinearVelocity
+        end)
+        local dist: number = (targetRoot.Position - originPos).Magnitude
+        local leadTime: number = math.clamp(dist / 280, 0.03, 0.18)
+        return targetRoot.Position + Vector3.new(vel.X, vel.Y * 0.25, vel.Z) * leadTime
+    end
+
+    local function passesWallCheck(
+        originPos: Vector3,
+        endpoint: Vector3,
+        target: Player
+    ): boolean
+        if not settings.wallCheck then
+            return true
+        end
+        if type(state.mm2CanDirectHitTarget) == "function" then
+            local okHit: boolean, clearHit: any = pcall(
+                state.mm2CanDirectHitTarget,
+                originPos,
+                endpoint,
+                target
+            )
+            if okHit then
+                return clearHit == true
+            end
+        end
+        if type(isWeaponPathClear) == "function" then
+            local okClear: boolean, clear: any = pcall(
+                isWeaponPathClear,
+                originPos,
+                endpoint,
+                target.Character
+            )
+            return okClear and clear == true
+        end
+        return true
+    end
+
+    local function buildCFrameOriginAndEnd(
+        target: Player,
+        targetRoot: BasePart,
+        muzzleOrigin: CFrame,
+        endpoint: Vector3
+    ): (CFrame, CFrame)
+        if type(state.mm2BuildSilentShot) == "function" then
+            local okBuild: boolean, sOrigin: any, sEnd: any = pcall(
+                state.mm2BuildSilentShot,
+                target,
+                muzzleOrigin,
+                {
+                    endpoint = endpoint,
+                    capturedPosition = targetRoot.Position,
+                    velocity = targetRoot.AssemblyLinearVelocity,
+                },
+                settings.wallCheck == true
+            )
+            if okBuild and typeof(sOrigin) == "CFrame" and typeof(sEnd) == "CFrame" then
+                return sOrigin, sEnd
+            end
+        end
+        local capturedPos: Vector3 = targetRoot.Position
+        local chordFlat: Vector3 = Vector3.new(
+            endpoint.X - capturedPos.X,
+            0,
+            endpoint.Z - capturedPos.Z
+        )
+        local pierceAxis: Vector3
+        if chordFlat.Magnitude > 0.15 then
+            pierceAxis = chordFlat.Unit
+        else
+            local toTargetFlat: Vector3 = Vector3.new(
+                endpoint.X - muzzleOrigin.Position.X,
+                0,
+                endpoint.Z - muzzleOrigin.Position.Z
+            )
+            if toTargetFlat.Magnitude > 0.05 then
+                pierceAxis = toTargetFlat.Unit
+            else
+                pierceAxis = Vector3.new(0, 0, -1)
+            end
+        end
+        local startPoint: Vector3 = capturedPos - pierceAxis * 1.5
+        local endPoint: Vector3 = endpoint + pierceAxis * 1.5
+        if (endPoint - startPoint).Magnitude < 0.2 then
+            startPoint = endpoint + Vector3.new(0, 2.0, -1.5)
+            endPoint = endpoint
+        end
+        return CFrame.lookAt(startPoint, endPoint), CFrame.new(endPoint)
+    end
+
+    local function triggerMacroUnequip(gun: Tool?): ()
+        if not settings.macro or not gun then
+            return
+        end
+        task.delay(0.01, function(): ()
+            local character: Model? = LocalPlayer and LocalPlayer.Character
+            local humanoid: Humanoid? = character
+                and character:FindFirstChildOfClass("Humanoid")
+            if character and humanoid and gun.Parent == character then
+                pcall(function(): ()
+                    humanoid:UnequipTools()
+                end)
+            end
+        end)
+    end
+
+    local function computeSilentShotPair(): (Tool?, CFrame?, CFrame?, Vector3?)
+        if not settings.enabled then
+            return nil, nil, nil, nil
+        end
+        local gun: Tool?, character: Model?, _humanoid: Humanoid?, localRoot: BasePart? =
+            getEquippedGun()
+        if not gun or not character or not localRoot then
+            return nil, nil, nil, nil
+        end
+        local target: Player?, targetRoot: BasePart? = resolveActiveTarget()
+        if not target or not targetRoot then
+            return nil, nil, nil, nil
+        end
+        local muzzleOrigin: CFrame = (type(getGunOriginCFrame) == "function"
+            and getGunOriginCFrame(character, gun))
+            or localRoot.CFrame
+        local endpoint: Vector3 = computePredictedEndpoint(
+            target,
+            targetRoot,
+            muzzleOrigin.Position
+        )
+        if settings.mode == "CFrame" then
+            local shotOrigin: CFrame, shotEnd: CFrame = buildCFrameOriginAndEnd(
+                target,
+                targetRoot,
+                muzzleOrigin,
+                endpoint
+            )
+            if settings.wallCheck and not passesWallCheck(shotOrigin.Position, shotEnd.Position, target) then
+                return nil, nil, nil, nil
+            end
+            return gun, shotOrigin, shotEnd, endpoint
+        else
+            if not passesWallCheck(muzzleOrigin.Position, endpoint, target) then
+                return nil, nil, nil, nil
+            end
+            local shotOrigin: CFrame = CFrame.lookAt(muzzleOrigin.Position, endpoint)
+            local shotEnd: CFrame = CFrame.new(endpoint)
+            return gun, shotOrigin, shotEnd, endpoint
+        end
+    end
+
+    local function fireCFrameCompanionIfNeeded(): ()
+        if not settings.enabled or insideSilentDispatch then
+            return
+        end
+        local now: number = os.clock()
+        if now - lastNamecallRewriteAt < 0.08 or now - lastCFrameHelperAt < 0.12 then
+            return
+        end
+        local gun: Tool?, shotOrigin: CFrame?, shotEnd: CFrame? = computeSilentShotPair()
+        if not gun or not shotOrigin or not shotEnd then
+            return
+        end
+        if settings.mode == "CFrame" then
+            local shootRemote: Instance? = gun:FindFirstChild("Shoot")
+            if shootRemote and shootRemote:IsA("RemoteEvent") then
+                lastCFrameHelperAt = now
+                insideSilentDispatch = true
+                pcall(function(): ()
+                    (shootRemote :: RemoteEvent):FireServer(shotOrigin, shotEnd)
+                end)
+                insideSilentDispatch = false
+            end
+        end
+        triggerMacroUnequip(gun)
+    end
+
+    -- Redirect callback shared with WeaponService.GetMouseTargetCFrame (PC)
+    -- and WeaponService.GetTargetPosition (Mobile).
+    local function redirectWeaponServiceAim(_self: any, ...: any): CFrame?
+        if not settings.enabled then
+            return nil
+        end
+        local gun: Tool?, _shotOrigin: CFrame?, shotEnd: CFrame?, endpoint: Vector3? =
+            computeSilentShotPair()
+        if not gun or not shotEnd or not endpoint then
+            return nil
+        end
+        if settings.mode == "CFrame" then
+            task.defer(fireCFrameCompanionIfNeeded)
+        else
+            triggerMacroUnequip(gun)
+        end
+        return CFrame.new(endpoint)
+    end
+    state.mm2SilentAimRedirectCFrame = redirectWeaponServiceAim
+
+    local function installWeaponServiceRedirect(): ()
+        if hookedWeaponService then
+            return
+        end
+        pcall(function(): ()
+            local wsTable: any = nil
+            if type(getWeaponServiceModule) == "function" then
+                wsTable = getWeaponServiceModule()
+            end
+            if type(wsTable) ~= "table" then
+                local rs: Instance? = game:GetService("ReplicatedStorage")
+                local clientServices: Instance? = rs and rs:FindFirstChild("ClientServices")
+                local wsModule: Instance? = clientServices and clientServices:FindFirstChild("WeaponService")
+                if wsModule then
+                    local okReq: boolean, loaded: any = pcall(require, wsModule)
+                    if okReq and type(loaded) == "table" then
+                        wsTable = loaded
+                    end
+                end
+            end
+            if type(wsTable) ~= "table" then
+                return
+            end
+            origGetMouseTargetCFrame = wsTable.GetMouseTargetCFrame
+            origGetTargetPosition = wsTable.GetTargetPosition
+            hookedWeaponService = wsTable
+
+            if type(origGetMouseTargetCFrame) == "function" then
+                wsTable.GetMouseTargetCFrame = function(self: any, ...: any): any
+                    local redirected: CFrame? = redirectWeaponServiceAim(self, ...)
+                    if redirected then
+                        return redirected
+                    end
+                    return origGetMouseTargetCFrame(self, ...)
+                end
+            end
+
+            if type(origGetTargetPosition) == "function" then
+                wsTable.GetTargetPosition = function(self: any, ...: any): any
+                    local redirected: CFrame? = redirectWeaponServiceAim(self, ...)
+                    if redirected then
+                        return redirected
+                    end
+                    return origGetTargetPosition(self, ...)
+                end
+            end
+        end)
+    end
+
+    local function uninstallWeaponServiceRedirect(): ()
+        if not hookedWeaponService then
+            return
+        end
+        pcall(function(): ()
+            if origGetMouseTargetCFrame then
+                hookedWeaponService.GetMouseTargetCFrame = origGetMouseTargetCFrame
+            end
+            if origGetTargetPosition then
+                hookedWeaponService.GetTargetPosition = origGetTargetPosition
+            end
+        end)
+        hookedWeaponService = nil
+        origGetMouseTargetCFrame = nil
+        origGetTargetPosition = nil
+    end
+
+    -- Optional __namecall hook for executors supporting hookmetamethod:
+    -- rewrites native Gun.Shoot:FireServer(originCF, endCF) on both PC and Mobile.
+    pcall(function(): ()
+        local g: any = (type(getgenv) == "function" and getgenv()) or _G
+        local hookmm: any = (g and g.hookmetamethod) or (_G and (_G :: any).hookmetamethod)
+        local getncm: any = (g and g.getnamecallmethod) or (_G and (_G :: any).getnamecallmethod)
+        if type(hookmm) ~= "function" or type(getncm) ~= "function" then
+            return
+        end
+        if state.mm2SilentAimNamecallHooked then
+            return
+        end
+        state.mm2SilentAimNamecallHooked = true
+        local oldNamecall: any = nil
+        oldNamecall = hookmm(game, "__namecall", function(self: any, ...: any): any
+            if not insideSilentDispatch
+                and state.mm2SilentAimNativeActive == true
+                and type(state.mm2SilentAimRewriteFireServer) == "function" then
+                local method: string = getncm()
+                if method == "FireServer" and typeof(self) == "Instance" and self.Name == "Shoot" then
+                    local parentTool: Instance? = self.Parent
+                    local character: Model? = LocalPlayer and LocalPlayer.Character
+                    if parentTool and character and parentTool.Parent == character then
+                        local okRewrite: boolean, newOrigin: any, newEnd: any =
+                            pcall(state.mm2SilentAimRewriteFireServer)
+                        if okRewrite and typeof(newOrigin) == "CFrame" and typeof(newEnd) == "CFrame" then
+                            return oldNamecall(self, newOrigin, newEnd)
+                        end
+                    end
+                end
+            end
+            return oldNamecall(self, ...)
+        end)
+    end)
+
+    state.mm2SilentAimRewriteFireServer = function(): (CFrame?, CFrame?)
+        if not settings.enabled then
+            return nil, nil
+        end
+        local gun: Tool?, shotOrigin: CFrame?, shotEnd: CFrame? = computeSilentShotPair()
+        if not gun or not shotOrigin or not shotEnd then
+            return nil, nil
+        end
+        lastNamecallRewriteAt = os.clock()
+        triggerMacroUnequip(gun)
+        return shotOrigin, shotEnd
+    end
+
+    local function bindGunTool(tool: Instance?): ()
+        if not tool or not tool:IsA("Tool") or tool.Name ~= "Gun" then
+            return
+        end
+        pcall(function(): ()
+            if tool.Activated then
+                table.insert(
+                    toolConnections,
+                    tool.Activated:Connect(function(): ()
+                        if settings.enabled then
+                            fireCFrameCompanionIfNeeded()
+                        end
+                    end)
+                )
+            end
+        end)
+    end
+
+    local function watchCharacterGuns(): ()
+        clearToolConnections()
+        local character: Model? = LocalPlayer and LocalPlayer.Character
+        if character then
+            for _, child: Instance in ipairs(character:GetChildren()) do
+                bindGunTool(child)
+            end
+            pcall(function(): ()
+                if character.ChildAdded then
+                    table.insert(
+                        toolConnections,
+                        character.ChildAdded:Connect(bindGunTool)
+                    )
+                end
+            end)
+        end
+        pcall(function(): ()
+            if LocalPlayer and LocalPlayer.CharacterAdded then
+                table.insert(
+                    toolConnections,
+                    LocalPlayer.CharacterAdded:Connect(function(newChar: Model): ()
+                        for _, child: Instance in ipairs(newChar:GetChildren()) do
+                            bindGunTool(child)
+                        end
+                        if newChar.ChildAdded then
+                            table.insert(
+                                toolConnections,
+                                newChar.ChildAdded:Connect(bindGunTool)
+                            )
+                        end
+                    end)
+                )
+            end
+        end)
+    end
+
+    local function updateStatus(): ()
+        if not SilentAimFeature or not SilentAimFeature.enabled then
+            return
+        end
+        SilentAimFeature:SetStatus(settings.mode)
+    end
+
+    local function toggleSilentAim(enabled: boolean): ()
+        settings.enabled = enabled == true
+        state.mm2SilentAimNativeActive = settings.enabled
+        if settings.enabled then
+            installWeaponServiceRedirect()
+            watchCharacterGuns()
+            updateStatus()
+        else
+            clearToolConnections()
+            uninstallWeaponServiceRedirect()
+            if SilentAimFeature then
+                SilentAimFeature:SetStatus(nil)
+            end
+        end
+    end
+
+    SilentAimFeature = createUniversalFeature(
+        "Silent AIM",
+        "Redirects your native Gun shots (PC mouse click & Mobile screen tap) toward the Murderer automatically without pressing any extra button. Supports independent Bullet and CFrame mode settings.",
+        4,
+        toggleSilentAim,
+        {
+            categoryName = "Combat",
+            configKey = "MM2.SilentAIM",
+            parent = MM2Scroll,
+            registry = mm2Features,
+        }
+    )
+    state.mm2NativeSilentAimFeature = SilentAimFeature
+
+    local targetPlayerBox: GuiObject? = nil
+    local switchingMode: boolean = false
+
+    local function refreshTargetPlayerVisibility(): ()
+        if targetPlayerBox and type(setOptionVisible) == "function" then
+            setOptionVisible(
+                SilentAimFeature,
+                targetPlayerBox.Parent :: GuiObject,
+                settings.targetMode == "Custom"
+            )
+        end
+    end
+
+    local function syncModeOptions(): ()
+        local cfg = modeConfigs[settings.mode] or modeConfigs.Bullet
+        switchingMode = true
+        settings.wallCheck = cfg.wallCheck == true
+        settings.macro = cfg.macro == true
+        settings.targetMode = cfg.targetMode
+        settings.targetName = cfg.targetName
+        if state and type(state.toggleControls) == "table" then
+            local wc = state.toggleControls["MM2.SilentAIM.WallCheck"]
+            if wc and type(wc.setChecked) == "function" then
+                pcall(wc.setChecked, cfg.wallCheck == true)
+            end
+            local mc = state.toggleControls["MM2.SilentAIM.Macro"]
+            if mc and type(mc.setChecked) == "function" then
+                pcall(mc.setChecked, cfg.macro == true)
+            end
+        end
+        if state and type(state.valueControls) == "table" then
+            local tc = state.valueControls["MM2.SilentAIM.Target"]
+            if tc and type(tc.apply) == "function" then
+                pcall(tc.apply, cfg.targetMode)
+            end
+            local tp = state.valueControls["MM2.SilentAIM.Targetplayer"]
+            if tp and type(tp.apply) == "function" then
+                pcall(tp.apply, cfg.targetName)
+            end
+        end
+        switchingMode = false
+        refreshTargetPlayerVisibility()
+        updateStatus()
+    end
+
+    addCycleOption(
+        SilentAimFeature,
+        "Aim method",
+        {"Bullet", "CFrame"},
+        settings.mode == "CFrame" and 2 or 1,
+        function(value: string): ()
+            settings.mode = (value == "CFrame") and "CFrame" or "Bullet"
+            syncModeOptions()
+        end,
+        "Bullet redirects the shot from your Gun barrel; CFrame spawns the Gun.Shoot origin CFrame beside the Murderer. Each mode keeps independent WallCheck and Macro settings."
+    )
+
+    addCycleOption(
+        SilentAimFeature,
+        "Target",
+        {"Murder", "Custom"},
+        settings.targetMode == "Custom" and 2 or 1,
+        function(value: string): ()
+            settings.targetMode = value
+            if not switchingMode then
+                local cfg = modeConfigs[settings.mode]
+                if cfg then
+                    cfg.targetMode = value
+                end
+                if type(configData) == "table" and type(configData.values) == "table" then
+                    configData.values["MM2.SilentAIM." .. settings.mode .. ".Target"] = value
+                end
+            end
+            refreshTargetPlayerVisibility()
+        end,
+        "Target the Murderer automatically or a custom player name (independent per mode)."
+    )
+
+    addToggleOption(
+        SilentAimFeature,
+        "WallCheck",
+        settings.wallCheck,
+        function(value: boolean): ()
+            local on: boolean = value == true
+            settings.wallCheck = on
+            if not switchingMode then
+                local cfg = modeConfigs[settings.mode]
+                if cfg then
+                    cfg.wallCheck = on
+                end
+                if type(configData) == "table" and type(configData.states) == "table" then
+                    configData.states["MM2.SilentAIM." .. settings.mode .. ".WallCheck"] = on
+                end
+            end
+        end,
+        "Only redirect the shot when there is a clear line of sight to the target (independent per mode)."
+    )
+
+    addToggleOption(
+        SilentAimFeature,
+        "Macro",
+        settings.macro,
+        function(value: boolean): ()
+            local on: boolean = value == true
+            settings.macro = on
+            if not switchingMode then
+                local cfg = modeConfigs[settings.mode]
+                if cfg then
+                    cfg.macro = on
+                end
+                if type(configData) == "table" and type(configData.states) == "table" then
+                    configData.states["MM2.SilentAIM." .. settings.mode .. ".Macro"] = on
+                end
+            end
+        end,
+        "Pistol macro: automatically unequips the Gun 0.01 seconds after firing (independent per mode)."
+    )
+
+    targetPlayerBox = addTextOption(
+        SilentAimFeature,
+        "Target player",
+        settings.targetName,
+        function(value: string): ()
+            settings.targetName = value
+            if not switchingMode then
+                local cfg = modeConfigs[settings.mode]
+                if cfg then
+                    cfg.targetName = value
+                end
+                if type(configData) == "table" and type(configData.values) == "table" then
+                    configData.values["MM2.SilentAIM." .. settings.mode .. ".TargetPlayer"] = value
+                end
+            end
+        end,
+        false
+    )
+
+    syncModeOptions()
+
+    activeCleanup = function(): ()
+        toggleSilentAim(false)
+        state.mm2NativeSilentAimFeature = nil
+        state.mm2SilentAimRedirectCFrame = nil
+        state.mm2SilentAimRewriteFireServer = nil
+        state.mm2SilentAimNativeActive = false
     end
     Module.Events = featureConnections
     Module.Initialized = true
@@ -5519,7 +6514,7 @@ end
 return Module
 
 ]],
-        ["src/games/MM2/Other/AutoFarm.lua"] = [[
+        ["src/games/MM2/Other/AutoFarm.lua"] = [=[
 local Module = {
     Name = "MM2 Auto Farm",
     Events = {},
@@ -7255,41 +8250,136 @@ function Module.init(_runtime: any): any
         farmTimeStat = state.addStatOption(AutoFarmFeature, "Time", "00:00")
     end
 
+    local modeConfigs: {[string]: {[string]: any}} = {
+        Walk = {
+            speed = 16,
+            stayUnderOnStart = false,
+            safeZone = true,
+            resetOnFull = true,
+            flingMurder = false,
+            flingSheriff = false,
+            grabGunShoot = false,
+            killAllOnFull = false,
+        },
+        Below = {
+            speed = 16,
+            stayUnderOnStart = true,
+            safeZone = true,
+            resetOnFull = true,
+            flingMurder = false,
+            flingSheriff = false,
+            grabGunShoot = false,
+            killAllOnFull = false,
+        },
+    }
+    local switchingFarmMode: boolean = false
+
+    local function syncFarmModeOptions(): ()
+        local modeKey: string = (settings.mode == "Walk") and "Walk" or "Below"
+        local cfg = modeConfigs[modeKey] or modeConfigs.Walk
+        switchingFarmMode = true
+        settings.speed = cfg.speed or 16
+        settings.stayUnderOnStart = cfg.stayUnderOnStart == true
+        settings.safeZone = cfg.safeZone == true
+        settings.resetOnFull = cfg.resetOnFull == true
+        settings.flingMurder = cfg.flingMurder == true
+        settings.flingSheriff = cfg.flingSheriff == true
+        settings.grabGunShoot = cfg.grabGunShoot == true
+        settings.killAllOnFull = cfg.killAllOnFull == true
+        if state and type(state.valueControls) == "table" then
+            local sp = state.valueControls["MM2.AutoFarm.FarmSpeed"]
+            if sp and type(sp.apply) == "function" then
+                pcall(sp.apply, settings.speed)
+            end
+        end
+        if state and type(state.toggleControls) == "table" then
+            local pairsToSync: {{any}} = {
+                {"MM2.AutoFarm.StayUnderWhenRoundstarts", settings.stayUnderOnStart},
+                {"MM2.AutoFarm.SafeZone", settings.safeZone},
+                {"MM2.AutoFarm.ResetWhenFullCoinBag", settings.resetOnFull},
+                {"MM2.AutoFarm.FlingMurderafterreset", settings.flingMurder},
+                {"MM2.AutoFarm.FlingSheriffafterreset", settings.flingSheriff},
+                {"MM2.AutoFarm.AutoGrabgunandShoot", settings.grabGunShoot},
+                {"MM2.AutoFarm.AutoKillAllWhenfullcoinbag", settings.killAllOnFull},
+            }
+            for _, entry: {any} in ipairs(pairsToSync) do
+                local ctrl = state.toggleControls[entry[1]]
+                if ctrl and type(ctrl.setChecked) == "function" then
+                    pcall(ctrl.setChecked, entry[2] == true)
+                end
+            end
+        end
+        switchingFarmMode = false
+    end
+
     addCycleOption(AutoFarmFeature, "Farm Mode", {"Walk", "Below (Hitbox)"}, 1,
         function(value: string): ()
             settings.mode = if value == "Walk" then "Walk" else "Below"
+            syncFarmModeOptions()
         end, "Walk: your character walks on the ground to each coin (nothing about the body is changed; the slider is WalkSpeed). Below (Hitbox): upright, NoClip, flying under the floor with the root hitbox grown so it still touches the coin from below.")
     addNumberOption(AutoFarmFeature, "Farm Speed", 16, 5, 60,
         function(value: number): ()
             settings.speed = value
+            if not switchingFarmMode then
+                local cfg = modeConfigs[(settings.mode == "Walk") and "Walk" or "Below"]
+                if cfg then cfg.speed = value end
+            end
         end, "Walk mode: WalkSpeed. Below mode: flight speed in studs/second -- if the server kicks you (Invalid position), lower it; raise it slowly to find your fastest safe speed.", 1)
     addToggleOption(AutoFarmFeature, "Stay Under When Round starts", true,
         function(value: boolean): ()
             settings.stayUnderOnStart = value == true
+            if not switchingFarmMode then
+                local cfg = modeConfigs[(settings.mode == "Walk") and "Walk" or "Below"]
+                if cfg then cfg.stayUnderOnStart = value == true end
+            end
         end, "When enabled, hides your character safely underneath the map at the start of the round until coins spawn. When disabled, your character stays naturally on the map at the random spawn point where you spawned.")
     addToggleOption(AutoFarmFeature, "Safe Zone", true,
         function(value: boolean): ()
             settings.safeZone = value == true
+            if not switchingFarmMode then
+                local cfg = modeConfigs[(settings.mode == "Walk") and "Walk" or "Below"]
+                if cfg then cfg.safeZone = value == true end
+            end
         end, "When you reach 50 coins, teleports you to a platform in the void so the Murderer cannot reach or kill you.")
     addToggleOption(AutoFarmFeature, "Reset When Full Coin Bag", true,
         function(value: boolean): ()
             settings.resetOnFull = value
+            if not switchingFarmMode then
+                local cfg = modeConfigs[(settings.mode == "Walk") and "Walk" or "Below"]
+                if cfg then cfg.resetOnFull = value == true end
+            end
         end, "Reset the character as soon as the coin bag fills.")
     addToggleOption(AutoFarmFeature, "Fling Murder after reset", false,
         function(value: boolean): ()
             settings.flingMurder = value
+            if not switchingFarmMode then
+                local cfg = modeConfigs[(settings.mode == "Walk") and "Walk" or "Below"]
+                if cfg then cfg.flingMurder = value == true end
+            end
         end, "When the coin bag fills (50): fling the Murderer (after the reset above, if it is on).")
     addToggleOption(AutoFarmFeature, "Fling Sheriff after reset", false,
         function(value: boolean): ()
             settings.flingSheriff = value
+            if not switchingFarmMode then
+                local cfg = modeConfigs[(settings.mode == "Walk") and "Walk" or "Below"]
+                if cfg then cfg.flingSheriff = value == true end
+            end
         end, "When the coin bag fills (50): fling the Sheriff (after the reset above, if it is on).")
     addToggleOption(AutoFarmFeature, "Auto Grab gun and Shoot", false,
         function(value: boolean): ()
             settings.grabGunShoot = value
+            if not switchingFarmMode then
+                local cfg = modeConfigs[(settings.mode == "Walk") and "Walk" or "Below"]
+                if cfg then cfg.grabGunShoot = value == true end
+            end
         end, "Only when the coin bag fills (50), only as Innocent and only during an active round (never as Murderer, never in the lobby): try an instant touch for the dropped sheriff gun, otherwise walk/fly to it, equip it, and fire one SilentAim shot at the Murderer. Never during ordinary farming.")
     addToggleOption(AutoFarmFeature, "Auto Kill All When full coin bag", false,
         function(value: boolean): ()
             settings.killAllOnFull = value
+            if not switchingFarmMode then
+                local cfg = modeConfigs[(settings.mode == "Walk") and "Walk" or "Below"]
+                if cfg then cfg.killAllOnFull = value == true end
+            end
         end, "As Murderer, when the bag fills: pull everyone in front of you and slash (YARHM Kill All).")
     addInformationOption(
         AutoFarmFeature,
@@ -7319,7 +8409,7 @@ end
 
 return Module
 
-]],
+]=],
         ["src/games/MM2/Other/AutoUnbox.lua"] = [=[
 -- MM2 Auto Unbox: opens the game's own mystery boxes through the same remote
 -- the shop uses, with the box and the currency chosen in the menu.
@@ -26514,6 +27604,204 @@ end
 return Module
 
 ]],
+        ["src/games/universal/Blatant/TouchFling.lua"] = [[
+export type Runtime = {
+    framework: any,
+    entity: any,
+    host: any,
+}
+
+local Module = {
+    Name = "Touch Fling",
+    PlaceId = 0,
+    Events = {} :: {[string]: any},
+    Initialized = false,
+}
+
+local activeCleanup: (() -> ())? = nil
+
+function Module.init(context: Runtime): any
+    local host: any = context.host
+    local state: any = host.state
+    local configData: any = host.configData
+    local LocalPlayer: any = host.LocalPlayer
+    local RunService: any = host.RunService or game:GetService("RunService")
+    local createUniversalFeature: any = host.createUniversalFeature
+    local addFeatureTooltip: any = host.addFeatureTooltip
+
+    -- Never auto-enable Touch Fling on script injection from a stale config state.
+    if type(configData) == "table" and type(configData.states) == "table" then
+        configData.states["Universal.TouchFling"] = false
+    end
+
+    local originalCollision = setmetatable({}, {__mode = "k"})
+    local touchFlingActive: boolean = false
+    local touchFlingSession: number = 0
+    local lastSafeVelocity: Vector3 = Vector3.zero
+    local TouchFlingFeature: any = nil
+
+    local function restoreCollision(): ()
+        for part: any, canCollide: any in pairs(originalCollision) do
+            if part and part.Parent then
+                pcall(function(): ()
+                    part.CanCollide = canCollide
+                end)
+            end
+        end
+        originalCollision = setmetatable({}, {__mode = "k"})
+    end
+
+    local function getCharacterRoot(): (Model?, Humanoid?, BasePart?)
+        local character: Model? = LocalPlayer and LocalPlayer.Character
+        if not character or not character.Parent then
+            return nil, nil, nil
+        end
+        local humanoid: Humanoid? = character:FindFirstChildOfClass("Humanoid")
+        local root: BasePart? = (character:FindFirstChild("HumanoidRootPart")
+            or character:FindFirstChild("Torso")
+            or character:FindFirstChild("UpperTorso")) :: BasePart?
+        if not humanoid or humanoid.Health <= 0 or not root then
+            return character, humanoid, nil
+        end
+        return character, humanoid, root
+    end
+
+    local function waitSignal(sig: any): ()
+        if sig and (type(sig) == "table" or typeof(sig) == "RBXScriptSignal") and type(sig.Wait) == "function" then
+            local ok: boolean = pcall(function(): ()
+                sig:Wait()
+            end)
+            if ok then
+                return
+            end
+        end
+        task.wait()
+    end
+
+    local function toggleTouchFling(enabled: boolean): ()
+        local wanted: boolean = enabled == true
+        touchFlingActive = wanted
+        touchFlingSession += 1
+        local mySession: number = touchFlingSession
+
+        if state and type(state.toggleControls) == "table" then
+            local mm2Control: any = state.toggleControls["MM2.Fling.TouchFling"]
+            if mm2Control and type(mm2Control.setChecked) == "function" then
+                pcall(mm2Control.setChecked, wanted)
+            end
+        end
+
+        if not wanted then
+            local _char: Model?, _hum: Humanoid?, root: BasePart? = getCharacterRoot()
+            if root and root.Parent then
+                pcall(function(): ()
+                    root.Velocity = lastSafeVelocity
+                    root.AssemblyLinearVelocity = lastSafeVelocity
+                end)
+            end
+            restoreCollision()
+            if TouchFlingFeature then
+                TouchFlingFeature:SetStatus(nil)
+            end
+            return
+        end
+
+        if TouchFlingFeature then
+            TouchFlingFeature:SetStatus("ON")
+        end
+
+        task.spawn(function(): ()
+            local movel: number = 0.1
+            while touchFlingActive and touchFlingSession == mySession do
+                waitSignal(RunService and RunService.Heartbeat)
+                if not touchFlingActive or touchFlingSession ~= mySession then
+                    break
+                end
+                local character: Model?, _humanoid: Humanoid?, root: BasePart? = getCharacterRoot()
+                if character and root and root.Parent then
+                    local savedVel: Vector3 = root.AssemblyLinearVelocity
+                    lastSafeVelocity = savedVel
+                    for _, part: Instance in ipairs(character:GetChildren()) do
+                        if part:IsA("BasePart") then
+                            if originalCollision[part] == nil then
+                                originalCollision[part] = part.CanCollide
+                            end
+                            part.CanCollide = false
+                        end
+                    end
+                    local spike: Vector3 = savedVel * 10000 + Vector3.new(0, 10000, 0)
+                    pcall(function(): ()
+                        root.Velocity = spike
+                        root.AssemblyLinearVelocity = spike
+                    end)
+                    waitSignal(RunService and RunService.RenderStepped)
+                    if touchFlingActive and touchFlingSession == mySession and character.Parent and root.Parent then
+                        pcall(function(): ()
+                            root.Velocity = savedVel
+                            root.AssemblyLinearVelocity = savedVel
+                        end)
+                    end
+                    waitSignal(RunService and RunService.Stepped)
+                    if touchFlingActive and touchFlingSession == mySession and character.Parent and root.Parent then
+                        local osc: Vector3 = savedVel + Vector3.new(0, movel, 0)
+                        pcall(function(): ()
+                            root.Velocity = osc
+                            root.AssemblyLinearVelocity = osc
+                        end)
+                        movel = -movel
+                    end
+                else
+                    task.wait(0.05)
+                end
+            end
+        end)
+    end
+
+    TouchFlingFeature = createUniversalFeature(
+        "Touch Fling",
+        "Walk into any player to fling them on body contact (Infinite Yield walkfling)",
+        14,
+        toggleTouchFling,
+        {noOptions = true, categoryName = "Exploits"}
+    )
+    addFeatureTooltip(
+        TouchFlingFeature,
+        "Spikes physics velocity between Heartbeat and RenderStepped so touching any player's character with your body sends them flying."
+    )
+
+    if state then
+        state.touchFlingFeature = TouchFlingFeature
+        state.setTouchFlingEnabled = function(on: boolean): ()
+            if TouchFlingFeature and type(TouchFlingFeature.setEnabled) == "function" then
+                TouchFlingFeature.setEnabled(on == true, true)
+            else
+                toggleTouchFling(on == true)
+            end
+        end
+    end
+
+    activeCleanup = function(): ()
+        toggleTouchFling(false)
+        if state then
+            state.touchFlingFeature = nil
+            state.setTouchFlingEnabled = nil
+        end
+    end
+    Module.Initialized = true
+    return TouchFlingFeature
+end
+
+function Module.destroy(): ()
+    if activeCleanup then
+        pcall(activeCleanup)
+    end
+    activeCleanup = nil
+    Module.Initialized = false
+end
+
+return Module
+
+]],
         ["src/games/universal/Combat/AimAssist.lua"] = [[
 export type Runtime = {
     framework: any,
@@ -27458,195 +28746,6 @@ function Module.destroy(): ()
         pcall(activeCleanup)
     end
     activeCleanup = nil
-    Module.Initialized = false
-end
-
-return Module
-
-]],
-        ["src/games/universal/Combat/TargetStrafe.lua"] = [[
-export type Runtime = {framework: any, entity: any, host: any, services: any}
-
-local Module = {Name = "StrafeBot", PlaceId = 0, Events = {} :: {[string]: any}, Initialized = false}
-local activeCleanup
-
-function Module.init(context: Runtime): any
-    local host, framework = context.host, context.framework
-    local player = host.LocalPlayer
-    local UserInputService = host.UserInputService or game:GetService("UserInputService")
-    local RunService = host.RunService or game:GetService("RunService")
-    
-    local settings = {
-        radius = 5,
-        speed = 100,
-        mode = "Circle",
-        smartDodge = true,
-    }
-    
-    local targetStrafe
-    local lastTarget: Model? = nil
-
-    local function getTarget(): Model?
-        -- Find the nearest enemy within range using the targeting system
-        local targeting = state.targeting
-        if not targeting or type(targeting.getNearest) ~= "function" then
-            return nil
-        end
-        local result = targeting.getNearest({
-            maxDistance = 100,
-            teamCheck = true,
-            wallCheck = false,
-            aliveOnly = true,
-        })
-        return result and result.character or nil
-    end
-
-    local function toggleTargetStrafe(enabled)
-        if not enabled then
-            lastTarget = nil
-            return
-        end
-        
-        targetStrafe:Clean(RunService.PreSimulation:Connect(function(dt)
-            local character = player.Character
-            if not character then return end
-            
-            local root = character:FindFirstChild("HumanoidRootPart")
-            local humanoid = character:FindFirstChild("Humanoid")
-            if not root or not humanoid or humanoid.Health <= 0 then return end
-
-            local target = getTarget()
-            if not target or not target.Parent then
-                lastTarget = nil
-                return
-            end
-
-            local targetRoot = target:FindFirstChild("HumanoidRootPart")
-            if not targetRoot then return end
-
-            lastTarget = target
-            local targetPos = targetRoot.Position
-            local myPos = root.Position
-            
-            -- Calculate vector from target to us
-            local toMe = myPos - targetPos
-            local horizontal = Vector3.new(toMe.X, 0, toMe.Z)
-            
-            if horizontal.Magnitude < 0.1 then
-                -- We're on top of the target, pick a random direction
-                horizontal = Vector3.new(1, 0, 0)
-            end
-            
-            local distance = horizontal.Magnitude
-            local direction = horizontal.Unit
-            
-            -- Strafe mode: move in a circle around the target
-            local moveVector: Vector3
-            if settings.mode == "Circle" then
-                -- Perpendicular to the direction to target (circular motion)
-                local perp = Vector3.new(-direction.Z, 0, direction.X)
-                -- Adjust radius to maintain desired distance
-                local radiusDiff = settings.radius - distance
-                local radial = direction * radiusDiff * 2
-                moveVector = perp * settings.speed + radial
-            elseif settings.mode == "Figure8" then
-                -- Figure-8 pattern for unpredictable movement
-                local time = os.clock() * 2
-                local perp = Vector3.new(-direction.Z, 0, direction.X)
-                local figure8 = perp * math.sin(time) * settings.speed + direction * math.cos(time) * settings.speed * 0.5
-                local radiusDiff = settings.radius - distance
-                moveVector = figure8 + direction * radiusDiff * 2
-            else -- ZigZag
-                -- Zig-zag pattern
-                local perp = Vector3.new(-direction.Z, 0, direction.X)
-                local time = os.clock() * 3
-                local zigzag = perp * (math.sign(math.sin(time)) * settings.speed)
-                local radiusDiff = settings.radius - distance
-                moveVector = zigzag + direction * radiusDiff * 2
-            end
-            
-            -- Smart dodge: add random vertical movement to avoid predictable aim
-            if settings.smartDodge then
-                local state = humanoid:GetState()
-                if state == Enum.HumanoidStateType.Freefall or state == Enum.HumanoidStateType.Jumping then
-                    -- Add slight vertical variation while airborne
-                    local vertical = Vector3.new(0, math.sin(os.clock() * 5) * 20, 0)
-                    root.AssemblyLinearVelocity = Vector3.new(moveVector.X, root.AssemblyLinearVelocity.Y + vertical.Y, moveVector.Z)
-                    return
-                end
-            end
-            
-            -- Apply horizontal movement, preserve vertical
-            root.AssemblyLinearVelocity = Vector3.new(moveVector.X, root.AssemblyLinearVelocity.Y, moveVector.Z)
-        end))
-    end
-
-    targetStrafe = framework.Categories.Combat:CreateModule({
-        Name = "StrafeBot",
-        Category = "Combat",
-        ConfigKey = "Universal.TargetStrafe",
-        Order = 4,
-        Tooltip = "Automatically strafe around your target in circular, figure-8, or zig-zag patterns. Makes you much harder to hit in combat.",
-        Function = function(enabled)
-            if not enabled then
-                targetStrafe:SetStatus(nil)
-                return
-            end
-            targetStrafe:Clean(function() lastTarget = nil end)
-            toggleTargetStrafe(true)
-            targetStrafe:SetStatus(settings.mode)
-        end,
-    })
-
-    targetStrafe:CreateDropdown({
-        Name = "Mode",
-        List = {"Circle", "Figure8", "ZigZag"},
-        Index = 1,
-        Function = function(value)
-            settings.mode = value
-            if targetStrafe.Enabled then targetStrafe:SetStatus(value) end
-        end,
-        Tooltip = "Circle = constant orbit; Figure8 = unpredictable loops; ZigZag = rapid direction changes."
-    })
-    
-    targetStrafe:CreateSlider({
-        Name = "Radius",
-        Min = 2,
-        Max = 20,
-        Default = 5,
-        Function = function(value)
-            settings.radius = value
-        end,
-        Tooltip = "Distance to maintain from the target (in studs)."
-    })
-    
-    targetStrafe:CreateSlider({
-        Name = "Speed",
-        Min = 1,
-        Max = 250,
-        Default = 100,
-        Function = function(value)
-            settings.speed = value
-        end,
-        Tooltip = "How fast to strafe around the target."
-    })
-    
-    targetStrafe:CreateToggle({
-        Name = "Smart dodge",
-        Default = true,
-        Tooltip = "Adds vertical movement variation while airborne to dodge aim."
-    })
-
-    activeCleanup = function()
-        if targetStrafe.Enabled then targetStrafe:Toggle(false) end
-    end
-    
-    Module.Initialized = true
-    return targetStrafe
-end
-
-function Module.destroy()
-    if activeCleanup then activeCleanup(); activeCleanup = nil end
     Module.Initialized = false
 end
 
@@ -38951,36 +40050,6 @@ function Module.init(context: any): any
         configuration: any?
     ): any
         configuration = configuration or {}
-        local ordered: {[string]: number} = {
-            ["ItemESP"] = 1, ["PlayerESP"] = 2, ["Chams"] = 3,
-            ["Nametags"] = 4, ["HP"] = 5, ["Arrows"] = 6, ["NPCESP"] = 7,
-            ["FOV"] = 8, ["Fullbright"] = 9,
-            ["X-Ray"] = 10, ["Zoom"] = 11, ["Markers"] = 12,
-            ["Aim Assist"] = 1,
-            ["KillAura"] = 2,
-            ["TriggerBot"] = 3,
-            ["SilentAIM"] = 4,
-            ["Gun Aimbot"] = 4,
-            ["Fly"] = 1,
-            ["Fling"] = 7,
-            ["Noclip"] = 2,
-            ["Spider"] = 3,
-            ["Speed"] = 4,
-            ["Jump"] = 5,
-            ["Interact Extender"] = 6,
-            ["Anti Void"] = 1,
-            ["Teleport"] = 2,
-            ["Freeze Movements"] = 3,
-            ["Ghost"] = 4,
-            ["Improve FPS"] = 1,
-            ["Gravity"] = 2,
-            ["Anti AFK"] = 3,
-            ["Safe Walk"] = 4,
-            ["Blurt Roles"] = 5,
-            ["FreeCam"] = 6,
-            ["Disguise"] = 7,
-        }
-        layoutOrder = ordered[name] or (100 + layoutOrder)
         local registry: any = configuration.registry or universalFeatures
         local sectionName: string = configuration.section
             or (registry == mm2Features and "MM2")
@@ -39065,7 +40134,6 @@ function Module.init(context: any): any
         feature.row = row
 
         row:SetAttribute("FeatureCategory", categoryName)
-        row:SetAttribute("FeatureSortOrder", ordered[name])
         row:SetAttribute("FeatureSortName", string.lower(name))
 
         local bitmapText: any = state.bitmapText
@@ -39080,7 +40148,7 @@ function Module.init(context: any): any
                 end
                 bitmapText.draw(row, {
                     {
-                        text = name,
+                        text = feature.name or name,
                         color = feature.titleColor or Theme.text,
                     },
                 }, {
@@ -39107,6 +40175,22 @@ function Module.init(context: any): any
                 and Theme.text
                 or Theme.text
             feature.title = label
+        end
+
+        function feature:SetTitle(newName: string): ()
+            if type(newName) ~= "string" or newName == "" then
+                return
+            end
+            feature.name = newName
+            row:SetAttribute("FeatureSortName", string.lower(newName))
+            if type(feature.drawTitle) == "function" then
+                feature.drawTitle(feature.titleColor, feature.titleTransparency)
+            elseif feature.title then
+                feature.title.Text = newName
+            end
+            if state.clickGui and type(state.clickGui.resort) == "function" then
+                pcall(state.clickGui.resort, categoryName)
+            end
         end
 
         local arrow: TextButton? = nil
@@ -40092,9 +41176,6 @@ function Module.init(context: any): any
             end
         end
         table.sort(rows, function(left: GuiObject, right: GuiObject): boolean
-            local leftOrder: number = tonumber(left:GetAttribute("FeatureSortOrder")) or math.huge
-            local rightOrder: number = tonumber(right:GetAttribute("FeatureSortOrder")) or math.huge
-            if leftOrder ~= rightOrder then return leftOrder < rightOrder end
             local leftKey: string = tostring(left:GetAttribute("FeatureSortName") or "")
             local rightKey: string = tostring(right:GetAttribute("FeatureSortName") or "")
             if leftKey == rightKey then
@@ -40104,6 +41185,16 @@ function Module.init(context: any): any
         end)
         for index: number, row: GuiObject in ipairs(rows) do
             row.LayoutOrder = index
+        end
+    end
+
+    function ClickGui.resort(categoryName: string?): ()
+        if type(categoryName) == "string" and ClickGui.categories[categoryName] then
+            sortCategoryRows(ClickGui.categories[categoryName])
+            return
+        end
+        for _, record: CategoryWindow in pairs(ClickGui.categories) do
+            sortCategoryRows(record)
         end
     end
 
@@ -52698,11 +53789,6 @@ local Manifest: Manifest = {
             category = "Combat",
         },
         {
-            path = "src/games/universal/Combat/TargetStrafe.lua",
-            name = "StrafeBot",
-            category = "Combat",
-        },
-        {
             path = "src/games/universal/Combat/TriggerBot.lua",
             name = "TriggerBot",
             category = "Combat",
@@ -52762,6 +53848,11 @@ local Manifest: Manifest = {
         {
             path = "src/games/universal/Blatant/Jesus.lua",
             name = "Jesus",
+            category = "Exploits",
+        },
+        {
+            path = "src/games/universal/Blatant/TouchFling.lua",
+            name = "Touch Fling",
             category = "Exploits",
         },
         {
@@ -52827,6 +53918,7 @@ local Manifest: Manifest = {
             "src/games/MM2/base.lua",
             "src/games/MM2/Prediction.lua",
             "src/games/MM2/Blatant/Shoot.lua",
+            "src/games/MM2/Combat/SilentAim.lua",
             "src/games/MM2/Blatant/KnifeAura.lua",
             "src/games/MM2/Combat/AutoShoot.lua",
             "src/games/MM2/Combat/KnifeThrow.lua",

@@ -80,7 +80,11 @@ local FEATURE_CATEGORIES: {[string]: string} = {
 
     ["Blurt Roles"] = "World",
     ["SilentAIM"] = "Combat",
+    ["Silent AIM"] = "Combat",
     ["Gun Aimbot"] = "Combat",
+    ["Gun Aimbot Buttons"] = "Combat",
+    ["Knife Combat"] = "Combat",
+    ["Touch Fling"] = "Exploits",
     ["Trajectory Calibration"] = "Other",
 
     ["Auto Tackle"] = "Combat",
@@ -220,7 +224,7 @@ local RUNTIME_RAW_BASE: string =
         .. RUNTIME_BRANCH
         .. "/"
 
-local SOURCE_STAMP: string = "v139-20261026-yarhm-fling-autofarm-fixes"
+local SOURCE_STAMP: string = "v140-20261026-touchfling-silentaim-sorted-ui"
 
 local BOOT_STARTED_AT: number = os.clock()
 local BOOT_FINGERPRINT_SECONDS: number = 0
@@ -5928,7 +5932,6 @@ local fallbackManifest: any = {
         {path = "src/games/universal/Render/ZoomUnlocker.lua", name = "Zoom", category = "Render"},
         {path = "src/games/universal/Combat/KillAura.lua", name = "KillAura", category = "Combat"},
         {path = "src/games/universal/Combat/AimAssist.lua", name = "Aim Assist", category = "Combat"},
-        {path = "src/games/universal/Combat/TargetStrafe.lua", name = "StrafeBot", category = "Combat"},
         {path = "src/games/universal/Combat/TriggerBot.lua", name = "TriggerBot", category = "Combat"},
         {path = "src/games/universal/Blatant/Invisible.lua", name = "Ghost", category = "Utilities"},
         {path = "src/games/universal/Movement/Speed.lua", name = "Speed", category = "Exploits"},
@@ -5941,6 +5944,7 @@ local fallbackManifest: any = {
         {path = "src/games/universal/Blatant/Noclip.lua", name = "Noclip", category = "Exploits"},
         {path = "src/games/universal/Blatant/Swim.lua", name = "Swim", category = "Exploits"},
         {path = "src/games/universal/Blatant/Jesus.lua", name = "Jesus", category = "Exploits"},
+        {path = "src/games/universal/Blatant/TouchFling.lua", name = "Touch Fling", category = "Exploits"},
         {path = "src/games/universal/Movement/AntiVoid.lua", name = "Anti Void", category = "Utilities"},
         {path = "src/games/universal/Movement/FreezeMovements.lua", name = "Freeze Movements", category = "Utilities"},
         {path = "src/games/universal/Movement/Gravity.lua", name = "Gravity", category = "World"},
@@ -5966,6 +5970,7 @@ local fallbackManifest: any = {
             "src/games/MM2/base.lua",
             "src/games/MM2/Prediction.lua",
             "src/games/MM2/Blatant/Shoot.lua",
+            "src/games/MM2/Combat/SilentAim.lua",
             "src/games/MM2/Blatant/KnifeAura.lua",
             "src/games/MM2/Combat/AutoShoot.lua",
             "src/games/MM2/Combat/KnifeThrow.lua",

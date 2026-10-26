@@ -696,8 +696,8 @@ function Module.init(runtime: any): any
         configData.values["MM2.Shoot.Aimmethod"] = configData.values["MM2.Shoot.Mode"]
     end
     ShootFeature = createUniversalFeature(
-        "Gun Aimbot",
-        "Gun aimbot with Bullet and CFrame modes. The main assigned key fires/equips Gun. Every shot uses the kinematic predictor with the game-filter WallCheck.",
+        "Gun Aimbot Buttons",
+        "Button/key-triggered Gun aimbot (Gun.Shoot:FireServer) with independent Bullet and CFrame mode settings. Pressing the assigned key or mobile button equips the Gun and fires at the Murderer.",
         4,
         toggleShootMurderer,
         {
@@ -707,8 +707,10 @@ function Module.init(runtime: any): any
             registry = mm2Features,
         }
     )
+    ShootFeature.searchText ..= " gun aimbot buttons shoot"
     state.mm2SilentAimFeature = ShootFeature
-    -- Other modules (Auto Shoot, Auto Farm's full-bag grab, Auto Win) fire
+    state.mm2GunAimbotButtonsFeature = ShootFeature
+    -- Other modules (Auto Shoot, Auto Farm's full-bag grab, Auto Win, Silent AIM) fire
     -- through the exact Gun Aimbot path instead of hand-rolling their own shot.
     state.mm2FireSilentShot = function(target: Player?): boolean
         return fireGunAtTarget(target, {
@@ -726,9 +728,47 @@ function Module.init(runtime: any): any
             continuous = opts.continuous ~= false,
         })
     end
+    state.mm2BuildSilentShot = buildSilentShot
+    state.mm2PlanGunEndpoint = planGunEndpoint
+    state.mm2CanDirectHitTarget = canDirectHitTarget
     -- One card, two weapons: the heading keeps the gun rows together and the
     -- knife module opens its own section further down.
     if addSectionOption then addSectionOption(ShootFeature, "Gun") end
+
+    local modeConfigs: {[string]: {wallCheck: boolean, macro: boolean, targetMode: string, targetName: string}} = {
+        Bullet = {
+            wallCheck = if type(configData) == "table" and configData.states["MM2.Shoot.Bullet.WallCheck"] ~= nil
+                then configData.states["MM2.Shoot.Bullet.WallCheck"] == true
+                else (mm2Settings.shootWallCheck ~= false),
+            macro = if type(configData) == "table" and configData.states["MM2.Shoot.Bullet.Macro"] ~= nil
+                then configData.states["MM2.Shoot.Bullet.Macro"] == true
+                else false,
+            targetMode = if type(configData) == "table" and type(configData.values["MM2.Shoot.Bullet.Target"]) == "string"
+                then configData.values["MM2.Shoot.Bullet.Target"]
+                else (mm2Settings.shootMode or "Murder"),
+            targetName = if type(configData) == "table" and type(configData.values["MM2.Shoot.Bullet.TargetPlayer"]) == "string"
+                then configData.values["MM2.Shoot.Bullet.TargetPlayer"]
+                else (mm2Settings.shootTarget or ""),
+        },
+        CFrame = {
+            wallCheck = if type(configData) == "table" and configData.states["MM2.Shoot.CFrame.WallCheck"] ~= nil
+                then configData.states["MM2.Shoot.CFrame.WallCheck"] == true
+                else false,
+            macro = if type(configData) == "table" and configData.states["MM2.Shoot.CFrame.Macro"] ~= nil
+                then configData.states["MM2.Shoot.CFrame.Macro"] == true
+                else false,
+            targetMode = if type(configData) == "table" and type(configData.values["MM2.Shoot.CFrame.Target"]) == "string"
+                then configData.values["MM2.Shoot.CFrame.Target"]
+                else "Murder",
+            targetName = if type(configData) == "table" and type(configData.values["MM2.Shoot.CFrame.TargetPlayer"]) == "string"
+                then configData.values["MM2.Shoot.CFrame.TargetPlayer"]
+                else "",
+        },
+    }
+
+    local activeModeKey: string = (mm2Settings.silentAim and "CFrame") or "Bullet"
+    local switchingShootMode: boolean = false
+
     local ShootTargetBox
     local function refreshShootOptions(): ()
         if ShootTargetBox then
@@ -739,25 +779,68 @@ function Module.init(runtime: any): any
             )
         end
     end
+
+    local function syncShootModeControls(): ()
+        local cfg = modeConfigs[activeModeKey] or modeConfigs.Bullet
+        switchingShootMode = true
+        mm2Settings.shootWallCheck = cfg.wallCheck == true
+        shootMacro = cfg.macro == true
+        mm2Settings.shootMode = cfg.targetMode
+        mm2Settings.shootTarget = cfg.targetName
+        if state and type(state.toggleControls) == "table" then
+            local wc = state.toggleControls["MM2.Shoot.WallCheck"]
+            if wc and type(wc.setChecked) == "function" then
+                pcall(wc.setChecked, cfg.wallCheck == true)
+            end
+            local mc = state.toggleControls["MM2.Shoot.Macro"]
+            if mc and type(mc.setChecked) == "function" then
+                pcall(mc.setChecked, cfg.macro == true)
+            end
+        end
+        if state and type(state.valueControls) == "table" then
+            local tc = state.valueControls["MM2.Shoot.Target"]
+            if tc and type(tc.apply) == "function" then
+                pcall(tc.apply, cfg.targetMode)
+            end
+            local tp = state.valueControls["MM2.Shoot.Targetplayer"]
+            if tp and type(tp.apply) == "function" then
+                pcall(tp.apply, cfg.targetName)
+            end
+        end
+        switchingShootMode = false
+        refreshShootOptions()
+    end
+
     addCycleOption(
         ShootFeature,
         "Aim method",
         {"Bullet", "CFrame"},
         mm2Settings.silentAim and 2 or 1,
         function(value: string): ()
-            mm2Settings.silentAim = value == "CFrame" or value == "Silent AIM"
-            refreshShootOptions()
+            local isCF: boolean = value == "CFrame" or value == "Silent AIM"
+            mm2Settings.silentAim = isCF
+            activeModeKey = isCF and "CFrame" or "Bullet"
+            syncShootModeControls()
         end,
-        "Bullet fires from the gun; CFrame uses a near-target silent origin. "
-            .. "Both respect WallCheck and always protect other players."
+        "Bullet fires from the gun barrel; CFrame spoofs the Gun.Shoot origin CFrame beside the target. "
+            .. "Each mode maintains independent WallCheck and Macro settings."
     )
     addCycleOption(
         ShootFeature,
         "Target",
         {"Murder", "Custom"},
-        mm2Settings.shootMode == "Custom" and 2 or 1,
+        (modeConfigs[activeModeKey].targetMode == "Custom") and 2 or 1,
         function(value: string): ()
             mm2Settings.shootMode = value
+            if not switchingShootMode then
+                local cfg = modeConfigs[activeModeKey]
+                if cfg then
+                    cfg.targetMode = value
+                end
+                if type(configData) == "table" and type(configData.values) == "table" then
+                    configData.values["MM2.Shoot." .. activeModeKey .. ".Target"] = value
+                end
+            end
             refreshShootOptions()
         end
     )
@@ -772,27 +855,56 @@ function Module.init(runtime: any): any
     addToggleOption(
         ShootFeature,
         "WallCheck",
-        mm2Settings.shootWallCheck,
+        modeConfigs[activeModeKey].wallCheck,
         function(value: boolean): ()
-            mm2Settings.shootWallCheck = value == true
+            local on: boolean = value == true
+            mm2Settings.shootWallCheck = on
+            if not switchingShootMode then
+                local cfg = modeConfigs[activeModeKey]
+                if cfg then
+                    cfg.wallCheck = on
+                end
+                if type(configData) == "table" and type(configData.states) == "table" then
+                    configData.states["MM2.Shoot." .. activeModeKey .. ".WallCheck"] = on
+                end
+            end
         end,
-        "Checks that no wall or solid barrier blocks the shot."
+        "Checks that no wall or solid barrier blocks the shot (independent per mode)."
     )
     addToggleOption(
         ShootFeature,
         "Macro",
-        shootMacro,
+        modeConfigs[activeModeKey].macro,
         function(value: boolean): ()
-            shootMacro = value
+            local on: boolean = value == true
+            shootMacro = on
+            if not switchingShootMode then
+                local cfg = modeConfigs[activeModeKey]
+                if cfg then
+                    cfg.macro = on
+                end
+                if type(configData) == "table" and type(configData.states) == "table" then
+                    configData.states["MM2.Shoot." .. activeModeKey .. ".Macro"] = on
+                end
+            end
         end,
-        "Pistol macro: hides the gun 0.01 seconds after every shot."
+        "Pistol macro: hides the gun 0.01 seconds after every shot (independent per mode)."
     )
-    ShootTargetBox = addTextOption(ShootFeature, "Target player", "", function(
+    ShootTargetBox = addTextOption(ShootFeature, "Target player", modeConfigs[activeModeKey].targetName, function(
         value: string
     ): ()
         mm2Settings.shootTarget = value
+        if not switchingShootMode then
+            local cfg = modeConfigs[activeModeKey]
+            if cfg then
+                cfg.targetName = value
+            end
+            if type(configData) == "table" and type(configData.values) == "table" then
+                configData.values["MM2.Shoot." .. activeModeKey .. ".TargetPlayer"] = value
+            end
+        end
     end, false)
-    refreshShootOptions()
+    syncShootModeControls()
 
     -- The visible Auto control is at the top, but arming waits until saved
     -- aim method/target options below have all been restored.
@@ -802,8 +914,12 @@ function Module.init(runtime: any): any
     activeCleanup = function(): ()
         toggleShootMurderer(false)
         state.mm2SilentAimFeature = nil
+        state.mm2GunAimbotButtonsFeature = nil
         state.mm2FireSilentShot = nil
         state.mm2FireGunShot = nil
+        state.mm2BuildSilentShot = nil
+        state.mm2PlanGunEndpoint = nil
+        state.mm2CanDirectHitTarget = nil
         toggleAutoShoot(false)
         state.mm2ShotFeedback.hide()
     end

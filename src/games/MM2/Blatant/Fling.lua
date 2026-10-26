@@ -678,11 +678,24 @@ function Module.init(runtime: any): any
         end
     end)
 
-    -- Never auto-enable Auto Fling Selected Target from a persisted config on injection:
-    -- it must only turn on when the user explicitly toggles it during the session.
+    -- Never auto-enable Auto Fling Selected Target or Touch Fling from a persisted config on injection:
+    -- they must only turn on when the user explicitly toggles them during the session.
     if configData and type(configData.states) == "table" then
         configData.states["MM2.Fling.AutoFlingSelectedTarget"] = false
+        configData.states["MM2.Fling.TouchFling"] = false
     end
+
+    addToggleOption(
+        FlingFeature,
+        "Touch Fling",
+        false,
+        function(value: boolean): ()
+            if type(state.setTouchFlingEnabled) == "function" then
+                pcall(state.setTouchFlingEnabled, value == true)
+            end
+        end,
+        "Walk into any player to send them flying on body contact (only active while enabled)."
+    )
 
     addToggleOption(
         FlingFeature,

@@ -36,11 +36,22 @@ assert 'categoryName = "Combat"' in knife_throw
 assert '"WallCheck"' in knife_throw
 assert '"Delay"' in knife_throw
 
-# Gun Aimbot (formerly SilentAIM) should have Bullet/CFrame modes and WallCheck as the single gate
-assert '"Gun Aimbot"' in S
+# Gun Aimbot Buttons (formerly Gun Aimbot) should have Bullet/CFrame modes and independent per-mode options
+assert '"Gun Aimbot Buttons"' in S
 assert '"Bullet"' in S and '"CFrame"' in S
 for retained in ('Aim method', 'Target', 'WallCheck', 'Macro'):
-    assert f'"{retained}"' in S, f'{retained} must still be in Gun Aimbot'
+    assert f'"{retained}"' in S, f'{retained} must still be in Gun Aimbot Buttons'
+
+# Silent AIM must exist as an independent Combat module supporting PC & Mobile (WeaponService + Shoot:FireServer)
+silent_aim = (ROOT / 'src/games/MM2/Combat/SilentAim.lua').read_text()
+assert '"Silent AIM"' in silent_aim
+assert 'GetMouseTargetCFrame' in silent_aim and 'GetTargetPosition' in silent_aim
+for retained in ('Aim method', 'Target', 'WallCheck', 'Macro'):
+    assert f'"{retained}"' in silent_aim, f'{retained} must be in Silent AIM'
+
+touch_fling = (ROOT / 'src/games/universal/Blatant/TouchFling.lua').read_text()
+assert '"Touch Fling"' in touch_fling
+assert not (ROOT / 'src/games/universal/Combat/TargetStrafe.lua').exists(), 'StrafeBot must be removed'
 
 fling = (ROOT / 'src/games/MM2/Blatant/Fling.lua').read_text()
 assert '"Auto Fling Selected Target"' in fling, 'Fling must expose Auto Fling Selected Target'

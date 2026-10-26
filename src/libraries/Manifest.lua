@@ -113,11 +113,6 @@ local Manifest: Manifest = {
             category = "Combat",
         },
         {
-            path = "src/games/universal/Combat/TargetStrafe.lua",
-            name = "StrafeBot",
-            category = "Combat",
-        },
-        {
             path = "src/games/universal/Combat/TriggerBot.lua",
             name = "TriggerBot",
             category = "Combat",
@@ -177,6 +172,11 @@ local Manifest: Manifest = {
         {
             path = "src/games/universal/Blatant/Jesus.lua",
             name = "Jesus",
+            category = "Exploits",
+        },
+        {
+            path = "src/games/universal/Blatant/TouchFling.lua",
+            name = "Touch Fling",
             category = "Exploits",
         },
         {
@@ -242,6 +242,7 @@ local Manifest: Manifest = {
             "src/games/MM2/base.lua",
             "src/games/MM2/Prediction.lua",
             "src/games/MM2/Blatant/Shoot.lua",
+            "src/games/MM2/Combat/SilentAim.lua",
             "src/games/MM2/Blatant/KnifeAura.lua",
             "src/games/MM2/Combat/AutoShoot.lua",
             "src/games/MM2/Combat/KnifeThrow.lua",
