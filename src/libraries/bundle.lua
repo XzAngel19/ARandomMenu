@@ -1,5 +1,5 @@
 return {
-    stamp = "v136-20261026-aimbot-prediction-autofling-autowin",
+    stamp = "v137-20261026-autofarm-fling-knifethrow-emotes",
     files = {
         ["src/Profile/135856908115931.lua"] = [[
 --!strict
@@ -1603,16 +1603,17 @@ function Module.init(runtime: any): any
     local isPlayerAlive: any = core.isPlayerAlive
 
     -- Bounded high-impulse velocities: strong enough to launch any unanchored
-    -- humanoid at 1,000+ studs/s on contact (with Density=100), while staying
-    -- well below the 10^6-stud IEEE-754 32-bit float precision threshold so
-    -- the local character never enters Roblox's pixelated NullZone or void.
-    local FLING_LINEAR_VEL: Vector3 = Vector3.new(10000, 12000, 10000)
-    local FLING_ANGULAR_VEL: Vector3 = Vector3.new(12000, 12000, 12000)
+    -- humanoid at 1,000+ studs/s on contact (with Density=100, Elasticity=1),
+    -- while staying well below the 10^6-stud IEEE-754 32-bit float precision
+    -- threshold so the local character never enters Roblox's NullZone or void.
+    local FLING_LINEAR_VEL: Vector3 = Vector3.new(14000, 16000, 14000)
+    local FLING_ANGULAR_VEL: Vector3 = Vector3.new(15000, 15000, 15000)
 
     local flingRunning: boolean = false
     local flingTargetName: string = ""
     local autoFlingSelected: boolean = false
     local lastAutoFlingAt: number = 0
+    local stepPhase: number = 0
     local stepAngle: number = 0
 
     local function setFlingRunning(running: boolean): ()
@@ -1620,26 +1621,18 @@ function Module.init(runtime: any): any
         activity.set("fling", running)
     end
 
-    local function waitFrameStep(useRenderStep: boolean): ()
-        if useRenderStep then
-            local okRender: boolean = pcall(function(): ()
-                if RunService.RenderStepped and RunService.RenderStepped.Wait then
-                    RunService.RenderStepped:Wait()
-                elseif RunService.Stepped and RunService.Stepped.Wait then
-                    RunService.Stepped:Wait()
-                else
-                    RunService.Heartbeat:Wait()
-                end
-            end)
-            if not okRender then
-                pcall(function(): ()
-                    RunService.Heartbeat:Wait()
-                end)
-            end
-        else
-            pcall(function(): ()
+    local function waitFrameStep(_useRenderStep: boolean): ()
+        local okStep: boolean = pcall(function(): ()
+            if RunService.Heartbeat and RunService.Heartbeat.Wait then
                 RunService.Heartbeat:Wait()
-            end)
+            elseif RunService.Stepped and RunService.Stepped.Wait then
+                RunService.Stepped:Wait()
+            elseif RunService.RenderStepped and RunService.RenderStepped.Wait then
+                RunService.RenderStepped:Wait()
+            end
+        end)
+        if not okStep then
+            task.wait()
         end
     end
 
@@ -1648,7 +1641,7 @@ function Module.init(runtime: any): any
         savedCollide: {[BasePart]: boolean},
         savedProps: {[BasePart]: PhysicalProperties?}
     ): ()
-        local heavyProps: PhysicalProperties = PhysicalProperties.new(100, 0.3, 0.5, 1, 1)
+        local heavyProps: PhysicalProperties = PhysicalProperties.new(100, 0, 1, 100, 100)
         for _, child: Instance in ipairs(character:GetChildren()) do
             if child:IsA("BasePart") then
                 local part: BasePart = child :: BasePart
@@ -1698,6 +1691,93 @@ function Module.init(runtime: any): any
             or targetChar:FindFirstChildWhichIsA("BasePart")
     end
 
+    local function resolveTargetHorizontalVelocity(
+        targetPart: BasePart,
+        targetHum: Humanoid?
+    ): Vector3
+        local targetVel: Vector3 = Vector3.zero
+        local moveDir: Vector3 = Vector3.zero
+        local walkSpeed: number = 16
+        pcall(function(): ()
+            targetVel = targetPart.AssemblyLinearVelocity
+            if targetHum then
+                moveDir = targetHum.MoveDirection
+                if type(targetHum.WalkSpeed) == "number" and targetHum.WalkSpeed > 0 then
+                    walkSpeed = targetHum.WalkSpeed
+                end
+            end
+        end)
+        local flatVel: Vector3 = Vector3.new(targetVel.X, 0, targetVel.Z)
+        local flatMove: Vector3 = Vector3.new(moveDir.X, 0, moveDir.Z)
+        if flatMove.Magnitude > 0.05 then
+            local moveVel: Vector3 = flatMove.Unit * math.max(flatVel.Magnitude, walkSpeed)
+            if flatVel.Magnitude < 2 then
+                flatVel = moveVel
+            else
+                flatVel = flatVel * 0.65 + moveVel * 0.35
+            end
+        end
+        if flatVel.Magnitude > 40 then
+            flatVel = flatVel.Unit * 40
+        end
+        return flatVel
+    end
+
+    local function computePhaseOffsetAndVelocity(
+        phaseIndex: number,
+        flatVel: Vector3,
+        verticalVel: number
+    ): (Vector3, Vector3)
+        local isMoving: boolean = flatVel.Magnitude > 1.25
+        local leadStep: number = 0
+        local bodyOffset: Vector3 = Vector3.zero
+        if phaseIndex == 0 then
+            -- Direct core overlap: hits stationary & slow targets immediately.
+            leadStep = 0.0
+            bodyOffset = Vector3.new(0, 0, 0)
+        elseif phaseIndex == 1 then
+            -- Upper torso / head upward drive.
+            leadStep = 0.05
+            bodyOffset = Vector3.new(0, 1.35, 0)
+        elseif phaseIndex == 2 then
+            -- Lower root / legs under-sweep.
+            leadStep = 0.10
+            bodyOffset = Vector3.new(0, -1.35, 0)
+        elseif phaseIndex == 3 then
+            -- Mid-ping forward intercept (~150ms).
+            leadStep = 0.15
+            bodyOffset = if isMoving
+                then Vector3.new(0, 0.35, 0)
+                else Vector3.new(1.15, 0.5, -1.15)
+        elseif phaseIndex == 4 then
+            -- High-ping forward intercept (~220ms).
+            leadStep = 0.22
+            bodyOffset = if isMoving
+                then Vector3.new(0, -0.35, 0)
+                else Vector3.new(-1.15, -0.5, 1.15)
+        else
+            -- Tight cross-core shear.
+            leadStep = 0.08
+            bodyOffset = Vector3.new(0.75, 0.2, 0.75)
+        end
+
+        local leadOffset: Vector3 = flatVel * leadStep
+        if leadOffset.Magnitude > 6.5 then
+            leadOffset = leadOffset.Unit * 6.5
+        end
+        local yLead: number = math.clamp(verticalVel * 0.06, -2.0, 2.5)
+        local totalOffset: Vector3 = leadOffset + bodyOffset + Vector3.new(0, yLead, 0)
+
+        local signX: number = if phaseIndex % 2 == 0 then 1 else -1
+        local signZ: number = if phaseIndex % 3 == 0 then 1 else -1
+        local impulseVel: Vector3 = Vector3.new(
+            FLING_LINEAR_VEL.X * signX,
+            FLING_LINEAR_VEL.Y,
+            FLING_LINEAR_VEL.Z * signZ
+        )
+        return totalOffset, impulseVel
+    end
+
     -- Single-step high-impulse contact sweep (usable from per-frame loops
     -- such as Auto Win's Fling Sheriff and Get Gun).
     local function flingSingleStep(
@@ -1731,45 +1811,29 @@ function Module.init(runtime: any): any
         else
             pcall(function(): ()
                 root.CanCollide = true
-                root.CustomPhysicalProperties = PhysicalProperties.new(100, 0.3, 0.5, 1, 1)
+                root.CustomPhysicalProperties = PhysicalProperties.new(100, 0, 1, 100, 100)
             end)
         end
 
-        stepAngle = (stepAngle + 100) % 360
-        local phase: number = math.floor(stepAngle / 100) % 4
-        local targetVel: Vector3 = Vector3.zero
-        local moveDir: Vector3 = Vector3.zero
+        stepPhase = (stepPhase + 1) % 6
+        stepAngle = (stepAngle + 95) % 360
+        local flatVel: Vector3 = resolveTargetHorizontalVelocity(targetPart, targetHum)
+        local verticalVel: number = 0
         pcall(function(): ()
-            targetVel = targetPart.AssemblyLinearVelocity
-            if targetHum then
-                moveDir = targetHum.MoveDirection
-            end
+            verticalVel = targetPart.AssemblyLinearVelocity.Y
         end)
-
-        local leadOffset: Vector3 = if targetVel.Magnitude > 1.5
-            then moveDir * math.clamp(targetVel.Magnitude / 1.25, -18, 18)
-                + Vector3.new(targetVel.X * 0.08, 0, targetVel.Z * 0.08)
-            else Vector3.zero
-
-        local sweepLocal: CFrame
-        if phase == 0 then
-            sweepLocal = CFrame.new(0, 1.5, 0)
-        elseif phase == 1 then
-            sweepLocal = CFrame.new(0, -1.5, 0)
-        elseif phase == 2 then
-            sweepLocal = CFrame.new(2.0, 1.2, -2.0)
-        else
-            sweepLocal = CFrame.new(-2.0, -1.2, 2.0)
-        end
+        local totalOffset: Vector3, impulseVel: Vector3 = computePhaseOffsetAndVelocity(
+            stepPhase,
+            flatVel,
+            verticalVel
+        )
 
         local rotCF: CFrame = CFrame.Angles(
             math.rad(stepAngle),
-            math.rad(stepAngle),
-            0
+            math.rad((stepAngle * 2) % 360),
+            math.rad((stepAngle * 3) % 360)
         )
-        local finalCF: CFrame = CFrame.new(targetPart.Position + leadOffset)
-            * sweepLocal
-            * rotCF
+        local finalCF: CFrame = CFrame.new(targetPart.Position + totalOffset) * rotCF
 
         pcall(function(): ()
             if humanoid.Sit then
@@ -1779,7 +1843,7 @@ function Module.init(runtime: any): any
             humanoid.AutoRotate = false
             root.CFrame = finalCF
             character:PivotTo(finalCF)
-            root.AssemblyLinearVelocity = FLING_LINEAR_VEL
+            root.AssemblyLinearVelocity = impulseVel
             root.AssemblyAngularVelocity = FLING_ANGULAR_VEL
         end)
         return true
@@ -1870,23 +1934,20 @@ function Module.init(runtime: any): any
                     liveChar: Model,
                     liveRoot: BasePart,
                     basePart: BasePart,
-                    posOffset: CFrame,
+                    offsetVec: Vector3,
                     angOffset: CFrame,
-                    isPreSimReset: boolean?
+                    impulseVel: Vector3
                 ): ()
-                    local targetCF: CFrame = CFrame.new(basePart.Position)
-                        * posOffset
+                    local targetCF: CFrame = CFrame.new(basePart.Position + offsetVec)
                         * angOffset
                     pcall(function(): ()
+                        if bodyVel then
+                            bodyVel.Velocity = impulseVel
+                        end
                         liveRoot.CFrame = targetCF
                         liveChar:PivotTo(targetCF)
-                        if isPreSimReset then
-                            liveRoot.AssemblyLinearVelocity = Vector3.zero
-                            liveRoot.AssemblyAngularVelocity = Vector3.zero
-                        else
-                            liveRoot.AssemblyLinearVelocity = FLING_LINEAR_VEL
-                            liveRoot.AssemblyAngularVelocity = FLING_ANGULAR_VEL
-                        end
+                        liveRoot.AssemblyLinearVelocity = impulseVel
+                        liveRoot.AssemblyAngularVelocity = FLING_ANGULAR_VEL
                     end)
                 end
 
@@ -1926,8 +1987,11 @@ function Module.init(runtime: any): any
                     end
 
                     local targetSpeed: number = 0
+                    local verticalVel: number = 0
                     pcall(function(): ()
-                        targetSpeed = targetPart.AssemblyLinearVelocity.Magnitude
+                        local vel: Vector3 = targetPart.AssemblyLinearVelocity
+                        targetSpeed = vel.Magnitude
+                        verticalVel = vel.Y
                     end)
                     if targetSpeed > 250 then
                         touchedTarget = true
@@ -1958,85 +2022,40 @@ function Module.init(runtime: any): any
                         (targetPart :: any):SetNetworkOwner(LocalPlayer)
                     end)
 
-                    angle = (angle + 100) % 360
-                    local rotCF: CFrame = CFrame.Angles(math.rad(angle), 0, 0)
-                    local moveDir: Vector3 = targetHumanoid
-                        and targetHumanoid.MoveDirection
-                        or Vector3.zero
-                    local velMag: number = math.clamp(targetSpeed / 1.25, 0, 25)
-
-                    if targetSpeed < 1.5 then
+                    for phaseIdx = 0, 5 do
+                        if not flingRunning or not targetPart.Parent then
+                            break
+                        end
+                        local curVel: Vector3 = Vector3.zero
+                        pcall(function(): ()
+                            curVel = targetPart.AssemblyLinearVelocity
+                        end)
+                        if curVel.Magnitude > 250 or targetPart.Position.Y <= voidThreshold then
+                            touchedTarget = true
+                            reason = "flung"
+                            break
+                        end
+                        angle = (angle + 95) % 360
+                        local rotCF: CFrame = CFrame.Angles(
+                            math.rad(angle),
+                            math.rad((angle * 2) % 360),
+                            math.rad((angle * 3) % 360)
+                        )
+                        local flatVel: Vector3 = resolveTargetHorizontalVelocity(
+                            targetPart,
+                            targetHumanoid
+                        )
+                        local offsetVec: Vector3, impulseVel: Vector3 =
+                            computePhaseOffsetAndVelocity(phaseIdx, flatVel, curVel.Y)
                         applyFPos(
                             liveChar,
                             liveRoot,
                             targetPart,
-                            CFrame.new(0, 1.5, 0) + moveDir * velMag,
-                            rotCF
+                            offsetVec,
+                            rotCF,
+                            impulseVel
                         )
                         waitFrameStep(false)
-
-                        applyFPos(
-                            liveChar,
-                            liveRoot,
-                            targetPart,
-                            CFrame.new(0, -1.5, 0) + moveDir * velMag,
-                            rotCF
-                        )
-                        waitFrameStep(true)
-
-                        applyFPos(
-                            liveChar,
-                            liveRoot,
-                            targetPart,
-                            CFrame.new(2.25, 1.5, -2.25) + moveDir * velMag,
-                            rotCF
-                        )
-                        waitFrameStep(false)
-
-                        applyFPos(
-                            liveChar,
-                            liveRoot,
-                            targetPart,
-                            CFrame.new(-2.25, -1.5, 2.25) + moveDir * velMag,
-                            rotCF
-                        )
-                        waitFrameStep(true)
-                    else
-                        applyFPos(
-                            liveChar,
-                            liveRoot,
-                            targetPart,
-                            CFrame.new(0, 1.5, velMag) + moveDir * velMag,
-                            rotCF
-                        )
-                        waitFrameStep(false)
-
-                        applyFPos(
-                            liveChar,
-                            liveRoot,
-                            targetPart,
-                            CFrame.new(0, -1.5, -velMag) + moveDir * velMag,
-                            rotCF
-                        )
-                        waitFrameStep(true)
-
-                        applyFPos(
-                            liveChar,
-                            liveRoot,
-                            targetPart,
-                            CFrame.new(0, 1.5, 0) + moveDir,
-                            rotCF
-                        )
-                        waitFrameStep(false)
-
-                        applyFPos(
-                            liveChar,
-                            liveRoot,
-                            targetPart,
-                            CFrame.new(0, -1.5, 0) + moveDir,
-                            rotCF
-                        )
-                        waitFrameStep(true)
                     end
                 end
             end)
@@ -4273,6 +4292,7 @@ return Module
         ["src/games/MM2/Combat/KnifeThrow.lua"] = [[
 local Module = {
     Name = "MM2 Knife Throw",
+    PlaceId = 142823291,
     Events = {} :: {[string]: any},
     Initialized = false,
     Runtime = nil :: any,
@@ -4286,130 +4306,559 @@ function Module.init(runtime: any): any
     end
     local core: any = state.mm2Core
     assert(type(core) == "table", "MM2 Knife Throw requires the MM2 core module")
-    local prediction: any = state.mm2Prediction
-    assert(type(prediction) == "table", "MM2 Knife Throw requires MM2 Prediction")
     Module.Runtime = runtime
-    
+
     local findMurderer: any = core.findMurderer
     local getPlayerRole: any = core.getPlayerRole
     local getPlayerWeapon: any = core.getPlayerWeapon
     local isPlayerAlive: any = core.isPlayerAlive
     local isProtectedTarget: any = core.isProtectedTarget
+    local getEstimatedLatency: any = core.getEstimatedLatency
     local isWeaponPathClear: any = core.isWeaponPathClear
-    
+    local prediction: any = state.mm2Prediction
+
     local settings = {
+        enabled = false,
+        autoThrow = false,
         wallCheck = true,
-        delay = 0,
+        knifeTracer = false,
+        delay = 0.6,
     }
-    
-    local knifeThrowActive = false
-    local lastThrowAttempt = 0
-    
-    local function getKnife(): Tool?
-        local character = LocalPlayer.Character
-        if not character then return nil end
-        return getPlayerWeapon(LocalPlayer, "Knife", true)
+
+    local lastThrowAttempt: number = 0
+    local tracerPart: BasePart? = nil
+    local targetDotPart: BasePart? = nil
+    local hookedWeaponService: any = nil
+    local origGetMouseTargetCFrame: any = nil
+    local origGetTargetPosition: any = nil
+
+    local function destroyTracerVisuals(): ()
+        if tracerPart then
+            pcall(function(): ()
+                tracerPart:Destroy()
+            end)
+            tracerPart = nil
+        end
+        if targetDotPart then
+            pcall(function(): ()
+                targetDotPart:Destroy()
+            end)
+            targetDotPart = nil
+        end
     end
-    
-    local function findTarget(): Player?
-        local murderer = findMurderer()
-        if murderer ~= LocalPlayer then return nil end
-        
-        local localRoot = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
-        if not localRoot then return nil end
-        
-        local candidates = {}
-        for _, player in ipairs(game:GetService("Players"):GetPlayers()) do
-            if player ~= LocalPlayer 
-                and isPlayerAlive(player) 
-                and not isProtectedTarget(player)
-                and getPlayerRole(player) ~= "Murderer" then
-                
-                local targetRoot = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
-                if targetRoot then
-                    table.insert(candidates, {
-                        player = player,
-                        distance = (targetRoot.Position - localRoot.Position).Magnitude
-                    })
+
+    -- Check if player is valid target
+    local function isValidTarget(player: Player): boolean
+        if not player or player == LocalPlayer then
+            return false
+        end
+        if type(isProtectedTarget) == "function" and isProtectedTarget(player) then
+            return false
+        end
+        if type(isPlayerAlive) == "function" and not isPlayerAlive(player) then
+            return false
+        end
+        if type(getPlayerRole) == "function" and getPlayerRole(player) == "Murderer" then
+            return false
+        end
+        local character: Model? = player.Character
+        if not character then
+            return false
+        end
+        local root: BasePart? = character:FindFirstChild("HumanoidRootPart") :: BasePart?
+        local humanoid: Humanoid? = character:FindFirstChildOfClass("Humanoid")
+        if not root or not humanoid or humanoid.Health <= 0 then
+            return false
+        end
+        return true
+    end
+
+    -- Get equipped or carried knife when local player is Murderer
+    local function getKnife(): Tool?
+        local character: Model? = LocalPlayer and LocalPlayer.Character
+        if not character then
+            return nil
+        end
+        if type(getPlayerWeapon) == "function" then
+            local equippedKnife: Tool? = getPlayerWeapon(LocalPlayer, "Knife", true)
+            if equippedKnife then
+                return equippedKnife
+            end
+            local anyKnife: Tool? = getPlayerWeapon(LocalPlayer, "Knife", false)
+            if anyKnife then
+                return anyKnife
+            end
+        end
+        for _, item: Instance in ipairs(character:GetChildren()) do
+            if item:IsA("Tool") then
+                local name: string = item.Name:lower()
+                if name:find("knife") or item:FindFirstChild("Events") then
+                    local events: Instance? = item:FindFirstChild("Events")
+                    if name:find("knife") or (events and events:FindFirstChild("KnifeThrown")) then
+                        return item :: Tool
+                    end
                 end
             end
         end
-        
-        table.sort(candidates, function(a, b) return a.distance < b.distance end)
-        
-        for _, candidate in ipairs(candidates) do
-            if not settings.wallCheck or isWeaponPathClear(localRoot.Position, candidate.player.Character.HumanoidRootPart.Position, {}) then
-                return candidate.player
+        local backpack: Instance? = LocalPlayer:FindFirstChildOfClass("Backpack")
+        if backpack then
+            for _, item: Instance in ipairs(backpack:GetChildren()) do
+                if item:IsA("Tool") then
+                    local name: string = item.Name:lower()
+                    local events: Instance? = item:FindFirstChild("Events")
+                    if name:find("knife") or (events and events:FindFirstChild("KnifeThrown")) then
+                        return item :: Tool
+                    end
+                end
             end
         end
-        
         return nil
     end
-    
-    local function throwKnife(target: Player): boolean
-        local knife = getKnife()
-        if not knife then return false end
-        
-        local character = LocalPlayer.Character
-        if not character then return false end
-        
-        local root = character:FindFirstChild("HumanoidRootPart")
-        local targetRoot = target.Character and target.Character:FindFirstChild("HumanoidRootPart")
-        if not root or not targetRoot then return false end
-        
-        -- Get the throw remote
-        local remotes = game:GetService("ReplicatedStorage"):FindFirstChild("Remotes")
-        if not remotes then return false end
-        
-        local event = remotes:FindFirstChild("Event")
-        if not event then return false end
-        
-        -- Calculate aim with prediction
-        local originCFrame = getGunOriginCFrame(knife)
-        local aimPosition = targetRoot.Position
-        
-        -- Invoke the remote directly to trigger natural throw animation
-        -- The game will handle the animation and throw naturally
-        pcall(function()
-            event:FireServer("Throw", {
-                Origin = originCFrame,
-                Direction = (aimPosition - originCFrame.Position).Unit,
-                Target = target
-            })
+
+    local function getThrowOriginCFrame(knife: Tool?): CFrame?
+        local character: Model? = LocalPlayer and LocalPlayer.Character
+        if not character then
+            return nil
+        end
+        local handle: Instance? = knife and knife:FindFirstChild("Handle")
+        if handle and handle:IsA("BasePart") and knife and knife.Parent == character then
+            return (handle :: BasePart).CFrame
+        end
+        local hand: Instance? = character:FindFirstChild("RightHand")
+            or character:FindFirstChild("Right Arm")
+            or character:FindFirstChild("HumanoidRootPart")
+        if hand and hand:IsA("BasePart") then
+            return (hand :: BasePart).CFrame
+        end
+        return nil
+    end
+
+    local function checkLineOfSight(originPos: Vector3, targetPos: Vector3, targetChar: Model?): boolean
+        if not settings.wallCheck then
+            return true
+        end
+        if type(isWeaponPathClear) == "function" and targetChar then
+            local okClear: boolean, isClear: any = pcall(
+                isWeaponPathClear,
+                originPos,
+                targetPos,
+                targetChar,
+                nil,
+                { ignoreTarget = true }
+            )
+            if okClear then
+                return isClear == true
+            end
+        end
+        local direction: Vector3 = targetPos - originPos
+        if direction.Magnitude < 0.05 then
+            return true
+        end
+        local params: RaycastParams = RaycastParams.new()
+        params.FilterType = Enum.RaycastFilterType.Exclude
+        local ignoreList: {Instance} = {}
+        if LocalPlayer and LocalPlayer.Character then
+            table.insert(ignoreList, LocalPlayer.Character)
+        end
+        if targetChar then
+            table.insert(ignoreList, targetChar)
+        end
+        params.FilterDescendantsInstances = ignoreList
+        params.RespectCanCollide = true
+        params.IgnoreWater = true
+        local result: RaycastResult? = workspace:Raycast(originPos, direction, params)
+        return result == nil
+    end
+
+    -- Predict target intercept position for MM2 ThrowingKnife (96 studs/s linear projectile)
+    local function resolveKnifeAim(target: Player, originPos: Vector3, knife: Tool?): Vector3?
+        local character: Model? = target.Character
+        if not character then
+            return nil
+        end
+        local root: BasePart? = character:FindFirstChild("HumanoidRootPart") :: BasePart?
+        if not root then
+            return nil
+        end
+
+        local speed: number = 96
+        if knife then
+            pcall(function(): ()
+                local attrSpeed: any = knife:GetAttribute("ThrowSpeed")
+                if type(attrSpeed) == "number" and attrSpeed >= 24 and attrSpeed <= 300 then
+                    speed = attrSpeed
+                end
+            end)
+        end
+
+        local predicted: Vector3? = nil
+        if type(prediction) == "table" and type(prediction.knifeAim) == "function" then
+            local okPred: boolean, aimPoint: any = pcall(prediction.knifeAim, target, originPos)
+            if okPred and typeof(aimPoint) == "Vector3" then
+                predicted = aimPoint :: Vector3
+            end
+        end
+
+        if not predicted then
+            local velocity: Vector3 = root.AssemblyLinearVelocity
+            local latency: number = 0.06
+            if type(getEstimatedLatency) == "function" then
+                local okLat: boolean, l: any = pcall(getEstimatedLatency)
+                if okLat and type(l) == "number" and l == l then
+                    latency = math.clamp(l, 0, 0.5)
+                end
+            end
+            local observed: Vector3 = root.Position + velocity * latency
+            local rel: Vector3 = observed - originPos
+            local a: number = velocity:Dot(velocity) - speed * speed
+            local b: number = 2 * rel:Dot(velocity)
+            local c: number = rel:Dot(rel)
+            local flight: number? = nil
+            if c < 0.0025 then
+                flight = 0
+            elseif math.abs(a) < 1e-6 then
+                if b < -1e-6 then
+                    flight = -c / b
+                end
+            else
+                local disc: number = b * b - 4 * a * c
+                if disc >= 0 then
+                    local sqrtDisc: number = math.sqrt(disc)
+                    local t1: number = (-b - sqrtDisc) / (2 * a)
+                    local t2: number = (-b + sqrtDisc) / (2 * a)
+                    if t1 > 0 then
+                        flight = t1
+                    end
+                    if t2 > 0 and (not flight or t2 < flight) then
+                        flight = t2
+                    end
+                end
+            end
+            if flight and flight == flight then
+                flight = math.clamp(flight, 0, 1.5)
+                local horizVel: Vector3 = Vector3.new(velocity.X, 0, velocity.Z)
+                local yLead: number = math.clamp(velocity.Y * math.min(flight, 0.28), -3.5, 4.0)
+                predicted = observed + horizVel * flight + Vector3.new(0, yLead, 0)
+            else
+                predicted = observed
+            end
+        end
+
+        if not predicted then
+            return nil
+        end
+
+        if checkLineOfSight(originPos, predicted, character) then
+            return predicted
+        end
+
+        -- Fallback visibility scan across torso/head/limbs if WallCheck blocks primary point
+        local leadOffset: Vector3 = predicted - root.Position
+        local candidateNames: {string} = {
+            "UpperTorso", "Torso", "HumanoidRootPart", "Head",
+            "RightUpperArm", "LeftUpperArm", "Right Arm", "Left Arm",
+        }
+        for _, partName: string in ipairs(candidateNames) do
+            local part: Instance? = character:FindFirstChild(partName)
+            if part and part:IsA("BasePart") then
+                local candidatePoint: Vector3 = (part :: BasePart).Position + leadOffset
+                if checkLineOfSight(originPos, candidatePoint, character) then
+                    return candidatePoint
+                end
+            end
+        end
+
+        return nil
+    end
+
+    -- Find best target for knife throw
+    local function findTarget(): Player?
+        local localChar: Model? = LocalPlayer and LocalPlayer.Character
+        if not localChar then
+            return nil
+        end
+        local localRoot: BasePart? = localChar:FindFirstChild("HumanoidRootPart") :: BasePart?
+        if not localRoot then
+            return nil
+        end
+        local knife: Tool? = getKnife()
+        local originCF: CFrame? = getThrowOriginCFrame(knife)
+        local originPos: Vector3 = originCF and originCF.Position or localRoot.Position
+
+        local bestTarget: Player? = nil
+        local bestScore: number = math.huge
+
+        for _, player: Player in ipairs(Players:GetPlayers()) do
+            if isValidTarget(player) then
+                local targetChar: Model? = player.Character
+                local targetRoot: BasePart? = targetChar
+                    and targetChar:FindFirstChild("HumanoidRootPart") :: BasePart?
+                if targetRoot then
+                    local distance: number = (targetRoot.Position - originPos).Magnitude
+                    if distance <= 250 then
+                        local aimPoint: Vector3? = resolveKnifeAim(player, originPos, knife)
+                        if aimPoint then
+                            local roleBonus: number = 0
+                            if type(getPlayerRole) == "function" then
+                                local role: string? = getPlayerRole(player)
+                                if role == "Sheriff" or role == "Hero" then
+                                    roleBonus = -35
+                                end
+                            end
+                            local score: number = distance + roleBonus
+                            if score < bestScore then
+                                bestScore = score
+                                bestTarget = player
+                            end
+                        end
+                    end
+                end
+            end
+        end
+
+        return bestTarget
+    end
+
+    local function updateTracerVisual(originPos: Vector3?, aimPos: Vector3?): ()
+        if not settings.enabled or not settings.knifeTracer or not originPos or not aimPos then
+            destroyTracerVisuals()
+            return
+        end
+        local delta: Vector3 = aimPos - originPos
+        local dist: number = delta.Magnitude
+        if dist < 0.25 or dist > 400 then
+            destroyTracerVisuals()
+            return
+        end
+        pcall(function(): ()
+            if not tracerPart or not tracerPart.Parent then
+                local beamPart: Part = Instance.new("Part")
+                beamPart.Name = "WurstKnifeTracer"
+                beamPart.Anchored = true
+                beamPart.CanCollide = false
+                beamPart.CanQuery = false
+                beamPart.CanTouch = false
+                beamPart.Material = Enum.Material.Neon
+                beamPart.Color = Color3.fromRGB(255, 65, 65)
+                beamPart.Transparency = 0.25
+                beamPart.Parent = workspace
+                tracerPart = beamPart
+            end
+            if not targetDotPart or not targetDotPart.Parent then
+                local dot: Part = Instance.new("Part")
+                dot.Name = "WurstKnifeAimDot"
+                dot.Shape = Enum.PartType.Ball
+                dot.Size = Vector3.new(1.1, 1.1, 1.1)
+                dot.Anchored = true
+                dot.CanCollide = false
+                dot.CanQuery = false
+                dot.CanTouch = false
+                dot.Material = Enum.Material.Neon
+                dot.Color = Color3.fromRGB(255, 220, 60)
+                dot.Transparency = 0.15
+                dot.Parent = workspace
+                targetDotPart = dot
+            end
+            if tracerPart then
+                tracerPart.Size = Vector3.new(0.14, 0.14, dist)
+                tracerPart.CFrame = CFrame.lookAt(originPos + delta * 0.5, aimPos)
+            end
+            if targetDotPart then
+                targetDotPart.CFrame = CFrame.new(aimPos)
+            end
         end)
-        
-        return true
     end
-    
-    local function knifeThrowTick(): ()
-        if not knifeThrowActive then return end
-        
-        local now = os.clock()
-        local delay = settings.delay
-        if now - lastThrowAttempt < delay then return end
-        
-        local target = findTarget()
-        if not target then return end
-        
-        lastThrowAttempt = now
-        throwKnife(target)
+
+    -- Throw knife at predicted target using MM2's Knife.Events.KnifeThrown remote
+    local function throwKnife(target: Player, knife: Tool): boolean
+        local character: Model? = LocalPlayer and LocalPlayer.Character
+        if not character then
+            return false
+        end
+        local humanoid: Humanoid? = character:FindFirstChildOfClass("Humanoid")
+        if knife.Parent ~= character and humanoid then
+            pcall(function(): ()
+                humanoid:EquipTool(knife)
+            end)
+        end
+        local originCF: CFrame? = getThrowOriginCFrame(knife)
+        if not originCF then
+            return false
+        end
+        local aimPos: Vector3? = resolveKnifeAim(target, originCF.Position, knife)
+        if not aimPos then
+            return false
+        end
+
+        local fired: boolean = false
+        local eventsFolder: Instance? = knife:FindFirstChild("Events")
+        local knifeThrownRemote: Instance? = eventsFolder and eventsFolder:FindFirstChild("KnifeThrown")
+        if knifeThrownRemote and knifeThrownRemote:IsA("RemoteEvent") then
+            local okFire: boolean = pcall(function(): ()
+                (knifeThrownRemote :: RemoteEvent):FireServer(originCF, CFrame.new(aimPos))
+            end)
+            if okFire then
+                fired = true
+            end
+        end
+
+        if not fired then
+            pcall(function(): ()
+                local rs: Instance? = game:GetService("ReplicatedStorage")
+                local remotes: Instance? = rs and rs:FindFirstChild("Remotes")
+                local throwRemote: Instance? = remotes and remotes:FindFirstChild("Event")
+                if throwRemote and throwRemote:IsA("RemoteEvent") then
+                    local dir: Vector3 = (aimPos - originCF.Position).Unit
+                    local rem: RemoteEvent = throwRemote :: RemoteEvent
+                    rem:FireServer("Throw", aimPos, dir)
+                    fired = true
+                end
+            end)
+        end
+
+        return fired
     end
-    
-    local function toggleKnifeThrow(enabled: boolean): ()
-        knifeThrowActive = enabled
-        
-        if enabled then
-            featureConnections.MM2KnifeThrow = TaskManager:Connect(knifeThrowTick)
-            knifeThrowTick()
+
+    -- Hook ReplicatedStorage.ClientServices.WeaponService so native PC & Mobile
+    -- knife throws (Mouse, Keyboard E, Gamepad, Mobile TouchControls.RightBar.Throw)
+    -- automatically redirect to the Knife Predictor's aim point!
+    local function installWeaponServiceRedirect(): ()
+        if hookedWeaponService then
+            return
+        end
+        pcall(function(): ()
+            local rs: Instance? = game:GetService("ReplicatedStorage")
+            local clientServices: Instance? = rs and rs:FindFirstChild("ClientServices")
+            local wsModule: Instance? = clientServices and clientServices:FindFirstChild("WeaponService")
+            if not wsModule then
+                return
+            end
+            local okReq: boolean, wsTable: any = pcall(require, wsModule)
+            if not okReq or type(wsTable) ~= "table" then
+                return
+            end
+            origGetMouseTargetCFrame = wsTable.GetMouseTargetCFrame
+            origGetTargetPosition = wsTable.GetTargetPosition
+            hookedWeaponService = wsTable
+
+            if type(origGetMouseTargetCFrame) == "function" then
+                wsTable.GetMouseTargetCFrame = function(self: any, ...: any): any
+                    if settings.enabled then
+                        local knife: Tool? = getKnife()
+                        local character: Model? = LocalPlayer and LocalPlayer.Character
+                        if knife and character and knife.Parent == character then
+                            local originCF: CFrame? = getThrowOriginCFrame(knife)
+                            local target: Player? = findTarget()
+                            if originCF and target then
+                                local aim: Vector3? = resolveKnifeAim(target, originCF.Position, knife)
+                                if aim then
+                                    return CFrame.new(aim)
+                                end
+                            end
+                        end
+                    end
+                    return origGetMouseTargetCFrame(self, ...)
+                end
+            end
+
+            if type(origGetTargetPosition) == "function" then
+                wsTable.GetTargetPosition = function(self: any, ...: any): any
+                    if settings.enabled then
+                        local knife: Tool? = getKnife()
+                        local character: Model? = LocalPlayer and LocalPlayer.Character
+                        if knife and character and knife.Parent == character then
+                            local originCF: CFrame? = getThrowOriginCFrame(knife)
+                            local target: Player? = findTarget()
+                            if originCF and target then
+                                local aim: Vector3? = resolveKnifeAim(target, originCF.Position, knife)
+                                if aim then
+                                    return aim
+                                end
+                            end
+                        end
+                    end
+                    return origGetTargetPosition(self, ...)
+                end
+            end
+        end)
+    end
+
+    local function uninstallWeaponServiceRedirect(): ()
+        if not hookedWeaponService then
+            return
+        end
+        pcall(function(): ()
+            if origGetMouseTargetCFrame then
+                hookedWeaponService.GetMouseTargetCFrame = origGetMouseTargetCFrame
+            end
+            if origGetTargetPosition then
+                hookedWeaponService.GetTargetPosition = origGetTargetPosition
+            end
+        end)
+        hookedWeaponService = nil
+        origGetMouseTargetCFrame = nil
+        origGetTargetPosition = nil
+    end
+
+    -- Main loop for Knife Tracer and Auto Knife Throw
+    local function knifeThrowLoop(): ()
+        if not settings.enabled then
+            destroyTracerVisuals()
+            return
+        end
+
+        local knife: Tool? = getKnife()
+        if not knife then
+            destroyTracerVisuals()
+            return
+        end
+
+        local target: Player? = findTarget()
+        if not target then
+            destroyTracerVisuals()
+            return
+        end
+
+        local originCF: CFrame? = getThrowOriginCFrame(knife)
+        local aimPos: Vector3? = originCF and resolveKnifeAim(target, originCF.Position, knife) or nil
+
+        if settings.knifeTracer and originCF and aimPos then
+            updateTracerVisual(originCF.Position, aimPos)
         else
-            disconnectFeatureConnection("MM2KnifeThrow")
+            destroyTracerVisuals()
+        end
+
+        if settings.autoThrow then
+            local now: number = os.clock()
+            local cooldown: number = math.clamp(tonumber(settings.delay) or 0, 0, 10)
+            if now - lastThrowAttempt >= cooldown then
+                if throwKnife(target, knife) then
+                    lastThrowAttempt = now
+                end
+            end
         end
     end
-    
+
+    -- Toggle function
+    local function toggleKnifeThrow(enabled: boolean): ()
+        settings.enabled = enabled
+        disconnectFeatureConnection("MM2KnifeThrow")
+
+        if not enabled then
+            uninstallWeaponServiceRedirect()
+            destroyTracerVisuals()
+            return
+        end
+
+        installWeaponServiceRedirect()
+        featureConnections.MM2KnifeThrow = TaskManager:Connect(knifeThrowLoop)
+    end
+
+    -- Create the feature in Combat category
     local KnifeThrowFeature: any = createUniversalFeature(
         "Knife Throw",
-        "Automatically throws knives at targets using the game's natural throw animation. Invokes the Remote directly for authentic behavior with prediction.",
-        5,
+        "Redirects PC & Mobile knife throws to the Knife Predictor's aim point, with optional Auto Knife Throw and Knife Tracer.",
+        15,
         toggleKnifeThrow,
         {
             categoryName = "Combat",
@@ -4417,23 +4866,58 @@ function Module.init(runtime: any): any
             registry = mm2Features,
         }
     )
-    state.mm2KnifeThrowFeature = KnifeThrowFeature
-    
-    addToggleOption(KnifeThrowFeature, "WallCheck", true,
+
+    addToggleOption(
+        KnifeThrowFeature,
+        "WallCheck",
+        true,
         function(value: boolean): ()
             settings.wallCheck = value
         end,
-        "Only throw if there's a clear path to the target.")
-    
-    addNumberOption(KnifeThrowFeature, "Delay", 0, 0, 10,
+        "Checks line of sight before redirecting or throwing the knife."
+    )
+
+    addToggleOption(
+        KnifeThrowFeature,
+        "Auto Knife Throw",
+        false,
+        function(value: boolean): ()
+            settings.autoThrow = value == true
+        end,
+        "Continuously fires the knife throw remote at the predicted target."
+    )
+
+    addNumberOption(
+        KnifeThrowFeature,
+        "Delay",
+        0.6,
+        0,
+        10,
         function(value: number): ()
-            settings.delay = value
-            if KnifeThrowFeature.enabled then
-                KnifeThrowFeature:SetStatus(string.format("%.1fs", value))
+            settings.delay = math.clamp(tonumber(value) or 0, 0, 10)
+        end,
+        "Delay in seconds between automatic knife throws (0 to 10 seconds).",
+        0.1
+    )
+
+    addInformationOption(
+        KnifeThrowFeature,
+        "Seconds"
+    )
+
+    addToggleOption(
+        KnifeThrowFeature,
+        "Knife Tracer",
+        false,
+        function(value: boolean): ()
+            settings.knifeTracer = value == true
+            if not settings.knifeTracer then
+                destroyTracerVisuals()
             end
         end,
-        "Delay in seconds between each throw attempt. 0 = throw as fast as possible.", 0.1)
-    
+        "Draws a live 3D trajectory tracer from your hand to the predicted knife impact point."
+    )
+
     activeCleanup = function(): ()
         toggleKnifeThrow(false)
     end
@@ -5225,6 +5709,7 @@ function Module.init(_runtime: any): any
     local settings = {
         mode = "Walk",
         speed = 16,
+        stayUnderOnStart = true,
         safeZone = true,
         resetOnFull = true,
         flingMurder = false,
@@ -5646,6 +6131,7 @@ function Module.init(_runtime: any): any
         local homeCFrame: CFrame? = nil
         local homeCharacter: Model? = nil
         local hideAnchorPosition: Vector3? = nil
+        local hiddenUnderMap: boolean = false
         local savedCollide: {[Instance]: boolean} = {}
         local engagedMode: string? = nil
         local savedWalkSpeed: number? = nil
@@ -5656,6 +6142,65 @@ function Module.init(_runtime: any): any
         local function yawOf(frame: CFrame): number
             local look: Vector3 = frame.LookVector
             return math.atan2(-look.X, -look.Z)
+        end
+
+        local function resolveSafeAboveGroundPosition(
+            candidatePos: Vector3,
+            character: Model?
+        ): Vector3
+            local resolvedY: number = candidatePos.Y
+            local foundFloor: boolean = false
+            pcall(function(): ()
+                if type(workspace.Raycast) == "function" and type(RaycastParams) == "table" then
+                    local params: RaycastParams = RaycastParams.new()
+                    params.FilterType = Enum.RaycastFilterType.Exclude
+                    local excluded: {Instance} = {}
+                    if character then
+                        table.insert(excluded, character)
+                    end
+                    if safeZonePlatform then
+                        table.insert(excluded, safeZonePlatform)
+                    end
+                    params.FilterDescendantsInstances = excluded
+                    params.RespectCanCollide = true
+                    params.IgnoreWater = true
+                    local rayOrigin: Vector3 = Vector3.new(
+                        candidatePos.X,
+                        math.max(candidatePos.Y + 28, (homeCFrame and homeCFrame.Position.Y or candidatePos.Y) + 28),
+                        candidatePos.Z
+                    )
+                    local hit: any = workspace:Raycast(
+                        rayOrigin,
+                        Vector3.new(0, -140, 0),
+                        params
+                    )
+                    if hit and typeof(hit.Position) == "Vector3" then
+                        local safeFloorY: number = hit.Position.Y + 3.5
+                        if resolvedY < safeFloorY then
+                            resolvedY = safeFloorY
+                        end
+                        foundFloor = true
+                    end
+                end
+            end)
+            if not foundFloor then
+                if homeCFrame and homeCFrame.Position.Y > resolvedY + 1.5 then
+                    resolvedY = homeCFrame.Position.Y
+                elseif hiddenUnderMap then
+                    resolvedY = candidatePos.Y + BELOW_OFFSET + 4.5
+                end
+                if type(findMM2Map) == "function" then
+                    pcall(function(): ()
+                        local map: Instance? = findMM2Map()
+                        local spawns: Instance? = map and (map :: Instance):FindFirstChild("Spawns")
+                        local spawnPart: BasePart? = spawns and spawns:FindFirstChildWhichIsA("BasePart")
+                        if spawnPart and resolvedY < spawnPart.Position.Y - 1.5 then
+                            resolvedY = spawnPart.Position.Y + 3.5
+                        end
+                    end)
+                end
+            end
+            return Vector3.new(candidatePos.X, resolvedY, candidatePos.Z)
         end
 
         local function getHiddenUnderMapPosition(root: BasePart): Vector3
@@ -5673,6 +6218,7 @@ function Module.init(_runtime: any): any
             humanoid: Humanoid,
             root: BasePart
         ): ()
+            hiddenUnderMap = true
             for _, object: Instance in ipairs(character:GetDescendants()) do
                 if object:IsA("BasePart") then
                     if savedCollide[object] == nil then
@@ -5786,7 +6332,10 @@ function Module.init(_runtime: any): any
                         and homeCFrame ~= nil
                         and (not homeCharacter or homeCharacter == character)
                     if allowReturnHome and homeCFrame then
-                        local destPosition: Vector3 = homeCFrame.Position
+                        local destPosition: Vector3 = resolveSafeAboveGroundPosition(
+                            homeCFrame.Position,
+                            character
+                        )
                         if enabled and settings.safeZone and bagAmount >= 50 then
                             destPosition = ensureSafeZonePlatform(homeCFrame.Position)
                         end
@@ -5803,12 +6352,24 @@ function Module.init(_runtime: any): any
                             homeCFrame = nil
                         end
                     elseif not teleportedHomeThisRound then
-                        -- Stand back up exactly where we are.
-                        root.CFrame = CFrame.new(root.Position)
+                        -- Stand back up where we are, verified above ground so
+                        -- we never remain underneath the map floor.
+                        local safePos: Vector3 = resolveSafeAboveGroundPosition(
+                            root.Position,
+                            character
+                        )
+                        local targetCF: CFrame = CFrame.new(safePos)
                             * CFrame.Angles(0, yawOf(root.CFrame), 0)
+                        if character then
+                            pcall(function(): ()
+                                character:PivotTo(targetCF)
+                            end)
+                        end
+                        root.CFrame = targetCF
                     end
                 end)
             end
+            hiddenUnderMap = false
             savedRootSize = nil
             engaged = false
             engagedMode = nil
@@ -6299,9 +6860,18 @@ function Module.init(_runtime: any): any
                     fullHandled = false
                     roundFullReached = false
                     teleportedHomeThisRound = false
-                    homeCFrame = root.CFrame
+                    local safeStartPos: Vector3 = resolveSafeAboveGroundPosition(
+                        root.Position,
+                        character
+                    )
+                    homeCFrame = CFrame.new(safeStartPos)
+                        * CFrame.Angles(0, yawOf(root.CFrame), 0)
                     homeCharacter = character
-                    hideAnchorPosition = root.Position - Vector3.new(0, BELOW_OFFSET + 4, 0)
+                    hideAnchorPosition = Vector3.new(
+                        safeStartPos.X,
+                        safeStartPos.Y - (BELOW_OFFSET + 4),
+                        safeStartPos.Z
+                    )
                 end
 
                 local targetLimit: number = math.max(50, bagLimit)
@@ -6355,10 +6925,6 @@ function Module.init(_runtime: any): any
                     return
                 end
 
-                -- Capture pre-farm homeCFrame and stay engaged while
-                -- bagAmount < 50 inside the active round.
-                engage(character, humanoid, root)
-
                 -- Nearest pickup, from Coin ESP's own detection.
                 local now: number = os.clock()
                 local scanInterval: number = if #scanCache == 0 then 0.12 else 0.35
@@ -6390,11 +6956,33 @@ function Module.init(_runtime: any): any
                 end
                 if not nearest or not nearestPosition then
                     -- Round starting or 0 coins currently in the server while
-                    -- bag < 50: stay quietly hidden underneath the map (fixed
-                    -- CFrame + zero velocity so gravity never pulls us down),
-                    -- never teleporting back to the map surface until 50 coins.
+                    -- bag < 50: if the server just teleported the character to
+                    -- its random map spawn, update homeCFrame and hideAnchorPosition
+                    -- so we never get stuck or teleport to a stale spot.
+                    if bagAmount == 0 and homeCFrame then
+                        local dx: number = root.Position.X - homeCFrame.Position.X
+                        local dz: number = root.Position.Z - homeCFrame.Position.Z
+                        if math.sqrt(dx * dx + dz * dz) > 14 then
+                            local safeSpawnPos: Vector3 = resolveSafeAboveGroundPosition(
+                                root.Position,
+                                character
+                            )
+                            homeCFrame = CFrame.new(safeSpawnPos)
+                                * CFrame.Angles(0, yawOf(root.CFrame), 0)
+                            homeCharacter = character
+                            hideAnchorPosition = Vector3.new(
+                                safeSpawnPos.X,
+                                safeSpawnPos.Y - (BELOW_OFFSET + 4),
+                                safeSpawnPos.Z
+                            )
+                        end
+                    end
                     scanAt = now - 0.25
-                    holdHiddenUnderMap(character, humanoid, root)
+                    if settings.stayUnderOnStart then
+                        holdHiddenUnderMap(character, humanoid, root)
+                    elseif hiddenUnderMap or engaged then
+                        restoreCharacter(false)
+                    end
                     setStatus(string.format(
                         "Auto Farm (%s): waiting for coin - bag %d/%d - speed %d u/s - ping %dms",
                         settings.mode, bagAmount, targetLimit,
@@ -6404,6 +6992,12 @@ function Module.init(_runtime: any): any
                     stuckPart = nil
                     return
                 end
+                if hiddenUnderMap and settings.mode == "Walk" then
+                    restoreCharacter(false)
+                end
+                -- Capture pre-farm homeCFrame and stay engaged while
+                -- bagAmount < 50 inside the active round.
+                engage(character, humanoid, root)
                 hideAnchorPosition = Vector3.new(
                     (nearestPosition :: Vector3).X,
                     (nearestPosition :: Vector3).Y - (BELOW_OFFSET + 4),
@@ -6504,6 +7098,10 @@ function Module.init(_runtime: any): any
         function(value: number): ()
             settings.speed = value
         end, "Walk mode: WalkSpeed. Below mode: flight speed in studs/second -- if the server kicks you (Invalid position), lower it; raise it slowly to find your fastest safe speed.", 1)
+    addToggleOption(AutoFarmFeature, "Stay Under When Round starts", true,
+        function(value: boolean): ()
+            settings.stayUnderOnStart = value == true
+        end, "When enabled, hides your character safely underneath the map at the start of the round until coins spawn. When disabled, your character stays naturally on the map at the random spawn point where you spawned.")
     addToggleOption(AutoFarmFeature, "Safe Zone", true,
         function(value: boolean): ()
             settings.safeZone = value == true
@@ -9544,9 +10142,49 @@ function Module.init(runtime: any): any
     local TICK_INTERVAL: number = 0.08
     local CACHE_INTERVAL: number = 0.5
 
+    local settings = {
+        showHitbox = true,
+    }
+
     local savedCFrames: {[BasePart]: CFrame} = {}
     local savedPositions: {[BasePart]: Vector3} = {}
     local activeCoin: BasePart? = nil
+    local auraHitbox: BasePart? = nil
+
+    local function destroyHitbox(): ()
+        if auraHitbox then
+            pcall(function(): ()
+                auraHitbox:Destroy()
+            end)
+            auraHitbox = nil
+        end
+    end
+
+    local function updateHitbox(root: BasePart?): ()
+        if not settings.showHitbox or not root or not root.Parent then
+            destroyHitbox()
+            return
+        end
+        pcall(function(): ()
+            if not auraHitbox or not auraHitbox.Parent then
+                local part: Part = Instance.new("Part")
+                part.Name = "WurstCoinsAuraHitbox"
+                part.Size = Vector3.new(MAX_SERVER_REACH * 2, MAX_SERVER_REACH * 2, MAX_SERVER_REACH * 2)
+                part.Transparency = 0.72
+                part.BrickColor = BrickColor.new("Gold")
+                part.Material = Enum.Material.Neon
+                part.CanCollide = false
+                part.CanQuery = false
+                part.CanTouch = false
+                part.Anchored = true
+                part.CFrame = CFrame.new(root.Position)
+                part.Parent = workspace
+                auraHitbox = part
+            else
+                auraHitbox.CFrame = CFrame.new(root.Position)
+            end
+        end)
+    end
 
     local function rememberCoin(serverPart: BasePart): Vector3?
         local pos: Vector3? = savedPositions[serverPart]
@@ -9650,6 +10288,7 @@ function Module.init(runtime: any): any
     local function toggleCoinsAura(enabled: boolean): ()
         disconnectFeatureConnection("MM2CoinsAura")
         restoreAllCoins()
+        destroyHitbox()
 
         if not enabled then
             if CoinsAuraFeature then
@@ -9742,6 +10381,7 @@ function Module.init(runtime: any): any
                 if activeCoin then
                     restoreCoin(activeCoin)
                 end
+                destroyHitbox()
                 return
             end
             local humanoid: Humanoid? = character:FindFirstChildOfClass("Humanoid") :: Humanoid?
@@ -9749,9 +10389,11 @@ function Module.init(runtime: any): any
                 if activeCoin then
                     restoreCoin(activeCoin)
                 end
+                destroyHitbox()
                 return
             end
 
+            updateHitbox(root)
             refreshCoins(now)
 
             local rootPos: Vector3 = root.Position
@@ -9802,8 +10444,359 @@ function Module.init(runtime: any): any
     )
     state.mm2CoinsAuraFeature = CoinsAuraFeature
 
+    addToggleOption(
+        CoinsAuraFeature,
+        "Show Hitbox",
+        true,
+        function(value: boolean): ()
+            settings.showHitbox = value == true
+            if not settings.showHitbox then
+                destroyHitbox()
+            end
+        end,
+        "Shows or hides the Coins Aura hitbox square around your character."
+    )
+
     activeCleanup = function(): ()
         toggleCoinsAura(false)
+    end
+    Module.Events = featureConnections
+    Module.Initialized = true
+    return Module
+end
+
+function Module.destroy(): ()
+    if not Module.Initialized then
+        return
+    end
+    Module.Initialized = false
+    pcall(activeCleanup)
+    activeCleanup = function(): () end
+    Module.Events = {}
+    Module.Runtime = nil
+end
+
+return Module
+
+]],
+        ["src/games/MM2/Other/GetAllEmotes.lua"] = [[
+local Module = {
+    Name = "MM2 Get All Emotes",
+    Events = {} :: {[string]: any},
+    Initialized = false,
+    Runtime = nil :: any,
+}
+
+local activeCleanup: () -> () = function(): () end
+
+function Module.init(runtime: any): any
+    if Module.Initialized then
+        return Module
+    end
+    local core: any = state.mm2Core
+    assert(type(core) == "table", "MM2 Get All Emotes requires the MM2 core module")
+    Module.Runtime = runtime
+
+    type EmoteDef = {
+        id: string,
+        name: string,
+        command: string,
+        animationId: string,
+    }
+
+    -- Complete MM2 Sync.Emotes catalog from place, source.rbxlx (TestingStuff)
+    local BUILTIN_EMOTES: {EmoteDef} = {
+        { id = "ninja", name = "Ninja Rest", command = "ninja", animationId = "rbxassetid://204292303" },
+        { id = "sit", name = "Sit", command = "sit2", animationId = "rbxassetid://204292303" },
+        { id = "zen", name = "Zen", command = "zen", animationId = "rbxassetid://204295235" },
+        { id = "dab", name = "Dab", command = "dab", animationId = "rbxassetid://248263260" },
+        { id = "floss", name = "Floss", command = "floss", animationId = "rbxassetid://5917459365" },
+        { id = "zombie", name = "Zombie", command = "zombie", animationId = "rbxassetid://616158929" },
+        { id = "headless", name = "Headless", command = "headless", animationId = "rbxassetid://35154961" },
+        { id = "wave", name = "Wave", command = "wave", animationId = "http://www.roblox.com/asset/?id=128777973" },
+        { id = "cheer", name = "Cheer", command = "cheer", animationId = "http://www.roblox.com/asset/?id=129423030" },
+        { id = "laugh", name = "Laugh", command = "laugh", animationId = "http://www.roblox.com/asset/?id=129423131" },
+        { id = "point", name = "Point", command = "point", animationId = "http://www.roblox.com/asset/?id=128853357" },
+        { id = "dance1", name = "Dance 1", command = "dance1", animationId = "http://www.roblox.com/asset/?id=182435998" },
+        { id = "dance2", name = "Dance 2", command = "dance2", animationId = "http://www.roblox.com/asset/?id=182436842" },
+        { id = "dance3", name = "Dance 3", command = "dance3", animationId = "http://www.roblox.com/asset/?id=182436935" },
+    }
+
+    local SPECIAL_EMOTE_LABELS: {string} = {
+        "Ninja Rest",
+        "Sit",
+        "Zen",
+        "Dab",
+        "Floss",
+        "Zombie",
+        "Headless",
+    }
+
+    local LABEL_TO_EMOTE_ID: {[string]: string} = {
+        ["Ninja Rest"] = "ninja",
+        ["Sit"] = "sit",
+        ["Zen"] = "zen",
+        ["Dab"] = "dab",
+        ["Floss"] = "floss",
+        ["Zombie"] = "zombie",
+        ["Headless"] = "headless",
+    }
+
+    local selectedEmoteLabel: string = "Floss"
+    local activeTrack: any = nil
+    local GetAllEmotesFeature: any = nil
+
+    local function collectAllEmotes(): ({EmoteDef}, {[string]: EmoteDef})
+        local list: {EmoteDef} = {}
+        local byId: {[string]: EmoteDef} = {}
+
+        for _, def: EmoteDef in ipairs(BUILTIN_EMOTES) do
+            byId[def.id] = def
+            table.insert(list, def)
+        end
+
+        pcall(function(): ()
+            local rs: Instance? = game:GetService("ReplicatedStorage")
+            local db: Instance? = rs and rs:FindFirstChild("Database")
+            local syncFolder: Instance? = db and db:FindFirstChild("Sync")
+            local emotesModule: Instance? = syncFolder and syncFolder:FindFirstChild("Emotes")
+            if emotesModule then
+                local okReq: boolean, syncEmotes: any = pcall(require, emotesModule)
+                if okReq and type(syncEmotes) == "table" then
+                    for emoteId: any, info: any in pairs(syncEmotes) do
+                        if type(emoteId) == "string"
+                            and emoteId ~= "Back"
+                            and type(info) == "table"
+                            and (type(info.Command) == "string" or type(info.AnimationID) == "string") then
+                            if not byId[emoteId] then
+                                local entry: EmoteDef = {
+                                    id = emoteId,
+                                    name = tostring(info.Name or emoteId),
+                                    command = tostring(info.Command or emoteId),
+                                    animationId = tostring(info.AnimationID or ""),
+                                }
+                                byId[emoteId] = entry
+                                table.insert(list, entry)
+                            end
+                        end
+                    end
+                end
+            end
+        end)
+
+        return list, byId
+    end
+
+    -- Grant all emotes in ProfileData.Emotes.Owned and fire InventoryDataChanged
+    -- so MM2's EmoteWindow and Inventory UI populate every emote button and wire
+    -- ReplicatedStorage.Remotes.Misc.PlayEmote (which Character.Animate plays on
+    -- Humanoid/Animator and replicates to the server and all other players).
+    local function unlockAllEmotes(showNotification: boolean?): number
+        local allEmotes: {EmoteDef}, _byId: {[string]: EmoteDef} = collectAllEmotes()
+        local unlockedCount: number = 0
+
+        pcall(function(): ()
+            local rs: Instance? = game:GetService("ReplicatedStorage")
+            if not rs then
+                return
+            end
+
+            -- 1. Update ReplicatedStorage.Modules.ProfileData.Emotes.Owned
+            local modulesFolder: Instance? = rs:FindFirstChild("Modules")
+            local profileDataMod: Instance? = modulesFolder and modulesFolder:FindFirstChild("ProfileData")
+            local ownedTable: {string}? = nil
+            if profileDataMod then
+                local okProf: boolean, profileData: any = pcall(require, profileDataMod)
+                if okProf and type(profileData) == "table" then
+                    if type(profileData.Emotes) ~= "table" then
+                        profileData.Emotes = { Owned = {} }
+                    elseif type(profileData.Emotes.Owned) ~= "table" then
+                        profileData.Emotes.Owned = {}
+                    end
+                    ownedTable = profileData.Emotes.Owned
+                end
+            end
+
+            local ownedSet: {[string]: boolean} = {}
+            if type(ownedTable) == "table" then
+                for _, existingId: any in ipairs(ownedTable) do
+                    if type(existingId) == "string" then
+                        ownedSet[existingId] = true
+                    end
+                end
+            end
+
+            -- 2. Locate InventoryDataChanged BindableEvent for EmoteWindow & Inventory UI
+            local remotesFolder: Instance? = rs:FindFirstChild("Remotes")
+            local invRemotes: Instance? = remotesFolder and remotesFolder:FindFirstChild("Inventory")
+            local invChanged: Instance? = invRemotes and invRemotes:FindFirstChild("InventoryDataChanged")
+
+            for _, def: EmoteDef in ipairs(allEmotes) do
+                if type(ownedTable) == "table" and not ownedSet[def.id] then
+                    ownedSet[def.id] = true
+                    table.insert(ownedTable, def.id)
+                end
+                if invChanged and type((invChanged :: any).Fire) == "function" then
+                    pcall(function(): ()
+                        (invChanged :: any):Fire("Emotes", def.id, 1)
+                    end)
+                end
+                unlockedCount += 1
+            end
+
+            -- 3. Also support EmoteModule.GenerateEmotes if used by the current UI layout
+            local emoteModInst: Instance? = modulesFolder and modulesFolder:FindFirstChild("EmoteModule")
+            if emoteModInst and type(ownedTable) == "table" then
+                pcall(function(): ()
+                    local okEm: boolean, emoteModule: any = pcall(require, emoteModInst)
+                    if okEm and type(emoteModule) == "table" and type(emoteModule.GenerateEmotes) == "function" then
+                        local emoteGui: any = (_G and (_G :: any).EmoteFrame) or emoteModule.EmoteGUI
+                        if emoteGui then
+                            pcall(emoteModule.GenerateEmotes, ownedTable, emoteGui)
+                        end
+                    end
+                end)
+            end
+        end)
+
+        if GetAllEmotesFeature and GetAllEmotesFeature.enabled then
+            GetAllEmotesFeature:SetStatus(string.format("%d Emotes", unlockedCount))
+        end
+        if showNotification and type(notify) == "function" then
+            pcall(notify, string.format("Get All Emotes: unlocked %d MM2 emotes", unlockedCount))
+        end
+        return unlockedCount
+    end
+
+    -- Play an emote so it replicates to the server and is visible to all players:
+    -- 1. Fires ReplicatedStorage.Remotes.Misc.PlayEmote:Fire(emoteId), which
+    --    StarterCharacterScripts.Animate handles by playing the pre-registered
+    --    emote command on LocalPlayer.Character.Humanoid.
+    -- 2. Fallback: if PlayEmote is unavailable, loads the Animation onto the
+    --    character's Humanoid/Animator (which Roblox replicates to the server).
+    local function playServerReplicatedEmote(emoteId: string): boolean
+        local _list: {EmoteDef}, byId: {[string]: EmoteDef} = collectAllEmotes()
+        local def: EmoteDef? = byId[emoteId]
+        local firedBindable: boolean = false
+
+        pcall(function(): ()
+            local rs: Instance? = game:GetService("ReplicatedStorage")
+            local remotes: Instance? = rs and rs:FindFirstChild("Remotes")
+            local misc: Instance? = remotes and remotes:FindFirstChild("Misc")
+            local playEmoteEvent: Instance? = misc and misc:FindFirstChild("PlayEmote")
+            if playEmoteEvent and type((playEmoteEvent :: any).Fire) == "function" then
+                (playEmoteEvent :: any):Fire(emoteId)
+                firedBindable = true
+            end
+        end)
+
+        if firedBindable then
+            return true
+        end
+
+        -- Direct Humanoid/Animator fallback (replicates to server via network ownership)
+        if not def or def.animationId == "" then
+            return false
+        end
+        local playedFallback: boolean = false
+        pcall(function(): ()
+            local character: Model? = LocalPlayer and LocalPlayer.Character
+            local humanoid: Humanoid? = character and character:FindFirstChildOfClass("Humanoid")
+            if not humanoid or humanoid.Health <= 0 then
+                return
+            end
+            if activeTrack then
+                pcall(function(): ()
+                    activeTrack:Stop(0.1)
+                end)
+                activeTrack = nil
+            end
+            local anim: Animation = Instance.new("Animation")
+            anim.Name = def.command
+            anim.AnimationId = def.animationId
+            local animator: Animator? = humanoid:FindFirstChildOfClass("Animator")
+            local track: any = if animator
+                then animator:LoadAnimation(anim)
+                else (humanoid :: any):LoadAnimation(anim)
+            if track then
+                activeTrack = track
+                track:Play(0.1)
+                playedFallback = true
+            end
+        end)
+
+        return playedFallback
+    end
+
+    local function toggleGetAllEmotes(enabled: boolean): ()
+        disconnectFeatureConnection("MM2GetAllEmotesRespawn")
+
+        if not enabled then
+            if GetAllEmotesFeature then
+                GetAllEmotesFeature:SetStatus(nil)
+            end
+            return
+        end
+
+        unlockAllEmotes(true)
+
+        if LocalPlayer and LocalPlayer.CharacterAdded then
+            featureConnections.MM2GetAllEmotesRespawn = LocalPlayer.CharacterAdded:Connect(function(): ()
+                task.delay(0.5, function(): ()
+                    if GetAllEmotesFeature and GetAllEmotesFeature.enabled then
+                        unlockAllEmotes(false)
+                    end
+                end)
+            end)
+        end
+    end
+
+    GetAllEmotesFeature = createUniversalFeature(
+        "Get All Emotes",
+        "Unlocks all MM2 emotes (Ninja Rest, Sit, Zen, Dab, Floss, Zombie, Headless, etc.) in the Emote wheel and inventory with full server replication.",
+        11,
+        toggleGetAllEmotes,
+        {
+            categoryName = "Utilities",
+            parent = MM2Scroll,
+            registry = mm2Features,
+        }
+    )
+    state.mm2GetAllEmotesFeature = GetAllEmotesFeature
+
+    addActionOption(
+        GetAllEmotesFeature,
+        "Get All Emotes",
+        function(): ()
+            unlockAllEmotes(true)
+        end,
+        "Immediately grants all MM2 emotes in your Emote wheel and inventory without buying them."
+    )
+
+    addCycleOption(
+        GetAllEmotesFeature,
+        "Select Emote",
+        SPECIAL_EMOTE_LABELS,
+        5,
+        function(value: string): ()
+            selectedEmoteLabel = value
+        end,
+        "Select an MM2 emote to play directly with server replication."
+    )
+
+    addActionOption(
+        GetAllEmotesFeature,
+        "Play Emote",
+        function(): ()
+            local emoteId: string = LABEL_TO_EMOTE_ID[selectedEmoteLabel] or "floss"
+            unlockAllEmotes(false)
+            playServerReplicatedEmote(emoteId)
+        end,
+        "Plays the selected emote on your character so all players in the server see it."
+    )
+
+    activeCleanup = function(): ()
+        toggleGetAllEmotes(false)
     end
     Module.Events = featureConnections
     Module.Initialized = true
@@ -9844,6 +10837,7 @@ function Module.init(runtime: any): any
 
     local settings = {
         studs = 25,
+        showHitbox = true,
     }
 
     local TICK_INTERVAL: number = 0.08
@@ -10155,18 +11149,20 @@ function Module.init(runtime: any): any
                     rememberGunPartState(handle)
                     local truePos: Vector3? = trueGunPartPosition(handle)
 
-                    local hitbox = gunHitboxes[gun]
-                    if not hitbox or not hitbox.Parent then
-                        hitbox = createGunHitbox(gun)
-                        if hitbox then
-                            gunHitboxes[gun] = hitbox
+                    if settings.showHitbox then
+                        local hitbox = gunHitboxes[gun]
+                        if not hitbox or not hitbox.Parent then
+                            hitbox = createGunHitbox(gun)
+                            if hitbox then
+                                gunHitboxes[gun] = hitbox
+                            end
+                        elseif truePos then
+                            local targetSize = Vector3.new(settings.studs, settings.studs, settings.studs)
+                            if hitbox.Size ~= targetSize then
+                                hitbox.Size = targetSize
+                            end
+                            hitbox.CFrame = CFrame.new(truePos)
                         end
-                    elseif truePos then
-                        local targetSize = Vector3.new(settings.studs, settings.studs, settings.studs)
-                        if hitbox.Size ~= targetSize then
-                            hitbox.Size = targetSize
-                        end
-                        hitbox.CFrame = CFrame.new(truePos)
                     end
 
                     if canGrab and root and truePos and isWithinAura(truePos, root.Position) then
@@ -10280,6 +11276,14 @@ function Module.init(runtime: any): any
             end
         end,
         "Distance in studs around each dropped gun to automatically grab it.", 1)
+    addToggleOption(GunAuraFeature, "Show Hitbox", true,
+        function(value: boolean): ()
+            settings.showHitbox = value == true
+            if not settings.showHitbox then
+                clearAllHitboxes()
+            end
+        end,
+        "Shows or hides the white aura hitbox square around dropped guns.")
 
     activeCleanup = function(): ()
         toggleGunAura(false)
@@ -51671,6 +52675,7 @@ local Manifest: Manifest = {
             "src/games/MM2/Other/CoinsAura.lua",
             "src/games/MM2/Other/GunAura.lua",
             "src/games/MM2/Other/AutoWin.lua",
+            "src/games/MM2/Other/GetAllEmotes.lua",
             "src/games/MM2/Other/TrajectoryCalibration.lua",
             "src/games/MM2/Other/CalibrationTrails.lua",
         },

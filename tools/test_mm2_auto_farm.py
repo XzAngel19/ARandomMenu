@@ -146,6 +146,9 @@ assert 'GetAttribute("Collected")' in SOURCE
 # Parked collections also pulse the touch directly (physics Touched
 # is not guaranteed for a fully NoClipped body).
 assert "state.fireTouchInterest" in SOURCE
+assert '"Stay Under When Round starts"' in SOURCE
+assert "settings.stayUnderOnStart" in SOURCE
+assert "resolveSafeAboveGroundPosition" in SOURCE
 
 print("PASS MM2 Auto Farm: Walk (ground locomotion, slider WalkSpeed, "
       "hop on stall) and Below (Hitbox) (upright velocity flight, grown "

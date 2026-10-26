@@ -17,6 +17,7 @@ function Module.init(runtime: any): any
 
     local settings = {
         studs = 25,
+        showHitbox = true,
     }
 
     local TICK_INTERVAL: number = 0.08
@@ -328,18 +329,20 @@ function Module.init(runtime: any): any
                     rememberGunPartState(handle)
                     local truePos: Vector3? = trueGunPartPosition(handle)
 
-                    local hitbox = gunHitboxes[gun]
-                    if not hitbox or not hitbox.Parent then
-                        hitbox = createGunHitbox(gun)
-                        if hitbox then
-                            gunHitboxes[gun] = hitbox
+                    if settings.showHitbox then
+                        local hitbox = gunHitboxes[gun]
+                        if not hitbox or not hitbox.Parent then
+                            hitbox = createGunHitbox(gun)
+                            if hitbox then
+                                gunHitboxes[gun] = hitbox
+                            end
+                        elseif truePos then
+                            local targetSize = Vector3.new(settings.studs, settings.studs, settings.studs)
+                            if hitbox.Size ~= targetSize then
+                                hitbox.Size = targetSize
+                            end
+                            hitbox.CFrame = CFrame.new(truePos)
                         end
-                    elseif truePos then
-                        local targetSize = Vector3.new(settings.studs, settings.studs, settings.studs)
-                        if hitbox.Size ~= targetSize then
-                            hitbox.Size = targetSize
-                        end
-                        hitbox.CFrame = CFrame.new(truePos)
                     end
 
                     if canGrab and root and truePos and isWithinAura(truePos, root.Position) then
@@ -453,6 +456,14 @@ function Module.init(runtime: any): any
             end
         end,
         "Distance in studs around each dropped gun to automatically grab it.", 1)
+    addToggleOption(GunAuraFeature, "Show Hitbox", true,
+        function(value: boolean): ()
+            settings.showHitbox = value == true
+            if not settings.showHitbox then
+                clearAllHitboxes()
+            end
+        end,
+        "Shows or hides the white aura hitbox square around dropped guns.")
 
     activeCleanup = function(): ()
         toggleGunAura(false)

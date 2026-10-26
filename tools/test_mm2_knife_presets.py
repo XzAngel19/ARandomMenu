@@ -31,5 +31,10 @@ assert 'isWeaponPathClear' in SOURCE or 'wallCheck' in SOURCE.lower()
 # Verify Delay logic exists
 assert 'settings.delay' in SOURCE
 assert 'lastThrowAttempt' in SOURCE
+assert '"Auto Knife Throw"' in SOURCE
+assert '"Seconds"' in SOURCE
+assert '"Knife Tracer"' in SOURCE
+assert '"KnifeThrown"' in SOURCE
+assert '"WeaponService"' in SOURCE
 
 print('PASS Independent KnifeThrow: Remote-based throw, WallCheck, user-controlled Delay, Combat category')

@@ -5,7 +5,7 @@
 > contradice lo que crees, gana este documento (y los datos de calibración).
 >
 > **Estado al escribir esto:** rama `arena/9492e6b6-arandommenu`, build
-> **`v136-20261026-aimbot-prediction-autofling-autowin`**.
+> **`v137-20261026-autofarm-fling-knifethrow-emotes`**.
 > El usuario se comunica en español. Respóndele en español.
 
 ---

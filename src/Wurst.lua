@@ -220,7 +220,7 @@ local RUNTIME_RAW_BASE: string =
         .. RUNTIME_BRANCH
         .. "/"
 
-local SOURCE_STAMP: string = "v136-20261026-aimbot-prediction-autofling-autowin"
+local SOURCE_STAMP: string = "v137-20261026-autofarm-fling-knifethrow-emotes"
 
 local BOOT_STARTED_AT: number = os.clock()
 local BOOT_FINGERPRINT_SECONDS: number = 0
@@ -5981,6 +5981,7 @@ local fallbackManifest: any = {
             "src/games/MM2/Other/CoinsAura.lua",
             "src/games/MM2/Other/GunAura.lua",
             "src/games/MM2/Other/AutoWin.lua",
+            "src/games/MM2/Other/GetAllEmotes.lua",
             "src/games/MM2/Other/TrajectoryCalibration.lua",
             "src/games/MM2/Other/CalibrationTrails.lua",
         },

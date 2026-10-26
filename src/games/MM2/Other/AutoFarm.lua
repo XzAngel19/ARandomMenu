@@ -24,6 +24,7 @@ function Module.init(_runtime: any): any
     local settings = {
         mode = "Walk",
         speed = 16,
+        stayUnderOnStart = true,
         safeZone = true,
         resetOnFull = true,
         flingMurder = false,
@@ -445,6 +446,7 @@ function Module.init(_runtime: any): any
         local homeCFrame: CFrame? = nil
         local homeCharacter: Model? = nil
         local hideAnchorPosition: Vector3? = nil
+        local hiddenUnderMap: boolean = false
         local savedCollide: {[Instance]: boolean} = {}
         local engagedMode: string? = nil
         local savedWalkSpeed: number? = nil
@@ -455,6 +457,65 @@ function Module.init(_runtime: any): any
         local function yawOf(frame: CFrame): number
             local look: Vector3 = frame.LookVector
             return math.atan2(-look.X, -look.Z)
+        end
+
+        local function resolveSafeAboveGroundPosition(
+            candidatePos: Vector3,
+            character: Model?
+        ): Vector3
+            local resolvedY: number = candidatePos.Y
+            local foundFloor: boolean = false
+            pcall(function(): ()
+                if type(workspace.Raycast) == "function" and type(RaycastParams) == "table" then
+                    local params: RaycastParams = RaycastParams.new()
+                    params.FilterType = Enum.RaycastFilterType.Exclude
+                    local excluded: {Instance} = {}
+                    if character then
+                        table.insert(excluded, character)
+                    end
+                    if safeZonePlatform then
+                        table.insert(excluded, safeZonePlatform)
+                    end
+                    params.FilterDescendantsInstances = excluded
+                    params.RespectCanCollide = true
+                    params.IgnoreWater = true
+                    local rayOrigin: Vector3 = Vector3.new(
+                        candidatePos.X,
+                        math.max(candidatePos.Y + 28, (homeCFrame and homeCFrame.Position.Y or candidatePos.Y) + 28),
+                        candidatePos.Z
+                    )
+                    local hit: any = workspace:Raycast(
+                        rayOrigin,
+                        Vector3.new(0, -140, 0),
+                        params
+                    )
+                    if hit and typeof(hit.Position) == "Vector3" then
+                        local safeFloorY: number = hit.Position.Y + 3.5
+                        if resolvedY < safeFloorY then
+                            resolvedY = safeFloorY
+                        end
+                        foundFloor = true
+                    end
+                end
+            end)
+            if not foundFloor then
+                if homeCFrame and homeCFrame.Position.Y > resolvedY + 1.5 then
+                    resolvedY = homeCFrame.Position.Y
+                elseif hiddenUnderMap then
+                    resolvedY = candidatePos.Y + BELOW_OFFSET + 4.5
+                end
+                if type(findMM2Map) == "function" then
+                    pcall(function(): ()
+                        local map: Instance? = findMM2Map()
+                        local spawns: Instance? = map and (map :: Instance):FindFirstChild("Spawns")
+                        local spawnPart: BasePart? = spawns and spawns:FindFirstChildWhichIsA("BasePart")
+                        if spawnPart and resolvedY < spawnPart.Position.Y - 1.5 then
+                            resolvedY = spawnPart.Position.Y + 3.5
+                        end
+                    end)
+                end
+            end
+            return Vector3.new(candidatePos.X, resolvedY, candidatePos.Z)
         end
 
         local function getHiddenUnderMapPosition(root: BasePart): Vector3
@@ -472,6 +533,7 @@ function Module.init(_runtime: any): any
             humanoid: Humanoid,
             root: BasePart
         ): ()
+            hiddenUnderMap = true
             for _, object: Instance in ipairs(character:GetDescendants()) do
                 if object:IsA("BasePart") then
                     if savedCollide[object] == nil then
@@ -585,7 +647,10 @@ function Module.init(_runtime: any): any
                         and homeCFrame ~= nil
                         and (not homeCharacter or homeCharacter == character)
                     if allowReturnHome and homeCFrame then
-                        local destPosition: Vector3 = homeCFrame.Position
+                        local destPosition: Vector3 = resolveSafeAboveGroundPosition(
+                            homeCFrame.Position,
+                            character
+                        )
                         if enabled and settings.safeZone and bagAmount >= 50 then
                             destPosition = ensureSafeZonePlatform(homeCFrame.Position)
                         end
@@ -602,12 +667,24 @@ function Module.init(_runtime: any): any
                             homeCFrame = nil
                         end
                     elseif not teleportedHomeThisRound then
-                        -- Stand back up exactly where we are.
-                        root.CFrame = CFrame.new(root.Position)
+                        -- Stand back up where we are, verified above ground so
+                        -- we never remain underneath the map floor.
+                        local safePos: Vector3 = resolveSafeAboveGroundPosition(
+                            root.Position,
+                            character
+                        )
+                        local targetCF: CFrame = CFrame.new(safePos)
                             * CFrame.Angles(0, yawOf(root.CFrame), 0)
+                        if character then
+                            pcall(function(): ()
+                                character:PivotTo(targetCF)
+                            end)
+                        end
+                        root.CFrame = targetCF
                     end
                 end)
             end
+            hiddenUnderMap = false
             savedRootSize = nil
             engaged = false
             engagedMode = nil
@@ -1098,9 +1175,18 @@ function Module.init(_runtime: any): any
                     fullHandled = false
                     roundFullReached = false
                     teleportedHomeThisRound = false
-                    homeCFrame = root.CFrame
+                    local safeStartPos: Vector3 = resolveSafeAboveGroundPosition(
+                        root.Position,
+                        character
+                    )
+                    homeCFrame = CFrame.new(safeStartPos)
+                        * CFrame.Angles(0, yawOf(root.CFrame), 0)
                     homeCharacter = character
-                    hideAnchorPosition = root.Position - Vector3.new(0, BELOW_OFFSET + 4, 0)
+                    hideAnchorPosition = Vector3.new(
+                        safeStartPos.X,
+                        safeStartPos.Y - (BELOW_OFFSET + 4),
+                        safeStartPos.Z
+                    )
                 end
 
                 local targetLimit: number = math.max(50, bagLimit)
@@ -1154,10 +1240,6 @@ function Module.init(_runtime: any): any
                     return
                 end
 
-                -- Capture pre-farm homeCFrame and stay engaged while
-                -- bagAmount < 50 inside the active round.
-                engage(character, humanoid, root)
-
                 -- Nearest pickup, from Coin ESP's own detection.
                 local now: number = os.clock()
                 local scanInterval: number = if #scanCache == 0 then 0.12 else 0.35
@@ -1189,11 +1271,33 @@ function Module.init(_runtime: any): any
                 end
                 if not nearest or not nearestPosition then
                     -- Round starting or 0 coins currently in the server while
-                    -- bag < 50: stay quietly hidden underneath the map (fixed
-                    -- CFrame + zero velocity so gravity never pulls us down),
-                    -- never teleporting back to the map surface until 50 coins.
+                    -- bag < 50: if the server just teleported the character to
+                    -- its random map spawn, update homeCFrame and hideAnchorPosition
+                    -- so we never get stuck or teleport to a stale spot.
+                    if bagAmount == 0 and homeCFrame then
+                        local dx: number = root.Position.X - homeCFrame.Position.X
+                        local dz: number = root.Position.Z - homeCFrame.Position.Z
+                        if math.sqrt(dx * dx + dz * dz) > 14 then
+                            local safeSpawnPos: Vector3 = resolveSafeAboveGroundPosition(
+                                root.Position,
+                                character
+                            )
+                            homeCFrame = CFrame.new(safeSpawnPos)
+                                * CFrame.Angles(0, yawOf(root.CFrame), 0)
+                            homeCharacter = character
+                            hideAnchorPosition = Vector3.new(
+                                safeSpawnPos.X,
+                                safeSpawnPos.Y - (BELOW_OFFSET + 4),
+                                safeSpawnPos.Z
+                            )
+                        end
+                    end
                     scanAt = now - 0.25
-                    holdHiddenUnderMap(character, humanoid, root)
+                    if settings.stayUnderOnStart then
+                        holdHiddenUnderMap(character, humanoid, root)
+                    elseif hiddenUnderMap or engaged then
+                        restoreCharacter(false)
+                    end
                     setStatus(string.format(
                         "Auto Farm (%s): waiting for coin - bag %d/%d - speed %d u/s - ping %dms",
                         settings.mode, bagAmount, targetLimit,
@@ -1203,6 +1307,12 @@ function Module.init(_runtime: any): any
                     stuckPart = nil
                     return
                 end
+                if hiddenUnderMap and settings.mode == "Walk" then
+                    restoreCharacter(false)
+                end
+                -- Capture pre-farm homeCFrame and stay engaged while
+                -- bagAmount < 50 inside the active round.
+                engage(character, humanoid, root)
                 hideAnchorPosition = Vector3.new(
                     (nearestPosition :: Vector3).X,
                     (nearestPosition :: Vector3).Y - (BELOW_OFFSET + 4),
@@ -1303,6 +1413,10 @@ function Module.init(_runtime: any): any
         function(value: number): ()
             settings.speed = value
         end, "Walk mode: WalkSpeed. Below mode: flight speed in studs/second -- if the server kicks you (Invalid position), lower it; raise it slowly to find your fastest safe speed.", 1)
+    addToggleOption(AutoFarmFeature, "Stay Under When Round starts", true,
+        function(value: boolean): ()
+            settings.stayUnderOnStart = value == true
+        end, "When enabled, hides your character safely underneath the map at the start of the round until coins spawn. When disabled, your character stays naturally on the map at the random spawn point where you spawned.")
     addToggleOption(AutoFarmFeature, "Safe Zone", true,
         function(value: boolean): ()
             settings.safeZone = value == true

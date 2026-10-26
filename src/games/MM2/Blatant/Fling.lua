@@ -43,16 +43,17 @@ function Module.init(runtime: any): any
     local isPlayerAlive: any = core.isPlayerAlive
 
     -- Bounded high-impulse velocities: strong enough to launch any unanchored
-    -- humanoid at 1,000+ studs/s on contact (with Density=100), while staying
-    -- well below the 10^6-stud IEEE-754 32-bit float precision threshold so
-    -- the local character never enters Roblox's pixelated NullZone or void.
-    local FLING_LINEAR_VEL: Vector3 = Vector3.new(10000, 12000, 10000)
-    local FLING_ANGULAR_VEL: Vector3 = Vector3.new(12000, 12000, 12000)
+    -- humanoid at 1,000+ studs/s on contact (with Density=100, Elasticity=1),
+    -- while staying well below the 10^6-stud IEEE-754 32-bit float precision
+    -- threshold so the local character never enters Roblox's NullZone or void.
+    local FLING_LINEAR_VEL: Vector3 = Vector3.new(14000, 16000, 14000)
+    local FLING_ANGULAR_VEL: Vector3 = Vector3.new(15000, 15000, 15000)
 
     local flingRunning: boolean = false
     local flingTargetName: string = ""
     local autoFlingSelected: boolean = false
     local lastAutoFlingAt: number = 0
+    local stepPhase: number = 0
     local stepAngle: number = 0
 
     local function setFlingRunning(running: boolean): ()
@@ -60,26 +61,18 @@ function Module.init(runtime: any): any
         activity.set("fling", running)
     end
 
-    local function waitFrameStep(useRenderStep: boolean): ()
-        if useRenderStep then
-            local okRender: boolean = pcall(function(): ()
-                if RunService.RenderStepped and RunService.RenderStepped.Wait then
-                    RunService.RenderStepped:Wait()
-                elseif RunService.Stepped and RunService.Stepped.Wait then
-                    RunService.Stepped:Wait()
-                else
-                    RunService.Heartbeat:Wait()
-                end
-            end)
-            if not okRender then
-                pcall(function(): ()
-                    RunService.Heartbeat:Wait()
-                end)
-            end
-        else
-            pcall(function(): ()
+    local function waitFrameStep(_useRenderStep: boolean): ()
+        local okStep: boolean = pcall(function(): ()
+            if RunService.Heartbeat and RunService.Heartbeat.Wait then
                 RunService.Heartbeat:Wait()
-            end)
+            elseif RunService.Stepped and RunService.Stepped.Wait then
+                RunService.Stepped:Wait()
+            elseif RunService.RenderStepped and RunService.RenderStepped.Wait then
+                RunService.RenderStepped:Wait()
+            end
+        end)
+        if not okStep then
+            task.wait()
         end
     end
 
@@ -88,7 +81,7 @@ function Module.init(runtime: any): any
         savedCollide: {[BasePart]: boolean},
         savedProps: {[BasePart]: PhysicalProperties?}
     ): ()
-        local heavyProps: PhysicalProperties = PhysicalProperties.new(100, 0.3, 0.5, 1, 1)
+        local heavyProps: PhysicalProperties = PhysicalProperties.new(100, 0, 1, 100, 100)
         for _, child: Instance in ipairs(character:GetChildren()) do
             if child:IsA("BasePart") then
                 local part: BasePart = child :: BasePart
@@ -138,6 +131,93 @@ function Module.init(runtime: any): any
             or targetChar:FindFirstChildWhichIsA("BasePart")
     end
 
+    local function resolveTargetHorizontalVelocity(
+        targetPart: BasePart,
+        targetHum: Humanoid?
+    ): Vector3
+        local targetVel: Vector3 = Vector3.zero
+        local moveDir: Vector3 = Vector3.zero
+        local walkSpeed: number = 16
+        pcall(function(): ()
+            targetVel = targetPart.AssemblyLinearVelocity
+            if targetHum then
+                moveDir = targetHum.MoveDirection
+                if type(targetHum.WalkSpeed) == "number" and targetHum.WalkSpeed > 0 then
+                    walkSpeed = targetHum.WalkSpeed
+                end
+            end
+        end)
+        local flatVel: Vector3 = Vector3.new(targetVel.X, 0, targetVel.Z)
+        local flatMove: Vector3 = Vector3.new(moveDir.X, 0, moveDir.Z)
+        if flatMove.Magnitude > 0.05 then
+            local moveVel: Vector3 = flatMove.Unit * math.max(flatVel.Magnitude, walkSpeed)
+            if flatVel.Magnitude < 2 then
+                flatVel = moveVel
+            else
+                flatVel = flatVel * 0.65 + moveVel * 0.35
+            end
+        end
+        if flatVel.Magnitude > 40 then
+            flatVel = flatVel.Unit * 40
+        end
+        return flatVel
+    end
+
+    local function computePhaseOffsetAndVelocity(
+        phaseIndex: number,
+        flatVel: Vector3,
+        verticalVel: number
+    ): (Vector3, Vector3)
+        local isMoving: boolean = flatVel.Magnitude > 1.25
+        local leadStep: number = 0
+        local bodyOffset: Vector3 = Vector3.zero
+        if phaseIndex == 0 then
+            -- Direct core overlap: hits stationary & slow targets immediately.
+            leadStep = 0.0
+            bodyOffset = Vector3.new(0, 0, 0)
+        elseif phaseIndex == 1 then
+            -- Upper torso / head upward drive.
+            leadStep = 0.05
+            bodyOffset = Vector3.new(0, 1.35, 0)
+        elseif phaseIndex == 2 then
+            -- Lower root / legs under-sweep.
+            leadStep = 0.10
+            bodyOffset = Vector3.new(0, -1.35, 0)
+        elseif phaseIndex == 3 then
+            -- Mid-ping forward intercept (~150ms).
+            leadStep = 0.15
+            bodyOffset = if isMoving
+                then Vector3.new(0, 0.35, 0)
+                else Vector3.new(1.15, 0.5, -1.15)
+        elseif phaseIndex == 4 then
+            -- High-ping forward intercept (~220ms).
+            leadStep = 0.22
+            bodyOffset = if isMoving
+                then Vector3.new(0, -0.35, 0)
+                else Vector3.new(-1.15, -0.5, 1.15)
+        else
+            -- Tight cross-core shear.
+            leadStep = 0.08
+            bodyOffset = Vector3.new(0.75, 0.2, 0.75)
+        end
+
+        local leadOffset: Vector3 = flatVel * leadStep
+        if leadOffset.Magnitude > 6.5 then
+            leadOffset = leadOffset.Unit * 6.5
+        end
+        local yLead: number = math.clamp(verticalVel * 0.06, -2.0, 2.5)
+        local totalOffset: Vector3 = leadOffset + bodyOffset + Vector3.new(0, yLead, 0)
+
+        local signX: number = if phaseIndex % 2 == 0 then 1 else -1
+        local signZ: number = if phaseIndex % 3 == 0 then 1 else -1
+        local impulseVel: Vector3 = Vector3.new(
+            FLING_LINEAR_VEL.X * signX,
+            FLING_LINEAR_VEL.Y,
+            FLING_LINEAR_VEL.Z * signZ
+        )
+        return totalOffset, impulseVel
+    end
+
     -- Single-step high-impulse contact sweep (usable from per-frame loops
     -- such as Auto Win's Fling Sheriff and Get Gun).
     local function flingSingleStep(
@@ -171,45 +251,29 @@ function Module.init(runtime: any): any
         else
             pcall(function(): ()
                 root.CanCollide = true
-                root.CustomPhysicalProperties = PhysicalProperties.new(100, 0.3, 0.5, 1, 1)
+                root.CustomPhysicalProperties = PhysicalProperties.new(100, 0, 1, 100, 100)
             end)
         end
 
-        stepAngle = (stepAngle + 100) % 360
-        local phase: number = math.floor(stepAngle / 100) % 4
-        local targetVel: Vector3 = Vector3.zero
-        local moveDir: Vector3 = Vector3.zero
+        stepPhase = (stepPhase + 1) % 6
+        stepAngle = (stepAngle + 95) % 360
+        local flatVel: Vector3 = resolveTargetHorizontalVelocity(targetPart, targetHum)
+        local verticalVel: number = 0
         pcall(function(): ()
-            targetVel = targetPart.AssemblyLinearVelocity
-            if targetHum then
-                moveDir = targetHum.MoveDirection
-            end
+            verticalVel = targetPart.AssemblyLinearVelocity.Y
         end)
-
-        local leadOffset: Vector3 = if targetVel.Magnitude > 1.5
-            then moveDir * math.clamp(targetVel.Magnitude / 1.25, -18, 18)
-                + Vector3.new(targetVel.X * 0.08, 0, targetVel.Z * 0.08)
-            else Vector3.zero
-
-        local sweepLocal: CFrame
-        if phase == 0 then
-            sweepLocal = CFrame.new(0, 1.5, 0)
-        elseif phase == 1 then
-            sweepLocal = CFrame.new(0, -1.5, 0)
-        elseif phase == 2 then
-            sweepLocal = CFrame.new(2.0, 1.2, -2.0)
-        else
-            sweepLocal = CFrame.new(-2.0, -1.2, 2.0)
-        end
+        local totalOffset: Vector3, impulseVel: Vector3 = computePhaseOffsetAndVelocity(
+            stepPhase,
+            flatVel,
+            verticalVel
+        )
 
         local rotCF: CFrame = CFrame.Angles(
             math.rad(stepAngle),
-            math.rad(stepAngle),
-            0
+            math.rad((stepAngle * 2) % 360),
+            math.rad((stepAngle * 3) % 360)
         )
-        local finalCF: CFrame = CFrame.new(targetPart.Position + leadOffset)
-            * sweepLocal
-            * rotCF
+        local finalCF: CFrame = CFrame.new(targetPart.Position + totalOffset) * rotCF
 
         pcall(function(): ()
             if humanoid.Sit then
@@ -219,7 +283,7 @@ function Module.init(runtime: any): any
             humanoid.AutoRotate = false
             root.CFrame = finalCF
             character:PivotTo(finalCF)
-            root.AssemblyLinearVelocity = FLING_LINEAR_VEL
+            root.AssemblyLinearVelocity = impulseVel
             root.AssemblyAngularVelocity = FLING_ANGULAR_VEL
         end)
         return true
@@ -310,23 +374,20 @@ function Module.init(runtime: any): any
                     liveChar: Model,
                     liveRoot: BasePart,
                     basePart: BasePart,
-                    posOffset: CFrame,
+                    offsetVec: Vector3,
                     angOffset: CFrame,
-                    isPreSimReset: boolean?
+                    impulseVel: Vector3
                 ): ()
-                    local targetCF: CFrame = CFrame.new(basePart.Position)
-                        * posOffset
+                    local targetCF: CFrame = CFrame.new(basePart.Position + offsetVec)
                         * angOffset
                     pcall(function(): ()
+                        if bodyVel then
+                            bodyVel.Velocity = impulseVel
+                        end
                         liveRoot.CFrame = targetCF
                         liveChar:PivotTo(targetCF)
-                        if isPreSimReset then
-                            liveRoot.AssemblyLinearVelocity = Vector3.zero
-                            liveRoot.AssemblyAngularVelocity = Vector3.zero
-                        else
-                            liveRoot.AssemblyLinearVelocity = FLING_LINEAR_VEL
-                            liveRoot.AssemblyAngularVelocity = FLING_ANGULAR_VEL
-                        end
+                        liveRoot.AssemblyLinearVelocity = impulseVel
+                        liveRoot.AssemblyAngularVelocity = FLING_ANGULAR_VEL
                     end)
                 end
 
@@ -366,8 +427,11 @@ function Module.init(runtime: any): any
                     end
 
                     local targetSpeed: number = 0
+                    local verticalVel: number = 0
                     pcall(function(): ()
-                        targetSpeed = targetPart.AssemblyLinearVelocity.Magnitude
+                        local vel: Vector3 = targetPart.AssemblyLinearVelocity
+                        targetSpeed = vel.Magnitude
+                        verticalVel = vel.Y
                     end)
                     if targetSpeed > 250 then
                         touchedTarget = true
@@ -398,85 +462,40 @@ function Module.init(runtime: any): any
                         (targetPart :: any):SetNetworkOwner(LocalPlayer)
                     end)
 
-                    angle = (angle + 100) % 360
-                    local rotCF: CFrame = CFrame.Angles(math.rad(angle), 0, 0)
-                    local moveDir: Vector3 = targetHumanoid
-                        and targetHumanoid.MoveDirection
-                        or Vector3.zero
-                    local velMag: number = math.clamp(targetSpeed / 1.25, 0, 25)
-
-                    if targetSpeed < 1.5 then
+                    for phaseIdx = 0, 5 do
+                        if not flingRunning or not targetPart.Parent then
+                            break
+                        end
+                        local curVel: Vector3 = Vector3.zero
+                        pcall(function(): ()
+                            curVel = targetPart.AssemblyLinearVelocity
+                        end)
+                        if curVel.Magnitude > 250 or targetPart.Position.Y <= voidThreshold then
+                            touchedTarget = true
+                            reason = "flung"
+                            break
+                        end
+                        angle = (angle + 95) % 360
+                        local rotCF: CFrame = CFrame.Angles(
+                            math.rad(angle),
+                            math.rad((angle * 2) % 360),
+                            math.rad((angle * 3) % 360)
+                        )
+                        local flatVel: Vector3 = resolveTargetHorizontalVelocity(
+                            targetPart,
+                            targetHumanoid
+                        )
+                        local offsetVec: Vector3, impulseVel: Vector3 =
+                            computePhaseOffsetAndVelocity(phaseIdx, flatVel, curVel.Y)
                         applyFPos(
                             liveChar,
                             liveRoot,
                             targetPart,
-                            CFrame.new(0, 1.5, 0) + moveDir * velMag,
-                            rotCF
+                            offsetVec,
+                            rotCF,
+                            impulseVel
                         )
                         waitFrameStep(false)
-
-                        applyFPos(
-                            liveChar,
-                            liveRoot,
-                            targetPart,
-                            CFrame.new(0, -1.5, 0) + moveDir * velMag,
-                            rotCF
-                        )
-                        waitFrameStep(true)
-
-                        applyFPos(
-                            liveChar,
-                            liveRoot,
-                            targetPart,
-                            CFrame.new(2.25, 1.5, -2.25) + moveDir * velMag,
-                            rotCF
-                        )
-                        waitFrameStep(false)
-
-                        applyFPos(
-                            liveChar,
-                            liveRoot,
-                            targetPart,
-                            CFrame.new(-2.25, -1.5, 2.25) + moveDir * velMag,
-                            rotCF
-                        )
-                        waitFrameStep(true)
-                    else
-                        applyFPos(
-                            liveChar,
-                            liveRoot,
-                            targetPart,
-                            CFrame.new(0, 1.5, velMag) + moveDir * velMag,
-                            rotCF
-                        )
-                        waitFrameStep(false)
-
-                        applyFPos(
-                            liveChar,
-                            liveRoot,
-                            targetPart,
-                            CFrame.new(0, -1.5, -velMag) + moveDir * velMag,
-                            rotCF
-                        )
-                        waitFrameStep(true)
-
-                        applyFPos(
-                            liveChar,
-                            liveRoot,
-                            targetPart,
-                            CFrame.new(0, 1.5, 0) + moveDir,
-                            rotCF
-                        )
-                        waitFrameStep(false)
-
-                        applyFPos(
-                            liveChar,
-                            liveRoot,
-                            targetPart,
-                            CFrame.new(0, -1.5, 0) + moveDir,
-                            rotCF
-                        )
-                        waitFrameStep(true)
                     end
                 end
             end)

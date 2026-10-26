@@ -27,8 +27,11 @@ VOTE_SOURCE = (ROOT / "src/games/MM2/Other/AutoVote.lua").read_text(encoding="ut
 
 assert '"Coins Aura"' in COINS_SOURCE
 assert "addNumberOption" not in COINS_SOURCE, "Coins Aura must not have a Range slider"
+assert '"Show Hitbox"' in COINS_SOURCE
+assert "WurstCoinsAuraHitbox" in COINS_SOURCE
 assert '"Gun Aura"' in GUN_SOURCE
 assert '"Studs"' in GUN_SOURCE
+assert '"Show Hitbox"' in GUN_SOURCE
 assert '"Auto Vote"' in VOTE_SOURCE
 assert '"Select Map"' in VOTE_SOURCE
 
@@ -315,6 +318,16 @@ end
 
 function addNumberOption(feature, name, default, minVal, maxVal, callback, desc, step)
     assert(feature.name == "Gun Aura", "Only Gun Aura should register a number option here")
+end
+
+local coinsShowHitboxCallback = nil
+local gunShowHitboxCallback = nil
+function addToggleOption(feature, name, default, callback, desc)
+    if feature.name == "Coins Aura" and name == "Show Hitbox" then
+        coinsShowHitboxCallback = callback
+    elseif feature.name == "Gun Aura" and name == "Show Hitbox" then
+        gunShowHitboxCallback = callback
+    end
 end
 
 local selectMapChoices = nil
