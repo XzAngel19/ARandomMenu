@@ -5,7 +5,7 @@
 > contradice lo que crees, gana este documento (y los datos de calibración).
 >
 > **Estado al escribir esto:** rama `arena/9492e6b6-arandommenu`, build
-> **`v138-20261026-autofarm-antifling-iy-fixes`**.
+> **`v139-20261026-yarhm-fling-autofarm-fixes`**.
 > El usuario se comunica en español. Respóndele en español.
 
 ---
