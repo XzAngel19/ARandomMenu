@@ -25,6 +25,7 @@ function Module.init(runtime: any): any
     local getPlayerWeapon: any = core.getPlayerWeapon
     local isPlayerAlive: any = core.isPlayerAlive
     local isProtectedTarget: any = core.isProtectedTarget
+    local isRoundLifecycleActive: any = core.isRoundLifecycleActive
 
     local ABOVE_MAP_OFFSET: number = 120
 
@@ -32,20 +33,62 @@ function Module.init(runtime: any): any
         instaKillMurder = true,
         instaKillSheriff = true,
         flingSheriffGetGun = false,
+        flingMurderIfDead = false,
     }
 
     local autoWinActive: boolean = false
     local AutoWinFeature: any = nil
     local lastStatus: string? = nil
 
+    local sheriffWins: number = 0
+    local murderWins: number = 0
+    local innocentWins: number = 0
+    local sheriffWinsStat: any = nil
+    local murderWinsStat: any = nil
+    local innocentWinsStat: any = nil
+
     local wasOnMap: boolean = false
+    local participatedInRound: boolean = false
+    local roundMyRole: string? = nil
+    local roundSawMurderer: boolean = false
+    local roundCountedWin: boolean = false
+    local flungMurderThisDeath: boolean = false
+    local flingBusy: boolean = false
+
     local safeAbovePosition: Vector3? = nil
     local savedCollide: {[Instance]: boolean} = {}
-    local savedCustomProps: PhysicalProperties? = nil
-    local savedPropsRoot: BasePart? = nil
+    local savedCustomProps: {[BasePart]: PhysicalProperties?} = {}
     local victimSnapshots: {[BasePart]: {cframe: CFrame, anchored: boolean, canCollide: boolean}} = {}
     local toolConnections: {RBXScriptConnection} = {}
-    local flingOscillation: number = 0
+    local flingAngle: number = 0
+
+    local function updateWinOverlay(): ()
+        if sheriffWinsStat and type(sheriffWinsStat.set) == "function" then
+            sheriffWinsStat.set(tostring(sheriffWins))
+        end
+        if murderWinsStat and type(murderWinsStat.set) == "function" then
+            murderWinsStat.set(tostring(murderWins))
+        end
+        if innocentWinsStat and type(innocentWinsStat.set) == "function" then
+            innocentWinsStat.set(tostring(innocentWins))
+        end
+    end
+
+    local function awardRoundWin(roleCategory: string?): ()
+        if roundCountedWin then
+            return
+        end
+        local cat: string = roleCategory or roundMyRole or "Innocent"
+        roundCountedWin = true
+        if cat == "Murderer" then
+            murderWins += 1
+        elseif cat == "Sheriff" or cat == "Hero" then
+            sheriffWins += 1
+        else
+            innocentWins += 1
+        end
+        updateWinOverlay()
+    end
 
     local function setStatus(text: string?): ()
         if text == lastStatus then
@@ -172,6 +215,11 @@ function Module.init(runtime: any): any
 
     local function restoreLocalCharacter(): ()
         restoreVictims()
+        if services and services.activity then
+            pcall(function(): ()
+                services.activity.set("fling", false)
+            end)
+        end
         for part: Instance, wasCollide: boolean in pairs(savedCollide) do
             if part and part.Parent then
                 pcall(function(): ()
@@ -180,13 +228,14 @@ function Module.init(runtime: any): any
             end
         end
         table.clear(savedCollide)
-        if savedPropsRoot and savedPropsRoot.Parent then
-            pcall(function(): ()
-                savedPropsRoot.CustomPhysicalProperties = savedCustomProps
-            end)
+        for part: BasePart, oldProps: PhysicalProperties? in pairs(savedCustomProps) do
+            if part and part.Parent then
+                pcall(function(): ()
+                    part.CustomPhysicalProperties = oldProps
+                end)
+            end
         end
-        savedPropsRoot = nil
-        savedCustomProps = nil
+        table.clear(savedCustomProps)
 
         local character: Model?, humanoid: Humanoid?, root: BasePart? = characterParts()
         if humanoid then
@@ -194,6 +243,7 @@ function Module.init(runtime: any): any
                 humanoid.PlatformStand = false
                 humanoid.AutoRotate = true
                 humanoid:SetStateEnabled(Enum.HumanoidStateType.FallingDown, true)
+                humanoid:SetStateEnabled(Enum.HumanoidStateType.Seated, true)
                 humanoid:ChangeState(Enum.HumanoidStateType.Running)
             end)
         end
@@ -229,11 +279,37 @@ function Module.init(runtime: any): any
         end
     end
 
+    local function enableCharacterFlingCollisions(character: Model): ()
+        local heavyProps: PhysicalProperties = PhysicalProperties.new(100, 0.3, 0.5, 1, 1)
+        for _, object: Instance in ipairs(character:GetChildren()) do
+            if object:IsA("BasePart") then
+                local part: BasePart = object :: BasePart
+                if savedCollide[part] == nil then
+                    savedCollide[part] = part.CanCollide
+                end
+                if savedCustomProps[part] == nil then
+                    pcall(function(): ()
+                        savedCustomProps[part] = part.CustomPhysicalProperties
+                    end)
+                end
+                pcall(function(): ()
+                    part.CanCollide = true
+                    part.CustomPhysicalProperties = heavyProps
+                end)
+            end
+        end
+    end
+
     local function holdAboveMap(
         character: Model,
         humanoid: Humanoid,
         root: BasePart
     ): ()
+        if services and services.activity then
+            pcall(function(): ()
+                services.activity.set("fling", false)
+            end)
+        end
         disableCharacterCollisions(character)
         local holdPos: Vector3 = safeAbovePosition
             or (root.Position + Vector3.new(0, ABOVE_MAP_OFFSET, 0))
@@ -290,6 +366,69 @@ function Module.init(runtime: any): any
         return tool.Parent == character
     end
 
+    local function findActiveMurderer(): Player?
+        local playersService: Players = game:GetService("Players")
+        if type(getPlayerWeapon) == "function" then
+            for _, player: Player in ipairs(playersService:GetPlayers()) do
+                if player ~= LocalPlayer
+                    and (type(isPlayerAlive) ~= "function" or isPlayerAlive(player))
+                    and getPlayerWeapon(player, "Gun", false) == nil
+                    and getPlayerWeapon(player, "Knife", false) ~= nil then
+                    return player
+                end
+            end
+        end
+        if type(findMurderer) == "function" then
+            local target: Player? = findMurderer()
+            if target
+                and target ~= LocalPlayer
+                and (type(isPlayerAlive) ~= "function" or isPlayerAlive(target))
+                and (type(getPlayerWeapon) ~= "function"
+                    or getPlayerWeapon(target, "Gun", false) == nil) then
+                return target
+            end
+        end
+        for _, player: Player in ipairs(playersService:GetPlayers()) do
+            if player ~= LocalPlayer
+                and (type(isPlayerAlive) ~= "function" or isPlayerAlive(player))
+                and (type(getPlayerWeapon) ~= "function"
+                    or getPlayerWeapon(player, "Gun", false) == nil) then
+                local role: any = type(getPlayerRole) == "function"
+                    and getPlayerRole(player)
+                    or nil
+                if role == "Murderer" then
+                    return player
+                end
+            end
+        end
+        return nil
+    end
+
+    local function findActiveSheriffOrHero(): Player?
+        local playersService: Players = game:GetService("Players")
+        if type(getPlayerWeapon) == "function" then
+            for _, player: Player in ipairs(playersService:GetPlayers()) do
+                if player ~= LocalPlayer
+                    and (type(isPlayerAlive) ~= "function" or isPlayerAlive(player))
+                    and getPlayerWeapon(player, "Knife", false) == nil
+                    and getPlayerWeapon(player, "Gun", false) ~= nil then
+                    return player
+                end
+            end
+        end
+        if type(findSheriff) == "function" then
+            local target: Player? = findSheriff()
+            if target
+                and target ~= LocalPlayer
+                and (type(isPlayerAlive) ~= "function" or isPlayerAlive(target))
+                and (type(getPlayerWeapon) ~= "function"
+                    or getPlayerWeapon(target, "Knife", false) == nil) then
+                return target
+            end
+        end
+        return nil
+    end
+
     -- Insta Kill as Murder (Kill All while staying safely above the map).
     local function runInstaKillAsMurder(
         character: Model,
@@ -304,6 +443,7 @@ function Module.init(runtime: any): any
         local handle: BasePart? = (knife:FindFirstChild("Handle") :: BasePart?)
             or knife:FindFirstChildWhichIsA("BasePart")
         local slashRemote: Instance? = knife:FindFirstChild("Slash")
+        local stabRemote: Instance? = knife:FindFirstChild("Stab")
         local eventsFolder: Instance? = knife:FindFirstChild("Events")
         local touchedRemote: Instance? = eventsFolder
             and eventsFolder:FindFirstChild("HandleTouched")
@@ -321,42 +461,51 @@ function Module.init(runtime: any): any
                 local victimRoot: BasePart? = victimChar
                     and victimChar:FindFirstChild("HumanoidRootPart") :: BasePart?
                 if victimChar and victimRoot then
-                    hitAny = true
-                    if not victimSnapshots[victimRoot] then
+                    local onVictimMap: boolean = isCharacterOnMap(victimRoot)
+                    if onVictimMap then
+                        hitAny = true
+                        if not victimSnapshots[victimRoot] then
+                            pcall(function(): ()
+                                victimSnapshots[victimRoot] = {
+                                    cframe = victimRoot.CFrame,
+                                    anchored = victimRoot.Anchored,
+                                    canCollide = victimRoot.CanCollide,
+                                }
+                            end)
+                        end
                         pcall(function(): ()
-                            victimSnapshots[victimRoot] = {
-                                cframe = victimRoot.CFrame,
-                                anchored = victimRoot.Anchored,
-                                canCollide = victimRoot.CanCollide,
-                            }
+                            victimRoot.Anchored = true
+                            victimRoot.CanCollide = false
+                            victimRoot.AssemblyLinearVelocity = Vector3.zero
+                            victimRoot.AssemblyAngularVelocity = Vector3.zero
+                            victimRoot.CFrame = attackCF
                         end)
-                    end
-                    pcall(function(): ()
-                        victimRoot.Anchored = true
-                        victimRoot.CanCollide = false
-                        victimRoot.AssemblyLinearVelocity = Vector3.zero
-                        victimRoot.AssemblyAngularVelocity = Vector3.zero
-                        victimRoot.CFrame = attackCF
-                    end)
-                    if slashRemote and slashRemote:IsA("RemoteEvent") then
-                        pcall(function(): ()
-                            (slashRemote :: RemoteEvent):FireServer("Slash")
-                        end)
-                    end
-                    if touchedRemote and touchedRemote:IsA("RemoteEvent") then
-                        pcall(function(): ()
-                            (touchedRemote :: RemoteEvent):FireServer(victimRoot)
-                        end)
-                    end
-                    if handle and type(state.fireTouchInterest) == "function" then
-                        pcall(state.fireTouchInterest, handle, victimRoot, 0)
-                        pcall(state.fireTouchInterest, handle, victimRoot, 1)
+                        if slashRemote and slashRemote:IsA("RemoteEvent") then
+                            pcall(function(): ()
+                                (slashRemote :: RemoteEvent):FireServer("Slash")
+                            end)
+                        end
+                        if stabRemote and stabRemote:IsA("RemoteEvent") then
+                            pcall(function(): ()
+                                (stabRemote :: RemoteEvent):FireServer("Slash")
+                            end)
+                        end
+                        if touchedRemote and touchedRemote:IsA("RemoteEvent") then
+                            pcall(function(): ()
+                                (touchedRemote :: RemoteEvent):FireServer(victimRoot)
+                            end)
+                        end
+                        if handle and type(state.fireTouchInterest) == "function" then
+                            pcall(state.fireTouchInterest, handle, victimRoot, 0)
+                            pcall(state.fireTouchInterest, handle, victimRoot, 1)
+                        end
                     end
                 end
             end
         end
         if not hitAny then
             restoreVictims()
+            awardRoundWin("Murderer")
         end
         return hitAny
     end
@@ -373,37 +522,20 @@ function Module.init(runtime: any): any
         if not ensureToolEquipped(character, humanoid, gun) then
             return false
         end
+        local murderer: Player? = findActiveMurderer()
+        if not murderer then
+            if roundSawMurderer then
+                awardRoundWin("Sheriff")
+            end
+            return false
+        end
+        roundSawMurderer = true
         if type(state.mm2AutoShootCFrameOnce) == "function" then
             local okHelper: boolean, helperRes: any =
                 pcall(state.mm2AutoShootCFrameOnce, false)
             if okHelper and helperRes == true then
                 return true
             end
-        end
-        local murderer: Player? = type(findMurderer) == "function"
-            and findMurderer()
-            or nil
-        if not murderer then
-            local playersService: Players = game:GetService("Players")
-            for _, player: Player in ipairs(playersService:GetPlayers()) do
-                if player ~= LocalPlayer then
-                    local role: any = type(getPlayerRole) == "function"
-                        and getPlayerRole(player)
-                        or nil
-                    local hasKnife: boolean = type(getPlayerWeapon) == "function"
-                        and getPlayerWeapon(player, "Knife", false) ~= nil
-                    if role == "Murderer" or hasKnife then
-                        murderer = player
-                        break
-                    end
-                end
-            end
-        end
-        if not murderer or murderer == LocalPlayer then
-            return false
-        end
-        if type(isPlayerAlive) == "function" and not isPlayerAlive(murderer) then
-            return false
         end
         if type(isProtectedTarget) == "function" and isProtectedTarget(murderer) then
             return false
@@ -453,13 +585,18 @@ function Module.init(runtime: any): any
         return true
     end
 
-    -- Grab the dropped gun safely and return immediately above the map.
-    local function grabDroppedGunSafely(
+    -- Grab the dropped gun ONLY via fireTouchInterest while staying safely
+    -- above the map (never risking a teleport down to the map).
+    local function grabDroppedGunTouchOnly(
         character: Model,
         humanoid: Humanoid,
         root: BasePart,
         drop: Instance
     ): boolean
+        holdAboveMap(character, humanoid, root)
+        if type(state.fireTouchInterest) ~= "function" then
+            return false
+        end
         local touchPart: BasePart? = nil
         if drop:IsA("BasePart") then
             touchPart = drop :: BasePart
@@ -470,43 +607,36 @@ function Module.init(runtime: any): any
         if not touchPart then
             return false
         end
-        if type(state.fireTouchInterest) == "function" then
-            pcall(state.fireTouchInterest, root, touchPart, 0)
-            pcall(state.fireTouchInterest, root, touchPart, 1)
-        end
-        if findLocalTool("Gun") then
-            holdAboveMap(character, humanoid, root)
-            return true
-        end
-        -- Server distance check fallback: briefly touch the dropped gun's
-        -- CFrame while non-collidable, pulse touch, and snap back above map.
-        disableCharacterCollisions(character)
-        pcall(function(): ()
-            local dropPos: Vector3 = touchPart.Position
-            root.AssemblyLinearVelocity = Vector3.zero
-            root.AssemblyAngularVelocity = Vector3.zero
-            root.CFrame = CFrame.new(dropPos + Vector3.new(0, 1.5, 0))
-                * CFrame.Angles(0, yawOf(root.CFrame), 0)
-            if type(state.fireTouchInterest) == "function" then
-                pcall(state.fireTouchInterest, root, touchPart, 0)
-                pcall(state.fireTouchInterest, root, touchPart, 1)
-            end
-        end)
-        local gotGun: boolean = findLocalTool("Gun") ~= nil
-        if gotGun then
-            holdAboveMap(character, humanoid, root)
-        end
-        return gotGun
+        pcall(state.fireTouchInterest, root, touchPart, 0)
+        pcall(state.fireTouchInterest, root, touchPart, 1)
+        return findLocalTool("Gun") ~= nil
     end
 
-    -- Safe Fling on the Sheriff: never follows into the void and never kills
-    -- our own character.
+    -- Reconstructed high-impulse Fling on the Sheriff: forces CanCollide=true
+    -- and high density on contact so the Sheriff is actually flung, while
+    -- stopping before the void so our character never dies.
     local function flingSheriffStep(
         character: Model,
         humanoid: Humanoid,
         root: BasePart,
         sheriff: Player
     ): boolean
+        if type(state.mm2FlingStep) == "function" then
+            local okStep: boolean, res: any = pcall(
+                state.mm2FlingStep,
+                character,
+                humanoid,
+                root,
+                sheriff,
+                savedCollide,
+                savedCustomProps
+            )
+            if okStep and res == true then
+                return true
+            end
+            holdAboveMap(character, humanoid, root)
+            return false
+        end
         local sheriffChar: Model? = sheriff.Character
         local sheriffHum: Humanoid? = sheriffChar
             and sheriffChar:FindFirstChildOfClass("Humanoid")
@@ -517,53 +647,49 @@ function Module.init(runtime: any): any
             return false
         end
         local destroyHeight: number = workspace.FallenPartsDestroyHeight
-        if destroyHeight ~= destroyHeight then
+        if destroyHeight ~= destroyHeight or math.abs(destroyHeight) > 1e6 then
             destroyHeight = -500
         end
         local sheriffPos: Vector3 = sheriffRoot.Position
-        if sheriffPos.Y <= destroyHeight + 65 then
-            -- Sheriff is already falling into the void: stop flinging and wait
-            -- safely above the map for the gun to drop on the map.
+        if sheriffPos.Y <= destroyHeight + 55 then
             holdAboveMap(character, humanoid, root)
             return false
         end
-        disableCharacterCollisions(character)
-        if savedPropsRoot ~= root then
+        if services and services.activity then
             pcall(function(): ()
-                savedCustomProps = root.CustomPhysicalProperties
-                savedPropsRoot = root
-                root.CustomPhysicalProperties = PhysicalProperties.new(100, 0.3, 0.5)
+                services.activity.set("fling", true)
             end)
         end
-        flingOscillation += 1
-        local sweepOffset: Vector3 = Vector3.new(
-            math.sin(flingOscillation * 1.7) * 1.2,
-            0.2,
-            math.cos(flingOscillation * 1.7) * 1.2
-        )
+        enableCharacterFlingCollisions(character)
+        flingAngle = (flingAngle + 100) % 360
+        local phase: number = math.floor(flingAngle / 100) % 4
+        local sweepOffset: CFrame = if phase == 0
+            then CFrame.new(0, 1.5, 0)
+            elseif phase == 1 then CFrame.new(0, -1.5, 0)
+            elseif phase == 2 then CFrame.new(2.0, 1.2, -2.0)
+            else CFrame.new(-2.0, -1.2, 2.0)
         local sheriffVel: Vector3 = Vector3.zero
         pcall(function(): ()
             sheriffVel = sheriffRoot.AssemblyLinearVelocity
         end)
-        local targetPoint: Vector3 = sheriffPos + sheriffVel * 0.06 + sweepOffset
+        local targetCF: CFrame = CFrame.new(sheriffPos + sheriffVel * 0.08)
+            * sweepOffset
+            * CFrame.Angles(math.rad(flingAngle), math.rad(flingAngle), 0)
         pcall(function(): ()
-            humanoid.PlatformStand = true
+            if humanoid.Sit then
+                humanoid.Sit = false
+            end
             humanoid.AutoRotate = false
-            humanoid:SetStateEnabled(Enum.HumanoidStateType.FallingDown, false)
-            root.CFrame = CFrame.new(targetPoint)
-                * CFrame.Angles(0, yawOf(root.CFrame), 0)
-            root.AssemblyLinearVelocity = Vector3.new(
-                sheriffVel.X * 1.5,
-                28,
-                sheriffVel.Z * 1.5
-            )
-            root.AssemblyAngularVelocity = Vector3.new(0, 400, 0)
+            root.CFrame = targetCF
+            character:PivotTo(targetCF)
+            root.AssemblyLinearVelocity = Vector3.new(9e7, 9e7 * 10, 9e7)
+            root.AssemblyAngularVelocity = Vector3.new(9e8, 9e8, 9e8)
         end)
         return true
     end
 
     local function autoWinTick(): ()
-        if not autoWinActive then
+        if not autoWinActive or flingBusy then
             return
         end
         local character: Model?, humanoid: Humanoid?, root: BasePart? = characterParts()
@@ -572,25 +698,89 @@ function Module.init(runtime: any): any
         end
 
         local onMap: boolean, mapRefPos: Vector3? = isCharacterOnMap(root)
+        local activeMurderer: Player? = findActiveMurderer()
+        if activeMurderer then
+            roundSawMurderer = true
+        end
+
         if not onMap then
             if wasOnMap then
                 wasOnMap = false
                 safeAbovePosition = nil
                 restoreLocalCharacter()
             end
-            setStatus("Auto Win: waiting for map")
+
+            local roundStillRunning: boolean = type(findMM2Map) == "function"
+                and findMM2Map() ~= nil
+                and activeMurderer ~= nil
+                and (type(isRoundLifecycleActive) ~= "function"
+                    or isRoundLifecycleActive() ~= false)
+
+            if not roundStillRunning then
+                if participatedInRound and not roundCountedWin and roundSawMurderer then
+                    local myRoleNow: any = type(getPlayerRole) == "function"
+                        and getPlayerRole(LocalPlayer)
+                        or nil
+                    if myRoleNow ~= "Dead" then
+                        awardRoundWin(roundMyRole)
+                    end
+                end
+                participatedInRound = false
+                roundMyRole = nil
+                roundSawMurderer = false
+                roundCountedWin = false
+                flungMurderThisDeath = false
+                setStatus("Auto Win: waiting for map")
+                return
+            end
+
+            -- We are in the lobby while the round is still running on the map
+            -- (meaning we died / were killed during the round).
+            local myRole: any = type(getPlayerRole) == "function"
+                and getPlayerRole(LocalPlayer)
+                or nil
+            local diedInRound: boolean = participatedInRound or myRole == "Dead"
+            if settings.flingMurderIfDead
+                and diedInRound
+                and not flungMurderThisDeath
+                and activeMurderer then
+                flungMurderThisDeath = true
+                if type(state.mm2PerformFling) == "function" then
+                    flingBusy = true
+                    setStatus("Auto Win: Flinging Murderer (killed us)")
+                    task.spawn(function(): ()
+                        pcall(state.mm2PerformFling, activeMurderer, {
+                            silent = true,
+                            duration = 5.0,
+                            blocking = true,
+                        })
+                        flingBusy = false
+                    end)
+                    return
+                end
+            end
+
+            setStatus("Auto Win: waiting in lobby")
             return
         end
 
         if not wasOnMap or not safeAbovePosition then
             wasOnMap = true
+            participatedInRound = true
+            flungMurderThisDeath = false
             local anchor: Vector3 = mapRefPos or root.Position
             safeAbovePosition = anchor + Vector3.new(0, ABOVE_MAP_OFFSET, 0)
+        end
+
+        -- Check if the Murderer died while we are alive on the map -> count win!
+        if roundSawMurderer and not activeMurderer and not roundCountedWin then
+            awardRoundWin(roundMyRole)
         end
 
         -- 1) Murderer / Knife check: Insta Kill as Murder (Kill All).
         local knife: Tool? = findLocalTool("Knife")
         if knife then
+            roundMyRole = "Murderer"
             if settings.instaKillMurder then
                 runInstaKillAsMurder(character, humanoid, root, knife)
                 setStatus("Auto Win: Insta Kill as Murder")
@@ -607,6 +797,7 @@ function Module.init(runtime: any): any
         --    se recogió con Auto Grab Gun.
         local gun: Tool? = findLocalTool("Gun")
         if gun then
+            roundMyRole = "Sheriff"
             if settings.instaKillSheriff then
                 runInstaKillAsSheriff(character, humanoid, root, gun)
                 setStatus("Auto Win: Insta Kill As Sheriff (CFrame)")
@@ -617,9 +808,22 @@ function Module.init(runtime: any): any
             return
         end
 
-        -- 3) Dropped gun on the map: if Fling Sheriff and Get Gun is ON, OR
-        --    if Auto Grab Gun (Gun Aura / Auto Get Gun) is enabled, grab the
-        --    dropped gun and immediately shoot on the next frame!
+        if not roundMyRole then
+            local roleNow: any = type(getPlayerRole) == "function"
+                and getPlayerRole(LocalPlayer)
+                or nil
+            if roleNow == "Murderer" then
+                roundMyRole = "Murderer"
+            elseif roleNow == "Sheriff" or roleNow == "Hero" then
+                roundMyRole = "Sheriff"
+            else
+                roundMyRole = "Innocent"
+            end
+        end
+
+        -- 3) Dropped gun on the map: grab ONLY via fireTouchInterest (no
+        --    risky teleport) if Fling Sheriff and Get Gun is ON or Auto Grab
+        --    Gun is enabled.
         local autoGrabExternal: boolean = state.mm2GunAuraEnabled == true
             or state.mm2AutoGetGunEnabled == true
         if settings.flingSheriffGetGun or autoGrabExternal then
@@ -627,14 +831,15 @@ function Module.init(runtime: any): any
                 and findDroppedGun()
                 or nil
             if drop then
-                local grabbed: boolean = grabDroppedGunSafely(
+                local grabbed: boolean = grabDroppedGunTouchOnly(
                     character,
                     humanoid,
                     root,
                     drop
                 )
-                setStatus("Auto Win: grabbing dropped gun")
+                setStatus("Auto Win: touching dropped gun")
                 if grabbed then
+                    roundMyRole = "Sheriff"
                     local freshGun: Tool? = findLocalTool("Gun")
                     if freshGun and settings.instaKillSheriff then
                         runInstaKillAsSheriff(character, humanoid, root, freshGun)
@@ -645,11 +850,10 @@ function Module.init(runtime: any): any
         end
 
         -- 4) Fling Sheriff and Get Gun while Sheriff is still alive.
-        if settings.flingSheriffGetGun and type(findSheriff) == "function" then
-            local sheriff: Player? = findSheriff()
+        if settings.flingSheriffGetGun then
+            local sheriff: Player? = findActiveSheriffOrHero()
             if sheriff
                 and sheriff ~= LocalPlayer
-                and (type(isPlayerAlive) ~= "function" or isPlayerAlive(sheriff))
                 and (type(isProtectedTarget) ~= "function" or not isProtectedTarget(sheriff)) then
                 if flingSheriffStep(character, humanoid, root, sheriff) then
                     setStatus("Auto Win: flinging Sheriff for gun")
@@ -729,6 +933,11 @@ function Module.init(runtime: any): any
         clearToolConnections()
         if not enabled then
             wasOnMap = false
+            participatedInRound = false
+            roundMyRole = nil
+            roundSawMurderer = false
+            roundCountedWin = false
+            flungMurderThisDeath = false
             restoreLocalCharacter()
             safeAbovePosition = nil
             setStatus(nil)
@@ -741,7 +950,7 @@ function Module.init(runtime: any): any
 
     AutoWinFeature = createUniversalFeature(
         "Auto Win",
-        "Keeps your character safely above the map as soon as you enter the map (even before the round starts) so nobody can kill you, with Insta Kill as Murder, Insta Kill As Sheriff (AutoShoot CFrame), and Fling Sheriff and Get Gun.",
+        "Keeps your character safely above the map as soon as you enter the map (even before the round starts) so nobody can kill you, with Insta Kill as Murder, Insta Kill As Sheriff (AutoShoot CFrame), Fling Sheriff and Get Gun, and Fling Murder if Dead.",
         8,
         toggleAutoWin,
         {
@@ -751,6 +960,15 @@ function Module.init(runtime: any): any
         }
     )
     state.mm2AutoWinFeature = AutoWinFeature
+
+    if type(state.addSectionOption) == "function" then
+        state.addSectionOption(AutoWinFeature, "Overlay Info")
+    end
+    if type(state.addStatOption) == "function" then
+        sheriffWinsStat = state.addStatOption(AutoWinFeature, "Sheriff Wins", "0")
+        murderWinsStat = state.addStatOption(AutoWinFeature, "Murder Wins", "0")
+        innocentWinsStat = state.addStatOption(AutoWinFeature, "Innocent Wins", "0")
+    end
 
     addToggleOption(AutoWinFeature, "Insta Kill as Murder", true,
         function(value: boolean): ()
@@ -768,7 +986,13 @@ function Module.init(runtime: any): any
         function(value: boolean): ()
             settings.flingSheriffGetGun = value == true
         end,
-        "Safely flies to the Sheriff with Fling without killing yourself, then automatically grabs the dropped gun once the Sheriff dies and shoots the Murderer.")
+        "Safely flies to the Sheriff with Fling without killing yourself, then automatically grabs the dropped gun via TouchInterest once the Sheriff dies and shoots the Murderer.")
+
+    addToggleOption(AutoWinFeature, "Fling Murder if Dead", false,
+        function(value: boolean): ()
+            settings.flingMurderIfDead = value == true
+        end,
+        "If the Murderer kills you and sends you to the lobby while the round is still active, automatically flings the Murderer.")
 
     activeCleanup = function(): ()
         toggleAutoWin(false)

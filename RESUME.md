@@ -5,7 +5,7 @@
 > contradice lo que crees, gana este documento (y los datos de calibración).
 >
 > **Estado al escribir esto:** rama `arena/9492e6b6-arandommenu`, build
-> **`v134-20261025-autounbox-autoshoot-gunaimbot-autowin`**.
+> **`v135-20261025-overlays-safezone-fling-airwalk`**.
 > El usuario se comunica en español. Respóndele en español.
 
 ---

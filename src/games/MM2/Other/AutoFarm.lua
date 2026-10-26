@@ -24,12 +24,83 @@ function Module.init(_runtime: any): any
     local settings = {
         mode = "Walk",
         speed = 16,
+        safeZone = true,
         resetOnFull = true,
         flingMurder = false,
         flingSheriff = false,
         grabGunShoot = false,
         killAllOnFull = false,
     }
+
+    local totalCoinsCollected: number = 0
+    local farmElapsedSeconds: number = 0
+    local lastFormattedSecond: number = -1
+    local coinsCollectedStat: any = nil
+    local farmTimeStat: any = nil
+    local safeZonePlatform: Part? = nil
+
+    local function formatFarmTime(totalSeconds: number): string
+        local whole: number = math.max(0, math.floor(totalSeconds))
+        local hours: number = math.floor(whole / 3600)
+        local mins: number = math.floor((whole % 3600) / 60)
+        local secs: number = whole % 60
+        if hours > 0 then
+            return string.format("%02d:%02d:%02d", hours, mins, secs)
+        end
+        return string.format("%02d:%02d", mins, secs)
+    end
+
+    local function refreshFarmOverlay(): ()
+        if coinsCollectedStat and type(coinsCollectedStat.set) == "function" then
+            coinsCollectedStat.set(tostring(totalCoinsCollected))
+        end
+        local wholeSec: number = math.max(0, math.floor(farmElapsedSeconds))
+        if wholeSec ~= lastFormattedSecond then
+            lastFormattedSecond = wholeSec
+            if farmTimeStat and type(farmTimeStat.set) == "function" then
+                farmTimeStat.set(formatFarmTime(wholeSec))
+            end
+        end
+    end
+
+    local function destroySafeZonePlatform(): ()
+        if safeZonePlatform then
+            pcall(function(): ()
+                safeZonePlatform:Destroy()
+            end)
+            safeZonePlatform = nil
+        end
+    end
+
+    local function ensureSafeZonePlatform(originPos: Vector3): Vector3
+        local voidCenter: Vector3 = Vector3.new(
+            originPos.X + 650,
+            math.max(originPos.Y + 280, 380),
+            originPos.Z + 650
+        )
+        if not safeZonePlatform or not safeZonePlatform.Parent then
+            pcall(function(): ()
+                local part: Part = Instance.new("Part")
+                part.Name = "Wurst_AutoFarmSafeZone"
+                part.Anchored = true
+                part.CanCollide = true
+                part.CanQuery = false
+                part.CanTouch = false
+                part.CastShadow = false
+                part.Size = Vector3.new(64, 4, 64)
+                part.Material = Enum.Material.SmoothPlastic
+                part.Color = Color3.fromRGB(35, 42, 55)
+                part.Transparency = 0.15
+                part.CFrame = CFrame.new(voidCenter)
+                part.Parent = workspace
+                safeZonePlatform = part
+            end)
+        end
+        if safeZonePlatform and safeZonePlatform.Parent then
+            return safeZonePlatform.Position + Vector3.new(0, 5, 0)
+        end
+        return voidCenter + Vector3.new(0, 5, 0)
+    end
 
     -- Two ways to reach a coin, chosen with Farm Mode:
     --
@@ -229,6 +300,14 @@ function Module.init(_runtime: any): any
     -- couple of seconds; contact physics does the rest.
     local function flingPlayer(target: Player?): ()
         if not target then
+            return
+        end
+        if type(state.mm2PerformFling) == "function" then
+            pcall(state.mm2PerformFling, target, {
+                silent = true,
+                duration = 3.5,
+                blocking = true,
+            })
             return
         end
         local _, _, myRoot: BasePart? = characterParts()
@@ -433,6 +512,14 @@ function Module.init(_runtime: any): any
                     return false
                 end
             end
+            if safeZonePlatform and safeZonePlatform.Parent then
+                local okZoneDist: boolean, zoneDist: any = pcall(function(): any
+                    return (root.Position - safeZonePlatform.Position).Magnitude
+                end)
+                if okZoneDist and type(zoneDist) == "number" and zoneDist <= 120 then
+                    return true
+                end
+            end
             local refPart: BasePart? = nil
             local spawns: Instance? = (map :: Instance):FindFirstChild("Spawns")
             if spawns then
@@ -498,7 +585,11 @@ function Module.init(_runtime: any): any
                         and homeCFrame ~= nil
                         and (not homeCharacter or homeCharacter == character)
                     if allowReturnHome and homeCFrame then
-                        local targetCF: CFrame = CFrame.new(homeCFrame.Position)
+                        local destPosition: Vector3 = homeCFrame.Position
+                        if enabled and settings.safeZone and bagAmount >= 50 then
+                            destPosition = ensureSafeZonePlatform(homeCFrame.Position)
+                        end
+                        local targetCF: CFrame = CFrame.new(destPosition)
                             * CFrame.Angles(0, yawOf(homeCFrame), 0)
                         if character then
                             pcall(function(): ()
@@ -947,6 +1038,10 @@ function Module.init(_runtime: any): any
                             bagLimit = limit
                         end
                         if type(amount) == "number" then
+                            if amount > bagAmount then
+                                totalCoinsCollected += (amount - bagAmount)
+                                refreshFarmOverlay()
+                            end
                             bagAmount = amount
                         end
                         local targetLimit: number = math.max(50, bagLimit)
@@ -960,6 +1055,10 @@ function Module.init(_runtime: any): any
 
         featureConnections.MM2AutoFarmTick = TaskManager:Connect(
             function(deltaTime: number): ()
+                if type(deltaTime) == "number" and deltaTime > 0 and deltaTime < 5 then
+                    farmElapsedSeconds += deltaTime
+                    refreshFarmOverlay()
+                end
                 if busy then
                     return
                 end
@@ -986,6 +1085,7 @@ function Module.init(_runtime: any): any
                         homeCFrame = nil
                         homeCharacter = nil
                         hideAnchorPosition = nil
+                        destroySafeZonePlatform()
                     end
                     setStatus("Auto Farm: waiting in lobby")
                     stuckPart = nil
@@ -1168,6 +1268,7 @@ function Module.init(_runtime: any): any
         -- character is put back where the farm first grabbed it.
         featureConnections.MM2AutoFarmRestore = {
             Disconnect = function(): ()
+                destroySafeZonePlatform()
                 restoreCharacter(true)
             end,
         }
@@ -1186,6 +1287,14 @@ function Module.init(_runtime: any): any
     )
     state.mm2AutoFarmFeature = AutoFarmFeature
 
+    if type(state.addSectionOption) == "function" then
+        state.addSectionOption(AutoFarmFeature, "Overlay Info")
+    end
+    if type(state.addStatOption) == "function" then
+        coinsCollectedStat = state.addStatOption(AutoFarmFeature, "Coins Collected", "0")
+        farmTimeStat = state.addStatOption(AutoFarmFeature, "Time", "00:00")
+    end
+
     addCycleOption(AutoFarmFeature, "Farm Mode", {"Walk", "Below (Hitbox)"}, 1,
         function(value: string): ()
             settings.mode = if value == "Walk" then "Walk" else "Below"
@@ -1194,6 +1303,10 @@ function Module.init(_runtime: any): any
         function(value: number): ()
             settings.speed = value
         end, "Walk mode: WalkSpeed. Below mode: flight speed in studs/second -- if the server kicks you (Invalid position), lower it; raise it slowly to find your fastest safe speed.", 1)
+    addToggleOption(AutoFarmFeature, "Safe Zone", true,
+        function(value: boolean): ()
+            settings.safeZone = value == true
+        end, "When you reach 50 coins, teleports you to a platform in the void so the Murderer cannot reach or kill you.")
     addToggleOption(AutoFarmFeature, "Reset When Full Coin Bag", true,
         function(value: boolean): ()
             settings.resetOnFull = value

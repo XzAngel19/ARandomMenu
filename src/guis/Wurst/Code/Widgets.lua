@@ -300,6 +300,45 @@ function Module.init(context: any): WidgetLibrary
         return section
     end
 
+    state.addStatOption = function(
+        feature: any,
+        labelText: string,
+        initialValue: string?
+    ): any
+        local option: Frame = createOptionRow(feature, labelText, nil)
+        local optionLabel: TextLabel? =
+            option:FindFirstChild("OptionLabel") :: TextLabel?
+        if optionLabel then
+            (optionLabel :: TextLabel).Size =
+                UDim2.new(0.62, -CHILD_INSET, 1, 0);
+            (optionLabel :: TextLabel).TextColor3 = Theme.textMuted
+        end
+        local valueLabel: TextLabel = (create("TextLabel", {
+            TextTruncate = Enum.TextTruncate.AtEnd,
+            Parent = option,
+            Name = "StatValue",
+            AnchorPoint = Vector2.new(1, 0),
+            BackgroundTransparency = 1,
+            FontFace = CONTROL_FONT,
+            Position = UDim2.new(1, -CHILD_INSET, 0, 0),
+            Size = UDim2.new(0.38, -CHILD_INSET, 1, 0),
+            Text = tostring(initialValue or "0"),
+            TextColor3 = Theme.text,
+            TextSize = LABEL_FONT_SIZE,
+            TextXAlignment = Enum.TextXAlignment.Right,
+            ZIndex = option.ZIndex + 2,
+        }) :: any) :: TextLabel
+        return {
+            row = option,
+            label = valueLabel,
+            set = function(newText: string): ()
+                if valueLabel and valueLabel.Parent then
+                    valueLabel.Text = tostring(newText)
+                end
+            end,
+        }
+    end
+
     local function setOptionVisible(
         feature: any,
         option: GuiObject,

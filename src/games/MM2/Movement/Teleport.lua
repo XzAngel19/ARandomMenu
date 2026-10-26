@@ -119,29 +119,132 @@ function Module.init(runtime: any): any
         autoGetGunTick()
     end
 
+    local function moveCharacterTo(character: any, destination: CFrame): ()
+        local root: any = character:FindFirstChild("HumanoidRootPart")
+        if root then
+            pcall(function(): ()
+                root.Anchored = false
+                root.AssemblyLinearVelocity = Vector3.zero
+                root.AssemblyAngularVelocity = Vector3.zero
+            end)
+        end
+        character:PivotTo(destination)
+        if root then
+            pcall(function(): ()
+                root.CFrame = destination
+            end)
+        end
+    end
+
     local function teleportToMap()
         local map = findMM2Map()
-        local spawns = map and map:FindFirstChild("Spawns")
+        local spawns = map and (map:FindFirstChild("Spawns") or map:FindFirstChild("Spawns", true))
         local character = LocalPlayer.Character
-        if not spawns or not character then
+        if not map or not character then
             notify("No active MM2 map was found.")
             return
         end
 
-        local spawnList = spawns:GetChildren()
-        local target = spawnList[math.random(1, math.max(1, #spawnList))]
+        local target = nil
+        if spawns and type(spawns.GetChildren) == "function" then
+            local spawnList = spawns:GetChildren()
+            target = spawnList[math.random(1, math.max(1, #spawnList))]
+            if target and not target:IsA("BasePart") and type(target.FindFirstChildWhichIsA) == "function" then
+                target = target:FindFirstChildWhichIsA("BasePart", true)
+            end
+        end
+        if (not target or not target:IsA("BasePart"))
+            and spawns
+            and type(spawns.FindFirstChildWhichIsA) == "function" then
+            target = spawns:FindFirstChildWhichIsA("BasePart", true)
+        end
+        if (not target or not target:IsA("BasePart"))
+            and type(map.FindFirstChildWhichIsA) == "function" then
+            target = map:FindFirstChildWhichIsA("BasePart", true)
+        end
         if target and target:IsA("BasePart") then
-            character:PivotTo(target.CFrame + Vector3.new(0, 3, 0))
+            moveCharacterTo(character, target.CFrame + Vector3.new(0, 3, 0))
+        else
+            notify("No active MM2 map spawn was found.")
         end
     end
 
-    local function teleportToLobby()
+    local function findLobbySpawn()
         local lobby = workspace:FindFirstChild("Lobby")
-        local spawns = lobby and lobby:FindFirstChild("Spawns")
-        local spawn = spawns and spawns:FindFirstChildWhichIsA("SpawnLocation")
+            or workspace:FindFirstChild("MainLobby")
+            or workspace:FindFirstChild("RegularLobby")
+        if not lobby and type(workspace.GetChildren) == "function" then
+            for _, child in ipairs(workspace:GetChildren()) do
+                local lowerName = string.lower(tostring(child.Name))
+                if string.find(lowerName, "lobby", 1, true) ~= nil
+                    or child:FindFirstChild("VotePads", true) ~= nil
+                    or child:FindFirstChild("VotePad1", true) ~= nil
+                    or child:FindFirstChild("VoteIcons", true) ~= nil then
+                    lobby = child
+                    break
+                end
+            end
+        end
+        if lobby then
+            local spawns = lobby:FindFirstChild("Spawns")
+                or lobby:FindFirstChild("Spawns", true)
+            if spawns then
+                if type(spawns.FindFirstChildWhichIsA) == "function" then
+                    local spawn = spawns:FindFirstChildWhichIsA("SpawnLocation")
+                        or spawns:FindFirstChildWhichIsA("BasePart")
+                        or spawns:FindFirstChildWhichIsA("BasePart", true)
+                    if spawn then
+                        return spawn
+                    end
+                end
+                if type(spawns.GetChildren) == "function" then
+                    for _, item in ipairs(spawns:GetChildren()) do
+                        if type(item.IsA) == "function" and item:IsA("BasePart") then
+                            return item
+                        end
+                    end
+                end
+            end
+            if type(lobby.FindFirstChildWhichIsA) == "function" then
+                local directSpawn = lobby:FindFirstChildWhichIsA("SpawnLocation", true)
+                if directSpawn then
+                    return directSpawn
+                end
+            end
+            local votePads = lobby:FindFirstChild("VotePads", true)
+                or lobby:FindFirstChild("VotePad1", true)
+            if votePads and type(votePads.FindFirstChildWhichIsA) == "function" then
+                local padPart = votePads:FindFirstChildWhichIsA("BasePart", true)
+                if padPart then
+                    return padPart
+                end
+            end
+            if type(lobby.FindFirstChildWhichIsA) == "function" then
+                local anyPart = lobby:FindFirstChildWhichIsA("BasePart", true)
+                if anyPart then
+                    return anyPart
+                end
+            end
+        end
+        local worldSpawns = workspace:FindFirstChild("Spawns")
+        if worldSpawns and type(worldSpawns.FindFirstChildWhichIsA) == "function" then
+            local spawn = worldSpawns:FindFirstChildWhichIsA("SpawnLocation")
+                or worldSpawns:FindFirstChildWhichIsA("BasePart")
+            if spawn then
+                return spawn
+            end
+        end
+        if type(workspace.FindFirstChildWhichIsA) == "function" then
+            return workspace:FindFirstChildWhichIsA("SpawnLocation", true)
+        end
+        return nil
+    end
+
+    local function teleportToLobby()
+        local spawn = findLobbySpawn()
         local character = LocalPlayer.Character
         if spawn and character then
-            character:PivotTo(spawn.CFrame + Vector3.new(0, 3, 0))
+            moveCharacterTo(character, spawn.CFrame + Vector3.new(0, 3, 0))
         else
             notify("The MM2 lobby spawn was not found.")
         end

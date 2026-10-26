@@ -145,6 +145,11 @@ local Manifest: Manifest = {
             category = "Exploits",
         },
         {
+            path = "src/games/universal/Movement/AirWalk.lua",
+            name = "AirWalk",
+            category = "Exploits",
+        },
+        {
             path = "src/games/universal/Movement/ClickTeleport.lua",
             name = "Teleport",
             category = "Utilities",

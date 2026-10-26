@@ -220,7 +220,7 @@ local RUNTIME_RAW_BASE: string =
         .. RUNTIME_BRANCH
         .. "/"
 
-local SOURCE_STAMP: string = "v134-20261025-autounbox-autoshoot-gunaimbot-autowin"
+local SOURCE_STAMP: string = "v135-20261025-overlays-safezone-fling-airwalk"
 
 local BOOT_STARTED_AT: number = os.clock()
 local BOOT_FINGERPRINT_SECONDS: number = 0
@@ -5934,6 +5934,7 @@ local fallbackManifest: any = {
         {path = "src/games/universal/Movement/Speed.lua", name = "Speed", category = "Exploits"},
         {path = "src/games/universal/Movement/Jump.lua", name = "Jump", category = "Exploits"},
         {path = "src/games/universal/Movement/InfiniteJump.lua", name = "Infinite Jump", category = "Exploits"},
+        {path = "src/games/universal/Movement/AirWalk.lua", name = "AirWalk", category = "Exploits"},
         {path = "src/games/universal/Movement/ClickTeleport.lua", name = "Teleport", category = "Utilities"},
         {path = "src/games/universal/Blatant/Spider.lua", name = "Spider", category = "Exploits"},
         {path = "src/games/universal/Blatant/Fly.lua", name = "Fly", category = "Exploits"},

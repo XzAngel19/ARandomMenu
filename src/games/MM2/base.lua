@@ -234,22 +234,34 @@ local function getWeaponFromContainer(
                 return child
             end
 
-            if child.Name == weaponName then
-                if weaponName == "Gun" then
+            if weaponName == "Gun" then
+                if child.Name == "Gun" then
+                    return child
+                end
+                if child.Name ~= "FakeGun" then
                     local shootRemote: Instance? = child:FindFirstChild("Shoot")
                     if shootRemote and shootRemote:IsA("RemoteEvent") then
                         return child
                     end
-                elseif weaponName == "Knife" then
-                    local events: Instance? = child:FindFirstChild("Events")
-                    local knifeThrown: Instance? = events
-                        and events:FindFirstChild("KnifeThrown")
-                    local knifeStabbed: Instance? = events
-                        and events:FindFirstChild("KnifeStabbed")
-                    if knifeThrown and knifeThrown:IsA("RemoteEvent")
-                        and knifeStabbed and knifeStabbed:IsA("RemoteEvent") then
-                        return child
-                    end
+                end
+            elseif weaponName == "Knife" then
+                if child.Name == "Knife" then
+                    return child
+                end
+                local slashRemote: Instance? = child:FindFirstChild("Slash")
+                local stabRemote: Instance? = child:FindFirstChild("Stab")
+                if (slashRemote and slashRemote:IsA("RemoteEvent"))
+                    or (stabRemote and stabRemote:IsA("RemoteEvent")) then
+                    return child
+                end
+                local events: Instance? = child:FindFirstChild("Events")
+                local knifeThrown: Instance? = events
+                    and events:FindFirstChild("KnifeThrown")
+                local knifeStabbed: Instance? = events
+                    and events:FindFirstChild("KnifeStabbed")
+                if knifeThrown and knifeThrown:IsA("RemoteEvent")
+                    and knifeStabbed and knifeStabbed:IsA("RemoteEvent") then
+                    return child
                 end
             end
         end
@@ -318,9 +330,19 @@ local function playerFromRoundKey(key: any, data: any): Player?
     return player
 end
 
+local function isRoundEntryDead(data: any): boolean
+    if type(data) ~= "table" then
+        return false
+    end
+    return data.Dead == true or data.Killed == true
+end
+
 local function getRoundRole(player: Player): string?
     for key: any, data: any in pairs(mm2RoundData) do
         if playerFromRoundKey(key, data) == player and type(data) == "table" then
+            if isRoundEntryDead(data) then
+                return "Dead"
+            end
             local role: any = data.Role
             if role == "Murderer"
                 or role == "Sheriff"
@@ -457,14 +479,18 @@ local function buildRoundRoleMap(): {[Player]: string}
     local map: {[Player]: string} = {}
     for key: any, data: any in pairs(mm2RoundData) do
         if type(data) == "table" then
-            local role: any = data.Role
-            if role == "Murderer"
-                or role == "Sheriff"
-                or role == "Hero"
-                or role == "Innocent" then
-                local player: Player? = playerFromRoundKey(key, data)
-                if player then
-                    map[player] = role
+            local player: Player? = playerFromRoundKey(key, data)
+            if player then
+                if isRoundEntryDead(data) then
+                    map[player] = "Dead"
+                else
+                    local role: any = data.Role
+                    if role == "Murderer"
+                        or role == "Sheriff"
+                        or role == "Hero"
+                        or role == "Innocent" then
+                        map[player] = role
+                    end
                 end
             end
         end
@@ -479,7 +505,9 @@ rebuildRoleIndex = function(): ()
     local roles: {[Player]: string?} = {}
     local roundRoleByPlayer: {[Player]: string} = buildRoundRoleMap()
     local murderer: Player? = nil
+    local murdererHasKnife: boolean = false
     local sheriff: Player? = nil
+    local sheriffHasGun: boolean = false
     local alive: {[Player]: boolean} = {}
     local special: {[Player]: string} = {}
     local gunHolders: {[Player]: boolean} = {}
@@ -488,40 +516,60 @@ rebuildRoleIndex = function(): ()
         local character: Model? = player.Character
         local humanoid: Humanoid? = character
             and character:FindFirstChildOfClass("Humanoid")
-        local isAlive: boolean = humanoid ~= nil and humanoid.Health > 0
+        local roundRole: string? = roundRoleByPlayer[player]
+        local isAlive: boolean = humanoid ~= nil
+            and humanoid.Health > 0
+            and roundRole ~= "Dead"
         alive[player] = isAlive
 
-        local roundRole: string? = roundRoleByPlayer[player]
+        local hasGun: boolean = getPlayerWeapon(player, "Gun") ~= nil
+        local hasKnife: boolean = not hasGun
+            and getPlayerWeapon(player, "Knife") ~= nil
         local resolved: string? = nil
-        if hasMurdererCollisionGroup(character)
-            or getPlayerWeapon(player, "Knife") then
-            resolved = "Murderer"
-        elseif getPlayerWeapon(player, "Gun") then
+
+        -- Weapon possession is ground truth in MM2:
+        -- 1) Anyone carrying the Gun is Sheriff or Hero (never Murderer).
+        -- 2) Anyone carrying the Knife is Murderer.
+        -- 3) Otherwise use server round data (ignoring dead entries), and
+        --    only fall back to Murderer collision group when roundRole is
+        --    absent so a Hero/Sheriff is never misidentified as Murderer.
+        if hasGun then
             gunHolders[player] = true
-            -- The sheriff spawns WITH the gun; anyone else holding one
-            -- mid-round picked it up after the sheriff died, which makes
-            -- them the Hero. The round data can lag behind the pickup
-            -- ("si alguien agarra la gun los nametags seguiran siendo de
-            -- Inocente"), so possession decides until the data catches up.
-            if roundRole == "Innocent" or roundRole == "Hero" then
+            if roundRole == "Innocent"
+                or roundRole == "Hero"
+                or roundRole == "Dead" then
                 resolved = "Hero"
             else
                 resolved = "Sheriff"
             end
+        elseif hasKnife then
+            resolved = "Murderer"
+        elseif roundRole == "Dead" then
+            resolved = "Dead"
         elseif roundRole and roundRole ~= "Innocent" then
             resolved = roundRole
+        elseif roundRole == nil and hasMurdererCollisionGroup(character) then
+            resolved = "Murderer"
         end
 
-        if resolved then
+        if resolved and resolved ~= "Dead" then
             special[player] = resolved
 
             if resolved == "Murderer" then
-                if not murderer or (isAlive and not alive[murderer]) then
+                local better: boolean = not murderer
+                    or (isAlive and not alive[murderer])
+                    or (isAlive == alive[murderer] and hasKnife and not murdererHasKnife)
+                if better then
                     murderer = player
+                    murdererHasKnife = hasKnife
                 end
             elseif resolved == "Sheriff" or resolved == "Hero" then
-                if not sheriff or (isAlive and not alive[sheriff]) then
+                local better: boolean = not sheriff
+                    or (isAlive and not alive[sheriff])
+                    or (isAlive == alive[sheriff] and hasGun and not sheriffHasGun)
+                if better then
                     sheriff = player
+                    sheriffHasGun = hasGun
                 end
             end
         end
@@ -761,9 +809,18 @@ end
 
 local function findPlayerByRoundRole(role: string): Player?
     for key, data in pairs(mm2RoundData) do
-        if type(data) == "table" and data.Role == role then
+        if type(data) == "table"
+            and not isRoundEntryDead(data)
+            and data.Role == role then
             local player: Player? = playerFromRoundKey(key, data)
             if player and isPlayerAlive(player) then
+                if role == "Murderer" and getPlayerWeapon(player, "Gun") ~= nil then
+                    continue
+                end
+                if (role == "Sheriff" or role == "Hero")
+                    and getPlayerWeapon(player, "Knife") ~= nil then
+                    continue
+                end
                 return player
             end
         end
@@ -777,14 +834,36 @@ end
 
 local function findMurderer(): Player?
     ensureRoleIndex()
-    return roleIndex.murderer or findPlayerByRoundRole("Murderer")
+    for _, player: Player in ipairs(Players:GetPlayers()) do
+        if isPlayerAlive(player)
+            and getPlayerWeapon(player, "Gun") == nil
+            and getPlayerWeapon(player, "Knife") ~= nil then
+            return player
+        end
+    end
+    local candidate: Player? = roleIndex.murderer or findPlayerByRoundRole("Murderer")
+    if candidate and getPlayerWeapon(candidate, "Gun") ~= nil then
+        return nil
+    end
+    return candidate
 end
 
 local function findSheriff(): Player?
     ensureRoleIndex()
-    return roleIndex.sheriff
+    for _, player: Player in ipairs(Players:GetPlayers()) do
+        if isPlayerAlive(player)
+            and getPlayerWeapon(player, "Knife") == nil
+            and getPlayerWeapon(player, "Gun") ~= nil then
+            return player
+        end
+    end
+    local candidate: Player? = roleIndex.sheriff
         or findPlayerByRoundRole("Sheriff")
         or findPlayerByRoundRole("Hero")
+    if candidate and getPlayerWeapon(candidate, "Knife") ~= nil then
+        return nil
+    end
+    return candidate
 end
 
 local MM2_MAP_COIN_CONTAINERS: {string} = {
@@ -1121,9 +1200,7 @@ if mm2GameplayRemotes then
             if type(newData) == "table" and hasValidRoundRoleData(newData) then
                 roundLifecycleActive = true
                 mm2MapCache.at = -math.huge
-                for key: any, value: any in pairs(newData) do
-                    mm2RoundData[key] = value
-                end
+                mm2RoundData = newData
                 lastRoleRefreshAt = os.clock()
                 invalidateRoleCaches()
                 if rebuildRoleIndex then
@@ -1133,9 +1210,14 @@ if mm2GameplayRemotes then
                     lastPhase = "map"
                     setRoundPhase("map", "PlayerDataChanged")
                 end
-            elseif type(newData) ~= "table" or roundLifecycleActive == false then
+            elseif type(newData) ~= "table"
+                or next(newData) == nil
+                or roundLifecycleActive == false then
                 mm2RoundData = {}
                 invalidateRoleCaches()
+                if rebuildRoleIndex then
+                    rebuildRoleIndex()
+                end
             else
                 for key: any, value: any in pairs(newData) do
                     mm2RoundData[key] = value
@@ -1154,20 +1236,17 @@ if mm2GameplayRemotes then
         featureConnections.MM2RoleSelect = roleSelect.OnClientEvent:Connect(function(localRole: any)
             roundLifecycleActive = true
             mm2MapCache.at = -math.huge
+            mm2RoundData = {}
             if type(localRole) == "string"
                 and (localRole == "Murderer"
                     or localRole == "Sheriff"
                     or localRole == "Hero"
                     or localRole == "Innocent") then
-                local existing: any = mm2RoundData[LocalPlayer.Name]
-                if type(existing) ~= "table" then
-                    existing = {
-                        Name = LocalPlayer.Name,
-                        UserId = LocalPlayer.UserId,
-                    }
-                    mm2RoundData[LocalPlayer.Name] = existing
-                end
-                existing.Role = localRole
+                mm2RoundData[LocalPlayer.Name] = {
+                    Name = LocalPlayer.Name,
+                    UserId = LocalPlayer.UserId,
+                    Role = localRole,
+                }
             end
             invalidateRoleCaches()
             if rebuildRoleIndex then
@@ -1211,12 +1290,15 @@ local sessionRoundActive = false
 
 if timerRoundStart and timerRoundStart:IsA("RemoteEvent") then
     featureConnections.MM2TimerTrackerStart = timerRoundStart.OnClientEvent:Connect(
-        function(duration)
+        function(duration, startPlayerData)
             duration = tonumber(duration)
             roundTimer.endsAt = duration and os.clock() + duration or nil
             if not duration or duration <= 0 then
                 mm2RoundData = {}
                 sessionRoundActive = false
+            elseif type(startPlayerData) == "table"
+                and hasValidRoundRoleData(startPlayerData) then
+                mm2RoundData = startPlayerData
             end
             invalidateRoleCaches()
             roundLifecycleActive = duration ~= nil and duration > 0
@@ -4540,6 +4622,7 @@ state.mm2Core = {
         return roundLifecycleActive
     end,
     onRoundRoles = onRoundRoles,
+    requestRoleRefresh = requestRoleRefresh,
     onRoundPhase = onRoundPhase,
     getRoundPhase = function(): string
         return roundPhase
