@@ -238,6 +238,10 @@ function Module.init(context: Runtime): any
                     end
                     humanoid.UseJumpPower = true
                     humanoid.JumpPower = wantedPower
+                    if wantedPower < 0 and state == Enum.HumanoidStateType.Jumping then
+                        local curVel: Vector3 = (root :: BasePart).AssemblyLinearVelocity
+                        ;(root :: BasePart).AssemblyLinearVelocity = Vector3.new(curVel.X, wantedPower, curVel.Z)
+                    end
                 else
                     restoreJumpPower()
                 end
@@ -289,8 +293,8 @@ function Module.init(context: Runtime): any
     jump:CreateSlider({
         Name = "Jump power",
         Show = {Option = "Custom jump power", Values = {true}},
-        Min = -500,
-        Max = 500,
+        Min = 1,
+        Max = 250,
         Default = 80,
         Function = function(value: number): ()
             if jump.Enabled and jump.Options["Custom jump power"].Value then
@@ -311,7 +315,7 @@ function Module.init(context: Runtime): any
 
     jump:CreateSlider({
         Name = "High jump velocity",
-        Min = -250,
+        Min = 1,
         Max = 250,
         Default = 72,
         Tooltip = "Vertical velocity applied when High Jump button is pressed. Negative values launch the character downward.",
@@ -339,7 +343,7 @@ function Module.init(context: Runtime): any
             {Option = "Infinite jump", Values = {true}},
             {Option = "Infinite jump mode", Values = {"Normal", "Fall"}},
         },
-        Min = -250,
+        Min = 1,
         Max = 250,
         Default = 50,
         Tooltip = "Vertical impulse applied during mid-air jumps. Negative values push the character downward.",
@@ -351,8 +355,8 @@ function Module.init(context: Runtime): any
             {Option = "Infinite jump", Values = {true}},
             {Option = "Infinite jump mode", Values = {"Rise"}},
         },
-        Min = -350,
-        Max = 350,
+        Min = 1,
+        Max = 250,
         Default = 75,
         Tooltip = "Vertical speed while holding jump in Rise mode. Negative values descend instead of rising.",
     })
@@ -403,8 +407,8 @@ function Module.init(context: Runtime): any
     jump:CreateSlider({
         Name = "Long jump speed",
         Show = {Option = "Long jump", Values = {true}},
-        Min = -150,
-        Max = 150,
+        Min = 1,
+        Max = 250,
         Default = 50,
         Function = function(value: number): ()
             longJumpSpeed = value

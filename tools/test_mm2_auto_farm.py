@@ -60,12 +60,16 @@ assert "humanoid.Jump = true" in SOURCE  # hop when walking stalls
 assert "CanCollide = false" in SOURCE  # Below NoClip
 
 # Lobby safety: never activates or moves the character in the lobby,
-# and waits in place when 0 coins are in the server until the next coin
-# spawns (< 1s) instead of stopping before 50 coins.
+# stays hidden under the map when a round is starting or 0 coins are in
+# the server until the next coin spawns (< 1s), and strictly requires 50
+# coins before returning to homeCFrame during active farming.
 assert "restoreCharacter(false)" in SOURCE
 assert "isCharacterInActiveRound" in SOURCE
 assert '"Auto Farm: waiting in lobby"' in SOURCE
 assert "waiting for coin" in SOURCE
+assert "holdHiddenUnderMap" in SOURCE
+assert "getHiddenUnderMapPosition" in SOURCE
+assert "bagAmount >= 50 or not enabled" in SOURCE
 assert "restoreCharacter(true)" in SOURCE
 assert "recovered from the void" in SOURCE
 assert "roamTarget" not in SOURCE

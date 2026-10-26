@@ -423,47 +423,74 @@ function Module.init(runtime: any): any
     -- player is in the lobby. Returns false the instant voting ends or a round starts.
     local function isVotingIntermissionActive(root: BasePart?, detector: BasePart?): boolean
         local lobby: Instance? = findLobbyModel()
+        if not lobby then
+            return false
+        end
+
         local billboardsOn: boolean = areVotingBillboardsActive(lobby)
 
         -- If the voting billboards just turned on for a new intermission, clear
-        -- any previous round lock.
+        -- any previous round lock. If they were on and just turned off, lock until
+        -- the next intermission.
         if billboardsOn and not lastBillboardVotingState then
             roundBlockingVote = false
+        elseif not billboardsOn and lastBillboardVotingState then
+            roundBlockingVote = true
         end
         lastBillboardVotingState = billboardsOn
 
-        if not billboardsOn then
-            return false
-        end
         if roundBlockingVote then
             return false
         end
 
-        if type(core.isRoundLifecycleActive) == "function"
-            and core.isRoundLifecycleActive() == true then
-            return false
-        end
-
         local timerPart: Instance? = workspace:FindFirstChild("RoundTimerPart")
+        local timerIndicatesLobby: boolean = false
         if timerPart then
             local okTime: boolean, roundTime: any = pcall(function(): any
                 return timerPart:GetAttribute("Time")
             end)
-            if okTime and type(roundTime) == "number" and roundTime > 0 then
-                return false
+            if okTime and type(roundTime) == "number" then
+                if roundTime > 0 then
+                    return false
+                end
+                timerIndicatesLobby = true
             end
         end
 
+        local isNearPad: boolean = false
         if root and detector then
             local okDist: boolean, dist: any = pcall(function(): any
                 return (root.Position - detector.Position).Magnitude
             end)
-            if okDist and type(dist) == "number" and dist > MAX_LOBBY_PAD_DISTANCE then
-                return false
+            if okDist and type(dist) == "number" then
+                if dist > MAX_LOBBY_PAD_DISTANCE then
+                    return false
+                end
+                isNearPad = true
             end
         end
 
-        return true
+        if not isNearPad and type(core.isRoundLifecycleActive) == "function"
+            and core.isRoundLifecycleActive() == true then
+            return false
+        end
+
+        if billboardsOn then
+            return true
+        end
+
+        -- When enabled mid-intermission on servers where SurfaceGui.Enabled is
+        -- not replicated, verify the player is in the lobby near the pads (or
+        -- RoundTimerPart Time <= 0) and the voting board has map names loaded.
+        if isNearPad or timerIndicatesLobby then
+            for slot: number = 1, 3 do
+                if readSlotMapName(lobby, slot) ~= nil then
+                    return true
+                end
+            end
+        end
+
+        return false
     end
 
     local function resolveTargetSlot(lobby: Instance?): number
@@ -610,6 +637,8 @@ function Module.init(runtime: any): any
             return
         end
 
+        roundBlockingVote = false
+        lastBillboardVotingState = false
         refreshMapChoices(true)
         connectGameplayRemotes()
 

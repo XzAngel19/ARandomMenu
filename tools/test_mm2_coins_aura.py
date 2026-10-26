@@ -36,7 +36,12 @@ script = r'''
 local clockNow = 100
 os = { clock = function() return clockNow end }
 local Vector3Mt = {}
-Vector3Mt.__index = Vector3Mt
+function Vector3Mt:__index(k)
+    if k == "Magnitude" then
+        return math.sqrt(self.X * self.X + self.Y * self.Y + self.Z * self.Z)
+    end
+    return rawget(Vector3Mt, k)
+end
 function Vector3Mt:__sub(other)
     return Vector3.new(self.X - other.X, self.Y - other.Y, self.Z - other.Z)
 end
@@ -414,12 +419,24 @@ connections[#connections]()
 assert(#touched == 0, "Auto Vote must not touch pads after voting intermission ends")
 assert(newHumanoid.Health == 100, "Auto Vote must NEVER reset character after voting intermission ends!")
 
+-- Test enabling Auto Vote mid-intermission when SurfaceGui.Enabled is false on client
+-- (like in live MM2 place file) while player is near lobby pads and board has map names
+voteCard.enabled = false
+voteCard.onToggle(false)
+touched = {}
+clockNow = 305.0
+rootPart.Position = Vector3.new(10, 506, 40)
+rootPart.CFrame = CFrame.new(rootPart.Position)
+voteCard.enabled = true
+voteCard.onToggle(true)
+assert(#touched >= 2, "Auto Vote enabled mid-intermission must immediately detect lobby intermission and vote")
+
 voteCard.enabled = false
 voteCard.onToggle(false)
 CoinsModule.destroy()
 GunModule.destroy()
 VoteModule.destroy()
-print("PASS MM2 Coins Aura (no slider, low CPU), Gun Aura (low CPU), and Auto Vote (3-map billboard detection, firetouchinterest vote, intermission-only reset)")
+print("PASS MM2 Coins Aura (no slider, low CPU), Gun Aura (low CPU), and Auto Vote (3-map billboard detection, mid-intermission enable, intermission-only reset)")
 '''
 
 luau = os.environ.get("LUAU", str(ROOT / "tools/luau/bin/luau"))

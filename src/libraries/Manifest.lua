@@ -114,7 +114,7 @@ local Manifest: Manifest = {
         },
         {
             path = "src/games/universal/Combat/TargetStrafe.lua",
-            name = "Target Strafe",
+            name = "StrafeBot",
             category = "Combat",
         },
         {
@@ -137,6 +137,11 @@ local Manifest: Manifest = {
         {
             path = "src/games/universal/Movement/Jump.lua",
             name = "Jump",
+            category = "Exploits",
+        },
+        {
+            path = "src/games/universal/Movement/InfiniteJump.lua",
+            name = "Infinite Jump",
             category = "Exploits",
         },
         {

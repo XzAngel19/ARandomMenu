@@ -82,6 +82,9 @@ set('Mode','Teleport');root.CFrame=CFrame.new();tick(.1);near(root.CFrame.Positi
 h.MoveDirection=Vector3.zero;tick(.1);h.MoveDirection=Vector3.new(1,0,0);tick(.1);near(root.CFrame.Position.X,3.2)
 tick(.1);near(root.CFrame.Position.X,6.4)
 set('Mode','WalkSpeed');tick();near(h.WalkSpeed,32)
+set('Speed',-32);h.MoveDirection=Vector3.new(1,0,0);tick();near(h.WalkSpeed,-32);near(root.AssemblyLinearVelocity.X,-32)
+set('Mode','CFrame');root.CFrame=CFrame.new();tick(.1);near(root.CFrame.Position.X,-4.8)
+set('Mode','WalkSpeed');set('Speed',32);tick();near(h.WalkSpeed,32)
 for _,state in ipairs({'Climbing','Swimming','Physics','PlatformStanding'}) do h.state=state;tick();near(h.WalkSpeed,16) end
 h.state='Running';root.Anchored=true;tick();near(h.WalkSpeed,16);root.Anchored=false;fly.Enabled=true;tick();near(h.WalkSpeed,16);fly.Enabled=false
 module:Toggle(false);set('Auto jump',true);h.FloorMaterial='Ground';local changes=h.changes

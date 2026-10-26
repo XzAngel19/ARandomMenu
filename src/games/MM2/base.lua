@@ -1189,11 +1189,43 @@ end
 
 local function findLobbyModel(): Instance?
     for _, object: Instance in ipairs(workspace:GetChildren()) do
-        if isLobbyName(object.Name) then
+        if isLobbyName(object.Name) or isLobbyModel(object) then
             return object
         end
     end
     return nil
+end
+
+local function isRootNearLobby(root: BasePart, lobby: Instance): boolean
+    local okRoot: boolean, rootPos: any = pcall(function(): any
+        return root.Position
+    end)
+    if not okRoot or typeof(rootPos) ~= "Vector3" then
+        return false
+    end
+    local votePads: Instance? = lobby:FindFirstChild("VotePads", true)
+    local refPart: BasePart? = nil
+    if votePads then
+        refPart = votePads:FindFirstChildWhichIsA("BasePart", true)
+    end
+    if not refPart then
+        local spawns: Instance? = lobby:FindFirstChild("Spawns", true)
+        if spawns then
+            refPart = spawns:FindFirstChildWhichIsA("BasePart", true)
+        end
+    end
+    if not refPart then
+        refPart = lobby:FindFirstChildWhichIsA("BasePart", true)
+    end
+    if refPart then
+        local okDist: boolean, dist: any = pcall(function(): any
+            return (rootPos - refPart.Position).Magnitude
+        end)
+        if okDist and type(dist) == "number" and dist <= 350 then
+            return true
+        end
+    end
+    return false
 end
 
 local function detectRoundPhase(): string
@@ -1207,8 +1239,17 @@ local function detectRoundPhase(): string
     end
 
     local lobby: Instance? = findLobbyModel()
-    if lobby and root:IsDescendantOf(lobby) then
+    if lobby and (root:IsDescendantOf(lobby) or isRootNearLobby(root, lobby)) then
         return "lobby"
+    end
+    local timerPart: Instance? = workspace:FindFirstChild("RoundTimerPart")
+    if timerPart then
+        local okTime: boolean, tVal: any = pcall(function(): any
+            return timerPart:GetAttribute("Time")
+        end)
+        if okTime and type(tVal) == "number" and tVal <= 0 then
+            return "lobby"
+        end
     end
     if findMM2Map() then
         return "map"

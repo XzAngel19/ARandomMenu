@@ -1,5 +1,5 @@
 return {
-    stamp = "v131-20261025-autovote-autofarm-and-ui-fix",
+    stamp = "v132-20261025-movement-killaura-autovote-autofarm",
     files = {
         ["src/Profile/135856908115931.lua"] = [[
 --!strict
@@ -2119,6 +2119,159 @@ function Module.init(runtime: any): any
         refreshKnifeController()
     end
 
+    local killedCharacterByPlayer: {[Player]: Model} = {}
+    local killPlayerOption: any = nil
+
+    local function isLivingInnocentCandidate(player: Player): boolean
+        if player == LocalPlayer
+            or isProtectedTarget(player)
+            or not isPlayerAlive(player) then
+            return false
+        end
+        local character: Model? = player.Character
+        if not character or killedCharacterByPlayer[player] == character then
+            return false
+        end
+        local humanoid: Humanoid? = character:FindFirstChildOfClass("Humanoid") :: Humanoid?
+        local root: BasePart? = character:FindFirstChild("HumanoidRootPart") :: BasePart?
+        if not humanoid or humanoid.Health <= 0 or not root then
+            return false
+        end
+        local role: any = getPlayerRole(player)
+        if role == "Murderer" or role == "Dead" or role == "None" then
+            return false
+        end
+        return true
+    end
+
+    local function getLivingInnocentNames(): {string}
+        local names: {string} = {}
+        for _, player: Player in ipairs(Players:GetPlayers()) do
+            if isLivingInnocentCandidate(player) then
+                table.insert(names, player.Name)
+            end
+        end
+        table.sort(names)
+        return names
+    end
+
+    local function equipKnifeForKill(): (Model?, Humanoid?, BasePart?, Tool?)
+        if getPlayerRole(LocalPlayer) ~= "Murderer" then
+            if type(notify) == "function" then
+                notify("Kill Aura: Only the Murderer can use Kill All / Kill Player.")
+            end
+            return nil, nil, nil, nil
+        end
+        local character: Model? = LocalPlayer.Character
+        local humanoid: Humanoid? = character
+            and (character:FindFirstChildOfClass("Humanoid") :: Humanoid?)
+        local myRoot: BasePart? = character
+            and (character:FindFirstChild("HumanoidRootPart") :: BasePart?)
+        if not character or not humanoid or humanoid.Health <= 0 or not myRoot then
+            return nil, nil, nil, nil
+        end
+        local knife: Tool? = getPlayerWeapon(LocalPlayer, "Knife", false)
+        if not knife then
+            if type(notify) == "function" then
+                notify("Kill Aura: No Knife found.")
+            end
+            return nil, nil, nil, nil
+        end
+        if knife.Parent ~= character then
+            pcall(function(): ()
+                humanoid:EquipTool(knife :: Tool)
+            end)
+            local deadline: number = os.clock() + 0.3
+            while knife.Parent ~= character and os.clock() < deadline do
+                task.wait()
+            end
+        end
+        if knife.Parent ~= character then
+            return nil, nil, nil, nil
+        end
+        return character, humanoid, myRoot, knife
+    end
+
+    local function executeKnifeKillOnTargets(targets: {Player}): ()
+        if #targets == 0 then
+            return
+        end
+        local _, _, myRoot: BasePart?, knife: Tool? = equipKnifeForKill()
+        if not myRoot or not knife then
+            return
+        end
+        local handle: BasePart? = knife:FindFirstChild("Handle") :: BasePart?
+        local victimRoots: {BasePart} = {}
+        for _, target: Player in ipairs(targets) do
+            if isLivingInnocentCandidate(target) then
+                local targetChar: Model? = target.Character
+                local victimRoot: BasePart? = targetChar
+                    and (targetChar:FindFirstChild("HumanoidRootPart") :: BasePart?)
+                if targetChar and victimRoot then
+                    killedCharacterByPlayer[target] = targetChar
+                    table.insert(victimRoots, victimRoot)
+                    pcall(function(): ()
+                        victimRoot.Anchored = true
+                        victimRoot.CFrame = myRoot.CFrame + myRoot.CFrame.LookVector * 1
+                    end)
+                end
+            end
+        end
+        if killPlayerOption and type(killPlayerOption.Refresh) == "function" then
+            pcall(function(): ()
+                killPlayerOption:Refresh()
+            end)
+        end
+        if #victimRoots == 0 then
+            return
+        end
+        task.wait(0.1)
+        local stab: Instance? = knife:FindFirstChild("Stab")
+        if stab and stab:IsA("RemoteEvent") then
+            pcall(function(): ()
+                (stab :: RemoteEvent):FireServer("Slash")
+            end)
+        end
+        local events: Instance? = knife:FindFirstChild("Events")
+        local handleTouched: Instance? = events
+            and events:FindFirstChild("HandleTouched")
+        pcall(function(): ()
+            knife:Activate()
+        end)
+        local fireTouch: any = state.fireTouchInterest
+        for _, victimRoot: BasePart in ipairs(victimRoots) do
+            if handleTouched and handleTouched:IsA("RemoteEvent") then
+                pcall(function(): ()
+                    (handleTouched :: RemoteEvent):FireServer(victimRoot)
+                end)
+            end
+            if handle and handle:IsA("BasePart") and type(fireTouch) == "function" then
+                pcall(fireTouch, handle, victimRoot, 0)
+                pcall(fireTouch, handle, victimRoot, 1)
+            end
+            task.wait(0.04)
+        end
+        task.delay(0.45, function(): ()
+            for _, victimRoot: BasePart in ipairs(victimRoots) do
+                pcall(function(): ()
+                    victimRoot.Anchored = false
+                end)
+            end
+        end)
+    end
+
+    local function killAllPlayersAction(): ()
+        task.spawn(function(): ()
+            local targets: {Player} = {}
+            for _, player: Player in ipairs(Players:GetPlayers()) do
+                if isLivingInnocentCandidate(player) then
+                    table.insert(targets, player)
+                end
+            end
+            executeKnifeKillOnTargets(targets)
+        end)
+    end
+
     local aura: any = state.framework and state.framework:GetModule("KillAura")
     assert(aura, "MM2 Knife requires the existing KillAura module")
     local wasEnabled: boolean = aura.Enabled
@@ -2142,9 +2295,9 @@ function Module.init(runtime: any): any
     local KnifeFeature: any = aura.Feature
     local originalDescription: string = KnifeFeature.description
     local originalSearch: string = KnifeFeature.searchText
-    KnifeFeature.description = "MM2 melee combat: Knife Aura stabs with your held knife. Knife Throw belongs to SilentAIM."
+    KnifeFeature.description = "MM2 melee combat: Knife Aura stabs with your held knife. Includes Kill All and Kill Player."
     KnifeFeature.tooltipText = KnifeFeature.description
-    KnifeFeature.searchText = "killaura combat mm2 knife aura range"
+    KnifeFeature.searchText = "killaura combat mm2 knife aura range kill all kill player"
     aura.CombatAdapter = function(enabled: boolean): ()
         state.mm2KnifeRuntime.masterEnabled = enabled
         refreshKnifeController()
@@ -2152,7 +2305,10 @@ function Module.init(runtime: any): any
     end
     -- Generic melee controls do not describe the MM2 remote-based controller.
     aura.OptionFilter = function(name: string): boolean
-        return name == "Knife Aura" or name == "Aura Range"
+        return name == "Knife Aura"
+            or name == "Aura Range"
+            or name == "Kill All"
+            or name == "Kill Player"
     end
     aura:RefreshVisibility()
     state.mm2KnifeAuraModule = aura
@@ -2163,11 +2319,65 @@ function Module.init(runtime: any): any
     aura:CreateSlider({Name = "Aura Range", Min = 7, Max = 30, Default = 14,
         Show = {Option = "Knife Aura", Values = {true}},
         Function = function(value: number): () knifeSettings.auraRange = value end})
+    aura:CreateButton({
+        Name = "Kill All",
+        Function = killAllPlayersAction,
+        Tooltip = "As Murderer, equip your Knife and eliminate all living Innocent/Sheriff players.",
+    })
+    local killPlayerReady: boolean = false
+    local suppressKillPlayerCallback: boolean = false
+    killPlayerOption = aura:CreateList({
+        Name = "Kill Player",
+        Items = getLivingInnocentNames,
+        Single = true,
+        EmptyText = "No living innocents",
+        Tooltip = "Click to pick a living Innocent player to kill. Dead or eliminated players are removed from the list.",
+        Function = function(_selected: any, names: {string}): ()
+            if not killPlayerReady or suppressKillPlayerCallback then
+                return
+            end
+            local chosenName: string? = names and names[1]
+            if not chosenName or chosenName == "" then
+                return
+            end
+            local targetPlayer: Player? = nil
+            for _, player: Player in ipairs(Players:GetPlayers()) do
+                if player.Name == chosenName and isLivingInnocentCandidate(player) then
+                    targetPlayer = player
+                    break
+                end
+            end
+            suppressKillPlayerCallback = true
+            if killPlayerOption and type(killPlayerOption.Set) == "function" then
+                pcall(function(): ()
+                    killPlayerOption:Set(chosenName, false)
+                end)
+            end
+            suppressKillPlayerCallback = false
+            if targetPlayer then
+                local victim: Player = targetPlayer :: Player
+                task.spawn(function(): ()
+                    executeKnifeKillOnTargets({victim})
+                end)
+            end
+        end,
+    })
+    if killPlayerOption and type(killPlayerOption.Selected) == "table" and #killPlayerOption.Selected > 0 then
+        suppressKillPlayerCallback = true
+        for _, staleName: string in ipairs(table.clone(killPlayerOption.Selected)) do
+            pcall(function(): ()
+                killPlayerOption:Set(staleName, false)
+            end)
+        end
+        suppressKillPlayerCallback = false
+    end
+    killPlayerReady = true
     if wasEnabled then aura:Toggle(true) end
 
     activeCleanup = function(): ()
         if aura.Enabled then aura:Toggle(false) end
         toggleKnifeAura(false)
+        table.clear(killedCharacterByPlayer)
         state.mm2KnifeRuntime.masterEnabled = false
         state.mm2KnifeFeature = nil
         state.mm2KnifeAuraModule = nil
@@ -2178,7 +2388,10 @@ function Module.init(runtime: any): any
         -- If the adapter is detached before the whole UI is destroyed, do
         -- not expose stale MM2 actions beside the generic controls.
         aura.OptionFilter = function(name: string): boolean
-            return name ~= "Knife Aura" and name ~= "Aura Range"
+            return name ~= "Knife Aura"
+                and name ~= "Aura Range"
+                and name ~= "Kill All"
+                and name ~= "Kill Player"
         end
         aura:RefreshVisibility()
     end
@@ -4393,6 +4606,7 @@ function Module.init(_runtime: any): any
         local engagedCharacter: Model? = nil
         local homeCFrame: CFrame? = nil
         local homeCharacter: Model? = nil
+        local hideAnchorPosition: Vector3? = nil
         local savedCollide: {[Instance]: boolean} = {}
         local engagedMode: string? = nil
         local savedWalkSpeed: number? = nil
@@ -4403,6 +4617,43 @@ function Module.init(_runtime: any): any
         local function yawOf(frame: CFrame): number
             local look: Vector3 = frame.LookVector
             return math.atan2(-look.X, -look.Z)
+        end
+
+        local function getHiddenUnderMapPosition(root: BasePart): Vector3
+            if hideAnchorPosition then
+                return hideAnchorPosition
+            end
+            if homeCFrame then
+                return homeCFrame.Position - Vector3.new(0, BELOW_OFFSET + 4, 0)
+            end
+            return root.Position - Vector3.new(0, BELOW_OFFSET + 4, 0)
+        end
+
+        local function holdHiddenUnderMap(
+            character: Model,
+            humanoid: Humanoid,
+            root: BasePart
+        ): ()
+            for _, object: Instance in ipairs(character:GetDescendants()) do
+                if object:IsA("BasePart") then
+                    if savedCollide[object] == nil then
+                        savedCollide[object] = (object :: BasePart).CanCollide
+                    end
+                    pcall(function(): ()
+                        (object :: BasePart).CanCollide = false
+                    end)
+                end
+            end
+            local hidePos: Vector3 = getHiddenUnderMapPosition(root)
+            pcall(function(): ()
+                humanoid.PlatformStand = true
+                humanoid.AutoRotate = false
+                humanoid:Move(Vector3.zero, false)
+                root.AssemblyLinearVelocity = Vector3.zero
+                root.AssemblyAngularVelocity = Vector3.zero
+                root.CFrame = CFrame.new(hidePos)
+                    * CFrame.Angles(0, yawOf(root.CFrame), 0)
+            end)
         end
 
         local function isCharacterInActiveRound(root: BasePart): boolean
@@ -4478,8 +4729,13 @@ function Module.init(_runtime: any): any
                     root.AssemblyAngularVelocity = Vector3.zero
                     -- Return the character to the exact last position
                     -- it had right before Auto Farm started (homeCFrame),
-                    -- never to a random spawn point.
-                    if returnHome and homeCFrame and (not homeCharacter or homeCharacter == character) then
+                    -- never to a random spawn point, and during active
+                    -- farming strictly only when the player has 50 coins.
+                    local allowReturnHome: boolean = returnHome
+                        and (bagAmount >= 50 or not enabled)
+                        and homeCFrame ~= nil
+                        and (not homeCharacter or homeCharacter == character)
+                    if allowReturnHome and homeCFrame then
                         local targetCF: CFrame = CFrame.new(homeCFrame.Position)
                             * CFrame.Angles(0, yawOf(homeCFrame), 0)
                         if character then
@@ -4918,13 +5174,13 @@ function Module.init(_runtime: any): any
             featureConnections.MM2AutoFarmCoinCollected =
                 (collected :: any).OnClientEvent:Connect(
                     function(_bag: any, amount: any, limit: any): ()
-                        if type(limit) == "number" and limit > 0 then
+                        if type(limit) == "number" and limit >= 50 then
                             bagLimit = limit
                         end
                         if type(amount) == "number" then
                             bagAmount = amount
                         end
-                        local targetLimit: number = if bagLimit > 0 then bagLimit else 50
+                        local targetLimit: number = math.max(50, bagLimit)
                         if bagAmount < targetLimit then
                             fullHandled = false
                             roundFullReached = false
@@ -4959,6 +5215,7 @@ function Module.init(_runtime: any): any
                         roundFullReached = false
                         homeCFrame = nil
                         homeCharacter = nil
+                        hideAnchorPosition = nil
                     end
                     setStatus("Auto Farm: waiting in lobby")
                     stuckPart = nil
@@ -4972,9 +5229,10 @@ function Module.init(_runtime: any): any
                     roundFullReached = false
                     homeCFrame = root.CFrame
                     homeCharacter = character
+                    hideAnchorPosition = root.Position - Vector3.new(0, BELOW_OFFSET + 4, 0)
                 end
 
-                local targetLimit: number = if bagLimit > 0 then bagLimit else 50
+                local targetLimit: number = math.max(50, bagLimit)
 
                 -- Stop farming ONLY when 50 coins (full bag) are detected!
                 if bagAmount >= targetLimit then
@@ -5003,19 +5261,17 @@ function Module.init(_runtime: any): any
                     return
                 end
 
-                -- Void guard. A Below flight that loses its coin (round
-                -- end, coin taken, map seam) can be under the floor with
-                -- PlatformStand + NoClip, and every continued frame takes
-                -- it further down. Nothing below is collectable, so put
-                -- the body back home upright instead of riding it out.
+                -- Void guard. While bagAmount < 50, never teleport back to
+                -- homeCFrame on top of the map; recover directly to the
+                -- hidden spot underneath the map instead of falling further.
                 local destroyHeight: number = workspace.FallenPartsDestroyHeight
                 if destroyHeight ~= destroyHeight then
                     destroyHeight = -500
                 end
                 if root.Position.Y <= destroyHeight + 60 then
-                    restoreCharacter(true)
+                    holdHiddenUnderMap(character, humanoid, root)
                     setStatus(
-                        "Auto Farm: recovered from the void - back home"
+                        "Auto Farm: recovered from the void - hidden under map"
                     )
                     return
                 end
@@ -5054,21 +5310,12 @@ function Module.init(_runtime: any): any
                     end
                 end
                 if not nearest or not nearestPosition then
-                    -- 0 coins currently in the server while bag < 50:
-                    -- Do NOT stop farming or teleport back home because
-                    -- the next coin spawns in < 1s. Hold steady right
-                    -- here and re-scan quickly for the next coin.
+                    -- Round starting or 0 coins currently in the server while
+                    -- bag < 50: stay quietly hidden underneath the map (fixed
+                    -- CFrame + zero velocity so gravity never pulls us down),
+                    -- never teleporting back to the map surface until 50 coins.
                     scanAt = now - 0.25
-                    if settings.mode == "Walk" then
-                        pcall(function(): ()
-                            humanoid:Move(Vector3.zero, false)
-                        end)
-                    else
-                        pcall(function(): ()
-                            root.AssemblyLinearVelocity = Vector3.zero
-                            root.AssemblyAngularVelocity = Vector3.zero
-                        end)
-                    end
+                    holdHiddenUnderMap(character, humanoid, root)
                     setStatus(string.format(
                         "Auto Farm (%s): waiting for coin - bag %d/%d - speed %d u/s - ping %dms",
                         settings.mode, bagAmount, targetLimit,
@@ -5078,6 +5325,11 @@ function Module.init(_runtime: any): any
                     stuckPart = nil
                     return
                 end
+                hideAnchorPosition = Vector3.new(
+                    (nearestPosition :: Vector3).X,
+                    (nearestPosition :: Vector3).Y - (BELOW_OFFSET + 4),
+                    (nearestPosition :: Vector3).Z
+                )
                 local remaining: number
                 local arrived: boolean
                 if settings.mode == "Walk" then
@@ -6364,47 +6616,74 @@ function Module.init(runtime: any): any
     -- player is in the lobby. Returns false the instant voting ends or a round starts.
     local function isVotingIntermissionActive(root: BasePart?, detector: BasePart?): boolean
         local lobby: Instance? = findLobbyModel()
+        if not lobby then
+            return false
+        end
+
         local billboardsOn: boolean = areVotingBillboardsActive(lobby)
 
         -- If the voting billboards just turned on for a new intermission, clear
-        -- any previous round lock.
+        -- any previous round lock. If they were on and just turned off, lock until
+        -- the next intermission.
         if billboardsOn and not lastBillboardVotingState then
             roundBlockingVote = false
+        elseif not billboardsOn and lastBillboardVotingState then
+            roundBlockingVote = true
         end
         lastBillboardVotingState = billboardsOn
 
-        if not billboardsOn then
-            return false
-        end
         if roundBlockingVote then
             return false
         end
 
-        if type(core.isRoundLifecycleActive) == "function"
-            and core.isRoundLifecycleActive() == true then
-            return false
-        end
-
         local timerPart: Instance? = workspace:FindFirstChild("RoundTimerPart")
+        local timerIndicatesLobby: boolean = false
         if timerPart then
             local okTime: boolean, roundTime: any = pcall(function(): any
                 return timerPart:GetAttribute("Time")
             end)
-            if okTime and type(roundTime) == "number" and roundTime > 0 then
-                return false
+            if okTime and type(roundTime) == "number" then
+                if roundTime > 0 then
+                    return false
+                end
+                timerIndicatesLobby = true
             end
         end
 
+        local isNearPad: boolean = false
         if root and detector then
             local okDist: boolean, dist: any = pcall(function(): any
                 return (root.Position - detector.Position).Magnitude
             end)
-            if okDist and type(dist) == "number" and dist > MAX_LOBBY_PAD_DISTANCE then
-                return false
+            if okDist and type(dist) == "number" then
+                if dist > MAX_LOBBY_PAD_DISTANCE then
+                    return false
+                end
+                isNearPad = true
             end
         end
 
-        return true
+        if not isNearPad and type(core.isRoundLifecycleActive) == "function"
+            and core.isRoundLifecycleActive() == true then
+            return false
+        end
+
+        if billboardsOn then
+            return true
+        end
+
+        -- When enabled mid-intermission on servers where SurfaceGui.Enabled is
+        -- not replicated, verify the player is in the lobby near the pads (or
+        -- RoundTimerPart Time <= 0) and the voting board has map names loaded.
+        if isNearPad or timerIndicatesLobby then
+            for slot: number = 1, 3 do
+                if readSlotMapName(lobby, slot) ~= nil then
+                    return true
+                end
+            end
+        end
+
+        return false
     end
 
     local function resolveTargetSlot(lobby: Instance?): number
@@ -6551,6 +6830,8 @@ function Module.init(runtime: any): any
             return
         end
 
+        roundBlockingVote = false
+        lastBillboardVotingState = false
         refreshMapChoices(true)
         connectGameplayRemotes()
 
@@ -11395,11 +11676,43 @@ end
 
 local function findLobbyModel(): Instance?
     for _, object: Instance in ipairs(workspace:GetChildren()) do
-        if isLobbyName(object.Name) then
+        if isLobbyName(object.Name) or isLobbyModel(object) then
             return object
         end
     end
     return nil
+end
+
+local function isRootNearLobby(root: BasePart, lobby: Instance): boolean
+    local okRoot: boolean, rootPos: any = pcall(function(): any
+        return root.Position
+    end)
+    if not okRoot or typeof(rootPos) ~= "Vector3" then
+        return false
+    end
+    local votePads: Instance? = lobby:FindFirstChild("VotePads", true)
+    local refPart: BasePart? = nil
+    if votePads then
+        refPart = votePads:FindFirstChildWhichIsA("BasePart", true)
+    end
+    if not refPart then
+        local spawns: Instance? = lobby:FindFirstChild("Spawns", true)
+        if spawns then
+            refPart = spawns:FindFirstChildWhichIsA("BasePart", true)
+        end
+    end
+    if not refPart then
+        refPart = lobby:FindFirstChildWhichIsA("BasePart", true)
+    end
+    if refPart then
+        local okDist: boolean, dist: any = pcall(function(): any
+            return (rootPos - refPart.Position).Magnitude
+        end)
+        if okDist and type(dist) == "number" and dist <= 350 then
+            return true
+        end
+    end
+    return false
 end
 
 local function detectRoundPhase(): string
@@ -11413,8 +11726,17 @@ local function detectRoundPhase(): string
     end
 
     local lobby: Instance? = findLobbyModel()
-    if lobby and root:IsDescendantOf(lobby) then
+    if lobby and (root:IsDescendantOf(lobby) or isRootNearLobby(root, lobby)) then
         return "lobby"
+    end
+    local timerPart: Instance? = workspace:FindFirstChild("RoundTimerPart")
+    if timerPart then
+        local okTime: boolean, tVal: any = pcall(function(): any
+            return timerPart:GetAttribute("Time")
+        end)
+        if okTime and type(tVal) == "number" and tVal <= 0 then
+            return "lobby"
+        end
     end
     if findMM2Map() then
         return "map"
@@ -21434,6 +21756,13 @@ function Module.init(context: Runtime): any
                 flyRuntime.walkHumanoid = humanoid
             end
             humanoid.WalkSpeed = flySettings.speed
+            if flySettings.speed < 0 then
+                root.AssemblyLinearVelocity = Vector3.new(
+                    target.X,
+                    currentVelocity.Y,
+                    target.Z
+                )
+            end
             return
         end
 
@@ -21752,8 +22081,8 @@ function Module.init(context: Runtime): any
     })
     fly:CreateSlider({
         Name = "Horizontal speed",
-        Min = -500,
-        Max = 500,
+        Min = 1,
+        Max = 250,
         Default = flySettings.speed,
         Function = function(value: number): ()
             flySettings.speed = value
@@ -21762,8 +22091,8 @@ function Module.init(context: Runtime): any
     })
     fly:CreateSlider({
         Name = "Vertical speed",
-        Min = -350,
-        Max = 350,
+        Min = 1,
+        Max = 250,
         Default = flySettings.verticalSpeed,
         Function = function(value: number): ()
             flySettings.verticalSpeed = value
@@ -22067,7 +22396,7 @@ function Module.init(context)
         end})
     card:CreateToggle({Name="Ghost Fly",Default=false,Function=function(value) settings.fly=value end,
         Tooltip="OFF: native walking, falling and jumping; Left Shift runs at 32. ON: WASD, Space up, Ctrl down."})
-    card:CreateSlider({Name="Fly speed",Show={Option="Ghost Fly"},Min=-200,Max=200,Default=55,Function=function(value) settings.speed=value end})
+    card:CreateSlider({Name="Fly speed",Show={Option="Ghost Fly"},Min=1,Max=250,Default=55,Function=function(value) settings.speed=value end})
     card:CreateSlider({Name="Void depth",Min=50,Max=350,Default=120,Function=function(value) settings.depth=math.max(0,value) end})
     card:CreateSlider({Name="Ghost transparency",Min=0.1,Max=0.9,Step=0.05,Default=0.5,Function=function(value)
         settings.transparency=math.clamp(value,0,1)
@@ -22466,8 +22795,8 @@ function Module.init(context: Runtime): any
         SpiderFeature,
         "Climb speed",
         spiderSettings.speed,
-        5,
-        100,
+        1,
+        250,
         function(value: number): ()
             spiderSettings.speed = value
         end
@@ -23569,7 +23898,7 @@ return Module
         ["src/games/universal/Combat/TargetStrafe.lua"] = [[
 export type Runtime = {framework: any, entity: any, host: any, services: any}
 
-local Module = {Name = "Target Strafe", PlaceId = 0, Events = {} :: {[string]: any}, Initialized = false}
+local Module = {Name = "StrafeBot", PlaceId = 0, Events = {} :: {[string]: any}, Initialized = false}
 local activeCleanup
 
 function Module.init(context: Runtime): any
@@ -23684,7 +24013,7 @@ function Module.init(context: Runtime): any
     end
 
     targetStrafe = framework.Categories.Combat:CreateModule({
-        Name = "Target Strafe",
+        Name = "StrafeBot",
         Category = "Combat",
         ConfigKey = "Universal.TargetStrafe",
         Order = 4,
@@ -23724,8 +24053,8 @@ function Module.init(context: Runtime): any
     
     targetStrafe:CreateSlider({
         Name = "Speed",
-        Min = 30,
-        Max = 300,
+        Min = 1,
+        Max = 250,
         Default = 100,
         Function = function(value)
             settings.speed = value
@@ -25249,6 +25578,244 @@ end
 return Module
 
 ]],
+        ["src/games/universal/Movement/InfiniteJump.lua"] = [[
+export type Runtime = {
+    framework: any,
+    entity: any,
+    host: any,
+    services: any,
+}
+
+local Module = {
+    Name = "Infinite Jump",
+    PlaceId = 0,
+    Events = {} :: {[string]: any},
+    Initialized = false,
+}
+
+local activeCleanup: (() -> ())? = nil
+
+function Module.init(context: Runtime): any
+    local host: any = context.host
+    local framework: any = context.framework
+    local services: any = context.services
+    local LocalPlayer: Player = host.LocalPlayer
+    local UserInputService: UserInputService = host.UserInputService
+    local RunService: RunService = host.RunService
+    local movementInput: any = services and services.movementInput
+
+    local lastBoostAt: number = -math.huge
+    local pressHeld: boolean = false
+    local jumpTouch: any = nil
+
+    local function characterParts(): (Model?, Humanoid?, BasePart?)
+        local character: Model? = LocalPlayer and LocalPlayer.Character
+        if not character then
+            return nil, nil, nil
+        end
+        local humanoid: Humanoid? = character:FindFirstChildOfClass("Humanoid") :: Humanoid?
+        local root: BasePart? = character:FindFirstChild("HumanoidRootPart") :: BasePart?
+        return character, humanoid, root
+    end
+
+    local function canBoostJump(humanoid: Humanoid?): boolean
+        if not humanoid or not humanoid.Parent or humanoid.Health <= 0 then
+            return false
+        end
+        local currentState: Enum.HumanoidStateType = humanoid:GetState()
+        return currentState ~= Enum.HumanoidStateType.Seated
+            and currentState ~= Enum.HumanoidStateType.Swimming
+            and currentState ~= Enum.HumanoidStateType.Climbing
+            and currentState ~= Enum.HumanoidStateType.Physics
+            and currentState ~= Enum.HumanoidStateType.PlatformStanding
+            and currentState ~= Enum.HumanoidStateType.Ragdoll
+            and currentState ~= Enum.HumanoidStateType.Dead
+    end
+
+    local infiniteJump: any
+    infiniteJump = framework.Categories.Exploits:CreateModule({
+        Name = "Infinite Jump",
+        Category = "Exploits",
+        ConfigKey = "Universal.InfiniteJump",
+        Order = 10,
+        Tooltip = "Jump repeatedly in mid-air on both PC (Spacebar) and Mobile (Touch Jump button).",
+        Function = function(enabled: boolean): ()
+            lastBoostAt = -math.huge
+            pressHeld = false
+            jumpTouch = nil
+            if not enabled then
+                infiniteJump:SetStatus(nil)
+                return
+            end
+
+            infiniteJump:SetStatus("Active")
+
+            local function executeAirJump(fromTouchButton: boolean?): ()
+                local _, humanoid: Humanoid?, root: BasePart? = characterParts()
+                if not humanoid or not root or root.Anchored or not canBoostJump(humanoid) then
+                    return
+                end
+                local power: number = infiniteJump.Options["Jump Power"]
+                    and infiniteJump.Options["Jump Power"].Value
+                    or 50
+                -- Leave ordinary positive ground takeoff to Roblox unless
+                -- triggered from the mobile JumpButton while airborne or using
+                -- negative inverted jump physics.
+                if humanoid.FloorMaterial ~= Enum.Material.Air and power >= 0 and not fromTouchButton then
+                    return
+                end
+                local now: number = os.clock()
+                if now - lastBoostAt < 0.08 then
+                    return
+                end
+                lastBoostAt = now
+
+                local velocity: Vector3 = root.AssemblyLinearVelocity
+                root.AssemblyLinearVelocity = Vector3.new(velocity.X, power, velocity.Z)
+                humanoid:ChangeState(
+                    if power < 0
+                        then Enum.HumanoidStateType.Freefall
+                        else Enum.HumanoidStateType.Jumping
+                )
+            end
+
+            local function onJumpRequested(): ()
+                if pressHeld then
+                    return
+                end
+                pressHeld = true
+                if UserInputService and UserInputService.TouchEnabled then
+                    local okTouches: boolean, touches: any = pcall(function(): any
+                        return UserInputService:GetTouches()
+                    end)
+                    if okTouches and type(touches) == "table" then
+                        if #touches == 1 then
+                            jumpTouch = touches[1]
+                        else
+                            local gui: Instance? = LocalPlayer
+                                and LocalPlayer:FindFirstChildOfClass("PlayerGui")
+                            local touchGui: Instance? = gui and gui:FindFirstChild("TouchGui")
+                            local button: any = touchGui and touchGui:FindFirstChild("JumpButton", true)
+                            if button then
+                                local at: Vector2 = button.AbsolutePosition
+                                local size: Vector2 = button.AbsoluteSize
+                                for _, touch: any in ipairs(touches) do
+                                    local p: Vector3 = touch.Position
+                                    if p.X >= at.X and p.Y >= at.Y
+                                        and p.X <= at.X + size.X
+                                        and p.Y <= at.Y + size.Y then
+                                        jumpTouch = touch
+                                        break
+                                    end
+                                end
+                            end
+                        end
+                    end
+                end
+                executeAirJump(false)
+            end
+
+            if movementInput and type(movementInput.onJumpRequest) == "function" then
+                infiniteJump:Clean(movementInput.onJumpRequest(onJumpRequested))
+            elseif UserInputService and UserInputService.JumpRequest then
+                infiniteJump:Clean(UserInputService.JumpRequest:Connect(onJumpRequested))
+            end
+
+            -- Direct PC (Spacebar / Gamepad ButtonA) + Mobile TouchGui JumpButton support
+            if UserInputService and UserInputService.InputBegan then
+                infiniteJump:Clean(UserInputService.InputBegan:Connect(function(input: any, gameProcessed: boolean): ()
+                    if input.KeyCode == Enum.KeyCode.Space or input.KeyCode == Enum.KeyCode.ButtonA then
+                        if not gameProcessed then
+                            onJumpRequested()
+                        end
+                    elseif input.UserInputType == Enum.UserInputType.Touch then
+                        local gui: Instance? = LocalPlayer
+                            and LocalPlayer:FindFirstChildOfClass("PlayerGui")
+                        local touchGui: Instance? = gui and gui:FindFirstChild("TouchGui")
+                        local button: any = touchGui and touchGui:FindFirstChild("JumpButton", true)
+                        if button and button.AbsolutePosition and button.AbsoluteSize and input.Position then
+                            local at: Vector2 = button.AbsolutePosition
+                            local size: Vector2 = button.AbsoluteSize
+                            local p: Vector3 = input.Position
+                            if p.X >= at.X and p.Y >= at.Y
+                                and p.X <= at.X + size.X
+                                and p.Y <= at.Y + size.Y then
+                                jumpTouch = input
+                                pressHeld = true
+                                executeAirJump(true)
+                            end
+                        end
+                    end
+                end))
+            end
+
+            if UserInputService and UserInputService.InputEnded then
+                infiniteJump:Clean(UserInputService.InputEnded:Connect(function(event: any): ()
+                    if event.KeyCode == Enum.KeyCode.Space
+                        or event.KeyCode == Enum.KeyCode.ButtonA
+                        or (event.UserInputType == Enum.UserInputType.Touch
+                            and (not jumpTouch or event == jumpTouch)) then
+                        pressHeld = false
+                        jumpTouch = nil
+                    end
+                end))
+            end
+
+            if UserInputService and UserInputService.WindowFocusReleased then
+                infiniteJump:Clean(UserInputService.WindowFocusReleased:Connect(function(): ()
+                    pressHeld = false
+                    jumpTouch = nil
+                end))
+            end
+
+            if RunService and RunService.PreSimulation then
+                infiniteJump:Clean(RunService.PreSimulation:Connect(function(): ()
+                    local _, humanoid: Humanoid?, root: BasePart? = characterParts()
+                    if not humanoid or not root or humanoid.Health <= 0 then
+                        return
+                    end
+                    local power: number = infiniteJump.Options["Jump Power"]
+                        and infiniteJump.Options["Jump Power"].Value
+                        or 50
+                    if power < 0 and humanoid:GetState() == Enum.HumanoidStateType.Jumping then
+                        local vel: Vector3 = root.AssemblyLinearVelocity
+                        root.AssemblyLinearVelocity = Vector3.new(vel.X, power, vel.Z)
+                        humanoid:ChangeState(Enum.HumanoidStateType.Freefall)
+                    end
+                end))
+            end
+        end,
+    })
+
+    infiniteJump:CreateSlider({
+        Name = "Jump Power",
+        Min = 1,
+        Max = 250,
+        Default = 50,
+        Tooltip = "Vertical jump velocity applied in mid-air (1-250 slider preset; supports negative values to invert jump physics).",
+    })
+
+    activeCleanup = function(): ()
+        if infiniteJump.Enabled then
+            infiniteJump:Toggle(false)
+        end
+    end
+
+    Module.Initialized = true
+    return infiniteJump
+end
+
+function Module.destroy(): ()
+    if activeCleanup then
+        activeCleanup()
+    end
+    activeCleanup = nil
+    Module.Initialized = false
+end
+
+return Module
+
+]],
         ["src/games/universal/Movement/Jump.lua"] = [[
 export type Runtime = {
     framework: any,
@@ -25490,6 +26057,10 @@ function Module.init(context: Runtime): any
                     end
                     humanoid.UseJumpPower = true
                     humanoid.JumpPower = wantedPower
+                    if wantedPower < 0 and state == Enum.HumanoidStateType.Jumping then
+                        local curVel: Vector3 = (root :: BasePart).AssemblyLinearVelocity
+                        ;(root :: BasePart).AssemblyLinearVelocity = Vector3.new(curVel.X, wantedPower, curVel.Z)
+                    end
                 else
                     restoreJumpPower()
                 end
@@ -25541,8 +26112,8 @@ function Module.init(context: Runtime): any
     jump:CreateSlider({
         Name = "Jump power",
         Show = {Option = "Custom jump power", Values = {true}},
-        Min = -500,
-        Max = 500,
+        Min = 1,
+        Max = 250,
         Default = 80,
         Function = function(value: number): ()
             if jump.Enabled and jump.Options["Custom jump power"].Value then
@@ -25563,7 +26134,7 @@ function Module.init(context: Runtime): any
 
     jump:CreateSlider({
         Name = "High jump velocity",
-        Min = -250,
+        Min = 1,
         Max = 250,
         Default = 72,
         Tooltip = "Vertical velocity applied when High Jump button is pressed. Negative values launch the character downward.",
@@ -25591,7 +26162,7 @@ function Module.init(context: Runtime): any
             {Option = "Infinite jump", Values = {true}},
             {Option = "Infinite jump mode", Values = {"Normal", "Fall"}},
         },
-        Min = -250,
+        Min = 1,
         Max = 250,
         Default = 50,
         Tooltip = "Vertical impulse applied during mid-air jumps. Negative values push the character downward.",
@@ -25603,8 +26174,8 @@ function Module.init(context: Runtime): any
             {Option = "Infinite jump", Values = {true}},
             {Option = "Infinite jump mode", Values = {"Rise"}},
         },
-        Min = -350,
-        Max = 350,
+        Min = 1,
+        Max = 250,
         Default = 75,
         Tooltip = "Vertical speed while holding jump in Rise mode. Negative values descend instead of rising.",
     })
@@ -25655,8 +26226,8 @@ function Module.init(context: Runtime): any
     jump:CreateSlider({
         Name = "Long jump speed",
         Show = {Option = "Long jump", Values = {true}},
-        Min = -150,
-        Max = 150,
+        Min = 1,
+        Max = 250,
         Default = 50,
         Function = function(value: number): ()
             longJumpSpeed = value
@@ -25960,7 +26531,7 @@ function Module.init(context: Runtime): any
         -- the Humanoid's MoveDirection opposite to input
         if value < 0 then
             local moveDir = humanoid.MoveDirection
-            if moveDir.Magnitude > 0.01 then
+            if moveDir and moveDir.Magnitude > 0.01 and type(humanoid.Move) == "function" then
                 humanoid:Move(-moveDir, false)
             end
         end
@@ -26112,9 +26683,9 @@ function Module.init(context: Runtime): any
         if speed.Enabled and opts["Auto jump"].Value and move.Magnitude > 0.05 and humanoid.FloorMaterial ~= Enum.Material.Air then
             humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
         end
-        if mode == "WalkSpeed" then return end
+        if mode == "WalkSpeed" and target >= 0 then return end
         local velocity = root.AssemblyLinearVelocity
-        if mode == "Velocity" then
+        if mode == "Velocity" or (mode == "WalkSpeed" and target < 0) then
             root.AssemblyLinearVelocity = Vector3.new(move.X*target,velocity.Y,move.Z*target)
         elseif mode == "Impulse" then
             local difference = Vector3.new(move.X*target-velocity.X,0,move.Z*target-velocity.Z)
@@ -26128,7 +26699,8 @@ function Module.init(context: Runtime): any
                 teleportElapsed %= interval
                 elapsed = interval
             end
-            local step = move * math.max(0,target-humanoid.WalkSpeed) * elapsed
+            local speedDelta = target < 0 and (target - humanoid.WalkSpeed) or math.max(0, target - humanoid.WalkSpeed)
+            local step = move * speedDelta * elapsed
             if opts["Wall check"].Value then step = blocked(root,step) end
             root.CFrame += step
         else teleportElapsed = 0 end
@@ -26161,7 +26733,7 @@ function Module.init(context: Runtime): any
         if speed.Enabled then speed:SetStatus(speed.Options.Mode.Value) end
     end
     speed:CreateDropdown({Name="Mode",List={"WalkSpeed","Velocity","Impulse","CFrame","Teleport"},Index=1,Function=changed})
-    speed:CreateSlider({Name="Speed",Min=-200,Max=200,Default=32})
+    speed:CreateSlider({Name="Speed",Min=1,Max=250,Default=32})
     speed:CreateToggle({Name="Wall check",Default=true,Show={Option="Mode",Values={"CFrame","Teleport"}}})
     speed:CreateSlider({Name="Burst delay",Min=0.05,Max=1,Default=0.2,Show={Option="Mode",Values={"Teleport"}}})
     speed:CreateToggle({Name="Auto jump",Default=false})
@@ -30506,7 +31078,7 @@ function Module.init(context)
             end)
         end,
     })
-    card:CreateSlider({Name="Speed", Min=-150, Max=150, Default=48})
+    card:CreateSlider({Name="Speed", Min=1, Max=250, Default=48})
     card:CreateSlider({Name="Sensitivity", Min=0.05, Max=0.6, Default=0.2})
     Module.Initialized = true
     return card
@@ -48100,7 +48672,7 @@ local Manifest: Manifest = {
         },
         {
             path = "src/games/universal/Combat/TargetStrafe.lua",
-            name = "Target Strafe",
+            name = "StrafeBot",
             category = "Combat",
         },
         {
@@ -48123,6 +48695,11 @@ local Manifest: Manifest = {
         {
             path = "src/games/universal/Movement/Jump.lua",
             name = "Jump",
+            category = "Exploits",
+        },
+        {
+            path = "src/games/universal/Movement/InfiniteJump.lua",
+            name = "Infinite Jump",
             category = "Exploits",
         },
         {

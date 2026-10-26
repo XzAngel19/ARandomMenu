@@ -1,6 +1,6 @@
 export type Runtime = {framework: any, entity: any, host: any, services: any}
 
-local Module = {Name = "Target Strafe", PlaceId = 0, Events = {} :: {[string]: any}, Initialized = false}
+local Module = {Name = "StrafeBot", PlaceId = 0, Events = {} :: {[string]: any}, Initialized = false}
 local activeCleanup
 
 function Module.init(context: Runtime): any
@@ -115,7 +115,7 @@ function Module.init(context: Runtime): any
     end
 
     targetStrafe = framework.Categories.Combat:CreateModule({
-        Name = "Target Strafe",
+        Name = "StrafeBot",
         Category = "Combat",
         ConfigKey = "Universal.TargetStrafe",
         Order = 4,
@@ -155,8 +155,8 @@ function Module.init(context: Runtime): any
     
     targetStrafe:CreateSlider({
         Name = "Speed",
-        Min = 30,
-        Max = 300,
+        Min = 1,
+        Max = 250,
         Default = 100,
         Function = function(value)
             settings.speed = value

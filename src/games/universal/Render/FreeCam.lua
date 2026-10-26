@@ -231,7 +231,7 @@ function Module.init(context)
             end)
         end,
     })
-    card:CreateSlider({Name="Speed", Min=-150, Max=150, Default=48})
+    card:CreateSlider({Name="Speed", Min=1, Max=250, Default=48})
     card:CreateSlider({Name="Sensitivity", Min=0.05, Max=0.6, Default=0.2})
     Module.Initialized = true
     return card

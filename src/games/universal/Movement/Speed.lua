@@ -31,7 +31,7 @@ function Module.init(context: Runtime): any
         -- the Humanoid's MoveDirection opposite to input
         if value < 0 then
             local moveDir = humanoid.MoveDirection
-            if moveDir.Magnitude > 0.01 then
+            if moveDir and moveDir.Magnitude > 0.01 and type(humanoid.Move) == "function" then
                 humanoid:Move(-moveDir, false)
             end
         end
@@ -183,9 +183,9 @@ function Module.init(context: Runtime): any
         if speed.Enabled and opts["Auto jump"].Value and move.Magnitude > 0.05 and humanoid.FloorMaterial ~= Enum.Material.Air then
             humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
         end
-        if mode == "WalkSpeed" then return end
+        if mode == "WalkSpeed" and target >= 0 then return end
         local velocity = root.AssemblyLinearVelocity
-        if mode == "Velocity" then
+        if mode == "Velocity" or (mode == "WalkSpeed" and target < 0) then
             root.AssemblyLinearVelocity = Vector3.new(move.X*target,velocity.Y,move.Z*target)
         elseif mode == "Impulse" then
             local difference = Vector3.new(move.X*target-velocity.X,0,move.Z*target-velocity.Z)
@@ -199,7 +199,8 @@ function Module.init(context: Runtime): any
                 teleportElapsed %= interval
                 elapsed = interval
             end
-            local step = move * math.max(0,target-humanoid.WalkSpeed) * elapsed
+            local speedDelta = target < 0 and (target - humanoid.WalkSpeed) or math.max(0, target - humanoid.WalkSpeed)
+            local step = move * speedDelta * elapsed
             if opts["Wall check"].Value then step = blocked(root,step) end
             root.CFrame += step
         else teleportElapsed = 0 end
@@ -232,7 +233,7 @@ function Module.init(context: Runtime): any
         if speed.Enabled then speed:SetStatus(speed.Options.Mode.Value) end
     end
     speed:CreateDropdown({Name="Mode",List={"WalkSpeed","Velocity","Impulse","CFrame","Teleport"},Index=1,Function=changed})
-    speed:CreateSlider({Name="Speed",Min=-200,Max=200,Default=32})
+    speed:CreateSlider({Name="Speed",Min=1,Max=250,Default=32})
     speed:CreateToggle({Name="Wall check",Default=true,Show={Option="Mode",Values={"CFrame","Teleport"}}})
     speed:CreateSlider({Name="Burst delay",Min=0.05,Max=1,Default=0.2,Show={Option="Mode",Values={"Teleport"}}})
     speed:CreateToggle({Name="Auto jump",Default=false})

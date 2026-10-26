@@ -837,6 +837,14 @@ do
     local okAVOff, errAVOff = pcall(autoVote.onToggle, false)
     assert(okAVOff, "Auto Vote OFF must not error: " .. tostring(errAVOff))
     print("[HARNESS] COINS AURA + GUN AURA + AUTO VOTE TOGGLE CYCLES CLEAN")
+    local infiniteJump = findFeature("Infinite Jump")
+    assert(infiniteJump and infiniteJump.categoryName == "Exploits", "Infinite Jump standalone module must exist in Exploits")
+    local strafeBot = findFeature("StrafeBot")
+    assert(strafeBot and strafeBot.categoryName == "Combat", "StrafeBot module must exist in Combat")
+    assert(not findFeature("Target Strafe"), "Target Strafe must be renamed to StrafeBot")
+    local killAuraModule = ex.state.framework:GetModule("KillAura")
+    assert(killAuraModule and killAuraModule.Options["Kill All"] and killAuraModule.Options["Kill Player"],
+      "KillAura must expose Kill All button and Kill Player living-Innocent selector")
     local expected = {
       Render = {"ItemESP", "PlayerESP", "Chams", "Nametags", "HP", "Arrows", "NPCESP", "FOV", "Fullbright", "X-Ray", "Zoom", "Markers"},
       Combat = {"Aim Assist", "KillAura", "TriggerBot", "SilentAIM"},

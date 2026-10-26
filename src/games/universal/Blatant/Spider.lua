@@ -174,8 +174,8 @@ function Module.init(context: Runtime): any
         SpiderFeature,
         "Climb speed",
         spiderSettings.speed,
-        5,
-        100,
+        1,
+        250,
         function(value: number): ()
             spiderSettings.speed = value
         end

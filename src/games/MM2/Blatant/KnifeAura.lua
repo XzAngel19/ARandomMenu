@@ -199,6 +199,159 @@ function Module.init(runtime: any): any
         refreshKnifeController()
     end
 
+    local killedCharacterByPlayer: {[Player]: Model} = {}
+    local killPlayerOption: any = nil
+
+    local function isLivingInnocentCandidate(player: Player): boolean
+        if player == LocalPlayer
+            or isProtectedTarget(player)
+            or not isPlayerAlive(player) then
+            return false
+        end
+        local character: Model? = player.Character
+        if not character or killedCharacterByPlayer[player] == character then
+            return false
+        end
+        local humanoid: Humanoid? = character:FindFirstChildOfClass("Humanoid") :: Humanoid?
+        local root: BasePart? = character:FindFirstChild("HumanoidRootPart") :: BasePart?
+        if not humanoid or humanoid.Health <= 0 or not root then
+            return false
+        end
+        local role: any = getPlayerRole(player)
+        if role == "Murderer" or role == "Dead" or role == "None" then
+            return false
+        end
+        return true
+    end
+
+    local function getLivingInnocentNames(): {string}
+        local names: {string} = {}
+        for _, player: Player in ipairs(Players:GetPlayers()) do
+            if isLivingInnocentCandidate(player) then
+                table.insert(names, player.Name)
+            end
+        end
+        table.sort(names)
+        return names
+    end
+
+    local function equipKnifeForKill(): (Model?, Humanoid?, BasePart?, Tool?)
+        if getPlayerRole(LocalPlayer) ~= "Murderer" then
+            if type(notify) == "function" then
+                notify("Kill Aura: Only the Murderer can use Kill All / Kill Player.")
+            end
+            return nil, nil, nil, nil
+        end
+        local character: Model? = LocalPlayer.Character
+        local humanoid: Humanoid? = character
+            and (character:FindFirstChildOfClass("Humanoid") :: Humanoid?)
+        local myRoot: BasePart? = character
+            and (character:FindFirstChild("HumanoidRootPart") :: BasePart?)
+        if not character or not humanoid or humanoid.Health <= 0 or not myRoot then
+            return nil, nil, nil, nil
+        end
+        local knife: Tool? = getPlayerWeapon(LocalPlayer, "Knife", false)
+        if not knife then
+            if type(notify) == "function" then
+                notify("Kill Aura: No Knife found.")
+            end
+            return nil, nil, nil, nil
+        end
+        if knife.Parent ~= character then
+            pcall(function(): ()
+                humanoid:EquipTool(knife :: Tool)
+            end)
+            local deadline: number = os.clock() + 0.3
+            while knife.Parent ~= character and os.clock() < deadline do
+                task.wait()
+            end
+        end
+        if knife.Parent ~= character then
+            return nil, nil, nil, nil
+        end
+        return character, humanoid, myRoot, knife
+    end
+
+    local function executeKnifeKillOnTargets(targets: {Player}): ()
+        if #targets == 0 then
+            return
+        end
+        local _, _, myRoot: BasePart?, knife: Tool? = equipKnifeForKill()
+        if not myRoot or not knife then
+            return
+        end
+        local handle: BasePart? = knife:FindFirstChild("Handle") :: BasePart?
+        local victimRoots: {BasePart} = {}
+        for _, target: Player in ipairs(targets) do
+            if isLivingInnocentCandidate(target) then
+                local targetChar: Model? = target.Character
+                local victimRoot: BasePart? = targetChar
+                    and (targetChar:FindFirstChild("HumanoidRootPart") :: BasePart?)
+                if targetChar and victimRoot then
+                    killedCharacterByPlayer[target] = targetChar
+                    table.insert(victimRoots, victimRoot)
+                    pcall(function(): ()
+                        victimRoot.Anchored = true
+                        victimRoot.CFrame = myRoot.CFrame + myRoot.CFrame.LookVector * 1
+                    end)
+                end
+            end
+        end
+        if killPlayerOption and type(killPlayerOption.Refresh) == "function" then
+            pcall(function(): ()
+                killPlayerOption:Refresh()
+            end)
+        end
+        if #victimRoots == 0 then
+            return
+        end
+        task.wait(0.1)
+        local stab: Instance? = knife:FindFirstChild("Stab")
+        if stab and stab:IsA("RemoteEvent") then
+            pcall(function(): ()
+                (stab :: RemoteEvent):FireServer("Slash")
+            end)
+        end
+        local events: Instance? = knife:FindFirstChild("Events")
+        local handleTouched: Instance? = events
+            and events:FindFirstChild("HandleTouched")
+        pcall(function(): ()
+            knife:Activate()
+        end)
+        local fireTouch: any = state.fireTouchInterest
+        for _, victimRoot: BasePart in ipairs(victimRoots) do
+            if handleTouched and handleTouched:IsA("RemoteEvent") then
+                pcall(function(): ()
+                    (handleTouched :: RemoteEvent):FireServer(victimRoot)
+                end)
+            end
+            if handle and handle:IsA("BasePart") and type(fireTouch) == "function" then
+                pcall(fireTouch, handle, victimRoot, 0)
+                pcall(fireTouch, handle, victimRoot, 1)
+            end
+            task.wait(0.04)
+        end
+        task.delay(0.45, function(): ()
+            for _, victimRoot: BasePart in ipairs(victimRoots) do
+                pcall(function(): ()
+                    victimRoot.Anchored = false
+                end)
+            end
+        end)
+    end
+
+    local function killAllPlayersAction(): ()
+        task.spawn(function(): ()
+            local targets: {Player} = {}
+            for _, player: Player in ipairs(Players:GetPlayers()) do
+                if isLivingInnocentCandidate(player) then
+                    table.insert(targets, player)
+                end
+            end
+            executeKnifeKillOnTargets(targets)
+        end)
+    end
+
     local aura: any = state.framework and state.framework:GetModule("KillAura")
     assert(aura, "MM2 Knife requires the existing KillAura module")
     local wasEnabled: boolean = aura.Enabled
@@ -222,9 +375,9 @@ function Module.init(runtime: any): any
     local KnifeFeature: any = aura.Feature
     local originalDescription: string = KnifeFeature.description
     local originalSearch: string = KnifeFeature.searchText
-    KnifeFeature.description = "MM2 melee combat: Knife Aura stabs with your held knife. Knife Throw belongs to SilentAIM."
+    KnifeFeature.description = "MM2 melee combat: Knife Aura stabs with your held knife. Includes Kill All and Kill Player."
     KnifeFeature.tooltipText = KnifeFeature.description
-    KnifeFeature.searchText = "killaura combat mm2 knife aura range"
+    KnifeFeature.searchText = "killaura combat mm2 knife aura range kill all kill player"
     aura.CombatAdapter = function(enabled: boolean): ()
         state.mm2KnifeRuntime.masterEnabled = enabled
         refreshKnifeController()
@@ -232,7 +385,10 @@ function Module.init(runtime: any): any
     end
     -- Generic melee controls do not describe the MM2 remote-based controller.
     aura.OptionFilter = function(name: string): boolean
-        return name == "Knife Aura" or name == "Aura Range"
+        return name == "Knife Aura"
+            or name == "Aura Range"
+            or name == "Kill All"
+            or name == "Kill Player"
     end
     aura:RefreshVisibility()
     state.mm2KnifeAuraModule = aura
@@ -243,11 +399,65 @@ function Module.init(runtime: any): any
     aura:CreateSlider({Name = "Aura Range", Min = 7, Max = 30, Default = 14,
         Show = {Option = "Knife Aura", Values = {true}},
         Function = function(value: number): () knifeSettings.auraRange = value end})
+    aura:CreateButton({
+        Name = "Kill All",
+        Function = killAllPlayersAction,
+        Tooltip = "As Murderer, equip your Knife and eliminate all living Innocent/Sheriff players.",
+    })
+    local killPlayerReady: boolean = false
+    local suppressKillPlayerCallback: boolean = false
+    killPlayerOption = aura:CreateList({
+        Name = "Kill Player",
+        Items = getLivingInnocentNames,
+        Single = true,
+        EmptyText = "No living innocents",
+        Tooltip = "Click to pick a living Innocent player to kill. Dead or eliminated players are removed from the list.",
+        Function = function(_selected: any, names: {string}): ()
+            if not killPlayerReady or suppressKillPlayerCallback then
+                return
+            end
+            local chosenName: string? = names and names[1]
+            if not chosenName or chosenName == "" then
+                return
+            end
+            local targetPlayer: Player? = nil
+            for _, player: Player in ipairs(Players:GetPlayers()) do
+                if player.Name == chosenName and isLivingInnocentCandidate(player) then
+                    targetPlayer = player
+                    break
+                end
+            end
+            suppressKillPlayerCallback = true
+            if killPlayerOption and type(killPlayerOption.Set) == "function" then
+                pcall(function(): ()
+                    killPlayerOption:Set(chosenName, false)
+                end)
+            end
+            suppressKillPlayerCallback = false
+            if targetPlayer then
+                local victim: Player = targetPlayer :: Player
+                task.spawn(function(): ()
+                    executeKnifeKillOnTargets({victim})
+                end)
+            end
+        end,
+    })
+    if killPlayerOption and type(killPlayerOption.Selected) == "table" and #killPlayerOption.Selected > 0 then
+        suppressKillPlayerCallback = true
+        for _, staleName: string in ipairs(table.clone(killPlayerOption.Selected)) do
+            pcall(function(): ()
+                killPlayerOption:Set(staleName, false)
+            end)
+        end
+        suppressKillPlayerCallback = false
+    end
+    killPlayerReady = true
     if wasEnabled then aura:Toggle(true) end
 
     activeCleanup = function(): ()
         if aura.Enabled then aura:Toggle(false) end
         toggleKnifeAura(false)
+        table.clear(killedCharacterByPlayer)
         state.mm2KnifeRuntime.masterEnabled = false
         state.mm2KnifeFeature = nil
         state.mm2KnifeAuraModule = nil
@@ -258,7 +468,10 @@ function Module.init(runtime: any): any
         -- If the adapter is detached before the whole UI is destroyed, do
         -- not expose stale MM2 actions beside the generic controls.
         aura.OptionFilter = function(name: string): boolean
-            return name ~= "Knife Aura" and name ~= "Aura Range"
+            return name ~= "Knife Aura"
+                and name ~= "Aura Range"
+                and name ~= "Kill All"
+                and name ~= "Kill Player"
         end
         aura:RefreshVisibility()
     end

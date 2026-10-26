@@ -195,6 +195,13 @@ function Module.init(context: Runtime): any
                 flyRuntime.walkHumanoid = humanoid
             end
             humanoid.WalkSpeed = flySettings.speed
+            if flySettings.speed < 0 then
+                root.AssemblyLinearVelocity = Vector3.new(
+                    target.X,
+                    currentVelocity.Y,
+                    target.Z
+                )
+            end
             return
         end
 
@@ -513,8 +520,8 @@ function Module.init(context: Runtime): any
     })
     fly:CreateSlider({
         Name = "Horizontal speed",
-        Min = -500,
-        Max = 500,
+        Min = 1,
+        Max = 250,
         Default = flySettings.speed,
         Function = function(value: number): ()
             flySettings.speed = value
@@ -523,8 +530,8 @@ function Module.init(context: Runtime): any
     })
     fly:CreateSlider({
         Name = "Vertical speed",
-        Min = -350,
-        Max = 350,
+        Min = 1,
+        Max = 250,
         Default = flySettings.verticalSpeed,
         Function = function(value: number): ()
             flySettings.verticalSpeed = value

@@ -364,6 +364,7 @@ function Module.init(_runtime: any): any
         local engagedCharacter: Model? = nil
         local homeCFrame: CFrame? = nil
         local homeCharacter: Model? = nil
+        local hideAnchorPosition: Vector3? = nil
         local savedCollide: {[Instance]: boolean} = {}
         local engagedMode: string? = nil
         local savedWalkSpeed: number? = nil
@@ -374,6 +375,43 @@ function Module.init(_runtime: any): any
         local function yawOf(frame: CFrame): number
             local look: Vector3 = frame.LookVector
             return math.atan2(-look.X, -look.Z)
+        end
+
+        local function getHiddenUnderMapPosition(root: BasePart): Vector3
+            if hideAnchorPosition then
+                return hideAnchorPosition
+            end
+            if homeCFrame then
+                return homeCFrame.Position - Vector3.new(0, BELOW_OFFSET + 4, 0)
+            end
+            return root.Position - Vector3.new(0, BELOW_OFFSET + 4, 0)
+        end
+
+        local function holdHiddenUnderMap(
+            character: Model,
+            humanoid: Humanoid,
+            root: BasePart
+        ): ()
+            for _, object: Instance in ipairs(character:GetDescendants()) do
+                if object:IsA("BasePart") then
+                    if savedCollide[object] == nil then
+                        savedCollide[object] = (object :: BasePart).CanCollide
+                    end
+                    pcall(function(): ()
+                        (object :: BasePart).CanCollide = false
+                    end)
+                end
+            end
+            local hidePos: Vector3 = getHiddenUnderMapPosition(root)
+            pcall(function(): ()
+                humanoid.PlatformStand = true
+                humanoid.AutoRotate = false
+                humanoid:Move(Vector3.zero, false)
+                root.AssemblyLinearVelocity = Vector3.zero
+                root.AssemblyAngularVelocity = Vector3.zero
+                root.CFrame = CFrame.new(hidePos)
+                    * CFrame.Angles(0, yawOf(root.CFrame), 0)
+            end)
         end
 
         local function isCharacterInActiveRound(root: BasePart): boolean
@@ -449,8 +487,13 @@ function Module.init(_runtime: any): any
                     root.AssemblyAngularVelocity = Vector3.zero
                     -- Return the character to the exact last position
                     -- it had right before Auto Farm started (homeCFrame),
-                    -- never to a random spawn point.
-                    if returnHome and homeCFrame and (not homeCharacter or homeCharacter == character) then
+                    -- never to a random spawn point, and during active
+                    -- farming strictly only when the player has 50 coins.
+                    local allowReturnHome: boolean = returnHome
+                        and (bagAmount >= 50 or not enabled)
+                        and homeCFrame ~= nil
+                        and (not homeCharacter or homeCharacter == character)
+                    if allowReturnHome and homeCFrame then
                         local targetCF: CFrame = CFrame.new(homeCFrame.Position)
                             * CFrame.Angles(0, yawOf(homeCFrame), 0)
                         if character then
@@ -889,13 +932,13 @@ function Module.init(_runtime: any): any
             featureConnections.MM2AutoFarmCoinCollected =
                 (collected :: any).OnClientEvent:Connect(
                     function(_bag: any, amount: any, limit: any): ()
-                        if type(limit) == "number" and limit > 0 then
+                        if type(limit) == "number" and limit >= 50 then
                             bagLimit = limit
                         end
                         if type(amount) == "number" then
                             bagAmount = amount
                         end
-                        local targetLimit: number = if bagLimit > 0 then bagLimit else 50
+                        local targetLimit: number = math.max(50, bagLimit)
                         if bagAmount < targetLimit then
                             fullHandled = false
                             roundFullReached = false
@@ -930,6 +973,7 @@ function Module.init(_runtime: any): any
                         roundFullReached = false
                         homeCFrame = nil
                         homeCharacter = nil
+                        hideAnchorPosition = nil
                     end
                     setStatus("Auto Farm: waiting in lobby")
                     stuckPart = nil
@@ -943,9 +987,10 @@ function Module.init(_runtime: any): any
                     roundFullReached = false
                     homeCFrame = root.CFrame
                     homeCharacter = character
+                    hideAnchorPosition = root.Position - Vector3.new(0, BELOW_OFFSET + 4, 0)
                 end
 
-                local targetLimit: number = if bagLimit > 0 then bagLimit else 50
+                local targetLimit: number = math.max(50, bagLimit)
 
                 -- Stop farming ONLY when 50 coins (full bag) are detected!
                 if bagAmount >= targetLimit then
@@ -974,19 +1019,17 @@ function Module.init(_runtime: any): any
                     return
                 end
 
-                -- Void guard. A Below flight that loses its coin (round
-                -- end, coin taken, map seam) can be under the floor with
-                -- PlatformStand + NoClip, and every continued frame takes
-                -- it further down. Nothing below is collectable, so put
-                -- the body back home upright instead of riding it out.
+                -- Void guard. While bagAmount < 50, never teleport back to
+                -- homeCFrame on top of the map; recover directly to the
+                -- hidden spot underneath the map instead of falling further.
                 local destroyHeight: number = workspace.FallenPartsDestroyHeight
                 if destroyHeight ~= destroyHeight then
                     destroyHeight = -500
                 end
                 if root.Position.Y <= destroyHeight + 60 then
-                    restoreCharacter(true)
+                    holdHiddenUnderMap(character, humanoid, root)
                     setStatus(
-                        "Auto Farm: recovered from the void - back home"
+                        "Auto Farm: recovered from the void - hidden under map"
                     )
                     return
                 end
@@ -1025,21 +1068,12 @@ function Module.init(_runtime: any): any
                     end
                 end
                 if not nearest or not nearestPosition then
-                    -- 0 coins currently in the server while bag < 50:
-                    -- Do NOT stop farming or teleport back home because
-                    -- the next coin spawns in < 1s. Hold steady right
-                    -- here and re-scan quickly for the next coin.
+                    -- Round starting or 0 coins currently in the server while
+                    -- bag < 50: stay quietly hidden underneath the map (fixed
+                    -- CFrame + zero velocity so gravity never pulls us down),
+                    -- never teleporting back to the map surface until 50 coins.
                     scanAt = now - 0.25
-                    if settings.mode == "Walk" then
-                        pcall(function(): ()
-                            humanoid:Move(Vector3.zero, false)
-                        end)
-                    else
-                        pcall(function(): ()
-                            root.AssemblyLinearVelocity = Vector3.zero
-                            root.AssemblyAngularVelocity = Vector3.zero
-                        end)
-                    end
+                    holdHiddenUnderMap(character, humanoid, root)
                     setStatus(string.format(
                         "Auto Farm (%s): waiting for coin - bag %d/%d - speed %d u/s - ping %dms",
                         settings.mode, bagAmount, targetLimit,
@@ -1049,6 +1083,11 @@ function Module.init(_runtime: any): any
                     stuckPart = nil
                     return
                 end
+                hideAnchorPosition = Vector3.new(
+                    (nearestPosition :: Vector3).X,
+                    (nearestPosition :: Vector3).Y - (BELOW_OFFSET + 4),
+                    (nearestPosition :: Vector3).Z
+                )
                 local remaining: number
                 local arrived: boolean
                 if settings.mode == "Walk" then
