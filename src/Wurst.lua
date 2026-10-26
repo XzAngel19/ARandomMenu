@@ -222,7 +222,7 @@ local RUNTIME_RAW_BASE: string =
         .. RUNTIME_BRANCH
         .. "/"
 
-local SOURCE_STAMP: string = "v141-20261026-fling-cpu-repair"
+local SOURCE_STAMP: string = "v141-20261026-fling-cpu-safe-pulse"
 
 local BOOT_STARTED_AT: number = os.clock()
 local BOOT_FINGERPRINT_SECONDS: number = 0

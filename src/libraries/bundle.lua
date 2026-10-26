@@ -1,5 +1,5 @@
 return {
-    stamp = "v141-20261026-fling-cpu-repair",
+    stamp = "v141-20261026-fling-cpu-safe-pulse",
     files = {
         ["src/Profile/135856908115931.lua"] = [[
 --!strict
@@ -52541,18 +52541,19 @@ function Module.init(context: any): any
         maybeDisconnectRunSignals()
     end
 
-    local function boundedPulse(linear: Vector3, direction: Vector3): Vector3
-        -- This is the contact impulse used by walk-fling mechanisms, capped
-        -- so a bad input velocity cannot become inf/NaN or an unbounded spike.
-        local pulse: Vector3 = linear * 10000 + Vector3.new(0, 10000, 0)
+    local function boundedPulse(direction: Vector3, speed: number, lift: number): Vector3
+        -- Keep the impulse in the same bounded range as ordinary character
+        -- physics. The timing/contact fix must not be replaced by an extreme
+        -- velocity spike or by multiplying an already-moving assembly.
+        local pulse: Vector3 = Vector3.new(0, lift, 0)
         if direction.Magnitude > 0.001 then
-            pulse += direction.Unit * 1000
+            pulse += direction.Unit * speed
         end
-        if not finiteVector(pulse) or pulse.Magnitude <= 0.001 then
-            return Vector3.new(0, 10000, 0)
+        if not finiteVector(pulse) then
+            return Vector3.zero
         end
-        if pulse.Magnitude > 20000 then
-            pulse = pulse.Unit * 20000
+        if pulse.Magnitude > 250 then
+            pulse = pulse.Unit * 250
         end
         return pulse
     end
@@ -52594,8 +52595,8 @@ function Module.init(context: any): any
         if not savePulse("target", root) then
             return
         end
-        root.AssemblyLinearVelocity = boundedPulse(root.AssemblyLinearVelocity, direction)
-        root.AssemblyAngularVelocity = Vector3.new(0, 10000, 0)
+        root.AssemblyLinearVelocity = boundedPulse(direction, 180, 50)
+        root.AssemblyAngularVelocity = Vector3.new(0, 140, 0)
     end
 
     local function stepTouch(): ()
@@ -52637,6 +52638,7 @@ function Module.init(context: any): any
         if not finiteVector(direction) then
             return
         end
+        direction = Vector3.new(direction.X, 0, direction.Z)
         if direction.Magnitude <= 0.001 then
             local look: Vector3 = root.CFrame.LookVector
             direction = Vector3.new(look.X, 0, look.Z)
@@ -52644,8 +52646,8 @@ function Module.init(context: any): any
         if not savePulse("touch", root) then
             return
         end
-        root.AssemblyLinearVelocity = boundedPulse(root.AssemblyLinearVelocity, direction)
-        root.AssemblyAngularVelocity = Vector3.new(0, 10000, 0)
+        root.AssemblyLinearVelocity = boundedPulse(direction, 150, 70)
+        root.AssemblyAngularVelocity = Vector3.new(0, 120, 0)
         lastTouchPulseAt = now
     end
 

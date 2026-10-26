@@ -21,7 +21,7 @@ TOUCH_SOURCE = (ROOT / "src/games/universal/Blatant/TouchFling.lua").read_text()
 # No global/deprecated legacy mechanism is hidden in the replacement.
 for forbidden in (
     "SetNetworkOwner", "FallenPartsDestroyHeight", "CameraSubject",
-    "BodyVelocity", "BodyGyro", "9e7", "9e8", "12000",
+    "BodyVelocity", "BodyGyro", "9e7", "9e8", "10000", "12000", "20000",
 ):
     assert forbidden not in SOURCE, forbidden
 
@@ -202,8 +202,8 @@ assert(localCharacter.pivotCalls == 1,"one directed contact placement")
 assert(not physics.start(target,{duration=1.4}),"one directed owner")
 PreSimulation:Fire()
 assert(localCharacter.pivotCalls == 1,"no directed contact teleport per tick")
-assert(root.AssemblyLinearVelocity.Magnitude <= 20000,"finite directed pulse cap")
-assert(root.AssemblyAngularVelocity.Magnitude <= 10000,"finite directed angular cap")
+assert(root.AssemblyLinearVelocity.Magnitude < 250,"finite directed pulse cap")
+assert(root.AssemblyAngularVelocity.Magnitude <= 140,"finite directed angular cap")
 PostSimulation:Fire()
 assert(not sameVector(root.AssemblyLinearVelocity,originalLinear),
     "pulse survives PostSimulation for physics/replication")
@@ -250,8 +250,9 @@ assert(sameVector(root.AssemblyLinearVelocity,Vector3.zero),"no contact no pulse
 local beforeTouch = root.Position
 root.Touched:Fire(targetRoot)
 PreSimulation:Fire()
-assert(root.AssemblyLinearVelocity.Magnitude <= 20000,"finite touch pulse cap")
+assert(root.AssemblyLinearVelocity.Magnitude < 250,"finite touch pulse cap")
 assert(root.AssemblyLinearVelocity.Magnitude > 0,"contact produces a pulse")
+assert(root.AssemblyAngularVelocity.Magnitude <= 120,"bounded touch angular pulse")
 assert(closeVector(root.Position,beforeTouch),"touch does not teleport")
 PostSimulation:Fire()
 assert(root.AssemblyLinearVelocity.Magnitude > 0,"touch pulse crosses PostSimulation")
