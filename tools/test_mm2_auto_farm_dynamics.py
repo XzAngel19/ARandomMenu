@@ -147,6 +147,18 @@ local workspace = newInst("Workspace")
 workspace.FallenPartsDestroyHeight = -500
 local map = newInst("Model",workspace)
 map.Name = "Map"
+local workspaceChildScans = 0
+local mapReferenceScans = 0
+local baseWorkspaceChildren = workspace.GetChildren
+function workspace:GetChildren()
+    workspaceChildScans += 1
+    return baseWorkspaceChildren(self)
+end
+local baseMapReference = map.FindFirstChildWhichIsA
+function map:FindFirstChildWhichIsA(className,recursive)
+    mapReferenceScans += 1
+    return baseMapReference(self,className,recursive)
+end
 local spawns = newInst("Folder",map)
 spawns.Name = "Spawns"
 local spawn = newInst("Part",spawns)
@@ -307,7 +319,13 @@ pre(1/60)
 lv = farmLV()
 assert(lv and lv.VectorVelocity.Magnitude == 0,"fixed contact height is stationary")
 local settledPivots = character.pivotCount or 0
+local settledWorkspaceScans = workspaceChildScans
+local settledMapScans = mapReferenceScans
 for _=1,4 do tick(1/60);pre(1/60) end
+assert(workspaceChildScans == settledWorkspaceScans,
+    "lobby scan is cached across physics ticks")
+assert(mapReferenceScans == settledMapScans,
+    "map reference scan is cached across physics ticks")
 assert((character.pivotCount or 0) == settledPivots,"no per-tick CFrame writer")
 assert(farmLV().VectorVelocity.Magnitude == 0,"no vertical oscillation at contact")
 

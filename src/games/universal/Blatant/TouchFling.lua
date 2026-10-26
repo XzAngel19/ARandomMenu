@@ -61,7 +61,7 @@ function Module.init(context: Runtime): any
     )
     addFeatureTooltip(
         TouchFlingFeature,
-        "Uses recent body contact only. Velocity is pulsed during physics and restored immediately afterwards; there are no teleports or ownership requests."
+        "Uses recent body contact only. A capped pulse stays through the physics/replication step and is restored on Heartbeat; there are no teleports or ownership requests."
     )
 
     if state then

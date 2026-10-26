@@ -508,6 +508,16 @@ function Module.init(_runtime: any): any
         local savedRootSize: Vector3? = nil
         local walkLastDistance: number = math.huge
         local walkStuckSince: number = 0
+        local lastNoClipCharacter: Model? = nil
+        local lastNoClipAt: number = -math.huge
+        local lastConstraintVelocity: Vector3? = nil
+        local lastConstraintYaw: number? = nil
+        local lobbyScanAt: number = -math.huge
+        local cachedLobbyPart: BasePart? = nil
+        local cachedMap: Instance? = nil
+        local cachedMapReference: BasePart? = nil
+        local mapReferenceResolved: boolean = false
+        local mapReferenceAt: number = -math.huge
 
         local function yawOf(frame: CFrame): number
             local look: Vector3 = frame.LookVector
@@ -524,6 +534,8 @@ function Module.init(_runtime: any): any
             end
             farmLinearVelocity = nil
             farmAlignOrientation = nil
+            lastConstraintVelocity = nil
+            lastConstraintYaw = nil
             if farmAttachment then
                 pcall(function(): ()
                     farmAttachment:Destroy()
@@ -568,12 +580,34 @@ function Module.init(_runtime: any): any
                     ao.Parent = root
                     farmAlignOrientation = ao
                 end
-                farmLinearVelocity.VectorVelocity = velocity
-                farmAlignOrientation.CFrame = CFrame.Angles(0, yaw, 0)
+                if lastConstraintVelocity ~= velocity then
+                    farmLinearVelocity.VectorVelocity = velocity
+                    lastConstraintVelocity = velocity
+                end
+                if lastConstraintYaw == nil or math.abs(lastConstraintYaw - yaw) > 0.0001 then
+                    farmAlignOrientation.CFrame = CFrame.Angles(0, yaw, 0)
+                    lastConstraintYaw = yaw
+                end
             end)
         end
 
         local function findLobbyReferencePart(): BasePart?
+            local now: number = os.clock()
+            if cachedLobbyPart and cachedLobbyPart.Parent then
+                return cachedLobbyPart
+            end
+            if cachedLobbyPart and not cachedLobbyPart.Parent then
+                cachedLobbyPart = nil
+                lobbyScanAt = -math.huge
+            end
+            if now - lobbyScanAt < 0.75 then
+                return nil
+            end
+            lobbyScanAt = now
+            local function remember(part: BasePart?): BasePart?
+                cachedLobbyPart = part
+                return part
+            end
             local okChildren: boolean, children: any = pcall(function(): any
                 return workspace:GetChildren()
             end)
@@ -591,19 +625,19 @@ function Module.init(_runtime: any): any
                     if votePads then
                         local padPart: BasePart? = votePads:FindFirstChildWhichIsA("BasePart", true)
                         if padPart then
-                            return padPart
+                            return remember(padPart)
                         end
                     end
                     local spawns: Instance? = child:FindFirstChild("Spawns", true)
                     if spawns then
                         local spawnPart: BasePart? = spawns:FindFirstChildWhichIsA("BasePart", true)
                         if spawnPart then
-                            return spawnPart
+                            return remember(spawnPart)
                         end
                     end
                     local anyPart: BasePart? = child:FindFirstChildWhichIsA("BasePart", true)
                     if anyPart then
-                        return anyPart
+                        return remember(anyPart)
                     end
                 end
             end
@@ -685,14 +719,23 @@ function Module.init(_runtime: any): any
         end
 
         local function forceNoClipCharacter(character: Model): ()
+            local now: number = os.clock()
+            if character == lastNoClipCharacter and now - lastNoClipAt < 0.2 then
+                return
+            end
+            lastNoClipCharacter = character
+            lastNoClipAt = now
             for _, object: Instance in ipairs(character:GetDescendants()) do
                 if object:IsA("BasePart") then
-                    if savedCollide[object] == nil then
-                        savedCollide[object] = (object :: BasePart).CanCollide
+                    local part: BasePart = object :: BasePart
+                    if part.CanCollide then
+                        if savedCollide[object] == nil then
+                            savedCollide[object] = true
+                        end
+                        pcall(function(): ()
+                            part.CanCollide = false
+                        end)
                     end
-                    pcall(function(): ()
-                        (object :: BasePart).CanCollide = false
-                    end)
                 end
             end
         end
@@ -741,6 +784,14 @@ function Module.init(_runtime: any): any
             if not map then
                 return false
             end
+            if map ~= cachedMap then
+                cachedMap = map
+                cachedMapReference = nil
+                mapReferenceResolved = false
+                mapReferenceAt = -math.huge
+                cachedLobbyPart = nil
+                lobbyScanAt = -math.huge
+            end
             -- Proximity is only a secondary check. A loaded map or a
             -- nearby spawn must never make lobby/ended-round actions legal.
             if type(isRoundLifecycleActive) ~= "function"
@@ -783,20 +834,30 @@ function Module.init(_runtime: any): any
                     return true
                 end
             end
-            local refPart: BasePart? = nil
-            local spawns: Instance? = (map :: Instance):FindFirstChild("Spawns")
-            if spawns then
-                refPart = spawns:FindFirstChildWhichIsA("BasePart", true)
+            if cachedMapReference and not cachedMapReference.Parent then
+                cachedMapReference = nil
+                mapReferenceResolved = false
             end
-            if not refPart then
-                local coinContainer: Instance? = (map :: Instance):FindFirstChild("CoinContainer")
-                if coinContainer then
-                    refPart = coinContainer:FindFirstChildWhichIsA("BasePart", true)
+            if not mapReferenceResolved
+                or (not cachedMapReference and os.clock() - mapReferenceAt > 1) then
+                mapReferenceResolved = true
+                mapReferenceAt = os.clock()
+                cachedMapReference = nil
+                local spawns: Instance? = (map :: Instance):FindFirstChild("Spawns")
+                if spawns then
+                    cachedMapReference = spawns:FindFirstChildWhichIsA("BasePart", true)
+                end
+                if not cachedMapReference then
+                    local coinContainer: Instance? = (map :: Instance):FindFirstChild("CoinContainer")
+                    if coinContainer then
+                        cachedMapReference = coinContainer:FindFirstChildWhichIsA("BasePart", true)
+                    end
+                end
+                if not cachedMapReference then
+                    cachedMapReference = (map :: Instance):FindFirstChildWhichIsA("BasePart", true)
                 end
             end
-            if not refPart then
-                refPart = (map :: Instance):FindFirstChildWhichIsA("BasePart", true)
-            end
+            local refPart: BasePart? = cachedMapReference
             if refPart then
                 local okDist: boolean, dist: any = pcall(function(): any
                     return (root.Position - refPart.Position).Magnitude
@@ -823,6 +884,8 @@ function Module.init(_runtime: any): any
             belowDestination = nil
             belowHold = false
             destroyFarmConstraints()
+            lastNoClipCharacter = nil
+            lastNoClipAt = -math.huge
             local character: Model?, humanoid: Humanoid?, root: BasePart? =
                 characterParts()
             local canReposition: boolean = root ~= nil and humanoid ~= nil

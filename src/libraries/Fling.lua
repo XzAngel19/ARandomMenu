@@ -7,11 +7,10 @@ local Module = {
 
 local activeLibrary: any = nil
 
--- Shared owner for directed MM2 contact and universal Touch Fling. High
--- velocities exist only between PreSimulation and PostSimulation, so physics
--- can transfer momentum without accumulating a launch on the local assembly.
--- No ownership requests, remotes, camera writes, global destroy-height changes,
--- deprecated body movers or target-humanoid velocity writes are used.
+-- One owner for directed MM2 contact and universal Touch Fling. A pulse is
+-- applied before physics and remains in place through Heartbeat, when the
+-- engine has had a chance to simulate/replicate it. There is no always-on
+-- loop, target-humanoid writer, ownership request or global physics change.
 function Module.init(context: any): any
     local host: any = context.host or context
     local RunService: any = host.RunService
@@ -20,8 +19,8 @@ function Module.init(context: any): any
     local services: any = context.services or host.services
     local activity: any = services and services.activity
 
-    assert(RunService and RunService.PreSimulation and RunService.PostSimulation,
-        "Fling physics requires PreSimulation and PostSimulation")
+    assert(RunService and RunService.PreSimulation and RunService.Heartbeat,
+        "Fling physics requires PreSimulation and Heartbeat")
 
     local currentSession: any = nil
     local pulseBackup: any = nil
@@ -30,7 +29,16 @@ function Module.init(context: any): any
     local touchEnabled: boolean = false
     local touchCharacter: Model? = nil
     local touchConnections: {RBXScriptConnection} = {}
-    local touchContacts: {[Player]: number} = {}
+    local touchContacts: {[Player]: {at: number}} = {}
+    local touchCollisions: {[BasePart]: {canCollide: boolean, canTouch: boolean}} = {}
+    local touchBoundParts: {[BasePart]: boolean} = {}
+    local lastTouchPulseAt: number = -math.huge
+
+    local preConnection: RBXScriptConnection? = nil
+    local heartbeatConnection: RBXScriptConnection? = nil
+    local characterConnection: RBXScriptConnection? = nil
+    local ensureRunSignals: () -> ()
+    local setTouchEnabled: (enabled: boolean) -> ()
 
     local function setActivity(): ()
         if activity and type(activity.set) == "function" then
@@ -101,6 +109,50 @@ function Module.init(context: any): any
         return true
     end
 
+    local function disconnectRunSignals(): ()
+        if preConnection then
+            preConnection:Disconnect()
+            preConnection = nil
+        end
+        if heartbeatConnection then
+            heartbeatConnection:Disconnect()
+            heartbeatConnection = nil
+        end
+        if characterConnection then
+            characterConnection:Disconnect()
+            characterConnection = nil
+        end
+    end
+
+    local function maybeDisconnectRunSignals(): ()
+        if not currentSession and not touchEnabled then
+            disconnectRunSignals()
+        end
+    end
+
+    local function restoreTouchCollisions(): ()
+        for part: BasePart, snapshot: any in pairs(touchCollisions) do
+            if part.Parent then
+                pcall(function(): ()
+                    part.CanCollide = snapshot.canCollide
+                    part.CanTouch = snapshot.canTouch
+                end)
+            end
+        end
+        table.clear(touchCollisions)
+        table.clear(touchBoundParts)
+    end
+
+    local function disconnectTouch(): ()
+        for _, connection: RBXScriptConnection in ipairs(touchConnections) do
+            connection:Disconnect()
+        end
+        table.clear(touchConnections)
+        table.clear(touchContacts)
+        touchCharacter = nil
+        restoreTouchCollisions()
+    end
+
     local function finishSession(reason: string): ()
         local session: any = currentSession
         if not session then
@@ -111,10 +163,11 @@ function Module.init(context: any): any
             restorePulse()
         end
 
-        for part: BasePart, canCollide: boolean in pairs(session.collisions) do
+        for part: BasePart, snapshot: any in pairs(session.collisions) do
             if part.Parent then
                 pcall(function(): ()
-                    part.CanCollide = canCollide
+                    part.CanCollide = snapshot.canCollide
+                    part.CanTouch = snapshot.canTouch
                 end)
             end
         end
@@ -124,6 +177,7 @@ function Module.init(context: any): any
         if humanoid and humanoid.Parent then
             pcall(function(): ()
                 humanoid.AutoRotate = session.autoRotate
+                humanoid.Sit = session.wasSitting
                 humanoid:SetStateEnabled(
                     Enum.HumanoidStateType.Seated,
                     session.seatedEnabled
@@ -132,18 +186,21 @@ function Module.init(context: any): any
             end)
         end
 
-        local _, livingHumanoid: Humanoid?, root: BasePart? = livingParts(LocalPlayer)
-        if root and livingHumanoid and LocalPlayer.Character == session.character
-            and root == session.root then
+        local character: Model?, livingHumanoid: Humanoid?, root: BasePart? =
+            getParts(LocalPlayer)
+        if character == session.character and root == session.root and root
+            and root.Parent then
             pcall(function(): ()
                 root.AssemblyLinearVelocity = Vector3.zero
                 root.AssemblyAngularVelocity = Vector3.zero
-                if reason ~= "lost-local" and session.restorePosition ~= false then
+                if reason ~= "lost-local" and session.restorePosition ~= false
+                    and livingHumanoid and livingHumanoid.Health > 0 then
                     session.character:PivotTo(session.returnCFrame)
                 end
             end)
         end
         setActivity()
+        maybeDisconnectRunSignals()
     end
 
     local function cancel(): ()
@@ -153,6 +210,9 @@ function Module.init(context: any): any
     local function start(target: Player?, options: {[string]: any}?): boolean
         if destroyed or currentSession or not target or target == LocalPlayer then
             return false
+        end
+        if touchEnabled then
+            setTouchEnabled(false)
         end
         local targetCharacter: Model?, targetHumanoid: Humanoid?, targetRoot: BasePart? =
             livingParts(target)
@@ -168,6 +228,16 @@ function Module.init(context: any): any
         if duration ~= duration or math.abs(duration) == math.huge then
             duration = 1.4
         end
+        duration = math.clamp(duration, 0.1, 3)
+        local targetPosition: Vector3 = targetRoot.Position
+        local contactPosition: Vector3 =
+            (targetRoot.CFrame * CFrame.new(0, 0, 2.2)).Position
+        if not finiteVector(targetPosition) or not finiteVector(contactPosition)
+            or not finiteVector(root.Position)
+            or (targetPosition - root.Position).Magnitude > 650 then
+            return false
+        end
+
         local seatedEnabled: boolean = true
         pcall(function(): ()
             seatedEnabled = humanoid:GetStateEnabled(Enum.HumanoidStateType.Seated)
@@ -184,35 +254,47 @@ function Module.init(context: any): any
                 then settings.returnCFrame else root.CFrame,
             restorePosition = settings.restorePosition ~= false,
             shouldStop = settings.shouldStop,
-            duration = math.clamp(duration, 0.1, 3),
+            duration = duration,
             startedAt = os.clock(),
             collisions = {},
             autoRotate = humanoid.AutoRotate,
+            wasSitting = humanoid.Sit,
             seatedEnabled = seatedEnabled,
         }
 
         for _, object: Instance in ipairs(character:GetChildren()) do
             if object:IsA("BasePart") then
                 local part: BasePart = object :: BasePart
-                session.collisions[part] = part.CanCollide
+                session.collisions[part] = {
+                    canCollide = part.CanCollide,
+                    canTouch = part.CanTouch,
+                }
                 part.CanCollide = true
+                part.CanTouch = true
             end
         end
         humanoid.AutoRotate = false
+        humanoid.Sit = false
         humanoid:SetStateEnabled(Enum.HumanoidStateType.Seated, false)
         humanoid:ChangeState(Enum.HumanoidStateType.Physics)
+
+        -- A directed action gets one contact placement. It is never a
+        -- per-frame CFrame writer; subsequent motion is only the pulse.
         currentSession = session
+        local placed: boolean = pcall(function(): ()
+            character:PivotTo(CFrame.lookAt(contactPosition, targetPosition))
+        end)
+        if not placed then
+            finishSession("error")
+            return false
+        end
+        local connected: boolean = pcall(ensureRunSignals)
+        if not connected then
+            finishSession("error")
+            return false
+        end
         setActivity()
         return true
-    end
-
-    local function disconnectTouch(): ()
-        for _, connection: RBXScriptConnection in ipairs(touchConnections) do
-            connection:Disconnect()
-        end
-        table.clear(touchConnections)
-        table.clear(touchContacts)
-        touchCharacter = nil
     end
 
     local function noteTouch(hit: BasePart): ()
@@ -236,11 +318,21 @@ function Module.init(context: any): any
             return Players:GetPlayerFromCharacter(model)
         end)
         if ok and player and player ~= LocalPlayer then
-            touchContacts[player] = os.clock()
+            touchContacts[player] = {at = os.clock()}
         end
     end
 
     local function bindTouchPart(part: BasePart): ()
+        if touchBoundParts[part] then
+            return
+        end
+        touchBoundParts[part] = true
+        touchCollisions[part] = {
+            canCollide = part.CanCollide,
+            canTouch = part.CanTouch,
+        }
+        part.CanCollide = true
+        part.CanTouch = true
         table.insert(touchConnections, part.Touched:Connect(noteTouch))
     end
 
@@ -273,13 +365,15 @@ function Module.init(context: any): any
         end))
     end
 
-    local function setTouchEnabled(enabled: boolean): ()
+    setTouchEnabled = function(enabled: boolean): ()
         local wanted: boolean = enabled == true
-        if touchEnabled == wanted then
+        if touchEnabled == wanted or (destroyed and wanted) then
             return
         end
         touchEnabled = wanted
+        lastTouchPulseAt = -math.huge
         if touchEnabled then
+            ensureRunSignals()
             bindTouchCharacter()
         else
             disconnectTouch()
@@ -288,6 +382,23 @@ function Module.init(context: any): any
             end
         end
         setActivity()
+        maybeDisconnectRunSignals()
+    end
+
+    local function boundedPulse(linear: Vector3, direction: Vector3): Vector3
+        -- This is the contact impulse used by walk-fling mechanisms, capped
+        -- so a bad input velocity cannot become inf/NaN or an unbounded spike.
+        local pulse: Vector3 = linear * 10000 + Vector3.new(0, 10000, 0)
+        if direction.Magnitude > 0.001 then
+            pulse += direction.Unit * 1000
+        end
+        if not finiteVector(pulse) or pulse.Magnitude <= 0.001 then
+            return Vector3.new(0, 10000, 0)
+        end
+        if pulse.Magnitude > 20000 then
+            pulse = pulse.Unit * 20000
+        end
+        return pulse
     end
 
     local function stepTarget(session: any): ()
@@ -318,40 +429,21 @@ function Module.init(context: any): any
         end
 
         local targetPosition: Vector3 = session.targetRoot.Position
-        local contactPosition: Vector3 =
-            (session.targetRoot.CFrame * CFrame.new(0, 0, 2.2)).Position
-        if not finiteVector(targetPosition) or not finiteVector(contactPosition)
-            or not finiteVector(root.Position) then
-            finishSession("invalid-target")
+        local direction: Vector3 = targetPosition - root.Position
+        if not finiteVector(targetPosition) or not finiteVector(direction)
+            or direction.Magnitude > 14 then
+            finishSession("lost-contact")
             return
         end
-        local toContact: Vector3 = contactPosition - root.Position
-        local distance: number = toContact.Magnitude
         if not savePulse("target", root) then
             return
         end
-        if distance > 4.5 then
-            -- Approach through the physics step only. Never solve contact by
-            -- teleporting the local assembly to the target every frame.
-            local approachSpeed: number = math.min(220, math.max(40, distance * 10))
-            root.AssemblyLinearVelocity = toContact.Unit * approachSpeed
-            root.AssemblyAngularVelocity = Vector3.zero
-            return
-        end
-        local towards: Vector3 = targetPosition - root.Position
-        if towards.Magnitude <= 0.001 then
-            towards = session.targetRoot.CFrame.LookVector
-        end
-        if towards.Magnitude <= 0.001 then
-            restorePulse()
-            return
-        end
-        root.AssemblyLinearVelocity = towards.Unit * 180 + Vector3.new(0, 50, 0)
-        root.AssemblyAngularVelocity = Vector3.new(0, 140, 0)
+        root.AssemblyLinearVelocity = boundedPulse(root.AssemblyLinearVelocity, direction)
+        root.AssemblyAngularVelocity = Vector3.new(0, 10000, 0)
     end
 
     local function stepTouch(): ()
-        if not touchEnabled or pulseBackup then
+        if not touchEnabled then
             return
         end
         if touchCharacter ~= LocalPlayer.Character then
@@ -363,15 +455,18 @@ function Module.init(context: any): any
         end
 
         local now: number = os.clock()
+        if now - lastTouchPulseAt < 1 / 30 then
+            return
+        end
         local contactRoot: BasePart? = nil
-        local newest: number = 0
-        for player: Player, touchedAt: number in pairs(touchContacts) do
+        local newest: number = -math.huge
+        for player: Player, contact: {at: number} in pairs(touchContacts) do
             local _, targetHumanoid: Humanoid?, targetRoot: BasePart? =
                 livingParts(player)
-            if now - touchedAt <= 0.3 and targetHumanoid and targetRoot
-                and (targetRoot.Position - root.Position).Magnitude <= 8 then
-                if touchedAt > newest then
-                    newest = touchedAt
+            if now - contact.at <= 0.25 and targetHumanoid and targetRoot
+                and (targetRoot.Position - root.Position).Magnitude <= 14 then
+                if contact.at > newest then
+                    newest = contact.at
                     contactRoot = targetRoot
                 end
             else
@@ -383,47 +478,60 @@ function Module.init(context: any): any
         end
 
         local direction: Vector3 = contactRoot.Position - root.Position
-        direction = Vector3.new(direction.X, 0, direction.Z)
+        if not finiteVector(direction) then
+            return
+        end
         if direction.Magnitude <= 0.001 then
             local look: Vector3 = root.CFrame.LookVector
             direction = Vector3.new(look.X, 0, look.Z)
         end
-        if direction.Magnitude <= 0.001 or not savePulse("touch", root) then
+        if not savePulse("touch", root) then
             return
         end
-        root.AssemblyLinearVelocity = direction.Unit * 150 + Vector3.new(0, 70, 0)
-        root.AssemblyAngularVelocity = Vector3.new(0, 120, 0)
+        root.AssemblyLinearVelocity = boundedPulse(root.AssemblyLinearVelocity, direction)
+        root.AssemblyAngularVelocity = Vector3.new(0, 10000, 0)
+        lastTouchPulseAt = now
     end
 
-    local preConnection: RBXScriptConnection = RunService.PreSimulation:Connect(function(): ()
-        if destroyed then
+    ensureRunSignals = function(): ()
+        if preConnection then
             return
         end
-        if currentSession then
-            local session: any = currentSession
-            local ok: boolean = pcall(stepTarget, session)
-            if not ok and currentSession == session then
-                finishSession("error")
+        preConnection = RunService.PreSimulation:Connect(function(): ()
+            if destroyed then
+                return
             end
-        elseif touchEnabled then
-            local ok: boolean = pcall(stepTouch)
-            if not ok then
-                setTouchEnabled(false)
+            -- Also protects against a missed Heartbeat after a character or
+            -- executor timing anomaly; no stale pulse crosses two frames.
+            restorePulse()
+            if currentSession then
+                local session: any = currentSession
+                local ok: boolean = pcall(stepTarget, session)
+                if not ok and currentSession == session then
+                    finishSession("error")
+                end
+            elseif touchEnabled then
+                local ok: boolean = pcall(stepTouch)
+                if not ok then
+                    setTouchEnabled(false)
+                    restorePulse()
+                end
+            end
+        end)
+        heartbeatConnection = RunService.Heartbeat:Connect(function(): ()
+            if not destroyed then
                 restorePulse()
             end
-        end
-    end)
-    local postConnection: RBXScriptConnection = RunService.PostSimulation:Connect(function(): ()
-        restorePulse()
-    end)
-    local characterConnection: RBXScriptConnection = LocalPlayer.CharacterAdded:Connect(function(): ()
-        if currentSession then
-            finishSession("lost-local")
-        end
-        if touchEnabled then
-            bindTouchCharacter()
-        end
-    end)
+        end)
+        characterConnection = LocalPlayer.CharacterAdded:Connect(function(): ()
+            if currentSession then
+                finishSession("lost-local")
+            end
+            if touchEnabled then
+                bindTouchCharacter()
+            end
+        end)
+    end
 
     local library: any = {}
     function library.start(target: Player?, options: {[string]: any}?): boolean
@@ -449,9 +557,7 @@ function Module.init(context: any): any
         setTouchEnabled(false)
         finishSession("destroyed")
         restorePulse()
-        preConnection:Disconnect()
-        postConnection:Disconnect()
-        characterConnection:Disconnect()
+        disconnectRunSignals()
         setActivity()
         if activeLibrary == library then
             activeLibrary = nil

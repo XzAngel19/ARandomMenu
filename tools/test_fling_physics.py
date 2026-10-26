@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Exercise the shared Fling controller, not a copy of its algorithm.
+"""Exercise the real shared Fling controller with deterministic physics mocks.
 
-The mocks prove local physics ownership and cleanup only. They do not prove
-server-side knockback, damage, kills, coins or wins.
+These tests cover ownership, contact gating, pulse timing and cleanup only.
+They do not prove server-side knockback, damage, kills, coins or wins.
 """
 from __future__ import annotations
 
@@ -16,16 +16,16 @@ from test_mm2_precision import PRELUDE
 ROOT = Path(__file__).resolve().parents[1]
 SOURCE = (ROOT / "src/libraries/Fling.lua").read_text()
 MM2_SOURCE = (ROOT / "src/games/MM2/Blatant/Fling.lua").read_text()
+TOUCH_SOURCE = (ROOT / "src/games/universal/Blatant/TouchFling.lua").read_text()
 
-# Keep dangerous legacy mechanisms out of the shared implementation.
+# No global/deprecated legacy mechanism is hidden in the replacement.
 for forbidden in (
     "SetNetworkOwner", "FallenPartsDestroyHeight", "CameraSubject",
-    "BodyVelocity", "BodyGyro", "9e7", "9e8", "10000", "12000",
+    "BodyVelocity", "BodyGyro", "9e7", "9e8", "12000",
 ):
     assert forbidden not in SOURCE, forbidden
 
 script = PRELUDE + r'''
--- CFrame and instance mocks with real signal/callback behavior.
 local cfMt = {}
 cfMt.__index = cfMt
 cfMt.__mul = function(a,b) return CFrame.new(a.Position + b.Position) end
@@ -62,6 +62,13 @@ local function signal()
         end
     end
     return s
+end
+local function liveConnections(s)
+    local count = 0
+    for _,c in ipairs(s.callbacks) do
+        if c.Connected then count += 1 end
+    end
+    return count
 end
 
 local function adopt(child,parent)
@@ -132,6 +139,7 @@ local function makeRig(name,position)
     root.Name = "HumanoidRootPart"
     root.Size = Vector3.new(2,2,1)
     root.CanCollide = false
+    root.CanTouch = false
     root.Anchored = false
     root.Position = position
     root.CFrame = CFrame.new(position)
@@ -141,6 +149,7 @@ local function makeRig(name,position)
     local body = instance("Part",character)
     body.Name = "UpperTorso"
     body.CanCollide = true
+    body.CanTouch = false
     body.Position = position
     body.CFrame = CFrame.new(position)
     body.AssemblyLinearVelocity = Vector3.zero
@@ -161,18 +170,20 @@ function Players:GetPlayerFromCharacter(character)
     if character == targetCharacter then return target end
     return nil
 end
-local PreSimulation,PostSimulation = signal(),signal()
+local PreSimulation,PostSimulation,Heartbeat = signal(),signal(),signal()
 local activityValue = false
 local activity = {set=function(name,value)
     assert(name == "fling")
     activityValue = value
 end}
-local RunService = {PreSimulation=PreSimulation,PostSimulation=PostSimulation}
+local RunService = {PreSimulation=PreSimulation,PostSimulation=PostSimulation,Heartbeat=Heartbeat}
 local host = {RunService=RunService,Players=Players,LocalPlayer=LocalPlayer}
 local Module = (function()
 '''+SOURCE+r'''
 end)()
 local physics = Module.init({host=host,services={activity=activity}})
+assert(liveConnections(PreSimulation) == 0 and liveConnections(Heartbeat) == 0,
+    "Fling must not connect physics signals while OFF")
 local function sameVector(a,b)
     return a.X == b.X and a.Y == b.Y and a.Z == b.Z
 end
@@ -180,41 +191,47 @@ local function closeVector(a,b,epsilon)
     return (a-b).Magnitude <= (epsilon or 0.001)
 end
 
--- Directed pulse: bounded during physics, original local velocity after.
+-- Directed contact is placed once, then pulsed without a per-frame CFrame writer.
 local home = root.CFrame
 local originalLinear = Vector3.new(4,0,0)
 local originalAngular = Vector3.new(1,0,0)
 root.AssemblyLinearVelocity = originalLinear
 root.AssemblyAngularVelocity = originalAngular
 assert(physics.start(target,{duration=1.4}))
+assert(localCharacter.pivotCalls == 1,"one directed contact placement")
 assert(not physics.start(target,{duration=1.4}),"one directed owner")
-localCharacter.pivotCalls = 0
 PreSimulation:Fire()
-assert(localCharacter.pivotCalls == 0,"directed approach has no contact teleport")
-assert(root.AssemblyLinearVelocity.Magnitude < 250,"bounded directed pulse")
-assert(root.AssemblyAngularVelocity.Magnitude <= 140,"bounded directed angular pulse")
+assert(localCharacter.pivotCalls == 1,"no directed contact teleport per tick")
+assert(root.AssemblyLinearVelocity.Magnitude <= 20000,"finite directed pulse cap")
+assert(root.AssemblyAngularVelocity.Magnitude <= 10000,"finite directed angular cap")
 PostSimulation:Fire()
-assert(sameVector(root.AssemblyLinearVelocity,originalLinear),"post restores linear")
-assert(sameVector(root.AssemblyAngularVelocity,originalAngular),"post restores angular")
+assert(not sameVector(root.AssemblyLinearVelocity,originalLinear),
+    "pulse survives PostSimulation for physics/replication")
+Heartbeat:Fire()
+assert(sameVector(root.AssemblyLinearVelocity,originalLinear),"Heartbeat restores linear")
+assert(sameVector(root.AssemblyAngularVelocity,originalAngular),"Heartbeat restores angular")
 physics.cancel()
 assert(not physics.isRunning() and not activityValue)
+assert(liveConnections(PreSimulation) == 0 and liveConnections(Heartbeat) == 0,
+    "directed cleanup disconnects signals")
 assert(closeVector(root.Position,home.Position),"cancel returns home")
 assert(sameVector(root.AssemblyLinearVelocity,Vector3.zero),"cancel stops local motion")
-assert(body.CanCollide == true and humanoid.AutoRotate == true,"snapshots restored")
-pass("directed Pre/Post pulse, one owner, return and snapshot cleanup")
+assert(body.CanCollide == true and body.CanTouch == false and humanoid.AutoRotate == true,
+    "directed snapshots restored")
+pass("directed contact pulse, one placement, Heartbeat restore and cleanup")
 
 -- Death and target loss cancel without a delayed action.
 humanoid.Health = 100
 assert(physics.start(target,{duration=1.4}))
 humanoid.Health = 0
 PreSimulation:Fire()
-PostSimulation:Fire()
+Heartbeat:Fire()
 assert(not physics.isRunning() and not activityValue,"death cancels")
 humanoid.Health = 100
 assert(physics.start(target,{duration=1.4}))
 targetHumanoid.Health = 0
 PreSimulation:Fire()
-PostSimulation:Fire()
+Heartbeat:Fire()
 assert(not physics.isRunning(),"target death cancels")
 targetHumanoid.Health = 100
 pass("local death and target death cancel sessions")
@@ -226,27 +243,60 @@ root.AssemblyLinearVelocity = Vector3.zero
 root.AssemblyAngularVelocity = Vector3.zero
 physics.setTouchEnabled(true)
 assert(physics.isTouchEnabled() and activityValue)
+assert(liveConnections(PreSimulation) == 1 and liveConnections(Heartbeat) == 1,
+    "Touch owns signals only while enabled")
 PreSimulation:Fire()
 assert(sameVector(root.AssemblyLinearVelocity,Vector3.zero),"no contact no pulse")
 local beforeTouch = root.Position
 root.Touched:Fire(targetRoot)
 PreSimulation:Fire()
-assert(root.AssemblyLinearVelocity.Magnitude < 250,"bounded touch pulse")
+assert(root.AssemblyLinearVelocity.Magnitude <= 20000,"finite touch pulse cap")
+assert(root.AssemblyLinearVelocity.Magnitude > 0,"contact produces a pulse")
 assert(closeVector(root.Position,beforeTouch),"touch does not teleport")
 PostSimulation:Fire()
-assert(sameVector(root.AssemblyLinearVelocity,Vector3.zero),"touch restores after physics")
+assert(root.AssemblyLinearVelocity.Magnitude > 0,"touch pulse crosses PostSimulation")
+Heartbeat:Fire()
+assert(sameVector(root.AssemblyLinearVelocity,Vector3.zero),"touch restores after Heartbeat")
 physics.setTouchEnabled(false)
 assert(not physics.isTouchEnabled() and not activityValue)
+assert(body.CanCollide == true and body.CanTouch == false and root.CanTouch == false,
+    "Touch collision and CanTouch snapshots restored")
+assert(liveConnections(PreSimulation) == 0 and liveConnections(Heartbeat) == 0,
+    "Touch OFF disconnects signals")
 PreSimulation:Fire()
 assert(sameVector(root.AssemblyLinearVelocity,Vector3.zero),"OFF is inert")
 pass("touch requires contact, is bounded, non-teleporting and OFF-safe")
 
--- Destroy disconnects both physics signals and restores any active session.
+-- Exercise the actual universal card wiring, not only the library API.
+local universalState = {flingPhysics=physics,toggleControls={}}
+host.state = universalState
+host.configData = {states={}}
+host.addFeatureTooltip = function() end
+local touchCard = nil
+host.createUniversalFeature = function(_name,_description,_order,callback,_config)
+    touchCard = {onToggle=callback}
+    function touchCard:SetStatus(value) self.status=value end
+    return touchCard
+end
+local TouchModule = (function()
+'''+TOUCH_SOURCE+r'''
+end)()
+TouchModule.init({host=host})
+assert(type(universalState.setTouchFlingEnabled) == "function")
+touchCard.onToggle(true)
+assert(physics.isTouchEnabled() and touchCard.status == "ON",
+    "universal Touch card enables the shared controller")
+touchCard.onToggle(false)
+assert(not physics.isTouchEnabled(),"universal Touch card disables the controller")
+TouchModule.destroy()
+pass("universal Touch card wires ON/OFF and cleanup")
+
+-- Destroy disconnects signals and restores any active Touch pulse.
 physics.setTouchEnabled(true)
 root.Touched:Fire(targetRoot)
 PreSimulation:Fire()
 physics.destroy()
-PostSimulation:Fire()
+Heartbeat:Fire()
 assert(not physics.isTouchEnabled() and not activityValue)
 assert(sameVector(root.AssemblyLinearVelocity,Vector3.zero),"destroy restores pulse")
 local saved = root.AssemblyLinearVelocity
@@ -329,18 +379,20 @@ physics.cancel()
 assert(not physics.isRunning())
 pass("MM2 wrapper rejects lobby, death and self target and deduplicates sessions")
 
--- task.wait advances the fake clock and pumps the actual Pre/Post signals.
+-- task.wait advances the fake clock and pumps Pre/Post/Heartbeat.
 task = {wait=function(dt)
     now += (dt or 1/60)
     PreSimulation:Fire()
     PostSimulation:Fire()
+    Heartbeat:Fire()
 end,spawn=function(fn,...) return fn(...) end}
 localCharacter.pivotCalls = 0
 assert(state.mm2PerformFling(target,{
     silent=true,blocking=true,duration=0.1,restorePosition=false,
 }))
 assert(not physics.isRunning(),"blocking waits for bounded session")
-assert(localCharacter.pivotCalls == 0,"Auto Farm cancellation path has no controller teleport")
+assert(localCharacter.pivotCalls == 1,
+    "Auto Farm path has one live contact placement and no cancellation return")
 assert(sameVector(root.AssemblyLinearVelocity,Vector3.zero),"blocking return stops velocity")
 MM2Module.destroy()
 assert(state.mm2PerformFling==nil,"MM2 cleanup removes export")
