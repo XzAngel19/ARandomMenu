@@ -412,6 +412,7 @@ function Module.init(_runtime: any): any
 
     local function toggleAutoFarm(enabled: boolean): ()
         disconnectFeatureConnection("MM2AutoFarmTick")
+        disconnectFeatureConnection("MM2AutoFarmStepped")
         disconnectFeatureConnection("MM2AutoFarmCoinCollected")
         -- Invokes the restore closure the previous enable registered:
         -- collisions, PlatformStand, AutoRotate and the root all go
@@ -447,6 +448,7 @@ function Module.init(_runtime: any): any
         local homeCharacter: Model? = nil
         local hideAnchorPosition: Vector3? = nil
         local hiddenUnderMap: boolean = false
+        local firstCoinSeenThisRound: boolean = false
         local savedCollide: {[Instance]: boolean} = {}
         local engagedMode: string? = nil
         local savedWalkSpeed: number? = nil
@@ -459,11 +461,59 @@ function Module.init(_runtime: any): any
             return math.atan2(-look.X, -look.Z)
         end
 
+        local function findLobbyReferencePart(): BasePart?
+            local okChildren: boolean, children: any = pcall(function(): any
+                return workspace:GetChildren()
+            end)
+            if not okChildren or type(children) ~= "table" then
+                return nil
+            end
+            for _, child: Instance in ipairs(children) do
+                local lowerName: string = string.lower(tostring(child.Name))
+                local isLobby: boolean = string.find(lowerName, "lobby", 1, true) ~= nil
+                    or child:FindFirstChild("VotePads", true) ~= nil
+                    or child:FindFirstChild("VotePad1", true) ~= nil
+                    or child:FindFirstChild("VoteIcons", true) ~= nil
+                if isLobby then
+                    local votePads: Instance? = child:FindFirstChild("VotePads", true)
+                    if votePads then
+                        local padPart: BasePart? = votePads:FindFirstChildWhichIsA("BasePart", true)
+                        if padPart then
+                            return padPart
+                        end
+                    end
+                    local spawns: Instance? = child:FindFirstChild("Spawns", true)
+                    if spawns then
+                        local spawnPart: BasePart? = spawns:FindFirstChildWhichIsA("BasePart", true)
+                        if spawnPart then
+                            return spawnPart
+                        end
+                    end
+                    local anyPart: BasePart? = child:FindFirstChildWhichIsA("BasePart", true)
+                    if anyPart then
+                        return anyPart
+                    end
+                end
+            end
+            return nil
+        end
+
+        -- Resolves a safe indoor floor position without ever raycasting from
+        -- above the building roof (which would put the player on top of the map).
         local function resolveSafeAboveGroundPosition(
             candidatePos: Vector3,
             character: Model?
         ): Vector3
+            if homeCFrame then
+                local dx: number = candidatePos.X - homeCFrame.Position.X
+                local dz: number = candidatePos.Z - homeCFrame.Position.Z
+                if (dx * dx + dz * dz) <= 36 then
+                    return Vector3.new(candidatePos.X, homeCFrame.Position.Y, candidatePos.Z)
+                end
+            end
             local resolvedY: number = candidatePos.Y
+            local wasUnderground: boolean = hiddenUnderMap or engagedMode == "Below"
+            local probeRaise: number = if wasUnderground then (BELOW_OFFSET + 4.5) else 2.5
             local foundFloor: boolean = false
             pcall(function(): ()
                 if type(workspace.Raycast) == "function" and type(RaycastParams) == "table" then
@@ -481,38 +531,25 @@ function Module.init(_runtime: any): any
                     params.IgnoreWater = true
                     local rayOrigin: Vector3 = Vector3.new(
                         candidatePos.X,
-                        math.max(candidatePos.Y + 28, (homeCFrame and homeCFrame.Position.Y or candidatePos.Y) + 28),
+                        candidatePos.Y + probeRaise,
                         candidatePos.Z
                     )
                     local hit: any = workspace:Raycast(
                         rayOrigin,
-                        Vector3.new(0, -140, 0),
+                        Vector3.new(0, -(probeRaise + 8), 0),
                         params
                     )
                     if hit and typeof(hit.Position) == "Vector3" then
-                        local safeFloorY: number = hit.Position.Y + 3.5
-                        if resolvedY < safeFloorY then
-                            resolvedY = safeFloorY
-                        end
+                        resolvedY = hit.Position.Y + 3.2
                         foundFloor = true
                     end
                 end
             end)
-            if not foundFloor then
-                if homeCFrame and homeCFrame.Position.Y > resolvedY + 1.5 then
+            if not foundFloor and wasUnderground then
+                if homeCFrame then
                     resolvedY = homeCFrame.Position.Y
-                elseif hiddenUnderMap then
-                    resolvedY = candidatePos.Y + BELOW_OFFSET + 4.5
-                end
-                if type(findMM2Map) == "function" then
-                    pcall(function(): ()
-                        local map: Instance? = findMM2Map()
-                        local spawns: Instance? = map and (map :: Instance):FindFirstChild("Spawns")
-                        local spawnPart: BasePart? = spawns and spawns:FindFirstChildWhichIsA("BasePart")
-                        if spawnPart and resolvedY < spawnPart.Position.Y - 1.5 then
-                            resolvedY = spawnPart.Position.Y + 3.5
-                        end
-                    end)
+                else
+                    resolvedY = candidatePos.Y + BELOW_OFFSET + 4.0
                 end
             end
             return Vector3.new(candidatePos.X, resolvedY, candidatePos.Z)
@@ -528,12 +565,7 @@ function Module.init(_runtime: any): any
             return root.Position - Vector3.new(0, BELOW_OFFSET + 4, 0)
         end
 
-        local function holdHiddenUnderMap(
-            character: Model,
-            humanoid: Humanoid,
-            root: BasePart
-        ): ()
-            hiddenUnderMap = true
+        local function forceNoClipCharacter(character: Model): ()
             for _, object: Instance in ipairs(character:GetDescendants()) do
                 if object:IsA("BasePart") then
                     if savedCollide[object] == nil then
@@ -544,6 +576,15 @@ function Module.init(_runtime: any): any
                     end)
                 end
             end
+        end
+
+        local function holdHiddenUnderMap(
+            character: Model,
+            humanoid: Humanoid,
+            root: BasePart
+        ): ()
+            hiddenUnderMap = true
+            forceNoClipCharacter(character)
             local hidePos: Vector3 = getHiddenUnderMapPosition(root)
             pcall(function(): ()
                 humanoid.PlatformStand = true
@@ -556,11 +597,10 @@ function Module.init(_runtime: any): any
             end)
         end
 
+        -- Detects when the player's character is inside the loaded MM2 map,
+        -- including the pre-round countdown seconds right after teleporting
+        -- from the lobby before roles or coins have spawned.
         local function isCharacterInActiveRound(root: BasePart): boolean
-            if type(isRoundLifecycleActive) == "function"
-                and isRoundLifecycleActive() ~= true then
-                return false
-            end
             if type(findMM2Map) ~= "function" then
                 return false
             end
@@ -570,7 +610,31 @@ function Module.init(_runtime: any): any
             end
             if type(getPlayerRole) == "function" then
                 local role: any = getPlayerRole(LocalPlayer)
-                if role == "Dead" or role == "None" then
+                if role == "Dead" then
+                    return false
+                end
+                if (role == "None" or role == nil)
+                    and type(isRoundLifecycleActive) == "function"
+                    and isRoundLifecycleActive() == false then
+                    -- If round lifecycle explicitly says false AND we are near
+                    -- the lobby (or no map geometry exists), stay in lobby state.
+                    local lobbyPartCheck: BasePart? = findLobbyReferencePart()
+                    if lobbyPartCheck then
+                        local okLD: boolean, ld: any = pcall(function(): any
+                            return (root.Position - lobbyPartCheck.Position).Magnitude
+                        end)
+                        if okLD and type(ld) == "number" and ld <= 350 then
+                            return false
+                        end
+                    end
+                end
+            end
+            local lobbyPart: BasePart? = findLobbyReferencePart()
+            if lobbyPart then
+                local okLobbyDist: boolean, lobbyDist: any = pcall(function(): any
+                    return (root.Position - lobbyPart.Position).Magnitude
+                end)
+                if okLobbyDist and type(lobbyDist) == "number" and lobbyDist <= 350 then
                     return false
                 end
             end
@@ -585,13 +649,16 @@ function Module.init(_runtime: any): any
             local refPart: BasePart? = nil
             local spawns: Instance? = (map :: Instance):FindFirstChild("Spawns")
             if spawns then
-                refPart = spawns:FindFirstChildWhichIsA("BasePart")
+                refPart = spawns:FindFirstChildWhichIsA("BasePart", true)
             end
             if not refPart then
                 local coinContainer: Instance? = (map :: Instance):FindFirstChild("CoinContainer")
                 if coinContainer then
                     refPart = coinContainer:FindFirstChildWhichIsA("BasePart", true)
                 end
+            end
+            if not refPart then
+                refPart = (map :: Instance):FindFirstChildWhichIsA("BasePart", true)
             end
             if refPart then
                 local okDist: boolean, dist: any = pcall(function(): any
@@ -600,11 +667,17 @@ function Module.init(_runtime: any): any
                 if okDist and type(dist) == "number" and dist > 1500 then
                     return false
                 end
+                return true
+            end
+            if type(isRoundLifecycleActive) == "function"
+                and isRoundLifecycleActive() ~= true then
+                return false
             end
             return true
         end
 
         local function restoreCharacter(returnHome: boolean): ()
+            local wasMovedByFarm: boolean = engaged or hiddenUnderMap
             local character: Model?, humanoid: Humanoid?, root: BasePart? =
                 characterParts()
             for part: Instance, was: boolean in pairs(savedCollide) do
@@ -613,7 +686,7 @@ function Module.init(_runtime: any): any
                 end)
             end
             table.clear(savedCollide)
-            if humanoid then
+            if humanoid and wasMovedByFarm then
                 pcall(function(): ()
                     humanoid.PlatformStand = false
                     humanoid.AutoRotate = true
@@ -628,7 +701,7 @@ function Module.init(_runtime: any): any
                 end)
             end
             savedWalkSpeed = nil
-            if root then
+            if root and wasMovedByFarm then
                 pcall(function(): ()
                     if savedRootSize then
                         root.Size = savedRootSize
@@ -667,8 +740,6 @@ function Module.init(_runtime: any): any
                             homeCFrame = nil
                         end
                     elseif not teleportedHomeThisRound then
-                        -- Stand back up where we are, verified above ground so
-                        -- we never remain underneath the map floor.
                         local safePos: Vector3 = resolveSafeAboveGroundPosition(
                             root.Position,
                             character
@@ -697,16 +768,18 @@ function Module.init(_runtime: any): any
             root: BasePart
         ): ()
             if homeCharacter ~= character or not homeCFrame then
-                homeCFrame = root.CFrame
+                local basePos: Vector3 = if hiddenUnderMap
+                    then root.Position + Vector3.new(0, BELOW_OFFSET + 4, 0)
+                    else root.Position
+                homeCFrame = CFrame.new(basePos) * CFrame.Angles(0, yawOf(root.CFrame), 0)
                 homeCharacter = character
             end
-            if engagedMode ~= settings.mode then
-                -- Mode switched (or first engage): undo the other
-                -- mode's body changes without losing homeCFrame.
+            if engaged and engagedMode ~= nil and engagedMode ~= settings.mode then
+                -- Mode switched mid-round: undo the other mode's body changes.
                 restoreCharacter(false)
-                engagedMode = settings.mode
             end
-            if engagedCharacter ~= character then
+            engagedMode = settings.mode
+            if engagedCharacter ~= nil and engagedCharacter ~= character then
                 -- New body (respawn): the previous restore belongs to
                 -- the old character; remember this one's start point.
                 restoreCharacter(false)
@@ -715,18 +788,25 @@ function Module.init(_runtime: any): any
                     homeCFrame = root.CFrame
                     homeCharacter = character
                 end
-                engagedCharacter = character
             end
+            engagedCharacter = character
             if not engaged then
                 engaged = true
                 walkLastDistance = math.huge
                 walkStuckSince = os.clock()
                 if settings.mode ~= "Walk" then
-                    -- Below: upright, always -- no face-down tilt, the
-                    -- hitbox below does the reaching. PlatformStand
-                    -- hands the body to physics velocity alone.
+                    hiddenUnderMap = false
+                    forceNoClipCharacter(character)
                     pcall(function(): ()
-                        root.CFrame = CFrame.new(root.Position)
+                        local startPos: Vector3 = root.Position
+                        if homeCFrame and startPos.Y >= homeCFrame.Position.Y - 1.0 then
+                            startPos = Vector3.new(
+                                startPos.X,
+                                homeCFrame.Position.Y - BELOW_OFFSET,
+                                startPos.Z
+                            )
+                        end
+                        root.CFrame = CFrame.new(startPos)
                             * CFrame.Angles(0, yawOf(root.CFrame), 0)
                         humanoid.PlatformStand = true
                         humanoid.AutoRotate = false
@@ -753,16 +833,7 @@ function Module.init(_runtime: any): any
             -- Below keeps NoClip: every character part (tools
             -- included) is forced non-collidable each tick, so the
             -- flight never bumps a platform edge on the way to a coin.
-            for _, object: Instance in ipairs(character:GetDescendants()) do
-                if object:IsA("BasePart") then
-                    if savedCollide[object] == nil then
-                        savedCollide[object] = (object :: BasePart).CanCollide
-                    end
-                    pcall(function(): ()
-                        (object :: BasePart).CanCollide = false
-                    end)
-                end
-            end
+            forceNoClipCharacter(character)
         end
 
         -- Fly the root at a destination with PHYSICS velocity. The
@@ -786,17 +857,21 @@ function Module.init(_runtime: any): any
                 return 0
             end
             local speed: number = math.clamp(settings.speed, 5, 60)
-            if distance <= math.max(0.5, speed * deltaTime) then
+            local dt: number = math.clamp(tonumber(deltaTime) or (1 / 60), 1 / 240, 0.1)
+            if distance <= math.max(0.5, speed * dt) then
                 -- Final approach inside one step: land on the point
                 -- and stop, instead of orbiting it at full speed.
                 pcall(function(): ()
                     root.CFrame = CFrame.new(destination)
-                        * (root.CFrame - root.CFrame.Position)
+                        * CFrame.Angles(0, yawOf(root.CFrame), 0)
                     root.AssemblyLinearVelocity = Vector3.zero
                 end)
                 return 0
             end
             pcall(function(): ()
+                local nextPos: Vector3 = root.Position + delta.Unit * (speed * dt)
+                root.CFrame = CFrame.new(nextPos)
+                    * CFrame.Angles(0, yawOf(root.CFrame), 0)
                 root.AssemblyLinearVelocity = delta.Unit * speed
                 root.AssemblyAngularVelocity = Vector3.zero
             end)
@@ -1130,6 +1205,20 @@ function Module.init(_runtime: any): any
                 )
         end
 
+        if RunService and RunService.Stepped then
+            featureConnections.MM2AutoFarmStepped = RunService.Stepped:Connect(
+                function(): ()
+                    if not hiddenUnderMap and not (engaged and settings.mode ~= "Walk") then
+                        return
+                    end
+                    local character: Model? = LocalPlayer and LocalPlayer.Character
+                    if character then
+                        forceNoClipCharacter(character)
+                    end
+                end
+            )
+        end
+
         featureConnections.MM2AutoFarmTick = TaskManager:Connect(
             function(deltaTime: number): ()
                 if type(deltaTime) == "number" and deltaTime > 0 and deltaTime < 5 then
@@ -1150,7 +1239,7 @@ function Module.init(_runtime: any): any
                 -- or farm in the lobby or outside an active round on a map.
                 local inActiveRound: boolean = isCharacterInActiveRound(root)
                 if not inActiveRound then
-                    if engaged then
+                    if engaged or hiddenUnderMap then
                         restoreCharacter(false)
                     end
                     if wasInActiveRound then
@@ -1159,6 +1248,7 @@ function Module.init(_runtime: any): any
                         fullHandled = false
                         roundFullReached = false
                         teleportedHomeThisRound = false
+                        firstCoinSeenThisRound = false
                         homeCFrame = nil
                         homeCharacter = nil
                         hideAnchorPosition = nil
@@ -1175,17 +1265,14 @@ function Module.init(_runtime: any): any
                     fullHandled = false
                     roundFullReached = false
                     teleportedHomeThisRound = false
-                    local safeStartPos: Vector3 = resolveSafeAboveGroundPosition(
-                        root.Position,
-                        character
-                    )
-                    homeCFrame = CFrame.new(safeStartPos)
+                    firstCoinSeenThisRound = false
+                    homeCFrame = CFrame.new(root.Position)
                         * CFrame.Angles(0, yawOf(root.CFrame), 0)
                     homeCharacter = character
                     hideAnchorPosition = Vector3.new(
-                        safeStartPos.X,
-                        safeStartPos.Y - (BELOW_OFFSET + 4),
-                        safeStartPos.Z
+                        root.Position.X,
+                        root.Position.Y - (BELOW_OFFSET + 4),
+                        root.Position.Z
                     )
                 end
 
@@ -1278,9 +1365,13 @@ function Module.init(_runtime: any): any
                         local dx: number = root.Position.X - homeCFrame.Position.X
                         local dz: number = root.Position.Z - homeCFrame.Position.Z
                         if math.sqrt(dx * dx + dz * dz) > 14 then
-                            local safeSpawnPos: Vector3 = resolveSafeAboveGroundPosition(
-                                root.Position,
-                                character
+                            local spawnY: number = if hiddenUnderMap
+                                then root.Position.Y + (BELOW_OFFSET + 4)
+                                else root.Position.Y
+                            local safeSpawnPos: Vector3 = Vector3.new(
+                                root.Position.X,
+                                spawnY,
+                                root.Position.Z
                             )
                             homeCFrame = CFrame.new(safeSpawnPos)
                                 * CFrame.Angles(0, yawOf(root.CFrame), 0)
@@ -1293,10 +1384,23 @@ function Module.init(_runtime: any): any
                         end
                     end
                     scanAt = now - 0.25
-                    if settings.stayUnderOnStart then
-                        holdHiddenUnderMap(character, humanoid, root)
-                    elseif hiddenUnderMap or engaged then
-                        restoreCharacter(false)
+                    if not firstCoinSeenThisRound then
+                        if settings.stayUnderOnStart then
+                            holdHiddenUnderMap(character, humanoid, root)
+                        elseif hiddenUnderMap or engaged then
+                            restoreCharacter(false)
+                        end
+                    else
+                        if settings.mode == "Walk" then
+                            if hiddenUnderMap then
+                                restoreCharacter(false)
+                            end
+                            pcall(function(): ()
+                                humanoid:Move(Vector3.zero, false)
+                            end)
+                        else
+                            holdHiddenUnderMap(character, humanoid, root)
+                        end
                     end
                     setStatus(string.format(
                         "Auto Farm (%s): waiting for coin - bag %d/%d - speed %d u/s - ping %dms",
@@ -1307,6 +1411,7 @@ function Module.init(_runtime: any): any
                     stuckPart = nil
                     return
                 end
+                firstCoinSeenThisRound = true
                 if hiddenUnderMap and settings.mode == "Walk" then
                     restoreCharacter(false)
                 end

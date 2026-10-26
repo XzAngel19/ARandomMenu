@@ -21,49 +21,9 @@ function Module.init(runtime: any): any
     local TICK_INTERVAL: number = 0.08
     local CACHE_INTERVAL: number = 0.5
 
-    local settings = {
-        showHitbox = true,
-    }
-
     local savedCFrames: {[BasePart]: CFrame} = {}
     local savedPositions: {[BasePart]: Vector3} = {}
     local activeCoin: BasePart? = nil
-    local auraHitbox: BasePart? = nil
-
-    local function destroyHitbox(): ()
-        if auraHitbox then
-            pcall(function(): ()
-                auraHitbox:Destroy()
-            end)
-            auraHitbox = nil
-        end
-    end
-
-    local function updateHitbox(root: BasePart?): ()
-        if not settings.showHitbox or not root or not root.Parent then
-            destroyHitbox()
-            return
-        end
-        pcall(function(): ()
-            if not auraHitbox or not auraHitbox.Parent then
-                local part: Part = Instance.new("Part")
-                part.Name = "WurstCoinsAuraHitbox"
-                part.Size = Vector3.new(MAX_SERVER_REACH * 2, MAX_SERVER_REACH * 2, MAX_SERVER_REACH * 2)
-                part.Transparency = 0.72
-                part.BrickColor = BrickColor.new("Gold")
-                part.Material = Enum.Material.Neon
-                part.CanCollide = false
-                part.CanQuery = false
-                part.CanTouch = false
-                part.Anchored = true
-                part.CFrame = CFrame.new(root.Position)
-                part.Parent = workspace
-                auraHitbox = part
-            else
-                auraHitbox.CFrame = CFrame.new(root.Position)
-            end
-        end)
-    end
 
     local function rememberCoin(serverPart: BasePart): Vector3?
         local pos: Vector3? = savedPositions[serverPart]
@@ -167,7 +127,6 @@ function Module.init(runtime: any): any
     local function toggleCoinsAura(enabled: boolean): ()
         disconnectFeatureConnection("MM2CoinsAura")
         restoreAllCoins()
-        destroyHitbox()
 
         if not enabled then
             if CoinsAuraFeature then
@@ -260,7 +219,6 @@ function Module.init(runtime: any): any
                 if activeCoin then
                     restoreCoin(activeCoin)
                 end
-                destroyHitbox()
                 return
             end
             local humanoid: Humanoid? = character:FindFirstChildOfClass("Humanoid") :: Humanoid?
@@ -268,11 +226,9 @@ function Module.init(runtime: any): any
                 if activeCoin then
                     restoreCoin(activeCoin)
                 end
-                destroyHitbox()
                 return
             end
 
-            updateHitbox(root)
             refreshCoins(now)
 
             local rootPos: Vector3 = root.Position
@@ -322,19 +278,6 @@ function Module.init(runtime: any): any
         }
     )
     state.mm2CoinsAuraFeature = CoinsAuraFeature
-
-    addToggleOption(
-        CoinsAuraFeature,
-        "Show Hitbox",
-        true,
-        function(value: boolean): ()
-            settings.showHitbox = value == true
-            if not settings.showHitbox then
-                destroyHitbox()
-            end
-        end,
-        "Shows or hides the Coins Aura hitbox square around your character."
-    )
 
     activeCleanup = function(): ()
         toggleCoinsAura(false)

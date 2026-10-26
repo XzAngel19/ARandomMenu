@@ -819,7 +819,7 @@ do
     local coinsAura = findFeature("Coins Aura")
     assert(coinsAura, "Coins Aura feature must exist after boot")
     assert(not coinsAura.options:FindFirstChild("Option_Range"), "Coins Aura must not expose a Range slider")
-    assert(coinsAura.options:FindFirstChild("Option_ShowHitbox"), "Coins Aura must expose Show Hitbox option")
+    assert(not coinsAura.options:FindFirstChild("Option_ShowHitbox"), "Coins Aura must not expose a Hitbox option")
     local okCAOn, errCAOn = pcall(coinsAura.onToggle, true)
     assert(okCAOn, "Coins Aura ON must not error: " .. tostring(errCAOn))
     local okCAOff, errCAOff = pcall(coinsAura.onToggle, false)

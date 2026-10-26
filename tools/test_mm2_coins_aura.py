@@ -27,8 +27,7 @@ VOTE_SOURCE = (ROOT / "src/games/MM2/Other/AutoVote.lua").read_text(encoding="ut
 
 assert '"Coins Aura"' in COINS_SOURCE
 assert "addNumberOption" not in COINS_SOURCE, "Coins Aura must not have a Range slider"
-assert '"Show Hitbox"' in COINS_SOURCE
-assert "WurstCoinsAuraHitbox" in COINS_SOURCE
+assert "WurstCoinsAuraHitbox" not in COINS_SOURCE, "Coins Aura must not have a hitbox square"
 assert '"Gun Aura"' in GUN_SOURCE
 assert '"Studs"' in GUN_SOURCE
 assert '"Show Hitbox"' in GUN_SOURCE

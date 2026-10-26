@@ -26,12 +26,14 @@ function Module.init(runtime: any): any
     local gameBridge: any = services.gameBridge
     local createUniversalFeature: any = host.createUniversalFeature
     local addActionOption: any = host.addActionOption
+    local addCycleOption: any = host.addCycleOption
     local addToggleOption: any = host.addToggleOption
     local addTextOption: any = host.addTextOption
     local addInformationOption: any = host.addInformationOption
     local TaskManager: any = host.TaskManager
     local featureConnections: any = host.featureConnections
     local disconnectFeatureConnection: any = host.disconnectFeatureConnection
+    local findPlayerByText: any = host.findPlayerByText
 
     local workspace: any = host.workspace
     local RunService: any = host.RunService
@@ -42,47 +44,73 @@ function Module.init(runtime: any): any
     local getPlayerWeapon: any = core.getPlayerWeapon
     local isPlayerAlive: any = core.isPlayerAlive
 
-    -- Bounded high-impulse velocities: strong enough to launch any unanchored
-    -- humanoid at 1,000+ studs/s on contact (with Density=100, Elasticity=1),
-    -- while staying well below the 10^6-stud IEEE-754 32-bit float precision
-    -- threshold so the local character never enters Roblox's NullZone or void.
-    local FLING_LINEAR_VEL: Vector3 = Vector3.new(14000, 16000, 14000)
-    local FLING_ANGULAR_VEL: Vector3 = Vector3.new(15000, 15000, 15000)
+    -- High-impulse velocities modeled after Infinite Yield's walkfling + fling:
+    -- pulsed on Heartbeat, reset on RenderStepped (before physics integration),
+    -- and micro-oscillated on Stepped so replication never sleeps while the
+    -- local character never integrates into the void or NullZone.
+    local FLING_PULSE_VEL: Vector3 = Vector3.new(250000, 250000, 250000)
+    local FLING_ANGULAR_VEL: Vector3 = Vector3.new(0, 99999, 0)
 
     local flingRunning: boolean = false
+    local walkFlingEnabled: boolean = false
     local flingTargetName: string = ""
+    local selectedTargetChoice: string = "Murderer"
     local autoFlingSelected: boolean = false
     local lastAutoFlingAt: number = 0
     local stepPhase: number = 0
     local stepAngle: number = 0
+    local stepMovel: number = 0.1
 
     local function setFlingRunning(running: boolean): ()
         flingRunning = running
-        activity.set("fling", running)
+        activity.set("fling", running or walkFlingEnabled)
     end
 
-    local function waitFrameStep(_useRenderStep: boolean): ()
-        local okStep: boolean = pcall(function(): ()
+    local function waitHeartbeat(): ()
+        local ok: boolean = pcall(function(): ()
             if RunService.Heartbeat and RunService.Heartbeat.Wait then
                 RunService.Heartbeat:Wait()
-            elseif RunService.Stepped and RunService.Stepped.Wait then
-                RunService.Stepped:Wait()
-            elseif RunService.RenderStepped and RunService.RenderStepped.Wait then
-                RunService.RenderStepped:Wait()
             end
         end)
-        if not okStep then
+        if not ok then
             task.wait()
         end
     end
 
-    local function forceCharacterCollidable(
+    local function waitRenderStepped(): ()
+        local ok: boolean = pcall(function(): ()
+            if RunService.RenderStepped and RunService.RenderStepped.Wait then
+                RunService.RenderStepped:Wait()
+            elseif RunService.Heartbeat and RunService.Heartbeat.Wait then
+                RunService.Heartbeat:Wait()
+            end
+        end)
+        if not ok then
+            task.wait()
+        end
+    end
+
+    local function waitStepped(): ()
+        local ok: boolean = pcall(function(): ()
+            if RunService.Stepped and RunService.Stepped.Wait then
+                RunService.Stepped:Wait()
+            elseif RunService.Heartbeat and RunService.Heartbeat.Wait then
+                RunService.Heartbeat:Wait()
+            end
+        end)
+        if not ok then
+            task.wait()
+        end
+    end
+
+    local function forceCharacterFlingPhysics(
         character: Model,
         savedCollide: {[BasePart]: boolean},
-        savedProps: {[BasePart]: PhysicalProperties?}
+        savedProps: {[BasePart]: PhysicalProperties?},
+        savedMassless: {[BasePart]: boolean}?
     ): ()
-        local heavyProps: PhysicalProperties = PhysicalProperties.new(100, 0, 1, 100, 100)
-        for _, child: Instance in ipairs(character:GetChildren()) do
+        local heavyProps: PhysicalProperties = PhysicalProperties.new(100, 0.3, 0.5, 1, 1)
+        for _, child: Instance in ipairs(character:GetDescendants()) do
             if child:IsA("BasePart") then
                 local part: BasePart = child :: BasePart
                 if savedCollide[part] == nil then
@@ -93,17 +121,30 @@ function Module.init(runtime: any): any
                         savedProps[part] = part.CustomPhysicalProperties
                     end)
                 end
+                if savedMassless and savedMassless[part] == nil then
+                    pcall(function(): ()
+                        savedMassless[part] = part.Massless
+                    end)
+                end
                 pcall(function(): ()
-                    part.CanCollide = true
+                    part.CanCollide = false
                     part.CustomPhysicalProperties = heavyProps
                 end)
             end
+        end
+        local rootPart: BasePart? = character:FindFirstChild("HumanoidRootPart") :: BasePart?
+        if rootPart then
+            pcall(function(): ()
+                rootPart.CanCollide = true
+                rootPart.CustomPhysicalProperties = heavyProps
+            end)
         end
     end
 
     local function restoreCharacterPhysics(
         savedCollide: {[BasePart]: boolean},
-        savedProps: {[BasePart]: PhysicalProperties?}
+        savedProps: {[BasePart]: PhysicalProperties?},
+        savedMassless: {[BasePart]: boolean}?
     ): ()
         for part: BasePart, wasCollide: boolean in pairs(savedCollide) do
             if part and part.Parent then
@@ -118,6 +159,16 @@ function Module.init(runtime: any): any
                     part.CustomPhysicalProperties = oldProps
                 end)
             end
+        end
+        if savedMassless then
+            for part: BasePart, wasMassless: boolean in pairs(savedMassless) do
+                if part and part.Parent then
+                    pcall(function(): ()
+                        part.Massless = wasMassless
+                    end)
+                end
+            end
+            table.clear(savedMassless)
         end
         table.clear(savedCollide)
         table.clear(savedProps)
@@ -163,42 +214,36 @@ function Module.init(runtime: any): any
         return flatVel
     end
 
-    local function computePhaseOffsetAndVelocity(
+    local function computePhaseOffset(
         phaseIndex: number,
         flatVel: Vector3,
         verticalVel: number
-    ): (Vector3, Vector3)
+    ): Vector3
         local isMoving: boolean = flatVel.Magnitude > 1.25
         local leadStep: number = 0
         local bodyOffset: Vector3 = Vector3.zero
         if phaseIndex == 0 then
-            -- Direct core overlap: hits stationary & slow targets immediately.
             leadStep = 0.0
             bodyOffset = Vector3.new(0, 0, 0)
         elseif phaseIndex == 1 then
-            -- Upper torso / head upward drive.
             leadStep = 0.05
-            bodyOffset = Vector3.new(0, 1.35, 0)
+            bodyOffset = Vector3.new(0, 1.25, 0)
         elseif phaseIndex == 2 then
-            -- Lower root / legs under-sweep.
             leadStep = 0.10
-            bodyOffset = Vector3.new(0, -1.35, 0)
+            bodyOffset = Vector3.new(0, -1.25, 0)
         elseif phaseIndex == 3 then
-            -- Mid-ping forward intercept (~150ms).
-            leadStep = 0.15
+            leadStep = 0.16
             bodyOffset = if isMoving
-                then Vector3.new(0, 0.35, 0)
-                else Vector3.new(1.15, 0.5, -1.15)
+                then Vector3.new(0, 0.3, 0)
+                else Vector3.new(1.0, 0.4, -1.0)
         elseif phaseIndex == 4 then
-            -- High-ping forward intercept (~220ms).
             leadStep = 0.22
             bodyOffset = if isMoving
-                then Vector3.new(0, -0.35, 0)
-                else Vector3.new(-1.15, -0.5, 1.15)
+                then Vector3.new(0, -0.3, 0)
+                else Vector3.new(-1.0, -0.4, 1.0)
         else
-            -- Tight cross-core shear.
             leadStep = 0.08
-            bodyOffset = Vector3.new(0.75, 0.2, 0.75)
+            bodyOffset = Vector3.new(0.6, 0.15, 0.6)
         end
 
         local leadOffset: Vector3 = flatVel * leadStep
@@ -206,16 +251,7 @@ function Module.init(runtime: any): any
             leadOffset = leadOffset.Unit * 6.5
         end
         local yLead: number = math.clamp(verticalVel * 0.06, -2.0, 2.5)
-        local totalOffset: Vector3 = leadOffset + bodyOffset + Vector3.new(0, yLead, 0)
-
-        local signX: number = if phaseIndex % 2 == 0 then 1 else -1
-        local signZ: number = if phaseIndex % 3 == 0 then 1 else -1
-        local impulseVel: Vector3 = Vector3.new(
-            FLING_LINEAR_VEL.X * signX,
-            FLING_LINEAR_VEL.Y,
-            FLING_LINEAR_VEL.Z * signZ
-        )
-        return totalOffset, impulseVel
+        return leadOffset + bodyOffset + Vector3.new(0, yLead, 0)
     end
 
     -- Single-step high-impulse contact sweep (usable from per-frame loops
@@ -247,31 +283,28 @@ function Module.init(runtime: any): any
 
         activity.set("fling", true)
         if savedCollide and savedProps then
-            forceCharacterCollidable(character, savedCollide, savedProps)
+            forceCharacterFlingPhysics(character, savedCollide, savedProps, nil)
         else
             pcall(function(): ()
                 root.CanCollide = true
-                root.CustomPhysicalProperties = PhysicalProperties.new(100, 0, 1, 100, 100)
+                root.CustomPhysicalProperties = PhysicalProperties.new(100, 0.3, 0.5, 1, 1)
             end)
         end
 
         stepPhase = (stepPhase + 1) % 6
-        stepAngle = (stepAngle + 95) % 360
+        stepAngle = (stepAngle + 100) % 360
+        stepMovel = -stepMovel
         local flatVel: Vector3 = resolveTargetHorizontalVelocity(targetPart, targetHum)
         local verticalVel: number = 0
         pcall(function(): ()
             verticalVel = targetPart.AssemblyLinearVelocity.Y
         end)
-        local totalOffset: Vector3, impulseVel: Vector3 = computePhaseOffsetAndVelocity(
-            stepPhase,
-            flatVel,
-            verticalVel
-        )
+        local totalOffset: Vector3 = computePhaseOffset(stepPhase, flatVel, verticalVel)
 
         local rotCF: CFrame = CFrame.Angles(
             math.rad(stepAngle),
-            math.rad((stepAngle * 2) % 360),
-            math.rad((stepAngle * 3) % 360)
+            math.rad(stepAngle),
+            0
         )
         local finalCF: CFrame = CFrame.new(targetPart.Position + totalOffset) * rotCF
 
@@ -283,14 +316,14 @@ function Module.init(runtime: any): any
             humanoid.AutoRotate = false
             root.CFrame = finalCF
             character:PivotTo(finalCF)
-            root.AssemblyLinearVelocity = impulseVel
+            root.AssemblyLinearVelocity = FLING_PULSE_VEL + Vector3.new(0, stepMovel, 0)
             root.AssemblyAngularVelocity = FLING_ANGULAR_VEL
         end)
         return true
     end
 
-    -- Reconstructed full SkidFling / YARHM Fling with BodyVelocity +
-    -- high-density collision + 6-phase Heartbeat/RenderStepped FPos sweep.
+    -- Target Fling combining Infinite Yield's walkfling Heartbeat->RenderStepped->Stepped
+    -- velocity pulse and BodyAngularVelocity spin with tight multi-phase target CFrame lock.
     local function performFling(targetPlayer: Player?, options: {[string]: any}?): boolean
         if not Module.Initialized or not targetPlayer then
             return false
@@ -300,7 +333,7 @@ function Module.init(runtime: any): any
             return false
         end
         local silent: boolean = type(options) == "table" and options.silent == true
-        local maxDuration: number = (type(options) == "table" and tonumber(options.duration)) or 5.0
+        local maxDuration: number = (type(options) == "table" and tonumber(options.duration)) or 3.5
         local shouldStop: (() -> boolean)? = type(options) == "table"
             and type(options.shouldStop) == "function"
             and options.shouldStop
@@ -340,7 +373,8 @@ function Module.init(runtime: any): any
             local savedCameraSubject: any = camera and camera.CameraSubject or nil
             local savedCollide: {[BasePart]: boolean} = {}
             local savedProps: {[BasePart]: PhysicalProperties?} = {}
-            local bodyVel: BodyVelocity? = nil
+            local savedMassless: {[BasePart]: boolean} = {}
+            local bodyAngVel: BodyAngularVelocity? = nil
 
             local touchedTarget: boolean = false
             local reason: string = "timeout"
@@ -348,6 +382,15 @@ function Module.init(runtime: any): any
             local success: boolean, errorMessage: any = pcall(function(): ()
                 local startedAt: number = os.clock()
                 local angle: number = 0
+                local movel: number = 0.1
+                local phaseIdx: number = 0
+
+                local initialTargetChar: Model? = targetPlayer.Character
+                local initialTargetPart: BasePart? = initialTargetChar
+                    and resolveTargetContactPart(initialTargetChar)
+                local initialTargetPos: Vector3 = initialTargetPart
+                    and initialTargetPart.Position
+                    or root.Position
 
                 pcall(function(): ()
                     workspace.FallenPartsDestroyHeight = 0 / 0
@@ -361,35 +404,16 @@ function Module.init(runtime: any): any
                     humanoid:SetStateEnabled(Enum.HumanoidStateType.Seated, false)
                 end)
 
+                -- Infinite Yield fling BodyAngularVelocity spin (lines 17673-17679)
                 pcall(function(): ()
-                    local bv: BodyVelocity = Instance.new("BodyVelocity")
-                    bv.Name = "WurstFlingVel"
-                    bv.Velocity = FLING_LINEAR_VEL
-                    bv.MaxForce = Vector3.new(9e7, 9e7, 9e7)
-                    bv.Parent = root
-                    bodyVel = bv
+                    local bav: BodyAngularVelocity = Instance.new("BodyAngularVelocity")
+                    bav.Name = "WurstFlingBAV"
+                    bav.AngularVelocity = Vector3.new(0, 99999, 0)
+                    bav.MaxTorque = Vector3.new(0, math.huge, 0)
+                    bav.P = math.huge
+                    bav.Parent = root
+                    bodyAngVel = bav
                 end)
-
-                local function applyFPos(
-                    liveChar: Model,
-                    liveRoot: BasePart,
-                    basePart: BasePart,
-                    offsetVec: Vector3,
-                    angOffset: CFrame,
-                    impulseVel: Vector3
-                ): ()
-                    local targetCF: CFrame = CFrame.new(basePart.Position + offsetVec)
-                        * angOffset
-                    pcall(function(): ()
-                        if bodyVel then
-                            bodyVel.Velocity = impulseVel
-                        end
-                        liveRoot.CFrame = targetCF
-                        liveChar:PivotTo(targetCF)
-                        liveRoot.AssemblyLinearVelocity = impulseVel
-                        liveRoot.AssemblyAngularVelocity = FLING_ANGULAR_VEL
-                    end)
-                end
 
                 while flingRunning and os.clock() - startedAt < maxDuration do
                     if shouldStop and shouldStop() then
@@ -420,20 +444,22 @@ function Module.init(runtime: any): any
                         reason = "seated"
                         break
                     end
-                    if targetPart.Position.Y <= voidThreshold then
+                    if targetPart.Position.Y <= voidThreshold or targetPart.Position.Y >= 4000 then
                         touchedTarget = true
                         reason = "void"
                         break
                     end
 
-                    local targetSpeed: number = 0
-                    local verticalVel: number = 0
+                    local targetVel: Vector3 = Vector3.zero
                     pcall(function(): ()
-                        local vel: Vector3 = targetPart.AssemblyLinearVelocity
-                        targetSpeed = vel.Magnitude
-                        verticalVel = vel.Y
+                        targetVel = targetPart.AssemblyLinearVelocity
                     end)
-                    if targetSpeed > 250 then
+                    local targetSpeed: number = targetVel.Magnitude
+                    local targetDisplaced: number = (targetPart.Position - initialTargetPos).Magnitude
+                    -- Only count as flung early if the target has actually been
+                    -- launched far away (>130 studs) at high speed (>450 studs/s),
+                    -- so indoor wall/ceiling bounces never abort the fling!
+                    if targetSpeed > 450 and targetDisplaced > 130 then
                         touchedTarget = true
                         reason = "flung"
                         break
@@ -456,58 +482,76 @@ function Module.init(runtime: any): any
                         end)
                     end
 
-                    forceCharacterCollidable(liveChar, savedCollide, savedProps)
+                    forceCharacterFlingPhysics(liveChar, savedCollide, savedProps, savedMassless)
 
                     pcall(function(): ()
                         (targetPart :: any):SetNetworkOwner(LocalPlayer)
                     end)
 
-                    for phaseIdx = 0, 5 do
-                        if not flingRunning or not targetPart.Parent then
-                            break
+                    phaseIdx = (phaseIdx + 1) % 6
+                    angle = (angle + 100) % 360
+                    local rotCF: CFrame = CFrame.Angles(math.rad(angle), math.rad(angle), 0)
+                    local flatVel: Vector3 = resolveTargetHorizontalVelocity(targetPart, targetHumanoid)
+                    local offsetVec: Vector3 = computePhaseOffset(phaseIdx, flatVel, targetVel.Y)
+                    local contactCF: CFrame = CFrame.new(targetPart.Position + offsetVec) * rotCF
+
+                    -- Step 1: Position on target & wait for Heartbeat, then pulse velocity
+                    -- exactly like Infinite Yield's walkfling (lines 17765-17792).
+                    pcall(function(): ()
+                        if bodyAngVel then
+                            bodyAngVel.AngularVelocity = Vector3.new(0, 99999, 0)
                         end
-                        local curVel: Vector3 = Vector3.zero
+                        liveRoot.CFrame = contactCF
+                        liveChar:PivotTo(contactCF)
+                    end)
+                    waitHeartbeat()
+
+                    if not flingRunning or not liveRoot.Parent or not targetPart.Parent then
+                        break
+                    end
+
+                    pcall(function(): ()
+                        local dirVec: Vector3 = if flatVel.Magnitude > 1
+                            then flatVel.Unit
+                            else Vector3.new(1, 1, 1)
+                        liveRoot.Velocity = dirVec * 250000 + Vector3.new(0, 250000, 0)
+                        liveRoot.AssemblyLinearVelocity = dirVec * 250000 + Vector3.new(0, 250000, 0)
+                        liveRoot.AssemblyAngularVelocity = FLING_ANGULAR_VEL
+                    end)
+
+                    -- Step 2: Wait for RenderStepped and immediately zero velocity
+                    -- BEFORE Stepped/Physics integrates our local character!
+                    waitRenderStepped()
+                    if liveRoot and liveRoot.Parent and targetPart and targetPart.Parent then
                         pcall(function(): ()
-                            curVel = targetPart.AssemblyLinearVelocity
+                            liveRoot.Velocity = Vector3.zero
+                            liveRoot.AssemblyLinearVelocity = Vector3.zero
+                            liveRoot.CFrame = contactCF
+                            liveChar:PivotTo(contactCF)
                         end)
-                        if curVel.Magnitude > 250 or targetPart.Position.Y <= voidThreshold then
-                            touchedTarget = true
-                            reason = "flung"
-                            break
-                        end
-                        angle = (angle + 95) % 360
-                        local rotCF: CFrame = CFrame.Angles(
-                            math.rad(angle),
-                            math.rad((angle * 2) % 360),
-                            math.rad((angle * 3) % 360)
-                        )
-                        local flatVel: Vector3 = resolveTargetHorizontalVelocity(
-                            targetPart,
-                            targetHumanoid
-                        )
-                        local offsetVec: Vector3, impulseVel: Vector3 =
-                            computePhaseOffsetAndVelocity(phaseIdx, flatVel, curVel.Y)
-                        applyFPos(
-                            liveChar,
-                            liveRoot,
-                            targetPart,
-                            offsetVec,
-                            rotCF,
-                            impulseVel
-                        )
-                        waitFrameStep(false)
+                    end
+
+                    -- Step 3: Wait for Stepped and apply micro-oscillation (+/- 0.1 Y)
+                    -- so network replication stays awake.
+                    waitStepped()
+                    if liveRoot and liveRoot.Parent then
+                        pcall(function(): ()
+                            liveRoot.Velocity = Vector3.new(0, movel, 0)
+                            liveRoot.AssemblyLinearVelocity = Vector3.new(0, movel, 0)
+                            movel = -movel
+                        end)
                     end
                 end
             end)
 
-            if bodyVel then
+            if bodyAngVel then
                 pcall(function(): ()
-                    bodyVel:Destroy()
+                    bodyAngVel:Destroy()
                 end)
-                bodyVel = nil
+                bodyAngVel = nil
             end
 
-            restoreCharacterPhysics(savedCollide, savedProps)
+            restoreCharacterPhysics(savedCollide, savedProps, savedMassless)
 
             local finalChar: Model?, finalHumanoid: Humanoid?, finalRoot: BasePart? =
                 getCharacterParts()
@@ -525,11 +569,12 @@ function Module.init(runtime: any): any
                 end
             end
             if finalChar and finalRoot and finalRoot.Parent then
-                local returnCF: CFrame = savedCFrame + Vector3.new(0, 2, 0)
+                local returnCF: CFrame = savedCFrame
                 for _ = 1, 5 do
                     pcall(function(): ()
-                        for _, part: Instance in ipairs(finalChar:GetChildren()) do
+                        for _, part: Instance in ipairs(finalChar:GetDescendants()) do
                             if part:IsA("BasePart") then
+                                (part :: BasePart).Velocity = Vector3.zero;
                                 (part :: BasePart).AssemblyLinearVelocity = Vector3.zero;
                                 (part :: BasePart).AssemblyAngularVelocity = Vector3.zero
                             end
@@ -540,7 +585,7 @@ function Module.init(runtime: any): any
                     if (finalRoot.Position - returnCF.Position).Magnitude <= 6 then
                         break
                     end
-                    waitFrameStep(false)
+                    waitHeartbeat()
                 end
             end
 
@@ -597,8 +642,6 @@ function Module.init(runtime: any): any
 
     local function resolveMurdererTarget(): Player?
         refreshRoles()
-        -- 1) Ground truth: any living player holding/carrying the Knife
-        --    (and never holding the Gun).
         if type(getPlayerWeapon) == "function" then
             for _, player: Player in ipairs(Players:GetPlayers()) do
                 if player ~= LocalPlayer
@@ -609,7 +652,6 @@ function Module.init(runtime: any): any
                 end
             end
         end
-        -- 2) MM2 core findMurderer(), double-checked against Gun possession.
         if type(findMurderer) == "function" then
             local target: Player? = findMurderer()
             if target
@@ -625,7 +667,6 @@ function Module.init(runtime: any): any
                 end
             end
         end
-        -- 3) Fallback scan across getPlayerRole / gameBridge.playerRole.
         for _, player: Player in ipairs(Players:GetPlayers()) do
             if player ~= LocalPlayer
                 and (type(isPlayerAlive) ~= "function" or isPlayerAlive(player))
@@ -650,8 +691,6 @@ function Module.init(runtime: any): any
 
     local function resolveSheriffOrHeroTarget(): Player?
         refreshRoles()
-        -- 1) Ground truth: any living player holding/carrying the Gun
-        --    (and never holding the Knife).
         if type(getPlayerWeapon) == "function" then
             for _, player: Player in ipairs(Players:GetPlayers()) do
                 if player ~= LocalPlayer
@@ -662,7 +701,6 @@ function Module.init(runtime: any): any
                 end
             end
         end
-        -- 2) MM2 core findSheriff(), double-checked against Knife possession.
         if type(findSheriff) == "function" then
             local target: Player? = findSheriff()
             if target
@@ -678,7 +716,6 @@ function Module.init(runtime: any): any
                 end
             end
         end
-        -- 3) Fallback scan across getPlayerRole / gameBridge.playerRole.
         for _, player: Player in ipairs(Players:GetPlayers()) do
             if player ~= LocalPlayer
                 and (type(isPlayerAlive) ~= "function" or isPlayerAlive(player))
@@ -701,13 +738,150 @@ function Module.init(runtime: any): any
         return nil
     end
 
+    local function resolvePlayerByQuery(rawQuery: string): Player?
+        local query: string = string.lower(string.gsub(rawQuery or "", "^%s*(.-)%s*$", "%1"))
+        if query == "" then
+            return nil
+        end
+        if query == "murderer" or query == "murder" then
+            return resolveMurdererTarget()
+        end
+        if query == "sheriff" or query == "hero" then
+            return resolveSheriffOrHeroTarget()
+        end
+        if type(findPlayerByText) == "function" then
+            local okFind: boolean, found: any = pcall(findPlayerByText, rawQuery)
+            if okFind and found and found ~= LocalPlayer then
+                return found :: Player
+            end
+        end
+        local compactQuery: string = string.gsub(query, "%s+", "")
+        local prefixMatch: Player? = nil
+        local partialMatch: Player? = nil
+        for _, player: Player in ipairs(Players:GetPlayers()) do
+            if player ~= LocalPlayer then
+                local uName: string = string.lower(tostring(player.Name or ""))
+                local dName: string = string.lower(tostring((player :: any).DisplayName or player.Name or ""))
+                local uCompact: string = string.gsub(uName, "%s+", "")
+                local dCompact: string = string.gsub(dName, "%s+", "")
+                if uName == query or dName == query or uCompact == compactQuery or dCompact == compactQuery then
+                    return player
+                end
+                if not prefixMatch and (
+                    string.sub(uName, 1, #query) == query
+                    or string.sub(dName, 1, #query) == query
+                ) then
+                    prefixMatch = player
+                end
+                if not partialMatch and (
+                    string.find(uName, query, 1, true) ~= nil
+                    or string.find(dName, query, 1, true) ~= nil
+                    or string.find(uCompact, compactQuery, 1, true) ~= nil
+                    or string.find(dCompact, compactQuery, 1, true) ~= nil
+                ) then
+                    partialMatch = player
+                end
+            end
+        end
+        return prefixMatch or partialMatch
+    end
+
+    local function resolveSelectedTargetPlayer(): Player?
+        local typed: string = string.gsub(flingTargetName or "", "%s+", "")
+        if typed ~= "" then
+            local byTyped: Player? = resolvePlayerByQuery(flingTargetName)
+            if byTyped then
+                return byTyped
+            end
+        end
+        if selectedTargetChoice and selectedTargetChoice ~= "" then
+            return resolvePlayerByQuery(selectedTargetChoice)
+        end
+        return nil
+    end
+
+    -- Infinite Yield walkfling loop when the Fling module toggle is turned ON
+    local function startWalkFlingLoop(): ()
+        task.spawn(function(): ()
+            local movel: number = 0.1
+            while walkFlingEnabled and Module.Initialized do
+                if flingRunning then
+                    waitHeartbeat()
+                else
+                    waitHeartbeat()
+                    if not walkFlingEnabled then
+                        break
+                    end
+                    local character: Model?, _humanoid: Humanoid?, root: BasePart? = getCharacterParts()
+                    if character and root and root.Parent then
+                        local savedVel: Vector3 = root.AssemblyLinearVelocity
+                        pcall(function(): ()
+                            for _, part: Instance in ipairs(character:GetChildren()) do
+                                if part:IsA("BasePart") then
+                                    (part :: BasePart).CanCollide = false
+                                end
+                            end
+                            local spike: Vector3 = savedVel * 10000 + Vector3.new(0, 10000, 0)
+                            root.Velocity = spike
+                            root.AssemblyLinearVelocity = spike
+                        end)
+                        waitRenderStepped()
+                        if character and character.Parent and root and root.Parent then
+                            pcall(function(): ()
+                                root.Velocity = savedVel
+                                root.AssemblyLinearVelocity = savedVel
+                            end)
+                        end
+                        waitStepped()
+                        if character and character.Parent and root and root.Parent then
+                            pcall(function(): ()
+                                local osc: Vector3 = savedVel + Vector3.new(0, movel, 0)
+                                root.Velocity = osc
+                                root.AssemblyLinearVelocity = osc
+                                movel = -movel
+                            end)
+                        end
+                    end
+                end
+            end
+        end)
+    end
+
+    local function toggleFlingModule(enabled: boolean): ()
+        walkFlingEnabled = enabled == true
+        activity.set("fling", walkFlingEnabled or flingRunning)
+        if walkFlingEnabled then
+            if autoFlingSelected then
+                lastAutoFlingAt = 0
+            end
+            local target: Player? = resolveSelectedTargetPlayer()
+            if target and not flingRunning then
+                performFling(target, {
+                    silent = false,
+                    duration = 3.5,
+                })
+            end
+            startWalkFlingLoop()
+        else
+            local character: Model?, _humanoid: Humanoid?, root: BasePart? = getCharacterParts()
+            if character and root then
+                pcall(function(): ()
+                    root.Velocity = Vector3.zero
+                    root.AssemblyLinearVelocity = Vector3.zero
+                    root.AssemblyAngularVelocity = Vector3.zero
+                end)
+            end
+        end
+    end
+
     local FlingFeature: any = createUniversalFeature(
         "Fling",
-        "MM2 only: fling the murderer, sheriff or innocents",
+        "MM2 only: fling the murderer, sheriff or innocents, or walk-fling on contact",
         2,
-        function() end,
+        toggleFlingModule,
         {category = true, categoryName = "Exploits", registry = mm2Features, configKey = "MM2.Fling"}
     )
+
     addActionOption(FlingFeature, "Fling Murderer", function(): ()
         local target: Player? = resolveMurdererTarget()
         if target then
@@ -751,35 +925,56 @@ function Module.init(runtime: any): any
             end
         end)
     end)
-    local function resolveSelectedTargetPlayer(): Player?
-        local needle: string = string.lower(
-            string.gsub(flingTargetName or "", "%s+", "")
-        )
-        if needle == "" then
-            return nil
-        end
-        local exact: Player? = nil
-        local partial: Player? = nil
+
+    local targetChoices: {string} = {"Murderer", "Sheriff"}
+    local targetSelectorButton: any = nil
+
+    local function rebuildTargetChoices(): ()
+        table.clear(targetChoices)
+        table.insert(targetChoices, "Murderer")
+        table.insert(targetChoices, "Sheriff")
         for _, player: Player in ipairs(Players:GetPlayers()) do
-            if player ~= LocalPlayer then
-                local name: string = string.lower(player.Name)
-                if string.gsub(name, "%s+", "") == needle then
-                    exact = player
-                    break
-                end
-                if not partial and string.find(name, needle, 1, true) then
-                    partial = player
-                end
+            if player ~= LocalPlayer and type(player.Name) == "string" and player.Name ~= "" then
+                table.insert(targetChoices, player.Name)
             end
         end
-        return exact or partial
+    end
+    rebuildTargetChoices()
+
+    if type(addCycleOption) == "function" then
+        targetSelectorButton = addCycleOption(
+            FlingFeature,
+            "Select Target",
+            targetChoices,
+            1,
+            function(value: string): ()
+                rebuildTargetChoices()
+                selectedTargetChoice = value
+            end,
+            "Select Murderer, Sheriff, or a specific player in the server for Fling and Auto Fling."
+        )
+    end
+
+    if Players.PlayerAdded then
+        featureConnections.MM2FlingPlayerAdded = Players.PlayerAdded:Connect(function(): ()
+            rebuildTargetChoices()
+        end)
+    end
+    if Players.PlayerRemoving then
+        featureConnections.MM2FlingPlayerRemoving = Players.PlayerRemoving:Connect(function(): ()
+            rebuildTargetChoices()
+        end)
     end
 
     local function autoFlingTick(): ()
         if not autoFlingSelected or flingRunning then
             return
         end
-        if os.clock() - lastAutoFlingAt < 0.65 then
+        if os.clock() - lastAutoFlingAt < 0.35 then
+            return
+        end
+        local localChar: Model?, localHum: Humanoid?, localRoot: BasePart? = getCharacterParts()
+        if not localChar or not localHum or not localRoot or localHum.Health <= 0 then
             return
         end
         local target: Player? = resolveSelectedTargetPlayer()
@@ -802,20 +997,13 @@ function Module.init(runtime: any): any
         if destroyHeight ~= destroyHeight or math.abs(destroyHeight) > 1e6 then
             destroyHeight = -500
         end
-        if targetPart.Position.Y <= destroyHeight + 55 then
-            return
-        end
-        local speed: number = 0
-        pcall(function(): ()
-            speed = targetPart.AssemblyLinearVelocity.Magnitude
-        end)
-        if speed > 250 then
+        if targetPart.Position.Y <= destroyHeight + 55 or targetPart.Position.Y >= 4000 then
             return
         end
         lastAutoFlingAt = os.clock()
         performFling(target, {
             silent = true,
-            duration = 3.2,
+            duration = 3.5,
             shouldStop = function(): boolean
                 return not autoFlingSelected
             end,
@@ -830,21 +1018,14 @@ function Module.init(runtime: any): any
             flingTargetName = value
         end,
         false,
-        "Exact or partial name"
+        "Exact or partial username / display name (optional if Select Target is used)"
     )
     addActionOption(FlingFeature, "Fling", function(): ()
-        local needle: string = string.lower(
-            string.gsub(flingTargetName or "", "%s+", "")
-        )
-        if needle == "" then
-            notify("Type a player name in the Target player box first.")
-            return
-        end
         local target: Player? = resolveSelectedTargetPlayer()
         if target then
             performFling(target)
         else
-            notify("No player named \"" .. flingTargetName .. "\" was found.")
+            notify("No valid target player was found.")
         end
     end)
     addToggleOption(
@@ -863,21 +1044,25 @@ function Module.init(runtime: any): any
                 autoFlingTick()
             end
         end,
-        "Continuously flings the player specified in Target player whenever they are alive."
+        "Continuously flings the target chosen in Select Target or Target player whenever they are alive."
     )
     addInformationOption(
         FlingFeature,
-        "MM2 only. Choose a role action, or enter a player name and press Fling."
+        "MM2 only. Choose a role action, select a target in Select Target / Target player, or enable Fling for walk-fling."
     )
 
     activeCleanup = function(): ()
         autoFlingSelected = false
+        walkFlingEnabled = false
         if disconnectFeatureConnection then
             disconnectFeatureConnection("MM2AutoFlingTarget")
+            disconnectFeatureConnection("MM2FlingPlayerAdded")
+            disconnectFeatureConnection("MM2FlingPlayerRemoving")
         end
         setFlingRunning(false)
         state.mm2PerformFling = nil
         state.mm2FlingStep = nil
+        targetSelectorButton = nil
     end
     Module.Initialized = true
     return FlingFeature
