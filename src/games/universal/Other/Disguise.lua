@@ -2359,9 +2359,9 @@ function Module.init(context: Runtime): any
     end
 
     local card: any
-    card = framework.Categories.Utilities:CreateModule({
+    card = framework.Categories.World:CreateModule({
         Name = "Disguise",
-        Category = "Utilities",
+        Category = "World",
         ConfigKey = "Universal.Disguise",
         Order = 26,
         Tooltip = "Character: copies accessories, clothing, face, body colors and other compatible appearance items while keeping your own body, rig and scales. Emotes and movement animations have independent toggles. Animation: applies only animations/emotes to your own avatar, without hiding it. Default ID 78492.",

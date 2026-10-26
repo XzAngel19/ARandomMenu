@@ -81,13 +81,13 @@ function Module.init(context: any): any
             ["Teleport"] = 2,
             ["Freeze Movements"] = 3,
             ["Ghost"] = 4,
-            ["Disguise"] = 5,
             ["Improve FPS"] = 1,
             ["Gravity"] = 2,
             ["Anti AFK"] = 3,
             ["Safe Walk"] = 4,
             ["Blurt Roles"] = 5,
             ["FreeCam"] = 6,
+            ["Disguise"] = 7,
         }
         layoutOrder = ordered[name] or (100 + layoutOrder)
         local registry: any = configuration.registry or universalFeatures

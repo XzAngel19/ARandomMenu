@@ -5,7 +5,7 @@
 > contradice lo que crees, gana este documento (y los datos de calibración).
 >
 > **Estado al escribir esto:** rama `arena/9492e6b6-arandommenu`, build
-> **`v132-20261025-movement-killaura-autovote-autofarm`**.
+> **`v133-20261025-disguise-autofarm-render-autounbox`**.
 > El usuario se comunica en español. Respóndele en español.
 
 ---

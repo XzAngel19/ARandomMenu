@@ -849,8 +849,8 @@ do
       Render = {"ItemESP", "PlayerESP", "Chams", "Nametags", "HP", "Arrows", "NPCESP", "FOV", "Fullbright", "X-Ray", "Zoom", "Markers"},
       Combat = {"Aim Assist", "KillAura", "TriggerBot", "SilentAIM"},
       Exploits = {"Fly", "Noclip", "Spider", "Speed", "Jump", "Interact Extender", "Fling"},
-      Utilities = {"Anti Void", "Teleport", "Freeze Movements", "Ghost", "Disguise"},
-      World = {"Improve FPS", "Gravity", "Anti AFK", "Safe Walk", "Blurt Roles", "FreeCam"},
+      Utilities = {"Anti Void", "Teleport", "Freeze Movements", "Ghost"},
+      World = {"Improve FPS", "Gravity", "Anti AFK", "Safe Walk", "Blurt Roles", "FreeCam", "Disguise"},
     }
     for category, names in pairs(expected) do
       for index, name in ipairs(names) do
@@ -1059,7 +1059,7 @@ do
     assert(spider.options:FindFirstChild("Option_Climbstate").Visible)
     assert(not spider.options:FindFirstChild("Option_Impulseinterval").Visible)
     local disguise = ex.state.framework:GetModule("Disguise")
-    assert(disguise and disguise.Category == "Utilities", "Disguise must actually load in Utilities")
+    assert(disguise and disguise.Category == "World", "Disguise must actually load in World")
     disguise.Options.Mode.Metadata.callback("Animation")
     assert(not disguise.Options["Use target movement animations"].Visible
         and not disguise.Options["Show target emotes"].Visible,

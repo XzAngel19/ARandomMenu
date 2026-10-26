@@ -360,9 +360,27 @@ end
 local invalidateRoleCaches: () -> ()
 local rebuildRoleIndex: () -> ()
 
+local function hasValidRoundRoleData(dataTable: any): boolean
+    if type(dataTable) ~= "table" then
+        return false
+    end
+    for _, entry: any in pairs(dataTable) do
+        if type(entry) == "table" and entry.Dead ~= true then
+            local role: any = entry.Role
+            if role == "Murderer"
+                or role == "Sheriff"
+                or role == "Hero"
+                or role == "Innocent" then
+                return true
+            end
+        end
+    end
+    return false
+end
+
 local function requestRoleRefresh(force: boolean?): ()
     if not mm2RoleRemote
-        or roleRefreshRunning
+        or (not force and roleRefreshRunning)
         or (not force and os.clock() - lastRoleRefreshAt < 0.8) then
         return
     end
@@ -378,10 +396,16 @@ local function requestRoleRefresh(force: boolean?): ()
         lastRoleRefreshAt = os.clock()
         if success
             and generation == roleRefreshGeneration
-            and roundLifecycleActive ~= false
-            and type(result) == "table" then
+            and type(result) == "table"
+            and (roundLifecycleActive ~= false or hasValidRoundRoleData(result)) then
+            if hasValidRoundRoleData(result) and roundLifecycleActive == nil then
+                roundLifecycleActive = true
+            end
             mm2RoundData = result
             invalidateRoleCaches()
+            if rebuildRoleIndex then
+                rebuildRoleIndex()
+            end
         end
     end)
 end
@@ -835,7 +859,7 @@ local function findMM2Map(): Instance?
     if cached and cached.Parent == workspace and isMM2MapModel(cached) then
         return cached
     end
-    if os.clock() - mm2MapCache.at < 1 then
+    if os.clock() - mm2MapCache.at < 0.1 then
         return (cached and cached.Parent == workspace) and cached or nil
     end
     mm2MapCache.at = os.clock()
@@ -880,6 +904,13 @@ local function findDroppedGunUncached(): (Model | BasePart)?
         return candidate :: any
     end
 
+    for _, taggedDrop: Instance in ipairs(CollectionService:GetTagged("GunDrop")) do
+        if taggedDrop:IsDescendantOf(workspace)
+            and (taggedDrop:IsA("Model") or taggedDrop:IsA("BasePart")) then
+            return taggedDrop :: any
+        end
+    end
+
     for _, object: Instance in ipairs(workspace:GetChildren()) do
         if object:IsA("Model") or object:IsA("Folder") then
             local childDrop: Instance? = object:FindFirstChild("GunDrop")
@@ -907,7 +938,7 @@ local function findDroppedGunUncached(): (Model | BasePart)?
         end
     end
 
-    if os.clock() - lastGunSweepAt < 0.5 then
+    if os.clock() - lastGunSweepAt < 1.5 then
         return nil
     end
     lastGunSweepAt = os.clock()
@@ -916,14 +947,6 @@ local function findDroppedGunUncached(): (Model | BasePart)?
     if deepCandidate
         and (deepCandidate:IsA("Model") or deepCandidate:IsA("BasePart")) then
         return deepCandidate :: any
-    end
-    for _, object: Instance in ipairs(workspace:GetDescendants()) do
-        if isLooseGun(object) then
-            local part: (Model | BasePart)? = resolveGunPart(object)
-            if part then
-                return part
-            end
-        end
     end
     return nil
 end
@@ -965,7 +988,9 @@ local function createMM2Marker(folder, adornee, labelText, color, transparency)
 
     local head = adornee:IsA("Model")
         and (adornee:FindFirstChild("Head")
-            or adornee:FindFirstChild("HumanoidRootPart"))
+            or adornee:FindFirstChild("HumanoidRootPart")
+            or adornee:FindFirstChild("Handle", true)
+            or adornee:FindFirstChildWhichIsA("BasePart", true))
         or adornee
 
     if head and head:IsA("BasePart") then
@@ -1085,28 +1110,97 @@ local function registerMM2Roles(): ()
     })
 end
 
+local primeRoundState: () -> ()
+local setRoundPhase: (string, string) -> ()
+local lastPhase: string = "unknown"
+
 if mm2GameplayRemotes then
     local playerDataChanged = mm2GameplayRemotes:FindFirstChild("PlayerDataChanged")
     if playerDataChanged and playerDataChanged:IsA("RemoteEvent") then
         featureConnections.MM2PlayerDataChanged = playerDataChanged.OnClientEvent:Connect(function(newData)
-            invalidateRoleCaches()
-            if type(newData) ~= "table" or roundLifecycleActive == false then
-                mm2RoundData = {}
-            else
-
+            if type(newData) == "table" and hasValidRoundRoleData(newData) then
+                roundLifecycleActive = true
+                mm2MapCache.at = -math.huge
                 for key: any, value: any in pairs(newData) do
                     mm2RoundData[key] = value
                 end
                 lastRoleRefreshAt = os.clock()
+                invalidateRoleCaches()
+                if rebuildRoleIndex then
+                    rebuildRoleIndex()
+                end
+                if setRoundPhase and findMM2Map() then
+                    lastPhase = "map"
+                    setRoundPhase("map", "PlayerDataChanged")
+                end
+            elseif type(newData) ~= "table" or roundLifecycleActive == false then
+                mm2RoundData = {}
+                invalidateRoleCaches()
+            else
+                for key: any, value: any in pairs(newData) do
+                    mm2RoundData[key] = value
+                end
+                lastRoleRefreshAt = os.clock()
+                invalidateRoleCaches()
+                if rebuildRoleIndex then
+                    rebuildRoleIndex()
+                end
             end
-
         end)
     end
-end
 
-local primeRoundState: () -> ()
-local setRoundPhase: (string, string) -> ()
-local lastPhase: string = "unknown"
+    local roleSelect = mm2GameplayRemotes:FindFirstChild("RoleSelect")
+    if roleSelect and roleSelect:IsA("RemoteEvent") then
+        featureConnections.MM2RoleSelect = roleSelect.OnClientEvent:Connect(function(localRole: any)
+            roundLifecycleActive = true
+            mm2MapCache.at = -math.huge
+            if type(localRole) == "string"
+                and (localRole == "Murderer"
+                    or localRole == "Sheriff"
+                    or localRole == "Hero"
+                    or localRole == "Innocent") then
+                local existing: any = mm2RoundData[LocalPlayer.Name]
+                if type(existing) ~= "table" then
+                    existing = {
+                        Name = LocalPlayer.Name,
+                        UserId = LocalPlayer.UserId,
+                    }
+                    mm2RoundData[LocalPlayer.Name] = existing
+                end
+                existing.Role = localRole
+            end
+            invalidateRoleCaches()
+            if rebuildRoleIndex then
+                rebuildRoleIndex()
+            end
+            if primeRoundState then
+                primeRoundState()
+            end
+            if setRoundPhase then
+                lastPhase = "map"
+                setRoundPhase("map", "RoleSelect")
+            end
+        end)
+    end
+
+    for _, remoteName: string in ipairs({"ShowRoleSelect", "ShowRoleSelectNew"}) do
+        local showRole = mm2GameplayRemotes:FindFirstChild(remoteName)
+        if showRole and showRole:IsA("RemoteEvent") then
+            featureConnections["MM2" .. remoteName] = showRole.OnClientEvent:Connect(function()
+                roundLifecycleActive = true
+                mm2MapCache.at = -math.huge
+                invalidateRoleCaches()
+                if primeRoundState then
+                    primeRoundState()
+                end
+                if setRoundPhase then
+                    lastPhase = "map"
+                    setRoundPhase("map", remoteName)
+                end
+            end)
+        end
+    end
+end
 
 local roundTimer: {endsAt: number?} = {endsAt = nil}
 local timerRemotes = game:GetService("ReplicatedStorage"):FindFirstChild("Remotes")
@@ -1120,15 +1214,15 @@ if timerRoundStart and timerRoundStart:IsA("RemoteEvent") then
         function(duration)
             duration = tonumber(duration)
             roundTimer.endsAt = duration and os.clock() + duration or nil
-            mm2RoundData = {}
-            invalidateRoleCaches()
-            roundLifecycleActive = duration ~= nil and duration > 0
             if not duration or duration <= 0 then
+                mm2RoundData = {}
                 sessionRoundActive = false
             end
+            invalidateRoleCaches()
+            roundLifecycleActive = duration ~= nil and duration > 0
             roleRefreshGeneration += 1
             if duration and duration > 0 then
-
+                mm2MapCache.at = -math.huge
                 primeRoundState()
                 lastPhase = "map"
                 setRoundPhase("map", "RoundStart")
@@ -1242,15 +1336,6 @@ local function detectRoundPhase(): string
     if lobby and (root:IsDescendantOf(lobby) or isRootNearLobby(root, lobby)) then
         return "lobby"
     end
-    local timerPart: Instance? = workspace:FindFirstChild("RoundTimerPart")
-    if timerPart then
-        local okTime: boolean, tVal: any = pcall(function(): any
-            return timerPart:GetAttribute("Time")
-        end)
-        if okTime and type(tVal) == "number" and tVal <= 0 then
-            return "lobby"
-        end
-    end
     if findMM2Map() then
         return "map"
     end
@@ -1263,8 +1348,7 @@ primeRoundState = function(): ()
     local generation: number = roleRefreshGeneration
     requestRoleRefresh(true)
     task.spawn(function(): ()
-
-        for _, delay: number in ipairs({0.2, 0.6}) do
+        for _, delay: number in ipairs({0.05, 0.15, 0.3, 0.5, 0.8, 1.2, 2.0, 3.0}) do
             task.wait(delay)
             if generation ~= roleRefreshGeneration or roundRolesKnown() then
                 break
@@ -1276,9 +1360,13 @@ end
 
 local phaseElapsed: number = 0
 lastPhase = detectRoundPhase()
+if lastPhase == "map" then
+    roundLifecycleActive = true
+    primeRoundState()
+end
 featureConnections.MM2RoundPhase = TaskManager:Connect(function(deltaTime: number): ()
     phaseElapsed += deltaTime
-    if phaseElapsed < 0.2 then
+    if phaseElapsed < 0.05 then
         return
     end
     phaseElapsed = 0
@@ -1288,8 +1376,9 @@ featureConnections.MM2RoundPhase = TaskManager:Connect(function(deltaTime: numbe
     end
     lastPhase = phase
     if phase == "map" then
-
-        mm2RoundData = {}
+        if not hasValidRoundRoleData(mm2RoundData) then
+            mm2RoundData = {}
+        end
         roundLifecycleActive = true
         invalidateRoleCaches()
         primeRoundState("map")

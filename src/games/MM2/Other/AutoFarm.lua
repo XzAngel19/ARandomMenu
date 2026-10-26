@@ -349,6 +349,7 @@ function Module.init(_runtime: any): any
         local busy: boolean = false
         local fullHandled: boolean = false
         local roundFullReached: boolean = false
+        local teleportedHomeThisRound: boolean = false
         local wasInActiveRound: boolean = false
         local scanCache: {Instance} = {}
         local scanAt: number = 0
@@ -489,7 +490,10 @@ function Module.init(_runtime: any): any
                     -- it had right before Auto Farm started (homeCFrame),
                     -- never to a random spawn point, and during active
                     -- farming strictly only when the player has 50 coins.
+                    -- Once that 50-coin teleport has cleanly happened once,
+                    -- never teleport the character anywhere else in this round.
                     local allowReturnHome: boolean = returnHome
+                        and not teleportedHomeThisRound
                         and (bagAmount >= 50 or not enabled)
                         and homeCFrame ~= nil
                         and (not homeCharacter or homeCharacter == character)
@@ -502,7 +506,11 @@ function Module.init(_runtime: any): any
                             end)
                         end
                         root.CFrame = targetCF
-                    else
+                        if bagAmount >= 50 then
+                            teleportedHomeThisRound = true
+                            homeCFrame = nil
+                        end
+                    elseif not teleportedHomeThisRound then
                         -- Stand back up exactly where we are.
                         root.CFrame = CFrame.new(root.Position)
                             * CFrame.Angles(0, yawOf(root.CFrame), 0)
@@ -796,6 +804,9 @@ function Module.init(_runtime: any): any
                             break
                         end
                     end
+                    if teleportedHomeThisRound or roundFullReached then
+                        break
+                    end
                     local dropPosition: Vector3? = nil
                     pcall(function(): ()
                         if drop:IsA("BasePart") then
@@ -971,6 +982,7 @@ function Module.init(_runtime: any): any
                         bagAmount = 0
                         fullHandled = false
                         roundFullReached = false
+                        teleportedHomeThisRound = false
                         homeCFrame = nil
                         homeCharacter = nil
                         hideAnchorPosition = nil
@@ -985,6 +997,7 @@ function Module.init(_runtime: any): any
                     bagAmount = 0
                     fullHandled = false
                     roundFullReached = false
+                    teleportedHomeThisRound = false
                     homeCFrame = root.CFrame
                     homeCharacter = character
                     hideAnchorPosition = root.Position - Vector3.new(0, BELOW_OFFSET + 4, 0)
@@ -1005,7 +1018,14 @@ function Module.init(_runtime: any): any
                             restoreCharacter(true)
                         end
                     elseif settings.grabGunShoot and canGrabGun() then
-                        task.spawn(runFullSequence)
+                        task.spawn(function(): ()
+                            if busy then
+                                return
+                            end
+                            busy = true
+                            pcall(grabGunAndShoot)
+                            busy = false
+                        end)
                     else
                         setStatus(string.format(
                             "Auto Farm: full bag (%d/%d) - stopped at start position",

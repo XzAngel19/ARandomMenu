@@ -346,30 +346,104 @@ function Module.init(runtime: any): any
         return serverFamily or familyFromWorkspace()
     end
 
+    local function readSyncDatabase(): any
+        local replicated: Instance = game:GetService("ReplicatedStorage")
+        local database: Instance? = replicated:FindFirstChild("Database")
+        return safeRequire(database and database:FindFirstChild("Sync"))
+    end
+
+    local function readProfileData(): any
+        local replicated: Instance = game:GetService("ReplicatedStorage")
+        local modules: Instance? = replicated:FindFirstChild("Modules")
+        return safeRequire(modules and modules:FindFirstChild("ProfileData"))
+    end
+
+    -- Read the player's real balance for `currency` from MM2's ProfileData
+    -- module when available in the live game. Returns nil only when
+    -- ProfileData is not present (e.g. offline test harness).
+    local function getPlayerCurrencyBalance(currency: string): number?
+        if currency == "Robux" then
+            return nil
+        end
+        local profile: any = readProfileData()
+        if type(profile) ~= "table" then
+            return nil
+        end
+        local direct: any = profile[currency]
+        if type(direct) == "number" then
+            return direct
+        end
+        local materials: any = profile.Materials
+        if type(materials) == "table" and type(materials.Owned) == "table" then
+            local matOwned: any = materials.Owned[currency]
+            if type(matOwned) == "number" then
+                return matOwned
+            end
+        end
+        local weapons: any = profile.Weapons
+        if type(weapons) == "table" and type(weapons.Owned) == "table" then
+            local wepOwned: any = weapons.Owned[currency]
+            if type(wepOwned) == "number" then
+                return wepOwned
+            end
+        end
+        if type(profile.Coins) == "number"
+            or type(profile.Gems) == "number"
+            or type(materials) == "table"
+            or type(weapons) == "table" then
+            return 0
+        end
+        return nil
+    end
+
+    local function canAffordCurrency(entry: BoxEntry, currency: string): boolean
+        local price: number? = entry.prices and entry.prices[currency] or nil
+        if type(price) ~= "number" or price <= 0 then
+            return true
+        end
+        local balance: number? = getPlayerCurrencyBalance(currency)
+        if balance == nil then
+            return true
+        end
+        return balance >= price
+    end
+
     -- Auto: pay with the currency the active coin family fills, then Coins
-    -- and Gems, then the box's event currency, and only then a key.
+    -- and Gems, then the box's event currency, and only then a key. When
+    -- ProfileData is loaded, prefer a currency the player can actually afford.
     local function autoCurrency(entry: BoxEntry): string?
         local prices: {[string]: number} = entry.prices or {}
+        local orderedCandidates: {string} = {}
+        local seenCandidate: {[string]: boolean} = {}
+        local function pushCandidate(c: string): ()
+            if prices[c] and not seenCandidate[c] then
+                seenCandidate[c] = true
+                table.insert(orderedCandidates, c)
+            end
+        end
         local family: string? = activeFamily()
         if family then
             for _, currency: string in ipairs(FAMILY_CURRENCIES[family] or {}) do
-                if prices[currency] then
-                    return currency
-                end
+                pushCandidate(currency)
             end
         end
         for _, currency: string in ipairs({"Coins", "Gems"}) do
-            if prices[currency] then
-                return currency
-            end
+            pushCandidate(currency)
         end
         for _, currency: string in ipairs(sortedKeys(prices)) do
             if not contains(lower(currency), "key") then
+                pushCandidate(currency)
+            end
+        end
+        for _, currency: string in ipairs(sortedKeys(prices)) do
+            pushCandidate(currency)
+        end
+        for _, currency: string in ipairs(orderedCandidates) do
+            if canAffordCurrency(entry, currency) then
                 return currency
             end
         end
-        local keys: {string} = sortedKeys(prices)
-        return keys[1]
+        return orderedCandidates[1]
     end
 
     local function resolveCurrency(entry: BoxEntry): (string?, boolean)
@@ -456,39 +530,122 @@ function Module.init(runtime: any): any
     local revealUntil: number = 0
     local REVEAL_SECONDS: number = 5
 
+    -- Clean up any stuck MysteryBoxOpen / Unboxing2 dark overlay ScreenGui
+    -- left behind in PlayerGui if MM2's MysteryBoxService errored mid-tween.
+    local function clearStuckUnboxOverlays(): ()
+        pcall(function(): ()
+            local playerGui: Instance? = LocalPlayer
+                and LocalPlayer:FindFirstChildOfClass("PlayerGui")
+            if not playerGui then
+                return
+            end
+            for _, gui: Instance in ipairs(playerGui:GetChildren()) do
+                if gui.Name == "MysteryBoxOpen" or gui.Name == "Unboxing2" then
+                    gui:Destroy()
+                elseif gui.Name == "MainGUI" then
+                    for _, subName: string in ipairs({"Lobby", "Game"}) do
+                        local sub: Instance? = gui:FindFirstChild(subName)
+                        local proc: Instance? = sub and sub:FindFirstChild("Processing")
+                        if proc and proc:IsA("GuiObject") then
+                            (proc :: GuiObject).Visible = false
+                        end
+                    end
+                end
+            end
+        end)
+    end
+
+    local function isValidReward(reward: any, category: string): boolean
+        if type(reward) ~= "string" or reward == "" or reward == "false" or reward == "nil" then
+            return false
+        end
+        local sync: any = readSyncDatabase()
+        if type(sync) == "table" then
+            if category == "Eggs" then
+                local pets: any = sync.Pets
+                if type(pets) == "table" and next(pets) ~= nil then
+                    return pets[reward] ~= nil
+                end
+            else
+                local weapons: any = sync.Weapons
+                local items: any = sync.Item
+                if type(weapons) == "table" and next(weapons) ~= nil then
+                    if weapons[reward] ~= nil then
+                        return true
+                    end
+                    if type(items) == "table" and items[reward] ~= nil then
+                        return true
+                    end
+                    return false
+                end
+            end
+        end
+        return true
+    end
+
+    -- MysteryBoxService:PlayOpeningAnimation indexes Sync.MysteryBox[boxId]
+    -- and Sync.Weapons[reward] AFTER parenting the dark MysteryBoxOpen GUI
+    -- to PlayerGui. If an event box is not in Sync.MysteryBox (or reward is
+    -- not in Sync.Weapons), PlayOpeningAnimation crashes mid-function and
+    -- leaves the dark overlay stuck forever. Check before firing BoxController.
+    local function canPlayBoxAnimationSafely(boxId: string, reward: string): boolean
+        local sync: any = readSyncDatabase()
+        if type(sync) ~= "table" then
+            return true
+        end
+        local weapons: any = sync.Weapons
+        if type(weapons) ~= "table" or next(weapons) == nil then
+            return true
+        end
+        if type(weapons[reward]) ~= "table" then
+            return false
+        end
+        local mysteryBoxes: any = sync.MysteryBox
+        if type(mysteryBoxes) == "table" and next(mysteryBoxes) ~= nil then
+            local boxDef: any = mysteryBoxes[boxId]
+            if type(boxDef) ~= "table" or type(boxDef.Contents) ~= "table" then
+                return false
+            end
+        end
+        return true
+    end
+
     local function reveal(boxId: string, category: string, reward: any): ()
         local remotes: Instance? = shopRemotes()
         if not remotes then
             return
         end
         if settings.reveal == REVEAL_ON then
-            revealUntil = os.clock() + REVEAL_SECONDS
             -- The official flow: the game plays the reveal and reports the
             -- crate as complete (the BoxController LocalScript does both).
             if category == "Eggs" then
+                revealUntil = os.clock() + REVEAL_SECONDS
                 local eggController: Instance? = remotes:FindFirstChild("EggController")
                 if eggController then
                     pcall(function(): ()
                         (eggController :: any):Fire(boxId, reward)
                     end)
                 end
-            else
+                return
+            elseif canPlayBoxAnimationSafely(boxId, tostring(reward)) then
+                revealUntil = os.clock() + REVEAL_SECONDS
                 local boxController: Instance? = remotes:FindFirstChild("BoxController")
                 if boxController then
                     pcall(function(): ()
                         (boxController :: any):Fire({{MysteryBoxId = boxId, RewardedItemId = reward}})
                     end)
                 end
+                return
             end
-        else
-            -- No animation: still report the crate so the server sees the
-            -- same completion the reveal would have sent.
-            local crateComplete: Instance? = remotes:FindFirstChild("CrateComplete")
-            if crateComplete then
-                pcall(function(): ()
-                    (crateComplete :: any):FireServer(reward)
-                end)
-            end
+        end
+        -- No animation (or event box missing from Sync.MysteryBox which would
+        -- crash MysteryBoxService and leave a dark screen): still report the
+        -- crate so the server and inventory register the unboxed item cleanly.
+        local crateComplete: Instance? = remotes:FindFirstChild("CrateComplete")
+        if crateComplete then
+            pcall(function(): ()
+                (crateComplete :: any):FireServer(reward)
+            end)
         end
     end
 
@@ -511,6 +668,32 @@ function Module.init(runtime: any): any
             stop("Auto Unbox: " .. entry.name .. " has no known price currency.")
             return false
         end
+        -- Verify the player actually has enough currency BEFORE calling
+        -- OpenCrate or playing any reveal animation. If insufficient, do
+        -- nothing and stop immediately without opening imaginary boxes.
+        local requiredPrice: number? = entry.prices and entry.prices[currency] or nil
+        local currentBalance: number? = getPlayerCurrencyBalance(currency)
+        if type(requiredPrice) == "number"
+            and requiredPrice > 0
+            and type(currentBalance) == "number"
+            and currentBalance < requiredPrice then
+            clearStuckUnboxOverlays()
+            session.finished = true
+            openingBusy = false
+            report(summary())
+            stop(
+                "Auto Unbox stopped: not enough "
+                    .. tostring(currency)
+                    .. " ("
+                    .. tostring(currentBalance)
+                    .. "/"
+                    .. tostring(requiredPrice)
+                    .. ") for "
+                    .. entry.name
+                    .. "."
+            )
+            return false
+        end
         local remotes: Instance? = shopRemotes()
         local openCrate: Instance? = remotes and remotes:FindFirstChild("OpenCrate")
         if not (openCrate and openCrate:IsA("RemoteFunction")) then
@@ -525,7 +708,7 @@ function Module.init(runtime: any): any
         local ok: boolean, reward: any = pcall(function(): any
             return (openCrate :: any):InvokeServer(entry.id, entry.category, currency)
         end)
-        if ok and reward ~= nil then
+        if ok and isValidReward(reward, entry.category) then
             reveal(entry.id, entry.category, reward)
             session.opened += 1
             session.consecutiveFailures = 0
@@ -533,11 +716,12 @@ function Module.init(runtime: any): any
             openingBusy = false
             return true
         end
+        clearStuckUnboxOverlays()
         session.failures += 1
         session.consecutiveFailures += 1
         report(summary() .. note)
         openingBusy = false
-        if session.consecutiveFailures >= 3 then
+        if reward == false or session.consecutiveFailures >= 3 then
             session.finished = true
             stop(
                 "Auto Unbox stopped: "
@@ -579,6 +763,9 @@ function Module.init(runtime: any): any
         4,
         function(enabled: boolean): ()
             disconnectFeatureConnection("MM2AutoUnbox")
+            if os.clock() >= revealUntil then
+                clearStuckUnboxOverlays()
+            end
             if not enabled then
                 return
             end

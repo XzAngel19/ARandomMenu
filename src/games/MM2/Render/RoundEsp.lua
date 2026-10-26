@@ -57,8 +57,35 @@ function Module.init(runtime: any): any
         end)
     end
 
+    local savedTrapTransparency: {[Instance]: number} =
+        setmetatable({}, {__mode = "k"}) :: any
+
+    local function restoreTrapTransparency(): ()
+        for part: Instance, orig: number in pairs(savedTrapTransparency) do
+            pcall(function(): ()
+                (part :: BasePart).Transparency = orig
+            end)
+        end
+        table.clear(savedTrapTransparency)
+    end
+
+    local function revealTrapPart(part: Instance): ()
+        pcall(function(): ()
+            if part:IsA("BasePart") then
+                local current: any = (part :: BasePart).Transparency
+                if type(current) == "number" and current >= 0.95 then
+                    if savedTrapTransparency[part] == nil then
+                        savedTrapTransparency[part] = current
+                    end
+                    ;(part :: BasePart).Transparency = 0.35
+                end
+            end
+        end)
+    end
+
     local function toggleTrapEsp(enabled: boolean): ()
         disconnectFeatureConnection("MM2TrapAdded")
+        restoreTrapTransparency()
         clearEffects(TrapEffects)
 
         if not enabled then
@@ -72,7 +99,20 @@ function Module.init(runtime: any): any
             end
             if (object.Name == "TrapVisual" or object.Name == "Trap")
                 and (object:IsA("Model") or object:IsA("BasePart")) then
+                local parent: Instance? = (object :: any).Parent
+                if parent and marked[parent] then
+                    revealTrapPart(object)
+                    return
+                end
                 marked[object] = true
+                revealTrapPart(object)
+                pcall(function(): ()
+                    if type((object :: any).GetDescendants) == "function" then
+                        for _, child: Instance in ipairs((object :: any):GetDescendants()) do
+                            revealTrapPart(child)
+                        end
+                    end
+                end)
                 createMM2Cham(
                     TrapEffects,
                     object,
@@ -85,6 +125,11 @@ function Module.init(runtime: any): any
         local map = findMM2Map()
         for _, object in ipairs((map or workspace):GetDescendants()) do
             addTrap(object)
+        end
+        if map and type((workspace :: any).GetChildren) == "function" then
+            for _, child: Instance in ipairs((workspace :: any):GetChildren()) do
+                addTrap(child)
+            end
         end
         featureConnections.MM2TrapAdded = workspace.DescendantAdded:Connect(addTrap)
     end

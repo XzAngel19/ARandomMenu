@@ -70,7 +70,7 @@ local FEATURE_CATEGORIES: {[string]: string} = {
 
     ["Anti-AFK"] = "Other",
     ["AntiAFK"] = "Other",
-    ["Disguise"] = "Utilities",
+    ["Disguise"] = "World",
     ["Fling"] = "Exploits",
     ["Improve FPS"] = "World",
     ["Interact Extender"] = "Exploits",
@@ -219,7 +219,7 @@ local RUNTIME_RAW_BASE: string =
         .. RUNTIME_BRANCH
         .. "/"
 
-local SOURCE_STAMP: string = "v132-20261025-movement-killaura-autovote-autofarm"
+local SOURCE_STAMP: string = "v133-20261025-disguise-autofarm-render-autounbox"
 
 local BOOT_STARTED_AT: number = os.clock()
 local BOOT_FINGERPRINT_SECONDS: number = 0
@@ -5943,7 +5943,7 @@ local fallbackManifest: any = {
         {path = "src/games/universal/Movement/FreezeMovements.lua", name = "Freeze Movements", category = "Utilities"},
         {path = "src/games/universal/Movement/Gravity.lua", name = "Gravity", category = "World"},
         {path = "src/games/universal/Movement/SafeWalk.lua", name = "Safe Walk", category = "World"},
-        {path = "src/games/universal/Other/Disguise.lua", name = "Disguise", category = "Utilities"},
+        {path = "src/games/universal/Other/Disguise.lua", name = "Disguise", category = "World"},
         {path = "src/games/universal/Other/AntiAfk.lua", name = "Anti AFK", category = "World"},
         {path = "src/games/universal/Other/InteractExtender.lua", name = "Interact Extender", category = "Exploits"},
         {path = "src/games/universal/Other/RejoinServer.lua", name = "Rejoin Server", category = "Utilities"},

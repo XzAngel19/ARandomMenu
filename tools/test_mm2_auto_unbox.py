@@ -25,10 +25,13 @@ os = {clock = function() return clock end, time = realOs.time}
 
 -- ============================ shop remotes ============================
 local openCalls = {}
-local openCrate = {Name = "OpenCrate", failCount = 0}
+local openCrate = {Name = "OpenCrate", failCount = 0, returnFalse = false}
 function openCrate:IsA(class) return class == "RemoteFunction" end
 function openCrate:InvokeServer(boxId, category, currency)
     openCalls[#openCalls + 1] = {boxId = boxId, category = category, currency = currency}
+    if self.returnFalse then
+        return false
+    end
     if self.failCount > 0 then
         self.failCount -= 1
         return nil
@@ -373,6 +376,20 @@ assert(openCalls[#openCalls].currency == "SnowTokens2024",
     "the workspace family pays the matching currency")
 card.enabled = false
 card.onToggle(false)
+
+-- Server returning `false` (not enough currency) must NEVER fire BoxController
+-- (no imaginary boxes or stuck dark screen) and must stop immediately.
+local prevBoxFires = #boxController.fires
+openCrate.returnFalse = true
+clock += 10
+card.enabled = true
+card.onToggle(true)
+loop(0.1)
+assert(#boxController.fires == prevBoxFires,
+    "false reward from OpenCrate must never fire BoxController (no imaginary box)")
+assert(card.enabled == false and loop == nil,
+    "false reward (insufficient currency) stops Auto Unbox immediately")
+openCrate.returnFalse = false
 
 Module.destroy()
 assert(not state.mm2AutoUnboxFeature and loop == nil, "unload leaves nothing")

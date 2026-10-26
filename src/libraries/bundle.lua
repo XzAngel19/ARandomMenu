@@ -1,5 +1,5 @@
 return {
-    stamp = "v132-20261025-movement-killaura-autovote-autofarm",
+    stamp = "v133-20261025-disguise-autofarm-render-autounbox",
     files = {
         ["src/Profile/135856908115931.lua"] = [[
 --!strict
@@ -4591,6 +4591,7 @@ function Module.init(_runtime: any): any
         local busy: boolean = false
         local fullHandled: boolean = false
         local roundFullReached: boolean = false
+        local teleportedHomeThisRound: boolean = false
         local wasInActiveRound: boolean = false
         local scanCache: {Instance} = {}
         local scanAt: number = 0
@@ -4731,7 +4732,10 @@ function Module.init(_runtime: any): any
                     -- it had right before Auto Farm started (homeCFrame),
                     -- never to a random spawn point, and during active
                     -- farming strictly only when the player has 50 coins.
+                    -- Once that 50-coin teleport has cleanly happened once,
+                    -- never teleport the character anywhere else in this round.
                     local allowReturnHome: boolean = returnHome
+                        and not teleportedHomeThisRound
                         and (bagAmount >= 50 or not enabled)
                         and homeCFrame ~= nil
                         and (not homeCharacter or homeCharacter == character)
@@ -4744,7 +4748,11 @@ function Module.init(_runtime: any): any
                             end)
                         end
                         root.CFrame = targetCF
-                    else
+                        if bagAmount >= 50 then
+                            teleportedHomeThisRound = true
+                            homeCFrame = nil
+                        end
+                    elseif not teleportedHomeThisRound then
                         -- Stand back up exactly where we are.
                         root.CFrame = CFrame.new(root.Position)
                             * CFrame.Angles(0, yawOf(root.CFrame), 0)
@@ -5038,6 +5046,9 @@ function Module.init(_runtime: any): any
                             break
                         end
                     end
+                    if teleportedHomeThisRound or roundFullReached then
+                        break
+                    end
                     local dropPosition: Vector3? = nil
                     pcall(function(): ()
                         if drop:IsA("BasePart") then
@@ -5213,6 +5224,7 @@ function Module.init(_runtime: any): any
                         bagAmount = 0
                         fullHandled = false
                         roundFullReached = false
+                        teleportedHomeThisRound = false
                         homeCFrame = nil
                         homeCharacter = nil
                         hideAnchorPosition = nil
@@ -5227,6 +5239,7 @@ function Module.init(_runtime: any): any
                     bagAmount = 0
                     fullHandled = false
                     roundFullReached = false
+                    teleportedHomeThisRound = false
                     homeCFrame = root.CFrame
                     homeCharacter = character
                     hideAnchorPosition = root.Position - Vector3.new(0, BELOW_OFFSET + 4, 0)
@@ -5247,7 +5260,14 @@ function Module.init(_runtime: any): any
                             restoreCharacter(true)
                         end
                     elseif settings.grabGunShoot and canGrabGun() then
-                        task.spawn(runFullSequence)
+                        task.spawn(function(): ()
+                            if busy then
+                                return
+                            end
+                            busy = true
+                            pcall(grabGunAndShoot)
+                            busy = false
+                        end)
                     else
                         setStatus(string.format(
                             "Auto Farm: full bag (%d/%d) - stopped at start position",
@@ -5814,30 +5834,104 @@ function Module.init(runtime: any): any
         return serverFamily or familyFromWorkspace()
     end
 
+    local function readSyncDatabase(): any
+        local replicated: Instance = game:GetService("ReplicatedStorage")
+        local database: Instance? = replicated:FindFirstChild("Database")
+        return safeRequire(database and database:FindFirstChild("Sync"))
+    end
+
+    local function readProfileData(): any
+        local replicated: Instance = game:GetService("ReplicatedStorage")
+        local modules: Instance? = replicated:FindFirstChild("Modules")
+        return safeRequire(modules and modules:FindFirstChild("ProfileData"))
+    end
+
+    -- Read the player's real balance for `currency` from MM2's ProfileData
+    -- module when available in the live game. Returns nil only when
+    -- ProfileData is not present (e.g. offline test harness).
+    local function getPlayerCurrencyBalance(currency: string): number?
+        if currency == "Robux" then
+            return nil
+        end
+        local profile: any = readProfileData()
+        if type(profile) ~= "table" then
+            return nil
+        end
+        local direct: any = profile[currency]
+        if type(direct) == "number" then
+            return direct
+        end
+        local materials: any = profile.Materials
+        if type(materials) == "table" and type(materials.Owned) == "table" then
+            local matOwned: any = materials.Owned[currency]
+            if type(matOwned) == "number" then
+                return matOwned
+            end
+        end
+        local weapons: any = profile.Weapons
+        if type(weapons) == "table" and type(weapons.Owned) == "table" then
+            local wepOwned: any = weapons.Owned[currency]
+            if type(wepOwned) == "number" then
+                return wepOwned
+            end
+        end
+        if type(profile.Coins) == "number"
+            or type(profile.Gems) == "number"
+            or type(materials) == "table"
+            or type(weapons) == "table" then
+            return 0
+        end
+        return nil
+    end
+
+    local function canAffordCurrency(entry: BoxEntry, currency: string): boolean
+        local price: number? = entry.prices and entry.prices[currency] or nil
+        if type(price) ~= "number" or price <= 0 then
+            return true
+        end
+        local balance: number? = getPlayerCurrencyBalance(currency)
+        if balance == nil then
+            return true
+        end
+        return balance >= price
+    end
+
     -- Auto: pay with the currency the active coin family fills, then Coins
-    -- and Gems, then the box's event currency, and only then a key.
+    -- and Gems, then the box's event currency, and only then a key. When
+    -- ProfileData is loaded, prefer a currency the player can actually afford.
     local function autoCurrency(entry: BoxEntry): string?
         local prices: {[string]: number} = entry.prices or {}
+        local orderedCandidates: {string} = {}
+        local seenCandidate: {[string]: boolean} = {}
+        local function pushCandidate(c: string): ()
+            if prices[c] and not seenCandidate[c] then
+                seenCandidate[c] = true
+                table.insert(orderedCandidates, c)
+            end
+        end
         local family: string? = activeFamily()
         if family then
             for _, currency: string in ipairs(FAMILY_CURRENCIES[family] or {}) do
-                if prices[currency] then
-                    return currency
-                end
+                pushCandidate(currency)
             end
         end
         for _, currency: string in ipairs({"Coins", "Gems"}) do
-            if prices[currency] then
-                return currency
-            end
+            pushCandidate(currency)
         end
         for _, currency: string in ipairs(sortedKeys(prices)) do
             if not contains(lower(currency), "key") then
+                pushCandidate(currency)
+            end
+        end
+        for _, currency: string in ipairs(sortedKeys(prices)) do
+            pushCandidate(currency)
+        end
+        for _, currency: string in ipairs(orderedCandidates) do
+            if canAffordCurrency(entry, currency) then
                 return currency
             end
         end
-        local keys: {string} = sortedKeys(prices)
-        return keys[1]
+        return orderedCandidates[1]
     end
 
     local function resolveCurrency(entry: BoxEntry): (string?, boolean)
@@ -5924,39 +6018,122 @@ function Module.init(runtime: any): any
     local revealUntil: number = 0
     local REVEAL_SECONDS: number = 5
 
+    -- Clean up any stuck MysteryBoxOpen / Unboxing2 dark overlay ScreenGui
+    -- left behind in PlayerGui if MM2's MysteryBoxService errored mid-tween.
+    local function clearStuckUnboxOverlays(): ()
+        pcall(function(): ()
+            local playerGui: Instance? = LocalPlayer
+                and LocalPlayer:FindFirstChildOfClass("PlayerGui")
+            if not playerGui then
+                return
+            end
+            for _, gui: Instance in ipairs(playerGui:GetChildren()) do
+                if gui.Name == "MysteryBoxOpen" or gui.Name == "Unboxing2" then
+                    gui:Destroy()
+                elseif gui.Name == "MainGUI" then
+                    for _, subName: string in ipairs({"Lobby", "Game"}) do
+                        local sub: Instance? = gui:FindFirstChild(subName)
+                        local proc: Instance? = sub and sub:FindFirstChild("Processing")
+                        if proc and proc:IsA("GuiObject") then
+                            (proc :: GuiObject).Visible = false
+                        end
+                    end
+                end
+            end
+        end)
+    end
+
+    local function isValidReward(reward: any, category: string): boolean
+        if type(reward) ~= "string" or reward == "" or reward == "false" or reward == "nil" then
+            return false
+        end
+        local sync: any = readSyncDatabase()
+        if type(sync) == "table" then
+            if category == "Eggs" then
+                local pets: any = sync.Pets
+                if type(pets) == "table" and next(pets) ~= nil then
+                    return pets[reward] ~= nil
+                end
+            else
+                local weapons: any = sync.Weapons
+                local items: any = sync.Item
+                if type(weapons) == "table" and next(weapons) ~= nil then
+                    if weapons[reward] ~= nil then
+                        return true
+                    end
+                    if type(items) == "table" and items[reward] ~= nil then
+                        return true
+                    end
+                    return false
+                end
+            end
+        end
+        return true
+    end
+
+    -- MysteryBoxService:PlayOpeningAnimation indexes Sync.MysteryBox[boxId]
+    -- and Sync.Weapons[reward] AFTER parenting the dark MysteryBoxOpen GUI
+    -- to PlayerGui. If an event box is not in Sync.MysteryBox (or reward is
+    -- not in Sync.Weapons), PlayOpeningAnimation crashes mid-function and
+    -- leaves the dark overlay stuck forever. Check before firing BoxController.
+    local function canPlayBoxAnimationSafely(boxId: string, reward: string): boolean
+        local sync: any = readSyncDatabase()
+        if type(sync) ~= "table" then
+            return true
+        end
+        local weapons: any = sync.Weapons
+        if type(weapons) ~= "table" or next(weapons) == nil then
+            return true
+        end
+        if type(weapons[reward]) ~= "table" then
+            return false
+        end
+        local mysteryBoxes: any = sync.MysteryBox
+        if type(mysteryBoxes) == "table" and next(mysteryBoxes) ~= nil then
+            local boxDef: any = mysteryBoxes[boxId]
+            if type(boxDef) ~= "table" or type(boxDef.Contents) ~= "table" then
+                return false
+            end
+        end
+        return true
+    end
+
     local function reveal(boxId: string, category: string, reward: any): ()
         local remotes: Instance? = shopRemotes()
         if not remotes then
             return
         end
         if settings.reveal == REVEAL_ON then
-            revealUntil = os.clock() + REVEAL_SECONDS
             -- The official flow: the game plays the reveal and reports the
             -- crate as complete (the BoxController LocalScript does both).
             if category == "Eggs" then
+                revealUntil = os.clock() + REVEAL_SECONDS
                 local eggController: Instance? = remotes:FindFirstChild("EggController")
                 if eggController then
                     pcall(function(): ()
                         (eggController :: any):Fire(boxId, reward)
                     end)
                 end
-            else
+                return
+            elseif canPlayBoxAnimationSafely(boxId, tostring(reward)) then
+                revealUntil = os.clock() + REVEAL_SECONDS
                 local boxController: Instance? = remotes:FindFirstChild("BoxController")
                 if boxController then
                     pcall(function(): ()
                         (boxController :: any):Fire({{MysteryBoxId = boxId, RewardedItemId = reward}})
                     end)
                 end
+                return
             end
-        else
-            -- No animation: still report the crate so the server sees the
-            -- same completion the reveal would have sent.
-            local crateComplete: Instance? = remotes:FindFirstChild("CrateComplete")
-            if crateComplete then
-                pcall(function(): ()
-                    (crateComplete :: any):FireServer(reward)
-                end)
-            end
+        end
+        -- No animation (or event box missing from Sync.MysteryBox which would
+        -- crash MysteryBoxService and leave a dark screen): still report the
+        -- crate so the server and inventory register the unboxed item cleanly.
+        local crateComplete: Instance? = remotes:FindFirstChild("CrateComplete")
+        if crateComplete then
+            pcall(function(): ()
+                (crateComplete :: any):FireServer(reward)
+            end)
         end
     end
 
@@ -5979,6 +6156,32 @@ function Module.init(runtime: any): any
             stop("Auto Unbox: " .. entry.name .. " has no known price currency.")
             return false
         end
+        -- Verify the player actually has enough currency BEFORE calling
+        -- OpenCrate or playing any reveal animation. If insufficient, do
+        -- nothing and stop immediately without opening imaginary boxes.
+        local requiredPrice: number? = entry.prices and entry.prices[currency] or nil
+        local currentBalance: number? = getPlayerCurrencyBalance(currency)
+        if type(requiredPrice) == "number"
+            and requiredPrice > 0
+            and type(currentBalance) == "number"
+            and currentBalance < requiredPrice then
+            clearStuckUnboxOverlays()
+            session.finished = true
+            openingBusy = false
+            report(summary())
+            stop(
+                "Auto Unbox stopped: not enough "
+                    .. tostring(currency)
+                    .. " ("
+                    .. tostring(currentBalance)
+                    .. "/"
+                    .. tostring(requiredPrice)
+                    .. ") for "
+                    .. entry.name
+                    .. "."
+            )
+            return false
+        end
         local remotes: Instance? = shopRemotes()
         local openCrate: Instance? = remotes and remotes:FindFirstChild("OpenCrate")
         if not (openCrate and openCrate:IsA("RemoteFunction")) then
@@ -5993,7 +6196,7 @@ function Module.init(runtime: any): any
         local ok: boolean, reward: any = pcall(function(): any
             return (openCrate :: any):InvokeServer(entry.id, entry.category, currency)
         end)
-        if ok and reward ~= nil then
+        if ok and isValidReward(reward, entry.category) then
             reveal(entry.id, entry.category, reward)
             session.opened += 1
             session.consecutiveFailures = 0
@@ -6001,11 +6204,12 @@ function Module.init(runtime: any): any
             openingBusy = false
             return true
         end
+        clearStuckUnboxOverlays()
         session.failures += 1
         session.consecutiveFailures += 1
         report(summary() .. note)
         openingBusy = false
-        if session.consecutiveFailures >= 3 then
+        if reward == false or session.consecutiveFailures >= 3 then
             session.finished = true
             stop(
                 "Auto Unbox stopped: "
@@ -6047,6 +6251,9 @@ function Module.init(runtime: any): any
         4,
         function(enabled: boolean): ()
             disconnectFeatureConnection("MM2AutoUnbox")
+            if os.clock() >= revealUntil then
+                clearStuckUnboxOverlays()
+            end
             if not enabled then
                 return
             end
@@ -10412,8 +10619,35 @@ function Module.init(runtime: any): any
         end)
     end
 
+    local savedTrapTransparency: {[Instance]: number} =
+        setmetatable({}, {__mode = "k"}) :: any
+
+    local function restoreTrapTransparency(): ()
+        for part: Instance, orig: number in pairs(savedTrapTransparency) do
+            pcall(function(): ()
+                (part :: BasePart).Transparency = orig
+            end)
+        end
+        table.clear(savedTrapTransparency)
+    end
+
+    local function revealTrapPart(part: Instance): ()
+        pcall(function(): ()
+            if part:IsA("BasePart") then
+                local current: any = (part :: BasePart).Transparency
+                if type(current) == "number" and current >= 0.95 then
+                    if savedTrapTransparency[part] == nil then
+                        savedTrapTransparency[part] = current
+                    end
+                    ;(part :: BasePart).Transparency = 0.35
+                end
+            end
+        end)
+    end
+
     local function toggleTrapEsp(enabled: boolean): ()
         disconnectFeatureConnection("MM2TrapAdded")
+        restoreTrapTransparency()
         clearEffects(TrapEffects)
 
         if not enabled then
@@ -10427,7 +10661,20 @@ function Module.init(runtime: any): any
             end
             if (object.Name == "TrapVisual" or object.Name == "Trap")
                 and (object:IsA("Model") or object:IsA("BasePart")) then
+                local parent: Instance? = (object :: any).Parent
+                if parent and marked[parent] then
+                    revealTrapPart(object)
+                    return
+                end
                 marked[object] = true
+                revealTrapPart(object)
+                pcall(function(): ()
+                    if type((object :: any).GetDescendants) == "function" then
+                        for _, child: Instance in ipairs((object :: any):GetDescendants()) do
+                            revealTrapPart(child)
+                        end
+                    end
+                end)
                 createMM2Cham(
                     TrapEffects,
                     object,
@@ -10440,6 +10687,11 @@ function Module.init(runtime: any): any
         local map = findMM2Map()
         for _, object in ipairs((map or workspace):GetDescendants()) do
             addTrap(object)
+        end
+        if map and type((workspace :: any).GetChildren) == "function" then
+            for _, child: Instance in ipairs((workspace :: any):GetChildren()) do
+                addTrap(child)
+            end
         end
         featureConnections.MM2TrapAdded = workspace.DescendantAdded:Connect(addTrap)
     end
@@ -10847,9 +11099,27 @@ end
 local invalidateRoleCaches: () -> ()
 local rebuildRoleIndex: () -> ()
 
+local function hasValidRoundRoleData(dataTable: any): boolean
+    if type(dataTable) ~= "table" then
+        return false
+    end
+    for _, entry: any in pairs(dataTable) do
+        if type(entry) == "table" and entry.Dead ~= true then
+            local role: any = entry.Role
+            if role == "Murderer"
+                or role == "Sheriff"
+                or role == "Hero"
+                or role == "Innocent" then
+                return true
+            end
+        end
+    end
+    return false
+end
+
 local function requestRoleRefresh(force: boolean?): ()
     if not mm2RoleRemote
-        or roleRefreshRunning
+        or (not force and roleRefreshRunning)
         or (not force and os.clock() - lastRoleRefreshAt < 0.8) then
         return
     end
@@ -10865,10 +11135,16 @@ local function requestRoleRefresh(force: boolean?): ()
         lastRoleRefreshAt = os.clock()
         if success
             and generation == roleRefreshGeneration
-            and roundLifecycleActive ~= false
-            and type(result) == "table" then
+            and type(result) == "table"
+            and (roundLifecycleActive ~= false or hasValidRoundRoleData(result)) then
+            if hasValidRoundRoleData(result) and roundLifecycleActive == nil then
+                roundLifecycleActive = true
+            end
             mm2RoundData = result
             invalidateRoleCaches()
+            if rebuildRoleIndex then
+                rebuildRoleIndex()
+            end
         end
     end)
 end
@@ -11322,7 +11598,7 @@ local function findMM2Map(): Instance?
     if cached and cached.Parent == workspace and isMM2MapModel(cached) then
         return cached
     end
-    if os.clock() - mm2MapCache.at < 1 then
+    if os.clock() - mm2MapCache.at < 0.1 then
         return (cached and cached.Parent == workspace) and cached or nil
     end
     mm2MapCache.at = os.clock()
@@ -11367,6 +11643,13 @@ local function findDroppedGunUncached(): (Model | BasePart)?
         return candidate :: any
     end
 
+    for _, taggedDrop: Instance in ipairs(CollectionService:GetTagged("GunDrop")) do
+        if taggedDrop:IsDescendantOf(workspace)
+            and (taggedDrop:IsA("Model") or taggedDrop:IsA("BasePart")) then
+            return taggedDrop :: any
+        end
+    end
+
     for _, object: Instance in ipairs(workspace:GetChildren()) do
         if object:IsA("Model") or object:IsA("Folder") then
             local childDrop: Instance? = object:FindFirstChild("GunDrop")
@@ -11394,7 +11677,7 @@ local function findDroppedGunUncached(): (Model | BasePart)?
         end
     end
 
-    if os.clock() - lastGunSweepAt < 0.5 then
+    if os.clock() - lastGunSweepAt < 1.5 then
         return nil
     end
     lastGunSweepAt = os.clock()
@@ -11403,14 +11686,6 @@ local function findDroppedGunUncached(): (Model | BasePart)?
     if deepCandidate
         and (deepCandidate:IsA("Model") or deepCandidate:IsA("BasePart")) then
         return deepCandidate :: any
-    end
-    for _, object: Instance in ipairs(workspace:GetDescendants()) do
-        if isLooseGun(object) then
-            local part: (Model | BasePart)? = resolveGunPart(object)
-            if part then
-                return part
-            end
-        end
     end
     return nil
 end
@@ -11452,7 +11727,9 @@ local function createMM2Marker(folder, adornee, labelText, color, transparency)
 
     local head = adornee:IsA("Model")
         and (adornee:FindFirstChild("Head")
-            or adornee:FindFirstChild("HumanoidRootPart"))
+            or adornee:FindFirstChild("HumanoidRootPart")
+            or adornee:FindFirstChild("Handle", true)
+            or adornee:FindFirstChildWhichIsA("BasePart", true))
         or adornee
 
     if head and head:IsA("BasePart") then
@@ -11572,28 +11849,97 @@ local function registerMM2Roles(): ()
     })
 end
 
+local primeRoundState: () -> ()
+local setRoundPhase: (string, string) -> ()
+local lastPhase: string = "unknown"
+
 if mm2GameplayRemotes then
     local playerDataChanged = mm2GameplayRemotes:FindFirstChild("PlayerDataChanged")
     if playerDataChanged and playerDataChanged:IsA("RemoteEvent") then
         featureConnections.MM2PlayerDataChanged = playerDataChanged.OnClientEvent:Connect(function(newData)
-            invalidateRoleCaches()
-            if type(newData) ~= "table" or roundLifecycleActive == false then
-                mm2RoundData = {}
-            else
-
+            if type(newData) == "table" and hasValidRoundRoleData(newData) then
+                roundLifecycleActive = true
+                mm2MapCache.at = -math.huge
                 for key: any, value: any in pairs(newData) do
                     mm2RoundData[key] = value
                 end
                 lastRoleRefreshAt = os.clock()
+                invalidateRoleCaches()
+                if rebuildRoleIndex then
+                    rebuildRoleIndex()
+                end
+                if setRoundPhase and findMM2Map() then
+                    lastPhase = "map"
+                    setRoundPhase("map", "PlayerDataChanged")
+                end
+            elseif type(newData) ~= "table" or roundLifecycleActive == false then
+                mm2RoundData = {}
+                invalidateRoleCaches()
+            else
+                for key: any, value: any in pairs(newData) do
+                    mm2RoundData[key] = value
+                end
+                lastRoleRefreshAt = os.clock()
+                invalidateRoleCaches()
+                if rebuildRoleIndex then
+                    rebuildRoleIndex()
+                end
             end
-
         end)
     end
-end
 
-local primeRoundState: () -> ()
-local setRoundPhase: (string, string) -> ()
-local lastPhase: string = "unknown"
+    local roleSelect = mm2GameplayRemotes:FindFirstChild("RoleSelect")
+    if roleSelect and roleSelect:IsA("RemoteEvent") then
+        featureConnections.MM2RoleSelect = roleSelect.OnClientEvent:Connect(function(localRole: any)
+            roundLifecycleActive = true
+            mm2MapCache.at = -math.huge
+            if type(localRole) == "string"
+                and (localRole == "Murderer"
+                    or localRole == "Sheriff"
+                    or localRole == "Hero"
+                    or localRole == "Innocent") then
+                local existing: any = mm2RoundData[LocalPlayer.Name]
+                if type(existing) ~= "table" then
+                    existing = {
+                        Name = LocalPlayer.Name,
+                        UserId = LocalPlayer.UserId,
+                    }
+                    mm2RoundData[LocalPlayer.Name] = existing
+                end
+                existing.Role = localRole
+            end
+            invalidateRoleCaches()
+            if rebuildRoleIndex then
+                rebuildRoleIndex()
+            end
+            if primeRoundState then
+                primeRoundState()
+            end
+            if setRoundPhase then
+                lastPhase = "map"
+                setRoundPhase("map", "RoleSelect")
+            end
+        end)
+    end
+
+    for _, remoteName: string in ipairs({"ShowRoleSelect", "ShowRoleSelectNew"}) do
+        local showRole = mm2GameplayRemotes:FindFirstChild(remoteName)
+        if showRole and showRole:IsA("RemoteEvent") then
+            featureConnections["MM2" .. remoteName] = showRole.OnClientEvent:Connect(function()
+                roundLifecycleActive = true
+                mm2MapCache.at = -math.huge
+                invalidateRoleCaches()
+                if primeRoundState then
+                    primeRoundState()
+                end
+                if setRoundPhase then
+                    lastPhase = "map"
+                    setRoundPhase("map", remoteName)
+                end
+            end)
+        end
+    end
+end
 
 local roundTimer: {endsAt: number?} = {endsAt = nil}
 local timerRemotes = game:GetService("ReplicatedStorage"):FindFirstChild("Remotes")
@@ -11607,15 +11953,15 @@ if timerRoundStart and timerRoundStart:IsA("RemoteEvent") then
         function(duration)
             duration = tonumber(duration)
             roundTimer.endsAt = duration and os.clock() + duration or nil
-            mm2RoundData = {}
-            invalidateRoleCaches()
-            roundLifecycleActive = duration ~= nil and duration > 0
             if not duration or duration <= 0 then
+                mm2RoundData = {}
                 sessionRoundActive = false
             end
+            invalidateRoleCaches()
+            roundLifecycleActive = duration ~= nil and duration > 0
             roleRefreshGeneration += 1
             if duration and duration > 0 then
-
+                mm2MapCache.at = -math.huge
                 primeRoundState()
                 lastPhase = "map"
                 setRoundPhase("map", "RoundStart")
@@ -11729,15 +12075,6 @@ local function detectRoundPhase(): string
     if lobby and (root:IsDescendantOf(lobby) or isRootNearLobby(root, lobby)) then
         return "lobby"
     end
-    local timerPart: Instance? = workspace:FindFirstChild("RoundTimerPart")
-    if timerPart then
-        local okTime: boolean, tVal: any = pcall(function(): any
-            return timerPart:GetAttribute("Time")
-        end)
-        if okTime and type(tVal) == "number" and tVal <= 0 then
-            return "lobby"
-        end
-    end
     if findMM2Map() then
         return "map"
     end
@@ -11750,8 +12087,7 @@ primeRoundState = function(): ()
     local generation: number = roleRefreshGeneration
     requestRoleRefresh(true)
     task.spawn(function(): ()
-
-        for _, delay: number in ipairs({0.2, 0.6}) do
+        for _, delay: number in ipairs({0.05, 0.15, 0.3, 0.5, 0.8, 1.2, 2.0, 3.0}) do
             task.wait(delay)
             if generation ~= roleRefreshGeneration or roundRolesKnown() then
                 break
@@ -11763,9 +12099,13 @@ end
 
 local phaseElapsed: number = 0
 lastPhase = detectRoundPhase()
+if lastPhase == "map" then
+    roundLifecycleActive = true
+    primeRoundState()
+end
 featureConnections.MM2RoundPhase = TaskManager:Connect(function(deltaTime: number): ()
     phaseElapsed += deltaTime
-    if phaseElapsed < 0.2 then
+    if phaseElapsed < 0.05 then
         return
     end
     phaseElapsed = 0
@@ -11775,8 +12115,9 @@ featureConnections.MM2RoundPhase = TaskManager:Connect(function(deltaTime: numbe
     end
     lastPhase = phase
     if phase == "map" then
-
-        mm2RoundData = {}
+        if not hasValidRoundRoleData(mm2RoundData) then
+            mm2RoundData = {}
+        end
         roundLifecycleActive = true
         invalidateRoleCaches()
         primeRoundState("map")
@@ -29272,9 +29613,9 @@ function Module.init(context: Runtime): any
     end
 
     local card: any
-    card = framework.Categories.Utilities:CreateModule({
+    card = framework.Categories.World:CreateModule({
         Name = "Disguise",
-        Category = "Utilities",
+        Category = "World",
         ConfigKey = "Universal.Disguise",
         Order = 26,
         Tooltip = "Character: copies accessories, clothing, face, body colors and other compatible appearance items while keeping your own body, rig and scales. Emotes and movement animations have independent toggles. Animation: applies only animations/emotes to your own avatar, without hiding it. Default ID 78492.",
@@ -34984,13 +35325,13 @@ function Module.init(context: any): any
             ["Teleport"] = 2,
             ["Freeze Movements"] = 3,
             ["Ghost"] = 4,
-            ["Disguise"] = 5,
             ["Improve FPS"] = 1,
             ["Gravity"] = 2,
             ["Anti AFK"] = 3,
             ["Safe Walk"] = 4,
             ["Blurt Roles"] = 5,
             ["FreeCam"] = 6,
+            ["Disguise"] = 7,
         }
         layoutOrder = ordered[name] or (100 + layoutOrder)
         local registry: any = configuration.registry or universalFeatures
@@ -48757,7 +49098,7 @@ local Manifest: Manifest = {
         {
             path = "src/games/universal/Other/Disguise.lua",
             name = "Disguise",
-            category = "Utilities",
+            category = "World",
         },
         {
             path = "src/games/universal/Other/AntiAfk.lua",
