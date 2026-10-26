@@ -65,7 +65,9 @@ local framework={Categories={Exploits={CreateModule=function(_,definition)
 end}}}
 local userInput={KeyboardEnabled=true,IsKeyDown=function() return false end,GetFocusedTextBox=function() return nil end}
 local host={workspace=world,UserInputService=userInput,getCharacterParts=function() return nil,humanoid,root end}
+local flingActive=false
 local context={framework=framework,host=host,services={platformStandOwnership=platform,mobileActions={},
+    activity={isActive=function(name) return name=='fling' and flingActive end},
     movementInput={getVector=function() return 0,0 end,isJumpHeld=function() return false end}}}
 '''+'\nlocal Module=(function()\n'+source+'\nend)()\n'+r'''
 Module.init(context)
@@ -88,6 +90,12 @@ callbacks.Method('Constraint');loop(1/60)
 assert(floor.destroyed,'switching to Constraint must release Floor')
 local alive=0;for _,o in ipairs(allocated) do if o.Parent then alive+=1 end end
 assert(alive==3,'Constraint owns attachment, velocity and orientation')
+flingActive=true;loop(1/60)
+alive=0;for _,o in ipairs(allocated) do if o.Parent then alive+=1 end end
+assert(alive==0,'Fly releases constraints while Fling owns physics')
+flingActive=false;loop(1/60)
+alive=0;for _,o in ipairs(allocated) do if o.Parent then alive+=1 end end
+assert(alive==3,'Fly constraints resume after Fling releases ownership')
 callbacks.Method('Velocity');callbacks.Float('Bypass');now=0;loop(1/60)
 root.Position=Vector3.new(0,8,0);root.CFrame=cf.new(root.Position);now=0.01;loop(1/60)
 assert(root.CFrame.Position.Y==10,'Bypass must retain its altitude across frames')

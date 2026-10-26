@@ -1,5 +1,5 @@
 return {
-    stamp = "v141-20261026-fling-cpu-safe-pulse",
+    stamp = "v142-20261026-touch-physics-owner",
     files = {
         ["src/Profile/135856908115931.lua"] = [[
 --!strict
@@ -6281,6 +6281,18 @@ function Module.init(_runtime: any): any
     local getEstimatedLatency: any = core.getEstimatedLatency
     local getGunOriginCFrame: any = core.getGunOriginCFrame
 
+    local function flingOwnsPhysics(): boolean
+        local physics: any = state.flingPhysics
+        if not physics then
+            return false
+        end
+        local running: boolean = type(physics.isRunning) == "function"
+            and physics.isRunning() == true
+        local touching: boolean = type(physics.isTouchEnabled) == "function"
+            and physics.isTouchEnabled() == true
+        return running or touching
+    end
+
     local settings = {
         mode = "Walk",
         speed = 16,
@@ -7775,6 +7787,9 @@ function Module.init(_runtime: any): any
         end
 
         local function stepFarmPhysicsOverride(): ()
+            if flingOwnsPhysics() then
+                return
+            end
             if not engaged or settings.mode ~= "Walk" then
                 return
             end
@@ -7793,6 +7808,15 @@ function Module.init(_runtime: any): any
         end
 
         local function preFarmPhysics(deltaTime: number): ()
+            if flingOwnsPhysics() then
+                -- An enabled LinearVelocity keeps acting even when this
+                -- callback returns. Run the farm's existing non-repositioning
+                -- cleanup once, including PlatformStand/collision restoration.
+                if engaged or hiddenUnderMap then
+                    restoreCharacter(false)
+                end
+                return
+            end
             if settings.mode == "Walk" or (not engaged and not hiddenUnderMap) then
                 return
             end
@@ -7831,6 +7855,13 @@ function Module.init(_runtime: any): any
 
         featureConnections.MM2AutoFarmTick = TaskManager:Connect(
             function(deltaTime: number): ()
+                if flingOwnsPhysics() then
+                    if engaged or hiddenUnderMap then
+                        restoreCharacter(false)
+                    end
+                    setStatus("Auto Farm: paused while Fling owns physics")
+                    return
+                end
                 if type(deltaTime) == "number" and deltaTime > 0 and deltaTime < 5 then
                     farmElapsedSeconds += deltaTime
                     refreshFarmOverlay()
@@ -10076,6 +10107,7 @@ function Module.init(runtime: any): any
     local roundCountedWin: boolean = false
     local flungMurderThisDeath: boolean = false
     local flingBusy: boolean = false
+    local yieldedToFling: boolean = false
 
     local safeAbovePosition: Vector3? = nil
     local savedCollide: {[Instance]: boolean} = {}
@@ -10233,13 +10265,10 @@ function Module.init(runtime: any): any
         table.clear(victimSnapshots)
     end
 
-    local function restoreLocalCharacter(): ()
+    local function restoreLocalCharacter(reposition: boolean?): ()
         restoreVictims()
-        if services and services.activity then
-            pcall(function(): ()
-                services.activity.set("fling", false)
-            end)
-        end
+        -- The shared Fling controller owns the activity flag. Auto Win must
+        -- never clear another owner's session during its own cleanup.
         for part: Instance, wasCollide: boolean in pairs(savedCollide) do
             if part and part.Parent then
                 pcall(function(): ()
@@ -10259,7 +10288,7 @@ function Module.init(runtime: any): any
                 humanoid:ChangeState(Enum.HumanoidStateType.Running)
             end)
         end
-        if root then
+        if root and reposition ~= false then
             pcall(function(): ()
                 root.AssemblyLinearVelocity = Vector3.zero
                 root.AssemblyAngularVelocity = Vector3.zero
@@ -10296,11 +10325,6 @@ function Module.init(runtime: any): any
         humanoid: Humanoid,
         root: BasePart
     ): ()
-        if services and services.activity then
-            pcall(function(): ()
-                services.activity.set("fling", false)
-            end)
-        end
         disableCharacterCollisions(character)
         local holdPos: Vector3 = safeAbovePosition
             or (root.Position + Vector3.new(0, ABOVE_MAP_OFFSET, 0))
@@ -10683,6 +10707,20 @@ function Module.init(runtime: any): any
         if not autoWinActive or flingBusy then
             return
         end
+        if services and services.activity
+            and type(services.activity.isActive) == "function"
+            and services.activity.isActive("fling") then
+            -- Do not race the shared controller's CFrame, velocity, Humanoid
+            -- or collision ownership. Release Auto Win's state once, without
+            -- moving or zeroing the assembly that Fling now owns.
+            if not yieldedToFling then
+                yieldedToFling = true
+                restoreLocalCharacter(false)
+            end
+            setStatus("Auto Win: paused while Fling owns physics")
+            return
+        end
+        yieldedToFling = false
         local character: Model?, humanoid: Humanoid?, root: BasePart? = characterParts()
         if not character or not humanoid or not root or humanoid.Health <= 0 then
             return
@@ -26046,6 +26084,7 @@ function Module.init(context: Runtime): any
     local framework: any = context.framework
     local movementInput: any = context.services.movementInput
     local mobileActions: any = context.services.mobileActions
+    local activity: any = context.services and context.services.activity
     local getCharacterParts: any = host.getCharacterParts
     local UserInputService: any = host.UserInputService
     local currentWorkspace: Workspace = host.workspace or workspace
@@ -26444,6 +26483,18 @@ function Module.init(context: Runtime): any
 
             fly:SetStatus(flySettings.method)
             fly:Loop(function(deltaTime: number): ()
+                if activity and type(activity.isActive) == "function"
+                    and activity.isActive("fling") then
+                    -- Constraints keep solving after a callback returns.
+                    -- Release them so Fling is the only physics owner.
+                    removeFlyObjects()
+                    clearPlatform()
+                    restoreWalkSpeed()
+                    flyRuntime.root = nil
+                    flyRuntime.yLevel = nil
+                    flySmoothedVelocity = Vector3.zero
+                    return
+                end
                 local _, humanoid, root = getCharacterParts()
                 local camera: Camera? = currentWorkspace.CurrentCamera
                 if not humanoid or not root or not camera then
@@ -27016,6 +27067,7 @@ function Module.init(context: Runtime): any
     local disconnectFeatureConnection: any = host.disconnectFeatureConnection
     local createUniversalFeature: any = host.createUniversalFeature
     local addFeatureTooltip: any = host.addFeatureTooltip
+    local activity: any = context.services and context.services.activity
     local toggleNoclip: (boolean) -> ()
     do
     local originalCollision = setmetatable({}, {__mode = "k"})
@@ -27038,15 +27090,22 @@ function Module.init(context: Runtime): any
         end
 
         featureConnections.Noclip = TaskManager:Connect(function()
+            -- Fling owns contact collisions while its session is active.
+            -- Fighting it here every Heartbeat both cancels Touch and creates
+            -- needless property/physics work.
+            if activity and type(activity.isActive) == "function"
+                and activity.isActive("fling") then
+                return
+            end
             local character = LocalPlayer.Character
             if not character then
                 return
             end
 
             for _, descendant in ipairs(character:GetDescendants()) do
-                if descendant:IsA("BasePart") then
+                if descendant:IsA("BasePart") and descendant.CanCollide then
                     if originalCollision[descendant] == nil then
-                        originalCollision[descendant] = descendant.CanCollide
+                        originalCollision[descendant] = true
                     end
                     descendant.CanCollide = false
                 end
@@ -27475,7 +27534,7 @@ function Module.init(context: Runtime): any
     )
     addFeatureTooltip(
         TouchFlingFeature,
-        "Uses recent body contact only. A capped pulse stays through the physics/replication step and is restored on Heartbeat; there are no teleports or ownership requests."
+        "Idle mode only listens on body parts. Recent contact temporarily enables collisions and Humanoid Physics for a capped pulse; expiry, OFF and respawn restore the snapshots. No teleports or ownership requests."
     )
 
     if state then
@@ -52189,6 +52248,8 @@ function Module.init(context: any): any
     local touchCollisions: {[BasePart]: {canCollide: boolean, canTouch: boolean}} = {}
     local touchBoundParts: {[BasePart]: boolean} = {}
     local lastTouchPulseAt: number = -math.huge
+    local touchPhysicsActive: boolean = false
+    local touchHumanoidBackup: any = nil
 
     local preConnection: RBXScriptConnection? = nil
     local heartbeatConnection: RBXScriptConnection? = nil
@@ -52286,6 +52347,78 @@ function Module.init(context: any): any
         end
     end
 
+    -- Idle Touch must not turn the whole avatar into a colliding assembly.
+    -- Only a real, recent contact gets physics ownership; the snapshots stay
+    -- alive for CanTouch listening and are fully restored on OFF/rebind.
+    local function restoreTouchPhysics(): ()
+        if not touchPhysicsActive and not touchHumanoidBackup then
+            return
+        end
+        touchPhysicsActive = false
+        lastTouchPulseAt = -math.huge
+        for part: BasePart, snapshot: any in pairs(touchCollisions) do
+            if part.Parent and part.CanCollide ~= snapshot.canCollide then
+                pcall(function(): ()
+                    part.CanCollide = snapshot.canCollide
+                end)
+            end
+        end
+        local backup: any = touchHumanoidBackup
+        touchHumanoidBackup = nil
+        local humanoid: Humanoid? = backup and backup.humanoid
+        if humanoid and humanoid.Parent then
+            pcall(function(): ()
+                humanoid.AutoRotate = backup.autoRotate
+                humanoid.Sit = backup.wasSitting
+                humanoid:SetStateEnabled(
+                    Enum.HumanoidStateType.Seated,
+                    backup.seatedEnabled
+                )
+                humanoid:ChangeState(Enum.HumanoidStateType.GettingUp)
+            end)
+        end
+    end
+
+    local function engageTouchPhysics(humanoid: Humanoid): ()
+        local backup: any = touchHumanoidBackup
+        if backup and backup.humanoid ~= humanoid then
+            restoreTouchPhysics()
+            backup = nil
+        end
+        if not backup then
+            local seatedEnabled: boolean = true
+            pcall(function(): ()
+                seatedEnabled = humanoid:GetStateEnabled(
+                    Enum.HumanoidStateType.Seated
+                )
+            end)
+            backup = {
+                humanoid = humanoid,
+                autoRotate = humanoid.AutoRotate,
+                wasSitting = humanoid.Sit,
+                seatedEnabled = seatedEnabled,
+            }
+            touchHumanoidBackup = backup
+        end
+        touchPhysicsActive = true
+        for part: BasePart in pairs(touchCollisions) do
+            if part.Parent and not part.CanCollide then
+                pcall(function(): ()
+                    part.CanCollide = true
+                end)
+            end
+        end
+        -- A running Humanoid can overwrite assembly velocities before the
+        -- solver uses them. Physics state is therefore part of each contact
+        -- pulse, not a one-time toggle-side effect.
+        pcall(function(): ()
+            humanoid.AutoRotate = false
+            humanoid.Sit = false
+            humanoid:SetStateEnabled(Enum.HumanoidStateType.Seated, false)
+            humanoid:ChangeState(Enum.HumanoidStateType.Physics)
+        end)
+    end
+
     local function restoreTouchCollisions(): ()
         for part: BasePart, snapshot: any in pairs(touchCollisions) do
             if part.Parent then
@@ -52300,6 +52433,10 @@ function Module.init(context: any): any
     end
 
     local function disconnectTouch(): ()
+        restoreTouchPhysics()
+        if pulseBackup and pulseBackup.kind == "touch" then
+            restorePulse()
+        end
         for _, connection: RBXScriptConnection in ipairs(touchConnections) do
             connection:Disconnect()
         end
@@ -52487,7 +52624,7 @@ function Module.init(context: any): any
             canCollide = part.CanCollide,
             canTouch = part.CanTouch,
         }
-        part.CanCollide = true
+        -- Listening requires CanTouch, not a permanent collision change.
         part.CanTouch = true
         table.insert(touchConnections, part.Touched:Connect(noteTouch))
     end
@@ -52503,18 +52640,23 @@ function Module.init(context: any): any
             return
         end
         touchCharacter = character
-        for _, object: Instance in ipairs(character:GetDescendants()) do
+        -- Root and body parts are direct children. Accessory/tool handles are
+        -- deliberately excluded: they add collision pairs but are not needed
+        -- for a body-contact pulse.
+        for _, object: Instance in ipairs(character:GetChildren()) do
             if object:IsA("BasePart") then
                 bindTouchPart(object :: BasePart)
             end
         end
         table.insert(touchConnections, character.DescendantAdded:Connect(function(object: Instance): ()
-            if touchEnabled and object:IsA("BasePart") then
+            if touchEnabled and object.Parent == character
+                and object:IsA("BasePart") then
                 bindTouchPart(object :: BasePart)
             end
         end))
         table.insert(touchConnections, humanoid.Died:Connect(function(): ()
             table.clear(touchContacts)
+            restoreTouchPhysics()
             if pulseBackup and pulseBackup.kind == "touch" then
                 restorePulse()
             end
@@ -52608,13 +52750,11 @@ function Module.init(context: any): any
         end
         local _, humanoid: Humanoid?, root: BasePart? = livingParts(LocalPlayer)
         if not humanoid or not root then
+            restoreTouchPhysics()
             return
         end
 
         local now: number = os.clock()
-        if now - lastTouchPulseAt < 1 / 30 then
-            return
-        end
         local contactRoot: BasePart? = nil
         local newest: number = -math.huge
         for player: Player, contact: {at: number} in pairs(touchContacts) do
@@ -52631,11 +52771,16 @@ function Module.init(context: any): any
             end
         end
         if not contactRoot then
+            restoreTouchPhysics()
+            return
+        end
+        if now - lastTouchPulseAt < 1 / 30 then
             return
         end
 
         local direction: Vector3 = contactRoot.Position - root.Position
         if not finiteVector(direction) then
+            restoreTouchPhysics()
             return
         end
         direction = Vector3.new(direction.X, 0, direction.Z)
@@ -52643,6 +52788,7 @@ function Module.init(context: any): any
             local look: Vector3 = root.CFrame.LookVector
             direction = Vector3.new(look.X, 0, look.Z)
         end
+        engageTouchPhysics(humanoid)
         if not savePulse("touch", root) then
             return
         end

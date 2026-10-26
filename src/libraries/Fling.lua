@@ -33,6 +33,8 @@ function Module.init(context: any): any
     local touchCollisions: {[BasePart]: {canCollide: boolean, canTouch: boolean}} = {}
     local touchBoundParts: {[BasePart]: boolean} = {}
     local lastTouchPulseAt: number = -math.huge
+    local touchPhysicsActive: boolean = false
+    local touchHumanoidBackup: any = nil
 
     local preConnection: RBXScriptConnection? = nil
     local heartbeatConnection: RBXScriptConnection? = nil
@@ -130,6 +132,78 @@ function Module.init(context: any): any
         end
     end
 
+    -- Idle Touch must not turn the whole avatar into a colliding assembly.
+    -- Only a real, recent contact gets physics ownership; the snapshots stay
+    -- alive for CanTouch listening and are fully restored on OFF/rebind.
+    local function restoreTouchPhysics(): ()
+        if not touchPhysicsActive and not touchHumanoidBackup then
+            return
+        end
+        touchPhysicsActive = false
+        lastTouchPulseAt = -math.huge
+        for part: BasePart, snapshot: any in pairs(touchCollisions) do
+            if part.Parent and part.CanCollide ~= snapshot.canCollide then
+                pcall(function(): ()
+                    part.CanCollide = snapshot.canCollide
+                end)
+            end
+        end
+        local backup: any = touchHumanoidBackup
+        touchHumanoidBackup = nil
+        local humanoid: Humanoid? = backup and backup.humanoid
+        if humanoid and humanoid.Parent then
+            pcall(function(): ()
+                humanoid.AutoRotate = backup.autoRotate
+                humanoid.Sit = backup.wasSitting
+                humanoid:SetStateEnabled(
+                    Enum.HumanoidStateType.Seated,
+                    backup.seatedEnabled
+                )
+                humanoid:ChangeState(Enum.HumanoidStateType.GettingUp)
+            end)
+        end
+    end
+
+    local function engageTouchPhysics(humanoid: Humanoid): ()
+        local backup: any = touchHumanoidBackup
+        if backup and backup.humanoid ~= humanoid then
+            restoreTouchPhysics()
+            backup = nil
+        end
+        if not backup then
+            local seatedEnabled: boolean = true
+            pcall(function(): ()
+                seatedEnabled = humanoid:GetStateEnabled(
+                    Enum.HumanoidStateType.Seated
+                )
+            end)
+            backup = {
+                humanoid = humanoid,
+                autoRotate = humanoid.AutoRotate,
+                wasSitting = humanoid.Sit,
+                seatedEnabled = seatedEnabled,
+            }
+            touchHumanoidBackup = backup
+        end
+        touchPhysicsActive = true
+        for part: BasePart in pairs(touchCollisions) do
+            if part.Parent and not part.CanCollide then
+                pcall(function(): ()
+                    part.CanCollide = true
+                end)
+            end
+        end
+        -- A running Humanoid can overwrite assembly velocities before the
+        -- solver uses them. Physics state is therefore part of each contact
+        -- pulse, not a one-time toggle-side effect.
+        pcall(function(): ()
+            humanoid.AutoRotate = false
+            humanoid.Sit = false
+            humanoid:SetStateEnabled(Enum.HumanoidStateType.Seated, false)
+            humanoid:ChangeState(Enum.HumanoidStateType.Physics)
+        end)
+    end
+
     local function restoreTouchCollisions(): ()
         for part: BasePart, snapshot: any in pairs(touchCollisions) do
             if part.Parent then
@@ -144,6 +218,10 @@ function Module.init(context: any): any
     end
 
     local function disconnectTouch(): ()
+        restoreTouchPhysics()
+        if pulseBackup and pulseBackup.kind == "touch" then
+            restorePulse()
+        end
         for _, connection: RBXScriptConnection in ipairs(touchConnections) do
             connection:Disconnect()
         end
@@ -331,7 +409,7 @@ function Module.init(context: any): any
             canCollide = part.CanCollide,
             canTouch = part.CanTouch,
         }
-        part.CanCollide = true
+        -- Listening requires CanTouch, not a permanent collision change.
         part.CanTouch = true
         table.insert(touchConnections, part.Touched:Connect(noteTouch))
     end
@@ -347,18 +425,23 @@ function Module.init(context: any): any
             return
         end
         touchCharacter = character
-        for _, object: Instance in ipairs(character:GetDescendants()) do
+        -- Root and body parts are direct children. Accessory/tool handles are
+        -- deliberately excluded: they add collision pairs but are not needed
+        -- for a body-contact pulse.
+        for _, object: Instance in ipairs(character:GetChildren()) do
             if object:IsA("BasePart") then
                 bindTouchPart(object :: BasePart)
             end
         end
         table.insert(touchConnections, character.DescendantAdded:Connect(function(object: Instance): ()
-            if touchEnabled and object:IsA("BasePart") then
+            if touchEnabled and object.Parent == character
+                and object:IsA("BasePart") then
                 bindTouchPart(object :: BasePart)
             end
         end))
         table.insert(touchConnections, humanoid.Died:Connect(function(): ()
             table.clear(touchContacts)
+            restoreTouchPhysics()
             if pulseBackup and pulseBackup.kind == "touch" then
                 restorePulse()
             end
@@ -452,13 +535,11 @@ function Module.init(context: any): any
         end
         local _, humanoid: Humanoid?, root: BasePart? = livingParts(LocalPlayer)
         if not humanoid or not root then
+            restoreTouchPhysics()
             return
         end
 
         local now: number = os.clock()
-        if now - lastTouchPulseAt < 1 / 30 then
-            return
-        end
         local contactRoot: BasePart? = nil
         local newest: number = -math.huge
         for player: Player, contact: {at: number} in pairs(touchContacts) do
@@ -475,11 +556,16 @@ function Module.init(context: any): any
             end
         end
         if not contactRoot then
+            restoreTouchPhysics()
+            return
+        end
+        if now - lastTouchPulseAt < 1 / 30 then
             return
         end
 
         local direction: Vector3 = contactRoot.Position - root.Position
         if not finiteVector(direction) then
+            restoreTouchPhysics()
             return
         end
         direction = Vector3.new(direction.X, 0, direction.Z)
@@ -487,6 +573,7 @@ function Module.init(context: any): any
             local look: Vector3 = root.CFrame.LookVector
             direction = Vector3.new(look.X, 0, look.Z)
         end
+        engageTouchPhysics(humanoid)
         if not savePulse("touch", root) then
             return
         end

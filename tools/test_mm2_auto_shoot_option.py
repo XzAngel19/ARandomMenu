@@ -27,6 +27,15 @@ assert '"Auto Win"' in auto_win
 assert '"Insta Kill as Murder"' in auto_win
 assert '"Insta Kill As Sheriff"' in auto_win
 assert '"Fling Sheriff and Get Gun"' in auto_win
+assert 'services.activity.set("fling", false)' not in auto_win, (
+    'Auto Win must not clear the shared Fling owner'
+)
+assert 'services.activity.isActive("fling")' in auto_win, (
+    'Auto Win must yield while the shared Fling controller owns physics'
+)
+assert 'restoreLocalCharacter(false)' in auto_win, (
+    'Auto Win must release PlatformStand/collisions without repositioning Fling'
+)
 
 # Knife Throw should also be independent now
 knife_throw = (ROOT / 'src/games/MM2/Combat/KnifeThrow.lua').read_text()

@@ -17,6 +17,7 @@ ROOT = Path(__file__).resolve().parents[1]
 SOURCE = (ROOT / "src/libraries/Fling.lua").read_text()
 MM2_SOURCE = (ROOT / "src/games/MM2/Blatant/Fling.lua").read_text()
 TOUCH_SOURCE = (ROOT / "src/games/universal/Blatant/TouchFling.lua").read_text()
+NOCLIP_SOURCE = (ROOT / "src/games/universal/Blatant/Noclip.lua").read_text()
 
 # No global/deprecated legacy mechanism is hidden in the replacement.
 for forbidden in (
@@ -175,6 +176,8 @@ local activityValue = false
 local activity = {set=function(name,value)
     assert(name == "fling")
     activityValue = value
+end,isActive=function(name)
+    return name == "fling" and activityValue
 end}
 local RunService = {PreSimulation=PreSimulation,PostSimulation=PostSimulation,Heartbeat=Heartbeat}
 local host = {RunService=RunService,Players=Players,LocalPlayer=LocalPlayer}
@@ -241,18 +244,29 @@ root.CFrame = CFrame.new(Vector3.new(0,10,0))
 root.Position = Vector3.new(0,10,0)
 root.AssemblyLinearVelocity = Vector3.zero
 root.AssemblyAngularVelocity = Vector3.zero
+local accessory = instance("Accessory",localCharacter)
+local accessoryHandle = instance("Part",accessory)
+accessoryHandle.CanCollide = false
+accessoryHandle.CanTouch = false
 physics.setTouchEnabled(true)
 assert(physics.isTouchEnabled() and activityValue)
+assert(accessoryHandle.CanTouch == false and accessoryHandle.CanCollide == false,
+    "Touch ignores accessory collision pairs")
 assert(liveConnections(PreSimulation) == 1 and liveConnections(Heartbeat) == 1,
     "Touch owns signals only while enabled")
 PreSimulation:Fire()
 assert(sameVector(root.AssemblyLinearVelocity,Vector3.zero),"no contact no pulse")
+assert(root.CanCollide == false and humanoid.lastState ~= "Physics",
+    "idle Touch adds no colliders or Physics state")
 local beforeTouch = root.Position
 root.Touched:Fire(targetRoot)
 PreSimulation:Fire()
 assert(root.AssemblyLinearVelocity.Magnitude < 250,"finite touch pulse cap")
 assert(root.AssemblyLinearVelocity.Magnitude > 0,"contact produces a pulse")
 assert(root.AssemblyAngularVelocity.Magnitude <= 120,"bounded touch angular pulse")
+assert(root.CanCollide == true and humanoid.lastState == "Physics"
+    and humanoid.AutoRotate == false,
+    "contact owns collisions and Humanoid physics before the pulse")
 assert(closeVector(root.Position,beforeTouch),"touch does not teleport")
 PostSimulation:Fire()
 assert(root.AssemblyLinearVelocity.Magnitude > 0,"touch pulse crosses PostSimulation")
@@ -262,11 +276,27 @@ physics.setTouchEnabled(false)
 assert(not physics.isTouchEnabled() and not activityValue)
 assert(body.CanCollide == true and body.CanTouch == false and root.CanTouch == false,
     "Touch collision and CanTouch snapshots restored")
+assert(root.CanCollide == false and humanoid.AutoRotate == true
+    and humanoid.lastState == "GettingUp",
+    "Touch OFF restores Humanoid and body physics ownership")
 assert(liveConnections(PreSimulation) == 0 and liveConnections(Heartbeat) == 0,
     "Touch OFF disconnects signals")
 PreSimulation:Fire()
 assert(sameVector(root.AssemblyLinearVelocity,Vector3.zero),"OFF is inert")
-pass("touch requires contact, is bounded, non-teleporting and OFF-safe")
+
+-- A contact that ends without toggling the card also releases physics.
+physics.setTouchEnabled(true)
+root.Touched:Fire(targetRoot)
+PreSimulation:Fire()
+Heartbeat:Fire()
+assert(root.CanCollide == true and humanoid.lastState == "Physics")
+now += 0.3
+PreSimulation:Fire()
+assert(root.CanCollide == false and humanoid.AutoRotate == true
+    and humanoid.lastState == "GettingUp",
+    "contact expiry restores collisions and Humanoid state")
+physics.setTouchEnabled(false)
+pass("touch requires contact, owns physics only during contact and cleans up")
 
 -- Exercise the actual universal card wiring, not only the library API.
 local universalState = {flingPhysics=physics,toggleControls={}}
@@ -291,6 +321,45 @@ touchCard.onToggle(false)
 assert(not physics.isTouchEnabled(),"universal Touch card disables the controller")
 TouchModule.destroy()
 pass("universal Touch card wires ON/OFF and cleanup")
+
+-- Noclip must yield collision ownership instead of cancelling every pulse.
+host.featureConnections = {}
+host.disconnectFeatureConnection = function(key)
+    local connection = host.featureConnections[key]
+    if connection then connection:Disconnect();host.featureConnections[key]=nil end
+end
+local noclipTick = nil
+host.TaskManager = {Connect=function(_,callback)
+    noclipTick = callback
+    return {Disconnect=function()
+        if noclipTick == callback then noclipTick=nil end
+    end}
+end}
+local noclipCard = nil
+host.createUniversalFeature = function(_name,_description,_order,callback,_config)
+    noclipCard = {onToggle=callback}
+    return noclipCard
+end
+local NoclipModule = (function()
+'''+NOCLIP_SOURCE+r'''
+end)()
+NoclipModule.init({host=host,services={activity=activity}})
+noclipCard.onToggle(true)
+assert(noclipTick)
+noclipTick()
+assert(body.CanCollide == false,"Noclip owns collisions while Fling is OFF")
+physics.setTouchEnabled(true)
+root.Touched:Fire(targetRoot)
+PreSimulation:Fire()
+assert(root.CanCollide and body.CanCollide,"Touch takes contact collisions")
+noclipTick()
+assert(root.CanCollide and body.CanCollide and humanoid.lastState == "Physics",
+    "Noclip yields instead of fighting active Touch")
+physics.setTouchEnabled(false)
+noclipCard.onToggle(false)
+NoclipModule.destroy()
+assert(body.CanCollide == true,"Noclip restores its own collision snapshot")
+pass("Noclip and Touch have one collision owner")
 
 -- Destroy disconnects signals and restores any active Touch pulse.
 physics.setTouchEnabled(true)

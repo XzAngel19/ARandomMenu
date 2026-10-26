@@ -21,6 +21,18 @@ function Module.init(_runtime: any): any
     local getEstimatedLatency: any = core.getEstimatedLatency
     local getGunOriginCFrame: any = core.getGunOriginCFrame
 
+    local function flingOwnsPhysics(): boolean
+        local physics: any = state.flingPhysics
+        if not physics then
+            return false
+        end
+        local running: boolean = type(physics.isRunning) == "function"
+            and physics.isRunning() == true
+        local touching: boolean = type(physics.isTouchEnabled) == "function"
+            and physics.isTouchEnabled() == true
+        return running or touching
+    end
+
     local settings = {
         mode = "Walk",
         speed = 16,
@@ -1515,6 +1527,9 @@ function Module.init(_runtime: any): any
         end
 
         local function stepFarmPhysicsOverride(): ()
+            if flingOwnsPhysics() then
+                return
+            end
             if not engaged or settings.mode ~= "Walk" then
                 return
             end
@@ -1533,6 +1548,15 @@ function Module.init(_runtime: any): any
         end
 
         local function preFarmPhysics(deltaTime: number): ()
+            if flingOwnsPhysics() then
+                -- An enabled LinearVelocity keeps acting even when this
+                -- callback returns. Run the farm's existing non-repositioning
+                -- cleanup once, including PlatformStand/collision restoration.
+                if engaged or hiddenUnderMap then
+                    restoreCharacter(false)
+                end
+                return
+            end
             if settings.mode == "Walk" or (not engaged and not hiddenUnderMap) then
                 return
             end
@@ -1571,6 +1595,13 @@ function Module.init(_runtime: any): any
 
         featureConnections.MM2AutoFarmTick = TaskManager:Connect(
             function(deltaTime: number): ()
+                if flingOwnsPhysics() then
+                    if engaged or hiddenUnderMap then
+                        restoreCharacter(false)
+                    end
+                    setStatus("Auto Farm: paused while Fling owns physics")
+                    return
+                end
                 if type(deltaTime) == "number" and deltaTime > 0 and deltaTime < 5 then
                     farmElapsedSeconds += deltaTime
                     refreshFarmOverlay()

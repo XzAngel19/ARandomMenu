@@ -329,6 +329,26 @@ assert(mapReferenceScans == settledMapScans,
 assert((character.pivotCount or 0) == settledPivots,"no per-tick CFrame writer")
 assert(farmLV().VectorVelocity.Magnitude == 0,"no vertical oscillation at contact")
 
+-- The shared Fling owner suspends farm writers and, importantly, the
+-- LinearVelocity constraint that would otherwise keep acting in physics.
+state.flingPhysics = {
+    isRunning=function() return false end,
+    isTouchEnabled=function() return true end,
+}
+local beforeYieldPivots = character.pivotCount or 0
+tick(1/60)
+pre(1/60)
+assert(farmLV() == nil,"Below constraint is removed while Fling owns physics")
+assert((character.pivotCount or 0) == beforeYieldPivots,
+    "farm does not teleport while yielding to Fling")
+assert(humanoid.PlatformStand == false,
+    "farm restores PlatformStand while Fling owns physics")
+state.flingPhysics = nil
+tick(1/60)
+pre(1/60)
+assert(farmLV() ~= nil,"Below constraint resumes after Fling releases ownership")
+pass("Auto Farm yields constraints and writers to shared Fling")
+
 -- Losing the target after farming holds the current pose, not an old anchor.
 coins = {}
 now += 1

@@ -19,6 +19,7 @@ function Module.init(context: Runtime): any
     local framework: any = context.framework
     local movementInput: any = context.services.movementInput
     local mobileActions: any = context.services.mobileActions
+    local activity: any = context.services and context.services.activity
     local getCharacterParts: any = host.getCharacterParts
     local UserInputService: any = host.UserInputService
     local currentWorkspace: Workspace = host.workspace or workspace
@@ -417,6 +418,18 @@ function Module.init(context: Runtime): any
 
             fly:SetStatus(flySettings.method)
             fly:Loop(function(deltaTime: number): ()
+                if activity and type(activity.isActive) == "function"
+                    and activity.isActive("fling") then
+                    -- Constraints keep solving after a callback returns.
+                    -- Release them so Fling is the only physics owner.
+                    removeFlyObjects()
+                    clearPlatform()
+                    restoreWalkSpeed()
+                    flyRuntime.root = nil
+                    flyRuntime.yLevel = nil
+                    flySmoothedVelocity = Vector3.zero
+                    return
+                end
                 local _, humanoid, root = getCharacterParts()
                 local camera: Camera? = currentWorkspace.CurrentCamera
                 if not humanoid or not root or not camera then

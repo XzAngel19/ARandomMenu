@@ -60,6 +60,7 @@ function Module.init(runtime: any): any
     local roundCountedWin: boolean = false
     local flungMurderThisDeath: boolean = false
     local flingBusy: boolean = false
+    local yieldedToFling: boolean = false
 
     local safeAbovePosition: Vector3? = nil
     local savedCollide: {[Instance]: boolean} = {}
@@ -217,13 +218,10 @@ function Module.init(runtime: any): any
         table.clear(victimSnapshots)
     end
 
-    local function restoreLocalCharacter(): ()
+    local function restoreLocalCharacter(reposition: boolean?): ()
         restoreVictims()
-        if services and services.activity then
-            pcall(function(): ()
-                services.activity.set("fling", false)
-            end)
-        end
+        -- The shared Fling controller owns the activity flag. Auto Win must
+        -- never clear another owner's session during its own cleanup.
         for part: Instance, wasCollide: boolean in pairs(savedCollide) do
             if part and part.Parent then
                 pcall(function(): ()
@@ -243,7 +241,7 @@ function Module.init(runtime: any): any
                 humanoid:ChangeState(Enum.HumanoidStateType.Running)
             end)
         end
-        if root then
+        if root and reposition ~= false then
             pcall(function(): ()
                 root.AssemblyLinearVelocity = Vector3.zero
                 root.AssemblyAngularVelocity = Vector3.zero
@@ -280,11 +278,6 @@ function Module.init(runtime: any): any
         humanoid: Humanoid,
         root: BasePart
     ): ()
-        if services and services.activity then
-            pcall(function(): ()
-                services.activity.set("fling", false)
-            end)
-        end
         disableCharacterCollisions(character)
         local holdPos: Vector3 = safeAbovePosition
             or (root.Position + Vector3.new(0, ABOVE_MAP_OFFSET, 0))
@@ -667,6 +660,20 @@ function Module.init(runtime: any): any
         if not autoWinActive or flingBusy then
             return
         end
+        if services and services.activity
+            and type(services.activity.isActive) == "function"
+            and services.activity.isActive("fling") then
+            -- Do not race the shared controller's CFrame, velocity, Humanoid
+            -- or collision ownership. Release Auto Win's state once, without
+            -- moving or zeroing the assembly that Fling now owns.
+            if not yieldedToFling then
+                yieldedToFling = true
+                restoreLocalCharacter(false)
+            end
+            setStatus("Auto Win: paused while Fling owns physics")
+            return
+        end
+        yieldedToFling = false
         local character: Model?, humanoid: Humanoid?, root: BasePart? = characterParts()
         if not character or not humanoid or not root or humanoid.Health <= 0 then
             return
