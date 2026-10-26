@@ -263,6 +263,8 @@ function Module.init(runtime: any): any
         silent: boolean?,
         quiet: boolean?,
         whenReady: boolean?,
+        continuous: boolean?,
+        wallCheck: boolean?,
     }
 
     -- How long an authored request owns the gun. The feedback queue resolves
@@ -283,6 +285,12 @@ function Module.init(runtime: any): any
             silent = opts.silent
         end
         local quiet: boolean = opts.quiet == true
+        local continuous: boolean = opts.continuous == true
+        local useRaw: boolean = mm2Settings.shootRaw
+            or (continuous and silent)
+        local useWallCheck: boolean = if opts.wallCheck ~= nil
+            then opts.wallCheck == true
+            else mm2Settings.shootWallCheck
         local function reject(message: string): boolean
             lastRejectReason = message
             if not quiet and ShootFeature then ShootFeature:SetStatus(message) end
@@ -323,24 +331,27 @@ function Module.init(runtime: any): any
             end
         end
 
-        -- Raw mode: skip ALL prediction and wall gates. When gunAim
-        -- fails (no samples, stale, unreachable), use the target's
-        -- current root position as the endpoint so the shot still
-        -- fires. The gun must still be equipped and ready, and the
-        -- target must still be the Murderer.
-        if mm2Settings.shootRaw and not info and target.Character then
+        -- Raw mode or continuous Auto Shoot / Auto Win: when gunAim has no
+        -- samples yet on the first frame, fall back immediately to the
+        -- target's current root position (+ short velocity lead) so the shot
+        -- fires without waiting even a single second.
+        if (useRaw or continuous) and not info and target.Character then
             local targetRoot: BasePart? = target.Character:FindFirstChild("HumanoidRootPart")
             if targetRoot then
-                local fallbackEndpoint: Vector3 = targetRoot.Position
+                local vel: Vector3 = Vector3.zero
+                pcall(function(): ()
+                    vel = targetRoot.AssemblyLinearVelocity
+                end)
+                local fallbackEndpoint: Vector3 = targetRoot.Position + vel * 0.08
                 info = {
                     endpoint = fallbackEndpoint,
-                    velocity = Vector3.zero,
-                    leadSeconds = 0,
+                    velocity = vel,
+                    leadSeconds = 0.08,
                     motionSource = "raw",
                     model = "raw",
                     sampleAge = 0,
                     samples = 0,
-                    capturedPosition = fallbackEndpoint,
+                    capturedPosition = targetRoot.Position,
                     rtt = 0,
                     echoDelay = 0,
                     rttEngine = "raw",
@@ -348,7 +359,7 @@ function Module.init(runtime: any): any
                     turnRate = 0,
                     brakeSeconds = 0,
                     leadCorrection = 0,
-                    rootPosition = fallbackEndpoint,
+                    rootPosition = targetRoot.Position,
                 }
             end
         end
@@ -377,7 +388,8 @@ function Module.init(runtime: any): any
         -- choice and is not second-guessed here.
         -- Raw mode skips this gate entirely: the user asked to fire
         -- regardless of target movement.
-        if not mm2Settings.shootRaw
+        if not useRaw
+            and not continuous
             and prediction.settings and prediction.settings.autoLead
             and type(info.leadSeconds) == "number"
             and info.leadSeconds >= MAX_AUTO_LEAD_SAFE then
@@ -386,16 +398,12 @@ function Module.init(runtime: any): any
             )
         end
 
-        -- One authored request at a time (v106). The v105 calibration sent
-        -- fourteen silent requests at roughly 0.1 s spacing inside eight
-        -- seconds and received no GunFired echo for any of them; every request
-        -- sent after an echo was answered. A second packet before the first
-        -- resolves is not a second bullet -- it is a wasted attempt that also
-        -- inflates the attempt count the calibration reports. A held shot
-        -- still returns a useful status to Auto Shoot or the card; there is
-        -- no separate diagnostic counter or menu action to manage.
+        -- One authored request at a time (v106). Continuous Auto Shoot /
+        -- Auto Win bypasses the 1.5s confirmation gate so it never stops
+        -- firing while the Murderer is still alive.
         local pendingShot: any = state.mm2ShotFeedback.pending
-        if type(pendingShot) == "table"
+        if not continuous
+            and type(pendingShot) == "table"
             and type(pendingShot.queuedAt) == "number"
             and os.clock() - pendingShot.queuedAt < SHOT_CONFIRM_WINDOW then
             local remaining: number = SHOT_CONFIRM_WINDOW
@@ -414,10 +422,9 @@ function Module.init(runtime: any): any
                 or gun:GetAttribute("Reloading") == true or gun:GetAttribute("IsReloading") == true then
                 return reject("The gun is disabled or reloading.")
             end
-            -- Raw mode: skip the WeaponService wall filter entirely. The
-            -- shot fires regardless of walls, bystanders or occlusion.
-            -- The gun must still be equipped and ready.
-            if mm2Settings.shootRaw then
+            -- Raw mode or continuous CFrame: skip the WeaponService wall
+            -- filter entirely so CFrame Silent AIM fires immediately.
+            if useRaw then
                 return true
             end
             -- The muzzle is the character's gun, never the authored origin.
@@ -428,7 +435,7 @@ function Module.init(runtime: any): any
             -- between the gun and the target was never looked for.
             local muzzlePosition: Vector3 = (muzzle or shotOrigin).Position
             local ok, allowed, why, blocker, occluder = pcall(validateGunShot,target,character,targetCharacter,
-                muzzlePosition,shotOrigin.Position,shotEnd.Position,mm2Settings.shootWallCheck)
+                muzzlePosition,shotOrigin.Position,shotEnd.Position,useWallCheck)
             if not ok or not allowed then
                 if type(blocker) == "table" and trajectoryCalibration
                     and type(trajectoryCalibration.noteBlockedShot) == "function" then
@@ -456,13 +463,27 @@ function Module.init(runtime: any): any
                 sweep: number, resolvedVariant: string =
                 buildSilentShot(target, info, origin, variant)
             if not shotOrigin or not shotEnd then
-                return reject("Another player blocks the silent shot.")
+                if continuous and target.Character then
+                    local tr: BasePart? = target.Character:FindFirstChild("HumanoidRootPart")
+                    if tr then
+                        local ep: Vector3 = info.endpoint or tr.Position
+                        local startPt: Vector3 = ep + Vector3.new(0, 1.5, -2.5)
+                        shotOrigin = CFrame.lookAt(startPt, ep)
+                        shotEnd = CFrame.new(ep)
+                        offset = 2.5
+                        sweep = 0
+                        resolvedVariant = "Front"
+                    end
+                end
+                if not shotOrigin or not shotEnd then
+                    return reject("Another player blocks the silent shot.")
+                end
             end
             variant = resolvedVariant
             -- A near-target origin inside a body can make the engine miss that
             -- containing body. Fall back to the real muzzle, never a bypass.
             -- Raw mode skips this check: the shot fires regardless.
-            if not mm2Settings.shootRaw
+            if not useRaw
                 and not isWeaponPathClear(shotOrigin.Position,shotEnd.Position,targetCharacter,nil,{ignoreTarget=true}) then
                 shotOrigin,shotEnd = origin,CFrame.new(info.endpoint)
                 variant = "Muzzle"
@@ -470,7 +491,9 @@ function Module.init(runtime: any): any
                 sweep = 0
             end
             if not safeToSend(shotOrigin,shotEnd,origin) then return false end
-            state.mm2ShotFeedback.queue(target, gun, shotOrigin, shotEnd)
+            if not continuous then
+                state.mm2ShotFeedback.queue(target, gun, shotOrigin, shotEnd)
+            end
 
             state.lastSilentShotInfo = {
                 variant = variant,
@@ -490,7 +513,7 @@ function Module.init(runtime: any): any
                 variant = variant,
                 offset = offset,
                 settings = {mode = "Silent", spawn = variant,
-                    sweep = sweep, wallCheck = mm2Settings.shootWallCheck,
+                    sweep = sweep, wallCheck = useWallCheck,
                     leadSeconds = info.leadSeconds, motionSource = info.motionSource,
                     model = info.model,
                     sampleAge = info.sampleAge, samples = info.samples,
@@ -505,13 +528,17 @@ function Module.init(runtime: any): any
                     leadCorrection = info.leadCorrection},
             })
             if not quiet and ShootFeature then ShootFeature:SetStatus(nil) end
-            macroUnequip(gun)
+            if not continuous then
+                macroUnequip(gun)
+            end
             return true
         end
 
         local shotEndCFrame: CFrame = CFrame.new(info.endpoint)
         if not safeToSend(origin, shotEndCFrame) then return false end
-        state.mm2ShotFeedback.queue(target, gun, origin, shotEndCFrame)
+        if not continuous then
+            state.mm2ShotFeedback.queue(target, gun, origin, shotEndCFrame)
+        end
         -- Author one endpoint, without speculative "piercing" past it.
         -- Echo timing documents transport/visual confirmation, NOT rewind
         -- duration or an authoritative hit-rate denominator.
@@ -527,7 +554,7 @@ function Module.init(runtime: any): any
             aimPos = info.endpoint,
             target = target,
             silent = false,
-            settings = {mode = "Normal", wallCheck = mm2Settings.shootWallCheck,
+            settings = {mode = "Normal", wallCheck = useWallCheck,
                 leadSeconds = info.leadSeconds, motionSource = info.motionSource,
                 model = info.model,
                 sampleAge = info.sampleAge, samples = info.samples,
@@ -542,7 +569,9 @@ function Module.init(runtime: any): any
                 leadCorrection = info.leadCorrection},
         })
         if not quiet and ShootFeature then ShootFeature:SetStatus(nil) end
-        macroUnequip(gun)
+        if not continuous then
+            macroUnequip(gun)
+        end
         return true
     end
 
@@ -680,8 +709,8 @@ function Module.init(runtime: any): any
         configData.values["MM2.Shoot.Aimmethod"] = configData.values["MM2.Shoot.Mode"]
     end
     ShootFeature = createUniversalFeature(
-        "SilentAIM",
-        "Gun aim and Knife Throw. The main assigned key fires/equips Gun; Auto Shoot and Knife Throw use your held weapon. Every shot uses the kinematic predictor with the game-filter WallCheck.",
+        "Gun Aimbot",
+        "Gun aimbot with Bullet and CFrame modes. The main assigned key fires/equips Gun. Every shot uses the kinematic predictor with the game-filter WallCheck.",
         4,
         toggleShootMurderer,
         {
@@ -692,11 +721,23 @@ function Module.init(runtime: any): any
         }
     )
     state.mm2SilentAimFeature = ShootFeature
-    -- Other modules (Auto Farm's full-bag grab) fire through the exact
-    -- SilentAim path -- same silent spawn construction, wall check and
-    -- calibration capture -- instead of hand-rolling their own shot.
+    -- Other modules (Auto Shoot, Auto Farm's full-bag grab, Auto Win) fire
+    -- through the exact Gun Aimbot path instead of hand-rolling their own shot.
     state.mm2FireSilentShot = function(target: Player?): boolean
-        return fireGunAtTarget(target, {silent = true, quiet = true})
+        return fireGunAtTarget(target, {
+            silent = true,
+            quiet = true,
+            continuous = true,
+        })
+    end
+    state.mm2FireGunShot = function(target: Player?, shotOpts: any): boolean
+        local opts: any = type(shotOpts) == "table" and shotOpts or {}
+        return fireGunAtTarget(target, {
+            silent = opts.silent == true,
+            wallCheck = opts.wallCheck,
+            quiet = opts.quiet ~= false,
+            continuous = opts.continuous ~= false,
+        })
     end
     -- One card, two weapons: the heading keeps the gun rows together and the
     -- knife module opens its own section further down.
@@ -714,13 +755,13 @@ function Module.init(runtime: any): any
     addCycleOption(
         ShootFeature,
         "Aim method",
-        {"Prediction", "Silent AIM"},
+        {"Bullet", "CFrame"},
         mm2Settings.silentAim and 2 or 1,
         function(value: string): ()
-            mm2Settings.silentAim = value == "Silent AIM"
+            mm2Settings.silentAim = value == "CFrame" or value == "Silent AIM"
             refreshShootOptions()
         end,
-        "Prediction fires from the gun; Silent AIM uses a near-target origin. "
+        "Bullet fires from the gun; CFrame uses a near-target silent origin. "
             .. "Both respect WallCheck and always protect other players."
     )
     addCycleOption(
@@ -778,6 +819,7 @@ function Module.init(runtime: any): any
         toggleShootMurderer(false)
         state.mm2SilentAimFeature = nil
         state.mm2FireSilentShot = nil
+        state.mm2FireGunShot = nil
         toggleAutoShoot(false)
         state.mm2ShotFeedback.hide()
     end

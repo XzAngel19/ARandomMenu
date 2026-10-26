@@ -70,6 +70,7 @@ function Module.init(context: any): any
             ["KillAura"] = 2,
             ["TriggerBot"] = 3,
             ["SilentAIM"] = 4,
+            ["Gun Aimbot"] = 4,
             ["Fly"] = 1,
             ["Fling"] = 7,
             ["Noclip"] = 2,

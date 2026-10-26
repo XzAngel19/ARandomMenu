@@ -80,6 +80,7 @@ local FEATURE_CATEGORIES: {[string]: string} = {
 
     ["Blurt Roles"] = "World",
     ["SilentAIM"] = "Combat",
+    ["Gun Aimbot"] = "Combat",
     ["Trajectory Calibration"] = "Other",
 
     ["Auto Tackle"] = "Combat",
@@ -219,7 +220,7 @@ local RUNTIME_RAW_BASE: string =
         .. RUNTIME_BRANCH
         .. "/"
 
-local SOURCE_STAMP: string = "v133-20261025-disguise-autofarm-render-autounbox"
+local SOURCE_STAMP: string = "v134-20261025-autounbox-autoshoot-gunaimbot-autowin"
 
 local BOOT_STARTED_AT: number = os.clock()
 local BOOT_FINGERPRINT_SECONDS: number = 0
@@ -5978,7 +5979,7 @@ local fallbackManifest: any = {
             "src/games/MM2/Other/AutoVote.lua",
             "src/games/MM2/Other/CoinsAura.lua",
             "src/games/MM2/Other/GunAura.lua",
-            "src/games/MM2/Other/ProximityWarning.lua",
+            "src/games/MM2/Other/AutoWin.lua",
             "src/games/MM2/Other/TrajectoryCalibration.lua",
             "src/games/MM2/Other/CalibrationTrails.lua",
         },

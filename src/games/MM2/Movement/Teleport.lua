@@ -77,6 +77,7 @@ function Module.init(runtime: any): any
     local function toggleAutoGetGun(enabled)
         disconnectFeatureConnection("MM2AutoGetGun")
         autoGetGunBusy = false
+        state.mm2AutoGetGunEnabled = enabled == true
 
         if not enabled then
             return

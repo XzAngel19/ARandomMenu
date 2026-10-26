@@ -1,5 +1,5 @@
 return {
-    stamp = "v133-20261025-disguise-autofarm-render-autounbox",
+    stamp = "v134-20261025-autounbox-autoshoot-gunaimbot-autowin",
     files = {
         ["src/Profile/135856908115931.lua"] = [[
 --!strict
@@ -2680,6 +2680,8 @@ function Module.init(runtime: any): any
         silent: boolean?,
         quiet: boolean?,
         whenReady: boolean?,
+        continuous: boolean?,
+        wallCheck: boolean?,
     }
 
     -- How long an authored request owns the gun. The feedback queue resolves
@@ -2700,6 +2702,12 @@ function Module.init(runtime: any): any
             silent = opts.silent
         end
         local quiet: boolean = opts.quiet == true
+        local continuous: boolean = opts.continuous == true
+        local useRaw: boolean = mm2Settings.shootRaw
+            or (continuous and silent)
+        local useWallCheck: boolean = if opts.wallCheck ~= nil
+            then opts.wallCheck == true
+            else mm2Settings.shootWallCheck
         local function reject(message: string): boolean
             lastRejectReason = message
             if not quiet and ShootFeature then ShootFeature:SetStatus(message) end
@@ -2740,24 +2748,27 @@ function Module.init(runtime: any): any
             end
         end
 
-        -- Raw mode: skip ALL prediction and wall gates. When gunAim
-        -- fails (no samples, stale, unreachable), use the target's
-        -- current root position as the endpoint so the shot still
-        -- fires. The gun must still be equipped and ready, and the
-        -- target must still be the Murderer.
-        if mm2Settings.shootRaw and not info and target.Character then
+        -- Raw mode or continuous Auto Shoot / Auto Win: when gunAim has no
+        -- samples yet on the first frame, fall back immediately to the
+        -- target's current root position (+ short velocity lead) so the shot
+        -- fires without waiting even a single second.
+        if (useRaw or continuous) and not info and target.Character then
             local targetRoot: BasePart? = target.Character:FindFirstChild("HumanoidRootPart")
             if targetRoot then
-                local fallbackEndpoint: Vector3 = targetRoot.Position
+                local vel: Vector3 = Vector3.zero
+                pcall(function(): ()
+                    vel = targetRoot.AssemblyLinearVelocity
+                end)
+                local fallbackEndpoint: Vector3 = targetRoot.Position + vel * 0.08
                 info = {
                     endpoint = fallbackEndpoint,
-                    velocity = Vector3.zero,
-                    leadSeconds = 0,
+                    velocity = vel,
+                    leadSeconds = 0.08,
                     motionSource = "raw",
                     model = "raw",
                     sampleAge = 0,
                     samples = 0,
-                    capturedPosition = fallbackEndpoint,
+                    capturedPosition = targetRoot.Position,
                     rtt = 0,
                     echoDelay = 0,
                     rttEngine = "raw",
@@ -2765,7 +2776,7 @@ function Module.init(runtime: any): any
                     turnRate = 0,
                     brakeSeconds = 0,
                     leadCorrection = 0,
-                    rootPosition = fallbackEndpoint,
+                    rootPosition = targetRoot.Position,
                 }
             end
         end
@@ -2794,7 +2805,8 @@ function Module.init(runtime: any): any
         -- choice and is not second-guessed here.
         -- Raw mode skips this gate entirely: the user asked to fire
         -- regardless of target movement.
-        if not mm2Settings.shootRaw
+        if not useRaw
+            and not continuous
             and prediction.settings and prediction.settings.autoLead
             and type(info.leadSeconds) == "number"
             and info.leadSeconds >= MAX_AUTO_LEAD_SAFE then
@@ -2803,16 +2815,12 @@ function Module.init(runtime: any): any
             )
         end
 
-        -- One authored request at a time (v106). The v105 calibration sent
-        -- fourteen silent requests at roughly 0.1 s spacing inside eight
-        -- seconds and received no GunFired echo for any of them; every request
-        -- sent after an echo was answered. A second packet before the first
-        -- resolves is not a second bullet -- it is a wasted attempt that also
-        -- inflates the attempt count the calibration reports. A held shot
-        -- still returns a useful status to Auto Shoot or the card; there is
-        -- no separate diagnostic counter or menu action to manage.
+        -- One authored request at a time (v106). Continuous Auto Shoot /
+        -- Auto Win bypasses the 1.5s confirmation gate so it never stops
+        -- firing while the Murderer is still alive.
         local pendingShot: any = state.mm2ShotFeedback.pending
-        if type(pendingShot) == "table"
+        if not continuous
+            and type(pendingShot) == "table"
             and type(pendingShot.queuedAt) == "number"
             and os.clock() - pendingShot.queuedAt < SHOT_CONFIRM_WINDOW then
             local remaining: number = SHOT_CONFIRM_WINDOW
@@ -2831,10 +2839,9 @@ function Module.init(runtime: any): any
                 or gun:GetAttribute("Reloading") == true or gun:GetAttribute("IsReloading") == true then
                 return reject("The gun is disabled or reloading.")
             end
-            -- Raw mode: skip the WeaponService wall filter entirely. The
-            -- shot fires regardless of walls, bystanders or occlusion.
-            -- The gun must still be equipped and ready.
-            if mm2Settings.shootRaw then
+            -- Raw mode or continuous CFrame: skip the WeaponService wall
+            -- filter entirely so CFrame Silent AIM fires immediately.
+            if useRaw then
                 return true
             end
             -- The muzzle is the character's gun, never the authored origin.
@@ -2845,7 +2852,7 @@ function Module.init(runtime: any): any
             -- between the gun and the target was never looked for.
             local muzzlePosition: Vector3 = (muzzle or shotOrigin).Position
             local ok, allowed, why, blocker, occluder = pcall(validateGunShot,target,character,targetCharacter,
-                muzzlePosition,shotOrigin.Position,shotEnd.Position,mm2Settings.shootWallCheck)
+                muzzlePosition,shotOrigin.Position,shotEnd.Position,useWallCheck)
             if not ok or not allowed then
                 if type(blocker) == "table" and trajectoryCalibration
                     and type(trajectoryCalibration.noteBlockedShot) == "function" then
@@ -2873,13 +2880,27 @@ function Module.init(runtime: any): any
                 sweep: number, resolvedVariant: string =
                 buildSilentShot(target, info, origin, variant)
             if not shotOrigin or not shotEnd then
-                return reject("Another player blocks the silent shot.")
+                if continuous and target.Character then
+                    local tr: BasePart? = target.Character:FindFirstChild("HumanoidRootPart")
+                    if tr then
+                        local ep: Vector3 = info.endpoint or tr.Position
+                        local startPt: Vector3 = ep + Vector3.new(0, 1.5, -2.5)
+                        shotOrigin = CFrame.lookAt(startPt, ep)
+                        shotEnd = CFrame.new(ep)
+                        offset = 2.5
+                        sweep = 0
+                        resolvedVariant = "Front"
+                    end
+                end
+                if not shotOrigin or not shotEnd then
+                    return reject("Another player blocks the silent shot.")
+                end
             end
             variant = resolvedVariant
             -- A near-target origin inside a body can make the engine miss that
             -- containing body. Fall back to the real muzzle, never a bypass.
             -- Raw mode skips this check: the shot fires regardless.
-            if not mm2Settings.shootRaw
+            if not useRaw
                 and not isWeaponPathClear(shotOrigin.Position,shotEnd.Position,targetCharacter,nil,{ignoreTarget=true}) then
                 shotOrigin,shotEnd = origin,CFrame.new(info.endpoint)
                 variant = "Muzzle"
@@ -2887,7 +2908,9 @@ function Module.init(runtime: any): any
                 sweep = 0
             end
             if not safeToSend(shotOrigin,shotEnd,origin) then return false end
-            state.mm2ShotFeedback.queue(target, gun, shotOrigin, shotEnd)
+            if not continuous then
+                state.mm2ShotFeedback.queue(target, gun, shotOrigin, shotEnd)
+            end
 
             state.lastSilentShotInfo = {
                 variant = variant,
@@ -2907,7 +2930,7 @@ function Module.init(runtime: any): any
                 variant = variant,
                 offset = offset,
                 settings = {mode = "Silent", spawn = variant,
-                    sweep = sweep, wallCheck = mm2Settings.shootWallCheck,
+                    sweep = sweep, wallCheck = useWallCheck,
                     leadSeconds = info.leadSeconds, motionSource = info.motionSource,
                     model = info.model,
                     sampleAge = info.sampleAge, samples = info.samples,
@@ -2922,13 +2945,17 @@ function Module.init(runtime: any): any
                     leadCorrection = info.leadCorrection},
             })
             if not quiet and ShootFeature then ShootFeature:SetStatus(nil) end
-            macroUnequip(gun)
+            if not continuous then
+                macroUnequip(gun)
+            end
             return true
         end
 
         local shotEndCFrame: CFrame = CFrame.new(info.endpoint)
         if not safeToSend(origin, shotEndCFrame) then return false end
-        state.mm2ShotFeedback.queue(target, gun, origin, shotEndCFrame)
+        if not continuous then
+            state.mm2ShotFeedback.queue(target, gun, origin, shotEndCFrame)
+        end
         -- Author one endpoint, without speculative "piercing" past it.
         -- Echo timing documents transport/visual confirmation, NOT rewind
         -- duration or an authoritative hit-rate denominator.
@@ -2944,7 +2971,7 @@ function Module.init(runtime: any): any
             aimPos = info.endpoint,
             target = target,
             silent = false,
-            settings = {mode = "Normal", wallCheck = mm2Settings.shootWallCheck,
+            settings = {mode = "Normal", wallCheck = useWallCheck,
                 leadSeconds = info.leadSeconds, motionSource = info.motionSource,
                 model = info.model,
                 sampleAge = info.sampleAge, samples = info.samples,
@@ -2959,7 +2986,9 @@ function Module.init(runtime: any): any
                 leadCorrection = info.leadCorrection},
         })
         if not quiet and ShootFeature then ShootFeature:SetStatus(nil) end
-        macroUnequip(gun)
+        if not continuous then
+            macroUnequip(gun)
+        end
         return true
     end
 
@@ -3097,8 +3126,8 @@ function Module.init(runtime: any): any
         configData.values["MM2.Shoot.Aimmethod"] = configData.values["MM2.Shoot.Mode"]
     end
     ShootFeature = createUniversalFeature(
-        "SilentAIM",
-        "Gun aim and Knife Throw. The main assigned key fires/equips Gun; Auto Shoot and Knife Throw use your held weapon. Every shot uses the kinematic predictor with the game-filter WallCheck.",
+        "Gun Aimbot",
+        "Gun aimbot with Bullet and CFrame modes. The main assigned key fires/equips Gun. Every shot uses the kinematic predictor with the game-filter WallCheck.",
         4,
         toggleShootMurderer,
         {
@@ -3109,11 +3138,23 @@ function Module.init(runtime: any): any
         }
     )
     state.mm2SilentAimFeature = ShootFeature
-    -- Other modules (Auto Farm's full-bag grab) fire through the exact
-    -- SilentAim path -- same silent spawn construction, wall check and
-    -- calibration capture -- instead of hand-rolling their own shot.
+    -- Other modules (Auto Shoot, Auto Farm's full-bag grab, Auto Win) fire
+    -- through the exact Gun Aimbot path instead of hand-rolling their own shot.
     state.mm2FireSilentShot = function(target: Player?): boolean
-        return fireGunAtTarget(target, {silent = true, quiet = true})
+        return fireGunAtTarget(target, {
+            silent = true,
+            quiet = true,
+            continuous = true,
+        })
+    end
+    state.mm2FireGunShot = function(target: Player?, shotOpts: any): boolean
+        local opts: any = type(shotOpts) == "table" and shotOpts or {}
+        return fireGunAtTarget(target, {
+            silent = opts.silent == true,
+            wallCheck = opts.wallCheck,
+            quiet = opts.quiet ~= false,
+            continuous = opts.continuous ~= false,
+        })
     end
     -- One card, two weapons: the heading keeps the gun rows together and the
     -- knife module opens its own section further down.
@@ -3131,13 +3172,13 @@ function Module.init(runtime: any): any
     addCycleOption(
         ShootFeature,
         "Aim method",
-        {"Prediction", "Silent AIM"},
+        {"Bullet", "CFrame"},
         mm2Settings.silentAim and 2 or 1,
         function(value: string): ()
-            mm2Settings.silentAim = value == "Silent AIM"
+            mm2Settings.silentAim = value == "CFrame" or value == "Silent AIM"
             refreshShootOptions()
         end,
-        "Prediction fires from the gun; Silent AIM uses a near-target origin. "
+        "Bullet fires from the gun; CFrame uses a near-target silent origin. "
             .. "Both respect WallCheck and always protect other players."
     )
     addCycleOption(
@@ -3195,6 +3236,7 @@ function Module.init(runtime: any): any
         toggleShootMurderer(false)
         state.mm2SilentAimFeature = nil
         state.mm2FireSilentShot = nil
+        state.mm2FireGunShot = nil
         toggleAutoShoot(false)
         state.mm2ShotFeedback.hide()
     end
@@ -3236,132 +3278,388 @@ function Module.init(runtime: any): any
     local prediction: any = state.mm2Prediction
     assert(type(prediction) == "table", "MM2 Auto Shoot requires MM2 Prediction")
     Module.Runtime = runtime
-    
+
     local findMurderer: any = core.findMurderer
     local getPlayerRole: any = core.getPlayerRole
     local getPlayerWeapon: any = core.getPlayerWeapon
     local isPlayerAlive: any = core.isPlayerAlive
     local isProtectedTarget: any = core.isProtectedTarget
     local isWeaponPathClear: any = core.isWeaponPathClear
-    local validateGunShot: any = core.validateGunShot
     local getGunOriginCFrame: any = core.getGunOriginCFrame
-    
+
     local settings = {
-        mode = "Shoot",
+        mode = "Bullet",
         wallCheck = true,
-        aura = 20,
+        proximity = false,
+        aura = 25,
     }
-    
-    local autoShootActive = false
-    local lastShootAttempt = 0
-    
-    local function getGun(): Tool?
-        local character = LocalPlayer.Character
-        if not character then return nil end
-        return getPlayerWeapon(LocalPlayer, "Gun", true)
-    end
-    
-    local function findTarget(): Player?
-        local localRoot = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
-        if not localRoot then return nil end
-        
-        local murderer = findMurderer()
-        if not murderer then return nil end
-        
-        local targetRoot = murderer.Character and murderer.Character:FindFirstChild("HumanoidRootPart")
-        if not targetRoot then return nil end
-        
-        local distance = (targetRoot.Position - localRoot.Position).Magnitude
-        if distance > settings.aura then return nil end
-        
-        if not isPlayerAlive(murderer) or isProtectedTarget(murderer) then
-            return nil
+
+    local autoShootActive: boolean = false
+    local AutoShootFeature: any = nil
+    local toolConnections: {RBXScriptConnection} = {}
+
+    local function clearToolConnections(): ()
+        for _, conn: RBXScriptConnection in ipairs(toolConnections) do
+            pcall(function(): ()
+                conn:Disconnect()
+            end)
         end
-        
-        return murderer
+        table.clear(toolConnections)
     end
-    
-    local function tryCframeShoot(target: Player): boolean
-        local character = LocalPlayer.Character
-        local gun = getGun()
-        if not character or not gun then return false end
-        
-        local root = character:FindFirstChild("HumanoidRootPart")
-        local targetRoot = target.Character and target.Character:FindFirstChild("HumanoidRootPart")
-        if not root or not targetRoot then return false end
-        
-        -- Teleport near target (5 studs behind)
-        local offset = targetRoot.CFrame.LookVector * -5
-        local newCFrame = targetRoot.CFrame + offset
-        root.CFrame = newCFrame
-        
-        -- Wait a frame for position to sync
-        task.wait(0.05)
-        
-        -- Fire the gun
-        gun:Activate()
+
+    local function findLocalGun(): (Tool?, Model?, Humanoid?, BasePart?)
+        local character: Model? = LocalPlayer and LocalPlayer.Character
+        if not character then
+            return nil, nil, nil, nil
+        end
+        local humanoid: Humanoid? = character:FindFirstChildOfClass("Humanoid")
+        local root: BasePart? = character:FindFirstChild("HumanoidRootPart") :: BasePart?
+        if not humanoid or humanoid.Health <= 0 or not root then
+            return nil, character, humanoid, root
+        end
+        local gun: Tool? = nil
+        if type(getPlayerWeapon) == "function" then
+            gun = getPlayerWeapon(LocalPlayer, "Gun", false)
+        end
+        if not gun then
+            local charGun: Instance? = character:FindFirstChild("Gun")
+            if charGun and charGun:IsA("Tool") then
+                gun = charGun
+            end
+        end
+        if not gun then
+            local backpack: Instance? = LocalPlayer:FindFirstChildOfClass("Backpack")
+            local bpGun: Instance? = backpack and backpack:FindFirstChild("Gun")
+            if bpGun and bpGun:IsA("Tool") then
+                gun = bpGun
+            end
+        end
+        return gun, character, humanoid, root
+    end
+
+    local function ensureGunEquipped(
+        character: Model,
+        humanoid: Humanoid,
+        gun: Tool
+    ): boolean
+        if gun.Parent == character then
+            return true
+        end
+        pcall(function(): ()
+            humanoid:EquipTool(gun)
+        end)
+        if gun.Parent ~= character then
+            pcall(function(): ()
+                gun.Parent = character
+            end)
+        end
+        return gun.Parent == character
+    end
+
+    local function resolveMurdererTarget(
+        localRoot: BasePart,
+        enforceProximity: boolean
+    ): (Player?, BasePart?)
+        local murderer: Player? = nil
+        if type(findMurderer) == "function" then
+            murderer = findMurderer()
+        end
+        if not murderer then
+            local playersService: Players = game:GetService("Players")
+            for _, player: Player in ipairs(playersService:GetPlayers()) do
+                if player ~= LocalPlayer then
+                    local role: any = type(getPlayerRole) == "function"
+                        and getPlayerRole(player)
+                        or nil
+                    local hasKnife: boolean = type(getPlayerWeapon) == "function"
+                        and getPlayerWeapon(player, "Knife", false) ~= nil
+                    if role == "Murderer" or hasKnife then
+                        murderer = player
+                        break
+                    end
+                end
+            end
+        end
+        if not murderer or murderer == LocalPlayer then
+            return nil, nil
+        end
+        if type(isPlayerAlive) == "function" and not isPlayerAlive(murderer) then
+            return nil, nil
+        end
+        if type(isProtectedTarget) == "function" and isProtectedTarget(murderer) then
+            return nil, nil
+        end
+        local targetChar: Model? = murderer.Character
+        local targetRoot: BasePart? = targetChar
+            and targetChar:FindFirstChild("HumanoidRootPart") :: BasePart?
+        if not targetRoot then
+            return nil, nil
+        end
+        if enforceProximity then
+            local okDist: boolean, distance: any = pcall(function(): any
+                return (targetRoot.Position - localRoot.Position).Magnitude
+            end)
+            if okDist and type(distance) == "number" and distance > settings.aura then
+                return nil, nil
+            end
+        end
+        return murderer, targetRoot
+    end
+
+    local function computeTargetEndpoint(
+        target: Player,
+        targetRoot: BasePart,
+        originPos: Vector3
+    ): Vector3
+        if type(prediction) == "table" and type(prediction.gunAim) == "function" then
+            local ok: boolean, endpoint: any = pcall(
+                prediction.gunAim,
+                target,
+                originPos
+            )
+            if ok and typeof(endpoint) == "Vector3" then
+                return endpoint
+            end
+        end
+        local vel: Vector3 = Vector3.zero
+        pcall(function(): ()
+            vel = targetRoot.AssemblyLinearVelocity
+        end)
+        return targetRoot.Position + vel * 0.08
+    end
+
+    local function fireCFrameShotImmediate(
+        target: Player,
+        targetRoot: BasePart,
+        character: Model,
+        localRoot: BasePart,
+        gun: Tool
+    ): boolean
+        local shootRemote: Instance? = gun:FindFirstChild("Shoot")
+        if not (shootRemote and shootRemote:IsA("RemoteEvent")) then
+            return false
+        end
+        if gun.Enabled == false
+            or gun:GetAttribute("Disabled") == true
+            or gun:GetAttribute("Reloading") == true
+            or gun:GetAttribute("IsReloading") == true then
+            return false
+        end
+        local originCF: CFrame = (type(getGunOriginCFrame) == "function"
+            and getGunOriginCFrame(character, gun))
+            or localRoot.CFrame
+        local endpoint: Vector3 = computeTargetEndpoint(
+            target,
+            targetRoot,
+            originCF.Position
+        )
+        local lookDir: Vector3 = Vector3.new(0, 0, -1)
+        pcall(function(): ()
+            lookDir = targetRoot.CFrame.LookVector
+        end)
+        local startPoint: Vector3 = endpoint - lookDir * 2.5 + Vector3.new(0, 1.2, 0)
+        if (startPoint - endpoint).Magnitude < 0.2 then
+            startPoint = endpoint + Vector3.new(0, 2.0, -2.5)
+        end
+        local shotOrigin: CFrame = CFrame.lookAt(startPoint, endpoint)
+        local shotEnd: CFrame = CFrame.new(endpoint)
+        local firedSilent: boolean = false
+        if type(state.mm2FireSilentShot) == "function" then
+            local okSilent: boolean, res: any = pcall(state.mm2FireSilentShot, target)
+            firedSilent = okSilent and res == true
+        end
+        if not firedSilent then
+            pcall(function(): ()
+                (shootRemote :: RemoteEvent):FireServer(shotOrigin, shotEnd)
+            end)
+        end
         return true
     end
-    
-    local function tryNormalShoot(target: Player): boolean
-        local gun = getGun()
-        if not gun then return false end
-        
-        local character = LocalPlayer.Character
-        if not character then return false end
-        
-        local root = character:FindFirstChild("HumanoidRootPart")
-        local targetRoot = target.Character and target.Character:FindFirstChild("HumanoidRootPart")
-        if not root or not targetRoot then return false end
-        
-        -- Wall check
-        if settings.wallCheck then
-            local origin = root.Position
-            local endpoint = targetRoot.Position
-            if not isWeaponPathClear(origin, endpoint, {}) then
+
+    local function fireBulletShotImmediate(
+        target: Player,
+        targetRoot: BasePart,
+        character: Model,
+        localRoot: BasePart,
+        gun: Tool
+    ): boolean
+        local shootRemote: Instance? = gun:FindFirstChild("Shoot")
+        if not (shootRemote and shootRemote:IsA("RemoteEvent")) then
+            return false
+        end
+        if gun.Enabled == false
+            or gun:GetAttribute("Disabled") == true
+            or gun:GetAttribute("Reloading") == true
+            or gun:GetAttribute("IsReloading") == true then
+            return false
+        end
+        local originCF: CFrame = (type(getGunOriginCFrame) == "function"
+            and getGunOriginCFrame(character, gun))
+            or localRoot.CFrame
+        local endpoint: Vector3 = computeTargetEndpoint(
+            target,
+            targetRoot,
+            originCF.Position
+        )
+        if settings.wallCheck and type(isWeaponPathClear) == "function" then
+            local okClear: boolean, clear: any = pcall(
+                isWeaponPathClear,
+                originCF.Position,
+                endpoint,
+                target.Character
+            )
+            if not okClear or clear ~= true then
                 return false
             end
         end
-        
-        -- Fire the gun
-        gun:Activate()
+        local firedCore: boolean = false
+        if type(state.mm2FireGunShot) == "function" then
+            local okShot: boolean, res: any = pcall(state.mm2FireGunShot, target, {
+                silent = false,
+                wallCheck = settings.wallCheck,
+                continuous = true,
+                quiet = true,
+            })
+            firedCore = okShot and res == true
+        end
+        if not firedCore then
+            local shotOrigin: CFrame = CFrame.lookAt(originCF.Position, endpoint)
+            local shotEnd: CFrame = CFrame.new(endpoint)
+            pcall(function(): ()
+                (shootRemote :: RemoteEvent):FireServer(shotOrigin, shotEnd)
+            end)
+        end
         return true
     end
-    
+
+    -- Shared helper for Auto Win ("Insta Kill As Sheriff (Usa AutoShoot CFrame)")
+    -- and Auto Shoot CFrame mode: equips the gun the instant the player
+    -- receives it (whether as Sheriff, Hero, or Innocent who picked up GunDrop)
+    -- and fires Silent AIM CFrame continuously until the Murderer is dead.
+    local function executeAutoShootCFrameOnce(enforceProximity: boolean): boolean
+        local gun: Tool?, character: Model?, humanoid: Humanoid?,
+            localRoot: BasePart? = findLocalGun()
+        if not gun or not character or not humanoid or not localRoot then
+            return false
+        end
+        local target: Player?, targetRoot: BasePart? =
+            resolveMurdererTarget(localRoot, enforceProximity)
+        if not target or not targetRoot then
+            return false
+        end
+        if not ensureGunEquipped(character, humanoid, gun) then
+            return false
+        end
+        return fireCFrameShotImmediate(target, targetRoot, character, localRoot, gun)
+    end
+    state.mm2AutoShootCFrameOnce = executeAutoShootCFrameOnce
+
     local function autoShootTick(): ()
-        if not autoShootActive then return end
-        
-        local now = os.clock()
-        if now - lastShootAttempt < 0.1 then return end
-        lastShootAttempt = now
-        
-        local gun = getGun()
-        if not gun then return end
-        
-        local target = findTarget()
-        if not target then return end
-        
-        if settings.mode == "Cframe" then
-            tryCframeShoot(target)
+        if not autoShootActive then
+            return
+        end
+        local gun: Tool?, character: Model?, humanoid: Humanoid?,
+            localRoot: BasePart? = findLocalGun()
+        if not gun or not character or not humanoid or not localRoot then
+            return
+        end
+        local target: Player?, targetRoot: BasePart? =
+            resolveMurdererTarget(localRoot, settings.proximity == true)
+        if not target or not targetRoot then
+            return
+        end
+        if not ensureGunEquipped(character, humanoid, gun) then
+            return
+        end
+        local isCFrame: boolean = settings.mode == "CFrame"
+            or settings.mode == "Cframe"
+            or settings.mode == "Silent AIM"
+        if isCFrame then
+            fireCFrameShotImmediate(target, targetRoot, character, localRoot, gun)
         else
-            tryNormalShoot(target)
+            fireBulletShotImmediate(target, targetRoot, character, localRoot, gun)
         end
     end
-    
+
+    local function watchToolContainer(container: Instance?): ()
+        if not container or type((container :: any).ChildAdded) ~= "table"
+            and typeof((container :: any).ChildAdded) ~= "RBXScriptSignal" then
+            return
+        end
+        pcall(function(): ()
+            local conn: RBXScriptConnection = (container :: any).ChildAdded:Connect(
+                function(child: Instance): ()
+                    if autoShootActive and child and child.Name == "Gun" then
+                        autoShootTick()
+                    end
+                end
+            )
+            table.insert(toolConnections, conn)
+        end)
+    end
+
+    local function setupInstantGunWatchers(): ()
+        clearToolConnections()
+        if not LocalPlayer then
+            return
+        end
+        watchToolContainer(LocalPlayer.Character)
+        watchToolContainer(LocalPlayer:FindFirstChildOfClass("Backpack"))
+        pcall(function(): ()
+            if LocalPlayer.CharacterAdded then
+                table.insert(
+                    toolConnections,
+                    LocalPlayer.CharacterAdded:Connect(function(newChar: Model): ()
+                        watchToolContainer(newChar)
+                        watchToolContainer(LocalPlayer:FindFirstChildOfClass("Backpack"))
+                    end)
+                )
+            end
+            if LocalPlayer.ChildAdded then
+                table.insert(
+                    toolConnections,
+                    LocalPlayer.ChildAdded:Connect(function(child: Instance): ()
+                        if child and child:IsA("Backpack") then
+                            watchToolContainer(child)
+                        end
+                    end)
+                )
+            end
+        end)
+    end
+
+    local function updateStatus(): ()
+        if not AutoShootFeature or not AutoShootFeature.enabled then
+            return
+        end
+        if settings.proximity then
+            AutoShootFeature:SetStatus(
+                settings.mode .. " · " .. tostring(settings.aura) .. " studs"
+            )
+        else
+            AutoShootFeature:SetStatus(settings.mode)
+        end
+    end
+
     local function toggleAutoShoot(enabled: boolean): ()
-        autoShootActive = enabled
-        
+        autoShootActive = enabled == true
         if enabled then
+            updateStatus()
+            setupInstantGunWatchers()
             featureConnections.MM2AutoShoot = TaskManager:Connect(autoShootTick)
             autoShootTick()
         else
+            clearToolConnections()
             disconnectFeatureConnection("MM2AutoShoot")
+            if AutoShootFeature then
+                AutoShootFeature:SetStatus(nil)
+            end
         end
     end
-    
-    local AutoShootFeature: any = createUniversalFeature(
+
+    AutoShootFeature = createUniversalFeature(
         "Auto Shoot",
-        "Automatically shoots at the murderer when they're within aura range. Use CFrame mode to teleport near the target before shooting, or Shoot mode for normal silent aim.",
+        "Automatically equips the Gun the instant you receive it (as Sheriff or Hero) and shoots the Murderer continuously using Bullet (respects WallCheck) or CFrame (Silent AIM). Optional Proximity radius filter.",
         4,
         toggleAutoShoot,
         {
@@ -3371,30 +3669,54 @@ function Module.init(runtime: any): any
         }
     )
     state.mm2AutoShootFeature = AutoShootFeature
-    
-    addCycleOption(AutoShootFeature, "Mode", {"Shoot", "Cframe"}, 1,
+
+    local auraSlider: GuiObject? = nil
+    local function refreshProximityOption(): ()
+        if auraSlider and type(setOptionVisible) == "function" then
+            setOptionVisible(
+                AutoShootFeature,
+                auraSlider.Parent :: GuiObject,
+                settings.proximity == true
+            )
+        end
+        updateStatus()
+    end
+
+    addCycleOption(AutoShootFeature, "Mode", {"Bullet", "CFrame"}, 1,
         function(value: string): ()
             settings.mode = value
+            updateStatus()
         end,
-        "Shoot: normal silent aim. CFrame: teleport near target before shooting.")
-    
+        "Bullet: shoots continuously while respecting WallCheck. CFrame: shoots immediately with Silent AIM CFrame upon receiving the gun.")
+
     addToggleOption(AutoShootFeature, "WallCheck", true,
         function(value: boolean): ()
             settings.wallCheck = value
         end,
-        "Only shoot if there's a clear path to the target.")
-    
-    addNumberOption(AutoShootFeature, "Aura", 20, 5, 40,
+        "In Bullet mode, only shoot when there is a clear line of sight to the Murderer.")
+
+    addToggleOption(AutoShootFeature, "Proximity", false,
+        function(value: boolean): ()
+            settings.proximity = value == true
+            refreshProximityOption()
+        end,
+        "When enabled, only shoot when the Murderer enters the configured radius.")
+
+    auraSlider = addNumberOption(AutoShootFeature, "Aura", 25, 5, 150,
         function(value: number): ()
             settings.aura = value
             if AutoShootFeature.enabled then
                 AutoShootFeature:SetStatus(tostring(value) .. " studs")
             end
         end,
-        "Maximum distance in studs to automatically shoot at the murderer.", 1)
-    
+        "Maximum distance in studs to automatically shoot at the Murderer while Proximity is ON.", 1)
+
+    refreshProximityOption()
+
     activeCleanup = function(): ()
         toggleAutoShoot(false)
+        state.mm2AutoShootFeature = nil
+        state.mm2AutoShootCFrameOnce = nil
     end
     Module.Events = featureConnections
     Module.Initialized = true
@@ -4061,6 +4383,7 @@ function Module.init(runtime: any): any
     local function toggleAutoGetGun(enabled)
         disconnectFeatureConnection("MM2AutoGetGun")
         autoGetGunBusy = false
+        state.mm2AutoGetGunEnabled = enabled == true
 
         if not enabled then
             return
@@ -6158,7 +6481,7 @@ function Module.init(runtime: any): any
         end
         -- Verify the player actually has enough currency BEFORE calling
         -- OpenCrate or playing any reveal animation. If insufficient, do
-        -- nothing and stop immediately without opening imaginary boxes.
+        -- nothing and stay enabled waiting for currency while farming.
         local requiredPrice: number? = entry.prices and entry.prices[currency] or nil
         local currentBalance: number? = getPlayerCurrencyBalance(currency)
         if type(requiredPrice) == "number"
@@ -6166,28 +6489,24 @@ function Module.init(runtime: any): any
             and type(currentBalance) == "number"
             and currentBalance < requiredPrice then
             clearStuckUnboxOverlays()
-            session.finished = true
             openingBusy = false
-            report(summary())
-            stop(
-                "Auto Unbox stopped: not enough "
+            report(
+                summary()
+                    .. " · waiting for "
                     .. tostring(currency)
                     .. " ("
                     .. tostring(currentBalance)
                     .. "/"
                     .. tostring(requiredPrice)
-                    .. ") for "
-                    .. entry.name
-                    .. "."
+                    .. ")"
             )
             return false
         end
         local remotes: Instance? = shopRemotes()
         local openCrate: Instance? = remotes and remotes:FindFirstChild("OpenCrate")
         if not (openCrate and openCrate:IsA("RemoteFunction")) then
-            session.finished = true
             openingBusy = false
-            stop("Auto Unbox: the game's OpenCrate remote is missing.")
+            report(summary() .. " · waiting for shop")
             return false
         end
         local note: string = forced
@@ -6204,43 +6523,28 @@ function Module.init(runtime: any): any
             openingBusy = false
             return true
         end
+        -- Not enough currency or server rejected the open: do nothing, do not
+        -- play any reveal animation, and keep Auto Unbox active so it
+        -- automatically opens boxes as soon as farming collects enough coins.
         clearStuckUnboxOverlays()
         session.failures += 1
         session.consecutiveFailures += 1
-        report(summary() .. note)
+        report(summary() .. note .. " · waiting for " .. tostring(currency))
         openingBusy = false
-        if reward == false or session.consecutiveFailures >= 3 then
-            session.finished = true
-            stop(
-                "Auto Unbox stopped: "
-                    .. entry.name
-                    .. " did not open with "
-                    .. tostring(currency)
-                    .. ". Not enough currency, or the box is not on sale."
-            )
-        end
         return false
     end
 
     local function tick(_deltaTime: number): ()
-        if session.finished then
-            return
-        end
-        if session.opened >= math.round(settings.maxBoxes) then
-            session.finished = true
-            report(summary())
-            stop(nil)
-            return
-        end
         local now: number = os.clock()
         if now < session.nextAt or now < revealUntil or openingBusy then
             return
         end
-        openOnce()
+        local opened: boolean = openOnce()
         -- Extra settle time while the reveal plays: firing the next
         -- BoxController animation over a running one can leave the screen
-        -- black, so a revealed box always gets a longer breather.
-        local settle: number = settings.reveal == REVEAL_ON
+        -- black, so a revealed box always gets a longer breather. When no
+        -- box was opened (waiting for coins), check again after delay.
+        local settle: number = (opened and settings.reveal == REVEAL_ON)
             and REVEAL_SECONDS or 0
         session.nextAt = os.clock() + settings.delay + settle
     end
@@ -7223,6 +7527,802 @@ end
 return Module
 
 ]],
+        ["src/games/MM2/Other/AutoWin.lua"] = [[
+local Module = {
+    Name = "MM2 Auto Win",
+    Events = {} :: {[string]: any},
+    Initialized = false,
+    Runtime = nil :: any,
+}
+
+local activeCleanup: () -> () = function(): () end
+
+function Module.init(runtime: any): any
+    if Module.Initialized then
+        return Module
+    end
+    local core: any = state.mm2Core
+    assert(type(core) == "table", "MM2 Auto Win requires the MM2 core module")
+    local prediction: any = state.mm2Prediction
+    Module.Runtime = runtime
+
+    local findDroppedGun: any = core.findDroppedGun
+    local findMM2Map: any = core.findMM2Map
+    local findMurderer: any = core.findMurderer
+    local findSheriff: any = core.findSheriff
+    local getGunOriginCFrame: any = core.getGunOriginCFrame
+    local getPlayerRole: any = core.getPlayerRole
+    local getPlayerWeapon: any = core.getPlayerWeapon
+    local isPlayerAlive: any = core.isPlayerAlive
+    local isProtectedTarget: any = core.isProtectedTarget
+
+    local ABOVE_MAP_OFFSET: number = 120
+
+    local settings = {
+        instaKillMurder = true,
+        instaKillSheriff = true,
+        flingSheriffGetGun = false,
+    }
+
+    local autoWinActive: boolean = false
+    local AutoWinFeature: any = nil
+    local lastStatus: string? = nil
+
+    local wasOnMap: boolean = false
+    local safeAbovePosition: Vector3? = nil
+    local savedCollide: {[Instance]: boolean} = {}
+    local savedCustomProps: PhysicalProperties? = nil
+    local savedPropsRoot: BasePart? = nil
+    local victimSnapshots: {[BasePart]: {cframe: CFrame, anchored: boolean, canCollide: boolean}} = {}
+    local toolConnections: {RBXScriptConnection} = {}
+    local flingOscillation: number = 0
+
+    local function setStatus(text: string?): ()
+        if text == lastStatus then
+            return
+        end
+        lastStatus = text
+        if AutoWinFeature then
+            AutoWinFeature:SetStatus(text)
+        end
+    end
+
+    local function yawOf(frame: CFrame): number
+        local look: Vector3 = frame.LookVector
+        return math.atan2(-look.X, -look.Z)
+    end
+
+    local function characterParts(): (Model?, Humanoid?, BasePart?)
+        local character: Model? = LocalPlayer and LocalPlayer.Character
+        if not character then
+            return nil, nil, nil
+        end
+        local humanoid: Humanoid? = character:FindFirstChildOfClass("Humanoid")
+        local root: BasePart? = character:FindFirstChild("HumanoidRootPart") :: BasePart?
+        if not humanoid or not root then
+            return nil, nil, nil
+        end
+        return character, humanoid, root
+    end
+
+    local function findLobbyReferencePart(): BasePart?
+        for _, child: Instance in ipairs(workspace:GetChildren()) do
+            local lowerName: string = string.lower(tostring(child.Name))
+            local isLobby: boolean = string.find(lowerName, "lobby", 1, true) ~= nil
+                or child:FindFirstChild("VotePads", true) ~= nil
+                or child:FindFirstChild("VotePad1", true) ~= nil
+                or child:FindFirstChild("VoteIcons", true) ~= nil
+            if isLobby then
+                local votePads: Instance? = child:FindFirstChild("VotePads", true)
+                if votePads then
+                    local padPart: BasePart? = votePads:FindFirstChildWhichIsA("BasePart", true)
+                    if padPart then
+                        return padPart
+                    end
+                end
+                local spawns: Instance? = child:FindFirstChild("Spawns", true)
+                if spawns then
+                    local spawnPart: BasePart? = spawns:FindFirstChildWhichIsA("BasePart", true)
+                    if spawnPart then
+                        return spawnPart
+                    end
+                end
+                local anyPart: BasePart? = child:FindFirstChildWhichIsA("BasePart", true)
+                if anyPart then
+                    return anyPart
+                end
+            end
+        end
+        return nil
+    end
+
+    -- True as soon as the player's character is on the MM2 map, even during
+    -- the pre-round countdown before roles or weapons have been handed out.
+    local function isCharacterOnMap(root: BasePart): (boolean, Vector3?)
+        if type(findMM2Map) ~= "function" then
+            return false, nil
+        end
+        local map: Instance? = findMM2Map()
+        if not map then
+            return false, nil
+        end
+        local okRoot: boolean, rootPos: any = pcall(function(): any
+            return root.Position
+        end)
+        if not okRoot or typeof(rootPos) ~= "Vector3" then
+            return false, nil
+        end
+        local lobbyPart: BasePart? = findLobbyReferencePart()
+        if lobbyPart then
+            local okLobbyDist: boolean, lobbyDist: any = pcall(function(): any
+                return ((rootPos :: Vector3) - lobbyPart.Position).Magnitude
+            end)
+            if okLobbyDist and type(lobbyDist) == "number" and lobbyDist <= 350 then
+                return false, nil
+            end
+        end
+        local refPart: BasePart? = nil
+        local spawns: Instance? = (map :: Instance):FindFirstChild("Spawns")
+        if spawns then
+            refPart = spawns:FindFirstChildWhichIsA("BasePart", true)
+        end
+        if not refPart then
+            local coinContainer: Instance? = (map :: Instance):FindFirstChild("CoinContainer")
+            if coinContainer then
+                refPart = coinContainer:FindFirstChildWhichIsA("BasePart", true)
+            end
+        end
+        if not refPart then
+            refPart = (map :: Instance):FindFirstChildWhichIsA("BasePart", true)
+        end
+        if refPart then
+            local okMapDist: boolean, mapDist: any = pcall(function(): any
+                return ((rootPos :: Vector3) - refPart.Position).Magnitude
+            end)
+            if okMapDist and type(mapDist) == "number" and mapDist > 1500 then
+                return false, nil
+            end
+            return true, refPart.Position
+        end
+        return true, rootPos :: Vector3
+    end
+
+    local function restoreVictims(): ()
+        for part: BasePart, snap in pairs(victimSnapshots) do
+            if part and part.Parent then
+                pcall(function(): ()
+                    part.Anchored = snap.anchored
+                    part.CanCollide = snap.canCollide
+                    part.CFrame = snap.cframe
+                end)
+            end
+        end
+        table.clear(victimSnapshots)
+    end
+
+    local function restoreLocalCharacter(): ()
+        restoreVictims()
+        for part: Instance, wasCollide: boolean in pairs(savedCollide) do
+            if part and part.Parent then
+                pcall(function(): ()
+                    (part :: BasePart).CanCollide = wasCollide
+                end)
+            end
+        end
+        table.clear(savedCollide)
+        if savedPropsRoot and savedPropsRoot.Parent then
+            pcall(function(): ()
+                savedPropsRoot.CustomPhysicalProperties = savedCustomProps
+            end)
+        end
+        savedPropsRoot = nil
+        savedCustomProps = nil
+
+        local character: Model?, humanoid: Humanoid?, root: BasePart? = characterParts()
+        if humanoid then
+            pcall(function(): ()
+                humanoid.PlatformStand = false
+                humanoid.AutoRotate = true
+                humanoid:SetStateEnabled(Enum.HumanoidStateType.FallingDown, true)
+                humanoid:ChangeState(Enum.HumanoidStateType.Running)
+            end)
+        end
+        if root then
+            pcall(function(): ()
+                root.AssemblyLinearVelocity = Vector3.zero
+                root.AssemblyAngularVelocity = Vector3.zero
+                if safeAbovePosition then
+                    local groundPos: Vector3 = safeAbovePosition - Vector3.new(0, ABOVE_MAP_OFFSET - 4, 0)
+                    local targetCF: CFrame = CFrame.new(groundPos)
+                        * CFrame.Angles(0, yawOf(root.CFrame), 0)
+                    if character then
+                        pcall(function(): ()
+                            character:PivotTo(targetCF)
+                        end)
+                    end
+                    root.CFrame = targetCF
+                end
+            end)
+        end
+    end
+
+    local function disableCharacterCollisions(character: Model): ()
+        for _, object: Instance in ipairs(character:GetDescendants()) do
+            if object:IsA("BasePart") then
+                if savedCollide[object] == nil then
+                    savedCollide[object] = (object :: BasePart).CanCollide
+                end
+                pcall(function(): ()
+                    (object :: BasePart).CanCollide = false
+                end)
+            end
+        end
+    end
+
+    local function holdAboveMap(
+        character: Model,
+        humanoid: Humanoid,
+        root: BasePart
+    ): ()
+        disableCharacterCollisions(character)
+        local holdPos: Vector3 = safeAbovePosition
+            or (root.Position + Vector3.new(0, ABOVE_MAP_OFFSET, 0))
+        pcall(function(): ()
+            humanoid.PlatformStand = true
+            humanoid.AutoRotate = false
+            root.AssemblyLinearVelocity = Vector3.zero
+            root.AssemblyAngularVelocity = Vector3.zero
+            root.CFrame = CFrame.new(holdPos)
+                * CFrame.Angles(0, yawOf(root.CFrame), 0)
+        end)
+    end
+
+    local function findLocalTool(toolName: string): Tool?
+        local character: Model? = LocalPlayer and LocalPlayer.Character
+        if type(getPlayerWeapon) == "function" then
+            local found: Tool? = getPlayerWeapon(LocalPlayer, toolName, false)
+            if found then
+                return found
+            end
+        end
+        if character then
+            local inChar: Instance? = character:FindFirstChild(toolName)
+            if inChar and inChar:IsA("Tool") then
+                return inChar
+            end
+        end
+        local backpack: Instance? = LocalPlayer and LocalPlayer:FindFirstChildOfClass("Backpack")
+        if backpack then
+            local inBp: Instance? = backpack:FindFirstChild(toolName)
+            if inBp and inBp:IsA("Tool") then
+                return inBp
+            end
+        end
+        return nil
+    end
+
+    local function ensureToolEquipped(
+        character: Model,
+        humanoid: Humanoid,
+        tool: Tool
+    ): boolean
+        if tool.Parent == character then
+            return true
+        end
+        pcall(function(): ()
+            humanoid:EquipTool(tool)
+        end)
+        if tool.Parent ~= character then
+            pcall(function(): ()
+                tool.Parent = character
+            end)
+        end
+        return tool.Parent == character
+    end
+
+    -- Insta Kill as Murder (Kill All while staying safely above the map).
+    local function runInstaKillAsMurder(
+        character: Model,
+        humanoid: Humanoid,
+        root: BasePart,
+        knife: Tool
+    ): boolean
+        holdAboveMap(character, humanoid, root)
+        if not ensureToolEquipped(character, humanoid, knife) then
+            return false
+        end
+        local handle: BasePart? = (knife:FindFirstChild("Handle") :: BasePart?)
+            or knife:FindFirstChildWhichIsA("BasePart")
+        local slashRemote: Instance? = knife:FindFirstChild("Slash")
+        local eventsFolder: Instance? = knife:FindFirstChild("Events")
+        local touchedRemote: Instance? = eventsFolder
+            and eventsFolder:FindFirstChild("HandleTouched")
+
+        local attackCF: CFrame = (handle and handle.CFrame)
+            or (root.CFrame * CFrame.new(0, 0, -2.5))
+        local playersService: Players = game:GetService("Players")
+        local hitAny: boolean = false
+
+        for _, player: Player in ipairs(playersService:GetPlayers()) do
+            if player ~= LocalPlayer
+                and (type(isPlayerAlive) ~= "function" or isPlayerAlive(player))
+                and (type(isProtectedTarget) ~= "function" or not isProtectedTarget(player)) then
+                local victimChar: Model? = player.Character
+                local victimRoot: BasePart? = victimChar
+                    and victimChar:FindFirstChild("HumanoidRootPart") :: BasePart?
+                if victimChar and victimRoot then
+                    hitAny = true
+                    if not victimSnapshots[victimRoot] then
+                        pcall(function(): ()
+                            victimSnapshots[victimRoot] = {
+                                cframe = victimRoot.CFrame,
+                                anchored = victimRoot.Anchored,
+                                canCollide = victimRoot.CanCollide,
+                            }
+                        end)
+                    end
+                    pcall(function(): ()
+                        victimRoot.Anchored = true
+                        victimRoot.CanCollide = false
+                        victimRoot.AssemblyLinearVelocity = Vector3.zero
+                        victimRoot.AssemblyAngularVelocity = Vector3.zero
+                        victimRoot.CFrame = attackCF
+                    end)
+                    if slashRemote and slashRemote:IsA("RemoteEvent") then
+                        pcall(function(): ()
+                            (slashRemote :: RemoteEvent):FireServer("Slash")
+                        end)
+                    end
+                    if touchedRemote and touchedRemote:IsA("RemoteEvent") then
+                        pcall(function(): ()
+                            (touchedRemote :: RemoteEvent):FireServer(victimRoot)
+                        end)
+                    end
+                    if handle and type(state.fireTouchInterest) == "function" then
+                        pcall(state.fireTouchInterest, handle, victimRoot, 0)
+                        pcall(state.fireTouchInterest, handle, victimRoot, 1)
+                    end
+                end
+            end
+        end
+        if not hitAny then
+            restoreVictims()
+        end
+        return hitAny
+    end
+
+    -- Insta Kill As Sheriff (uses AutoShoot CFrame immediately upon receiving
+    -- the Gun, whether our role is Sheriff, Hero, or Innocent).
+    local function runInstaKillAsSheriff(
+        character: Model,
+        humanoid: Humanoid,
+        root: BasePart,
+        gun: Tool
+    ): boolean
+        holdAboveMap(character, humanoid, root)
+        if not ensureToolEquipped(character, humanoid, gun) then
+            return false
+        end
+        if type(state.mm2AutoShootCFrameOnce) == "function" then
+            local okHelper: boolean, helperRes: any =
+                pcall(state.mm2AutoShootCFrameOnce, false)
+            if okHelper and helperRes == true then
+                return true
+            end
+        end
+        local murderer: Player? = type(findMurderer) == "function"
+            and findMurderer()
+            or nil
+        if not murderer then
+            local playersService: Players = game:GetService("Players")
+            for _, player: Player in ipairs(playersService:GetPlayers()) do
+                if player ~= LocalPlayer then
+                    local role: any = type(getPlayerRole) == "function"
+                        and getPlayerRole(player)
+                        or nil
+                    local hasKnife: boolean = type(getPlayerWeapon) == "function"
+                        and getPlayerWeapon(player, "Knife", false) ~= nil
+                    if role == "Murderer" or hasKnife then
+                        murderer = player
+                        break
+                    end
+                end
+            end
+        end
+        if not murderer or murderer == LocalPlayer then
+            return false
+        end
+        if type(isPlayerAlive) == "function" and not isPlayerAlive(murderer) then
+            return false
+        end
+        if type(isProtectedTarget) == "function" and isProtectedTarget(murderer) then
+            return false
+        end
+        local targetChar: Model? = murderer.Character
+        local targetRoot: BasePart? = targetChar
+            and targetChar:FindFirstChild("HumanoidRootPart") :: BasePart?
+        if not targetRoot then
+            return false
+        end
+        if type(state.mm2FireSilentShot) == "function" then
+            local okSilent: boolean, res: any = pcall(state.mm2FireSilentShot, murderer)
+            if okSilent and res == true then
+                return true
+            end
+        end
+        local shootRemote: Instance? = gun:FindFirstChild("Shoot")
+        if not (shootRemote and shootRemote:IsA("RemoteEvent")) then
+            return false
+        end
+        local originCF: CFrame = (type(getGunOriginCFrame) == "function"
+            and getGunOriginCFrame(character, gun))
+            or root.CFrame
+        local endpoint: Vector3 = targetRoot.Position
+        if type(prediction) == "table" and type(prediction.gunAim) == "function" then
+            local okAim: boolean, aimPt: any = pcall(
+                prediction.gunAim,
+                murderer,
+                originCF.Position
+            )
+            if okAim and typeof(aimPt) == "Vector3" then
+                endpoint = aimPt
+            else
+                local vel: Vector3 = Vector3.zero
+                pcall(function(): ()
+                    vel = targetRoot.AssemblyLinearVelocity
+                end)
+                endpoint = targetRoot.Position + vel * 0.08
+            end
+        end
+        local startPoint: Vector3 = endpoint + Vector3.new(0, 1.5, -2.5)
+        local shotOrigin: CFrame = CFrame.lookAt(startPoint, endpoint)
+        local shotEnd: CFrame = CFrame.new(endpoint)
+        pcall(function(): ()
+            (shootRemote :: RemoteEvent):FireServer(shotOrigin, shotEnd)
+        end)
+        return true
+    end
+
+    -- Grab the dropped gun safely and return immediately above the map.
+    local function grabDroppedGunSafely(
+        character: Model,
+        humanoid: Humanoid,
+        root: BasePart,
+        drop: Instance
+    ): boolean
+        local touchPart: BasePart? = nil
+        if drop:IsA("BasePart") then
+            touchPart = drop :: BasePart
+        elseif drop:IsA("Model") then
+            touchPart = (drop:FindFirstChild("Handle", true) :: BasePart?)
+                or drop:FindFirstChildWhichIsA("BasePart", true)
+        end
+        if not touchPart then
+            return false
+        end
+        if type(state.fireTouchInterest) == "function" then
+            pcall(state.fireTouchInterest, root, touchPart, 0)
+            pcall(state.fireTouchInterest, root, touchPart, 1)
+        end
+        if findLocalTool("Gun") then
+            holdAboveMap(character, humanoid, root)
+            return true
+        end
+        -- Server distance check fallback: briefly touch the dropped gun's
+        -- CFrame while non-collidable, pulse touch, and snap back above map.
+        disableCharacterCollisions(character)
+        pcall(function(): ()
+            local dropPos: Vector3 = touchPart.Position
+            root.AssemblyLinearVelocity = Vector3.zero
+            root.AssemblyAngularVelocity = Vector3.zero
+            root.CFrame = CFrame.new(dropPos + Vector3.new(0, 1.5, 0))
+                * CFrame.Angles(0, yawOf(root.CFrame), 0)
+            if type(state.fireTouchInterest) == "function" then
+                pcall(state.fireTouchInterest, root, touchPart, 0)
+                pcall(state.fireTouchInterest, root, touchPart, 1)
+            end
+        end)
+        local gotGun: boolean = findLocalTool("Gun") ~= nil
+        if gotGun then
+            holdAboveMap(character, humanoid, root)
+        end
+        return gotGun
+    end
+
+    -- Safe Fling on the Sheriff: never follows into the void and never kills
+    -- our own character.
+    local function flingSheriffStep(
+        character: Model,
+        humanoid: Humanoid,
+        root: BasePart,
+        sheriff: Player
+    ): boolean
+        local sheriffChar: Model? = sheriff.Character
+        local sheriffHum: Humanoid? = sheriffChar
+            and sheriffChar:FindFirstChildOfClass("Humanoid")
+        local sheriffRoot: BasePart? = sheriffChar
+            and sheriffChar:FindFirstChild("HumanoidRootPart") :: BasePart?
+        if not sheriffChar or not sheriffHum or sheriffHum.Health <= 0 or not sheriffRoot then
+            holdAboveMap(character, humanoid, root)
+            return false
+        end
+        local destroyHeight: number = workspace.FallenPartsDestroyHeight
+        if destroyHeight ~= destroyHeight then
+            destroyHeight = -500
+        end
+        local sheriffPos: Vector3 = sheriffRoot.Position
+        if sheriffPos.Y <= destroyHeight + 65 then
+            -- Sheriff is already falling into the void: stop flinging and wait
+            -- safely above the map for the gun to drop on the map.
+            holdAboveMap(character, humanoid, root)
+            return false
+        end
+        disableCharacterCollisions(character)
+        if savedPropsRoot ~= root then
+            pcall(function(): ()
+                savedCustomProps = root.CustomPhysicalProperties
+                savedPropsRoot = root
+                root.CustomPhysicalProperties = PhysicalProperties.new(100, 0.3, 0.5)
+            end)
+        end
+        flingOscillation += 1
+        local sweepOffset: Vector3 = Vector3.new(
+            math.sin(flingOscillation * 1.7) * 1.2,
+            0.2,
+            math.cos(flingOscillation * 1.7) * 1.2
+        )
+        local sheriffVel: Vector3 = Vector3.zero
+        pcall(function(): ()
+            sheriffVel = sheriffRoot.AssemblyLinearVelocity
+        end)
+        local targetPoint: Vector3 = sheriffPos + sheriffVel * 0.06 + sweepOffset
+        pcall(function(): ()
+            humanoid.PlatformStand = true
+            humanoid.AutoRotate = false
+            humanoid:SetStateEnabled(Enum.HumanoidStateType.FallingDown, false)
+            root.CFrame = CFrame.new(targetPoint)
+                * CFrame.Angles(0, yawOf(root.CFrame), 0)
+            root.AssemblyLinearVelocity = Vector3.new(
+                sheriffVel.X * 1.5,
+                28,
+                sheriffVel.Z * 1.5
+            )
+            root.AssemblyAngularVelocity = Vector3.new(0, 400, 0)
+        end)
+        return true
+    end
+
+    local function autoWinTick(): ()
+        if not autoWinActive then
+            return
+        end
+        local character: Model?, humanoid: Humanoid?, root: BasePart? = characterParts()
+        if not character or not humanoid or not root or humanoid.Health <= 0 then
+            return
+        end
+
+        local onMap: boolean, mapRefPos: Vector3? = isCharacterOnMap(root)
+        if not onMap then
+            if wasOnMap then
+                wasOnMap = false
+                safeAbovePosition = nil
+                restoreLocalCharacter()
+            end
+            setStatus("Auto Win: waiting for map")
+            return
+        end
+
+        if not wasOnMap or not safeAbovePosition then
+            wasOnMap = true
+            local anchor: Vector3 = mapRefPos or root.Position
+            safeAbovePosition = anchor + Vector3.new(0, ABOVE_MAP_OFFSET, 0)
+        end
+
+        -- 1) Murderer / Knife check: Insta Kill as Murder (Kill All).
+        local knife: Tool? = findLocalTool("Knife")
+        if knife then
+            if settings.instaKillMurder then
+                runInstaKillAsMurder(character, humanoid, root, knife)
+                setStatus("Auto Win: Insta Kill as Murder")
+            else
+                holdAboveMap(character, humanoid, root)
+                setStatus("Auto Win: safe above map (Murderer)")
+            end
+            return
+        end
+
+        -- 2) Gun check (Sheriff OR Hero OR Innocent who received the Gun!):
+        --    Dispara al momento que reciba la pistola con AutoShoot CFrame,
+        --    incluso si Fling Sheriff and Get Gun está desactivado y el arma
+        --    se recogió con Auto Grab Gun.
+        local gun: Tool? = findLocalTool("Gun")
+        if gun then
+            if settings.instaKillSheriff then
+                runInstaKillAsSheriff(character, humanoid, root, gun)
+                setStatus("Auto Win: Insta Kill As Sheriff (CFrame)")
+            else
+                holdAboveMap(character, humanoid, root)
+                setStatus("Auto Win: safe above map (Gun ready)")
+            end
+            return
+        end
+
+        -- 3) Dropped gun on the map: if Fling Sheriff and Get Gun is ON, OR
+        --    if Auto Grab Gun (Gun Aura / Auto Get Gun) is enabled, grab the
+        --    dropped gun and immediately shoot on the next frame!
+        local autoGrabExternal: boolean = state.mm2GunAuraEnabled == true
+            or state.mm2AutoGetGunEnabled == true
+        if settings.flingSheriffGetGun or autoGrabExternal then
+            local drop: Instance? = type(findDroppedGun) == "function"
+                and findDroppedGun()
+                or nil
+            if drop then
+                local grabbed: boolean = grabDroppedGunSafely(
+                    character,
+                    humanoid,
+                    root,
+                    drop
+                )
+                setStatus("Auto Win: grabbing dropped gun")
+                if grabbed then
+                    local freshGun: Tool? = findLocalTool("Gun")
+                    if freshGun and settings.instaKillSheriff then
+                        runInstaKillAsSheriff(character, humanoid, root, freshGun)
+                    end
+                end
+                return
+            end
+        end
+
+        -- 4) Fling Sheriff and Get Gun while Sheriff is still alive.
+        if settings.flingSheriffGetGun and type(findSheriff) == "function" then
+            local sheriff: Player? = findSheriff()
+            if sheriff
+                and sheriff ~= LocalPlayer
+                and (type(isPlayerAlive) ~= "function" or isPlayerAlive(sheriff))
+                and (type(isProtectedTarget) ~= "function" or not isProtectedTarget(sheriff)) then
+                if flingSheriffStep(character, humanoid, root, sheriff) then
+                    setStatus("Auto Win: flinging Sheriff for gun")
+                    return
+                end
+            end
+        end
+
+        -- 5) Default on map (including pre-round before weapons are given):
+        --    Stay safely high above the map where nobody can kill us.
+        holdAboveMap(character, humanoid, root)
+        setStatus("Auto Win: safe above map")
+    end
+
+    local function clearToolConnections(): ()
+        for _, conn: RBXScriptConnection in ipairs(toolConnections) do
+            pcall(function(): ()
+                conn:Disconnect()
+            end)
+        end
+        table.clear(toolConnections)
+    end
+
+    local function watchToolContainer(container: Instance?): ()
+        if not container
+            or (type((container :: any).ChildAdded) ~= "table"
+                and typeof((container :: any).ChildAdded) ~= "RBXScriptSignal") then
+            return
+        end
+        pcall(function(): ()
+            local conn: RBXScriptConnection = (container :: any).ChildAdded:Connect(
+                function(child: Instance): ()
+                    if autoWinActive
+                        and child
+                        and (child.Name == "Gun" or child.Name == "Knife") then
+                        autoWinTick()
+                    end
+                end
+            )
+            table.insert(toolConnections, conn)
+        end)
+    end
+
+    local function setupInstantWeaponWatchers(): ()
+        clearToolConnections()
+        if not LocalPlayer then
+            return
+        end
+        watchToolContainer(LocalPlayer.Character)
+        watchToolContainer(LocalPlayer:FindFirstChildOfClass("Backpack"))
+        pcall(function(): ()
+            if LocalPlayer.CharacterAdded then
+                table.insert(
+                    toolConnections,
+                    LocalPlayer.CharacterAdded:Connect(function(newChar: Model): ()
+                        watchToolContainer(newChar)
+                        watchToolContainer(LocalPlayer:FindFirstChildOfClass("Backpack"))
+                    end)
+                )
+            end
+            if LocalPlayer.ChildAdded then
+                table.insert(
+                    toolConnections,
+                    LocalPlayer.ChildAdded:Connect(function(child: Instance): ()
+                        if child and child:IsA("Backpack") then
+                            watchToolContainer(child)
+                        end
+                    end)
+                )
+            end
+        end)
+    end
+
+    local function toggleAutoWin(enabled: boolean): ()
+        autoWinActive = enabled == true
+        disconnectFeatureConnection("MM2AutoWin")
+        clearToolConnections()
+        if not enabled then
+            wasOnMap = false
+            restoreLocalCharacter()
+            safeAbovePosition = nil
+            setStatus(nil)
+            return
+        end
+        setupInstantWeaponWatchers()
+        featureConnections.MM2AutoWin = TaskManager:Connect(autoWinTick)
+        autoWinTick()
+    end
+
+    AutoWinFeature = createUniversalFeature(
+        "Auto Win",
+        "Keeps your character safely above the map as soon as you enter the map (even before the round starts) so nobody can kill you, with Insta Kill as Murder, Insta Kill As Sheriff (AutoShoot CFrame), and Fling Sheriff and Get Gun.",
+        8,
+        toggleAutoWin,
+        {
+            categoryName = "Utilities",
+            parent = MM2Scroll,
+            registry = mm2Features,
+        }
+    )
+    state.mm2AutoWinFeature = AutoWinFeature
+
+    addToggleOption(AutoWinFeature, "Insta Kill as Murder", true,
+        function(value: boolean): ()
+            settings.instaKillMurder = value == true
+        end,
+        "Automatically kills all living players as soon as you receive the Knife as Murderer.")
+
+    addToggleOption(AutoWinFeature, "Insta Kill As Sheriff", true,
+        function(value: boolean): ()
+            settings.instaKillSheriff = value == true
+        end,
+        "Automatically equips the Gun and shoots the Murderer using AutoShoot CFrame the instant you receive the Gun (as Sheriff or Hero).")
+
+    addToggleOption(AutoWinFeature, "Fling Sheriff and Get Gun", false,
+        function(value: boolean): ()
+            settings.flingSheriffGetGun = value == true
+        end,
+        "Safely flies to the Sheriff with Fling without killing yourself, then automatically grabs the dropped gun once the Sheriff dies and shoots the Murderer.")
+
+    activeCleanup = function(): ()
+        toggleAutoWin(false)
+        state.mm2AutoWinFeature = nil
+    end
+    Module.Events = featureConnections
+    Module.Initialized = true
+    return Module
+end
+
+function Module.destroy(): ()
+    if not Module.Initialized then
+        return
+    end
+    Module.Initialized = false
+    pcall(activeCleanup)
+    activeCleanup = function(): () end
+    Module.Events = {}
+    Module.Runtime = nil
+end
+
+return Module
+
+]],
         ["src/games/MM2/Other/CalibrationTrails.lua"] = [[
 local Module = {Name = "MM2 Calibration Trails", Initialized = false}
 local activeCleanup = function() end
@@ -8079,6 +9179,7 @@ function Module.init(runtime: any): any
 
     local function toggleGunAura(enabled: boolean): ()
         gunAuraActive = enabled
+        state.mm2GunAuraEnabled = enabled == true
         disconnectFeatureConnection("MM2GunAura")
         disconnectFeatureConnection("MM2GunAuraDescendant")
 
@@ -8132,208 +9233,6 @@ function Module.init(runtime: any): any
 
     activeCleanup = function(): ()
         toggleGunAura(false)
-    end
-    Module.Events = featureConnections
-    Module.Initialized = true
-    return Module
-end
-
-function Module.destroy(): ()
-    if not Module.Initialized then
-        return
-    end
-    Module.Initialized = false
-    pcall(activeCleanup)
-    activeCleanup = function(): () end
-    Module.Events = {}
-    Module.Runtime = nil
-end
-
-return Module
-
-]],
-        ["src/games/MM2/Other/ProximityWarning.lua"] = [[
-local Module = {
-    Name = "MM2 Proximity Warning",
-    Events = {} :: {[string]: any},
-    Initialized = false,
-    Runtime = nil :: any,
-}
-
-local activeCleanup: () -> () = function(): () end
-
-function Module.init(runtime: any): any
-    if Module.Initialized then
-        return Module
-    end
-    local core: any = state.mm2Core
-    assert(type(core) == "table", "MM2 Proximity Warning requires the MM2 core module")
-    Module.Runtime = runtime
-
-    local settings = {
-        radius = 50,
-        alertRadius = 25,
-        criticalRadius = 15,
-        showArrow = true,
-        showDistance = true,
-    }
-
-    local function getLocalRole(): string?
-        if type(core.getPlayerRole) == "function" then
-            return core.getPlayerRole(LocalPlayer)
-        end
-        return nil
-    end
-
-    local function findMurderer(): Player?
-        if type(core.getPlayerRole) ~= "function" then
-            return nil
-        end
-        for _, player: Player in ipairs(game:GetService("Players"):GetPlayers()) do
-            if player ~= LocalPlayer and core.getPlayerRole(player) == "Murderer" then
-                return player
-            end
-        end
-        return nil
-    end
-
-    local function characterRoot(player: Player): BasePart?
-        local character = player.Character
-        if not character then return nil end
-        return character:FindFirstChild("HumanoidRootPart")
-    end
-
-    local function toggleProximityWarning(enabled: boolean): ()
-        disconnectFeatureConnection("MM2ProximityWarning")
-
-        if not enabled then
-            return
-        end
-
-        local lastUpdate: number = -math.huge
-
-        featureConnections.MM2ProximityWarning = TaskManager:Connect(function(): ()
-            local now: number = os.clock()
-            if now - lastUpdate < 0.1 then
-                return
-            end
-            lastUpdate = now
-
-            local localRole: string? = getLocalRole()
-            
-            -- Don't show warning if you're the murderer
-            if localRole == "Murderer" then
-                return
-            end
-
-            local myRoot: BasePart? = characterRoot(LocalPlayer)
-            if not myRoot then
-                return
-            end
-
-            local murderer: Player? = findMurderer()
-            if not murderer then
-                return
-            end
-
-            local murdererRoot: BasePart? = characterRoot(murderer)
-            if not murdererRoot then
-                return
-            end
-
-            local distance: number = (murdererRoot.Position - myRoot.Position).Magnitude
-            local myRoot: BasePart? = characterRoot(LocalPlayer)
-            if not myRoot then
-                return
-            end
-
-            -- Determine alert level based on distance
-            local alertLevel: string
-            local alertColor: Color3
-            
-            if distance <= settings.criticalRadius then
-                alertLevel = "CRITICAL"
-                alertColor = Color3.fromRGB(255, 50, 50)
-            elseif distance <= settings.alertRadius then
-                alertLevel = "WARNING"
-                alertColor = Color3.fromRGB(255, 200, 50)
-            elseif distance <= settings.radius then
-                alertLevel = "NEARBY"
-                alertColor = Color3.fromRGB(100, 255, 100)
-            else
-                return
-            end
-
-            -- Build status text
-            local statusParts: {string} = {alertLevel}
-            
-            if settings.showDistance then
-                table.insert(statusParts, string.format("%.1f studs", distance))
-            end
-            
-            if settings.showArrow then
-                local direction: Vector3 = (murdererRoot.Position - myRoot.Position).Unit
-                local angle: number = math.atan2(direction.Z, direction.X)
-                local arrowIndex: number = math.floor((angle + math.pi) / (math.pi / 4)) % 8
-                local arrows: {string} = {"→", "↘", "↓", "↙", "←", "↖", "↑", "↗"}
-                table.insert(statusParts, arrows[arrowIndex + 1])
-            end
-
-            local status: string = table.concat(statusParts, " ")
-            
-            -- Update the feature status
-            local feature = state.mm2ProximityWarningFeature
-            if feature then
-                feature:SetStatus(status)
-            end
-        end)
-    end
-
-    local ProximityWarningFeature: any = createUniversalFeature(
-        "Proximity Warning",
-        "Alerts you when the murderer is nearby. Shows distance and direction. Only works if you're not the murderer.",
-        8,
-        toggleProximityWarning,
-        {
-            categoryName = "Utilities",
-            parent = MM2Scroll,
-            registry = mm2Features,
-        }
-    )
-    state.mm2ProximityWarningFeature = ProximityWarningFeature
-
-    addNumberOption(ProximityWarningFeature, "Detection Radius", 50, 10, 100,
-        function(value: number): ()
-            settings.radius = value
-        end,
-        "Maximum distance to detect the murderer (in studs).", 1)
-
-    addNumberOption(ProximityWarningFeature, "Alert Radius", 25, 5, 50,
-        function(value: number): ()
-            settings.alertRadius = value
-        end,
-        "Distance at which to show WARNING alert (yellow).", 1)
-
-    addNumberOption(ProximityWarningFeature, "Critical Radius", 15, 5, 30,
-        function(value: number): ()
-            settings.criticalRadius = value
-        end,
-        "Distance at which to show CRITICAL alert (red).", 1)
-
-    addToggleOption(ProximityWarningFeature, "Show Arrow", true,
-        function(value: boolean): ()
-            settings.showArrow = value
-        end,
-        "Show directional arrow pointing to the murderer.")
-
-    addToggleOption(ProximityWarningFeature, "Show Distance", true,
-        function(value: boolean): ()
-            settings.showDistance = value
-        end,
-        "Show distance to the murderer in studs.")
-
-    activeCleanup = function(): ()
-        toggleProximityWarning(false)
     end
     Module.Events = featureConnections
     Module.Initialized = true
@@ -35314,6 +36213,7 @@ function Module.init(context: any): any
             ["KillAura"] = 2,
             ["TriggerBot"] = 3,
             ["SilentAIM"] = 4,
+            ["Gun Aimbot"] = 4,
             ["Fly"] = 1,
             ["Fling"] = 7,
             ["Noclip"] = 2,
@@ -49150,7 +50050,7 @@ local Manifest: Manifest = {
             "src/games/MM2/Other/AutoVote.lua",
             "src/games/MM2/Other/CoinsAura.lua",
             "src/games/MM2/Other/GunAura.lua",
-            "src/games/MM2/Other/ProximityWarning.lua",
+            "src/games/MM2/Other/AutoWin.lua",
             "src/games/MM2/Other/TrajectoryCalibration.lua",
             "src/games/MM2/Other/CalibrationTrails.lua",
         },

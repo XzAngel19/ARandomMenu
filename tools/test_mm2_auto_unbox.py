@@ -322,41 +322,34 @@ local before = #openCalls
 loop(0.1)
 assert(#openCalls == before, "the delay is respected")
 
--- Max boxes stops the run and turns the card off.
+-- Continuous farming mode: Auto Unbox stays ON when currency is insufficient
+-- (nil or false from OpenCrate), does nothing (never fires BoxController),
+-- and automatically opens the next box once currency is available again.
+options["Box to open"]("Mystery Box #1")
 options["Delay between boxes"](0.8)
-options["Max boxes per run"](2)
 card.enabled = false
 card.onToggle(false)
 card.enabled = true
 card.onToggle(true)
-clock += 8
-loop(0.1) -- open 1
-clock += 8
-loop(0.1) -- open 2
-clock += 8
-loop(0.1) -- done
-assert(string.find(statuses[#statuses], "2 opened") and string.find(statuses[#statuses], "done"),
-    tostring(statuses[#statuses]))
-assert(loop == nil, "the run stops at Max boxes")
-assert(card.enabled == false, "the card turns itself OFF when done")
-assert(refreshCalls > 0, "the card repaints when it turns itself OFF")
-
--- A box that never opens is a failure, not an infinite loop: three nil
--- rewards stop the run with the reason in a notification.
-openCrate.failCount = 10
-card.enabled = true
-card.onToggle(true)
+local boxFiresBeforeWait = #boxController.fires
+openCrate.failCount = 3
 clock += 8
 loop(0.1)
 clock += 8
 loop(0.1)
-assert(string.find(statuses[#statuses], "2 failed"), tostring(statuses[#statuses]))
 clock += 8
 loop(0.1)
-assert(loop == nil, "three failures stop the run")
-assert(card.enabled == false, "the card turns OFF after repeated failures")
-assert(string.find(notices[#notices], "did not open"),
-    "the reason is reported: " .. tostring(notices[#notices]))
+assert(card.enabled == true and loop ~= nil,
+    "Auto Unbox stays ON while waiting for currency during long farming sessions")
+assert(#boxController.fires == boxFiresBeforeWait,
+    "no imaginary BoxController reveal fires when currency is insufficient")
+assert(string.find(statuses[#statuses], "waiting for"),
+    "status reports waiting for currency: " .. tostring(statuses[#statuses]))
+-- Once the player has farmed enough coins again, the next tick opens a real box.
+clock += 8
+loop(0.1)
+assert(#boxController.fires == boxFiresBeforeWait + 1,
+    "Auto Unbox automatically opens a real box once currency is available")
 
 -- The workspace attributes are the fallback family when no CoinsStarted has
 -- fired: a fresh module reads them instead of remembering an old bag.
@@ -378,7 +371,7 @@ card.enabled = false
 card.onToggle(false)
 
 -- Server returning `false` (not enough currency) must NEVER fire BoxController
--- (no imaginary boxes or stuck dark screen) and must stop immediately.
+-- (no imaginary boxes or stuck dark screen) and must keep Auto Unbox ON waiting.
 local prevBoxFires = #boxController.fires
 openCrate.returnFalse = true
 clock += 10
@@ -387,9 +380,15 @@ card.onToggle(true)
 loop(0.1)
 assert(#boxController.fires == prevBoxFires,
     "false reward from OpenCrate must never fire BoxController (no imaginary box)")
-assert(card.enabled == false and loop == nil,
-    "false reward (insufficient currency) stops Auto Unbox immediately")
+assert(card.enabled == true and loop ~= nil,
+    "false reward (insufficient currency) keeps Auto Unbox enabled and waiting")
 openCrate.returnFalse = false
+clock += 2
+loop(0.1)
+assert(#boxController.fires == prevBoxFires + 1,
+    "once currency is sufficient, Auto Unbox opens the box without needing re-toggle")
+card.enabled = false
+card.onToggle(false)
 
 Module.destroy()
 assert(not state.mm2AutoUnboxFeature and loop == nil, "unload leaves nothing")

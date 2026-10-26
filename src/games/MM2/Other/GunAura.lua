@@ -402,6 +402,7 @@ function Module.init(runtime: any): any
 
     local function toggleGunAura(enabled: boolean): ()
         gunAuraActive = enabled
+        state.mm2GunAuraEnabled = enabled == true
         disconnectFeatureConnection("MM2GunAura")
         disconnectFeatureConnection("MM2GunAuraDescendant")
 

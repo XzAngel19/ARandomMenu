@@ -15,8 +15,18 @@ assert 'categoryName = "Combat"' in auto_shoot
 
 # Check Auto Shoot has the required options
 assert '"Mode"' in auto_shoot
+assert '"Bullet"' in auto_shoot and '"CFrame"' in auto_shoot
 assert '"WallCheck"' in auto_shoot
+assert '"Proximity"' in auto_shoot
 assert '"Aura"' in auto_shoot
+
+# Proximity Warning module was removed and replaced by Auto Win in Utilities
+assert not (ROOT / 'src/games/MM2/Other/ProximityWarning.lua').exists()
+auto_win = (ROOT / 'src/games/MM2/Other/AutoWin.lua').read_text()
+assert '"Auto Win"' in auto_win
+assert '"Insta Kill as Murder"' in auto_win
+assert '"Insta Kill As Sheriff"' in auto_win
+assert '"Fling Sheriff and Get Gun"' in auto_win
 
 # Knife Throw should also be independent now
 knife_throw = (ROOT / 'src/games/MM2/Combat/KnifeThrow.lua').read_text()
@@ -26,8 +36,10 @@ assert 'categoryName = "Combat"' in knife_throw
 assert '"WallCheck"' in knife_throw
 assert '"Delay"' in knife_throw
 
-# SilentAIM should still have the other options
+# Gun Aimbot (formerly SilentAIM) should have Bullet/CFrame modes and retained options
+assert '"Gun Aimbot"' in S
+assert '"Bullet"' in S and '"CFrame"' in S
 for retained in ('Aim method', 'Target', 'Raw', 'Macro'):
-    assert f'"{retained}"' in S, f'{retained} must still be in SilentAIM'
+    assert f'"{retained}"' in S, f'{retained} must still be in Gun Aimbot'
 
 print('PASS Auto Shoot and Knife Throw are now independent Combat modules with required options')

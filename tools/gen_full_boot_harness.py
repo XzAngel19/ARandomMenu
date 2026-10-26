@@ -847,7 +847,7 @@ do
       "KillAura must expose Kill All button and Kill Player living-Innocent selector")
     local expected = {
       Render = {"ItemESP", "PlayerESP", "Chams", "Nametags", "HP", "Arrows", "NPCESP", "FOV", "Fullbright", "X-Ray", "Zoom", "Markers"},
-      Combat = {"Aim Assist", "KillAura", "TriggerBot", "SilentAIM"},
+      Combat = {"Aim Assist", "KillAura", "TriggerBot", "Gun Aimbot"},
       Exploits = {"Fly", "Noclip", "Spider", "Speed", "Jump", "Interact Extender", "Fling"},
       Utilities = {"Anti Void", "Teleport", "Freeze Movements", "Ghost"},
       World = {"Improve FPS", "Gravity", "Anti AFK", "Safe Walk", "Blurt Roles", "FreeCam", "Disguise"},
@@ -965,12 +965,12 @@ do
     
     -- GUI visibility and section tests wrapped in pcall due to mock limitations
     pcall(function()
-    local shoot = findFeature("SilentAIM")
+    local shoot = findFeature("Gun Aimbot") or findFeature("SilentAIM")
     local aimMethod = ex.state.valueControls["MM2.Shoot.Aimmethod"]
     assert(aimMethod, "Gun method must be configurable")
-    aimMethod.apply("Silent AIM")
+    aimMethod.apply("CFrame")
     assert(shoot.options:FindFirstChild("Option_WallCheck").Visible, "WallCheck applies to Silent too")
-    aimMethod.apply("Prediction")
+    aimMethod.apply("Bullet")
     assert(ex.state.shortcutBindings["MM2.Shoot"], "Shoot keeps its main activation shortcut")
     assert(not shoot.options:FindFirstChild("Option_Shootnow"), "Shoot now duplicates its main keybind")
     assert(not ex.state.shortcutBindings["MM2.ShootShoot now"], "duplicate Shoot now shortcut must not register")

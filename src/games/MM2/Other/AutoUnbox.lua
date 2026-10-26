@@ -670,7 +670,7 @@ function Module.init(runtime: any): any
         end
         -- Verify the player actually has enough currency BEFORE calling
         -- OpenCrate or playing any reveal animation. If insufficient, do
-        -- nothing and stop immediately without opening imaginary boxes.
+        -- nothing and stay enabled waiting for currency while farming.
         local requiredPrice: number? = entry.prices and entry.prices[currency] or nil
         local currentBalance: number? = getPlayerCurrencyBalance(currency)
         if type(requiredPrice) == "number"
@@ -678,28 +678,24 @@ function Module.init(runtime: any): any
             and type(currentBalance) == "number"
             and currentBalance < requiredPrice then
             clearStuckUnboxOverlays()
-            session.finished = true
             openingBusy = false
-            report(summary())
-            stop(
-                "Auto Unbox stopped: not enough "
+            report(
+                summary()
+                    .. " · waiting for "
                     .. tostring(currency)
                     .. " ("
                     .. tostring(currentBalance)
                     .. "/"
                     .. tostring(requiredPrice)
-                    .. ") for "
-                    .. entry.name
-                    .. "."
+                    .. ")"
             )
             return false
         end
         local remotes: Instance? = shopRemotes()
         local openCrate: Instance? = remotes and remotes:FindFirstChild("OpenCrate")
         if not (openCrate and openCrate:IsA("RemoteFunction")) then
-            session.finished = true
             openingBusy = false
-            stop("Auto Unbox: the game's OpenCrate remote is missing.")
+            report(summary() .. " · waiting for shop")
             return false
         end
         local note: string = forced
@@ -716,43 +712,28 @@ function Module.init(runtime: any): any
             openingBusy = false
             return true
         end
+        -- Not enough currency or server rejected the open: do nothing, do not
+        -- play any reveal animation, and keep Auto Unbox active so it
+        -- automatically opens boxes as soon as farming collects enough coins.
         clearStuckUnboxOverlays()
         session.failures += 1
         session.consecutiveFailures += 1
-        report(summary() .. note)
+        report(summary() .. note .. " · waiting for " .. tostring(currency))
         openingBusy = false
-        if reward == false or session.consecutiveFailures >= 3 then
-            session.finished = true
-            stop(
-                "Auto Unbox stopped: "
-                    .. entry.name
-                    .. " did not open with "
-                    .. tostring(currency)
-                    .. ". Not enough currency, or the box is not on sale."
-            )
-        end
         return false
     end
 
     local function tick(_deltaTime: number): ()
-        if session.finished then
-            return
-        end
-        if session.opened >= math.round(settings.maxBoxes) then
-            session.finished = true
-            report(summary())
-            stop(nil)
-            return
-        end
         local now: number = os.clock()
         if now < session.nextAt or now < revealUntil or openingBusy then
             return
         end
-        openOnce()
+        local opened: boolean = openOnce()
         -- Extra settle time while the reveal plays: firing the next
         -- BoxController animation over a running one can leave the screen
-        -- black, so a revealed box always gets a longer breather.
-        local settle: number = settings.reveal == REVEAL_ON
+        -- black, so a revealed box always gets a longer breather. When no
+        -- box was opened (waiting for coins), check again after delay.
+        local settle: number = (opened and settings.reveal == REVEAL_ON)
             and REVEAL_SECONDS or 0
         session.nextAt = os.clock() + settings.delay + settle
     end
