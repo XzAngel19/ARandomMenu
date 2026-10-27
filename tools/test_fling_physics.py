@@ -1,11 +1,9 @@
 #!/usr/bin/env python3
-"""v150 contact-physics controller: static bans and deterministic lifecycle.
+"""v151 shared Fling engine: exact Infinite Yield walkfling sequence.
 
-The rebuilt library uses a finite impulse on an assembly this client can
-steer (confirmed network ownership of the target, or its own root through a
-character-to-character contact). It does not spin, does not write CFrames per
-frame, does not leave constraints or ownership behind. These tests prove the
-local mechanism and cleanup; only a live session can prove server knockback.
+The tests below prove the local mechanism -- three velocity frames, local
+noclip, one engine owner, bounded sessions and cleanup. Only a live Roblox
+session can prove another player's knockback.
 """
 from __future__ import annotations
 
@@ -20,25 +18,37 @@ MM2_SOURCE = (ROOT / "src/games/MM2/Blatant/Fling.lua").read_text()
 TOUCH_SOURCE = (ROOT / "src/games/universal/Blatant/TouchFling.lua").read_text()
 
 # --- Static contract -------------------------------------------------------
+for required in (
+    "VELOCITY_SCALE: number = 10000",
+    "VELOCITY_LIFT: number = 10000",
+    "local DRIFT: number = 0.1",
+    "RunService.Heartbeat",
+    "RunService.RenderStepped",
+    "RunService.Stepped",
+    "part.CanCollide = false",
+    "restoreCollisions",
+    "writeVelocity",
+    "CFrame.lookAt",
+    'pcall(activity.set, "fling"',
+):
+    assert required in SOURCE, f"missing walkfling mechanism: {required}"
+
 for banned in (
-    "BodyAngularVelocity", "BodyVelocity", "BodyGyro",
-    "99999", "1000000", "AlignPosition", "Massless",
-    "CustomPhysicalProperties", "RenderStepped:Wait", "Stepped:Wait",
-    "root.CFrame =", "Character:PivotTo(", "Density", "MaxTorque",
+    'Instance.new("BodyAngularVelocity")',
+    'Instance.new("BodyVelocity")',
+    'Instance.new("BodyGyro")',
+    "ApplyImpulse(",
+    "GetNetworkOwner(",
+    "SetNetworkOwner(",
+    "root.CFrame =",
+    "BindToRenderStep",
+    ":Wait()",
+    "99999",
+    "1000000",
+    "CustomPhysicalProperties",
+    "MaxTorque",
 ):
     assert banned not in SOURCE, f"retired fling mechanism: {banned}"
-# math.huge may only appear in finite-value guards / an empty cooldown sentinel.
-assert SOURCE.count("math.huge") <= 6
-for required in (
-    "ApplyImpulse", "GetNetworkOwner", "SetNetworkOwner",
-    "SetNetworkOwnershipAuto", "releaseOwnership", "applyImpulseOnce",
-    "PULSE_SPEED: number = 190", "TaskManager:Connect",
-    "activity.set", "lastStrategy", "PLACE_DISTANCE: number = 2.4",
-    "character:PivotTo",  # one bounded placement / return, never per frame
-):
-    assert required in SOURCE, f"missing contact mechanism: {required}"
-# Two calls (placement and return) plus one reference in the evidence comment.
-assert SOURCE.count("character:PivotTo") == 3, "exactly two bounded placements"
 
 for required in (
     '"Fling target"', "state.mm2FlingRoster", "state.mm2FlingSelection",
@@ -49,7 +59,9 @@ for required in (
 assert "task.wait" not in MM2_SOURCE, "no blocking coroutine in the MM2 card"
 assert "physics.setTouchEnabled" in TOUCH_SOURCE
 assert "restore = false" in TOUCH_SOURCE
-assert "BodyAngularVelocity" not in TOUCH_SOURCE
+assert "WALKFLING ON" in TOUCH_SOURCE
+assert "physics.isRunning() or physics.isTouchEnabled()" not in MM2_SOURCE, \
+    "continuous Touch Fling must not block a directed session"
 
 HARNESS = r'''
 local Vector3 = {}
@@ -71,9 +83,12 @@ vmt.__index = function(a, k)
         return math.sqrt(a.X * a.X + a.Y * a.Y + a.Z * a.Z)
     end
 end
-local CFrame = {new = function(p) return {Position = p} end}
+local CFrame = {}
+function CFrame.new(p) return {Position = p or Vector3.zero} end
+function CFrame.lookAt(p) return CFrame.new(p) end
+
 local now = 0
-os = {clock = function() return now end}
+os = {clock = function() return now end, time = function() return now end}
 task = {spawn = function(fn) fn() end, wait = function() end, defer = function(fn) fn() end}
 Enum = {Material = {Air = "Air"}}
 
@@ -117,79 +132,83 @@ local function drive(dt)
     for _, handle in ipairs(table.clone(tasks)) do handle.fn(dt) end
 end
 
-local ownerMode = "none"
-local autoCalls = 0
-local LocalPlayer = {Name = "Me"}
+local Heartbeat, RenderStepped, Stepped = signal(), signal(), signal()
+local RunService = {Heartbeat = Heartbeat, RenderStepped = RenderStepped, Stepped = Stepped}
+local LocalPlayer = {Name = "Me", CharacterAdded = signal()}
+
+local velocityWrites, collisionWrites, pivotCalls = 0, 0, 0
 local function makeRoot(label, position)
-    local r = {
+    local data = {
         Name = label,
         Position = position,
+        CFrame = CFrame.new(position),
         Parent = true,
         Anchored = false,
-        AssemblyLinearVelocity = Vector3.zero,
-        AssemblyAngularVelocity = Vector3.zero,
-        AssemblyMass = 10,
-        impulses = 0,
-        Touched = signal(),
-        LookVector = Vector3.new(0, 0, -1),
+        CanCollide = true,
+        Velocity = Vector3.new(1, 0, 0),
+        AssemblyLinearVelocity = Vector3.new(1, 0, 0),
     }
-    r.CFrame = CFrame.new(position)
-    function r:ApplyImpulse(delta)
-        self.impulses += 1
-        self.AssemblyLinearVelocity = self.AssemblyLinearVelocity + delta
-    end
-    function r:GetNetworkOwner()
-        if ownerMode == "local" then return LocalPlayer end
-        return nil
-    end
-    function r:SetNetworkOwner(player) self.lastOwnerRequest = player end
-    function r:SetNetworkOwnershipAuto() autoCalls += 1 end
-    function r:IsA(className) return className == "BasePart" end
-    return r
+    local methods = {
+        IsA = function(_, className) return className == "BasePart" end,
+    }
+    return setmetatable({}, {
+        __index = function(_, k)
+            if methods[k] then return methods[k] end
+            return data[k]
+        end,
+        __newindex = function(_, k, v)
+            if k == "Velocity" or k == "AssemblyLinearVelocity" then
+                velocityWrites += 1
+            elseif k == "CanCollide" then
+                collisionWrites += 1
+            end
+            data[k] = v
+        end,
+    })
 end
 
 local localRoot = makeRoot("LocalRoot", Vector3.new(0, 0, 0))
 local targetRoot = makeRoot("TargetRoot", Vector3.new(3, 0, 0))
-local secondTargetRoot = makeRoot("SecondRoot", Vector3.new(-3, 0, 0))
+local secondRoot = makeRoot("SecondRoot", Vector3.new(-3, 0, 0))
 
 local function makeCharacter(root, hum)
-    local c = {
+    return {
         Parent = true,
-        DescendantAdded = signal(),
-        GetChildren = function() return {root} end,
+        GetDescendants = function() return {root} end,
+        GetChildren = function() return {root, hum} end,
         FindFirstChildOfClass = function(_, name)
             if name == "Humanoid" then return hum end
             return nil
         end,
-        PivotTo = function() pivotCalls += 1 end,
+        PivotTo = function(_, frame)
+            pivotCalls += 1
+            root.Position = frame.Position
+            root.CFrame = frame
+        end,
     }
-    return c
 end
-pivotCalls = 0
 local localHum = {Health = 100, RootPart = localRoot, Died = signal()}
 local targetHum = {Health = 100, RootPart = targetRoot, Died = signal()}
-local secondHum = {Health = 100, RootPart = secondTargetRoot, Died = signal()}
+local secondHum = {Health = 100, RootPart = secondRoot, Died = signal()}
 LocalPlayer.Character = makeCharacter(localRoot, localHum)
 local target = {Name = "Target", Character = makeCharacter(targetRoot, targetHum)}
-local second = {Name = "Second", Character = makeCharacter(secondTargetRoot, secondHum)}
+local second = {Name = "Second", Character = makeCharacter(secondRoot, secondHum)}
 localRoot.Parent = LocalPlayer.Character
 targetRoot.Parent = target.Character
-secondTargetRoot.Parent = second.Character
+secondRoot.Parent = second.Character
 
 local Players = {
     LocalPlayer = LocalPlayer,
     GetPlayerFromCharacter = function(_, character)
         if character == target.Character then return target end
         if character == second.Character then return second end
-        if character == LocalPlayer.Character then return LocalPlayer end
         return nil
     end,
 }
-
 local host = {
     Players = Players,
     LocalPlayer = LocalPlayer,
-    RunService = nil,
+    RunService = RunService,
     TaskManager = TaskManager,
     clock = function() return now end,
 }
@@ -202,100 +221,89 @@ local function check(label, condition)
     if not condition then error("FAIL " .. label, 2) end
     print("PASS " .. label)
 end
-local function constants() return physics.constants() end
+local function frame()
+    Heartbeat:Fire(1/60)
+    RenderStepped:Fire(1/60)
+    Stepped:Fire(now, 1/60)
+end
 
 check("boot is idle", not physics.isRunning() and not physics.isTouchEnabled()
     and not physics.isPulsing() and not activityValue)
-check("no spin or pin APIs", not physics.isSpinning() and not physics.isHeld())
-check("impulse is finite and bounded", constants().pulseSpeed == 190
-    and constants().pulseSpeed < 1000)
+check("no spin or pin APIs", not physics.isSpinning() and not physics.isHeld()
+    and not physics.hasOwnership())
+check("literal IY constants", physics.constants().velocityScale == 10000
+    and physics.constants().velocityLift == 10000
+    and physics.constants().drift == 0.1)
 
--- Directed session, contact path (ownership unavailable).
-ownerMode = "none"
+-- One directed session: high velocity on Heartbeat, restore on RenderStepped,
+-- alternating drift + noclip on Stepped.
 check("directed start succeeds", physics.start(target,
     {duration = 0.5, restorePosition = false}))
-check("session owns the pulse", physics.isRunning() and physics.isPulsing()
-    and activityValue)
-check("one directed owner", not physics.start(second,
+check("one engine owns the session", physics.isRunning()
+    and physics.isPulsing() and activityValue)
+check("a second directed session is rejected", not physics.start(second,
     {duration = 0.4, restorePosition = false}))
-local before = localRoot.impulses
-drive(0.1)
-drive(0.1)
-check("finite impulses go through the contact path",
-    localRoot.impulses > before and physics.lastStrategy() == "contact")
-check("ownership was not assumed", not physics.hasOwnership())
-drive(0.1); drive(0.1); drive(0.1); drive(0.1)
-check("bounded session ends by itself", not physics.isRunning()
+Heartbeat:Fire(1/60)
+check("Heartbeat publishes IY's one-step spike",
+    localRoot.Velocity.X == 10000 and localRoot.Velocity.Y == 10000
+    and localRoot.AssemblyLinearVelocity.X == 10000
+    and physics.lastStrategy() == "walkfling")
+RenderStepped:Fire(1/60)
+check("RenderStepped restores the real velocity",
+    localRoot.Velocity.X == 1 and localRoot.Velocity.Y == 0)
+Stepped:Fire(now, 1/60)
+check("Stepped writes the alternating drift",
+    localRoot.Velocity.X == 1 and localRoot.Velocity.Y == 0.1)
+check("noclip is applied only to local parts", localRoot.CanCollide == false
+    and targetRoot.CanCollide == true)
+check("one bounded placement", pivotCalls == 1)
+
+now = 1
+drive(1/60)
+check("bounded session ends", not physics.isRunning()
     and not physics.isPulsing() and not activityValue)
-check("single placement, no per-frame teleport", pivotCalls <= 1)
+check("idle scheduler is empty after the session", #tasks == 0)
+check("velocity and collisions are restored", localRoot.CanCollide == true
+    and localRoot.Velocity.X == 1)
 
--- Directed session, confirmed ownership path.
-ownerMode = "local"
-check("second directed start succeeds", physics.start(second,
-    {duration = 0.4, restorePosition = false}))
-local targetBefore = secondTargetRoot.impulses
-drive(0.1)
-drive(0.1)
-check("impulses use confirmed ownership",
-    secondTargetRoot.impulses > targetBefore
-    and physics.lastStrategy() == "ownership" and physics.hasOwnership())
-drive(0.1); drive(0.1); drive(0.1)
-check("ownership is released with the session", not physics.hasOwnership()
-    and autoCalls > 0 and not physics.isRunning())
-
--- Touch fling: listeners, cooldown, OFF and respawn cleanup.
-ownerMode = "none"
-local touchParts = LocalPlayer.Character:GetChildren()
+-- Continuous Touch Fling uses the same engine, not a Touched-listener pulse.
 physics.setTouchEnabled(true)
-check("Touch binds local parts", physics.isTouchEnabled() and activityValue
-    and touchParts[1].Touched:count() == 1)
-check("idle Touch never pulses", not physics.isPulsing())
-check("scenery is ignored", (function()
-    local scenery = {Parent = {Parent = nil}}
-    touchParts[1].Touched:Fire(scenery)
-    return not physics.isPulsing()
-end)())
-now = 10
-touchParts[1].Touched:Fire(targetRoot)
-check("contact starts a pulse", physics.isPulsing())
-check("cooldown prevents a crowd chain", (function()
-    local beforeCount = localRoot.impulses
-    physics.cancel()
-    now = 10.1
-    touchParts[1].Touched:Fire(targetRoot)
-    return not physics.isPulsing() and localRoot.impulses == beforeCount
-end)())
-now = 11
-touchParts[1].Touched:Fire(targetRoot)
-check("contact after cooldown pulses again", physics.isPulsing())
+check("Touch Fling starts one continuous engine", physics.isTouchEnabled()
+    and physics.isPulsing() and activityValue)
+frame()
+check("continuous engine keeps cycling", localRoot.Velocity.X == 1
+    and localRoot.Velocity.Y == 0.1 and localRoot.CanCollide == false)
+check("directed action can run during Touch Fling", physics.start(second,
+    {duration = 0.2, restorePosition = false, place = false}))
+now = 2
+drive(1/60)
+check("session ends without disabling Touch Fling", not physics.isRunning()
+    and physics.isTouchEnabled() and physics.isPulsing())
 physics.setTouchEnabled(false)
-check("OFF releases listeners and pulse", not physics.isTouchEnabled()
-    and not physics.isPulsing() and touchParts[1].Touched:count() == 0
-    and not activityValue)
+check("OFF stops the engine and restores collisions",
+    not physics.isTouchEnabled() and not physics.isPulsing()
+    and not activityValue and localRoot.CanCollide == true and #tasks == 0)
 
 -- Death / cancel / destroy.
-check("cancel is idempotent", (function()
-    physics.cancel(); physics.cancel()
-    return not physics.isRunning()
-end)())
 physics.setTouchEnabled(true)
-now = 20
-touchParts[1].Touched:Fire(targetRoot)
-check("pulse runs before destroy", physics.isPulsing())
+check("cancel does not turn off continuous Touch Fling", (function()
+    physics.cancel()
+    return physics.isTouchEnabled() and physics.isPulsing()
+end)())
 physics.destroy()
 check("destroy stops everything", not physics.isPulsing()
     and not physics.isRunning() and not physics.isTouchEnabled()
-    and not activityValue and not physics.hasOwnership())
+    and not activityValue and localRoot.CanCollide == true)
 check("destroyed library cannot restart", not physics.start(target,
     {duration = 0.3, restorePosition = false}))
 check("destroy is idempotent", (function() physics.destroy(); return true end)())
-print("[FLING v150] contact physics verified")
+print("[FLING v151] exact IY walkfling sequence verified")
 '''
 
 script = HARNESS.replace("__FLING_SOURCE__", SOURCE)
 
 with tempfile.TemporaryDirectory() as tmp:
-    path = Path(tmp) / "fling_v150.luau"
+    path = Path(tmp) / "fling_v151.luau"
     path.write_text(script)
     luau = os.environ.get("LUAU", str(ROOT / "tools/luau/bin/luau"))
     result = subprocess.run([luau, str(path)], capture_output=True, text=True)

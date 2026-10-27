@@ -42,13 +42,17 @@ assert "autoGetGunDelay" not in base
 assert "droppedGunCache.at < 0.05" in base
 assert "droppedGunCache.at < 0.4" not in base
 
-# Auto Farm (v150): the rebuilt farm reacts on the shared Heartbeat tick and
-# binds native movement after the default controls. There is no full-bag
-# coroutine, no gun-touch routine and no hidden sleep anywhere in the module.
+# Auto Farm (v151): the farm reacts on the shared Heartbeat tick. It must NOT
+# bind a render-step movement owner (that stole player controls in v150).
+# Below Map uses bounded whole-model placements; Direct refreshes native
+# MoveTo. There is no full-bag coroutine, no gun-touch routine and no sleep.
 farm = read("src/games/MM2/Other/AutoFarm.lua")
 assert "TaskManager:Connect(farmTick)" in farm
-assert "BindToRenderStep" in farm and "humanoid:Move(desiredDirection, false)" in farm
-assert "humanoid:MoveTo(position)" in farm, "MoveTo fallback keeps the 8 s timeout reset"
+assert "BindToRenderStep" not in farm, "never overwrite default player controls"
+assert "humanoid:Move(" not in farm, "no zero-move writer that freezes input"
+assert "humanoid:MoveTo(position)" in farm, "Direct uses native locomotion"
+assert "CONTACT_REFRESH: number = 0.12" in farm, "contact refresh stays bounded"
+assert "MANUAL_PAUSE: number = 1.2" in farm, "manual input always wins briefly"
 assert "task.wait" not in farm, "farm must not add hidden polling sleeps"
 assert "firetouchinterest(" not in farm, "a local fake touch is not a server coin"
 

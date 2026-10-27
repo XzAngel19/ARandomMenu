@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""Run the rebuilt MM2 Auto Farm against deterministic Roblox-shaped mocks.
+"""Run MM2 Auto Farm v151 against deterministic Roblox-shaped mocks.
 
-This checks that the farm walks with native Humanoid locomotion, only credits
-server CoinCollected events, stops at the announced bag limit, respects
-lobby/round/role guards and releases every connection on OFF. It does NOT
-prove that a live server awards a coin for a physical overlap.
+This checks Below Map's two physical placements, bounded contact refresh,
+manual-control override, server-only coin confirmation, full-bag stop,
+lobby guard, Direct MoveTo mode and complete OFF cleanup. It does NOT prove
+that a live MM2 server awards a coin for the physical overlap.
 """
 from __future__ import annotations
 
@@ -36,16 +36,15 @@ vmt.__index = function(a, k)
         return math.sqrt(a.X * a.X + a.Y * a.Y + a.Z * a.Z)
     end
 end
-local CFrame = {new = function(p) return {Position = p} end}
+local CFrame = {new = function(p) return {Position = p or Vector3.zero} end}
+function CFrame.lookAt(p) return CFrame.new(p) end
 
 local now = 0
 os = {clock = function() return now end, time = function() return now end}
 task = {spawn = function(fn) fn() end, wait = function() end, defer = function(fn) fn() end}
 Enum = {
-    Material = {Air = "Air"},
-    RenderPriority = {Character = {Value = 200}},
+    Material = {Air = "Air", Grass = "Grass"},
     RaycastFilterType = {Exclude = "Exclude"},
-    PathStatus = {Success = "Success"},
 }
 RaycastParams = nil
 
@@ -73,16 +72,12 @@ local function signal()
 end
 
 local function remoteEvent(name)
-    local event = {Name = name, className = "RemoteEvent", OnClientEvent = signal()}
-    return event
+    return {Name = name, className = "RemoteEvent", OnClientEvent = signal()}
 end
-
 local gameplay = {}
 local remoteNames = {"CoinsStarted", "CoinCollected", "RoundStart",
     "VictoryScreen", "RoundEndFade", "PlayerDataChanged"}
-for _, name in ipairs(remoteNames) do
-    gameplay[name] = remoteEvent(name)
-end
+for _, name in ipairs(remoteNames) do gameplay[name] = remoteEvent(name) end
 function gameplay:FindFirstChild(name) return self[name] end
 
 local inventoryEvent = remoteEvent("ChangeInventoryItem")
@@ -109,7 +104,6 @@ function map:FindFirstChild(name)
     if name == "Spawns" then return spawnFolder end
     return nil
 end
-
 local workspaceMock = {
     FindFirstChild = function(_, name)
         if name == "RoundTimerPart" then return timer end
@@ -120,8 +114,10 @@ local workspaceMock = {
 
 game = {GetService = function(_, name)
     if name == "ReplicatedStorage" then return replicated end
-    if name == "CollectionService" then return {GetTagged = function() return {} end} end
-    return nil -- PathfindingService is unavailable: Direct fallback
+    if name == "CollectionService" then
+        return {GetTagged = function() return {} end}
+    end
+    return nil
 end}
 
 local written = {CFrame = 0, Size = 0, AssemblyLinearVelocity = 0}
@@ -129,9 +125,9 @@ local rootData = {
     Position = Vector3.new(0, 10, 0),
     CFrame = CFrame.new(Vector3.new(0, 10, 0)),
     Parent = true,
+    Anchored = false,
     AssemblyLinearVelocity = Vector3.zero,
     AssemblyAngularVelocity = Vector3.zero,
-    AssemblyMass = 10,
 }
 local root = setmetatable({}, {
     __index = rootData,
@@ -141,18 +137,25 @@ local root = setmetatable({}, {
     end,
 })
 
-local pivotCalls = 0
+local pivotCalls, pivots = 0, {}
 local character = {
     Parent = workspaceMock,
-    PivotTo = function() pivotCalls += 1 end,
+    PivotTo = function(_, frame)
+        pivotCalls += 1
+        table.insert(pivots, frame.Position)
+        -- Bypass the write-tracking proxy: PivotTo moves the whole model, so
+        -- the test harness must not count its own bookkeeping as a root write.
+        rootData.Position = frame.Position
+        rootData.CFrame = frame
+    end,
 }
-local moveCalls, moveToCalls = {}, {}
+local moveToCalls = {}
 local humanoid = {
     Health = 100,
     WalkSpeed = 16,
     MoveDirection = Vector3.zero,
-    FloorMaterial = "Ground",
-    Move = function(_, dir) table.insert(moveCalls, dir) end,
+    FloorMaterial = "Grass",
+    Jump = false,
     MoveTo = function(_, pos) table.insert(moveToCalls, pos) end,
 }
 
@@ -161,6 +164,7 @@ local coinParent = {
     Parent = map,
     Position = Vector3.new(10, 10, 0),
     CanTouch = true,
+    Transparency = 0,
     GetAttribute = function(_, name)
         if name == "CoinID" then return "Coin" end
         return nil
@@ -171,6 +175,7 @@ local coinVisual = {
     Parent = coinParent,
     Position = Vector3.new(10, 10, 0),
     CanTouch = true,
+    Transparency = 0,
     GetAttribute = function(_, name)
         if name == "CoinID" then return "Coin" end
         return nil
@@ -178,10 +183,10 @@ local coinVisual = {
 }
 local coinVisuals = {coinVisual}
 
-local renderBindings = {}
+local renderBindCount, renderUnbindCount = 0, 0
 local RunService = {}
-function RunService:BindToRenderStep(name, _, fn) renderBindings[name] = fn end
-function RunService:UnbindFromRenderStep(name) renderBindings[name] = nil end
+function RunService:BindToRenderStep() renderBindCount += 1 end
+function RunService:UnbindFromRenderStep() renderUnbindCount += 1 end
 
 local tasks = {}
 local TaskManager = {}
@@ -201,14 +206,14 @@ local function disconnectFeatureConnection(name)
 end
 
 local card
-local options = {}
-local stats = {}
+local options, stats = {}, {}
+local touchCalls, invalidations = 0, 0
 state = {
     mm2CoinPickups = function() return coinVisuals end,
-    mm2InvalidateCoinPickups = function() end,
+    mm2InvalidateCoinPickups = function() invalidations += 1 end,
+    fireTouchInterest = function(_, _, _) touchCalls += 1 end,
     addStatOption = function(_, label)
-        local stat = {set = function(value) stats[label] = value end}
-        return stat
+        return {set = function(value) stats[label] = value end}
     end,
     addSectionOption = function() end,
     framework = {GetModule = function() return nil end},
@@ -254,58 +259,72 @@ local function tick(dt)
     assert(handle, "farm tick is not connected")
     handle.fn(dt)
 end
-local function render()
-    local fn = renderBindings["WurstMM2AutoFarm"]
-    assert(fn, "movement binding missing")
-    fn()
-end
 local function check(label, condition)
     if not condition then error("FAIL " .. label, 2) end
     print("PASS " .. label)
 end
 
--- Activation: one tick owner and one native movement binding.
+-- Activation: one scheduler owner, no render-step lock.
 card.onToggle(true)
 check("activation owns exactly one scheduler task", #tasks == 1)
-check("activation binds after default controls", renderBindings["WurstMM2AutoFarm"] ~= nil)
+check("activation never binds a render-step owner", renderBindCount == 0)
 check("boot does not enable from config", card.status ~= nil)
-
--- First real step walks toward the actual Coin_Server part.
-now = 0.5
-tick(0.5)
 local snap = state.mm2AutoFarmSnapshot()
-check("target is the real server pickup", snap.targetName == "Coin_Server")
-check("navigation defaults to Pathfinding", snap.navigation == "Pathfinding")
-render()
-check("native Move drives toward the coin", #moveCalls > 0
-    and moveCalls[#moveCalls].X > 0.9 and moveCalls[#moveCalls].Y == 0)
-check("no CFrame/Size/velocity writer while farming",
-    written.CFrame == 0 and written.Size == 0
-    and written.AssemblyLinearVelocity == 0)
+check("Below Map is the default mode", snap.mode == "Below Map" and snap.belowMap)
+check("manual override is on by default", snap.manualOverride)
 
--- Overlap the pickup: the farm waits for the server's own Touched handler.
-rootData.Position = Vector3.new(9, 10, 0)
-now = 1.0
-tick(0.5)
+-- Park under Coin_Server, then rise into its real volume from below.
+now = 0.2
+tick(0.2)
+check("first placement parks below the coin", pivotCalls == 1
+    and pivots[1].X == 10 and pivots[1].Y == 6)
 snap = state.mm2AutoFarmSnapshot()
-check("contact counts no coin before CoinCollected", snap.coinsConfirmed == 0)
-check("contact status is Collecting", string.find(snap.status, "Collecting", 1, true) ~= nil)
-check("no pivot used for collection", pivotCalls == 0)
+check("target is the real server pickup", snap.targetName == "Coin_Server")
+now = 0.4
+tick(0.2)
+check("second placement physically overlaps the coin", pivotCalls == 2
+    and pivots[2].Y == 9.4)
+check("local touch nudge is optional and bounded", touchCalls == 2)
+check("farm does not resize the hitbox or write root CFrame",
+    written.CFrame == 0 and written.Size == 0)
 
--- Only the server event confirms a coin (and the persistent balance event is
--- observed but never counted as a second coin).
+now = 0.45
+tick(0.05)
+check("contact is not refreshed every frame", pivotCalls == 2)
+now = 0.55
+tick(0.1)
+check("contact refresh is bounded to ~0.12 s", pivotCalls == 3
+    and pivots[3].Y == 9.4)
+check("contact does not credit a fake coin",
+    state.mm2AutoFarmSnapshot().coinsConfirmed == 0)
+
+-- Only the server event confirms a coin.
 inventoryEvent.OnClientEvent:Fire("Materials", "Coins", 900)
 gameplay.CoinCollected.OnClientEvent:Fire("Coin", 1, 50, {Value = 1})
 snap = state.mm2AutoFarmSnapshot()
 check("CoinCollected confirms exactly one coin", snap.coinsConfirmed == 1)
 check("bag amount comes from the event", snap.bagAmount == 1 and snap.bagLimit == 50)
 check("persistent balance is observed", snap.persistentCoins == 900)
-now = 1.5
-tick(0.5)
+now = 0.6
+tick(0.05)
 check("overlay reports the confirmed coin", stats["Coins Collected"] == "1")
 check("overlay reports active time", stats["Time"] ~= nil)
 
--- CoinsStarted announces this round's real limit; reaching it stops walking.
+-- Manual input pauses Below Map placements instead of stealing controls.
+humanoid.MoveDirection = Vector3.new(1, 0, 0)
+now = 0.7
+tick(0.1)
+snap = state.mm2AutoFarmSnapshot()
+check("manual movement pauses the farm", snap.manualPause > 0
+    and string.find(snap.status, "Paused", 1, true) ~= nil)
+local beforeManual = pivotCalls
+humanoid.MoveDirection = Vector3.zero
+now = 1.0
+tick(0.3)
+check("pause leaves the character under player control",
+    pivotCalls == beforeManual and renderBindCount == 0)
+
+-- CoinsStarted announces the real limit; reaching it stops the farm.
 gameplay.CoinsStarted.OnClientEvent:Fire({
     Coin = {CollectedAmount = 0, CollectionLimit = 2},
 })
@@ -318,36 +337,39 @@ check("bag full is read from the server limit",
     snap.bagAmount == 2 and snap.bagLimit == 2)
 check("full bag stops the farm", string.find(snap.status, "Bag full", 1, true) ~= nil)
 
--- Lobby / role guards fail closed.
-phase = "lobby"
+-- Lobby fails closed; a missing or non-Innocent role no longer blocks farming.
 gameplay.CoinsStarted.OnClientEvent:Fire({
     Coin = {CollectedAmount = 0, CollectionLimit = 50},
 })
-now = 2.5
-tick(0.5)
+phase = "lobby"
+now = 2.1
+tick(0.1)
 check("lobby pauses farming",
     string.find(state.mm2AutoFarmSnapshot().status, "Waiting", 1, true) ~= nil)
 phase = "map"
 role = "Murderer"
-now = 3.0
-tick(0.5)
-check("non-Innocent role pauses farming",
-    string.find(state.mm2AutoFarmSnapshot().status, "Waiting", 1, true) ~= nil)
-role = "Innocent"
+rootData.Position = Vector3.new(0, 10, 0)
+now = 2.3
+tick(0.2)
+check("role no longer blocks the farm",
+    string.find(state.mm2AutoFarmSnapshot().status, "Waiting", 1, true) == nil)
 
--- Direct navigation is still native locomotion, never a teleport.
-options["Navigation"]("Direct")
-now = 3.5
-tick(0.5)
-render()
-check("Direct mode keeps native Move", #moveCalls > 1)
-check("no teleport in any mode", written.CFrame == 0 and pivotCalls == 0)
+-- Direct mode uses native MoveTo, never the Below Map pivots.
+options["Farm mode"]("Direct")
+rootData.Position = Vector3.new(0, 10, 0)
+local beforeDirect = pivotCalls
+now = 2.5
+tick(0.2)
+check("Direct mode keeps native MoveTo", #moveToCalls > 0)
+check("Direct mode performs no teleport", pivotCalls == beforeDirect)
+check("Direct status names the mode",
+    string.find(state.mm2AutoFarmSnapshot().status, "Direct", 1, true) ~= nil)
 
--- OFF releases the frame task, the render binding and every remote listener.
+-- OFF releases the frame task, every remote listener and the native autopilot.
 card.onToggle(false)
 check("OFF disconnects the farm tick", featureConnections.MM2AutoFarmTick == nil)
-check("OFF unbinds movement", renderBindings["WurstMM2AutoFarm"] == nil)
 check("OFF leaves scheduler empty", #tasks == 0)
+check("OFF never needed a render-step unbind", renderUnbindCount == 0)
 check("OFF clears status", card.status == nil)
 local listeners = 0
 for _, name in ipairs(remoteNames) do
@@ -359,13 +381,13 @@ check("feature exposes a read-only snapshot",
     type(state.mm2AutoFarmSnapshot) == "function")
 Module.destroy()
 check("destroy clears the published snapshot", state.mm2AutoFarmSnapshot == nil)
-print("[MM2 AUTO FARM v150] dynamics verified")
+print("[MM2 AUTO FARM v151] Below Map dynamics verified")
 '''
 
 script = HARNESS.replace("__AUTOFARM_SOURCE__", SOURCE)
 
 with tempfile.TemporaryDirectory() as tmp:
-    path = Path(tmp) / "auto_farm_v150.luau"
+    path = Path(tmp) / "auto_farm_v151.luau"
     path.write_text(script)
     luau = os.environ.get("LUAU", str(ROOT / "tools/luau/bin/luau"))
     result = subprocess.run([luau, str(path)], capture_output=True, text=True)

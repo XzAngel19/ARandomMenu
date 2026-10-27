@@ -1,29 +1,28 @@
--- v150 · Shared contact physics, rebuilt from zero.
+-- v151 · Shared Fling / Touch Fling engine: Infinite Yield's REAL walkfling.
 --
--- Evidence used (see docs/FIXES-v150.md):
---   * TestingStuff/place, source.rbxlx (MM2 placeId 142823291, place version
---     1447): Workspace.Gravity = 196.2, FallenPartsDestroyHeight = -500,
---     TouchesUseCollisionGroups = false. Collision group "Characters" collides
---     with itself, so two live players really do exchange contact impulses.
---   * The RBXL snapshot has 107 `Coin_Server` parts, each with a
---     `TouchInterest` (TouchTransmitter). Server-owned anchored parts cannot
---     change owner (Roblox network-ownership docs); a client-side
---     `firetouchinterest` cannot make the server credit a coin.
---   * Roblox docs: `BasePart:ApplyImpulse()` changes an owned assembly's
---     velocity through the physics solver; `Humanoid:Move()` is overwritten by
---     the default control script; network ownership decides whose physics the
---     server believes.
+-- Source of the mechanism: EdgeIY/infiniteyield `source`, command `walkfling`
+-- (official repository, command around line 11835). The exact loop is:
 --
--- Mechanism: a bounded, finite impulse on an assembly we can actually steer.
--- We first try to obtain network ownership of the target's root (only when the
--- executor exposes a real setter AND `GetNetworkOwner()` confirms it). If that
--- is unavailable we apply the impulse to our own root while standing next to
--- the target, so the contact transfers momentum. Nothing spins, nothing is
--- pinned, no CFrame is written per frame, no constraint survives a session and
--- no velocity is left behind.
+--   noclip ON
+--   repeat: wait for Heartbeat
+--     vel = root.Velocity
+--     root.Velocity = vel * 10000 + Vector3.new(0, 10000, 0)
+--     wait for RenderStepped; root.Velocity = vel
+--     wait for Stepped;      root.Velocity = vel + Vector3.new(0, ±0.1, 0)
+--   until OFF
 --
--- This is an offline-verified physics controller. Whether a live MM2 server
--- accepts the resulting knockback still has to be observed in game.
+-- v149 claimed to copy this but used 1,000,000 instead of 10,000, never
+-- inverted `movel`, and omitted the noclip that IY enables with walkfling.
+-- v150 replaced it with a small ApplyImpulse, which the live game ignored.
+-- v151 restores the complete three-signal sequence. It writes ONLY the local
+-- root's velocity (the assembly this client owns), disables local character
+-- collisions while active, restores both on OFF, and never touches the target's
+-- assembly. There is no spin, density hack, BodyAngularVelocity, constraint,
+-- network-ownership call, per-frame CFrame or Touched-listener fan-out.
+--
+-- `Touch Fling` runs the engine continuously: walk into another character.
+-- A directed MM2 `Fling` runs the same engine for one bounded session after a
+-- single placement next to the target. Both cannot create two engines.
 
 local Module = {
     Name = "FlingPhysics",
@@ -37,7 +36,7 @@ local activeLibrary: any = nil
 function Module.init(context: any): any
     local host: any = context.host or context
     local Players: any = host.Players
-    local LocalPlayer: Player = host.LocalPlayer
+    local LocalPlayer: any = host.LocalPlayer
     local RunService: any = host.RunService
     local TaskManager: any = host.TaskManager
     local services: any = context.services or host.services
@@ -45,60 +44,65 @@ function Module.init(context: any): any
     local clock: () -> number = if type((host :: any).clock) == "function"
         then (host :: any).clock else os.clock
 
-    -- Finite numbers. Roblox clamps absurd velocities; 1e6-style spikes were
-    -- the old design and produced no reproducible knockback for this user.
-    local PULSE_SPEED: number = 190        -- studs/s of velocity change
-    local PULSE_LIFT: number = 42          -- upward component
-    local PULSE_INTERVAL: number = 0.09    -- seconds between impulses
-    local RESTORE_AFTER: number = 0.045    -- one physics window for contact
-    local TOUCH_PULSE: number = 0.3
-    local TOUCH_COOLDOWN: number = 0.45
-    local CONTACT_RANGE: number = 16
-    local MAX_DURATION: number = 2.5
-    local PLACE_DISTANCE: number = 2.4
+    -- Literal IY walkfling numbers. These are applied to the owned local root
+    -- for one physics window, then restored; they are not a sustained speed.
+    local VELOCITY_SCALE: number = 10000
+    local VELOCITY_LIFT: number = 10000
+    local DRIFT: number = 0.1
+    local PLACE_DISTANCE: number = 2.2
+    local MAX_DURATION: number = 3
+    local TOUCH_PULSE: number = 0.18 -- exposed for diagnostics/compat
 
     local destroyed: boolean = false
-    local currentSession: any = nil
+    local engineActive: boolean = false
     local touchEnabled: boolean = false
-    local touchConnections: {any} = {}
-    local touchBoundParts: {[any]: boolean} = {}
-    local lastTouchAt: number = -math.huge
+    local currentSession: any = nil
+    local sessionTask: any = nil
+    local fallbackTask: any = nil
 
-    local generation: number = 0
-    local pulseHandle: any = nil
-    local pulseActive: boolean = false
-    local pulseOptions: any = nil
-    local baselineVelocity: any = nil
+    local stage: number = 0 -- 0 idle, 1 high velocity, 2 restored
+    local drift: number = DRIFT
     local baselineRoot: any = nil
-    local pendingRestore: boolean = false
-    local ownedParts: {[any]: boolean} = {}
+    local baselineVelocity: any = nil
     local lastStrategy: string = "idle"
+
+    local originalCollision: {[any]: boolean} = {}
+    local cachedCharacter: any = nil
+    local cachedParts: {any} = {}
+    local connections: {any} = {}
 
     local function setActivity(): ()
         if activity and type(activity.set) == "function" then
             pcall(activity.set, "fling",
-                currentSession ~= nil or touchEnabled or pulseActive)
+                engineActive or touchEnabled or currentSession ~= nil)
         end
     end
 
-    local function getParts(player: Player?): (Model?, Humanoid?, BasePart?)
-        local character: Model? = player and player.Character
+    local function getParts(player: any): (any, any, any)
+        local character: any = player and player.Character
         if not character or not character.Parent then
             return nil, nil, nil
         end
-        local humanoid: Humanoid? =
-            character:FindFirstChildOfClass("Humanoid") :: Humanoid?
+        local humanoid: any = nil
+        pcall(function(): ()
+            if type(character.FindFirstChildOfClass) == "function" then
+                humanoid = character:FindFirstChildOfClass("Humanoid")
+            end
+        end)
         if not humanoid then
             return character, nil, nil
         end
-        local root: BasePart? = (humanoid.RootPart
-            or character:FindFirstChild("HumanoidRootPart")) :: BasePart?
+        local root: any = humanoid.RootPart
+        if not root and type(character.FindFirstChild) == "function" then
+            pcall(function(): ()
+                root = character:FindFirstChild("HumanoidRootPart")
+            end)
+        end
         return character, humanoid, root
     end
 
-    local function livingParts(player: Player?): (Model?, Humanoid?, BasePart?)
-        local character: Model?, humanoid: Humanoid?, root: BasePart? =
-            getParts(player)
+    local function livingParts(player: any): (any, any, any)
+        local character: any, humanoid: any, root: any = getParts(player)
         if not character or not humanoid or not root or humanoid.Health <= 0
             or not root.Parent or root.Anchored then
             return character, humanoid, nil
@@ -107,6 +111,9 @@ function Module.init(context: any): any
     end
 
     local function finiteVector(value: any): boolean
+        if type(value) ~= "table" and type(value) ~= "userdata" then
+            return false
+        end
         local ok: boolean, x: any, y: any, z: any = pcall(function(): any
             return value.X, value.Y, value.Z
         end)
@@ -116,322 +123,365 @@ function Module.init(context: any): any
             and math.abs(z) ~= math.huge
     end
 
-    -- Executor-provided ownership setters are optional. A plain `loadstring`
-    -- does not have them; in that case the contact path is used instead.
-    local function environment(): any
-        local ok: boolean, env: any = pcall(getfenv)
-        if ok and type(env) == "table" then
-            return env
+    local function readVelocity(root: any): any
+        local ok: boolean, value: any = pcall(function(): any
+            return (root :: any).Velocity
+        end)
+        if ok and finiteVector(value) then
+            return value
         end
-        return _G or {}
-    end
-
-    local function ownerSetter(): any
-        local env: any = environment()
-        local okGenv: boolean, genv: any = pcall(getgenv)
-        for _, name: string in ipairs({
-            "setnetworkowner", "set_network_owner", "SetNetworkOwner",
-            "setnetworkownership",
-        }) do
-            local candidate: any = env[name]
-            if type(candidate) ~= "function" and okGenv and type(genv) == "table" then
-                candidate = genv[name]
-            end
-            if type(candidate) == "function" then
-                return candidate
-            end
+        ok, value = pcall(function(): any
+            return (root :: any).AssemblyLinearVelocity
+        end)
+        if ok and finiteVector(value) then
+            return value
         end
         return nil
     end
 
-    local function releaseOwnership(): ()
-        for part: any in pairs(ownedParts) do
-            if part and part.Parent then
-                pcall(function(): ()
-                    if type((part :: any).SetNetworkOwnershipAuto) == "function" then
-                        (part :: any):SetNetworkOwnershipAuto()
-                    end
-                end)
-                local setter: any = ownerSetter()
-                if setter then
-                    pcall(setter, part, nil)
-                end
-            end
-            ownedParts[part] = nil
-        end
-    end
-
-    local function tryOwn(part: any): boolean
-        if not part or not part.Parent or part.Anchored then
-            return false
-        end
-        local setter: any = ownerSetter()
-        if setter then
-            pcall(setter, part)
-            pcall(setter, part, LocalPlayer)
-        end
-        pcall(function(): ()
-            if type((part :: any).SetNetworkOwner) == "function" then
-                (part :: any):SetNetworkOwner(LocalPlayer)
-            end
-        end)
-        local ok: boolean, owner: any = pcall(function(): any
-            if type((part :: any).GetNetworkOwner) == "function" then
-                return (part :: any):GetNetworkOwner()
-            end
-            return nil
-        end)
-        if ok and owner == LocalPlayer then
-            ownedParts[part] = true
-            return true
-        end
-        return false
-    end
-
-    local function impulse(part: any, direction: Vector3, speed: number): boolean
-        if not part or not part.Parent then
-            return false
-        end
-        local mass: number = 1
-        pcall(function(): ()
-            local value: any = (part :: any).AssemblyMass
-            if type(value) == "number" and value > 0.05 and value < 1e6 then
-                mass = value
-            end
-        end)
-        local delta: Vector3 = direction * speed
-        if type((part :: any).ApplyImpulse) == "function" then
-            local ok: boolean = pcall(function(): ()
-                (part :: any):ApplyImpulse(delta * mass)
-            end)
-            if ok then
-                return true
-            end
-        end
-        return pcall(function(): ()
-            local current: any = (part :: any).AssemblyLinearVelocity
-            if finiteVector(current) then
-                (part :: any).AssemblyLinearVelocity = current + delta
-            end
-        end) == true
-    end
-
-    local function directionTo(from: Vector3, to: Vector3): Vector3
-        local flat: Vector3 = Vector3.new(to.X - from.X, 0, to.Z - from.Z)
-        if flat.Magnitude < 0.001 then
-            return Vector3.new(0, 0.2, -1)
-        end
-        local unit: Vector3 = flat / flat.Magnitude
-        return Vector3.new(unit.X, PULSE_LIFT / PULSE_SPEED, unit.Z)
-    end
-
-    local function restoreBaseline(): ()
-        pendingRestore = false
-        if baselineVelocity and baselineRoot and baselineRoot.Parent then
-            pcall(function(): ()
-                baselineRoot.AssemblyLinearVelocity = baselineVelocity
-            end)
-        end
-    end
-
-    local function stopPulse(finished: boolean?): ()
-        generation += 1
-        if pulseHandle then
-            pcall(function(): () pulseHandle:Disconnect() end)
-            pulseHandle = nil
-        end
-        local options: any = pulseOptions
-        pulseOptions = nil
-        pulseActive = false
-        restoreBaseline()
-        baselineVelocity = nil
-        baselineRoot = nil
-        releaseOwnership()
-        setActivity()
-        if finished and options and type(options.onFinished) == "function" then
-            pcall(options.onFinished)
-        end
-    end
-
-    -- One impulse per interval. When ownership is confirmed the impulse goes
-    -- straight to the target's assembly; otherwise it goes through our own
-    -- root and the documented character-to-character contact.
-    local function applyImpulseOnce(options: any): boolean
-        local character: Model?, humanoid: Humanoid?, root: BasePart? =
-            livingParts(LocalPlayer)
-        if not character or not humanoid or not root then
-            return false
-        end
-        local targetRoot: any = options and options.targetRoot
-        if not targetRoot or not targetRoot.Parent then
-            return false
-        end
-        if not finiteVector(root.Position) or not finiteVector(targetRoot.Position) then
-            return false
-        end
-        if (targetRoot.Position - root.Position).Magnitude > CONTACT_RANGE * 2
-            and not options.owned then
-            return false
-        end
-        if options.owned == nil then
-            options.owned = tryOwn(targetRoot)
-        end
-        local direction: Vector3 = directionTo(root.Position, targetRoot.Position)
-        if options.owned then
-            lastStrategy = "ownership"
-            if impulse(targetRoot, direction, PULSE_SPEED) then
-                return true
-            end
-            options.owned = false
-        end
-        lastStrategy = "contact"
-        if not baselineVelocity then
-            local ok: boolean, value: any = pcall(function(): any
-                return root.AssemblyLinearVelocity
-            end)
-            baselineVelocity = (ok and finiteVector(value)) and value or nil
-            baselineRoot = root
-        end
-        local applied: boolean = impulse(root, direction, PULSE_SPEED)
-        if applied then
-            pendingRestore = true
-        end
-        return applied
-    end
-
-    local function beginPulse(options: any): ()
-        if destroyed then
+    -- `Velocity` is IY's property and still works in Roblox; the assembly
+    -- alias is written too so an executor that only proxies one of them works.
+    local function writeVelocity(root: any, value: any): ()
+        if not root or not finiteVector(value) then
             return
         end
-        stopPulse(false)
-        generation += 1
-        local token: number = generation
-        pulseOptions = options
-        pulseActive = true
-        lastStrategy = "idle"
-        setActivity()
+        pcall(function(): () (root :: any).Velocity = value end)
+        pcall(function(): () (root :: any).AssemblyLinearVelocity = value end)
+    end
 
-        local duration: number = math.clamp(tonumber(options.duration) or 1.2,
-            0.1, MAX_DURATION)
-        local elapsed: number = 0
-        local sinceImpulse: number = PULSE_INTERVAL
-        local sinceRestore: number = 0
-
-        local function finish(): ()
-            if generation ~= token then
-                return
-            end
-            stopPulse(true)
+    local function rebuildParts(character: any): ()
+        cachedCharacter = character
+        cachedParts = {}
+        if not character then
+            return
         end
-
-        local function tick(deltaTime: number): ()
-            if generation ~= token or destroyed then
-                return
-            end
-            local dt: number = if type(deltaTime) == "number"
-                and deltaTime > 0 and deltaTime < 1 then deltaTime else 1 / 60
-            elapsed += dt
-            if pendingRestore then
-                sinceRestore += dt
-                if sinceRestore >= RESTORE_AFTER then
-                    sinceRestore = 0
-                    restoreBaseline()
-                end
-            end
-            if type(options.shouldStop) == "function" then
-                local ok: boolean, stop: any = pcall(options.shouldStop)
-                if not ok or stop == true then
-                    finish()
-                    return
-                end
-            end
-            if elapsed >= duration then
-                finish()
-                return
-            end
-            sinceImpulse += dt
-            if sinceImpulse >= PULSE_INTERVAL then
-                sinceImpulse = 0
-                applyImpulseOnce(options)
-            end
+        local list: any = nil
+        if type(character.GetDescendants) == "function" then
+            pcall(function(): () list = character:GetDescendants() end)
         end
-
-        if TaskManager and type(TaskManager.Connect) == "function" then
-            local ok: boolean, handle: any = pcall(function(): any
-                return TaskManager:Connect(tick)
+        if type(list) ~= "table" and type(character.GetChildren) == "function" then
+            pcall(function(): () list = character:GetChildren() end)
+        end
+        if type(list) ~= "table" then
+            return
+        end
+        for _, object: any in ipairs(list) do
+            local isPart: boolean = false
+            pcall(function(): ()
+                isPart = type(object.IsA) == "function"
+                    and object:IsA("BasePart") == true
             end)
-            if ok and handle then
-                pulseHandle = handle
+            if isPart then
+                table.insert(cachedParts, object)
             end
-        end
-        if not pulseHandle then
-            -- Host without the shared scheduler: bounded coroutine fallback.
-            task.spawn(function(): ()
-                while generation == token and not destroyed do
-                    tick(1 / 60)
-                    task.wait(1 / 30)
-                end
-            end)
         end
     end
 
-    local function finishSession(reason: string): ()
+    local function stripCollisions(character: any): ()
+        if cachedCharacter ~= character then
+            rebuildParts(character)
+        end
+        for _, part: any in ipairs(cachedParts) do
+            if part and part.Parent then
+                local canCollide: any = nil
+                pcall(function(): () canCollide = part.CanCollide end)
+                if canCollide ~= false then
+                    if originalCollision[part] == nil then
+                        originalCollision[part] = canCollide ~= false
+                    end
+                    pcall(function(): () part.CanCollide = false end)
+                end
+            end
+        end
+    end
+
+    local function restoreCollisions(): ()
+        for part: any, original: boolean in pairs(originalCollision) do
+            if part and part.Parent then
+                pcall(function(): () part.CanCollide = original end)
+            end
+        end
+        table.clear(originalCollision)
+        cachedCharacter = nil
+        cachedParts = {}
+    end
+
+    local function connectSignal(signal: any, callback: any): ()
+        if not signal or type(signal.Connect) ~= "function" then
+            return
+        end
+        local ok: boolean, connection: any = pcall(function(): any
+            return signal:Connect(callback)
+        end)
+        if ok and connection then
+            table.insert(connections, connection)
+        end
+    end
+
+    -- Frame 1 of IY's cycle: after Heartbeat, publish the one-step velocity to
+    -- the local assembly. The client owns its character, so this is the only
+    -- assembly we write.
+    local function onHeartbeat(): ()
+        if not engineActive or destroyed or stage ~= 0 then
+            return
+        end
+        local character: any, humanoid: any, root: any = livingParts(LocalPlayer)
+        if not character or not humanoid or not root then
+            return
+        end
+        local velocity: any = readVelocity(root)
+        if not velocity then
+            return
+        end
+        baselineRoot = root
+        baselineVelocity = velocity
+        writeVelocity(root,
+            velocity * VELOCITY_SCALE + Vector3.new(0, VELOCITY_LIFT, 0))
+        stage = 1
+        lastStrategy = "walkfling"
+    end
+
+    -- Frame 2: RenderStepped restores the real movement velocity.
+    local function onRenderStepped(): ()
+        if not engineActive or destroyed or stage ~= 1 then
+            return
+        end
+        if baselineRoot and baselineVelocity then
+            writeVelocity(baselineRoot, baselineVelocity)
+        end
+        stage = 2
+    end
+
+    -- Frame 3: Stepped adds IY's alternating ±0.1 drift and keeps the local
+    -- noclip alive. The server still owns collision resolution for others.
+    local function onStepped(): ()
+        if not engineActive or destroyed then
+            return
+        end
+        local character: any = LocalPlayer and LocalPlayer.Character or nil
+        if character then
+            stripCollisions(character)
+        end
+        if stage == 2 and baselineRoot and baselineVelocity then
+            writeVelocity(baselineRoot,
+                baselineVelocity + Vector3.new(0, drift, 0))
+            drift = -drift
+            stage = 0
+        elseif stage == 1 and baselineRoot and baselineVelocity then
+            -- Host skipped RenderStepped: never leave the spike behind.
+            writeVelocity(baselineRoot, baselineVelocity)
+            stage = 0
+        end
+    end
+
+    -- A host without the three RunService signals still advances one stage per
+    -- scheduler tick. Production uses the real signals above, not this path.
+    local function fallbackTick(): ()
+        if not engineActive or destroyed then
+            return
+        end
+        if stage == 0 then
+            onHeartbeat()
+        elseif stage == 1 then
+            onRenderStepped()
+        else
+            onStepped()
+        end
+    end
+
+    local heartbeatSignal: any = RunService and RunService.Heartbeat or nil
+    local renderSignal: any = RunService and RunService.RenderStepped or nil
+    local steppedSignal: any = RunService and RunService.Stepped or nil
+    connectSignal(heartbeatSignal, onHeartbeat)
+    connectSignal(renderSignal, onRenderStepped)
+    connectSignal(steppedSignal, onStepped)
+    if LocalPlayer and LocalPlayer.CharacterAdded then
+        connectSignal(LocalPlayer.CharacterAdded, function(): ()
+            rebuildParts(nil)
+        end)
+    end
+
+    local function stopEngine(): ()
+        if not engineActive then
+            return
+        end
+        engineActive = false
+        if baselineRoot and baselineVelocity and baselineRoot.Parent then
+            writeVelocity(baselineRoot, baselineVelocity)
+        end
+        stage = 0
+        drift = DRIFT
+        baselineRoot = nil
+        baselineVelocity = nil
+        lastStrategy = "idle"
+        restoreCollisions()
+        if fallbackTask then
+            pcall(function(): () fallbackTask:Disconnect() end)
+            fallbackTask = nil
+        end
+        if sessionTask then
+            pcall(function(): () sessionTask:Disconnect() end)
+            sessionTask = nil
+        end
+        setActivity()
+    end
+
+    local finishSession: (reason: string) -> ()
+    local function sessionTick(): ()
+        local session: any = currentSession
+        if not session or destroyed then
+            return
+        end
+        if clock() - session.startedAt >= session.duration then
+            finishSession("completed")
+            return
+        end
+        if type(session.shouldStop) == "function" then
+            local ok: boolean, stop: any = pcall(session.shouldStop)
+            if not ok or stop == true then
+                finishSession("cancelled")
+                return
+            end
+        end
+        local _, targetHumanoid: any, targetRoot: any = livingParts(session.target)
+        local _, humanoid: any, root: any = livingParts(LocalPlayer)
+        if not targetHumanoid or not targetRoot or not humanoid or not root
+            or humanoid ~= session.humanoid or root ~= session.root then
+            finishSession("lost-local")
+        end
+    end
+
+    local function startEngine(): ()
+        if engineActive or destroyed then
+            return
+        end
+        engineActive = true
+        stage = 0
+        drift = DRIFT
+        baselineRoot = nil
+        baselineVelocity = nil
+        local character: any = LocalPlayer and LocalPlayer.Character or nil
+        if character then
+            rebuildParts(character)
+        end
+        if not heartbeatSignal or not renderSignal or not steppedSignal then
+            if TaskManager and type(TaskManager.Connect) == "function" then
+                local ok: boolean, handle: any = pcall(function(): any
+                    return TaskManager:Connect(fallbackTick)
+                end)
+                if ok and handle then
+                    fallbackTask = handle
+                end
+            end
+        end
+        if TaskManager and type(TaskManager.Connect) == "function"
+            and not sessionTask then
+            local ok: boolean, handle: any = pcall(function(): any
+                return TaskManager:Connect(sessionTick)
+            end)
+            if ok and handle then
+                sessionTask = handle
+            end
+        end
+        setActivity()
+    end
+
+    local function maybeStopEngine(): ()
+        if not touchEnabled and not currentSession then
+            stopEngine()
+        else
+            setActivity()
+        end
+    end
+
+    -- One bounded placement, preserving the current look direction. This is
+    -- the game's own `PivotTo` mechanism, not a per-frame CFrame writer.
+    local function placeNextTo(character: any, root: any, targetRoot: any): ()
+        if not character or not root or not targetRoot
+            or type(character.PivotTo) ~= "function" then
+            return
+        end
+        local from: any = root.Position
+        local to: any = targetRoot.Position
+        local away: any = from - to
+        local length: number = math.sqrt(away.X * away.X + away.Z * away.Z)
+        if length < 0.001 then
+            away = Vector3.new(0, 0, 1)
+            length = 1
+        end
+        local contact: any = to + Vector3.new(
+            away.X / length * PLACE_DISTANCE, 0,
+            away.Z / length * PLACE_DISTANCE)
+        local look: any = Vector3.new(0, 0, -1)
+        pcall(function(): ()
+            local frame: any = root.CFrame
+            if frame and finiteVector(frame.LookVector) then
+                look = frame.LookVector
+            end
+        end)
+        local destination: any = nil
+        pcall(function(): ()
+            destination = CFrame.lookAt(contact, contact + look)
+        end)
+        if not destination then
+            destination = CFrame.new(contact)
+        end
+        pcall(function(): () character:PivotTo(destination) end)
+    end
+
+    local function setTouchEnabled(enabled: boolean): ()
+        local wanted: boolean = enabled == true
+        if touchEnabled == wanted or (destroyed and wanted) then
+            return
+        end
+        touchEnabled = wanted
+        if wanted then
+            startEngine()
+        else
+            maybeStopEngine()
+        end
+        setActivity()
+    end
+    Module.__touchBinder = function(enabled: boolean): ()
+        setTouchEnabled(enabled)
+    end
+
+    finishSession = function(reason: string): ()
         local session: any = currentSession
         if not session then
             return
         end
         currentSession = nil
-        stopPulse(false)
-        local character: Model?, humanoid: Humanoid?, root: BasePart? =
-            getParts(LocalPlayer)
+        local character: any, humanoid: any, root: any = getParts(LocalPlayer)
         if character == session.character and root == session.root and root
             and root.Parent and reason ~= "lost-local"
             and session.restorePosition ~= false and humanoid
             and humanoid.Health > 0 then
-            pcall(function(): ()
-                character:PivotTo(session.returnCFrame)
-            end)
+            pcall(function(): () character:PivotTo(session.returnCFrame) end)
         end
+        maybeStopEngine()
         setActivity()
     end
 
-    local function cancel(): ()
-        local hadSession: boolean = currentSession ~= nil
-        finishSession("cancelled")
-        if not hadSession then
-            -- A standalone Touch pulse has no session object; it still has to
-            -- be cancellable by OFF, death or an explicit card action.
-            stopPulse(false)
-        end
-    end
-
-    local function start(target: Player?, options: {[string]: any}?): boolean
+    local function start(target: any, options: any): boolean
         if destroyed or currentSession or not target or target == LocalPlayer then
             return false
         end
-        if touchEnabled then
-            -- One owner at a time: an explicit directed action wins.
-            setTouchEnabled(false)
-        end
-        local targetCharacter: Model?, targetHumanoid: Humanoid?, targetRoot: BasePart? =
+        local targetCharacter: any, targetHumanoid: any, targetRoot: any =
             livingParts(target)
-        local character: Model?, humanoid: Humanoid?, root: BasePart? =
-            livingParts(LocalPlayer)
+        local character: any, humanoid: any, root: any = livingParts(LocalPlayer)
         if not targetCharacter or not targetHumanoid or not targetRoot
             or not character or not humanoid or not root then
             return false
         end
-        local settings: any = options or {}
-        local duration: number = tonumber(settings.duration) or 1.2
+        local settings: any = type(options) == "table" and options or {}
+        local duration: number = tonumber(settings.duration) or 2.2
         if duration ~= duration or math.abs(duration) == math.huge then
-            duration = 1.2
+            duration = 2.2
         end
         duration = math.clamp(duration, 0.1, MAX_DURATION)
-        if not finiteVector(root.Position) or not finiteVector(targetRoot.Position)
-            or (targetRoot.Position - root.Position).Magnitude > 650 then
-            return false
-        end
-
+        local returnCFrame: any = if typeof(settings.returnCFrame) == "CFrame"
+            then settings.returnCFrame else root.CFrame
         local session: any = {
             target = target,
             targetCharacter = targetCharacter,
@@ -440,243 +490,29 @@ function Module.init(context: any): any
             character = character,
             humanoid = humanoid,
             root = root,
-            returnCFrame = if typeof(settings.returnCFrame) == "CFrame"
-                then settings.returnCFrame else root.CFrame,
+            returnCFrame = returnCFrame,
             restorePosition = settings.restorePosition ~= false,
             shouldStop = settings.shouldStop,
             duration = duration,
             startedAt = clock(),
         }
         currentSession = session
-
-        -- ONE placement, same mechanism MM2 itself uses for TeleportToPart
-        -- (CharacterClient.lua calls `character:PivotTo`). Not per frame.
-        if settings.place ~= false and typeof(session.returnCFrame) == "CFrame" then
-            pcall(function(): ()
-                local look: any = (root :: any).LookVector
-                local flat: Vector3 = if finiteVector(look)
-                    then Vector3.new(look.X, 0, look.Z)
-                    else Vector3.new(0, 0, -1)
-                if flat.Magnitude < 0.001 then
-                    flat = Vector3.new(0, 0, -1)
-                end
-                local contact: Vector3 = targetRoot.Position
-                    - (flat / flat.Magnitude) * PLACE_DISTANCE
-                local frame: CFrame = session.returnCFrame
-                character:PivotTo(CFrame.new(contact) * (frame - frame.Position))
-            end)
+        startEngine()
+        if settings.place ~= false then
+            placeNextTo(character, root, targetRoot)
         end
-
-        beginPulse({
-            duration = duration,
-            targetRoot = targetRoot,
-            restorePosition = session.restorePosition,
-            shouldStop = function(): boolean
-                if type(settings.shouldStop) == "function" then
-                    local ok: boolean, stop: any = pcall(settings.shouldStop)
-                    if not ok or stop == true then
-                        return true
-                    end
-                end
-                if currentSession ~= session then
-                    return true
-                end
-                local _, livingHumanoid: Humanoid?, livingRoot: BasePart? =
-                    livingParts(LocalPlayer)
-                local _, targetLivingHumanoid: Humanoid?, targetLivingRoot: BasePart? =
-                    livingParts(target)
-                return not livingHumanoid or not livingRoot
-                    or livingHumanoid ~= session.humanoid
-                    or livingRoot ~= session.root
-                    or not targetLivingHumanoid or not targetLivingRoot
-            end,
-            onFinished = function(): ()
-                if currentSession == session then
-                    finishSession("completed")
-                end
-            end,
-        })
         setActivity()
         return true
     end
 
-    local function instanceLike(value: any): boolean
-        if value == nil then
-            return false
-        end
-        local kind: string = typeof(value)
-        return kind == "Instance" or kind == "table" or kind == "userdata"
-    end
-
-    local function noteTouch(hit: BasePart): ()
-        if not touchEnabled or not hit or destroyed then
-            return
-        end
-        if currentSession or pulseActive then
-            return
-        end
-        local now: number = clock()
-        if now - lastTouchAt < TOUCH_COOLDOWN then
-            return
-        end
-        local model: any = hit.Parent
-        for _ = 1, 3 do
-            if not instanceLike(model) then
-                return
-            end
-            local okHum: boolean, humanoid: any = pcall(function(): any
-                return model:FindFirstChildOfClass("Humanoid")
-            end)
-            if okHum and humanoid then
-                break
-            end
-            model = model.Parent
-        end
-        if not instanceLike(model) then
-            return
-        end
-        local ok: boolean, player: any = pcall(function(): any
-            return Players:GetPlayerFromCharacter(model)
-        end)
-        if not ok or not player or player == LocalPlayer then
-            return
-        end
-        local _, targetHumanoid: Humanoid?, targetRoot: BasePart? = livingParts(player)
-        local character: Model?, humanoid: Humanoid?, root: BasePart? =
-            livingParts(LocalPlayer)
-        if not targetHumanoid or not targetRoot or not character
-            or not humanoid or not root then
-            return
-        end
-        if (targetRoot.Position - root.Position).Magnitude > CONTACT_RANGE then
-            return
-        end
-        lastTouchAt = now
-        beginPulse({
-            duration = TOUCH_PULSE,
-            targetRoot = targetRoot,
-            shouldStop = function(): boolean
-                return not touchEnabled or currentSession ~= nil
-            end,
-        })
-    end
-
-    local function disconnectTouch(): ()
-        for _, connection: any in ipairs(touchConnections) do
-            if type(connection) == "table" and type(connection.Disconnect) == "function" then
-                pcall(function(): () connection:Disconnect() end)
-            end
-        end
-        table.clear(touchConnections)
-        table.clear(touchBoundParts)
-    end
-
-    local function bindTouchCharacter(): ()
-        disconnectTouch()
-        if not touchEnabled then
-            return
-        end
-        local character: Model?, humanoid: Humanoid?, root: BasePart? =
-            livingParts(LocalPlayer)
-        if not character or not humanoid or not root then
-            return
-        end
-        local function bindPart(part: any): ()
-            if touchBoundParts[part] or not part.Parent then
-                return
-            end
-            if type((part :: any).Touched) == "table"
-                and type((part :: any).Touched.Connect) == "function" then
-                local ok: boolean, connection: any = pcall(function(): any
-                    return (part :: any).Touched:Connect(noteTouch)
-                end)
-                if ok and connection then
-                    touchBoundParts[part] = true
-                    table.insert(touchConnections, connection)
-                end
-            end
-        end
-        local okChildren: boolean, children: any = pcall(function(): any
-            return character:GetChildren()
-        end)
-        if okChildren and type(children) == "table" then
-            for _, object: any in ipairs(children) do
-                local okIsA: boolean, isPart: any = pcall(function(): any
-                    return object:IsA("BasePart")
-                end)
-                if okIsA and isPart then
-                    bindPart(object)
-                end
-            end
-        end
-        if type((character :: any).DescendantAdded) == "table" then
-            local okAdd: boolean, connection: any = pcall(function(): any
-                return (character :: any).DescendantAdded:Connect(function(object: any): ()
-                    if not touchEnabled then
-                        return
-                    end
-                    local okIsA: boolean, isPart: any = pcall(function(): any
-                        return object:IsA("BasePart")
-                    end)
-                    if okIsA and isPart then
-                        bindPart(object)
-                    end
-                end)
-            end)
-            if okAdd and connection then
-                table.insert(touchConnections, connection)
-            end
-        end
-        if type((humanoid :: any).Died) == "table" then
-            local okDied: boolean, connection: any = pcall(function(): any
-                return (humanoid :: any).Died:Connect(function(): ()
-                    stopPulse(false)
-                end)
-            end)
-            if okDied and connection then
-                table.insert(touchConnections, connection)
-            end
-        end
-    end
-
-    function setTouchEnabled(enabled: boolean): ()
-        local wanted: boolean = enabled == true
-        if touchEnabled == wanted or (destroyed and wanted) then
-            return
-        end
-        touchEnabled = wanted
-        if touchEnabled then
-            bindTouchCharacter()
-        else
-            disconnectTouch()
-            stopPulse(false)
-        end
-        setActivity()
-    end
-    Module.__touchBinder = function(enabled: boolean): ()
-        setTouchEnabled(enabled)
-    end
-
-    -- Re-bind after a respawn: Touch must survive a new character model.
-    local lifecycleConnection: any = nil
-    if LocalPlayer and type((LocalPlayer :: any).CharacterAdded) == "table"
-        and type((LocalPlayer :: any).CharacterAdded.Connect) == "function" then
-        pcall(function(): ()
-            lifecycleConnection =
-                (LocalPlayer :: any).CharacterAdded:Connect(function(): ()
-                    if touchEnabled then
-                        task.defer(bindTouchCharacter)
-                    end
-                end)
-        end)
-    end
-
     local library: any = {}
-    function library.start(target: Player?, options: {[string]: any}?): boolean
+    function library.start(target: any, options: any): boolean
         return start(target, options)
     end
     function library.cancel(): ()
-        cancel()
+        if currentSession then
+            finishSession("cancelled")
+        end
     end
     function library.isRunning(): boolean
         return currentSession ~= nil
@@ -688,7 +524,7 @@ function Module.init(context: any): any
         return touchEnabled
     end
     function library.isPulsing(): boolean
-        return pulseActive
+        return engineActive
     end
     function library.isSpinning(): boolean
         return false
@@ -696,20 +532,18 @@ function Module.init(context: any): any
     function library.isHeld(): boolean
         return false
     end
-    -- Diagnostics: which documented path the last impulse actually used.
     function library.lastStrategy(): string
         return lastStrategy
     end
     function library.hasOwnership(): boolean
-        return next(ownedParts) ~= nil
+        return false
     end
     function library.constants(): any
         return {
-            pulseSpeed = PULSE_SPEED,
-            pulseLift = PULSE_LIFT,
-            pulseInterval = PULSE_INTERVAL,
+            velocityScale = VELOCITY_SCALE,
+            velocityLift = VELOCITY_LIFT,
+            drift = DRIFT,
             touchPulse = TOUCH_PULSE,
-            touchCooldown = TOUCH_COOLDOWN,
             maxDuration = MAX_DURATION,
         }
     end
@@ -718,14 +552,19 @@ function Module.init(context: any): any
             return
         end
         destroyed = true
-        setTouchEnabled(false)
-        finishSession("destroyed")
-        stopPulse(false)
-        if lifecycleConnection then
-            pcall(function(): () lifecycleConnection:Disconnect() end)
-            lifecycleConnection = nil
+        touchEnabled = false
+        currentSession = nil
+        stopEngine()
+        if sessionTask then
+            pcall(function(): () sessionTask:Disconnect() end)
+            sessionTask = nil
         end
-        lastStrategy = "idle"
+        for _, connection: any in ipairs(connections) do
+            if connection and type(connection.Disconnect) == "function" then
+                pcall(function(): () connection:Disconnect() end)
+            end
+        end
+        table.clear(connections)
         setActivity()
         if activeLibrary == library then
             activeLibrary = nil

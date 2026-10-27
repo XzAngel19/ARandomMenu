@@ -1,37 +1,32 @@
--- v150 · MM2 Auto Farm, rebuilt from zero against the saved place.
+-- v151 · MM2 Auto Farm: "Below Map" by default, manual control preserved.
 --
--- What the game actually does (TestingStuff / "place, source.rbxlx", placeId
--- 142823291, place version 1447; and the 05-10-2026 .rbxl snapshot):
+-- Live feedback on v150: the farm did not move the character and, while ON,
+-- stole all user controls. Causes found in that build:
+--   * A permanent render-step binding ran after the default controls EVERY
+--     frame, even when there was no target, and wrote a zero-move command.
+--   * The old route solver produced no usable path on MM2's `GlitchProof`
+--     multi-level maps, so the actuator never received a direction.
+--   * `roundContext()` demanded a confirmed `Innocent` role; if MM2 did not
+--     publish the role early enough, the farm stayed "Waiting" forever.
 --
---   * Each pickup is a `Coin_Server` BasePart inside <map>.CoinContainer. It is
---     Anchored, CanCollide=false, CanTouch=true, 1.2 x 2 x 2 studs, carries the
---     `CoinID` attribute (e.g. "Coin") and has its own `TouchInterest`
---     (TouchTransmitter). The visible `CoinVisual` child is tagged CoinVisual.
---     After collection the server sets `Collected = true`; at round end it also
---     sets `RoundEnd` and hides it (Transparency = 1).
---   * No client remote asks for a coin. The remote spy logs contain 234
---     Incoming `CoinCollected` and 21 `CoinsStarted` events, zero outgoing
---     `GetCoin`. Collection is a SERVER `Touched` handler on those anchored,
---     server-owned parts. `firetouchinterest` from the client cannot fire that
---     server handler, so the old instant-pickup pulses could not credit coins.
---   * `CoinsStarted` carries { Coin = { CollectedAmount = 0,
---     CollectionLimit = 50 } }; `CoinCollected` carries
---     ("Coin", currentAmount, limit, { Value = 1 }). `RoundStart` carries the
---     round length and the player/role table. `RoundTimerPart.Time` counts the
---     round down and `MapID` / the CurrentMap tag identify the active map.
---   * Roblox docs: `Humanoid:Move()` is overwritten every frame by the default
---     control script unless it is bound after Character priority, while
---     `Humanoid:MoveTo()` uses WalkToPoint with an 8 s timeout. MM2 uses the
---     stock PlayerModule (ControlsEnable.lua), and the game itself teleports
---     with a single `character:PivotTo` (CharacterClient.lua).
+-- v151 removes all of those. The default mode is called `Below Map`: the
+-- character is parked under the real `Coin_Server` part, then its whole model
+-- is pivoted into the coin's physical volume from below. A bounded contact
+-- refresh keeps the root inside the server pickup while waiting for the real
+-- `CoinCollected` event. `state.fireTouchInterest` is only an optional local
+-- nudge after that physical overlap; it is NEVER counted as a coin.
 --
--- Therefore this farm only walks. It binds one native `Humanoid:Move` after the
--- default controls, follows real `Coin_Server` positions (optionally with
--- PathfindingService waypoints), overlaps the coin so the server's own Touched
--- handler can pay, and counts ONLY `CoinCollected` events as collected coins.
--- No CFrame per tick, no grown hitbox, no velocity/constraint writers, no
--- firetouchinterest as a substitute for a server touch, no terminal actions on
--- a full bag, and no property is modified that must be restored later.
+-- There is no RenderStep binding and no `Humanoid:Move` writer. `Direct` mode
+-- uses native `Humanoid:MoveTo` refreshed on the shared Heartbeat. In Below
+-- Map, WASD/jump input pauses farm placements for 1.2 s, so the user keeps
+-- manual control. OFF cancels the native MoveTo and leaves the default
+-- PlayerModule untouched. No hitbox resize, no velocity constraint, no
+-- per-frame CFrame writer, no pathfinding and no fake coin counter.
+--
+-- Place evidence remains the one recorded in docs/FIXES-v150.md:
+-- `Coin_Server` is anchored, CanTouch=true, CanCollide=false, 1.2x2x2, has a
+-- TouchInterest and pays only through the server's own Touched handler.
+-- `CoinsStarted` / `CoinCollected` are the only payment confirmations.
 
 local Module = {
     Name = "MM2 Auto Farm",
@@ -47,7 +42,6 @@ function Module.init(_runtime: any): any
     local host: any = state.frameworkEnvironment
     local workspace: any = host.workspace
     local LocalPlayer: any = host.LocalPlayer
-    local RunService: any = host.RunService
     local TaskManager: any = host.TaskManager
     local featureConnections: any = host.featureConnections
     local disconnectFeatureConnection: any = host.disconnectFeatureConnection
@@ -60,7 +54,6 @@ function Module.init(_runtime: any): any
     local gameplay: any = core.mm2GameplayRemotes
     local replicated: any = nil
     local inventory: any = nil
-    local pathfinding: any = nil
     pcall(function(): ()
         replicated = game:GetService("ReplicatedStorage")
     end)
@@ -70,52 +63,53 @@ function Module.init(_runtime: any): any
                 and replicated.Remotes:FindFirstChild("Inventory")
         end)
     end
-    pcall(function(): ()
-        pathfinding = game:GetService("PathfindingService")
-    end)
 
-    local STEP_MIN: number = 0.15
-    local STEP_MAX: number = 1
-    local CONTACT_RADIUS: number = 2.2
-    local CONTACT_VERTICAL: number = 3.2
-    local CONTACT_TIMEOUT: number = 2.5
-    local STUCK_SECONDS: number = 1.3
+    local STEP_MIN: number = 0.1
+    local STEP_MAX: number = 0.6
+    local BELOW_OFFSET: number = 4
+    local CONTACT_OFFSET: number = 0.6
+    local PARK_DWELL: number = 0.08
+    local CONTACT_REFRESH: number = 0.12
+    local CONTACT_TIMEOUT: number = 1.6
     local BLACKLIST_SECONDS: number = 8
-    local PATH_INTERVAL: number = 0.7
-    local ROAM_INTERVAL: number = 2.5
+    local DIRECT_CONTACT_RADIUS: number = 2.2
+    local DIRECT_CONTACT_VERTICAL: number = 3.2
+    local DIRECT_CONTACT_TIMEOUT: number = 2.5
+    local MANUAL_PAUSE: number = 1.2
     local FALL_MARGIN: number = 18
     local RESCUE_COOLDOWN: number = 1.5
-    local RENDER_BIND: string = "WurstMM2AutoFarm"
 
     local settings = {
-        navigation = "Pathfinding",
-        stepInterval = 0.4,
+        mode = "Below Map",
+        stepInterval = 0.18,
         jumpForHigh = true,
         roamWhenEmpty = true,
         voidRescue = true,
         stopAtFullBag = true,
+        manualOverride = true,
     }
 
     local enabled: boolean = false
     local generation: number = 0
     local signals: {any} = {}
-    local renderBound: boolean = false
-    local desiredDirection: any = nil
+    local lastStepAt: number = 0
+    local manualUntil: number = -math.huge
+    local lastMoveToTarget: any = nil
+    local lastJumpAt: number = -math.huge
+    local lastPlacedAt: number = -math.huge
+    local lastContactRefreshAt: number = -math.huge
 
+    local pickupCache: {any} = {}
+    local pickupCacheAt: number = -math.huge
     local currentVisual: any = nil
     local currentServer: any = nil
     local currentPosition: any = nil
     local currentSince: number = 0
+    local belowPhase: string = "park" -- park -> contact -> wait
+    local phaseAt: number = 0
     local contactSince: number = 0
+    local touchPulsed: boolean = false
     local blacklist: {[any]: number} = {}
-    local waypoints: {any} = {}
-    local waypointIndex: number = 1
-    local pathAt: number = -math.huge
-    local pathGeneration: number = 0
-    local lastStepAt: number = 0
-    local lastProgressAt: number = 0
-    local lastProgressPosition: any = nil
-    local lastJumpAt: number = -math.huge
     local roamAt: number = -math.huge
     local roamPosition: any = nil
     local spawns: {any} = {}
@@ -216,19 +210,27 @@ function Module.init(_runtime: any): any
     end
 
     local function invalidatePickups(): ()
+        pickupCache = {}
+        pickupCacheAt = -math.huge
         if type(state.mm2InvalidateCoinPickups) == "function" then
             pcall(state.mm2InvalidateCoinPickups)
         end
     end
 
+    local function clearTarget(): ()
+        currentVisual, currentServer, currentPosition = nil, nil, nil
+        currentSince = 0
+        belowPhase = "park"
+        phaseAt = 0
+        contactSince = 0
+        touchPulsed = false
+        lastPlacedAt = -math.huge
+        lastContactRefreshAt = -math.huge
+    end
+
     local function resetRoundMemory(): ()
         generation += 1
-        pathGeneration = generation
-        currentVisual, currentServer, currentPosition = nil, nil, nil
-        contactSince = 0
-        waypoints = {}
-        waypointIndex = 1
-        pathAt = -math.huge
+        clearTarget()
         roamPosition = nil
         spawns = {}
         spawnsAt = -math.huge
@@ -238,6 +240,8 @@ function Module.init(_runtime: any): any
         bagAmount = 0
         previousBagAmount = 0
         bagLimit = 50
+        manualUntil = -math.huge
+        lastMoveToTarget = nil
         invalidatePickups()
     end
 
@@ -274,10 +278,7 @@ function Module.init(_runtime: any): any
         if currentVisual then
             blacklist[currentVisual] = clock() + 1
         end
-        currentVisual, currentServer, currentPosition = nil, nil, nil
-        contactSince = 0
-        waypoints = {}
-        waypointIndex = 1
+        clearTarget()
         invalidatePickups()
         setStatus(string.format("Collected · bag %d/%d", bagAmount, bagLimit))
     end
@@ -324,164 +325,31 @@ function Module.init(_runtime: any): any
         return ok and found ~= nil and found.Enabled == true
     end
 
-    local function roundContext(): string
-        local character: any, humanoid: any, root: any = getCharacterParts()
-        if not character or not humanoid or not root or humanoid.Health <= 0
-            or not root.Parent then
-            return "dead"
-        end
-        if type(core.getRoundPhase) == "function"
-            and core.getRoundPhase() == "lobby" then
-            return "lobby"
-        end
-        if type(core.isRoundLifecycleActive) == "function"
-            and core.isRoundLifecycleActive() ~= true then
-            return "lobby"
-        end
-        if type(core.findMM2Map) == "function" and not core.findMM2Map() then
-            return "lobby"
-        end
-        local timer: any = workspace and type(workspace.FindFirstChild) == "function"
-            and workspace:FindFirstChild("RoundTimerPart") or nil
-        if timer and type(timer.GetAttribute) == "function" then
-            local remaining: any = timer:GetAttribute("Time")
-            if type(remaining) == "number" and remaining <= 0 then
-                return "lobby"
-            end
-        end
-        local role: any = type(core.getPlayerRole) == "function"
-            and core.getPlayerRole(LocalPlayer) or nil
-        if role ~= "Innocent" then
-            return "role"
-        end
-        local physics: any = state.flingPhysics
-        if (physics and ((type(physics.isRunning) == "function" and physics.isRunning())
-                or (type(physics.isTouchEnabled) == "function" and physics.isTouchEnabled())))
-            or active("fling") or active("teleport") or active("ghost")
-            or featureEnabled("Fly") then
-            return "busy"
-        end
-        return "active"
-    end
-
-    local function contextLabel(context: string): string
-        if context == "lobby" then
-            return "Waiting · lobby / round over"
-        elseif context == "dead" then
-            return "Waiting · no living character"
-        elseif context == "role" then
-            return "Waiting · Innocent role not confirmed"
-        elseif context == "busy" then
-            return "Paused · another physics feature owns the character"
-        end
-        return "Farming"
-    end
-
-    local function parts(): (any, any, any)
-        return getCharacterParts()
-    end
-
-    local function unbindMovement(): ()
-        if renderBound and RunService
-            and type(RunService.UnbindFromRenderStep) == "function" then
-            pcall(function(): () RunService:UnbindFromRenderStep(RENDER_BIND) end)
-        end
-        renderBound = false
-        desiredDirection = nil
-    end
-
-    local function bindMovement(): ()
-        if renderBound or not RunService
-            or type(RunService.BindToRenderStep) ~= "function" then
-            return
-        end
-        local priority: number = 201
-        pcall(function(): ()
-            local value: any = Enum.RenderPriority.Character.Value
-            if type(value) == "number" then
-                priority = value + 1
-            end
-        end)
-        local ok: boolean = pcall(function(): ()
-            RunService:BindToRenderStep(RENDER_BIND, priority, function(): ()
-                if not enabled or not desiredDirection then
-                    return
-                end
-                local character: any, humanoid: any, root: any = parts()
-                if not humanoid or not root or humanoid.Health <= 0 then
-                    return
-                end
-                pcall(function(): () humanoid:Move(desiredDirection, false) end)
-            end)
-        end)
-        if ok then
-            renderBound = true
-        end
-    end
-
-    -- Fallback actuator when BindToRenderStep is unavailable: MoveTo's 8 s
-    -- timeout is refreshed on every step tick (Roblox Humanoid docs).
-    local lastMoveToTarget: any = nil
-    local function moveToFallback(humanoid: any, position: any): ()
-        if not humanoid or type(humanoid.MoveTo) ~= "function" then
-            return
-        end
-        if lastMoveToTarget and position
-            and (position - lastMoveToTarget).Magnitude < 0.5 then
-            return
-        end
-        lastMoveToTarget = position
-        pcall(function(): () humanoid:MoveTo(position) end)
-    end
-
-    local function setDirection(humanoid: any, root: any, position: any): ()
-        if not root or not position then
-            desiredDirection = nil
-            return
-        end
-        local delta: any = position - root.Position
-        local flat: any = Vector3.new(delta.X, 0, delta.Z)
-        if flat.Magnitude < 0.12 then
-            desiredDirection = Vector3.zero
-        else
-            desiredDirection = Vector3.new(flat.X / flat.Magnitude, 0,
-                flat.Z / flat.Magnitude)
-        end
-        if not renderBound then
-            moveToFallback(humanoid, position)
-        end
-    end
-
-    local function stopMovement(): ()
-        desiredDirection = Vector3.zero
-        lastMoveToTarget = nil
-        local _, humanoid: any, root: any = parts()
-        if humanoid then
-            pcall(function(): () humanoid:Move(Vector3.zero, false) end)
-            if root then
-                moveToFallback(humanoid, root.Position)
-            end
-        end
-    end
-
     local function pickups(): {any}
+        local now: number = clock()
+        if now - pickupCacheAt < 0.3 then
+            return pickupCache
+        end
+        pickupCacheAt = now
+        local out: {any} = {}
         if type(state.mm2CoinPickups) == "function" then
             local ok: boolean, list: any = pcall(state.mm2CoinPickups)
             if ok and type(list) == "table" then
-                return list
+                out = list
             end
         end
-        -- Fallback: the game's own tag, then the exact spawn part name.
-        local out: {any} = {}
-        local collection: any = nil
-        pcall(function(): () collection = game:GetService("CollectionService") end)
-        if collection then
-            local okTagged: boolean, tagged: any = pcall(function(): any
-                return collection:GetTagged("CoinVisual")
-            end)
-            if okTagged and type(tagged) == "table" then
-                for _, object: any in ipairs(tagged) do
-                    table.insert(out, object)
+        -- Fallback: the game's own tag, then the exact server spawn part name.
+        if #out == 0 then
+            local collection: any = nil
+            pcall(function(): () collection = game:GetService("CollectionService") end)
+            if collection then
+                local okTagged: boolean, tagged: any = pcall(function(): any
+                    return collection:GetTagged("CoinVisual")
+                end)
+                if okTagged and type(tagged) == "table" then
+                    for _, object: any in ipairs(tagged) do
+                        table.insert(out, object)
+                    end
                 end
             end
         end
@@ -497,7 +365,87 @@ function Module.init(_runtime: any): any
                 end
             end
         end
+        pickupCache = out
         return out
+    end
+
+    -- No role gate: MM2 can delay or omit the local role, and that made v150
+    -- sit still. A confirmed round, map/timer or live coin event is enough.
+    local function roundContext(): string
+        local character: any, humanoid: any, root: any = getCharacterParts()
+        if not character or not humanoid or not root or humanoid.Health <= 0
+            or not root.Parent then
+            return "dead"
+        end
+        if type(core.getRoundPhase) == "function"
+            and core.getRoundPhase() == "lobby" then
+            return "lobby"
+        end
+        local explicitInactive: boolean = type(core.isRoundLifecycleActive) == "function"
+            and core.isRoundLifecycleActive() ~= true
+        local hasMap: boolean = type(core.findMM2Map) == "function"
+            and core.findMM2Map() ~= nil
+        local hasCoins: boolean = #pickups() > 0
+        if explicitInactive and not (bagActive and hasCoins) then
+            return "lobby"
+        end
+        if not hasMap and not hasCoins then
+            return "lobby"
+        end
+        local timer: any = workspace and type(workspace.FindFirstChild) == "function"
+            and workspace:FindFirstChild("RoundTimerPart") or nil
+        if timer and type(timer.GetAttribute) == "function" then
+            local remaining: any = timer:GetAttribute("Time")
+            if type(remaining) == "number" and remaining <= 0 then
+                return "lobby"
+            end
+        end
+        local physics: any = state.flingPhysics
+        if (physics and ((type(physics.isRunning) == "function" and physics.isRunning())
+                or (type(physics.isTouchEnabled) == "function" and physics.isTouchEnabled())))
+            or active("fling") or active("teleport") or active("ghost")
+            or featureEnabled("Fly") then
+            return "busy"
+        end
+        return "active"
+    end
+
+    local function contextLabel(context: string): string
+        if context == "lobby" then
+            return "Waiting · MM2 round not confirmed"
+        elseif context == "dead" then
+            return "Waiting · no living character"
+        elseif context == "busy" then
+            return "Paused · another physics feature owns the character"
+        end
+        return "Farming"
+    end
+
+    local function parts(): (any, any, any)
+        return getCharacterParts()
+    end
+
+    -- Cancels only the farm's own native autopilot. It deliberately does NOT
+    -- write Humanoid:Move(Vector3.zero): that call froze user input in v150.
+    local function releaseMovement(): ()
+        if lastMoveToTarget then
+            local _, humanoid: any, root: any = parts()
+            if humanoid and root and type(humanoid.MoveTo) == "function" then
+                pcall(function(): () humanoid:MoveTo(root.Position) end)
+            end
+        end
+        lastMoveToTarget = nil
+    end
+
+    local function moveTo(humanoid: any, position: any): ()
+        if not humanoid or not position or type(humanoid.MoveTo) ~= "function" then
+            return
+        end
+        if lastMoveToTarget and (position - lastMoveToTarget).Magnitude < 0.5 then
+            return
+        end
+        lastMoveToTarget = position
+        pcall(function(): () humanoid:MoveTo(position) end)
     end
 
     local function attribute(part: any, name: string): any
@@ -528,18 +476,28 @@ function Module.init(_runtime: any): any
         if not part or not part.Parent then
             return false
         end
-        if attribute(part, "Collected") == true
-            or attribute(part, "Delete") == true then
+        local server: any = serverPartOf(part)
+        for _, source: any in ipairs({part, server}) do
+            if attribute(source, "Collected") == true
+                or attribute(source, "Delete") == true
+                or attribute(source, "RoundEnd") == true then
+                return false
+            end
+        end
+        if part.Transparency == 1 or (server and server.Transparency == 1) then
             return false
         end
-        if part.CanTouch == false then
+        if (server and server.CanTouch == false) or part.CanTouch == false then
             return false
         end
         local expiry: number? = blacklist[part]
         if expiry and now < expiry then
             return false
         end
-        local currency: any = attribute(part, "CoinID")
+        local currency: any = attribute(server, "CoinID")
+        if currency == nil then
+            currency = attribute(part, "CoinID")
+        end
         if bagActive and bagCurrency and currency ~= nil
             and tostring(currency) ~= bagCurrency then
             return false
@@ -560,9 +518,8 @@ function Module.init(_runtime: any): any
                     local dx: number = position.X - root.Position.X
                     local dz: number = position.Z - root.Position.Z
                     local dy: number = math.abs(position.Y - root.Position.Y)
-                    if dy <= 12 then
-                        local score: number = math.sqrt(dx * dx + dz * dz)
-                            + dy * 2.5
+                    if dy <= 45 then
+                        local score: number = math.sqrt(dx * dx + dz * dz) + dy
                         if score < bestScore then
                             bestScore = score
                             bestVisual = visual
@@ -574,10 +531,7 @@ function Module.init(_runtime: any): any
             end
         end
         if not bestVisual then
-            currentVisual, currentServer, currentPosition = nil, nil, nil
-            contactSince = 0
-            waypoints = {}
-            waypointIndex = 1
+            clearTarget()
             return false
         end
         if bestVisual ~= currentVisual then
@@ -585,68 +539,14 @@ function Module.init(_runtime: any): any
             currentServer = bestServer
             currentPosition = bestPosition
             currentSince = now
+            belowPhase = "park"
+            phaseAt = now
             contactSince = 0
-            waypoints = {}
-            waypointIndex = 1
-            pathAt = -math.huge
-            lastProgressAt = now
-            lastProgressPosition = root and root.Position or nil
+            touchPulsed = false
+            lastPlacedAt = -math.huge
+            lastContactRefreshAt = -math.huge
         end
         return true
-    end
-
-    local function computePath(rootPosition: any, destination: any, now: number): ()
-        if settings.navigation ~= "Pathfinding" or not pathfinding
-            or not rootPosition or not destination then
-            return
-        end
-        if now - pathAt < PATH_INTERVAL then
-            return
-        end
-        pathAt = now
-        local myGeneration: number = generation
-        task.spawn(function(): ()
-            local okCreate: boolean, path: any = pcall(function(): any
-                return pathfinding:CreatePath({
-                    AgentRadius = 2,
-                    AgentHeight = 5,
-                    AgentCanJump = true,
-                })
-            end)
-            if not okCreate or not path or generation ~= myGeneration then
-                return
-            end
-            local okCompute: boolean = pcall(function(): ()
-                path:ComputeAsync(rootPosition, destination)
-            end)
-            if not okCompute or generation ~= myGeneration then
-                return
-            end
-            local success: any = nil
-            pcall(function(): () success = Enum.PathStatus.Success end)
-            if success ~= nil and path.Status ~= success then
-                return
-            end
-            local okPoints: boolean, points: any = pcall(function(): any
-                return path:GetWaypoints()
-            end)
-            if okPoints and type(points) == "table" and #points > 0
-                and generation == myGeneration then
-                waypoints = points
-                waypointIndex = math.min(2, #points)
-            end
-        end)
-    end
-
-    local function nextWaypoint(destination: any): any
-        if settings.navigation == "Pathfinding" and #waypoints > 0 then
-            local index: number = math.clamp(waypointIndex, 1, #waypoints)
-            local point: any = waypoints[index]
-            if point and point.Position then
-                return point.Position
-            end
-        end
-        return destination
     end
 
     local function refreshSpawns(now: number): ()
@@ -682,8 +582,11 @@ function Module.init(_runtime: any): any
         safeY = nil
     end
 
-    local voidTick = function(character: any, humanoid: any, root: any, now: number): ()
-        if not settings.voidRescue or antiVoidOwnsRescue() then
+    -- Direct mode only: an intentional farm placement below the map is not a
+    -- void fall and must not be fought by this optional rescue.
+    local function voidTick(character: any, humanoid: any, root: any, now: number): ()
+        if settings.mode == "Below Map" or not settings.voidRescue
+            or antiVoidOwnsRescue() then
             return
         end
         if lastCharacter ~= character or lastRoot ~= root then
@@ -727,6 +630,187 @@ function Module.init(_runtime: any): any
         end)
     end
 
+    local function manualControlActive(humanoid: any): boolean
+        if not settings.manualOverride then
+            return false
+        end
+        local move: any = humanoid and humanoid.MoveDirection or nil
+        if move and type(move.Magnitude) == "number" and move.Magnitude > 0.12 then
+            return true
+        end
+        return humanoid and humanoid.Jump == true
+    end
+
+    -- One whole-model placement at a coin-relative position. No root CFrame
+    -- writer, no hitbox resize and no velocity/constraint motor.
+    local function placeCharacter(character: any, root: any, position: any, now: number): boolean
+        if not character or not root or not position
+            or type(character.PivotTo) ~= "function" then
+            return false
+        end
+        local look: any = Vector3.new(0, 0, -1)
+        pcall(function(): ()
+            local frame: any = root.CFrame
+            if frame and frame.LookVector and frame.LookVector.X == frame.LookVector.X then
+                look = frame.LookVector
+            end
+        end)
+        local destination: any = nil
+        pcall(function(): ()
+            destination = CFrame.lookAt(position, position + look)
+        end)
+        if not destination then
+            destination = CFrame.new(position)
+        end
+        local ok: boolean = pcall(function(): () character:PivotTo(destination) end)
+        if not ok then
+            return false
+        end
+        pcall(function(): ()
+            root.AssemblyLinearVelocity = Vector3.zero
+            root.AssemblyAngularVelocity = Vector3.zero
+        end)
+        lastPlacedAt = now
+        return true
+    end
+
+    local function pulseTouchInterest(root: any, server: any): ()
+        if touchPulsed or not root or not server then
+            return
+        end
+        touchPulsed = true
+        local fire: any = state.fireTouchInterest
+        if type(fire) == "function" then
+            pcall(fire, root, server, 0)
+            pcall(fire, root, server, 1)
+        end
+    end
+
+    local function parkPosition(position: any): any
+        return position - Vector3.new(0, BELOW_OFFSET, 0)
+    end
+
+    local function contactPosition(position: any): any
+        return position - Vector3.new(0, CONTACT_OFFSET, 0)
+    end
+
+    local function skipTarget(now: number, reason: string): ()
+        if currentVisual then
+            blacklist[currentVisual] = now + BLACKLIST_SECONDS
+        end
+        clearTarget()
+        invalidatePickups()
+        setStatus(reason)
+    end
+
+    local function belowMapTick(character: any, humanoid: any, root: any, now: number): ()
+        -- A live contact is refreshed at 0.12 s, not every frame, so the
+        -- character stays inside Coin_Server without a CFrame-per-frame loop.
+        if belowPhase == "wait" and currentPosition and currentServer then
+            if now - lastContactRefreshAt >= CONTACT_REFRESH then
+                placeCharacter(character, root, contactPosition(currentPosition), now)
+                lastContactRefreshAt = now
+            end
+            if now - contactSince > CONTACT_TIMEOUT then
+                skipTarget(now, "Skipped pickup · server did not confirm")
+                return
+            end
+            setStatus(string.format("Below Map · collecting · %d/%d",
+                bagAmount, bagLimit))
+            return
+        end
+        if now - lastStepAt < math.clamp(settings.stepInterval, STEP_MIN, STEP_MAX) then
+            return
+        end
+        lastStepAt = now
+        if not chooseTarget(root, now) then
+            setStatus("Waiting · no collectable pickup")
+            return
+        end
+        local position: any = currentPosition
+        local server: any = currentServer
+        if not position or not server or not server.Parent then
+            skipTarget(now, "Skipped missing server pickup")
+            return
+        end
+        if belowPhase == "park" then
+            if placeCharacter(character, root, parkPosition(position), now) then
+                belowPhase = "contact"
+                phaseAt = now
+                setStatus("Below Map · moving under coin")
+            else
+                skipTarget(now, "Skipped pickup · placement failed")
+            end
+        elseif belowPhase == "contact" and now - phaseAt >= PARK_DWELL then
+            if placeCharacter(character, root, contactPosition(position), now) then
+                pulseTouchInterest(root, server)
+                belowPhase = "wait"
+                contactSince = now
+                lastContactRefreshAt = now
+                setStatus(string.format("Below Map · collecting · %d/%d",
+                    bagAmount, bagLimit))
+            else
+                skipTarget(now, "Skipped pickup · contact failed")
+            end
+        end
+    end
+
+    local function directTick(character: any, humanoid: any, root: any, now: number): ()
+        if now - lastStepAt < math.clamp(settings.stepInterval, STEP_MIN, STEP_MAX) then
+            return
+        end
+        lastStepAt = now
+        if not chooseTarget(root, now) then
+            refreshSpawns(now)
+            if settings.roamWhenEmpty and #spawns > 0 then
+                if not roamPosition or now - roamAt > 2.5 then
+                    roamAt = now
+                    roamPosition = spawns[math.random(1, #spawns)]
+                end
+                moveTo(humanoid, roamPosition)
+                setStatus("Roaming · no collectable pickup")
+            else
+                releaseMovement()
+                setStatus("Waiting · no collectable pickup")
+            end
+            return
+        end
+        roamPosition = nil
+        local position: any = currentPosition
+        local server: any = currentServer
+        if not position or not server or not server.Parent then
+            skipTarget(now, "Skipped missing server pickup")
+            return
+        end
+        local dx: number = position.X - root.Position.X
+        local dz: number = position.Z - root.Position.Z
+        local horizontal: number = math.sqrt(dx * dx + dz * dz)
+        local vertical: number = math.abs(position.Y - root.Position.Y)
+        if horizontal <= DIRECT_CONTACT_RADIUS and vertical <= DIRECT_CONTACT_VERTICAL then
+            releaseMovement()
+            if contactSince == 0 then
+                contactSince = now
+                pulseTouchInterest(root, server)
+            elseif now - contactSince > DIRECT_CONTACT_TIMEOUT then
+                skipTarget(now, "Skipped pickup · server did not confirm")
+                return
+            end
+            setStatus(string.format("Collecting · %d/%d · %s",
+                bagAmount, bagLimit, tostring(bagCurrency or "Coin")))
+            return
+        end
+        contactSince = 0
+        touchPulsed = false
+        moveTo(humanoid, position)
+        if settings.jumpForHigh and position.Y - root.Position.Y > 2.5
+            and position.Y - root.Position.Y < 8
+            and now - lastJumpAt > 0.8 then
+            lastJumpAt = now
+            pcall(function(): () humanoid.Jump = true end)
+        end
+        setStatus(string.format("Direct · walking · %d/%d", bagAmount, bagLimit))
+    end
+
     local function farmTick(deltaTime: number): ()
         if not enabled then
             return
@@ -737,134 +821,48 @@ function Module.init(_runtime: any): any
         local now: number = clock()
         local character: any, humanoid: any, root: any = parts()
         if not character or not humanoid or not root or humanoid.Health <= 0 then
-            stopMovement()
+            releaseMovement()
             setStatus("Waiting · no living character")
             refreshOverlay()
             return
         end
         voidTick(character, humanoid, root, now)
-
         local context: string = roundContext()
         if context ~= "active" then
-            stopMovement()
+            releaseMovement()
             setStatus(contextLabel(context))
             refreshOverlay()
             return
         end
         if settings.stopAtFullBag and bagAmount >= bagLimit then
-            stopMovement()
+            releaseMovement()
             setStatus(string.format("Bag full · %d/%d confirmed", bagAmount, bagLimit))
             refreshOverlay()
             return
         end
-        if now - lastStepAt < math.clamp(settings.stepInterval, STEP_MIN, STEP_MAX) then
+        -- Only Below Map checks MoveDirection: Direct's MoveTo itself produces
+        -- a MoveDirection and would otherwise look like manual input.
+        if settings.mode == "Below Map" and manualControlActive(humanoid) then
+            manualUntil = now + MANUAL_PAUSE
+            releaseMovement()
+            clearTarget()
+        end
+        if now < manualUntil then
+            setStatus("Paused · manual movement")
             refreshOverlay()
             return
         end
-        lastStepAt = now
-        bindMovement()
-
-        if not chooseTarget(root, now) then
-            currentVisual = nil
-            refreshSpawns(now)
-            if settings.roamWhenEmpty and #spawns > 0 then
-                if not roamPosition or now - roamAt > ROAM_INTERVAL then
-                    roamAt = now
-                    roamPosition = spawns[math.random(1, #spawns)]
-                end
-                setDirection(humanoid, root, roamPosition)
-                setStatus("Roaming · no collectable pickup")
-            else
-                stopMovement()
-                setStatus("Waiting · no collectable pickup")
-            end
-            refreshOverlay()
-            return
+        if settings.mode == "Below Map" then
+            belowMapTick(character, humanoid, root, now)
+        else
+            directTick(character, humanoid, root, now)
         end
-        roamPosition = nil
-
-        local position: any = currentPosition
-        local server: any = currentServer
-        if not position or not server or not server.Parent then
-            blacklist[currentVisual] = now + BLACKLIST_SECONDS
-            invalidatePickups()
-            refreshOverlay()
-            return
-        end
-
-        local dx: number = position.X - root.Position.X
-        local dz: number = position.Z - root.Position.Z
-        local horizontal: number = math.sqrt(dx * dx + dz * dz)
-        local vertical: number = math.abs(position.Y - root.Position.Y)
-
-        if horizontal <= CONTACT_RADIUS and vertical <= CONTACT_VERTICAL then
-            -- Stand inside the server pickup volume and let the game's own
-            -- Touched handler pay. No local fake touch is counted as a coin.
-            desiredDirection = Vector3.zero
-            if contactSince == 0 then
-                contactSince = now
-            elseif now - contactSince > CONTACT_TIMEOUT then
-                blacklist[currentVisual] = now + BLACKLIST_SECONDS
-                currentVisual, currentServer, currentPosition = nil, nil, nil
-                contactSince = 0
-                invalidatePickups()
-            end
-            setStatus(string.format("Collecting · %d/%d · %s",
-                bagAmount, bagLimit, tostring(bagCurrency or "Coin")))
-            refreshOverlay()
-            return
-        end
-        contactSince = 0
-
-        if now - lastProgressAt > STUCK_SECONDS then
-            local moved: number = 0
-            if lastProgressPosition then
-                local px: number = root.Position.X - lastProgressPosition.X
-                local pz: number = root.Position.Z - lastProgressPosition.Z
-                moved = math.sqrt(px * px + pz * pz)
-            end
-            if moved < 0.6 and horizontal > 3 then
-                blacklist[currentVisual] = now + BLACKLIST_SECONDS
-                currentVisual, currentServer, currentPosition = nil, nil, nil
-                waypoints = {}
-                waypointIndex = 1
-                invalidatePickups()
-                setStatus("Skipped an unreachable pickup")
-                refreshOverlay()
-                return
-            end
-            lastProgressAt = now
-            lastProgressPosition = root.Position
-        end
-
-        computePath(root.Position, position, now)
-        local waypoint: any = nextWaypoint(position)
-        if settings.navigation == "Pathfinding" and #waypoints > 0
-            and waypoint and waypoint ~= position then
-            local wx: number = waypoint.X - root.Position.X
-            local wz: number = waypoint.Z - root.Position.Z
-            if math.sqrt(wx * wx + wz * wz) < 2.2 and waypointIndex < #waypoints then
-                waypointIndex += 1
-                waypoint = nextWaypoint(position)
-            end
-        end
-        setDirection(humanoid, root, waypoint)
-
-        if settings.jumpForHigh and position.Y - root.Position.Y > 2.5
-            and position.Y - root.Position.Y < 8
-            and now - lastJumpAt > 0.8 then
-            lastJumpAt = now
-            pcall(function(): () humanoid.Jump = true end)
-        end
-        setStatus(string.format("Farming · %s · %d/%d",
-            settings.navigation, bagAmount, bagLimit))
         refreshOverlay()
     end
 
     local function release(): ()
         enabled = false
         generation += 1
-        pathGeneration = generation
         disconnectFeatureConnection("MM2AutoFarmTick")
         for _, connection: any in ipairs(signals) do
             if type(connection) == "table" and type(connection.Disconnect) == "function" then
@@ -872,11 +870,8 @@ function Module.init(_runtime: any): any
             end
         end
         table.clear(signals)
-        stopMovement()
-        unbindMovement()
-        currentVisual, currentServer, currentPosition = nil, nil, nil
-        waypoints = {}
-        waypointIndex = 1
+        releaseMovement()
+        clearTarget()
         table.clear(blacklist)
         forgetSafe()
         setStatus(nil)
@@ -890,12 +885,9 @@ function Module.init(_runtime: any): any
             enabled = true
             generation += 1
             lastStepAt = 0
-            lastProgressAt = clock()
-            lastProgressPosition = nil
-            -- Only one owner of the frame tick, whatever the saved state was.
+            manualUntil = -math.huge
             disconnectFeatureConnection("MM2AutoFarmTick")
             featureConnections.MM2AutoFarmTick = TaskManager:Connect(farmTick)
-            bindMovement()
             setStatus("Starting · waiting for round context")
             farmTick(1 / 60)
         else
@@ -905,7 +897,7 @@ function Module.init(_runtime: any): any
 
     local AutoFarmFeature: any = host.createUniversalFeature(
         "Auto Farm",
-        "Physically walks to real Coin_Server pickups and counts only server-confirmed coins",
+        "Below Map: physically overlaps real Coin_Server pickups from below",
         6,
         toggleAutoFarm,
         {
@@ -927,43 +919,50 @@ function Module.init(_runtime: any): any
         stateStat = state.addStatOption(AutoFarmFeature, "State", "Idle")
     end
 
-    host.addCycleOption(AutoFarmFeature, "Navigation",
-        {"Pathfinding", "Direct"}, 1,
+    host.addCycleOption(AutoFarmFeature, "Farm mode",
+        {"Below Map", "Direct"}, 1,
         function(value: string): ()
-            settings.navigation = value
-            waypoints = {}
-            waypointIndex = 1
-            pathAt = -math.huge
+            settings.mode = if value == "Direct" then "Direct" else "Below Map"
+            clearTarget()
+            lastStepAt = -math.huge
+            releaseMovement()
         end,
-        "Pathfinding follows real navigation waypoints; Direct walks straight to the pickup.")
-    host.addNumberOption(AutoFarmFeature, "Step interval", 0.4, 0.15, 1,
+        "Below Map parks under a coin and rises into its real server volume. Direct walks with Humanoid:MoveTo. The old route solver is gone.")
+    host.addNumberOption(AutoFarmFeature, "Step interval", 0.18, STEP_MIN, STEP_MAX,
         function(value: number): ()
-            settings.stepInterval = math.clamp(tonumber(value) or 0.4,
+            settings.stepInterval = math.clamp(tonumber(value) or 0.18,
                 STEP_MIN, STEP_MAX)
         end,
-        "How often the farm re-evaluates its target and refreshes MoveTo.", 0.05)
+        "Seconds between farm decisions. Contact refresh has its own 0.12 s bound.", 0.02)
+    host.addToggleOption(AutoFarmFeature, "Manual override", true,
+        function(value: boolean): () settings.manualOverride = value == true end,
+        "WASD or jump pauses Below Map placements for 1.2 s so you keep control.")
     host.addToggleOption(AutoFarmFeature, "Jump for high pickups", true,
         function(value: boolean): () settings.jumpForHigh = value == true end,
-        "Uses the native Humanoid.Jump for pickups a few studs above the floor.")
+        "Direct mode only: uses the native Humanoid.Jump for pickups above the floor.")
     host.addToggleOption(AutoFarmFeature, "Roam when empty", true,
         function(value: boolean): () settings.roamWhenEmpty = value == true end,
-        "Walks to a real map spawn while no collectable pickup exists.")
+        "Direct mode only: walks to a real map spawn while no pickup exists.")
     host.addToggleOption(AutoFarmFeature, "Void rescue", true,
         function(value: boolean): () settings.voidRescue = value == true end,
-        "One bounded teleport back to the last grounded position during a fall. Yields to the Anti Void card.")
+        "Direct mode only: one bounded teleport back to the last grounded position. Disabled while Below Map is selected.")
     host.addToggleOption(AutoFarmFeature, "Stop at full bag", true,
         function(value: boolean): () settings.stopAtFullBag = value == true end,
         "Stops walking when CoinCollected reports the server's collection limit.")
     host.addInformationOption(AutoFarmFeature,
-        "MM2 credits coins from a server Touched event on Coin_Server. The farm "
-            .. "walks into that volume; a local firetouchinterest is not a "
-            .. "confirmed coin. Only Innocent, active rounds, living character.")
+        "Below Map uses real Coin_Server positions and physically overlaps the "
+            .. "server pickup from below; only CoinCollected increments Coins "
+            .. "Collected. No route solver, no render-step lock and no grown hitbox.")
 
     -- Read-only state for offline suites and the debug surfaces.
     state.mm2AutoFarmSnapshot = function(): any
         return {
             enabled = enabled,
-            navigation = settings.navigation,
+            mode = settings.mode,
+            navigation = settings.mode,
+            belowMap = settings.mode == "Below Map",
+            manualOverride = settings.manualOverride,
+            manualPause = math.max(0, manualUntil - clock()),
             coinsConfirmed = coinsConfirmed,
             bagAmount = bagAmount,
             bagLimit = bagLimit,
@@ -973,6 +972,7 @@ function Module.init(_runtime: any): any
             status = lastStatus,
             persistentCoins = persistentCoins,
             targetName = currentServer and tostring(currentServer.Name) or nil,
+            belowPhase = belowPhase,
         }
     end
 

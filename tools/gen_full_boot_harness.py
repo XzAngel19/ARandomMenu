@@ -856,9 +856,10 @@ do
     local autoFarm = findFeature("Auto Farm")
     assert(autoFarm and autoFarm.options:FindFirstChild("Option_CoinsCollected"), "Auto Farm must expose Coins Collected overlay")
     assert(autoFarm.options:FindFirstChild("Option_Time"), "Auto Farm must expose Time overlay")
-    -- v150: the old "stay under the map" / "safe zone" hacks are gone. The
-    -- rebuilt farm walks to real Coin_Server parts and exposes navigation.
-    assert(autoFarm.options:FindFirstChild("Option_Navigation"), "Auto Farm must expose Navigation")
+    -- v151: the old route solver and render-step movement lock are gone. The
+    -- default Farm mode is Below Map and manual control has its own switch.
+    assert(autoFarm.options:FindFirstChild("Option_Farmmode"), "Auto Farm must expose Farm mode")
+    assert(autoFarm.options:FindFirstChild("Option_Manualoverride"), "Auto Farm must expose Manual override")
     assert(autoFarm.options:FindFirstChild("Option_Stepinterval"), "Auto Farm must expose Step interval")
     assert(autoFarm.options:FindFirstChild("Option_Voidrescue"), "Auto Farm must expose Void rescue")
     local knifeThrow = findFeature("Knife Throw")

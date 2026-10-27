@@ -1,8 +1,10 @@
--- v150 · Universal Touch Fling card, rebuilt from zero.
+-- v151 · Universal Touch Fling: continuous Infinite Yield `walkfling`.
 --
--- The card is only a switch. Contact detection and the bounded impulse live in
--- src/libraries/Fling.lua. It is session-only (restore = false): injecting with
--- an old config must never arm a physics action.
+-- The card is only a switch. The three-signal velocity engine and its local
+-- noclip live in src/libraries/Fling.lua. There is no Touched-listener fan-out:
+-- IY's mechanism works by walking into another character while the local root
+-- publishes one high-velocity physics window per frame. Session-only
+-- (restore = false): injecting with an old config must never arm the engine.
 
 export type Runtime = {
     framework: any,
@@ -25,9 +27,9 @@ function Module.init(context: Runtime): any
     local createUniversalFeature: any = host.createUniversalFeature
     local addFeatureTooltip: any = host.addFeatureTooltip
     local physics: any = state.flingPhysics
-    assert(physics, "Touch Fling requires the shared contact library")
+    assert(physics, "Touch Fling requires the shared walkfling library")
     assert(type(physics.setTouchEnabled) == "function",
-        "Touch Fling requires the contact entry point of the shared library")
+        "Touch Fling requires the continuous engine entry point")
 
     local touchFlingActive: boolean = false
     local TouchFlingFeature: any = nil
@@ -37,26 +39,25 @@ function Module.init(context: Runtime): any
         touchFlingActive = wanted
         physics.setTouchEnabled(wanted)
         if TouchFlingFeature then
-            TouchFlingFeature:SetStatus(if wanted then "ON" else nil)
+            TouchFlingFeature:SetStatus(if wanted then "WALKFLING ON" else nil)
         end
     end
 
     TouchFlingFeature = createUniversalFeature(
         "Touch Fling",
-        "Walk normally: a bounded physics impulse is delivered on contact",
+        "Continuous IY walkfling: walk into players to fling them",
         14,
         toggleTouchFling,
         {noOptions = true, categoryName = "Exploits", restore = false}
     )
     addFeatureTooltip(
         TouchFlingFeature,
-        "On contact with another living character the shared library applies a "
-            .. "finite impulse (190 studs/s) to an assembly it can steer: the "
-            .. "target's root when network ownership is confirmed, otherwise "
-            .. "your own root so the character-to-character contact transfers "
-            .. "momentum. No spin, no constraints, no CFrame loop and no "
-            .. "velocity left behind when it stops. OFF and respawn release "
-            .. "every listener and any acquired ownership."
+        "Runs Infinite Yield's real walkfling on your OWN root: every physics "
+            .. "frame publishes vel * 10000 + 10000Y, restores it on "
+            .. "RenderStepped, and alternates ±0.1Y on Stepped. Local "
+            .. "character collisions are disabled while ON and restored on "
+            .. "OFF. No spinning, no target writes, no constraints and no "
+            .. "per-frame CFrame. Keep it OFF when you are not flinging."
     )
 
     if state then

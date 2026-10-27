@@ -1,10 +1,10 @@
--- v150 · MM2 Fling card, rebuilt from zero around the shared contact library.
+-- v151 · MM2 Fling card, rebuilt around Infinite Yield's real walkfling.
 --
 -- The card owns only three things: MM2 round/target validity, the live player
 -- roster (with roles from RoundStart/PlayerDataChanged and from the knife/gun
 -- actually held), and the user's intents. All physics lives in
--- src/libraries/Fling.lua. There is no second motor, no CFrame loop and no
--- velocity writer in this file.
+-- src/libraries/Fling.lua: one shared three-signal velocity engine. There is
+-- no second motor, no CFrame loop and no velocity writer in this file.
 
 local Module = {
     Name = "MM2 Fling",
@@ -104,18 +104,20 @@ function Module.init(_runtime: any): any
             end
             return false
         end
-        if physics.isRunning() or physics.isTouchEnabled() then
+        -- Touch Fling is the same engine running continuously, not a second
+        -- owner: a directed action may still place and pulse a chosen target.
+        if physics.isRunning() then
             if not silent then
-                notify("A fling is already running.")
+                notify("A directed fling is already running.")
             end
             return false
         end
         local externalStop: any = type(options) == "table"
             and options.shouldStop or nil
         local duration: number = if type(options) == "table"
-            then tonumber(options.duration) or 1.2 else 1.2
+            then tonumber(options.duration) or 2.2 else 2.2
         if duration ~= duration or math.abs(duration) == math.huge then
-            duration = 1.2
+            duration = 2.2
         end
         local started: boolean = physics.start(targetPlayer, {
             duration = math.clamp(duration, 0.1, 2.5),
@@ -351,22 +353,21 @@ function Module.init(_runtime: any): any
                     disconnectFeatureConnection("MM2FlingQueue")
                     return
                 end
-                if physics.isRunning() or physics.isTouchEnabled()
-                    or os.clock() - lastQueuedAt < 0.15
+                if physics.isRunning() or os.clock() - lastQueuedAt < 0.15
                     or not roundIsActive() or not localIsAlive() then
                     return
                 end
                 local nextTarget: Player? = table.remove(queue, 1)
                 if nextTarget and targetIsValid(nextTarget) then
                     lastQueuedAt = os.clock()
-                    performFling(nextTarget, {silent = true, duration = 0.9})
+                    performFling(nextTarget, {silent = true, duration = 1.4})
                 end
             end)
         end
     end)
 
     local function autoFlingTick(): ()
-        if not autoFlingSelected or physics.isRunning() or physics.isTouchEnabled()
+        if not autoFlingSelected or physics.isRunning()
             or os.clock() - lastAutoFlingAt < 0.45
             or not roundIsActive() or not localIsAlive() then
             return
@@ -378,7 +379,7 @@ function Module.init(_runtime: any): any
         lastAutoFlingAt = os.clock()
         performFling(target, {
             silent = true,
-            duration = 1.2,
+            duration = 2.2,
             shouldStop = function(): boolean
                 return not autoFlingSelected
             end,
@@ -496,7 +497,8 @@ function Module.init(_runtime: any): any
     addInformationOption(
         FlingFeature,
         "Active rounds only. Death, round end, target loss or OFF cancels the session. "
-            .. "Impulses are finite and bounded; no spin and no per-frame teleport."
+            .. "Uses IY's real walkfling velocity sequence on your own root for a bounded time; "
+            .. "no spin and no per-frame teleport."
     )
 
     activeCleanup = function(): ()

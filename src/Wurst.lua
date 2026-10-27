@@ -261,7 +261,7 @@ local RUNTIME_RAW_BASE: string =
         .. RUNTIME_BRANCH
         .. "/"
 
-local SOURCE_STAMP: string = "v150-20261027-mm2-place-evidence-rebuild"
+local SOURCE_STAMP: string = "v151-20261027-walkfling-below-map-manual-control"
 -- What the menu shows. It is derived from the stamp, never a hardcoded label:
 -- a build cannot display a version it is not.
 local BUILD_LABEL: string = string.match(SOURCE_STAMP, "^v%d+") or SOURCE_STAMP

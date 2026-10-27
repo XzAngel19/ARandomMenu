@@ -5,19 +5,53 @@
 > contradice lo que crees, gana este documento (y los datos de calibración).
 >
 > **Estado al escribir esto:** rama canónica `arena/2ec6eed9-arandommenu`,
-> build **`v150-20261027-mm2-place-evidence-rebuild`**.
+> build **`v151-20261027-walkfling-below-map-manual-control`**.
 >
-> **v150 reconstruyó TODO el código de Fling, Anti fling, Anti Void, Touch
-> Fling y MM2 Auto Farm** leyendo el `place` de TestingStuff. Las secciones
-> v144–v149 de este documento son historia: describen implementaciones que ya
-> no existen. La bitácora vigente es `docs/FIXES-v150.md`.
+> **v151 corrige el fallo en vivo reportado sobre v150**: Fling/Touch Fling
+> vuelven al `walkfling` real de Infinite Yield y MM2 Auto Farm cambia
+> Pathfinding + render-step por el modo **Below Map** sin robar el control
+> manual. La bitácora vigente es `docs/FIXES-v151.md`; la lectura del `place`
+> y la evidencia de monedas siguen en `docs/FIXES-v150.md`. Las secciones
+> v144–v150 son historia para esos tres módulos; Anti Void/Anti fling siguen
+> siendo los de v150.
 > El usuario se comunica en español; respóndele en español.
 
 ---
 
-## 0. Estado operativo actual — v150 (reconstrucción con evidencia del place)
+## 0. Estado operativo actual — v151 (walkfling real y Below Map)
 
-### 0.-1 Lo más reciente: v150 — borrado y reconstrucción total
+### 0.-1 Lo más reciente: v151 — corrección del reporte en vivo
+
+Detalle completo en `docs/FIXES-v151.md`. Resumen:
+
+- **Fling / Touch Fling**: se clonó el repositorio oficial
+  `EdgeIY/infiniteyield` (`febace97`, comando `walkfling`) y se reproducen sus
+  constantes y orden reales: `vel * 10000 + 10000Y` en `Heartbeat`, restauración
+  en `RenderStepped`, deriva alterna `±0.1Y` en `Stepped` y noclip local
+  temporal. v149 usaba `1e6` sin alternancia; v150 usaba `ApplyImpulse` de 190
+  y el servidor no aceptaba el knockback. Un solo motor atiende Touch continuo
+  y sesiones dirigidas; OFF/devolución restauran velocidad y colisiones.
+- **Auto Farm**: se eliminaron `PathfindingService`, los waypoints y el
+  `BindToRenderStep` que escribía `Humanoid:Move(Vector3.zero)` cada frame.
+  El selector ya no es `Navigation/Pathfinding`: es **`Farm mode`** con
+  **`Below Map`** por defecto y `Direct`. Below Map aparca bajo cada
+  `Coin_Server` real y coloca el modelo dentro de su volumen físico; refresca
+  ese contacto como máximo cada 0.12 s y solo `CoinCollected` cuenta monedas.
+- **Control manual**: WASD o salto pausan las colocaciones de Below Map 1.2 s.
+  Ya no existe un writer de render que bloquee al `PlayerModule`. OFF cancela
+  únicamente un `MoveTo` propio, sin escribir `Move(zero)`.
+- **Guards**: se quitó la exigencia de rol `Innocent`; MM2 podía no publicarlo
+  y el farm se quedaba inmóvil. Se conservan fase/ronda/mapa/timer con fallback
+  a monedas reales, y cesión a Fling/Teleport/Ghost/Fly.
+- Se reescribieron `test_fling_physics.py`, `test_mm2_auto_farm.py` y
+  `test_mm2_auto_farm_dynamics.py`; se actualizaron `test_action_latency.py` y
+  el full-boot harness. `validate.sh` verde: 66 suites, boot `failures=0`,
+  102 call sites, menú 50/49.
+- **Aceptación live pendiente**: knockback aceptado, cobro real desde Below
+  Map, compatibilidad con `GlitchProof` en todos los mapas, detección de input
+  y A/B de FPS. No afirmar ninguno.
+
+### 0.-2 Anterior: v150 — borrado y reconstrucción total (historia para estos módulos)
 
 Detalle completo en `docs/FIXES-v150.md`. Resumen:
 
@@ -47,7 +81,7 @@ Detalle completo en `docs/FIXES-v150.md`. Resumen:
   `CharacterClient.lua` del juego). **Anti fling** amortigua el root local y
   quita colisiones del flinger cercano una vez por ventana de 0.45 s.
 - Se reescribieron 4 suites y se actualizaron 2 contratos más. `validate.sh`
-  verde: 66 suites, boot `failures=0`, 103 call sites, menú 50/49.
+  verde: 66 suites, boot `failures=0`, 102 call sites, menú 50/49.
 - **Aceptación live pendiente**: knockback aceptado, cobro real de monedas,
   movimiento con `BindToRenderStep` en MM2 y A/B de FPS. No afirmar ninguno.
 
@@ -192,18 +226,18 @@ se entrega ahora.
 
 | Elemento | Estado actual documentado |
 | --- | --- |
-| Fecha local de esta actualización | `2026-10-27` (v150) |
+| Fecha local de esta actualización | `2026-10-27` (v151) |
 | Repositorio | `XzAngel19/ARandomMenu` |
 | Rama activa y única para esta sesión | `arena/2ec6eed9-arandommenu` |
 | `CANONICAL_BRANCH` (única del repo) | `arena/2ec6eed9-arandommenu` |
-| `SOURCE_STAMP` | `v150-20261027-mm2-place-evidence-rebuild` |
-| `BUILD_LABEL` visible | `v150` (derivado del stamp) |
+| `SOURCE_STAMP` | `v151-20261027-walkfling-below-map-manual-control` |
+| `BUILD_LABEL` visible | `v151` (derivado del stamp) |
 | Bundle | `src/libraries/bundle.lua`, mismo stamp, **84 archivos** |
 | Identidad de caché | `Wurst/.stamp` + `Wurst/.branch` + `Wurst/.layout` |
 | Loader de `README.md` | Apunta a `refs/heads/arena/2ec6eed9-arandommenu/src/Wurst.lua` |
 | Toolchain | Luau `0.739.0`, vendored en `tools/luau/vendor` |
-| Validación final de v150 | 84 fuentes en bundle, 66 suites, boot `failures=0`, 103 call sites, menú 50/49 |
-| Aceptación live de v150 | **Pendiente: knockback, cobro de monedas, navegación y FPS. Ver §5 de `docs/FIXES-v150.md`.** |
+| Validación final de v151 | 84 fuentes en bundle, 66 suites, boot `failures=0`, 102 call sites, menú 50/49 |
+| Aceptación live de v151 | **Pendiente: knockback, cobro Below Map, `GlitchProof`, input y FPS. Ver §5 de `docs/FIXES-v151.md`.** |
 
 - El commit `5b4ad20` se publicó con push normal y el remoto coincidió con
   `5b4ad20672d9501ca06ecce14380b91e9cf6d459`. Esta actualización de `RESUME.md`
@@ -637,13 +671,15 @@ Notas críticas:
 
 1. Leer esta sección y ejecutar `git status --short --branch`, `git log -3` y
    `git ls-remote` si hay cualquier duda de alineación.
-2. Confirmar que el runtime que investiga tiene stamp **v150**; no mezclar
-   logs o fixtures de v141–v149 con conclusiones de v150. Para estos cinco
-   módulos, la fuente de verdad es `docs/FIXES-v150.md` más el código actual.
+2. Confirmar que el runtime que investiga tiene stamp **v151**; no mezclar
+   logs o fixtures de v141–v150 con conclusiones de v151. Para Fling/Touch
+   Fling/Auto Farm, la fuente de verdad es `docs/FIXES-v151.md` más el código
+   actual; Anti Void/Anti fling siguen en `docs/FIXES-v150.md`.
 3. Si el usuario reporta Touch/lag/monedas, pedir la secuencia exacta y evidencia
-   live de §0.8. No volver automáticamente a pulsos grandes, CFrames por tick,
-   ownership requests, `ChangeState(Physics)`, giros locales ni writers
-   paralelos: v144 los retiró por una razón medida en el código.
+   live de §0.8. No volver a giros locales, constraints paralelos, CFrames por
+   frame, ownership requests ni writers de render que roben el control. El
+   `walkfling` real de v151 es la excepción documentada: ventana de velocidad
+   alta de IY en tres señales, sobre el root propio y con noclip restaurado.
 4. Revisar ownership y orden antes de tocar magnitudes. Si la pista es
    `activity("fling")`, construir primero una prueba que distinga listener idle
    de posesión durante contacto.
@@ -713,8 +749,8 @@ implementaciones ni como sustituto de una sesión live:
   1. Edita en `src/…`, nunca directamente en `src/libraries/bundle.lua`.
   2. Sube `SOURCE_STAMP` en `src/Wurst.lua` (`vNNN-AAAAMMDD-descripcion`).
   3. `python3 tools/build_bundle.py --stamp <el mismo stamp>`
-  4. `bash tools/validate.sh` — debe terminar VERDE. En v150 son 84 fuentes en el bundle,
-     66 suites, boot `failures=0`, auditoría de menú 50/49 tarjetas y 103 call
+  4. `bash tools/validate.sh` — debe terminar VERDE. En v151 son 84 fuentes en el bundle,
+     66 suites, boot `failures=0`, auditoría de menú 50/49 tarjetas y 102 call
      sites; si el inventario cambia, actualiza también los contratos.
   5. Commit + push **normales** a `arena/2ec6eed9-arandommenu`. Sin force-push,
      sin reescribir historia, sin trabajar en otra rama.
@@ -1653,11 +1689,11 @@ la implementación actual:
   documentales no requieren stamp, pero sí actualizar este handoff con precisión.
 
 ---
-*Última actualización: 2026-10-27 · runtime **v150**, reconstrucción total de
-Fling, Anti fling, Anti Void, Touch Fling y MM2 Auto Farm a partir del `place`
-de MM2 en TestingStuff. La bitácora vigente, la evidencia y la lista de
-comprobaciones pendientes en vivo están en `docs/FIXES-v150.md`. Todo lo que
-este handoff dice sobre v141–v149 para esos cinco módulos es historia: ganan
-siempre el código actual y `docs/FIXES-v150.md`. Al publicar una versión nueva
-o recibir aceptación live, actualiza la línea de estado y las secciones
-afectadas.*
+*Última actualización: 2026-10-27 · runtime **v151**, corrección en vivo de
+Fling/Touch Fling con el `walkfling` real de Infinite Yield y de MM2 Auto Farm
+con el modo **Below Map** sin bloquear el control manual. La bitácora vigente y
+la lista de comprobaciones pendientes en vivo están en `docs/FIXES-v151.md`; la
+evidencia del place permanece en `docs/FIXES-v150.md`. Todo lo que este handoff
+dice sobre v141–v150 para esos tres módulos es historia: ganan siempre el
+código actual y `docs/FIXES-v151.md`. Al publicar una versión nueva o recibir
+aceptación live, actualiza la línea de estado y las secciones afectadas.*

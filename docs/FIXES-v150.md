@@ -1,5 +1,10 @@
 # v150 — reconstrucción total de Fling / Anti fling / Anti Void / Touch Fling / Auto Farm
 
+> **Nota v151:** este documento conserva la evidencia del `place` y el estado
+> vigente de Anti Void/Anti fling, pero los mecanismos de Fling, Touch Fling y
+> MM2 Auto Farm descritos más abajo fueron reemplazados tras el reporte en vivo
+> del usuario. La implementación vigente está en `docs/FIXES-v151.md`.
+
 Rama: `arena/2ec6eed9-arandommenu`
 Stamp: `v150-20261027-mm2-place-evidence-rebuild`
 Build visible en el menú: **v150**
