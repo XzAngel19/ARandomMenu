@@ -1,7 +1,7 @@
 local RUNTIME_COMPATIBILITY_MARKER: string =
     "Initialization error — check executor console"
 local RUNTIME_SAFETY_SOURCE_URL: string =
-    "https://raw.githubusercontent.com/XzAngel19/ARandomMenu/refs/heads/arena/2fb9a46a-arandommenu/src/Wurst.lua"
+    "https://raw.githubusercontent.com/XzAngel19/ARandomMenu/refs/heads/arena/83897e25-arandommenu/src/Wurst.lua"
 
 local DEFAULT_FEATURE_CATEGORY: string = "Utilities"
 
@@ -197,7 +197,7 @@ local function computeLayoutMetrics(
     }
 end
 
-local RUNTIME_BRANCH: string = "arena/2fb9a46a-arandommenu"
+local RUNTIME_BRANCH: string = "arena/83897e25-arandommenu"
 do
     local override: any = nil
     local okGenv, genv = pcall(function()
@@ -222,7 +222,7 @@ local RUNTIME_RAW_BASE: string =
         .. RUNTIME_BRANCH
         .. "/"
 
-local SOURCE_STAMP: string = "v143-20261026-boot-restore-lifecycle"
+local SOURCE_STAMP: string = "v144-20261027-touch-momentum-farm-collect"
 
 local BOOT_STARTED_AT: number = os.clock()
 local BOOT_FINGERPRINT_SECONDS: number = 0
@@ -1089,6 +1089,32 @@ if type(configData.ui.toggleKey) == "string" then
     end)
 end
 
+-- firetouchinterest is an executor global that is not always present when the
+-- script starts, and some executors only expose it after the first frame.
+-- Reading it once at boot silently disabled every instant pickup -- coins,
+-- dropped gun, knife contacts -- so it is resolved at call time instead.
+local cachedTouchInterest: any = nil
+local function resolveTouchInterest(): any
+    if type(cachedTouchInterest) == "function" then
+        return cachedTouchInterest
+    end
+    local ok: boolean, env: any = pcall(getfenv)
+    if ok and type(env) == "table" then
+        for _, name: string in ipairs({
+            "firetouchinterest",
+            "FireTouchInterest",
+            "fireTouchInterest",
+        }) do
+            local candidate: any = env[name]
+            if type(candidate) == "function" then
+                cachedTouchInterest = candidate
+                return candidate
+            end
+        end
+    end
+    return nil
+end
+
 local state: any = {
 
     -- Dev surfaces (MM2 calibration capture) ask for this before they build
@@ -1107,7 +1133,20 @@ local state: any = {
     hookMetamethod = (getfenv() :: any).hookmetamethod,
     getNamecallMethod = (getfenv() :: any).getnamecallmethod,
     newCClosure = (getfenv() :: any).newcclosure,
-    fireTouchInterest = (getfenv() :: any).firetouchinterest,
+    resolveTouchInterest = resolveTouchInterest,
+    -- Stable entry point: the executor function is looked up on every call so
+    -- a late-arriving firetouchinterest still works. Returns the executor's
+    -- result, or nothing when the executor does not provide it.
+    fireTouchInterest = function(a: any, b: any, c: any): any
+        local fn: any = resolveTouchInterest()
+        if type(fn) ~= "function" then
+            return nil
+        end
+        return fn(a, b, c)
+    end,
+    hasTouchInterest = function(): boolean
+        return type(resolveTouchInterest()) == "function"
+    end,
     requireModule = require,
     uiConnections = {} :: {RBXScriptConnection},
     styledButtons = {} :: {TextButton},

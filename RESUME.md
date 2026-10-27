@@ -4,16 +4,35 @@
 > reglas del usuario, y los errores que ya se pagaron una vez. Si algo aquí
 > contradice lo que crees, gana este documento (y los datos de calibración).
 >
-> **Estado al escribir esto:** rama `arena/2fb9a46a-arandommenu`, build
-> **`v143-20261026-boot-restore-lifecycle`**.
+> **Estado al escribir esto:** rama `arena/83897e25-arandommenu`, build
+> **`v144-20261027-touch-momentum-farm-collect`**.
 > El usuario se comunica en español. Respóndele en español.
 
 ---
 
-## 0. Estado operativo actual — v143, Fling/Auto Farm y lifecycle de Wurst
+## 0. Estado operativo actual — v144, Touch Fling y cobro de Auto Farm
+
+### 0.0 Lo más reciente: v144 (leer antes que 0.1–0.13)
+
+v144 existe porque el usuario reportó, sobre v143: **Below/Under no funciona
+correctamente**, **faltan checks coherentes de lobby/muerte**, **no agarra
+monedas** y **Touch Fling hace un movimiento circular en vez de lanzar al
+tocado**, más CPU alta en MM2. Detalle completo en `docs/FIXES-v144.md`.
+
+| Reporte | Causa encontrada en el código | Cambio v144 |
+| --- | --- | --- |
+| Touch Fling gira en círculos | El contacto escribía sobre el avatar local: `ChangeState(Physics)`, `AutoRotate=false`, `CanCollide` en todo el cuerpo y `AssemblyAngularVelocity=(0,120,0)` repetido cada `1/30 s` | El pulso acotado va al **assembly del tocado** (`200`+`60`, giro `25` en Y). Del local solo un paso de física horizontal sin giro, restaurado en `Heartbeat` |
+| Touch no lanza a nadie | Nada empujaba al objetivo | `pulseTarget` sobre el root tocado, con cooldown `1/20 s` por objetivo |
+| Below no cobra | El hitbox `4×8×4` es **local**; el servidor no ve ese solape y un `firetouchinterest` local no garantiza cobro | Colocación física acotada dentro del volumen del pickup (máx. 2 intentos por moneda, `0.35 s` de separación) y luego blacklist |
+| «No agarra monedas» | `state.fireTouchInterest` se leía una sola vez en el boot; si el executor no lo tenía en ese instante, toda recogida instantánea moría en silencio | Resolución **en cada llamada** con caché en cuanto aparece (`resolveTouchInterest`) |
+| Faltan checks de lobby/muerte | Tres caminos distintos (`isCharacterInActiveRound`, escaneos de lobby con caché parcial, reset de memoria solo en la transición) | Un único `roundContext(root)` → `"active"`/`"lobby"`/`"dead"`; la memoria de ronda se limpia **siempre** fuera de ronda |
+| CPU alta | Dos writers por frame en Auto Farm, scan completo de `workspace` cada `0.5 s` desde el provider de pickups, overlay reescrito cada frame | Un solo writer según el modo, scan del provider ≤ 1/s con invalidación explícita, overlay solo si el texto cambia |
+
+Sigue **sin** aceptación live: nada de esto demuestra que el servidor acepte el
+knockback, que las monedas se cobren ni que los FPS suban. Ver §0.8.
 
 Esta sección es la actualización más reciente. Cuando una cifra o una descripción
-histórica de otra sección difiera de ésta, usa el estado v143 y comprueba el
+histórica de otra sección difiera de ésta, usa el estado v144 y comprueba el
 archivo actual antes de editar. Las decisiones de diseño anteriores siguen
 siendo útiles, pero una versión vieja citada en un ejemplo no es el runtime que
 se entrega ahora.
@@ -22,17 +41,16 @@ se entrega ahora.
 
 | Elemento | Estado actual documentado |
 | --- | --- |
-| Fecha local de esta actualización | `2026-10-26` |
+| Fecha local de esta actualización | `2026-10-27` |
 | Repositorio | `XzAngel19/ARandomMenu` |
-| Rama activa y única para esta sesión | `arena/2fb9a46a-arandommenu` |
-| Commit de runtime v143 | `5b4ad20672d9501ca06ecce14380b91e9cf6d459` |
-| Padre inmediato del runtime v143 | `a83f4ef507e58a330a9cdee9cb3144fe38cc16fb` (v142) |
-| `SOURCE_STAMP` | `v143-20261026-boot-restore-lifecycle` |
+| Rama activa y única para esta sesión | `arena/83897e25-arandommenu` |
+| Runtime v143 previo | `5b4ad20672d9501ca06ecce14380b91e9cf6d459` |
+| `SOURCE_STAMP` | `v144-20261027-touch-momentum-farm-collect` |
 | Bundle | `src/libraries/bundle.lua`, generado con el mismo stamp, 90 archivos |
-| Loader de `README.md` | Apunta a `refs/heads/arena/2fb9a46a-arandommenu/src/Wurst.lua` |
+| Loader de `README.md` | Apunta a `refs/heads/arena/83897e25-arandommenu/src/Wurst.lua` |
 | Toolchain | Luau `0.739.0`, vendored en `tools/luau/vendor` |
-| Validación final de v143 | 92 fuentes, 65 suites, boot `failures=0`, 109 call sites, menú 50/49 |
-| Aceptación live de v143 | **Pendiente. No afirmar que lag, Touch o knockback ya están resueltos.** |
+| Validación final de v144 | 92 fuentes, 65 suites, boot `failures=0`, 110 call sites, menú 50/49 |
+| Aceptación live de v144 | **Pendiente. No afirmar que Touch, knockback, monedas, lag o FPS ya están resueltos.** |
 
 - El commit `5b4ad20` se publicó con push normal y el remoto coincidió con
   `5b4ad20672d9501ca06ecce14380b91e9cf6d459`. Esta actualización de `RESUME.md`
@@ -218,29 +236,29 @@ directas a RunService que no pertenecen a este scheduler.
 v143 no cambió las magnitudes físicas de v142. Estos valores se documentan para
 evitar que un próximo agente «arregle» otra vez mediante extremos:
 
-- Controller compartido: `src/libraries/Fling.lua`.
-- Fling dirigido: pulso `180 + 50` y angular `140`.
-- Touch: pulso `150 + 70` y angular `120`.
-- Límite lineal común: `250`; las pruebas exigen valores reales por debajo de
-  ese límite y prohíben volver a `10000`, `20000`, `9e7` o similares.
-- Timing: PreSimulation aplica un pulso acotado y Heartbeat restaura el snapshot;
-  no hay un writer de velocidad del humanoide objetivo ni una solicitud de
-  network ownership en el controller actual.
-- Fling dirigido hace **una** colocación de contacto por sesión, no `PivotTo`
-  por tick. MM2 exige ronda activa, personaje local vivo y objetivo válido/vivo.
-- Touch escucha partes directas del cuerpo con `CanTouch`, excluye handles de
-  accesorios/tools y no teletransporta. Un contacto reciente (ventana de
-  `0.25 s`, distancia máxima `14`) habilita temporalmente colisiones y Physics;
-  el pulso está limitado a `1/30 s`. OFF, muerte, respawn y destroy restauran
-  snapshots y conexiones.
-- El listener de Touch puede estar activo sin contacto sin convertir todo el
-  avatar en un collider permanente. La posesión de colisiones durante contacto
-  está cubierta por `tools/test_fling_physics.py`.
-- `activity.set("fling", currentSession ~= nil or touchEnabled)` sigue siendo
-  la semántica actual. Se revisó como posible pista porque Noclip/Fly/Auto Win
-  ceden mientras está activa, pero **no se modificó en v143** al no existir una
-  reproducción que justificara otro cambio. No alterarla por intuición; medir
-  primero si debe representar listener activo o posesión durante el pulso.
+- Controller compartido: `src/libraries/Fling.lua` (reescrito en v144).
+- Fling dirigido: **una** colocación de contacto y pulsos acotados al objetivo
+  (`200` horizontal + `60` lift) más un paso local (`170` + `20`) sin giro.
+- Touch: pulso al assembly del tocado (`200` + `60`, giro `25` en Y) y un paso
+  local horizontal (`165`, sin lift, sin giro). Cooldown `1/20 s` por objetivo;
+  ventana de contacto `0.25 s`, alcance máximo `14`.
+- Límite lineal común: `250`; ninguna escritura puede superarlo y las pruebas
+  prohíben volver a `10000`, `20000`, `9e7` o similares.
+- El controller **no** escribe estado del Humanoid, `AutoRotate`, `Sit`,
+  `PlatformStand` ni `ChangeState(Physics)`, y no pide network ownership. Eso es
+  lo que causaba el giro local y el coste de física por contacto.
+- Timing: PreSimulation aplica el pulso y Heartbeat restaura el paso local. La
+  velocidad entregada al objetivo **no** se restaura: ese impulso es el fling.
+- Touch habilita `CanTouch` y `CanCollide` del propio cuerpo **una vez al
+  encender** (snapshot + restauración en OFF/respawn), nunca por contacto.
+  Excluye handles de accesorios/tools y no teletransporta al jugador.
+- MM2 exige ronda activa, personaje local vivo y objetivo válido/vivo.
+- `activity.set("fling", currentSession ~= nil or touchEnabled)` sigue siendo la
+  semántica actual: Noclip/Fly/Auto Win ceden mientras está activa. No alterarla
+  por intuición; medir primero si debe representar listener o posesión.
+- Auto Farm cobra con un **contacto físico acotado** dentro del volumen del
+  pickup (máx. 2 intentos por moneda, `0.35 s` de separación) además del pulso
+  de touch: el hitbox agrandado es local y no basta.
 - Auto Farm cede constraints/writers al Fling compartido mediante
   `flingOwnsPhysics`. Walk usa `Humanoid:Move`; Below usa LinearVelocity +
   AlignOrientation, NoClip, root `4×8×4` y offset `3.0`, con velocidad 5–60.
@@ -274,26 +292,38 @@ secciones. Comprueba que:
 scheduler perezoso. El test sigue exigiendo la rama Heartbeat y la conexión del
 TaskManager; **no se relajó el requisito de latencia**.
 
-Validación ejecutada después de generar v143 con su stamp final:
+Validación ejecutada después de generar v144 con su stamp final:
 
 ```bash
-python3 tools/build_bundle.py --stamp v143-20261026-boot-restore-lifecycle
+python3 tools/build_bundle.py --stamp v144-20261027-touch-momentum-farm-collect
 bash tools/validate.sh
 ```
 
 Resultados:
 
 ```text
-bundle.lua current: 90 files, stamp v143-20261026-boot-restore-lifecycle
+bundle.lua current: 90 files, stamp v144-20261027-touch-momentum-farm-collect
 PASS 92 Lua sources compile
 PASS 65 Python/Luau suites
 [Wurst:Bootstrap] Load complete · failures=0
 [HARNESS] done
 core exports: 44 | prediction exports: 16
-call sites checked: 109
+call sites checked: 110
 PASS menu audit: 50 cards
 PASS release menu: 49 cards, no Calibration card
 ```
+
+Suites que cambiaron de contrato en v144 (no se relajó ningún requisito; el
+comportamiento exigido es el nuevo):
+
+- `tools/test_fling_physics.py`: el fling dirigido y Touch ya no pueden tocar
+  Humanoid ni colisiones locales por contacto; exige impulso al objetivo, un
+  solo paso local sin giro, restauración en `Heartbeat` y snapshots con OFF.
+- `tools/test_mm2_auto_farm_dynamics.py`: nuevo escenario de collect físico
+  acotado en Below (colocación en la moneda, pulso, ≤ 2 intentos) además de los
+  guards de muerte/lobby y la idempotencia del bag lleno.
+- `tools/test_mm2_auto_farm.py`: contrato estático de `roundContext`,
+  `attemptCollect` y `ensureFarmSignals`.
 
 También pasaron de forma focalizada `test_fling_physics.py`,
 `test_mm2_auto_farm_dynamics.py`, `test_flight.py`, `test_delivery_branch.py`,
@@ -320,8 +350,8 @@ La captura histórica del usuario mostraba aproximadamente Physics `12,4 ms /
 44 %`, Render `1,0 ms / 3 %`, Network receive `0,5 ms / 1 %` y unos 35 FPS. Es
 una pista de una sesión, no un benchmark A/B de Lua ni una medición de v143.
 
-Para aceptar v143 en vivo, usar la misma cuenta/config cuando sea posible y
-anotar el watermark `UI Settings · v143`:
+Para aceptar v144 en vivo, usar la misma cuenta/config cuando sea posible y
+anotar el watermark `UI Settings · v144`:
 
 1. **Boot hostil:** inyectar con una configuración que antes tuviera Auto Farm,
    Touch o Auto Fling ON. Esperado: los cuatro estados de sesión permanecen OFF;
@@ -329,25 +359,29 @@ anotar el watermark `UI Settings · v143`:
 2. **Restauración normal:** comprobar que preferencias restaurables siguen
    apareciendo después del boot y que el menú termina de cargar sin errores.
 3. **Touch manual:** activarlo explícitamente y caminar contra un objetivo vivo.
-   Observar si existe contacto/knockback real y si OFF restaura movimiento y
-   colisiones. No usar un mock como sustituto de esta observación.
+   Esperado en v144: el personaje local **no** gira ni se queda en modo físico;
+   el tocado recibe el impulso. Observar si el knockback lo ve el servidor, si
+   OFF restaura `CanTouch`/`CanCollide` y si un respawn rebindea el listener. No
+   usar un mock como sustituto de esta observación.
 4. **Auto Fling manual:** en MM2, con ronda activa y objetivo vivo; probar OFF,
    muerte local, muerte/cambio del objetivo y fin de ronda. Debe cancelar sin
    dejar otro writer activo.
 5. **Auto Farm manual:** probar Walk y Below en ronda activa; pérdida de moneda,
    personaje muerto, lobby, fin de ronda y bolsa llena. Ninguna acción terminal
    debe ejecutarse en los estados prohibidos.
-6. **Rendimiento A/B:** comparar v142/v143 en condiciones equivalentes, con el
+6. **Rendimiento A/B:** comparar v143/v144 en condiciones equivalentes, con el
    mismo conjunto de features y una captura de Timing. Reportar Physics/Render/
-   Network y FPS antes/después; no atribuir una diferencia de servidor al
-   scheduler sin medición.
+   Network y FPS antes/después. Lo esperado en v144 es menos coste de física por
+   contacto (sin `ChangeState(Physics)`, sin togglear `CanCollide` por toque, sin
+   dos writers por frame en Auto Farm) y un scan de pickups ≤ 1/s; no atribuir
+   una diferencia de servidor al scheduler sin medición.
 7. **Cleanup:** revisar OFF, respawn y destroy. Si queda CanTouch/CanCollide,
    AutoRotate, Sit/Seated, LinearVelocity, AlignOrientation o conexiones con un
    dueño incorrecto, registrar el módulo y la secuencia exacta.
 
 Mientras el usuario no confirme estas pruebas, el mensaje correcto es:
-**«v143 corrige y valida offline el lifecycle; eficacia Touch/lag pendiente en
-vivo»**, no «Touch y lag solucionados».
+**«v144 cambia el mecanismo de Touch y el cobro de Auto Farm y lo valida
+offline; eficacia y FPS pendientes en vivo»**, no «Touch y lag solucionados».
 
 ### 0.9 Mapa de archivos que importan para continuar
 
@@ -367,6 +401,8 @@ vivo»**, no «Touch y lag solucionados».
 | `src/libraries/Manifest.lua` | Carga universal; debe coincidir con fallback y bundle. |
 | `src/libraries/bundle.lua` | Artefacto generado; nunca editarlo como fuente independiente. |
 | `tools/test_startup_restore.py` | Regresión de boot hostil, sesión y scheduler perezoso. |
+| `docs/FIXES-v144.md` | Qué cambió en v144 y por qué (Touch, cobro, guards, CPU). |
+| `src/games/MM2/Render/CoinEsp.lua` | Provider de pickups compartido; cache ≤ 1 s e `state.mm2InvalidateCoinPickups`. |
 | `tools/test_fling_physics.py` | Pulsos, contacto, muerte, Touch, Noclip y cleanup. |
 | `tools/test_mm2_auto_farm_dynamics.py` | Cesión de Farm, constraints, rondas y acciones terminales. |
 | `tools/test_action_latency.py` | Heartbeat y reacciones inmediatas sin borrar gates deliberados. |
@@ -408,11 +444,12 @@ Notas críticas:
 
 1. Leer esta sección y ejecutar `git status --short --branch`, `git log -3` y
    `git ls-remote` si hay cualquier duda de alineación.
-2. Confirmar que el runtime que investiga tiene stamp v143; no mezclar logs o
-   fixtures de v141/v142 con conclusiones de v143.
-3. Si el usuario reporta Touch/lag, pedir la secuencia exacta y evidencia live de
-   §0.8. No volver automáticamente a pulsos grandes, CFrames por tick, ownership
-   requests o writers paralelos.
+2. Confirmar que el runtime que investiga tiene stamp v144; no mezclar logs o
+   fixtures de v141–v143 con conclusiones de v144.
+3. Si el usuario reporta Touch/lag/monedas, pedir la secuencia exacta y evidencia
+   live de §0.8. No volver automáticamente a pulsos grandes, CFrames por tick,
+   ownership requests, `ChangeState(Physics)`, giros locales ni writers
+   paralelos: v144 los retiró por una razón medida en el código.
 4. Revisar ownership y orden antes de tocar magnitudes. Si la pista es
    `activity("fling")`, construir primero una prueba que distinga listener idle
    de posesión durante contacto.
@@ -482,7 +519,7 @@ implementaciones ni como sustituto de una sesión live:
   1. Edita en `src/…`, nunca directamente en `src/libraries/bundle.lua`.
   2. Sube `SOURCE_STAMP` en `src/Wurst.lua` (`vNNN-AAAAMMDD-descripcion`).
   3. `python3 tools/build_bundle.py --stamp <el mismo stamp>`
-  4. `bash tools/validate.sh` — debe terminar VERDE. En v143 son 92 fuentes,
+  4. `bash tools/validate.sh` — debe terminar VERDE. En v144 son 92 fuentes,
      65 suites, boot `failures=0`, auditoría de menú 50/49 tarjetas y 109 call
      sites; si el inventario cambia, actualiza también los contratos.
   5. Commit + push **normales** a `arena/2fb9a46a-arandommenu`. Sin force-push,
@@ -1357,16 +1394,19 @@ La validación offline actual tiene 65 suites y boot limpio; los items históric
 deben reevaluarse contra el módulo vigente, no asumir que una versión citada es
 la implementación actual:
 
-- **v143 lifecycle:** boot con configs antiguas, restauración después de todas
+- **v144 lifecycle:** boot con configs antiguas, restauración después de todas
   las secciones, ausencia de movimiento accidental y A/B de Timing/FPS. El
   scheduler perezoso está probado estructuralmente, no medido en una partida.
-- **Touch v142–v143:** contacto y knockback reales al activarlo manualmente,
-  comportamiento con Noclip/Fly, OFF/respawn y restauración de snapshots. El
-  usuario ya rechazó v141 como solución; v143 todavía necesita su veredicto.
-- **Auto Farm v143:** activación exclusivamente manual, Walk/Below en ronda,
+- **Touch v144:** que el tocado salga despedido de verdad, que el personaje
+  local no gire ni quede en estado raro, comportamiento con Noclip/Fly,
+  OFF/respawn y restauración de `CanTouch`/`CanCollide`. v141 y v143 ya fueron
+  rechazadas por el usuario; v144 necesita su veredicto.
+- **Auto Farm v144:** activación exclusivamente manual, Walk/Below en ronda,
   roaming sin monedas, void guard, retorno/cleanup y acciones de bolsa llena
-  sólo bajo sus guards. Comprobar también la recogida real de gun/monedas, que
-  los mocks no pueden acreditar.
+  sólo bajo sus guards. En particular: ¿cobra monedas con la colocación física
+  acotada? ¿el contador `Coins Collected` avanza sin `CoinCollected`? ¿el guard
+  nuevo deja de farmear en lobby y con el personaje muerto? Los mocks no pueden
+  acreditar ninguna de las tres.
 - **Fling/Auto Fling actuales:** pulsos compartidos sin requests de network
   ownership, una colocación dirigida por sesión y cancelación por OFF/muerte/
   ronda. Anti Fling debe probarse contra un fling real por separado.
@@ -1401,8 +1441,9 @@ la implementación actual:
   documentales no requieren stamp, pero sí actualizar este handoff con precisión.
 
 ---
-*Última actualización: 2026-10-26 · runtime v143, restauración transaccional,
-acciones físicas de sesión, TaskManager perezoso, forense v138–v143, validación,
-recuperación del workspace y protocolo live documentados. Al publicar una
+*Última actualización: 2026-10-27 · runtime v144, Touch Fling con impulso al
+objetivo (sin giro local ni estado Physics), Auto Farm con contexto único de
+ronda y cobro físico acotado, resolución perezosa de `firetouchinterest`, cache
+de pickups ≤ 1/s y presupuesto de CPU por frame documentados. Al publicar una
 versión nueva o recibir aceptación live, actualiza la línea de estado y todas
 las secciones afectadas.*

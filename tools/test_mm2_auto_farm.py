@@ -41,11 +41,32 @@ assert "humanoid:Move(unitDir, false)" in SOURCE
 assert "humanoid.WalkSpeed = speed" in SOURCE
 assert "humanoid.Jump = true" in SOURCE
 walk_body = SOURCE.split("local function walkTowards", 1)[1].split(
-    "-- The Coin_Server part", 1
+    "-- The Coin_Server part that pays", 1
 )[0]
 assert "root.CFrame" not in walk_body
 assert "AssemblyLinearVelocity" not in walk_body
 assert "MoveTo" not in walk_body
+
+# The one deliberate physical collect placement is bounded: at most two per
+# coin, spaced by an interval, and only when the walk/travel already arrived.
+assert "local function attemptCollect" in SOURCE
+assert "local COLLECT_ATTEMPTS: number = 2" in SOURCE
+assert "local COLLECT_INTERVAL: number = 0.35" in SOURCE
+collect_body = SOURCE.split("local function attemptCollect", 1)[1].split(
+    "-- The gun grab is an in-round action", 1
+)[0]
+assert "character:PivotTo(contactCFrame)" in collect_body
+assert "state.fireTouchInterest" in collect_body
+assert "COLLECT_ATTEMPTS" in collect_body
+assert "flingOwnsPhysics()" in collect_body
+# One coherent guard decides every action; no second, weaker path is allowed.
+assert "local function roundContext(root: BasePart?): string" in SOURCE
+assert 'return "dead"' in SOURCE and 'return "lobby"' in SOURCE and 'return "active"' in SOURCE
+assert "roundContext(root) == \"active\"" in SOURCE
+assert "local function contextStatus" in SOURCE
+# Only the writer the current mode needs stays connected.
+assert "local function ensureFarmSignals" in SOURCE
+assert "signalsMode == wanted" in SOURCE
 
 # Active-round and living-character gates cover ordinary and terminal work.
 assert "isRoundLifecycleActive() ~= true" in SOURCE
@@ -90,6 +111,6 @@ assert sequence.index("restoreCharacter(true)") < sequence.index("grabGunAndShoo
 assert sequence.index("grabGunAndShoot(alive)") < sequence.index("humanoid.Health = 0")
 assert sequence.index("humanoid.Health = 0") < sequence.index("flingPlayer(findMurderer(), alive)")
 
-print("PASS MM2 Auto Farm static: fixed Below contact, constraint-owned movement, "
-      "Humanoid Walk, strict alive/round guards, one terminal sequence, "
-      "remembered full-bag idempotence and shared Fling only")
+print("PASS MM2 Auto Farm static: bounded Below collect placement, one coherent "
+      "alive/round context, constraint-owned movement, Humanoid Walk, one "
+      "terminal sequence, remembered full-bag idempotence and shared Fling only")

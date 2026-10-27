@@ -1,5 +1,5 @@
 return {
-    stamp = "v143-20261026-boot-restore-lifecycle",
+    stamp = "v144-20261027-touch-momentum-farm-collect",
     files = {
         ["src/Profile/135856908115931.lua"] = [[
 --!strict
@@ -6278,6 +6278,7 @@ function Module.init(_runtime: any): any
     local findMM2Map: any = core.findMM2Map
     local getEstimatedLatency: any = core.getEstimatedLatency
     local getGunOriginCFrame: any = core.getGunOriginCFrame
+    local getRoundPhase: any = core.getRoundPhase
 
     local function flingOwnsPhysics(): boolean
         local physics: any = state.flingPhysics
@@ -6327,9 +6328,17 @@ function Module.init(_runtime: any): any
         return string.format("%02d:%02d", mins, secs)
     end
 
+    -- Called every farm frame: only touch the labels when the value actually
+    -- changed. Rewriting the same string per frame rebuilt text layout for no
+    -- visible difference.
+    local lastRenderedCoins: string = ""
     local function refreshFarmOverlay(): ()
-        if coinsCollectedStat and type(coinsCollectedStat.set) == "function" then
-            coinsCollectedStat.set(tostring(totalCoinsCollected))
+        local coinsText: string = tostring(totalCoinsCollected)
+        if coinsText ~= lastRenderedCoins then
+            lastRenderedCoins = coinsText
+            if coinsCollectedStat and type(coinsCollectedStat.set) == "function" then
+                coinsCollectedStat.set(coinsText)
+            end
         end
         local wholeSec: number = math.max(0, math.floor(farmElapsedSeconds))
         if wholeSec ~= lastFormattedSecond then
@@ -6751,6 +6760,12 @@ function Module.init(_runtime: any): any
         local stuckSince: number = 0
         local lastTouchPulse: number = 0
         local blacklist: {[Instance]: number} = {}
+        -- The overlay counter is confirmed pickups only. When the server's
+        -- CoinCollected never reaches the client, a target that disappears
+        -- while this character is parked on it is the only confirmation
+        -- available; it is never mixed with the authoritative bag amount.
+        local remoteBagKnown: boolean = false
+        local localCollected: {[Instance]: boolean} = {}
 
         -- Engagement state. The farm touches the character ONLY while
         -- engaged inside an active round on a map. In the lobby or
@@ -6870,7 +6885,7 @@ function Module.init(_runtime: any): any
                 cachedLobbyPart = nil
                 lobbyScanAt = -math.huge
             end
-            if now - lobbyScanAt < 0.75 then
+            if now - lobbyScanAt < 1.5 then
                 return nil
             end
             lobbyScanAt = now
@@ -7043,105 +7058,143 @@ function Module.init(_runtime: any): any
             end)
         end
 
-        -- Detects when the player's character is inside the loaded MM2 map,
-        -- including the pre-round countdown seconds right after teleporting
-        -- from the lobby before roles or coins have spawned.
-        local function isCharacterInActiveRound(root: BasePart): boolean
-            if type(findMM2Map) ~= "function" then
-                return false
-            end
-            local map: Instance? = findMM2Map()
-            if not map then
-                return false
-            end
-            if map ~= cachedMap then
-                cachedMap = map
-                cachedMapReference = nil
-                mapReferenceResolved = false
-                mapReferenceAt = -math.huge
-                cachedLobbyPart = nil
-                lobbyScanAt = -math.huge
-            end
-            -- Proximity is only a secondary check. A loaded map or a
-            -- nearby spawn must never make lobby/ended-round actions legal.
-            if type(isRoundLifecycleActive) ~= "function"
-                or isRoundLifecycleActive() ~= true then
-                return false
-            end
-            if type(getPlayerRole) == "function" then
-                local role: any = getPlayerRole(LocalPlayer)
-                if role == "Dead" then
-                    return false
-                end
-                if (role == "None" or role == nil)
-                    and type(isRoundLifecycleActive) == "function"
-                    and isRoundLifecycleActive() == false then
-                    local lobbyPartCheck: BasePart? = findLobbyReferencePart()
-                    if lobbyPartCheck then
-                        local okLD: boolean, ld: any = pcall(function(): any
-                            return (root.Position - lobbyPartCheck.Position).Magnitude
-                        end)
-                        if okLD and type(ld) == "number" and ld <= 350 then
-                            return false
-                        end
-                    end
-                end
-            end
-            local lobbyPart: BasePart? = findLobbyReferencePart()
-            if lobbyPart then
-                local okLobbyDist: boolean, lobbyDist: any = pcall(function(): any
-                    return (root.Position - lobbyPart.Position).Magnitude
-                end)
-                if okLobbyDist and type(lobbyDist) == "number" and lobbyDist <= 350 then
-                    return false
-                end
-            end
-            if safeZonePlatform and safeZonePlatform.Parent then
-                local okZoneDist: boolean, zoneDist: any = pcall(function(): any
-                    return (root.Position - safeZonePlatform.Position).Magnitude
-                end)
-                if okZoneDist and type(zoneDist) == "number" and zoneDist <= 120 then
-                    return true
-                end
-            end
+        -- One coherent round context. Every movement, coin pulse and terminal
+        -- action asks this first, so the lobby or a dead body cannot leak into
+        -- an action through a second, weaker path.
+        --
+        --   "active" -> inside a loaded map, in a round, character alive
+        --   "lobby"  -> no map, or the body is still at the lobby reference
+        --   "dead"   -> no living local body / local role Dead
+        --
+        -- A loaded map is required for every action, never a proximity guess.
+        -- The result is cached per frame-sized window: scanning Workspace or the
+        -- map reference on every tick was one of the farm's hot paths.
+        local function refreshMapScopedCaches(map: Instance): ()
+            cachedMap = map
+            cachedMapReference = nil
+            mapReferenceResolved = false
+            mapReferenceAt = -math.huge
+            cachedLobbyPart = nil
+            lobbyScanAt = -math.huge
+        end
+
+        -- One BasePart that represents the loaded map. Resolved at most once a
+        -- second; the farm asks for it per frame, so it must stay cached.
+        local function resolveMapReference(map: Instance): BasePart?
             if cachedMapReference and not cachedMapReference.Parent then
                 cachedMapReference = nil
                 mapReferenceResolved = false
             end
-            if not mapReferenceResolved
-                or (not cachedMapReference and os.clock() - mapReferenceAt > 1) then
-                mapReferenceResolved = true
-                mapReferenceAt = os.clock()
-                cachedMapReference = nil
-                local spawns: Instance? = (map :: Instance):FindFirstChild("Spawns")
-                if spawns then
-                    cachedMapReference = spawns:FindFirstChildWhichIsA("BasePart", true)
-                end
-                if not cachedMapReference then
-                    local coinContainer: Instance? = (map :: Instance):FindFirstChild("CoinContainer")
-                    if coinContainer then
-                        cachedMapReference = coinContainer:FindFirstChildWhichIsA("BasePart", true)
-                    end
-                end
-                if not cachedMapReference then
-                    cachedMapReference = (map :: Instance):FindFirstChildWhichIsA("BasePart", true)
+            if mapReferenceResolved
+                and (cachedMapReference or os.clock() - mapReferenceAt <= 1) then
+                return cachedMapReference
+            end
+            mapReferenceResolved = true
+            mapReferenceAt = os.clock()
+            cachedMapReference = nil
+            local spawns: Instance? = map:FindFirstChild("Spawns")
+            if spawns then
+                cachedMapReference = spawns:FindFirstChildWhichIsA("BasePart", true)
+            end
+            if not cachedMapReference then
+                local coinContainer: Instance? = map:FindFirstChild("CoinContainer")
+                if coinContainer then
+                    cachedMapReference = coinContainer:FindFirstChildWhichIsA("BasePart", true)
                 end
             end
-            local refPart: BasePart? = cachedMapReference
+            if not cachedMapReference then
+                cachedMapReference = map:FindFirstChildWhichIsA("BasePart", true)
+            end
+            return cachedMapReference
+        end
+
+        -- Cheap per-frame checks are re-evaluated every call; only the
+        -- expensive lookups (map model, map reference, lobby scan) are cached.
+        -- Caching the whole verdict delayed death/lobby by up to a frame and
+        -- let an action slip through in the state it was supposed to block.
+        local function roundContext(root: BasePart?): string
+            local character: Model?, humanoid: Humanoid? = characterParts()
+            if not root or not root.Parent or not character or not humanoid
+                or humanoid.Health <= 0 then
+                return "dead"
+            end
+            local map: Instance? = nil
+            if type(findMM2Map) == "function" then
+                local okMap: boolean, found: any = pcall(findMM2Map)
+                if okMap then
+                    map = found
+                end
+            end
+            if not map then
+                return "lobby"
+            end
+            if map ~= cachedMap then
+                refreshMapScopedCaches(map :: Instance)
+            end
+            local role: any = nil
+            if type(getPlayerRole) == "function" then
+                local okRole: boolean, resolved: any =
+                    pcall(getPlayerRole, LocalPlayer)
+                if okRole then
+                    role = resolved
+                end
+            end
+            if role == "Dead" then
+                return "dead"
+            end
+            if type(isRoundLifecycleActive) == "function"
+                and isRoundLifecycleActive() == false then
+                -- RoundEndFade or the lobby teleport already announced the end
+                -- of the round. The map can still be loaded for a moment, so
+                -- this wins over every proximity check.
+                return "lobby"
+            end
+            local phase: any = nil
+            if type(getRoundPhase) == "function" then
+                local okPhase: boolean, resolved: any = pcall(getRoundPhase)
+                if okPhase then
+                    phase = resolved
+                end
+            end
+            if phase == "lobby" then
+                return "lobby"
+            end
+            -- A lobby part left in Workspace is the only reliable way to tell
+            -- "still standing in the lobby" from "teleported into the map
+            -- before roles exist". Unknown lifecycle + loaded map is allowed.
+            local lobbyPart: BasePart? = findLobbyReferencePart()
+            if lobbyPart then
+                local okDist: boolean, dist: any = pcall(function(): any
+                    return (root.Position - lobbyPart.Position).Magnitude
+                end)
+                if okDist and type(dist) == "number" and dist <= 300 then
+                    return "lobby"
+                end
+            end
+            local refPart: BasePart? = resolveMapReference(map :: Instance)
             if refPart then
                 local okDist: boolean, dist: any = pcall(function(): any
                     return (root.Position - refPart.Position).Magnitude
                 end)
                 if okDist and type(dist) == "number" and dist > 1500 then
-                    return false
+                    return "lobby"
                 end
-                return true
             end
-            if type(isRoundLifecycleActive) == "function"
-                and isRoundLifecycleActive() ~= true then
-                return false
+            return "active"
+        end
+
+        local function isCharacterInActiveRound(root: BasePart): boolean
+            return roundContext(root) == "active"
+        end
+
+        local function contextStatus(): string
+            local value: string = roundContext(rootOf(LocalPlayer))
+            if value == "dead" then
+                return "Auto Farm: paused - your character is dead"
+            elseif value == "lobby" then
+                return "Auto Farm: waiting in lobby"
             end
-            return true
+            return "Auto Farm: running"
         end
 
         local function restoreCharacter(
@@ -7484,6 +7537,74 @@ function Module.init(_runtime: any): any
             return pos
         end
 
+        -- A local hitbox does not exist for the server: growing the root only
+        -- changes what this client collides with. The pickup pays on a real
+        -- overlap, so a farm that parks three studs under a coin and only
+        -- pulses a local touch never gets paid. Below keeps the hidden travel
+        -- path, but rises into the pickup volume once per coin, pulses the
+        -- touch from there and drops back under on the following frame (the
+        -- movement writer pulls the root down again).
+        --
+        -- Walk gets the same bounded fallback for pickups that sit above the
+        -- floor (a table, a ledge): walking alone never reaches them.
+        local COLLECT_ATTEMPTS: number = 2
+        local COLLECT_INTERVAL: number = 0.35
+        local collectAttempts: {[Instance]: number} = {}
+        local collectAttemptAt: number = -math.huge
+
+        -- Returns true when the coin has spent its last physical attempt, so
+        -- the caller can blacklist it instead of dwelling on it.
+        local function attemptCollect(
+            character: Model,
+            humanoid: Humanoid,
+            root: BasePart,
+            part: Instance,
+            position: Vector3
+        ): boolean
+            local now: number = os.clock()
+            local attempts: number = collectAttempts[part] or 0
+            if attempts >= COLLECT_ATTEMPTS
+                or now - collectAttemptAt < COLLECT_INTERVAL
+                or flingOwnsPhysics() then
+                return false
+            end
+            if not part.Parent or humanoid.Health <= 0 then
+                return false
+            end
+            collectAttempts[part] = attempts + 1
+            collectAttemptAt = now
+            local yaw: number = yawOf(root.CFrame)
+            -- Stop the movement writer for this placement: a live
+            -- LinearVelocity would drag the root out of the pickup volume
+            -- before the touch could register.
+            if settings.mode ~= "Walk" then
+                belowHold = true
+                belowDestination = nil
+                ensureFarmConstraints(root, Vector3.zero, yaw)
+            else
+                pcall(function(): ()
+                    humanoid:Move(Vector3.zero, false)
+                end)
+            end
+            local touchPart: Instance? = serverPartOf(part)
+            local placed: boolean = pcall(function(): ()
+                local contactCFrame: CFrame = CFrame.new(position)
+                    * CFrame.Angles(0, yaw, 0)
+                root.CFrame = contactCFrame
+                character:PivotTo(contactCFrame)
+                root.AssemblyLinearVelocity = Vector3.zero
+                root.AssemblyAngularVelocity = Vector3.zero
+            end)
+            if not placed then
+                return false
+            end
+            if touchPart and type(state.fireTouchInterest) == "function" then
+                pcall(state.fireTouchInterest, root, touchPart, 0)
+                pcall(state.fireTouchInterest, root, touchPart, 1)
+            end
+            return (collectAttempts[part] or 0) >= COLLECT_ATTEMPTS
+        end
+
     -- The gun grab is an in-round action for non-Murderer roles: as
     -- Murderer it must never run, and in the lobby there is no round,
     -- no murderer and no dropped gun to shoot with. Note that once an
@@ -7762,12 +7883,17 @@ function Module.init(_runtime: any): any
                             rememberedBagLimit = limit
                         end
                         if type(amount) == "number" then
+                            remoteBagKnown = true
                             if amount > bagAmount then
                                 totalCoinsCollected += (amount - bagAmount)
                                 refreshFarmOverlay()
                                 if currentTargetCoin then
                                     blacklist[currentTargetCoin] = os.clock() + BLACKLIST_SECONDS
                                     currentTargetCoin = nil
+                                end
+                                -- The pickup list is stale from this frame on.
+                                if type(state.mm2InvalidateCoinPickups) == "function" then
+                                    pcall(state.mm2InvalidateCoinPickups)
                                 end
                                 scanAt = 0
                             end
@@ -7841,18 +7967,40 @@ function Module.init(_runtime: any): any
             end
         end
 
-        if RunService and RunService.Stepped then
-            featureConnections.MM2AutoFarmStepped = RunService.Stepped:Connect(stepFarmPhysicsOverride)
-        end
-        pcall(function(): ()
-            if RunService and (RunService :: any).PreSimulation then
-                featureConnections.MM2AutoFarmPreSim =
-                    (RunService :: any).PreSimulation:Connect(preFarmPhysics)
+        -- Only the writer the current mode needs is connected: Walk drives the
+        -- Humanoid from Stepped, Below drives its constraints from
+        -- PreSimulation. Keeping both connected made every farm frame pay for a
+        -- branch, a character lookup and a round-context check it could never
+        -- use.
+        local signalsMode: string? = nil
+
+        local function ensureFarmSignals(): ()
+            local wanted: string = if settings.mode == "Walk" then "Walk" else "Below"
+            if signalsMode == wanted then
+                return
             end
-        end)
+            disconnectFeatureConnection("MM2AutoFarmStepped")
+            disconnectFeatureConnection("MM2AutoFarmPreSim")
+            signalsMode = wanted
+            if wanted == "Walk" then
+                if RunService and RunService.Stepped then
+                    featureConnections.MM2AutoFarmStepped =
+                        RunService.Stepped:Connect(stepFarmPhysicsOverride)
+                end
+                return
+            end
+            pcall(function(): ()
+                if RunService and (RunService :: any).PreSimulation then
+                    featureConnections.MM2AutoFarmPreSim =
+                        (RunService :: any).PreSimulation:Connect(preFarmPhysics)
+                end
+            end)
+        end
+        ensureFarmSignals()
 
         featureConnections.MM2AutoFarmTick = TaskManager:Connect(
             function(deltaTime: number): ()
+                ensureFarmSignals()
                 if flingOwnsPhysics() then
                     if engaged or hiddenUnderMap then
                         restoreCharacter(false)
@@ -7883,15 +8031,21 @@ function Module.init(_runtime: any): any
                     if engaged or hiddenUnderMap then
                         restoreCharacter(false)
                     end
+                    -- Round-scoped memory never survives outside a round,
+                    -- however it got there: a stale CoinCollected remote, an
+                    -- old config or a death mid-sequence. The per-round
+                    -- teardown still runs once, on the transition.
+                    rememberedBagAmount = 0
+                    rememberedBagLimit = 50
+                    rememberedFullHandled = false
+                    bagAmount = 0
+                    fullHandled = false
+                    roundFullReached = false
+                    table.clear(collectAttempts)
+                    collectAttemptAt = -math.huge
                     if wasInActiveRound then
                         wasInActiveRound = false
                         roundGeneration += 1
-                        rememberedBagAmount = 0
-                        rememberedBagLimit = 50
-                        rememberedFullHandled = false
-                        bagAmount = 0
-                        fullHandled = false
-                        roundFullReached = false
                         teleportedHomeThisRound = false
                         firstCoinSeenThisRound = false
                         currentTargetCoin = nil
@@ -7901,7 +8055,7 @@ function Module.init(_runtime: any): any
                         hideAnchorPosition = nil
                         destroySafeZonePlatform()
                     end
-                    setStatus("Auto Farm: waiting in lobby")
+                    setStatus(contextStatus())
                     stuckPart = nil
                     return
                 end
@@ -7976,6 +8130,18 @@ function Module.init(_runtime: any): any
 
                 -- Nearest pickup, from Coin ESP's own detection.
                 local now: number = os.clock()
+                if currentTargetCoin and not stillCollectable(currentTargetCoin) then
+                    -- The pickup we were parked on is gone. Trust the bag
+                    -- remote when it speaks; otherwise report the confirmed
+                    -- local pickup instead of staying at zero forever.
+                    if not remoteBagKnown and not localCollected[currentTargetCoin] then
+                        localCollected[currentTargetCoin] = true
+                        totalCoinsCollected += 1
+                        refreshFarmOverlay()
+                    end
+                    currentTargetCoin = nil
+                    stuckPart = nil
+                end
                 local scanInterval: number = if #scanCache == 0 then 0.10 else 0.25
                 if now - scanAt > scanInterval then
                     scanAt = now
@@ -8030,7 +8196,7 @@ function Module.init(_runtime: any): any
                     end
                     scanAt = now - 0.20
                     if not firstCoinSeenThisRound then
-                        if settings.stayUnderOnStart then
+                        if settings.stayUnderOnStart and settings.mode ~= "Walk" then
                             holdHiddenUnderMap(character, humanoid, root)
                         elseif hiddenUnderMap or engaged then
                             restoreCharacter(false, true)
@@ -8091,9 +8257,9 @@ function Module.init(_runtime: any): any
                     remaining = (destination - root.Position).Magnitude
                     arrived = remaining < 1.0
                 end
-                if arrived or remaining < 3.5 then
+                if not arrived and remaining < 3.5 then
                     -- Pulse the touch directly against the Coin_Server part
-                    -- until the coin is collected.
+                    -- while closing the last studs.
                     if now - lastTouchPulse > 0.08 then
                         lastTouchPulse = now
                         local touchPart: Instance? =
@@ -8112,14 +8278,29 @@ function Module.init(_runtime: any): any
                     pingMillis()
                 ))
                 if arrived then
-                    -- Parked under the coin: if it does not collect,
-                    -- skip it for a while instead of getting stuck.
+                    -- Parked at the coin. A local touch pulse is not proof of
+                    -- collection, so after a short grace the farm rises into
+                    -- the pickup volume (bounded attempts) before skipping it.
                     if stuckPart ~= nearest then
                         stuckPart = nearest
                         stuckSince = now
-                    elseif now - stuckSince > STUCK_SECONDS then
-                        blacklist[nearest] = now + BLACKLIST_SECONDS
-                        stuckPart = nil
+                    elseif now - stuckSince > 0.15 then
+                        local spent: boolean = attemptCollect(
+                            character,
+                            humanoid,
+                            root,
+                            nearest,
+                            nearestPosition :: Vector3
+                        )
+                        if spent then
+                            -- Two real overlaps did not pay: drop the target
+                            -- from the cached list as well as from the loop.
+                            blacklist[nearest] = now + BLACKLIST_SECONDS
+                            stuckPart = nil
+                            if type(state.mm2InvalidateCoinPickups) == "function" then
+                                pcall(state.mm2InvalidateCoinPickups)
+                            end
+                        end
                     end
                 else
                     stuckPart = nil
@@ -14296,13 +14477,20 @@ function Module.init(runtime: any): any
         end
         pickupCache = {at = os.clock(), list = list}
     end
+    -- The full scan is the detection that demonstrably works in game, so it is
+    -- never replaced by a cheaper heuristic. Its cost is bounded instead: one
+    -- scan per second at most, and an explicit invalidation whenever a consumer
+    -- (Auto Farm) knows a pickup was just taken.
     state.mm2CoinPickups = function(): {Instance}
-        if os.clock() - pickupCache.at < 0.5 then
+        if os.clock() - pickupCache.at < 1 then
             return pickupCache.list
         end
         local found: {[Instance]: string} = collectAll()
         refreshPickupCache(found)
         return pickupCache.list
+    end
+    state.mm2InvalidateCoinPickups = function(): ()
+        pickupCache.at = -math.huge
     end
 
     local function toggleCoinEsp(enabled: boolean): ()
@@ -27523,14 +27711,14 @@ function Module.init(context: Runtime): any
 
     TouchFlingFeature = createUniversalFeature(
         "Touch Fling",
-        "Walk into a player to transfer a bounded physics contact pulse",
+        "Walk into a player and the contact launches them, with your character left normal",
         14,
         toggleTouchFling,
         {noOptions = true, categoryName = "Exploits", restore = false}
     )
     addFeatureTooltip(
         TouchFlingFeature,
-        "Idle mode only listens on body parts. Recent contact temporarily enables collisions and Humanoid Physics for a capped pulse; expiry, OFF and respawn restore the snapshots. No teleports or ownership requests."
+        "Only your body parts listen; touching someone adds a bounded contact pulse to their body and one physics step to yours. No spin, no Humanoid Physics state, no teleports, no ownership requests. OFF and respawn restore every snapshot."
     )
 
     if state then
@@ -52310,10 +52498,25 @@ local Module = {
 
 local activeLibrary: any = nil
 
--- One owner for directed MM2 contact and universal Touch Fling. A pulse is
--- applied before physics and remains in place through Heartbeat, when the
--- engine has had a chance to simulate/replicate it. There is no always-on
--- loop, target-humanoid writer, ownership request or global physics change.
+-- One owner for directed MM2 contact and universal Touch Fling.
+--
+-- A fling is a bounded momentum transfer, NOT a physics takeover of the local
+-- avatar. What this library writes:
+--
+--   * Directed: ONE contact placement of the local character next to the
+--     target, then bounded contact pulses. No per-tick CFrame, no
+--     PlatformStand, no Humanoid Physics state, no spin.
+--   * Contact pulses: a bounded AssemblyLinearVelocity on the touched
+--     assembly (the target) and the same bounded pulse on the local root for
+--     one physics step. The local root is the assembly the server owns and
+--     accepts, so that one step is what carries the momentum into the
+--     collision; the target write makes the contact visible immediately.
+--
+-- It never writes Humanoid state, AutoRotate, Sit, a spin, network ownership
+-- or a per-frame velocity on the local root. Those writes are what made
+-- earlier builds rotate the player in place instead of flinging the target,
+-- and they made the engine rebuild colliding assemblies every frame.
+
 function Module.init(context: any): any
     local host: any = context.host or context
     local RunService: any = host.RunService
@@ -52325,19 +52528,29 @@ function Module.init(context: any): any
     assert(RunService and RunService.PreSimulation and RunService.Heartbeat,
         "Fling physics requires PreSimulation and Heartbeat")
 
+    -- Bounded pulse budgets. The linear result stays below 250 studs/s.
+    local DIRECTED_SPEED: number = 170
+    local DIRECTED_LIFT: number = 20
+    local TOUCH_SPEED: number = 165
+    local TOUCH_LIFT: number = 0
+    local TARGET_SPEED: number = 200
+    local TARGET_LIFT: number = 60
+    local PULSE_COOLDOWN: number = 1 / 20
+    local CONTACT_SECONDS: number = 0.25
+    local CONTACT_RANGE: number = 14
+    local LINEAR_LIMIT: number = 250
+
     local currentSession: any = nil
-    local pulseBackup: any = nil
+    local selfPulse: any = nil
     local destroyed: boolean = false
 
     local touchEnabled: boolean = false
     local touchCharacter: Model? = nil
     local touchConnections: {RBXScriptConnection} = {}
-    local touchContacts: {[Player]: {at: number}} = {}
+    local touchContacts: {[Player]: {at: number, pulsedAt: number}} = {}
     local touchCollisions: {[BasePart]: {canCollide: boolean, canTouch: boolean}} = {}
     local touchBoundParts: {[BasePart]: boolean} = {}
-    local lastTouchPulseAt: number = -math.huge
-    local touchPhysicsActive: boolean = false
-    local touchHumanoidBackup: any = nil
+    local contactCollisionsOwned: boolean = false
 
     local preConnection: RBXScriptConnection? = nil
     local heartbeatConnection: RBXScriptConnection? = nil
@@ -52385,33 +52598,68 @@ function Module.init(context: any): any
         return character, humanoid, root
     end
 
-    local function restorePulse(): ()
-        local backup: any = pulseBackup
-        pulseBackup = nil
-        if backup and backup.root and backup.root.Parent then
+    -- The bounded impulse both sides of a contact receive.
+    local function boundedPulse(direction: Vector3, speed: number, lift: number): Vector3
+        local pulse: Vector3 = Vector3.new(0, lift, 0)
+        if direction.Magnitude > 0.001 then
+            pulse += direction.Unit * speed
+        end
+        if not finiteVector(pulse) then
+            return Vector3.zero
+        end
+        if pulse.Magnitude > LINEAR_LIMIT then
+            pulse = pulse.Unit * LINEAR_LIMIT
+        end
+        return pulse
+    end
+
+    -- One physics step of local momentum. The original velocity is restored on
+    -- Heartbeat, so the avatar never keeps drifting or spinning after a touch.
+    local function restoreSelfPulse(): ()
+        local pulse: any = selfPulse
+        selfPulse = nil
+        if pulse and pulse.root and pulse.root.Parent then
             pcall(function(): ()
-                backup.root.AssemblyLinearVelocity = backup.linear
-                backup.root.AssemblyAngularVelocity = backup.angular
+                pulse.root.AssemblyLinearVelocity = pulse.linear
+                pulse.root.AssemblyAngularVelocity = pulse.angular
             end)
         end
     end
 
-    local function savePulse(kind: string, root: BasePart): boolean
-        if pulseBackup then
+    local function pulseSelf(root: BasePart, direction: Vector3, speed: number, lift: number): boolean
+        if selfPulse and selfPulse.root ~= root then
+            restoreSelfPulse()
+        end
+        if not selfPulse then
+            local linear: Vector3 = root.AssemblyLinearVelocity
+            local angular: Vector3 = root.AssemblyAngularVelocity
+            if not finiteVector(linear) or not finiteVector(angular) then
+                return false
+            end
+            selfPulse = {root = root, linear = linear, angular = angular}
+        end
+        local ok: boolean = pcall(function(): ()
+            root.AssemblyLinearVelocity = boundedPulse(direction, speed, lift)
+            -- No spin: the player's body normalises itself on the next frame.
+            root.AssemblyAngularVelocity = Vector3.zero
+        end)
+        if not ok then
+            restoreSelfPulse()
+        end
+        return ok
+    end
+
+    -- Momentum handed to the touched assembly. It is deliberately not restored:
+    -- that velocity IS the fling, and reconciliation belongs to whoever owns it.
+    local function pulseTarget(targetRoot: BasePart, direction: Vector3): boolean
+        local pulse: Vector3 = boundedPulse(direction, TARGET_SPEED, TARGET_LIFT)
+        if pulse.Magnitude <= 0 then
             return false
         end
-        local linear: Vector3 = root.AssemblyLinearVelocity
-        local angular: Vector3 = root.AssemblyAngularVelocity
-        if not finiteVector(linear) or not finiteVector(angular) then
-            return false
-        end
-        pulseBackup = {
-            kind = kind,
-            root = root,
-            linear = linear,
-            angular = angular,
-        }
-        return true
+        return pcall(function(): ()
+            targetRoot.AssemblyLinearVelocity = pulse
+            targetRoot.AssemblyAngularVelocity = Vector3.new(0, 25, 0)
+        end)
     end
 
     local function disconnectRunSignals(): ()
@@ -52435,96 +52683,31 @@ function Module.init(context: any): any
         end
     end
 
-    -- Idle Touch must not turn the whole avatar into a colliding assembly.
-    -- Only a real, recent contact gets physics ownership; the snapshots stay
-    -- alive for CanTouch listening and are fully restored on OFF/rebind.
-    local function restoreTouchPhysics(): ()
-        if not touchPhysicsActive and not touchHumanoidBackup then
-            return
-        end
-        touchPhysicsActive = false
-        lastTouchPulseAt = -math.huge
-        for part: BasePart, snapshot: any in pairs(touchCollisions) do
-            if part.Parent and part.CanCollide ~= snapshot.canCollide then
-                pcall(function(): ()
-                    part.CanCollide = snapshot.canCollide
-                end)
-            end
-        end
-        local backup: any = touchHumanoidBackup
-        touchHumanoidBackup = nil
-        local humanoid: Humanoid? = backup and backup.humanoid
-        if humanoid and humanoid.Parent then
-            pcall(function(): ()
-                humanoid.AutoRotate = backup.autoRotate
-                humanoid.Sit = backup.wasSitting
-                humanoid:SetStateEnabled(
-                    Enum.HumanoidStateType.Seated,
-                    backup.seatedEnabled
-                )
-                humanoid:ChangeState(Enum.HumanoidStateType.GettingUp)
-            end)
-        end
-    end
-
-    local function engageTouchPhysics(humanoid: Humanoid): ()
-        local backup: any = touchHumanoidBackup
-        if backup and backup.humanoid ~= humanoid then
-            restoreTouchPhysics()
-            backup = nil
-        end
-        if not backup then
-            local seatedEnabled: boolean = true
-            pcall(function(): ()
-                seatedEnabled = humanoid:GetStateEnabled(
-                    Enum.HumanoidStateType.Seated
-                )
-            end)
-            backup = {
-                humanoid = humanoid,
-                autoRotate = humanoid.AutoRotate,
-                wasSitting = humanoid.Sit,
-                seatedEnabled = seatedEnabled,
-            }
-            touchHumanoidBackup = backup
-        end
-        touchPhysicsActive = true
-        for part: BasePart in pairs(touchCollisions) do
-            if part.Parent and not part.CanCollide then
-                pcall(function(): ()
-                    part.CanCollide = true
-                end)
-            end
-        end
-        -- A running Humanoid can overwrite assembly velocities before the
-        -- solver uses them. Physics state is therefore part of each contact
-        -- pulse, not a one-time toggle-side effect.
-        pcall(function(): ()
-            humanoid.AutoRotate = false
-            humanoid.Sit = false
-            humanoid:SetStateEnabled(Enum.HumanoidStateType.Seated, false)
-            humanoid:ChangeState(Enum.HumanoidStateType.Physics)
-        end)
-    end
-
+    -- Contact needs CanTouch (for the listener) and CanCollide (so the shove
+    -- actually meets the target's body). Both are snapshot once when Touch is
+    -- enabled and restored on OFF/respawn: no per-contact assembly rebuild.
     local function restoreTouchCollisions(): ()
-        for part: BasePart, snapshot: any in pairs(touchCollisions) do
-            if part.Parent then
-                pcall(function(): ()
-                    part.CanCollide = snapshot.canCollide
-                    part.CanTouch = snapshot.canTouch
-                end)
+        if contactCollisionsOwned then
+            for part: BasePart, snapshot: any in pairs(touchCollisions) do
+                if part.Parent then
+                    pcall(function(): ()
+                        if snapshot.canCollide ~= nil then
+                            part.CanCollide = snapshot.canCollide
+                        end
+                        if snapshot.canTouch ~= nil then
+                            part.CanTouch = snapshot.canTouch
+                        end
+                    end)
+                end
             end
+            contactCollisionsOwned = false
         end
         table.clear(touchCollisions)
         table.clear(touchBoundParts)
     end
 
     local function disconnectTouch(): ()
-        restoreTouchPhysics()
-        if pulseBackup and pulseBackup.kind == "touch" then
-            restorePulse()
-        end
+        restoreSelfPulse()
         for _, connection: RBXScriptConnection in ipairs(touchConnections) do
             connection:Disconnect()
         end
@@ -52540,32 +52723,7 @@ function Module.init(context: any): any
             return
         end
         currentSession = nil
-        if pulseBackup and pulseBackup.kind == "target" then
-            restorePulse()
-        end
-
-        for part: BasePart, snapshot: any in pairs(session.collisions) do
-            if part.Parent then
-                pcall(function(): ()
-                    part.CanCollide = snapshot.canCollide
-                    part.CanTouch = snapshot.canTouch
-                end)
-            end
-        end
-        table.clear(session.collisions)
-
-        local humanoid: Humanoid? = session.humanoid
-        if humanoid and humanoid.Parent then
-            pcall(function(): ()
-                humanoid.AutoRotate = session.autoRotate
-                humanoid.Sit = session.wasSitting
-                humanoid:SetStateEnabled(
-                    Enum.HumanoidStateType.Seated,
-                    session.seatedEnabled
-                )
-                humanoid:ChangeState(Enum.HumanoidStateType.GettingUp)
-            end)
-        end
+        restoreSelfPulse()
 
         local character: Model?, livingHumanoid: Humanoid?, root: BasePart? =
             getParts(LocalPlayer)
@@ -52619,10 +52777,6 @@ function Module.init(context: any): any
             return false
         end
 
-        local seatedEnabled: boolean = true
-        pcall(function(): ()
-            seatedEnabled = humanoid:GetStateEnabled(Enum.HumanoidStateType.Seated)
-        end)
         local session: any = {
             target = target,
             targetCharacter = targetCharacter,
@@ -52637,30 +52791,11 @@ function Module.init(context: any): any
             shouldStop = settings.shouldStop,
             duration = duration,
             startedAt = os.clock(),
-            collisions = {},
-            autoRotate = humanoid.AutoRotate,
-            wasSitting = humanoid.Sit,
-            seatedEnabled = seatedEnabled,
+            lastPulseAt = -math.huge,
         }
 
-        for _, object: Instance in ipairs(character:GetChildren()) do
-            if object:IsA("BasePart") then
-                local part: BasePart = object :: BasePart
-                session.collisions[part] = {
-                    canCollide = part.CanCollide,
-                    canTouch = part.CanTouch,
-                }
-                part.CanCollide = true
-                part.CanTouch = true
-            end
-        end
-        humanoid.AutoRotate = false
-        humanoid.Sit = false
-        humanoid:SetStateEnabled(Enum.HumanoidStateType.Seated, false)
-        humanoid:ChangeState(Enum.HumanoidStateType.Physics)
-
         -- A directed action gets one contact placement. It is never a
-        -- per-frame CFrame writer; subsequent motion is only the pulse.
+        -- per-frame CFrame writer; the Humanoid is left exactly as it is.
         currentSession = session
         local placed: boolean = pcall(function(): ()
             character:PivotTo(CFrame.lookAt(contactPosition, targetPosition))
@@ -52699,7 +52834,12 @@ function Module.init(context: any): any
             return Players:GetPlayerFromCharacter(model)
         end)
         if ok and player and player ~= LocalPlayer then
-            touchContacts[player] = {at = os.clock()}
+            local existing: any = touchContacts[player]
+            if existing then
+                existing.at = os.clock()
+            else
+                touchContacts[player] = {at = os.clock(), pulsedAt = -math.huge}
+            end
         end
     end
 
@@ -52712,8 +52852,11 @@ function Module.init(context: any): any
             canCollide = part.CanCollide,
             canTouch = part.CanTouch,
         }
-        -- Listening requires CanTouch, not a permanent collision change.
-        part.CanTouch = true
+        -- Listening requires CanTouch; the collider value is what makes the
+        -- shove meet the target's body, so it is enabled once below.
+        pcall(function(): ()
+            part.CanTouch = true
+        end)
         table.insert(touchConnections, part.Touched:Connect(noteTouch))
     end
 
@@ -52729,25 +52872,35 @@ function Module.init(context: any): any
         end
         touchCharacter = character
         -- Root and body parts are direct children. Accessory/tool handles are
-        -- deliberately excluded: they add collision pairs but are not needed
-        -- for a body-contact pulse.
+        -- deliberately excluded: they add collision pairs but not body contact.
         for _, object: Instance in ipairs(character:GetChildren()) do
             if object:IsA("BasePart") then
                 bindTouchPart(object :: BasePart)
+            end
+        end
+        -- One snapshot pass: collisions on, once per session.
+        contactCollisionsOwned = true
+        for part: BasePart in pairs(touchCollisions) do
+            if part.Parent and not part.CanCollide then
+                pcall(function(): ()
+                    part.CanCollide = true
+                end)
             end
         end
         table.insert(touchConnections, character.DescendantAdded:Connect(function(object: Instance): ()
             if touchEnabled and object.Parent == character
                 and object:IsA("BasePart") then
                 bindTouchPart(object :: BasePart)
+                if contactCollisionsOwned and not (object :: BasePart).CanCollide then
+                    pcall(function(): ()
+                        (object :: BasePart).CanCollide = true
+                    end)
+                end
             end
         end))
         table.insert(touchConnections, humanoid.Died:Connect(function(): ()
             table.clear(touchContacts)
-            restoreTouchPhysics()
-            if pulseBackup and pulseBackup.kind == "touch" then
-                restorePulse()
-            end
+            restoreSelfPulse()
         end))
     end
 
@@ -52757,35 +52910,14 @@ function Module.init(context: any): any
             return
         end
         touchEnabled = wanted
-        lastTouchPulseAt = -math.huge
         if touchEnabled then
             ensureRunSignals()
             bindTouchCharacter()
         else
             disconnectTouch()
-            if pulseBackup and pulseBackup.kind == "touch" then
-                restorePulse()
-            end
         end
         setActivity()
         maybeDisconnectRunSignals()
-    end
-
-    local function boundedPulse(direction: Vector3, speed: number, lift: number): Vector3
-        -- Keep the impulse in the same bounded range as ordinary character
-        -- physics. The timing/contact fix must not be replaced by an extreme
-        -- velocity spike or by multiplying an already-moving assembly.
-        local pulse: Vector3 = Vector3.new(0, lift, 0)
-        if direction.Magnitude > 0.001 then
-            pulse += direction.Unit * speed
-        end
-        if not finiteVector(pulse) then
-            return Vector3.zero
-        end
-        if pulse.Magnitude > 250 then
-            pulse = pulse.Unit * 250
-        end
-        return pulse
     end
 
     local function stepTarget(session: any): ()
@@ -52818,15 +52950,17 @@ function Module.init(context: any): any
         local targetPosition: Vector3 = session.targetRoot.Position
         local direction: Vector3 = targetPosition - root.Position
         if not finiteVector(targetPosition) or not finiteVector(direction)
-            or direction.Magnitude > 14 then
+            or direction.Magnitude > CONTACT_RANGE then
             finishSession("lost-contact")
             return
         end
-        if not savePulse("target", root) then
+        local now: number = os.clock()
+        if now - session.lastPulseAt < PULSE_COOLDOWN then
             return
         end
-        root.AssemblyLinearVelocity = boundedPulse(direction, 180, 50)
-        root.AssemblyAngularVelocity = Vector3.new(0, 140, 0)
+        session.lastPulseAt = now
+        pulseTarget(session.targetRoot, direction)
+        pulseSelf(root, direction, DIRECTED_SPEED, DIRECTED_LIFT)
     end
 
     local function stepTouch(): ()
@@ -52838,51 +52972,47 @@ function Module.init(context: any): any
         end
         local _, humanoid: Humanoid?, root: BasePart? = livingParts(LocalPlayer)
         if not humanoid or not root then
-            restoreTouchPhysics()
+            table.clear(touchContacts)
+            restoreSelfPulse()
             return
         end
 
         local now: number = os.clock()
-        local contactRoot: BasePart? = nil
-        local newest: number = -math.huge
-        for player: Player, contact: {at: number} in pairs(touchContacts) do
-            local _, targetHumanoid: Humanoid?, targetRoot: BasePart? =
-                livingParts(player)
-            if now - contact.at <= 0.25 and targetHumanoid and targetRoot
-                and (targetRoot.Position - root.Position).Magnitude <= 14 then
-                if contact.at > newest then
-                    newest = contact.at
-                    contactRoot = targetRoot
-                end
+        local pending: {Player} = {}
+        for player: Player, contact: {at: number, pulsedAt: number} in pairs(touchContacts) do
+            if now - contact.at <= CONTACT_SECONDS then
+                table.insert(pending, player)
             else
                 touchContacts[player] = nil
             end
         end
-        if not contactRoot then
-            restoreTouchPhysics()
+        if #pending == 0 then
             return
         end
-        if now - lastTouchPulseAt < 1 / 30 then
-            return
+        for _, player: Player in ipairs(pending) do
+            local contact: any = touchContacts[player]
+            if contact and now - contact.pulsedAt >= PULSE_COOLDOWN then
+                local _, targetHumanoid: Humanoid?, targetRoot: BasePart? =
+                    livingParts(player)
+                local direction: Vector3? = nil
+                if targetHumanoid and targetRoot
+                    and (targetRoot.Position - root.Position).Magnitude <= CONTACT_RANGE then
+                    direction = targetRoot.Position - root.Position
+                end
+                if direction and finiteVector(direction) then
+                    contact.pulsedAt = now
+                    direction = Vector3.new(direction.X, 0, direction.Z)
+                    if direction.Magnitude <= 0.001 then
+                        local look: Vector3 = root.CFrame.LookVector
+                        direction = Vector3.new(look.X, 0, look.Z)
+                    end
+                    if targetRoot then
+                        pulseTarget(targetRoot, direction)
+                    end
+                    pulseSelf(root, direction, TOUCH_SPEED, TOUCH_LIFT)
+                end
+            end
         end
-
-        local direction: Vector3 = contactRoot.Position - root.Position
-        if not finiteVector(direction) then
-            restoreTouchPhysics()
-            return
-        end
-        direction = Vector3.new(direction.X, 0, direction.Z)
-        if direction.Magnitude <= 0.001 then
-            local look: Vector3 = root.CFrame.LookVector
-            direction = Vector3.new(look.X, 0, look.Z)
-        end
-        engageTouchPhysics(humanoid)
-        if not savePulse("touch", root) then
-            return
-        end
-        root.AssemblyLinearVelocity = boundedPulse(direction, 150, 70)
-        root.AssemblyAngularVelocity = Vector3.new(0, 120, 0)
-        lastTouchPulseAt = now
     end
 
     ensureRunSignals = function(): ()
@@ -52893,9 +53023,8 @@ function Module.init(context: any): any
             if destroyed then
                 return
             end
-            -- Also protects against a missed Heartbeat after a character or
-            -- executor timing anomaly; no stale pulse crosses two frames.
-            restorePulse()
+            -- A second restore point: no stale local pulse survives a physics
+            -- step even if Heartbeat is delayed by a hitch.
             if currentSession then
                 local session: any = currentSession
                 local ok: boolean = pcall(stepTarget, session)
@@ -52906,19 +53035,20 @@ function Module.init(context: any): any
                 local ok: boolean = pcall(stepTouch)
                 if not ok then
                     setTouchEnabled(false)
-                    restorePulse()
+                    restoreSelfPulse()
                 end
             end
         end)
         heartbeatConnection = RunService.Heartbeat:Connect(function(): ()
             if not destroyed then
-                restorePulse()
+                restoreSelfPulse()
             end
         end)
         characterConnection = LocalPlayer.CharacterAdded:Connect(function(): ()
             if currentSession then
                 finishSession("lost-local")
             end
+            restoreSelfPulse()
             if touchEnabled then
                 bindTouchCharacter()
             end
@@ -52948,7 +53078,7 @@ function Module.init(context: any): any
         destroyed = true
         setTouchEnabled(false)
         finishSession("destroyed")
-        restorePulse()
+        restoreSelfPulse()
         disconnectRunSignals()
         setActivity()
         if activeLibrary == library then

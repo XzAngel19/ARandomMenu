@@ -428,13 +428,20 @@ function Module.init(runtime: any): any
         end
         pickupCache = {at = os.clock(), list = list}
     end
+    -- The full scan is the detection that demonstrably works in game, so it is
+    -- never replaced by a cheaper heuristic. Its cost is bounded instead: one
+    -- scan per second at most, and an explicit invalidation whenever a consumer
+    -- (Auto Farm) knows a pickup was just taken.
     state.mm2CoinPickups = function(): {Instance}
-        if os.clock() - pickupCache.at < 0.5 then
+        if os.clock() - pickupCache.at < 1 then
             return pickupCache.list
         end
         local found: {[Instance]: string} = collectAll()
         refreshPickupCache(found)
         return pickupCache.list
+    end
+    state.mm2InvalidateCoinPickups = function(): ()
+        pickupCache.at = -math.huge
     end
 
     local function toggleCoinEsp(enabled: boolean): ()

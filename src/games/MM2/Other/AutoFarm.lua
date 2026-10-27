@@ -20,6 +20,7 @@ function Module.init(_runtime: any): any
     local findMM2Map: any = core.findMM2Map
     local getEstimatedLatency: any = core.getEstimatedLatency
     local getGunOriginCFrame: any = core.getGunOriginCFrame
+    local getRoundPhase: any = core.getRoundPhase
 
     local function flingOwnsPhysics(): boolean
         local physics: any = state.flingPhysics
@@ -69,9 +70,17 @@ function Module.init(_runtime: any): any
         return string.format("%02d:%02d", mins, secs)
     end
 
+    -- Called every farm frame: only touch the labels when the value actually
+    -- changed. Rewriting the same string per frame rebuilt text layout for no
+    -- visible difference.
+    local lastRenderedCoins: string = ""
     local function refreshFarmOverlay(): ()
-        if coinsCollectedStat and type(coinsCollectedStat.set) == "function" then
-            coinsCollectedStat.set(tostring(totalCoinsCollected))
+        local coinsText: string = tostring(totalCoinsCollected)
+        if coinsText ~= lastRenderedCoins then
+            lastRenderedCoins = coinsText
+            if coinsCollectedStat and type(coinsCollectedStat.set) == "function" then
+                coinsCollectedStat.set(coinsText)
+            end
         end
         local wholeSec: number = math.max(0, math.floor(farmElapsedSeconds))
         if wholeSec ~= lastFormattedSecond then
@@ -493,6 +502,12 @@ function Module.init(_runtime: any): any
         local stuckSince: number = 0
         local lastTouchPulse: number = 0
         local blacklist: {[Instance]: number} = {}
+        -- The overlay counter is confirmed pickups only. When the server's
+        -- CoinCollected never reaches the client, a target that disappears
+        -- while this character is parked on it is the only confirmation
+        -- available; it is never mixed with the authoritative bag amount.
+        local remoteBagKnown: boolean = false
+        local localCollected: {[Instance]: boolean} = {}
 
         -- Engagement state. The farm touches the character ONLY while
         -- engaged inside an active round on a map. In the lobby or
@@ -612,7 +627,7 @@ function Module.init(_runtime: any): any
                 cachedLobbyPart = nil
                 lobbyScanAt = -math.huge
             end
-            if now - lobbyScanAt < 0.75 then
+            if now - lobbyScanAt < 1.5 then
                 return nil
             end
             lobbyScanAt = now
@@ -785,105 +800,143 @@ function Module.init(_runtime: any): any
             end)
         end
 
-        -- Detects when the player's character is inside the loaded MM2 map,
-        -- including the pre-round countdown seconds right after teleporting
-        -- from the lobby before roles or coins have spawned.
-        local function isCharacterInActiveRound(root: BasePart): boolean
-            if type(findMM2Map) ~= "function" then
-                return false
-            end
-            local map: Instance? = findMM2Map()
-            if not map then
-                return false
-            end
-            if map ~= cachedMap then
-                cachedMap = map
-                cachedMapReference = nil
-                mapReferenceResolved = false
-                mapReferenceAt = -math.huge
-                cachedLobbyPart = nil
-                lobbyScanAt = -math.huge
-            end
-            -- Proximity is only a secondary check. A loaded map or a
-            -- nearby spawn must never make lobby/ended-round actions legal.
-            if type(isRoundLifecycleActive) ~= "function"
-                or isRoundLifecycleActive() ~= true then
-                return false
-            end
-            if type(getPlayerRole) == "function" then
-                local role: any = getPlayerRole(LocalPlayer)
-                if role == "Dead" then
-                    return false
-                end
-                if (role == "None" or role == nil)
-                    and type(isRoundLifecycleActive) == "function"
-                    and isRoundLifecycleActive() == false then
-                    local lobbyPartCheck: BasePart? = findLobbyReferencePart()
-                    if lobbyPartCheck then
-                        local okLD: boolean, ld: any = pcall(function(): any
-                            return (root.Position - lobbyPartCheck.Position).Magnitude
-                        end)
-                        if okLD and type(ld) == "number" and ld <= 350 then
-                            return false
-                        end
-                    end
-                end
-            end
-            local lobbyPart: BasePart? = findLobbyReferencePart()
-            if lobbyPart then
-                local okLobbyDist: boolean, lobbyDist: any = pcall(function(): any
-                    return (root.Position - lobbyPart.Position).Magnitude
-                end)
-                if okLobbyDist and type(lobbyDist) == "number" and lobbyDist <= 350 then
-                    return false
-                end
-            end
-            if safeZonePlatform and safeZonePlatform.Parent then
-                local okZoneDist: boolean, zoneDist: any = pcall(function(): any
-                    return (root.Position - safeZonePlatform.Position).Magnitude
-                end)
-                if okZoneDist and type(zoneDist) == "number" and zoneDist <= 120 then
-                    return true
-                end
-            end
+        -- One coherent round context. Every movement, coin pulse and terminal
+        -- action asks this first, so the lobby or a dead body cannot leak into
+        -- an action through a second, weaker path.
+        --
+        --   "active" -> inside a loaded map, in a round, character alive
+        --   "lobby"  -> no map, or the body is still at the lobby reference
+        --   "dead"   -> no living local body / local role Dead
+        --
+        -- A loaded map is required for every action, never a proximity guess.
+        -- The result is cached per frame-sized window: scanning Workspace or the
+        -- map reference on every tick was one of the farm's hot paths.
+        local function refreshMapScopedCaches(map: Instance): ()
+            cachedMap = map
+            cachedMapReference = nil
+            mapReferenceResolved = false
+            mapReferenceAt = -math.huge
+            cachedLobbyPart = nil
+            lobbyScanAt = -math.huge
+        end
+
+        -- One BasePart that represents the loaded map. Resolved at most once a
+        -- second; the farm asks for it per frame, so it must stay cached.
+        local function resolveMapReference(map: Instance): BasePart?
             if cachedMapReference and not cachedMapReference.Parent then
                 cachedMapReference = nil
                 mapReferenceResolved = false
             end
-            if not mapReferenceResolved
-                or (not cachedMapReference and os.clock() - mapReferenceAt > 1) then
-                mapReferenceResolved = true
-                mapReferenceAt = os.clock()
-                cachedMapReference = nil
-                local spawns: Instance? = (map :: Instance):FindFirstChild("Spawns")
-                if spawns then
-                    cachedMapReference = spawns:FindFirstChildWhichIsA("BasePart", true)
-                end
-                if not cachedMapReference then
-                    local coinContainer: Instance? = (map :: Instance):FindFirstChild("CoinContainer")
-                    if coinContainer then
-                        cachedMapReference = coinContainer:FindFirstChildWhichIsA("BasePart", true)
-                    end
-                end
-                if not cachedMapReference then
-                    cachedMapReference = (map :: Instance):FindFirstChildWhichIsA("BasePart", true)
+            if mapReferenceResolved
+                and (cachedMapReference or os.clock() - mapReferenceAt <= 1) then
+                return cachedMapReference
+            end
+            mapReferenceResolved = true
+            mapReferenceAt = os.clock()
+            cachedMapReference = nil
+            local spawns: Instance? = map:FindFirstChild("Spawns")
+            if spawns then
+                cachedMapReference = spawns:FindFirstChildWhichIsA("BasePart", true)
+            end
+            if not cachedMapReference then
+                local coinContainer: Instance? = map:FindFirstChild("CoinContainer")
+                if coinContainer then
+                    cachedMapReference = coinContainer:FindFirstChildWhichIsA("BasePart", true)
                 end
             end
-            local refPart: BasePart? = cachedMapReference
+            if not cachedMapReference then
+                cachedMapReference = map:FindFirstChildWhichIsA("BasePart", true)
+            end
+            return cachedMapReference
+        end
+
+        -- Cheap per-frame checks are re-evaluated every call; only the
+        -- expensive lookups (map model, map reference, lobby scan) are cached.
+        -- Caching the whole verdict delayed death/lobby by up to a frame and
+        -- let an action slip through in the state it was supposed to block.
+        local function roundContext(root: BasePart?): string
+            local character: Model?, humanoid: Humanoid? = characterParts()
+            if not root or not root.Parent or not character or not humanoid
+                or humanoid.Health <= 0 then
+                return "dead"
+            end
+            local map: Instance? = nil
+            if type(findMM2Map) == "function" then
+                local okMap: boolean, found: any = pcall(findMM2Map)
+                if okMap then
+                    map = found
+                end
+            end
+            if not map then
+                return "lobby"
+            end
+            if map ~= cachedMap then
+                refreshMapScopedCaches(map :: Instance)
+            end
+            local role: any = nil
+            if type(getPlayerRole) == "function" then
+                local okRole: boolean, resolved: any =
+                    pcall(getPlayerRole, LocalPlayer)
+                if okRole then
+                    role = resolved
+                end
+            end
+            if role == "Dead" then
+                return "dead"
+            end
+            if type(isRoundLifecycleActive) == "function"
+                and isRoundLifecycleActive() == false then
+                -- RoundEndFade or the lobby teleport already announced the end
+                -- of the round. The map can still be loaded for a moment, so
+                -- this wins over every proximity check.
+                return "lobby"
+            end
+            local phase: any = nil
+            if type(getRoundPhase) == "function" then
+                local okPhase: boolean, resolved: any = pcall(getRoundPhase)
+                if okPhase then
+                    phase = resolved
+                end
+            end
+            if phase == "lobby" then
+                return "lobby"
+            end
+            -- A lobby part left in Workspace is the only reliable way to tell
+            -- "still standing in the lobby" from "teleported into the map
+            -- before roles exist". Unknown lifecycle + loaded map is allowed.
+            local lobbyPart: BasePart? = findLobbyReferencePart()
+            if lobbyPart then
+                local okDist: boolean, dist: any = pcall(function(): any
+                    return (root.Position - lobbyPart.Position).Magnitude
+                end)
+                if okDist and type(dist) == "number" and dist <= 300 then
+                    return "lobby"
+                end
+            end
+            local refPart: BasePart? = resolveMapReference(map :: Instance)
             if refPart then
                 local okDist: boolean, dist: any = pcall(function(): any
                     return (root.Position - refPart.Position).Magnitude
                 end)
                 if okDist and type(dist) == "number" and dist > 1500 then
-                    return false
+                    return "lobby"
                 end
-                return true
             end
-            if type(isRoundLifecycleActive) == "function"
-                and isRoundLifecycleActive() ~= true then
-                return false
+            return "active"
+        end
+
+        local function isCharacterInActiveRound(root: BasePart): boolean
+            return roundContext(root) == "active"
+        end
+
+        local function contextStatus(): string
+            local value: string = roundContext(rootOf(LocalPlayer))
+            if value == "dead" then
+                return "Auto Farm: paused - your character is dead"
+            elseif value == "lobby" then
+                return "Auto Farm: waiting in lobby"
             end
-            return true
+            return "Auto Farm: running"
         end
 
         local function restoreCharacter(
@@ -1226,6 +1279,74 @@ function Module.init(_runtime: any): any
             return pos
         end
 
+        -- A local hitbox does not exist for the server: growing the root only
+        -- changes what this client collides with. The pickup pays on a real
+        -- overlap, so a farm that parks three studs under a coin and only
+        -- pulses a local touch never gets paid. Below keeps the hidden travel
+        -- path, but rises into the pickup volume once per coin, pulses the
+        -- touch from there and drops back under on the following frame (the
+        -- movement writer pulls the root down again).
+        --
+        -- Walk gets the same bounded fallback for pickups that sit above the
+        -- floor (a table, a ledge): walking alone never reaches them.
+        local COLLECT_ATTEMPTS: number = 2
+        local COLLECT_INTERVAL: number = 0.35
+        local collectAttempts: {[Instance]: number} = {}
+        local collectAttemptAt: number = -math.huge
+
+        -- Returns true when the coin has spent its last physical attempt, so
+        -- the caller can blacklist it instead of dwelling on it.
+        local function attemptCollect(
+            character: Model,
+            humanoid: Humanoid,
+            root: BasePart,
+            part: Instance,
+            position: Vector3
+        ): boolean
+            local now: number = os.clock()
+            local attempts: number = collectAttempts[part] or 0
+            if attempts >= COLLECT_ATTEMPTS
+                or now - collectAttemptAt < COLLECT_INTERVAL
+                or flingOwnsPhysics() then
+                return false
+            end
+            if not part.Parent or humanoid.Health <= 0 then
+                return false
+            end
+            collectAttempts[part] = attempts + 1
+            collectAttemptAt = now
+            local yaw: number = yawOf(root.CFrame)
+            -- Stop the movement writer for this placement: a live
+            -- LinearVelocity would drag the root out of the pickup volume
+            -- before the touch could register.
+            if settings.mode ~= "Walk" then
+                belowHold = true
+                belowDestination = nil
+                ensureFarmConstraints(root, Vector3.zero, yaw)
+            else
+                pcall(function(): ()
+                    humanoid:Move(Vector3.zero, false)
+                end)
+            end
+            local touchPart: Instance? = serverPartOf(part)
+            local placed: boolean = pcall(function(): ()
+                local contactCFrame: CFrame = CFrame.new(position)
+                    * CFrame.Angles(0, yaw, 0)
+                root.CFrame = contactCFrame
+                character:PivotTo(contactCFrame)
+                root.AssemblyLinearVelocity = Vector3.zero
+                root.AssemblyAngularVelocity = Vector3.zero
+            end)
+            if not placed then
+                return false
+            end
+            if touchPart and type(state.fireTouchInterest) == "function" then
+                pcall(state.fireTouchInterest, root, touchPart, 0)
+                pcall(state.fireTouchInterest, root, touchPart, 1)
+            end
+            return (collectAttempts[part] or 0) >= COLLECT_ATTEMPTS
+        end
+
     -- The gun grab is an in-round action for non-Murderer roles: as
     -- Murderer it must never run, and in the lobby there is no round,
     -- no murderer and no dropped gun to shoot with. Note that once an
@@ -1504,12 +1625,17 @@ function Module.init(_runtime: any): any
                             rememberedBagLimit = limit
                         end
                         if type(amount) == "number" then
+                            remoteBagKnown = true
                             if amount > bagAmount then
                                 totalCoinsCollected += (amount - bagAmount)
                                 refreshFarmOverlay()
                                 if currentTargetCoin then
                                     blacklist[currentTargetCoin] = os.clock() + BLACKLIST_SECONDS
                                     currentTargetCoin = nil
+                                end
+                                -- The pickup list is stale from this frame on.
+                                if type(state.mm2InvalidateCoinPickups) == "function" then
+                                    pcall(state.mm2InvalidateCoinPickups)
                                 end
                                 scanAt = 0
                             end
@@ -1583,18 +1709,40 @@ function Module.init(_runtime: any): any
             end
         end
 
-        if RunService and RunService.Stepped then
-            featureConnections.MM2AutoFarmStepped = RunService.Stepped:Connect(stepFarmPhysicsOverride)
-        end
-        pcall(function(): ()
-            if RunService and (RunService :: any).PreSimulation then
-                featureConnections.MM2AutoFarmPreSim =
-                    (RunService :: any).PreSimulation:Connect(preFarmPhysics)
+        -- Only the writer the current mode needs is connected: Walk drives the
+        -- Humanoid from Stepped, Below drives its constraints from
+        -- PreSimulation. Keeping both connected made every farm frame pay for a
+        -- branch, a character lookup and a round-context check it could never
+        -- use.
+        local signalsMode: string? = nil
+
+        local function ensureFarmSignals(): ()
+            local wanted: string = if settings.mode == "Walk" then "Walk" else "Below"
+            if signalsMode == wanted then
+                return
             end
-        end)
+            disconnectFeatureConnection("MM2AutoFarmStepped")
+            disconnectFeatureConnection("MM2AutoFarmPreSim")
+            signalsMode = wanted
+            if wanted == "Walk" then
+                if RunService and RunService.Stepped then
+                    featureConnections.MM2AutoFarmStepped =
+                        RunService.Stepped:Connect(stepFarmPhysicsOverride)
+                end
+                return
+            end
+            pcall(function(): ()
+                if RunService and (RunService :: any).PreSimulation then
+                    featureConnections.MM2AutoFarmPreSim =
+                        (RunService :: any).PreSimulation:Connect(preFarmPhysics)
+                end
+            end)
+        end
+        ensureFarmSignals()
 
         featureConnections.MM2AutoFarmTick = TaskManager:Connect(
             function(deltaTime: number): ()
+                ensureFarmSignals()
                 if flingOwnsPhysics() then
                     if engaged or hiddenUnderMap then
                         restoreCharacter(false)
@@ -1625,15 +1773,21 @@ function Module.init(_runtime: any): any
                     if engaged or hiddenUnderMap then
                         restoreCharacter(false)
                     end
+                    -- Round-scoped memory never survives outside a round,
+                    -- however it got there: a stale CoinCollected remote, an
+                    -- old config or a death mid-sequence. The per-round
+                    -- teardown still runs once, on the transition.
+                    rememberedBagAmount = 0
+                    rememberedBagLimit = 50
+                    rememberedFullHandled = false
+                    bagAmount = 0
+                    fullHandled = false
+                    roundFullReached = false
+                    table.clear(collectAttempts)
+                    collectAttemptAt = -math.huge
                     if wasInActiveRound then
                         wasInActiveRound = false
                         roundGeneration += 1
-                        rememberedBagAmount = 0
-                        rememberedBagLimit = 50
-                        rememberedFullHandled = false
-                        bagAmount = 0
-                        fullHandled = false
-                        roundFullReached = false
                         teleportedHomeThisRound = false
                         firstCoinSeenThisRound = false
                         currentTargetCoin = nil
@@ -1643,7 +1797,7 @@ function Module.init(_runtime: any): any
                         hideAnchorPosition = nil
                         destroySafeZonePlatform()
                     end
-                    setStatus("Auto Farm: waiting in lobby")
+                    setStatus(contextStatus())
                     stuckPart = nil
                     return
                 end
@@ -1718,6 +1872,18 @@ function Module.init(_runtime: any): any
 
                 -- Nearest pickup, from Coin ESP's own detection.
                 local now: number = os.clock()
+                if currentTargetCoin and not stillCollectable(currentTargetCoin) then
+                    -- The pickup we were parked on is gone. Trust the bag
+                    -- remote when it speaks; otherwise report the confirmed
+                    -- local pickup instead of staying at zero forever.
+                    if not remoteBagKnown and not localCollected[currentTargetCoin] then
+                        localCollected[currentTargetCoin] = true
+                        totalCoinsCollected += 1
+                        refreshFarmOverlay()
+                    end
+                    currentTargetCoin = nil
+                    stuckPart = nil
+                end
                 local scanInterval: number = if #scanCache == 0 then 0.10 else 0.25
                 if now - scanAt > scanInterval then
                     scanAt = now
@@ -1772,7 +1938,7 @@ function Module.init(_runtime: any): any
                     end
                     scanAt = now - 0.20
                     if not firstCoinSeenThisRound then
-                        if settings.stayUnderOnStart then
+                        if settings.stayUnderOnStart and settings.mode ~= "Walk" then
                             holdHiddenUnderMap(character, humanoid, root)
                         elseif hiddenUnderMap or engaged then
                             restoreCharacter(false, true)
@@ -1833,9 +1999,9 @@ function Module.init(_runtime: any): any
                     remaining = (destination - root.Position).Magnitude
                     arrived = remaining < 1.0
                 end
-                if arrived or remaining < 3.5 then
+                if not arrived and remaining < 3.5 then
                     -- Pulse the touch directly against the Coin_Server part
-                    -- until the coin is collected.
+                    -- while closing the last studs.
                     if now - lastTouchPulse > 0.08 then
                         lastTouchPulse = now
                         local touchPart: Instance? =
@@ -1854,14 +2020,29 @@ function Module.init(_runtime: any): any
                     pingMillis()
                 ))
                 if arrived then
-                    -- Parked under the coin: if it does not collect,
-                    -- skip it for a while instead of getting stuck.
+                    -- Parked at the coin. A local touch pulse is not proof of
+                    -- collection, so after a short grace the farm rises into
+                    -- the pickup volume (bounded attempts) before skipping it.
                     if stuckPart ~= nearest then
                         stuckPart = nearest
                         stuckSince = now
-                    elseif now - stuckSince > STUCK_SECONDS then
-                        blacklist[nearest] = now + BLACKLIST_SECONDS
-                        stuckPart = nil
+                    elseif now - stuckSince > 0.15 then
+                        local spent: boolean = attemptCollect(
+                            character,
+                            humanoid,
+                            root,
+                            nearest,
+                            nearestPosition :: Vector3
+                        )
+                        if spent then
+                            -- Two real overlaps did not pay: drop the target
+                            -- from the cached list as well as from the loop.
+                            blacklist[nearest] = now + BLACKLIST_SECONDS
+                            stuckPart = nil
+                            if type(state.mm2InvalidateCoinPickups) == "function" then
+                                pcall(state.mm2InvalidateCoinPickups)
+                            end
+                        end
                     end
                 else
                     stuckPart = nil

@@ -200,27 +200,42 @@ local originalLinear = Vector3.new(4,0,0)
 local originalAngular = Vector3.new(1,0,0)
 root.AssemblyLinearVelocity = originalLinear
 root.AssemblyAngularVelocity = originalAngular
+-- A fling is momentum given to the target, not a takeover of the avatar.
 assert(physics.start(target,{duration=1.4}))
 assert(localCharacter.pivotCalls == 1,"one directed contact placement")
 assert(not physics.start(target,{duration=1.4}),"one directed owner")
+assert(humanoid.AutoRotate == true and humanoid.lastState == nil
+    and humanoid.Sit == false,
+    "directed fling never takes over local Humanoid state")
+assert(root.CanCollide == false and root.CanTouch == false
+    and body.CanCollide == true and body.CanTouch == false,
+    "directed fling owns no collisions")
 PreSimulation:Fire()
 assert(localCharacter.pivotCalls == 1,"no directed contact teleport per tick")
-assert(root.AssemblyLinearVelocity.Magnitude < 250,"finite directed pulse cap")
-assert(root.AssemblyAngularVelocity.Magnitude <= 140,"finite directed angular cap")
+assert(targetRoot.AssemblyLinearVelocity.Magnitude > 100,
+    "contact momentum reaches the target")
+assert(targetRoot.AssemblyLinearVelocity.Magnitude < 250,"bounded target pulse")
+assert(root.AssemblyLinearVelocity.Magnitude > 0
+    and root.AssemblyLinearVelocity.Magnitude < 250,
+    "one bounded local step carries the momentum")
+assert(root.AssemblyAngularVelocity.Magnitude == 0,"no local spin")
 PostSimulation:Fire()
-assert(not sameVector(root.AssemblyLinearVelocity,originalLinear),
-    "pulse survives PostSimulation for physics/replication")
 Heartbeat:Fire()
-assert(sameVector(root.AssemblyLinearVelocity,originalLinear),"Heartbeat restores linear")
-assert(sameVector(root.AssemblyAngularVelocity,originalAngular),"Heartbeat restores angular")
+assert(sameVector(root.AssemblyLinearVelocity,originalLinear),
+    "Heartbeat restores the local velocity")
+assert(sameVector(root.AssemblyAngularVelocity,originalAngular),
+    "Heartbeat restores the local angular velocity")
+assert(targetRoot.AssemblyLinearVelocity.Magnitude > 100,
+    "the target keeps the momentum we never cancel")
 physics.cancel()
 assert(not physics.isRunning() and not activityValue)
 assert(liveConnections(PreSimulation) == 0 and liveConnections(Heartbeat) == 0,
     "directed cleanup disconnects signals")
 assert(closeVector(root.Position,home.Position),"cancel returns home")
 assert(sameVector(root.AssemblyLinearVelocity,Vector3.zero),"cancel stops local motion")
-assert(body.CanCollide == true and body.CanTouch == false and humanoid.AutoRotate == true,
-    "directed snapshots restored")
+assert(body.CanCollide == true and body.CanTouch == false and humanoid.AutoRotate == true
+    and humanoid.lastState == nil,
+    "directed leaves the body and the Humanoid untouched")
 pass("directed contact pulse, one placement, Heartbeat restore and cleanup")
 
 -- Death and target loss cancel without a delayed action.
@@ -239,11 +254,13 @@ assert(not physics.isRunning(),"target death cancels")
 targetHumanoid.Health = 100
 pass("local death and target death cancel sessions")
 
--- Touch mode only pulses on recent contact and never pivots the character.
+-- Touch mode only pulses on real contact and never pivots or ragdolls you.
 root.CFrame = CFrame.new(Vector3.new(0,10,0))
 root.Position = Vector3.new(0,10,0)
 root.AssemblyLinearVelocity = Vector3.zero
 root.AssemblyAngularVelocity = Vector3.zero
+targetRoot.AssemblyLinearVelocity = Vector3.zero
+targetRoot.AssemblyAngularVelocity = Vector3.zero
 local accessory = instance("Accessory",localCharacter)
 local accessoryHandle = instance("Part",accessory)
 accessoryHandle.CanCollide = false
@@ -254,49 +271,55 @@ assert(accessoryHandle.CanTouch == false and accessoryHandle.CanCollide == false
     "Touch ignores accessory collision pairs")
 assert(liveConnections(PreSimulation) == 1 and liveConnections(Heartbeat) == 1,
     "Touch owns signals only while enabled")
+assert(root.CanTouch == true and body.CanTouch == true,
+    "listening needs CanTouch, which is snapshotted")
+assert(root.CanCollide == true and body.CanCollide == true,
+    "contact colliders are enabled once per session, not per contact")
+assert(humanoid.AutoRotate == true and humanoid.lastState == nil
+    and humanoid.Sit == false,
+    "idle Touch leaves the Humanoid alone")
 PreSimulation:Fire()
 assert(sameVector(root.AssemblyLinearVelocity,Vector3.zero),"no contact no pulse")
-assert(root.CanCollide == false and humanoid.lastState ~= "Physics",
-    "idle Touch adds no colliders or Physics state")
+assert(sameVector(targetRoot.AssemblyLinearVelocity,Vector3.zero),
+    "no contact never touches the target")
 local beforeTouch = root.Position
 root.Touched:Fire(targetRoot)
 PreSimulation:Fire()
-assert(root.AssemblyLinearVelocity.Magnitude < 250,"finite touch pulse cap")
-assert(root.AssemblyLinearVelocity.Magnitude > 0,"contact produces a pulse")
-assert(root.AssemblyAngularVelocity.Magnitude <= 120,"bounded touch angular pulse")
-assert(root.CanCollide == true and humanoid.lastState == "Physics"
-    and humanoid.AutoRotate == false,
-    "contact owns collisions and Humanoid physics before the pulse")
+assert(targetRoot.AssemblyLinearVelocity.Magnitude > 100,"touch launches the target")
+assert(targetRoot.AssemblyLinearVelocity.Magnitude < 250,"bounded touch target pulse")
+assert(root.AssemblyLinearVelocity.Magnitude > 0
+    and root.AssemblyLinearVelocity.Magnitude < 250,
+    "touch adds one bounded local step")
+assert(root.AssemblyAngularVelocity.Magnitude == 0,"touch never spins the player")
+assert(humanoid.AutoRotate == true and humanoid.lastState == nil,
+    "touch never takes over the Humanoid")
 assert(closeVector(root.Position,beforeTouch),"touch does not teleport")
 PostSimulation:Fire()
-assert(root.AssemblyLinearVelocity.Magnitude > 0,"touch pulse crosses PostSimulation")
 Heartbeat:Fire()
-assert(sameVector(root.AssemblyLinearVelocity,Vector3.zero),"touch restores after Heartbeat")
+assert(sameVector(root.AssemblyLinearVelocity,Vector3.zero),
+    "touch restores the local step after one physics step")
+assert(targetRoot.AssemblyLinearVelocity.Magnitude > 100,
+    "the touched player keeps the launched velocity")
+-- Expiry: the same contact does not pulse again once the window closes.
+now += 0.3
+root.AssemblyLinearVelocity = Vector3.zero
+targetRoot.AssemblyLinearVelocity = Vector3.zero
+PreSimulation:Fire()
+assert(sameVector(root.AssemblyLinearVelocity,Vector3.zero),"expired contact is inert")
+assert(sameVector(targetRoot.AssemblyLinearVelocity,Vector3.zero),
+    "expired contact does not pulse the target")
+assert(humanoid.AutoRotate == true and humanoid.lastState == nil,
+    "expiry needs no Humanoid restore because it never changed")
 physics.setTouchEnabled(false)
 assert(not physics.isTouchEnabled() and not activityValue)
-assert(body.CanCollide == true and body.CanTouch == false and root.CanTouch == false,
+assert(body.CanCollide == true and body.CanTouch == false and root.CanTouch == false
+    and root.CanCollide == false,
     "Touch collision and CanTouch snapshots restored")
-assert(root.CanCollide == false and humanoid.AutoRotate == true
-    and humanoid.lastState == "GettingUp",
-    "Touch OFF restores Humanoid and body physics ownership")
 assert(liveConnections(PreSimulation) == 0 and liveConnections(Heartbeat) == 0,
     "Touch OFF disconnects signals")
 PreSimulation:Fire()
 assert(sameVector(root.AssemblyLinearVelocity,Vector3.zero),"OFF is inert")
-
--- A contact that ends without toggling the card also releases physics.
-physics.setTouchEnabled(true)
-root.Touched:Fire(targetRoot)
-PreSimulation:Fire()
-Heartbeat:Fire()
-assert(root.CanCollide == true and humanoid.lastState == "Physics")
-now += 0.3
-PreSimulation:Fire()
-assert(root.CanCollide == false and humanoid.AutoRotate == true
-    and humanoid.lastState == "GettingUp",
-    "contact expiry restores collisions and Humanoid state")
-physics.setTouchEnabled(false)
-pass("touch requires contact, owns physics only during contact and cleans up")
+pass("touch launches the contacted player and never takes over local physics")
 
 -- Exercise the actual universal card wiring, not only the library API.
 local universalState = {flingPhysics=physics,toggleControls={}}
@@ -351,10 +374,13 @@ assert(body.CanCollide == false,"Noclip owns collisions while Fling is OFF")
 physics.setTouchEnabled(true)
 root.Touched:Fire(targetRoot)
 PreSimulation:Fire()
-assert(root.CanCollide and body.CanCollide,"Touch takes contact collisions")
+assert(root.CanCollide and body.CanCollide,
+    "Touch owns body collisions while it is enabled")
 noclipTick()
-assert(root.CanCollide and body.CanCollide and humanoid.lastState == "Physics",
+assert(root.CanCollide and body.CanCollide,
     "Noclip yields instead of fighting active Touch")
+assert(humanoid.lastState == nil,
+    "Touch still leaves the Humanoid state alone while Noclip yields")
 physics.setTouchEnabled(false)
 noclipCard.onToggle(false)
 NoclipModule.destroy()

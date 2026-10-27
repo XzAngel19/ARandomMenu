@@ -411,6 +411,48 @@ assert(touchCount == fullTouches,"OFF/ON does not resume full-bag actions")
 assert(farmLV() == nil,"handled full bag leaves no movement owner")
 pass("50/50 repeated toggles do not repeat terminal actions")
 
+-- Below: the grown root is only a local collider, so a parked coin gets one
+-- bounded physical contact placement -- the overlap the server can actually
+-- see -- and then the coin is skipped instead of dwelt on forever.
+humanoid.Health = 100
+roundActive = true
+remote.OnClientEvent:Fire(nil,0,50)
+local freshCoin = newInst("Part",map)
+freshCoin.Name = "Coin_Server"
+freshCoin.Position = Vector3.new(0,20,0)
+freshCoin.CFrame = CFrame.new(freshCoin.Position)
+freshCoin.Size = Vector3.new(1.2,2,2)
+coins = {freshCoin}
+setRootPosition(Vector3.new(0,17,0))
+now += 2
+tick(1/60)          -- engage: the mock has no physics solver, so re-place
+pre(1/60)
+setRootPosition(Vector3.new(0,17,0))
+tick(1/60)          -- parked at the fixed contact offset
+local pivotsBeforeRise = character.pivotCount or 0
+local touchesBeforeRise = touchCount
+now += 0.2
+tick(1/60)          -- grace expired: one physical collect placement
+assert((character.pivotCount or 0) > pivotsBeforeRise,
+    "Below rises into the pickup volume")
+assert(touchCount > touchesBeforeRise,"the rise pulses the touch")
+assert(math.abs(root.Position.Y - 20) < 0.001
+    and math.abs(root.Position.X) < 0.001 and math.abs(root.Position.Z) < 0.001,
+    "the placement lands on the coin, not three studs under it")
+local placements = 0
+for _ = 1, 40 do
+    now += 0.1
+    local before = character.pivotCount or 0
+    setRootPosition(Vector3.new(0,17,0))
+    tick(1/60)
+    pre(1/60)
+    if (character.pivotCount or 0) > before then
+        placements += 1
+    end
+end
+assert(placements <= 2,"collect placements stay bounded per coin")
+pass("Below bounded physical collect placement for a parked coin")
+
 farmToggle(false)
 Module.destroy()
 assert(farmTick == nil,"cleanup disconnects tick")

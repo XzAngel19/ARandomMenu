@@ -49,14 +49,14 @@ function Module.init(context: Runtime): any
 
     TouchFlingFeature = createUniversalFeature(
         "Touch Fling",
-        "Walk into a player to transfer a bounded physics contact pulse",
+        "Walk into a player and the contact launches them, with your character left normal",
         14,
         toggleTouchFling,
         {noOptions = true, categoryName = "Exploits", restore = false}
     )
     addFeatureTooltip(
         TouchFlingFeature,
-        "Idle mode only listens on body parts. Recent contact temporarily enables collisions and Humanoid Physics for a capped pulse; expiry, OFF and respawn restore the snapshots. No teleports or ownership requests."
+        "Only your body parts listen; touching someone adds a bounded contact pulse to their body and one physics step to yours. No spin, no Humanoid Physics state, no teleports, no ownership requests. OFF and respawn restore every snapshot."
     )
 
     if state then
