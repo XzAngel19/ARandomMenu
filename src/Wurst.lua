@@ -1,7 +1,7 @@
 local RUNTIME_COMPATIBILITY_MARKER: string =
     "Initialization error — check executor console"
 local RUNTIME_SAFETY_SOURCE_URL: string =
-    "https://raw.githubusercontent.com/XzAngel19/ARandomMenu/refs/heads/arena/83897e25-arandommenu/src/Wurst.lua"
+    "https://raw.githubusercontent.com/XzAngel19/ARandomMenu/refs/heads/arena/2ec6eed9-arandommenu/src/Wurst.lua"
 
 local DEFAULT_FEATURE_CATEGORY: string = "Utilities"
 
@@ -200,7 +200,7 @@ end
 -- The only branch this build ships from. Everything (bundle, sources, assets,
 -- reinject, teleport persistence) is fetched from RUNTIME_BRANCH, which is this
 -- value unless the user explicitly overrides it.
-local CANONICAL_BRANCH: string = "arena/83897e25-arandommenu"
+local CANONICAL_BRANCH: string = "arena/2ec6eed9-arandommenu"
 local RUNTIME_BRANCH: string = CANONICAL_BRANCH
 local BRANCH_SOURCE: string = "canonical"
 
@@ -261,7 +261,7 @@ local RUNTIME_RAW_BASE: string =
         .. RUNTIME_BRANCH
         .. "/"
 
-local SOURCE_STAMP: string = "v149-20261026-fling-is-walkfling-no-spin"
+local SOURCE_STAMP: string = "v150-20261027-mm2-place-evidence-rebuild"
 -- What the menu shows. It is derived from the stamp, never a hardcoded label:
 -- a build cannot display a version it is not.
 local BUILD_LABEL: string = string.match(SOURCE_STAMP, "^v%d+") or SOURCE_STAMP

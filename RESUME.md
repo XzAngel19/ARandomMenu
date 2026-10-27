@@ -4,13 +4,52 @@
 > reglas del usuario, y los errores que ya se pagaron una vez. Si algo aquí
 > contradice lo que crees, gana este documento (y los datos de calibración).
 >
-> **Estado al escribir esto:** rama canónica `arena/83897e25-arandommenu`,
-> build **`v149-20261026-fling-is-walkfling-no-spin`**.
-> El usuario se comunica en español. Respóndele en español.
+> **Estado al escribir esto:** rama canónica `arena/2ec6eed9-arandommenu`,
+> build **`v150-20261027-mm2-place-evidence-rebuild`**.
+>
+> **v150 reconstruyó TODO el código de Fling, Anti fling, Anti Void, Touch
+> Fling y MM2 Auto Farm** leyendo el `place` de TestingStuff. Las secciones
+> v144–v149 de este documento son historia: describen implementaciones que ya
+> no existen. La bitácora vigente es `docs/FIXES-v150.md`.
+> El usuario se comunica en español; respóndele en español.
 
 ---
 
-## 0. Estado operativo actual — v145, loader/caché · v144 Touch/Farm
+## 0. Estado operativo actual — v150 (reconstrucción con evidencia del place)
+
+### 0.-1 Lo más reciente: v150 — borrado y reconstrucción total
+
+Detalle completo en `docs/FIXES-v150.md`. Resumen:
+
+- Se leyeron por completo `place, source.rbxlx` (23.591 instancias, 303
+  scripts descompilados, 115 RemoteEvent), los dos `.rbxl` binarios (incluido
+  el snapshot de ronda activa con 107 `Coin_Server` + 107 `TouchInterest`),
+  los 7 logs de espía de remotos, los 4 `Game_Learning.json` y la
+  documentación oficial de Roblox (network ownership, BasePart, Humanoid,
+  PathfindingService). Los archivos de evidencia quedan en `.cache/` (ignorado
+  por Git); no se subió nada a TestingStuff.
+- **Auto Farm**: las monedas las cobra un `Touched` del SERVIDOR sobre
+  `Coin_Server` (anclada, `CanTouch=true`, 1.2x2x2). No existe un
+  `FireServer` de cliente para pedir monedas. Por eso se borró
+  `firetouchinterest` del farm, el hitbox `4x8x4`, Below, los constraints, la
+  zona segura y las acciones terminales de bolsa llena. Ahora camina con
+  `Humanoid:Move` enlazado tras el control por defecto (o `MoveTo` refrescado),
+  sigue waypoints de `PathfindingService`, se solapa con la moneda y solo
+  cuenta `CoinCollected`. `CoinsStarted` da el límite real (50 en los logs).
+- **Fling / Touch Fling**: se retiró el `walkfling` de IY (1e6 de velocidad en
+  ventana de render). Ahora hay un impulso finito (190 studs/s) vía
+  `ApplyImpulse` sobre un assembly gobernable: root del objetivo si
+  `GetNetworkOwner()` confirma propiedad, si no root propio por contacto.
+  Cero giro, cero constraints, cero CFrame por frame. `lastStrategy()` dice
+  qué camino se usó.
+- **Anti Void**: ya no crea una plataforma. Recuerda el último `CFrame` en
+  suelo y hace UN `PivotTo` acotado al caer sin suelo (como el propio
+  `CharacterClient.lua` del juego). **Anti fling** amortigua el root local y
+  quita colisiones del flinger cercano una vez por ventana de 0.45 s.
+- Se reescribieron 4 suites y se actualizaron 2 contratos más. `validate.sh`
+  verde: 66 suites, boot `failures=0`, 103 call sites, menú 50/49.
+- **Aceptación live pendiente**: knockback aceptado, cobro real de monedas,
+  movimiento con `BindToRenderStep` en MM2 y A/B de FPS. No afirmar ninguno.
 
 ### 0.0 Lo más reciente: v149 (walkfling de IY, sin giro), v148, v147, v146, v145 y v144
 
@@ -153,18 +192,18 @@ se entrega ahora.
 
 | Elemento | Estado actual documentado |
 | --- | --- |
-| Fecha local de esta actualización | `2026-10-27` |
+| Fecha local de esta actualización | `2026-10-27` (v150) |
 | Repositorio | `XzAngel19/ARandomMenu` |
-| Rama activa y única para esta sesión | `arena/83897e25-arandommenu` |
-| `CANONICAL_BRANCH` (única del repo) | `arena/83897e25-arandommenu` |
-| `SOURCE_STAMP` | `v149-20261026-fling-is-walkfling-no-spin` |
-| `BUILD_LABEL` visible | `v149` (derivado del stamp) |
+| Rama activa y única para esta sesión | `arena/2ec6eed9-arandommenu` |
+| `CANONICAL_BRANCH` (única del repo) | `arena/2ec6eed9-arandommenu` |
+| `SOURCE_STAMP` | `v150-20261027-mm2-place-evidence-rebuild` |
+| `BUILD_LABEL` visible | `v150` (derivado del stamp) |
 | Bundle | `src/libraries/bundle.lua`, mismo stamp, **84 archivos** |
 | Identidad de caché | `Wurst/.stamp` + `Wurst/.branch` + `Wurst/.layout` |
-| Loader de `README.md` | Apunta a `refs/heads/arena/83897e25-arandommenu/src/Wurst.lua` |
+| Loader de `README.md` | Apunta a `refs/heads/arena/2ec6eed9-arandommenu/src/Wurst.lua` |
 | Toolchain | Luau `0.739.0`, vendored en `tools/luau/vendor` |
-| Validación final de v149 | 86 fuentes, 66 suites, boot `failures=0`, 111 call sites, menú 50/49 |
-| Aceptación live de v149 | **Pendiente. No afirmar knockback: `TOUCH_PULSE` (0.18 s) es el número a subir si en vivo no alcanza.** |
+| Validación final de v150 | 84 fuentes en bundle, 66 suites, boot `failures=0`, 103 call sites, menú 50/49 |
+| Aceptación live de v150 | **Pendiente: knockback, cobro de monedas, navegación y FPS. Ver §5 de `docs/FIXES-v150.md`.** |
 
 - El commit `5b4ad20` se publicó con push normal y el remoto coincidió con
   `5b4ad20672d9501ca06ecce14380b91e9cf6d459`. Esta actualización de `RESUME.md`
@@ -598,8 +637,9 @@ Notas críticas:
 
 1. Leer esta sección y ejecutar `git status --short --branch`, `git log -3` y
    `git ls-remote` si hay cualquier duda de alineación.
-2. Confirmar que el runtime que investiga tiene stamp v144; no mezclar logs o
-   fixtures de v141–v143 con conclusiones de v144.
+2. Confirmar que el runtime que investiga tiene stamp **v150**; no mezclar
+   logs o fixtures de v141–v149 con conclusiones de v150. Para estos cinco
+   módulos, la fuente de verdad es `docs/FIXES-v150.md` más el código actual.
 3. Si el usuario reporta Touch/lag/monedas, pedir la secuencia exacta y evidencia
    live de §0.8. No volver automáticamente a pulsos grandes, CFrames por tick,
    ownership requests, `ChangeState(Physics)`, giros locales ni writers
@@ -668,15 +708,15 @@ implementaciones ni como sustituto de una sesión live:
 - Menú "Wurst" para Roblox, foco principal **MM2** (place id `142823291`).
   También hay módulos universales y de otros juegos (BedFight, TRS, VD y
   X2Duels/MVS).
-- El loader carga el **bundle**: `getgenv().WURST_BRANCH = "arena/2fb9a46a-arandommenu"`.
+- El loader carga el **bundle**: `getgenv().WURST_BRANCH = "arena/2ec6eed9-arandommenu"`.
 - **Protocolo de publicación de runtime (obligatorio):**
   1. Edita en `src/…`, nunca directamente en `src/libraries/bundle.lua`.
   2. Sube `SOURCE_STAMP` en `src/Wurst.lua` (`vNNN-AAAAMMDD-descripcion`).
   3. `python3 tools/build_bundle.py --stamp <el mismo stamp>`
-  4. `bash tools/validate.sh` — debe terminar VERDE. En v145 son 86 fuentes,
-     65 suites, boot `failures=0`, auditoría de menú 50/49 tarjetas y 109 call
+  4. `bash tools/validate.sh` — debe terminar VERDE. En v150 son 84 fuentes en el bundle,
+     66 suites, boot `failures=0`, auditoría de menú 50/49 tarjetas y 103 call
      sites; si el inventario cambia, actualiza también los contratos.
-  5. Commit + push **normales** a `arena/2fb9a46a-arandommenu`. Sin force-push,
+  5. Commit + push **normales** a `arena/2ec6eed9-arandommenu`. Sin force-push,
      sin reescribir historia, sin trabajar en otra rama.
 - Sin bundle regenerado + stamp, un cambio de runtime **no llega al usuario**.
   Un commit exclusivamente documental no necesita stamp ni bundle nuevo, pero
@@ -1613,17 +1653,11 @@ la implementación actual:
   documentales no requieren stamp, pero sí actualizar este handoff con precisión.
 
 ---
-*Última actualización: 2026-10-26 · runtime v149, Fling = `walkfling` de
-Infinite Yield (velocidad 1e6 sólo en la ventana de render, cero restricciones,
-cero rotación, no lanza al que flingea) con lista de jugadores y roles y Touch
-en pulsos de 0.18 s, anti-fling sin recorrido de árbol ni escrituras por frame,
-línea `Script` en Session Info y `tools/perf_frame.py`. v146, Fling con el mecanismo de
-Infinite Yield (giro del assembly local, cero Lua por frame, snapshots
-restaurados), anti-fling y noclip con listas de partes cacheadas y sin
-escrituras de física por frame. v145, loader canónico con override
-validado, identidad de caché stamp+rama+layout con purga antes de leer, versión
-derivada del stamp, reinject que rechaza loaders de otra rama, botón Clear cache
-y retirada de los árboles legacy (`src/gui`, `src/library`, `src/Profile`).
-v144 sigue siendo el cambio de mecanismo de Touch Fling y del cobro de Auto
-Farm. Al publicar una versión nueva o recibir aceptación live, actualiza la
-línea de estado y todas las secciones afectadas.*
+*Última actualización: 2026-10-27 · runtime **v150**, reconstrucción total de
+Fling, Anti fling, Anti Void, Touch Fling y MM2 Auto Farm a partir del `place`
+de MM2 en TestingStuff. La bitácora vigente, la evidencia y la lista de
+comprobaciones pendientes en vivo están en `docs/FIXES-v150.md`. Todo lo que
+este handoff dice sobre v141–v149 para esos cinco módulos es historia: ganan
+siempre el código actual y `docs/FIXES-v150.md`. Al publicar una versión nueva
+o recibir aceptación live, actualiza la línea de estado y las secciones
+afectadas.*

@@ -15,3 +15,6 @@ __pycache__/
 # Vendored Luau toolchain unpacked by tools/luau/setup.sh
 tools/luau/bin/
 tools/luau/node_modules/
+
+# Local read-only research copies (TestingStuff place/logs)
+.cache/

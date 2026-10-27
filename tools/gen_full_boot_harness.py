@@ -856,8 +856,11 @@ do
     local autoFarm = findFeature("Auto Farm")
     assert(autoFarm and autoFarm.options:FindFirstChild("Option_CoinsCollected"), "Auto Farm must expose Coins Collected overlay")
     assert(autoFarm.options:FindFirstChild("Option_Time"), "Auto Farm must expose Time overlay")
-    assert(autoFarm.options:FindFirstChild("Option_StayUnderWhenRoundstarts"), "Auto Farm must expose Stay Under When Round starts option")
-    assert(autoFarm.options:FindFirstChild("Option_SafeZone"), "Auto Farm must expose Safe Zone option")
+    -- v150: the old "stay under the map" / "safe zone" hacks are gone. The
+    -- rebuilt farm walks to real Coin_Server parts and exposes navigation.
+    assert(autoFarm.options:FindFirstChild("Option_Navigation"), "Auto Farm must expose Navigation")
+    assert(autoFarm.options:FindFirstChild("Option_Stepinterval"), "Auto Farm must expose Step interval")
+    assert(autoFarm.options:FindFirstChild("Option_Voidrescue"), "Auto Farm must expose Void rescue")
     local knifeThrow = findFeature("Knife Throw")
     assert(knifeThrow and knifeThrow.categoryName == "Combat", "Knife Throw module must exist in Combat")
     assert(knifeThrow.options:FindFirstChild("Option_AutoKnifeThrow"), "Knife Throw must expose Auto Knife Throw option")

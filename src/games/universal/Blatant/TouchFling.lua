@@ -1,3 +1,9 @@
+-- v150 · Universal Touch Fling card, rebuilt from zero.
+--
+-- The card is only a switch. Contact detection and the bounded impulse live in
+-- src/libraries/Fling.lua. It is session-only (restore = false): injecting with
+-- an old config must never arm a physics action.
+
 export type Runtime = {
     framework: any,
     entity: any,
@@ -19,11 +25,10 @@ function Module.init(context: Runtime): any
     local createUniversalFeature: any = host.createUniversalFeature
     local addFeatureTooltip: any = host.addFeatureTooltip
     local physics: any = state.flingPhysics
-    assert(physics, "Touch Fling requires the shared Fling physics library")
+    assert(physics, "Touch Fling requires the shared contact library")
     assert(type(physics.setTouchEnabled) == "function",
         "Touch Fling requires the contact entry point of the shared library")
 
-    -- Contact physics is a deliberate per-session action, never restored ON.
     local touchFlingActive: boolean = false
     local TouchFlingFeature: any = nil
 
@@ -38,20 +43,20 @@ function Module.init(context: Runtime): any
 
     TouchFlingFeature = createUniversalFeature(
         "Touch Fling",
-        "Walk normally: whoever you bump into gets flung. No spin, no rotation, full control",
+        "Walk normally: a bounded physics impulse is delivered on contact",
         14,
         toggleTouchFling,
         {noOptions = true, categoryName = "Exploits", restore = false}
     )
     addFeatureTooltip(
         TouchFlingFeature,
-        "Infinite Yield's walkfling, which IY itself describes as \"fling but no "
-            .. "spinning\": on contact your root velocity gets IY's exact pulse "
-            .. "(velocity * 1000000 + 1e6 up) for one render window only, is restored "
-            .. "before the physics step, and is followed by IY's 0.1 stud drift. "
-            .. "Nothing is attached to your body, nothing is pinned, and the character "
-            .. "never turns: you keep walking and you keep looking where you look. "
-            .. "OFF and respawn restore every snapshot."
+        "On contact with another living character the shared library applies a "
+            .. "finite impulse (190 studs/s) to an assembly it can steer: the "
+            .. "target's root when network ownership is confirmed, otherwise "
+            .. "your own root so the character-to-character contact transfers "
+            .. "momentum. No spin, no constraints, no CFrame loop and no "
+            .. "velocity left behind when it stops. OFF and respawn release "
+            .. "every listener and any acquired ownership."
     )
 
     if state then

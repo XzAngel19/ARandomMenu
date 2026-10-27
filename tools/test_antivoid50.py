@@ -1,147 +1,296 @@
 #!/usr/bin/env python3
-"""Exercise real Anti Void / Anti fling: false positives, contact impulses and rescue ownership."""
-import os, subprocess, tempfile
-from pathlib import Path
-from test_mm2_precision import PRELUDE
-ROOT=Path(__file__).resolve().parents[1]
-script=PRELUDE+r'''
-local RaycastParams={new=function() return {} end}
-local timers={};local task={delay=function(_,fn) table.insert(timers,fn) end}
-local created={}
-local Instance={new=function()
- local p={Destroy=function(self) self.destroyed=true end};table.insert(created,p);return p
-end}
-local tick,feature
-local h={Health=100,WalkSpeed=16,MoveDirection=Vector3.new(1,0,0),FloorMaterial='Ground',JumpPower=50}
-local props={Position=Vector3.new(0,250,0),CFrame='never roll back',AssemblyLinearVelocity=Vector3.zero,AssemblyAngularVelocity=Vector3.zero}
-local root=setmetatable({}, {__index=props,__newindex=function(_,k,v) assert(k~='CFrame','anti modules must not teleport');props[k]=v end})
-local character={}
-local near=true;local floor;local casts=0
-local world={FallenPartsDestroyHeight=-500,Raycast=function(_,origin,direction,params)
- casts+=1;assert(params.RespectCanCollide and params.FilterDescendantsInstances[1]==character)
- return floor and {Position=Vector3.new(0,floor,0)} or nil
-end}
-local flags={}
-local speed={Enabled=false,Options={Speed={Value=5000}}}
-local fly={Enabled=false}
--- Inject the clock so the anti-fling detection window can be advanced without
--- sleeping, and count tree walks: the per-frame GetDescendants scan over every
--- other character was the single most expensive thing in the menu.
-local fakeNow=0
-local otherWalks=0
--- Count every physics property write: the old anti-fling wrote CanCollide and
--- both assembly velocities on every part of every player, every frame.
-local otherWrites=0
-local function countedPart(extra)
- local data={CanCollide=true,Parent=true,AssemblyLinearVelocity=Vector3.zero,AssemblyAngularVelocity=Vector3.zero}
- for k,v in pairs(extra or {}) do data[k]=v end
- return setmetatable({}, {
-  __index=data,
-  __newindex=function(_,k,v)
-   if k=='CanCollide' or k=='AssemblyLinearVelocity' or k=='AssemblyAngularVelocity' then otherWrites+=1 end
-   data[k]=v
-  end,
- })
-end
-local otherTorso=countedPart()
-local otherRoot=countedPart({Position=Vector3.new(1,0,0)})
-local otherHumanoid={WalkSpeed=16,JumpPower=50}
-local otherAdded={Connect=function() return {Disconnect=function() end} end}
-local otherCharacter={
- PrimaryPart=otherRoot,
- DescendantAdded=otherAdded,
- FindFirstChildOfClass=function() return otherHumanoid end,
- GetDescendants=function() otherWalks+=1;return {otherRoot,otherTorso} end,
-}
-local host={workspace=world,featureConnections={},clock=function() return fakeNow end,
- getCharacterParts=function() return character,h,root end,
- Players={GetPlayers=function() return near and {{Character=otherCharacter}} or {} end}}
-function host.disconnectFeatureConnection(key) local c=host.featureConnections[key];if c then c:Disconnect();host.featureConnections[key]=nil end end
-host.TaskManager={Connect=function(_,fn) tick=fn;return {Disconnect=function() tick=nil end} end}
-host.createUniversalFeature=function(_,_,_,fn) feature={toggle=fn,options={}};return feature end
-host.addToggleOption=function(_,n,_,fn) feature.options[n]=fn end
-host.addNumberOption=function(_,n,_,_,_,fn) feature.options[n]=fn;return {} end
-host.addFeatureTooltip=function() end
-local context={host=host,services={activity={isActive=function(n) return flags[n] end}},framework={GetModule=function(_,n) return n=='Speed' and speed or n=='Fly' and fly or nil end}}
-'''+ '\nlocal Module=(function()\n'+(ROOT/'src/games/universal/Movement/AntiVoid.lua').read_text()+'\nend)()\n'+r'''
-Module.init(context);feature.toggle(true);feature.options['Anti fling'](true);tick(.02)
-assert(feature.options['Velocity limit']==nil,'no user-tuned velocity limit to get wrong')
--- A strong bounce under the character's own limits and a very long fall are never flings.
-h.FloorMaterial='Air';root.AssemblyLinearVelocity=Vector3.new(10,110,0);tick(.02);near(root.AssemblyLinearVelocity.Y,110)
-root.AssemblyLinearVelocity=Vector3.new(10,-1000,0);tick(.02);near(root.AssemblyLinearVelocity.Y,-1000);assert(#created==0 and casts==0)
--- Even near the void, a lower collidable floor makes this a legitimate drop.
-root.Position=Vector3.new(0,-450,0);floor=-480;tick(.02);assert(#created==0);near(root.AssemblyLinearVelocity.Y,-1000)
--- Contact fling: remove the side/spin impulse, preserve falling and player input.
-root.AssemblyLinearVelocity=Vector3.new(999,-200,0);root.AssemblyAngularVelocity=Vector3.new(0,999,0);tick(.02)
-near(root.AssemblyLinearVelocity.X,16);near(root.AssemblyLinearVelocity.Y,-200);near(root.AssemblyAngularVelocity.Magnitude,0)
--- A vertical launch no jump can produce is damped to a jump, not left flying.
-root.AssemblyLinearVelocity=Vector3.new(0,400,0);root.AssemblyAngularVelocity=Vector3.zero;tick(.02)
-near(root.AssemblyLinearVelocity.X,16);near(root.AssemblyLinearVelocity.Y,50)
--- A single-frame planar shove is caught on the first tick, no tuning needed.
-root.AssemblyLinearVelocity=Vector3.new(200,0,0);tick(.02);near(root.AssemblyLinearVelocity.X,16)
--- A distant sender is not excused: the old 10-stud proximity gate is gone.
-near=false;root.AssemblyLinearVelocity=Vector3.new(900,-200,0);root.AssemblyAngularVelocity=Vector3.new(0,900,0);tick(.02)
-near(root.AssemblyLinearVelocity.X,16);near(root.AssemblyAngularVelocity.Magnitude,0)
--- Intentional large Speed stays, because the threshold follows the character.
-near=true;speed.Enabled=true;root.AssemblyLinearVelocity=Vector3.new(5000,-200,0);root.AssemblyAngularVelocity=Vector3.zero;tick(.02)
-near(root.AssemblyLinearVelocity.X,5000);speed.Enabled=false
--- Explicit actions and vehicles/anchored roots are not fought.
-for _,name in ipairs({'ghost','teleport','fling'}) do flags[name]=true;root.AssemblyLinearVelocity=Vector3.new(10000,0,0);tick(.02);near(root.AssemblyLinearVelocity.X,10000);flags[name]=nil end
-h.Sit=true;tick(.02);near(root.AssemblyLinearVelocity.X,10000);h.Sit=false
-root.Anchored=true;tick(.02);near(root.AssemblyLinearVelocity.X,10000);root.Anchored=false
-fly.Enabled=true;tick(.02);near(root.AssemblyLinearVelocity.X,10000);fly.Enabled=false
--- Only an imminent unsupported descent gets a platform, once.
-feature.options['Anti fling'](false);floor=nil;root.AssemblyLinearVelocity=Vector3.new(3,-200,4);root.AssemblyAngularVelocity=Vector3.zero
-root.Position=Vector3.new(0,-470,0);tick(.02);assert(#created==1 and created[1].CanCollide and created[1].Anchored)
-near(root.AssemblyLinearVelocity.Y,0);near(root.AssemblyLinearVelocity.X,3)
-root.AssemblyLinearVelocity=Vector3.new(3,-50,4);tick(.02);assert(#created==1,'no platform per-frame churn')
-character={};root.Position=Vector3.new(0,250,0);tick(.02);assert(created[1].destroyed,'respawn removes owned rescue')
-root.Position=Vector3.new(0,-470,0);root.AssemblyLinearVelocity=Vector3.new(0,-200,0);tick(.02);assert(#created==2)
-timers[1]();assert(not created[2].destroyed,'an old timer cannot destroy the new rescue')
--- Anti fling stands on its own: Anti Void off still damps, and builds nothing.
-feature.options['Anti fling'](true);feature.toggle(false);assert(tick,'anti fling keeps its own connection with Anti Void off')
-root.AssemblyLinearVelocity=Vector3.new(900,-200,0);tick(.02);near(root.AssemblyLinearVelocity.X,16)
-assert(#created==2,'Anti Void off must not build a platform')
-feature.options['Anti fling'](false);assert(not tick and created[2].destroyed)
--- The other character is only touched when it actually looks like a fling, and
--- its part list is walked once per character, not once per frame.
-feature.toggle(true);feature.options['Anti fling'](true)
-fakeNow=fakeNow+1
-tick(.02)
-assert(otherWalks==0 and otherTorso.CanCollide,'a calm other player costs two reads, no tree walk')
-assert(otherRoot.CanCollide,'calm other player keeps collisions')
-otherRoot.AssemblyAngularVelocity=Vector3.new(0,900,0)
-otherRoot.Position=root.Position+Vector3.new(1,0,0)  -- within reach
-fakeNow=fakeNow+1
-tick(.02)
-local walksAfterDetect=otherWalks
-assert(walksAfterDetect==1,'one part walk per detected fling, not per frame')
-assert(otherTorso.CanCollide==false and otherRoot.CanCollide==false,
-    'a detected fling loses collisions')
-local writesAfterDetect=otherWrites
-for _=1,12 do tick(.02) end
-assert(otherWalks==walksAfterDetect,'cache: no tree walk while the strip is active')
-assert(otherWrites==writesAfterDetect,'no physics writes per frame while the strip is active')
--- After the window the collisions come back on their own.
-fakeNow=fakeNow+1
-otherRoot.AssemblyAngularVelocity=Vector3.zero
-otherRoot.AssemblyLinearVelocity=Vector3.zero
-tick(.02)
-assert(otherTorso.CanCollide==true and otherWalks==walksAfterDetect,
-    'release restores collisions without walking the tree')
--- Toggling everything off releases any strip still held.
-otherRoot.AssemblyAngularVelocity=Vector3.new(0,900,0)
-otherRoot.Position=root.Position+Vector3.new(1,0,0)
-fakeNow=fakeNow+1
-tick(.02)
-assert(otherTorso.CanCollide==false)
-Module.destroy()
-assert(otherTorso.CanCollide==true and otherRoot.CanCollide==true,
-    'destroy restores the other player collisions')
+"""v150 Anti Void / Anti fling: bounded rescue, local damping and cheap strips.
 
-pass('actual Anti Void/Anti fling: strong bounce, long fall and lower floor untouched, contact/vertical/spike/distant damping on the first tick, no slider, intended Speed, action/seat/anchor exclusions, imminent void, batching, respawn/timer ownership, cached part lists (no per-frame tree walk or physics write), freed collisions on detection/release/destroy, independence from Anti Void and cleanup')
+Off-line only. Proves that the module does not create a platform, does not
+write CFrames, damps only its own root, strips a nearby flinger once per window
+and restores every collision, and performs one PivotTo when a real void fall is
+detected. It does not prove anything about a live Roblox server.
+"""
+from __future__ import annotations
+
+import os
+import subprocess
+import tempfile
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+SOURCE = (ROOT / "src/games/universal/Movement/AntiVoid.lua").read_text()
+
+for banned in ("Wurst_AntiVoidPlatform", "Instance.new(\"Part\")",
+               "root.CFrame =", "BodyAngularVelocity"):
+    assert banned not in SOURCE, banned
+for required in ("character:PivotTo(target)", "safeCFrame", "AntiVoidStepped",
+                 "partCache", "releaseStrip", "forgetSafe", "RaycastParams"):
+    assert required in SOURCE, required
+
+HARNESS = r'''
+local Vector3 = {}
+local vmt = {}
+function Vector3.new(x, y, z)
+    return setmetatable({X = x or 0, Y = y or 0, Z = z or 0}, vmt)
+end
+Vector3.zero = Vector3.new(0, 0, 0)
+vmt.__add = function(a, b) return Vector3.new(a.X + b.X, a.Y + b.Y, a.Z + b.Z) end
+vmt.__sub = function(a, b) return Vector3.new(a.X - b.X, a.Y - b.Y, a.Z - b.Z) end
+vmt.__mul = function(a, b)
+    if type(a) == "number" then a, b = b, a end
+    if type(b) == "table" then return Vector3.new(a.X * b.X, a.Y * b.Y, a.Z * b.Z) end
+    return Vector3.new(a.X * b, a.Y * b, a.Z * b)
+end
+vmt.__index = function(a, k)
+    if k == "Magnitude" then
+        return math.sqrt(a.X * a.X + a.Y * a.Y + a.Z * a.Z)
+    end
+end
+local CFrame = {new = function(p) return {Position = p} end}
+local now = 0
+os = {clock = function() return now end}
+Enum = {Material = {Air = "Air"}, RaycastFilterType = {Exclude = "Exclude"}}
+RaycastParams = {new = function()
+    return {FilterDescendantsInstances = {}, RespectCanCollide = false}
+end}
+
+local function signal()
+    local s = {listeners = {}}
+    function s:Connect(fn)
+        self.listeners[fn] = true
+        local alive = true
+        return {Disconnect = function()
+            if alive then alive = false; self.listeners[fn] = nil end
+        end}
+    end
+    function s:Fire(...)
+        for fn in pairs(self.listeners) do fn(...) end
+    end
+    return s
+end
+
+local casts = 0
+local world = {
+    FallenPartsDestroyHeight = -500,
+    Raycast = function(_, origin, direction, params)
+        casts += 1
+        assert(params.RespectCanCollide, "raycast must respect collisions")
+        assert(type(params.FilterDescendantsInstances) == "table")
+        return nil -- no floor below the character: a real void
+    end,
+}
+
+local rootWrites = {CFrame = 0, Position = 0}
+local rootData = {
+    Position = Vector3.new(0, 250, 0),
+    CFrame = CFrame.new(Vector3.new(0, 250, 0)),
+    Parent = true,
+    Anchored = false,
+    AssemblyLinearVelocity = Vector3.zero,
+    AssemblyAngularVelocity = Vector3.zero,
+}
+local root = setmetatable({}, {
+    __index = rootData,
+    __newindex = function(_, k, v)
+        if rootWrites[k] ~= nil then rootWrites[k] += 1 end
+        rootData[k] = v
+    end,
+})
+local pivotCalls, pivotTargets = 0, {}
+local character = {
+    Parent = world,
+    PivotTo = function(_, target)
+        pivotCalls += 1
+        table.insert(pivotTargets, target)
+    end,
+}
+local humanoid = {
+    Health = 100,
+    WalkSpeed = 16,
+    JumpPower = 50,
+    MoveDirection = Vector3.zero,
+    FloorMaterial = "Ground",
+    Died = signal(),
+}
+
+local otherParts = {}
+local function makePart(name)
+    local p = {
+        Name = name,
+        Parent = character,
+        CanCollide = true,
+        AssemblyLinearVelocity = Vector3.zero,
+        AssemblyAngularVelocity = Vector3.zero,
+        IsA = function(_, c) return c == "BasePart" end,
+    }
+    table.insert(otherParts, p)
+    return p
+end
+local otherRoot = makePart("OtherRoot")
+otherRoot.PrimaryPart = nil
+otherRoot.Position = Vector3.new(5, 250, 0)
+local otherCharacter = {
+    PrimaryPart = otherRoot,
+    GetDescendants = function() return otherParts end,
+    DescendantAdded = signal(),
+    FindFirstChildOfClass = function(_, name)
+        if name == "Humanoid" then
+            return {WalkSpeed = 16}
+        end
+        return nil
+    end,
+}
+for _, p in ipairs(otherParts) do p.Parent = otherCharacter end
+
+local flingActive = false
+local LocalPlayer = {Name = "Me", Character = character}
+local otherPlayer = {Name = "Flinger", Character = otherCharacter}
+local Players = {GetPlayers = function() return {LocalPlayer, otherPlayer} end}
+
+local tasks = {}
+local TaskManager = {}
+function TaskManager:Connect(fn)
+    local handle = {fn = fn, Disconnect = function(self)
+        for i, entry in ipairs(tasks) do
+            if entry == self then table.remove(tasks, i); break end
+        end
+    end}
+    table.insert(tasks, handle)
+    return handle
+end
+local featureConnections = {}
+local function disconnectFeatureConnection(name)
+    local handle = featureConnections[name]
+    if handle then handle:Disconnect(); featureConnections[name] = nil end
+end
+local RunService = {Stepped = signal()}
+
+local card
+local options = {}
+local host = {
+    workspace = world,
+    Players = Players,
+    LocalPlayer = LocalPlayer,
+    RunService = RunService,
+    TaskManager = TaskManager,
+    featureConnections = featureConnections,
+    disconnectFeatureConnection = disconnectFeatureConnection,
+    getCharacterParts = function() return character, humanoid, root end,
+    clock = function() return now end,
+    createUniversalFeature = function(_, _, _, fn)
+        card = {fn = fn, options = options}
+        return card
+    end,
+    addToggleOption = function(_, label, _, callback) options[label] = callback end,
+    addFeatureTooltip = function() end,
+}
+local context = {
+    host = host,
+    framework = {GetModule = function() return nil end},
+    services = {activity = {isActive = function(name)
+        return name == "fling" and flingActive
+    end}},
+}
+state = {}
+
+local Module = (function()
+__ANTIVOID_SOURCE__
+end)()
+Module.init(context)
+
+local function tick(dt)
+    local handle = featureConnections.AntiVoid
+    assert(handle, "Anti Void/Anti fling tick is not connected")
+    handle.fn(dt)
+end
+local function check(label, condition)
+    if not condition then error("FAIL " .. label, 2) end
+    print("PASS " .. label)
+end
+
+-- Anti Void alone records a safe ground pose; it does not teleport.
+card.fn(true)
+tick(0.02)
+check("grounded pose is remembered", pivotCalls == 0 and rootWrites.CFrame == 0)
+check("no platform instance is created", #otherParts == 1)
+
+-- Anti fling keeps its own tick and its Stepped strip owner.
+options["Anti fling"](true)
+check("anti fling owns a tick independently", featureConnections.AntiVoid ~= nil)
+check("anti fling owns the Stepped strip scanner",
+    featureConnections.AntiVoidStepped ~= nil)
+
+rootData.AssemblyLinearVelocity = Vector3.new(999, 0, 0)
+tick(0.02)
+check("launch impulse is damped on the local root",
+    rootData.AssemblyLinearVelocity.Magnitude == 0)
+check("damping never teleports", rootWrites.CFrame == 0 and pivotCalls == 0)
+
+flingActive = true
+rootData.AssemblyLinearVelocity = Vector3.new(999, 0, 0)
+tick(0.02)
+check("explicit MM2 Fling is never fought",
+    rootData.AssemblyLinearVelocity.X == 999)
+flingActive = false
+rootData.AssemblyLinearVelocity = Vector3.zero
+tick(0.02)
+
+-- A nearby driven spin is stripped once, then restored after the window.
+otherRoot.AssemblyAngularVelocity = Vector3.new(0, 40, 0)
+otherRoot.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
+RunService.Stepped:Fire()
+check("flinger collisions are stripped once", otherRoot.CanCollide == false)
+otherRoot.CanCollide = false
+now = 0.5
+RunService.Stepped:Fire()
+check("stripped collisions are restored", otherRoot.CanCollide == true)
+
+-- A real void fall: one bounded PivotTo to the last safe ground.
+now = 3
+rootData.Position = Vector3.new(0, 220, 0)
+rootData.AssemblyLinearVelocity = Vector3.new(0, -60, 0)
+humanoid.FloorMaterial = "Air"
+tick(0.02)
+check("void fall triggers exactly one rescue", pivotCalls == 1)
+check("rescue uses the remembered safe CFrame",
+    pivotTargets[1] ~= nil and pivotTargets[1].Position.Y == 250)
+check("rescue zeroes velocities without writing CFrames",
+    rootData.AssemblyLinearVelocity.Y == 0 and rootWrites.CFrame == 0)
+check("rescue is rate limited", (function()
+    now = 3.1
+    rootData.Position = Vector3.new(0, 220, 0)
+    rootData.AssemblyLinearVelocity = Vector3.new(0, -60, 0)
+    tick(0.02)
+    return pivotCalls == 1
+end)())
+
+-- Respawn invalidates the remembered pose.
+character = {
+    Parent = world,
+    PivotTo = function() pivotCalls += 1 end,
+}
+rootData.Position = Vector3.new(0, 250, 0)
+humanoid.FloorMaterial = "Ground"
+rootData.AssemblyLinearVelocity = Vector3.zero
+LocalPlayer.Character = character
+host.getCharacterParts = function() return character, humanoid, root end
+tick(0.02)
+check("respawn drops the stale rescue pose", pivotCalls == 1)
+
+-- OFF and destroy release everything.
+card.fn(false)
+check("Anti Void OFF keeps Anti fling tick", featureConnections.AntiVoid ~= nil)
+options["Anti fling"](false)
+check("both OFF disconnect the tick", featureConnections.AntiVoid == nil
+    and featureConnections.AntiVoidStepped == nil and #tasks == 0)
+Module.destroy()
+check("destroy is safe", true)
+print("[ANTI VOID v150] bounded rescue and collision ownership verified")
 '''
-# Rename the fixture proximity flag so the numeric assertion helper remains callable.
-script=script.replace('local near=true','local nearby=true').replace('return near and','return nearby and').replace('near=false','nearby=false').replace('near=true','nearby=true')
+
+script = HARNESS.replace("__ANTIVOID_SOURCE__", SOURCE)
+
 with tempfile.TemporaryDirectory() as tmp:
- p=Path(tmp)/'anti.luau';p.write_text(script);subprocess.run([os.environ.get('LUAU','luau'),str(p)],check=True)
+    path = Path(tmp) / "antivoid_v150.luau"
+    path.write_text(script)
+    luau = os.environ.get("LUAU", str(ROOT / "tools/luau/bin/luau"))
+    result = subprocess.run([luau, str(path)], capture_output=True, text=True)
+    if result.returncode:
+        raise SystemExit(result.stdout + result.stderr)
+    print(result.stdout.strip())

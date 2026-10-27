@@ -1,3 +1,11 @@
+-- v150 · MM2 Fling card, rebuilt from zero around the shared contact library.
+--
+-- The card owns only three things: MM2 round/target validity, the live player
+-- roster (with roles from RoundStart/PlayerDataChanged and from the knife/gun
+-- actually held), and the user's intents. All physics lives in
+-- src/libraries/Fling.lua. There is no second motor, no CFrame loop and no
+-- velocity writer in this file.
+
 local Module = {
     Name = "MM2 Fling",
     Events = {} :: {[string]: any},
@@ -6,12 +14,12 @@ local Module = {
 
 local activeCleanup: (() -> ())? = nil
 
-function Module.init(runtime: any): any
+function Module.init(_runtime: any): any
     local host: any = state.frameworkEnvironment
     local core: any = state.mm2Core
     local physics: any = state.flingPhysics
     assert(core, "MM2 Fling requires the MM2 core")
-    assert(physics, "MM2 Fling requires the shared physics library")
+    assert(physics, "MM2 Fling requires the shared contact library")
 
     local Players: any = host.Players
     local LocalPlayer: any = host.LocalPlayer
@@ -22,7 +30,6 @@ function Module.init(runtime: any): any
     local createUniversalFeature: any = host.createUniversalFeature
     local addActionOption: any = host.addActionOption
     local addToggleOption: any = host.addToggleOption
-    local addTextOption: any = host.addTextOption
     local addListOption: any = host.addListOption
     local addInformationOption: any = host.addInformationOption
     local TaskManager: any = host.TaskManager
@@ -40,18 +47,20 @@ function Module.init(runtime: any): any
     local autoFlingSelected: boolean = false
     local lastAutoFlingAt: number = 0
     local sequenceNumber: number = 0
+    local queue: {Player} = {}
+    local queueGeneration: number = 0
 
     local function roundIsActive(): boolean
-        if type(core.isRoundLifecycleActive) ~= "function" then
+        if type(core.isRoundLifecycleActive) ~= "function"
+            or core.isRoundLifecycleActive() ~= true then
             return false
         end
-        local ok: boolean, active: any = pcall(core.isRoundLifecycleActive)
-        if not ok or active ~= true then
+        if type(core.getRoundPhase) == "function"
+            and core.getRoundPhase() == "lobby" then
             return false
         end
-        if type(core.findMM2Map) == "function" then
-            local okMap: boolean, map: any = pcall(core.findMM2Map)
-            return okMap and map ~= nil
+        if type(core.findMM2Map) == "function" and not core.findMM2Map() then
+            return false
         end
         return true
     end
@@ -76,9 +85,8 @@ function Module.init(runtime: any): any
             and character:FindFirstChildOfClass("Humanoid") :: Humanoid?
         local root: BasePart? = (humanoid and humanoid.RootPart)
             or (character and character:FindFirstChild("HumanoidRootPart") :: BasePart?)
-        local result = character ~= nil and humanoid ~= nil and root ~= nil
+        return character ~= nil and humanoid ~= nil and root ~= nil
             and humanoid.Health > 0 and root.Parent ~= nil and not root.Anchored
-        return result
     end
 
     local function canAct(target: Player?): boolean
@@ -89,43 +97,28 @@ function Module.init(runtime: any): any
     local function performFling(targetPlayer: Player?, options: {[string]: any}?): boolean
         local silent: boolean = type(options) == "table" and options.silent == true
         if not canAct(targetPlayer) then
-            if not silent and Module.Initialized and not roundIsActive() then
-                notify("Fling requires an active MM2 round.")
-            elseif not silent then
-                notify("No living, valid fling target is available.")
+            if not silent and Module.Initialized then
+                notify(if not roundIsActive()
+                    then "Fling requires an active MM2 round."
+                    else "No living, valid fling target is available.")
             end
             return false
         end
-        if physics.isRunning() then
+        if physics.isRunning() or physics.isTouchEnabled() then
             if not silent then
                 notify("A fling is already running.")
             end
             return false
         end
-        if physics.isTouchEnabled() then
-            if type(state.setTouchFlingEnabled) == "function" then
-                state.setTouchFlingEnabled(false)
-            else
-                physics.setTouchEnabled(false)
-            end
-        end
-
         local externalStop: any = type(options) == "table"
             and options.shouldStop or nil
         local duration: number = if type(options) == "table"
-            then tonumber(options.duration) or 1.4
-            else 1.4
+            then tonumber(options.duration) or 1.2 else 1.2
         if duration ~= duration or math.abs(duration) == math.huge then
-            duration = 1.4
+            duration = 1.2
         end
-        duration = math.clamp(duration, 0.1, 3)
         local started: boolean = physics.start(targetPlayer, {
-            duration = duration,
-            blocking = type(options) == "table" and options.blocking == true,
-            returnCFrame = type(options) == "table"
-                and options.returnCFrame or nil,
-            restorePosition = if type(options) == "table"
-                then options.restorePosition else nil,
+            duration = math.clamp(duration, 0.1, 2.5),
             shouldStop = function(): boolean
                 if not canAct(targetPlayer) then
                     return true
@@ -137,26 +130,6 @@ function Module.init(runtime: any): any
                 return false
             end,
         })
-        if started and type(options) == "table" and options.blocking == true then
-            local deadline: number = os.clock() + math.clamp(duration, 0.1, 3) + 0.5
-            while physics.isRunning() and os.clock() < deadline do
-                if not canAct(targetPlayer) then
-                    physics.cancel()
-                    break
-                end
-                if type(externalStop) == "function" then
-                    local ok: boolean, stop: any = pcall(externalStop)
-                    if not ok or stop == true then
-                        physics.cancel()
-                        break
-                    end
-                end
-                task.wait()
-            end
-            if physics.isRunning() then
-                physics.cancel()
-            end
-        end
         if not started and not silent then
             notify("The fling could not start safely.")
         end
@@ -174,14 +147,10 @@ function Module.init(runtime: any): any
         end
     end
 
-    -- One source of truth for "who is what". The card used to guess the role in
-    -- three different places and none of them fell back to the held tool, which
-    -- is what MM2 actually replicates: the murderer carries the knife and the
-    -- sheriff (or the hero who picked the gun up) carries the gun. That is why
-    -- the list looked empty and "Fling Murderer" said nobody was found.
     local ROLE_ORDER: {[string]: number} = {
         Murderer = 1, Sheriff = 2, Hero = 3, Innocent = 4, Dead = 5,
     }
+
     local function hasWeapon(player: Player, toolName: string): boolean
         if type(getPlayerWeapon) ~= "function" then
             return false
@@ -196,7 +165,7 @@ function Module.init(runtime: any): any
         end
         local role: any = type(getPlayerRole) == "function"
             and getPlayerRole(player) or nil
-        if not role and type(gameBridge.playerRole) == "function" then
+        if not role and gameBridge and type(gameBridge.playerRole) == "function" then
             local okRole: boolean, resolved: any = pcall(gameBridge.playerRole, player)
             if okRole then
                 role = resolved
@@ -206,27 +175,21 @@ function Module.init(runtime: any): any
             or role == "Innocent" or role == "Dead" then
             return role
         end
-        -- Tool inference: what the server actually puts in the backpack.
         if hasWeapon(player, "Knife") then
             return "Murderer"
         end
         if hasWeapon(player, "Gun") then
             return "Sheriff"
         end
-        if role == nil then
-            local character: Model? = player.Character
-            local humanoid: Humanoid? = character
-                and character:FindFirstChildOfClass("Humanoid") :: Humanoid?
-            if humanoid and humanoid.Health <= 0 then
-                return "Dead"
-            end
+        local character: Model? = player.Character
+        local humanoid: Humanoid? = character
+            and character:FindFirstChildOfClass("Humanoid") :: Humanoid?
+        if humanoid and humanoid.Health <= 0 then
+            return "Dead"
         end
-        return role
+        return nil
     end
 
-    -- "It does not detect anyone" is usually not a bug: MM2 has not published
-    -- the round roles yet. Saying which of the two happened is the difference
-    -- between a feature that looks broken and one the user can wait out.
     local function rolesPublished(): boolean
         if type(core.hasActiveRoundRoles) == "function" then
             local ok: boolean, published: any = pcall(core.hasActiveRoundRoles)
@@ -272,8 +235,7 @@ function Module.init(runtime: any): any
         return entries
     end
 
-    -- Read-only hooks. They describe exactly what the card is showing, which is
-    -- the only way an offline suite can prove "the list knows who is who".
+    -- Read-only hooks: an offline suite can prove the list knows who is who.
     state.mm2FlingRoster = function(): {any}
         local snapshot: {any} = {}
         for _, entry: any in ipairs(rosterEntries(false)) do
@@ -288,55 +250,35 @@ function Module.init(runtime: any): any
         return if selectedPlayer then tostring(selectedPlayer.Name) else nil
     end
 
-
-    local function resolveMurdererTarget(): Player?
+    local function resolveByRole(wanted: string): Player?
         refreshRoles()
-        if type(getPlayerWeapon) == "function" then
+        local byWeapon: string? = nil
+        if wanted == "Murderer" then
+            byWeapon = "Knife"
+        elseif wanted == "Sheriff" then
+            byWeapon = "Gun"
+        end
+        if byWeapon and type(getPlayerWeapon) == "function" then
             for _, player: Player in ipairs(Players:GetPlayers()) do
                 if player ~= LocalPlayer and targetIsValid(player)
-                    and getPlayerWeapon(player, "Gun", false) == nil
-                    and getPlayerWeapon(player, "Knife", false) ~= nil then
+                    and getPlayerWeapon(player, byWeapon, false) ~= nil then
                     return player
                 end
             end
         end
-        if type(findMurderer) == "function" then
-            local target: Player? = findMurderer()
-            if target and targetIsValid(target) and roleOf(target) ~= "Dead" then
-                return target
-            end
-        end
-        for _, player: Player in ipairs(Players:GetPlayers()) do
-            if player ~= LocalPlayer and targetIsValid(player)
-                and roleOf(player) == "Murderer" then
-                return player
-            end
-        end
-        return nil
-    end
-
-    local function resolveSheriffOrHeroTarget(): Player?
-        refreshRoles()
-        if type(getPlayerWeapon) == "function" then
-            for _, player: Player in ipairs(Players:GetPlayers()) do
-                if player ~= LocalPlayer and targetIsValid(player)
-                    and getPlayerWeapon(player, "Knife", false) == nil
-                    and getPlayerWeapon(player, "Gun", false) ~= nil then
-                    return player
-                end
-            end
-        end
-        if type(findSheriff) == "function" then
-            local target: Player? = findSheriff()
-            if target and targetIsValid(target)
-                and roleOf(target) ~= "Murderer" and roleOf(target) ~= "Dead" then
-                return target
+        local finder: any = if wanted == "Murderer" then findMurderer
+            elseif wanted == "Sheriff" then findSheriff else nil
+        if type(finder) == "function" then
+            local found: Player? = finder()
+            if targetIsValid(found) then
+                return found
             end
         end
         for _, player: Player in ipairs(Players:GetPlayers()) do
             if player ~= LocalPlayer and targetIsValid(player) then
                 local role: string? = roleOf(player)
-                if role == "Sheriff" or role == "Hero" then
+                if role == wanted
+                    or (wanted == "Sheriff" and role == "Hero") then
                     return player
                 end
             end
@@ -365,7 +307,7 @@ function Module.init(runtime: any): any
     )
 
     addActionOption(FlingFeature, "Fling Murderer", function(): ()
-        local target: Player? = resolveMurdererTarget()
+        local target: Player? = resolveByRole("Murderer")
         if target then
             performFling(target)
         else
@@ -375,7 +317,7 @@ function Module.init(runtime: any): any
         end
     end)
     addActionOption(FlingFeature, "Fling Sheriff", function(): ()
-        local target: Player? = resolveSheriffOrHeroTarget()
+        local target: Player? = resolveByRole("Sheriff")
         if target then
             performFling(target)
         else
@@ -384,31 +326,48 @@ function Module.init(runtime: any): any
                 else "MM2 has not published the roles yet. Wait for the round to start.")
         end
     end)
+
+    -- "Fling All Innocents" is a queue, not a blocking coroutine: one impulse
+    -- session at a time and no fixed sleeps competing with the scheduler.
     addActionOption(FlingFeature, "Fling All Innocents", function(): ()
         if not roundIsActive() or not localIsAlive() then
             notify("Fling requires an active MM2 round and a living character.")
             return
         end
         sequenceNumber += 1
-        local sequence: number = sequenceNumber
+        queueGeneration = sequenceNumber
+        table.clear(queue)
         refreshRoles()
-        task.spawn(function(): ()
-            for _, player: Player in ipairs(Players:GetPlayers()) do
-                if sequence ~= sequenceNumber or not roundIsActive()
-                    or not localIsAlive() then
-                    break
-                end
-                if targetIsValid(player) and roleOf(player) == "Innocent" then
-                    performFling(player, {blocking = true, silent = true})
-                    task.wait(0.05)
-                end
+        for _, player: Player in ipairs(Players:GetPlayers()) do
+            if targetIsValid(player) and roleOf(player) == "Innocent" then
+                table.insert(queue, player)
             end
-        end)
+        end
+        local lastQueuedAt: number = 0
+        if TaskManager and featureConnections then
+            disconnectFeatureConnection("MM2FlingQueue")
+            featureConnections.MM2FlingQueue = TaskManager:Connect(function(): ()
+                if queueGeneration ~= sequenceNumber or #queue == 0 then
+                    disconnectFeatureConnection("MM2FlingQueue")
+                    return
+                end
+                if physics.isRunning() or physics.isTouchEnabled()
+                    or os.clock() - lastQueuedAt < 0.15
+                    or not roundIsActive() or not localIsAlive() then
+                    return
+                end
+                local nextTarget: Player? = table.remove(queue, 1)
+                if nextTarget and targetIsValid(nextTarget) then
+                    lastQueuedAt = os.clock()
+                    performFling(nextTarget, {silent = true, duration = 0.9})
+                end
+            end)
+        end
     end)
 
     local function autoFlingTick(): ()
         if not autoFlingSelected or physics.isRunning() or physics.isTouchEnabled()
-            or os.clock() - lastAutoFlingAt < 0.35
+            or os.clock() - lastAutoFlingAt < 0.45
             or not roundIsActive() or not localIsAlive() then
             return
         end
@@ -419,17 +378,13 @@ function Module.init(runtime: any): any
         lastAutoFlingAt = os.clock()
         performFling(target, {
             silent = true,
-            duration = 1.4,
+            duration = 1.2,
             shouldStop = function(): boolean
                 return not autoFlingSelected
             end,
         })
     end
 
-    -- The target is a live list of the players this round, already labelled with
-    -- their role. Typing a name by hand was the reason the card "detected
-    -- nothing": a typo, a display name or a player who joined a second ago all
-    -- looked identical to a broken feature.
     local listHandle: any = nil
     if type(addListOption) == "function" then
         listHandle = addListOption(FlingFeature, "Fling target", {
@@ -452,9 +407,6 @@ function Module.init(runtime: any): any
                 if label == "" then
                     return
                 end
-                -- Only a label that is still in the living roster can become a
-                -- target: a stale saved name must never point at a dead player
-                -- or at someone from the previous round.
                 for _, entry: any in ipairs(rosterEntries(false)) do
                     if entry.label == label then
                         selectedPlayer = entry.player
@@ -465,20 +417,14 @@ function Module.init(runtime: any): any
         })
     end
 
-    -- Keep the labels honest while roles change between rounds (the murderer of
-    -- this round is not the murderer of the next one). Cheap: one signature
-    -- string every second, and it does nothing at all until it changes.
     local lastRosterSignature: string = ""
     local lastRosterSignatureAt: number = 0
-    local function rosterSignature(): string
+    local function refreshRoster(): ()
         local parts: {string} = {}
         for _, entry: any in ipairs(rosterEntries()) do
             table.insert(parts, entry.label)
         end
-        return table.concat(parts, "|")
-    end
-    local function refreshRoster(): ()
-        local signature: string = rosterSignature()
+        local signature: string = table.concat(parts, "|")
         if signature == lastRosterSignature then
             return
         end
@@ -498,8 +444,6 @@ function Module.init(runtime: any): any
             return
         end
         pcall(function(): ()
-            -- Drop a selection whose player left, then re-point the label of a
-            -- selection whose role changed.
             if selectedLabel ~= "" then
                 control.set(selectedLabel, false)
             end
@@ -535,9 +479,7 @@ function Module.init(runtime: any): any
         false,
         function(value: boolean): ()
             autoFlingSelected = value == true
-            if disconnectFeatureConnection then
-                disconnectFeatureConnection("MM2AutoFlingTarget")
-            end
+            disconnectFeatureConnection("MM2AutoFlingTarget")
             if not autoFlingSelected then
                 physics.cancel()
             elseif TaskManager and featureConnections then
@@ -553,16 +495,17 @@ function Module.init(runtime: any): any
     )
     addInformationOption(
         FlingFeature,
-        "Active rounds only. Death, round end, target loss or OFF cancels the session."
+        "Active rounds only. Death, round end, target loss or OFF cancels the session. "
+            .. "Impulses are finite and bounded; no spin and no per-frame teleport."
     )
 
     activeCleanup = function(): ()
         sequenceNumber += 1
+        table.clear(queue)
         autoFlingSelected = false
-        if disconnectFeatureConnection then
-            disconnectFeatureConnection("MM2AutoFlingTarget")
-            disconnectFeatureConnection("MM2FlingRoster")
-        end
+        disconnectFeatureConnection("MM2AutoFlingTarget")
+        disconnectFeatureConnection("MM2FlingRoster")
+        disconnectFeatureConnection("MM2FlingQueue")
         selectedPlayer = nil
         selectedLabel = ""
         physics.cancel()

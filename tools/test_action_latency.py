@@ -42,15 +42,15 @@ assert "autoGetGunDelay" not in base
 assert "droppedGunCache.at < 0.05" in base
 assert "droppedGunCache.at < 0.4" not in base
 
-# Auto Farm: the full-bag sequence waits for conditions (equip landed,
-# respawn arrived) per frame instead of sleeping fixed amounts.
+# Auto Farm (v150): the rebuilt farm reacts on the shared Heartbeat tick and
+# binds native movement after the default controls. There is no full-bag
+# coroutine, no gun-touch routine and no hidden sleep anywhere in the module.
 farm = read("src/games/MM2/Other/AutoFarm.lua")
-assert "equipDeadline" in farm
-assert "task.wait(0.25)" not in farm.split("runFullSequence")[1]
-gun_touch = farm.split("local function touchDroppedGun(", 1)[1].split(
-    "local function grabGunAndShoot", 1
-)[0]
-assert "task.wait" not in gun_touch, "farm gun touch has no fixed pickup delay"
+assert "TaskManager:Connect(farmTick)" in farm
+assert "BindToRenderStep" in farm and "humanoid:Move(desiredDirection, false)" in farm
+assert "humanoid:MoveTo(position)" in farm, "MoveTo fallback keeps the 8 s timeout reset"
+assert "task.wait" not in farm, "farm must not add hidden polling sleeps"
+assert "firetouchinterest(" not in farm, "a local fake touch is not a server coin"
 
 # Deliberate delays stay. Removing these would not make anything
 # faster in reality -- it would desync the knife animation, re-open

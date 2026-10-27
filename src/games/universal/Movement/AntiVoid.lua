@@ -1,229 +1,164 @@
--- Rescue actual void falls, not ordinary jumps or long drops onto lower ground.
-local Module={Name="AntiVoid",PlaceId=0,Initialized=false}
-local cleanup
-function Module.init(context)
-    local host, world = context.host, context.host.workspace
-    local antiFling, voidGuard, platform, platformY, token = false, false, nil, nil, 0
-    local stripOwnedByStepped = false
-    local previousCharacter, previousRoot, previousVelocity, overSpeedTicks
-    -- Fixed physical thresholds, measured against what the body itself can
-    -- produce. There is no user-facing velocity limit any more: a single
-    -- number has to be retuned per game and per speed setting, and when it
-    -- was wrong the protection silently did nothing.
-    local SPIN_LIMIT = 20      -- rad/s: a driven spin, not a turn
-    local SPEED_FACTOR = 2.2   -- multiples of the character's walking speed
-    local JUMP_FACTOR = 3      -- multiples of JumpPower no jump can reach
-    local function removePlatform()
-        token+=1
-        if platform then platform:Destroy();platform=nil;platformY=nil end
-    end
-    local function active(name)
-        return context.services.activity and context.services.activity.isActive(name)
-    end
-    local function module(name)
-        return context.framework and context.framework.GetModule and context.framework:GetModule(name)
-    end
-    local function motionLimits(humanoid)
-        local walk=math.max(16,humanoid.WalkSpeed or 16)
-        local feature=module("Speed")
-        if feature and feature.Enabled and feature.Options and feature.Options.Speed then
-            walk=math.max(walk,feature.Options.Speed.Value)
-        end
-        return walk,math.max(50,humanoid.JumpPower or 50)
-    end
-    -- Anti fling (Infinite Yield's idea) used to run `GetDescendants()` over
-    -- every other character and write CanCollide + both assembly velocities on
-    -- every part, every single frame -- with three pcall closures allocated per
-    -- part. In a full MM2 server that is thousands of closures and ~600 physics
-    -- property writes per frame, which is what made the game's Physics step go
-    -- from ~2 ms to ~12 ms and the FPS collapse.
-    --
-    -- It now costs two property reads per player in the steady state and only
-    -- touches a character that actually looks like it is flinging. Part lists
-    -- are cached per character (invalidated on DescendantAdded) so the frame
-    -- path never walks a tree, and the expensive writes happen once per
-    -- detection window instead of once per frame.
-    local STRIP_SECONDS = 0.45
-    local STRIP_RESTRIKE = 0.1
-    -- 60 studs: beyond that a character's contact cannot reach the local root
-    -- in the half second the strip lasts.
-    local STRIP_RANGE = 60
-    -- Injectable clock: lets a suite drive the detection window without
-    -- sleeping, and keeps the frame path free of extra service lookups.
+-- v150 · Anti Void + Anti fling, rebuilt from zero.
+--
+-- Evidence: MM2 (TestingStuff place 142823291) has no floor under its maps.
+-- Workspace.Gravity is 196.2 and FallenPartsDestroyHeight is -500, while the
+-- House2 / Bank2 maps live around Y=240..280. Waiting for the destroy layer
+-- therefore cannot rescue a normal void fall. The game's own CharacterClient
+-- teleports with a single `character:PivotTo` on TeleportToPart, so a single
+-- bounded rescue is consistent with the game; a per-frame CFrame writer is not.
+--
+-- Anti fling damps impulses on the LOCAL root (the assembly we own) and strips
+-- nearby flinging characters' collisions once per detection window. Part lists
+-- are cached, no GetDescendants() runs per frame, and nothing is left modified
+-- after OFF/death/respawn/destroy.
+
+local Module = { Name = "AntiVoid", PlaceId = 0, Initialized = false }
+local cleanup: (() -> ())? = nil
+
+function Module.init(context: any): any
+    local host: any = context.host
+    local world: any = host.workspace
+    local RunService: any = host.RunService
+    local TaskManager: any = host.TaskManager
+    local featureConnections: any = host.featureConnections
+    local disconnectFeatureConnection: any = host.disconnectFeatureConnection
+    local framework: any = context.framework
+    local services: any = context.services
+    local activity: any = services and services.activity
+    local getCharacterParts: any = host.getCharacterParts
     local clock: () -> number = if type((host :: any).clock) == "function"
         then (host :: any).clock else os.clock
-    local partCache = setmetatable({}, {__mode = "k"})
-    local stripped = setmetatable({}, {__mode = "k"})
-    local walkCache = setmetatable({}, {__mode = "k"})
-    local cacheWatchers = setmetatable({}, {__mode = "k"})
 
-    -- The previous version wrapped this in a closure per part per frame.
+    local antiFling: boolean = false
+    local voidGuard: boolean = false
+    local stripOwnedByStepped: boolean = false
+
+    local SPIN_LIMIT: number = 20
+    local SPEED_FACTOR: number = 2.2
+    local JUMP_FACTOR: number = 3
+    local STRIP_SECONDS: number = 0.45
+    local STRIP_RANGE: number = 60
+    local FALL_MARGIN: number = 16
+    local RESCUE_COOLDOWN: number = 1.5
+    local RAY_DISTANCE: number = 120
+
+    local safeCFrame: any = nil
+    local safeCharacter: any = nil
+    local safeY: number? = nil
+    local lastRescueAt: number = -math.huge
+    local previousCharacter: any = nil
+    local previousRoot: any = nil
+    local previousVelocity: any = nil
+    local overSpeedTicks: number = 0
+
+    local partCache: any = setmetatable({}, {__mode = "k"})
+    local walkCache: any = setmetatable({}, {__mode = "k"})
+    local stripped: any = setmetatable({}, {__mode = "k"})
+    local cacheWatchers: any = setmetatable({}, {__mode = "k"})
+
+    local function active(name: string): boolean
+        return activity ~= nil and type(activity.isActive) == "function"
+            and activity.isActive(name) == true
+    end
+
+    local function module(name: string): any
+        if framework and type(framework.GetModule) == "function" then
+            local ok: boolean, found: any = pcall(framework.GetModule, framework, name)
+            if ok then
+                return found
+            end
+        end
+        return nil
+    end
+
+    local function motionLimits(humanoid: any): (number, number)
+        local walk: number = math.max(16, tonumber(humanoid.WalkSpeed) or 16)
+        local feature: any = module("Speed")
+        if feature and feature.Enabled and feature.Options and feature.Options.Speed
+            and type(feature.Options.Speed.Value) == "number" then
+            walk = math.max(walk, feature.Options.Speed.Value)
+        end
+        return walk, math.max(50, tonumber(humanoid.JumpPower) or 50)
+    end
+
     local function isBasePart(inst: any): boolean
-        if type(inst) ~= "table" and typeof(inst) ~= "Instance" then
+        if inst == nil then
             return false
         end
-        local ok: boolean, verdict: any = pcall(inst.IsA, inst, "BasePart")
-        if ok then
+        local ok: boolean, verdict: any = pcall(function(): any
+            if type(inst.IsA) == "function" then
+                return inst:IsA("BasePart")
+            end
+            return nil
+        end)
+        if ok and verdict ~= nil then
             return verdict == true
         end
-        -- Table-backed part (test harness / executor proxy): identity is the
-        -- physics surface we are about to write.
         return (inst :: any).CanCollide ~= nil
             and (inst :: any).AssemblyLinearVelocity ~= nil
     end
 
-    local function partsOf(character: any)
-        local cached = partCache[character]
+    local function partsOf(character: any): {any}
+        local cached: any = partCache[character]
         if cached ~= nil then
             return cached
         end
-        local list = {}
-        local okDesc, descendants = pcall(function(): any
+        local list: {any} = {}
+        local ok: boolean, descendants: any = pcall(function(): any
             return character:GetDescendants()
         end)
-        if okDesc and type(descendants) == "table" then
-            for _, inst in ipairs(descendants) do
+        if ok and type(descendants) == "table" then
+            for _, inst: any in ipairs(descendants) do
                 if isBasePart(inst) then
-                    list[#list + 1] = inst
+                    table.insert(list, inst)
                 end
             end
         end
         partCache[character] = list
-        -- One listener per character, not one scan per frame.
         if cacheWatchers[character] == nil then
-            local added = (character :: any).DescendantAdded
+            local added: any = (character :: any).DescendantAdded
             if added and type(added.Connect) == "function" then
-                local connection = added:Connect(function(inst)
-                    if isBasePart(inst) then
-                        partCache[character] = nil
-                    end
+                local okAdd: boolean, connection: any = pcall(function(): any
+                    return added:Connect(function(inst: any): ()
+                        if isBasePart(inst) then
+                            partCache[character] = nil
+                        end
+                    end)
                 end)
-                cacheWatchers[character] = connection
+                if okAdd then
+                    cacheWatchers[character] = connection
+                end
             end
         end
         return list
     end
 
-    local function walkOf(character, humanoid)
-        local cached = walkCache[character]
+    local function walkOf(character: any, humanoid: any): number
+        local cached: any = walkCache[character]
         if cached then
             return cached
         end
-        local walk = 16
+        local walk: number = 16
         if humanoid then
-            walk, _ = motionLimits(humanoid)
+            walk = motionLimits(humanoid)
         end
         walkCache[character] = walk
         return walk
     end
 
-    local function releaseStrip(entry)
-        if not entry then
+    local function releaseStrip(entry: any): ()
+        if not entry or not entry.saved then
             return
         end
         for part, canCollide in pairs(entry.saved) do
-            if part.Parent and part.CanCollide ~= canCollide then
-                pcall(function()
-                    part.CanCollide = canCollide
-                end)
+            if part and part.Parent and part.CanCollide ~= canCollide then
+                pcall(function(): () part.CanCollide = canCollide end)
             end
         end
         entry.saved = nil
     end
 
-    local function stripCharacter(character, entry, now)
-        local list = partsOf(character)
-        local saved = entry.saved or {}
-        -- Only a part that can collide can transfer a contact. In R6/R15 that is
-        -- typically the torso and the head: two or three writes instead of one
-        -- per part, and nothing at all on the parts that are already off.
-        for i = 1, #list do
-            local part = list[i]
-            if part.Parent and part.CanCollide ~= false then
-                if saved[part] == nil then
-                    saved[part] = part.CanCollide == true
-                end
-                part.CanCollide = false
-            end
-        end
-        entry.saved = saved
-        entry.untilAt = now + STRIP_SECONDS
-        entry.reStrikeAt = now + STRIP_RESTRIKE
-    end
-
-    local function stripOtherPlayerCollisions()
-        if not antiFling or active("fling") then
-            return
-        end
-        local playersService = host.Players
-        if not playersService or type(playersService.GetPlayers) ~= "function" then
-            return
-        end
-        local list = playersService:GetPlayers()
-        if type(list) ~= "table" then
-            return
-        end
-        local now = clock()
-        local localPlayer = host.LocalPlayer
-        local myRoot = nil
-        do
-            local _, _, root = host.getCharacterParts()
-            myRoot = root
-        end
-        local myPosition = myRoot and myRoot.Position or nil
-        for i = 1, #list do
-            local other = list[i]
-            if other ~= localPlayer then
-                local character = other.Character
-                local entry = character and stripped[character]
-                if entry then
-                    if now >= entry.untilAt then
-                        releaseStrip(entry)
-                        stripped[character] = nil
-                    elseif now >= entry.reStrikeAt then
-                        -- Same detected fling: nothing to write. CanCollide is
-                        -- already off and restoring it early is what let the
-                        -- contact through; the entry just stays until it expires.
-                        entry.reStrikeAt = now + STRIP_RESTRIKE
-                    end
-                elseif character then
-                    local root = (character :: any).PrimaryPart
-                        or character:FindFirstChild("HumanoidRootPart")
-                    if root and (isBasePart(root)
-                        or (root :: any).AssemblyLinearVelocity ~= nil) then
-                        -- A fling on the other side of the map cannot touch us.
-                        local reachable = true
-                        if myPosition then
-                            local okDelta, delta = pcall(function(): number
-                                return (root.Position - myPosition).Magnitude
-                            end)
-                            reachable = okDelta and type(delta) == "number"
-                                and delta <= STRIP_RANGE
-                        end
-                        if not reachable then
-                            continue
-                        end
-                        -- Two reads decide it. No tree walk, no allocation.
-                        local spin = root.AssemblyAngularVelocity.Magnitude
-                        local speed = root.AssemblyLinearVelocity.Magnitude
-                        local okHumanoid, humanoid = pcall(function(): any
-                            return character:FindFirstChildOfClass("Humanoid")
-                        end)
-                        if not okHumanoid then
-                            humanoid = nil
-                        end
-                        local walk = walkOf(character, humanoid)
-                        if spin > SPIN_LIMIT or speed > walk * SPEED_FACTOR * 1.5 then
-                            entry = {saved = nil}
-                            stripped[character] = entry
-                            stripCharacter(character, entry, now)
-                        end
-                    end
-                end
-            end
-        end
-    end
-    local function releaseAllStrips()
+    local function releaseAllStrips(): ()
         for character, entry in pairs(stripped) do
             releaseStrip(entry)
             stripped[character] = nil
@@ -231,133 +166,287 @@ function Module.init(context)
         table.clear(partCache)
         table.clear(walkCache)
         for character, connection in pairs(cacheWatchers) do
-            if connection and connection.Disconnect then
+            if connection and type(connection.Disconnect) == "function" then
                 pcall(connection.Disconnect, connection)
             end
             cacheWatchers[character] = nil
         end
     end
 
-    local function step(dt)
-        local character,humanoid,root=host.getCharacterParts()
-        if not humanoid or not root or humanoid.Health<=0 then return end
-        local velocity=root.AssemblyLinearVelocity
-        local planar=Vector3.new(velocity.X,0,velocity.Z)
-        if previousCharacter~=character or previousRoot~=root then
-            previousCharacter,previousRoot,previousVelocity,overSpeedTicks=character,root,velocity,0
-            removePlatform()
+    -- Two reads per player in the steady state. Writes happen once per 0.45 s
+    -- detection window, never once per frame.
+    local function stripOtherPlayerCollisions(): ()
+        if not antiFling or active("fling") then
+            return
         end
-        local fly=module("Fly")
-        local busy=root.Anchored or humanoid.Sit or humanoid.SeatPart or active("fling")
-            or active("ghost") or active("teleport") or fly and fly.Enabled
+        local playersService: any = host.Players
+        if not playersService or type(playersService.GetPlayers) ~= "function" then
+            return
+        end
+        local list: any = playersService:GetPlayers()
+        if type(list) ~= "table" then
+            return
+        end
+        local now: number = clock()
+        local localPlayer: any = host.LocalPlayer
+        local myRoot: any = nil
+        do
+            local _, _, found: any = getCharacterParts()
+            myRoot = found
+        end
+        local myPosition: any = myRoot and myRoot.Position or nil
+        for i = 1, #list do
+            local other: any = list[i]
+            if other ~= localPlayer then
+                local character: any = other.Character
+                local entry: any = character and stripped[character]
+                if entry then
+                    if now >= entry.untilAt then
+                        releaseStrip(entry)
+                        stripped[character] = nil
+                    end
+                elseif character then
+                    local root: any = (character :: any).PrimaryPart
+                    if not root and type(character.FindFirstChild) == "function" then
+                        local okFind: boolean, found: any = pcall(function(): any
+                            return character:FindFirstChild("HumanoidRootPart")
+                        end)
+                        if okFind then
+                            root = found
+                        end
+                    end
+                    if root and isBasePart(root) then
+                        local reachable: boolean = true
+                        if myPosition and root.Position then
+                            local okDelta: boolean, delta: any = pcall(function(): any
+                                return (root.Position - myPosition).Magnitude
+                            end)
+                            reachable = okDelta and type(delta) == "number"
+                                and delta <= STRIP_RANGE
+                        end
+                        local spin: any = root.AssemblyAngularVelocity
+                            and root.AssemblyAngularVelocity.Magnitude or 0
+                        local speed: any = root.AssemblyLinearVelocity
+                            and root.AssemblyLinearVelocity.Magnitude or 0
+                        local humanoid: any = nil
+                        if type(character.FindFirstChildOfClass) == "function" then
+                            local okHum: boolean, foundHum: any = pcall(function(): any
+                                return character:FindFirstChildOfClass("Humanoid")
+                            end)
+                            if okHum then
+                                humanoid = foundHum
+                            end
+                        end
+                        local walk: number = walkOf(character, humanoid)
+                        if reachable and ((type(spin) == "number" and spin > SPIN_LIMIT)
+                            or (type(speed) == "number" and speed > walk * SPEED_FACTOR * 1.5)) then
+                            local saved: any = {}
+                            for _, part: any in ipairs(partsOf(character)) do
+                                if part and part.Parent and part.CanCollide ~= false then
+                                    if saved[part] == nil then
+                                        saved[part] = part.CanCollide == true
+                                    end
+                                    pcall(function(): () part.CanCollide = false end)
+                                end
+                            end
+                            stripped[character] = {
+                                saved = saved,
+                                untilAt = now + STRIP_SECONDS,
+                            }
+                        end
+                    end
+                end
+            end
+        end
+    end
+
+    local function forgetSafe(): ()
+        safeCFrame = nil
+        safeCharacter = nil
+        safeY = nil
+    end
+
+    local function rememberSafe(character: any, root: any, humanoid: any): ()
+        if not character or not root or not humanoid then
+            return
+        end
+        local grounded: boolean = humanoid.FloorMaterial ~= Enum.Material.Air
+        local velocity: any = root.AssemblyLinearVelocity
+        local falling: boolean = velocity ~= nil
+            and type(velocity.Y) == "number" and velocity.Y < -1
+        if grounded and not falling then
+            safeCharacter = character
+            safeCFrame = root.CFrame
+            safeY = root.Position.Y
+        end
+    end
+
+    local function rescuePossible(character: any, root: any): boolean
+        if not character or not root or not safeCFrame or safeCharacter ~= character
+            or safeY == nil or type(character.PivotTo) ~= "function" then
+            return false
+        end
+        local velocity: any = root.AssemblyLinearVelocity
+        if velocity == nil or type(velocity.Y) ~= "number" or velocity.Y >= 0 then
+            return false
+        end
+        if root.Position.Y > (safeY :: number) - FALL_MARGIN then
+            return false
+        end
+        if clock() - lastRescueAt < RESCUE_COOLDOWN then
+            return false
+        end
+        -- A real floor before the void means this is a legitimate drop.
+        if world and type(world.Raycast) == "function" and RaycastParams then
+            local params: any = RaycastParams.new()
+            params.FilterType = Enum.RaycastFilterType.Exclude
+            params.FilterDescendantsInstances = {character}
+            params.RespectCanCollide = true
+            local ok: boolean, hit: any = pcall(function(): any
+                return world:Raycast(root.Position,
+                    Vector3.new(0, -RAY_DISTANCE, 0), params)
+            end)
+            if ok and hit and hit.Position
+                and hit.Position.Y > root.Position.Y - RAY_DISTANCE + 2 then
+                return false
+            end
+        end
+        return true
+    end
+
+    local function rescue(character: any, root: any): ()
+        local target: any = safeCFrame
+        lastRescueAt = clock()
+        pcall(function(): () character:PivotTo(target) end)
+        pcall(function(): ()
+            root.AssemblyLinearVelocity = Vector3.zero
+            root.AssemblyAngularVelocity = Vector3.zero
+        end)
+    end
+
+    local function step(deltaTime: number): ()
+        local character: any, humanoid: any, root: any = getCharacterParts()
+        if not character or not humanoid or not root or humanoid.Health <= 0 then
+            return
+        end
+        if previousCharacter ~= character or previousRoot ~= root then
+            previousCharacter, previousRoot = character, root
+            previousVelocity = nil
+            overSpeedTicks = 0
+            forgetSafe()
+        end
+        local velocity: any = root.AssemblyLinearVelocity or Vector3.zero
+        local fly: any = module("Fly")
+        local busy: boolean = root.Anchored or humanoid.Sit or humanoid.SeatPart
+            or active("fling") or active("ghost") or active("teleport")
+            or (fly and fly.Enabled) or false
+
         if antiFling and not busy then
-            -- Stepped owns the scan when it exists (it runs before the solver
-            -- and reads the same values), so the Heartbeat path must not run it
-            -- a second time in the same frame.
             if not stripOwnedByStepped then
                 stripOtherPlayerCollisions()
             end
-            -- Everything is compared to the body's own mobility, so a fast
-            -- walk or an intentional Speed never reads as a fling, and no
-            -- slider has to match it.
-            local walk,jump=motionLimits(humanoid)
-            local limit=walk*SPEED_FACTOR
-            local spin=root.AssemblyAngularVelocity.Magnitude>SPIN_LIMIT
-            local rise=velocity.Y>jump*JUMP_FACTOR
-            local delta=previousVelocity and (velocity-previousVelocity) or Vector3.zero
-            local kick=math.max(planar.Magnitude,Vector3.new(delta.X,0,delta.Z).Magnitude)
-            if planar.Magnitude>limit then overSpeedTicks=(overSpeedTicks or 0)+1 else overSpeedTicks=0 end
-            -- Four signatures, any one of them enough: a driven spin, a rise
-            -- no jump can produce, a single-frame planar spike, and a shove
-            -- held over several frames (contact flings accelerate instead of
-            -- jumping in one tick). Proximity is not one of them: a fling
-            -- sent through a tool or a remote arrives from any distance, and
-            -- the old 10-stud gate is why it used to need several attempts.
-            if spin or rise or kick>limit or overSpeedTicks>=2 then
-                -- Remove the impulse, never the position or the input.
-                local desired=humanoid.MoveDirection*walk
-                local lifted=rise or spin
-                root.AssemblyLinearVelocity=Vector3.new(desired.X,
-                    lifted and math.min(velocity.Y,jump) or velocity.Y,desired.Z)
-                root.AssemblyAngularVelocity=Vector3.zero
-                velocity=root.AssemblyLinearVelocity
-                planar=Vector3.new(desired.X,0,desired.Z)
-                overSpeedTicks=0
+            local walk: number, jump: number = motionLimits(humanoid)
+            local limit: number = walk * SPEED_FACTOR
+            local planar: any = velocity and Vector3.new(velocity.X, 0, velocity.Z)
+                or Vector3.zero
+            local spin: any = root.AssemblyAngularVelocity
+                and root.AssemblyAngularVelocity.Magnitude or 0
+            local rise: boolean = velocity ~= nil
+                and type(velocity.Y) == "number"
+                and velocity.Y > jump * JUMP_FACTOR
+            local delta: any = previousVelocity and (velocity - previousVelocity)
+                or Vector3.zero
+            local kick: number = math.max(planar.Magnitude,
+                Vector3.new(delta.X, 0, delta.Z).Magnitude)
+            if planar.Magnitude > limit then
+                overSpeedTicks += 1
+            else
+                overSpeedTicks = 0
+            end
+            if (type(spin) == "number" and spin > SPIN_LIMIT) or rise
+                or kick > limit or overSpeedTicks >= 2 then
+                local desired: any = humanoid.MoveDirection or Vector3.zero
+                local lifted: boolean = rise
+                    or (type(spin) == "number" and spin > SPIN_LIMIT)
+                pcall(function(): ()
+                    root.AssemblyLinearVelocity = Vector3.new(
+                        desired.X * walk,
+                        lifted and math.min(velocity.Y, jump) or velocity.Y,
+                        desired.Z * walk)
+                    root.AssemblyAngularVelocity = Vector3.zero
+                end)
+                velocity = root.AssemblyLinearVelocity
+                overSpeedTicks = 0
             end
         end
-        previousVelocity=velocity
-        if not voidGuard then return end
-        if platform then
-            if platformY then
-                pcall(function()
-                    platform.CFrame=CFrame.new(root.Position.X,platformY,root.Position.Z)
-                end)
-                if root.Position.Y<=platformY+6 and velocity.Y<0 then
-                    root.AssemblyLinearVelocity=Vector3.new(velocity.X,0,velocity.Z)
-                    root.AssemblyAngularVelocity=Vector3.zero
-                end
-            end
+        previousVelocity = velocity
+
+        if not voidGuard or busy then
             return
         end
-        if humanoid.FloorMaterial~=Enum.Material.Air or velocity.Y>=0 then return end
-        local destroyHeight=world.FallenPartsDestroyHeight
-        if destroyHeight~=destroyHeight or math.abs(destroyHeight)==math.huge then destroyHeight=-500 end
-        local distance=root.Position.Y-destroyHeight
-        if distance>math.max(35,-velocity.Y*0.25) then return end
-        local params=RaycastParams.new()
-        params.FilterType=Enum.RaycastFilterType.Exclude
-        params.FilterDescendantsInstances={character}
-        params.RespectCanCollide=true;params.IgnoreWater=false
-        if root.CollisionGroup then params.CollisionGroup=root.CollisionGroup end
-        -- A real floor before the destroy layer means this is a legitimate drop.
-        local hit=world:Raycast(root.Position,Vector3.new(0,-math.clamp(distance,1,15000),0),params)
-        if hit and hit.Position.Y>destroyHeight+2 then return end
-        local rescue=Instance.new("Part")
-        rescue.Name="Wurst_AntiVoidPlatform";rescue.Anchored=true;rescue.CanCollide=true
-        rescue.CanQuery=false;rescue.CanTouch=false;rescue.CastShadow=false
-        rescue.Size=Vector3.new(256,4,256);rescue.Transparency=1
-        platformY=root.Position.Y-4.25
-        rescue.CFrame=CFrame.new(root.Position-Vector3.new(0,4.25,0));rescue.Parent=world
-        platform=rescue
-        root.AssemblyLinearVelocity=Vector3.new(velocity.X,0,velocity.Z)
-        root.AssemblyAngularVelocity=Vector3.zero
-        token+=1;local mine=token
-        task.delay(3,function() if mine==token then removePlatform() end end)
+        rememberSafe(character, root, humanoid)
+        if rescuePossible(character, root) then
+            rescue(character, root)
+            previousVelocity = Vector3.zero
+        end
     end
-    -- Anti fling owns its connection: it protects with Anti Void off, and
-    -- Anti Void keeps the rescue without ever turning the damping off.
-    local function refresh()
-        host.disconnectFeatureConnection("AntiVoid")
-        host.disconnectFeatureConnection("AntiVoidStepped")
-        if not antiFling then overSpeedTicks=0 end
+
+    local function refresh(): ()
+        disconnectFeatureConnection("AntiVoid")
+        disconnectFeatureConnection("AntiVoidStepped")
+        if not antiFling then
+            overSpeedTicks = 0
+        end
         if voidGuard or antiFling then
-            host.featureConnections.AntiVoid=host.TaskManager:Connect(step)
+            featureConnections.AntiVoid = TaskManager:Connect(step)
         end
-        stripOwnedByStepped = antiFling and host.RunService ~= nil
-            and host.RunService.Stepped ~= nil
+        stripOwnedByStepped = antiFling and RunService ~= nil
+            and type((RunService :: any).Stepped) == "table"
+            and type((RunService :: any).Stepped.Connect) == "function"
         if stripOwnedByStepped then
-            host.featureConnections.AntiVoidStepped=host.RunService.Stepped:Connect(stripOtherPlayerCollisions)
+            featureConnections.AntiVoidStepped =
+                (RunService :: any).Stepped:Connect(stripOtherPlayerCollisions)
         end
     end
-    local feature=host.createUniversalFeature("Anti Void","Rescue imminent falls into the destroy layer, not normal drops",4,function(enabled)
-        voidGuard=enabled
-        removePlatform()
-        previousCharacter,previousRoot,previousVelocity,overSpeedTicks=nil,nil,nil,0
+
+    local feature: any = host.createUniversalFeature(
+        "Anti Void",
+        "Rescue real void falls with one bounded teleport back to the last safe ground",
+        4,
+        function(enabled: boolean): ()
+            voidGuard = enabled == true
+            forgetSafe()
+            previousCharacter, previousRoot, previousVelocity = nil, nil, nil
+            overSpeedTicks = 0
+            refresh()
+        end,
+        {categoryName = "Utilities"}
+    )
+    host.addToggleOption(feature, "Anti fling", false, function(value: boolean): ()
+        antiFling = value == true
         refresh()
-    end,{categoryName="Utilities"})
-    host.addToggleOption(feature,"Anti fling",false,function(value) antiFling=value;refresh() end,
-        "Cancels a fling on contact: strips other players' collisions on Stepped and damps spin/launch impulses. Works without Anti Void.")
-    host.addFeatureTooltip(feature,"Only rescues a falling character near the void when there is no collidable floor below. Anti fling never teleports you back and keeps your input.")
-    cleanup=function()
-        host.disconnectFeatureConnection("AntiVoid")
-        host.disconnectFeatureConnection("AntiVoidStepped")
+    end,
+        "Damps launch impulses on your own root and strips a nearby flinger's collisions once per detection window. Works without Anti Void.")
+    host.addFeatureTooltip(feature,
+        "Anti Void remembers the last grounded position and performs a single PivotTo only when the character is falling with no floor below. Anti fling never teleports and never fights an explicit MM2 Fling.")
+
+    cleanup = function(): ()
+        disconnectFeatureConnection("AntiVoid")
+        disconnectFeatureConnection("AntiVoidStepped")
+        stripOwnedByStepped = false
         releaseAllStrips()
-        removePlatform()
+        forgetSafe()
     end
-    Module.Initialized=true;return feature
+    Module.Initialized = true
+    return feature
 end
-function Module.destroy()
-    if cleanup then cleanup() end
-    cleanup=nil;Module.Initialized=false
+
+function Module.destroy(): ()
+    if cleanup then
+        pcall(cleanup)
+    end
+    cleanup = nil
+    Module.Initialized = false
 end
+
 return Module
