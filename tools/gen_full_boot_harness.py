@@ -881,8 +881,8 @@ do
     local expected = {
       Render = {"ItemESP", "PlayerESP", "Chams", "Nametags", "HP", "Arrows", "NPCESP", "FOV", "Fullbright", "X-Ray", "Zoom", "Markers"},
       Combat = {"Aim Assist", "KillAura", "TriggerBot", "Gun Aimbot"},
-      Exploits = {"Fly", "Noclip", "Spider", "Speed", "Jump", "Interact Extender", "Fling"},
-      Utilities = {"Anti Void", "Teleport", "Freeze Movements", "Ghost"},
+      Exploits = {"Fly", "Noclip", "Spider", "Speed", "Jump", "Interact Extender", "Fling", "Walk Fling"},
+      Utilities = {"Anti Void", "Teleport", "Freeze Movements", "Ghost", "Anti Fling"},
       World = {"Improve FPS", "Gravity", "Anti AFK", "Safe Walk", "Blurt Roles", "FreeCam", "Disguise"},
     }
     for category, names in pairs(expected) do
@@ -901,10 +901,15 @@ do
     if autoShoot then
       assert(autoShoot.categoryName == "Combat", "Auto Shoot must be in Combat category, not Blatant")
     end
-    assert(not findFeature("Time Changer") and not findFeature("Anti Fling"))
+    assert(not findFeature("Time Changer"))
+    -- v138.2: Anti Fling is its own card and Anti Void is the invisible platform,
+    -- so neither the old fold-in nor the old "Anti fling" sub-option may return.
+    assert(not findFeature("Anti Void").options:FindFirstChild("Option_Antifling"))
     local fling = findFeature("Fling")
     assert(fling and fling.configKey == "MM2.Fling", "only MM2 owns role Fling")
-    assert(findFeature("Anti Void").options:FindFirstChild("Option_Antifling"))
+    assert(findFeature("Anti Void").options:FindFirstChild("Option_Distance"))
+    assert(findFeature("Anti Void").options:FindFirstChild("Option_Showplatform"))
+    assert(findFeature("Anti Fling").options:FindFirstChild("Option_Sensitivity"))
     local fullbright=ex.state.framework:GetModule("Fullbright")
     assert(fullbright.Options["Time Changer"] and not fullbright.Options.Time.Visible)
     fullbright.Options["Time Changer"].Metadata.callback(true);assert(fullbright.Options.Time.Visible)

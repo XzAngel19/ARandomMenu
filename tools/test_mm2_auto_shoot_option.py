@@ -46,9 +46,12 @@ fling = (ROOT / 'src/games/MM2/Blatant/Fling.lua').read_text()
 assert '\n        "Auto Fling Selected Target",\n' not in fling, 'Auto Fling must stay deleted'
 assert 'configData.states["MM2.Fling.AutoFlingSelectedTarget"] = nil' in fling, \
     'the stale Auto Fling key must be dropped at boot'
-assert '"Touch Fling"' in fling, 'Fling must expose Touch Fling'
-assert 'configData.states["MM2.Fling.TouchFling"] = false' in fling, \
-    'Touch Fling must never be restored from the saved config'
+assert '"Touch Fling"' not in fling, 'Walk Fling is its own card now, not an option here'
+assert 'FLING_VELOCITY' in fling and '9e7' in fling, 'Fling must use the SkidFling velocity'
+walkfling = (ROOT / 'src/games/universal/Blatant/WalkFling.lua').read_text()
+assert '"Walk Fling"' in walkfling, 'Walk Fling must be its own module'
+assert 'configData.states["Universal.WalkFling"] = false' in walkfling, \
+    'Walk Fling must never be restored from the saved config'
 assert 'MAP_FLING_WARMUP_SECONDS' in auto_win, 'Auto Win must wait for map load before Fling Sheriff'
 
 print('PASS Auto Shoot and Knife Throw are now independent Combat modules with required options')

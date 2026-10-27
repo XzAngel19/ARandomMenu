@@ -33,7 +33,19 @@
 > limpia `CanCollide` y el usuario lee como noclip— pasó a ser la opción
 > **Touch Fling**: solo corre mientras esa opción está encendida, y al apagarse
 > devuelve las colisiones. La tarjeta `Fling` es un grupo y ya no lanza nada.
-> Evidencia: `docs/FIXES-v138.1.md`, `tools/test_fling_touch_only.py`.
+> Evidencia: `docs/FIXES-v138.1.md`.
+>
+> **v138.2 (2026-10-27):** Walk Fling es su propia tarjeta universal
+> (`src/games/universal/Blatant/WalkFling.lua`, Exploits, orden 8) y el Fling de
+> MM2 usa **SkidFling** (copia de la implementación pública de zqyDSUWX:
+> CFrame sobre la víctima + `9e7`/`9e8` + BodyVelocity de anclaje +
+> `FallenPartsDestroyHeight = 0/0` restaurado). **Anti Void** es ahora una
+> plataforma local invisible (`Wurst_AntiVoidPlatform`, `CanQuery=false`,
+> `CanTouch=false`, `Transparency=1`, `Distance` 1–40) que no baja al caer.
+> **Anti Fling** es tarjeta propia (`src/games/universal/Movement/AntiFling.lua`,
+> Utilities, orden 5) que recorta impulso planar/subida/caída/giro cada frame y
+> respeta `fling`/`walkfling`. Evidencia: `docs/FIXES-v138.2.md`,
+> `tools/test_walkfling.py`, `tools/test_fling_skid.py`, `tools/test_antivoid50.py`.
 
 ## 1A. X2Duels (MVS): estructura MM2, evidencia y contratos
 

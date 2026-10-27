@@ -170,6 +170,11 @@ local Manifest: Manifest = {
             category = "Exploits",
         },
         {
+            path = "src/games/universal/Blatant/WalkFling.lua",
+            name = "Walk Fling",
+            category = "Exploits",
+        },
+        {
             path = "src/games/universal/Blatant/Swim.lua",
             name = "Swim",
             category = "Exploits",
@@ -182,6 +187,11 @@ local Manifest: Manifest = {
         {
             path = "src/games/universal/Movement/AntiVoid.lua",
             name = "Anti Void",
+            category = "Utilities",
+        },
+        {
+            path = "src/games/universal/Movement/AntiFling.lua",
+            name = "Anti Fling",
             category = "Utilities",
         },
         {
