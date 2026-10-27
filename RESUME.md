@@ -68,6 +68,18 @@
 > `OldPos * CFrame.new(0, .5, 0)`. `state.mm2FlingStep` (Auto Win) usa el mismo
 > golpe y limpia su pin a los 0.5 s. Evidencia: `docs/FIXES-v138.4.md`,
 > `tools/test_fling_skid.py` (6 suites).
+>
+> **v138.5 (2026-10-27):** el Fling "terminaba" en medio segundo porque el `until`
+> comparaba `targetPlayer.Parent ~= Players` con el **cloneref** del servicio (otra
+> referencia ⇒ siempre distinto) y cortaba tras 6 poses sin contacto útil. También
+> `type(velocity) == "table"` era falso con un `Vector3` real (userdata), así que la
+> velocidad se leía 0 y nunca se detectaba el éxito. Ahora: `playerStillHere()` por
+> `FindFirstChild`, `partSpeed()` por `pcall`+`Magnitude`, `nowSeconds()` (`tick()` →
+> `os.clock()`) con tope de 600 poses, `guardedRun()` que nunca deja `flingRunning`
+> pegado, pin con reintento a `1e9` si `math.huge` falla, rescate de 2 frames si la
+> víctima no se movió, y notificación con poses/velocidad reales +
+> `state.mm2LastFling`. Evidencia: `docs/FIXES-v138.5.md`,
+> `tools/test_fling_skid.py` (7 suites).
 
 ## 1A. X2Duels (MVS): estructura MM2, evidencia y contratos
 

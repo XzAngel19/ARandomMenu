@@ -78,6 +78,18 @@ function CFrame.Angles(x, y, z)
 end
 local Enum = {HumanoidStateType={Seated="Seated",GettingUp="GettingUp",Freefall="Freefall"}}
 
+-- Roblox exposes typeof(); the module uses it to detect a CFrame option, so the
+-- harness has to provide it or every options table would take the error path.
+local function typeof(value)
+    if type(value) == "table" then
+        local meta = getmetatable(value)
+        if meta == CF then return "CFrame" end
+        if meta == mt then return "Vector3" end
+        return "table"
+    end
+    return type(value)
+end
+
 local now = 0
 local os = {clock=function() return now end, time=function() return now end}
 local RunService = {
@@ -154,6 +166,7 @@ local function makePart(name, position)
         track(key, props, value)
         props[key] = value
     end})
+    props.IsA = function(_, class) return class == "BasePart" end
     return part, props
 end
 
@@ -199,6 +212,7 @@ local character = makeCharacter(localParts, humanoid, "Local")
 local victimSpeed = 0
 local function makeVictimPart(name, position)
     local props = {Name=name, Parent=true, Position=position}
+    props.IsA = function(_, class) return class == "BasePart" end
     return setmetatable({}, {__index=function(_, key)
         if key == "Velocity" or key == "AssemblyLinearVelocity" then
             return Vector3.new(victimSpeed, 0, 0)
@@ -217,6 +231,11 @@ local victimHumanoid = {Health=100, RootPart=victimRoot, Sit=false,
     MoveDirection=Vector3.zero, WalkSpeed=16}
 local victimCharacter = makeCharacter({victimRoot, victimTorso, victimHead}, victimHumanoid, "Victim")
 victimCharacter.Head = victimHead
+-- The victim's parts must be children of the victim's character: the pose loop
+-- stops when "basePart.Parent ~= targetCharacter" (a part that got destroyed).
+victimRoot.Parent = victimCharacter
+victimTorso.Parent = victimCharacter
+victimHead.Parent = victimCharacter
 function victimCharacter:FindFirstChild(name_)
     if name_ == "Head" then return victimHead end
     return makeCharacter
@@ -236,9 +255,18 @@ victimCharacter.FindFirstChildOfClass = function(_, class)
 end
 victimCharacter.FindFirstChildWhichIsA = function() return victimRoot end
 
+-- cloneReference() hands the module a different service reference: the player's
+-- Parent is the real service, never the reference the module holds. The old port
+-- compared them, so "player left the game" was true on frame one and the
+-- choreography died after six poses ("fling finished" in half a second).
+local PlayersReference = {Name="Players"}
 local victimPlayer = {Name="Victim", DisplayName="Victim", Parent=true, Character=victimCharacter}
 
 local Players = {GetPlayers=function() return {victimPlayer} end}
+Players.FindFirstChild = function(_, name)
+    if name == victimPlayer.Name then return victimPlayer end
+    return nil
+end
 
 local world = {FallenPartsDestroyHeight=-500, CurrentCamera=nil}
 
@@ -350,12 +378,44 @@ assert(math.abs(rootProps.Position.Y - 10.5) < 26, "the character comes back nea
 assert(activityService.flags["fling"] == false, "fling activity must be released")
 pass("SkidFling poses 9e7/9e8 with an EpixVel 9e8 catapult, then restores everything")
 
+-- cloneref: the loop must not stop because Parent ~= the module's reference ---
+victimSpeed = 0
+resetWrites()
+notifications = {}
+options["Target player"]("Victim")
+options["Fling"]()
+pump(60)
+assert(#notifications == 0,
+    "after 0.6 s the fling must still be running, got: " .. tostring(notifications[1]))
+assert(writes.poses >= 12,
+    "the choreography keeps going past the first pose set, got " .. writes.poses)
+assert(writes.primaries >= 12, "every pose still goes through SetPrimaryPartCFrame")
+
+pump(260)
+assert(#notifications == 1, "exactly one notification when it ends, got " .. #notifications)
+assert(string.find(notifications[1], "did not move") ~= nil,
+    "a target that never moved is reported as such, got: " .. notifications[1])
+assert(string.find(notifications[1], "rescue used") ~= nil,
+    "the rescue is reported instead of hidden, got: " .. notifications[1])
+assert(state.mm2LastFling and state.mm2LastFling.poses >= 12, "diagnostics are published")
+assert(activityService.flags["fling"] == false, "activity released after the full run")
+local rescueParts = 0
+for _, object in ipairs(created) do
+    if object.ClassName == "BodyAngularVelocity" or object.ClassName == "BodyVelocity" then
+        if object.Parent ~= nil and object.destroyed == false then rescueParts += 1 end
+    end
+end
+assert(rescueParts == 0, "the rescue leaves nothing behind, found " .. rescueParts)
+pass("the loop survives cloneref (Parent ~= Players) and reports the real outcome")
+
 -- A target without a character fails closed --------------------------------
 notifications = {}
 local empty = {Name="Nobody", Parent=true, Character=nil}
 local failed = state.mm2PerformFling(empty, {blocking=true, silent=false, duration=0.1})
 assert(failed == false, "no character must return false")
-assert(#notifications > 0, "it must say why")
+assert(#notifications == 1, "it must say why exactly once, got " .. #notifications)
+assert(string.find(notifications[1], "No valid character") ~= nil,
+    "and it must be the character message, not an internal error: " .. notifications[1])
 assert(world.FallenPartsDestroyHeight == -500, "a failed fling must not leave the void layer off")
 pass("a target without a character fails closed")
 

@@ -220,7 +220,7 @@ local RUNTIME_RAW_BASE: string =
         .. RUNTIME_BRANCH
         .. "/"
 
-local SOURCE_STAMP: string = "v138.4-20261027-yarhm-fling-epixvel"
+local SOURCE_STAMP: string = "v138.5-20261027-fling-loop-not-aborted"
 
 local BOOT_STARTED_AT: number = os.clock()
 local BOOT_FINGERPRINT_SECONDS: number = 0

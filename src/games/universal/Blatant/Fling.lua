@@ -170,6 +170,60 @@ function Module.init(context: Runtime): any
         end)
     end
 
+    local function nowSeconds(): number
+        -- YARHM times the loop with tick(). os.clock() is the fallback and 0 the
+        -- last resort; the pose counter below keeps the loop bounded either way.
+        local ok: boolean, value: any = pcall(function(): any
+            return tick()
+        end)
+        if ok and type(value) == "number" then
+            return value
+        end
+        ok, value = pcall(function(): any
+            return os.clock()
+        end)
+        if ok and type(value) == "number" then
+            return value
+        end
+        return 0
+    end
+
+    -- Vector3 is userdata in the client and a table in the harness: read the
+    -- magnitude through pcall instead of type() so both work.
+    local function partSpeed(part: BasePart?): number
+        if not part then
+            return 0
+        end
+        local ok: boolean, velocity: any = pcall(function(): any
+            return part.Velocity
+        end)
+        if not ok or not velocity then
+            return 0
+        end
+        local okMagnitude: boolean, magnitude: any = pcall(function(): any
+            return velocity.Magnitude
+        end)
+        if okMagnitude and type(magnitude) == "number" then
+            return magnitude
+        end
+        return 0
+    end
+
+    -- cloneReference() gives the host a DIFFERENT reference for the same
+    -- service, so "targetPlayer.Parent ~= Players" is true even for a player who
+    -- is in the game. That checked true on every frame and killed the loop after
+    -- a single pose set (the "finished in half a second" bug). Ask the service
+    -- instead, and never stop the loop when the answer is unknown.
+    local function playerStillHere(player: Player): boolean
+        local ok: boolean, found: any = pcall(function(): any
+            return Players:FindFirstChild(player.Name)
+        end)
+        if not ok then
+            return true
+        end
+        return found ~= nil
+    end
+
     -- SFBasePart: the choreography, exactly as written in YARHM.
     local function sfBasePart(
         character: Model,
@@ -181,26 +235,21 @@ function Module.init(context: Runtime): any
         targetHumanoid: Humanoid?,
         targetRoot: BasePart?,
         timeToWait: number,
-        shouldStop: (() -> boolean)?
+        shouldStop: (() -> boolean)?,
+        stats: any
     ): ()
-        local startedAt: number = os.clock()
+        local startedAt: number = nowSeconds()
         local angle: number = 0
-        local moveDirection: Vector3 = Vector3.zero
-        local walkSpeed: number = 16
         repeat
             if not root or not targetHumanoid then
                 break
             end
-            local okState: boolean, baseVelocity: any = pcall(function(): any
-                return basePart.Velocity
-            end)
-            local speed: number = 0
-            if okState and type(baseVelocity) == "table" and type(baseVelocity.Magnitude) == "number" then
-                speed = baseVelocity.Magnitude
-            end
             if shouldStop and shouldStop() then
                 break
             end
+            local speed: number = partSpeed(basePart)
+            local moveDirection: Vector3 = Vector3.zero
+            local walkSpeed: number = 16
             pcall(function(): ()
                 moveDirection = targetHumanoid.MoveDirection
                 walkSpeed = targetHumanoid.WalkSpeed
@@ -210,53 +259,107 @@ function Module.init(context: Runtime): any
                 local lead: Vector3 = moveDirection * (speed / 1.25)
                 local spin: CFrame = CFrame.Angles(math.rad(angle), 0, 0)
                 fpos(character, root, basePart, CFrame.new(0, 1.5, 0) + lead, spin)
+                stats.poses += 1
                 waitFrame()
                 fpos(character, root, basePart, CFrame.new(0, -1.5, 0) + lead, spin)
+                stats.poses += 1
                 waitFrame()
                 fpos(character, root, basePart, CFrame.new(2.25, 1.5, -2.25) + lead, spin)
+                stats.poses += 1
                 waitFrame()
                 fpos(character, root, basePart, CFrame.new(-2.25, -1.5, 2.25) + lead, spin)
+                stats.poses += 1
                 waitFrame()
                 fpos(character, root, basePart, CFrame.new(0, 1.5, 0) + moveDirection, spin)
+                stats.poses += 1
                 waitFrame()
                 fpos(character, root, basePart, CFrame.new(0, -1.5, 0) + moveDirection, spin)
+                stats.poses += 1
                 waitFrame()
             else
-                local rootSpeed: number = speed
-                pcall(function(): ()
-                    if targetRoot then
-                        rootSpeed = targetRoot.Velocity.Magnitude
-                    end
-                end)
-                local downLead: number = rootSpeed / 1.25
+                local downLead: number = partSpeed(targetRoot) / 1.25
                 fpos(character, root, basePart, CFrame.new(0, 1.5, walkSpeed), CFrame.Angles(math.rad(90), 0, 0))
+                stats.poses += 1
                 waitFrame()
                 fpos(character, root, basePart, CFrame.new(0, -1.5, -walkSpeed), CFrame.Angles(0, 0, 0))
+                stats.poses += 1
                 waitFrame()
                 fpos(character, root, basePart, CFrame.new(0, 1.5, walkSpeed), CFrame.Angles(math.rad(90), 0, 0))
+                stats.poses += 1
                 waitFrame()
                 fpos(character, root, basePart, CFrame.new(0, 1.5, downLead), CFrame.Angles(math.rad(90), 0, 0))
+                stats.poses += 1
                 waitFrame()
                 fpos(character, root, basePart, CFrame.new(0, -1.5, -downLead), CFrame.Angles(0, 0, 0))
+                stats.poses += 1
                 waitFrame()
                 fpos(character, root, basePart, CFrame.new(0, 1.5, downLead), CFrame.Angles(math.rad(90), 0, 0))
+                stats.poses += 1
                 waitFrame()
                 fpos(character, root, basePart, CFrame.new(0, -1.5, 0), CFrame.Angles(math.rad(90), 0, 0))
+                stats.poses += 1
                 waitFrame()
                 fpos(character, root, basePart, CFrame.new(0, -1.5, 0), CFrame.Angles(0, 0, 0))
+                stats.poses += 1
                 waitFrame()
                 fpos(character, root, basePart, CFrame.new(0, -1.5, 0), CFrame.Angles(math.rad(-90), 0, 0))
+                stats.poses += 1
                 waitFrame()
                 fpos(character, root, basePart, CFrame.new(0, -1.5, 0), CFrame.Angles(0, 0, 0))
+                stats.poses += 1
                 waitFrame()
             end
-        until speed > 500
+        until partSpeed(basePart) > 500
             or basePart.Parent ~= targetCharacter
             or targetPlayer.Character ~= targetCharacter
-            or targetPlayer.Parent ~= Players
+            or not playerStillHere(targetPlayer)
             or targetHumanoid.Sit
             or humanoid.Health <= 0
-            or os.clock() > startedAt + timeToWait
+            or nowSeconds() > startedAt + timeToWait
+            or stats.poses >= 600
+    end
+
+    -- Only used if SkidFling could not move the target at all: spin and push the
+    -- victim's own part for two frames. Everything created here is destroyed and
+    -- the result is reported in the notification, so it can never be silent.
+    local RESCUE_SPIN: Vector3 = Vector3.new(1000, 1000, 1000)
+    local RESCUE_PUSH: Vector3 = Vector3.new(0, 500, 0)
+
+    local function rescueImpulse(targetCharacter: Model, targetRoot: BasePart?, targetHead: BasePart?): boolean
+        local target: BasePart? = targetRoot or targetHead
+        if not target then
+            return false
+        end
+        local created: {any} = {}
+        local ok: boolean = pcall(function(): ()
+            local spin: any = Instance.new("BodyAngularVelocity")
+            spin.Name = "Wurst_RescueSpin"
+            spin.AngularVelocity = RESCUE_SPIN
+            spin.MaxTorque = PIN_FORCE
+            spin.Parent = target
+            table.insert(created, spin)
+            local push: any = Instance.new("BodyVelocity")
+            push.Name = "Wurst_RescuePush"
+            push.Velocity = RESCUE_PUSH
+            push.MaxForce = PIN_FORCE
+            push.Parent = target
+            table.insert(created, push)
+            for _, part: Instance in ipairs(targetCharacter:GetChildren()) do
+                if part:IsA("BasePart") then
+                    local bodyPart: BasePart = part :: BasePart
+                    bodyPart.Velocity = RESCUE_PUSH
+                    bodyPart.RotVelocity = RESCUE_SPIN
+                end
+            end
+        end)
+        waitFrame()
+        waitFrame()
+        for _, item: any in ipairs(created) do
+            pcall(function(): ()
+                item:Destroy()
+            end)
+        end
+        return ok and #created > 0
     end
 
     local function createPin(root: BasePart): any
@@ -268,8 +371,21 @@ function Module.init(context: Runtime): any
             bodyVelocity.MaxForce = PIN_FORCE
             return bodyVelocity
         end)
-        if ok then
+        if ok and pin then
             return pin
+        end
+        -- Some executors reject math.huge in a Vector3. 1e9 is the same catapult
+        -- for every practical purpose, so the fling still lands.
+        local okFallback: boolean, fallback: any = pcall(function(): any
+            local bodyVelocity: any = Instance.new("BodyVelocity")
+            bodyVelocity.Name = "EpixVel"
+            bodyVelocity.Parent = root
+            bodyVelocity.Velocity = PIN_VELOCITY
+            bodyVelocity.MaxForce = Vector3.new(1e9, 1e9, 1e9)
+            return bodyVelocity
+        end)
+        if okFallback then
+            return fallback
         end
         return nil
     end
@@ -380,6 +496,8 @@ function Module.init(context: Runtime): any
 
         setFlingRunning(true)
 
+        local stats: any = {poses = 0, speed = 0, pinned = false, rescued = false}
+
         local function runFling(): boolean
             local character: Model?, humanoid: Humanoid?, root: BasePart? = getCharacterParts()
             if not character or not humanoid or not root then
@@ -407,21 +525,23 @@ function Module.init(context: Runtime): any
                 return false
             end
 
-            if root.Velocity.Magnitude < 50 then
+            if partSpeed(root) < 50 then
                 lastOldPos = root.CFrame
             end
             local oldPos: CFrame = returnCFrame or lastOldPos or root.CFrame
 
-            local savedDestroyHeight: any = workspace.FallenPartsDestroyHeight
+            local savedDestroyHeight: any = nil
+            pcall(function(): ()
+                savedDestroyHeight = workspace.FallenPartsDestroyHeight
+            end)
             local camera: Camera? = workspace.CurrentCamera
-            local touchedTarget: boolean = false
 
             local success: boolean, errorMessage: any = pcall(function(): ()
                 if camera then
                     pcall(function(): ()
+                        local accessory: any = targetCharacter:FindFirstChildOfClass("Accessory")
                         camera.CameraSubject = targetHead
-                            or (targetCharacter:FindFirstChildOfClass("Accessory")
-                                and targetCharacter:FindFirstChildOfClass("Accessory"):FindFirstChild("Handle"))
+                            or (accessory and accessory:FindFirstChild("Handle"))
                             or targetHumanoid
                     end)
                 end
@@ -433,6 +553,7 @@ function Module.init(context: Runtime): any
                 end)
 
                 local pin: any = createPin(root)
+                stats.pinned = pin ~= nil
                 pcall(function(): ()
                     humanoid:SetStateEnabled(Enum.HumanoidStateType.Seated, false)
                 end)
@@ -460,8 +581,15 @@ function Module.init(context: Runtime): any
                         targetHumanoid,
                         targetRoot,
                         maxDuration,
-                        shouldStop
+                        shouldStop,
+                        stats
                     )
+                end
+
+                stats.speed = math.max(partSpeed(targetRoot), partSpeed(targetHead))
+                if stats.speed <= 100 then
+                    stats.rescued = rescueImpulse(targetCharacter, targetRoot, targetHead)
+                    stats.speed = math.max(partSpeed(targetRoot), partSpeed(targetHead), stats.speed)
                 end
 
                 destroyPin(pin)
@@ -504,36 +632,64 @@ function Module.init(context: Runtime): any
                     waitFrame()
                 until (finalRoot.Position - oldPos.Position).Magnitude < 25 or attempts >= 60
             end
-            local speed: number = 0
-            pcall(function(): ()
-                if targetRoot then
-                    speed = targetRoot.Velocity.Magnitude
-                elseif targetHead then
-                    speed = targetHead.Velocity.Magnitude
-                end
-            end)
-            touchedTarget = speed > 100
 
             setFlingRunning(false)
+            local touchedTarget: boolean = stats.speed > 100
+            pcall(function(): ()
+                state.mm2LastFling = {
+                    target = tostring(targetPlayer.Name),
+                    poses = stats.poses,
+                    speed = stats.speed,
+                    pinned = stats.pinned,
+                    rescued = stats.rescued,
+                    ok = success,
+                }
+            end)
             if not Module.Initialized then
                 return touchedTarget
             end
             if not silent then
+                local speedText: string = tostring(math.floor(stats.speed))
                 if not success then
                     notify("fling failed: " .. tostring(errorMessage))
                 elseif touchedTarget then
-                    notify("fling complete: " .. targetPlayer.Name .. " went flying.")
+                    notify(string.format(
+                        "fling: %s sent flying (%s studs/s, %d poses)",
+                        tostring(targetPlayer.Name),
+                        speedText,
+                        stats.poses
+                    ))
                 else
-                    notify("fling finished on " .. targetPlayer.Name .. ".")
+                    notify(string.format(
+                        "fling: %s did not move (%d poses, %s studs/s%s)",
+                        tostring(targetPlayer.Name),
+                        stats.poses,
+                        speedText,
+                        stats.rescued and ", rescue used" or ""
+                    ))
                 end
             end
             return touchedTarget
         end
 
-        if type(options) == "table" and options.blocking == true then
-            return runFling()
+        -- Any error must reset flingRunning, otherwise every later fling answers
+        -- "fling already running" for the rest of the session.
+        local function guardedRun(): boolean
+            local ok: boolean, result: any = pcall(runFling)
+            if not ok then
+                setFlingRunning(false)
+                if not silent then
+                    notify("fling error: " .. tostring(result))
+                end
+                return false
+            end
+            return result == true
         end
-        task.spawn(runFling)
+
+        if type(options) == "table" and options.blocking == true then
+            return guardedRun()
+        end
+        task.spawn(guardedRun)
         return true
     end
 
