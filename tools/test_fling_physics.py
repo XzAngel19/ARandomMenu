@@ -62,6 +62,8 @@ script = PRELUDE + r'''
 local cfMt = {}
 cfMt.__index = cfMt
 cfMt.__mul = function(a,b) return CFrame.new(a.Position + b.Position) end
+-- Roblox: CFrame - Vector3 keeps the rotation and shifts the position.
+cfMt.__sub = function(a,b) return CFrame.new(a.Position - b) end
 CFrame = {}
 function CFrame.new(x,y,z)
     local p = if type(x) == "table" then x else Vector3.new(x or 0,y or 0,z or 0)
@@ -243,6 +245,9 @@ function Instance.new(class, parent)
                 if value and value.children then table.insert(value.children, self) end
                 return
             end
+            if key == "CFrame" and value and value.LookVector then
+                self.props.LookVector = value.LookVector
+            end
             self.props[key] = value
         end,
     })
@@ -340,9 +345,15 @@ end
 
 -- Directed fling: IY mechanism.
 local home = root.CFrame
+local localStartLook = root.LookVector
 local targetBefore = targetRoot.AssemblyLinearVelocity
 assert(physics.start(target, {duration = 0.4}))
 assert(localCharacter.pivotCalls == 1, "one contact placement")
+-- v148: the character is never turned toward the target.
+assert(root.LookVector.Z == localStartLook.Z,
+    "the fling must not rotate the character toward the target")
+assert(root.LookVector.X == localStartLook.X,
+    "the fling must not rotate the character toward the target")
 local spin = constraint()
 assert(spin, "directed fling attaches the IY spin")
 assert(spin.AngularVelocity.Y == 99999, "99999 rad/s spin")
@@ -420,6 +431,8 @@ local placementsBefore: number? = localCharacter.pivotCalls
 assert(constraint() == nil, "idle Touch never spins")
 assert(localCharacter.pivotCalls == placementsBefore,
     "idle Touch never places the character")
+
+local touchStartLook = root.LookVector
 root.Touched:Fire(targetRoot)
 local touchSpin = constraint()
 assert(touchSpin and touchSpin.AngularVelocity.Y == 99999, "contact starts the spin")
@@ -427,27 +440,58 @@ assert(touchSpin.MaxTorque.Y == math.huge, "contact spin keeps infinite torque")
 -- The touched player flies; you stay where the contact happened.
 assert(physics.isHeld() and holdConstraint() ~= nil,
     "Touch holds the local player while it spins")
-local heldRootVel = root.AssemblyLinearVelocity
-assert(sameVector(heldRootVel, Vector3.zero),
+assert(sameVector(root.AssemblyLinearVelocity, Vector3.zero),
     "the spinner never keeps a launch velocity of its own")
 assert(sameVector(targetRoot.AssemblyLinearVelocity, targetBefore),
     "Touch never writes the target either")
-pass("Touch spins on contact only")
+assert(root.LookVector.X == touchStartLook.X
+    and root.LookVector.Z == touchStartLook.Z,
+    "Touch never rotates the character")
+assert(localCharacter.pivotCalls == placementsBefore,
+    "Touch never moves the character into the target")
+pass("Touch spins on contact only, without rotating or moving the player")
 
--- Walking away releases the spin by itself.
-pump(0.7)
-assert(constraint() == nil, "contact expiry releases the spin")
+-- The burst is short and self-cleaning: full control comes back by itself.
+pump(0.2)
+assert(constraint() == nil, "the 0.15 s burst releases the spin")
 assert(holdConstraint() == nil and holdAttachment() == nil,
-    "contact expiry releases the position hold")
+    "the burst releases the position pin too")
 assert(root.Massless == false and root.CustomPhysicalProperties.density == 0.7,
-    "contact expiry restores the body")
+    "the burst restores density and massless")
+assert(root.CanCollide == false and torso.CanCollide == true,
+    "the burst restores collision")
+assert(sameVector(root.AssemblyLinearVelocity, Vector3.zero),
+    "no leftover launch velocity after the burst")
+assert(not physics.isHeld() and root.Touched:live() == 1,
+    "still listening after the burst, with nothing attached")
+pass("Touch is a self-cleaning burst that returns full control")
+
+-- A burst cannot throw the flinger: physics drift during it is undone.
+pump(0.5) -- let the previous burst's cooldown expire
+local beforeDrift = root.Position
 root.Touched:Fire(targetRoot)
-assert(constraint() ~= nil, "a new contact spins again")
+assert(constraint() ~= nil)
+root.Position = root.Position + Vector3.new(0, 0, 40)
+pump(0.2)
+assert((root.Position - beforeDrift).Magnitude < 1,
+    "physics drift during the burst is undone")
+assert(root.LookVector.X == touchStartLook.X
+    and root.LookVector.Z == touchStartLook.Z,
+    "restoring the position never changes the facing")
+pass("the flinger is never launched by its own burst")
+
+-- Cooldown: a contact right after a burst does not restart the spin.
+pump(0.05)
+root.Touched:Fire(targetRoot)
+assert(constraint() == nil, "the cooldown keeps a crowd from chaining bursts")
+pump(0.5)
+root.Touched:Fire(targetRoot)
+assert(constraint() ~= nil, "a new contact after the cooldown spins again")
 physics.setTouchEnabled(false)
 assert(constraint() == nil and not activityValue, "OFF releases the spin")
 assert(root.CanTouch == false and torso.CanTouch == false, "CanTouch restored")
 assert(root.Touched:live() == 0, "OFF disconnects the listeners")
-pass("Touch OFF and contact expiry restore every snapshot")
+pass("Touch OFF restores every snapshot and the cooldown holds")
 
 -- A non-player touch never spins.
 physics.setTouchEnabled(true)
@@ -520,6 +564,7 @@ assert(torso.CanCollide == true, "Noclip restores its own snapshot")
 pass("Noclip caches the part list instead of walking it every frame")
 
 -- Destroy cleans everything.
+pump(0.5) -- the previous test left the touch cooldown running
 physics.setTouchEnabled(true)
 root.Touched:Fire(targetRoot)
 assert(constraint() ~= nil)
@@ -560,7 +605,8 @@ local core = {
     requestRoleRefresh = function() end,
 }
 host.getCharacterParts = function() return localCharacter, humanoid, root end
-host.notify = function() end
+local notices: {string} = {}
+host.notify = function(message) table.insert(notices, tostring(message)) end
 host.findPlayerByText = function() return target end
 host.configData = {states = {}}
 host.featureConnections = {}
@@ -574,8 +620,22 @@ end}
 host.createUniversalFeature = function(_name, _description, _order, callback, _config)
     return {SetStatus = function() end, onToggle = callback}
 end
-host.addActionOption = function() end
-host.addTextOption = function() end
+local capturedActions: {[string]: any} = {}
+local capturedToggles: {string} = {}
+local capturedList: any = nil
+host.addActionOption = function(_feature, labelText, callback)
+    capturedActions[labelText] = callback
+end
+host.addListOption = function(_feature, labelText, definition)
+    capturedList = {label = labelText, definition = definition}
+    return {GetAttribute = function() return "MM2.Fling.Flingtarget" end}
+end
+host.addToggleOption = function(_feature, labelText)
+    table.insert(capturedToggles, labelText)
+end
+host.addTextOption = function(_feature, labelText)
+    table.insert(capturedToggles, "TEXT:" .. tostring(labelText))
+end
 host.addInformationOption = function() end
 host.addToggleOption = function() end
 LocalPlayer.Name = "Local"
@@ -584,11 +644,45 @@ state.mm2Core = core
 state.frameworkEnvironment = host
 physics = Module.init({host = host, services = {activity = activity}})
 state.flingPhysics = physics
-local MM2Module = (function()
+local function newMM2()
+    return (function()
 ''' + MM2_SOURCE + r'''
-end)()
+    end)()
+end
+local MM2Module = newMM2()
 MM2Module.init({})
 assert(type(state.mm2PerformFling) == "function")
+
+-- v148: the card shows a live roster and never asks for a typed name.
+assert(capturedList and capturedList.label == "Fling target",
+    "the Fling card must build a player list called Fling target")
+assert(capturedList.definition.single == true, "one target at a time")
+for _, label in ipairs(capturedToggles) do
+    assert(label ~= "Touch Fling",
+        "the MM2 card must not duplicate the universal Touch Fling toggle")
+    assert(label ~= "TEXT:Target player",
+        "the Fling card must not ask the user to type a player name")
+end
+local roster = state.mm2FlingRoster()
+assert(#roster == 1, "the roster lists the living players of the round")
+assert(roster[1].name == "Target" and roster[1].label == "Target [Innocent]",
+    "the roster entry carries the resolved role")
+local items = capturedList.definition.items()
+assert(#items == 1 and items[1] == "Target [Innocent]",
+    "the list offers the same labelled entry the roster reports")
+assert(state.mm2FlingSelection() == nil, "nothing is selected at boot")
+capturedList.definition.onChanged({["Target [Innocent]"] = true}, {"Target [Innocent]"})
+assert(state.mm2FlingSelection() == "Target",
+    "picking a row resolves to that player, not to a name typed by hand")
+capturedList.definition.onChanged({}, {})
+assert(state.mm2FlingSelection() == nil, "clearing the list clears the target")
+pass("Fling target is a live role-labelled list, never a text box")
+
+targetHumanoid.Health = 0
+assert(#state.mm2FlingRoster() == 0, "dead players leave the list")
+targetHumanoid.Health = 100
+assert(#state.mm2FlingRoster() == 1, "and come back when they are alive again")
+
 assert(not state.mm2PerformFling(target, {silent = true}), "lobby rejected")
 assert(not physics.isRunning())
 roundActive = true
@@ -611,8 +705,71 @@ assert(state.mm2PerformFling(target, {
 assert(not physics.isRunning(), "blocking waits for the bounded session")
 assert(localCharacter.pivotCalls == 1,
     "Auto Farm path has one live contact placement and no cancellation return")
+-- The action reads the list: it never guesses, and it never fires without one.
+capturedList.definition.onChanged({["Target [Innocent]"] = true}, {"Target [Innocent]"})
+capturedActions["Fling"]()
+assert(physics.isRunning(), "Fling acts on the selected living player")
+physics.cancel()
+capturedList.definition.onChanged({}, {})
+capturedActions["Fling"]()
+assert(not physics.isRunning(), "Fling refuses to guess when nothing is selected")
+assert(type(state.mm2FlingRoster) == "function"
+    and type(state.mm2FlingSelection) == "function")
+pass("Fling acts on the selection and never guesses a target")
+
 MM2Module.destroy()
 assert(state.mm2PerformFling == nil, "MM2 cleanup removes export")
+assert(state.mm2FlingRoster == nil and state.mm2FlingSelection == nil,
+    "MM2 cleanup removes the roster hooks")
+
+-- A round without published roles: the knife and the gun decide the label.
+-- This is the "it does not even know who the sheriff is" complaint.
+local savedRole, savedWeapon = core.getPlayerRole, core.getPlayerWeapon
+core.getPlayerRole = function() return nil end
+core.getPlayerWeapon = function(_player, weaponName)
+    if weaponName == "Gun" then return {Name = "Gun"} end
+    return nil
+end
+services.gameBridge.playerRole = nil
+capturedList = nil
+local weaponModule = newMM2()
+weaponModule.init({})
+local weaponRoster = state.mm2FlingRoster()
+assert(#weaponRoster == 1 and weaponRoster[1].label == "Target [Sheriff]",
+    "the gun in the backpack marks the sheriff without round data")
+weaponModule.destroy()
+
+-- No round roles and no weapons: the card must say the roles are not published
+-- yet instead of claiming nobody was found.
+core.getPlayerWeapon = function() return nil end
+local savedMurderer, savedSheriff = core.findMurderer, core.findSheriff
+core.findMurderer = function() return nil end
+core.findSheriff = function() return nil end
+local unknownModule = newMM2()
+unknownModule.init({})
+assert(#state.mm2FlingRoster() == 1,
+    "players without a known role still appear in the list")
+assert(state.mm2FlingRoster()[1].label == "Target",
+    "an unknown role adds no suffix and does not hide the player")
+table.clear(notices)
+capturedActions["Fling Murderer"]()
+assert(notices[1] and string.find(notices[1], "not published", 1, true),
+    "the card must explain that MM2 has not published the roles, not that nobody exists")
+unknownModule.destroy()
+pass("unpublished roles are explained, not hidden")
+core.findMurderer, core.findSheriff = savedMurderer, savedSheriff
+core.getPlayerWeapon = function(_player, weaponName)
+    if weaponName == "Knife" then return {Name = "Knife"} end
+    return nil
+end
+local knifeModule = newMM2()
+knifeModule.init({})
+local knifeRoster = state.mm2FlingRoster()
+assert(#knifeRoster == 1 and knifeRoster[1].label == "Target [Murderer]",
+    "the knife in the backpack marks the murderer without round data")
+knifeModule.destroy()
+core.getPlayerRole, core.getPlayerWeapon = savedRole, savedWeapon
+pass("the roster names roles from round data and from the knife/gun actually held")
 physics.destroy()
 pass("MM2 blocking cancellation and destroy cleanup")
 '''

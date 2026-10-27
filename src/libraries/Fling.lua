@@ -10,35 +10,42 @@ local activeLibrary: any = nil
 -- Fling, implemented the way Infinite Yield does it (the reference the user
 -- provided) instead of with bounded velocity pulses.
 --
--- Why the previous version did nothing: it wrote AssemblyLinearVelocity on the
+-- Why the old version did nothing: it wrote AssemblyLinearVelocity on the
 -- TARGET's parts. The local client does not own another player's assembly, so
--- the replication stream overwrites that write on the very next frame. Nothing
--- visible happens. What actually flings someone in Roblox is your OWN assembly
--- spinning at an extreme angular velocity with an extreme physical density while
--- it touches them: the server trusts your character's motion, and the contact
--- resolution carries that energy into the other body.
+-- the replication stream overwrites that write on the very next frame. What
+-- actually flings someone in Roblox is your OWN assembly spinning at an extreme
+-- angular velocity with an extreme physical density while it touches them: the
+-- server trusts your character's motion and the contact resolution carries that
+-- energy into the other body.
 --
 -- So the mechanism is exactly IY's:
 --
 --   1. CustomPhysicalProperties(density = math.huge) on the local parts.
 --   2. CanCollide = false / Massless = true, so the body keeps walking normally
---      and never creates a permanent collider pair (that was also pure physics
---      cost).
+--      and never creates a permanent collider pair (that was also physics cost).
 --   3. BodyAngularVelocity on the root at 99999 rad/s, MaxTorque = math.huge.
---   4. Duty cycle 0.2 s spinning / 0.1 s stopped, like `fling` in IY.
 --
--- IY alone also throws the player who is flinging: the spin pushes the local
--- body out of the way. A rigid AlignPosition (one attachment, RigidityEnabled)
--- pins the local root where the contact happened for the duration of the spin,
--- so the energy goes into the other player and not into you. That is a physics
--- constraint, not a CFrame write per tick.
+-- Three rules this module enforces on top of IY (v148):
 --
--- Everything is restored on OFF, death, respawn and destroy: the constraints
--- are destroyed, density/collision/massless go back to their snapshots.
+--   * Touch is a BURST, not a session. Touching someone spins for 0.15 s and
+--     then puts the body back exactly as it was. Between contacts nothing is
+--     attached, nothing is pinned and nothing is written, so the player walks,
+--     turns and jumps normally with full control. The old continuous spin is
+--     what made the body look like it was circling the target (and what kept
+--     throwing the flinger).
+--   * The character is never rotated toward anybody: no lookAt, no facing, no
+--     placement on contact. A directed fling moves the root once and keeps the
+--     current orientation.
+--   * The flinger is never launched. While the spin delivers the impulse a rigid
+--     AlignPosition holds the root in place, and when the burst ends the body's
+--     motion is zeroed and any physics drift beyond MAX_DRIFT is undone.
 --
--- CPU: while spinning there is NO per-frame Lua. The duty cycle is two
--- task.wait() sleeps, and Touch detection is a Touched listener. The old design
--- ran a PreSimulation + Heartbeat body every frame for the whole session.
+-- Everything is restored on OFF, death, respawn and destroy: the constraints are
+-- destroyed, density/collision/massless go back to their snapshots.
+--
+-- CPU: while spinning there is NO per-frame Lua. The burst is two task.wait()
+-- sleeps and Touch detection is a Touched listener. The old design ran a
+-- PreSimulation + Heartbeat body every frame for the whole session.
 
 function Module.init(context: any): any
     local host: any = context.host or context
@@ -50,21 +57,25 @@ function Module.init(context: any): any
     local SPIN_RATE: number = 99999
     local SPIN_ON: number = 0.2
     local SPIN_OFF: number = 0.1
-    -- A contact keeps the spin armed for this long, so one bump is enough.
-    local CONTACT_SECONDS: number = 0.6
-    -- The local player is pinned only while the impulse lands. After this the
-    -- hold is released even if the session continues, so a long fling never
-    -- traps the player in place (teleport/farm keep working).
-    local HOLD_SECONDS: number = 0.8
+    -- One short burst per contact: long enough for the contact to resolve, short
+    -- enough that the player never loses control.
+    local TOUCH_BURST: number = 0.15
+    -- Between bursts nothing happens; this keeps a crowded hallway from turning
+    -- into a permanent spin.
+    local TOUCH_COOLDOWN: number = 0.4
     local CONTACT_RANGE: number = 20
+    -- A burst may never move the player more than this. Anything beyond it is
+    -- physics pushing the flinger, not the player walking, so it is undone.
+    local MAX_DRIFT: number = 6
+    -- Directed flings hold the player for the delivery window only.
+    local HOLD_SECONDS: number = 0.8
 
     local destroyed: boolean = false
     local currentSession: any = nil
     local touchEnabled: boolean = false
-    local touchCharacter: Model? = nil
     local touchConnections: {RBXScriptConnection} = {}
-    local touchContacts: {[Player]: number} = {}
     local touchCanTouch: {[BasePart]: boolean} = {}
+    local touchCooldownUntil: number = 0
 
     local spinState: any = nil
     local spinLoopToken: number = 0
@@ -99,6 +110,28 @@ function Module.init(context: any): any
         return character, humanoid, root
     end
 
+    -- Rotation only: used to move the root without changing which way the
+    -- character looks.
+    local function orientationOf(frame: CFrame): CFrame
+        return frame - frame.Position
+    end
+
+    local function desiredPivot(character: Model, root: BasePart): CFrame
+        local ok: boolean, frame: any = pcall(function(): any
+            return root.CFrame
+        end)
+        if ok and typeof(frame) == "CFrame" then
+            return frame -- current position + current orientation
+        end
+        local okCharacter: boolean, characterFrame: any = pcall(function(): any
+            return character:GetPivot()
+        end)
+        if okCharacter and typeof(characterFrame) == "CFrame" then
+            return characterFrame
+        end
+        return CFrame.new(root.Position)
+    end
+
     local function releaseSpin(): ()
         spinLoopToken += 1
         local state: any = spinState
@@ -124,7 +157,7 @@ function Module.init(context: any): any
         for part: BasePart, snapshot: any in pairs(state.parts) do
             if part.Parent then
                 pcall(function(): ()
-                    if state.savedCollide and snapshot.canCollide ~= nil then
+                    if snapshot.canCollide ~= nil then
                         part.CanCollide = snapshot.canCollide
                     end
                     if snapshot.massless ~= nil then
@@ -137,6 +170,32 @@ function Module.init(context: any): any
             end
         end
         table.clear(state.parts)
+
+        -- Give the player their body back: no leftover launch, and if physics
+        -- pushed them away during the burst, put them where the burst started.
+        local root: BasePart? = state.root
+        if not root or not root.Parent then
+            return
+        end
+        pcall(function(): ()
+            root.AssemblyLinearVelocity = Vector3.zero
+        end)
+        if state.driftGuard then
+            local startPosition: Vector3? = state.startPosition
+            local okDistance: boolean, distance: any = pcall(function(): number
+                return startPosition and (root.Position - startPosition).Magnitude or 0
+            end)
+            if okDistance and type(distance) == "number" and distance > MAX_DRIFT then
+                local character: Model? = state.character
+                local startFrame: CFrame? = state.startCFrame
+                if character and startFrame then
+                    pcall(function(): ()
+                        character:PivotTo(CFrame.new(startPosition)
+                            * orientationOf(startFrame))
+                    end)
+                end
+            end
+        end
     end
 
     -- Holds the local root exactly where it is. RigidityEnabled makes the
@@ -153,8 +212,7 @@ function Module.init(context: any): any
             hold.Name = "WurstFlingHold"
             -- OneAttachment aligns Attachment0 with the WORLD position in
             -- `Position`. Leaving that at (0, 0, 0) -- the default -- would drag
-            -- the player to the world origin, so it is pinned to where the
-            -- contact happened.
+            -- the player to the world origin, so it is pinned to the contact.
             hold.Mode = Enum.PositionAlignmentMode.OneAttachment
             hold.Position = position
             hold.Attachment0 = attachment
@@ -174,9 +232,14 @@ function Module.init(context: any): any
         return hold, attachment
     end
 
-    -- IY's fling: infinite density, no collision, massless body, and a spinning
-    -- root. Anything the body overlaps is launched.
-    local function engageSpin(character: Model, root: BasePart): boolean
+    -- IY's fling: infinite density, no collision, massless body, spinning root.
+    -- `seconds` bounds the burst; nil means "until the caller releases it".
+    local function engageSpin(
+        character: Model,
+        root: BasePart,
+        seconds: number?,
+        holdSeconds: number?
+    ): boolean
         if spinState and spinState.root ~= root then
             releaseSpin()
         end
@@ -203,6 +266,15 @@ function Module.init(context: any): any
                 constraint = body
             end)
             if not ok or not constraint then
+                for part: BasePart, snapshot: any in pairs(parts) do
+                    if part.Parent then
+                        pcall(function(): ()
+                            part.CanCollide = snapshot.canCollide
+                            part.Massless = snapshot.massless
+                            part.CustomPhysicalProperties = snapshot.properties
+                        end)
+                    end
+                end
                 return false
             end
             for part: BasePart in pairs(parts) do
@@ -216,8 +288,8 @@ function Module.init(context: any): any
                     part.AssemblyLinearVelocity = Vector3.zero
                 end)
             end
-            -- Only the target moves: our own body is pinned for the spin.
             local startPosition: Vector3 = root.Position
+            local startFrame: CFrame = desiredPivot(character, root)
             local hold: any, holdAttachment: any = createHold(root, startPosition)
             spinState = {
                 root = root,
@@ -226,21 +298,37 @@ function Module.init(context: any): any
                 hold = hold,
                 holdAttachment = holdAttachment,
                 holdPosition = startPosition,
-                holdUntil = os.clock() + HOLD_SECONDS,
+                holdUntil = os.clock() + (holdSeconds or HOLD_SECONDS),
+                startPosition = startPosition,
+                startCFrame = startFrame,
+                -- A directed fling may legitimately travel; a touch burst may
+                -- not, so that is the one that undoes physics drift.
+                driftGuard = seconds ~= nil,
                 parts = parts,
-                savedCollide = true,
             }
         end
-        -- IY's duty cycle: 0.2 s spinning, 0.1 s stopped, until released.
+        local releaseAt: number? = nil
+        if seconds ~= nil then
+            releaseAt = os.clock() + math.max(0.05, seconds)
+        end
+        if spinState then
+            spinState.releaseAt = releaseAt
+        end
+
+        -- IY's duty cycle: spinning, then stopped, until released.
         spinLoopToken += 1
         local token: number = spinLoopToken
         task.spawn(function(): ()
             while spinState and spinLoopToken == token and not destroyed do
                 local state: any = spinState
-                -- The pin has a short life of its own; see HOLD_SECONDS. Checked
-                -- at the top so a long pump/frame cannot leave it stuck on.
-                if state and state.hold and state.holdUntil
-                    and os.clock() >= state.holdUntil then
+                local now: number = os.clock()
+                if state.releaseAt and now >= state.releaseAt then
+                    releaseSpin()
+                    return
+                end
+                -- The pin has a short life of its own; a long fling must not
+                -- trap the player in place.
+                if state.hold and state.holdUntil and now >= state.holdUntil then
                     pcall(function(): ()
                         state.hold:Destroy()
                     end)
@@ -252,15 +340,14 @@ function Module.init(context: any): any
                     state.hold = nil
                     state.holdAttachment = nil
                 end
-                if state and state.constraint and state.constraint.Parent then
+                if state.constraint and state.constraint.Parent then
                     pcall(function(): ()
                         state.constraint.AngularVelocity = Vector3.new(0, SPIN_RATE, 0)
-                        -- Kill any drift the previous pulse left behind so the
-                        -- hold never has to fight a tanking velocity.
+                        -- Kill any drift so the hold never has to fight a
+                        -- tanking velocity.
                         if state.root and state.root.Parent then
                             state.root.AssemblyLinearVelocity = Vector3.zero
                         end
-                        -- Re-assert the pin in case anything moved the goal.
                         if state.hold and state.holdPosition then
                             state.hold.Position = state.holdPosition
                         end
@@ -271,7 +358,7 @@ function Module.init(context: any): any
                     return
                 end
                 state = spinState
-                if state and state.constraint and state.constraint.Parent then
+                if state.constraint and state.constraint.Parent then
                     pcall(function(): ()
                         state.constraint.AngularVelocity = Vector3.zero
                     end)
@@ -309,18 +396,23 @@ function Module.init(context: any): any
         finishSession("cancelled")
     end
 
+    local function finiteVector(value: any): boolean
+        local ok: boolean, x: any, y: any, z: any = pcall(function(): any
+            return value.X, value.Y, value.Z
+        end)
+        return ok and type(x) == "number" and type(y) == "number"
+            and type(z) == "number" and x == x and y == y and z == z
+            and math.abs(x) ~= math.huge and math.abs(y) ~= math.huge
+            and math.abs(z) ~= math.huge
+    end
+
     local function start(target: Player?, options: {[string]: any}?): boolean
         if destroyed or currentSession or not target or target == LocalPlayer then
             return false
         end
         if touchEnabled then
             -- One owner at a time; the directed action wins.
-            local previous = touchEnabled
-            touchEnabled = false
-            local state: any = Module.__touchBinder
-            if previous and type(state) == "function" then
-                pcall(state, false)
-            end
+            setTouchEnabled(false)
         end
         local targetCharacter: Model?, targetHumanoid: Humanoid?, targetRoot: BasePart? =
             livingParts(target)
@@ -340,15 +432,6 @@ function Module.init(context: any): any
         local targetPosition: Vector3 = targetRoot.Position
         local contactPosition: Vector3 =
             (targetRoot.CFrame * CFrame.new(0, 0, 2.2)).Position
-        local function finiteVector(value: any): boolean
-            local ok: boolean, x: any, y: any, z: any = pcall(function(): any
-                return value.X, value.Y, value.Z
-            end)
-            return ok and type(x) == "number" and type(y) == "number"
-                and type(z) == "number" and x == x and y == y and z == z
-                and math.abs(x) ~= math.huge and math.abs(y) ~= math.huge
-                and math.abs(z) ~= math.huge
-        end
         if not finiteVector(targetPosition) or not finiteVector(contactPosition)
             or not finiteVector(root.Position) then
             return false
@@ -374,16 +457,17 @@ function Module.init(context: any): any
         }
         currentSession = session
 
-        -- One contact placement, then the spin does the work (IY does not even
-        -- place: it relies on the spin and your own walking).
+        -- One contact placement, keeping the current orientation: the character
+        -- never turns to face the target.
         local placed: boolean = pcall(function(): ()
-            character:PivotTo(CFrame.lookAt(contactPosition, targetPosition))
+            character:PivotTo(CFrame.new(contactPosition)
+                * orientationOf(session.returnCFrame))
         end)
         if not placed then
             finishSession("error")
             return false
         end
-        if not engageSpin(character, root) then
+        if not engageSpin(character, root, nil, HOLD_SECONDS) then
             finishSession("error")
             return false
         end
@@ -416,7 +500,14 @@ function Module.init(context: any): any
     end
 
     local function noteTouch(hit: BasePart): ()
-        if not touchEnabled or not hit then
+        if not touchEnabled or not hit or destroyed then
+            return
+        end
+        if currentSession or spinState then
+            return
+        end
+        local now: number = os.clock()
+        if now < touchCooldownUntil then
             return
         end
         local model: any = hit.Parent
@@ -442,37 +533,18 @@ function Module.init(context: any): any
         if not targetHumanoid or not targetRoot then
             return
         end
-        local _, humanoid: Humanoid?, root: BasePart? = livingParts(LocalPlayer)
-        if not humanoid or not root then
+        local character: Model?, humanoid: Humanoid?, root: BasePart? =
+            livingParts(LocalPlayer)
+        if not character or not humanoid or not root then
             return
         end
         if (targetRoot.Position - root.Position).Magnitude > CONTACT_RANGE then
             return
         end
-        touchContacts[player] = os.clock()
-        if not spinState or spinState.root ~= root then
-            local character: Model? = LocalPlayer.Character
-            if character then
-                engageSpin(character, root)
-            end
-        end
-        -- The spin stays armed while any contact is fresh; this timer is the
-        -- only scheduled work, and it costs nothing until it fires.
-        task.delay(CONTACT_SECONDS, function(): ()
-            local newest: number = -math.huge
-            for _, at: number in pairs(touchContacts) do
-                if at > newest then
-                    newest = at
-                end
-            end
-            if os.clock() - newest < CONTACT_SECONDS then
-                return
-            end
-            table.clear(touchContacts)
-            if touchEnabled and not currentSession then
-                releaseSpin()
-            end
-        end)
+        touchCooldownUntil = now + TOUCH_COOLDOWN
+        -- One short burst. No placement, no facing, no pin after it ends: the
+        -- player keeps walking and the other body takes the impulse.
+        engageSpin(character, root, TOUCH_BURST, TOUCH_BURST)
     end
 
     local function bindTouchPart(part: BasePart): ()
@@ -492,7 +564,6 @@ function Module.init(context: any): any
             connection:Disconnect()
         end
         table.clear(touchConnections)
-        table.clear(touchContacts)
         for part: BasePart, canTouch: boolean in pairs(touchCanTouch) do
             if part.Parent then
                 pcall(function(): ()
@@ -501,7 +572,6 @@ function Module.init(context: any): any
             end
         end
         table.clear(touchCanTouch)
-        touchCharacter = nil
     end
 
     local function bindTouchCharacter(): ()
@@ -514,7 +584,6 @@ function Module.init(context: any): any
         if not character or not humanoid or not root then
             return
         end
-        touchCharacter = character
         for _, object: Instance in ipairs(character:GetChildren()) do
             if object:IsA("BasePart") then
                 bindTouchPart(object :: BasePart)
@@ -527,13 +596,11 @@ function Module.init(context: any): any
             end
         end))
         table.insert(touchConnections, humanoid.Died:Connect(function(): ()
-            table.clear(touchContacts)
             releaseSpin()
         end))
     end
 
-    local setTouchEnabled: (enabled: boolean) -> ()
-    setTouchEnabled = function(enabled: boolean): ()
+    function setTouchEnabled(enabled: boolean): ()
         local wanted: boolean = enabled == true
         if touchEnabled == wanted or (destroyed and wanted) then
             return

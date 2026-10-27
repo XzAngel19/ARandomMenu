@@ -41,7 +41,7 @@ boot, where the debug-only Calibration card does not exist):
 | Section | Card | Category | Rows |
 | --- | --- | --- | --- |
 | MM2 | SilentAIM | Combat | 15 (Gun: Auto Shoot, Aim method, Target, WallCheck, Macro, Silent sweep, Silent spawn, Spawn A/B status, Auto lead, Lead offset ms, Prediction status, Reset prediction, Target player; Knife: Knife Throw, Throw with button) |
-| MM2 | Fling | Exploits | 5 |
+| MM2 | Fling | Exploits | 6 (Fling Murderer, Fling Sheriff, Fling All Innocents, Fling target list, Fling, Auto Fling Selected Target) |
 | MM2 | Blurt Roles | World | 5 (Instant Roles, Delay, Repeat on change, Fake Blurt Roles, Blurt now) |
 | MM2 | Coin ESP | Render | 2 (Coin colour, Coin transparency) + live "N coins · N candies" status |
 | MM2 | Auto Unbox | Utilities | 3 (Delay between boxes, Max boxes per run, Find box button) + live opened/failed status |

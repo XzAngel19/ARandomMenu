@@ -111,7 +111,10 @@ do
     assert(touch and touch.enabled ~= true,
         "Touch Fling must not restore from a stale config")
     assert(ex.configData.states["Universal.TouchFling"] == false)
-    assert(ex.configData.states["MM2.Fling.TouchFling"] == false)
+    -- v148 retired the duplicate MM2 toggle: a stale `true` is erased, not
+    -- restored, and the key does not even survive the config load.
+    assert(ex.configData.states["MM2.Fling.TouchFling"] == nil,
+        "the retired MM2 Touch Fling key must be erased from an old config")
     assert(ex.configData.states["MM2.Fling.AutoFlingSelectedTarget"] == false)
     assert(ex.featureConnections.MM2AutoFlingTarget == nil)
     assert(not ex.state.flingPhysics.isRunning())
@@ -130,7 +133,7 @@ do
     assert(touch.enabled == true and ex.state.flingPhysics.isTouchEnabled(),
         "the user must still be able to enable Touch explicitly")
     assert(ex.configData.states["Universal.TouchFling"] == false)
-    assert(ex.configData.states["MM2.Fling.TouchFling"] == false)
+    assert(ex.configData.states["MM2.Fling.TouchFling"] == nil)
     touch.activate()
     assert(not ex.state.flingPhysics.isTouchEnabled())
 

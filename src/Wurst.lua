@@ -261,7 +261,7 @@ local RUNTIME_RAW_BASE: string =
         .. RUNTIME_BRANCH
         .. "/"
 
-local SOURCE_STAMP: string = "v147-20261027-fling-holds-you-and-script-cost"
+local SOURCE_STAMP: string = "v148-20261026-fling-picks-a-player-and-keeps-your-control"
 -- What the menu shows. It is derived from the stamp, never a hardcoded label:
 -- a build cannot display a version it is not.
 local BUILD_LABEL: string = string.match(SOURCE_STAMP, "^v%d+") or SOURCE_STAMP
@@ -341,6 +341,14 @@ local PlayerGui: PlayerGui = LocalPlayer:WaitForChild("PlayerGui") :: PlayerGui
 
 local GUI_NAME = PRODUCT.guiName
 local BLUR_NAME = PRODUCT.blurName
+-- Options that no longer exist but may still be `true` in an old config. They
+-- are erased so a retired control can never come back on its own.
+local RETIRED_OPTION_KEYS: {string} = {
+    -- v148: Touch Fling lives only in the universal Touch Fling card. The copy
+    -- inside the MM2 Fling card was a second owner of the same physics.
+    "MM2.Fling.TouchFling",
+}
+
 local CONFIG_FOLDER = PRODUCT.storageFolder
 local CONFIG_PROFILE_FOLDER = CONFIG_FOLDER .. "/Profiles"
 local CONFIG_GAME_ID: string = tostring(game.GameId > 0 and game.GameId or game.PlaceId)
@@ -873,6 +881,10 @@ local function applyLoadedConfig(loaded: any): boolean
     configData.states = type(loaded.states) == "table" and loaded.states or {}
     configData.values = type(loaded.values) == "table" and loaded.values or {}
     configData.ui = type(loaded.ui) == "table" and loaded.ui or {}
+    for _, key: string in ipairs(RETIRED_OPTION_KEYS) do
+        configData.states[key] = nil
+        configData.values[key] = nil
+    end
     return true
 end
 

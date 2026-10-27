@@ -934,6 +934,30 @@ do
     assert(not findFeature("Time Changer") and not findFeature("Anti Fling"))
     local fling = findFeature("Fling")
     assert(fling and fling.configKey == "MM2.Fling", "only MM2 owns role Fling")
+    -- v148: the Fling card picks the target from a live player list and no
+    -- longer duplicates the Touch Fling toggle owned by the universal card.
+    local flingOptions = fling.options
+    assert(flingOptions, "the Fling card must expose its options")
+    local function findOptionText(fragment)
+      for _, child in ipairs(flingOptions:GetDescendants()) do
+        if (child:IsA("TextButton") or child:IsA("TextLabel"))
+          and type(child.Text) == "string"
+          and string.find(child.Text, fragment, 1, true) then
+          return child
+        end
+      end
+      return nil
+    end
+    assert(findOptionText("Fling target"),
+      "the Fling card must offer a player list named Fling target")
+    assert(type(ex.state.mm2FlingRoster) == "function",
+      "the Fling card must expose the roster it is showing")
+    assert(ex.state.listControls["MM2.Fling.Flingtarget"],
+      "the Fling target list must be registered as a real list control")
+    assert(not findOptionText("Target player"),
+      "the Fling card must not ask the user to type a player name")
+    assert(not findOptionText("Touch Fling"),
+      "Touch Fling must live only in the universal card, not in MM2 Fling")
     assert(findFeature("Anti Void").options:FindFirstChild("Option_Antifling"))
     local fullbright=ex.state.framework:GetModule("Fullbright")
     assert(fullbright.Options["Time Changer"] and not fullbright.Options.Time.Visible)

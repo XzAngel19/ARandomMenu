@@ -1,5 +1,5 @@
 return {
-    stamp = "v147-20261027-fling-holds-you-and-script-cost",
+    stamp = "v148-20261026-fling-picks-a-player-and-keeps-your-control",
     files = {
         ["src/games/BedFight/Combat/AutoSwing.lua"] = [[
 local Module = {Name = "BedFight Auto Swing", Initialized = false, Connection = nil}
@@ -1434,11 +1434,11 @@ function Module.init(runtime: any): any
     local addActionOption: any = host.addActionOption
     local addToggleOption: any = host.addToggleOption
     local addTextOption: any = host.addTextOption
+    local addListOption: any = host.addListOption
     local addInformationOption: any = host.addInformationOption
     local TaskManager: any = host.TaskManager
     local featureConnections: any = host.featureConnections
     local disconnectFeatureConnection: any = host.disconnectFeatureConnection
-    local findPlayerByText: any = host.findPlayerByText
 
     local findMurderer: any = core.findMurderer
     local findSheriff: any = core.findSheriff
@@ -1446,7 +1446,8 @@ function Module.init(runtime: any): any
     local getPlayerWeapon: any = core.getPlayerWeapon
     local isPlayerAlive: any = core.isPlayerAlive
 
-    local flingTargetName: string = ""
+    local selectedPlayer: Player? = nil
+    local selectedLabel: string = ""
     local autoFlingSelected: boolean = false
     local lastAutoFlingAt: number = 0
     local sequenceNumber: number = 0
@@ -1486,8 +1487,9 @@ function Module.init(runtime: any): any
             and character:FindFirstChildOfClass("Humanoid") :: Humanoid?
         local root: BasePart? = (humanoid and humanoid.RootPart)
             or (character and character:FindFirstChild("HumanoidRootPart") :: BasePart?)
-        return character ~= nil and humanoid ~= nil and root ~= nil
+        local result = character ~= nil and humanoid ~= nil and root ~= nil
             and humanoid.Health > 0 and root.Parent ~= nil and not root.Anchored
+        return result
     end
 
     local function canAct(target: Player?): boolean
@@ -1583,6 +1585,121 @@ function Module.init(runtime: any): any
         end
     end
 
+    -- One source of truth for "who is what". The card used to guess the role in
+    -- three different places and none of them fell back to the held tool, which
+    -- is what MM2 actually replicates: the murderer carries the knife and the
+    -- sheriff (or the hero who picked the gun up) carries the gun. That is why
+    -- the list looked empty and "Fling Murderer" said nobody was found.
+    local ROLE_ORDER: {[string]: number} = {
+        Murderer = 1, Sheriff = 2, Hero = 3, Innocent = 4, Dead = 5,
+    }
+    local function hasWeapon(player: Player, toolName: string): boolean
+        if type(getPlayerWeapon) ~= "function" then
+            return false
+        end
+        local ok: boolean, value: any = pcall(getPlayerWeapon, player, toolName, false)
+        return ok and value ~= nil
+    end
+
+    local function roleOf(player: Player): string?
+        if not player then
+            return nil
+        end
+        local role: any = type(getPlayerRole) == "function"
+            and getPlayerRole(player) or nil
+        if not role and type(gameBridge.playerRole) == "function" then
+            local okRole: boolean, resolved: any = pcall(gameBridge.playerRole, player)
+            if okRole then
+                role = resolved
+            end
+        end
+        if role == "Murderer" or role == "Sheriff" or role == "Hero"
+            or role == "Innocent" or role == "Dead" then
+            return role
+        end
+        -- Tool inference: what the server actually puts in the backpack.
+        if hasWeapon(player, "Knife") then
+            return "Murderer"
+        end
+        if hasWeapon(player, "Gun") then
+            return "Sheriff"
+        end
+        if role == nil then
+            local character: Model? = player.Character
+            local humanoid: Humanoid? = character
+                and character:FindFirstChildOfClass("Humanoid") :: Humanoid?
+            if humanoid and humanoid.Health <= 0 then
+                return "Dead"
+            end
+        end
+        return role
+    end
+
+    -- "It does not detect anyone" is usually not a bug: MM2 has not published
+    -- the round roles yet. Saying which of the two happened is the difference
+    -- between a feature that looks broken and one the user can wait out.
+    local function rolesPublished(): boolean
+        if type(core.hasActiveRoundRoles) == "function" then
+            local ok: boolean, published: any = pcall(core.hasActiveRoundRoles)
+            if ok and published == true then
+                return true
+            end
+        end
+        for _, player: Player in ipairs(Players:GetPlayers()) do
+            if player ~= LocalPlayer and roleOf(player) ~= nil then
+                return true
+            end
+        end
+        return false
+    end
+
+    local function rosterEntries(withRefresh: boolean?): {{player: Player, label: string}}
+        if withRefresh ~= false then
+            refreshRoles()
+        end
+        local entries: {{player: Player, label: string}} = {}
+        for _, player: Player in ipairs(Players:GetPlayers()) do
+            if player ~= LocalPlayer and targetIsValid(player) then
+                local role: string? = roleOf(player)
+                local suffix: string = if role then " [" .. tostring(role) .. "]" else ""
+                table.insert(entries, {
+                    player = player,
+                    label = tostring(player.Name) .. suffix,
+                })
+            end
+        end
+        table.sort(entries, function(left: any, right: any): boolean
+            local leftRole: number = ROLE_ORDER[
+                (string.match(left.label, "%[(%a+)%]") or "")
+            ] or 9
+            local rightRole: number = ROLE_ORDER[
+                (string.match(right.label, "%[(%a+)%]") or "")
+            ] or 9
+            if leftRole ~= rightRole then
+                return leftRole < rightRole
+            end
+            return string.lower(left.label) < string.lower(right.label)
+        end)
+        return entries
+    end
+
+    -- Read-only hooks. They describe exactly what the card is showing, which is
+    -- the only way an offline suite can prove "the list knows who is who".
+    state.mm2FlingRoster = function(): {any}
+        local snapshot: {any} = {}
+        for _, entry: any in ipairs(rosterEntries(false)) do
+            table.insert(snapshot, {
+                name = tostring(entry.player.Name),
+                label = entry.label,
+            })
+        end
+        return snapshot
+    end
+    state.mm2FlingSelection = function(): string?
+        return if selectedPlayer then tostring(selectedPlayer.Name) else nil
+    end
+
+
     local function resolveMurdererTarget(): Player?
         refreshRoles()
         if type(getPlayerWeapon) == "function" then
@@ -1596,32 +1713,14 @@ function Module.init(runtime: any): any
         end
         if type(findMurderer) == "function" then
             local target: Player? = findMurderer()
-            if target and targetIsValid(target)
-                and (type(getPlayerWeapon) ~= "function"
-                    or getPlayerWeapon(target, "Gun", false) == nil) then
-                local role: any = type(getPlayerRole) == "function"
-                    and getPlayerRole(target) or "Murderer"
-                if role ~= "Hero" and role ~= "Sheriff" and role ~= "Dead" then
-                    return target
-                end
+            if target and targetIsValid(target) and roleOf(target) ~= "Dead" then
+                return target
             end
         end
         for _, player: Player in ipairs(Players:GetPlayers()) do
             if player ~= LocalPlayer and targetIsValid(player)
-                and (type(getPlayerWeapon) ~= "function"
-                    or getPlayerWeapon(player, "Gun", false) == nil) then
-                local role: any = type(getPlayerRole) == "function"
-                    and getPlayerRole(player) or nil
-                if not role and type(gameBridge.playerRole) == "function" then
-                    local okRole: boolean, resolved: any =
-                        pcall(gameBridge.playerRole, player)
-                    if okRole then
-                        role = resolved
-                    end
-                end
-                if role == "Murderer" then
-                    return player
-                end
+                and roleOf(player) == "Murderer" then
+                return player
             end
         end
         return nil
@@ -1641,28 +1740,13 @@ function Module.init(runtime: any): any
         if type(findSheriff) == "function" then
             local target: Player? = findSheriff()
             if target and targetIsValid(target)
-                and (type(getPlayerWeapon) ~= "function"
-                    or getPlayerWeapon(target, "Knife", false) == nil) then
-                local role: any = type(getPlayerRole) == "function"
-                    and getPlayerRole(target) or "Sheriff"
-                if role ~= "Murderer" and role ~= "Dead" then
-                    return target
-                end
+                and roleOf(target) ~= "Murderer" and roleOf(target) ~= "Dead" then
+                return target
             end
         end
         for _, player: Player in ipairs(Players:GetPlayers()) do
-            if player ~= LocalPlayer and targetIsValid(player)
-                and (type(getPlayerWeapon) ~= "function"
-                    or getPlayerWeapon(player, "Knife", false) == nil) then
-                local role: any = type(getPlayerRole) == "function"
-                    and getPlayerRole(player) or nil
-                if not role and type(gameBridge.playerRole) == "function" then
-                    local okRole: boolean, resolved: any =
-                        pcall(gameBridge.playerRole, player)
-                    if okRole then
-                        role = resolved
-                    end
-                end
+            if player ~= LocalPlayer and targetIsValid(player) then
+                local role: string? = roleOf(player)
                 if role == "Sheriff" or role == "Hero" then
                     return player
                 end
@@ -1672,57 +1756,10 @@ function Module.init(runtime: any): any
     end
 
     local function resolveSelectedTargetPlayer(): Player?
-        local query: string = string.lower(string.gsub(
-            flingTargetName or "", "^%s*(.-)%s*$", "%1"
-        ))
-        if query == "" then
-            return nil
+        if selectedPlayer and targetIsValid(selectedPlayer) then
+            return selectedPlayer
         end
-        if query == "murderer" or query == "murder" then
-            return resolveMurdererTarget()
-        end
-        if query == "sheriff" or query == "hero" then
-            return resolveSheriffOrHeroTarget()
-        end
-        if type(findPlayerByText) == "function" then
-            local okFind: boolean, found: any = pcall(findPlayerByText, flingTargetName)
-            if okFind and targetIsValid(found) then
-                return found :: Player
-            end
-        end
-        local compactQuery: string = string.gsub(query, "%s+", "")
-        local prefixMatch: Player? = nil
-        local partialMatch: Player? = nil
-        for _, player: Player in ipairs(Players:GetPlayers()) do
-            if player ~= LocalPlayer then
-                local userName: string = string.lower(tostring(player.Name or ""))
-                local displayName: string = string.lower(tostring(
-                    (player :: any).DisplayName or player.Name or ""
-                ))
-                local userCompact: string = string.gsub(userName, "%s+", "")
-                local displayCompact: string = string.gsub(displayName, "%s+", "")
-                if userName == query or displayName == query
-                    or userCompact == compactQuery
-                    or displayCompact == compactQuery then
-                    return player
-                end
-                if not prefixMatch and (
-                    string.sub(userName, 1, #query) == query
-                    or string.sub(displayName, 1, #query) == query
-                ) then
-                    prefixMatch = player
-                end
-                if not partialMatch and (
-                    string.find(userName, query, 1, true) ~= nil
-                    or string.find(displayName, query, 1, true) ~= nil
-                    or string.find(userCompact, compactQuery, 1, true) ~= nil
-                    or string.find(displayCompact, compactQuery, 1, true) ~= nil
-                ) then
-                    partialMatch = player
-                end
-            end
-        end
-        return prefixMatch or partialMatch
+        return nil
     end
 
     local FlingFeature: any = createUniversalFeature(
@@ -1743,7 +1780,9 @@ function Module.init(runtime: any): any
         if target then
             performFling(target)
         else
-            notify("No living murderer was found in this round.")
+            notify(if rolesPublished()
+                then "No living murderer was found in this round."
+                else "MM2 has not published the roles yet. Wait for the round to start.")
         end
     end)
     addActionOption(FlingFeature, "Fling Sheriff", function(): ()
@@ -1751,7 +1790,9 @@ function Module.init(runtime: any): any
         if target then
             performFling(target)
         else
-            notify("No living sheriff or hero was found in this round.")
+            notify(if rolesPublished()
+                then "No living sheriff or hero was found in this round."
+                else "MM2 has not published the roles yet. Wait for the round to start.")
         end
     end)
     addActionOption(FlingFeature, "Fling All Innocents", function(): ()
@@ -1768,24 +1809,9 @@ function Module.init(runtime: any): any
                     or not localIsAlive() then
                     break
                 end
-                if targetIsValid(player) then
-                    local hasKnife: boolean = type(getPlayerWeapon) == "function"
-                        and getPlayerWeapon(player, "Knife", false) ~= nil
-                    local hasGun: boolean = type(getPlayerWeapon) == "function"
-                        and getPlayerWeapon(player, "Gun", false) ~= nil
-                    local role: any = type(getPlayerRole) == "function"
-                        and getPlayerRole(player) or nil
-                    if not role and type(gameBridge.playerRole) == "function" then
-                        local okRole: boolean, resolved: any =
-                            pcall(gameBridge.playerRole, player)
-                        if okRole then
-                            role = resolved
-                        end
-                    end
-                    if not hasKnife and not hasGun and role == "Innocent" then
-                        performFling(player, {blocking = true, silent = true})
-                        task.wait(0.05)
-                    end
+                if targetIsValid(player) and roleOf(player) == "Innocent" then
+                    performFling(player, {blocking = true, silent = true})
+                    task.wait(0.05)
                 end
             end
         end)
@@ -1811,40 +1837,109 @@ function Module.init(runtime: any): any
         })
     end
 
-    addTextOption(
-        FlingFeature,
-        "Target player",
-        "",
-        function(value: string): ()
-            flingTargetName = value
-        end,
-        false,
-        "Username, display name, or 'Murderer' / 'Sheriff'"
-    )
+    -- The target is a live list of the players this round, already labelled with
+    -- their role. Typing a name by hand was the reason the card "detected
+    -- nothing": a typo, a display name or a player who joined a second ago all
+    -- looked identical to a broken feature.
+    local listHandle: any = nil
+    if type(addListOption) == "function" then
+        listHandle = addListOption(FlingFeature, "Fling target", {
+            items = function(): {string}
+                local labels: {string} = {}
+                for _, entry: any in ipairs(rosterEntries()) do
+                    table.insert(labels, entry.label)
+                end
+                return labels
+            end,
+            single = true,
+            default = {},
+            emptyText = "No players in this round",
+            hint = "Living players, ordered by role. The role comes from the round "
+                .. "data and from the knife/gun actually held.",
+            onChanged = function(_selected: any, names: {string}): ()
+                local label: string = names[1] or ""
+                selectedLabel = label
+                selectedPlayer = nil
+                if label == "" then
+                    return
+                end
+                -- Only a label that is still in the living roster can become a
+                -- target: a stale saved name must never point at a dead player
+                -- or at someone from the previous round.
+                for _, entry: any in ipairs(rosterEntries(false)) do
+                    if entry.label == label then
+                        selectedPlayer = entry.player
+                        return
+                    end
+                end
+            end,
+        })
+    end
+
+    -- Keep the labels honest while roles change between rounds (the murderer of
+    -- this round is not the murderer of the next one). Cheap: one signature
+    -- string every second, and it does nothing at all until it changes.
+    local lastRosterSignature: string = ""
+    local lastRosterSignatureAt: number = 0
+    local function rosterSignature(): string
+        local parts: {string} = {}
+        for _, entry: any in ipairs(rosterEntries()) do
+            table.insert(parts, entry.label)
+        end
+        return table.concat(parts, "|")
+    end
+    local function refreshRoster(): ()
+        local signature: string = rosterSignature()
+        if signature == lastRosterSignature then
+            return
+        end
+        lastRosterSignature = signature
+        local controls: any = state.listControls
+        local key: string? = nil
+        if listHandle and type(listHandle.GetAttribute) == "function" then
+            local ok: boolean, value: any = pcall(function(): any
+                return listHandle:GetAttribute("ListKey")
+            end)
+            if ok and type(value) == "string" then
+                key = value
+            end
+        end
+        local control: any = key and controls and controls[key] or nil
+        if not control then
+            return
+        end
+        pcall(function(): ()
+            -- Drop a selection whose player left, then re-point the label of a
+            -- selection whose role changed.
+            if selectedLabel ~= "" then
+                control.set(selectedLabel, false)
+            end
+            if selectedPlayer and targetIsValid(selectedPlayer) then
+                local role: string? = roleOf(selectedPlayer)
+                local suffix: string = if role then " [" .. tostring(role) .. "]" else ""
+                control.set(tostring(selectedPlayer.Name) .. suffix, true)
+            end
+        end)
+    end
+    refreshRoster()
+    if TaskManager and featureConnections then
+        featureConnections.MM2FlingRoster = TaskManager:Connect(function(): ()
+            if os.clock() - lastRosterSignatureAt < 1 then
+                return
+            end
+            lastRosterSignatureAt = os.clock()
+            refreshRoster()
+        end)
+    end
+
     addActionOption(FlingFeature, "Fling", function(): ()
         local target: Player? = resolveSelectedTargetPlayer()
         if target then
             performFling(target)
         else
-            notify("No valid target player was found.")
+            notify("Pick a living player from the Fling target list first.")
         end
     end)
-
-    -- These are deliberate session actions. The widget layer owns the
-    -- restore=false policy for boot, profiles and stale saved states.
-    addToggleOption(
-        FlingFeature,
-        "Touch Fling",
-        false,
-        function(value: boolean): ()
-            if type(state.setTouchFlingEnabled) == "function" then
-                state.setTouchFlingEnabled(value == true)
-            end
-        end,
-        "Walk into a player to transfer a bounded contact pulse. No teleport.",
-        nil,
-        false
-    )
     addToggleOption(
         FlingFeature,
         "Auto Fling Selected Target",
@@ -1877,9 +1972,14 @@ function Module.init(runtime: any): any
         autoFlingSelected = false
         if disconnectFeatureConnection then
             disconnectFeatureConnection("MM2AutoFlingTarget")
+            disconnectFeatureConnection("MM2FlingRoster")
         end
+        selectedPlayer = nil
+        selectedLabel = ""
         physics.cancel()
         state.mm2PerformFling = nil
+        state.mm2FlingRoster = nil
+        state.mm2FlingSelection = nil
     end
     Module.Initialized = true
     return FlingFeature
@@ -27581,43 +27681,36 @@ function Module.init(context: Runtime): any
     local addFeatureTooltip: any = host.addFeatureTooltip
     local physics: any = state.flingPhysics
     assert(physics, "Touch Fling requires the shared Fling physics library")
+    assert(type(physics.setTouchEnabled) == "function",
+        "Touch Fling requires the contact entry point of the shared library")
 
     -- Contact physics is a deliberate per-session action, never restored ON.
     local touchFlingActive: boolean = false
-    local syncing: boolean = false
     local TouchFlingFeature: any = nil
 
     local function toggleTouchFling(enabled: boolean): ()
-        if syncing then
-            return
-        end
         local wanted: boolean = enabled == true
         touchFlingActive = wanted
         physics.setTouchEnabled(wanted)
         if TouchFlingFeature then
             TouchFlingFeature:SetStatus(if wanted then "ON" else nil)
         end
-
-        if state and type(state.toggleControls) == "table" then
-            local mm2Control: any = state.toggleControls["MM2.Fling.TouchFling"]
-            if mm2Control and type(mm2Control.setChecked) == "function" then
-                syncing = true
-                pcall(mm2Control.setChecked, wanted)
-                syncing = false
-            end
-        end
     end
 
     TouchFlingFeature = createUniversalFeature(
         "Touch Fling",
-        "Walk into a player and the contact launches them, with your character left normal",
+        "Walk normally: whoever you bump into gets flung, and you keep your full control",
         14,
         toggleTouchFling,
         {noOptions = true, categoryName = "Exploits", restore = false}
     )
     addFeatureTooltip(
         TouchFlingFeature,
-        "Only your body parts listen; touching someone adds a bounded contact pulse to their body and one physics step to yours. No spin, no Humanoid Physics state, no teleports, no ownership requests. OFF and respawn restore every snapshot."
+        "Nothing is changed while you just walk: your parts only listen for contact. "
+            .. "On a real touch the fling lasts 0.15 s, the impulse goes into the other "
+            .. "player, your character is held in place for that instant and then put "
+            .. "back exactly as it was. No rotation, no facing, no teleport, no Humanoid "
+            .. "Physics state, no ownership requests. OFF and respawn restore every snapshot."
     )
 
     if state then
@@ -51157,35 +51250,42 @@ local activeLibrary: any = nil
 -- Fling, implemented the way Infinite Yield does it (the reference the user
 -- provided) instead of with bounded velocity pulses.
 --
--- Why the previous version did nothing: it wrote AssemblyLinearVelocity on the
+-- Why the old version did nothing: it wrote AssemblyLinearVelocity on the
 -- TARGET's parts. The local client does not own another player's assembly, so
--- the replication stream overwrites that write on the very next frame. Nothing
--- visible happens. What actually flings someone in Roblox is your OWN assembly
--- spinning at an extreme angular velocity with an extreme physical density while
--- it touches them: the server trusts your character's motion, and the contact
--- resolution carries that energy into the other body.
+-- the replication stream overwrites that write on the very next frame. What
+-- actually flings someone in Roblox is your OWN assembly spinning at an extreme
+-- angular velocity with an extreme physical density while it touches them: the
+-- server trusts your character's motion and the contact resolution carries that
+-- energy into the other body.
 --
 -- So the mechanism is exactly IY's:
 --
 --   1. CustomPhysicalProperties(density = math.huge) on the local parts.
 --   2. CanCollide = false / Massless = true, so the body keeps walking normally
---      and never creates a permanent collider pair (that was also pure physics
---      cost).
+--      and never creates a permanent collider pair (that was also physics cost).
 --   3. BodyAngularVelocity on the root at 99999 rad/s, MaxTorque = math.huge.
---   4. Duty cycle 0.2 s spinning / 0.1 s stopped, like `fling` in IY.
 --
--- IY alone also throws the player who is flinging: the spin pushes the local
--- body out of the way. A rigid AlignPosition (one attachment, RigidityEnabled)
--- pins the local root where the contact happened for the duration of the spin,
--- so the energy goes into the other player and not into you. That is a physics
--- constraint, not a CFrame write per tick.
+-- Three rules this module enforces on top of IY (v148):
 --
--- Everything is restored on OFF, death, respawn and destroy: the constraints
--- are destroyed, density/collision/massless go back to their snapshots.
+--   * Touch is a BURST, not a session. Touching someone spins for 0.15 s and
+--     then puts the body back exactly as it was. Between contacts nothing is
+--     attached, nothing is pinned and nothing is written, so the player walks,
+--     turns and jumps normally with full control. The old continuous spin is
+--     what made the body look like it was circling the target (and what kept
+--     throwing the flinger).
+--   * The character is never rotated toward anybody: no lookAt, no facing, no
+--     placement on contact. A directed fling moves the root once and keeps the
+--     current orientation.
+--   * The flinger is never launched. While the spin delivers the impulse a rigid
+--     AlignPosition holds the root in place, and when the burst ends the body's
+--     motion is zeroed and any physics drift beyond MAX_DRIFT is undone.
 --
--- CPU: while spinning there is NO per-frame Lua. The duty cycle is two
--- task.wait() sleeps, and Touch detection is a Touched listener. The old design
--- ran a PreSimulation + Heartbeat body every frame for the whole session.
+-- Everything is restored on OFF, death, respawn and destroy: the constraints are
+-- destroyed, density/collision/massless go back to their snapshots.
+--
+-- CPU: while spinning there is NO per-frame Lua. The burst is two task.wait()
+-- sleeps and Touch detection is a Touched listener. The old design ran a
+-- PreSimulation + Heartbeat body every frame for the whole session.
 
 function Module.init(context: any): any
     local host: any = context.host or context
@@ -51197,21 +51297,25 @@ function Module.init(context: any): any
     local SPIN_RATE: number = 99999
     local SPIN_ON: number = 0.2
     local SPIN_OFF: number = 0.1
-    -- A contact keeps the spin armed for this long, so one bump is enough.
-    local CONTACT_SECONDS: number = 0.6
-    -- The local player is pinned only while the impulse lands. After this the
-    -- hold is released even if the session continues, so a long fling never
-    -- traps the player in place (teleport/farm keep working).
-    local HOLD_SECONDS: number = 0.8
+    -- One short burst per contact: long enough for the contact to resolve, short
+    -- enough that the player never loses control.
+    local TOUCH_BURST: number = 0.15
+    -- Between bursts nothing happens; this keeps a crowded hallway from turning
+    -- into a permanent spin.
+    local TOUCH_COOLDOWN: number = 0.4
     local CONTACT_RANGE: number = 20
+    -- A burst may never move the player more than this. Anything beyond it is
+    -- physics pushing the flinger, not the player walking, so it is undone.
+    local MAX_DRIFT: number = 6
+    -- Directed flings hold the player for the delivery window only.
+    local HOLD_SECONDS: number = 0.8
 
     local destroyed: boolean = false
     local currentSession: any = nil
     local touchEnabled: boolean = false
-    local touchCharacter: Model? = nil
     local touchConnections: {RBXScriptConnection} = {}
-    local touchContacts: {[Player]: number} = {}
     local touchCanTouch: {[BasePart]: boolean} = {}
+    local touchCooldownUntil: number = 0
 
     local spinState: any = nil
     local spinLoopToken: number = 0
@@ -51246,6 +51350,28 @@ function Module.init(context: any): any
         return character, humanoid, root
     end
 
+    -- Rotation only: used to move the root without changing which way the
+    -- character looks.
+    local function orientationOf(frame: CFrame): CFrame
+        return frame - frame.Position
+    end
+
+    local function desiredPivot(character: Model, root: BasePart): CFrame
+        local ok: boolean, frame: any = pcall(function(): any
+            return root.CFrame
+        end)
+        if ok and typeof(frame) == "CFrame" then
+            return frame -- current position + current orientation
+        end
+        local okCharacter: boolean, characterFrame: any = pcall(function(): any
+            return character:GetPivot()
+        end)
+        if okCharacter and typeof(characterFrame) == "CFrame" then
+            return characterFrame
+        end
+        return CFrame.new(root.Position)
+    end
+
     local function releaseSpin(): ()
         spinLoopToken += 1
         local state: any = spinState
@@ -51271,7 +51397,7 @@ function Module.init(context: any): any
         for part: BasePart, snapshot: any in pairs(state.parts) do
             if part.Parent then
                 pcall(function(): ()
-                    if state.savedCollide and snapshot.canCollide ~= nil then
+                    if snapshot.canCollide ~= nil then
                         part.CanCollide = snapshot.canCollide
                     end
                     if snapshot.massless ~= nil then
@@ -51284,6 +51410,32 @@ function Module.init(context: any): any
             end
         end
         table.clear(state.parts)
+
+        -- Give the player their body back: no leftover launch, and if physics
+        -- pushed them away during the burst, put them where the burst started.
+        local root: BasePart? = state.root
+        if not root or not root.Parent then
+            return
+        end
+        pcall(function(): ()
+            root.AssemblyLinearVelocity = Vector3.zero
+        end)
+        if state.driftGuard then
+            local startPosition: Vector3? = state.startPosition
+            local okDistance: boolean, distance: any = pcall(function(): number
+                return startPosition and (root.Position - startPosition).Magnitude or 0
+            end)
+            if okDistance and type(distance) == "number" and distance > MAX_DRIFT then
+                local character: Model? = state.character
+                local startFrame: CFrame? = state.startCFrame
+                if character and startFrame then
+                    pcall(function(): ()
+                        character:PivotTo(CFrame.new(startPosition)
+                            * orientationOf(startFrame))
+                    end)
+                end
+            end
+        end
     end
 
     -- Holds the local root exactly where it is. RigidityEnabled makes the
@@ -51300,8 +51452,7 @@ function Module.init(context: any): any
             hold.Name = "WurstFlingHold"
             -- OneAttachment aligns Attachment0 with the WORLD position in
             -- `Position`. Leaving that at (0, 0, 0) -- the default -- would drag
-            -- the player to the world origin, so it is pinned to where the
-            -- contact happened.
+            -- the player to the world origin, so it is pinned to the contact.
             hold.Mode = Enum.PositionAlignmentMode.OneAttachment
             hold.Position = position
             hold.Attachment0 = attachment
@@ -51321,9 +51472,14 @@ function Module.init(context: any): any
         return hold, attachment
     end
 
-    -- IY's fling: infinite density, no collision, massless body, and a spinning
-    -- root. Anything the body overlaps is launched.
-    local function engageSpin(character: Model, root: BasePart): boolean
+    -- IY's fling: infinite density, no collision, massless body, spinning root.
+    -- `seconds` bounds the burst; nil means "until the caller releases it".
+    local function engageSpin(
+        character: Model,
+        root: BasePart,
+        seconds: number?,
+        holdSeconds: number?
+    ): boolean
         if spinState and spinState.root ~= root then
             releaseSpin()
         end
@@ -51350,6 +51506,15 @@ function Module.init(context: any): any
                 constraint = body
             end)
             if not ok or not constraint then
+                for part: BasePart, snapshot: any in pairs(parts) do
+                    if part.Parent then
+                        pcall(function(): ()
+                            part.CanCollide = snapshot.canCollide
+                            part.Massless = snapshot.massless
+                            part.CustomPhysicalProperties = snapshot.properties
+                        end)
+                    end
+                end
                 return false
             end
             for part: BasePart in pairs(parts) do
@@ -51363,8 +51528,8 @@ function Module.init(context: any): any
                     part.AssemblyLinearVelocity = Vector3.zero
                 end)
             end
-            -- Only the target moves: our own body is pinned for the spin.
             local startPosition: Vector3 = root.Position
+            local startFrame: CFrame = desiredPivot(character, root)
             local hold: any, holdAttachment: any = createHold(root, startPosition)
             spinState = {
                 root = root,
@@ -51373,21 +51538,37 @@ function Module.init(context: any): any
                 hold = hold,
                 holdAttachment = holdAttachment,
                 holdPosition = startPosition,
-                holdUntil = os.clock() + HOLD_SECONDS,
+                holdUntil = os.clock() + (holdSeconds or HOLD_SECONDS),
+                startPosition = startPosition,
+                startCFrame = startFrame,
+                -- A directed fling may legitimately travel; a touch burst may
+                -- not, so that is the one that undoes physics drift.
+                driftGuard = seconds ~= nil,
                 parts = parts,
-                savedCollide = true,
             }
         end
-        -- IY's duty cycle: 0.2 s spinning, 0.1 s stopped, until released.
+        local releaseAt: number? = nil
+        if seconds ~= nil then
+            releaseAt = os.clock() + math.max(0.05, seconds)
+        end
+        if spinState then
+            spinState.releaseAt = releaseAt
+        end
+
+        -- IY's duty cycle: spinning, then stopped, until released.
         spinLoopToken += 1
         local token: number = spinLoopToken
         task.spawn(function(): ()
             while spinState and spinLoopToken == token and not destroyed do
                 local state: any = spinState
-                -- The pin has a short life of its own; see HOLD_SECONDS. Checked
-                -- at the top so a long pump/frame cannot leave it stuck on.
-                if state and state.hold and state.holdUntil
-                    and os.clock() >= state.holdUntil then
+                local now: number = os.clock()
+                if state.releaseAt and now >= state.releaseAt then
+                    releaseSpin()
+                    return
+                end
+                -- The pin has a short life of its own; a long fling must not
+                -- trap the player in place.
+                if state.hold and state.holdUntil and now >= state.holdUntil then
                     pcall(function(): ()
                         state.hold:Destroy()
                     end)
@@ -51399,15 +51580,14 @@ function Module.init(context: any): any
                     state.hold = nil
                     state.holdAttachment = nil
                 end
-                if state and state.constraint and state.constraint.Parent then
+                if state.constraint and state.constraint.Parent then
                     pcall(function(): ()
                         state.constraint.AngularVelocity = Vector3.new(0, SPIN_RATE, 0)
-                        -- Kill any drift the previous pulse left behind so the
-                        -- hold never has to fight a tanking velocity.
+                        -- Kill any drift so the hold never has to fight a
+                        -- tanking velocity.
                         if state.root and state.root.Parent then
                             state.root.AssemblyLinearVelocity = Vector3.zero
                         end
-                        -- Re-assert the pin in case anything moved the goal.
                         if state.hold and state.holdPosition then
                             state.hold.Position = state.holdPosition
                         end
@@ -51418,7 +51598,7 @@ function Module.init(context: any): any
                     return
                 end
                 state = spinState
-                if state and state.constraint and state.constraint.Parent then
+                if state.constraint and state.constraint.Parent then
                     pcall(function(): ()
                         state.constraint.AngularVelocity = Vector3.zero
                     end)
@@ -51456,18 +51636,23 @@ function Module.init(context: any): any
         finishSession("cancelled")
     end
 
+    local function finiteVector(value: any): boolean
+        local ok: boolean, x: any, y: any, z: any = pcall(function(): any
+            return value.X, value.Y, value.Z
+        end)
+        return ok and type(x) == "number" and type(y) == "number"
+            and type(z) == "number" and x == x and y == y and z == z
+            and math.abs(x) ~= math.huge and math.abs(y) ~= math.huge
+            and math.abs(z) ~= math.huge
+    end
+
     local function start(target: Player?, options: {[string]: any}?): boolean
         if destroyed or currentSession or not target or target == LocalPlayer then
             return false
         end
         if touchEnabled then
             -- One owner at a time; the directed action wins.
-            local previous = touchEnabled
-            touchEnabled = false
-            local state: any = Module.__touchBinder
-            if previous and type(state) == "function" then
-                pcall(state, false)
-            end
+            setTouchEnabled(false)
         end
         local targetCharacter: Model?, targetHumanoid: Humanoid?, targetRoot: BasePart? =
             livingParts(target)
@@ -51487,15 +51672,6 @@ function Module.init(context: any): any
         local targetPosition: Vector3 = targetRoot.Position
         local contactPosition: Vector3 =
             (targetRoot.CFrame * CFrame.new(0, 0, 2.2)).Position
-        local function finiteVector(value: any): boolean
-            local ok: boolean, x: any, y: any, z: any = pcall(function(): any
-                return value.X, value.Y, value.Z
-            end)
-            return ok and type(x) == "number" and type(y) == "number"
-                and type(z) == "number" and x == x and y == y and z == z
-                and math.abs(x) ~= math.huge and math.abs(y) ~= math.huge
-                and math.abs(z) ~= math.huge
-        end
         if not finiteVector(targetPosition) or not finiteVector(contactPosition)
             or not finiteVector(root.Position) then
             return false
@@ -51521,16 +51697,17 @@ function Module.init(context: any): any
         }
         currentSession = session
 
-        -- One contact placement, then the spin does the work (IY does not even
-        -- place: it relies on the spin and your own walking).
+        -- One contact placement, keeping the current orientation: the character
+        -- never turns to face the target.
         local placed: boolean = pcall(function(): ()
-            character:PivotTo(CFrame.lookAt(contactPosition, targetPosition))
+            character:PivotTo(CFrame.new(contactPosition)
+                * orientationOf(session.returnCFrame))
         end)
         if not placed then
             finishSession("error")
             return false
         end
-        if not engageSpin(character, root) then
+        if not engageSpin(character, root, nil, HOLD_SECONDS) then
             finishSession("error")
             return false
         end
@@ -51563,7 +51740,14 @@ function Module.init(context: any): any
     end
 
     local function noteTouch(hit: BasePart): ()
-        if not touchEnabled or not hit then
+        if not touchEnabled or not hit or destroyed then
+            return
+        end
+        if currentSession or spinState then
+            return
+        end
+        local now: number = os.clock()
+        if now < touchCooldownUntil then
             return
         end
         local model: any = hit.Parent
@@ -51589,37 +51773,18 @@ function Module.init(context: any): any
         if not targetHumanoid or not targetRoot then
             return
         end
-        local _, humanoid: Humanoid?, root: BasePart? = livingParts(LocalPlayer)
-        if not humanoid or not root then
+        local character: Model?, humanoid: Humanoid?, root: BasePart? =
+            livingParts(LocalPlayer)
+        if not character or not humanoid or not root then
             return
         end
         if (targetRoot.Position - root.Position).Magnitude > CONTACT_RANGE then
             return
         end
-        touchContacts[player] = os.clock()
-        if not spinState or spinState.root ~= root then
-            local character: Model? = LocalPlayer.Character
-            if character then
-                engageSpin(character, root)
-            end
-        end
-        -- The spin stays armed while any contact is fresh; this timer is the
-        -- only scheduled work, and it costs nothing until it fires.
-        task.delay(CONTACT_SECONDS, function(): ()
-            local newest: number = -math.huge
-            for _, at: number in pairs(touchContacts) do
-                if at > newest then
-                    newest = at
-                end
-            end
-            if os.clock() - newest < CONTACT_SECONDS then
-                return
-            end
-            table.clear(touchContacts)
-            if touchEnabled and not currentSession then
-                releaseSpin()
-            end
-        end)
+        touchCooldownUntil = now + TOUCH_COOLDOWN
+        -- One short burst. No placement, no facing, no pin after it ends: the
+        -- player keeps walking and the other body takes the impulse.
+        engageSpin(character, root, TOUCH_BURST, TOUCH_BURST)
     end
 
     local function bindTouchPart(part: BasePart): ()
@@ -51639,7 +51804,6 @@ function Module.init(context: any): any
             connection:Disconnect()
         end
         table.clear(touchConnections)
-        table.clear(touchContacts)
         for part: BasePart, canTouch: boolean in pairs(touchCanTouch) do
             if part.Parent then
                 pcall(function(): ()
@@ -51648,7 +51812,6 @@ function Module.init(context: any): any
             end
         end
         table.clear(touchCanTouch)
-        touchCharacter = nil
     end
 
     local function bindTouchCharacter(): ()
@@ -51661,7 +51824,6 @@ function Module.init(context: any): any
         if not character or not humanoid or not root then
             return
         end
-        touchCharacter = character
         for _, object: Instance in ipairs(character:GetChildren()) do
             if object:IsA("BasePart") then
                 bindTouchPart(object :: BasePart)
@@ -51674,13 +51836,11 @@ function Module.init(context: any): any
             end
         end))
         table.insert(touchConnections, humanoid.Died:Connect(function(): ()
-            table.clear(touchContacts)
             releaseSpin()
         end))
     end
 
-    local setTouchEnabled: (enabled: boolean) -> ()
-    setTouchEnabled = function(enabled: boolean): ()
+    function setTouchEnabled(enabled: boolean): ()
         local wanted: boolean = enabled == true
         if touchEnabled == wanted or (destroyed and wanted) then
             return

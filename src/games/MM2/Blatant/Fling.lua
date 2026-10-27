@@ -23,11 +23,11 @@ function Module.init(runtime: any): any
     local addActionOption: any = host.addActionOption
     local addToggleOption: any = host.addToggleOption
     local addTextOption: any = host.addTextOption
+    local addListOption: any = host.addListOption
     local addInformationOption: any = host.addInformationOption
     local TaskManager: any = host.TaskManager
     local featureConnections: any = host.featureConnections
     local disconnectFeatureConnection: any = host.disconnectFeatureConnection
-    local findPlayerByText: any = host.findPlayerByText
 
     local findMurderer: any = core.findMurderer
     local findSheriff: any = core.findSheriff
@@ -35,7 +35,8 @@ function Module.init(runtime: any): any
     local getPlayerWeapon: any = core.getPlayerWeapon
     local isPlayerAlive: any = core.isPlayerAlive
 
-    local flingTargetName: string = ""
+    local selectedPlayer: Player? = nil
+    local selectedLabel: string = ""
     local autoFlingSelected: boolean = false
     local lastAutoFlingAt: number = 0
     local sequenceNumber: number = 0
@@ -75,8 +76,9 @@ function Module.init(runtime: any): any
             and character:FindFirstChildOfClass("Humanoid") :: Humanoid?
         local root: BasePart? = (humanoid and humanoid.RootPart)
             or (character and character:FindFirstChild("HumanoidRootPart") :: BasePart?)
-        return character ~= nil and humanoid ~= nil and root ~= nil
+        local result = character ~= nil and humanoid ~= nil and root ~= nil
             and humanoid.Health > 0 and root.Parent ~= nil and not root.Anchored
+        return result
     end
 
     local function canAct(target: Player?): boolean
@@ -172,6 +174,121 @@ function Module.init(runtime: any): any
         end
     end
 
+    -- One source of truth for "who is what". The card used to guess the role in
+    -- three different places and none of them fell back to the held tool, which
+    -- is what MM2 actually replicates: the murderer carries the knife and the
+    -- sheriff (or the hero who picked the gun up) carries the gun. That is why
+    -- the list looked empty and "Fling Murderer" said nobody was found.
+    local ROLE_ORDER: {[string]: number} = {
+        Murderer = 1, Sheriff = 2, Hero = 3, Innocent = 4, Dead = 5,
+    }
+    local function hasWeapon(player: Player, toolName: string): boolean
+        if type(getPlayerWeapon) ~= "function" then
+            return false
+        end
+        local ok: boolean, value: any = pcall(getPlayerWeapon, player, toolName, false)
+        return ok and value ~= nil
+    end
+
+    local function roleOf(player: Player): string?
+        if not player then
+            return nil
+        end
+        local role: any = type(getPlayerRole) == "function"
+            and getPlayerRole(player) or nil
+        if not role and type(gameBridge.playerRole) == "function" then
+            local okRole: boolean, resolved: any = pcall(gameBridge.playerRole, player)
+            if okRole then
+                role = resolved
+            end
+        end
+        if role == "Murderer" or role == "Sheriff" or role == "Hero"
+            or role == "Innocent" or role == "Dead" then
+            return role
+        end
+        -- Tool inference: what the server actually puts in the backpack.
+        if hasWeapon(player, "Knife") then
+            return "Murderer"
+        end
+        if hasWeapon(player, "Gun") then
+            return "Sheriff"
+        end
+        if role == nil then
+            local character: Model? = player.Character
+            local humanoid: Humanoid? = character
+                and character:FindFirstChildOfClass("Humanoid") :: Humanoid?
+            if humanoid and humanoid.Health <= 0 then
+                return "Dead"
+            end
+        end
+        return role
+    end
+
+    -- "It does not detect anyone" is usually not a bug: MM2 has not published
+    -- the round roles yet. Saying which of the two happened is the difference
+    -- between a feature that looks broken and one the user can wait out.
+    local function rolesPublished(): boolean
+        if type(core.hasActiveRoundRoles) == "function" then
+            local ok: boolean, published: any = pcall(core.hasActiveRoundRoles)
+            if ok and published == true then
+                return true
+            end
+        end
+        for _, player: Player in ipairs(Players:GetPlayers()) do
+            if player ~= LocalPlayer and roleOf(player) ~= nil then
+                return true
+            end
+        end
+        return false
+    end
+
+    local function rosterEntries(withRefresh: boolean?): {{player: Player, label: string}}
+        if withRefresh ~= false then
+            refreshRoles()
+        end
+        local entries: {{player: Player, label: string}} = {}
+        for _, player: Player in ipairs(Players:GetPlayers()) do
+            if player ~= LocalPlayer and targetIsValid(player) then
+                local role: string? = roleOf(player)
+                local suffix: string = if role then " [" .. tostring(role) .. "]" else ""
+                table.insert(entries, {
+                    player = player,
+                    label = tostring(player.Name) .. suffix,
+                })
+            end
+        end
+        table.sort(entries, function(left: any, right: any): boolean
+            local leftRole: number = ROLE_ORDER[
+                (string.match(left.label, "%[(%a+)%]") or "")
+            ] or 9
+            local rightRole: number = ROLE_ORDER[
+                (string.match(right.label, "%[(%a+)%]") or "")
+            ] or 9
+            if leftRole ~= rightRole then
+                return leftRole < rightRole
+            end
+            return string.lower(left.label) < string.lower(right.label)
+        end)
+        return entries
+    end
+
+    -- Read-only hooks. They describe exactly what the card is showing, which is
+    -- the only way an offline suite can prove "the list knows who is who".
+    state.mm2FlingRoster = function(): {any}
+        local snapshot: {any} = {}
+        for _, entry: any in ipairs(rosterEntries(false)) do
+            table.insert(snapshot, {
+                name = tostring(entry.player.Name),
+                label = entry.label,
+            })
+        end
+        return snapshot
+    end
+    state.mm2FlingSelection = function(): string?
+        return if selectedPlayer then tostring(selectedPlayer.Name) else nil
+    end
+
+
     local function resolveMurdererTarget(): Player?
         refreshRoles()
         if type(getPlayerWeapon) == "function" then
@@ -185,32 +302,14 @@ function Module.init(runtime: any): any
         end
         if type(findMurderer) == "function" then
             local target: Player? = findMurderer()
-            if target and targetIsValid(target)
-                and (type(getPlayerWeapon) ~= "function"
-                    or getPlayerWeapon(target, "Gun", false) == nil) then
-                local role: any = type(getPlayerRole) == "function"
-                    and getPlayerRole(target) or "Murderer"
-                if role ~= "Hero" and role ~= "Sheriff" and role ~= "Dead" then
-                    return target
-                end
+            if target and targetIsValid(target) and roleOf(target) ~= "Dead" then
+                return target
             end
         end
         for _, player: Player in ipairs(Players:GetPlayers()) do
             if player ~= LocalPlayer and targetIsValid(player)
-                and (type(getPlayerWeapon) ~= "function"
-                    or getPlayerWeapon(player, "Gun", false) == nil) then
-                local role: any = type(getPlayerRole) == "function"
-                    and getPlayerRole(player) or nil
-                if not role and type(gameBridge.playerRole) == "function" then
-                    local okRole: boolean, resolved: any =
-                        pcall(gameBridge.playerRole, player)
-                    if okRole then
-                        role = resolved
-                    end
-                end
-                if role == "Murderer" then
-                    return player
-                end
+                and roleOf(player) == "Murderer" then
+                return player
             end
         end
         return nil
@@ -230,28 +329,13 @@ function Module.init(runtime: any): any
         if type(findSheriff) == "function" then
             local target: Player? = findSheriff()
             if target and targetIsValid(target)
-                and (type(getPlayerWeapon) ~= "function"
-                    or getPlayerWeapon(target, "Knife", false) == nil) then
-                local role: any = type(getPlayerRole) == "function"
-                    and getPlayerRole(target) or "Sheriff"
-                if role ~= "Murderer" and role ~= "Dead" then
-                    return target
-                end
+                and roleOf(target) ~= "Murderer" and roleOf(target) ~= "Dead" then
+                return target
             end
         end
         for _, player: Player in ipairs(Players:GetPlayers()) do
-            if player ~= LocalPlayer and targetIsValid(player)
-                and (type(getPlayerWeapon) ~= "function"
-                    or getPlayerWeapon(player, "Knife", false) == nil) then
-                local role: any = type(getPlayerRole) == "function"
-                    and getPlayerRole(player) or nil
-                if not role and type(gameBridge.playerRole) == "function" then
-                    local okRole: boolean, resolved: any =
-                        pcall(gameBridge.playerRole, player)
-                    if okRole then
-                        role = resolved
-                    end
-                end
+            if player ~= LocalPlayer and targetIsValid(player) then
+                local role: string? = roleOf(player)
                 if role == "Sheriff" or role == "Hero" then
                     return player
                 end
@@ -261,57 +345,10 @@ function Module.init(runtime: any): any
     end
 
     local function resolveSelectedTargetPlayer(): Player?
-        local query: string = string.lower(string.gsub(
-            flingTargetName or "", "^%s*(.-)%s*$", "%1"
-        ))
-        if query == "" then
-            return nil
+        if selectedPlayer and targetIsValid(selectedPlayer) then
+            return selectedPlayer
         end
-        if query == "murderer" or query == "murder" then
-            return resolveMurdererTarget()
-        end
-        if query == "sheriff" or query == "hero" then
-            return resolveSheriffOrHeroTarget()
-        end
-        if type(findPlayerByText) == "function" then
-            local okFind: boolean, found: any = pcall(findPlayerByText, flingTargetName)
-            if okFind and targetIsValid(found) then
-                return found :: Player
-            end
-        end
-        local compactQuery: string = string.gsub(query, "%s+", "")
-        local prefixMatch: Player? = nil
-        local partialMatch: Player? = nil
-        for _, player: Player in ipairs(Players:GetPlayers()) do
-            if player ~= LocalPlayer then
-                local userName: string = string.lower(tostring(player.Name or ""))
-                local displayName: string = string.lower(tostring(
-                    (player :: any).DisplayName or player.Name or ""
-                ))
-                local userCompact: string = string.gsub(userName, "%s+", "")
-                local displayCompact: string = string.gsub(displayName, "%s+", "")
-                if userName == query or displayName == query
-                    or userCompact == compactQuery
-                    or displayCompact == compactQuery then
-                    return player
-                end
-                if not prefixMatch and (
-                    string.sub(userName, 1, #query) == query
-                    or string.sub(displayName, 1, #query) == query
-                ) then
-                    prefixMatch = player
-                end
-                if not partialMatch and (
-                    string.find(userName, query, 1, true) ~= nil
-                    or string.find(displayName, query, 1, true) ~= nil
-                    or string.find(userCompact, compactQuery, 1, true) ~= nil
-                    or string.find(displayCompact, compactQuery, 1, true) ~= nil
-                ) then
-                    partialMatch = player
-                end
-            end
-        end
-        return prefixMatch or partialMatch
+        return nil
     end
 
     local FlingFeature: any = createUniversalFeature(
@@ -332,7 +369,9 @@ function Module.init(runtime: any): any
         if target then
             performFling(target)
         else
-            notify("No living murderer was found in this round.")
+            notify(if rolesPublished()
+                then "No living murderer was found in this round."
+                else "MM2 has not published the roles yet. Wait for the round to start.")
         end
     end)
     addActionOption(FlingFeature, "Fling Sheriff", function(): ()
@@ -340,7 +379,9 @@ function Module.init(runtime: any): any
         if target then
             performFling(target)
         else
-            notify("No living sheriff or hero was found in this round.")
+            notify(if rolesPublished()
+                then "No living sheriff or hero was found in this round."
+                else "MM2 has not published the roles yet. Wait for the round to start.")
         end
     end)
     addActionOption(FlingFeature, "Fling All Innocents", function(): ()
@@ -357,24 +398,9 @@ function Module.init(runtime: any): any
                     or not localIsAlive() then
                     break
                 end
-                if targetIsValid(player) then
-                    local hasKnife: boolean = type(getPlayerWeapon) == "function"
-                        and getPlayerWeapon(player, "Knife", false) ~= nil
-                    local hasGun: boolean = type(getPlayerWeapon) == "function"
-                        and getPlayerWeapon(player, "Gun", false) ~= nil
-                    local role: any = type(getPlayerRole) == "function"
-                        and getPlayerRole(player) or nil
-                    if not role and type(gameBridge.playerRole) == "function" then
-                        local okRole: boolean, resolved: any =
-                            pcall(gameBridge.playerRole, player)
-                        if okRole then
-                            role = resolved
-                        end
-                    end
-                    if not hasKnife and not hasGun and role == "Innocent" then
-                        performFling(player, {blocking = true, silent = true})
-                        task.wait(0.05)
-                    end
+                if targetIsValid(player) and roleOf(player) == "Innocent" then
+                    performFling(player, {blocking = true, silent = true})
+                    task.wait(0.05)
                 end
             end
         end)
@@ -400,40 +426,109 @@ function Module.init(runtime: any): any
         })
     end
 
-    addTextOption(
-        FlingFeature,
-        "Target player",
-        "",
-        function(value: string): ()
-            flingTargetName = value
-        end,
-        false,
-        "Username, display name, or 'Murderer' / 'Sheriff'"
-    )
+    -- The target is a live list of the players this round, already labelled with
+    -- their role. Typing a name by hand was the reason the card "detected
+    -- nothing": a typo, a display name or a player who joined a second ago all
+    -- looked identical to a broken feature.
+    local listHandle: any = nil
+    if type(addListOption) == "function" then
+        listHandle = addListOption(FlingFeature, "Fling target", {
+            items = function(): {string}
+                local labels: {string} = {}
+                for _, entry: any in ipairs(rosterEntries()) do
+                    table.insert(labels, entry.label)
+                end
+                return labels
+            end,
+            single = true,
+            default = {},
+            emptyText = "No players in this round",
+            hint = "Living players, ordered by role. The role comes from the round "
+                .. "data and from the knife/gun actually held.",
+            onChanged = function(_selected: any, names: {string}): ()
+                local label: string = names[1] or ""
+                selectedLabel = label
+                selectedPlayer = nil
+                if label == "" then
+                    return
+                end
+                -- Only a label that is still in the living roster can become a
+                -- target: a stale saved name must never point at a dead player
+                -- or at someone from the previous round.
+                for _, entry: any in ipairs(rosterEntries(false)) do
+                    if entry.label == label then
+                        selectedPlayer = entry.player
+                        return
+                    end
+                end
+            end,
+        })
+    end
+
+    -- Keep the labels honest while roles change between rounds (the murderer of
+    -- this round is not the murderer of the next one). Cheap: one signature
+    -- string every second, and it does nothing at all until it changes.
+    local lastRosterSignature: string = ""
+    local lastRosterSignatureAt: number = 0
+    local function rosterSignature(): string
+        local parts: {string} = {}
+        for _, entry: any in ipairs(rosterEntries()) do
+            table.insert(parts, entry.label)
+        end
+        return table.concat(parts, "|")
+    end
+    local function refreshRoster(): ()
+        local signature: string = rosterSignature()
+        if signature == lastRosterSignature then
+            return
+        end
+        lastRosterSignature = signature
+        local controls: any = state.listControls
+        local key: string? = nil
+        if listHandle and type(listHandle.GetAttribute) == "function" then
+            local ok: boolean, value: any = pcall(function(): any
+                return listHandle:GetAttribute("ListKey")
+            end)
+            if ok and type(value) == "string" then
+                key = value
+            end
+        end
+        local control: any = key and controls and controls[key] or nil
+        if not control then
+            return
+        end
+        pcall(function(): ()
+            -- Drop a selection whose player left, then re-point the label of a
+            -- selection whose role changed.
+            if selectedLabel ~= "" then
+                control.set(selectedLabel, false)
+            end
+            if selectedPlayer and targetIsValid(selectedPlayer) then
+                local role: string? = roleOf(selectedPlayer)
+                local suffix: string = if role then " [" .. tostring(role) .. "]" else ""
+                control.set(tostring(selectedPlayer.Name) .. suffix, true)
+            end
+        end)
+    end
+    refreshRoster()
+    if TaskManager and featureConnections then
+        featureConnections.MM2FlingRoster = TaskManager:Connect(function(): ()
+            if os.clock() - lastRosterSignatureAt < 1 then
+                return
+            end
+            lastRosterSignatureAt = os.clock()
+            refreshRoster()
+        end)
+    end
+
     addActionOption(FlingFeature, "Fling", function(): ()
         local target: Player? = resolveSelectedTargetPlayer()
         if target then
             performFling(target)
         else
-            notify("No valid target player was found.")
+            notify("Pick a living player from the Fling target list first.")
         end
     end)
-
-    -- These are deliberate session actions. The widget layer owns the
-    -- restore=false policy for boot, profiles and stale saved states.
-    addToggleOption(
-        FlingFeature,
-        "Touch Fling",
-        false,
-        function(value: boolean): ()
-            if type(state.setTouchFlingEnabled) == "function" then
-                state.setTouchFlingEnabled(value == true)
-            end
-        end,
-        "Walk into a player to transfer a bounded contact pulse. No teleport.",
-        nil,
-        false
-    )
     addToggleOption(
         FlingFeature,
         "Auto Fling Selected Target",
@@ -466,9 +561,14 @@ function Module.init(runtime: any): any
         autoFlingSelected = false
         if disconnectFeatureConnection then
             disconnectFeatureConnection("MM2AutoFlingTarget")
+            disconnectFeatureConnection("MM2FlingRoster")
         end
+        selectedPlayer = nil
+        selectedLabel = ""
         physics.cancel()
         state.mm2PerformFling = nil
+        state.mm2FlingRoster = nil
+        state.mm2FlingSelection = nil
     end
     Module.Initialized = true
     return FlingFeature

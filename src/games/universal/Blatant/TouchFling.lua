@@ -20,43 +20,36 @@ function Module.init(context: Runtime): any
     local addFeatureTooltip: any = host.addFeatureTooltip
     local physics: any = state.flingPhysics
     assert(physics, "Touch Fling requires the shared Fling physics library")
+    assert(type(physics.setTouchEnabled) == "function",
+        "Touch Fling requires the contact entry point of the shared library")
 
     -- Contact physics is a deliberate per-session action, never restored ON.
     local touchFlingActive: boolean = false
-    local syncing: boolean = false
     local TouchFlingFeature: any = nil
 
     local function toggleTouchFling(enabled: boolean): ()
-        if syncing then
-            return
-        end
         local wanted: boolean = enabled == true
         touchFlingActive = wanted
         physics.setTouchEnabled(wanted)
         if TouchFlingFeature then
             TouchFlingFeature:SetStatus(if wanted then "ON" else nil)
         end
-
-        if state and type(state.toggleControls) == "table" then
-            local mm2Control: any = state.toggleControls["MM2.Fling.TouchFling"]
-            if mm2Control and type(mm2Control.setChecked) == "function" then
-                syncing = true
-                pcall(mm2Control.setChecked, wanted)
-                syncing = false
-            end
-        end
     end
 
     TouchFlingFeature = createUniversalFeature(
         "Touch Fling",
-        "Walk into a player and the contact launches them, with your character left normal",
+        "Walk normally: whoever you bump into gets flung, and you keep your full control",
         14,
         toggleTouchFling,
         {noOptions = true, categoryName = "Exploits", restore = false}
     )
     addFeatureTooltip(
         TouchFlingFeature,
-        "Only your body parts listen; touching someone adds a bounded contact pulse to their body and one physics step to yours. No spin, no Humanoid Physics state, no teleports, no ownership requests. OFF and respawn restore every snapshot."
+        "Nothing is changed while you just walk: your parts only listen for contact. "
+            .. "On a real touch the fling lasts 0.15 s, the impulse goes into the other "
+            .. "player, your character is held in place for that instant and then put "
+            .. "back exactly as it was. No rotation, no facing, no teleport, no Humanoid "
+            .. "Physics state, no ownership requests. OFF and respawn restore every snapshot."
     )
 
     if state then
