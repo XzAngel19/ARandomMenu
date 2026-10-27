@@ -4,7 +4,7 @@
 > reglas del usuario, y los errores que ya se pagaron una vez. Si algo aquí
 > contradice lo que crees, gana este documento (y los datos de calibración).
 >
-> **Estado al escribir esto:** rama `arena/9492e6b6-arandommenu`, build
+> **Estado al escribir esto:** rama `arena/76bc3f2f-arandommenu`, build
 > **`v138-20261026-autofarm-antifling-iy-fixes`**.
 > El usuario se comunica en español. Respóndele en español.
 
@@ -15,14 +15,14 @@
 - Menú "Wurst" para Roblox, foco principal **MM2** (place id `142823291`).
   También hay módulos universales y de otros juegos (BedFight, TRS, VD y
   X2Duels/MVS).
-- El loader carga el **bundle**: `getgenv().WURST_BRANCH = "arena/9492e6b6-arandommenu"`.
+- El loader carga el **bundle**: `getgenv().WURST_BRANCH = "arena/76bc3f2f-arandommenu"`.
 - **Protocolo de publicación (obligatorio, sin excepciones):**
   1. Edita en `src/…`, nunca directamente en `src/libraries/bundle.lua`.
   2. Sube `SOURCE_STAMP` en `src/Wurst.lua` (`vNNN-AAAAMMDD-descripcion`).
   3. `python3 tools/build_bundle.py --stamp <el mismo stamp>`
   4. `bash tools/validate.sh` — debe terminar VERDE (87 fuentes, 62 suites,
      boot `failures=0`, auditoría de menú 46/45 tarjetas).
-  5. Commit + push **normales** a `arena/9492e6b6-arandommenu`. Sin force-push,
+  5. Commit + push **normales** a `arena/76bc3f2f-arandommenu`. Sin force-push,
      sin reescribir historia, sin trabajar en otra rama.
 - Sin bundle regenerado + stamp, el cambio **no llega al usuario**. El watermark
   "UI Settings · vNNN" en el menú es como el usuario verifica la versión.
