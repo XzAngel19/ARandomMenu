@@ -5,14 +5,31 @@
 > contradice lo que crees, gana este documento (y los datos de calibración).
 >
 > **Estado al escribir esto:** rama canónica `arena/83897e25-arandommenu`,
-> build **`v148-20261026-fling-picks-a-player-and-keeps-your-control`**.
+> build **`v149-20261026-fling-is-walkfling-no-spin`**.
 > El usuario se comunica en español. Respóndele en español.
 
 ---
 
 ## 0. Estado operativo actual — v145, loader/caché · v144 Touch/Farm
 
-### 0.0 Lo más reciente: v148 (lista de jugadores + Touch sin giro), v147, v146, v145 y v144
+### 0.0 Lo más reciente: v149 (walkfling de IY, sin giro), v148, v147, v146, v145 y v144
+
+**v149 — el Fling es el `walkfling` de Infinite Yield.** Detalle en
+`docs/FIXES-v149.md`.
+
+- IY trae **dos** flings y yo usaba el equivocado: el `fling` de la línea 11373
+  gira tu propio assembly (`BodyAngularVelocity 99999`, densidad `math.huge`) —
+  eso era el «rota horrible y 0 % control». v149 copia el `walkfling` de la
+  línea 11453, que IY describe como *«fling but no spinning»*, y lo usa para
+  **todo**: Touch, Fling Murderer/Sheriff/Innocents, Fling y Auto Fling.
+- Mecanismo exacto: guardar la velocidad del root → `velocity * 1000000 + (0,1e6,0)`
+  → esperar `RenderStepped` → **devolver la velocidad** → esperar `Stepped` →
+  `velocity + (0,0.1,0)`. La velocidad gigante no existe cuando corre la física,
+  por eso no te lanza; y no hay ninguna restricción ni rotación, por eso no gira.
+- Ya no hay `BodyAngularVelocity`, `math.huge`, `99999`, `AlignPosition`,
+  `Massless`, `CustomPhysicalProperties` ni `lookAt` en el módulo. Y ninguna
+  conexión a frames: se **espera** en ellos dentro de la corrutina del pulso.
+- Touch: `TOUCH_PULSE = 0.18 s` + `TOUCH_COOLDOWN = 0.35 s`, sin colocar nada.
 
 **v148 — el Fling elige de una lista y el Touch ya no gira al personaje.**
 Detalle en `docs/FIXES-v148.md`.
@@ -28,16 +45,12 @@ Detalle en `docs/FIXES-v148.md`.
 - **Se borró el `Touch Fling` de la tarjeta MM2 Fling** (era un segundo dueño del
   mismo motor). Queda sólo el de Exploits. La clave retirada
   `MM2.Fling.TouchFling` se **borra** al cargar config (`RETIRED_OPTION_KEYS`).
-- **Nada rota al personaje**: el toque ya no hace `PivotTo` ni copia la
-  orientación del objetivo. El fling dirigido conserva la orientación
+- **Nada rota al personaje**: el toque no hace `PivotTo` ni copia la orientación
+  del objetivo. El fling dirigido conserva la orientación
   (`frame - frame.Position`). No existe `lookAt` en el módulo.
-- **El Touch es un pulso, no una sesión**: `TOUCH_BURST = 0.15 s` +
-  `TOUCH_COOLDOWN = 0.4 s`. Entre pulsos no hay constraint, ni pin, ni escritura:
-  caminas normal. El giro continuo era lo que «circulaba» al objetivo y te
-  lanzaba.
-- **El que flingea no sale despedido**: pin rígido mientras dura el pulso,
-  velocidades a cero al soltar y `MAX_DRIFT = 6` studs de tolerancia que se
-  deshace (sólo para pulsos de toque, nunca para caminar).
+- **El Touch es un pulso corto, no una sesión**: contacto → pulso → control
+  normal. (En v148 fue `0.15 s` con pin; v149 lo reemplazó por el pulso de
+  `walkfling`, que no necesita pin porque la velocidad nunca llega a la física.)
 
 **v147 — el Fling ya no te lanza a ti, y el lag se mide.** Detalle en
 `docs/FIXES-v147.md`.
@@ -144,14 +157,14 @@ se entrega ahora.
 | Repositorio | `XzAngel19/ARandomMenu` |
 | Rama activa y única para esta sesión | `arena/83897e25-arandommenu` |
 | `CANONICAL_BRANCH` (única del repo) | `arena/83897e25-arandommenu` |
-| `SOURCE_STAMP` | `v148-20261026-fling-picks-a-player-and-keeps-your-control` |
-| `BUILD_LABEL` visible | `v148` (derivado del stamp) |
+| `SOURCE_STAMP` | `v149-20261026-fling-is-walkfling-no-spin` |
+| `BUILD_LABEL` visible | `v149` (derivado del stamp) |
 | Bundle | `src/libraries/bundle.lua`, mismo stamp, **84 archivos** |
 | Identidad de caché | `Wurst/.stamp` + `Wurst/.branch` + `Wurst/.layout` |
 | Loader de `README.md` | Apunta a `refs/heads/arena/83897e25-arandommenu/src/Wurst.lua` |
 | Toolchain | Luau `0.739.0`, vendored en `tools/luau/vendor` |
-| Validación final de v148 | 86 fuentes, 66 suites, boot `failures=0`, 111 call sites, menú 50/49 |
-| Aceptación live de v148 | **Pendiente. No afirmar que el knockback del Touch llega; `TOUCH_BURST` es el número a subir si en vivo no alcanza.** |
+| Validación final de v149 | 86 fuentes, 66 suites, boot `failures=0`, 111 call sites, menú 50/49 |
+| Aceptación live de v149 | **Pendiente. No afirmar knockback: `TOUCH_PULSE` (0.18 s) es el número a subir si en vivo no alcanza.** |
 
 - El commit `5b4ad20` se publicó con push normal y el remoto coincidió con
   `5b4ad20672d9501ca06ecce14380b91e9cf6d459`. Esta actualización de `RESUME.md`
@@ -334,43 +347,48 @@ directas a RunService que no pertenecen a este scheduler.
 
 ### 0.6 Contrato actual de Fling, Touch y Auto Farm
 
-v146 cambió el **mecanismo**. Los valores de v144/v145 (pulsos acotados de
-`200`/`170`) quedan como historia: no son la base de nada.
+v149 cambió el **mecanismo otra vez**, y esta vez al bueno. IY trae dos flings:
 
-- Controller compartido: `src/libraries/Fling.lua`, mecanismo de Infinite Yield
-  (la referencia que pasó el usuario).
-- **La orientación del personaje nunca se toca** (v148): no hay `lookAt`, no se
-  copia la orientación del objetivo y el toque no hace `PivotTo`. El fling
-  dirigido mueve el root al punto de contacto con `frame - frame.Position`; el
-  Touch no mueve nada. Esto es requisito del usuario: «no quiero que rote».
-- Fling dirigido: **una** colocación de contacto (`PivotTo` a 2.2 studs del
-  objetivo, orientación propia) y después el giro hace el trabajo.
-- **El que flingea no sale despedido:** durante el giro, el root local queda
-  fijado con `AlignPosition` rígido (`OneAttachment`, `Position` = posición del
-  contacto, `RigidityEnabled = true`), máximo `0.8 s`. Sin eso, la reacción del
-  giro lanza a los dos.
-- Mecanismo: `BodyAngularVelocity` en el root a `99999 rad/s`,
-  `MaxTorque`/`P` `math.huge`, `CustomPhysicalProperties = PhysicalProperties.new(math.huge, 0.3, 0.5)`,
-  `Massless = true`, `CanCollide = false`, `Velocity = 0` en las partes.
-  Ciclo `0.2 s` girando / `0.1 s` quieto. Eso es el `fling` de IY.
+- `fling` (referencia, línea 11373): gira **tu** assembly con
+  `BodyAngularVelocity 99999` y densidad `math.huge`. Es el que usaban v146–v148
+  y la causa directa del «rota horrible y 0 % control». **Prohibido.**
+- `walkfling` (referencia, línea 11453): la descripción de IY es *«Basically
+  fling but no spinning»*. **Es el que usa v149, para todo.**
+
+Contrato vigente:
+
+- Controller compartido: `src/libraries/Fling.lua`, `walkfling` de IY:
+  guardar `AssemblyLinearVelocity` del root → `velocity * 1000000 + Vector3.new(0,1000000,0)`
+  → esperar `RenderStepped` → devolver la velocidad → esperar `Stepped` →
+  `velocity + Vector3.new(0,0.1,0)`. Esos números son los de IY, no inventados.
+- El orden de frames es el mecanismo: la velocidad gigante **no existe** en el
+  paso de física. Invertir el orden es lo que lanzaba al que flingea; la suite
+  lo comprueba explícitamente.
+- **Sin cuerpo tocado**: no hay `BodyAngularVelocity`, `math.huge`, `99999`,
+  `AlignPosition`, `Massless`, `CustomPhysicalProperties` ni `lookAt`. La suite
+  falla si reaparece cualquiera.
+- **La orientación nunca se toca:** dos `PivotTo` en total (colocación dirigida
+  conservando `frame - frame.Position`, y la vuelta a casa). El Touch no coloca.
 - **Nunca** se escribe velocidad al tocado: el cliente no es dueño de su
   assembly y el servidor la sobrescribe. La prueba falla si aparece
   `targetRoot.<propiedad> = ...`.
-- **Cero Lua por frame**: no hay `PreSimulation`, `Heartbeat` ni `Stepped` en el
-  controller; el ciclo son dos `task.wait` y Touch es un `Touched`.
+- **Cero callbacks por frame**: no hay `RenderStepped:Connect` ni
+  `Stepped:Connect`; se **espera** en esos eventos dentro de la corrutina del
+  pulso, igual que IY.
 - Touch: `CanTouch = true` en las partes propias (snapshot + restauración), un
   `Touched` por parte y `DescendantAdded` para herramientas nuevas. Al contacto
-  hay **un pulso de `0.15 s`** (`TOUCH_BURST`) con `0.4 s` de cooldown
-  (`TOUCH_COOLDOWN`); si no tocas a nadie, no gira. **No volver al giro
+  hay **un pulso de `0.18 s`** (`TOUCH_PULSE`) con `0.35 s` de cooldown
+  (`TOUCH_COOLDOWN`); si no tocas a nadie, no pasa nada. **No volver al giro
   continuo**: era lo que hacía circular al personaje y lo que lanzaba al que
   flingea.
-- El que flingea no sale despedido (v148): pin rígido durante el pulso,
-  `AssemblyLinearVelocity`/`AssemblyAngularVelocity` a cero al soltar y
-  `MAX_DRIFT = 6` studs de deriva deshecha (sólo `driftGuard`, es decir sólo
-  pulsos de toque; caminar nunca se corrige). `activity.set("fling", …)` sigue
-  igual, así que Noclip/Fly/Auto Win ceden mientras hay sesión o Touch activo.
-- Restauración: OFF, muerte, respawn, cancelación y `destroy` destruyen el
-  constraint y devuelven `CanCollide`, `Massless` y la densidad guardados.
+- El que flingea no sale despedido **por construcción**: la velocidad gigante se
+  devuelve antes del paso de física, así que no hay impulso que lo lance ni pin
+  que lo sujete. `activity.set("fling", …)` sigue igual, así que Noclip/Fly/Auto
+  Win ceden mientras hay sesión o Touch activo.
+- Restauración: OFF, muerte, respawn, cancelación y `destroy` cortan la
+  corrutina del pulso, devuelven la última velocidad capturada del jugador,
+  quitan los listeners y restauran `CanTouch`. El módulo **no** toca
+  `CanCollide`, `Massless` ni la densidad: no hay nada que restaurar.
 - MM2 exige ronda activa, personaje local vivo y objetivo válido/vivo.
 - **La tarjeta MM2 Fling elige el objetivo de una lista**, nunca de un texto: la
   clave de lista es `MM2.Fling.Flingtarget` (`addListOption`, `single = true`) y
@@ -532,6 +550,7 @@ siguen pendientes en vivo»**, no «Touch y lag solucionados».
 | `docs/FIXES-v144.md` | Qué cambió en v144 y por qué (Touch, cobro, guards, CPU). |
 | `docs/FIXES-v145.md` | Loader canónico, identidad de caché, versión derivada y árboles legacy borrados. |
 | `docs/FIXES-v146.md` | Fling IY (giro del assembly local) y los tres escritores de física por frame eliminados. |
+| `docs/FIXES-v149.md` | Fling = `walkfling` de IY: sin giro, sin restricciones y sin lanzar al que flingea. |
 | `docs/FIXES-v148.md` | Lista de objetivos con rol, retirada del `Touch Fling` de MM2, toque sin rotación y sin lanzar al que flingea. |
 | `docs/FIXES-v147.md` | Pin rígido para no salir despedido + causa exacta del lag (v138) y la línea `Script`. |
 | `tools/perf_frame.py` | Perfil del coste por callback y comprobación de la línea `Script` en Session Info. |
@@ -1535,12 +1554,11 @@ la implementación actual:
   correcto en una ronda real (incluido el caso «MM2 aún no publicó roles»), que
   el rol cambie al cambiar de ronda y que un jugador que se va o muere
   desaparezca sin dejar la selección apuntando a nadie.
-- **v148 Touch:** que el pulso de `0.15 s` entregue knockback en vivo. Si no
-  alcanza, subir `TOUCH_BURST` (no la lógica, no la colocación). Y confirmar
-  que el personaje **no gira** al tocar y que caminar sigue normal entre
-  pulsos.
-- **v148 «no me bota a mí»:** confirmar que con `MAX_DRIFT = 6` la deriva de
-  un pulso se deshace y que el pin no interfiere con caminar.
+- **v149 Touch:** que el pulso de `walkfling` (`TOUCH_PULSE = 0.18 s`) entregue
+  knockback en vivo. Si no alcanza, subir `TOUCH_PULSE` (no la lógica). Y
+  confirmar que el personaje **no gira** al tocar y que caminar sigue normal.
+- **v149 «no me bota a mí»:** el mecanismo no mete la velocidad gigante en el
+  paso de física; confirmar en vivo que no hay tirón propio en ping alto.
 
 - **v145 loader/caché:** inyectar dos veces con el mismo archivo, cambiar de
   rama con `getgenv().WURST_BRANCH`, pulsar *Clear cache* y *Reinject latest*.
@@ -1595,9 +1613,10 @@ la implementación actual:
   documentales no requieren stamp, pero sí actualizar este handoff con precisión.
 
 ---
-*Última actualización: 2026-10-26 · runtime v148, Fling con lista de jugadores
-y roles, Touch en pulsos de 0.15 s sin rotación (solo
-vuela el tocado), anti-fling sin recorrido de árbol ni escrituras por frame,
+*Última actualización: 2026-10-26 · runtime v149, Fling = `walkfling` de
+Infinite Yield (velocidad 1e6 sólo en la ventana de render, cero restricciones,
+cero rotación, no lanza al que flingea) con lista de jugadores y roles y Touch
+en pulsos de 0.18 s, anti-fling sin recorrido de árbol ni escrituras por frame,
 línea `Script` en Session Info y `tools/perf_frame.py`. v146, Fling con el mecanismo de
 Infinite Yield (giro del assembly local, cero Lua por frame, snapshots
 restaurados), anti-fling y noclip con listas de partes cacheadas y sin

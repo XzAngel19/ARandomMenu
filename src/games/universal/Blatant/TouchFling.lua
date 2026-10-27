@@ -38,18 +38,20 @@ function Module.init(context: Runtime): any
 
     TouchFlingFeature = createUniversalFeature(
         "Touch Fling",
-        "Walk normally: whoever you bump into gets flung, and you keep your full control",
+        "Walk normally: whoever you bump into gets flung. No spin, no rotation, full control",
         14,
         toggleTouchFling,
         {noOptions = true, categoryName = "Exploits", restore = false}
     )
     addFeatureTooltip(
         TouchFlingFeature,
-        "Nothing is changed while you just walk: your parts only listen for contact. "
-            .. "On a real touch the fling lasts 0.15 s, the impulse goes into the other "
-            .. "player, your character is held in place for that instant and then put "
-            .. "back exactly as it was. No rotation, no facing, no teleport, no Humanoid "
-            .. "Physics state, no ownership requests. OFF and respawn restore every snapshot."
+        "Infinite Yield's walkfling, which IY itself describes as \"fling but no "
+            .. "spinning\": on contact your root velocity gets IY's exact pulse "
+            .. "(velocity * 1000000 + 1e6 up) for one render window only, is restored "
+            .. "before the physics step, and is followed by IY's 0.1 stud drift. "
+            .. "Nothing is attached to your body, nothing is pinned, and the character "
+            .. "never turns: you keep walking and you keep looking where you look. "
+            .. "OFF and respawn restore every snapshot."
     )
 
     if state then

@@ -1,14 +1,24 @@
 #!/usr/bin/env python3
 """Exercise the real shared Fling controller with deterministic physics mocks.
 
-The mechanism is Infinite Yield's: the LOCAL assembly spins (BodyAngularVelocity
-99999, infinite density, massless + no collision) and the contact carries that
-energy into the other body. Writing velocity to another player's assembly does
-nothing, which is why the previous bounded-pulse version looked like it was
-disabled.
+The mechanism is Infinite Yield's `walkfling` (line 11453 of the reference the
+user provided), not IY's spinning `fling`:
 
-These tests cover the mechanism, the duty cycle, ownership and cleanup. They do
-not prove server-side knockback: only a live session can show that.
+    local Velocity = root.Velocity
+    root.Velocity = Velocity * 1000000 + Vector3.new(0, 1000000, 0)
+    RunService.RenderStepped:Wait()
+    root.Velocity = Velocity
+    RunService.Stepped:Wait()
+    root.Velocity = Velocity + Vector3.new(0, 0.1, 0)
+
+Nothing spins, nothing is attached to the body, and the huge velocity only
+exists during the render window: it is put back before the physics step, which
+is why the player keeps walking and is never launched. The retired spinning
+design (BodyAngularVelocity 99999 + infinite density) is what made the body
+rotate and lose control, so it is forbidden here.
+
+These tests cover the mechanism, the frame ordering, ownership and cleanup. They
+do not prove server-side knockback: only a live session can show that.
 """
 from __future__ import annotations
 
@@ -26,37 +36,65 @@ MM2_SOURCE = (ROOT / "src/games/MM2/Blatant/Fling.lua").read_text()
 TOUCH_SOURCE = (ROOT / "src/games/universal/Blatant/TouchFling.lua").read_text()
 NOCLIP_SOURCE = (ROOT / "src/games/universal/Blatant/Noclip.lua").read_text()
 
-# The retired velocity-pulse design must not come back.
+
+def without_comments(text: str) -> str:
+    """Drop Lua comments so the retired mechanism may still be *explained*."""
+    kept = []
+    for line in text.splitlines():
+        cut = line.find("--")
+        kept.append(line if cut < 0 else line[:cut])
+    return "\n".join(kept)
+
+
+CODE = without_comments(SOURCE)
+
+# The spinning IY fling and the old velocity-pulse design must not come back.
+# Both are what made the character rotate ("rota horrible") with no control.
 for forbidden in (
+    "BodyAngularVelocity",
     "SetNetworkOwner",
     "CameraSubject",
     "BodyVelocity",
     "BodyGyro",
+    "AlignPosition",
+    "AlignOrientation",
+    "SetPrimaryPartCFrame",
+    "RigidityEnabled",
+    "math.huge,",
+    "99999",
     "9e7",
     "9e8",
-    "10000",
-    "12000",
-    "20000",
+    "250000",
 ):
-    assert forbidden not in SOURCE, forbidden
-# No per-frame Lua at all: the whole point of the IY mechanism is that the
-# engine does the work and we only flip the constraint. The words may appear in
-# comments explaining the old design, never as a connection.
-for forbidden in ("PreSimulation", "Heartbeat", "RenderStepped", "Stepped"):
-    assert f"RunService.{forbidden}" not in SOURCE, f"Fling must not connect {forbidden}"
-    assert f"{forbidden}:Connect" not in SOURCE, f"Fling must not connect {forbidden}"
-assert "RunService" not in SOURCE.replace("run the", ""), (
-    "Fling must not need RunService at all"
-)
-assert "SPIN_RATE: number = 99999" in SOURCE
-assert re.search(r"PhysicalProperties\.new\(\s*math\.huge, 0\.3, 0\.5\s*\)", SOURCE)
-assert "BodyAngularVelocity" in SOURCE
-assert "task.wait(SPIN_ON)" in SOURCE and "task.wait(SPIN_OFF)" in SOURCE
+    assert forbidden not in CODE, forbidden
+# No body mutation at all: walkfling only writes the root velocity.
+for forbidden in ("Massless", "CustomPhysicalProperties", "PhysicalProperties"):
+    assert forbidden not in CODE, forbidden
+# The only velocity write is IY's own pulse.
+assert "PULSE_SCALE: number = 1000000" in CODE
+assert "PULSE_LIFT: Vector3 = Vector3.new(0, 1000000, 0)" in CODE
+assert "PULSE_DRIFT: Vector3 = Vector3.new(0, 0.1, 0)" in CODE
+assert "velocity * PULSE_SCALE + PULSE_LIFT" in CODE
+assert "velocity + PULSE_DRIFT" in CODE
+# IY's ordering: the huge velocity is restored inside the render window, before
+# the Stepped/physics step. Swapping these two is what would launch the player.
+render_at = CODE.index("waitFrame(renderSignal)")
+restore_at = CODE.index("root.AssemblyLinearVelocity = velocity\n")
+stepped_at = CODE.index("waitFrame(steppedSignal)")
+assert render_at < restore_at < stepped_at, "walkfling frame ordering"
+# Waiting on a frame signal is not a connection: no per-frame callback at all.
+for forbidden in ("RenderStepped:Connect", "Stepped:Connect", "Heartbeat:Connect"):
+    assert forbidden not in CODE, forbidden
+assert "RunService.RenderStepped:Connect" not in CODE
 # Never write to the target: another player's assembly is not ours to drive.
-for line in SOURCE.splitlines():
+for line in CODE.splitlines():
     stripped = line.strip()
     if stripped.startswith("targetRoot."):
         raise AssertionError(f"Fling writes the target assembly: {stripped}")
+# The character is never turned: no lookAt anywhere, and the only PivotTo calls
+# keep the orientation of the frame that was captured before the fling.
+assert "lookAt" not in CODE
+assert CODE.count("PivotTo(") == 2, "placement and return home, nothing else"
 
 script = PRELUDE + r'''
 local cfMt = {}
@@ -69,7 +107,7 @@ function CFrame.new(x,y,z)
     local p = if type(x) == "table" then x else Vector3.new(x or 0,y or 0,z or 0)
     return setmetatable({Position=p,LookVector=Vector3.new(0,0,-1)},cfMt)
 end
-function CFrame.lookAt(p,q)
+CFrame.lookAt = function(p,q)
     local result = CFrame.new(p)
     result.LookVector = (q-p).Unit
     return result
@@ -84,10 +122,39 @@ function typeof(value)
     return oldTypeof(value)
 end
 
--- Deterministic task scheduler: spawn/delay create coroutine records, wait
--- yields, and pump(dt) advances a virtual clock.
+-- Deterministic scheduler. Two kinds of waits exist: task.wait(dt) wakes on the
+-- virtual clock, and RunService signals wake when their frame fires. pump(dt)
+-- advances one frame: due timers first, then Heartbeat, RenderStepped, Stepped
+-- in Roblox's order, which is exactly what walkfling depends on.
 local scheduler = {now = 0, records = {}, pending = {}}
 os = {clock = function() return scheduler.now end}
+local frameOrder = {"Heartbeat", "RenderStepped", "Stepped"}
+local frameWaiters = {Heartbeat = {}, RenderStepped = {}, Stepped = {}}
+local frameTrace = {}
+local traceSource = nil
+local traceEnabled = false
+
+local function makeFrameSignal(name)
+    local signal = {}
+    function signal:Wait()
+        local co = coroutine.running()
+        -- Park: a coroutine waiting for a frame must not be woken by the timer
+        -- loop, or the frame order this mechanism depends on disappears.
+        if co and scheduler.records[co] then
+            scheduler.records[co].wakeAt = math.huge
+        end
+        table.insert(frameWaiters[name], co)
+        coroutine.yield()
+    end
+    function signal:Connect() error("Fling must not connect frame signals") end
+    return signal
+end
+RunService = {
+    Heartbeat = makeFrameSignal("Heartbeat"),
+    RenderStepped = makeFrameSignal("RenderStepped"),
+    Stepped = makeFrameSignal("Stepped"),
+}
+
 task = {}
 local function schedule(co, wakeAt)
     local record = {co = co, wakeAt = wakeAt}
@@ -122,12 +189,37 @@ function task.wait(dt)
     record.wakeAt = scheduler.now + (dt or 0)
     coroutine.yield()
 end
-pump = function(dt)
-    scheduler.now += (dt or 1/60)
-    local steps = 0
-    while steps < 500 do
-        steps += 1
-        local resumed = false
+
+local function recordFrame(name)
+    if not traceEnabled or not traceSource then return end
+    local velocity = traceSource.AssemblyLinearVelocity
+    table.insert(frameTrace, {
+        frame = name,
+        velocity = velocity,
+    })
+end
+
+local function fireFrame(name)
+    local waiters = frameWaiters[name]
+    if #waiters == 0 then return false end
+    recordFrame(name)
+    frameWaiters[name] = {}
+    for _, co in ipairs(waiters) do
+        local ok, err = coroutine.resume(co)
+        assert(ok, err)
+        if coroutine.status(co) == "dead" then
+            scheduler.records[co] = nil
+            for index, record in ipairs(scheduler.pending) do
+                if record.co == co then table.remove(scheduler.pending, index); break end
+            end
+        end
+    end
+    return true
+end
+
+local function runDueTimers()
+    for _ = 1, 200 do
+        local progressed = false
         local index = 1
         while index <= #scheduler.pending do
             local record = scheduler.pending[index]
@@ -140,15 +232,25 @@ pump = function(dt)
                 else
                     index += 1
                 end
-                resumed = true
+                progressed = true
             else
                 index += 1
             end
         end
-        if not resumed then
-            return
-        end
+        if not progressed then return end
     end
+end
+
+-- One call = one frame: due timers, then Heartbeat, RenderStepped and Stepped.
+-- Advancing a single frame per call is what makes the walkfling ordering
+-- observable and keeps the 0.1 stud drift at IY's real rate.
+pump = function(dt)
+    scheduler.now += (dt or 1/60)
+    runDueTimers()
+    for _, name in ipairs(frameOrder) do
+        fireFrame(name)
+    end
+    runDueTimers()
 end
 
 PhysicalProperties = {}
@@ -305,199 +407,200 @@ local activity = {
     set = function(name, value) assert(name == "fling"); activityValue = value end,
     isActive = function(name) return name == "fling" and activityValue end,
 }
-local host = {Players = Players, LocalPlayer = LocalPlayer}
+local host = {Players = Players, LocalPlayer = LocalPlayer, RunService = RunService}
 local Module = (function()
 ''' + SOURCE + r'''
 end)()
 local physics = Module.init({host = host, services = {activity = activity}})
+traceSource = root
 
-local function constraint()
-    return root:FindFirstChild("WurstFlingSpin")
-end
 local function sameVector(a, b)
     return a.X == b.X and a.Y == b.Y and a.Z == b.Z
 end
+local function resetTrace()
+    table.clear(frameTrace)
+    traceEnabled = true
+end
+local function stopTrace() traceEnabled = false end
+local function hugeSamples()
+    local count = 0
+    for _, sample in ipairs(frameTrace) do
+        if sample.velocity and math.abs(sample.velocity.Y) > 100000 then count += 1 end
+    end
+    return count
+end
+local function steppedSamplesHuge()
+    for _, sample in ipairs(frameTrace) do
+        if sample.frame == "Stepped" and sample.velocity
+            and math.abs(sample.velocity.Y) > 100000 then
+            return true
+        end
+    end
+    return false
+end
 
--- Boot with everything OFF: no listener, no constraint, no spin, no signals.
+-- Boot with everything OFF: no listener, no pulse, no writes.
 assert(root.Touched:live() == 0, "no Touched listener while OFF")
 assert(localCharacter.pivotCalls == nil, "OFF does not move the character")
 assert(not physics.isRunning() and not physics.isTouchEnabled() and not activityValue)
-pass("Fling OFF allocates nothing and moves nothing")
+assert(not physics.isPulsing() and not physics.isSpinning() and not physics.isHeld())
+assert(root.AssemblyLinearVelocity.Y == 0, "OFF writes no velocity")
+pass("Fling OFF allocates nothing, attaches nothing and writes nothing")
 
--- The local character is held while it spins: IY alone throws the flinger too.
-local function holdConstraint()
-    -- The attachment and the AlignPosition share the name; pick the constraint.
-    for _, child in ipairs(root.children) do
-        if child.ClassName == "AlignPosition" and child.Name == "WurstFlingHold" then
-            return child
-        end
-    end
-    return nil
-end
-local function holdAttachment()
-    for _, child in ipairs(root.children) do
-        if child.ClassName == "Attachment" and child.Name == "WurstFlingHold" then
-            return child
-        end
-    end
-    return nil
-end
-
--- Directed fling: IY mechanism.
+-- Directed fling: IY's walkfling, applied to the target's contact point.
 local home = root.CFrame
 local localStartLook = root.LookVector
 local targetBefore = targetRoot.AssemblyLinearVelocity
+resetTrace()
 assert(physics.start(target, {duration = 0.4}))
 assert(localCharacter.pivotCalls == 1, "one contact placement")
--- v148: the character is never turned toward the target.
-assert(root.LookVector.Z == localStartLook.Z,
+assert(root.LookVector.Z == localStartLook.Z
+    and root.LookVector.X == localStartLook.X,
     "the fling must not rotate the character toward the target")
-assert(root.LookVector.X == localStartLook.X,
-    "the fling must not rotate the character toward the target")
-local spin = constraint()
-assert(spin, "directed fling attaches the IY spin")
-assert(spin.AngularVelocity.Y == 99999, "99999 rad/s spin")
-assert(spin.MaxTorque.Y == math.huge and spin.P == math.huge, "infinite torque")
-assert(root.Massless == true and torso.Massless == true, "body becomes massless")
-assert(root.CanCollide == false and torso.CanCollide == false,
-    "no collision pairs are created (that was physics cost)")
-assert(root.CustomPhysicalProperties.density == math.huge, "infinite density")
+assert(physics.isRunning() and physics.isPulsing(), "session owns the pulse loop")
+-- Nothing is attached to the body and no physical property is touched; this is
+-- what keeps full control, and it is the opposite of the spinning version.
+assert(#created == 0, "no BodyAngularVelocity is ever created")
+assert(root:FindFirstChild("WurstFlingSpin") == nil, "no spin constraint")
+assert(root:FindFirstChild("WurstFlingHold") == nil, "no position pin")
+assert(root.Massless == false and torso.Massless == false, "body stays physical")
+assert(root.CanCollide == false and torso.CanCollide == true,
+    "collision is not touched (Noclip owns it)")
+assert(root.CustomPhysicalProperties.density == 0.7, "density is untouched")
 assert(sameVector(targetRoot.AssemblyLinearVelocity, targetBefore),
-    "never writes the target assembly (it would be overwritten anyway)")
+    "never writes the target assembly")
 assert(not physics.start(target, {duration = 0.4}), "one directed owner")
-assert(spin and physics.isHeld(), "the spinner is position-held")
-local hold = holdConstraint()
-assert(hold and hold.RigidityEnabled == true, "rigid AlignPosition, no spring")
-assert(hold.Attachment0 and hold.Attachment0.Name == "WurstFlingHold")
--- OneAttachment holds the world Position; the default (0,0,0) would drag the
--- player to the origin, so it must be the contact position.
-assert(hold.Position == root.Position, "the hold is pinned where the contact was")
-pass("directed fling spins the local assembly and never drives the target")
+pass("directed fling pulses like walkfling without touching the body")
 
--- Duty cycle: 0.2 s spinning, 0.1 s stopped.
-pump(0.05)
-assert(constraint().AngularVelocity.Y == 99999, "spinning at the start of the cycle")
-pump(0.2)
-assert(constraint().AngularVelocity.Y == 0, "spin stops after 0.2 s")
+-- Frame ordering: the huge velocity exists during the render window only and is
+-- already restored when Stepped fires. That is why walking survives and why the
+-- player is not launched.
 pump(0.1)
-assert(constraint().AngularVelocity.Y == 99999, "spin resumes after 0.1 s")
-pass("IY duty cycle 0.2 s on / 0.1 s off with no per-frame Lua")
+assert(hugeSamples() > 0, "the pulse really reaches 1e6 during the render window")
+assert(not steppedSamplesHuge(),
+    "the huge velocity is restored before the physics step")
+local lastRestored = nil
+for _, sample in ipairs(frameTrace) do
+    if sample.frame == "Stepped" then lastRestored = sample.velocity end
+end
+assert(lastRestored and math.abs(lastRestored.Y) < 1000,
+    "physics only ever sees the player's own velocity")
+stopTrace()
+pass("walkfling ordering: 1e6 is gone before the physics step runs")
 
--- Duration end restores everything.
-pump(0.4)
+-- The player's own motion is what the loop restores, not a frozen zero.
+pump(0.5) -- let the previous session finish
+assert(not physics.isRunning())
+root.AssemblyLinearVelocity = Vector3.new(16, 0, 0)
+assert(physics.start(target, {duration = 0.3, restorePosition = false}))
+resetTrace()
+pump(1/60)
+pump(1/60)
+pump(1/60)
+assert(physics.isPulsing(), "the second session is pulsing")
+local sawWalking = false
+for _, sample in ipairs(frameTrace) do
+    if sample.frame == "Stepped" and sample.velocity.X == 16 then sawWalking = true end
+end
+stopTrace()
+assert(sawWalking, "walking velocity survives every pulse")
+assert(not steppedSamplesHuge(), "and physics still never sees the 1e6")
+root.AssemblyLinearVelocity = Vector3.zero
+pump(0.5)
+pass("the player keeps walking through the pulse")
+
+-- Duration end restores everything and returns the body home.
+pump(0.5)
 assert(not physics.isRunning(), "session ends at its duration")
-assert(constraint() == nil, "constraint destroyed")
-assert(root.Massless == false and torso.Massless == false, "massless restored")
-assert(root.CanCollide == false and torso.CanCollide == true, "collision restored")
-assert(root.CustomPhysicalProperties.density == 0.7, "physical properties restored")
-assert(localCharacter.pivotCalls == 2,
+assert(localCharacter.pivotCalls >= 2,
     "the only extra placement is the one return home, never a per-frame one")
-assert(not physics.isHeld() and holdConstraint() == nil
-    and holdAttachment() == nil, "the position hold is released with the spin")
-pass("directed fling restores density, massless and collision")
+assert(root.AssemblyLinearVelocity.X == 16
+    and math.abs(root.AssemblyLinearVelocity.Y) < 1,
+    "the walking velocity is put back (only IY's 0.1 drift remains)")
+assert(#created == 0 and root:FindFirstChild("WurstFlingSpin") == nil)
+assert(root.Massless == false and root.CustomPhysicalProperties.density == 0.7)
 
--- The pin has a short life: a long session must not freeze the player.
-assert(physics.start(target, {duration = 2}))
-assert(physics.isHeld() and constraint() ~= nil)
-pump(1.0)
-assert(constraint() ~= nil, "the spin is still running")
-assert(not physics.isHeld() and holdConstraint() == nil,
-    "the position pin expires on its own after ~0.8 s")
-physics.cancel()
-
--- Local death cancels without leaving the constraint behind.
-assert(physics.start(target, {duration = 2}))
-assert(constraint() ~= nil)
+-- Death ends the session without waiting for the duration or leaving a pulse.
+root.AssemblyLinearVelocity = Vector3.zero
+assert(physics.start(target, {duration = 2, restorePosition = false}))
+assert(physics.isRunning())
 humanoid.Health = 0
 pump(0.1)
-assert(constraint() == nil, "death releases the spin on the next poll")
+assert(not physics.isRunning(), "death ends the session on the next pulse")
 humanoid.Died:Fire()
-assert(constraint() == nil, "the Died event is idempotent here")
+assert(not physics.isRunning(), "the Died event is idempotent here")
 humanoid.Health = 100
-physics.cancel()
-assert(not physics.isRunning())
-pass("death releases the spin")
+assert(not physics.isPulsing(), "no pulse survives death")
+pass("death releases the fling")
 
--- Touch Fling: listen with CanTouch only, spin on real contact.
+-- Touch Fling: listen with CanTouch only, pulse on real contact.
 physics.setTouchEnabled(true)
 assert(physics.isTouchEnabled() and activityValue)
 assert(root.CanTouch == true and torso.CanTouch == true, "body listens for contact")
 assert(root.CanCollide == false and torso.CanCollide == true,
     "listening does not change collisions")
 assert(root.Touched:live() == 1, "one listener per body part")
-assert(constraint() == nil, "idle Touch never spins")
 pump(1)
 local placementsBefore: number? = localCharacter.pivotCalls
-assert(constraint() == nil, "idle Touch never spins")
+assert(not physics.isPulsing(), "idle Touch never pulses")
 assert(localCharacter.pivotCalls == placementsBefore,
     "idle Touch never places the character")
 
 local touchStartLook = root.LookVector
+local touchStartPosition = root.Position
+root.AssemblyLinearVelocity = Vector3.zero
+resetTrace()
 root.Touched:Fire(targetRoot)
-local touchSpin = constraint()
-assert(touchSpin and touchSpin.AngularVelocity.Y == 99999, "contact starts the spin")
-assert(touchSpin.MaxTorque.Y == math.huge, "contact spin keeps infinite torque")
--- The touched player flies; you stay where the contact happened.
-assert(physics.isHeld() and holdConstraint() ~= nil,
-    "Touch holds the local player while it spins")
-assert(sameVector(root.AssemblyLinearVelocity, Vector3.zero),
-    "the spinner never keeps a launch velocity of its own")
-assert(sameVector(targetRoot.AssemblyLinearVelocity, targetBefore),
-    "Touch never writes the target either")
+assert(physics.isPulsing(), "contact starts the pulse")
+pump(0.05)
+assert(hugeSamples() > 0, "the contact pulse uses the same 1e6 window")
+assert(not steppedSamplesHuge(), "and restores it before the physics step")
+stopTrace()
 assert(root.LookVector.X == touchStartLook.X
     and root.LookVector.Z == touchStartLook.Z,
     "Touch never rotates the character")
 assert(localCharacter.pivotCalls == placementsBefore,
-    "Touch never moves the character into the target")
-pass("Touch spins on contact only, without rotating or moving the player")
-
--- The burst is short and self-cleaning: full control comes back by itself.
-pump(0.2)
-assert(constraint() == nil, "the 0.15 s burst releases the spin")
-assert(holdConstraint() == nil and holdAttachment() == nil,
-    "the burst releases the position pin too")
+    "Touch never moves the character")
+assert((root.Position - touchStartPosition).Magnitude < 0.001,
+    "Touch never teleports the character")
+assert(sameVector(targetRoot.AssemblyLinearVelocity, targetBefore),
+    "Touch never writes the target either")
+assert(#created == 0 and root:FindFirstChild("WurstFlingSpin") == nil
+    and root:FindFirstChild("WurstFlingHold") == nil,
+    "Touch attaches nothing")
 assert(root.Massless == false and root.CustomPhysicalProperties.density == 0.7,
-    "the burst restores density and massless")
-assert(root.CanCollide == false and torso.CanCollide == true,
-    "the burst restores collision")
-assert(sameVector(root.AssemblyLinearVelocity, Vector3.zero),
-    "no leftover launch velocity after the burst")
-assert(not physics.isHeld() and root.Touched:live() == 1,
-    "still listening after the burst, with nothing attached")
-pass("Touch is a self-cleaning burst that returns full control")
+    "Touch leaves the body alone")
+pass("Touch pulses on contact without rotating, moving or pinning the player")
 
--- A burst cannot throw the flinger: physics drift during it is undone.
-pump(0.5) -- let the previous burst's cooldown expire
-local beforeDrift = root.Position
-root.Touched:Fire(targetRoot)
-assert(constraint() ~= nil)
-root.Position = root.Position + Vector3.new(0, 0, 40)
-pump(0.2)
-assert((root.Position - beforeDrift).Magnitude < 1,
-    "physics drift during the burst is undone")
-assert(root.LookVector.X == touchStartLook.X
-    and root.LookVector.Z == touchStartLook.Z,
-    "restoring the position never changes the facing")
-pass("the flinger is never launched by its own burst")
+-- The pulse is short and self-cleaning: full control comes back by itself.
+pump(0.3)
+assert(not physics.isPulsing(), "the contact pulse ends by itself")
+assert(root.AssemblyLinearVelocity.X == 0
+    and math.abs(root.AssemblyLinearVelocity.Y) < 1
+    and root.AssemblyLinearVelocity.Z == 0,
+    "the velocity the player had is restored after the pulse")
+assert(root.Touched:live() == 1, "still listening, with nothing attached")
+assert(activityValue, "Touch keeps the fling activity flag while armed")
 
--- Cooldown: a contact right after a burst does not restart the spin.
-pump(0.05)
+-- Cooldown: a contact right after a pulse does not chain a new one.
 root.Touched:Fire(targetRoot)
-assert(constraint() == nil, "the cooldown keeps a crowd from chaining bursts")
+assert(not physics.isPulsing(), "the cooldown keeps a crowd from chaining pulses")
 pump(0.5)
 root.Touched:Fire(targetRoot)
-assert(constraint() ~= nil, "a new contact after the cooldown spins again")
+assert(physics.isPulsing(), "a new contact after the cooldown pulses again")
+pump(0.3)
 physics.setTouchEnabled(false)
-assert(constraint() == nil and not activityValue, "OFF releases the spin")
+assert(not physics.isTouchEnabled() and not activityValue, "OFF releases everything")
 assert(root.CanTouch == false and torso.CanTouch == false, "CanTouch restored")
 assert(root.Touched:live() == 0, "OFF disconnects the listeners")
+assert(not physics.isPulsing(), "OFF stops the pulse")
 pass("Touch OFF restores every snapshot and the cooldown holds")
 
--- A non-player touch never spins.
+-- A non-player touch never pulses.
 physics.setTouchEnabled(true)
 local prop = Instance.new("Part", localCharacter.Parent)
 root.Touched:Fire(prop)
-assert(constraint() == nil, "touching scenery is not a fling")
+assert(not physics.isPulsing(), "touching scenery is not a fling")
 physics.setTouchEnabled(false)
 pass("scenery contact is ignored")
 
@@ -563,19 +666,26 @@ NoclipModule.destroy()
 assert(torso.CanCollide == true, "Noclip restores its own snapshot")
 pass("Noclip caches the part list instead of walking it every frame")
 
+
 -- Destroy cleans everything.
+root.AssemblyLinearVelocity = Vector3.zero
 pump(0.5) -- the previous test left the touch cooldown running
 physics.setTouchEnabled(true)
 root.Touched:Fire(targetRoot)
-assert(constraint() ~= nil)
+assert(physics.isPulsing(), "a pulse is running before destroy")
 physics.destroy()
-assert(constraint() == nil and holdConstraint() == nil and holdAttachment() == nil)
-assert(not physics.isTouchEnabled() and not activityValue)
-assert(root.CanTouch == false and root.CustomPhysicalProperties.density == 0.7)
-pass("destroy releases the spin, the hold and restores the body")
-'''
+assert(not physics.isPulsing() and not physics.isRunning(), "destroy stops the pulse")
+assert(not physics.isTouchEnabled() and not activityValue, "destroy clears activity")
+assert(root.CanTouch == false and torso.CanTouch == false, "destroy restores CanTouch")
+assert(root.Touched:live() == 0, "destroy disconnects the listeners")
+assert(#created == 0 and root:FindFirstChild("WurstFlingSpin") == nil
+    and root:FindFirstChild("WurstFlingHold") == nil, "nothing was ever attached")
+assert(root.Massless == false and root.CustomPhysicalProperties.density == 0.7,
+    "destroy leaves the body as it found it")
+pump(0.3)
+assert(not physics.isPulsing(), "and it cannot come back")
+pass("destroy stops the pulse, disconnects and leaves the body untouched")
 
-script += r'''
 -- MM2 wrapper guards and blocking contract, using the real module next.
 local roundActive = false
 state = {

@@ -7,45 +7,30 @@ local Module = {
 
 local activeLibrary: any = nil
 
--- Fling, implemented the way Infinite Yield does it (the reference the user
--- provided) instead of with bounded velocity pulses.
+-- Fling, copied from Infinite Yield (the reference the user gave us).
 --
--- Why the old version did nothing: it wrote AssemblyLinearVelocity on the
--- TARGET's parts. The local client does not own another player's assembly, so
--- the replication stream overwrites that write on the very next frame. What
--- actually flings someone in Roblox is your OWN assembly spinning at an extreme
--- angular velocity with an extreme physical density while it touches them: the
--- server trusts your character's motion and the contact resolution carries that
--- energy into the other body.
+-- IY ships two different flings and they are not interchangeable:
 --
--- So the mechanism is exactly IY's:
+--   IY `fling` (line 11373) — density = math.huge, noclip, and a
+--   BodyAngularVelocity of 99999 rad/s on the LOCAL root, cycled 0.2 s on /
+--   0.1 s off. It flings by spinning your own assembly, so the body turns like a
+--   top and you lose the controls while it runs. That is the version v146-v148
+--   used, and it is exactly what the user kept reporting as "rota horrible y 0%
+--   control".
 --
---   1. CustomPhysicalProperties(density = math.huge) on the local parts.
---   2. CanCollide = false / Massless = true, so the body keeps walking normally
---      and never creates a permanent collider pair (that was also physics cost).
---   3. BodyAngularVelocity on the root at 99999 rad/s, MaxTorque = math.huge.
+--   IY `walkfling` (line 11453) — described in IY itself as "Basically fling but
+--   no spinning". Every frame it stores the root velocity, writes
+--   `velocity * 1000000 + Vector3.new(0, 1000000, 0)` for exactly one
+--   RenderStepped, puts the original velocity back, waits one Stepped and
+--   re-applies `velocity + Vector3.new(0, 0.1, 0)`. Nothing spins, nothing is
+--   attached, the character never turns, and the player keeps walking: the huge
+--   velocity only exists inside the physics step that resolves the contact, so
+--   it is never what the server sees your body doing.
 --
--- Three rules this module enforces on top of IY (v148):
---
---   * Touch is a BURST, not a session. Touching someone spins for 0.15 s and
---     then puts the body back exactly as it was. Between contacts nothing is
---     attached, nothing is pinned and nothing is written, so the player walks,
---     turns and jumps normally with full control. The old continuous spin is
---     what made the body look like it was circling the target (and what kept
---     throwing the flinger).
---   * The character is never rotated toward anybody: no lookAt, no facing, no
---     placement on contact. A directed fling moves the root once and keeps the
---     current orientation.
---   * The flinger is never launched. While the spin delivers the impulse a rigid
---     AlignPosition holds the root in place, and when the burst ends the body's
---     motion is zeroed and any physics drift beyond MAX_DRIFT is undone.
---
--- Everything is restored on OFF, death, respawn and destroy: the constraints are
--- destroyed, density/collision/massless go back to their snapshots.
---
--- CPU: while spinning there is NO per-frame Lua. The burst is two task.wait()
--- sleeps and Touch detection is a Touched listener. The old design ran a
--- PreSimulation + Heartbeat body every frame for the whole session.
+-- v149 is that second function, used for everything: Touch Fling and the directed
+-- flings (Fling Murderer / Sheriff / Innocents / Fling / Auto Fling). Nothing in
+-- this file rotates the character, nothing pins it, nothing writes to another
+-- player, and there is no constraint left behind between pulses.
 
 function Module.init(context: any): any
     local host: any = context.host or context
@@ -53,22 +38,25 @@ function Module.init(context: any): any
     local LocalPlayer: Player = host.LocalPlayer
     local services: any = context.services or host.services
     local activity: any = services and services.activity
+    local RunService: any = host.RunService
+    if not RunService and host.game and type(host.game.GetService) == "function" then
+        local okService: boolean, service: any = pcall(function(): any
+            return host.game:GetService("RunService")
+        end)
+        if okService then
+            RunService = service
+        end
+    end
 
-    local SPIN_RATE: number = 99999
-    local SPIN_ON: number = 0.2
-    local SPIN_OFF: number = 0.1
-    -- One short burst per contact: long enough for the contact to resolve, short
-    -- enough that the player never loses control.
-    local TOUCH_BURST: number = 0.15
-    -- Between bursts nothing happens; this keeps a crowded hallway from turning
-    -- into a permanent spin.
-    local TOUCH_COOLDOWN: number = 0.4
+    -- IY walkfling numbers, literally (line 11470-11486).
+    local PULSE_SCALE: number = 1000000
+    local PULSE_LIFT: Vector3 = Vector3.new(0, 1000000, 0)
+    local PULSE_DRIFT: Vector3 = Vector3.new(0, 0.1, 0)
+    -- One contact runs the pulse for a moment; longer than a frame so the contact
+    -- is delivered, short enough that the player never stops walking.
+    local TOUCH_PULSE: number = 0.18
+    local TOUCH_COOLDOWN: number = 0.35
     local CONTACT_RANGE: number = 20
-    -- A burst may never move the player more than this. Anything beyond it is
-    -- physics pushing the flinger, not the player walking, so it is undone.
-    local MAX_DRIFT: number = 6
-    -- Directed flings hold the player for the delivery window only.
-    local HOLD_SECONDS: number = 0.8
 
     local destroyed: boolean = false
     local currentSession: any = nil
@@ -77,12 +65,20 @@ function Module.init(context: any): any
     local touchCanTouch: {[BasePart]: boolean} = {}
     local touchCooldownUntil: number = 0
 
-    local spinState: any = nil
-    local spinLoopToken: number = 0
+    -- Only one pulse loop may own the root at a time.
+    local pulseToken: number = 0
+    local pulseActive: boolean = false
+
+    local renderSignal: any = RunService and RunService.RenderStepped or nil
+    local steppedSignal: any = RunService and RunService.Stepped or nil
 
     local function setActivity(): ()
         if activity and type(activity.set) == "function" then
-            pcall(activity.set, "fling", currentSession ~= nil or touchEnabled)
+            pcall(
+                activity.set,
+                "fling",
+                currentSession ~= nil or touchEnabled or pulseActive
+            )
         end
     end
 
@@ -110,263 +106,108 @@ function Module.init(context: any): any
         return character, humanoid, root
     end
 
-    -- Rotation only: used to move the root without changing which way the
-    -- character looks.
-    local function orientationOf(frame: CFrame): CFrame
-        return frame - frame.Position
-    end
-
-    local function desiredPivot(character: Model, root: BasePart): CFrame
-        local ok: boolean, frame: any = pcall(function(): any
-            return root.CFrame
-        end)
-        if ok and typeof(frame) == "CFrame" then
-            return frame -- current position + current orientation
-        end
-        local okCharacter: boolean, characterFrame: any = pcall(function(): any
-            return character:GetPivot()
-        end)
-        if okCharacter and typeof(characterFrame) == "CFrame" then
-            return characterFrame
-        end
-        return CFrame.new(root.Position)
-    end
-
-    local function releaseSpin(): ()
-        spinLoopToken += 1
-        local state: any = spinState
-        spinState = nil
-        if not state then
-            return
-        end
-        if state.constraint then
-            pcall(function(): ()
-                state.constraint:Destroy()
+    -- IY waits on frame signals here. `task.wait()` is the fallback so the module
+    -- still works when the host does not expose RunService.
+    local function waitFrame(signal: any): ()
+        if signal and type(signal.Wait) == "function" then
+            local ok: boolean = pcall(function(): ()
+                signal:Wait()
             end)
-        end
-        if state.hold then
-            pcall(function(): ()
-                state.hold:Destroy()
-            end)
-        end
-        if state.holdAttachment then
-            pcall(function(): ()
-                state.holdAttachment:Destroy()
-            end)
-        end
-        for part: BasePart, snapshot: any in pairs(state.parts) do
-            if part.Parent then
-                pcall(function(): ()
-                    if snapshot.canCollide ~= nil then
-                        part.CanCollide = snapshot.canCollide
-                    end
-                    if snapshot.massless ~= nil then
-                        part.Massless = snapshot.massless
-                    end
-                    if snapshot.properties ~= nil then
-                        part.CustomPhysicalProperties = snapshot.properties
-                    end
-                end)
+            if ok then
+                return
             end
         end
-        table.clear(state.parts)
+        task.wait()
+    end
 
-        -- Give the player their body back: no leftover launch, and if physics
-        -- pushed them away during the burst, put them where the burst started.
-        local root: BasePart? = state.root
-        if not root or not root.Parent then
-            return
+    -- A real Vector3 (and our numeric mock of one) has three numbers in X/Y/Z.
+    local function isVector(value: any): boolean
+        local ok: boolean, x: any, y: any, z: any = pcall(function(): any
+            return value.X, value.Y, value.Z
+        end)
+        return ok and type(x) == "number" and type(y) == "number"
+            and type(z) == "number"
+    end
+
+    -- One iteration of IY's walkfling loop. Returns the velocity it restored, or
+    -- nil when the root disappeared mid-pulse.
+    local function pulseOnce(root: BasePart): Vector3?
+        local ok: boolean, velocity: any = pcall(function(): any
+            return root.AssemblyLinearVelocity
+        end)
+        if not ok or not isVector(velocity) or not root.Parent then
+            return nil
         end
         pcall(function(): ()
-            root.AssemblyLinearVelocity = Vector3.zero
+            -- BasePart.Velocity in IY is the deprecated alias of this property.
+            root.AssemblyLinearVelocity = velocity * PULSE_SCALE + PULSE_LIFT
         end)
-        if state.driftGuard then
-            local startPosition: Vector3? = state.startPosition
-            local okDistance: boolean, distance: any = pcall(function(): number
-                return startPosition and (root.Position - startPosition).Magnitude or 0
-            end)
-            if okDistance and type(distance) == "number" and distance > MAX_DRIFT then
-                local character: Model? = state.character
-                local startFrame: CFrame? = state.startCFrame
-                if character and startFrame then
-                    pcall(function(): ()
-                        character:PivotTo(CFrame.new(startPosition)
-                            * orientationOf(startFrame))
-                    end)
-                end
-            end
+        waitFrame(renderSignal)
+        if not root.Parent then
+            return nil
         end
+        pcall(function(): ()
+            root.AssemblyLinearVelocity = velocity
+        end)
+        waitFrame(steppedSignal)
+        if not root.Parent then
+            return nil
+        end
+        pcall(function(): ()
+            root.AssemblyLinearVelocity = velocity + PULSE_DRIFT
+        end)
+        return velocity
     end
 
-    -- Holds the local root exactly where it is. RigidityEnabled makes the
-    -- attachment a hard position constraint, so the equal-and-opposite impulse
-    -- from the contact is absorbed here instead of throwing the local player.
-    local function createHold(root: BasePart, position: Vector3): (any?, any?)
-        local attachment: any = nil
-        local hold: any = nil
-        local ok: boolean = pcall(function(): ()
-            attachment = Instance.new("Attachment")
-            attachment.Name = "WurstFlingHold"
-            attachment.Parent = root
-            hold = Instance.new("AlignPosition")
-            hold.Name = "WurstFlingHold"
-            -- OneAttachment aligns Attachment0 with the WORLD position in
-            -- `Position`. Leaving that at (0, 0, 0) -- the default -- would drag
-            -- the player to the world origin, so it is pinned to the contact.
-            hold.Mode = Enum.PositionAlignmentMode.OneAttachment
-            hold.Position = position
-            hold.Attachment0 = attachment
-            hold.ApplyAtCenterOfMass = true
-            -- Rigid: no spring, no drift, no tuning.
-            hold.RigidityEnabled = true
-            hold.Parent = root
-        end)
-        if not ok or not hold then
-            if attachment then
-                pcall(function(): ()
-                    attachment:Destroy()
-                end)
-            end
-            return nil, nil
-        end
-        return hold, attachment
-    end
-
-    -- IY's fling: infinite density, no collision, massless body, spinning root.
-    -- `seconds` bounds the burst; nil means "until the caller releases it".
-    local function engageSpin(
-        character: Model,
+    -- IY's loop body, bounded: run pulses until `deadline` or until `shouldStop`.
+    -- The player's own velocity is put back when the loop ends, so nothing is
+    -- left over and walking resumes untouched.
+    local function runPulses(
         root: BasePart,
-        seconds: number?,
-        holdSeconds: number?
-    ): boolean
-        if spinState and spinState.root ~= root then
-            releaseSpin()
-        end
-        if not spinState then
-            local parts: {[BasePart]: any} = {}
-            for _, object: Instance in ipairs(character:GetChildren()) do
-                if object:IsA("BasePart") then
-                    local part: BasePart = object :: BasePart
-                    parts[part] = {
-                        canCollide = part.CanCollide,
-                        massless = part.Massless,
-                        properties = part.CustomPhysicalProperties,
-                    }
-                end
-            end
-            local constraint: any = nil
-            local ok: boolean = pcall(function(): ()
-                local body: any = Instance.new("BodyAngularVelocity")
-                body.Name = "WurstFlingSpin"
-                body.AngularVelocity = Vector3.new(0, SPIN_RATE, 0)
-                body.MaxTorque = Vector3.new(0, math.huge, 0)
-                body.P = math.huge
-                body.Parent = root
-                constraint = body
-            end)
-            if not ok or not constraint then
-                for part: BasePart, snapshot: any in pairs(parts) do
-                    if part.Parent then
-                        pcall(function(): ()
-                            part.CanCollide = snapshot.canCollide
-                            part.Massless = snapshot.massless
-                            part.CustomPhysicalProperties = snapshot.properties
-                        end)
-                    end
-                end
-                return false
-            end
-            for part: BasePart in pairs(parts) do
-                pcall(function(): ()
-                    -- Exactly IY's call: density, friction, elasticity.
-                    part.CustomPhysicalProperties = PhysicalProperties.new(
-                        math.huge, 0.3, 0.5
-                    )
-                    part.CanCollide = false
-                    part.Massless = true
-                    part.AssemblyLinearVelocity = Vector3.zero
-                end)
-            end
-            local startPosition: Vector3 = root.Position
-            local startFrame: CFrame = desiredPivot(character, root)
-            local hold: any, holdAttachment: any = createHold(root, startPosition)
-            spinState = {
-                root = root,
-                character = character,
-                constraint = constraint,
-                hold = hold,
-                holdAttachment = holdAttachment,
-                holdPosition = startPosition,
-                holdUntil = os.clock() + (holdSeconds or HOLD_SECONDS),
-                startPosition = startPosition,
-                startCFrame = startFrame,
-                -- A directed fling may legitimately travel; a touch burst may
-                -- not, so that is the one that undoes physics drift.
-                driftGuard = seconds ~= nil,
-                parts = parts,
-            }
-        end
-        local releaseAt: number? = nil
-        if seconds ~= nil then
-            releaseAt = os.clock() + math.max(0.05, seconds)
-        end
-        if spinState then
-            spinState.releaseAt = releaseAt
-        end
-
-        -- IY's duty cycle: spinning, then stopped, until released.
-        spinLoopToken += 1
-        local token: number = spinLoopToken
+        seconds: number,
+        shouldStop: (() -> boolean)?,
+        onFinished: (() -> ())?
+    ): ()
+        pulseToken += 1
+        local token: number = pulseToken
+        pulseActive = true
+        setActivity()
         task.spawn(function(): ()
-            while spinState and spinLoopToken == token and not destroyed do
-                local state: any = spinState
-                local now: number = os.clock()
-                if state.releaseAt and now >= state.releaseAt then
-                    releaseSpin()
-                    return
-                end
-                -- The pin has a short life of its own; a long fling must not
-                -- trap the player in place.
-                if state.hold and state.holdUntil and now >= state.holdUntil then
-                    pcall(function(): ()
-                        state.hold:Destroy()
-                    end)
-                    if state.holdAttachment then
-                        pcall(function(): ()
-                            state.holdAttachment:Destroy()
-                        end)
+            local deadline: number = os.clock() + math.max(0.05, seconds)
+            local lastVelocity: Vector3? = nil
+            while pulseToken == token and not destroyed
+                and os.clock() < deadline do
+                if type(shouldStop) == "function" then
+                    local okStop: boolean, stop: any = pcall(shouldStop)
+                    if not okStop or stop == true then
+                        break
                     end
-                    state.hold = nil
-                    state.holdAttachment = nil
                 end
-                if state.constraint and state.constraint.Parent then
+                local restored: Vector3? = pulseOnce(root)
+                if not restored then
+                    break
+                end
+                lastVelocity = restored
+            end
+            if pulseToken == token then
+                pulseToken += 1
+                pulseActive = false
+                if lastVelocity and root.Parent then
                     pcall(function(): ()
-                        state.constraint.AngularVelocity = Vector3.new(0, SPIN_RATE, 0)
-                        -- Kill any drift so the hold never has to fight a
-                        -- tanking velocity.
-                        if state.root and state.root.Parent then
-                            state.root.AssemblyLinearVelocity = Vector3.zero
-                        end
-                        if state.hold and state.holdPosition then
-                            state.hold.Position = state.holdPosition
-                        end
+                        root.AssemblyLinearVelocity = lastVelocity
                     end)
                 end
-                task.wait(SPIN_ON)
-                if not spinState or spinLoopToken ~= token or destroyed then
-                    return
+                setActivity()
+                if type(onFinished) == "function" then
+                    pcall(onFinished)
                 end
-                state = spinState
-                if state.constraint and state.constraint.Parent then
-                    pcall(function(): ()
-                        state.constraint.AngularVelocity = Vector3.zero
-                    end)
-                end
-                task.wait(SPIN_OFF)
             end
         end)
-        return true
+    end
+
+    local function stopPulses(): ()
+        pulseToken += 1
+        pulseActive = false
     end
 
     local function finishSession(reason: string): ()
@@ -375,14 +216,12 @@ function Module.init(context: any): any
             return
         end
         currentSession = nil
-        releaseSpin()
+        stopPulses()
         local character: Model?, humanoid: Humanoid?, root: BasePart? =
             getParts(LocalPlayer)
         if character == session.character and root == session.root and root
             and root.Parent then
             pcall(function(): ()
-                root.AssemblyLinearVelocity = Vector3.zero
-                root.AssemblyAngularVelocity = Vector3.zero
                 if reason ~= "lost-local" and session.restorePosition ~= false
                     and humanoid and humanoid.Health > 0 then
                     session.character:PivotTo(session.returnCFrame)
@@ -457,40 +296,36 @@ function Module.init(context: any): any
         }
         currentSession = session
 
-        -- One contact placement, keeping the current orientation: the character
-        -- never turns to face the target.
+        -- Get next to the target without touching the orientation: the position
+        -- changes, which way the character looks does not.
         local placed: boolean = pcall(function(): ()
+            local startCFrame: CFrame = session.returnCFrame
             character:PivotTo(CFrame.new(contactPosition)
-                * orientationOf(session.returnCFrame))
+                * (startCFrame - startCFrame.Position))
         end)
         if not placed then
             finishSession("error")
             return false
         end
-        if not engageSpin(character, root, nil, HOLD_SECONDS) then
-            finishSession("error")
-            return false
-        end
-        local deadline: number = os.clock() + duration
-        task.spawn(function(): ()
-            while currentSession == session and os.clock() < deadline do
-                if type(session.shouldStop) == "function" then
-                    local ok: boolean, stop: any = pcall(session.shouldStop)
-                    if not ok or stop == true then
-                        break
-                    end
+
+        runPulses(root, duration, function(): boolean
+            if type(session.shouldStop) == "function" then
+                local okStop: boolean, stop: any = pcall(session.shouldStop)
+                if not okStop or stop == true then
+                    return true
                 end
-                -- Death, respawn or a replaced character ends the session
-                -- without waiting for the duration or a wrapper check.
-                local _, livingHumanoid: Humanoid?, livingRoot: BasePart? =
-                    livingParts(LocalPlayer)
-                if not livingHumanoid or not livingRoot
-                    or livingHumanoid ~= session.humanoid
-                    or livingRoot ~= session.root then
-                    break
-                end
-                task.wait(0.05)
             end
+            if currentSession ~= session then
+                return true
+            end
+            -- Death, respawn or a replaced character ends the session without
+            -- waiting for the duration.
+            local _, livingHumanoid: Humanoid?, livingRoot: BasePart? =
+                livingParts(LocalPlayer)
+            return not livingHumanoid or not livingRoot
+                or livingHumanoid ~= session.humanoid
+                or livingRoot ~= session.root
+        end, function(): ()
             if currentSession == session then
                 finishSession("completed")
             end
@@ -503,7 +338,7 @@ function Module.init(context: any): any
         if not touchEnabled or not hit or destroyed then
             return
         end
-        if currentSession or spinState then
+        if currentSession or pulseActive then
             return
         end
         local now: number = os.clock()
@@ -542,9 +377,9 @@ function Module.init(context: any): any
             return
         end
         touchCooldownUntil = now + TOUCH_COOLDOWN
-        -- One short burst. No placement, no facing, no pin after it ends: the
-        -- player keeps walking and the other body takes the impulse.
-        engageSpin(character, root, TOUCH_BURST, TOUCH_BURST)
+        -- No placement, no spin, no pin: IY's walkfling pulses on the spot the
+        -- contact happened, and the player keeps walking through it.
+        runPulses(root, TOUCH_PULSE, nil, nil)
     end
 
     local function bindTouchPart(part: BasePart): ()
@@ -559,7 +394,7 @@ function Module.init(context: any): any
     end
 
     local function disconnectTouch(): ()
-        releaseSpin()
+        stopPulses()
         for _, connection: RBXScriptConnection in ipairs(touchConnections) do
             connection:Disconnect()
         end
@@ -596,7 +431,7 @@ function Module.init(context: any): any
             end
         end))
         table.insert(touchConnections, humanoid.Died:Connect(function(): ()
-            releaseSpin()
+            stopPulses()
         end))
     end
 
@@ -633,11 +468,16 @@ function Module.init(context: any): any
     function library.isTouchEnabled(): boolean
         return touchEnabled
     end
+    -- The spin is gone; these two stay so a stale caller gets an honest answer
+    -- instead of a nil method error.
     function library.isSpinning(): boolean
-        return spinState ~= nil
+        return false
     end
     function library.isHeld(): boolean
-        return spinState ~= nil and spinState.hold ~= nil
+        return false
+    end
+    function library.isPulsing(): boolean
+        return pulseActive
     end
     function library.destroy(): ()
         if destroyed then
@@ -646,7 +486,7 @@ function Module.init(context: any): any
         destroyed = true
         setTouchEnabled(false)
         finishSession("destroyed")
-        releaseSpin()
+        stopPulses()
         setActivity()
         if activeLibrary == library then
             activeLibrary = nil
@@ -656,14 +496,6 @@ function Module.init(context: any): any
     activeLibrary = library
     Module.Initialized = true
     return library
-end
-
-function Module.destroy(): ()
-    if activeLibrary then
-        activeLibrary.destroy()
-    end
-    activeLibrary = nil
-    Module.Initialized = false
 end
 
 return Module
