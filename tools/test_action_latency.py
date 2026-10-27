@@ -19,9 +19,12 @@ def read(path: str) -> str:
     return (ROOT / path).read_text()
 
 
-# The framework clock itself: every TaskManager task runs per Heartbeat.
+# The framework clock itself: every non-render TaskManager task runs per
+# Heartbeat. The signal is opened lazily through syncTaskConnection rather than
+# kept alive for an empty bucket, so check the phase selection and connection.
 WURST = read("src/Wurst.lua")
-assert "RunService.Heartbeat:Connect" in WURST
+assert "else RunService.Heartbeat" in WURST
+assert "owner[field] = signal:Connect" in WURST
 
 teleport = read("src/games/MM2/Movement/Teleport.lua")
 # Auto Get Gun used to poll twice a second (up to 500 ms late) and the

@@ -16,17 +16,12 @@ local activeCleanup: (() -> ())? = nil
 function Module.init(context: Runtime): any
     local host: any = context.host
     local state: any = host.state
-    local configData: any = host.configData
     local createUniversalFeature: any = host.createUniversalFeature
     local addFeatureTooltip: any = host.addFeatureTooltip
     local physics: any = state.flingPhysics
     assert(physics, "Touch Fling requires the shared Fling physics library")
 
     -- Contact physics is a deliberate per-session action, never restored ON.
-    if type(configData) == "table" and type(configData.states) == "table" then
-        configData.states["Universal.TouchFling"] = false
-    end
-
     local touchFlingActive: boolean = false
     local syncing: boolean = false
     local TouchFlingFeature: any = nil
@@ -57,7 +52,7 @@ function Module.init(context: Runtime): any
         "Walk into a player to transfer a bounded physics contact pulse",
         14,
         toggleTouchFling,
-        {noOptions = true, categoryName = "Exploits"}
+        {noOptions = true, categoryName = "Exploits", restore = false}
     )
     addFeatureTooltip(
         TouchFlingFeature,

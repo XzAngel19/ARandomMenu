@@ -1889,6 +1889,9 @@ function Module.init(_runtime: any): any
             categoryName = "Utilities",
             parent = MM2Scroll,
             registry = mm2Features,
+            -- Farming moves the character and must be an explicit per-session
+            -- choice, not a side effect of injecting with an old config.
+            restore = false,
         }
     )
     state.mm2AutoFarmFeature = AutoFarmFeature
@@ -2034,7 +2037,7 @@ function Module.init(_runtime: any): any
         end, "As Murderer, when the bag fills: pull everyone in front of you and slash (YARHM Kill All).")
     addInformationOption(
         AutoFarmFeature,
-        "Walk uses Humanoid locomotion on the ground. Below (Hitbox) uses upright LinearVelocity + AlignOrientation constraints with NoClip and a 4x8x4 root hitbox, with one fixed contact offset per coin and a stationary wait when no target exists. Collected coins are dropped as targets immediately. Only explicit startup/return cleanup uses a guarded CFrame reposition, never a dead/lobby/ended-round action. If Below kicks you for Invalid position, lower Farm Speed and raise it little by little. OFF restores collisions, hitbox and WalkSpeed."
+        "Walk uses Humanoid locomotion on the ground. Below (Hitbox) uses upright LinearVelocity + AlignOrientation constraints with NoClip and a 4x8x4 root hitbox, with one fixed contact offset per coin and a stationary wait when no target exists. Collected coins are dropped as targets immediately. Only explicit startup/return cleanup uses a guarded CFrame reposition, never a dead/lobby/ended-round action. Auto Farm is session-only and never restores ON at injection or from a profile. If Below kicks you for Invalid position, lower Farm Speed and raise it little by little. OFF restores collisions, hitbox and WalkSpeed."
     )
 
     activeCleanup = function(): ()

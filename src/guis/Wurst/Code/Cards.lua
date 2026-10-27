@@ -96,6 +96,10 @@ function Module.init(context: any): any
                 or "toggle",
             silentAction = configuration.silentAction == true,
             searchable = configuration.searchable ~= false,
+            -- restore=false is a session-only toggle: it may be enabled by the
+            -- user, but neither boot nor an old profile may switch it on.
+            restore = configuration.restore ~= false,
+            restorePending = false,
             onHold = configuration.onHold,
             optionCount = 0,
             optionRows = {},
@@ -435,6 +439,10 @@ function Module.init(context: any): any
             end
 
             local requestedState: boolean = not feature.enabled
+            -- An explicit input wins over a restore that is still waiting for
+            -- the boot gate. Without this cancellation the queued callback can
+            -- undo the user's click a moment later.
+            feature.restorePending = false
             local success: boolean, errorMessage: any = pcall(
                 feature.onToggle,
                 requestedState
@@ -444,7 +452,9 @@ function Module.init(context: any): any
                 if requestedState then
                     feature.enabledAt = os.clock()
                 end
-                configData.states[feature.configKey] = requestedState
+                configData.states[feature.configKey] = if feature.restore == false
+                    then false
+                    else requestedState
                 flushConfigSave()
             else
                 warn("[Random Testing Menu] " .. name .. ": " .. tostring(errorMessage))
@@ -921,9 +931,28 @@ function Module.init(context: any): any
         if not feature.isAction
             and not feature.isCategory
             and not feature.isHoldAction
-            and configuration.restore ~= false
+            and feature.restore == false then
+            -- Also erase stale true values written by older builds. The
+            -- feature remains explicitly controllable for this session.
+            configData.states[feature.configKey] = false
+        end
+
+        if not feature.isAction
+            and not feature.isCategory
+            and not feature.isHoldAction
+            and feature.restore ~= false
             and configData.states[feature.configKey] == true then
-            task.defer(function(): ()
+            feature.restorePending = true
+            local restoreFeature = function(): ()
+                if not feature.restorePending or feature.enabled then
+                    return
+                end
+                feature.restorePending = false
+                -- A failed game section rolls its cards back. Their queued
+                -- callbacks must not resurrect destroyed feature state.
+                if not feature.row or not feature.row.Parent then
+                    return
+                end
                 local success: boolean, errorMessage: any = pcall(
                     feature.onToggle,
                     true
@@ -942,7 +971,14 @@ function Module.init(context: any): any
                             .. tostring(errorMessage)
                     )
                 end
-            end)
+            end
+            if type(state.queueFeatureRestore) == "function" then
+                state.queueFeatureRestore(restoreFeature)
+            else
+                -- Isolated library hosts predate the coordinator; the real
+                -- Wurst host always takes the transactional branch above.
+                task.defer(restoreFeature)
+            end
         end
         return feature
     end

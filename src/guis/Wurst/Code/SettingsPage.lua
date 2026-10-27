@@ -706,16 +706,22 @@ function Module.init(context: any): any
         -- 3) Module masters: the cards flip with full UI sync.
         for _, feature: any in ipairs(allFeatures) do
             local wanted: boolean = snapshot.states[feature.configKey] == true
+                and feature.restore ~= false
             if feature.enabled ~= wanted
                 and type(feature.activate) == "function" then
                 pcall(feature.activate)
             end
         end
-        -- 4) Option toggles.
+        -- 4) Option toggles. Session-only controls are explicitly turned off
+        -- even when an old profile contains a stale true value.
         for key: string, control: any in pairs(state.toggleControls or {}) do
             local saved: any = snapshot.states[key]
-            if saved ~= nil and type(control.setChecked) == "function" then
-                pcall(control.setChecked, saved == true)
+            if type(control.setChecked) == "function" then
+                if control.restore == false then
+                    pcall(control.setChecked, false)
+                elseif saved ~= nil then
+                    pcall(control.setChecked, saved == true)
+                end
             end
         end
         -- 5) Option values (sliders, colours, cycles, text).

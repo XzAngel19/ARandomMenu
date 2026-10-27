@@ -222,7 +222,7 @@ local RUNTIME_RAW_BASE: string =
         .. RUNTIME_BRANCH
         .. "/"
 
-local SOURCE_STAMP: string = "v142-20261026-touch-physics-owner"
+local SOURCE_STAMP: string = "v143-20261026-boot-restore-lifecycle"
 
 local BOOT_STARTED_AT: number = os.clock()
 local BOOT_FINGERPRINT_SECONDS: number = 0
@@ -1116,6 +1116,50 @@ local state: any = {
 }
 
 state.activeGameName = ACTIVE_GAME_MODULE
+
+-- Configuration restoration is a boot transaction, not a side effect of
+-- constructing a card. Modules register while their dependencies may still be
+-- loading; running a persisted physics callback there creates order-dependent
+-- owners and connections. Cards and widgets enqueue restores here, and the
+-- section loader opens the gate only after every initial section has finished.
+local pendingFeatureRestores: {() -> ()} = {}
+state.featureRestoresReady = false
+state.featureRestoresDestroyed = false
+
+state.queueFeatureRestore = function(callback: () -> ()): ()
+    if state.featureRestoresDestroyed then
+        return
+    end
+    table.insert(pendingFeatureRestores, callback)
+end
+
+state.flushFeatureRestores = function(): ()
+    if state.featureRestoresDestroyed or #pendingFeatureRestores == 0 then
+        return
+    end
+    local batch: {() -> ()} = pendingFeatureRestores
+    pendingFeatureRestores = {}
+    for _, callback: () -> () in ipairs(batch) do
+        local ok: boolean, failure: any = pcall(callback)
+        if not ok then
+            warn("[" .. PRODUCT.logPrefix .. ":Restore] " .. tostring(failure))
+        end
+    end
+end
+
+state.completeFeatureRestoreBoot = function(): ()
+    if state.featureRestoresDestroyed then
+        return
+    end
+    state.featureRestoresReady = true
+    state.flushFeatureRestores()
+end
+
+state.destroyFeatureRestores = function(): ()
+    state.featureRestoresDestroyed = true
+    state.featureRestoresReady = false
+    table.clear(pendingFeatureRestores)
+end
 
 state.textScale = configData.ui.textScaleCalibrationVersion == 2
     and math.clamp(
@@ -2045,6 +2089,12 @@ function SectionManager.initialize(sectionName: string): (boolean, string?)
     entry.loading = false
     if success then
         entry.loaded = true
+        -- A fingerprint can add a game section after the initial boot gate
+        -- opened. Drain that section only after its builder has returned, never
+        -- from a defer that could run halfway through module registration.
+        if state.featureRestoresReady then
+            state.flushFeatureRestores()
+        end
         return true, nil
     end
 
@@ -2069,6 +2119,7 @@ function SectionManager.initializeAllAsync(): ()
     local failures: number = 0
 
     if total == 0 then
+        state.completeFeatureRestoreBoot()
         return
     end
 
@@ -2092,6 +2143,7 @@ function SectionManager.initializeAllAsync(): ()
             end
             completed += 1
             if completed >= total then
+                state.completeFeatureRestoreBoot()
                 print(
                     "[" .. PRODUCT.logPrefix .. ":Bootstrap] Load complete · failures="
                         .. tostring(failures)
@@ -3846,53 +3898,6 @@ local TaskManager = {
     renderConnection = nil :: RBXScriptConnection?,
 }
 
-function TaskManager:Connect(
-    callback: (...any) -> (),
-    phase: string?
-): TaskHandle
-    self.nextId += 1
-    local taskId: number = self.nextId
-    local bucket: {[number]: ScheduledTask} = phase == "render"
-        and self.renderTasks
-        or self.tasks
-    local handle: TaskHandle
-    handle = {
-        Connected = true,
-        Disconnect = function(selfHandle: TaskHandle): ()
-            if not selfHandle.Connected then
-                return
-            end
-            selfHandle.Connected = false
-            bucket[taskId] = nil
-        end,
-    }
-    bucket[taskId] = {
-        callback = callback,
-        handle = handle,
-        failures = 0,
-    }
-    return handle
-end
-
-function TaskManager:Destroy(): ()
-    for _, bucket: {[number]: ScheduledTask} in
-        ipairs({self.tasks, self.renderTasks})
-    do
-        for taskId: number, scheduled: ScheduledTask in pairs(bucket) do
-            scheduled.handle.Connected = false
-            bucket[taskId] = nil
-        end
-    end
-    if self.connection then
-        self.connection:Disconnect()
-        self.connection = nil
-    end
-    if self.renderConnection then
-        self.renderConnection:Disconnect()
-        self.renderConnection = nil
-    end
-end
-
 local function runBucket(
     bucket: {[number]: ScheduledTask},
     deltaTime: number
@@ -3922,17 +3927,78 @@ local function runBucket(
     end
 end
 
-TaskManager.connection = RunService.Heartbeat:Connect(function(
-    deltaTime: number
-): ()
-    runBucket(TaskManager.tasks, deltaTime)
-end)
+-- A scheduler signal is owned by its non-empty bucket. Keeping permanent
+-- Heartbeat/RenderStepped connections just to iterate empty tables made idle
+-- cost and cleanup depend on unrelated modules. The bucket tables are stable;
+-- only their signal connections come and go.
+local function syncTaskConnection(owner: any, render: boolean): ()
+    local bucket: {[number]: ScheduledTask} = if render
+        then owner.renderTasks
+        else owner.tasks
+    local field: string = if render then "renderConnection" else "connection"
+    local existing: RBXScriptConnection? = owner[field]
+    if next(bucket) == nil then
+        if existing then
+            existing:Disconnect()
+            owner[field] = nil
+        end
+        return
+    end
+    if existing then
+        return
+    end
+    local signal: any = if render
+        then RunService.RenderStepped
+        else RunService.Heartbeat
+    owner[field] = signal:Connect(function(deltaTime: number): ()
+        runBucket(bucket, deltaTime)
+    end)
+end
 
-TaskManager.renderConnection = RunService.RenderStepped:Connect(function(
-    deltaTime: number
-): ()
-    runBucket(TaskManager.renderTasks, deltaTime)
-end)
+function TaskManager:Connect(
+    callback: (...any) -> (),
+    phase: string?
+): TaskHandle
+    self.nextId += 1
+    local taskId: number = self.nextId
+    local render: boolean = phase == "render"
+    local bucket: {[number]: ScheduledTask} = if render
+        then self.renderTasks
+        else self.tasks
+    local owner: any = self
+    local handle: TaskHandle
+    handle = {
+        Connected = true,
+        Disconnect = function(selfHandle: TaskHandle): ()
+            if not selfHandle.Connected then
+                return
+            end
+            selfHandle.Connected = false
+            bucket[taskId] = nil
+            syncTaskConnection(owner, render)
+        end,
+    }
+    bucket[taskId] = {
+        callback = callback,
+        handle = handle,
+        failures = 0,
+    }
+    syncTaskConnection(owner, render)
+    return handle
+end
+
+function TaskManager:Destroy(): ()
+    for _, bucket: {[number]: ScheduledTask} in
+        ipairs({self.tasks, self.renderTasks})
+    do
+        for taskId: number, scheduled: ScheduledTask in pairs(bucket) do
+            scheduled.handle.Connected = false
+            bucket[taskId] = nil
+        end
+    end
+    syncTaskConnection(self, false)
+    syncTaskConnection(self, true)
+end
 
 local function disconnectFeatureConnection(name)
     local connection = featureConnections[name]
@@ -6372,6 +6438,9 @@ local function cleanupRuntime(): ()
     end
     runtimeCleaned = true
 
+    cleanupStep("pending configuration restores", function(): ()
+        state.destroyFeatureRestores()
+    end)
     cleanupStep("teleport persistence", function(): ()
         if state.teleportPersist then
             state.teleportPersist.enabled = false

@@ -354,13 +354,20 @@ function Module.init(context: any): WidgetLibrary
         defaultValue: boolean,
         callback: (boolean) -> (),
         hintText: string?,
-        bindable: boolean?
+        bindable: boolean?,
+        restore: boolean?
     ): TextButton
         local optionKey: string =
             feature.configKey .. "." .. labelText:gsub("%W", "")
-        local enabled: boolean? = configData.states[optionKey]
-        if enabled == nil then
-            enabled = defaultValue == true
+        local persisted: any = configData.states[optionKey]
+        local enabled: boolean = if restore ~= false and persisted ~= nil
+            then persisted == true
+            else defaultValue == true
+        local restorePending: boolean = false
+        if restore == false then
+            -- Session-only options stay usable now, but stale values from an
+            -- older config/profile can never activate them automatically.
+            configData.states[optionKey] = false
         end
 
         local option: Frame = createOptionRow(feature, labelText, hintText)
@@ -446,14 +453,21 @@ function Module.init(context: any): WidgetLibrary
         -- ones toggled afterwards.
         table.insert(toggleThemeRefreshers, refreshOptionState)
 
+        local function persistOptionState(): ()
+            configData.states[optionKey] = if restore == false
+                then false
+                else enabled
+        end
+
         local function toggleOption(): ()
             if not option.Visible then return end
+            restorePending = false
             enabled = not enabled
             refreshOptionState()
-            configData.states[optionKey] = enabled
-            callback(enabled :: boolean)
+            persistOptionState()
+            callback(enabled)
             queueConfigSave()
-            notify(labelText .. ((enabled :: boolean) and " enabled" or " disabled"))
+            notify(labelText .. (enabled and " enabled" or " disabled"))
         end
         if bindable then
             -- Use the same persisted/capture-aware shortcut path as actions.
@@ -480,24 +494,60 @@ function Module.init(context: any): WidgetLibrary
         -- persisted state and the module callback all move together.
         state.toggleControls = state.toggleControls or {}
         state.toggleControls[optionKey] = {
+            restore = restore ~= false,
             setChecked = function(checked: boolean): ()
+                restorePending = false
                 if not button.Parent then
                     return
                 end
                 local wanted: boolean = checked == true
-                if wanted == (enabled :: boolean) then
+                if wanted == enabled then
                     return
                 end
                 enabled = wanted
                 refreshOptionState()
-                configData.states[optionKey] = enabled
-                callback(enabled :: boolean)
+                persistOptionState()
+                callback(enabled)
                 queueConfigSave()
             end,
         }
 
         refreshOptionState()
-        callback(enabled :: boolean)
+        if restore ~= false and persisted == true then
+            restorePending = true
+            local restoreOption = function(): ()
+                if not restorePending then
+                    return
+                end
+                restorePending = false
+                if not button.Parent
+                    or (feature.row and not feature.row.Parent) then
+                    return
+                end
+                local ok: boolean, failure: any = pcall(callback, true)
+                if not ok then
+                    enabled = false
+                    configData.states[optionKey] = false
+                    refreshOptionState()
+                    queueConfigSave()
+                    warn(
+                        "[Random Testing Menu] Could not restore "
+                            .. labelText
+                            .. ": "
+                            .. tostring(failure)
+                    )
+                end
+            end
+            if type(state.queueFeatureRestore) == "function" then
+                state.queueFeatureRestore(restoreOption)
+            else
+                task.defer(restoreOption)
+            end
+        else
+            -- Defaults and explicit OFF values are inert configuration. Only a
+            -- persisted ON callback needs to wait for the completed runtime.
+            callback(enabled)
+        end
         return button
     end
     local function addActionOption(

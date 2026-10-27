@@ -1,5 +1,5 @@
 return {
-    stamp = "v142-20261026-touch-physics-owner",
+    stamp = "v143-20261026-boot-restore-lifecycle",
     files = {
         ["src/Profile/135856908115931.lua"] = [[
 --!strict
@@ -1588,7 +1588,6 @@ function Module.init(runtime: any): any
     local featureConnections: any = host.featureConnections
     local disconnectFeatureConnection: any = host.disconnectFeatureConnection
     local findPlayerByText: any = host.findPlayerByText
-    local configData: any = host.configData
 
     local findMurderer: any = core.findMurderer
     local findSheriff: any = core.findSheriff
@@ -1980,13 +1979,8 @@ function Module.init(runtime: any): any
         end
     end)
 
-    -- These two options are deliberate session actions, never restored ON at
-    -- injection from a persisted configuration.
-    if configData and type(configData.states) == "table" then
-        configData.states["MM2.Fling.AutoFlingSelectedTarget"] = false
-        configData.states["MM2.Fling.TouchFling"] = false
-    end
-
+    -- These are deliberate session actions. The widget layer owns the
+    -- restore=false policy for boot, profiles and stale saved states.
     addToggleOption(
         FlingFeature,
         "Touch Fling",
@@ -1996,7 +1990,9 @@ function Module.init(runtime: any): any
                 state.setTouchFlingEnabled(value == true)
             end
         end,
-        "Walk into a player to transfer a bounded contact pulse. No teleport."
+        "Walk into a player to transfer a bounded contact pulse. No teleport.",
+        nil,
+        false
     )
     addToggleOption(
         FlingFeature,
@@ -2016,7 +2012,9 @@ function Module.init(runtime: any): any
                 autoFlingTick()
             end
         end,
-        "Retries the selected living target only during an active MM2 round."
+        "Retries the selected living target only during an active MM2 round.",
+        nil,
+        false
     )
     addInformationOption(
         FlingFeature,
@@ -8149,6 +8147,9 @@ function Module.init(_runtime: any): any
             categoryName = "Utilities",
             parent = MM2Scroll,
             registry = mm2Features,
+            -- Farming moves the character and must be an explicit per-session
+            -- choice, not a side effect of injecting with an old config.
+            restore = false,
         }
     )
     state.mm2AutoFarmFeature = AutoFarmFeature
@@ -8294,7 +8295,7 @@ function Module.init(_runtime: any): any
         end, "As Murderer, when the bag fills: pull everyone in front of you and slash (YARHM Kill All).")
     addInformationOption(
         AutoFarmFeature,
-        "Walk uses Humanoid locomotion on the ground. Below (Hitbox) uses upright LinearVelocity + AlignOrientation constraints with NoClip and a 4x8x4 root hitbox, with one fixed contact offset per coin and a stationary wait when no target exists. Collected coins are dropped as targets immediately. Only explicit startup/return cleanup uses a guarded CFrame reposition, never a dead/lobby/ended-round action. If Below kicks you for Invalid position, lower Farm Speed and raise it little by little. OFF restores collisions, hitbox and WalkSpeed."
+        "Walk uses Humanoid locomotion on the ground. Below (Hitbox) uses upright LinearVelocity + AlignOrientation constraints with NoClip and a 4x8x4 root hitbox, with one fixed contact offset per coin and a stationary wait when no target exists. Collected coins are dropped as targets immediately. Only explicit startup/return cleanup uses a guarded CFrame reposition, never a dead/lobby/ended-round action. Auto Farm is session-only and never restores ON at injection or from a profile. If Below kicks you for Invalid position, lower Farm Speed and raise it little by little. OFF restores collisions, hitbox and WalkSpeed."
     )
 
     activeCleanup = function(): ()
@@ -27489,17 +27490,12 @@ local activeCleanup: (() -> ())? = nil
 function Module.init(context: Runtime): any
     local host: any = context.host
     local state: any = host.state
-    local configData: any = host.configData
     local createUniversalFeature: any = host.createUniversalFeature
     local addFeatureTooltip: any = host.addFeatureTooltip
     local physics: any = state.flingPhysics
     assert(physics, "Touch Fling requires the shared Fling physics library")
 
     -- Contact physics is a deliberate per-session action, never restored ON.
-    if type(configData) == "table" and type(configData.states) == "table" then
-        configData.states["Universal.TouchFling"] = false
-    end
-
     local touchFlingActive: boolean = false
     local syncing: boolean = false
     local TouchFlingFeature: any = nil
@@ -27530,7 +27526,7 @@ function Module.init(context: Runtime): any
         "Walk into a player to transfer a bounded physics contact pulse",
         14,
         toggleTouchFling,
-        {noOptions = true, categoryName = "Exploits"}
+        {noOptions = true, categoryName = "Exploits", restore = false}
     )
     addFeatureTooltip(
         TouchFlingFeature,
@@ -39607,6 +39603,10 @@ function Module.init(context: any): any
                 or "toggle",
             silentAction = configuration.silentAction == true,
             searchable = configuration.searchable ~= false,
+            -- restore=false is a session-only toggle: it may be enabled by the
+            -- user, but neither boot nor an old profile may switch it on.
+            restore = configuration.restore ~= false,
+            restorePending = false,
             onHold = configuration.onHold,
             optionCount = 0,
             optionRows = {},
@@ -39946,6 +39946,10 @@ function Module.init(context: any): any
             end
 
             local requestedState: boolean = not feature.enabled
+            -- An explicit input wins over a restore that is still waiting for
+            -- the boot gate. Without this cancellation the queued callback can
+            -- undo the user's click a moment later.
+            feature.restorePending = false
             local success: boolean, errorMessage: any = pcall(
                 feature.onToggle,
                 requestedState
@@ -39955,7 +39959,9 @@ function Module.init(context: any): any
                 if requestedState then
                     feature.enabledAt = os.clock()
                 end
-                configData.states[feature.configKey] = requestedState
+                configData.states[feature.configKey] = if feature.restore == false
+                    then false
+                    else requestedState
                 flushConfigSave()
             else
                 warn("[Random Testing Menu] " .. name .. ": " .. tostring(errorMessage))
@@ -40432,9 +40438,28 @@ function Module.init(context: any): any
         if not feature.isAction
             and not feature.isCategory
             and not feature.isHoldAction
-            and configuration.restore ~= false
+            and feature.restore == false then
+            -- Also erase stale true values written by older builds. The
+            -- feature remains explicitly controllable for this session.
+            configData.states[feature.configKey] = false
+        end
+
+        if not feature.isAction
+            and not feature.isCategory
+            and not feature.isHoldAction
+            and feature.restore ~= false
             and configData.states[feature.configKey] == true then
-            task.defer(function(): ()
+            feature.restorePending = true
+            local restoreFeature = function(): ()
+                if not feature.restorePending or feature.enabled then
+                    return
+                end
+                feature.restorePending = false
+                -- A failed game section rolls its cards back. Their queued
+                -- callbacks must not resurrect destroyed feature state.
+                if not feature.row or not feature.row.Parent then
+                    return
+                end
                 local success: boolean, errorMessage: any = pcall(
                     feature.onToggle,
                     true
@@ -40453,7 +40478,14 @@ function Module.init(context: any): any
                             .. tostring(errorMessage)
                     )
                 end
-            end)
+            end
+            if type(state.queueFeatureRestore) == "function" then
+                state.queueFeatureRestore(restoreFeature)
+            else
+                -- Isolated library hosts predate the coordinator; the real
+                -- Wurst host always takes the transactional branch above.
+                task.defer(restoreFeature)
+            end
         end
         return feature
     end
@@ -45688,16 +45720,22 @@ function Module.init(context: any): any
         -- 3) Module masters: the cards flip with full UI sync.
         for _, feature: any in ipairs(allFeatures) do
             local wanted: boolean = snapshot.states[feature.configKey] == true
+                and feature.restore ~= false
             if feature.enabled ~= wanted
                 and type(feature.activate) == "function" then
                 pcall(feature.activate)
             end
         end
-        -- 4) Option toggles.
+        -- 4) Option toggles. Session-only controls are explicitly turned off
+        -- even when an old profile contains a stale true value.
         for key: string, control: any in pairs(state.toggleControls or {}) do
             local saved: any = snapshot.states[key]
-            if saved ~= nil and type(control.setChecked) == "function" then
-                pcall(control.setChecked, saved == true)
+            if type(control.setChecked) == "function" then
+                if control.restore == false then
+                    pcall(control.setChecked, false)
+                elseif saved ~= nil then
+                    pcall(control.setChecked, saved == true)
+                end
             end
         end
         -- 5) Option values (sliders, colours, cycles, text).
@@ -47549,13 +47587,20 @@ function Module.init(context: any): WidgetLibrary
         defaultValue: boolean,
         callback: (boolean) -> (),
         hintText: string?,
-        bindable: boolean?
+        bindable: boolean?,
+        restore: boolean?
     ): TextButton
         local optionKey: string =
             feature.configKey .. "." .. labelText:gsub("%W", "")
-        local enabled: boolean? = configData.states[optionKey]
-        if enabled == nil then
-            enabled = defaultValue == true
+        local persisted: any = configData.states[optionKey]
+        local enabled: boolean = if restore ~= false and persisted ~= nil
+            then persisted == true
+            else defaultValue == true
+        local restorePending: boolean = false
+        if restore == false then
+            -- Session-only options stay usable now, but stale values from an
+            -- older config/profile can never activate them automatically.
+            configData.states[optionKey] = false
         end
 
         local option: Frame = createOptionRow(feature, labelText, hintText)
@@ -47641,14 +47686,21 @@ function Module.init(context: any): WidgetLibrary
         -- ones toggled afterwards.
         table.insert(toggleThemeRefreshers, refreshOptionState)
 
+        local function persistOptionState(): ()
+            configData.states[optionKey] = if restore == false
+                then false
+                else enabled
+        end
+
         local function toggleOption(): ()
             if not option.Visible then return end
+            restorePending = false
             enabled = not enabled
             refreshOptionState()
-            configData.states[optionKey] = enabled
-            callback(enabled :: boolean)
+            persistOptionState()
+            callback(enabled)
             queueConfigSave()
-            notify(labelText .. ((enabled :: boolean) and " enabled" or " disabled"))
+            notify(labelText .. (enabled and " enabled" or " disabled"))
         end
         if bindable then
             -- Use the same persisted/capture-aware shortcut path as actions.
@@ -47675,24 +47727,60 @@ function Module.init(context: any): WidgetLibrary
         -- persisted state and the module callback all move together.
         state.toggleControls = state.toggleControls or {}
         state.toggleControls[optionKey] = {
+            restore = restore ~= false,
             setChecked = function(checked: boolean): ()
+                restorePending = false
                 if not button.Parent then
                     return
                 end
                 local wanted: boolean = checked == true
-                if wanted == (enabled :: boolean) then
+                if wanted == enabled then
                     return
                 end
                 enabled = wanted
                 refreshOptionState()
-                configData.states[optionKey] = enabled
-                callback(enabled :: boolean)
+                persistOptionState()
+                callback(enabled)
                 queueConfigSave()
             end,
         }
 
         refreshOptionState()
-        callback(enabled :: boolean)
+        if restore ~= false and persisted == true then
+            restorePending = true
+            local restoreOption = function(): ()
+                if not restorePending then
+                    return
+                end
+                restorePending = false
+                if not button.Parent
+                    or (feature.row and not feature.row.Parent) then
+                    return
+                end
+                local ok: boolean, failure: any = pcall(callback, true)
+                if not ok then
+                    enabled = false
+                    configData.states[optionKey] = false
+                    refreshOptionState()
+                    queueConfigSave()
+                    warn(
+                        "[Random Testing Menu] Could not restore "
+                            .. labelText
+                            .. ": "
+                            .. tostring(failure)
+                    )
+                end
+            end
+            if type(state.queueFeatureRestore) == "function" then
+                state.queueFeatureRestore(restoreOption)
+            else
+                task.defer(restoreOption)
+            end
+        else
+            -- Defaults and explicit OFF values are inert configuration. Only a
+            -- persisted ON callback needs to wait for the completed runtime.
+            callback(enabled)
+        end
         return button
     end
     local function addActionOption(

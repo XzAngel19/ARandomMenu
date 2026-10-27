@@ -28,7 +28,6 @@ function Module.init(runtime: any): any
     local featureConnections: any = host.featureConnections
     local disconnectFeatureConnection: any = host.disconnectFeatureConnection
     local findPlayerByText: any = host.findPlayerByText
-    local configData: any = host.configData
 
     local findMurderer: any = core.findMurderer
     local findSheriff: any = core.findSheriff
@@ -420,13 +419,8 @@ function Module.init(runtime: any): any
         end
     end)
 
-    -- These two options are deliberate session actions, never restored ON at
-    -- injection from a persisted configuration.
-    if configData and type(configData.states) == "table" then
-        configData.states["MM2.Fling.AutoFlingSelectedTarget"] = false
-        configData.states["MM2.Fling.TouchFling"] = false
-    end
-
+    -- These are deliberate session actions. The widget layer owns the
+    -- restore=false policy for boot, profiles and stale saved states.
     addToggleOption(
         FlingFeature,
         "Touch Fling",
@@ -436,7 +430,9 @@ function Module.init(runtime: any): any
                 state.setTouchFlingEnabled(value == true)
             end
         end,
-        "Walk into a player to transfer a bounded contact pulse. No teleport."
+        "Walk into a player to transfer a bounded contact pulse. No teleport.",
+        nil,
+        false
     )
     addToggleOption(
         FlingFeature,
@@ -456,7 +452,9 @@ function Module.init(runtime: any): any
                 autoFlingTick()
             end
         end,
-        "Retries the selected living target only during an active MM2 round."
+        "Retries the selected living target only during an active MM2 round.",
+        nil,
+        false
     )
     addInformationOption(
         FlingFeature,
