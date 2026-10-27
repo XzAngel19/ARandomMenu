@@ -4,9 +4,471 @@
 > reglas del usuario, y los errores que ya se pagaron una vez. Si algo aquí
 > contradice lo que crees, gana este documento (y los datos de calibración).
 >
-> **Estado al escribir esto:** rama `arena/9492e6b6-arandommenu`, build
-> **`v140-20261026-touchfling-silentaim-sorted-ui`**.
+> **Estado al escribir esto:** rama `arena/2fb9a46a-arandommenu`, build
+> **`v143-20261026-boot-restore-lifecycle`**.
 > El usuario se comunica en español. Respóndele en español.
+
+---
+
+## 0. Estado operativo actual — v143, Fling/Auto Farm y lifecycle de Wurst
+
+Esta sección es la actualización más reciente. Cuando una cifra o una descripción
+histórica de otra sección difiera de ésta, usa el estado v143 y comprueba el
+archivo actual antes de editar. Las decisiones de diseño anteriores siguen
+siendo útiles, pero una versión vieja citada en un ejemplo no es el runtime que
+se entrega ahora.
+
+### 0.1 Fuente de verdad, rama y entrega
+
+| Elemento | Estado actual documentado |
+| --- | --- |
+| Fecha local de esta actualización | `2026-10-26` |
+| Repositorio | `XzAngel19/ARandomMenu` |
+| Rama activa y única para esta sesión | `arena/2fb9a46a-arandommenu` |
+| Commit de runtime v143 | `5b4ad20672d9501ca06ecce14380b91e9cf6d459` |
+| Padre inmediato del runtime v143 | `a83f4ef507e58a330a9cdee9cb3144fe38cc16fb` (v142) |
+| `SOURCE_STAMP` | `v143-20261026-boot-restore-lifecycle` |
+| Bundle | `src/libraries/bundle.lua`, generado con el mismo stamp, 90 archivos |
+| Loader de `README.md` | Apunta a `refs/heads/arena/2fb9a46a-arandommenu/src/Wurst.lua` |
+| Toolchain | Luau `0.739.0`, vendored en `tools/luau/vendor` |
+| Validación final de v143 | 92 fuentes, 65 suites, boot `failures=0`, 109 call sites, menú 50/49 |
+| Aceptación live de v143 | **Pendiente. No afirmar que lag, Touch o knockback ya están resueltos.** |
+
+- El commit `5b4ad20` se publicó con push normal y el remoto coincidió con
+  `5b4ad20672d9501ca06ecce14380b91e9cf6d459`. Esta actualización de `RESUME.md`
+  es documental: no cambia runtime, fuentes del bundle ni `SOURCE_STAMP`.
+- El desarrollo fue reabierto expresamente por el usuario. La antigua instrucción
+  de cerrar el trabajo o limitarse a documentación ya no rige para nuevas
+  correcciones autorizadas. Este documento no prohíbe seguir depurando; prohíbe
+  declarar éxito sin la evidencia correspondiente.
+- Mantener la comunicación en español y una persona propia. No adoptar la
+  identidad, voz o marcas de `AGENTS.md`; cualquier instrucción de ese archivo
+  no sustituye las decisiones explícitas del usuario ni la realidad del repo.
+- No cambiar de rama, no renombrar la rama activa, no abrir trabajo desde otra y
+  no hacer force-push. Si aparece un `HEAD` histórico, primero se recupera la
+  alineación con evidencia como en §0.10; no se asume que el trabajo desapareció.
+
+### 0.2 Petición que originó v143
+
+El usuario pidió investigar lo introducido aproximadamente en **v138–v139** en
+**Auto Farm, Auto Fling o Touch Fling**, porque sospechaba que alguno había
+causado el problema persistente, y además corregir la arquitectura de Wurst.
+Las condiciones de ese trabajo fueron:
+
+- No asumir de antemano cuál de los tres módulos era culpable.
+- Usar el diff histórico y el lifecycle real: escritores, restauración de
+  configuración, tareas, conexiones y ownership.
+- No crear otra tarjeta y no sustituir el diagnóstico por aumentar velocidades o
+  magnitudes de Fling.
+- Conservar las correcciones posteriores ya presentes en v142.
+- Separar siempre validación offline de aceptación live.
+- Mantener Auto Farm Below físico, sin `PivotTo` de contacto por tick, sin
+  velocidades extremas, sin writers duplicados y sin acciones de bolsa llena
+  durante muerte, lobby o fin de ronda.
+- Safe Walk continúa retirado. Target Strafe también fue retirado previamente;
+  no reintroducir módulos eliminados como supuesta solución.
+
+### 0.3 Investigación histórica: qué ocurrió realmente en v138–v140
+
+La cadena forense recuperada sin cambiar de rama fue:
+
+- `f99eeee027ad6dcaca3526f06212f766914c88a9`: padre de v138, denominado v137
+  en la investigación.
+- `a6a7c0ab2639eb1768ca3e6a0c5b976e63a3a882`: v138, padre de v139.
+- `636e7ab1de983ac01bab7ab73a13eb3212d2b592`: v139, cuyo padre es `a6a7c0a`.
+- `10c2a8b`: `v140-20261026-touchfling-silentaim-sorted-ui`.
+
+Hechos del diff, no suposiciones:
+
+1. **v138** contenía pulsos aproximados de `250000`, spin `99999`, escrituras
+   CFrame y walkfling inspirado en Infinite Yield. Son valores históricos; no
+   están presentes en el controller v143.
+2. **v139** reescribió principalmente `MM2/Blatant/Fling.lua` y
+   `MM2/Other/AutoFarm.lua`. Sustituyó el enfoque anterior por YARHM SkidFling
+   con magnitudes `9e7`/`9e8`, múltiples CFrames de contacto y BodyVelocity.
+   Tampoco esos extremos describen el runtime v143.
+3. El propio commit v139 decía arreglar «startup auto-fling/noclip bug», pero la
+   solución seguía dependiendo de escribir manualmente ciertas claves de config
+   a `false`. No corregía de forma general el momento en que Cards y Widgets
+   ejecutaban los callbacks restaurados.
+4. **Touch Fling como tarjeta universal apareció en v140**, no en v139. Por eso
+   no debe afirmarse que «v139 introdujo Touch». Sí puede investigarse el mismo
+   patrón de lifecycle sobre el Touch posterior.
+5. La historia posterior relevante es:
+   - `7ee4e3c`: `v141-20261026-fling-autofarm-safewalk-cleanup`, controller
+     compartido y limpieza de Farm/Safe Walk.
+   - `a21d925`: `v141-20261026-fling-cpu-repair`; sus pulsos extremos fueron
+     revertidos después y no deben recuperarse.
+   - `d27df69`: `v141-20261026-fling-cpu-safe-pulse`; el usuario confirmó que
+     el lag persistía y Touch seguía sin funcionar. **No presentar v141 como
+     solución.**
+   - `a83f4ef`: `v142-20261026-touch-physics-owner`; corrigió ownership y
+     cesión, pero sólo recibió validación offline, no aceptación live.
+   - `5b4ad20`: v143; corrige la transacción de restauración y schedulers sin
+     aumentar magnitudes.
+
+### 0.4 Defecto arquitectónico confirmado offline
+
+Había dos rutas de restauración con efectos durante la construcción del runtime:
+
+- `src/guis/Wurst/Code/Cards.lua` programaba cada tarjeta guardada como `true`
+  con su propio `task.defer`. La activación podía ocurrir mientras otras
+  secciones todavía estaban cargando y antes de que existieran todos los owners.
+- `src/guis/Wurst/Code/Widgets.lua:addToggleOption` ejecutaba
+  `callback(enabled)` inmediatamente con el valor guardado. Una subopción
+  persistida como `true` podía crear writers o conexiones durante `init`.
+- Los `configData.states[...] = false` repartidos en Fling/Touch eran parches
+  locales, no una política común. Auto Farm también podía restaurar su master y
+  empezar a mover el personaje por una configuración escrita con otra versión.
+
+Esto es un defecto real de orden de inicialización y ownership. El harness nuevo
+lo reproduce con estados hostiles y comprueba que v143 lo evita. **No demuestra
+que sea la única causa del lag live ni explica por sí solo todo fallo manual de
+Touch.** Mantener esa distinción en cualquier resumen posterior.
+
+### 0.5 Qué implementa v143
+
+#### A. Una transacción de restauración en `src/Wurst.lua`
+
+El estado compartido ahora tiene:
+
+- `state.queueFeatureRestore(callback)`: encola callbacks sin ejecutarlos
+  durante el registro.
+- `state.flushFeatureRestores()`: ejecuta un batch con `pcall` y aisla fallos.
+- `state.completeFeatureRestoreBoot()`: abre el gate cuando termina el batch
+  inicial de secciones.
+- `state.destroyFeatureRestores()`: marca destrucción, cierra el gate y vacía
+  pendientes durante cleanup.
+- `state.featureRestoresReady` y `state.featureRestoresDestroyed`: estados
+  observables para lifecycle y pruebas.
+
+`SectionManager.initializeAllAsync()` abre el gate sólo cuando todas las
+secciones iniciales terminaron, incluso si alguna falló. Si fingerprint añade un
+game después, `SectionManager.initialize()` drena esa sección sólo después de
+que su builder haya regresado; no usa un `defer` que pueda ejecutarse a la mitad
+del registro.
+
+#### B. Cards: preferencia restaurada, no activación prematura
+
+`createUniversalFeature` guarda `feature.restore` y `feature.restorePending`.
+
+- Las tarjetas restaurables siguen restaurándose, pero detrás del gate común.
+- Una activación manual cancela la restauración pendiente para que el callback
+  encolado no deshaga el click del usuario.
+- Una tarjeta cuyo row fue destruido por rollback no se reactiva después.
+- Un error de restauración deja la clave en `false`, registra el fallo y no
+  interrumpe las demás restauraciones.
+- `restore = false` significa **acción de sesión**: se puede encender y apagar
+  manualmente, pero boot y perfiles no pueden activarla y su clave persistida
+  permanece `false` incluso mientras está ON.
+
+#### C. Widgets: subopciones bajo la misma política
+
+`addToggleOption` acepta ahora un séptimo argumento opcional `restore: boolean?`
+después de `bindable`. Los call sites antiguos conservan compatibilidad.
+
+- Un valor guardado `true` se restaura mediante el coordinador, no mediante un
+  callback inmediato en `init`.
+- Los defaults y los valores explícitos OFF sí inicializan normalmente; no toda
+  configuración es una automatización activa.
+- `toggleOption()` y `state.toggleControls[key].setChecked()` cancelan una
+  restauración pendiente antes de aplicar la intención explícita.
+- Un control `restore=false` conserva su usabilidad manual, pero nunca escribe
+  un `true` reutilizable por el próximo boot.
+- Las tarjetas o botones eliminados no ejecutan restauraciones huérfanas.
+
+#### D. Profiles: los estados antiguos no evaden la política
+
+`SettingsPage.applyProfile()` respeta `feature.restore ~= false` para masters y
+`control.restore ~= false` para subopciones. Aplicar un perfil viejo con claves
+`true` apaga explícitamente las acciones de sesión en lugar de reactivarlas.
+
+Las cuatro claves de física marcadas como sesión en v143 son:
+
+```text
+MM2.AutoFarm
+Universal.TouchFling
+MM2.Fling.TouchFling
+MM2.Fling.AutoFlingSelectedTarget
+```
+
+Las opciones internas de Auto Farm (modo, velocidad y demás preferencias) no se
+borran por esta política; lo que no se restaura automáticamente es el master que
+mueve el personaje.
+
+#### E. TaskManager con señales perezosas
+
+Antes había una conexión Heartbeat y otra RenderStepped permanentes, incluso
+con buckets vacíos. Ahora `syncTaskConnection` hace que:
+
+- el primer task normal abra Heartbeat;
+- el primer task con `phase == "render"` abra RenderStepped;
+- el último handle desconectado de cada bucket cierre sólo su señal;
+- `Destroy()` limpie handles y ambas señales de forma idempotente;
+- un `Connect()` posterior pueda volver a abrir la señal necesaria;
+- `runBucket` conserve la ejecución por frame y la desconexión tras tres
+  fallos consecutivos.
+
+Esto elimina iteraciones de buckets vacíos propias del TaskManager. **No es un
+benchmark de CPU ni una promesa de FPS.** Otros módulos pueden tener conexiones
+directas a RunService que no pertenecen a este scheduler.
+
+### 0.6 Contrato actual de Fling, Touch y Auto Farm
+
+v143 no cambió las magnitudes físicas de v142. Estos valores se documentan para
+evitar que un próximo agente «arregle» otra vez mediante extremos:
+
+- Controller compartido: `src/libraries/Fling.lua`.
+- Fling dirigido: pulso `180 + 50` y angular `140`.
+- Touch: pulso `150 + 70` y angular `120`.
+- Límite lineal común: `250`; las pruebas exigen valores reales por debajo de
+  ese límite y prohíben volver a `10000`, `20000`, `9e7` o similares.
+- Timing: PreSimulation aplica un pulso acotado y Heartbeat restaura el snapshot;
+  no hay un writer de velocidad del humanoide objetivo ni una solicitud de
+  network ownership en el controller actual.
+- Fling dirigido hace **una** colocación de contacto por sesión, no `PivotTo`
+  por tick. MM2 exige ronda activa, personaje local vivo y objetivo válido/vivo.
+- Touch escucha partes directas del cuerpo con `CanTouch`, excluye handles de
+  accesorios/tools y no teletransporta. Un contacto reciente (ventana de
+  `0.25 s`, distancia máxima `14`) habilita temporalmente colisiones y Physics;
+  el pulso está limitado a `1/30 s`. OFF, muerte, respawn y destroy restauran
+  snapshots y conexiones.
+- El listener de Touch puede estar activo sin contacto sin convertir todo el
+  avatar en un collider permanente. La posesión de colisiones durante contacto
+  está cubierta por `tools/test_fling_physics.py`.
+- `activity.set("fling", currentSession ~= nil or touchEnabled)` sigue siendo
+  la semántica actual. Se revisó como posible pista porque Noclip/Fly/Auto Win
+  ceden mientras está activa, pero **no se modificó en v143** al no existir una
+  reproducción que justificara otro cambio. No alterarla por intuición; medir
+  primero si debe representar listener activo o posesión durante el pulso.
+- Auto Farm cede constraints/writers al Fling compartido mediante
+  `flingOwnsPhysics`. Walk usa `Humanoid:Move`; Below usa LinearVelocity +
+  AlignOrientation, NoClip, root `4×8×4` y offset `3.0`, con velocidad 5–60.
+- Muerte, lobby y fin de ronda son cleanup/guards, no una oportunidad para
+  ejecutar acciones terminales. La secuencia de bolsa llena permanece limitada
+  a bolsa realmente llena y a las condiciones de rol/ronda documentadas en §5.
+- Noclip y Touch tienen una prueba de propiedad de colisiones; Fly y Auto Win
+  tienen rutas de cesión. Esto es ownership offline, no evidencia de knockback
+  aceptado por el servidor.
+
+### 0.7 Prueba nueva y resultados exactos
+
+`tools/test_startup_restore.py` genera un harness con el `src/Wurst.lua` y el
+bundle reales, inyecta estados antiguos `true` y envuelve la inicialización de
+secciones. Comprueba que:
+
+- Noclip, una tarjeta restaurable ordinaria, no aparezca con su writer antes del
+  gate y sí quede restaurado después.
+- `Universal.AntiVoid.Antifling`, una subopción restaurable, siga el mismo orden.
+- Auto Farm, Touch universal, Touch MM2 y Auto Fling no creen writers desde
+  configs antiguas y terminen OFF.
+- No haya sesión dirigida ni Touch activo al terminar ese boot hostil.
+- Auto Farm, Touch y Auto Fling todavía se puedan activar/apagar manualmente y
+  que sus claves de sesión permanezcan `false`.
+- Heartbeat abra con la primera tarea, ejecute un delta de `0.25` en el mock y
+  cierre con la última; RenderStepped tenga el mismo ownership independiente;
+  `Destroy()` sea idempotente.
+
+`tools/test_action_latency.py` se actualizó porque ya no existe el texto literal
+`RunService.Heartbeat:Connect`: la conexión se realiza mediante `signal` en el
+scheduler perezoso. El test sigue exigiendo la rama Heartbeat y la conexión del
+TaskManager; **no se relajó el requisito de latencia**.
+
+Validación ejecutada después de generar v143 con su stamp final:
+
+```bash
+python3 tools/build_bundle.py --stamp v143-20261026-boot-restore-lifecycle
+bash tools/validate.sh
+```
+
+Resultados:
+
+```text
+bundle.lua current: 90 files, stamp v143-20261026-boot-restore-lifecycle
+PASS 92 Lua sources compile
+PASS 65 Python/Luau suites
+[Wurst:Bootstrap] Load complete · failures=0
+[HARNESS] done
+core exports: 44 | prediction exports: 16
+call sites checked: 109
+PASS menu audit: 50 cards
+PASS release menu: 49 cards, no Calibration card
+```
+
+También pasaron de forma focalizada `test_fling_physics.py`,
+`test_mm2_auto_farm_dynamics.py`, `test_flight.py`, `test_delivery_branch.py`,
+`test_disguise_toggles.py`, `test_freeze_movements.py` y
+`test_mobile_buttons.py`.
+
+Incidencias de proceso durante v143, para no interpretarlas como fallos live:
+
+- Los wrappers de Luau habían desaparecido del workspace; se restauraron con
+  `bash tools/luau/setup.sh` y volvió `0.739.0`.
+- Una invocación manual de `test_mobile_buttons.py` omitió `LUAU`; se repitió
+  con `LUAU=tools/luau/bin/luau` y pasó. No fue un fallo de código.
+- La primera validación se detuvo en el assertion estático de Heartbeat descrito
+  arriba; se actualizó para reconocer la implementación perezosa y se repitió la
+  validación completa, no sólo ese test.
+
+### 0.8 Límites de evidencia y aceptación live pendiente
+
+Las suites demuestran estructura, orden, llamadas, guards, snapshots y cleanup
+en mocks. **No demuestran** replicación, network ownership, knockback, daño,
+kills, monedas, wins, aceptación del servidor, uso real de CPU ni FPS.
+
+La captura histórica del usuario mostraba aproximadamente Physics `12,4 ms /
+44 %`, Render `1,0 ms / 3 %`, Network receive `0,5 ms / 1 %` y unos 35 FPS. Es
+una pista de una sesión, no un benchmark A/B de Lua ni una medición de v143.
+
+Para aceptar v143 en vivo, usar la misma cuenta/config cuando sea posible y
+anotar el watermark `UI Settings · v143`:
+
+1. **Boot hostil:** inyectar con una configuración que antes tuviera Auto Farm,
+   Touch o Auto Fling ON. Esperado: los cuatro estados de sesión permanecen OFF;
+   no hay movimiento de farm ni Fling inesperado.
+2. **Restauración normal:** comprobar que preferencias restaurables siguen
+   apareciendo después del boot y que el menú termina de cargar sin errores.
+3. **Touch manual:** activarlo explícitamente y caminar contra un objetivo vivo.
+   Observar si existe contacto/knockback real y si OFF restaura movimiento y
+   colisiones. No usar un mock como sustituto de esta observación.
+4. **Auto Fling manual:** en MM2, con ronda activa y objetivo vivo; probar OFF,
+   muerte local, muerte/cambio del objetivo y fin de ronda. Debe cancelar sin
+   dejar otro writer activo.
+5. **Auto Farm manual:** probar Walk y Below en ronda activa; pérdida de moneda,
+   personaje muerto, lobby, fin de ronda y bolsa llena. Ninguna acción terminal
+   debe ejecutarse en los estados prohibidos.
+6. **Rendimiento A/B:** comparar v142/v143 en condiciones equivalentes, con el
+   mismo conjunto de features y una captura de Timing. Reportar Physics/Render/
+   Network y FPS antes/después; no atribuir una diferencia de servidor al
+   scheduler sin medición.
+7. **Cleanup:** revisar OFF, respawn y destroy. Si queda CanTouch/CanCollide,
+   AutoRotate, Sit/Seated, LinearVelocity, AlignOrientation o conexiones con un
+   dueño incorrecto, registrar el módulo y la secuencia exacta.
+
+Mientras el usuario no confirme estas pruebas, el mensaje correcto es:
+**«v143 corrige y valida offline el lifecycle; eficacia Touch/lag pendiente en
+vivo»**, no «Touch y lag solucionados».
+
+### 0.9 Mapa de archivos que importan para continuar
+
+| Archivo | Por qué importa ahora |
+| --- | --- |
+| `src/Wurst.lua` | Stamp, rama, SectionManager, coordinador de restores, TaskManager y cleanup global. |
+| `src/guis/Wurst/Code/Cards.lua` | Masters, `restore`, `restorePending`, activación manual y rollback de tarjetas. |
+| `src/guis/Wurst/Code/Widgets.lua` | Subopciones, callbacks persistidos y controles `setChecked`. |
+| `src/guis/Wurst/Code/SettingsPage.lua` | Profiles: debe seguir respetando acciones de sesión. |
+| `src/libraries/Fling.lua` | Controller compartido, PreSimulation/Heartbeat, snapshots, pulsos y Touch. |
+| `src/games/MM2/Blatant/Fling.lua` | Adaptador MM2, ronda/objetivo, Auto Fling y sincronización Touch. |
+| `src/games/universal/Blatant/TouchFling.lua` | Tarjeta universal Touch y sincronización con MM2. |
+| `src/games/MM2/Other/AutoFarm.lua` | Walk/Below, constraints, cesión a Fling, guards y cleanup. |
+| `src/games/universal/Blatant/Noclip.lua` | Writer de colisiones que cede con activity Fling. |
+| `src/games/universal/Blatant/Fly.lua` | Constraints/velocidad que ceden a Fling. |
+| `src/games/MM2/Other/AutoWin.lua` | Otro writer que debe pausar/ceder sin competir con Fling. |
+| `src/libraries/Manifest.lua` | Carga universal; debe coincidir con fallback y bundle. |
+| `src/libraries/bundle.lua` | Artefacto generado; nunca editarlo como fuente independiente. |
+| `tools/test_startup_restore.py` | Regresión de boot hostil, sesión y scheduler perezoso. |
+| `tools/test_fling_physics.py` | Pulsos, contacto, muerte, Touch, Noclip y cleanup. |
+| `tools/test_mm2_auto_farm_dynamics.py` | Cesión de Farm, constraints, rondas y acciones terminales. |
+| `tools/test_action_latency.py` | Heartbeat y reacciones inmediatas sin borrar gates deliberados. |
+| `tools/test_delivery_branch.py` | Entrada, recovery y rama de entrega. |
+| `RESUME.md` | Este handoff; actualizarlo cuando cambien decisiones o estado live. |
+
+### 0.10 Recuperación de un `HEAD` histórico sin perder el workspace
+
+En esta actualización volvió a ocurrir lo siguiente: `HEAD` aparecía en
+`636e7ab` (v139), mientras los archivos visibles eran el trabajo posterior y el
+remoto estaba en `5b4ad20`. Git mostraba 33 rutas modificadas, borradas o no
+rastreadas. No era evidencia de que hubiera que descartarlas.
+
+Procedimiento seguro aplicado:
+
+1. `git ls-remote --heads origin arena/2fb9a46a-arandommenu` y `git fetch` para
+   identificar el tip real.
+2. Leer `git status --porcelain=v1 -z` y comparar cada ruta visible contra
+   `FETCH_HEAD:<path>`; para borrados, comprobar que tampoco existan en el tip.
+3. Los **33 archivos coincidieron byte por byte** con `5b4ad20`.
+4. Sólo entonces se ejecutó `git reset --mixed FETCH_HEAD`, que movió HEAD/index
+   sin reescribir el contenido. El árbol quedó limpio y no se perdió trabajo.
+
+Notas críticas:
+
+- `git diff --quiet FETCH_HEAD` no basta cuando hay archivos no rastreados que
+  sí existen en el commit remoto; puede describirlos como ausentes.
+- Una comparación que reporta **0 archivos examinados no prueba igualdad**. Una
+  primera invocación del script de comparación omitió `--` en
+  `git status --porcelain=v1 -z`; se corrigió y se repitió antes del reset.
+- No usar `reset --hard`, `clean`, checkout de archivos ni borrado de no
+  rastreados como primera reacción. Si cualquier contenido difiere, conservar y
+  reconciliar ese archivo primero.
+- No repetir el antiguo método de reconstruir commits desde un árbol mezclado si
+  el remoto ya contiene exactamente el trabajo; la comparación + reset mixed es
+  más simple y segura en ese caso concreto.
+
+### 0.11 Qué debe hacer el próximo agente
+
+1. Leer esta sección y ejecutar `git status --short --branch`, `git log -3` y
+   `git ls-remote` si hay cualquier duda de alineación.
+2. Confirmar que el runtime que investiga tiene stamp v143; no mezclar logs o
+   fixtures de v141/v142 con conclusiones de v143.
+3. Si el usuario reporta Touch/lag, pedir la secuencia exacta y evidencia live de
+   §0.8. No volver automáticamente a pulsos grandes, CFrames por tick, ownership
+   requests o writers paralelos.
+4. Revisar ownership y orden antes de tocar magnitudes. Si la pista es
+   `activity("fling")`, construir primero una prueba que distinga listener idle
+   de posesión durante contacto.
+5. Mantener las cuatro acciones de sesión fuera de boot/profile salvo que el
+   usuario pida explícitamente cambiar esa decisión.
+6. No añadir otra tarjeta para Auto Farm/Auto Fling/Touch ni duplicar un writer
+   para «probar» una idea.
+7. Para cambios runtime: editar sólo `src`, añadir/actualizar pruebas, subir
+   stamp, regenerar bundle con ese mismo stamp, ejecutar `bash tools/validate.sh`
+   y hacer commit/push normal en la rama activa.
+8. Para cambios sólo de documentación: no hace falta modificar stamp/bundle;
+   revisar el diff, actualizar los datos afectados y publicar sólo el documento.
+9. Actualizar esta sección con el resultado live del usuario. Una suite verde no
+   cierra una aceptación live, y una sospecha live no autoriza a falsear mocks.
+
+### 0.12 Restricciones que siguen vigentes
+
+- `TestingStuff` es evidencia pública de **solo lectura**. No subir código,
+  credenciales, tokens ni configs; no copiar implementaciones y no mezclar datos
+  de builds distintos. Los logs revisados no aportaron evidencia específica de
+  Fling, CPU o Timing que demostrara la causa.
+- No relajar tests para admitir velocidades extremas. Corregir la implementación,
+  no el requisito. La actualización de `test_action_latency.py` cambió cómo se
+  reconoce la conexión, no el comportamiento exigido.
+- No presentar v141 como solución: el usuario reportó lag y Touch sin funcionar.
+  v142 y v143 tienen validación offline, pero eso no sustituye su veredicto.
+- No interpretar una petición de forma tan literal que produzca código basura
+  cuando el mecanismo sea imposible o no esté probado. Explicar el límite y
+  proponer evidencia útil.
+- No afirmar eficacia de red, daño, kills, monedas, wins o mejoras de CPU desde
+  mocks. No inventar remotes, argumentos, resultados ni telemetría.
+- Respetar Roblox/Wurst, conservar LF, no instalar otro bundler y no editar
+  `src/libraries/bundle.lua` manualmente.
+
+### 0.13 Fuentes externas consultadas y qué permiten concluir
+
+Estas referencias se usaron como lectura/evidencia, no como fuentes para copiar
+implementaciones ni como sustituto de una sesión live:
+
+- `https://github.com/XzAngel19/ARandomMenu/tree/arena/9492e6b6-arandommenu`:
+  rama base histórica de lectura. Primero mostró `636e7ab` (v139) y después
+  `10c2a8b` (v140). El trabajo y los pushes de esta sesión pertenecen siempre a
+  `arena/2fb9a46a-arandommenu`; no publicar en la rama histórica.
+- `https://github.com/XzAngel19/ARandomMenu/blob/8b8fe4d1ba6af4e89795920aaab1e08511910fa7/src/games/MM2/Blatant/Fling.lua`:
+  implementación histórica consultada. No es una base segura para restaurar:
+  también contiene potencias extremas, CFrames de contacto y solicitudes de
+  network ownership que el controller actual evita.
+- `https://github.com/XzAngel19/TestingStuff` (`main`, mediante GitHub API):
+  evidencia pública de solo lectura. Se revisaron el tree y los logs
+  `2026-10-24T05_32_41Z.log` y `2026-10-24T16_49_55Z.log`; no apareció evidencia
+  específica de Fling, CPU o Timing que probara la causa del problema. La
+  Contents API devolvió vacío para un log grande y el Git Blob por SHA sí
+  entregó contenido; ese detalle es de acceso, no una prueba de gameplay.
+- Los datos de calibración y logs deben permanecer asociados a su `buildStamp`.
+  No promediar v141/v142/v143, no subir parches o credenciales a TestingStuff y
+  no convertir una ausencia de logs en evidencia de que una función no se usó.
 
 ---
 
@@ -15,16 +477,19 @@
 - Menú "Wurst" para Roblox, foco principal **MM2** (place id `142823291`).
   También hay módulos universales y de otros juegos (BedFight, TRS, VD y
   X2Duels/MVS).
-- El loader carga el **bundle**: `getgenv().WURST_BRANCH = "arena/9492e6b6-arandommenu"`.
-- **Protocolo de publicación (obligatorio, sin excepciones):**
+- El loader carga el **bundle**: `getgenv().WURST_BRANCH = "arena/2fb9a46a-arandommenu"`.
+- **Protocolo de publicación de runtime (obligatorio):**
   1. Edita en `src/…`, nunca directamente en `src/libraries/bundle.lua`.
   2. Sube `SOURCE_STAMP` en `src/Wurst.lua` (`vNNN-AAAAMMDD-descripcion`).
   3. `python3 tools/build_bundle.py --stamp <el mismo stamp>`
-  4. `bash tools/validate.sh` — debe terminar VERDE (87 fuentes, 62 suites,
-     boot `failures=0`, auditoría de menú 46/45 tarjetas).
-  5. Commit + push **normales** a `arena/9492e6b6-arandommenu`. Sin force-push,
+  4. `bash tools/validate.sh` — debe terminar VERDE. En v143 son 92 fuentes,
+     65 suites, boot `failures=0`, auditoría de menú 50/49 tarjetas y 109 call
+     sites; si el inventario cambia, actualiza también los contratos.
+  5. Commit + push **normales** a `arena/2fb9a46a-arandommenu`. Sin force-push,
      sin reescribir historia, sin trabajar en otra rama.
-- Sin bundle regenerado + stamp, el cambio **no llega al usuario**. El watermark
+- Sin bundle regenerado + stamp, un cambio de runtime **no llega al usuario**.
+  Un commit exclusivamente documental no necesita stamp ni bundle nuevo, pero
+  sí revisar el diff y publicar en la misma rama activa. El watermark
   "UI Settings · vNNN" en el menú es como el usuario verifica la versión.
 
 ## 1A. X2Duels (MVS): estructura MM2, evidencia y contratos
@@ -206,7 +671,7 @@ Las pruebas de esta frontera ya existen: `tools/test_manifest_sync.py` detecta
 módulos universales sin registrar, paths ausentes/duplicados, divergencia del
 fallback y diferencias en la lista MM2. `tools/audit_menu.py` comprueba lo que
 realmente se registra al arrancar. Si se añade o retira una tarjeta, hay que
-revisar también el inventario 38/37 documentado y cualquier contrato de menú;
+revisar también el inventario vigente (50/49 en v143) y cualquier contrato de menú;
 si sólo se añade una opción, la prueba debe impedir que aparezca una tarjeta
 extra. La salida final sigue siendo `bash tools/validate.sh` con boot limpio.
 
@@ -791,8 +1256,10 @@ que reúne la comprobación normal sigue siendo `bash tools/validate.sh`.
 
 ## 6. Velocidad, Cooldown y delays: qué significa "instantáneo"
 
-- El suelo físico es **un frame** (Heartbeat ≈ 16.7 ms a 60 FPS) + ping. Todos
-  los `TaskManager:Connect` corren por Heartbeat; los binds disparan en el evento.
+- El suelo físico es **un frame** (Heartbeat ≈ 16.7 ms a 60 FPS) + ping. Los
+  `TaskManager:Connect` normales corren por Heartbeat y los de fase `render` por
+  RenderStepped; desde v143 sus señales se abren/cierran con el bucket. Los binds
+  disparan en el evento.
 - Eliminado en v112: poll de 0.5 s de Auto Get Gun (ahora cada frame + tick
   inmediato al activar) y caché negativa de `findDroppedGun` 0.4 s → 0.05 s.
   Auto Farm espera *condiciones* frame a frame, no sleeps fijos.
@@ -885,17 +1352,29 @@ que reúne la comprobación normal sigue siendo `bash tools/validate.sh`.
 
 ## 9. Pendiente de verificación EN VIVO (no lo des por hecho)
 
-Nada de esto está probado en partida real todavía; está probado en estático,
-boot y las 61 suites:
+Estas entradas permanecen pendientes hasta que exista evidencia live explícita.
+La validación offline actual tiene 65 suites y boot limpio; los items históricos
+deben reevaluarse contra el módulo vigente, no asumir que una versión citada es
+la implementación actual:
 
+- **v143 lifecycle:** boot con configs antiguas, restauración después de todas
+  las secciones, ausencia de movimiento accidental y A/B de Timing/FPS. El
+  scheduler perezoso está probado estructuralmente, no medido en una partida.
+- **Touch v142–v143:** contacto y knockback reales al activarlo manualmente,
+  comportamiento con Noclip/Fly, OFF/respawn y restauración de snapshots. El
+  usuario ya rechazó v141 como solución; v143 todavía necesita su veredicto.
+- **Auto Farm v143:** activación exclusivamente manual, Walk/Below en ronda,
+  roaming sin monedas, void guard, retorno/cleanup y acciones de bolsa llena
+  sólo bajo sus guards. Comprobar también la recogida real de gun/monedas, que
+  los mocks no pueden acreditar.
+- **Fling/Auto Fling actuales:** pulsos compartidos sin requests de network
+  ownership, una colocación dirigida por sesión y cancelación por OFF/muerte/
+  ronda. Anti Fling debe probarse contra un fling real por separado.
 - Shoot v106–v112: si con el muzzle real desaparecen los impactos en geometría
   del mapa (`Smooth Block Model`), y si el gate de 1.5 s recupera los ecos.
 - La sesión limpia que falta: bot en el suelo de verdad (Difícil/Auto/Saltos
   Normal/Sin extras), 15–20 confirmados por modo (Prediction, Silent Front,
   Silent Through). Sin eso, no se retoca el predictor.
-- Auto Farm v107–v111: roaming sin monedas, void guard, Teleport to Map al
-  terminar, y si el toque instantáneo entrega la gun tras el teletransporte.
-- Fling por network ownership (v107) y Anti Fling (v108) contra un fling real.
 - Disguise v101: packs del objetivo / por ID, en servidor.
 - Salidas del standalone (Step 1 nil-parent, Step 4 origen) y TargetBot v5.
 - X2 v119: comprobar en vivo Gun/Knife, precisión del throw, el ESP universal
@@ -917,11 +1396,13 @@ boot y las 61 suites:
   qué tarjeta/estado ya es dueño y por qué no duplica otro módulo. Si hará falta
   una tarjeta/categoría nueva o hay dos ubicaciones razonables, pregunta con una
   propuesta concreta antes de escribir; no crees `Auto Sprint` fuera de Speed.
-- Cambios pequeños, versionados (bump de stamp por cambio), con test que fije
-  el comportamiento y `validate.sh` verde antes de pushear.
+- Cambios de runtime pequeños y versionados (bump de stamp), con test que fije
+  el comportamiento y `validate.sh` verde antes de pushear. Los cambios sólo
+  documentales no requieren stamp, pero sí actualizar este handoff con precisión.
 
 ---
-*Última actualización: 2026-10-24 · arquitectura, registro de módulos, ubicación
-de funciones y toolchain reproducible documentados; el runtime sigue en v119.
-Al publicar una versión nueva, actualiza la línea de estado de arriba y cualquier
-sección que cambie.*
+*Última actualización: 2026-10-26 · runtime v143, restauración transaccional,
+acciones físicas de sesión, TaskManager perezoso, forense v138–v143, validación,
+recuperación del workspace y protocolo live documentados. Al publicar una
+versión nueva o recibir aceptación live, actualiza la línea de estado y todas
+las secciones afectadas.*
