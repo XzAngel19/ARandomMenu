@@ -351,6 +351,7 @@ pass("Auto Farm yields constraints and writers to shared Fling")
 
 -- Losing the target after farming holds the current pose, not an old anchor.
 coins = {}
+coin.Parent = nil
 now += 1
 tick(1/60)
 pre(1/60)
@@ -361,6 +362,7 @@ assert(farmLV().VectorVelocity.Magnitude == 0,"hold uses zero constraint velocit
 pass("Below fixed contact, no per-tick CFrame and stationary target loss")
 
 -- Death is cleanup-only; no coin pulse, teleport or new constraint.
+coin.Parent = map
 coins = {coin}
 now += 1
 tick(1/60)

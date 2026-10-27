@@ -1,5 +1,5 @@
 return {
-    stamp = "v143-20261026-boot-restore-lifecycle",
+    stamp = "v144-20261026-autofarm-touch-performance",
     files = {
         ["src/Profile/135856908115931.lua"] = [[
 --!strict
@@ -6461,7 +6461,7 @@ function Module.init(_runtime: any): any
     local function coinPickups(): {Instance}
         if type(state.mm2CoinPickups) == "function" then
             local ok: boolean, list: any = pcall(state.mm2CoinPickups)
-            if ok and type(list) == "table" then
+            if ok and type(list) == "table" and #list > 0 then
                 return list
             end
         end
@@ -6474,8 +6474,20 @@ function Module.init(_runtime: any): any
             return tagged
         end
         local out: {Instance} = {}
+        -- Round coin parts live under the active map. Restrict the fallback
+        -- traversal to that subtree rather than walking the entire workspace.
+        local map: Instance? = nil
+        if type(findMM2Map) == "function" then
+            local okMap: boolean, found: any = pcall(findMM2Map)
+            if okMap and typeof(found) == "Instance" then
+                map = found
+            end
+        end
+        if not map then
+            return out
+        end
         local ok: boolean, descendants: any = pcall(function(): any
-            return workspace:GetDescendants()
+            return map:GetDescendants()
         end)
         if ok and type(descendants) == "table" then
             for _, object: Instance in ipairs(descendants) do
@@ -7391,12 +7403,17 @@ function Module.init(_runtime: any): any
         -- The Coin_Server part that pays for a pickup entry (ESP hands
         -- out the visual, the server part is its parent).
         local function serverPartOf(part: Instance): Instance?
-            if part.Name == "Coin_Server" then
-                return part
-            end
-            local parent: Instance? = part.Parent
-            if parent and parent.Name == "Coin_Server" then
-                return parent
+            -- CoinVisual may be nested inside a wrapper/model in some MM2
+            -- map builds. Walk ancestors to the actual touch-receiving part.
+            local cursor: Instance? = part
+            for _ = 1, 8 do
+                if not cursor then
+                    break
+                end
+                if cursor.Name == "Coin_Server" and cursor:IsA("BasePart") then
+                    return cursor
+                end
+                cursor = cursor.Parent
             end
             return part
         end
@@ -7976,7 +7993,10 @@ function Module.init(_runtime: any): any
 
                 -- Nearest pickup, from Coin ESP's own detection.
                 local now: number = os.clock()
-                local scanInterval: number = if #scanCache == 0 then 0.10 else 0.25
+                -- Empty rounds are common during transitions. Back off the
+                -- expensive fallback scan while empty; tagged/live lists still
+                -- refresh promptly once pickups exist.
+                local scanInterval: number = if #scanCache == 0 then 0.60 else 0.25
                 if now - scanAt > scanInterval then
                     scanAt = now
                     scanCache = coinPickups()
@@ -8028,7 +8048,6 @@ function Module.init(_runtime: any): any
                             )
                         end
                     end
-                    scanAt = now - 0.20
                     if not firstCoinSeenThisRound then
                         if settings.stayUnderOnStart then
                             holdHiddenUnderMap(character, humanoid, root)
@@ -52881,7 +52900,9 @@ function Module.init(context: any): any
             return
         end
         root.AssemblyLinearVelocity = boundedPulse(direction, 150, 70)
-        root.AssemblyAngularVelocity = Vector3.new(0, 120, 0)
+        -- Keep the player's own avatar upright and readable on contact. The
+        -- old yaw spin made Touch Fling orbit instead of moving normally.
+        root.AssemblyAngularVelocity = Vector3.zero
         lastTouchPulseAt = now
     end
 

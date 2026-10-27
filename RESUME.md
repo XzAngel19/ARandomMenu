@@ -10,7 +10,26 @@
 
 ---
 
-## 0. Estado operativo actual — v143, Fling/Auto Farm y lifecycle de Wurst
+## 0. Estado operativo actual — v144, Auto Farm / Touch Fling / rendimiento
+
+> Actualización de trabajo de esta sesión (2026-10-26). La evidencia es offline;
+> no se afirma que la recogida o el knockback funcionen en servidor live.
+
+- `SOURCE_STAMP`: `v144-20261026-autofarm-touch-performance`.
+- Auto Farm conserva el guard estricto: personaje vivo + ronda activa + mapa
+  cargado antes de mover, tocar monedas o ejecutar acciones terminales. Pruebas
+  dinámicas cubren muerte, lobby y ronda terminada.
+- La búsqueda fallback de monedas queda limitada al subárbol del mapa activo,
+  no recorre todo `workspace`; el refresco de lista vacía baja su frecuencia.
+  Los CoinVisual anidados ahora resuelven hasta el `Coin_Server` ancestro para
+  pulsar la parte real de contacto.
+- Touch Fling ya no añade velocidad angular de yaw al personaje local durante
+  el contacto; esta era la causa directa del movimiento circular/spin.
+- Validación ejecutada: `bash tools/validate.sh`, 65 suites, compilación de 92
+  fuentes y boot con `failures=0`. Aceptación live sigue pendiente; pedir log
+  del build v144 y prueba en lobby, muerte, ronda activa y contacto real.
+
+### 0.1 Estado documentado previo — v143, Fling/Auto Farm y lifecycle de Wurst
 
 Esta sección es la actualización más reciente. Cuando una cifra o una descripción
 histórica de otra sección difiera de ésta, usa el estado v143 y comprueba el

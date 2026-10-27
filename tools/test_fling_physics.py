@@ -263,7 +263,8 @@ root.Touched:Fire(targetRoot)
 PreSimulation:Fire()
 assert(root.AssemblyLinearVelocity.Magnitude < 250,"finite touch pulse cap")
 assert(root.AssemblyLinearVelocity.Magnitude > 0,"contact produces a pulse")
-assert(root.AssemblyAngularVelocity.Magnitude <= 120,"bounded touch angular pulse")
+assert(sameVector(root.AssemblyAngularVelocity,Vector3.zero),
+    "Touch contact must not add the yaw spin that makes the avatar orbit")
 assert(root.CanCollide == true and humanoid.lastState == "Physics"
     and humanoid.AutoRotate == false,
     "contact owns collisions and Humanoid physics before the pulse")

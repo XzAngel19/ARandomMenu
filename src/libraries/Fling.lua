@@ -578,7 +578,9 @@ function Module.init(context: any): any
             return
         end
         root.AssemblyLinearVelocity = boundedPulse(direction, 150, 70)
-        root.AssemblyAngularVelocity = Vector3.new(0, 120, 0)
+        -- Keep the player's own avatar upright and readable on contact. The
+        -- old yaw spin made Touch Fling orbit instead of moving normally.
+        root.AssemblyAngularVelocity = Vector3.zero
         lastTouchPulseAt = now
     end
 
