@@ -111,6 +111,7 @@ tick(.02)
 assert(otherWalks==0 and otherTorso.CanCollide,'a calm other player costs two reads, no tree walk')
 assert(otherRoot.CanCollide,'calm other player keeps collisions')
 otherRoot.AssemblyAngularVelocity=Vector3.new(0,900,0)
+otherRoot.Position=root.Position+Vector3.new(1,0,0)  -- within reach
 fakeNow=fakeNow+1
 tick(.02)
 local walksAfterDetect=otherWalks
@@ -130,6 +131,7 @@ assert(otherTorso.CanCollide==true and otherWalks==walksAfterDetect,
     'release restores collisions without walking the tree')
 -- Toggling everything off releases any strip still held.
 otherRoot.AssemblyAngularVelocity=Vector3.new(0,900,0)
+otherRoot.Position=root.Position+Vector3.new(1,0,0)
 fakeNow=fakeNow+1
 tick(.02)
 assert(otherTorso.CanCollide==false)

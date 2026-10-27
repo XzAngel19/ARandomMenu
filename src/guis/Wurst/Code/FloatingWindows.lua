@@ -1150,6 +1150,20 @@ function Module.init(context: any): any
                 local ping: number? = getSessionPing()
                 table.insert(lines, string.format("FPS       %.0f", math.clamp(sessionFps, 0, 999)))
                 table.insert(lines, "Ping      " .. (ping and string.format("%.0f ms", ping) or "N/A"))
+                -- What the menu itself costs per frame. If this stays under ~1 ms
+                -- and the game still lags, the menu is not the cause.
+                local profile: any = state.performance
+                if type(profile) == "table" then
+                    local frames: number = tonumber(profile.frames) or 0
+                    local tasks: number = frames > 0
+                        and (tonumber(profile.tasks) or 0) / frames
+                        or 0
+                    table.insert(lines, string.format(
+                        "Script    %.2f ms / %d tasks",
+                        tonumber(profile.scriptMs) or 0,
+                        math.floor(tasks + 0.5)
+                    ))
+                end
             end
             if sessionSettings.showServer then
                 table.insert(lines, string.format("Players   %d/%d", #Players:GetPlayers(), Players.MaxPlayers))

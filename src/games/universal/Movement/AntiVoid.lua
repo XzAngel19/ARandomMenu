@@ -4,6 +4,7 @@ local cleanup
 function Module.init(context)
     local host, world = context.host, context.host.workspace
     local antiFling, voidGuard, platform, platformY, token = false, false, nil, nil, 0
+    local stripOwnedByStepped = false
     local previousCharacter, previousRoot, previousVelocity, overSpeedTicks
     -- Fixed physical thresholds, measured against what the body itself can
     -- produce. There is no user-facing velocity limit any more: a single
@@ -44,6 +45,9 @@ function Module.init(context)
     -- detection window instead of once per frame.
     local STRIP_SECONDS = 0.45
     local STRIP_RESTRIKE = 0.1
+    -- 60 studs: beyond that a character's contact cannot reach the local root
+    -- in the half second the strip lasts.
+    local STRIP_RANGE = 60
     -- Injectable clock: lets a suite drive the detection window without
     -- sleeping, and keeps the frame path free of extra service lookups.
     local clock: () -> number = if type((host :: any).clock) == "function"
@@ -130,15 +134,16 @@ function Module.init(context)
     local function stripCharacter(character, entry, now)
         local list = partsOf(character)
         local saved = entry.saved or {}
+        -- Only a part that can collide can transfer a contact. In R6/R15 that is
+        -- typically the torso and the head: two or three writes instead of one
+        -- per part, and nothing at all on the parts that are already off.
         for i = 1, #list do
             local part = list[i]
-            if part.Parent then
+            if part.Parent and part.CanCollide ~= false then
                 if saved[part] == nil then
                     saved[part] = part.CanCollide == true
                 end
-                if part.CanCollide then
-                    part.CanCollide = false
-                end
+                part.CanCollide = false
             end
         end
         entry.saved = saved
@@ -160,6 +165,12 @@ function Module.init(context)
         end
         local now = clock()
         local localPlayer = host.LocalPlayer
+        local myRoot = nil
+        do
+            local _, _, root = host.getCharacterParts()
+            myRoot = root
+        end
+        local myPosition = myRoot and myRoot.Position or nil
         for i = 1, #list do
             local other = list[i]
             if other ~= localPlayer then
@@ -170,17 +181,9 @@ function Module.init(context)
                         releaseStrip(entry)
                         stripped[character] = nil
                     elseif now >= entry.reStrikeAt then
-                        -- Same detected fling: keep the velocities at zero so
-                        -- the solver cannot carry the spin, without touching
-                        -- CanCollide again.
-                        local parts = partsOf(character)
-                        for j = 1, #parts do
-                            local part = parts[j]
-                            if part.Parent then
-                                part.AssemblyLinearVelocity = Vector3.zero
-                                part.AssemblyAngularVelocity = Vector3.zero
-                            end
-                        end
+                        -- Same detected fling: nothing to write. CanCollide is
+                        -- already off and restoring it early is what let the
+                        -- contact through; the entry just stays until it expires.
                         entry.reStrikeAt = now + STRIP_RESTRIKE
                     end
                 elseif character then
@@ -188,6 +191,18 @@ function Module.init(context)
                         or character:FindFirstChild("HumanoidRootPart")
                     if root and (isBasePart(root)
                         or (root :: any).AssemblyLinearVelocity ~= nil) then
+                        -- A fling on the other side of the map cannot touch us.
+                        local reachable = true
+                        if myPosition then
+                            local okDelta, delta = pcall(function(): number
+                                return (root.Position - myPosition).Magnitude
+                            end)
+                            reachable = okDelta and type(delta) == "number"
+                                and delta <= STRIP_RANGE
+                        end
+                        if not reachable then
+                            continue
+                        end
                         -- Two reads decide it. No tree walk, no allocation.
                         local spin = root.AssemblyAngularVelocity.Magnitude
                         local speed = root.AssemblyLinearVelocity.Magnitude
@@ -236,7 +251,12 @@ function Module.init(context)
         local busy=root.Anchored or humanoid.Sit or humanoid.SeatPart or active("fling")
             or active("ghost") or active("teleport") or fly and fly.Enabled
         if antiFling and not busy then
-            stripOtherPlayerCollisions()
+            -- Stepped owns the scan when it exists (it runs before the solver
+            -- and reads the same values), so the Heartbeat path must not run it
+            -- a second time in the same frame.
+            if not stripOwnedByStepped then
+                stripOtherPlayerCollisions()
+            end
             -- Everything is compared to the body's own mobility, so a fast
             -- walk or an intentional Speed never reads as a fling, and no
             -- slider has to match it.
@@ -313,7 +333,9 @@ function Module.init(context)
         if voidGuard or antiFling then
             host.featureConnections.AntiVoid=host.TaskManager:Connect(step)
         end
-        if antiFling and host.RunService and host.RunService.Stepped then
+        stripOwnedByStepped = antiFling and host.RunService ~= nil
+            and host.RunService.Stepped ~= nil
+        if stripOwnedByStepped then
             host.featureConnections.AntiVoidStepped=host.RunService.Stepped:Connect(stripOtherPlayerCollisions)
         end
     end

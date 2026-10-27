@@ -261,7 +261,7 @@ local RUNTIME_RAW_BASE: string =
         .. RUNTIME_BRANCH
         .. "/"
 
-local SOURCE_STAMP: string = "v146-20261027-iy-fling-and-zero-frame-cost"
+local SOURCE_STAMP: string = "v147-20261027-fling-holds-you-and-script-cost"
 -- What the menu shows. It is derived from the stamp, never a hardcoded label:
 -- a build cannot display a version it is not.
 local BUILD_LABEL: string = string.match(SOURCE_STAMP, "^v%d+") or SOURCE_STAMP
@@ -3995,12 +3995,28 @@ local TaskManager = {
     renderConnection = nil :: RBXScriptConnection?,
 }
 
+-- Real numbers instead of guesses. Every per-frame callback the menu owns runs
+-- through here, so this is exactly how much Lua the menu costs per frame. It is
+-- shown in Session Info → Performance, and it is the only way to tell "the menu
+-- is slow" apart from "the game/executor is slow".
+local performanceSample = {
+    scriptMs = 0,
+    worstMs = 0,
+    tasks = 0,
+    frames = 0,
+}
+-- The UI reads it from state, the modules from the host table.
+state.performance = performanceSample
+
 local function runBucket(
     bucket: {[number]: ScheduledTask},
     deltaTime: number
 ): ()
+    local startedAt: number = os.clock()
+    local ran: number = 0
     for taskId: number, scheduled: ScheduledTask in pairs(bucket) do
         if scheduled.handle.Connected then
+            ran += 1
             local success: boolean, message: any = pcall(
                 scheduled.callback,
                 deltaTime
@@ -4022,6 +4038,14 @@ local function runBucket(
             end
         end
     end
+    local spent: number = (os.clock() - startedAt) * 1000
+    -- Smoothed, so one hitch does not redefine the readout.
+    performanceSample.scriptMs = performanceSample.scriptMs * 0.9 + spent * 0.1
+    if spent > performanceSample.worstMs then
+        performanceSample.worstMs = spent
+    end
+    performanceSample.tasks += ran
+    performanceSample.frames += 1
 end
 
 -- A scheduler signal is owned by its non-empty bucket. Keeping permanent
@@ -5173,6 +5197,7 @@ local function createGameModuleEnvironment(
             return instance:IsDescendantOf(ScreenGui)
         end,
         TaskManager = TaskManager,
+    performance = performanceSample,
         featureConnections = featureConnections,
         disconnectFeatureConnection = disconnectFeatureConnection,
         getCharacterParts = getCharacterParts,

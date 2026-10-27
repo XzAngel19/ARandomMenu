@@ -27,8 +27,14 @@ local activeLibrary: any = nil
 --   3. BodyAngularVelocity on the root at 99999 rad/s, MaxTorque = math.huge.
 --   4. Duty cycle 0.2 s spinning / 0.1 s stopped, like `fling` in IY.
 --
--- Everything is restored on OFF, death, respawn and destroy: the constraint is
--- destroyed, density/collision/massless go back to their snapshots.
+-- IY alone also throws the player who is flinging: the spin pushes the local
+-- body out of the way. A rigid AlignPosition (one attachment, RigidityEnabled)
+-- pins the local root where the contact happened for the duration of the spin,
+-- so the energy goes into the other player and not into you. That is a physics
+-- constraint, not a CFrame write per tick.
+--
+-- Everything is restored on OFF, death, respawn and destroy: the constraints
+-- are destroyed, density/collision/massless go back to their snapshots.
 --
 -- CPU: while spinning there is NO per-frame Lua. The duty cycle is two
 -- task.wait() sleeps, and Touch detection is a Touched listener. The old design
@@ -46,6 +52,10 @@ function Module.init(context: any): any
     local SPIN_OFF: number = 0.1
     -- A contact keeps the spin armed for this long, so one bump is enough.
     local CONTACT_SECONDS: number = 0.6
+    -- The local player is pinned only while the impulse lands. After this the
+    -- hold is released even if the session continues, so a long fling never
+    -- traps the player in place (teleport/farm keep working).
+    local HOLD_SECONDS: number = 0.8
     local CONTACT_RANGE: number = 20
 
     local destroyed: boolean = false
@@ -101,6 +111,16 @@ function Module.init(context: any): any
                 state.constraint:Destroy()
             end)
         end
+        if state.hold then
+            pcall(function(): ()
+                state.hold:Destroy()
+            end)
+        end
+        if state.holdAttachment then
+            pcall(function(): ()
+                state.holdAttachment:Destroy()
+            end)
+        end
         for part: BasePart, snapshot: any in pairs(state.parts) do
             if part.Parent then
                 pcall(function(): ()
@@ -117,6 +137,41 @@ function Module.init(context: any): any
             end
         end
         table.clear(state.parts)
+    end
+
+    -- Holds the local root exactly where it is. RigidityEnabled makes the
+    -- attachment a hard position constraint, so the equal-and-opposite impulse
+    -- from the contact is absorbed here instead of throwing the local player.
+    local function createHold(root: BasePart, position: Vector3): (any?, any?)
+        local attachment: any = nil
+        local hold: any = nil
+        local ok: boolean = pcall(function(): ()
+            attachment = Instance.new("Attachment")
+            attachment.Name = "WurstFlingHold"
+            attachment.Parent = root
+            hold = Instance.new("AlignPosition")
+            hold.Name = "WurstFlingHold"
+            -- OneAttachment aligns Attachment0 with the WORLD position in
+            -- `Position`. Leaving that at (0, 0, 0) -- the default -- would drag
+            -- the player to the world origin, so it is pinned to where the
+            -- contact happened.
+            hold.Mode = Enum.PositionAlignmentMode.OneAttachment
+            hold.Position = position
+            hold.Attachment0 = attachment
+            hold.ApplyAtCenterOfMass = true
+            -- Rigid: no spring, no drift, no tuning.
+            hold.RigidityEnabled = true
+            hold.Parent = root
+        end)
+        if not ok or not hold then
+            if attachment then
+                pcall(function(): ()
+                    attachment:Destroy()
+                end)
+            end
+            return nil, nil
+        end
+        return hold, attachment
     end
 
     -- IY's fling: infinite density, no collision, massless body, and a spinning
@@ -161,10 +216,17 @@ function Module.init(context: any): any
                     part.AssemblyLinearVelocity = Vector3.zero
                 end)
             end
+            -- Only the target moves: our own body is pinned for the spin.
+            local startPosition: Vector3 = root.Position
+            local hold: any, holdAttachment: any = createHold(root, startPosition)
             spinState = {
                 root = root,
                 character = character,
                 constraint = constraint,
+                hold = hold,
+                holdAttachment = holdAttachment,
+                holdPosition = startPosition,
+                holdUntil = os.clock() + HOLD_SECONDS,
                 parts = parts,
                 savedCollide = true,
             }
@@ -175,9 +237,33 @@ function Module.init(context: any): any
         task.spawn(function(): ()
             while spinState and spinLoopToken == token and not destroyed do
                 local state: any = spinState
+                -- The pin has a short life of its own; see HOLD_SECONDS. Checked
+                -- at the top so a long pump/frame cannot leave it stuck on.
+                if state and state.hold and state.holdUntil
+                    and os.clock() >= state.holdUntil then
+                    pcall(function(): ()
+                        state.hold:Destroy()
+                    end)
+                    if state.holdAttachment then
+                        pcall(function(): ()
+                            state.holdAttachment:Destroy()
+                        end)
+                    end
+                    state.hold = nil
+                    state.holdAttachment = nil
+                end
                 if state and state.constraint and state.constraint.Parent then
                     pcall(function(): ()
                         state.constraint.AngularVelocity = Vector3.new(0, SPIN_RATE, 0)
+                        -- Kill any drift the previous pulse left behind so the
+                        -- hold never has to fight a tanking velocity.
+                        if state.root and state.root.Parent then
+                            state.root.AssemblyLinearVelocity = Vector3.zero
+                        end
+                        -- Re-assert the pin in case anything moved the goal.
+                        if state.hold and state.holdPosition then
+                            state.hold.Position = state.holdPosition
+                        end
                     end)
                 end
                 task.wait(SPIN_ON)
@@ -482,6 +568,9 @@ function Module.init(context: any): any
     end
     function library.isSpinning(): boolean
         return spinState ~= nil
+    end
+    function library.isHeld(): boolean
+        return spinState ~= nil and spinState.hold ~= nil
     end
     function library.destroy(): ()
         if destroyed then

@@ -74,6 +74,7 @@ function CFrame.lookAt(p,q)
 end
 CFrame.Angles = function() return CFrame.new() end
 Enum.HumanoidStateType = {Seated="Seated",Physics="Physics",GettingUp="GettingUp"}
+Enum.PositionAlignmentMode = {OneAttachment="OneAttachment",TwoAttachment="TwoAttachment"}
 
 local oldTypeof = typeof
 function typeof(value)
@@ -318,6 +319,25 @@ assert(localCharacter.pivotCalls == nil, "OFF does not move the character")
 assert(not physics.isRunning() and not physics.isTouchEnabled() and not activityValue)
 pass("Fling OFF allocates nothing and moves nothing")
 
+-- The local character is held while it spins: IY alone throws the flinger too.
+local function holdConstraint()
+    -- The attachment and the AlignPosition share the name; pick the constraint.
+    for _, child in ipairs(root.children) do
+        if child.ClassName == "AlignPosition" and child.Name == "WurstFlingHold" then
+            return child
+        end
+    end
+    return nil
+end
+local function holdAttachment()
+    for _, child in ipairs(root.children) do
+        if child.ClassName == "Attachment" and child.Name == "WurstFlingHold" then
+            return child
+        end
+    end
+    return nil
+end
+
 -- Directed fling: IY mechanism.
 local home = root.CFrame
 local targetBefore = targetRoot.AssemblyLinearVelocity
@@ -334,6 +354,13 @@ assert(root.CustomPhysicalProperties.density == math.huge, "infinite density")
 assert(sameVector(targetRoot.AssemblyLinearVelocity, targetBefore),
     "never writes the target assembly (it would be overwritten anyway)")
 assert(not physics.start(target, {duration = 0.4}), "one directed owner")
+assert(spin and physics.isHeld(), "the spinner is position-held")
+local hold = holdConstraint()
+assert(hold and hold.RigidityEnabled == true, "rigid AlignPosition, no spring")
+assert(hold.Attachment0 and hold.Attachment0.Name == "WurstFlingHold")
+-- OneAttachment holds the world Position; the default (0,0,0) would drag the
+-- player to the origin, so it must be the contact position.
+assert(hold.Position == root.Position, "the hold is pinned where the contact was")
 pass("directed fling spins the local assembly and never drives the target")
 
 -- Duty cycle: 0.2 s spinning, 0.1 s stopped.
@@ -354,7 +381,18 @@ assert(root.CanCollide == false and torso.CanCollide == true, "collision restore
 assert(root.CustomPhysicalProperties.density == 0.7, "physical properties restored")
 assert(localCharacter.pivotCalls == 2,
     "the only extra placement is the one return home, never a per-frame one")
+assert(not physics.isHeld() and holdConstraint() == nil
+    and holdAttachment() == nil, "the position hold is released with the spin")
 pass("directed fling restores density, massless and collision")
+
+-- The pin has a short life: a long session must not freeze the player.
+assert(physics.start(target, {duration = 2}))
+assert(physics.isHeld() and constraint() ~= nil)
+pump(1.0)
+assert(constraint() ~= nil, "the spin is still running")
+assert(not physics.isHeld() and holdConstraint() == nil,
+    "the position pin expires on its own after ~0.8 s")
+physics.cancel()
 
 -- Local death cancels without leaving the constraint behind.
 assert(physics.start(target, {duration = 2}))
@@ -386,11 +424,21 @@ root.Touched:Fire(targetRoot)
 local touchSpin = constraint()
 assert(touchSpin and touchSpin.AngularVelocity.Y == 99999, "contact starts the spin")
 assert(touchSpin.MaxTorque.Y == math.huge, "contact spin keeps infinite torque")
+-- The touched player flies; you stay where the contact happened.
+assert(physics.isHeld() and holdConstraint() ~= nil,
+    "Touch holds the local player while it spins")
+local heldRootVel = root.AssemblyLinearVelocity
+assert(sameVector(heldRootVel, Vector3.zero),
+    "the spinner never keeps a launch velocity of its own")
+assert(sameVector(targetRoot.AssemblyLinearVelocity, targetBefore),
+    "Touch never writes the target either")
 pass("Touch spins on contact only")
 
 -- Walking away releases the spin by itself.
 pump(0.7)
 assert(constraint() == nil, "contact expiry releases the spin")
+assert(holdConstraint() == nil and holdAttachment() == nil,
+    "contact expiry releases the position hold")
 assert(root.Massless == false and root.CustomPhysicalProperties.density == 0.7,
     "contact expiry restores the body")
 root.Touched:Fire(targetRoot)
@@ -476,9 +524,10 @@ physics.setTouchEnabled(true)
 root.Touched:Fire(targetRoot)
 assert(constraint() ~= nil)
 physics.destroy()
-assert(constraint() == nil and not physics.isTouchEnabled() and not activityValue)
+assert(constraint() == nil and holdConstraint() == nil and holdAttachment() == nil)
+assert(not physics.isTouchEnabled() and not activityValue)
 assert(root.CanTouch == false and root.CustomPhysicalProperties.density == 0.7)
-pass("destroy releases the spin and restores the body")
+pass("destroy releases the spin, the hold and restores the body")
 '''
 
 script += r'''

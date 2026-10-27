@@ -5,14 +5,38 @@
 > contradice lo que crees, gana este documento (y los datos de calibración).
 >
 > **Estado al escribir esto:** rama canónica `arena/83897e25-arandommenu`,
-> build **`v146-20261027-iy-fling-and-zero-frame-cost`**.
+> build **`v147-20261027-fling-holds-you-and-script-cost`**.
 > El usuario se comunica en español. Respóndele en español.
 
 ---
 
 ## 0. Estado operativo actual — v145, loader/caché · v144 Touch/Farm
 
-### 0.0 Lo más reciente: v146 (Fling IY + lag), v145 (loader) y v144 (Touch/Farm)
+### 0.0 Lo más reciente: v147 (Fling que no te lanza + medición), v146, v145 y v144
+
+**v147 — el Fling ya no te lanza a ti, y el lag se mide.** Detalle en
+`docs/FIXES-v147.md`.
+
+- El mecanismo de IY lanzaba también al que flingea (reacción del giro). Ahora,
+  mientras el giro entrega el impulso, el root local queda fijado con un
+  `AlignPosition` **rígido** (`OneAttachment`, `Position` = dónde fue el
+  contacto, `RigidityEnabled = true`). Es una restricción física, no un CFrame
+  por tick. Vive ≤ `0.8 s`, así que no te clava en flings largos.
+- **Causa del lag, con evidencia:** el commit de v138
+  (`a6a7c0a`) añadió el anti-fling de IY que hacía, por frame y por jugador,
+  `GetDescendants()` + 3 `pcall` con closure nueva por parte + `CanCollide` y
+  dos velocidades en **todas** las partes (~500 escrituras de física y 500
+  closures por frame con 11 jugadores). Cada `CanCollide` reinserta la parte en
+  el broadphase. Eso es el `Physics 12.4 ms` del microprofiler.
+- v147 deja el anti-fling en: 2 lecturas por jugador, lista de partes cacheada
+  por personaje, detección real (giro > 20 rad/s o > 1.5× caminata), escritura
+  **una vez** por detección de 0.45 s, solo ≤ 60 studs, y un único dueño por
+  frame (Stepped). Noclip igual: lista cacheada, sin recorrido por frame.
+- **Session Info → Performance** ahora muestra `Script  x.xx ms / N tasks`: el
+  coste real de Lua del menú por frame, medido dentro de `TaskManager`. Si ese
+  número es bajo y el juego sigue lento, el menú no es la causa.
+- `tools/perf_frame.py` perfila el coste por callback con 12 jugadores y 80
+  monedas: ≈0.8 ms/frame en un mock de Lua puro (más lento que Roblox nativo).
 
 **v146 — el Fling usa el mecanismo de Infinite Yield y el lag se ataca donde
 estaba.** Detalle en `docs/FIXES-v146.md`.
@@ -95,14 +119,14 @@ se entrega ahora.
 | Repositorio | `XzAngel19/ARandomMenu` |
 | Rama activa y única para esta sesión | `arena/83897e25-arandommenu` |
 | `CANONICAL_BRANCH` (única del repo) | `arena/83897e25-arandommenu` |
-| `SOURCE_STAMP` | `v146-20261027-iy-fling-and-zero-frame-cost` |
-| `BUILD_LABEL` visible | `v146` (derivado del stamp) |
+| `SOURCE_STAMP` | `v147-20261027-fling-holds-you-and-script-cost` |
+| `BUILD_LABEL` visible | `v147` (derivado del stamp) |
 | Bundle | `src/libraries/bundle.lua`, mismo stamp, **84 archivos** |
 | Identidad de caché | `Wurst/.stamp` + `Wurst/.branch` + `Wurst/.layout` |
 | Loader de `README.md` | Apunta a `refs/heads/arena/83897e25-arandommenu/src/Wurst.lua` |
 | Toolchain | Luau `0.739.0`, vendored en `tools/luau/vendor` |
-| Validación final de v146 | 86 fuentes, 66 suites, boot `failures=0`, 110 call sites, menú 50/49 |
-| Aceptación live de v146 | **Pendiente. No afirmar que Touch, knockback, monedas, lag o FPS ya están resueltos.** |
+| Validación final de v147 | 86 fuentes, 66 suites, boot `failures=0`, 110 call sites, menú 50/49 |
+| Aceptación live de v147 | **Pendiente. No afirmar que knockback o FPS están resueltos; pedir el número de `Script`.** |
 
 - El commit `5b4ad20` se publicó con push normal y el remoto coincidió con
   `5b4ad20672d9501ca06ecce14380b91e9cf6d459`. Esta actualización de `RESUME.md`
@@ -292,6 +316,10 @@ v146 cambió el **mecanismo**. Los valores de v144/v145 (pulsos acotados de
   (la referencia que pasó el usuario).
 - Fling dirigido: **una** colocación de contacto (`PivotTo` a 2.2 studs del
   objetivo) y después el giro hace el trabajo.
+- **El que flingea no sale despedido:** durante el giro, el root local queda
+  fijado con `AlignPosition` rígido (`OneAttachment`, `Position` = posición del
+  contacto, `RigidityEnabled = true`), máximo `0.8 s`. Sin eso, la reacción del
+  giro lanza a los dos.
 - Mecanismo: `BodyAngularVelocity` en el root a `99999 rad/s`,
   `MaxTorque`/`P` `math.huge`, `CustomPhysicalProperties = PhysicalProperties.new(math.huge, 0.3, 0.5)`,
   `Massless = true`, `CanCollide = false`, `Velocity = 0` en las partes.
@@ -460,6 +488,8 @@ siguen pendientes en vivo»**, no «Touch y lag solucionados».
 | `docs/FIXES-v144.md` | Qué cambió en v144 y por qué (Touch, cobro, guards, CPU). |
 | `docs/FIXES-v145.md` | Loader canónico, identidad de caché, versión derivada y árboles legacy borrados. |
 | `docs/FIXES-v146.md` | Fling IY (giro del assembly local) y los tres escritores de física por frame eliminados. |
+| `docs/FIXES-v147.md` | Pin rígido para no salir despedido + causa exacta del lag (v138) y la línea `Script`. |
+| `tools/perf_frame.py` | Perfil del coste por callback y comprobación de la línea `Script` en Session Info. |
 | `tools/test_loader_cache.py` | Identidad de caché y purga reales contra un filesystem simulado. |
 | `README.md` | Único loader canónico y cómo cambiar de rama sin romper nada. |
 | `src/games/MM2/Render/CoinEsp.lua` | Provider de pickups compartido; cache ≤ 1 s e `state.mm2InvalidateCoinPickups`. |
@@ -1507,7 +1537,9 @@ la implementación actual:
   documentales no requieren stamp, pero sí actualizar este handoff con precisión.
 
 ---
-*Última actualización: 2026-10-27 · runtime v146, Fling con el mecanismo de
+*Última actualización: 2026-10-27 · runtime v147, Fling con pin rígido (solo
+vuela el tocado), anti-fling sin recorrido de árbol ni escrituras por frame,
+línea `Script` en Session Info y `tools/perf_frame.py`. v146, Fling con el mecanismo de
 Infinite Yield (giro del assembly local, cero Lua por frame, snapshots
 restaurados), anti-fling y noclip con listas de partes cacheadas y sin
 escrituras de física por frame. v145, loader canónico con override

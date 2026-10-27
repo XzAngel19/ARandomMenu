@@ -1,5 +1,5 @@
 return {
-    stamp = "v146-20261027-iy-fling-and-zero-frame-cost",
+    stamp = "v147-20261027-fling-holds-you-and-script-cost",
     files = {
         ["src/games/BedFight/Combat/AutoSwing.lua"] = [[
 local Module = {Name = "BedFight Auto Swing", Initialized = false, Connection = nil}
@@ -29217,6 +29217,7 @@ local cleanup
 function Module.init(context)
     local host, world = context.host, context.host.workspace
     local antiFling, voidGuard, platform, platformY, token = false, false, nil, nil, 0
+    local stripOwnedByStepped = false
     local previousCharacter, previousRoot, previousVelocity, overSpeedTicks
     -- Fixed physical thresholds, measured against what the body itself can
     -- produce. There is no user-facing velocity limit any more: a single
@@ -29257,6 +29258,9 @@ function Module.init(context)
     -- detection window instead of once per frame.
     local STRIP_SECONDS = 0.45
     local STRIP_RESTRIKE = 0.1
+    -- 60 studs: beyond that a character's contact cannot reach the local root
+    -- in the half second the strip lasts.
+    local STRIP_RANGE = 60
     -- Injectable clock: lets a suite drive the detection window without
     -- sleeping, and keeps the frame path free of extra service lookups.
     local clock: () -> number = if type((host :: any).clock) == "function"
@@ -29343,15 +29347,16 @@ function Module.init(context)
     local function stripCharacter(character, entry, now)
         local list = partsOf(character)
         local saved = entry.saved or {}
+        -- Only a part that can collide can transfer a contact. In R6/R15 that is
+        -- typically the torso and the head: two or three writes instead of one
+        -- per part, and nothing at all on the parts that are already off.
         for i = 1, #list do
             local part = list[i]
-            if part.Parent then
+            if part.Parent and part.CanCollide ~= false then
                 if saved[part] == nil then
                     saved[part] = part.CanCollide == true
                 end
-                if part.CanCollide then
-                    part.CanCollide = false
-                end
+                part.CanCollide = false
             end
         end
         entry.saved = saved
@@ -29373,6 +29378,12 @@ function Module.init(context)
         end
         local now = clock()
         local localPlayer = host.LocalPlayer
+        local myRoot = nil
+        do
+            local _, _, root = host.getCharacterParts()
+            myRoot = root
+        end
+        local myPosition = myRoot and myRoot.Position or nil
         for i = 1, #list do
             local other = list[i]
             if other ~= localPlayer then
@@ -29383,17 +29394,9 @@ function Module.init(context)
                         releaseStrip(entry)
                         stripped[character] = nil
                     elseif now >= entry.reStrikeAt then
-                        -- Same detected fling: keep the velocities at zero so
-                        -- the solver cannot carry the spin, without touching
-                        -- CanCollide again.
-                        local parts = partsOf(character)
-                        for j = 1, #parts do
-                            local part = parts[j]
-                            if part.Parent then
-                                part.AssemblyLinearVelocity = Vector3.zero
-                                part.AssemblyAngularVelocity = Vector3.zero
-                            end
-                        end
+                        -- Same detected fling: nothing to write. CanCollide is
+                        -- already off and restoring it early is what let the
+                        -- contact through; the entry just stays until it expires.
                         entry.reStrikeAt = now + STRIP_RESTRIKE
                     end
                 elseif character then
@@ -29401,6 +29404,18 @@ function Module.init(context)
                         or character:FindFirstChild("HumanoidRootPart")
                     if root and (isBasePart(root)
                         or (root :: any).AssemblyLinearVelocity ~= nil) then
+                        -- A fling on the other side of the map cannot touch us.
+                        local reachable = true
+                        if myPosition then
+                            local okDelta, delta = pcall(function(): number
+                                return (root.Position - myPosition).Magnitude
+                            end)
+                            reachable = okDelta and type(delta) == "number"
+                                and delta <= STRIP_RANGE
+                        end
+                        if not reachable then
+                            continue
+                        end
                         -- Two reads decide it. No tree walk, no allocation.
                         local spin = root.AssemblyAngularVelocity.Magnitude
                         local speed = root.AssemblyLinearVelocity.Magnitude
@@ -29449,7 +29464,12 @@ function Module.init(context)
         local busy=root.Anchored or humanoid.Sit or humanoid.SeatPart or active("fling")
             or active("ghost") or active("teleport") or fly and fly.Enabled
         if antiFling and not busy then
-            stripOtherPlayerCollisions()
+            -- Stepped owns the scan when it exists (it runs before the solver
+            -- and reads the same values), so the Heartbeat path must not run it
+            -- a second time in the same frame.
+            if not stripOwnedByStepped then
+                stripOtherPlayerCollisions()
+            end
             -- Everything is compared to the body's own mobility, so a fast
             -- walk or an intentional Speed never reads as a fling, and no
             -- slider has to match it.
@@ -29526,7 +29546,9 @@ function Module.init(context)
         if voidGuard or antiFling then
             host.featureConnections.AntiVoid=host.TaskManager:Connect(step)
         end
-        if antiFling and host.RunService and host.RunService.Stepped then
+        stripOwnedByStepped = antiFling and host.RunService ~= nil
+            and host.RunService.Stepped ~= nil
+        if stripOwnedByStepped then
             host.featureConnections.AntiVoidStepped=host.RunService.Stepped:Connect(stripOtherPlayerCollisions)
         end
     end
@@ -40804,6 +40826,20 @@ function Module.init(context: any): any
                 local ping: number? = getSessionPing()
                 table.insert(lines, string.format("FPS       %.0f", math.clamp(sessionFps, 0, 999)))
                 table.insert(lines, "Ping      " .. (ping and string.format("%.0f ms", ping) or "N/A"))
+                -- What the menu itself costs per frame. If this stays under ~1 ms
+                -- and the game still lags, the menu is not the cause.
+                local profile: any = state.performance
+                if type(profile) == "table" then
+                    local frames: number = tonumber(profile.frames) or 0
+                    local tasks: number = frames > 0
+                        and (tonumber(profile.tasks) or 0) / frames
+                        or 0
+                    table.insert(lines, string.format(
+                        "Script    %.2f ms / %d tasks",
+                        tonumber(profile.scriptMs) or 0,
+                        math.floor(tasks + 0.5)
+                    ))
+                end
             end
             if sessionSettings.showServer then
                 table.insert(lines, string.format("Players   %d/%d", #Players:GetPlayers(), Players.MaxPlayers))
@@ -51138,8 +51174,14 @@ local activeLibrary: any = nil
 --   3. BodyAngularVelocity on the root at 99999 rad/s, MaxTorque = math.huge.
 --   4. Duty cycle 0.2 s spinning / 0.1 s stopped, like `fling` in IY.
 --
--- Everything is restored on OFF, death, respawn and destroy: the constraint is
--- destroyed, density/collision/massless go back to their snapshots.
+-- IY alone also throws the player who is flinging: the spin pushes the local
+-- body out of the way. A rigid AlignPosition (one attachment, RigidityEnabled)
+-- pins the local root where the contact happened for the duration of the spin,
+-- so the energy goes into the other player and not into you. That is a physics
+-- constraint, not a CFrame write per tick.
+--
+-- Everything is restored on OFF, death, respawn and destroy: the constraints
+-- are destroyed, density/collision/massless go back to their snapshots.
 --
 -- CPU: while spinning there is NO per-frame Lua. The duty cycle is two
 -- task.wait() sleeps, and Touch detection is a Touched listener. The old design
@@ -51157,6 +51199,10 @@ function Module.init(context: any): any
     local SPIN_OFF: number = 0.1
     -- A contact keeps the spin armed for this long, so one bump is enough.
     local CONTACT_SECONDS: number = 0.6
+    -- The local player is pinned only while the impulse lands. After this the
+    -- hold is released even if the session continues, so a long fling never
+    -- traps the player in place (teleport/farm keep working).
+    local HOLD_SECONDS: number = 0.8
     local CONTACT_RANGE: number = 20
 
     local destroyed: boolean = false
@@ -51212,6 +51258,16 @@ function Module.init(context: any): any
                 state.constraint:Destroy()
             end)
         end
+        if state.hold then
+            pcall(function(): ()
+                state.hold:Destroy()
+            end)
+        end
+        if state.holdAttachment then
+            pcall(function(): ()
+                state.holdAttachment:Destroy()
+            end)
+        end
         for part: BasePart, snapshot: any in pairs(state.parts) do
             if part.Parent then
                 pcall(function(): ()
@@ -51228,6 +51284,41 @@ function Module.init(context: any): any
             end
         end
         table.clear(state.parts)
+    end
+
+    -- Holds the local root exactly where it is. RigidityEnabled makes the
+    -- attachment a hard position constraint, so the equal-and-opposite impulse
+    -- from the contact is absorbed here instead of throwing the local player.
+    local function createHold(root: BasePart, position: Vector3): (any?, any?)
+        local attachment: any = nil
+        local hold: any = nil
+        local ok: boolean = pcall(function(): ()
+            attachment = Instance.new("Attachment")
+            attachment.Name = "WurstFlingHold"
+            attachment.Parent = root
+            hold = Instance.new("AlignPosition")
+            hold.Name = "WurstFlingHold"
+            -- OneAttachment aligns Attachment0 with the WORLD position in
+            -- `Position`. Leaving that at (0, 0, 0) -- the default -- would drag
+            -- the player to the world origin, so it is pinned to where the
+            -- contact happened.
+            hold.Mode = Enum.PositionAlignmentMode.OneAttachment
+            hold.Position = position
+            hold.Attachment0 = attachment
+            hold.ApplyAtCenterOfMass = true
+            -- Rigid: no spring, no drift, no tuning.
+            hold.RigidityEnabled = true
+            hold.Parent = root
+        end)
+        if not ok or not hold then
+            if attachment then
+                pcall(function(): ()
+                    attachment:Destroy()
+                end)
+            end
+            return nil, nil
+        end
+        return hold, attachment
     end
 
     -- IY's fling: infinite density, no collision, massless body, and a spinning
@@ -51272,10 +51363,17 @@ function Module.init(context: any): any
                     part.AssemblyLinearVelocity = Vector3.zero
                 end)
             end
+            -- Only the target moves: our own body is pinned for the spin.
+            local startPosition: Vector3 = root.Position
+            local hold: any, holdAttachment: any = createHold(root, startPosition)
             spinState = {
                 root = root,
                 character = character,
                 constraint = constraint,
+                hold = hold,
+                holdAttachment = holdAttachment,
+                holdPosition = startPosition,
+                holdUntil = os.clock() + HOLD_SECONDS,
                 parts = parts,
                 savedCollide = true,
             }
@@ -51286,9 +51384,33 @@ function Module.init(context: any): any
         task.spawn(function(): ()
             while spinState and spinLoopToken == token and not destroyed do
                 local state: any = spinState
+                -- The pin has a short life of its own; see HOLD_SECONDS. Checked
+                -- at the top so a long pump/frame cannot leave it stuck on.
+                if state and state.hold and state.holdUntil
+                    and os.clock() >= state.holdUntil then
+                    pcall(function(): ()
+                        state.hold:Destroy()
+                    end)
+                    if state.holdAttachment then
+                        pcall(function(): ()
+                            state.holdAttachment:Destroy()
+                        end)
+                    end
+                    state.hold = nil
+                    state.holdAttachment = nil
+                end
                 if state and state.constraint and state.constraint.Parent then
                     pcall(function(): ()
                         state.constraint.AngularVelocity = Vector3.new(0, SPIN_RATE, 0)
+                        -- Kill any drift the previous pulse left behind so the
+                        -- hold never has to fight a tanking velocity.
+                        if state.root and state.root.Parent then
+                            state.root.AssemblyLinearVelocity = Vector3.zero
+                        end
+                        -- Re-assert the pin in case anything moved the goal.
+                        if state.hold and state.holdPosition then
+                            state.hold.Position = state.holdPosition
+                        end
                     end)
                 end
                 task.wait(SPIN_ON)
@@ -51593,6 +51715,9 @@ function Module.init(context: any): any
     end
     function library.isSpinning(): boolean
         return spinState ~= nil
+    end
+    function library.isHeld(): boolean
+        return spinState ~= nil and spinState.hold ~= nil
     end
     function library.destroy(): ()
         if destroyed then
