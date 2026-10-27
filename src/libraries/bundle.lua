@@ -1,5 +1,5 @@
 return {
-    stamp = "v138-20261026-autofarm-antifling-iy-fixes",
+    stamp = "v138.1-20261027-no-autofling-touchfling-only",
     files = {
         ["src/Profile/135856908115931.lua"] = [[
 --!strict
@@ -1590,10 +1590,10 @@ function Module.init(runtime: any): any
     local addToggleOption: any = host.addToggleOption
     local addTextOption: any = host.addTextOption
     local addInformationOption: any = host.addInformationOption
-    local TaskManager: any = host.TaskManager
     local featureConnections: any = host.featureConnections
     local disconnectFeatureConnection: any = host.disconnectFeatureConnection
     local findPlayerByText: any = host.findPlayerByText
+    local configData: any = host.configData
 
     local workspace: any = host.workspace
     local RunService: any = host.RunService
@@ -1604,6 +1604,15 @@ function Module.init(runtime: any): any
     local getPlayerWeapon: any = core.getPlayerWeapon
     local isPlayerAlive: any = core.isPlayerAlive
 
+    -- v138 restored "Auto Fling Selected Target" from the saved config on every
+    -- injection, so it started flinging the lobby (the local player included)
+    -- before the menu was even open. The option is gone: its stale key is dropped
+    -- and Touch Fling is never restored, so nothing fling-related runs at boot.
+    if configData and type(configData.states) == "table" then
+        configData.states["MM2.Fling.AutoFlingSelectedTarget"] = nil
+        configData.states["MM2.Fling.TouchFling"] = false
+    end
+
     -- High-impulse velocities modeled after Infinite Yield's walkfling + fling:
     -- pulsed on Heartbeat, reset on RenderStepped (before physics integration),
     -- and micro-oscillated on Stepped so replication never sleeps while the
@@ -1612,18 +1621,17 @@ function Module.init(runtime: any): any
     local FLING_ANGULAR_VEL: Vector3 = Vector3.new(0, 99999, 0)
 
     local flingRunning: boolean = false
-    local walkFlingEnabled: boolean = false
+    local touchFlingEnabled: boolean = false
+    local touchFlingCollision: any = setmetatable({}, {__mode = "k"})
     local flingTargetName: string = ""
     local selectedTargetChoice: string = "Murderer"
-    local autoFlingSelected: boolean = false
-    local lastAutoFlingAt: number = 0
     local stepPhase: number = 0
     local stepAngle: number = 0
     local stepMovel: number = 0.1
 
     local function setFlingRunning(running: boolean): ()
         flingRunning = running
-        activity.set("fling", running or walkFlingEnabled)
+        activity.set("fling", running or touchFlingEnabled)
     end
 
     local function waitHeartbeat(): ()
@@ -2360,22 +2368,47 @@ function Module.init(runtime: any): any
         return nil
     end
 
-    -- Infinite Yield walkfling loop when the Fling module toggle is turned ON
-    local function startWalkFlingLoop(): ()
+    -- Touch Fling. This is the Infinite Yield walkfling pulse v138 started from the
+    -- Fling card, but gated: it only runs while the Touch Fling option is ON, so
+    -- injecting the menu never launches anybody by itself. The pulse is unchanged
+    -- (noclip the local parts, spike the root velocity for one RenderStepped, put
+    -- it back before Stepped and micro-oscillate); the difference is that the
+    -- CanCollide flags it clears are recorded and restored when it stops.
+    local function rememberCollision(character: Model): ()
+        for _, part: Instance in ipairs(character:GetChildren()) do
+            if part:IsA("BasePart") and touchFlingCollision[part] == nil then
+                touchFlingCollision[part] = (part :: BasePart).CanCollide
+            end
+        end
+    end
+
+    local function restoreCollision(): ()
+        for part: any, canCollide: any in pairs(touchFlingCollision) do
+            if part and part.Parent then
+                pcall(function(): ()
+                    part.CanCollide = canCollide
+                end)
+            end
+        end
+        touchFlingCollision = setmetatable({}, {__mode = "k"})
+    end
+
+    local function startTouchFlingLoop(): ()
         task.spawn(function(): ()
             local movel: number = 0.1
-            while walkFlingEnabled and Module.Initialized do
+            while touchFlingEnabled and Module.Initialized do
                 if flingRunning then
                     waitHeartbeat()
                 else
                     waitHeartbeat()
-                    if not walkFlingEnabled then
+                    if not touchFlingEnabled then
                         break
                     end
                     local character: Model?, _humanoid: Humanoid?, root: BasePart? = getCharacterParts()
                     if character and root and root.Parent then
                         local savedVel: Vector3 = root.AssemblyLinearVelocity
                         pcall(function(): ()
+                            rememberCollision(character)
                             for _, part: Instance in ipairs(character:GetChildren()) do
                                 if part:IsA("BasePart") then
                                     (part :: BasePart).CanCollide = false
@@ -2404,34 +2437,31 @@ function Module.init(runtime: any): any
                     end
                 end
             end
+            restoreCollision()
         end)
     end
 
-    local function toggleFlingModule(enabled: boolean): ()
-        walkFlingEnabled = enabled == true
-        activity.set("fling", walkFlingEnabled or flingRunning)
-        if walkFlingEnabled then
-            if autoFlingSelected then
-                lastAutoFlingAt = 0
-            end
-            local target: Player? = resolveSelectedTargetPlayer()
-            if target and not flingRunning then
-                performFling(target, {
-                    silent = false,
-                    duration = 3.5,
-                })
-            end
-            startWalkFlingLoop()
-        else
-            local character: Model?, _humanoid: Humanoid?, root: BasePart? = getCharacterParts()
-            if character and root then
-                pcall(function(): ()
-                    root.Velocity = Vector3.zero
-                    root.AssemblyLinearVelocity = Vector3.zero
-                    root.AssemblyAngularVelocity = Vector3.zero
-                end)
-            end
+    local function stopTouchFling(): ()
+        touchFlingEnabled = false
+        activity.set("fling", flingRunning)
+        local character: Model?, _humanoid: Humanoid?, root: BasePart? = getCharacterParts()
+        if character and root then
+            pcall(function(): ()
+                root.Velocity = Vector3.zero
+                root.AssemblyLinearVelocity = Vector3.zero
+                root.AssemblyAngularVelocity = Vector3.zero
+            end)
         end
+        restoreCollision()
+    end
+
+    -- The card itself is a group, so this only reports the container state. Turning
+    -- the module off never starts a fling: every fling here is an explicit action.
+    local function toggleFlingModule(enabled: boolean): ()
+        if not enabled then
+            stopTouchFling()
+        end
+        activity.set("fling", flingRunning)
     end
 
     local FlingFeature: any = createUniversalFeature(
@@ -2511,7 +2541,7 @@ function Module.init(runtime: any): any
                 rebuildTargetChoices()
                 selectedTargetChoice = value
             end,
-            "Select Murderer, Sheriff, or a specific player in the server for Fling and Auto Fling."
+            "Select Murderer, Sheriff, or a specific player in the server for Fling."
         )
     end
 
@@ -2524,50 +2554,6 @@ function Module.init(runtime: any): any
         featureConnections.MM2FlingPlayerRemoving = Players.PlayerRemoving:Connect(function(): ()
             rebuildTargetChoices()
         end)
-    end
-
-    local function autoFlingTick(): ()
-        if not autoFlingSelected or flingRunning then
-            return
-        end
-        if os.clock() - lastAutoFlingAt < 0.35 then
-            return
-        end
-        local localChar: Model?, localHum: Humanoid?, localRoot: BasePart? = getCharacterParts()
-        if not localChar or not localHum or not localRoot or localHum.Health <= 0 then
-            return
-        end
-        local target: Player? = resolveSelectedTargetPlayer()
-        if not target or protectedTargets.isProtected(target) then
-            return
-        end
-        if type(isPlayerAlive) == "function" and not isPlayerAlive(target) then
-            return
-        end
-        local targetChar: Model? = target.Character
-        local targetHum: Humanoid? = targetChar
-            and targetChar:FindFirstChildOfClass("Humanoid")
-            :: Humanoid?
-        local targetPart: BasePart? = targetChar
-            and resolveTargetContactPart(targetChar)
-        if not targetChar or not targetHum or targetHum.Health <= 0 or targetHum.Sit or not targetPart then
-            return
-        end
-        local destroyHeight: number = workspace.FallenPartsDestroyHeight
-        if destroyHeight ~= destroyHeight or math.abs(destroyHeight) > 1e6 then
-            destroyHeight = -500
-        end
-        if targetPart.Position.Y <= destroyHeight + 55 or targetPart.Position.Y >= 4000 then
-            return
-        end
-        lastAutoFlingAt = os.clock()
-        performFling(target, {
-            silent = true,
-            duration = 3.5,
-            shouldStop = function(): boolean
-                return not autoFlingSelected
-            end,
-        })
     end
 
     addTextOption(
@@ -2590,32 +2576,27 @@ function Module.init(runtime: any): any
     end)
     addToggleOption(
         FlingFeature,
-        "Auto Fling Selected Target",
+        "Touch Fling",
         false,
         function(value: boolean): ()
-            autoFlingSelected = value == true
-            if disconnectFeatureConnection then
-                disconnectFeatureConnection("MM2AutoFlingTarget")
-            end
-            if autoFlingSelected and TaskManager and featureConnections then
-                lastAutoFlingAt = 0
-                featureConnections.MM2AutoFlingTarget =
-                    TaskManager:Connect(autoFlingTick)
-                autoFlingTick()
+            touchFlingEnabled = value == true
+            if touchFlingEnabled then
+                activity.set("fling", true)
+                startTouchFlingLoop()
+            else
+                stopTouchFling()
             end
         end,
-        "Continuously flings the target chosen in Select Target or Target player whenever they are alive."
+        "Walk-fling: while ON, bumping into another player launches them. Nothing runs while it is OFF."
     )
     addInformationOption(
         FlingFeature,
-        "MM2 only. Choose a role action, select a target in Select Target / Target player, or enable Fling for walk-fling."
+        "MM2 only. Choose a role action or a target in Select Target / Target player, or enable Touch Fling to walk-fling on contact."
     )
 
     activeCleanup = function(): ()
-        autoFlingSelected = false
-        walkFlingEnabled = false
+        stopTouchFling()
         if disconnectFeatureConnection then
-            disconnectFeatureConnection("MM2AutoFlingTarget")
             disconnectFeatureConnection("MM2FlingPlayerAdded")
             disconnectFeatureConnection("MM2FlingPlayerRemoving")
         end

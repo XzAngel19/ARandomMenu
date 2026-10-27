@@ -220,7 +220,7 @@ local RUNTIME_RAW_BASE: string =
         .. RUNTIME_BRANCH
         .. "/"
 
-local SOURCE_STAMP: string = "v138-20261026-autofarm-antifling-iy-fixes"
+local SOURCE_STAMP: string = "v138.1-20261027-no-autofling-touchfling-only"
 
 local BOOT_STARTED_AT: number = os.clock()
 local BOOT_FINGERPRINT_SECONDS: number = 0

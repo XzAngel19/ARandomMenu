@@ -43,7 +43,12 @@ for retained in ('Aim method', 'Target', 'WallCheck', 'Macro'):
     assert f'"{retained}"' in S, f'{retained} must still be in Gun Aimbot'
 
 fling = (ROOT / 'src/games/MM2/Blatant/Fling.lua').read_text()
-assert '"Auto Fling Selected Target"' in fling, 'Fling must expose Auto Fling Selected Target'
+assert '\n        "Auto Fling Selected Target",\n' not in fling, 'Auto Fling must stay deleted'
+assert 'configData.states["MM2.Fling.AutoFlingSelectedTarget"] = nil' in fling, \
+    'the stale Auto Fling key must be dropped at boot'
+assert '"Touch Fling"' in fling, 'Fling must expose Touch Fling'
+assert 'configData.states["MM2.Fling.TouchFling"] = false' in fling, \
+    'Touch Fling must never be restored from the saved config'
 assert 'MAP_FLING_WARMUP_SECONDS' in auto_win, 'Auto Win must wait for map load before Fling Sheriff'
 
 print('PASS Auto Shoot and Knife Throw are now independent Combat modules with required options')

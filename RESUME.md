@@ -27,6 +27,14 @@
 - Sin bundle regenerado + stamp, el cambio **no llega al usuario**. El watermark
   "UI Settings · vNNN" en el menú es como el usuario verifica la versión.
 
+> **v138.1 (2026-10-27):** esta rama sirve v138 con un parche encima. Se borró
+> **Auto Fling Selected Target** (se restauraba del guardado al inyectar y
+> flingeaba la partida sola) y el pulso de Infinite Yield `walkfling` —el que
+> limpia `CanCollide` y el usuario lee como noclip— pasó a ser la opción
+> **Touch Fling**: solo corre mientras esa opción está encendida, y al apagarse
+> devuelve las colisiones. La tarjeta `Fling` es un grupo y ya no lanza nada.
+> Evidencia: `docs/FIXES-v138.1.md`, `tools/test_fling_touch_only.py`.
+
 ## 1A. X2Duels (MVS): estructura MM2, evidencia y contratos
 
 - PlaceIds registrados: `92876937625630` y el MVS anterior `135856908115931`.
