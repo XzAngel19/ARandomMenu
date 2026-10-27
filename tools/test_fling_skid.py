@@ -140,7 +140,7 @@ local Instance = {new=function(class) return newInstance(class) end}
 
 -- Records what the module writes on the local body.
 local writes = {maxVelocity=0, maxRotVelocity=0, poses=0, primaries=0,
-    assemblyWrites=0, customPhysicsWrites=0, cframeWrites=0}
+    assemblyWrites=0, customPhysicsWrites=0, cframeWrites=0, positions={}}
 
 local function track(name, props, value)
     if name == "Velocity" and type(value) == "table" then
@@ -154,7 +154,10 @@ local function track(name, props, value)
         writes.customPhysicsWrites += 1
     elseif name == "CFrame" then
         writes.cframeWrites += 1
-        if type(value) == "table" and value.Position then props.Position = value.Position end
+        if type(value) == "table" and value.Position then
+            props.Position = value.Position
+            table.insert(writes.positions, value.Position)
+        end
     end
 end
 
@@ -270,12 +273,14 @@ end
 
 local world = {FallenPartsDestroyHeight=-500, CurrentCamera=nil}
 
+local networkPing = 0
 local notifications = {}
 local configData = {states={["MM2.Fling.AutoFlingSelectedTarget"]=true,["MM2.Fling.TouchFling"]=true}, values={}}
 local feature, options = nil, {}
 local host = {
     Players=Players,
-    LocalPlayer={Name="Local", Character=character},
+    LocalPlayer={Name="Local", Character=character,
+        GetNetworkPing=function() return networkPing end},
     getCharacterParts=function() return character, humanoid, root end,
     notify=function(message) table.insert(notifications, message) end,
     findPlayerByText=function() return nil end,
@@ -285,6 +290,9 @@ local host = {
     configData=configData,
     addActionOption=function(_feature, name, callback) options[name] = callback end,
     addTextOption=function(_feature, name, _default, callback) options[name] = callback end,
+    addNumberOption=function(_feature, name, _default, _min, _max, callback)
+        options[name] = callback
+    end,
     addInformationOption=function() end,
 }
 host.disconnectFeatureConnection = function(key)
@@ -318,6 +326,7 @@ local function resetWrites()
     writes.maxVelocity = 0; writes.maxRotVelocity = 0; writes.poses = 0
     writes.primaries = 0; writes.assemblyWrites = 0
     writes.customPhysicsWrites = 0; writes.cframeWrites = 0
+    writes.positions = {}
 end
 local passed = 0
 local function pass(name) passed += 1; print("PASS", name) end
@@ -391,7 +400,8 @@ assert(writes.poses >= 12,
     "the choreography keeps going past the first pose set, got " .. writes.poses)
 assert(writes.primaries >= 12, "every pose still goes through SetPrimaryPartCFrame")
 
-pump(260)
+-- Duration 3 s + one half-length retry: ~4.5 s of 10 ms frames.
+pump(600)
 assert(#notifications == 1, "exactly one notification when it ends, got " .. #notifications)
 assert(string.find(notifications[1], "did not move") ~= nil,
     "a target that never moved is reported as such, got: " .. notifications[1])
@@ -445,6 +455,81 @@ assert(#notifications == 1 and string.find(notifications[1], "Murder Mystery 2")
     "role actions must explain that they need MM2")
 state.mm2Core = savedCore
 pass("MM2 role actions degrade cleanly outside MM2")
+
+-- Ping prediction: the pose is written where the victim WILL be ------------
+-- 300 ms of ping means the server works on a copy of the victim that is 150 ms
+-- old; with Prediction 0.15 that is 0.30 s of its own velocity added to the pose.
+victimSpeed = 100
+networkPing = 0.3
+notifications = {}
+resetWrites()
+options["Power"](3)
+options["Prediction"](0.15)
+options["Duration"](1)
+options["Retries"](0)
+options["Target player"]("Victim")
+options["Fling"]()
+pump(120)
+assert(#notifications == 1, "the fling must finish, got " .. tostring(notifications[1]))
+local furthest = 0
+for _, position in ipairs(writes.positions) do
+    if position.X > furthest then furthest = position.X end
+end
+assert(furthest > 22,
+    "the pose must lead the victim by ~30 studs at 300 ms ping, got " .. tostring(furthest))
+networkPing = 0
+-- Prediction 0 still leads by half the (now zero) ping: essentially no lead.
+victimSpeed = 0
+pass("the pose leads the victim by half the ping plus Prediction")
+
+-- Power scales both the pose velocity and the EpixVel pin ------------------
+networkPing = 0
+victimSpeed = 0
+notifications = {}
+resetWrites()
+options["Power"](6)
+options["Duration"](1)
+options["Retries"](0)
+local baseMax = writes.maxVelocity
+options["Target player"]("Victim")
+options["Fling"]()
+pump(120)
+assert(writes.maxVelocity >= 1.7e9,
+    "Power 6 must double the 9e8 pose velocity, got " .. tostring(writes.maxVelocity))
+local pinAfter = nil
+for _, object in ipairs(created) do
+    if object.ClassName == "BodyVelocity" and object.Name == "EpixVel"
+        and object.destroyed == false then pinAfter = object end
+end
+-- The pin is destroyed when the fling ends; assert the scaled value was set.
+local sawScaledPin = false
+for _, object in ipairs(created) do
+    if object.ClassName == "BodyVelocity" and object.Name == "EpixVel"
+        and object.Velocity and object.Velocity.Magnitude >= 1.7e9 then
+        sawScaledPin = true
+    end
+end
+assert(sawScaledPin, "the EpixVel pin must be scaled by Power too")
+options["Power"](3)
+pass("Power scales the pose velocity and the pin together")
+
+-- Retries: a victim that never moves gets a second pass ---------------------
+victimSpeed = 0
+notifications = {}
+resetWrites()
+options["Power"](3)
+options["Duration"](0.5)
+options["Retries"](1)
+options["Prediction"](0)
+options["Target player"]("Victim")
+options["Fling"]()
+pump(400)
+assert(#notifications == 1, "one notification, got " .. tostring(#notifications))
+assert(state.mm2LastFling and (state.mm2LastFling.retries or 0) >= 1,
+    "a victim that did not move must trigger the second pass")
+assert(writes.poses >= 24, "the second pass writes more poses, got " .. writes.poses)
+options["Retries"](1)
+pass("a motionless victim gets a second pass on its other part")
 
 print("PASS " .. passed .. " SkidFling suites")
 '''

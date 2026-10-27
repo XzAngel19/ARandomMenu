@@ -179,8 +179,10 @@ assert '"Touch Fling"' not in FLING, "Fling must not own Touch Fling any more"
 assert "startTouchFlingLoop" not in FLING, "the walkfling loop moved out of Fling"
 assert "universal/Blatant/WalkFling.lua" in MANIFEST, "Walk Fling must be in the manifest"
 assert "universal/Movement/AntiFling.lua" in MANIFEST, "Anti Fling must be its own module"
-assert 'name = "Walk Fling"' in LOADER, "Walk Fling must be in the loader fallback manifest"
-assert 'name = "Anti Fling"' in LOADER, "Anti Fling must be in the loader fallback manifest"
+CATALOG = (ROOT / "src/libraries/Manifest.lua").read_text()
+assert 'name = "Walk Fling"' in CATALOG, "Walk Fling must be in the module catalog"
+assert 'name = "Anti Fling"' in CATALOG, "Anti Fling must be in the module catalog"
+assert "fallbackManifest" not in LOADER, "the loader keeps no second catalog"
 
 with tempfile.TemporaryDirectory() as tmp:
     script = Path(tmp) / "walkfling.luau"

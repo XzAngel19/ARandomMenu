@@ -13,10 +13,10 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 SOURCE = (ROOT / 'src/games/MM2/Other/AutoFarm.lua').read_text()
-WURST = (ROOT / 'src/Wurst.lua').read_text()
+CATALOG = (ROOT / 'src/libraries/Manifest.lua').read_text()
 
-# Registered in the MM2 module load list.
-assert '"src/games/MM2/Other/AutoFarm.lua"' in WURST
+# Registered in the MM2 module load list (v138.9: the catalog, not Wurst.lua).
+assert '"src/games/MM2/Other/AutoFarm.lua"' in CATALOG
 
 # Feature + Farm Speed slider + the five requested options.
 assert '"Auto Farm"' in SOURCE

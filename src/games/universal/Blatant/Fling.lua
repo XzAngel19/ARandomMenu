@@ -30,6 +30,7 @@ function Module.init(context: Runtime): any
     local createUniversalFeature: any = host.createUniversalFeature
     local addActionOption: any = host.addActionOption
     local addTextOption: any = host.addTextOption
+    local addNumberOption: any = host.addNumberOption
     local addInformationOption: any = host.addInformationOption
     local findPlayerByText: any = host.findPlayerByText
     local configData: any = host.configData
@@ -103,10 +104,33 @@ function Module.init(context: Runtime): any
     --     RenderStepped.
     --   * Two pose sets: six poses while the victim is still (< 50 studs/s) and
     --     nine while it is already moving.
-    local FLING_VELOCITY: Vector3 = Vector3.new(9e7, 9e7 * 10, 9e7)
-    local FLING_ROT_VELOCITY: Vector3 = Vector3.new(9e8, 9e8, 9e8)
-    local PIN_VELOCITY: Vector3 = Vector3.new(9e8, 9e8, 9e8)
+    -- Power 3 reproduces YARHM's numbers exactly (9e7 / 9e8); anything above
+    -- scales BOTH textures of the trick (the pose velocity and the EpixVel pin),
+    -- which is what makes the fling survive a laggy or fast-moving victim.
+    local FLING_VELOCITY_BASE: Vector3 = Vector3.new(9e7, 9e7 * 10, 9e7)
+    local FLING_ROT_VELOCITY_BASE: Vector3 = Vector3.new(9e8, 9e8, 9e8)
+    local PIN_VELOCITY_BASE: Vector3 = Vector3.new(9e8, 9e8, 9e8)
     local PIN_FORCE: Vector3 = Vector3.new(math.huge, math.huge, math.huge)
+
+    local flingPower: number = 4
+    local flingDuration: number = 3
+    local flingPrediction: number = 0.15
+    local flingRetries: number = 1
+    -- Temporary boost used by the second pass only (never persisted).
+    local flingBoost: number = 1
+
+    local function powerScale(): number
+        local power: number = tonumber(flingPower) or 4
+        if power ~= power then
+            power = 4
+        end
+        return (math.clamp(power, 1, 10) / 3) * flingBoost
+    end
+
+    local function scaledVelocity(base: Vector3): Vector3
+        local scale: number = powerScale()
+        return Vector3.new(base.X * scale, base.Y * scale, base.Z * scale)
+    end
 
     local flingRunning: boolean = false
     local flingTargetName: string = ""
@@ -159,15 +183,84 @@ function Module.init(context: Runtime): any
         root: BasePart,
         basePart: BasePart,
         offset: CFrame,
-        angles: CFrame
+        angles: CFrame,
+        lead: Vector3?
     ): ()
-        local targetCFrame: CFrame = CFrame.new(basePart.Position) * offset * angles
+        local origin: Vector3 = basePart.Position
+        if lead then
+            origin = origin + lead
+        end
+        local targetCFrame: CFrame = CFrame.new(origin) * offset * angles
         pcall(function(): ()
             root.CFrame = targetCFrame
             moveCharacter(character, targetCFrame)
-            root.Velocity = FLING_VELOCITY
-            root.RotVelocity = FLING_ROT_VELOCITY
+            root.Velocity = scaledVelocity(FLING_VELOCITY_BASE)
+            root.RotVelocity = scaledVelocity(FLING_ROT_VELOCITY_BASE)
         end)
+    end
+
+    -- Round trip / 2: how stale the server's copy of the victim is by the time it
+    -- applies the pose we just wrote. With 300 ms of ping that is 150 ms of
+    -- movement we have to lead with our own.
+    local function transportSeconds(): number
+        local ping: any = 0
+        pcall(function(): ()
+            local player: any = LocalPlayer
+            if player and type(player.GetNetworkPing) == "function" then
+                ping = player:GetNetworkPing()
+            end
+        end)
+        if type(ping) ~= "number" or ping ~= ping or ping < 0 then
+            ping = 0
+        end
+        -- GetNetworkPing returns seconds in current builds; older ones returned
+        -- milliseconds. Anything above 2 is milliseconds.
+        if ping > 2 then
+            ping = ping / 1000
+        end
+        return math.clamp(ping * 0.5, 0, 0.5)
+    end
+
+    -- Where the victim will be when the server applies this pose: planar lead
+    -- from its own velocity. Vertical lead is left out on purpose, it is the
+    -- floor contact that carries the fling.
+    local function leadFor(targetPart: BasePart?): Vector3?
+        if not targetPart then
+            return nil
+        end
+        local velocity: any = Vector3.zero
+        pcall(function(): ()
+            velocity = targetPart.AssemblyLinearVelocity
+        end)
+        if type(velocity) ~= "userdata" and type(velocity) ~= "table" then
+            return nil
+        end
+        local seconds: number = math.clamp(
+            transportSeconds() + (tonumber(flingPrediction) or 0.15),
+            0,
+            0.6
+        )
+        if seconds <= 0.001 then
+            return nil
+        end
+        local lead: any = Vector3.new(velocity.X, 0, velocity.Z) * seconds
+        return lead :: Vector3
+    end
+
+    -- The victim's own parts can be replaced (respawn, ragdoll, tool swap) while
+    -- the fling runs; re-read them every pose instead of caching the first pair.
+    local function liveTargetParts(
+        targetPlayer: Player,
+        targetCharacter: Model
+    ): (Model?, Humanoid?, BasePart?, BasePart?)
+        local character: Model? = targetPlayer.Character or targetCharacter
+        if not character or not character.Parent then
+            return nil, nil, nil, nil
+        end
+        local humanoid: Humanoid? = character:FindFirstChildOfClass("Humanoid")
+        local root: BasePart? = humanoid and humanoid.RootPart or nil
+        local head: BasePart? = character:FindFirstChild("Head") :: BasePart?
+        return character, humanoid, root, head
     end
 
     local function nowSeconds(): number
@@ -224,7 +317,16 @@ function Module.init(context: Runtime): any
         return found ~= nil
     end
 
-    -- SFBasePart: the choreography, exactly as written in YARHM.
+    -- SFBasePart: YARHM's choreography (six poses while the victim is slow, nine
+    -- while it is already moving), hardened for lag and for fast victims:
+    --
+    --   * MIN_POSES before the "it is flying, stop" check, so one stale
+    --     replication frame does not end the fling early;
+    --   * the victim's parts are re-read on every pose (respawn, ragdoll);
+    --   * each pose is led by the victim's own velocity times half the ping, so a
+    --     300 ms connection still lands the contact.
+    local MIN_POSES: number = 12
+
     local function sfBasePart(
         character: Model,
         humanoid: Humanoid,
@@ -240,6 +342,42 @@ function Module.init(context: Runtime): any
     ): ()
         local startedAt: number = nowSeconds()
         local angle: number = 0
+        local liveBase: BasePart = basePart
+
+        local function currentBasePart(): BasePart?
+            local characterNow: Model?, humanoidNow: Humanoid?, rootNow: BasePart?, headNow: BasePart? =
+                liveTargetParts(targetPlayer, targetCharacter)
+            if not characterNow then
+                return nil
+            end
+            targetCharacter = characterNow
+            targetHumanoid = humanoidNow or targetHumanoid
+            targetRoot = rootNow or targetRoot
+            local candidate: BasePart? = rootNow
+            if rootNow and headNow then
+                if (rootNow.Position - headNow.Position).Magnitude > 5 then
+                    candidate = headNow
+                end
+            elseif headNow then
+                candidate = headNow
+            end
+            if candidate and candidate.Parent then
+                liveBase = candidate
+            end
+            return liveBase
+        end
+
+        local function pose(offset: CFrame, angles: CFrame): boolean
+            local part: BasePart? = currentBasePart()
+            if not part then
+                return false
+            end
+            fpos(character, root, part, offset, angles, leadFor(part))
+            stats.poses += 1
+            waitFrame()
+            return true
+        end
+
         repeat
             if not root or not targetHumanoid then
                 break
@@ -247,7 +385,11 @@ function Module.init(context: Runtime): any
             if shouldStop and shouldStop() then
                 break
             end
-            local speed: number = partSpeed(basePart)
+            local part: BasePart? = currentBasePart()
+            if not part then
+                break
+            end
+            local speed: number = partSpeed(part)
             local moveDirection: Vector3 = Vector3.zero
             local walkSpeed: number = 16
             pcall(function(): ()
@@ -258,62 +400,30 @@ function Module.init(context: Runtime): any
                 angle = angle + 100
                 local lead: Vector3 = moveDirection * (speed / 1.25)
                 local spin: CFrame = CFrame.Angles(math.rad(angle), 0, 0)
-                fpos(character, root, basePart, CFrame.new(0, 1.5, 0) + lead, spin)
-                stats.poses += 1
-                waitFrame()
-                fpos(character, root, basePart, CFrame.new(0, -1.5, 0) + lead, spin)
-                stats.poses += 1
-                waitFrame()
-                fpos(character, root, basePart, CFrame.new(2.25, 1.5, -2.25) + lead, spin)
-                stats.poses += 1
-                waitFrame()
-                fpos(character, root, basePart, CFrame.new(-2.25, -1.5, 2.25) + lead, spin)
-                stats.poses += 1
-                waitFrame()
-                fpos(character, root, basePart, CFrame.new(0, 1.5, 0) + moveDirection, spin)
-                stats.poses += 1
-                waitFrame()
-                fpos(character, root, basePart, CFrame.new(0, -1.5, 0) + moveDirection, spin)
-                stats.poses += 1
-                waitFrame()
+                pose(CFrame.new(0, 1.5, 0) + lead, spin)
+                pose(CFrame.new(0, -1.5, 0) + lead, spin)
+                pose(CFrame.new(2.25, 1.5, -2.25) + lead, spin)
+                pose(CFrame.new(-2.25, -1.5, 2.25) + lead, spin)
+                pose(CFrame.new(0, 1.5, 0) + moveDirection, spin)
+                pose(CFrame.new(0, -1.5, 0) + moveDirection, spin)
             else
                 local downLead: number = partSpeed(targetRoot) / 1.25
-                fpos(character, root, basePart, CFrame.new(0, 1.5, walkSpeed), CFrame.Angles(math.rad(90), 0, 0))
-                stats.poses += 1
-                waitFrame()
-                fpos(character, root, basePart, CFrame.new(0, -1.5, -walkSpeed), CFrame.Angles(0, 0, 0))
-                stats.poses += 1
-                waitFrame()
-                fpos(character, root, basePart, CFrame.new(0, 1.5, walkSpeed), CFrame.Angles(math.rad(90), 0, 0))
-                stats.poses += 1
-                waitFrame()
-                fpos(character, root, basePart, CFrame.new(0, 1.5, downLead), CFrame.Angles(math.rad(90), 0, 0))
-                stats.poses += 1
-                waitFrame()
-                fpos(character, root, basePart, CFrame.new(0, -1.5, -downLead), CFrame.Angles(0, 0, 0))
-                stats.poses += 1
-                waitFrame()
-                fpos(character, root, basePart, CFrame.new(0, 1.5, downLead), CFrame.Angles(math.rad(90), 0, 0))
-                stats.poses += 1
-                waitFrame()
-                fpos(character, root, basePart, CFrame.new(0, -1.5, 0), CFrame.Angles(math.rad(90), 0, 0))
-                stats.poses += 1
-                waitFrame()
-                fpos(character, root, basePart, CFrame.new(0, -1.5, 0), CFrame.Angles(0, 0, 0))
-                stats.poses += 1
-                waitFrame()
-                fpos(character, root, basePart, CFrame.new(0, -1.5, 0), CFrame.Angles(math.rad(-90), 0, 0))
-                stats.poses += 1
-                waitFrame()
-                fpos(character, root, basePart, CFrame.new(0, -1.5, 0), CFrame.Angles(0, 0, 0))
-                stats.poses += 1
-                waitFrame()
+                pose(CFrame.new(0, 1.5, walkSpeed), CFrame.Angles(math.rad(90), 0, 0))
+                pose(CFrame.new(0, -1.5, -walkSpeed), CFrame.Angles(0, 0, 0))
+                pose(CFrame.new(0, 1.5, walkSpeed), CFrame.Angles(math.rad(90), 0, 0))
+                pose(CFrame.new(0, 1.5, downLead), CFrame.Angles(math.rad(90), 0, 0))
+                pose(CFrame.new(0, -1.5, -downLead), CFrame.Angles(0, 0, 0))
+                pose(CFrame.new(0, 1.5, downLead), CFrame.Angles(math.rad(90), 0, 0))
+                pose(CFrame.new(0, -1.5, 0), CFrame.Angles(math.rad(90), 0, 0))
+                pose(CFrame.new(0, -1.5, 0), CFrame.Angles(0, 0, 0))
+                pose(CFrame.new(0, -1.5, 0), CFrame.Angles(math.rad(-90), 0, 0))
+                pose(CFrame.new(0, -1.5, 0), CFrame.Angles(0, 0, 0))
             end
-        until partSpeed(basePart) > 500
-            or basePart.Parent ~= targetCharacter
+        until (stats.poses >= MIN_POSES and partSpeed(liveBase) > 500)
+            or not liveBase.Parent
             or targetPlayer.Character ~= targetCharacter
             or not playerStillHere(targetPlayer)
-            or targetHumanoid.Sit
+            or (targetHumanoid ~= nil and targetHumanoid.Sit)
             or humanoid.Health <= 0
             or nowSeconds() > startedAt + timeToWait
             or stats.poses >= 600
@@ -363,11 +473,12 @@ function Module.init(context: Runtime): any
     end
 
     local function createPin(root: BasePart): any
+        local pinVelocity: Vector3 = scaledVelocity(PIN_VELOCITY_BASE)
         local ok: boolean, pin: any = pcall(function(): any
             local bodyVelocity: any = Instance.new("BodyVelocity")
             bodyVelocity.Name = "EpixVel"
             bodyVelocity.Parent = root
-            bodyVelocity.Velocity = PIN_VELOCITY
+            bodyVelocity.Velocity = pinVelocity
             bodyVelocity.MaxForce = PIN_FORCE
             return bodyVelocity
         end)
@@ -380,7 +491,7 @@ function Module.init(context: Runtime): any
             local bodyVelocity: any = Instance.new("BodyVelocity")
             bodyVelocity.Name = "EpixVel"
             bodyVelocity.Parent = root
-            bodyVelocity.Velocity = PIN_VELOCITY
+            bodyVelocity.Velocity = pinVelocity
             bodyVelocity.MaxForce = Vector3.new(1e9, 1e9, 1e9)
             return bodyVelocity
         end)
@@ -477,7 +588,8 @@ function Module.init(context: Runtime): any
             return false
         end
         local silent: boolean = type(options) == "table" and options.silent == true
-        local maxDuration: number = (type(options) == "table" and tonumber(options.duration)) or 2
+        local maxDuration: number = (type(options) == "table" and tonumber(options.duration))
+            or flingDuration
         local shouldStop: (() -> boolean)? = type(options) == "table"
             and type(options.shouldStop) == "function"
             and options.shouldStop
@@ -496,7 +608,7 @@ function Module.init(context: Runtime): any
 
         setFlingRunning(true)
 
-        local stats: any = {poses = 0, speed = 0, pinned = false, rescued = false}
+        local stats: any = {poses = 0, speed = 0, pinned = false, rescued = false, retries = 0}
 
         local function runFling(): boolean
             local character: Model?, humanoid: Humanoid?, root: BasePart? = getCharacterParts()
@@ -570,23 +682,81 @@ function Module.init(context: Runtime): any
                 elseif targetHead then
                     basePart = targetHead
                 end
-                if basePart then
+
+                -- Pass 1 is YARHM as written. If the victim did not move, the
+                -- remaining passes switch to its other part with a temporary 1.5x
+                -- boost: on a bad connection the first contact is often applied
+                -- after the victim has already left the pose.
+                local maxPasses: number = math.clamp(
+                    math.floor(tonumber(flingRetries) or 0),
+                    0,
+                    3
+                ) + 1
+                local used: BasePart? = nil
+                local pass: number = 0
+                while pass < maxPasses do
+                    pass += 1
+                    local partNow: BasePart? = nil
+                    if pass == 1 then
+                        partNow = basePart
+                    else
+                        local _c: Model?, _h: Humanoid?, rootNow: BasePart?, headNow: BasePart? =
+                            liveTargetParts(targetPlayer, targetCharacter)
+                        targetHumanoid = _h or targetHumanoid
+                        targetRoot = rootNow or targetRoot
+                        local primary: BasePart? = rootNow
+                        if rootNow and headNow then
+                            if (rootNow.Position - headNow.Position).Magnitude > 5 then
+                                primary = headNow
+                            end
+                        elseif headNow then
+                            primary = headNow
+                        end
+                        if primary == used then
+                            partNow = if primary == rootNow then headNow else rootNow
+                        else
+                            partNow = primary
+                        end
+                        if partNow then
+                            flingBoost = 1.5
+                            stats.retries = (stats.retries or 0) + 1
+                        end
+                    end
+                    if not partNow or not partNow.Parent then
+                        flingBoost = 1
+                        break
+                    end
+                    used = partNow
                     sfBasePart(
                         character,
                         humanoid,
                         root,
-                        basePart,
+                        partNow,
                         targetCharacter,
                         targetPlayer,
                         targetHumanoid,
                         targetRoot,
-                        maxDuration,
+                        -- Retries are half as long: they exist to catch a late
+                        -- server contact, not to double the time spent posing.
+                        if pass > 1 then maxDuration * 0.5 else maxDuration,
                         shouldStop,
                         stats
                     )
+                    flingBoost = 1
+                    stats.speed = math.max(
+                        stats.speed or 0,
+                        partSpeed(targetRoot),
+                        partSpeed(targetHead)
+                    )
+                    if stats.speed > 100 then
+                        break
+                    end
                 end
-
-                stats.speed = math.max(partSpeed(targetRoot), partSpeed(targetHead))
+                stats.speed = math.max(
+                    stats.speed or 0,
+                    partSpeed(targetRoot),
+                    partSpeed(targetHead)
+                )
                 if stats.speed <= 100 then
                     stats.rescued = rescueImpulse(targetCharacter, targetRoot, targetHead)
                     stats.speed = math.max(partSpeed(targetRoot), partSpeed(targetHead), stats.speed)
@@ -642,6 +812,8 @@ function Module.init(context: Runtime): any
                     speed = stats.speed,
                     pinned = stats.pinned,
                     rescued = stats.rescued,
+                    retries = stats.retries,
+                    power = powerScale(),
                     ok = success,
                 }
             end)
@@ -654,10 +826,13 @@ function Module.init(context: Runtime): any
                     notify("fling failed: " .. tostring(errorMessage))
                 elseif touchedTarget then
                     notify(string.format(
-                        "fling: %s sent flying (%s studs/s, %d poses)",
+                        "fling: %s sent flying (%s studs/s, %d poses%s)",
                         tostring(targetPlayer.Name),
                         speedText,
-                        stats.poses
+                        stats.poses,
+                        (stats.retries or 0) > 0
+                            and string.format(", %d retries", stats.retries)
+                            or ""
                     ))
                 else
                     notify(string.format(
@@ -863,7 +1038,7 @@ function Module.init(context: Runtime): any
 
     local FlingFeature: any = createUniversalFeature(
         "Fling",
-        "SkidFling: throw the player typed in Target player (MM2 roles when available)",
+        "SkidFling: throw the player typed in Target player (MM2 roles when available). Led by ping, retried if the victim did not move.",
         7,
         toggleFlingModule,
         {category = true, categoryName = "Exploits", configKey = "Universal.Fling"}
@@ -945,6 +1120,59 @@ function Module.init(context: Runtime): any
             end
         end)
     end)
+    addNumberOption(
+        FlingFeature,
+        "Power",
+        4,
+        1,
+        10,
+        function(value: number): ()
+            flingPower = tonumber(value) or 4
+        end,
+        "Strength of the catapult. 3 is YARHM's exact numbers (9e7 pose, 9e8 pin); "
+            .. "higher throws harder and is the fix when the victim barely moves. "
+            .. "Very high values can get you kicked for Invalid position.",
+        0.5
+    )
+    addNumberOption(
+        FlingFeature,
+        "Duration",
+        3,
+        1,
+        6,
+        function(value: number): ()
+            flingDuration = tonumber(value) or 3
+        end,
+        "Seconds the poses keep being written. Longer survives a laggy server that "
+            .. "applies the contact late.",
+        0.5
+    )
+    addNumberOption(
+        FlingFeature,
+        "Prediction",
+        0.15,
+        0,
+        0.5,
+        function(value: number): ()
+            flingPrediction = tonumber(value) or 0.15
+        end,
+        "Extra lead (seconds) on top of half your ping. Every pose is written where "
+            .. "the victim will be, so fast targets and 300 ms connections still get hit.",
+        0.05
+    )
+    addNumberOption(
+        FlingFeature,
+        "Retries",
+        1,
+        0,
+        3,
+        function(value: number): ()
+            flingRetries = tonumber(value) or 1
+        end,
+        "Extra passes if the victim did not move. Each retry uses the other body part "
+            .. "with a temporary 1.5x boost.",
+        1
+    )
     addInformationOption(
         FlingFeature,
         "Type a name in Target player and press Fling. Walk Fling is its own card."

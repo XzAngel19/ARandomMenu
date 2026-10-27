@@ -28,26 +28,47 @@ local WINDOW_GAP: number = 2
 local GRID_GAP: number = 10
 local TITLE_HEIGHT: number = 26
 
-local CATEGORY_ORDER: {string} = {
+-- v138.9: the window list and the aliases live in ONE place, Manifest.lua
+-- (categories.order / categories.aliases). This file used to carry its own copy
+-- with a different alias set than the loader's. The table below is only the
+-- last-resort default for a hand-made state that has no catalog.
+local DEFAULT_CATEGORY_ORDER: {string} = {
     "Combat", "Exploits", "Utilities", "World", "Render", "Blocks", "Items",
 }
-local CATEGORY_ALIASES: {[string]: string} = {
-    Blatant = "Exploits", Movement = "World", Other = "Utilities",
-    Fun = "Utilities", Visuals = "Render", Protection = "Utilities",
-    Utility = "Utilities", Spoof = "Utilities", General = "Utilities", Player = "World",
+local categories: any = {
+    order = DEFAULT_CATEGORY_ORDER,
+    aliases = {},
+    default = "Utilities",
 }
 
+local function useCatalog(hostState: any): ()
+    local catalog: any = hostState and hostState.categories
+    if type(catalog) == "table" and type(catalog.order) == "table"
+        and #catalog.order > 0 then
+        categories = catalog
+    end
+end
+
+local function order(): {string}
+    return categories.order or DEFAULT_CATEGORY_ORDER
+end
+
 local function fallbackNormalize(raw: any): string
-    local name: string = tostring(raw or "Utilities")
-    if table.find(CATEGORY_ORDER, name) ~= nil then
+    local name: string = tostring(raw or categories.default or "Utilities")
+    if table.find(order(), name) ~= nil then
         return name
     end
-    return CATEGORY_ALIASES[name] or "Utilities"
+    local aliases: any = categories.aliases
+    if type(aliases) == "table" and type(aliases[name]) == "string" then
+        return aliases[name]
+    end
+    return categories.default or "Utilities"
 end
 
 function Module.init(context: any): any
     local host: any = context
     local state: any = host.state
+    useCatalog(state)
     local create: any = host.create
     local allFeatures: {any} = host.allFeatures
     local normalizeFeatureCategory: any = host.normalizeFeatureCategory
@@ -151,8 +172,8 @@ function Module.init(context: any): any
         ClickGui.categories[name] = record
         table.insert(ClickGui.order, name)
         table.sort(ClickGui.order, function(left: string, right: string): boolean
-            local leftRank: number = table.find(CATEGORY_ORDER, left) or math.huge
-            local rightRank: number = table.find(CATEGORY_ORDER, right) or math.huge
+            local leftRank: number = table.find(order(), left) or math.huge
+            local rightRank: number = table.find(order(), right) or math.huge
             if leftRank == rightRank then
                 return left < right
             end
@@ -214,14 +235,16 @@ function Module.init(context: any): any
                 table.insert(rows, child :: GuiObject)
             end
         end
-        -- ARandomMenu order: the cards inside a window are placed by their
-        -- session-stable random rank, never alphabetically and never by the
-        -- curated slot. The rank is drawn once per session (Cards.lua), so the
-        -- order never moves while the script is running.
+        -- v138.9: every window is ALPHABETICAL by card name (FeatureSortName is
+        -- the lowercased display name), so a module is always where you expect
+        -- it. Ties (same name in two sections) fall back to the row name so the
+        -- order is stable instead of moving between refreshes.
         table.sort(rows, function(left: GuiObject, right: GuiObject): boolean
-            local leftRank: number = tonumber(left:GetAttribute("FeatureSortRank")) or math.huge
-            local rightRank: number = tonumber(right:GetAttribute("FeatureSortRank")) or math.huge
-            if leftRank ~= rightRank then return leftRank < rightRank end
+            local leftKey: string = tostring(left:GetAttribute("FeatureSortName") or "")
+            local rightKey: string = tostring(right:GetAttribute("FeatureSortName") or "")
+            if leftKey ~= rightKey then
+                return leftKey < rightKey
+            end
             return tostring(left.Name) < tostring(right.Name)
         end)
         for index: number, row: GuiObject in ipairs(rows) do
@@ -307,7 +330,7 @@ function Module.init(context: any): any
         end
         return fallbackNormalize(raw)
     end
-    for _, name: string in ipairs(CATEGORY_ORDER) do
+    for _, name: string in ipairs(order()) do
         for _, feature: any in ipairs(allFeatures) do
             if resolvedCategory(feature) == name then
                 categoryWindow(name)

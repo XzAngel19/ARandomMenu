@@ -37,6 +37,10 @@ while IFS= read -r -d '' source; do
 done < <(find src -name '*.lua' -print0)
 echo "PASS $sources Lua sources compile"
 
+# v138.9: one catalog. tools/card.py is the front door to it (add/remove/window)
+# and this checks the catalog against the disk before anything else runs.
+python3 tools/card.py check
+
 suites=0
 for suite in tools/test_*.py; do
     python3 "$suite"

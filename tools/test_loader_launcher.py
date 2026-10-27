@@ -11,7 +11,8 @@ Three user-visible problems are pinned here:
      VISIBLE, so it flashed for the whole load. It must start hidden and only
      appear once every section has initialized.
   3. UI Settings had two unnecessary switches: Random Card Order and Rainbow.
-     The shuffle stays (it is what makes the order random), the switches do not.
+     The cards are alphabetical again (v138.9) and the catalog lives in one
+     file, so this also proves nothing was left behind from the random order.
 """
 from pathlib import Path
 
@@ -69,16 +70,31 @@ for kept in ('"Background"', '"Accent"', '"Opacity"', '"Keep after teleport"'):
 # the HUD list's own Rainbow is a different panel and stays
 assert 'addToggleOption(panel, "Rainbow", HACKLIST_RAINBOW' in SETTINGS
 
-# The shuffle itself survives without the switch.
-assert "nextRandomRank" in CARDS and "FeatureSortRank" in CARDS
+# v138.9: the cards are ALPHABETICAL. The random rank of v138.6-v138.8 is gone.
+assert "nextRandomRank" not in CARDS and "FeatureSortRank" not in CARDS
+assert "sessionSeed" not in CARDS
+assert 'SetAttribute("FeatureSortName", string.lower(name))' in CARDS
 sort_body = CLICKGUI.split("local function sortCategoryRows", 1)[1].split("for index", 1)[0]
 comparator = sort_body.split("table.sort(rows", 1)[1]
-assert 'GetAttribute("FeatureSortRank")' in comparator
-assert 'GetAttribute("FeatureSortName")' not in comparator, \
-    "the alphabetical tie-break must not be back in the card order"
+assert 'GetAttribute("FeatureSortName")' in comparator, \
+    "the windows must sort by the card name"
+assert 'GetAttribute("FeatureSortRank")' not in comparator
 assert "randomCardOrder" not in CLICKGUI
 assert "ClickGui.restack" not in CLICKGUI
 
+# --- 4. one catalog ------------------------------------------------------
+assert "fallbackManifest" not in WURST, "the duplicated catalog must be gone"
+assert "    return\n" in WURST.split("did not load; the menu cannot boot", 1)[1][:200], \
+    "a missing catalog must abort the boot instead of loading another menu"
+assert "manifest.categories" in WURST and "manifest.cards" in WURST
+assert 'local FEATURE_CATEGORIES: {[string]: string} = {}' in WURST
+assert 'local CATEGORY_ALIASES: {[string]: string} = {}' in WURST
+manifest = (ROOT / "src/libraries/Manifest.lua").read_text()
+assert "categories = {" in manifest and "cards = {" in manifest
+assert "<arandommenu:modules>" in manifest and "<arandommenu:cards>" in manifest, \
+    "tools/card.py needs its markers" 
+
 print("PASS loader has no source cache (bundle -> memory -> one GET, legacy purge in the background)")
 print("PASS launcher starts hidden and waits for state.menuReady")
-print("PASS UI settings: Random Card Order and Rainbow removed, shuffle kept")
+print("PASS UI settings: Random Card Order and Rainbow removed")
+print("PASS one catalog: Manifest.lua is the only module list, no fallback copy")

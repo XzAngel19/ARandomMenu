@@ -889,7 +889,6 @@ do
     local killAuraModule = ex.state.framework:GetModule("KillAura")
     assert(killAuraModule and killAuraModule.Options["Kill All"] and killAuraModule.Options["Kill Player"],
       "KillAura must expose Kill All button and Kill Player living-Innocent selector")
-    local RANDOM_ORDER_PROOF = false
     local expected = {
       Render = {"ItemESP", "PlayerESP", "Chams", "Nametags", "HP", "Arrows", "NPCESP", "FOV", "Fullbright", "X-Ray", "Zoom", "Markers"},
       Combat = {"Aim Assist", "KillAura", "TriggerBot", "Gun Aimbot"},
@@ -907,69 +906,42 @@ do
         assert(type(rank) == "number" and rank >= 1, name .. " has no display slot")
         assert(ranks[rank] == nil, name .. " reuses display slot " .. tostring(rank))
         ranks[rank] = true
-        assert(type(feature.row:GetAttribute("FeatureSortRank")) == "number",
-          name .. " has no random ordering rank")
+        assert(feature.row:GetAttribute("FeatureSortName") == string.lower(name),
+          name .. " has no alphabetical ordering key")
       end
     end
-    -- ARandomMenu ordering: inside each window the cards are shuffled by a
-    -- session-stable random rank, so the display slots must be a permutation
-    -- (every card in the window gets its own slot) instead of the old
-    -- alphabetical/curated sequence.
-    for category, _ in pairs(expected) do
-      local slots = {}
-      local count = 0
-      for _, feature in ipairs(ex.allFeatures) do
-        if type(feature) == "table" and feature.name and feature.row
-          and feature.categoryName == category then
-          count += 1
-          local slot = feature.row.LayoutOrder
-          assert(type(slot) == "number", feature.name .. " has no display slot")
-          assert(slots[slot] == nil, category .. " repeats display slot " .. tostring(slot))
-          slots[slot] = feature.name
-        end
-      end
-      for slot = 1, count do
-        assert(slots[slot] ~= nil, category .. " is missing display slot " .. tostring(slot))
-      end
-      -- and the slot order must follow the random rank, not the name
-      local previousRank = -1
-      local previousName = nil
-      local sawInversion = false
-      for slot = 1, count do
-        for _, feature in ipairs(ex.allFeatures) do
-          if type(feature) == "table" and feature.name and feature.row
-            and feature.categoryName == category
-            and feature.row.LayoutOrder == slot then
-            local rank = feature.row:GetAttribute("FeatureSortRank")
-            assert(rank > previousRank, category .. " slots do not follow the random rank")
-            previousRank = rank
-            local key = feature.row:GetAttribute("FeatureSortName")
-            if previousName and key < previousName then
-              sawInversion = true
-            end
-            previousName = key
-          end
-        end
-      end
-      if sawInversion then
-        RANDOM_ORDER_PROOF = true
-      end
-    end
-    assert(RANDOM_ORDER_PROOF == true,
-      "menu order is still alphabetical; cards must be shuffled by their random rank")
-    -- every card carries a distinct session rank, so the shuffle is a real
-    -- permutation instead of a tie broken by name
+    -- v138.9 ordering: every window is ALPHABETICAL by display name. The check
+    -- reads the REAL window bodies (not the feature registry), so it covers cards
+    -- the harness registry does not see, like the debug Calibration card.
     do
-      local ranks = {}
-      for _, feature in ipairs(ex.allFeatures) do
-        if type(feature) == "table" and feature.row then
-          local rank = feature.row:GetAttribute("FeatureSortRank")
-          if type(rank) == "number" then
-            assert(ranks[rank] == nil, "two cards share the random rank " .. tostring(rank))
-            ranks[rank] = true
+      local windows = ex.state.clickGui and ex.state.clickGui.categories or {}
+      local checked = 0
+      for category, record in pairs(windows) do
+        local rows = {}
+        for _, child in ipairs(record.window.body:GetChildren()) do
+          if child:IsA("GuiObject") and type(child:GetAttribute("FeatureSortName")) == "string" then
+            table.insert(rows, child)
           end
         end
+        table.sort(rows, function(a, b) return a.LayoutOrder < b.LayoutOrder end)
+        local previousKey = nil
+        for index, row in ipairs(rows) do
+          local key = row:GetAttribute("FeatureSortName")
+          assert(row.LayoutOrder == index,
+            category .. ": " .. tostring(row.Name) .. " is in slot "
+              .. tostring(row.LayoutOrder) .. ", expected " .. tostring(index))
+          assert(row:GetAttribute("FeatureSortRank") == nil,
+            category .. ": " .. tostring(row.Name) .. " still carries the old random rank")
+          if previousKey then
+            assert(previousKey <= key,
+              category .. ": " .. tostring(row.Name) .. " (" .. tostring(key)
+                .. ") is placed after " .. tostring(previousKey))
+          end
+          previousKey = key
+          checked += 1
+        end
       end
+      assert(checked >= 45, "expected at least 45 ordered cards, checked " .. tostring(checked))
     end
     for _, name in ipairs({"Metrics", "Learning", "Game Learning", "HookPart", "Flight", "Invisible", "SpinBot", "Sprint", "Instant Role Notify", "Knife", "Shoot"}) do
       assert(not findFeature(name), "Removed module still present: " .. name)

@@ -121,6 +121,17 @@
 > del suelo, que era lo que dejaba el cuerpo enterrado en Walk). **Anti Fling** queda
 > sin opciones (`noOptions = true`, umbrales 2.5× WalkSpeed). Evidencia:
 > `docs/FIXES-v138.8.md`, `tools/test_autofarm_motion.py` (7 suites).
+>
+> **v138.9 (2026-10-27):** las tarjetas vuelven al **orden alfabético** (fuera
+> `nextRandomRank`, `FeatureSortRank` y el mapa curado `ordered`); se elimina el
+> `fallbackManifest` de `Wurst.lua` (un solo catálogo: `Manifest.lua`) y las copias
+> de categorías/alias de `ClickGui.lua` (`categories` + `cards` viven en el
+> catálogo). Nuevo `tools/card.py` (`list` / `add --stub` / `remove` / `window` /
+> `check`) para dar de alta o borrar módulos y ventanas en un comando; `check` corre
+> en `validate.sh`. **Fling**: opciones Power (3 = YARHM exacto), Duration,
+> Prediction y Retries, adelanto por `ping/2` en cada pose, re-resolución de las
+> partes del rival, mínimo de 12 poses y segunda pasada con boost ×1.5. Evidencia:
+> `docs/FIXES-v138.9.md`, `tools/test_fling_skid.py` (10 suites).
 
 ## 1A. X2Duels (MVS): estructura MM2, evidencia y contratos
 

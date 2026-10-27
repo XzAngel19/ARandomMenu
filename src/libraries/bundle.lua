@@ -1,5 +1,5 @@
 return {
-    stamp = "v138.8-20261027-autofarm-instant-stayunder-antifling-clean",
+    stamp = "v138.9-20261027-alphabetical-one-catalog-fling-ping",
     files = {
         ["src/Profile/135856908115931.lua"] = [[
 --!strict
@@ -24461,6 +24461,7 @@ function Module.init(context: Runtime): any
     local createUniversalFeature: any = host.createUniversalFeature
     local addActionOption: any = host.addActionOption
     local addTextOption: any = host.addTextOption
+    local addNumberOption: any = host.addNumberOption
     local addInformationOption: any = host.addInformationOption
     local findPlayerByText: any = host.findPlayerByText
     local configData: any = host.configData
@@ -24534,10 +24535,33 @@ function Module.init(context: Runtime): any
     --     RenderStepped.
     --   * Two pose sets: six poses while the victim is still (< 50 studs/s) and
     --     nine while it is already moving.
-    local FLING_VELOCITY: Vector3 = Vector3.new(9e7, 9e7 * 10, 9e7)
-    local FLING_ROT_VELOCITY: Vector3 = Vector3.new(9e8, 9e8, 9e8)
-    local PIN_VELOCITY: Vector3 = Vector3.new(9e8, 9e8, 9e8)
+    -- Power 3 reproduces YARHM's numbers exactly (9e7 / 9e8); anything above
+    -- scales BOTH textures of the trick (the pose velocity and the EpixVel pin),
+    -- which is what makes the fling survive a laggy or fast-moving victim.
+    local FLING_VELOCITY_BASE: Vector3 = Vector3.new(9e7, 9e7 * 10, 9e7)
+    local FLING_ROT_VELOCITY_BASE: Vector3 = Vector3.new(9e8, 9e8, 9e8)
+    local PIN_VELOCITY_BASE: Vector3 = Vector3.new(9e8, 9e8, 9e8)
     local PIN_FORCE: Vector3 = Vector3.new(math.huge, math.huge, math.huge)
+
+    local flingPower: number = 4
+    local flingDuration: number = 3
+    local flingPrediction: number = 0.15
+    local flingRetries: number = 1
+    -- Temporary boost used by the second pass only (never persisted).
+    local flingBoost: number = 1
+
+    local function powerScale(): number
+        local power: number = tonumber(flingPower) or 4
+        if power ~= power then
+            power = 4
+        end
+        return (math.clamp(power, 1, 10) / 3) * flingBoost
+    end
+
+    local function scaledVelocity(base: Vector3): Vector3
+        local scale: number = powerScale()
+        return Vector3.new(base.X * scale, base.Y * scale, base.Z * scale)
+    end
 
     local flingRunning: boolean = false
     local flingTargetName: string = ""
@@ -24590,15 +24614,84 @@ function Module.init(context: Runtime): any
         root: BasePart,
         basePart: BasePart,
         offset: CFrame,
-        angles: CFrame
+        angles: CFrame,
+        lead: Vector3?
     ): ()
-        local targetCFrame: CFrame = CFrame.new(basePart.Position) * offset * angles
+        local origin: Vector3 = basePart.Position
+        if lead then
+            origin = origin + lead
+        end
+        local targetCFrame: CFrame = CFrame.new(origin) * offset * angles
         pcall(function(): ()
             root.CFrame = targetCFrame
             moveCharacter(character, targetCFrame)
-            root.Velocity = FLING_VELOCITY
-            root.RotVelocity = FLING_ROT_VELOCITY
+            root.Velocity = scaledVelocity(FLING_VELOCITY_BASE)
+            root.RotVelocity = scaledVelocity(FLING_ROT_VELOCITY_BASE)
         end)
+    end
+
+    -- Round trip / 2: how stale the server's copy of the victim is by the time it
+    -- applies the pose we just wrote. With 300 ms of ping that is 150 ms of
+    -- movement we have to lead with our own.
+    local function transportSeconds(): number
+        local ping: any = 0
+        pcall(function(): ()
+            local player: any = LocalPlayer
+            if player and type(player.GetNetworkPing) == "function" then
+                ping = player:GetNetworkPing()
+            end
+        end)
+        if type(ping) ~= "number" or ping ~= ping or ping < 0 then
+            ping = 0
+        end
+        -- GetNetworkPing returns seconds in current builds; older ones returned
+        -- milliseconds. Anything above 2 is milliseconds.
+        if ping > 2 then
+            ping = ping / 1000
+        end
+        return math.clamp(ping * 0.5, 0, 0.5)
+    end
+
+    -- Where the victim will be when the server applies this pose: planar lead
+    -- from its own velocity. Vertical lead is left out on purpose, it is the
+    -- floor contact that carries the fling.
+    local function leadFor(targetPart: BasePart?): Vector3?
+        if not targetPart then
+            return nil
+        end
+        local velocity: any = Vector3.zero
+        pcall(function(): ()
+            velocity = targetPart.AssemblyLinearVelocity
+        end)
+        if type(velocity) ~= "userdata" and type(velocity) ~= "table" then
+            return nil
+        end
+        local seconds: number = math.clamp(
+            transportSeconds() + (tonumber(flingPrediction) or 0.15),
+            0,
+            0.6
+        )
+        if seconds <= 0.001 then
+            return nil
+        end
+        local lead: any = Vector3.new(velocity.X, 0, velocity.Z) * seconds
+        return lead :: Vector3
+    end
+
+    -- The victim's own parts can be replaced (respawn, ragdoll, tool swap) while
+    -- the fling runs; re-read them every pose instead of caching the first pair.
+    local function liveTargetParts(
+        targetPlayer: Player,
+        targetCharacter: Model
+    ): (Model?, Humanoid?, BasePart?, BasePart?)
+        local character: Model? = targetPlayer.Character or targetCharacter
+        if not character or not character.Parent then
+            return nil, nil, nil, nil
+        end
+        local humanoid: Humanoid? = character:FindFirstChildOfClass("Humanoid")
+        local root: BasePart? = humanoid and humanoid.RootPart or nil
+        local head: BasePart? = character:FindFirstChild("Head") :: BasePart?
+        return character, humanoid, root, head
     end
 
     local function nowSeconds(): number
@@ -24655,7 +24748,16 @@ function Module.init(context: Runtime): any
         return found ~= nil
     end
 
-    -- SFBasePart: the choreography, exactly as written in YARHM.
+    -- SFBasePart: YARHM's choreography (six poses while the victim is slow, nine
+    -- while it is already moving), hardened for lag and for fast victims:
+    --
+    --   * MIN_POSES before the "it is flying, stop" check, so one stale
+    --     replication frame does not end the fling early;
+    --   * the victim's parts are re-read on every pose (respawn, ragdoll);
+    --   * each pose is led by the victim's own velocity times half the ping, so a
+    --     300 ms connection still lands the contact.
+    local MIN_POSES: number = 12
+
     local function sfBasePart(
         character: Model,
         humanoid: Humanoid,
@@ -24671,6 +24773,42 @@ function Module.init(context: Runtime): any
     ): ()
         local startedAt: number = nowSeconds()
         local angle: number = 0
+        local liveBase: BasePart = basePart
+
+        local function currentBasePart(): BasePart?
+            local characterNow: Model?, humanoidNow: Humanoid?, rootNow: BasePart?, headNow: BasePart? =
+                liveTargetParts(targetPlayer, targetCharacter)
+            if not characterNow then
+                return nil
+            end
+            targetCharacter = characterNow
+            targetHumanoid = humanoidNow or targetHumanoid
+            targetRoot = rootNow or targetRoot
+            local candidate: BasePart? = rootNow
+            if rootNow and headNow then
+                if (rootNow.Position - headNow.Position).Magnitude > 5 then
+                    candidate = headNow
+                end
+            elseif headNow then
+                candidate = headNow
+            end
+            if candidate and candidate.Parent then
+                liveBase = candidate
+            end
+            return liveBase
+        end
+
+        local function pose(offset: CFrame, angles: CFrame): boolean
+            local part: BasePart? = currentBasePart()
+            if not part then
+                return false
+            end
+            fpos(character, root, part, offset, angles, leadFor(part))
+            stats.poses += 1
+            waitFrame()
+            return true
+        end
+
         repeat
             if not root or not targetHumanoid then
                 break
@@ -24678,7 +24816,11 @@ function Module.init(context: Runtime): any
             if shouldStop and shouldStop() then
                 break
             end
-            local speed: number = partSpeed(basePart)
+            local part: BasePart? = currentBasePart()
+            if not part then
+                break
+            end
+            local speed: number = partSpeed(part)
             local moveDirection: Vector3 = Vector3.zero
             local walkSpeed: number = 16
             pcall(function(): ()
@@ -24689,62 +24831,30 @@ function Module.init(context: Runtime): any
                 angle = angle + 100
                 local lead: Vector3 = moveDirection * (speed / 1.25)
                 local spin: CFrame = CFrame.Angles(math.rad(angle), 0, 0)
-                fpos(character, root, basePart, CFrame.new(0, 1.5, 0) + lead, spin)
-                stats.poses += 1
-                waitFrame()
-                fpos(character, root, basePart, CFrame.new(0, -1.5, 0) + lead, spin)
-                stats.poses += 1
-                waitFrame()
-                fpos(character, root, basePart, CFrame.new(2.25, 1.5, -2.25) + lead, spin)
-                stats.poses += 1
-                waitFrame()
-                fpos(character, root, basePart, CFrame.new(-2.25, -1.5, 2.25) + lead, spin)
-                stats.poses += 1
-                waitFrame()
-                fpos(character, root, basePart, CFrame.new(0, 1.5, 0) + moveDirection, spin)
-                stats.poses += 1
-                waitFrame()
-                fpos(character, root, basePart, CFrame.new(0, -1.5, 0) + moveDirection, spin)
-                stats.poses += 1
-                waitFrame()
+                pose(CFrame.new(0, 1.5, 0) + lead, spin)
+                pose(CFrame.new(0, -1.5, 0) + lead, spin)
+                pose(CFrame.new(2.25, 1.5, -2.25) + lead, spin)
+                pose(CFrame.new(-2.25, -1.5, 2.25) + lead, spin)
+                pose(CFrame.new(0, 1.5, 0) + moveDirection, spin)
+                pose(CFrame.new(0, -1.5, 0) + moveDirection, spin)
             else
                 local downLead: number = partSpeed(targetRoot) / 1.25
-                fpos(character, root, basePart, CFrame.new(0, 1.5, walkSpeed), CFrame.Angles(math.rad(90), 0, 0))
-                stats.poses += 1
-                waitFrame()
-                fpos(character, root, basePart, CFrame.new(0, -1.5, -walkSpeed), CFrame.Angles(0, 0, 0))
-                stats.poses += 1
-                waitFrame()
-                fpos(character, root, basePart, CFrame.new(0, 1.5, walkSpeed), CFrame.Angles(math.rad(90), 0, 0))
-                stats.poses += 1
-                waitFrame()
-                fpos(character, root, basePart, CFrame.new(0, 1.5, downLead), CFrame.Angles(math.rad(90), 0, 0))
-                stats.poses += 1
-                waitFrame()
-                fpos(character, root, basePart, CFrame.new(0, -1.5, -downLead), CFrame.Angles(0, 0, 0))
-                stats.poses += 1
-                waitFrame()
-                fpos(character, root, basePart, CFrame.new(0, 1.5, downLead), CFrame.Angles(math.rad(90), 0, 0))
-                stats.poses += 1
-                waitFrame()
-                fpos(character, root, basePart, CFrame.new(0, -1.5, 0), CFrame.Angles(math.rad(90), 0, 0))
-                stats.poses += 1
-                waitFrame()
-                fpos(character, root, basePart, CFrame.new(0, -1.5, 0), CFrame.Angles(0, 0, 0))
-                stats.poses += 1
-                waitFrame()
-                fpos(character, root, basePart, CFrame.new(0, -1.5, 0), CFrame.Angles(math.rad(-90), 0, 0))
-                stats.poses += 1
-                waitFrame()
-                fpos(character, root, basePart, CFrame.new(0, -1.5, 0), CFrame.Angles(0, 0, 0))
-                stats.poses += 1
-                waitFrame()
+                pose(CFrame.new(0, 1.5, walkSpeed), CFrame.Angles(math.rad(90), 0, 0))
+                pose(CFrame.new(0, -1.5, -walkSpeed), CFrame.Angles(0, 0, 0))
+                pose(CFrame.new(0, 1.5, walkSpeed), CFrame.Angles(math.rad(90), 0, 0))
+                pose(CFrame.new(0, 1.5, downLead), CFrame.Angles(math.rad(90), 0, 0))
+                pose(CFrame.new(0, -1.5, -downLead), CFrame.Angles(0, 0, 0))
+                pose(CFrame.new(0, 1.5, downLead), CFrame.Angles(math.rad(90), 0, 0))
+                pose(CFrame.new(0, -1.5, 0), CFrame.Angles(math.rad(90), 0, 0))
+                pose(CFrame.new(0, -1.5, 0), CFrame.Angles(0, 0, 0))
+                pose(CFrame.new(0, -1.5, 0), CFrame.Angles(math.rad(-90), 0, 0))
+                pose(CFrame.new(0, -1.5, 0), CFrame.Angles(0, 0, 0))
             end
-        until partSpeed(basePart) > 500
-            or basePart.Parent ~= targetCharacter
+        until (stats.poses >= MIN_POSES and partSpeed(liveBase) > 500)
+            or not liveBase.Parent
             or targetPlayer.Character ~= targetCharacter
             or not playerStillHere(targetPlayer)
-            or targetHumanoid.Sit
+            or (targetHumanoid ~= nil and targetHumanoid.Sit)
             or humanoid.Health <= 0
             or nowSeconds() > startedAt + timeToWait
             or stats.poses >= 600
@@ -24794,11 +24904,12 @@ function Module.init(context: Runtime): any
     end
 
     local function createPin(root: BasePart): any
+        local pinVelocity: Vector3 = scaledVelocity(PIN_VELOCITY_BASE)
         local ok: boolean, pin: any = pcall(function(): any
             local bodyVelocity: any = Instance.new("BodyVelocity")
             bodyVelocity.Name = "EpixVel"
             bodyVelocity.Parent = root
-            bodyVelocity.Velocity = PIN_VELOCITY
+            bodyVelocity.Velocity = pinVelocity
             bodyVelocity.MaxForce = PIN_FORCE
             return bodyVelocity
         end)
@@ -24811,7 +24922,7 @@ function Module.init(context: Runtime): any
             local bodyVelocity: any = Instance.new("BodyVelocity")
             bodyVelocity.Name = "EpixVel"
             bodyVelocity.Parent = root
-            bodyVelocity.Velocity = PIN_VELOCITY
+            bodyVelocity.Velocity = pinVelocity
             bodyVelocity.MaxForce = Vector3.new(1e9, 1e9, 1e9)
             return bodyVelocity
         end)
@@ -24908,7 +25019,8 @@ function Module.init(context: Runtime): any
             return false
         end
         local silent: boolean = type(options) == "table" and options.silent == true
-        local maxDuration: number = (type(options) == "table" and tonumber(options.duration)) or 2
+        local maxDuration: number = (type(options) == "table" and tonumber(options.duration))
+            or flingDuration
         local shouldStop: (() -> boolean)? = type(options) == "table"
             and type(options.shouldStop) == "function"
             and options.shouldStop
@@ -24927,7 +25039,7 @@ function Module.init(context: Runtime): any
 
         setFlingRunning(true)
 
-        local stats: any = {poses = 0, speed = 0, pinned = false, rescued = false}
+        local stats: any = {poses = 0, speed = 0, pinned = false, rescued = false, retries = 0}
 
         local function runFling(): boolean
             local character: Model?, humanoid: Humanoid?, root: BasePart? = getCharacterParts()
@@ -25001,23 +25113,81 @@ function Module.init(context: Runtime): any
                 elseif targetHead then
                     basePart = targetHead
                 end
-                if basePart then
+
+                -- Pass 1 is YARHM as written. If the victim did not move, the
+                -- remaining passes switch to its other part with a temporary 1.5x
+                -- boost: on a bad connection the first contact is often applied
+                -- after the victim has already left the pose.
+                local maxPasses: number = math.clamp(
+                    math.floor(tonumber(flingRetries) or 0),
+                    0,
+                    3
+                ) + 1
+                local used: BasePart? = nil
+                local pass: number = 0
+                while pass < maxPasses do
+                    pass += 1
+                    local partNow: BasePart? = nil
+                    if pass == 1 then
+                        partNow = basePart
+                    else
+                        local _c: Model?, _h: Humanoid?, rootNow: BasePart?, headNow: BasePart? =
+                            liveTargetParts(targetPlayer, targetCharacter)
+                        targetHumanoid = _h or targetHumanoid
+                        targetRoot = rootNow or targetRoot
+                        local primary: BasePart? = rootNow
+                        if rootNow and headNow then
+                            if (rootNow.Position - headNow.Position).Magnitude > 5 then
+                                primary = headNow
+                            end
+                        elseif headNow then
+                            primary = headNow
+                        end
+                        if primary == used then
+                            partNow = if primary == rootNow then headNow else rootNow
+                        else
+                            partNow = primary
+                        end
+                        if partNow then
+                            flingBoost = 1.5
+                            stats.retries = (stats.retries or 0) + 1
+                        end
+                    end
+                    if not partNow or not partNow.Parent then
+                        flingBoost = 1
+                        break
+                    end
+                    used = partNow
                     sfBasePart(
                         character,
                         humanoid,
                         root,
-                        basePart,
+                        partNow,
                         targetCharacter,
                         targetPlayer,
                         targetHumanoid,
                         targetRoot,
-                        maxDuration,
+                        -- Retries are half as long: they exist to catch a late
+                        -- server contact, not to double the time spent posing.
+                        if pass > 1 then maxDuration * 0.5 else maxDuration,
                         shouldStop,
                         stats
                     )
+                    flingBoost = 1
+                    stats.speed = math.max(
+                        stats.speed or 0,
+                        partSpeed(targetRoot),
+                        partSpeed(targetHead)
+                    )
+                    if stats.speed > 100 then
+                        break
+                    end
                 end
-
-                stats.speed = math.max(partSpeed(targetRoot), partSpeed(targetHead))
+                stats.speed = math.max(
+                    stats.speed or 0,
+                    partSpeed(targetRoot),
+                    partSpeed(targetHead)
+                )
                 if stats.speed <= 100 then
                     stats.rescued = rescueImpulse(targetCharacter, targetRoot, targetHead)
                     stats.speed = math.max(partSpeed(targetRoot), partSpeed(targetHead), stats.speed)
@@ -25073,6 +25243,8 @@ function Module.init(context: Runtime): any
                     speed = stats.speed,
                     pinned = stats.pinned,
                     rescued = stats.rescued,
+                    retries = stats.retries,
+                    power = powerScale(),
                     ok = success,
                 }
             end)
@@ -25085,10 +25257,13 @@ function Module.init(context: Runtime): any
                     notify("fling failed: " .. tostring(errorMessage))
                 elseif touchedTarget then
                     notify(string.format(
-                        "fling: %s sent flying (%s studs/s, %d poses)",
+                        "fling: %s sent flying (%s studs/s, %d poses%s)",
                         tostring(targetPlayer.Name),
                         speedText,
-                        stats.poses
+                        stats.poses,
+                        (stats.retries or 0) > 0
+                            and string.format(", %d retries", stats.retries)
+                            or ""
                     ))
                 else
                     notify(string.format(
@@ -25294,7 +25469,7 @@ function Module.init(context: Runtime): any
 
     local FlingFeature: any = createUniversalFeature(
         "Fling",
-        "SkidFling: throw the player typed in Target player (MM2 roles when available)",
+        "SkidFling: throw the player typed in Target player (MM2 roles when available). Led by ping, retried if the victim did not move.",
         7,
         toggleFlingModule,
         {category = true, categoryName = "Exploits", configKey = "Universal.Fling"}
@@ -25376,6 +25551,59 @@ function Module.init(context: Runtime): any
             end
         end)
     end)
+    addNumberOption(
+        FlingFeature,
+        "Power",
+        4,
+        1,
+        10,
+        function(value: number): ()
+            flingPower = tonumber(value) or 4
+        end,
+        "Strength of the catapult. 3 is YARHM's exact numbers (9e7 pose, 9e8 pin); "
+            .. "higher throws harder and is the fix when the victim barely moves. "
+            .. "Very high values can get you kicked for Invalid position.",
+        0.5
+    )
+    addNumberOption(
+        FlingFeature,
+        "Duration",
+        3,
+        1,
+        6,
+        function(value: number): ()
+            flingDuration = tonumber(value) or 3
+        end,
+        "Seconds the poses keep being written. Longer survives a laggy server that "
+            .. "applies the contact late.",
+        0.5
+    )
+    addNumberOption(
+        FlingFeature,
+        "Prediction",
+        0.15,
+        0,
+        0.5,
+        function(value: number): ()
+            flingPrediction = tonumber(value) or 0.15
+        end,
+        "Extra lead (seconds) on top of half your ping. Every pose is written where "
+            .. "the victim will be, so fast targets and 300 ms connections still get hit.",
+        0.05
+    )
+    addNumberOption(
+        FlingFeature,
+        "Retries",
+        1,
+        0,
+        3,
+        function(value: number): ()
+            flingRetries = tonumber(value) or 1
+        end,
+        "Extra passes if the victim did not move. Each retry uses the other body part "
+            .. "with a temporary 1.5x boost.",
+        1
+    )
     addInformationOption(
         FlingFeature,
         "Type a name in Target player and press Fling. Walk Fling is its own card."
@@ -39631,33 +39859,9 @@ function Module.init(context: any): any
             }) :: Frame
         end
 
-    -- ARandomMenu: the cards inside each window are ordered RANDOMLY, not
-    -- alphabetically. The ranks are drawn once per session from a small LCG, so
-    -- the order looks shuffled but never changes while the script is running
-    -- (re-sorting on every refresh would make the menu jump under the pointer).
-    local randomState: number = 0
-    local function sessionSeed(): number
-        local seed: number = 0
-        pcall(function(): ()
-            seed = math.floor((os.clock() % 1) * 1000000000)
-        end)
-        if seed <= 0 then
-            pcall(function(): ()
-                seed = math.floor(os.time() or 0)
-            end)
-        end
-        seed = math.floor(seed) % 2147483647
-        if seed <= 0 then
-            seed = 20261027
-        end
-        return seed
-    end
-    randomState = sessionSeed()
-    local function nextRandomRank(): number
-        randomState = (randomState * 16807) % 2147483647
-        return randomState
-    end
-
+    -- v138.9: the cards inside each window are ALPHABETICAL. The random rank of
+    -- v138.6-v138.8 made a module hard to find again; ClickGui.sortCategoryRows
+    -- reads FeatureSortName (set below) and orders every window by it.
     local function createUniversalFeature(
         name: string,
         description: string,
@@ -39666,38 +39870,8 @@ function Module.init(context: any): any
         configuration: any?
     ): any
         configuration = configuration or {}
-        local ordered: {[string]: number} = {
-            ["ItemESP"] = 1, ["PlayerESP"] = 2, ["Chams"] = 3,
-            ["Nametags"] = 4, ["HP"] = 5, ["Arrows"] = 6, ["NPCESP"] = 7,
-            ["FOV"] = 8, ["Fullbright"] = 9,
-            ["X-Ray"] = 10, ["Zoom"] = 11, ["Markers"] = 12,
-            ["Aim Assist"] = 1,
-            ["KillAura"] = 2,
-            ["TriggerBot"] = 3,
-            ["SilentAIM"] = 4,
-            ["Gun Aimbot"] = 4,
-            ["Fly"] = 1,
-            ["Fling"] = 7,
-            ["Noclip"] = 2,
-            ["Spider"] = 3,
-            ["Speed"] = 4,
-            ["Jump"] = 5,
-            ["Interact Extender"] = 6,
-            ["Walk Fling"] = 8,
-            ["Anti Void"] = 1,
-            ["Anti Fling"] = 5,
-            ["Teleport"] = 2,
-            ["Freeze Movements"] = 3,
-            ["Ghost"] = 4,
-            ["Improve FPS"] = 1,
-            ["Gravity"] = 2,
-            ["Anti AFK"] = 3,
-            ["Safe Walk"] = 4,
-            ["Blurt Roles"] = 5,
-            ["FreeCam"] = 6,
-            ["Disguise"] = 7,
-        }
-        layoutOrder = ordered[name] or (100 + layoutOrder)
+        -- No curated slot table any more (v138.9): the window sorts by name, so
+        -- the per-card LayoutOrder is only the creation fallback.
         local registry: any = configuration.registry or universalFeatures
         local sectionName: string = configuration.section
             or (registry == mm2Features and "MM2")
@@ -39782,13 +39956,8 @@ function Module.init(context: any): any
         feature.row = row
 
         row:SetAttribute("FeatureCategory", categoryName)
-        row:SetAttribute("FeatureSortOrder", ordered[name])
+        -- Alphabetical key for ClickGui.sortCategoryRows.
         row:SetAttribute("FeatureSortName", string.lower(name))
-        -- Session-stable random position inside the window (see nextRandomRank).
-        if feature.sortRank == nil then
-            feature.sortRank = nextRandomRank()
-        end
-        row:SetAttribute("FeatureSortRank", feature.sortRank)
 
         local bitmapText: any = state.bitmapText
         local title: TextLabel? = nil
@@ -40627,26 +40796,47 @@ local WINDOW_GAP: number = 2
 local GRID_GAP: number = 10
 local TITLE_HEIGHT: number = 26
 
-local CATEGORY_ORDER: {string} = {
+-- v138.9: the window list and the aliases live in ONE place, Manifest.lua
+-- (categories.order / categories.aliases). This file used to carry its own copy
+-- with a different alias set than the loader's. The table below is only the
+-- last-resort default for a hand-made state that has no catalog.
+local DEFAULT_CATEGORY_ORDER: {string} = {
     "Combat", "Exploits", "Utilities", "World", "Render", "Blocks", "Items",
 }
-local CATEGORY_ALIASES: {[string]: string} = {
-    Blatant = "Exploits", Movement = "World", Other = "Utilities",
-    Fun = "Utilities", Visuals = "Render", Protection = "Utilities",
-    Utility = "Utilities", Spoof = "Utilities", General = "Utilities", Player = "World",
+local categories: any = {
+    order = DEFAULT_CATEGORY_ORDER,
+    aliases = {},
+    default = "Utilities",
 }
 
+local function useCatalog(hostState: any): ()
+    local catalog: any = hostState and hostState.categories
+    if type(catalog) == "table" and type(catalog.order) == "table"
+        and #catalog.order > 0 then
+        categories = catalog
+    end
+end
+
+local function order(): {string}
+    return categories.order or DEFAULT_CATEGORY_ORDER
+end
+
 local function fallbackNormalize(raw: any): string
-    local name: string = tostring(raw or "Utilities")
-    if table.find(CATEGORY_ORDER, name) ~= nil then
+    local name: string = tostring(raw or categories.default or "Utilities")
+    if table.find(order(), name) ~= nil then
         return name
     end
-    return CATEGORY_ALIASES[name] or "Utilities"
+    local aliases: any = categories.aliases
+    if type(aliases) == "table" and type(aliases[name]) == "string" then
+        return aliases[name]
+    end
+    return categories.default or "Utilities"
 end
 
 function Module.init(context: any): any
     local host: any = context
     local state: any = host.state
+    useCatalog(state)
     local create: any = host.create
     local allFeatures: {any} = host.allFeatures
     local normalizeFeatureCategory: any = host.normalizeFeatureCategory
@@ -40750,8 +40940,8 @@ function Module.init(context: any): any
         ClickGui.categories[name] = record
         table.insert(ClickGui.order, name)
         table.sort(ClickGui.order, function(left: string, right: string): boolean
-            local leftRank: number = table.find(CATEGORY_ORDER, left) or math.huge
-            local rightRank: number = table.find(CATEGORY_ORDER, right) or math.huge
+            local leftRank: number = table.find(order(), left) or math.huge
+            local rightRank: number = table.find(order(), right) or math.huge
             if leftRank == rightRank then
                 return left < right
             end
@@ -40813,14 +41003,16 @@ function Module.init(context: any): any
                 table.insert(rows, child :: GuiObject)
             end
         end
-        -- ARandomMenu order: the cards inside a window are placed by their
-        -- session-stable random rank, never alphabetically and never by the
-        -- curated slot. The rank is drawn once per session (Cards.lua), so the
-        -- order never moves while the script is running.
+        -- v138.9: every window is ALPHABETICAL by card name (FeatureSortName is
+        -- the lowercased display name), so a module is always where you expect
+        -- it. Ties (same name in two sections) fall back to the row name so the
+        -- order is stable instead of moving between refreshes.
         table.sort(rows, function(left: GuiObject, right: GuiObject): boolean
-            local leftRank: number = tonumber(left:GetAttribute("FeatureSortRank")) or math.huge
-            local rightRank: number = tonumber(right:GetAttribute("FeatureSortRank")) or math.huge
-            if leftRank ~= rightRank then return leftRank < rightRank end
+            local leftKey: string = tostring(left:GetAttribute("FeatureSortName") or "")
+            local rightKey: string = tostring(right:GetAttribute("FeatureSortName") or "")
+            if leftKey ~= rightKey then
+                return leftKey < rightKey
+            end
             return tostring(left.Name) < tostring(right.Name)
         end)
         for index: number, row: GuiObject in ipairs(rows) do
@@ -40906,7 +41098,7 @@ function Module.init(context: any): any
         end
         return fallbackNormalize(raw)
     end
-    for _, name: string in ipairs(CATEGORY_ORDER) do
+    for _, name: string in ipairs(order()) do
         for _, feature: any in ipairs(allFeatures) do
             if resolvedCategory(feature) == name then
                 categoryWindow(name)
@@ -53259,8 +53451,16 @@ export type GamePlaceEntry = {
     displayName: string,
 }
 
+export type CategoryCatalog = {
+    order: {string},
+    aliases: {[string]: string},
+    default: string,
+}
+
 export type Manifest = {
     version: number,
+    categories: CategoryCatalog,
+    cards: {[string]: string},
     widgets: string,
     core: {string},
     libraries: {string},
@@ -53271,6 +53471,118 @@ export type Manifest = {
 
 local Manifest: Manifest = {
     version = 1,
+
+    -- v138.9: the catalog also owns the windows. Wurst.lua and ClickGui.lua used
+    -- to keep their own copies of these two lists, which is exactly how a card
+    -- ended up in one window in the menu and another one in the code.
+    categories = {
+        order = {
+            "Combat",
+            "Exploits",
+            "Utilities",
+            "World",
+            "Render",
+            "Blocks",
+            "Items",
+        },
+        aliases = {
+            ["Blatant"] = "Exploits",
+            ["Movement"] = "World",
+            ["Other"] = "Utilities",
+            ["Visuals"] = "Render",
+            ["Protection"] = "Utilities",
+            ["Utility"] = "Utilities",
+            ["Spoof"] = "Utilities",
+            ["Fun"] = "Utilities",
+            ["General"] = "Utilities",
+            ["Player"] = "World",
+        },
+        default = "Utilities",
+    },
+
+    -- Display name of a card -> window. Only consulted when the card does not
+    -- pass categoryName itself.
+    cards = {
+        -- <arandommenu:cards> managed by tools/card.py
+        ["Aim Assist"] = "Combat",
+        ["Anti AFK"] = "World",
+        ["Anti Fling"] = "Utilities",
+        ["Anti Void"] = "Utilities",
+        ["Anti-AFK"] = "Other",
+        ["Anti-Fling"] = "Movement",
+        ["Anti-Void"] = "Movement",
+        ["AntiAFK"] = "Other",
+        ["Auto Buy"] = "Other",
+        ["Auto Dribble"] = "Combat",
+        ["Auto Generator"] = "Other",
+        ["Auto Header"] = "Combat",
+        ["Auto Parry / Auto Block"] = "Movement",
+        ["Auto Pickup"] = "Other",
+        ["Auto Swing"] = "Combat",
+        ["Auto Tackle"] = "Combat",
+        ["Ball Trajectory"] = "Render",
+        ["Bed Nuker"] = "Combat",
+        ["Best Goal Visual"] = "Render",
+        ["Blurt Roles"] = "World",
+        ["Cooldown Modifier"] = "Exploits",
+        ["Damage Boost"] = "Exploits",
+        ["Disguise"] = "World",
+        ["FOV"] = "Render",
+        ["Fast Vault Optimizer"] = "Movement",
+        ["Fling"] = "Exploits",
+        ["Fly"] = "Exploits",
+        ["Freeze Movements"] = "Utilities",
+        ["Fullbright"] = "Render",
+        ["Ghost"] = "Utilities",
+        ["Goalkeeper Assist"] = "Combat",
+        ["Gravity"] = "World",
+        ["Gun Aimbot"] = "Combat",
+        ["Improve FPS"] = "World",
+        ["Interact Extender"] = "Exploits",
+        ["Invisible"] = "Exploits",
+        ["Jump"] = "Exploits",
+        ["KillAura"] = "Combat",
+        ["Killer Hit Aura"] = "Combat",
+        ["Killer Power Cooldowns"] = "Render",
+        ["Killer Proximity Visualizer"] = "Render",
+        ["Lag Switch"] = "Exploits",
+        ["Large Shoot"] = "Combat",
+        ["Line of Sight ESP"] = "Render",
+        ["Locker & Hideout Detector"] = "Render",
+        ["Noclip"] = "Exploits",
+        ["Noclip (Vaults & Pallets)"] = "Exploits",
+        ["Optimize Blind / Flash Protection"] = "Movement",
+        ["Pass Assist"] = "Combat",
+        ["Player ESP"] = "Render",
+        ["Power Shot"] = "Combat",
+        ["Quick Actions"] = "Other",
+        ["Rejoin Server"] = "Other",
+        ["Remote Logger"] = "Other",
+        ["Round Info"] = "Render",
+        ["Safe Walk"] = "World",
+        ["SafeWalk"] = "Movement",
+        ["Scaffold"] = "Movement",
+        ["Server Aura"] = "Combat",
+        ["Server Miner"] = "Other",
+        ["Server Scaffold"] = "Movement",
+        ["Shoot Assist"] = "Combat",
+        ["Silent Aim"] = "Combat",
+        ["Silent Steps / Anti-Sound"] = "Movement",
+        ["SilentAIM"] = "Combat",
+        ["Speed"] = "Exploits",
+        ["Spider"] = "Exploits",
+        ["Teleport"] = "Utilities",
+        ["Time Changer"] = "Render",
+        ["Trajectory Calibration"] = "Other",
+        ["TriggerBot"] = "Combat",
+        ["VD Field of View"] = "Render",
+        ["VD Fullbright"] = "Render",
+        ["Walk Speed"] = "World",
+        ["WalkSpeed Hack"] = "Exploits",
+        ["X-Ray"] = "Render",
+        ["Zoom Unlocker"] = "Render",
+        -- </arandommenu:cards>
+    },
 
     widgets = "src/guis/Wurst/Code/Widgets.lua",
     core = {
@@ -53299,197 +53611,49 @@ local Manifest: Manifest = {
         "src/guis/Wurst/Code/Furniture.lua",
     },
     modules = {
+        -- <arandommenu:modules> managed by tools/card.py
+        {path = "src/games/universal/Combat/AimAssist.lua", name = "Aim Assist", category = "Combat"},
+        {path = "src/games/universal/Movement/AirWalk.lua", name = "AirWalk", category = "Exploits"},
+        {path = "src/games/universal/Other/AntiAfk.lua", name = "Anti AFK", category = "World"},
+        {path = "src/games/universal/Movement/AntiFling.lua", name = "Anti Fling", category = "Utilities"},
+        {path = "src/games/universal/Movement/AntiVoid.lua", name = "Anti Void", category = "Utilities"},
+        {path = "src/games/universal/Render/Arrows.lua", name = "Arrows", category = "Render"},
+        {path = "src/games/universal/Render/Chams.lua", name = "Chams", category = "Render"},
+        {path = "src/games/universal/Other/Disguise.lua", name = "Disguise", category = "World"},
+        {path = "src/games/universal/Blatant/Fling.lua", name = "Fling", category = "Exploits"},
+        {path = "src/games/universal/Blatant/Fly.lua", name = "Fly", category = "Exploits"},
+        {path = "src/games/universal/Render/FieldOfView.lua", name = "FOV", category = "Render"},
         {path = "src/games/universal/Render/FreeCam.lua", name = "FreeCam", category = "World"},
-        {path = "src/games/universal/Render/Spectate.lua", name = "Spectate", category = "World"},
-        {path = "src/games/universal/Render/Markers.lua", name = "Markers", category = "Render"},
-
-        {
-            path = "src/games/universal/Render/ItemRender.lua",
-            name = "ItemESP",
-            category = "Render",
-        },
-        {
-            path = "src/games/universal/Render/PlayerESP.lua",
-            name = "PlayerESP",
-            category = "Render",
-        },
-        {
-            path = "src/games/universal/Render/Chams.lua",
-            name = "Chams",
-            category = "Render",
-        },
-        {path = "src/games/universal/Render/Nametags.lua", name = "Nametags", category = "Render"},
+        {path = "src/games/universal/Movement/FreezeMovements.lua", name = "Freeze Movements", category = "Utilities"},
+        {path = "src/games/universal/Render/Fullbright.lua", name = "Fullbright", category = "Render"},
+        {path = "src/games/universal/Blatant/Invisible.lua", name = "Ghost", category = "Utilities"},
+        {path = "src/games/universal/Movement/Gravity.lua", name = "Gravity", category = "World"},
         {path = "src/games/universal/Render/HP.lua", name = "HP", category = "Render"},
-        {
-            path = "src/games/universal/Render/Arrows.lua",
-            name = "Arrows",
-            category = "Render",
-        },
-        {
-            path = "src/games/universal/Render/NPCESP.lua",
-            name = "NPCESP",
-            category = "Render",
-        },
-        {
-            path = "src/games/universal/Render/FieldOfView.lua",
-            name = "FOV",
-            category = "Render",
-        },
-        {
-            path = "src/games/universal/Render/Fullbright.lua",
-            name = "Fullbright",
-            category = "Render",
-        },
-        {
-            path = "src/games/universal/Render/XRay.lua",
-            name = "X-Ray",
-            category = "Render",
-        },
-        {
-            path = "src/games/universal/Render/ZoomUnlocker.lua",
-            name = "Zoom",
-            category = "Render",
-        },
-
-        {
-            path = "src/games/universal/Combat/KillAura.lua",
-            name = "KillAura",
-            category = "Combat",
-        },
-        {
-            path = "src/games/universal/Combat/AimAssist.lua",
-            name = "Aim Assist",
-            category = "Combat",
-        },
-        {
-            path = "src/games/universal/Combat/TargetStrafe.lua",
-            name = "StrafeBot",
-            category = "Combat",
-        },
-        {
-            path = "src/games/universal/Combat/TriggerBot.lua",
-            name = "TriggerBot",
-            category = "Combat",
-        },
-
-        {
-            path = "src/games/universal/Blatant/Invisible.lua",
-            name = "Ghost",
-            category = "Utilities",
-        },
-
-        {
-            path = "src/games/universal/Movement/Speed.lua",
-            name = "Speed",
-            category = "Exploits",
-        },
-        {
-            path = "src/games/universal/Movement/Jump.lua",
-            name = "Jump",
-            category = "Exploits",
-        },
-        {
-            path = "src/games/universal/Movement/InfiniteJump.lua",
-            name = "Infinite Jump",
-            category = "Exploits",
-        },
-        {
-            path = "src/games/universal/Movement/AirWalk.lua",
-            name = "AirWalk",
-            category = "Exploits",
-        },
-        {
-            path = "src/games/universal/Movement/ClickTeleport.lua",
-            name = "Teleport",
-            category = "Utilities",
-        },
-        {
-            path = "src/games/universal/Blatant/Spider.lua",
-            name = "Spider",
-            category = "Exploits",
-        },
-        {
-            path = "src/games/universal/Blatant/Fly.lua",
-            name = "Fly",
-            category = "Exploits",
-        },
-        {
-            path = "src/games/universal/Blatant/Noclip.lua",
-            name = "Noclip",
-            category = "Exploits",
-        },
-        {
-            path = "src/games/universal/Blatant/WalkFling.lua",
-            name = "Walk Fling",
-            category = "Exploits",
-        },
-        {
-            path = "src/games/universal/Blatant/Fling.lua",
-            name = "Fling",
-            category = "Exploits",
-        },
-        {
-            path = "src/games/universal/Blatant/Swim.lua",
-            name = "Swim",
-            category = "Exploits",
-        },
-        {
-            path = "src/games/universal/Blatant/Jesus.lua",
-            name = "Jesus",
-            category = "Exploits",
-        },
-        {
-            path = "src/games/universal/Movement/AntiVoid.lua",
-            name = "Anti Void",
-            category = "Utilities",
-        },
-        {
-            path = "src/games/universal/Movement/AntiFling.lua",
-            name = "Anti Fling",
-            category = "Utilities",
-        },
-        {
-            path = "src/games/universal/Movement/FreezeMovements.lua",
-            name = "Freeze Movements",
-            category = "Utilities",
-        },
-        {
-            path = "src/games/universal/Movement/Gravity.lua",
-            name = "Gravity",
-            category = "World",
-        },
-        {
-            path = "src/games/universal/Movement/SafeWalk.lua",
-            name = "Safe Walk",
-            category = "World",
-        },
-
-
-        {
-            path = "src/games/universal/Other/Disguise.lua",
-            name = "Disguise",
-            category = "World",
-        },
-        {
-            path = "src/games/universal/Other/AntiAfk.lua",
-            name = "Anti AFK",
-            category = "World",
-        },
-        {
-            path = "src/games/universal/Other/InteractExtender.lua",
-            name = "Interact Extender",
-            category = "Exploits",
-        },
-        {
-            path = "src/games/universal/Other/RejoinServer.lua",
-            name = "Rejoin Server",
-            category = "Utilities",
-        },
-        {
-            path = "src/games/universal/Other/ImproveFps.lua",
-            name = "Improve FPS",
-            category = "World",
-        },
+        {path = "src/games/universal/Other/ImproveFps.lua", name = "Improve FPS", category = "World"},
+        {path = "src/games/universal/Movement/InfiniteJump.lua", name = "Infinite Jump", category = "Exploits"},
+        {path = "src/games/universal/Other/InteractExtender.lua", name = "Interact Extender", category = "Exploits"},
+        {path = "src/games/universal/Render/ItemRender.lua", name = "ItemESP", category = "Render"},
+        {path = "src/games/universal/Blatant/Jesus.lua", name = "Jesus", category = "Exploits"},
+        {path = "src/games/universal/Movement/Jump.lua", name = "Jump", category = "Exploits"},
+        {path = "src/games/universal/Combat/KillAura.lua", name = "KillAura", category = "Combat"},
+        {path = "src/games/universal/Render/Markers.lua", name = "Markers", category = "Render"},
+        {path = "src/games/universal/Render/Nametags.lua", name = "Nametags", category = "Render"},
+        {path = "src/games/universal/Blatant/Noclip.lua", name = "Noclip", category = "Exploits"},
+        {path = "src/games/universal/Render/NPCESP.lua", name = "NPCESP", category = "Render"},
+        {path = "src/games/universal/Render/PlayerESP.lua", name = "PlayerESP", category = "Render"},
+        {path = "src/games/universal/Other/RejoinServer.lua", name = "Rejoin Server", category = "Utilities"},
+        {path = "src/games/universal/Movement/SafeWalk.lua", name = "Safe Walk", category = "World"},
+        {path = "src/games/universal/Render/Spectate.lua", name = "Spectate", category = "World"},
+        {path = "src/games/universal/Movement/Speed.lua", name = "Speed", category = "Exploits"},
+        {path = "src/games/universal/Blatant/Spider.lua", name = "Spider", category = "Exploits"},
+        {path = "src/games/universal/Combat/TargetStrafe.lua", name = "StrafeBot", category = "Combat"},
+        {path = "src/games/universal/Blatant/Swim.lua", name = "Swim", category = "Exploits"},
+        {path = "src/games/universal/Movement/ClickTeleport.lua", name = "Teleport", category = "Utilities"},
+        {path = "src/games/universal/Combat/TriggerBot.lua", name = "TriggerBot", category = "Combat"},
+        {path = "src/games/universal/Blatant/WalkFling.lua", name = "Walk Fling", category = "Exploits"},
+        {path = "src/games/universal/Render/XRay.lua", name = "X-Ray", category = "Render"},
+        {path = "src/games/universal/Render/ZoomUnlocker.lua", name = "Zoom", category = "Render"},
+        -- </arandommenu:modules>
     },
 
     gamePlaces = {
