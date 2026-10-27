@@ -18,7 +18,9 @@ It then asserts what a player would see:
      dead the velocity carry moves the body instead.
   3. Falling below the budget is caught and the body is put back inside the map
      instead of continuing to fall.
-  4. Coins are fly-through waypoints: no braking under a coin, no parking.
+  4. Full Farm Speed, at most a fraction of a second on a coin, instant retarget.
+  5. A coin that never pays is retried later instead of being waited on.
+  6. "Stay Under When Round starts" holds the body at round start in both modes.
 """
 import os
 import subprocess
@@ -484,9 +486,7 @@ assert(rootProps.Position.Y > workspace.FallenPartsDestroyHeight + 40,
     "recovered above the destroy height")
 pass("falling into the void is caught and the body is put back inside the map")
 
--- 4) Fly-through: coins are waypoints, the farm never parks on one ---------
--- The server pays on contact, so this harness marks a coin as collected the
--- moment the body overlaps it, exactly like the game.
+-- 4) Full speed, no dwell, instant retarget -------------------------------
 local autoCollect = true
 local function collectTouched()
     if not autoCollect then return end
@@ -506,59 +506,130 @@ end
 
 resetBody()
 table.clear(coins)
-makeCoin(Vector3.new(40, 10, 0))
-makeCoin(Vector3.new(80, 10, 0))
-makeCoin(Vector3.new(120, 10, 0))
-makeCoin(Vector3.new(0, 10, 40))
+local coinA = makeCoin(Vector3.new(40, 10, 0))
+makeCoin(Vector3.new(90, 10, 0))
 setMode("Below (Hitbox)")
-setSpeed(24)
+setSpeed(30)
 feature.onToggle(true)
-local slowFrames = 0
-local worstSlow = 0
-for index = 1, 420 do
+
+-- The travel must be full Farm Speed, not the old distance*6 taper.
+frames(24)
+local travel = math.sqrt(
+    rootProps.AssemblyLinearVelocity.X ^ 2 + rootProps.AssemblyLinearVelocity.Z ^ 2)
+assert(travel > 30 * 0.85,
+    "the farm must fly at the selected speed, got " .. tostring(travel))
+
+-- Follow the whole run: how long does it stay parked while a coin is waiting?
+local parked = 0
+local worstParked = 0
+local firstCoinCollectedAt = nil
+local movingAfterFirst = 0
+for index = 1, 400 do
     stepFrame()
     collectTouched()
-    if index > 20 then
-        local speed = math.sqrt(
-            rootProps.AssemblyLinearVelocity.X ^ 2 + rootProps.AssemblyLinearVelocity.Z ^ 2
-        )
-        if speed < 24 * 0.35 then
-            slowFrames += 1
-            if slowFrames > worstSlow then worstSlow = slowFrames end
+    local speed = math.sqrt(
+        rootProps.AssemblyLinearVelocity.X ^ 2 + rootProps.AssemblyLinearVelocity.Z ^ 2)
+    local anyLeft = false
+    for _, entry in ipairs(coins) do
+        if entry.props.Collected ~= true then anyLeft = true end
+    end
+    if index > 10 and anyLeft then
+        if speed < 6 then
+            parked += 1
+            if parked > worstParked then worstParked = parked end
         else
-            slowFrames = 0
+            parked = 0
         end
     end
+    if not firstCoinCollectedAt and coinA:GetAttribute("Collected") == true then
+        firstCoinCollectedAt = index
+    end
+    if firstCoinCollectedAt and index > firstCoinCollectedAt and index <= firstCoinCollectedAt + 6
+        and speed > 10 then
+        movingAfterFirst += 1
+    end
 end
-local collectedCount = 0
-for _, entry in ipairs(coins) do
-    if entry.props.Collected == true then collectedCount += 1 end
-end
-assert(collectedCount >= 3,
-    "the farm must sweep several coins, collected " .. collectedCount)
-assert(worstSlow <= 20,
-    "the farm braked on a coin for " .. worstSlow .. " frames; it must not stop")
-assert(rootProps.Position.Y > 12 - 90, "fly-through keeps altitude")
+assert(firstCoinCollectedAt ~= nil, "the first coin must be collected")
+assert(worstParked <= 20,
+    "the farm stopped for " .. worstParked .. " frames (must be under ~0.33 s)")
+-- Once the coin is gone the body is already flying at the next one: no scan wait.
+assert(movingAfterFirst >= 4,
+    "only " .. movingAfterFirst .. "/6 frames moved right after collecting the coin")
+assert(rootProps.Position.X > 50,
+    "after collecting it must move on immediately, X=" .. tostring(rootProps.Position.X))
+pass("full-speed travel, no dwell under the coin, instant retarget")
 
--- A coin that never pays must not park the body either: it keeps moving until it
--- is blacklisted and then holds its altitude.
+-- 5) A coin that never pays is retried later, never waited on -------------
 resetBody()
 table.clear(coins)
 autoCollect = false
 makeCoin(Vector3.new(40, 10, 0))
+makeCoin(Vector3.new(90, 10, 0))
 setMode("Below (Hitbox)")
+setSpeed(30)
 feature.onToggle(true)
-local movingFrames = 0
-for _ = 1, 120 do
+local stuckFrames = 0
+local worstStuck = 0
+local moved = 0
+for _ = 1, 240 do
     stepFrame()
     local speed = math.sqrt(
-        rootProps.AssemblyLinearVelocity.X ^ 2 + rootProps.AssemblyLinearVelocity.Z ^ 2
-    )
-    if speed > 4 then movingFrames += 1 end
+        rootProps.AssemblyLinearVelocity.X ^ 2 + rootProps.AssemblyLinearVelocity.Z ^ 2)
+    if speed > 6 then
+        moved += 1
+        stuckFrames = 0
+    else
+        stuckFrames += 1
+        if stuckFrames > worstStuck then worstStuck = stuckFrames end
+    end
 end
-assert(movingFrames > 70,
-    "with a coin that never pays the body must still move, moved " .. movingFrames .. "/120")
-pass("coins are fly-through waypoints: no stop under the coin, no parking")
+assert(moved > 120, "the body must keep farming, moved " .. moved .. "/240 frames")
+assert(worstStuck <= 26,
+    "an unpaying coin held the farm for " .. worstStuck .. " frames (max ~0.3 s dwell + ping)")
+assert(rootProps.Position.X > 60, "it must reach the second coin, X=" .. tostring(rootProps.Position.X))
+pass("a coin that never pays costs one short dwell, then the farm moves on")
+
+-- 6) Stay Under When Round starts: both modes, round start only -----------
+resetBody()
+table.clear(coins)
+autoCollect = false
+setMode("Walk")
+optionCallbacks["Stay Under When Round starts"](true)
+feature.onToggle(true)
+frames(40)
+assert(rootProps.Position.Y < 10 - 3,
+    "Walk must wait under the map while the round has no coins, Y="
+        .. tostring(rootProps.Position.Y))
+assert(humanoid.PlatformStand, "the round-start hold parks the body")
+
+-- First coin of the round: come back to the surface and walk normally.
+local roundCoin = makeCoin(Vector3.new(40, 10, 0))
+frames(12)
+assert(rootProps.Position.Y > 10.5,
+    "the body must come back on the ground when the coins appear, Y="
+        .. tostring(rootProps.Position.Y))
+assert(not humanoid.PlatformStand, "walking resumes with a walkable body")
+assert(humanoid.movedDirection and humanoid.movedDirection.Magnitude > 0.5,
+    "the humanoid must be walking again")
+frames(200)
+assert(rootProps.Position.X > 20,
+    "it must really walk to the coin, X=" .. tostring(rootProps.Position.X))
+pass("Stay Under works in Walk mode too and releases on the first coin")
+
+resetBody()
+table.clear(coins)
+setMode("Below (Hitbox)")
+feature.onToggle(true)
+frames(40)
+assert(rootProps.Position.Y < 10 - 2,
+    "Below must also wait under the map at round start, Y="
+        .. tostring(rootProps.Position.Y))
+makeCoin(Vector3.new(40, 10, 0))
+frames(30)
+assert(rootProps.Position.Y > 10 - 12,
+    "Below leaves the hold and farms, Y=" .. tostring(rootProps.Position.Y))
+assert(rootProps.Size.Y == 8, "Below keeps its hitbox once farming")
+pass("Stay Under also works in Below mode")
 
 feature.onToggle(false)
 print("PASS " .. passed .. " Auto Farm motion suites")

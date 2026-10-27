@@ -109,6 +109,18 @@
 > abridor circular (círculo + `≡`) se crea oculto y solo aparece cuando
 > `state.menuReady` (fin de todas las secciones). Evidencia: `docs/FIXES-v138.7.md`,
 > `tools/test_autofarm_motion.py`, `tools/test_loader_launcher.py`.
+>
+> **v138.8 (2026-10-27):** se revierte el **fly-through** del Auto Farm (velocidad
+> proporcional, punto 26 studs pasado la moneda y compromiso de rumbo: "se movía
+> flojo" y "hacia ninguna trayectoria") y vuelve el ir-y-cobrar, pero **sin la espera
+> de ~1 s**: velocidad plena, primer touch en el mismo frame de llegada
+> (`lastTouchPulse = 0`), `DWELL_SECONDS = 0.3` con `RETRY_SECONDS = 1.5` /
+> `RETRY_LIMIT = 3` y cambio de objetivo inmediato al desaparecer la moneda.
+> **Stay Under When Round starts** vuelve y aplica a **ambos** modos; al salir del
+> escondite el cuerpo va a la superficie en `homeCFrame` (antes raycast desde debajo
+> del suelo, que era lo que dejaba el cuerpo enterrado en Walk). **Anti Fling** queda
+> sin opciones (`noOptions = true`, umbrales 2.5× WalkSpeed). Evidencia:
+> `docs/FIXES-v138.8.md`, `tools/test_autofarm_motion.py` (7 suites).
 
 ## 1A. X2Duels (MVS): estructura MM2, evidencia y contratos
 

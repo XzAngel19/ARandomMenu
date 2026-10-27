@@ -18,7 +18,6 @@ function Module.init(context: Runtime): any
     local workspace: any = host.workspace
     local createUniversalFeature: any = host.createUniversalFeature
     local addFeatureTooltip: any = host.addFeatureTooltip
-    local addNumberOption: any = host.addNumberOption
     local disconnectFeatureConnection: any = host.disconnectFeatureConnection
     local services: any = (context :: any).services
     local activity: any = services and services.activity
@@ -124,30 +123,22 @@ function Module.init(context: Runtime): any
         host.featureConnections.AntiFling = host.TaskManager:Connect(step)
     end
 
+    -- No options on purpose (v138.8): Anti Fling is a plain ON/OFF card. The
+    -- thresholds scale with the character by themselves -- planar speed above
+    -- 2.5x WalkSpeed, rise above three jump powers, fall past 500 studs/s and spin
+    -- past 20 rad/s -- so there is nothing to tune.
     antiFlingFeature = createUniversalFeature(
         "Anti Fling",
         "Cancel fling impulses on the local character every physics frame",
         2,
         toggleAntiFling,
-        {categoryName = "Utilities"}
-    )
-    addNumberOption(
-        antiFlingFeature,
-        "Sensitivity",
-        sensitivity,
-        1.5,
-        10,
-        function(value: number): ()
-            sensitivity = tonumber(value) or 2.5
-        end,
-        "How many times your walking speed the character may reach before the impulse is cancelled.",
-        0.5
+        {categoryName = "Utilities", noOptions = true}
     )
     addFeatureTooltip(
         antiFlingFeature,
-        "Each frame, any planar speed above Sensitivity x WalkSpeed, any rise above "
-            .. "three jump powers, any fall past 500 studs/s and any spin past 20 rad/s "
-            .. "is removed while your own input is kept. It never teleports you and it "
+        "Each frame, any planar speed above 2.5x your WalkSpeed, any rise above three "
+            .. "jump powers, any fall past 500 studs/s and any spin past 20 rad/s is "
+            .. "removed while your own input is kept. It never teleports you and it "
             .. "stands alone (no Anti Void needed)."
     )
 

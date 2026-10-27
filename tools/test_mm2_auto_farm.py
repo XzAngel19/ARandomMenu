@@ -160,25 +160,31 @@ assert 'GetAttribute("Collected")' in SOURCE
 # Parked collections also pulse the touch directly (physics Touched
 # is not guaranteed for a fully NoClipped body).
 assert "state.fireTouchInterest" in SOURCE
-# v138.7: the "Stay Under When Round starts" toggle is gone (it was what buried a
-# Walk-mode body in geometry); the farm just holds position when there is no coin.
-assert '"Stay Under When Round starts"' not in SOURCE
-assert "stayUnderOnStart" not in SOURCE
-assert "holdHiddenUnderMap" not in SOURCE
+# v138.8: "Stay Under When Round starts" is back and applies to BOTH modes; it is
+# only the round-start hold, and leaving it puts the body back on the surface.
+assert '"Stay Under When Round starts"' in SOURCE
+assert "stayUnderOnStart" in SOURCE
+assert "holdUnderMap" in SOURCE
+assert "settings.stayUnderOnStart and not engaged" in SOURCE
+assert "hiddenUnderMap and homeCFrame" in SOURCE, \
+    "leaving the hold must use the surface start point, not a raycast from underground"
 assert "walkBodyReady" in SOURCE          # body normalised once per engagement
 assert "walkCarryUntil" in SOURCE         # velocity carry when Move is ignored
 assert "walkCarryDirection" in SOURCE
 
-# Fly-through farming: a coin is a waypoint, never a stop. The body keeps its
-# momentum across the coin (the target becomes a point 26 studs past it) and the
-# coin just swept is skipped for a moment so the next one is picked.
-assert "PASS_SKIP_SECONDS" in SOURCE
-assert "PASS_LIMIT" in SOURCE
-assert "passThrough" in SOURCE and "passCount" in SOURCE
-assert "direction * 26" in SOURCE
-assert "STUCK_SECONDS" not in SOURCE, "the old parked-coin timer must be gone"
-assert "stuckPart" not in SOURCE
-assert "PASS_SKIP_SECONDS" in SOURCE
+# v138.8: back to approach-and-collect, but at full Farm Speed and without the
+# ~1 s park: a short dwell, an immediate first touch, then the next coin, with a
+# retry list and a blacklist after three failed touches.
+assert "math.min(speed, flatDistance" not in SOURCE, "the taper made the flight look slow"
+assert "velocityX = direction.X * speed" in SOURCE
+assert "DWELL_SECONDS: number = 0.3" in SOURCE
+assert "RETRY_SECONDS" in SOURCE and "RETRY_LIMIT" in SOURCE
+assert "retryAt" in SOURCE and "attempts" in SOURCE
+assert "lastTouchPulse = 0" in SOURCE, "the first touch on a new coin must not wait"
+assert "direction * 26" not in SOURCE, "the fly-through overfly point must be gone"
+assert "PASS_SKIP_SECONDS" not in SOURCE
+assert "passThrough" not in SOURCE
+assert "BEHIND_PENALTY" not in SOURCE
 # The renamed toggles carry saved values over instead of resetting them.
 assert "FlingMurderafterreset" in SOURCE and "FlingMurderafterfullbag" in SOURCE
 assert "resolveSafeAboveGroundPosition" in SOURCE

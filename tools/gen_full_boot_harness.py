@@ -859,7 +859,7 @@ do
     assert(autoFarm.options:FindFirstChild("Option_FlingMurderafterfullbag"), "Auto Farm must expose Fling Murder after full bag")
     assert(autoFarm.options:FindFirstChild("Option_FlingSheriffafterfullbag"), "Auto Farm must expose Fling Sheriff after full bag")
     assert(not autoFarm.options:FindFirstChild("Option_FlingMurderafterreset"), "the old 'after reset' label must be gone")
-    assert(not autoFarm.options:FindFirstChild("Option_StayUnderWhenRoundstarts"), "Stay Under was removed: the farm holds position instead")
+    assert(autoFarm.options:FindFirstChild("Option_StayUnderWhenRoundstarts"), "Stay Under When Round starts must be back (both modes)")
     -- The launcher must stay hidden until the whole menu has loaded.
     assert(ex.state.menuReady == true, "boot completion must set state.menuReady")
     assert(type(ex.state.refreshLauncher) == "function", "the launcher must re-evaluate on its own")
@@ -998,7 +998,15 @@ do
     assert(walkFling.hasOptions() == false, "Walk Fling is a plain toggle with no options")
     assert(findFeature("Anti Void").options:FindFirstChild("Option_Distance"))
     assert(findFeature("Anti Void").options:FindFirstChild("Option_Showplatform"))
-    assert(findFeature("Anti Fling").options:FindFirstChild("Option_Sensitivity"))
+    -- v138.8: Anti Fling is a plain ON/OFF card with no options at all.
+    do
+      local antiFling = findFeature("Anti Fling")
+      assert(antiFling, "Anti Fling must exist")
+      assert(antiFling.hasOptions() == false,
+        "Anti Fling must not expose any option row")
+      assert(antiFling.options:FindFirstChild("Option_Sensitivity") == nil,
+        "the Sensitivity row must be gone")
+    end
     local fullbright=ex.state.framework:GetModule("Fullbright")
     assert(fullbright.Options["Time Changer"] and not fullbright.Options.Time.Visible)
     fullbright.Options["Time Changer"].Metadata.callback(true);assert(fullbright.Options.Time.Visible)

@@ -172,7 +172,11 @@ SCRIPT_ANTIFLING = PRELUDE + "\nlocal AntiFling = (function()\n" + ANTIFLING + "
 options = {}
 AntiFling.init(context)
 assert(feature.name == "Anti Fling", "the card is Anti Fling")
-assert(options["Sensitivity"] ~= nil, "Sensitivity is configurable")
+-- v138.8: Anti Fling has NO options; the thresholds scale with the character.
+assert(next(options) == nil,
+    "Anti Fling must be a plain ON/OFF card, got option(s): " .. tostring(next(options)))
+assert(feature.configuration and feature.configuration.noOptions == true,
+    "the card must declare noOptions")
 
 feature.toggle(true)
 assert(type(tick) == "function", "Anti Fling owns its own frame step")
@@ -216,18 +220,20 @@ near(rootProps.AssemblyLinearVelocity.X, 9000)
 activityFlags["walkfling"] = nil
 pass("Anti Fling never fights our own Fling or Walk Fling")
 
--- Sensitivity scales the limit: 10x walk speed allows 150 studs/s, the
--- default 2.5x does not.
+-- The limit scales with the character, with nothing to tune: 2.5x WalkSpeed
+-- clamps 150 studs/s at WalkSpeed 16 but allows it at WalkSpeed 80.
 humanoid.MoveDirection = Vector3.zero
-options["Sensitivity"](10)
+local savedWalkSpeed = humanoid.WalkSpeed
+humanoid.WalkSpeed = 16
+rootProps.AssemblyLinearVelocity = Vector3.new(150, 0, 0)
+tick(0.016)
+assert(rootProps.AssemblyLinearVelocity.X < 100, "16 WalkSpeed must clamp 150 studs/s")
+humanoid.WalkSpeed = 80
 rootProps.AssemblyLinearVelocity = Vector3.new(150, 0, 0)
 tick(0.016)
 near(rootProps.AssemblyLinearVelocity.X, 150)
-options["Sensitivity"](2.5)
-rootProps.AssemblyLinearVelocity = Vector3.new(150, 0, 0)
-tick(0.016)
-assert(rootProps.AssemblyLinearVelocity.X < 100, "the default limit must clamp 150 studs/s")
-pass("Sensitivity scales the threshold")
+humanoid.WalkSpeed = savedWalkSpeed
+pass("Anti Fling thresholds scale with WalkSpeed, no options to tune")
 
 feature.toggle(false)
 assert(tick == nil, "disabling releases the frame step")

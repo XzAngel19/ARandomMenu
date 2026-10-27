@@ -40,6 +40,7 @@ function Module.init(_runtime: any): any
     local settings = {
         mode = "Walk",
         speed = 16,
+        stayUnderOnStart = true,
         safeZone = true,
         resetOnFull = true,
         flingMurder = false,
@@ -448,29 +449,22 @@ function Module.init(_runtime: any): any
         local wasInActiveRound: boolean = false
         local scanCache: {Instance} = {}
         local scanAt: number = 0
-        -- Fly-through farming: coins are waypoints, never stops. A coin we just
-        -- swept past is skipped for a moment so the body keeps moving to the next
-        -- one instead of braking on it; a coin that survives several passes is
-        -- blacklisted like before.
-        local passThrough: {[Instance]: number} = {}
-        local passCount: {[Instance]: number} = {}
-        local PASS_SKIP_SECONDS: number = 2.5
-        local PASS_LIMIT: number = 5
-        -- A coin behind the current heading is worth this many extra studs, so the
-        -- farm commits to the coin it is already flying at instead of turning back
-        -- to the one it just swept.
-        local BEHIND_PENALTY: number = 60
-        -- After sweeping a coin the farm keeps its course for this long before it
-        -- may turn back: without it the next tick immediately re-targeted a coin
-        -- behind the body and the flight ping-ponged between two pickups.
-        local COURSE_COMMIT_SECONDS: number = 1.2
-        local courseClearUntil: number = 0
-        local lastTouchPulse: number = 0
+        -- A coin that does not pay on the first touch is retried on a later pass
+        -- instead of holding the farm on it: the dwell under a coin is a fraction
+        -- of a second, never the old ~1 s stop.
+        local DWELL_SECONDS: number = 0.3
+        local RETRY_SECONDS: number = 1.5
+        local RETRY_LIMIT: number = 3
+        local retryAt: {[Instance]: number} = {}
+        local attempts: {[Instance]: number} = {}
         local blacklist: {[Instance]: number} = {}
+        local stuckPart: Instance? = nil
+        local stuckSince: number = 0
+        local lastTouchPulse: number = 0
 
-        -- Engagement state. The farm touches the character ONLY while
-        -- engaged inside an active round on a map. In the lobby or
-        -- between rounds, the character is left completely alone.
+        -- Engagement state. The farm touches the character ONLY while engaged
+        -- inside an active round on a map. In the lobby or between rounds, the
+        -- character is left completely alone.
         local engaged: boolean = false
         local engagedCharacter: Model? = nil
         local homeCFrame: CFrame? = nil
@@ -664,10 +658,12 @@ function Module.init(_runtime: any): any
                 local flat: Vector3 = Vector3.new(delta.X, 0, delta.Z)
                 local flatDistance: number = flat.Magnitude
                 if flatDistance > 0.35 then
-                    local step: number = math.min(speed, flatDistance * 6)
+                    -- Full Farm Speed until the body is on the point: the old
+                    -- proportional taper is what made the flight look slow and
+                    -- flimsy on the final approach.
                     local direction: Vector3 = flat / flatDistance
-                    velocityX = direction.X * step
-                    velocityZ = direction.Z * step
+                    velocityX = direction.X * speed
+                    velocityZ = direction.Z * speed
                 end
                 -- Proportional altitude hold: this exactly cancels the falling
                 -- the physics step would otherwise add.
@@ -703,6 +699,46 @@ function Module.init(_runtime: any): any
                 root
             )
             hoverActive = true
+        end
+
+        -- Round start only ("Stay Under When Round starts"): the body waits under
+        -- the map while there is nothing to farm, then the farm starts normally in
+        -- whichever mode is selected. Works for Walk too: leaving the hold puts the
+        -- body back on the surface at the round's start point, so walking resumes
+        -- from solid ground instead of from inside the geometry.
+        local function holdUnderMap(
+            character: Model,
+            humanoid: Humanoid,
+            root: BasePart
+        ): ()
+            hiddenUnderMap = true
+            forceNoClipCharacter(character)
+            local basePosition: Vector3 = if homeCFrame
+                then homeCFrame.Position
+                else root.Position
+            local hidePos: Vector3 = clampBelowTarget(
+                basePosition - Vector3.new(0, BELOW_OFFSET + 4, 0),
+                root
+            )
+            hoverTarget = hidePos
+            hoverActive = settings.mode ~= "Walk"
+            pcall(function(): ()
+                humanoid.PlatformStand = true
+                humanoid.AutoRotate = false
+                humanoid:Move(Vector3.zero, false)
+                if settings.mode ~= "Walk" then
+                    if savedRootSize == nil then
+                        savedRootSize = root.Size
+                    end
+                    root.Size = HITBOX_SIZE
+                end
+                if (root.Position - hidePos).Magnitude > 6 then
+                    root.CFrame = CFrame.new(hidePos)
+                        * CFrame.Angles(0, yawOf(root.CFrame), 0)
+                    root.AssemblyLinearVelocity = Vector3.zero
+                    root.AssemblyAngularVelocity = Vector3.zero
+                end
+            end)
         end
 
         -- Puts the body back inside the farm's altitude budget after a fall.
@@ -907,10 +943,13 @@ function Module.init(_runtime: any): any
                             homeCFrame = nil
                         end
                     elseif not teleportedHomeThisRound then
-                        local safePos: Vector3 = resolveSafeAboveGroundPosition(
-                            root.Position,
-                            character
-                        )
+                        -- Coming out of the round-start hold: the body is
+                        -- underneath the floor, so a raycast from there finds
+                        -- nothing. Go back to the round's start point instead,
+                        -- which was recorded on the surface.
+                        local safePos: Vector3 = if hiddenUnderMap and homeCFrame
+                            then homeCFrame.Position
+                            else resolveSafeAboveGroundPosition(root.Position, character)
                         local targetCF: CFrame = CFrame.new(safePos)
                             * CFrame.Angles(0, yawOf(root.CFrame), 0)
                         if character then
@@ -1548,69 +1587,25 @@ function Module.init(_runtime: any): any
                 local nearest: Instance? = nil
                 local nearestPosition: Vector3? = nil
                 local nearestDistance: number = math.huge
-                local fallback: Instance? = nil
-                local fallbackPosition: Vector3? = nil
-                local fallbackDistance: number = math.huge
-                local velocity: Vector3 = Vector3.zero
-                pcall(function(): ()
-                    velocity = root.AssemblyLinearVelocity
-                end)
-                local speedNow: number = math.sqrt(
-                    velocity.X * velocity.X + velocity.Z * velocity.Z
-                )
-                local moving: boolean = speedNow > 6
-                local allowBehind: boolean = (not moving) or now >= courseClearUntil
                 for _, part: Instance in ipairs(scanCache) do
                     if part.Parent
                         and stillCollectable(part)
-                        and (not blacklist[part] or blacklist[part] < now) then
+                        and (not blacklist[part] or blacklist[part] < now)
+                        and (not retryAt[part] or retryAt[part] < now) then
                         local position: Vector3? = nil
                         pcall(function(): ()
                             position = (part :: BasePart).Position
                         end)
                         if position then
-                            local flatX: number = (position :: Vector3).X - root.Position.X
-                            local flatZ: number = (position :: Vector3).Z - root.Position.Z
-                            local distance: number = math.sqrt(
-                                flatX * flatX + flatZ * flatZ
-                            )
-                            -- The coin just swept past is skipped for a moment so
-                            -- the farm keeps flying instead of braking on it.
-                            local skipped: boolean = passThrough[part] ~= nil
-                                and passThrough[part] > now
-                            -- Hysteresis: a coin behind the current heading costs
-                            -- extra studs, so the body commits to the coin it is
-                            -- already flying at instead of ping-ponging between two.
-                            local ahead: boolean = true
-                            if moving then
-                                ahead = (flatX * velocity.X + flatZ * velocity.Z)
-                                    >= -0.1 * distance * speedNow
-                            end
-                            local score: number = if ahead
-                                then distance
-                                else distance + BEHIND_PENALTY
-                            -- While the course is committed only coins in front of
-                            -- the body are targets; the one just swept is skipped.
-                            if not skipped and (ahead or allowBehind)
-                                and score < nearestDistance then
+                            local distance: number =
+                                ((position :: Vector3) - root.Position).Magnitude
+                            if distance < nearestDistance then
                                 nearest = part
                                 nearestPosition = position
-                                nearestDistance = score
-                            end
-                            if (ahead or allowBehind) and distance < fallbackDistance then
-                                fallback = part
-                                fallbackPosition = position
-                                fallbackDistance = distance
+                                nearestDistance = distance
                             end
                         end
                     end
-                end
-                if not nearest and fallback then
-                    -- Only one reachable coin and we just swept it: take it again.
-                    nearest = fallback
-                    nearestPosition = fallbackPosition
-                    nearestDistance = fallbackDistance
-                    passThrough[fallback] = nil
                 end
                 if not nearest or not nearestPosition then
                     -- Round starting or 0 coins currently in the server while
@@ -1642,23 +1637,24 @@ function Module.init(_runtime: any): any
                         end
                     end
                     scanAt = now - 0.25
-                    -- No coin to chase right now (round starting, or every coin
-                    -- was just swept): stay exactly where the body is. No dive
-                    -- under the map, no teleport home, no waiting loop.
-                    if settings.mode == "Walk" then
-                        if hiddenUnderMap then
-                            restoreCharacter(false)
-                        end
+                    -- No coin to chase right now. At round start that is exactly
+                    -- what "Stay Under When Round starts" is for: wait under the
+                    -- map (both modes) until the first coins appear. Once the farm
+                    -- is engaged, just hold the position/altitude the body has --
+                    -- no dive, no teleport home, no waiting loop.
+                    if settings.stayUnderOnStart and not engaged then
+                        holdUnderMap(character, humanoid, root)
+                    elseif hiddenUnderMap then
+                        restoreCharacter(false)
+                        pcall(function(): ()
+                            humanoid:Move(Vector3.zero, false)
+                        end)
+                    elseif settings.mode == "Walk" then
                         pcall(function(): ()
                             humanoid:Move(Vector3.zero, false)
                         end)
                     else
-                        -- Keep flying at the point already targeted (the one just
-                        -- past the coin) instead of braking on the spot; only hold
-                        -- the current altitude when there is no target at all.
-                        if not hoverActive or not hoverTarget then
-                            holdAltitude(root)
-                        end
+                        holdAltitude(root)
                     end
                     setStatus(string.format(
                         "Auto Farm (%s): waiting for coin - bag %d/%d - speed %d u/s - ping %dms",
@@ -1668,7 +1664,9 @@ function Module.init(_runtime: any): any
                     ))
                     return
                 end
-                if hiddenUnderMap and settings.mode == "Walk" then
+                if hiddenUnderMap then
+                    -- First coin of the round: leave the round-start hold and start
+                    -- farming normally. Restore puts the body back on the surface.
                     restoreCharacter(false)
                 end
                 -- Capture pre-farm homeCFrame and stay engaged while
@@ -1685,65 +1683,49 @@ function Module.init(_runtime: any): any
                         deltaTime
                     )
                 end
-                -- Fly-through: the coin pays by contact while the body crosses it,
-                -- and the farm never brakes, parks or waits on one. The pulse runs
-                -- while the coin is near; the target becomes a point PAST the coin
-                -- only when the body is really on top of it, so it always crosses
-                -- the pickup instead of turning away from it.
-                local flatToCoinX: number = coinPosition.X - root.Position.X
-                local flatToCoinZ: number = coinPosition.Z - root.Position.Z
-                local horizontal: number = math.sqrt(
-                    flatToCoinX * flatToCoinX + flatToCoinZ * flatToCoinZ
-                )
-                local pulseRange: number = if settings.mode == "Walk" then 4.0 else 9.0
-                local reach: number = if settings.mode == "Walk" then 2.4 else 4.5
-                if horizontal < pulseRange and now - lastTouchPulse > 0.2 then
-                    lastTouchPulse = now
-                    -- Belt and braces: some builds only pay on a physics
-                    -- Touched, and a fully NoClipped body can miss that
-                    -- pairing. Pulse the touch against Coin_Server itself.
-                    local touchPart: Instance? = serverPartOf(nearest)
-                    if type(state.fireTouchInterest) == "function"
-                        and touchPart then
-                        pcall(state.fireTouchInterest, root, touchPart, 0)
-                        pcall(state.fireTouchInterest, root, touchPart, 1)
-                    end
-                end
-                if remaining < reach or horizontal < reach then
-                    passThrough[nearest] = now + PASS_SKIP_SECONDS
-                    courseClearUntil = now + COURSE_COMMIT_SECONDS
-                    local passes: number = (passCount[nearest] or 0) + 1
-                    passCount[nearest] = passes
-                    if passes >= PASS_LIMIT and stillCollectable(nearest) then
-                        -- Five clean passes and it still pays nothing: skip it.
-                        blacklist[nearest] = now + BLACKLIST_SECONDS
-                        passCount[nearest] = nil
-                        passThrough[nearest] = nil
-                    end
-                    if settings.mode ~= "Walk" then
-                        -- The point past the coin follows the CURRENT heading when
-                        -- the body is already moving: using body->coin here turned
-                        -- the farm around whenever the pass was detected just after
-                        -- crossing (the vector points backwards at that moment).
-                        local heading: Vector3 = Vector3.new(
-                            coinPosition.X - root.Position.X,
-                            0,
-                            coinPosition.Z - root.Position.Z
-                        )
-                        if speedNow > 4 then
-                            heading = Vector3.new(velocity.X, 0, velocity.Z)
+                -- Close enough to pay: the grown 4x8x4 hitbox already overlaps
+                -- Coin_Server from 2.6 studs, so both thresholds are generous and
+                -- the body does not have to crawl onto the exact centre.
+                local reach: number = if settings.mode == "Walk" then 2.0 else 3.5
+                local arrived: boolean = remaining <= reach
+                if arrived then
+                    if stuckPart ~= nearest then
+                        -- New coin: pulse on THIS tick instead of waiting for the
+                        -- 0.25 s throttle to run out. That wait was the "moves a
+                        -- bit later" feel.
+                        stuckPart = nearest
+                        stuckSince = now
+                        lastTouchPulse = 0
+                        if not attempts[nearest] then
+                            attempts[nearest] = 0
                         end
-                        local direction: Vector3 = if heading.Magnitude > 0.05
-                            then heading.Unit
-                            else Vector3.new(0, 0, -1)
-                        moveTowards(
-                            root,
-                            coinPosition
-                                + Vector3.new(0, -BELOW_OFFSET, 0)
-                                + direction * 26,
-                            deltaTime
-                        )
+                        attempts[nearest] = attempts[nearest] + 1
                     end
+                    if now - lastTouchPulse > 0.12 then
+                        lastTouchPulse = now
+                        -- Belt and braces: some builds only pay on a physics
+                        -- Touched, and a fully NoClipped body can miss that
+                        -- pairing. Pulse the touch against Coin_Server itself.
+                        local touchPart: Instance? = serverPartOf(nearest)
+                        if type(state.fireTouchInterest) == "function"
+                            and touchPart then
+                            pcall(state.fireTouchInterest, root, touchPart, 0)
+                            pcall(state.fireTouchInterest, root, touchPart, 1)
+                        end
+                    end
+                    if now - stuckSince > DWELL_SECONDS
+                        and stillCollectable(nearest) then
+                        -- It did not pay: leave it and take the next coin. It is
+                        -- retried on a later pass, and blacklisted after too many.
+                        retryAt[nearest] = now + RETRY_SECONDS
+                        stuckPart = nil
+                        if (attempts[nearest] or 0) >= RETRY_LIMIT then
+                            blacklist[nearest] = now + BLACKLIST_SECONDS
+                            attempts[nearest] = nil
+                        end
+                    end
+                else
+                    stuckPart = nil
                 end
                 setStatus(string.format(
                     "Auto Farm (%s): %d coins - bag %d/%d - speed %d u/s - ping %dms",
@@ -1767,7 +1749,7 @@ function Module.init(_runtime: any): any
 
     local AutoFarmFeature: any = createUniversalFeature(
         "Auto Farm",
-        "Fly-through coin farming (Walk or Below/Hitbox) that never stops on a coin, with full-bag actions.",
+        "Coin farming in Walk or Below (Hitbox) mode with full-bag actions.",
         6,
         toggleAutoFarm,
         {
@@ -1794,6 +1776,10 @@ function Module.init(_runtime: any): any
         function(value: number): ()
             settings.speed = value
         end, "Walk mode: WalkSpeed. Below mode: flight speed in studs/second -- if the server kicks you (Invalid position), lower it; raise it slowly to find your fastest safe speed.", 1)
+    addToggleOption(AutoFarmFeature, "Stay Under When Round starts", true,
+        function(value: boolean): ()
+            settings.stayUnderOnStart = value == true
+        end, "Hides your character under the map while the round is starting (both farm modes) and starts farming normally as soon as the first coins spawn. Turn it off to wait on the surface at your spawn point.")
     addToggleOption(AutoFarmFeature, "Safe Zone", true,
         function(value: boolean): ()
             settings.safeZone = value == true
@@ -1820,7 +1806,7 @@ function Module.init(_runtime: any): any
         end, "As Murderer, when the bag fills: pull everyone in front of you and slash (YARHM Kill All).")
     addInformationOption(
         AutoFarmFeature,
-        "Fly-through farming: the body never stops on a coin. Below (Hitbox) skims under the floor with the root hitbox grown so each coin pays as it is crossed; Walk does the same on the ground. If Below ever kicks you for Invalid position, lower Farm Speed. Turning it off restores collisions, hitbox and WalkSpeed and returns you where you started."
+        "The body moves at full Farm Speed to the nearest coin, touches it and moves on to the next one the same frame it is collected (a coin that does not pay is retried later, never waited on). Below (Hitbox) skims under the floor with the root hitbox grown so coins pay from underneath; Walk does it on the ground. If Below ever kicks you for Invalid position, lower Farm Speed. Turning it off restores collisions, hitbox and WalkSpeed and returns you where you started."
     )
 
     activeCleanup = function(): ()
