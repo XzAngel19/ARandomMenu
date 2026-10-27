@@ -214,7 +214,17 @@ function Module.init(context: any): any
                 table.insert(rows, child :: GuiObject)
             end
         end
+        -- ARandomMenu order: the cards inside a window are placed by their
+        -- session-stable random rank, never alphabetically. Turning the setting
+        -- off restores the curated order (explicit rank, then name).
+        local randomOrder: boolean = state.randomCardOrder ~= false
         table.sort(rows, function(left: GuiObject, right: GuiObject): boolean
+            if randomOrder then
+                local leftRank: number = tonumber(left:GetAttribute("FeatureSortRank")) or math.huge
+                local rightRank: number = tonumber(right:GetAttribute("FeatureSortRank")) or math.huge
+                if leftRank ~= rightRank then return leftRank < rightRank end
+                return tostring(left.Name) < tostring(right.Name)
+            end
             local leftOrder: number = tonumber(left:GetAttribute("FeatureSortOrder")) or math.huge
             local rightOrder: number = tonumber(right:GetAttribute("FeatureSortOrder")) or math.huge
             if leftOrder ~= rightOrder then return leftOrder < rightOrder end
@@ -227,6 +237,13 @@ function Module.init(context: any): any
         end)
         for index: number, row: GuiObject in ipairs(rows) do
             row.LayoutOrder = index
+        end
+    end
+
+    -- Re-run the ordering of every window (used by the Settings toggle).
+    function ClickGui.restack(): ()
+        for _, record: CategoryWindow in pairs(ClickGui.categories) do
+            pcall(sortCategoryRows, record)
         end
     end
 

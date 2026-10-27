@@ -220,7 +220,7 @@ local RUNTIME_RAW_BASE: string =
         .. RUNTIME_BRANCH
         .. "/"
 
-local SOURCE_STAMP: string = "v138.5-20261027-fling-loop-not-aborted"
+local SOURCE_STAMP: string = "v138.6-20261027-autofarm-motion-random-menu"
 
 local BOOT_STARTED_AT: number = os.clock()
 local BOOT_FINGERPRINT_SECONDS: number = 0

@@ -878,6 +878,7 @@ do
     local killAuraModule = ex.state.framework:GetModule("KillAura")
     assert(killAuraModule and killAuraModule.Options["Kill All"] and killAuraModule.Options["Kill Player"],
       "KillAura must expose Kill All button and Kill Player living-Innocent selector")
+    local RANDOM_ORDER_PROOF = false
     local expected = {
       Render = {"ItemESP", "PlayerESP", "Chams", "Nametags", "HP", "Arrows", "NPCESP", "FOV", "Fullbright", "X-Ray", "Zoom", "Markers"},
       Combat = {"Aim Assist", "KillAura", "TriggerBot", "Gun Aimbot"},
@@ -886,11 +887,77 @@ do
       World = {"Improve FPS", "Gravity", "Anti AFK", "Safe Walk", "Blurt Roles", "FreeCam", "Disguise"},
     }
     for category, names in pairs(expected) do
-      for index, name in ipairs(names) do
+      local ranks = {}
+      for _, name in ipairs(names) do
         local feature = findFeature(name)
         assert(feature, "Missing requested menu module: " .. name)
         assert(feature.categoryName == category, name .. " in wrong window: " .. tostring(feature.categoryName))
-        assert(feature.row.LayoutOrder == index, name .. " in wrong display order")
+        local rank = feature.row.LayoutOrder
+        assert(type(rank) == "number" and rank >= 1, name .. " has no display slot")
+        assert(ranks[rank] == nil, name .. " reuses display slot " .. tostring(rank))
+        ranks[rank] = true
+        assert(type(feature.row:GetAttribute("FeatureSortRank")) == "number",
+          name .. " has no random ordering rank")
+      end
+    end
+    -- ARandomMenu ordering: inside each window the cards are shuffled by a
+    -- session-stable random rank, so the display slots must be a permutation
+    -- (every card in the window gets its own slot) instead of the old
+    -- alphabetical/curated sequence.
+    for category, _ in pairs(expected) do
+      local slots = {}
+      local count = 0
+      for _, feature in ipairs(ex.allFeatures) do
+        if type(feature) == "table" and feature.name and feature.row
+          and feature.categoryName == category then
+          count += 1
+          local slot = feature.row.LayoutOrder
+          assert(type(slot) == "number", feature.name .. " has no display slot")
+          assert(slots[slot] == nil, category .. " repeats display slot " .. tostring(slot))
+          slots[slot] = feature.name
+        end
+      end
+      for slot = 1, count do
+        assert(slots[slot] ~= nil, category .. " is missing display slot " .. tostring(slot))
+      end
+      -- and the slot order must follow the random rank, not the name
+      local previousRank = -1
+      local previousName = nil
+      local sawInversion = false
+      for slot = 1, count do
+        for _, feature in ipairs(ex.allFeatures) do
+          if type(feature) == "table" and feature.name and feature.row
+            and feature.categoryName == category
+            and feature.row.LayoutOrder == slot then
+            local rank = feature.row:GetAttribute("FeatureSortRank")
+            assert(rank > previousRank, category .. " slots do not follow the random rank")
+            previousRank = rank
+            local key = feature.row:GetAttribute("FeatureSortName")
+            if previousName and key < previousName then
+              sawInversion = true
+            end
+            previousName = key
+          end
+        end
+      end
+      if sawInversion then
+        RANDOM_ORDER_PROOF = true
+      end
+    end
+    assert(RANDOM_ORDER_PROOF == true,
+      "menu order is still alphabetical; cards must be shuffled by their random rank")
+    -- every card carries a distinct session rank, so the shuffle is a real
+    -- permutation instead of a tie broken by name
+    do
+      local ranks = {}
+      for _, feature in ipairs(ex.allFeatures) do
+        if type(feature) == "table" and feature.row then
+          local rank = feature.row:GetAttribute("FeatureSortRank")
+          if type(rank) == "number" then
+            assert(ranks[rank] == nil, "two cards share the random rank " .. tostring(rank))
+            ranks[rank] = true
+          end
+        end
       end
     end
     for _, name in ipairs({"Metrics", "Learning", "Game Learning", "HookPart", "Flight", "Invisible", "SpinBot", "Sprint", "Instant Role Notify", "Knife", "Shoot"}) do

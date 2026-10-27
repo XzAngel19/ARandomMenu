@@ -53,6 +53,33 @@ function Module.init(context: any): any
             }) :: Frame
         end
 
+    -- ARandomMenu: the cards inside each window are ordered RANDOMLY, not
+    -- alphabetically. The ranks are drawn once per session from a small LCG, so
+    -- the order looks shuffled but never changes while the script is running
+    -- (re-sorting on every refresh would make the menu jump under the pointer).
+    local randomState: number = 0
+    local function sessionSeed(): number
+        local seed: number = 0
+        pcall(function(): ()
+            seed = math.floor((os.clock() % 1) * 1000000000)
+        end)
+        if seed <= 0 then
+            pcall(function(): ()
+                seed = math.floor(os.time() or 0)
+            end)
+        end
+        seed = math.floor(seed) % 2147483647
+        if seed <= 0 then
+            seed = 20261027
+        end
+        return seed
+    end
+    randomState = sessionSeed()
+    local function nextRandomRank(): number
+        randomState = (randomState * 16807) % 2147483647
+        return randomState
+    end
+
     local function createUniversalFeature(
         name: string,
         description: string,
@@ -179,6 +206,11 @@ function Module.init(context: any): any
         row:SetAttribute("FeatureCategory", categoryName)
         row:SetAttribute("FeatureSortOrder", ordered[name])
         row:SetAttribute("FeatureSortName", string.lower(name))
+        -- Session-stable random position inside the window (see nextRandomRank).
+        if feature.sortRank == nil then
+            feature.sortRank = nextRandomRank()
+        end
+        row:SetAttribute("FeatureSortRank", feature.sortRank)
 
         local bitmapText: any = state.bitmapText
         local title: TextLabel? = nil

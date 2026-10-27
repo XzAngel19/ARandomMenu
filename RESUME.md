@@ -80,6 +80,23 @@
 > víctima no se movió, y notificación con poses/velocidad reales +
 > `state.mm2LastFling`. Evidencia: `docs/FIXES-v138.5.md`,
 > `tools/test_fling_skid.py` (7 suites).
+>
+> **v138.6 (2026-10-27):** **Auto Farm** dejó de caerse al vacío: el vuelo de
+> Below lo hace `applyBelowControl` en `RunService.Stepped` (antes de física) con
+> control de altitud proporcional que cancela la gravedad; antes se escribía solo
+> desde el Heartbeat y la gravedad se acumulaba entre escrituras. El "rebase" de
+> `homeCFrame` ya no se calcula desde un cuerpo que está debajo del mapa (eso bajaba
+> el objetivo 7 studs por tick hasta el fondo). `clampBelowTarget`/`floorBudgetY`
+> limitan la profundidad y `recoverFromVoid` devuelve el cuerpo dentro del mapa.
+> **Walk** funciona: "Stay Under" ya solo aplica a Below (antes enterraba el cuerpo
+> de Walk), `engage()` normaliza PlatformStand/NoClip/hitbox una vez por sesión, no
+> se re-ejecuta `restoreCharacter` cada tick y hay carry por velocidad si
+> `Humanoid:Move` no mueve. **Menú**: el orden de las tarjetas dentro de cada
+> ventana es **aleatorio por sesión** (LCG + atributo `FeatureSortRank`), no
+> alfabético, con toggle *Settings → Random Card Order*. Evidencia:
+> `docs/FIXES-v138.6.md`, `tools/test_autofarm_motion.py` (4 suites, con gravedad
+> simulada y tick congelado), `tools/test_mm2_auto_farm.py`,
+> `tools/gen_full_boot_harness.py` (prueba de orden no alfabético).
 
 ## 1A. X2Duels (MVS): estructura MM2, evidencia y contratos
 

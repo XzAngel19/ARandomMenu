@@ -2039,6 +2039,18 @@ function Module.init(context: any): any
         warn("[Wurst:Settings] palette rows skipped: " .. tostring(paletteError))
     end
 
+    -- ARandomMenu: the cards inside each window are shuffled per session. This
+    -- toggle goes back to the curated order for anyone who wants it.
+    addToggleOption(uiPanel, "Random Card Order", state.randomCardOrder ~= false,
+        function(value: boolean): ()
+            state.randomCardOrder = value == true
+            local clickGui: any = state.clickGui
+            if clickGui and type(clickGui.restack) == "function" then
+                pcall(clickGui.restack, clickGui)
+            end
+        end,
+        "Shuffle the cards inside each window. The order is drawn once per session, so it stays put while you play.")
+
     local rainbowConnection: any = nil
     local rainbowElapsed: number = 0
     local rainbowSince: number = 0

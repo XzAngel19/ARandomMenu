@@ -31,8 +31,17 @@ for option, default in (
     needle = f'"{option}", {default}'
     assert needle in SOURCE, f"missing option: {option}"
 
-# Movement is physics velocity, never per-tick CFrame teleports.
-assert "root.AssemblyLinearVelocity = delta.Unit * speed" in SOURCE
+# Movement is physics velocity, never per-tick CFrame teleports, and the Below
+# flight is driven on RunService.Stepped (BEFORE physics) by an altitude
+# controller: writing it only from the Heartbeat tick let gravity accumulate
+# between writes, which is what made the farm sink out of the map.
+assert "applyBelowControl" in SOURCE
+assert "RunService.Stepped:Connect" in SOURCE
+assert "hoverActive" in SOURCE and "hoverTarget" in SOURCE
+assert "root.AssemblyLinearVelocity = Vector3.new(velocityX, velocityY, velocityZ)" in SOURCE
+assert "clampBelowTarget" in SOURCE and "floorBudgetY" in SOURCE
+assert "MAX_BELOW_DEPTH" in SOURCE and "VOID_RECOVER_DEPTH" in SOURCE
+assert "recoverFromVoid" in SOURCE
 assert "Invalid position" in SOURCE  # documented in the module
 assert "settings.speed" in SOURCE
 
@@ -49,6 +58,10 @@ assert '"Below (Hitbox)"' in SOURCE
 assert "local BELOW_OFFSET: number = 3.0" in SOURCE
 assert "Vector3.new(4, 8, 4)" in SOURCE
 assert "root.Size = HITBOX_SIZE" in SOURCE
+# The depth reference must never be derived from a body that is already below the
+# map: that fed on itself and walked the hold target down into the void.
+assert "not hiddenUnderMap and bodyOnMap" in SOURCE
+assert "local bodyOnMap: boolean = homeCFrame ~= nil" in SOURCE
 assert "savedRootSize" in SOURCE  # hitbox restored on OFF
 # The face-down tilt is gone for good (that fight glitched the camera).
 assert "math.rad(90)" not in SOURCE
@@ -148,6 +161,12 @@ assert 'GetAttribute("Collected")' in SOURCE
 assert "state.fireTouchInterest" in SOURCE
 assert '"Stay Under When Round starts"' in SOURCE
 assert "settings.stayUnderOnStart" in SOURCE
+# Stay Under is a Below-mode trick only: hiding a Walk-mode body under the floor
+# is what buried it in geometry and made Walk "do nothing".
+assert 'settings.stayUnderOnStart and settings.mode ~= "Walk"' in SOURCE
+assert "walkBodyReady" in SOURCE          # body normalised once per engagement
+assert "walkCarryUntil" in SOURCE         # velocity carry when Move is ignored
+assert "walkCarryDirection" in SOURCE
 assert "resolveSafeAboveGroundPosition" in SOURCE
 
 print("PASS MM2 Auto Farm: Walk (ground locomotion, slider WalkSpeed, "
