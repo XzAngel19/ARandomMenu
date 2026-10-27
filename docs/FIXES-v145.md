@@ -104,6 +104,13 @@ manifiesto y prohíbe que `src/Profile` reaparezca.
 
 ## 3. Estado de Fling (respuesta a «¿ya está arreglado?»)
 
+> **Actualizado en v146:** el mecanismo descrito aquí (pulsos acotados de
+> velocidad al objetivo) **no funcionaba**: el cliente no es dueño del assembly
+> del tocado y el servidor sobrescribe la escritura. v146 lo sustituye por el
+> mecanismo de Infinite Yield (giro del assembly local). Ver
+> `docs/FIXES-v146.md`. Este apartado se conserva como historia.
+
+
 Lo que **está corregido y verificado offline**:
 
 - El impulso va al jugador tocado; el avatar local ya no entra en estado

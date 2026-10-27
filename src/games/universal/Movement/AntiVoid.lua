@@ -30,43 +30,199 @@ function Module.init(context)
         end
         return walk,math.max(50,humanoid.JumpPower or 50)
     end
-    -- Infinite Yield antifling: disable CanCollide and zero velocity on all other
-    -- players' character parts before the physics solver runs (RunService.Stepped)
-    -- so another player's spin/walkfling can never transfer momentum on contact.
+    -- Anti fling (Infinite Yield's idea) used to run `GetDescendants()` over
+    -- every other character and write CanCollide + both assembly velocities on
+    -- every part, every single frame -- with three pcall closures allocated per
+    -- part. In a full MM2 server that is thousands of closures and ~600 physics
+    -- property writes per frame, which is what made the game's Physics step go
+    -- from ~2 ms to ~12 ms and the FPS collapse.
+    --
+    -- It now costs two property reads per player in the steady state and only
+    -- touches a character that actually looks like it is flinging. Part lists
+    -- are cached per character (invalidated on DescendantAdded) so the frame
+    -- path never walks a tree, and the expensive writes happen once per
+    -- detection window instead of once per frame.
+    local STRIP_SECONDS = 0.45
+    local STRIP_RESTRIKE = 0.1
+    -- Injectable clock: lets a suite drive the detection window without
+    -- sleeping, and keeps the frame path free of extra service lookups.
+    local clock: () -> number = if type((host :: any).clock) == "function"
+        then (host :: any).clock else os.clock
+    local partCache = setmetatable({}, {__mode = "k"})
+    local stripped = setmetatable({}, {__mode = "k"})
+    local walkCache = setmetatable({}, {__mode = "k"})
+    local cacheWatchers = setmetatable({}, {__mode = "k"})
+
+    -- The previous version wrapped this in a closure per part per frame.
+    local function isBasePart(inst: any): boolean
+        if type(inst) ~= "table" and typeof(inst) ~= "Instance" then
+            return false
+        end
+        local ok: boolean, verdict: any = pcall(inst.IsA, inst, "BasePart")
+        if ok then
+            return verdict == true
+        end
+        -- Table-backed part (test harness / executor proxy): identity is the
+        -- physics surface we are about to write.
+        return (inst :: any).CanCollide ~= nil
+            and (inst :: any).AssemblyLinearVelocity ~= nil
+    end
+
+    local function partsOf(character: any)
+        local cached = partCache[character]
+        if cached ~= nil then
+            return cached
+        end
+        local list = {}
+        local okDesc, descendants = pcall(function(): any
+            return character:GetDescendants()
+        end)
+        if okDesc and type(descendants) == "table" then
+            for _, inst in ipairs(descendants) do
+                if isBasePart(inst) then
+                    list[#list + 1] = inst
+                end
+            end
+        end
+        partCache[character] = list
+        -- One listener per character, not one scan per frame.
+        if cacheWatchers[character] == nil then
+            local added = (character :: any).DescendantAdded
+            if added and type(added.Connect) == "function" then
+                local connection = added:Connect(function(inst)
+                    if isBasePart(inst) then
+                        partCache[character] = nil
+                    end
+                end)
+                cacheWatchers[character] = connection
+            end
+        end
+        return list
+    end
+
+    local function walkOf(character, humanoid)
+        local cached = walkCache[character]
+        if cached then
+            return cached
+        end
+        local walk = 16
+        if humanoid then
+            walk, _ = motionLimits(humanoid)
+        end
+        walkCache[character] = walk
+        return walk
+    end
+
+    local function releaseStrip(entry)
+        if not entry then
+            return
+        end
+        for part, canCollide in pairs(entry.saved) do
+            if part.Parent and part.CanCollide ~= canCollide then
+                pcall(function()
+                    part.CanCollide = canCollide
+                end)
+            end
+        end
+        entry.saved = nil
+    end
+
+    local function stripCharacter(character, entry, now)
+        local list = partsOf(character)
+        local saved = entry.saved or {}
+        for i = 1, #list do
+            local part = list[i]
+            if part.Parent then
+                if saved[part] == nil then
+                    saved[part] = part.CanCollide == true
+                end
+                if part.CanCollide then
+                    part.CanCollide = false
+                end
+            end
+        end
+        entry.saved = saved
+        entry.untilAt = now + STRIP_SECONDS
+        entry.reStrikeAt = now + STRIP_RESTRIKE
+    end
+
     local function stripOtherPlayerCollisions()
-        if not antiFling or active("fling") then return end
+        if not antiFling or active("fling") then
+            return
+        end
         local playersService = host.Players
-        if not playersService or type(playersService.GetPlayers) ~= "function" then return end
-        local okList, list = pcall(playersService.GetPlayers, playersService)
-        if not okList or type(list) ~= "table" then return end
-        for _, otherPlayer in ipairs(list) do
-            if otherPlayer ~= host.LocalPlayer then
-                local otherChar = otherPlayer and otherPlayer.Character
-                if otherChar and type(otherChar.GetDescendants) == "function" then
-                    local okDesc, descendants = pcall(otherChar.GetDescendants, otherChar)
-                    if okDesc and type(descendants) == "table" then
-                        for _, inst in ipairs(descendants) do
-                            if type(inst) == "table" or typeof(inst) == "Instance" then
-                                local isPart = false
-                                pcall(function()
-                                    if type(inst.IsA) == "function" then
-                                        isPart = inst:IsA("BasePart")
-                                    end
-                                end)
-                                if isPart then
-                                    pcall(function()
-                                        inst.CanCollide = false
-                                        inst.AssemblyLinearVelocity = Vector3.zero
-                                        inst.AssemblyAngularVelocity = Vector3.zero
-                                    end)
-                                end
+        if not playersService or type(playersService.GetPlayers) ~= "function" then
+            return
+        end
+        local list = playersService:GetPlayers()
+        if type(list) ~= "table" then
+            return
+        end
+        local now = clock()
+        local localPlayer = host.LocalPlayer
+        for i = 1, #list do
+            local other = list[i]
+            if other ~= localPlayer then
+                local character = other.Character
+                local entry = character and stripped[character]
+                if entry then
+                    if now >= entry.untilAt then
+                        releaseStrip(entry)
+                        stripped[character] = nil
+                    elseif now >= entry.reStrikeAt then
+                        -- Same detected fling: keep the velocities at zero so
+                        -- the solver cannot carry the spin, without touching
+                        -- CanCollide again.
+                        local parts = partsOf(character)
+                        for j = 1, #parts do
+                            local part = parts[j]
+                            if part.Parent then
+                                part.AssemblyLinearVelocity = Vector3.zero
+                                part.AssemblyAngularVelocity = Vector3.zero
                             end
+                        end
+                        entry.reStrikeAt = now + STRIP_RESTRIKE
+                    end
+                elseif character then
+                    local root = (character :: any).PrimaryPart
+                        or character:FindFirstChild("HumanoidRootPart")
+                    if root and (isBasePart(root)
+                        or (root :: any).AssemblyLinearVelocity ~= nil) then
+                        -- Two reads decide it. No tree walk, no allocation.
+                        local spin = root.AssemblyAngularVelocity.Magnitude
+                        local speed = root.AssemblyLinearVelocity.Magnitude
+                        local okHumanoid, humanoid = pcall(function(): any
+                            return character:FindFirstChildOfClass("Humanoid")
+                        end)
+                        if not okHumanoid then
+                            humanoid = nil
+                        end
+                        local walk = walkOf(character, humanoid)
+                        if spin > SPIN_LIMIT or speed > walk * SPEED_FACTOR * 1.5 then
+                            entry = {saved = nil}
+                            stripped[character] = entry
+                            stripCharacter(character, entry, now)
                         end
                     end
                 end
             end
         end
     end
+    local function releaseAllStrips()
+        for character, entry in pairs(stripped) do
+            releaseStrip(entry)
+            stripped[character] = nil
+        end
+        table.clear(partCache)
+        table.clear(walkCache)
+        for character, connection in pairs(cacheWatchers) do
+            if connection and connection.Disconnect then
+                pcall(connection.Disconnect, connection)
+            end
+            cacheWatchers[character] = nil
+        end
+    end
+
     local function step(dt)
         local character,humanoid,root=host.getCharacterParts()
         if not humanoid or not root or humanoid.Health<=0 then return end
@@ -173,6 +329,7 @@ function Module.init(context)
     cleanup=function()
         host.disconnectFeatureConnection("AntiVoid")
         host.disconnectFeatureConnection("AntiVoidStepped")
+        releaseAllStrips()
         removePlatform()
     end
     Module.Initialized=true;return feature

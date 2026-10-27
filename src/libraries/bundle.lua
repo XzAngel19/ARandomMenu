@@ -1,5 +1,5 @@
 return {
-    stamp = "v145-20261027-canonical-loader-cache-purge",
+    stamp = "v146-20261027-iy-fling-and-zero-frame-cost",
     files = {
         ["src/games/BedFight/Combat/AutoSwing.lua"] = [[
 local Module = {Name = "BedFight Auto Swing", Initialized = false, Connection = nil}
@@ -27112,6 +27112,13 @@ function Module.init(context: Runtime): any
     do
     local originalCollision = setmetatable({}, {__mode = "k"})
 
+    -- Walking the whole character with GetDescendants() every frame was pure
+    -- garbage: the part list is built once per character and kept in sync with
+    -- DescendantAdded. The frame path only checks the cached list.
+    local cachedCharacter = nil
+    local cachedParts = {}
+    local addedConnection = nil
+
     local function restoreCollision()
         for part, canCollide in pairs(originalCollision) do
             if part and part.Parent then
@@ -27121,9 +27128,48 @@ function Module.init(context: Runtime): any
         originalCollision = setmetatable({}, {__mode = "k"})
     end
 
+    local function forgetCharacter()
+        if addedConnection then
+            pcall(function(): ()
+                addedConnection:Disconnect()
+            end)
+            addedConnection = nil
+        end
+        cachedCharacter = nil
+        cachedParts = {}
+    end
+
+    local function collectParts(character: Model)
+        local parts: {BasePart} = {}
+        for _, descendant: Instance in ipairs(character:GetDescendants()) do
+            if descendant:IsA("BasePart") then
+                table.insert(parts, descendant :: BasePart)
+            end
+        end
+        cachedParts = parts
+    end
+
+    local function partsOf(character: Model): {BasePart}
+        if character ~= cachedCharacter then
+            forgetCharacter()
+            cachedCharacter = character
+            collectParts(character)
+            local added = (character :: any).DescendantAdded
+            if added and type(added.Connect) == "function" then
+                addedConnection = added:Connect(function(object: Instance): ()
+                    if object:IsA("BasePart") then
+                        table.insert(cachedParts, object :: BasePart)
+                    end
+                end)
+            end
+        end
+        return cachedParts
+    end
+
     function toggleNoclip(enabled: boolean): ()
         disconnectFeatureConnection("Noclip")
         restoreCollision()
+        forgetCharacter()
 
         if not enabled then
             return
@@ -27142,12 +27188,14 @@ function Module.init(context: Runtime): any
                 return
             end
 
-            for _, descendant in ipairs(character:GetDescendants()) do
-                if descendant:IsA("BasePart") and descendant.CanCollide then
-                    if originalCollision[descendant] == nil then
-                        originalCollision[descendant] = true
+            local parts = partsOf(character)
+            for index = 1, #parts do
+                local part = parts[index]
+                if part.Parent and part.CanCollide then
+                    if originalCollision[part] == nil then
+                        originalCollision[part] = true
                     end
-                    descendant.CanCollide = false
+                    part.CanCollide = false
                 end
             end
         end)
@@ -29195,43 +29243,199 @@ function Module.init(context)
         end
         return walk,math.max(50,humanoid.JumpPower or 50)
     end
-    -- Infinite Yield antifling: disable CanCollide and zero velocity on all other
-    -- players' character parts before the physics solver runs (RunService.Stepped)
-    -- so another player's spin/walkfling can never transfer momentum on contact.
+    -- Anti fling (Infinite Yield's idea) used to run `GetDescendants()` over
+    -- every other character and write CanCollide + both assembly velocities on
+    -- every part, every single frame -- with three pcall closures allocated per
+    -- part. In a full MM2 server that is thousands of closures and ~600 physics
+    -- property writes per frame, which is what made the game's Physics step go
+    -- from ~2 ms to ~12 ms and the FPS collapse.
+    --
+    -- It now costs two property reads per player in the steady state and only
+    -- touches a character that actually looks like it is flinging. Part lists
+    -- are cached per character (invalidated on DescendantAdded) so the frame
+    -- path never walks a tree, and the expensive writes happen once per
+    -- detection window instead of once per frame.
+    local STRIP_SECONDS = 0.45
+    local STRIP_RESTRIKE = 0.1
+    -- Injectable clock: lets a suite drive the detection window without
+    -- sleeping, and keeps the frame path free of extra service lookups.
+    local clock: () -> number = if type((host :: any).clock) == "function"
+        then (host :: any).clock else os.clock
+    local partCache = setmetatable({}, {__mode = "k"})
+    local stripped = setmetatable({}, {__mode = "k"})
+    local walkCache = setmetatable({}, {__mode = "k"})
+    local cacheWatchers = setmetatable({}, {__mode = "k"})
+
+    -- The previous version wrapped this in a closure per part per frame.
+    local function isBasePart(inst: any): boolean
+        if type(inst) ~= "table" and typeof(inst) ~= "Instance" then
+            return false
+        end
+        local ok: boolean, verdict: any = pcall(inst.IsA, inst, "BasePart")
+        if ok then
+            return verdict == true
+        end
+        -- Table-backed part (test harness / executor proxy): identity is the
+        -- physics surface we are about to write.
+        return (inst :: any).CanCollide ~= nil
+            and (inst :: any).AssemblyLinearVelocity ~= nil
+    end
+
+    local function partsOf(character: any)
+        local cached = partCache[character]
+        if cached ~= nil then
+            return cached
+        end
+        local list = {}
+        local okDesc, descendants = pcall(function(): any
+            return character:GetDescendants()
+        end)
+        if okDesc and type(descendants) == "table" then
+            for _, inst in ipairs(descendants) do
+                if isBasePart(inst) then
+                    list[#list + 1] = inst
+                end
+            end
+        end
+        partCache[character] = list
+        -- One listener per character, not one scan per frame.
+        if cacheWatchers[character] == nil then
+            local added = (character :: any).DescendantAdded
+            if added and type(added.Connect) == "function" then
+                local connection = added:Connect(function(inst)
+                    if isBasePart(inst) then
+                        partCache[character] = nil
+                    end
+                end)
+                cacheWatchers[character] = connection
+            end
+        end
+        return list
+    end
+
+    local function walkOf(character, humanoid)
+        local cached = walkCache[character]
+        if cached then
+            return cached
+        end
+        local walk = 16
+        if humanoid then
+            walk, _ = motionLimits(humanoid)
+        end
+        walkCache[character] = walk
+        return walk
+    end
+
+    local function releaseStrip(entry)
+        if not entry then
+            return
+        end
+        for part, canCollide in pairs(entry.saved) do
+            if part.Parent and part.CanCollide ~= canCollide then
+                pcall(function()
+                    part.CanCollide = canCollide
+                end)
+            end
+        end
+        entry.saved = nil
+    end
+
+    local function stripCharacter(character, entry, now)
+        local list = partsOf(character)
+        local saved = entry.saved or {}
+        for i = 1, #list do
+            local part = list[i]
+            if part.Parent then
+                if saved[part] == nil then
+                    saved[part] = part.CanCollide == true
+                end
+                if part.CanCollide then
+                    part.CanCollide = false
+                end
+            end
+        end
+        entry.saved = saved
+        entry.untilAt = now + STRIP_SECONDS
+        entry.reStrikeAt = now + STRIP_RESTRIKE
+    end
+
     local function stripOtherPlayerCollisions()
-        if not antiFling or active("fling") then return end
+        if not antiFling or active("fling") then
+            return
+        end
         local playersService = host.Players
-        if not playersService or type(playersService.GetPlayers) ~= "function" then return end
-        local okList, list = pcall(playersService.GetPlayers, playersService)
-        if not okList or type(list) ~= "table" then return end
-        for _, otherPlayer in ipairs(list) do
-            if otherPlayer ~= host.LocalPlayer then
-                local otherChar = otherPlayer and otherPlayer.Character
-                if otherChar and type(otherChar.GetDescendants) == "function" then
-                    local okDesc, descendants = pcall(otherChar.GetDescendants, otherChar)
-                    if okDesc and type(descendants) == "table" then
-                        for _, inst in ipairs(descendants) do
-                            if type(inst) == "table" or typeof(inst) == "Instance" then
-                                local isPart = false
-                                pcall(function()
-                                    if type(inst.IsA) == "function" then
-                                        isPart = inst:IsA("BasePart")
-                                    end
-                                end)
-                                if isPart then
-                                    pcall(function()
-                                        inst.CanCollide = false
-                                        inst.AssemblyLinearVelocity = Vector3.zero
-                                        inst.AssemblyAngularVelocity = Vector3.zero
-                                    end)
-                                end
+        if not playersService or type(playersService.GetPlayers) ~= "function" then
+            return
+        end
+        local list = playersService:GetPlayers()
+        if type(list) ~= "table" then
+            return
+        end
+        local now = clock()
+        local localPlayer = host.LocalPlayer
+        for i = 1, #list do
+            local other = list[i]
+            if other ~= localPlayer then
+                local character = other.Character
+                local entry = character and stripped[character]
+                if entry then
+                    if now >= entry.untilAt then
+                        releaseStrip(entry)
+                        stripped[character] = nil
+                    elseif now >= entry.reStrikeAt then
+                        -- Same detected fling: keep the velocities at zero so
+                        -- the solver cannot carry the spin, without touching
+                        -- CanCollide again.
+                        local parts = partsOf(character)
+                        for j = 1, #parts do
+                            local part = parts[j]
+                            if part.Parent then
+                                part.AssemblyLinearVelocity = Vector3.zero
+                                part.AssemblyAngularVelocity = Vector3.zero
                             end
+                        end
+                        entry.reStrikeAt = now + STRIP_RESTRIKE
+                    end
+                elseif character then
+                    local root = (character :: any).PrimaryPart
+                        or character:FindFirstChild("HumanoidRootPart")
+                    if root and (isBasePart(root)
+                        or (root :: any).AssemblyLinearVelocity ~= nil) then
+                        -- Two reads decide it. No tree walk, no allocation.
+                        local spin = root.AssemblyAngularVelocity.Magnitude
+                        local speed = root.AssemblyLinearVelocity.Magnitude
+                        local okHumanoid, humanoid = pcall(function(): any
+                            return character:FindFirstChildOfClass("Humanoid")
+                        end)
+                        if not okHumanoid then
+                            humanoid = nil
+                        end
+                        local walk = walkOf(character, humanoid)
+                        if spin > SPIN_LIMIT or speed > walk * SPEED_FACTOR * 1.5 then
+                            entry = {saved = nil}
+                            stripped[character] = entry
+                            stripCharacter(character, entry, now)
                         end
                     end
                 end
             end
         end
     end
+    local function releaseAllStrips()
+        for character, entry in pairs(stripped) do
+            releaseStrip(entry)
+            stripped[character] = nil
+        end
+        table.clear(partCache)
+        table.clear(walkCache)
+        for character, connection in pairs(cacheWatchers) do
+            if connection and connection.Disconnect then
+                pcall(connection.Disconnect, connection)
+            end
+            cacheWatchers[character] = nil
+        end
+    end
+
     local function step(dt)
         local character,humanoid,root=host.getCharacterParts()
         if not humanoid or not root or humanoid.Health<=0 then return end
@@ -29338,6 +29542,7 @@ function Module.init(context)
     cleanup=function()
         host.disconnectFeatureConnection("AntiVoid")
         host.disconnectFeatureConnection("AntiVoidStepped")
+        releaseAllStrips()
         removePlatform()
     end
     Module.Initialized=true;return feature
@@ -50913,80 +51118,62 @@ local Module = {
 
 local activeLibrary: any = nil
 
--- One owner for directed MM2 contact and universal Touch Fling.
+-- Fling, implemented the way Infinite Yield does it (the reference the user
+-- provided) instead of with bounded velocity pulses.
 --
--- A fling is a bounded momentum transfer, NOT a physics takeover of the local
--- avatar. What this library writes:
+-- Why the previous version did nothing: it wrote AssemblyLinearVelocity on the
+-- TARGET's parts. The local client does not own another player's assembly, so
+-- the replication stream overwrites that write on the very next frame. Nothing
+-- visible happens. What actually flings someone in Roblox is your OWN assembly
+-- spinning at an extreme angular velocity with an extreme physical density while
+-- it touches them: the server trusts your character's motion, and the contact
+-- resolution carries that energy into the other body.
 --
---   * Directed: ONE contact placement of the local character next to the
---     target, then bounded contact pulses. No per-tick CFrame, no
---     PlatformStand, no Humanoid Physics state, no spin.
---   * Contact pulses: a bounded AssemblyLinearVelocity on the touched
---     assembly (the target) and the same bounded pulse on the local root for
---     one physics step. The local root is the assembly the server owns and
---     accepts, so that one step is what carries the momentum into the
---     collision; the target write makes the contact visible immediately.
+-- So the mechanism is exactly IY's:
 --
--- It never writes Humanoid state, AutoRotate, Sit, a spin, network ownership
--- or a per-frame velocity on the local root. Those writes are what made
--- earlier builds rotate the player in place instead of flinging the target,
--- and they made the engine rebuild colliding assemblies every frame.
+--   1. CustomPhysicalProperties(density = math.huge) on the local parts.
+--   2. CanCollide = false / Massless = true, so the body keeps walking normally
+--      and never creates a permanent collider pair (that was also pure physics
+--      cost).
+--   3. BodyAngularVelocity on the root at 99999 rad/s, MaxTorque = math.huge.
+--   4. Duty cycle 0.2 s spinning / 0.1 s stopped, like `fling` in IY.
+--
+-- Everything is restored on OFF, death, respawn and destroy: the constraint is
+-- destroyed, density/collision/massless go back to their snapshots.
+--
+-- CPU: while spinning there is NO per-frame Lua. The duty cycle is two
+-- task.wait() sleeps, and Touch detection is a Touched listener. The old design
+-- ran a PreSimulation + Heartbeat body every frame for the whole session.
 
 function Module.init(context: any): any
     local host: any = context.host or context
-    local RunService: any = host.RunService
     local Players: any = host.Players
     local LocalPlayer: Player = host.LocalPlayer
     local services: any = context.services or host.services
     local activity: any = services and services.activity
 
-    assert(RunService and RunService.PreSimulation and RunService.Heartbeat,
-        "Fling physics requires PreSimulation and Heartbeat")
+    local SPIN_RATE: number = 99999
+    local SPIN_ON: number = 0.2
+    local SPIN_OFF: number = 0.1
+    -- A contact keeps the spin armed for this long, so one bump is enough.
+    local CONTACT_SECONDS: number = 0.6
+    local CONTACT_RANGE: number = 20
 
-    -- Bounded pulse budgets. The linear result stays below 250 studs/s.
-    local DIRECTED_SPEED: number = 170
-    local DIRECTED_LIFT: number = 20
-    local TOUCH_SPEED: number = 165
-    local TOUCH_LIFT: number = 0
-    local TARGET_SPEED: number = 200
-    local TARGET_LIFT: number = 60
-    local PULSE_COOLDOWN: number = 1 / 20
-    local CONTACT_SECONDS: number = 0.25
-    local CONTACT_RANGE: number = 14
-    local LINEAR_LIMIT: number = 250
-
-    local currentSession: any = nil
-    local selfPulse: any = nil
     local destroyed: boolean = false
-
+    local currentSession: any = nil
     local touchEnabled: boolean = false
     local touchCharacter: Model? = nil
     local touchConnections: {RBXScriptConnection} = {}
-    local touchContacts: {[Player]: {at: number, pulsedAt: number}} = {}
-    local touchCollisions: {[BasePart]: {canCollide: boolean, canTouch: boolean}} = {}
-    local touchBoundParts: {[BasePart]: boolean} = {}
-    local contactCollisionsOwned: boolean = false
+    local touchContacts: {[Player]: number} = {}
+    local touchCanTouch: {[BasePart]: boolean} = {}
 
-    local preConnection: RBXScriptConnection? = nil
-    local heartbeatConnection: RBXScriptConnection? = nil
-    local characterConnection: RBXScriptConnection? = nil
-    local ensureRunSignals: () -> ()
-    local setTouchEnabled: (enabled: boolean) -> ()
+    local spinState: any = nil
+    local spinLoopToken: number = 0
 
     local function setActivity(): ()
         if activity and type(activity.set) == "function" then
             pcall(activity.set, "fling", currentSession ~= nil or touchEnabled)
         end
-    end
-
-    local function finiteVector(value: any): boolean
-        local ok: boolean, x: any, y: any, z: any = pcall(function(): any
-            return value.X, value.Y, value.Z
-        end)
-        return ok and type(x) == "number" and type(y) == "number"
-            and type(z) == "number" and x == x and y == y and z == z
-            and math.abs(x) ~= math.huge and math.abs(y) ~= math.huge
-            and math.abs(z) ~= math.huge
     end
 
     local function getParts(player: Player?): (Model?, Humanoid?, BasePart?)
@@ -51013,123 +51200,111 @@ function Module.init(context: any): any
         return character, humanoid, root
     end
 
-    -- The bounded impulse both sides of a contact receive.
-    local function boundedPulse(direction: Vector3, speed: number, lift: number): Vector3
-        local pulse: Vector3 = Vector3.new(0, lift, 0)
-        if direction.Magnitude > 0.001 then
-            pulse += direction.Unit * speed
+    local function releaseSpin(): ()
+        spinLoopToken += 1
+        local state: any = spinState
+        spinState = nil
+        if not state then
+            return
         end
-        if not finiteVector(pulse) then
-            return Vector3.zero
-        end
-        if pulse.Magnitude > LINEAR_LIMIT then
-            pulse = pulse.Unit * LINEAR_LIMIT
-        end
-        return pulse
-    end
-
-    -- One physics step of local momentum. The original velocity is restored on
-    -- Heartbeat, so the avatar never keeps drifting or spinning after a touch.
-    local function restoreSelfPulse(): ()
-        local pulse: any = selfPulse
-        selfPulse = nil
-        if pulse and pulse.root and pulse.root.Parent then
+        if state.constraint then
             pcall(function(): ()
-                pulse.root.AssemblyLinearVelocity = pulse.linear
-                pulse.root.AssemblyAngularVelocity = pulse.angular
+                state.constraint:Destroy()
             end)
         end
-    end
-
-    local function pulseSelf(root: BasePart, direction: Vector3, speed: number, lift: number): boolean
-        if selfPulse and selfPulse.root ~= root then
-            restoreSelfPulse()
-        end
-        if not selfPulse then
-            local linear: Vector3 = root.AssemblyLinearVelocity
-            local angular: Vector3 = root.AssemblyAngularVelocity
-            if not finiteVector(linear) or not finiteVector(angular) then
-                return false
+        for part: BasePart, snapshot: any in pairs(state.parts) do
+            if part.Parent then
+                pcall(function(): ()
+                    if state.savedCollide and snapshot.canCollide ~= nil then
+                        part.CanCollide = snapshot.canCollide
+                    end
+                    if snapshot.massless ~= nil then
+                        part.Massless = snapshot.massless
+                    end
+                    if snapshot.properties ~= nil then
+                        part.CustomPhysicalProperties = snapshot.properties
+                    end
+                end)
             end
-            selfPulse = {root = root, linear = linear, angular = angular}
         end
-        local ok: boolean = pcall(function(): ()
-            root.AssemblyLinearVelocity = boundedPulse(direction, speed, lift)
-            -- No spin: the player's body normalises itself on the next frame.
-            root.AssemblyAngularVelocity = Vector3.zero
-        end)
-        if not ok then
-            restoreSelfPulse()
-        end
-        return ok
+        table.clear(state.parts)
     end
 
-    -- Momentum handed to the touched assembly. It is deliberately not restored:
-    -- that velocity IS the fling, and reconciliation belongs to whoever owns it.
-    local function pulseTarget(targetRoot: BasePart, direction: Vector3): boolean
-        local pulse: Vector3 = boundedPulse(direction, TARGET_SPEED, TARGET_LIFT)
-        if pulse.Magnitude <= 0 then
-            return false
+    -- IY's fling: infinite density, no collision, massless body, and a spinning
+    -- root. Anything the body overlaps is launched.
+    local function engageSpin(character: Model, root: BasePart): boolean
+        if spinState and spinState.root ~= root then
+            releaseSpin()
         end
-        return pcall(function(): ()
-            targetRoot.AssemblyLinearVelocity = pulse
-            targetRoot.AssemblyAngularVelocity = Vector3.new(0, 25, 0)
-        end)
-    end
-
-    local function disconnectRunSignals(): ()
-        if preConnection then
-            preConnection:Disconnect()
-            preConnection = nil
-        end
-        if heartbeatConnection then
-            heartbeatConnection:Disconnect()
-            heartbeatConnection = nil
-        end
-        if characterConnection then
-            characterConnection:Disconnect()
-            characterConnection = nil
-        end
-    end
-
-    local function maybeDisconnectRunSignals(): ()
-        if not currentSession and not touchEnabled then
-            disconnectRunSignals()
-        end
-    end
-
-    -- Contact needs CanTouch (for the listener) and CanCollide (so the shove
-    -- actually meets the target's body). Both are snapshot once when Touch is
-    -- enabled and restored on OFF/respawn: no per-contact assembly rebuild.
-    local function restoreTouchCollisions(): ()
-        if contactCollisionsOwned then
-            for part: BasePart, snapshot: any in pairs(touchCollisions) do
-                if part.Parent then
-                    pcall(function(): ()
-                        if snapshot.canCollide ~= nil then
-                            part.CanCollide = snapshot.canCollide
-                        end
-                        if snapshot.canTouch ~= nil then
-                            part.CanTouch = snapshot.canTouch
-                        end
-                    end)
+        if not spinState then
+            local parts: {[BasePart]: any} = {}
+            for _, object: Instance in ipairs(character:GetChildren()) do
+                if object:IsA("BasePart") then
+                    local part: BasePart = object :: BasePart
+                    parts[part] = {
+                        canCollide = part.CanCollide,
+                        massless = part.Massless,
+                        properties = part.CustomPhysicalProperties,
+                    }
                 end
             end
-            contactCollisionsOwned = false
+            local constraint: any = nil
+            local ok: boolean = pcall(function(): ()
+                local body: any = Instance.new("BodyAngularVelocity")
+                body.Name = "WurstFlingSpin"
+                body.AngularVelocity = Vector3.new(0, SPIN_RATE, 0)
+                body.MaxTorque = Vector3.new(0, math.huge, 0)
+                body.P = math.huge
+                body.Parent = root
+                constraint = body
+            end)
+            if not ok or not constraint then
+                return false
+            end
+            for part: BasePart in pairs(parts) do
+                pcall(function(): ()
+                    -- Exactly IY's call: density, friction, elasticity.
+                    part.CustomPhysicalProperties = PhysicalProperties.new(
+                        math.huge, 0.3, 0.5
+                    )
+                    part.CanCollide = false
+                    part.Massless = true
+                    part.AssemblyLinearVelocity = Vector3.zero
+                end)
+            end
+            spinState = {
+                root = root,
+                character = character,
+                constraint = constraint,
+                parts = parts,
+                savedCollide = true,
+            }
         end
-        table.clear(touchCollisions)
-        table.clear(touchBoundParts)
-    end
-
-    local function disconnectTouch(): ()
-        restoreSelfPulse()
-        for _, connection: RBXScriptConnection in ipairs(touchConnections) do
-            connection:Disconnect()
-        end
-        table.clear(touchConnections)
-        table.clear(touchContacts)
-        touchCharacter = nil
-        restoreTouchCollisions()
+        -- IY's duty cycle: 0.2 s spinning, 0.1 s stopped, until released.
+        spinLoopToken += 1
+        local token: number = spinLoopToken
+        task.spawn(function(): ()
+            while spinState and spinLoopToken == token and not destroyed do
+                local state: any = spinState
+                if state and state.constraint and state.constraint.Parent then
+                    pcall(function(): ()
+                        state.constraint.AngularVelocity = Vector3.new(0, SPIN_RATE, 0)
+                    end)
+                end
+                task.wait(SPIN_ON)
+                if not spinState or spinLoopToken ~= token or destroyed then
+                    return
+                end
+                state = spinState
+                if state and state.constraint and state.constraint.Parent then
+                    pcall(function(): ()
+                        state.constraint.AngularVelocity = Vector3.zero
+                    end)
+                end
+                task.wait(SPIN_OFF)
+            end
+        end)
+        return true
     end
 
     local function finishSession(reason: string): ()
@@ -51138,9 +51313,8 @@ function Module.init(context: any): any
             return
         end
         currentSession = nil
-        restoreSelfPulse()
-
-        local character: Model?, livingHumanoid: Humanoid?, root: BasePart? =
+        releaseSpin()
+        local character: Model?, humanoid: Humanoid?, root: BasePart? =
             getParts(LocalPlayer)
         if character == session.character and root == session.root and root
             and root.Parent then
@@ -51148,13 +51322,12 @@ function Module.init(context: any): any
                 root.AssemblyLinearVelocity = Vector3.zero
                 root.AssemblyAngularVelocity = Vector3.zero
                 if reason ~= "lost-local" and session.restorePosition ~= false
-                    and livingHumanoid and livingHumanoid.Health > 0 then
+                    and humanoid and humanoid.Health > 0 then
                     session.character:PivotTo(session.returnCFrame)
                 end
             end)
         end
         setActivity()
-        maybeDisconnectRunSignals()
     end
 
     local function cancel(): ()
@@ -51166,7 +51339,13 @@ function Module.init(context: any): any
             return false
         end
         if touchEnabled then
-            setTouchEnabled(false)
+            -- One owner at a time; the directed action wins.
+            local previous = touchEnabled
+            touchEnabled = false
+            local state: any = Module.__touchBinder
+            if previous and type(state) == "function" then
+                pcall(state, false)
+            end
         end
         local targetCharacter: Model?, targetHumanoid: Humanoid?, targetRoot: BasePart? =
             livingParts(target)
@@ -51186,9 +51365,20 @@ function Module.init(context: any): any
         local targetPosition: Vector3 = targetRoot.Position
         local contactPosition: Vector3 =
             (targetRoot.CFrame * CFrame.new(0, 0, 2.2)).Position
+        local function finiteVector(value: any): boolean
+            local ok: boolean, x: any, y: any, z: any = pcall(function(): any
+                return value.X, value.Y, value.Z
+            end)
+            return ok and type(x) == "number" and type(y) == "number"
+                and type(z) == "number" and x == x and y == y and z == z
+                and math.abs(x) ~= math.huge and math.abs(y) ~= math.huge
+                and math.abs(z) ~= math.huge
+        end
         if not finiteVector(targetPosition) or not finiteVector(contactPosition)
-            or not finiteVector(root.Position)
-            or (targetPosition - root.Position).Magnitude > 650 then
+            or not finiteVector(root.Position) then
+            return false
+        end
+        if (targetPosition - root.Position).Magnitude > 650 then
             return false
         end
 
@@ -51206,12 +51396,11 @@ function Module.init(context: any): any
             shouldStop = settings.shouldStop,
             duration = duration,
             startedAt = os.clock(),
-            lastPulseAt = -math.huge,
         }
-
-        -- A directed action gets one contact placement. It is never a
-        -- per-frame CFrame writer; the Humanoid is left exactly as it is.
         currentSession = session
+
+        -- One contact placement, then the spin does the work (IY does not even
+        -- place: it relies on the spin and your own walking).
         local placed: boolean = pcall(function(): ()
             character:PivotTo(CFrame.lookAt(contactPosition, targetPosition))
         end)
@@ -51219,11 +51408,34 @@ function Module.init(context: any): any
             finishSession("error")
             return false
         end
-        local connected: boolean = pcall(ensureRunSignals)
-        if not connected then
+        if not engageSpin(character, root) then
             finishSession("error")
             return false
         end
+        local deadline: number = os.clock() + duration
+        task.spawn(function(): ()
+            while currentSession == session and os.clock() < deadline do
+                if type(session.shouldStop) == "function" then
+                    local ok: boolean, stop: any = pcall(session.shouldStop)
+                    if not ok or stop == true then
+                        break
+                    end
+                end
+                -- Death, respawn or a replaced character ends the session
+                -- without waiting for the duration or a wrapper check.
+                local _, livingHumanoid: Humanoid?, livingRoot: BasePart? =
+                    livingParts(LocalPlayer)
+                if not livingHumanoid or not livingRoot
+                    or livingHumanoid ~= session.humanoid
+                    or livingRoot ~= session.root then
+                    break
+                end
+                task.wait(0.05)
+            end
+            if currentSession == session then
+                finishSession("completed")
+            end
+        end)
         setActivity()
         return true
     end
@@ -51248,31 +51460,73 @@ function Module.init(context: any): any
         local ok: boolean, player: any = pcall(function(): any
             return Players:GetPlayerFromCharacter(model)
         end)
-        if ok and player and player ~= LocalPlayer then
-            local existing: any = touchContacts[player]
-            if existing then
-                existing.at = os.clock()
-            else
-                touchContacts[player] = {at = os.clock(), pulsedAt = -math.huge}
+        if not ok or not player or player == LocalPlayer then
+            return
+        end
+        local _, targetHumanoid: Humanoid?, targetRoot: BasePart? = livingParts(player)
+        if not targetHumanoid or not targetRoot then
+            return
+        end
+        local _, humanoid: Humanoid?, root: BasePart? = livingParts(LocalPlayer)
+        if not humanoid or not root then
+            return
+        end
+        if (targetRoot.Position - root.Position).Magnitude > CONTACT_RANGE then
+            return
+        end
+        touchContacts[player] = os.clock()
+        if not spinState or spinState.root ~= root then
+            local character: Model? = LocalPlayer.Character
+            if character then
+                engageSpin(character, root)
             end
         end
+        -- The spin stays armed while any contact is fresh; this timer is the
+        -- only scheduled work, and it costs nothing until it fires.
+        task.delay(CONTACT_SECONDS, function(): ()
+            local newest: number = -math.huge
+            for _, at: number in pairs(touchContacts) do
+                if at > newest then
+                    newest = at
+                end
+            end
+            if os.clock() - newest < CONTACT_SECONDS then
+                return
+            end
+            table.clear(touchContacts)
+            if touchEnabled and not currentSession then
+                releaseSpin()
+            end
+        end)
     end
 
     local function bindTouchPart(part: BasePart): ()
-        if touchBoundParts[part] then
+        if touchCanTouch[part] ~= nil then
             return
         end
-        touchBoundParts[part] = true
-        touchCollisions[part] = {
-            canCollide = part.CanCollide,
-            canTouch = part.CanTouch,
-        }
-        -- Listening requires CanTouch; the collider value is what makes the
-        -- shove meet the target's body, so it is enabled once below.
+        touchCanTouch[part] = part.CanTouch
         pcall(function(): ()
             part.CanTouch = true
         end)
         table.insert(touchConnections, part.Touched:Connect(noteTouch))
+    end
+
+    local function disconnectTouch(): ()
+        releaseSpin()
+        for _, connection: RBXScriptConnection in ipairs(touchConnections) do
+            connection:Disconnect()
+        end
+        table.clear(touchConnections)
+        table.clear(touchContacts)
+        for part: BasePart, canTouch: boolean in pairs(touchCanTouch) do
+            if part.Parent then
+                pcall(function(): ()
+                    part.CanTouch = canTouch
+                end)
+            end
+        end
+        table.clear(touchCanTouch)
+        touchCharacter = nil
     end
 
     local function bindTouchCharacter(): ()
@@ -51286,39 +51540,24 @@ function Module.init(context: any): any
             return
         end
         touchCharacter = character
-        -- Root and body parts are direct children. Accessory/tool handles are
-        -- deliberately excluded: they add collision pairs but not body contact.
         for _, object: Instance in ipairs(character:GetChildren()) do
             if object:IsA("BasePart") then
                 bindTouchPart(object :: BasePart)
-            end
-        end
-        -- One snapshot pass: collisions on, once per session.
-        contactCollisionsOwned = true
-        for part: BasePart in pairs(touchCollisions) do
-            if part.Parent and not part.CanCollide then
-                pcall(function(): ()
-                    part.CanCollide = true
-                end)
             end
         end
         table.insert(touchConnections, character.DescendantAdded:Connect(function(object: Instance): ()
             if touchEnabled and object.Parent == character
                 and object:IsA("BasePart") then
                 bindTouchPart(object :: BasePart)
-                if contactCollisionsOwned and not (object :: BasePart).CanCollide then
-                    pcall(function(): ()
-                        (object :: BasePart).CanCollide = true
-                    end)
-                end
             end
         end))
         table.insert(touchConnections, humanoid.Died:Connect(function(): ()
             table.clear(touchContacts)
-            restoreSelfPulse()
+            releaseSpin()
         end))
     end
 
+    local setTouchEnabled: (enabled: boolean) -> ()
     setTouchEnabled = function(enabled: boolean): ()
         local wanted: boolean = enabled == true
         if touchEnabled == wanted or (destroyed and wanted) then
@@ -51326,148 +51565,14 @@ function Module.init(context: any): any
         end
         touchEnabled = wanted
         if touchEnabled then
-            ensureRunSignals()
             bindTouchCharacter()
         else
             disconnectTouch()
         end
         setActivity()
-        maybeDisconnectRunSignals()
     end
-
-    local function stepTarget(session: any): ()
-        if os.clock() - session.startedAt >= session.duration then
-            finishSession("completed")
-            return
-        end
-        if type(session.shouldStop) == "function" then
-            local ok: boolean, stop: any = pcall(session.shouldStop)
-            if not ok or stop == true then
-                finishSession("cancelled")
-                return
-            end
-        end
-        local character: Model?, humanoid: Humanoid?, root: BasePart? =
-            livingParts(LocalPlayer)
-        if not character or character ~= session.character or not humanoid
-            or humanoid ~= session.humanoid or not root or root ~= session.root then
-            finishSession("lost-local")
-            return
-        end
-        if session.target.Parent ~= Players
-            or session.target.Character ~= session.targetCharacter
-            or session.targetHumanoid.Health <= 0
-            or not session.targetRoot.Parent then
-            finishSession("lost-target")
-            return
-        end
-
-        local targetPosition: Vector3 = session.targetRoot.Position
-        local direction: Vector3 = targetPosition - root.Position
-        if not finiteVector(targetPosition) or not finiteVector(direction)
-            or direction.Magnitude > CONTACT_RANGE then
-            finishSession("lost-contact")
-            return
-        end
-        local now: number = os.clock()
-        if now - session.lastPulseAt < PULSE_COOLDOWN then
-            return
-        end
-        session.lastPulseAt = now
-        pulseTarget(session.targetRoot, direction)
-        pulseSelf(root, direction, DIRECTED_SPEED, DIRECTED_LIFT)
-    end
-
-    local function stepTouch(): ()
-        if not touchEnabled then
-            return
-        end
-        if touchCharacter ~= LocalPlayer.Character then
-            bindTouchCharacter()
-        end
-        local _, humanoid: Humanoid?, root: BasePart? = livingParts(LocalPlayer)
-        if not humanoid or not root then
-            table.clear(touchContacts)
-            restoreSelfPulse()
-            return
-        end
-
-        local now: number = os.clock()
-        local pending: {Player} = {}
-        for player: Player, contact: {at: number, pulsedAt: number} in pairs(touchContacts) do
-            if now - contact.at <= CONTACT_SECONDS then
-                table.insert(pending, player)
-            else
-                touchContacts[player] = nil
-            end
-        end
-        if #pending == 0 then
-            return
-        end
-        for _, player: Player in ipairs(pending) do
-            local contact: any = touchContacts[player]
-            if contact and now - contact.pulsedAt >= PULSE_COOLDOWN then
-                local _, targetHumanoid: Humanoid?, targetRoot: BasePart? =
-                    livingParts(player)
-                local direction: Vector3? = nil
-                if targetHumanoid and targetRoot
-                    and (targetRoot.Position - root.Position).Magnitude <= CONTACT_RANGE then
-                    direction = targetRoot.Position - root.Position
-                end
-                if direction and finiteVector(direction) then
-                    contact.pulsedAt = now
-                    direction = Vector3.new(direction.X, 0, direction.Z)
-                    if direction.Magnitude <= 0.001 then
-                        local look: Vector3 = root.CFrame.LookVector
-                        direction = Vector3.new(look.X, 0, look.Z)
-                    end
-                    if targetRoot then
-                        pulseTarget(targetRoot, direction)
-                    end
-                    pulseSelf(root, direction, TOUCH_SPEED, TOUCH_LIFT)
-                end
-            end
-        end
-    end
-
-    ensureRunSignals = function(): ()
-        if preConnection then
-            return
-        end
-        preConnection = RunService.PreSimulation:Connect(function(): ()
-            if destroyed then
-                return
-            end
-            -- A second restore point: no stale local pulse survives a physics
-            -- step even if Heartbeat is delayed by a hitch.
-            if currentSession then
-                local session: any = currentSession
-                local ok: boolean = pcall(stepTarget, session)
-                if not ok and currentSession == session then
-                    finishSession("error")
-                end
-            elseif touchEnabled then
-                local ok: boolean = pcall(stepTouch)
-                if not ok then
-                    setTouchEnabled(false)
-                    restoreSelfPulse()
-                end
-            end
-        end)
-        heartbeatConnection = RunService.Heartbeat:Connect(function(): ()
-            if not destroyed then
-                restoreSelfPulse()
-            end
-        end)
-        characterConnection = LocalPlayer.CharacterAdded:Connect(function(): ()
-            if currentSession then
-                finishSession("lost-local")
-            end
-            restoreSelfPulse()
-            if touchEnabled then
-                bindTouchCharacter()
-            end
-        end)
+    Module.__touchBinder = function(enabled: boolean): ()
+        setTouchEnabled(enabled)
     end
 
     local library: any = {}
@@ -51486,6 +51591,9 @@ function Module.init(context: any): any
     function library.isTouchEnabled(): boolean
         return touchEnabled
     end
+    function library.isSpinning(): boolean
+        return spinState ~= nil
+    end
     function library.destroy(): ()
         if destroyed then
             return
@@ -51493,8 +51601,7 @@ function Module.init(context: any): any
         destroyed = true
         setTouchEnabled(false)
         finishSession("destroyed")
-        restoreSelfPulse()
-        disconnectRunSignals()
+        releaseSpin()
         setActivity()
         if activeLibrary == library then
             activeLibrary = nil

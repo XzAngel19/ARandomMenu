@@ -24,8 +24,38 @@ end}
 local flags={}
 local speed={Enabled=false,Options={Speed={Value=5000}}}
 local fly={Enabled=false}
-local host={workspace=world,featureConnections={},getCharacterParts=function() return character,h,root end,
- Players={GetPlayers=function() return near and {{Character={FindFirstChild=function() return {Position=root.Position+Vector3.new(1,0,0)} end}}} or {} end}}
+-- Inject the clock so the anti-fling detection window can be advanced without
+-- sleeping, and count tree walks: the per-frame GetDescendants scan over every
+-- other character was the single most expensive thing in the menu.
+local fakeNow=0
+local otherWalks=0
+-- Count every physics property write: the old anti-fling wrote CanCollide and
+-- both assembly velocities on every part of every player, every frame.
+local otherWrites=0
+local function countedPart(extra)
+ local data={CanCollide=true,Parent=true,AssemblyLinearVelocity=Vector3.zero,AssemblyAngularVelocity=Vector3.zero}
+ for k,v in pairs(extra or {}) do data[k]=v end
+ return setmetatable({}, {
+  __index=data,
+  __newindex=function(_,k,v)
+   if k=='CanCollide' or k=='AssemblyLinearVelocity' or k=='AssemblyAngularVelocity' then otherWrites+=1 end
+   data[k]=v
+  end,
+ })
+end
+local otherTorso=countedPart()
+local otherRoot=countedPart({Position=Vector3.new(1,0,0)})
+local otherHumanoid={WalkSpeed=16,JumpPower=50}
+local otherAdded={Connect=function() return {Disconnect=function() end} end}
+local otherCharacter={
+ PrimaryPart=otherRoot,
+ DescendantAdded=otherAdded,
+ FindFirstChildOfClass=function() return otherHumanoid end,
+ GetDescendants=function() otherWalks+=1;return {otherRoot,otherTorso} end,
+}
+local host={workspace=world,featureConnections={},clock=function() return fakeNow end,
+ getCharacterParts=function() return character,h,root end,
+ Players={GetPlayers=function() return near and {{Character=otherCharacter}} or {} end}}
 function host.disconnectFeatureConnection(key) local c=host.featureConnections[key];if c then c:Disconnect();host.featureConnections[key]=nil end end
 host.TaskManager={Connect=function(_,fn) tick=fn;return {Disconnect=function() tick=nil end} end}
 host.createUniversalFeature=function(_,_,_,fn) feature={toggle=fn,options={}};return feature end
@@ -73,8 +103,41 @@ feature.options['Anti fling'](true);feature.toggle(false);assert(tick,'anti flin
 root.AssemblyLinearVelocity=Vector3.new(900,-200,0);tick(.02);near(root.AssemblyLinearVelocity.X,16)
 assert(#created==2,'Anti Void off must not build a platform')
 feature.options['Anti fling'](false);assert(not tick and created[2].destroyed)
+-- The other character is only touched when it actually looks like a fling, and
+-- its part list is walked once per character, not once per frame.
+feature.toggle(true);feature.options['Anti fling'](true)
+fakeNow=fakeNow+1
+tick(.02)
+assert(otherWalks==0 and otherTorso.CanCollide,'a calm other player costs two reads, no tree walk')
+assert(otherRoot.CanCollide,'calm other player keeps collisions')
+otherRoot.AssemblyAngularVelocity=Vector3.new(0,900,0)
+fakeNow=fakeNow+1
+tick(.02)
+local walksAfterDetect=otherWalks
+assert(walksAfterDetect==1,'one part walk per detected fling, not per frame')
+assert(otherTorso.CanCollide==false and otherRoot.CanCollide==false,
+    'a detected fling loses collisions')
+local writesAfterDetect=otherWrites
+for _=1,12 do tick(.02) end
+assert(otherWalks==walksAfterDetect,'cache: no tree walk while the strip is active')
+assert(otherWrites==writesAfterDetect,'no physics writes per frame while the strip is active')
+-- After the window the collisions come back on their own.
+fakeNow=fakeNow+1
+otherRoot.AssemblyAngularVelocity=Vector3.zero
+otherRoot.AssemblyLinearVelocity=Vector3.zero
+tick(.02)
+assert(otherTorso.CanCollide==true and otherWalks==walksAfterDetect,
+    'release restores collisions without walking the tree')
+-- Toggling everything off releases any strip still held.
+otherRoot.AssemblyAngularVelocity=Vector3.new(0,900,0)
+fakeNow=fakeNow+1
+tick(.02)
+assert(otherTorso.CanCollide==false)
 Module.destroy()
-pass('actual Anti Void/Anti fling: strong bounce, long fall and lower floor untouched, contact/vertical/spike/distant damping on the first tick, no slider, intended Speed, action/seat/anchor exclusions, imminent void, batching, respawn/timer ownership, independence from Anti Void and cleanup')
+assert(otherTorso.CanCollide==true and otherRoot.CanCollide==true,
+    'destroy restores the other player collisions')
+
+pass('actual Anti Void/Anti fling: strong bounce, long fall and lower floor untouched, contact/vertical/spike/distant damping on the first tick, no slider, intended Speed, action/seat/anchor exclusions, imminent void, batching, respawn/timer ownership, cached part lists (no per-frame tree walk or physics write), freed collisions on detection/release/destroy, independence from Anti Void and cleanup')
 '''
 # Rename the fixture proximity flag so the numeric assertion helper remains callable.
 script=script.replace('local near=true','local nearby=true').replace('return near and','return nearby and').replace('near=false','nearby=false').replace('near=true','nearby=true')

@@ -26,6 +26,13 @@ function Module.init(context: Runtime): any
     do
     local originalCollision = setmetatable({}, {__mode = "k"})
 
+    -- Walking the whole character with GetDescendants() every frame was pure
+    -- garbage: the part list is built once per character and kept in sync with
+    -- DescendantAdded. The frame path only checks the cached list.
+    local cachedCharacter = nil
+    local cachedParts = {}
+    local addedConnection = nil
+
     local function restoreCollision()
         for part, canCollide in pairs(originalCollision) do
             if part and part.Parent then
@@ -35,9 +42,48 @@ function Module.init(context: Runtime): any
         originalCollision = setmetatable({}, {__mode = "k"})
     end
 
+    local function forgetCharacter()
+        if addedConnection then
+            pcall(function(): ()
+                addedConnection:Disconnect()
+            end)
+            addedConnection = nil
+        end
+        cachedCharacter = nil
+        cachedParts = {}
+    end
+
+    local function collectParts(character: Model)
+        local parts: {BasePart} = {}
+        for _, descendant: Instance in ipairs(character:GetDescendants()) do
+            if descendant:IsA("BasePart") then
+                table.insert(parts, descendant :: BasePart)
+            end
+        end
+        cachedParts = parts
+    end
+
+    local function partsOf(character: Model): {BasePart}
+        if character ~= cachedCharacter then
+            forgetCharacter()
+            cachedCharacter = character
+            collectParts(character)
+            local added = (character :: any).DescendantAdded
+            if added and type(added.Connect) == "function" then
+                addedConnection = added:Connect(function(object: Instance): ()
+                    if object:IsA("BasePart") then
+                        table.insert(cachedParts, object :: BasePart)
+                    end
+                end)
+            end
+        end
+        return cachedParts
+    end
+
     function toggleNoclip(enabled: boolean): ()
         disconnectFeatureConnection("Noclip")
         restoreCollision()
+        forgetCharacter()
 
         if not enabled then
             return
@@ -56,12 +102,14 @@ function Module.init(context: Runtime): any
                 return
             end
 
-            for _, descendant in ipairs(character:GetDescendants()) do
-                if descendant:IsA("BasePart") and descendant.CanCollide then
-                    if originalCollision[descendant] == nil then
-                        originalCollision[descendant] = true
+            local parts = partsOf(character)
+            for index = 1, #parts do
+                local part = parts[index]
+                if part.Parent and part.CanCollide then
+                    if originalCollision[part] == nil then
+                        originalCollision[part] = true
                     end
-                    descendant.CanCollide = false
+                    part.CanCollide = false
                 end
             end
         end)

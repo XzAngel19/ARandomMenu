@@ -5,14 +5,41 @@
 > contradice lo que crees, gana este documento (y los datos de calibración).
 >
 > **Estado al escribir esto:** rama canónica `arena/83897e25-arandommenu`,
-> build **`v145-20261027-canonical-loader-cache-purge`**.
+> build **`v146-20261027-iy-fling-and-zero-frame-cost`**.
 > El usuario se comunica en español. Respóndele en español.
 
 ---
 
 ## 0. Estado operativo actual — v145, loader/caché · v144 Touch/Farm
 
-### 0.0 Lo más reciente: v145 (loader/caché) y v144 (Touch/Farm)
+### 0.0 Lo más reciente: v146 (Fling IY + lag), v145 (loader) y v144 (Touch/Farm)
+
+**v146 — el Fling usa el mecanismo de Infinite Yield y el lag se ataca donde
+estaba.** Detalle en `docs/FIXES-v146.md`.
+
+- El Fling anterior escribía `AssemblyLinearVelocity` sobre el **tocado**. El
+  cliente no es dueño de ese assembly: el servidor lo sobrescribe en el frame
+  siguiente. Por eso parecía desactivado. Ahora se hace lo que hace IY: el
+  assembly **local** gira con `BodyAngularVelocity` a `99999 rad/s`,
+  `MaxTorque`/`P` infinitos y densidad `math.huge`, con el cuerpo `Massless` y
+  sin colisión; el contacto arrastra al otro. Ciclo 0.2 s girando / 0.1 s
+  quieto. **Cero Lua por frame** (era `PreSimulation` + `Heartbeat` toda la
+  sesión). Snapshots restaurados al salir, morir, respawnear o destruir.
+- **Anti fling era el costo real de física**: cada frame, por cada jugador,
+  `GetDescendants()` + 3 `pcall` con una closure nueva por parte + 3 escrituras
+  por parte (~500 escrituras/frame con 11 jugadores). Cada `CanCollide`
+  reinserta la parte en el broadphase → `Physics 12.4 ms`. Ahora: dos lecturas
+  por jugador, detección (`>20 rad/s` o `>1.5×` su caminata) y lista de partes
+  cacheada por personaje, invalidada con `DescendantAdded`; strip de 0.45 s que
+  se reafirma cada 0.1 s sin reescribir `CanCollide`. Medido: 1 recorrido por
+  fling detectado y **0 escrituras por frame** durante el strip.
+- **Noclip** recorría el árbol y reescribía `CanCollide` cada frame: ahora lista
+  cacheada y solo escribe las partes que aún colisionan.
+- `tools/test_fling_physics.py` reescrito sobre el controlador real con reloj y
+  scheduler deterministas; `tools/test_antivoid50.py` cuenta recorridos y
+  escrituras.
+- Sigue **pendiente en vivo** que el servidor acepte el knockback y que el
+  microprofiler deje de mostrar `Physics` dominante. No afirmar FPS ganados.
 
 **v145 — un solo loader, cero caché vieja, versión real.** El usuario reportó que
 el menú mostraba una versión vieja y que la caché seguía apuntando a ella.
@@ -68,14 +95,14 @@ se entrega ahora.
 | Repositorio | `XzAngel19/ARandomMenu` |
 | Rama activa y única para esta sesión | `arena/83897e25-arandommenu` |
 | `CANONICAL_BRANCH` (única del repo) | `arena/83897e25-arandommenu` |
-| `SOURCE_STAMP` | `v145-20261027-canonical-loader-cache-purge` |
-| `BUILD_LABEL` visible | `v145` (derivado del stamp) |
+| `SOURCE_STAMP` | `v146-20261027-iy-fling-and-zero-frame-cost` |
+| `BUILD_LABEL` visible | `v146` (derivado del stamp) |
 | Bundle | `src/libraries/bundle.lua`, mismo stamp, **84 archivos** |
 | Identidad de caché | `Wurst/.stamp` + `Wurst/.branch` + `Wurst/.layout` |
 | Loader de `README.md` | Apunta a `refs/heads/arena/83897e25-arandommenu/src/Wurst.lua` |
 | Toolchain | Luau `0.739.0`, vendored en `tools/luau/vendor` |
-| Validación final de v145 | 86 fuentes, 66 suites, boot `failures=0`, 110 call sites, menú 50/49 |
-| Aceptación live de v145 | **Pendiente. No afirmar que Touch, knockback, monedas, lag o FPS ya están resueltos.** |
+| Validación final de v146 | 86 fuentes, 66 suites, boot `failures=0`, 110 call sites, menú 50/49 |
+| Aceptación live de v146 | **Pendiente. No afirmar que Touch, knockback, monedas, lag o FPS ya están resueltos.** |
 
 - El commit `5b4ad20` se publicó con push normal y el remoto coincidió con
   `5b4ad20672d9501ca06ecce14380b91e9cf6d459`. Esta actualización de `RESUME.md`
@@ -258,25 +285,28 @@ directas a RunService que no pertenecen a este scheduler.
 
 ### 0.6 Contrato actual de Fling, Touch y Auto Farm
 
-v143 no cambió las magnitudes físicas de v142. Estos valores se documentan para
-evitar que un próximo agente «arregle» otra vez mediante extremos:
+v146 cambió el **mecanismo**. Los valores de v144/v145 (pulsos acotados de
+`200`/`170`) quedan como historia: no son la base de nada.
 
-- Controller compartido: `src/libraries/Fling.lua` (reescrito en v144).
-- Fling dirigido: **una** colocación de contacto y pulsos acotados al objetivo
-  (`200` horizontal + `60` lift) más un paso local (`170` + `20`) sin giro.
-- Touch: pulso al assembly del tocado (`200` + `60`, giro `25` en Y) y un paso
-  local horizontal (`165`, sin lift, sin giro). Cooldown `1/20 s` por objetivo;
-  ventana de contacto `0.25 s`, alcance máximo `14`.
-- Límite lineal común: `250`; ninguna escritura puede superarlo y las pruebas
-  prohíben volver a `10000`, `20000`, `9e7` o similares.
-- El controller **no** escribe estado del Humanoid, `AutoRotate`, `Sit`,
-  `PlatformStand` ni `ChangeState(Physics)`, y no pide network ownership. Eso es
-  lo que causaba el giro local y el coste de física por contacto.
-- Timing: PreSimulation aplica el pulso y Heartbeat restaura el paso local. La
-  velocidad entregada al objetivo **no** se restaura: ese impulso es el fling.
-- Touch habilita `CanTouch` y `CanCollide` del propio cuerpo **una vez al
-  encender** (snapshot + restauración en OFF/respawn), nunca por contacto.
-  Excluye handles de accesorios/tools y no teletransporta al jugador.
+- Controller compartido: `src/libraries/Fling.lua`, mecanismo de Infinite Yield
+  (la referencia que pasó el usuario).
+- Fling dirigido: **una** colocación de contacto (`PivotTo` a 2.2 studs del
+  objetivo) y después el giro hace el trabajo.
+- Mecanismo: `BodyAngularVelocity` en el root a `99999 rad/s`,
+  `MaxTorque`/`P` `math.huge`, `CustomPhysicalProperties = PhysicalProperties.new(math.huge, 0.3, 0.5)`,
+  `Massless = true`, `CanCollide = false`, `Velocity = 0` en las partes.
+  Ciclo `0.2 s` girando / `0.1 s` quieto. Eso es el `fling` de IY.
+- **Nunca** se escribe velocidad al tocado: el cliente no es dueño de su
+  assembly y el servidor la sobrescribe. La prueba falla si aparece
+  `targetRoot.<propiedad> = ...`.
+- **Cero Lua por frame**: no hay `PreSimulation`, `Heartbeat` ni `Stepped` en el
+  controller; el ciclo son dos `task.wait` y Touch es un `Touched`.
+- Touch: `CanTouch = true` en las partes propias (snapshot + restauración), un
+  `Touched` por parte y `DescendantAdded` para herramientas nuevas. Al contacto
+  gira `0.6 s`; si no tocas a nadie, no gira. `activity.set("fling", …)` sigue
+  igual, así que Noclip/Fly/Auto Win ceden mientras hay sesión o Touch activo.
+- Restauración: OFF, muerte, respawn, cancelación y `destroy` destruyen el
+  constraint y devuelven `CanCollide`, `Massless` y la densidad guardados.
 - MM2 exige ronda activa, personaje local vivo y objetivo válido/vivo.
 - `activity.set("fling", currentSession ~= nil or touchEnabled)` sigue siendo la
   semántica actual: Noclip/Fly/Auto Win ceden mientras está activa. No alterarla
@@ -417,11 +447,11 @@ siguen pendientes en vivo»**, no «Touch y lag solucionados».
 | `src/guis/Wurst/Code/Cards.lua` | Masters, `restore`, `restorePending`, activación manual y rollback de tarjetas. |
 | `src/guis/Wurst/Code/Widgets.lua` | Subopciones, callbacks persistidos y controles `setChecked`. |
 | `src/guis/Wurst/Code/SettingsPage.lua` | Profiles: debe seguir respetando acciones de sesión. |
-| `src/libraries/Fling.lua` | Controller compartido, PreSimulation/Heartbeat, snapshots, pulsos y Touch. |
+| `src/libraries/Fling.lua` | Controller compartido, mecanismo IY (giro local), snapshots y Touch. |
 | `src/games/MM2/Blatant/Fling.lua` | Adaptador MM2, ronda/objetivo, Auto Fling y sincronización Touch. |
 | `src/games/universal/Blatant/TouchFling.lua` | Tarjeta universal Touch y sincronización con MM2. |
 | `src/games/MM2/Other/AutoFarm.lua` | Walk/Below, constraints, cesión a Fling, guards y cleanup. |
-| `src/games/universal/Blatant/Noclip.lua` | Writer de colisiones que cede con activity Fling. |
+| `src/games/universal/Blatant/Noclip.lua` | Writer de colisiones con lista de partes cacheada; cede con activity Fling. |
 | `src/games/universal/Blatant/Fly.lua` | Constraints/velocidad que ceden a Fling. |
 | `src/games/MM2/Other/AutoWin.lua` | Otro writer que debe pausar/ceder sin competir con Fling. |
 | `src/libraries/Manifest.lua` | Carga universal; debe coincidir con fallback y bundle. |
@@ -429,6 +459,7 @@ siguen pendientes en vivo»**, no «Touch y lag solucionados».
 | `tools/test_startup_restore.py` | Regresión de boot hostil, sesión y scheduler perezoso. |
 | `docs/FIXES-v144.md` | Qué cambió en v144 y por qué (Touch, cobro, guards, CPU). |
 | `docs/FIXES-v145.md` | Loader canónico, identidad de caché, versión derivada y árboles legacy borrados. |
+| `docs/FIXES-v146.md` | Fling IY (giro del assembly local) y los tres escritores de física por frame eliminados. |
 | `tools/test_loader_cache.py` | Identidad de caché y purga reales contra un filesystem simulado. |
 | `README.md` | Único loader canónico y cómo cambiar de rama sin romper nada. |
 | `src/games/MM2/Render/CoinEsp.lua` | Provider de pickups compartido; cache ≤ 1 s e `state.mm2InvalidateCoinPickups`. |
@@ -1476,7 +1507,10 @@ la implementación actual:
   documentales no requieren stamp, pero sí actualizar este handoff con precisión.
 
 ---
-*Última actualización: 2026-10-27 · runtime v145, loader canónico con override
+*Última actualización: 2026-10-27 · runtime v146, Fling con el mecanismo de
+Infinite Yield (giro del assembly local, cero Lua por frame, snapshots
+restaurados), anti-fling y noclip con listas de partes cacheadas y sin
+escrituras de física por frame. v145, loader canónico con override
 validado, identidad de caché stamp+rama+layout con purga antes de leer, versión
 derivada del stamp, reinject que rechaza loaders de otra rama, botón Clear cache
 y retirada de los árboles legacy (`src/gui`, `src/library`, `src/Profile`).

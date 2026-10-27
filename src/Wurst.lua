@@ -261,7 +261,7 @@ local RUNTIME_RAW_BASE: string =
         .. RUNTIME_BRANCH
         .. "/"
 
-local SOURCE_STAMP: string = "v145-20261027-canonical-loader-cache-purge"
+local SOURCE_STAMP: string = "v146-20261027-iy-fling-and-zero-frame-cost"
 -- What the menu shows. It is derived from the stamp, never a hardcoded label:
 -- a build cannot display a version it is not.
 local BUILD_LABEL: string = string.match(SOURCE_STAMP, "^v%d+") or SOURCE_STAMP
