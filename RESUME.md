@@ -46,6 +46,16 @@
 > Utilities, orden 5) que recorta impulso planar/subida/caída/giro cada frame y
 > respeta `fling`/`walkfling`. Evidencia: `docs/FIXES-v138.2.md`,
 > `tools/test_walkfling.py`, `tools/test_fling_skid.py`, `tools/test_antivoid50.py`.
+>
+> **v138.3 (2026-10-27):** **Fling** dejó de ser tarjeta de MM2 y es un módulo
+> universal (`src/games/universal/Blatant/Fling.lua`, Exploits, orden 7,
+> `configKey = Universal.Fling`). Solo tiene **Target player** como lista (se
+> borraron `Select Target`, `targetChoices` y las conexiones PlayerAdded/Removing
+> que lo alimentaban); el texto se resuelve exacto → prefijo → subcadena. Los
+> botones de rol resuelven `state.mm2Core` en el clic y avisan fuera de MM2.
+> `state.mm2PerformFling` / `state.mm2FlingStep` los publica este módulo y el
+> harness los verifica tras el arranque. **Walk Fling** ya no tiene slider
+> (`POWER = 10000`, `noOptions = true`). Evidencia: `docs/FIXES-v138.3.md`.
 
 ## 1A. X2Duels (MVS): estructura MM2, evidencia y contratos
 

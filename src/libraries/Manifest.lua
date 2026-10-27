@@ -175,6 +175,11 @@ local Manifest: Manifest = {
             category = "Exploits",
         },
         {
+            path = "src/games/universal/Blatant/Fling.lua",
+            name = "Fling",
+            category = "Exploits",
+        },
+        {
             path = "src/games/universal/Blatant/Swim.lua",
             name = "Swim",
             category = "Exploits",
@@ -258,7 +263,6 @@ local Manifest: Manifest = {
             "src/games/MM2/Render/RoundEsp.lua",
             "src/games/MM2/Render/CoinEsp.lua",
             "src/games/MM2/Movement/Sprint.lua",
-            "src/games/MM2/Blatant/Fling.lua",
             "src/games/MM2/Movement/Teleport.lua",
             "src/games/MM2/Fun/BlurtRoles.lua",
             "src/games/MM2/Other/AutoUnbox.lua",

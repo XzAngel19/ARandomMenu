@@ -42,7 +42,7 @@ assert '"Bullet"' in S and '"CFrame"' in S
 for retained in ('Aim method', 'Target', 'WallCheck', 'Macro'):
     assert f'"{retained}"' in S, f'{retained} must still be in Gun Aimbot'
 
-fling = (ROOT / 'src/games/MM2/Blatant/Fling.lua').read_text()
+fling = (ROOT / 'src/games/universal/Blatant/Fling.lua').read_text()
 assert '\n        "Auto Fling Selected Target",\n' not in fling, 'Auto Fling must stay deleted'
 assert 'configData.states["MM2.Fling.AutoFlingSelectedTarget"] = nil' in fling, \
     'the stale Auto Fling key must be dropped at boot'

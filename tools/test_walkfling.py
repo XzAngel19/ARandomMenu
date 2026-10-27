@@ -15,7 +15,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 SOURCE = (ROOT / "src/games/universal/Blatant/WalkFling.lua").read_text()
-FLING = (ROOT / "src/games/MM2/Blatant/Fling.lua").read_text()
+FLING = (ROOT / "src/games/universal/Blatant/Fling.lua").read_text()
 MANIFEST = (ROOT / "src/libraries/Manifest.lua").read_text()
 LOADER = (ROOT / "src/Wurst.lua").read_text()
 
@@ -136,7 +136,7 @@ Module.init(context)
 assert(configData.states["Universal.WalkFling"] == false,
     "a saved ON state must never start a fling on injection")
 assert(feature.name == "Walk Fling", "the card is Walk Fling")
-assert(options["Power"] ~= nil, "the card exposes Power")
+assert(options["Power"] == nil, "Walk Fling has no options: it is a plain toggle")
 
 resetWrites()
 pump(15)
@@ -151,13 +151,6 @@ assert(writes.maxSpeed >= 9999, "the IY walkfling spike must run, got " .. tostr
 assert(collisionFalse > 0, "the walkfling noclip must run while ON")
 assert(activity["walkfling"] == true, "the card marks its activity")
 pass("Walk Fling ON runs the 10000x pulse and the noclip")
-
-options["Power"](50000)
-resetWrites()
-pump(10)
-assert(writes.maxSpeed >= 49999, "Power must scale the spike, got " .. tostring(writes.maxSpeed))
-options["Power"](10000)
-pass("Power scales the spike")
 
 feature.toggle(false)
 pump(12)

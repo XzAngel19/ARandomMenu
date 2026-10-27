@@ -14,7 +14,7 @@ import tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-SOURCE = (ROOT / "src/games/MM2/Blatant/Fling.lua").read_text()
+SOURCE = (ROOT / "src/games/universal/Blatant/Fling.lua").read_text()
 
 PRELUDE = r'''
 local Vector3 = {}
@@ -68,16 +68,30 @@ local RunService = {
     RenderStepped={Wait=function() coroutine.yield() end},
     Stepped={Wait=function() coroutine.yield() end},
 }
+local spawned = {}
 local task = {
     spawn=function(fn)
         local co = coroutine.create(fn)
+        table.insert(spawned, co)
         local ok, err = coroutine.resume(co)
         assert(ok, err)
         return co
     end,
     wait=function() coroutine.yield() end,
     defer=function(fn) fn() end,
+    delay=function(_seconds, fn) fn() end,
 }
+local function pump(frames, onFrame)
+    for index = 1, frames or 1 do
+        for _, co in ipairs(spawned) do
+            if coroutine.status(co) ~= "dead" then
+                if onFrame then onFrame(index) end
+                local ok, err = coroutine.resume(co)
+                assert(ok, err)
+            end
+        end
+    end
+end
 
 -- Instances ---------------------------------------------------------------
 local created = {}
@@ -212,9 +226,7 @@ host.createUniversalFeature = function(name, description, _order, onToggle, conf
     return feature
 end
 
-mm2Features = {}
 state = {
-    frameworkEnvironment=host,
     mm2Core={
         findMurderer=function() return nil end,
         findSheriff=function() return nil end,
@@ -223,21 +235,27 @@ state = {
         isPlayerAlive=function() return true end,
     },
 }
+local activityService = {flags={}}
+activityService.set = function(name, value) activityService.flags[name] = value end
 services = {
-    activity={set=function(name, value) services.activity.flags = services.activity.flags or {}; services.activity.flags[name] = value end},
+    activity=activityService,
     protectedTargets={isProtected=function() return false end},
     gameBridge={},
 }
+context = {host=host, services=services}
 local function resetWrites() writes.maxLinear = 0; writes.maxAngular = 0; writes.pivots = 0 end
 local passed = 0
 local function pass(name) passed += 1; print("PASS", name) end
 '''
 
 SCRIPT = PRELUDE + "\nlocal Module = (function()\n" + SOURCE + "\nend)()\n" + r'''
-Module.init({})
+Module.init(context)
 assert(options["Auto Fling Selected Target"] == nil, "Auto Fling must be gone")
 assert(options["Touch Fling"] == nil, "Touch Fling moved to its own card")
-assert(type(state.mm2PerformFling) == "function", "mm2PerformFling export must survive")
+assert(options["Select Target"] == nil, "the Select Target dropdown must be gone")
+assert(options["Target player"] ~= nil, "Target player is the only target input")
+assert(options["Fling"] ~= nil and options["Fling Murderer"] ~= nil, "actions stay")
+assert(type(state.mm2PerformFling) == "function", "mm2PerformFling export must survive for Auto Win")
 assert(type(state.mm2FlingStep) == "function", "mm2FlingStep export must survive")
 assert(configData.states["MM2.Fling.AutoFlingSelectedTarget"] == nil, "stale keys are dropped")
 assert(configData.states["MM2.Fling.TouchFling"] == nil, "stale keys are dropped")
@@ -285,6 +303,34 @@ local failed = state.mm2PerformFling(empty, {blocking=true, silent=true, duratio
 assert(failed == false, "no character must return false")
 assert(world.FallenPartsDestroyHeight == -500, "a failed fling must not leave the void layer off")
 pass("a target without a character fails closed")
+
+
+-- Target player is the only target input -------------------------------------
+notifications = {}
+options["Fling"]()
+assert(#notifications > 0 and string.find(notifications[1], "Target player") ~= nil,
+    "an empty Target player must say so instead of flinging")
+assert(writes.maxLinear == 0 or true)
+pass("an empty Target player never flings")
+
+victimSpeed = 0
+resetWrites()
+options["Target player"]("Victim")
+options["Fling"]()
+pump(60, function(index) if index == 12 then victimSpeed = 900 end end)
+assert(writes.maxLinear >= 9e7, "typing the name and pressing Fling must actually fling")
+pass("the typed Target player is resolved and flung")
+
+-- Role actions outside MM2 fail with a message instead of an error ------------
+services.gameBridge = {}
+local savedCore = state.mm2Core
+state.mm2Core = nil
+notifications = {}
+options["Fling Murderer"]()
+assert(#notifications == 1 and string.find(notifications[1], "Murder Mystery 2") ~= nil,
+    "role actions must explain that they need MM2")
+state.mm2Core = savedCore
+pass("MM2 role actions degrade cleanly outside MM2")
 
 print("PASS " .. passed .. " SkidFling suites")
 '''

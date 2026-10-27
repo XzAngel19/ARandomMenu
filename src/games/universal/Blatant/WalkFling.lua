@@ -19,7 +19,6 @@ function Module.init(context: Runtime): any
     local RunService: any = host.RunService or game:GetService("RunService")
     local workspace: any = host.workspace
     local createUniversalFeature: any = host.createUniversalFeature
-    local addNumberOption: any = host.addNumberOption
     local addFeatureTooltip: any = host.addFeatureTooltip
     local configData: any = host.configData
     local services: any = (context :: any).services
@@ -33,7 +32,8 @@ function Module.init(context: Runtime): any
 
     local enabled: boolean = false
     local session: number = 0
-    local power: number = 10000
+    -- No slider: this is the Infinite Yield default and it is what works.
+    local POWER: number = 10000
     local savedCollision: any = setmetatable({}, {__mode = "k"})
     local walkFlingFeature: any = nil
 
@@ -139,7 +139,7 @@ function Module.init(context: Runtime): any
                                 (part :: BasePart).CanCollide = false
                             end
                         end
-                        local spike: Vector3 = savedVelocity * power + Vector3.new(0, power, 0)
+                        local spike: Vector3 = savedVelocity * POWER + Vector3.new(0, POWER, 0)
                         root.Velocity = spike
                         root.AssemblyLinearVelocity = spike
                     end)
@@ -184,19 +184,7 @@ function Module.init(context: Runtime): any
         "Fling on contact while walking (Infinite Yield walkfling)",
         8,
         toggleWalkFling,
-        {categoryName = "Exploits"}
-    )
-    addNumberOption(
-        walkFlingFeature,
-        "Power",
-        power,
-        1000,
-        1000000,
-        function(value: number): ()
-            power = tonumber(value) or 10000
-        end,
-        "Velocity multiplier applied for one frame; 10000 is Infinite Yield's default.",
-        1000
+        {categoryName = "Exploits", noOptions = true}
     )
     addFeatureTooltip(
         walkFlingFeature,

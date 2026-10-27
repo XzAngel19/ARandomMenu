@@ -906,7 +906,18 @@ do
     -- so neither the old fold-in nor the old "Anti fling" sub-option may return.
     assert(not findFeature("Anti Void").options:FindFirstChild("Option_Antifling"))
     local fling = findFeature("Fling")
-    assert(fling and fling.configKey == "MM2.Fling", "only MM2 owns role Fling")
+    assert(fling and fling.configKey == "Universal.Fling", "Fling is a universal card since v138.3")
+    assert(fling.categoryName == "Exploits", "Fling must stay in Exploits")
+    assert(fling.options:FindFirstChild("Option_Targetplayer"), "Target player is the only target input")
+    assert(fling.options:FindFirstChild("Option_Fling"))
+    assert(not fling.options:FindFirstChild("Option_SelectTarget"), "the Select Target dropdown is gone")
+    -- Auto Win and Auto Farm still drive flings through these exports; the card
+    -- moved to Universal, so they must be published from there.
+    assert(type(ex.state.mm2PerformFling) == "function", "mm2PerformFling must exist after boot")
+    assert(type(ex.state.mm2FlingStep) == "function", "mm2FlingStep must exist after boot")
+    local walkFling = findFeature("Walk Fling")
+    assert(walkFling and walkFling.categoryName == "Exploits", "Walk Fling must exist in Exploits")
+    assert(walkFling.hasOptions() == false, "Walk Fling is a plain toggle with no options")
     assert(findFeature("Anti Void").options:FindFirstChild("Option_Distance"))
     assert(findFeature("Anti Void").options:FindFirstChild("Option_Showplatform"))
     assert(findFeature("Anti Fling").options:FindFirstChild("Option_Sensitivity"))

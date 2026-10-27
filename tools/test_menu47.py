@@ -117,7 +117,9 @@ notify('Could not load avatar');assert(activeCard.count==1)
 pass('Disguise: routine readiness is status; actual failures remain notifications')
 '''
 manifest=(ROOT/'src/libraries/Manifest.lua').read_text()
-assert 'universal/Blatant/Fling.lua' not in manifest and 'TimeChanger.lua' not in manifest
+assert 'universal/Blatant/Fling.lua' in manifest, 'Fling is a universal card since v138.3'
+assert 'MM2/Blatant/Fling.lua' not in manifest, 'the MM2 Fling card is gone'
+assert 'TimeChanger.lua' not in manifest
 assert 'universal/Movement/AntiFling.lua' in manifest, 'Anti Fling is its own card since v138.2'
 assert 'universal/Blatant/WalkFling.lua' in manifest, 'Walk Fling is its own card since v138.2'
 cards_source=(ROOT/'src/guis/Wurst/Code/Cards.lua').read_text()
