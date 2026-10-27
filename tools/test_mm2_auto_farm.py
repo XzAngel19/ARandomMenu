@@ -23,8 +23,8 @@ assert '"Auto Farm"' in SOURCE
 assert '"Farm Speed", 16, 5, 60' in SOURCE, "user-tunable speed slider, slow default"
 for option, default in (
     ("Reset When Full Coin Bag", "true"),
-    ("Fling Murder after reset", "false"),
-    ("Fling Sheriff after reset", "false"),
+    ("Fling Murder after full bag", "false"),
+    ("Fling Sheriff after full bag", "false"),
     ("Auto Grab gun and Shoot", "false"),
     ("Auto Kill All When full coin bag", "false"),
 ):
@@ -80,8 +80,9 @@ assert "restoreCharacter(false)" in SOURCE
 assert "isCharacterInActiveRound" in SOURCE
 assert '"Auto Farm: waiting in lobby"' in SOURCE
 assert "waiting for coin" in SOURCE
-assert "holdHiddenUnderMap" in SOURCE
-assert "getHiddenUnderMapPosition" in SOURCE
+# The under-map hold helpers are gone: everything they did is handled by the
+# altitude controller (hold position when idle, recover when something drops you).
+assert "recoverFromVoid" in SOURCE
 assert "bagAmount >= 50 or not enabled" in SOURCE
 assert "restoreCharacter(true)" in SOURCE
 assert "recovered from the void" in SOURCE
@@ -159,14 +160,27 @@ assert 'GetAttribute("Collected")' in SOURCE
 # Parked collections also pulse the touch directly (physics Touched
 # is not guaranteed for a fully NoClipped body).
 assert "state.fireTouchInterest" in SOURCE
-assert '"Stay Under When Round starts"' in SOURCE
-assert "settings.stayUnderOnStart" in SOURCE
-# Stay Under is a Below-mode trick only: hiding a Walk-mode body under the floor
-# is what buried it in geometry and made Walk "do nothing".
-assert 'settings.stayUnderOnStart and settings.mode ~= "Walk"' in SOURCE
+# v138.7: the "Stay Under When Round starts" toggle is gone (it was what buried a
+# Walk-mode body in geometry); the farm just holds position when there is no coin.
+assert '"Stay Under When Round starts"' not in SOURCE
+assert "stayUnderOnStart" not in SOURCE
+assert "holdHiddenUnderMap" not in SOURCE
 assert "walkBodyReady" in SOURCE          # body normalised once per engagement
 assert "walkCarryUntil" in SOURCE         # velocity carry when Move is ignored
 assert "walkCarryDirection" in SOURCE
+
+# Fly-through farming: a coin is a waypoint, never a stop. The body keeps its
+# momentum across the coin (the target becomes a point 26 studs past it) and the
+# coin just swept is skipped for a moment so the next one is picked.
+assert "PASS_SKIP_SECONDS" in SOURCE
+assert "PASS_LIMIT" in SOURCE
+assert "passThrough" in SOURCE and "passCount" in SOURCE
+assert "direction * 26" in SOURCE
+assert "STUCK_SECONDS" not in SOURCE, "the old parked-coin timer must be gone"
+assert "stuckPart" not in SOURCE
+assert "PASS_SKIP_SECONDS" in SOURCE
+# The renamed toggles carry saved values over instead of resetting them.
+assert "FlingMurderafterreset" in SOURCE and "FlingMurderafterfullbag" in SOURCE
 assert "resolveSafeAboveGroundPosition" in SOURCE
 
 print("PASS MM2 Auto Farm: Walk (ground locomotion, slider WalkSpeed, "

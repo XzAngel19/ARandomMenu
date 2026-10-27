@@ -97,6 +97,18 @@
 > `docs/FIXES-v138.6.md`, `tools/test_autofarm_motion.py` (4 suites, con gravedad
 > simulada y tick congelado), `tools/test_mm2_auto_farm.py`,
 > `tools/gen_full_boot_harness.py` (prueba de orden no alfabético).
+>
+> **v138.7 (2026-10-27):** Auto Farm vuela **a través** de las monedas (sin la
+> parada corta): pulso de touch al acercarse, objetivo 26 studs más allá al pasar,
+> moneda barrida saltada 2.5 s y compromiso de rumbo 1.2 s para no ping-ponguear;
+> `holdAltitude` mantiene la altura cuando no hay objetivo. `Fling Murder/Sheriff
+> after reset` pasan a **after full bag** con migración de la clave guardada. Se
+> eliminan `Stay Under When Round starts` (y su estado muerto) y, en UI Settings,
+> `Random Card Order` y `Rainbow`. El **loader** ya no cachea fuentes en disco:
+> bundle → memoria → un GET, y purga `Wurst/src` en segundo plano. El antiguo
+> abridor circular (círculo + `≡`) se crea oculto y solo aparece cuando
+> `state.menuReady` (fin de todas las secciones). Evidencia: `docs/FIXES-v138.7.md`,
+> `tools/test_autofarm_motion.py`, `tools/test_loader_launcher.py`.
 
 ## 1A. X2Duels (MVS): estructura MM2, evidencia y contratos
 

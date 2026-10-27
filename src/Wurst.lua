@@ -220,7 +220,7 @@ local RUNTIME_RAW_BASE: string =
         .. RUNTIME_BRANCH
         .. "/"
 
-local SOURCE_STAMP: string = "v138.6-20261027-autofarm-motion-random-menu"
+local SOURCE_STAMP: string = "v138.7-20261027-autofarm-flythrough-no-cache"
 
 local BOOT_STARTED_AT: number = os.clock()
 local BOOT_FINGERPRINT_SECONDS: number = 0
@@ -2094,6 +2094,19 @@ function SectionManager.initializeAllAsync(): ()
                     "[" .. PRODUCT.logPrefix .. ":Bootstrap] Load complete · failures="
                         .. tostring(failures)
                 )
+                -- The GUI is fully built from here on: this is what releases the
+                -- launcher (it stays hidden through the whole load).
+                local finish = function(): ()
+                    state.menuReady = true
+                    if type(state.refreshLauncher) == "function" then
+                        pcall(state.refreshLauncher)
+                    end
+                end
+                if type(task) == "table" and type(task.defer) == "function" then
+                    task.defer(finish)
+                else
+                    finish()
+                end
             end
         end)
     end
@@ -3669,7 +3682,9 @@ local MobileMenuButton = create("TextButton", {
     Text = "≡",
     TextColor3 = Theme.text,
     TextSize = 20,
-    Visible = state.isMobile,
+    -- Hidden until the whole menu has finished loading: showing it at injection
+    -- flashed the old circular launcher for a few seconds before the GUI existed.
+    Visible = false,
     ZIndex = 190,
 }) :: TextButton
 create("UICorner", {
@@ -3813,8 +3828,10 @@ do
 end
 
 local function refreshLauncherVisibility(): ()
-
-    MobileMenuButton.Visible = (state.isMobile or state.toggleKey == Enum.KeyCode.Unknown)
+    -- Only once every section has initialized (state.menuReady) and one frame has
+    -- passed, so the launcher can never appear before the menu it opens.
+    MobileMenuButton.Visible = state.menuReady == true
+        and (state.isMobile or state.toggleKey == Enum.KeyCode.Unknown)
         and state.pill == nil
         and not state.visible
 end
@@ -5412,66 +5429,27 @@ state.httpGetPath = function(path: string): (string?, string?)
     return nil, tostring(body)
 end
 
-state.ensureSourceFolders = function(path: string): ()
-    local environment: any = getfenv()
-    if type(environment.makefolder) ~= "function" then
-        return
+state.fetchRepositorySource = function(path: string): (string?, string?)
+    local bundled: any = state.boot.bundle and state.boot.bundle[path]
+    if type(bundled) == "string" then
+        return bundled, nil
     end
-    pcall(environment.makefolder, "Wurst")
-    local cursor: string = "Wurst"
-    for segment: string in string.gmatch(path, "([^/]+)/") do
-        cursor = cursor .. "/" .. segment
-        pcall(environment.makefolder, cursor)
+    local remembered: string? = state.boot.sources[path]
+    if remembered then
+        return remembered, nil
     end
+    local downloaded: string?, downloadError: string? = state.httpGetPath(path)
+    if downloaded then
+        state.boot.sources[path] = downloaded
+        return downloaded, nil
+    end
+    return nil, downloadError or ("Download failed: " .. path)
 end
 
-state.readCachedSource = function(path: string): string?
-    local environment: any = getfenv()
-    local readFile: any = environment.readfile
-    local isFile: any = environment.isfile
-    if type(readFile) ~= "function" then
-        return nil
-    end
-    local stampFile: string = "Wurst/.stamp"
-    if type(isFile) == "function" then
-        local stampOk: boolean, stampExists: any = pcall(isFile, stampFile)
-        if not stampOk or not stampExists then
-            return nil
-        end
-    end
-    local stampOk: boolean, stampBody: any = pcall(readFile, stampFile)
-    if not stampOk or stampBody ~= SOURCE_STAMP then
-        return nil
-    end
-    local localPath: string = "Wurst/" .. path
-    if type(isFile) == "function" then
-        local fileOk: boolean, exists: any = pcall(isFile, localPath)
-        if not fileOk or not exists then
-            return nil
-        end
-    end
-    local readOk: boolean, source: any = pcall(readFile, localPath)
-    if readOk and state.sourceLooksValid(source, 32) then
-        return source :: string
-    end
-    return nil
-end
-
-state.writeCachedSource = function(path: string, source: string): ()
-    if path == "src/libraries/bundle.lua" then
-        return
-    end
-    local environment: any = getfenv()
-    local writeFile: any = environment.writefile
-    if type(writeFile) ~= "function" then
-        return
-    end
-    state.ensureSourceFolders(path)
-    pcall(writeFile, "Wurst/" .. path, source)
-    pcall(writeFile, "Wurst/.stamp", SOURCE_STAMP)
-end
-
-state.sweepStaleSources = function(): number
+-- Old builds wrote one file per source plus a stamp into the executor folder.
+-- Nothing reads that any more; clear it once, in the background, so it neither
+-- slows the boot nor keeps several hundred KB on the device.
+state.purgeLegacySourceCache = function(): number
     local environment: any = getfenv()
     local listFiles: any = environment.listfiles
     local deleteFile: any = environment.delfile
@@ -5479,79 +5457,31 @@ state.sweepStaleSources = function(): number
     if type(listFiles) ~= "function" or type(deleteFile) ~= "function" then
         return 0
     end
-    local bundle: any = state.boot.bundle
-    if type(bundle) ~= "table" or next(bundle) == nil then
-        return 0
-    end
     local removed: number = 0
-    local function sweep(folder: string): ()
+    local function purge(folder: string): ()
         local listed: boolean, entries: any = pcall(listFiles, folder)
         if not listed or type(entries) ~= "table" then
             return
         end
-        for _, path: any in ipairs(entries) do
-            local entry: string = tostring(path)
-            local isDirectory: boolean = false
+        for _, raw: any in ipairs(entries) do
+            local entry: string = tostring(raw)
+            local directory: boolean = false
             if type(isFolder) == "function" then
                 local checked: boolean, verdict: any = pcall(isFolder, entry)
-                isDirectory = checked and verdict == true
+                directory = checked and verdict == true
             end
-            if isDirectory then
-                sweep(entry)
+            if directory then
+                purge(entry)
             else
-                local relative: string = entry:gsub("\\", "/")
-                    :gsub("^.-Wurst/", "")
-
-                if relative ~= ".stamp"
-                    and string.sub(relative, 1, 4) == "src/"
-                    and bundle[relative] == nil then
-                    if pcall(deleteFile, entry) then
-                        removed += 1
-                    end
+                if pcall(deleteFile, entry) then
+                    removed += 1
                 end
             end
         end
     end
-    sweep("Wurst")
+    purge("Wurst/src")
+    pcall(deleteFile, "Wurst/.stamp")
     return removed
-end
-
-state.fetchRepositorySource = function(path: string): (string?, string?)
-    local bundled: any = state.boot.bundle and state.boot.bundle[path]
-    if type(bundled) == "string" then
-        state.boot.sources[path] = bundled
-        return bundled, nil
-    end
-    local remembered: string? = state.boot.sources[path]
-    if remembered then
-        return remembered, nil
-    end
-    local cached: string? = state.readCachedSource(path)
-    if cached then
-        state.boot.sources[path] = cached
-        return cached, nil
-    end
-    local downloaded: string?, downloadError: string? = state.httpGetPath(path)
-    if downloaded then
-        state.boot.sources[path] = downloaded
-        state.writeCachedSource(path, downloaded)
-        return downloaded, nil
-    end
-    local environment: any = getfenv()
-    local readFile: any = environment.readfile
-    local isFile: any = environment.isfile
-    local localPath: string = "Wurst/" .. path
-    local stampOk: boolean, stampBody: any = pcall(readFile, "Wurst/.stamp")
-    if stampOk and stampBody == SOURCE_STAMP
-        and type(readFile) == "function"
-        and (type(isFile) ~= "function" or isFile(localPath)) then
-        local readOk: boolean, localSource: any = pcall(readFile, localPath)
-        if readOk and state.sourceLooksValid(localSource, 32) then
-            state.boot.sources[path] = localSource
-            return localSource :: string, nil
-        end
-    end
-    return nil, downloadError or ("Download failed: " .. path)
 end
 
 state.compileRepositorySource = function(path: string, source: string): (any, string?)
@@ -6014,12 +5944,14 @@ if type(packed) == "table"
     state.boot.bundle = packed.files
     state.logBootstrap("Bundle accepted · stamp=" .. SOURCE_STAMP)
 
+    -- Off the boot path: drop the legacy per-source cache folder, and sweep
+    -- stale assets. Neither blocks the menu.
     task.spawn(function(): ()
-        local staleSources: number = state.sweepStaleSources()
+        local purgedSources: number = state.purgeLegacySourceCache()
         local staleAssets: number = state.sweepStaleAssets()
-        if staleSources + staleAssets > 0 then
-            print("[" .. PRODUCT.logPrefix .. ":Cache] swept "
-                .. tostring(staleSources) .. " stale source(s), "
+        if purgedSources + staleAssets > 0 then
+            print("[" .. PRODUCT.logPrefix .. ":Cache] purged "
+                .. tostring(purgedSources) .. " legacy source file(s), "
                 .. tostring(staleAssets) .. " stale asset(s)")
         end
     end)

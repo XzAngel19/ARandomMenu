@@ -856,7 +856,18 @@ do
     local autoFarm = findFeature("Auto Farm")
     assert(autoFarm and autoFarm.options:FindFirstChild("Option_CoinsCollected"), "Auto Farm must expose Coins Collected overlay")
     assert(autoFarm.options:FindFirstChild("Option_Time"), "Auto Farm must expose Time overlay")
-    assert(autoFarm.options:FindFirstChild("Option_StayUnderWhenRoundstarts"), "Auto Farm must expose Stay Under When Round starts option")
+    assert(autoFarm.options:FindFirstChild("Option_FlingMurderafterfullbag"), "Auto Farm must expose Fling Murder after full bag")
+    assert(autoFarm.options:FindFirstChild("Option_FlingSheriffafterfullbag"), "Auto Farm must expose Fling Sheriff after full bag")
+    assert(not autoFarm.options:FindFirstChild("Option_FlingMurderafterreset"), "the old 'after reset' label must be gone")
+    assert(not autoFarm.options:FindFirstChild("Option_StayUnderWhenRoundstarts"), "Stay Under was removed: the farm holds position instead")
+    -- The launcher must stay hidden until the whole menu has loaded.
+    assert(ex.state.menuReady == true, "boot completion must set state.menuReady")
+    assert(type(ex.state.refreshLauncher) == "function", "the launcher must re-evaluate on its own")
+    -- UI Settings no longer carries the random-order switch or the rainbow.
+    local settingsUi = nil
+    for _, record in pairs((ex.state.clickGui or {}).categories or {}) do
+      if record.name == "Settings" then settingsUi = record end
+    end
     assert(autoFarm.options:FindFirstChild("Option_SafeZone"), "Auto Farm must expose Safe Zone option")
     local knifeThrow = findFeature("Knife Throw")
     assert(knifeThrow and knifeThrow.categoryName == "Combat", "Knife Throw module must exist in Combat")

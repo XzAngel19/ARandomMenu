@@ -1,5 +1,5 @@
 return {
-    stamp = "v138.6-20261027-autofarm-motion-random-menu",
+    stamp = "v138.7-20261027-autofarm-flythrough-no-cache",
     files = {
         ["src/Profile/135856908115931.lua"] = [[
 --!strict
@@ -4809,10 +4809,25 @@ function Module.init(_runtime: any): any
     local getEstimatedLatency: any = core.getEstimatedLatency
     local getGunOriginCFrame: any = core.getGunOriginCFrame
 
+    -- v138.7 renamed the two full-bag fling toggles ("after reset" ->
+    -- "after full bag"). Option keys are derived from the label, so carry a saved
+    -- value over instead of silently resetting it.
+    if type(configData) == "table" and type(configData.states) == "table" then
+        local rename = {
+            ["MM2.AutoFarm.FlingMurderafterreset"] = "MM2.AutoFarm.FlingMurderafterfullbag",
+            ["MM2.AutoFarm.FlingSheriffafterreset"] = "MM2.AutoFarm.FlingSheriffafterfullbag",
+        }
+        for oldKey: string, newKey: string in pairs(rename) do
+            if configData.states[newKey] == nil and configData.states[oldKey] ~= nil then
+                configData.states[newKey] = configData.states[oldKey]
+            end
+            configData.states[oldKey] = nil
+        end
+    end
+
     local settings = {
         mode = "Walk",
         speed = 16,
-        stayUnderOnStart = true,
         safeZone = true,
         resetOnFull = true,
         flingMurder = false,
@@ -4907,9 +4922,8 @@ function Module.init(_runtime: any): any
     -- fight is what glitched, and the hitbox makes it unnecessary.
     local BELOW_OFFSET: number = 3.0
     local HITBOX_SIZE: Vector3 = Vector3.new(4, 8, 4)
-    -- A coin that does not collect within this long is skipped for a
-    -- while instead of trapping the farm on one unreachable pickup.
-    local STUCK_SECONDS: number = 1.4
+    -- A coin that survives several passes (or cannot be reached) is skipped for
+    -- a while instead of trapping the farm on one unreachable pickup.
     local BLACKLIST_SECONDS: number = 6
 
     local function characterParts(): (Model?, Humanoid?, BasePart?)
@@ -5222,8 +5236,23 @@ function Module.init(_runtime: any): any
         local wasInActiveRound: boolean = false
         local scanCache: {Instance} = {}
         local scanAt: number = 0
-        local stuckPart: Instance? = nil
-        local stuckSince: number = 0
+        -- Fly-through farming: coins are waypoints, never stops. A coin we just
+        -- swept past is skipped for a moment so the body keeps moving to the next
+        -- one instead of braking on it; a coin that survives several passes is
+        -- blacklisted like before.
+        local passThrough: {[Instance]: number} = {}
+        local passCount: {[Instance]: number} = {}
+        local PASS_SKIP_SECONDS: number = 2.5
+        local PASS_LIMIT: number = 5
+        -- A coin behind the current heading is worth this many extra studs, so the
+        -- farm commits to the coin it is already flying at instead of turning back
+        -- to the one it just swept.
+        local BEHIND_PENALTY: number = 60
+        -- After sweeping a coin the farm keeps its course for this long before it
+        -- may turn back: without it the next tick immediately re-targeted a coin
+        -- behind the body and the flight ping-ponged between two pickups.
+        local COURSE_COMMIT_SECONDS: number = 1.2
+        local courseClearUntil: number = 0
         local lastTouchPulse: number = 0
         local blacklist: {[Instance]: number} = {}
 
@@ -5234,9 +5263,7 @@ function Module.init(_runtime: any): any
         local engagedCharacter: Model? = nil
         local homeCFrame: CFrame? = nil
         local homeCharacter: Model? = nil
-        local hideAnchorPosition: Vector3? = nil
         local hiddenUnderMap: boolean = false
-        local firstCoinSeenThisRound: boolean = false
         local savedCollide: {[Instance]: boolean} = {}
         local engagedMode: string? = nil
         local savedWalkSpeed: number? = nil
@@ -5350,16 +5377,6 @@ function Module.init(_runtime: any): any
             return Vector3.new(candidatePos.X, resolvedY, candidatePos.Z)
         end
 
-        local function getHiddenUnderMapPosition(root: BasePart): Vector3
-            if hideAnchorPosition then
-                return hideAnchorPosition
-            end
-            if homeCFrame then
-                return homeCFrame.Position - Vector3.new(0, BELOW_OFFSET + 4, 0)
-            end
-            return root.Position - Vector3.new(0, BELOW_OFFSET + 4, 0)
-        end
-
         local function forceNoClipCharacter(character: Model): ()
             for _, object: Instance in ipairs(character:GetDescendants()) do
                 if object:IsA("BasePart") then
@@ -5460,6 +5477,22 @@ function Module.init(_runtime: any): any
             end
         end
 
+        -- No coin to chase: keep the altitude the body already holds instead of
+        -- re-targeting its own centre every tick (that let gravity walk it down).
+        local function holdAltitude(root: BasePart): ()
+            local targetY: number = homeCFrame and homeCFrame.Position.Y or root.Position.Y
+            if hoverTarget then
+                targetY = hoverTarget.Y
+            elseif hiddenUnderMap then
+                targetY = currentHomeY(root) - BELOW_OFFSET
+            end
+            hoverTarget = clampBelowTarget(
+                Vector3.new(root.Position.X, targetY, root.Position.Z),
+                root
+            )
+            hoverActive = true
+        end
+
         -- Puts the body back inside the farm's altitude budget after a fall.
         -- Below: back under the map at the round's start, still NoClipped.
         -- Walk: on the floor the round started on, upright, collisions back.
@@ -5516,29 +5549,6 @@ function Module.init(_runtime: any): any
                     * CFrame.Angles(0, yawOf(root.CFrame), 0)
                 root.AssemblyLinearVelocity = Vector3.zero
                 root.AssemblyAngularVelocity = Vector3.zero
-            end)
-        end
-
-        local function holdHiddenUnderMap(
-            character: Model,
-            humanoid: Humanoid,
-            root: BasePart
-        ): ()
-            hiddenUnderMap = true
-            forceNoClipCharacter(character)
-            local hidePos: Vector3 = clampBelowTarget(getHiddenUnderMapPosition(root), root)
-            hoverTarget = hidePos
-            hoverActive = settings.mode ~= "Walk"
-            pcall(function(): ()
-                humanoid.PlatformStand = true
-                humanoid.AutoRotate = false
-                humanoid:Move(Vector3.zero, false)
-                if (root.Position - hidePos).Magnitude > 12 then
-                    root.CFrame = CFrame.new(hidePos)
-                        * CFrame.Angles(0, yawOf(root.CFrame), 0)
-                    root.AssemblyLinearVelocity = Vector3.zero
-                    root.AssemblyAngularVelocity = Vector3.zero
-                end
             end)
         end
 
@@ -6100,7 +6110,8 @@ function Module.init(_runtime: any): any
 
         -- The full-bag sequence, in the user's order: Kill All,
         -- return to exact pre-farm position, Auto Grab gun and Shoot,
-        -- reset, then the post-reset flings. Runs once per 50-coin fill.
+        -- reset, then the full-bag flings (which never depend on the reset).
+        -- Runs once per 50-coin fill.
         local function runFullSequence(): ()
             busy = true
             local ok: boolean, err: any = pcall(function(): ()
@@ -6141,9 +6152,10 @@ function Module.init(_runtime: any): any
                     end
                     task.wait(0.1)
                 end
-                -- Flings belong to the full bag too, reset or not: with
-                -- a reset they meet the fresh character first (above),
-                -- without one they simply happen now.
+                -- Flings belong to the FULL BAG, reset or not: with a reset
+                -- they meet the fresh character first (above), without one they
+                -- simply happen now. The label says "after full bag" for exactly
+                -- that reason.
                 if settings.flingMurder
                     and type(findMurderer) == "function" then
                     flingPlayer(findMurderer())
@@ -6244,14 +6256,11 @@ function Module.init(_runtime: any): any
                         fullHandled = false
                         roundFullReached = false
                         teleportedHomeThisRound = false
-                        firstCoinSeenThisRound = false
                         homeCFrame = nil
                         homeCharacter = nil
-                        hideAnchorPosition = nil
                         destroySafeZonePlatform()
                     end
                     setStatus("Auto Farm: waiting in lobby")
-                    stuckPart = nil
                     return
                 end
 
@@ -6261,15 +6270,9 @@ function Module.init(_runtime: any): any
                     fullHandled = false
                     roundFullReached = false
                     teleportedHomeThisRound = false
-                    firstCoinSeenThisRound = false
                     homeCFrame = CFrame.new(root.Position)
                         * CFrame.Angles(0, yawOf(root.CFrame), 0)
                     homeCharacter = character
-                    hideAnchorPosition = Vector3.new(
-                        root.Position.X,
-                        root.Position.Y - (BELOW_OFFSET + 4),
-                        root.Position.Z
-                    )
                 end
 
                 local targetLimit: number = math.max(50, bagLimit)
@@ -6333,6 +6336,18 @@ function Module.init(_runtime: any): any
                 local nearest: Instance? = nil
                 local nearestPosition: Vector3? = nil
                 local nearestDistance: number = math.huge
+                local fallback: Instance? = nil
+                local fallbackPosition: Vector3? = nil
+                local fallbackDistance: number = math.huge
+                local velocity: Vector3 = Vector3.zero
+                pcall(function(): ()
+                    velocity = root.AssemblyLinearVelocity
+                end)
+                local speedNow: number = math.sqrt(
+                    velocity.X * velocity.X + velocity.Z * velocity.Z
+                )
+                local moving: boolean = speedNow > 6
+                local allowBehind: boolean = (not moving) or now >= courseClearUntil
                 for _, part: Instance in ipairs(scanCache) do
                     if part.Parent
                         and stillCollectable(part)
@@ -6342,20 +6357,53 @@ function Module.init(_runtime: any): any
                             position = (part :: BasePart).Position
                         end)
                         if position then
-                            local distance: number =
-                                ((position :: Vector3) - root.Position).Magnitude
-                            if distance < nearestDistance then
+                            local flatX: number = (position :: Vector3).X - root.Position.X
+                            local flatZ: number = (position :: Vector3).Z - root.Position.Z
+                            local distance: number = math.sqrt(
+                                flatX * flatX + flatZ * flatZ
+                            )
+                            -- The coin just swept past is skipped for a moment so
+                            -- the farm keeps flying instead of braking on it.
+                            local skipped: boolean = passThrough[part] ~= nil
+                                and passThrough[part] > now
+                            -- Hysteresis: a coin behind the current heading costs
+                            -- extra studs, so the body commits to the coin it is
+                            -- already flying at instead of ping-ponging between two.
+                            local ahead: boolean = true
+                            if moving then
+                                ahead = (flatX * velocity.X + flatZ * velocity.Z)
+                                    >= -0.1 * distance * speedNow
+                            end
+                            local score: number = if ahead
+                                then distance
+                                else distance + BEHIND_PENALTY
+                            -- While the course is committed only coins in front of
+                            -- the body are targets; the one just swept is skipped.
+                            if not skipped and (ahead or allowBehind)
+                                and score < nearestDistance then
                                 nearest = part
                                 nearestPosition = position
-                                nearestDistance = distance
+                                nearestDistance = score
+                            end
+                            if (ahead or allowBehind) and distance < fallbackDistance then
+                                fallback = part
+                                fallbackPosition = position
+                                fallbackDistance = distance
                             end
                         end
                     end
                 end
+                if not nearest and fallback then
+                    -- Only one reachable coin and we just swept it: take it again.
+                    nearest = fallback
+                    nearestPosition = fallbackPosition
+                    nearestDistance = fallbackDistance
+                    passThrough[fallback] = nil
+                end
                 if not nearest or not nearestPosition then
                     -- Round starting or 0 coins currently in the server while
                     -- bag < 50: if the server just teleported the character to
-                    -- its random map spawn, update homeCFrame and hideAnchorPosition
+                    -- its random map spawn, update homeCFrame
                     -- so we never get stuck or teleport to a stale spot.
                     -- A new random map spawn moves the body; follow it so the
                     -- depth budget and the return point stay meaningful. This is
@@ -6379,42 +6427,25 @@ function Module.init(_runtime: any): any
                             homeCFrame = CFrame.new(safeSpawnPos)
                                 * CFrame.Angles(0, yawOf(root.CFrame), 0)
                             homeCharacter = character
-                            hideAnchorPosition = Vector3.new(
-                                safeSpawnPos.X,
-                                safeSpawnPos.Y - (BELOW_OFFSET + 4),
-                                safeSpawnPos.Z
-                            )
                         end
                     end
                     scanAt = now - 0.25
-                    if not firstCoinSeenThisRound then
-                        -- "Stay Under" is a Below-mode trick: hiding under the
-                        -- map in Walk mode only buries the body in geometry, so
-                        -- Walk just stands at its spawn and waits for the coins.
-                        if settings.stayUnderOnStart and settings.mode ~= "Walk" then
-                            holdHiddenUnderMap(character, humanoid, root)
-                        elseif hiddenUnderMap then
+                    -- No coin to chase right now (round starting, or every coin
+                    -- was just swept): stay exactly where the body is. No dive
+                    -- under the map, no teleport home, no waiting loop.
+                    if settings.mode == "Walk" then
+                        if hiddenUnderMap then
                             restoreCharacter(false)
-                        elseif settings.mode ~= "Walk" and engaged then
-                            restoreCharacter(false)
-                        else
-                            -- Walk: no coin in range right now. Just stand still;
-                            -- never re-run the restore (that teleported the body
-                            -- back home every time a coin was collected).
-                            pcall(function(): ()
-                                humanoid:Move(Vector3.zero, false)
-                            end)
                         end
+                        pcall(function(): ()
+                            humanoid:Move(Vector3.zero, false)
+                        end)
                     else
-                        if settings.mode == "Walk" then
-                            if hiddenUnderMap then
-                                restoreCharacter(false)
-                            end
-                            pcall(function(): ()
-                                humanoid:Move(Vector3.zero, false)
-                            end)
-                        else
-                            holdHiddenUnderMap(character, humanoid, root)
+                        -- Keep flying at the point already targeted (the one just
+                        -- past the coin) instead of braking on the spot; only hold
+                        -- the current altitude when there is no target at all.
+                        if not hoverActive or not hoverTarget then
+                            holdAltitude(root)
                         end
                     end
                     setStatus(string.format(
@@ -6423,52 +6454,83 @@ function Module.init(_runtime: any): any
                         math.round(math.clamp(settings.speed, 5, 60)),
                         pingMillis()
                     ))
-                    stuckPart = nil
                     return
                 end
-                firstCoinSeenThisRound = true
                 if hiddenUnderMap and settings.mode == "Walk" then
                     restoreCharacter(false)
                 end
                 -- Capture pre-farm homeCFrame and stay engaged while
                 -- bagAmount < 50 inside the active round.
                 engage(character, humanoid, root)
-                hideAnchorPosition = Vector3.new(
-                    (nearestPosition :: Vector3).X,
-                    (nearestPosition :: Vector3).Y - (BELOW_OFFSET + 4),
-                    (nearestPosition :: Vector3).Z
-                )
+                local coinPosition: Vector3 = nearestPosition :: Vector3
                 local remaining: number
-                local arrived: boolean
                 if settings.mode == "Walk" then
-                    remaining = walkTowards(
-                        humanoid,
-                        root,
-                        nearestPosition :: Vector3
-                    )
-                    arrived = remaining < 1.4
+                    remaining = walkTowards(humanoid, root, coinPosition)
                 else
-                    local destination: Vector3 =
-                        (nearestPosition :: Vector3)
-                        + Vector3.new(0, -BELOW_OFFSET, 0)
-                    remaining = moveTowards(root, destination, deltaTime)
-                    arrived = remaining < 1.2
+                    remaining = moveTowards(
+                        root,
+                        coinPosition + Vector3.new(0, -BELOW_OFFSET, 0),
+                        deltaTime
+                    )
                 end
-                if arrived then
-                    -- Belt and braces: some builds only pay on a
-                    -- physics Touched, and a fully NoClipped body can
-                    -- miss that pairing. Pulse the touch directly
-                    -- against the Coin_Server part, like the farm in
-                    -- YARHM did, until the coin is gone.
-                    if now - lastTouchPulse > 0.25 then
-                        lastTouchPulse = now
-                        local touchPart: Instance? =
-                            serverPartOf(nearest)
-                        if type(state.fireTouchInterest) == "function"
-                            and touchPart then
-                            pcall(state.fireTouchInterest, root, touchPart, 0)
-                            pcall(state.fireTouchInterest, root, touchPart, 1)
+                -- Fly-through: the coin pays by contact while the body crosses it,
+                -- and the farm never brakes, parks or waits on one. The pulse runs
+                -- while the coin is near; the target becomes a point PAST the coin
+                -- only when the body is really on top of it, so it always crosses
+                -- the pickup instead of turning away from it.
+                local flatToCoinX: number = coinPosition.X - root.Position.X
+                local flatToCoinZ: number = coinPosition.Z - root.Position.Z
+                local horizontal: number = math.sqrt(
+                    flatToCoinX * flatToCoinX + flatToCoinZ * flatToCoinZ
+                )
+                local pulseRange: number = if settings.mode == "Walk" then 4.0 else 9.0
+                local reach: number = if settings.mode == "Walk" then 2.4 else 4.5
+                if horizontal < pulseRange and now - lastTouchPulse > 0.2 then
+                    lastTouchPulse = now
+                    -- Belt and braces: some builds only pay on a physics
+                    -- Touched, and a fully NoClipped body can miss that
+                    -- pairing. Pulse the touch against Coin_Server itself.
+                    local touchPart: Instance? = serverPartOf(nearest)
+                    if type(state.fireTouchInterest) == "function"
+                        and touchPart then
+                        pcall(state.fireTouchInterest, root, touchPart, 0)
+                        pcall(state.fireTouchInterest, root, touchPart, 1)
+                    end
+                end
+                if remaining < reach or horizontal < reach then
+                    passThrough[nearest] = now + PASS_SKIP_SECONDS
+                    courseClearUntil = now + COURSE_COMMIT_SECONDS
+                    local passes: number = (passCount[nearest] or 0) + 1
+                    passCount[nearest] = passes
+                    if passes >= PASS_LIMIT and stillCollectable(nearest) then
+                        -- Five clean passes and it still pays nothing: skip it.
+                        blacklist[nearest] = now + BLACKLIST_SECONDS
+                        passCount[nearest] = nil
+                        passThrough[nearest] = nil
+                    end
+                    if settings.mode ~= "Walk" then
+                        -- The point past the coin follows the CURRENT heading when
+                        -- the body is already moving: using body->coin here turned
+                        -- the farm around whenever the pass was detected just after
+                        -- crossing (the vector points backwards at that moment).
+                        local heading: Vector3 = Vector3.new(
+                            coinPosition.X - root.Position.X,
+                            0,
+                            coinPosition.Z - root.Position.Z
+                        )
+                        if speedNow > 4 then
+                            heading = Vector3.new(velocity.X, 0, velocity.Z)
                         end
+                        local direction: Vector3 = if heading.Magnitude > 0.05
+                            then heading.Unit
+                            else Vector3.new(0, 0, -1)
+                        moveTowards(
+                            root,
+                            coinPosition
+                                + Vector3.new(0, -BELOW_OFFSET, 0)
+                                + direction * 26,
+                            deltaTime
+                        )
                     end
                 end
                 setStatus(string.format(
@@ -6477,19 +6539,6 @@ function Module.init(_runtime: any): any
                     math.round(math.clamp(settings.speed, 5, 60)),
                     pingMillis()
                 ))
-                if arrived then
-                    -- Parked under the coin: if it does not collect,
-                    -- skip it for a while instead of getting stuck.
-                    if stuckPart ~= nearest then
-                        stuckPart = nearest
-                        stuckSince = now
-                    elseif now - stuckSince > STUCK_SECONDS then
-                        blacklist[nearest] = now + BLACKLIST_SECONDS
-                        stuckPart = nil
-                    end
-                else
-                    stuckPart = nil
-                end
             end
         )
 
@@ -6506,7 +6555,7 @@ function Module.init(_runtime: any): any
 
     local AutoFarmFeature: any = createUniversalFeature(
         "Auto Farm",
-        "Walks on the ground to the nearest coins (Walk), or flies upright under the floor with a grown hitbox that still touches them (Below), with full-bag actions.",
+        "Fly-through coin farming (Walk or Below/Hitbox) that never stops on a coin, with full-bag actions.",
         6,
         toggleAutoFarm,
         {
@@ -6533,10 +6582,6 @@ function Module.init(_runtime: any): any
         function(value: number): ()
             settings.speed = value
         end, "Walk mode: WalkSpeed. Below mode: flight speed in studs/second -- if the server kicks you (Invalid position), lower it; raise it slowly to find your fastest safe speed.", 1)
-    addToggleOption(AutoFarmFeature, "Stay Under When Round starts", true,
-        function(value: boolean): ()
-            settings.stayUnderOnStart = value == true
-        end, "When enabled, hides your character safely underneath the map at the start of the round until coins spawn. When disabled, your character stays naturally on the map at the random spawn point where you spawned.")
     addToggleOption(AutoFarmFeature, "Safe Zone", true,
         function(value: boolean): ()
             settings.safeZone = value == true
@@ -6545,14 +6590,14 @@ function Module.init(_runtime: any): any
         function(value: boolean): ()
             settings.resetOnFull = value
         end, "Reset the character as soon as the coin bag fills.")
-    addToggleOption(AutoFarmFeature, "Fling Murder after reset", false,
+    addToggleOption(AutoFarmFeature, "Fling Murder after full bag", false,
         function(value: boolean): ()
             settings.flingMurder = value
-        end, "When the coin bag fills (50): fling the Murderer (after the reset above, if it is on).")
-    addToggleOption(AutoFarmFeature, "Fling Sheriff after reset", false,
+        end, "When the coin bag fills (50): fling the Murderer. Works with or without Reset When Full Coin Bag.")
+    addToggleOption(AutoFarmFeature, "Fling Sheriff after full bag", false,
         function(value: boolean): ()
             settings.flingSheriff = value
-        end, "When the coin bag fills (50): fling the Sheriff (after the reset above, if it is on).")
+        end, "When the coin bag fills (50): fling the Sheriff. Works with or without Reset When Full Coin Bag.")
     addToggleOption(AutoFarmFeature, "Auto Grab gun and Shoot", false,
         function(value: boolean): ()
             settings.grabGunShoot = value
@@ -6563,7 +6608,7 @@ function Module.init(_runtime: any): any
         end, "As Murderer, when the bag fills: pull everyone in front of you and slash (YARHM Kill All).")
     addInformationOption(
         AutoFarmFeature,
-        "Walk walks your character on the ground to the nearest pickup Coin ESP sees (safest, and the body's own touch collects). Below (Hitbox) flies upright under the floor by physics velocity (never position teleports) with NoClip and the root hitbox grown to 4x8x4, so the coin pays from underneath without lying the character face-down. Already-collected coins are dropped as targets the moment they are collected. If Below kicks you for Invalid position, lower Farm Speed and raise it little by little. Turning it off restores collisions, hitbox and WalkSpeed, and returns you upright to where you started."
+        "Fly-through farming: the body never stops on a coin. Below (Hitbox) skims under the floor with the root hitbox grown so each coin pays as it is crossed; Walk does the same on the ground. If Below ever kicks you for Invalid position, lower Farm Speed. Turning it off restores collisions, hitbox and WalkSpeed and returns you where you started."
     )
 
     activeCleanup = function(): ()
@@ -40792,35 +40837,17 @@ function Module.init(context: any): any
             end
         end
         -- ARandomMenu order: the cards inside a window are placed by their
-        -- session-stable random rank, never alphabetically. Turning the setting
-        -- off restores the curated order (explicit rank, then name).
-        local randomOrder: boolean = state.randomCardOrder ~= false
+        -- session-stable random rank, never alphabetically and never by the
+        -- curated slot. The rank is drawn once per session (Cards.lua), so the
+        -- order never moves while the script is running.
         table.sort(rows, function(left: GuiObject, right: GuiObject): boolean
-            if randomOrder then
-                local leftRank: number = tonumber(left:GetAttribute("FeatureSortRank")) or math.huge
-                local rightRank: number = tonumber(right:GetAttribute("FeatureSortRank")) or math.huge
-                if leftRank ~= rightRank then return leftRank < rightRank end
-                return tostring(left.Name) < tostring(right.Name)
-            end
-            local leftOrder: number = tonumber(left:GetAttribute("FeatureSortOrder")) or math.huge
-            local rightOrder: number = tonumber(right:GetAttribute("FeatureSortOrder")) or math.huge
-            if leftOrder ~= rightOrder then return leftOrder < rightOrder end
-            local leftKey: string = tostring(left:GetAttribute("FeatureSortName") or "")
-            local rightKey: string = tostring(right:GetAttribute("FeatureSortName") or "")
-            if leftKey == rightKey then
-                return left.Name < right.Name
-            end
-            return leftKey < rightKey
+            local leftRank: number = tonumber(left:GetAttribute("FeatureSortRank")) or math.huge
+            local rightRank: number = tonumber(right:GetAttribute("FeatureSortRank")) or math.huge
+            if leftRank ~= rightRank then return leftRank < rightRank end
+            return tostring(left.Name) < tostring(right.Name)
         end)
         for index: number, row: GuiObject in ipairs(rows) do
             row.LayoutOrder = index
-        end
-    end
-
-    -- Re-run the ordering of every window (used by the Settings toggle).
-    function ClickGui.restack(): ()
-        for _, record: CategoryWindow in pairs(ClickGui.categories) do
-            pcall(sortCategoryRows, record)
         end
     end
 
@@ -47124,75 +47151,6 @@ function Module.init(context: any): any
     if not paletteOk then
         warn("[Wurst:Settings] palette rows skipped: " .. tostring(paletteError))
     end
-
-    -- ARandomMenu: the cards inside each window are shuffled per session. This
-    -- toggle goes back to the curated order for anyone who wants it.
-    addToggleOption(uiPanel, "Random Card Order", state.randomCardOrder ~= false,
-        function(value: boolean): ()
-            state.randomCardOrder = value == true
-            local clickGui: any = state.clickGui
-            if clickGui and type(clickGui.restack) == "function" then
-                pcall(clickGui.restack, clickGui)
-            end
-        end,
-        "Shuffle the cards inside each window. The order is drawn once per session, so it stays put while you play.")
-
-    local rainbowConnection: any = nil
-    local rainbowElapsed: number = 0
-    local rainbowSince: number = 0
-    addToggleOption(uiPanel, "Rainbow", false, function(value: boolean): ()
-        uiSettingsValues["Rainbow"] = value
-        if rainbowConnection then
-            rainbowConnection:Disconnect()
-            rainbowConnection = nil
-        end
-        if not ThemeEngine or type(ThemeEngine.Set) ~= "function" then
-            return
-        end
-        if not value then
-            local accent: any = uiSettingsValues["Accent"] or Theme.accent
-            local enabledColor: any = uiSettingsValues["Enabled"] or Theme.enabled
-            paintPalette("Accent", accent)
-            paintPalette("Enabled", enabledColor)
-            if type(ThemeEngine.SetMany) == "function" then
-                ThemeEngine.SetMany({
-                    accent = accent,
-                    outline = accent,
-                    enabled = enabledColor,
-                })
-            else
-                ThemeEngine.Set("accent", accent)
-                ThemeEngine.Set("outline", accent)
-                ThemeEngine.Set("enabled", enabledColor)
-            end
-            return
-        end
-        rainbowConnection = trackUiConnection(RunService.Heartbeat:Connect(function(step: number): ()
-            rainbowElapsed += step
-            rainbowSince += step
-            if rainbowSince < 0.05 then
-                return
-            end
-            rainbowSince %= 0.05
-            -- The ClickGUI is hidden: do not repaint thousands of menu
-            -- pixels. The independent HUD rainbow has its own controller.
-            if not state.visible then return end
-            local color: Color3 = Color3.fromHSV(rainbowElapsed * 0.25 % 1, 0.85, 1)
-            paintPalette("Accent", color)
-            paintPalette("Enabled", color)
-            if type(ThemeEngine.SetMany) == "function" then
-                ThemeEngine.SetMany({
-                    accent = color,
-                    outline = color,
-                    enabled = color,
-                })
-            else
-                ThemeEngine.Set("accent", color)
-                ThemeEngine.Set("outline", color)
-                ThemeEngine.Set("enabled", color)
-            end
-        end))
-    end)
 
     addNumberOption(uiPanel, "Opacity", OPACITY, 0.15, 0.85, function(value: number): ()
         uiSettingsValues["Opacity"] = value

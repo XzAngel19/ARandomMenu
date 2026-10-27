@@ -18,7 +18,7 @@ It then asserts what a player would see:
      dead the velocity carry moves the body instead.
   3. Falling below the budget is caught and the body is put back inside the map
      instead of continuing to fall.
-  4. "Stay Under When Round starts" never buries a Walk-mode body.
+  4. Coins are fly-through waypoints: no braking under a coin, no parking.
 """
 import os
 import subprocess
@@ -398,7 +398,6 @@ Module.init(nil)
 assert(feature.onToggle, "Auto Farm must build its card")
 local function setMode(value) optionCallbacks["Farm Mode"](value) end
 local function setSpeed(value) optionCallbacks["Farm Speed"](value) end
-local function setStayUnder(value) optionCallbacks["Stay Under When Round starts"](value) end
 
 -- 1) Below (Hitbox): fly to a coin 40 studs away ---------------------------
 resetBody()
@@ -406,19 +405,22 @@ table.clear(coins)
 local coin = makeCoin(Vector3.new(40, 10, 0))
 setMode("Below (Hitbox)")
 setSpeed(24)
-setStayUnder(true)
 feature.onToggle(true)
 local lowest = 0
+local closest = math.huge
 for _ = 1, 300 do
     stepFrame()
     if rootProps.Position.Y < lowest then lowest = rootProps.Position.Y end
+    local dx = 40 - rootProps.Position.X
+    local dz = 0 - rootProps.Position.Z
+    local horizontal = math.sqrt(dx * dx + dz * dz)
+    if horizontal < closest then closest = horizontal end
 end
 local finalPosition = rootProps.Position
-local distanceToCoin = math.sqrt(
-    (finalPosition.X - 40) ^ 2 + (finalPosition.Z - 0) ^ 2
-)
-assert(distanceToCoin < 8,
-    "Below must reach the coin, ended " .. tostring(distanceToCoin) .. " studs away")
+-- Fly-through: the body does not park on the coin, it crosses it (inside the
+-- 4x8x4 hitbox, i.e. under 2.6 studs horizontally) and carries on.
+assert(closest < 2.6,
+    "Below must sweep through the coin, closest approach " .. tostring(closest))
 near(finalPosition.Y, 10 - 3, 6)
 assert(lowest > 12 - 90,
     "Below must never sink past the depth budget, lowest Y was " .. tostring(lowest))
@@ -449,7 +451,6 @@ table.clear(coins)
 makeCoin(Vector3.new(40, 10, 0))
 setMode("Walk")
 setSpeed(20)
-setStayUnder(true)
 feature.onToggle(true)
 frames(30)
 assert(not humanoid.PlatformStand, "Walk must never leave PlatformStand on")
@@ -473,7 +474,6 @@ resetBody()
 table.clear(coins)
 makeCoin(Vector3.new(40, 10, 0))
 setMode("Below (Hitbox)")
-setStayUnder(true)
 feature.onToggle(true)
 frames(5)
 rootProps.Position = Vector3.new(0, -600, 0)
@@ -484,17 +484,81 @@ assert(rootProps.Position.Y > workspace.FallenPartsDestroyHeight + 40,
     "recovered above the destroy height")
 pass("falling into the void is caught and the body is put back inside the map")
 
--- 4) Stay Under never buries a Walk body -----------------------------------
+-- 4) Fly-through: coins are waypoints, the farm never parks on one ---------
+-- The server pays on contact, so this harness marks a coin as collected the
+-- moment the body overlaps it, exactly like the game.
+local autoCollect = true
+local function collectTouched()
+    if not autoCollect then return end
+    -- Below flies with the root hitbox grown to 4x8x4, so overlap is 2.6 studs
+    -- horizontally and 5 studs vertically around the coin's centre.
+    for _, entry in ipairs(coins) do
+        if entry.props.Collected ~= true then
+            local dx = entry.props.Position.X - rootProps.Position.X
+            local dz = entry.props.Position.Z - rootProps.Position.Z
+            local dy = entry.props.Position.Y - rootProps.Position.Y
+            if math.sqrt(dx * dx + dz * dz) < 2.6 and math.abs(dy) < 5 then
+                entry.props.Collected = true
+            end
+        end
+    end
+end
+
 resetBody()
 table.clear(coins)
-setMode("Walk")
-setStayUnder(true)
+makeCoin(Vector3.new(40, 10, 0))
+makeCoin(Vector3.new(80, 10, 0))
+makeCoin(Vector3.new(120, 10, 0))
+makeCoin(Vector3.new(0, 10, 40))
+setMode("Below (Hitbox)")
+setSpeed(24)
 feature.onToggle(true)
-frames(90)
-assert(rootProps.Position.Y >= 10.5,
-    "Walk with Stay Under on must stay on the map, Y is " .. tostring(rootProps.Position.Y))
-assert(not humanoid.PlatformStand, "Walk never gets PlatformStand")
-pass("Stay Under no longer buries a Walk-mode body")
+local slowFrames = 0
+local worstSlow = 0
+for index = 1, 420 do
+    stepFrame()
+    collectTouched()
+    if index > 20 then
+        local speed = math.sqrt(
+            rootProps.AssemblyLinearVelocity.X ^ 2 + rootProps.AssemblyLinearVelocity.Z ^ 2
+        )
+        if speed < 24 * 0.35 then
+            slowFrames += 1
+            if slowFrames > worstSlow then worstSlow = slowFrames end
+        else
+            slowFrames = 0
+        end
+    end
+end
+local collectedCount = 0
+for _, entry in ipairs(coins) do
+    if entry.props.Collected == true then collectedCount += 1 end
+end
+assert(collectedCount >= 3,
+    "the farm must sweep several coins, collected " .. collectedCount)
+assert(worstSlow <= 20,
+    "the farm braked on a coin for " .. worstSlow .. " frames; it must not stop")
+assert(rootProps.Position.Y > 12 - 90, "fly-through keeps altitude")
+
+-- A coin that never pays must not park the body either: it keeps moving until it
+-- is blacklisted and then holds its altitude.
+resetBody()
+table.clear(coins)
+autoCollect = false
+makeCoin(Vector3.new(40, 10, 0))
+setMode("Below (Hitbox)")
+feature.onToggle(true)
+local movingFrames = 0
+for _ = 1, 120 do
+    stepFrame()
+    local speed = math.sqrt(
+        rootProps.AssemblyLinearVelocity.X ^ 2 + rootProps.AssemblyLinearVelocity.Z ^ 2
+    )
+    if speed > 4 then movingFrames += 1 end
+end
+assert(movingFrames > 70,
+    "with a coin that never pays the body must still move, moved " .. movingFrames .. "/120")
+pass("coins are fly-through waypoints: no stop under the coin, no parking")
 
 feature.onToggle(false)
 print("PASS " .. passed .. " Auto Farm motion suites")
