@@ -56,6 +56,18 @@
 > `state.mm2PerformFling` / `state.mm2FlingStep` los publica este módulo y el
 > harness los verifica tras el arranque. **Walk Fling** ya no tiene slider
 > (`POWER = 10000`, `noOptions = true`). Evidencia: `docs/FIXES-v138.3.md`.
+>
+> **v138.4 (2026-10-27):** la mecánica de **Fling** se reescribió copiando
+> `SkidFling` de YARHM tal cual. El bug era el pin: nuestro `BodyVelocity` iba con
+> `Velocity = 0` (ancla) y escrituras de `AssemblyLinearVelocity` /
+> `CustomPhysicalProperties` por frame (el "círculo" y el personaje que
+> "desaparece"). Ahora es `BodyVelocity` `"EpixVel"` con `Velocity = (9e8, 9e8, 9e8)`
+> y `MaxForce = (1/0, 1/0, 1/0)`, poses `RootPart.CFrame` +
+> `SetPrimaryPartCFrame` + `RootPart.Velocity = (9e7, 9e7*10, 9e7)` +
+> `RotVelocity = 9e8` con `task.wait()` entre pose y pose, y volver a casa con
+> `OldPos * CFrame.new(0, .5, 0)`. `state.mm2FlingStep` (Auto Win) usa el mismo
+> golpe y limpia su pin a los 0.5 s. Evidencia: `docs/FIXES-v138.4.md`,
+> `tools/test_fling_skid.py` (6 suites).
 
 ## 1A. X2Duels (MVS): estructura MM2, evidencia y contratos
 

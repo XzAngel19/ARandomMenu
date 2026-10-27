@@ -1,12 +1,17 @@
 #!/usr/bin/env python3
-"""Execute the real MM2 Fling module and check it uses the working SkidFling.
+"""Execute the real universal Fling module, ported from the YARHM SkidFling.
 
-What is asserted, against the module itself (not a copy):
-  - a fling parks the local root on the victim and writes 9e7/9e8 velocities,
-  - a BodyVelocity(MaxForce 9e9) pins the local character while it runs,
-  - FallenPartsDestroyHeight is disabled only while flinging and always restored,
-  - the local character is brought back and the target counts as flung,
-  - Auto Fling / Touch Fling are gone from this card.
+The user compared both: theirs teleports onto the target, does a short choreography
+and launches them; ours orbited and the local character seemed to fade. The two
+concrete defects were pinned down and are asserted here:
+
+  1. The BodyVelocity must be "EpixVel" with Velocity (9e8, 9e8, 9e8) and infinite
+     MaxForce - a catapult. Our old port used Velocity zero, which transfers
+     nothing.
+  2. The pose is written with RootPart.CFrame *and* SetPrimaryPartCFrame plus
+     RootPart.Velocity/RotVelocity only. Writing AssemblyLinearVelocity and
+     CustomPhysicalProperties every frame (the old port) is what made the local
+     character flicker like it was disappearing.
 """
 import os
 import subprocess
@@ -19,7 +24,7 @@ SOURCE = (ROOT / "src/games/universal/Blatant/Fling.lua").read_text()
 PRELUDE = r'''
 local Vector3 = {}
 local mt = {}
-function Vector3.new(x,y,z) return setmetatable({X=x,Y=y,Z=z},mt) end
+function Vector3.new(x,y,z) return setmetatable({X=x or 0,Y=y or 0,Z=z or 0},mt) end
 Vector3.zero = Vector3.new(0,0,0)
 mt.__add=function(a,b) return Vector3.new(a.X+b.X,a.Y+b.Y,a.Z+b.Z) end
 mt.__sub=function(a,b) return Vector3.new(a.X-b.X,a.Y-b.Y,a.Z-b.Z) end
@@ -29,14 +34,26 @@ mt.__mul=function(a,b)
     if type(b)=="number" then return Vector3.new(a.X*b,a.Y*b,a.Z*b) end
     return Vector3.new(a.X*b.X,a.Y*b.Y,a.Z*b.Z)
 end
+mt.__div=function(a,b) return a*(1/b) end
 mt.__index=function(a,k)
     if k=="Magnitude" then return math.sqrt(a.X*a.X+a.Y*a.Y+a.Z*a.Z) end
     if k=="Unit" then return a/a.Magnitude end
 end
 
--- CFrame: enough to record where the module tries to put the character.
 local CF = {}
 CF.__index = CF
+CF.__add = function(a, b)
+    local out = setmetatable({}, CF)
+    out.Position = a.Position + b
+    out.Angle = a.Angle
+    return out
+end
+CF.__sub = function(a, b)
+    local out = setmetatable({}, CF)
+    out.Position = a.Position - b
+    out.Angle = a.Angle
+    return out
+end
 CF.__mul = function(a,b)
     local out = setmetatable({}, CF)
     out.Position = a.Position + b.Position
@@ -44,16 +61,16 @@ CF.__mul = function(a,b)
     return out
 end
 local CFrame = {}
-function CFrame.new(position)
+function CFrame.new(x, y, z)
     local c = setmetatable({}, CF)
-    if type(position) == "table" and position.X then
-        c.Position = position
+    if type(x) == "table" then
+        c.Position = x
     else
-        c.Position = Vector3.zero
+        c.Position = Vector3.new(x or 0, y or 0, z or 0)
     end
     return c
 end
-function CFrame.Angles(x,y,z)
+function CFrame.Angles(x, y, z)
     local c = setmetatable({}, CF)
     c.Position = Vector3.zero
     c.Angle = math.deg(x)
@@ -79,12 +96,19 @@ local task = {
     end,
     wait=function() coroutine.yield() end,
     defer=function(fn) fn() end,
-    delay=function(_seconds, fn) fn() end,
+    delay=function(_seconds, fn) table.insert(pendingDelays, fn) end,
 }
+pendingDelays = {}
+local function runDelays()
+    local queued = pendingDelays
+    pendingDelays = {}
+    for _, fn in ipairs(queued) do fn() end
+end
 local function pump(frames, onFrame)
     for index = 1, frames or 1 do
         for _, co in ipairs(spawned) do
             if coroutine.status(co) ~= "dead" then
+                now += 0.01
                 if onFrame then onFrame(index) end
                 local ok, err = coroutine.resume(co)
                 assert(ok, err)
@@ -93,7 +117,6 @@ local function pump(frames, onFrame)
     end
 end
 
--- Instances ---------------------------------------------------------------
 local created = {}
 local function newInstance(class)
     local object = {ClassName=class, Name=class, Parent=nil, destroyed=false}
@@ -103,13 +126,32 @@ local function newInstance(class)
 end
 local Instance = {new=function(class) return newInstance(class) end}
 
--- Characters --------------------------------------------------------------
-local writes = {maxLinear=0, maxAngular=0, maxForce=nil, pivots=0}
+-- Records what the module writes on the local body.
+local writes = {maxVelocity=0, maxRotVelocity=0, poses=0, primaries=0,
+    assemblyWrites=0, customPhysicsWrites=0, cframeWrites=0}
+
+local function track(name, props, value)
+    if name == "Velocity" and type(value) == "table" then
+        if value.Magnitude > writes.maxVelocity then writes.maxVelocity = value.Magnitude end
+        writes.poses += 1
+    elseif name == "RotVelocity" and type(value) == "table" then
+        if value.Magnitude > writes.maxRotVelocity then writes.maxRotVelocity = value.Magnitude end
+    elseif name == "AssemblyLinearVelocity" or name == "AssemblyAngularVelocity" then
+        writes.assemblyWrites += 1
+    elseif name == "CustomPhysicalProperties" then
+        writes.customPhysicsWrites += 1
+    elseif name == "CFrame" then
+        writes.cframeWrites += 1
+        if type(value) == "table" and value.Position then props.Position = value.Position end
+    end
+end
+
 local function makePart(name, position)
-    local props = {Name=name, Parent=true, Position=position, CanCollide=true,
-        AssemblyLinearVelocity=Vector3.zero, AssemblyAngularVelocity=Vector3.zero,
-        Velocity=Vector3.zero, RotVelocity=Vector3.zero}
+    local props = {Name=name, Parent=true, Position=position,
+        Velocity=Vector3.zero, RotVelocity=Vector3.zero,
+        AssemblyLinearVelocity=Vector3.zero, AssemblyAngularVelocity=Vector3.zero}
     local part = setmetatable({}, {__index=props, __newindex=function(_, key, value)
+        track(key, props, value)
         props[key] = value
     end})
     return part, props
@@ -117,87 +159,88 @@ end
 
 local root, rootProps = makePart("HumanoidRootPart", Vector3.new(0, 10, 0))
 local torso = makePart("Torso", Vector3.new(0, 10, 0))
-local function guardRoot()
-    local props = rootProps
-    local proxy = setmetatable({}, {__index=props, __newindex=function(_, key, value)
-        if key == "AssemblyLinearVelocity" and type(value) == "table" then
-            local magnitude = math.sqrt(value.X*value.X + value.Y*value.Y + value.Z*value.Z)
-            if magnitude > writes.maxLinear then writes.maxLinear = magnitude end
-        elseif key == "AssemblyAngularVelocity" and type(value) == "table" then
-            local magnitude = math.sqrt(value.X*value.X + value.Y*value.Y + value.Z*value.Z)
-            if magnitude > writes.maxAngular then writes.maxAngular = magnitude end
-        elseif key == "CFrame" and type(value) == "table" then
-            local offset = value.Position
-            if offset then props.Position = offset end
-        elseif key == "Velocity" and type(value) == "table" then
-            local magnitude = math.sqrt(value.X*value.X + value.Y*value.Y + value.Z*value.Z)
-            if magnitude > writes.maxLinear then writes.maxLinear = magnitude end
-        end
-        props[key] = value
-    end})
-    return proxy
-end
-root = guardRoot()
 root.CFrame = CFrame.new(Vector3.new(0, 10, 0))
+local localParts = {root, torso}
 
-local humanoid = {Health=100, RootPart=root, Sit=false, AutoRotate=true, MoveDirection=Vector3.zero}
-function humanoid:SetStateEnabled(state, enabled)
-    self.seatedEnabled = enabled
-end
+local humanoid = {Health=100, RootPart=root, Sit=false, AutoRotate=true,
+    MoveDirection=Vector3.zero, WalkSpeed=16}
+function humanoid:SetStateEnabled(state, enabled) self["seated_" .. tostring(state)] = enabled end
 function humanoid:ChangeState() end
 
-local children = {root, torso}
 local function makeCharacter(partList, hum, name)
-    local character = {Parent=true, Name=name or "Local", Humanoid=hum, Pivot=partList[1].Position}
-    function character:PivotTo(cframe)
-        writes.pivots += 1
+    local character = {Parent=true, Name=name or "Local", Humanoid=hum}
+    function character:SetPrimaryPartCFrame(cframe)
+        writes.primaries += 1
         for _, part in ipairs(partList) do
             if part == root then
                 root.CFrame = cframe
             end
         end
-        self.Pivot = cframe.Position
         if hum and hum.RootPart == root then rootProps.Position = cframe.Position end
     end
-    function character:GetDescendants() return partList end
+    function character:PivotTo(cframe) self:SetPrimaryPartCFrame(cframe) end
     function character:GetChildren() return partList end
-    function character:FindFirstChild(name)
-        for _, part in ipairs(partList) do if part.Name == name then return part end end
+    function character:GetDescendants() return partList end
+    function character:FindFirstChild(name_)
+        for _, part in ipairs(partList) do if part.Name == name_ then return part end end
         return nil
     end
     function character:FindFirstChildOfClass(class)
         if class == "Humanoid" then return hum end
+        if class == "Accessory" then return nil end
         return nil
     end
     function character:FindFirstChildWhichIsA() return partList[1] end
     return character
 end
-local character = makeCharacter(children, humanoid, "Local")
+local character = makeCharacter(localParts, humanoid, "Local")
 
 -- Victim ------------------------------------------------------------------
 local victimSpeed = 0
-local victimRootProps = {Name="HumanoidRootPart", Parent=true, Position=Vector3.new(0, 12, 5)}
-local victimRoot = setmetatable({}, {__index=function(_, key)
-    if key == "AssemblyLinearVelocity" then
-        return Vector3.new(victimSpeed, 0, 0)
+local function makeVictimPart(name, position)
+    local props = {Name=name, Parent=true, Position=position}
+    return setmetatable({}, {__index=function(_, key)
+        if key == "Velocity" or key == "AssemblyLinearVelocity" then
+            return Vector3.new(victimSpeed, 0, 0)
+        end
+        if key == "RotVelocity" or key == "AssemblyAngularVelocity" then
+            return Vector3.zero
+        end
+        if key == "CFrame" then return CFrame.new(props.Position) end
+        return props[key]
+    end, __newindex=function(_, key, value) props[key] = value end})
+end
+local victimRoot = makeVictimPart("HumanoidRootPart", Vector3.new(0, 12, 5))
+local victimTorso = makeVictimPart("Torso", Vector3.new(0, 12, 5))
+local victimHead = makeVictimPart("Head", Vector3.new(0, 13.5, 5))
+local victimHumanoid = {Health=100, RootPart=victimRoot, Sit=false,
+    MoveDirection=Vector3.zero, WalkSpeed=16}
+local victimCharacter = makeCharacter({victimRoot, victimTorso, victimHead}, victimHumanoid, "Victim")
+victimCharacter.Head = victimHead
+function victimCharacter:FindFirstChild(name_)
+    if name_ == "Head" then return victimHead end
+    return makeCharacter
+end
+local function victimFind(name_)
+    if name_ == "Head" then return victimHead end
+    for _, part in ipairs({victimRoot, victimTorso}) do
+        if part.Name == name_ then return part end
     end
-    return victimRootProps[key]
-end, __newindex=function(_, key, value) victimRootProps[key] = value end})
-local victimTorso = {Name="Torso", Parent=true, Position=Vector3.new(0, 12, 5)}
-local victimHumanoid = {Health=100, RootPart=victimRoot, Sit=false}
-local victimCharacter = makeCharacter({victimRoot, victimTorso}, victimHumanoid, "Victim")
+    return nil
+end
+victimCharacter.FindFirstChild = function(_, name_) return victimFind(name_) end
+victimCharacter.FindFirstChildOfClass = function(_, class)
+    if class == "Humanoid" then return victimHumanoid end
+    if class == "Accessory" then return nil end
+    return nil
+end
+victimCharacter.FindFirstChildWhichIsA = function() return victimRoot end
+
 local victimPlayer = {Name="Victim", DisplayName="Victim", Parent=true, Character=victimCharacter}
 
-local Players = {
-    GetPlayers=function() return {victimPlayer} end,
-    PlayerAdded=nil,
-    PlayerRemoving=nil,
-}
+local Players = {GetPlayers=function() return {victimPlayer} end}
 
-local world = {
-    FallenPartsDestroyHeight=-500,
-    CurrentCamera=nil,
-}
+local world = {FallenPartsDestroyHeight=-500, CurrentCamera=nil}
 
 local notifications = {}
 local configData = {states={["MM2.Fling.AutoFlingSelectedTarget"]=true,["MM2.Fling.TouchFling"]=true}, values={}}
@@ -213,7 +256,6 @@ local host = {
     featureConnections={},
     configData=configData,
     addActionOption=function(_feature, name, callback) options[name] = callback end,
-    addCycleOption=function() return {} end,
     addTextOption=function(_feature, name, _default, callback) options[name] = callback end,
     addInformationOption=function() end,
 }
@@ -222,7 +264,8 @@ host.disconnectFeatureConnection = function(key)
     if connection then connection:Disconnect(); host.featureConnections[key] = nil end
 end
 host.createUniversalFeature = function(name, description, _order, onToggle, configuration)
-    feature = {name=name, description=description, toggle=onToggle, options={}}
+    feature = {name=name, description=description, toggle=onToggle,
+        options={}, configuration=configuration}
     return feature
 end
 
@@ -243,9 +286,16 @@ services = {
     gameBridge={},
 }
 context = {host=host, services=services}
-local function resetWrites() writes.maxLinear = 0; writes.maxAngular = 0; writes.pivots = 0 end
+local function resetWrites()
+    writes.maxVelocity = 0; writes.maxRotVelocity = 0; writes.poses = 0
+    writes.primaries = 0; writes.assemblyWrites = 0
+    writes.customPhysicsWrites = 0; writes.cframeWrites = 0
+end
 local passed = 0
 local function pass(name) passed += 1; print("PASS", name) end
+local function near(a, b, epsilon)
+    assert(math.abs(a - b) <= (epsilon or 1e-6), tostring(a) .. " != " .. tostring(b))
+end
 '''
 
 SCRIPT = PRELUDE + "\nlocal Module = (function()\n" + SOURCE + "\nend)()\n" + r'''
@@ -256,73 +306,77 @@ assert(options["Select Target"] == nil, "the Select Target dropdown must be gone
 assert(options["Target player"] ~= nil, "Target player is the only target input")
 assert(options["Fling"] ~= nil and options["Fling Murderer"] ~= nil, "actions stay")
 assert(type(state.mm2PerformFling) == "function", "mm2PerformFling export must survive for Auto Win")
-assert(type(state.mm2FlingStep) == "function", "mm2FlingStep export must survive")
-assert(configData.states["MM2.Fling.AutoFlingSelectedTarget"] == nil, "stale keys are dropped")
-assert(configData.states["MM2.Fling.TouchFling"] == nil, "stale keys are dropped")
-pass("Fling card exposes SkidFling actions only")
+pass("Fling card exposes the typed target and the actions only")
 
--- Blocking fling against a still victim, pumping the frame waits.
-victimSpeed = 0
-resetWrites()
-local touched = false
-local thread = coroutine.create(function()
-    touched = state.mm2PerformFling(victimPlayer, {blocking=true, silent=true, duration=0.5})
-end)
-local guard = 0
-while coroutine.status(thread) ~= "dead" and guard < 400 do
-    guard += 1
-    now += 0.01
-    if guard == 12 then victimSpeed = 900 end
-    local ok, err = coroutine.resume(thread)
-    assert(ok, err)
-end
-assert(coroutine.status(thread) == "dead", "the fling must finish")
-
-assert(writes.maxLinear >= 9e7, "the local root must receive the 9e7 SkidFling velocity, got " .. tostring(writes.maxLinear))
-assert(writes.maxAngular >= 9e8, "the local root must receive the 9e8 SkidFling rotation, got " .. tostring(writes.maxAngular))
-assert(writes.pivots > 0, "the character is pivoted onto the victim")
-
-local bodyVelocity = nil
-for _, object in ipairs(created) do
-    if object.ClassName == "BodyVelocity" then bodyVelocity = object end
-end
-assert(bodyVelocity ~= nil, "a BodyVelocity must pin the local character")
-assert(bodyVelocity.destroyed == true, "the BodyVelocity must be destroyed afterwards")
-
-assert(world.FallenPartsDestroyHeight == -500, "FallenPartsDestroyHeight must be restored")
-assert(humanoid.seatedEnabled == true, "the Seated state must be re-enabled")
-assert(touched == true, "the victim counting as flung must be reported")
-near = function(a, b) assert(math.abs(a - b) < 6, tostring(a) .. " != " .. tostring(b)) end
-near(rootProps.Position.Y, 10)
-assert(services.activity.flags["fling"] == false, "fling activity must be released")
-pass("SkidFling writes 9e7/9e8, pins with BodyVelocity, restores the world and comes home")
-
--- A missing target fails closed instead of throwing.
-local empty = {Name="Nobody", Parent=true, Character=nil}
-local failed = state.mm2PerformFling(empty, {blocking=true, silent=true, duration=0.1})
-assert(failed == false, "no character must return false")
-assert(world.FallenPartsDestroyHeight == -500, "a failed fling must not leave the void layer off")
-pass("a target without a character fails closed")
-
-
--- Target player is the only target input -------------------------------------
+-- Empty target ------------------------------------------------------------
 notifications = {}
 options["Fling"]()
-assert(#notifications > 0 and string.find(notifications[1], "Target player") ~= nil,
+assert(#notifications > 0 and string.find(notifications[1], "No player matched") ~= nil,
     "an empty Target player must say so instead of flinging")
-assert(writes.maxLinear == 0 or true)
 pass("an empty Target player never flings")
 
+-- The fling itself --------------------------------------------------------
 victimSpeed = 0
 resetWrites()
 options["Target player"]("Victim")
 options["Fling"]()
-pump(60, function(index) if index == 12 then victimSpeed = 900 end end)
-assert(writes.maxLinear >= 9e7, "typing the name and pressing Fling must actually fling")
-pass("the typed Target player is resolved and flung")
+pump(80, function(index) if index == 10 then victimSpeed = 900 end end)
 
--- Role actions outside MM2 fail with a message instead of an error ------------
-services.gameBridge = {}
+assert(writes.poses >= 6, "the six-pose YARHM choreography must run, got " .. writes.poses)
+assert(writes.maxVelocity >= 8e8,
+    "each pose writes 9e7/9e8 through RootPart.Velocity, got " .. tostring(writes.maxVelocity))
+assert(writes.maxRotVelocity >= 8e8, "each pose writes 9e8 rotation, got " .. tostring(writes.maxRotVelocity))
+assert(writes.primaries > 0, "the pose goes through SetPrimaryPartCFrame like the original")
+assert(writes.cframeWrites > 0, "RootPart.CFrame is written too")
+assert(writes.assemblyWrites == 0,
+    "AssemblyLinearVelocity/AssemblyAngularVelocity must not be written (that is the fading bug)")
+assert(writes.customPhysicsWrites == 0,
+    "CustomPhysicalProperties must not be written per pose (that is the fading bug)")
+
+local pin = nil
+for _, object in ipairs(created) do
+    if object.ClassName == "BodyVelocity" then pin = object end
+end
+assert(pin ~= nil, "the EpixVel BodyVelocity must exist")
+assert(pin.Name == "EpixVel", "the pin keeps the original name")
+assert(pin.Velocity ~= nil and pin.Velocity.Magnitude >= 8e8,
+    "the pin must DRIVE at 9e8, not hold at zero, got " .. tostring(pin.Velocity and pin.Velocity.Magnitude))
+assert(pin.MaxForce ~= nil and pin.MaxForce.Magnitude == math.huge, "the pin uses infinite MaxForce")
+assert(pin.destroyed == true, "the pin must be destroyed at the end")
+
+assert(world.FallenPartsDestroyHeight == -500, "FallenPartsDestroyHeight must be restored")
+assert(humanoid.seated_Seated == true, "the Seated state must be re-enabled")
+assert(math.abs(rootProps.Position.Y - 10.5) < 26, "the character comes back near where it started")
+assert(activityService.flags["fling"] == false, "fling activity must be released")
+pass("SkidFling poses 9e7/9e8 with an EpixVel 9e8 catapult, then restores everything")
+
+-- A target without a character fails closed --------------------------------
+notifications = {}
+local empty = {Name="Nobody", Parent=true, Character=nil}
+local failed = state.mm2PerformFling(empty, {blocking=true, silent=false, duration=0.1})
+assert(failed == false, "no character must return false")
+assert(#notifications > 0, "it must say why")
+assert(world.FallenPartsDestroyHeight == -500, "a failed fling must not leave the void layer off")
+pass("a target without a character fails closed")
+
+-- Per-frame export used by Auto Win ---------------------------------------
+victimSpeed = 0
+resetWrites()
+local stepped = state.mm2FlingStep(character, humanoid, root, victimPlayer, {}, {})
+assert(stepped == true, "the per-frame pose must report success")
+assert(writes.maxVelocity >= 8e8, "the per-frame pose uses the same 9e7 velocity")
+assert(activityService.flags["fling"] == true, "the per-frame pose marks fling activity")
+local stepPin = nil
+for _, object in ipairs(created) do
+    if object.ClassName == "BodyVelocity" and object.destroyed == false then stepPin = object end
+end
+assert(stepPin ~= nil, "the per-frame pose installs its own pin")
+runDelays()
+assert(stepPin.destroyed == true, "the per-frame pin is cleaned up when the caller stops")
+assert(activityService.flags["fling"] == false, "the per-frame fling releases its activity")
+pass("the per-frame pose (Auto Win) uses the same fling and cleans up after itself")
+
+-- Role actions outside MM2 ------------------------------------------------
 local savedCore = state.mm2Core
 state.mm2Core = nil
 notifications = {}

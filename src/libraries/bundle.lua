@@ -1,5 +1,5 @@
 return {
-    stamp = "v138.3-20261027-universal-fling-target-only",
+    stamp = "v138.4-20261027-yarhm-fling-epixvel",
     files = {
         ["src/Profile/135856908115931.lua"] = [[
 --!strict
@@ -24259,13 +24259,35 @@ function Module.init(context: Runtime): any
     -- into the sky. That enormous velocity exists just long enough for the
     -- contact solver to hand it to the victim, which is why this version actually
     -- launches people and the old CFrame-lock one did not.
+    -- SkidFling, copied line by line from the YARHM hub the user supplied
+    -- (YARHM_Hub_KEYLESS_2026.txt, "Fling" -> SkidFling, originally by zqyDSUWX).
+    --
+    -- The parts that matter and that our own port had wrong:
+    --
+    --   * The BodyVelocity named "EpixVel" drives at Vector3.new(9e8, 9e8, 9e8)
+    --     with infinite MaxForce. It is a catapult, not a pin: the local body is
+    --     thrown into the victim. With Velocity zero (our old version) nothing is
+    --     transferred, the character just sits there and the camera flickers.
+    --   * The pose is written through RootPart.CFrame *and*
+    --     Character:SetPrimaryPartCFrame, then RootPart.Velocity/RotVelocity.
+    --     No AssemblyLinearVelocity, no CustomPhysicalProperties: writing those
+    --     every frame is what made our character look like it was fading.
+    --   * Each pose is separated by task.wait() (Heartbeat, after physics), not
+    --     RenderStepped.
+    --   * Two pose sets: six poses while the victim is still (< 50 studs/s) and
+    --     nine while it is already moving.
     local FLING_VELOCITY: Vector3 = Vector3.new(9e7, 9e7 * 10, 9e7)
     local FLING_ROT_VELOCITY: Vector3 = Vector3.new(9e8, 9e8, 9e8)
+    local PIN_VELOCITY: Vector3 = Vector3.new(9e8, 9e8, 9e8)
+    local PIN_FORCE: Vector3 = Vector3.new(math.huge, math.huge, math.huge)
 
     local flingRunning: boolean = false
     local flingTargetName: string = ""
     local stepPhase: number = 0
     local stepAngle: number = 0
+    local lastOldPos: CFrame? = nil
+    local stepPin: any = nil
+    local stepPinToken: number = 0
 
     local function setFlingRunning(running: boolean): ()
         flingRunning = running
@@ -24274,81 +24296,169 @@ function Module.init(context: Runtime): any
         end
     end
 
-    local function waitHeartbeat(): ()
-        local ok: boolean = pcall(function(): ()
-            if RunService and RunService.Heartbeat and RunService.Heartbeat.Wait then
-                RunService.Heartbeat:Wait()
-            elseif task and task.wait then
-                task.wait()
-            end
-        end)
-        if not ok then
-            task.wait()
-        end
-    end
-
-    local function waitRenderStepped(): ()
-        local ok: boolean = pcall(function(): ()
-            if RunService and RunService.RenderStepped and RunService.RenderStepped.Wait then
-                RunService.RenderStepped:Wait()
-            elseif RunService and RunService.Heartbeat and RunService.Heartbeat.Wait then
-                RunService.Heartbeat:Wait()
-            else
-                task.wait()
-            end
-        end)
-        if not ok then
+    -- task.wait(), like the original: it resumes on Heartbeat, one physics step
+    -- after the pose was written.
+    local function waitFrame(): ()
+        if type(task) == "table" and type(task.wait) == "function" then
             task.wait()
         end
     end
 
     local function moveCharacter(character: Model, cframe: CFrame): ()
-        if type(character.PivotTo) == "function" then
-            character:PivotTo(cframe)
-        elseif type(character.SetPrimaryPartCFrame) == "function" then
+        -- SetPrimaryPartCFrame is what the original calls; PivotTo is the modern
+        -- equivalent when the executor/engine no longer exposes the old one.
+        if type(character.SetPrimaryPartCFrame) == "function" then
             character:SetPrimaryPartCFrame(cframe)
+        elseif type(character.PivotTo) == "function" then
+            character:PivotTo(cframe)
         end
     end
 
-    local function targetRootPart(targetPlayer: Player?): (Model?, Humanoid?, BasePart?)
+    local function targetParts(targetPlayer: Player?): (Model?, Humanoid?, BasePart?, BasePart?, BasePart?)
         local targetCharacter: Model? = targetPlayer and targetPlayer.Character
-        if not targetCharacter or not targetCharacter.Parent then
-            return nil, nil, nil
+        if not targetCharacter then
+            return nil, nil, nil, nil, nil
         end
         local targetHumanoid: Humanoid? = targetCharacter:FindFirstChildOfClass("Humanoid")
-        local targetPart: BasePart? = (targetHumanoid and targetHumanoid.RootPart)
-            or (targetCharacter:FindFirstChild("HumanoidRootPart") :: BasePart?)
-            or (targetCharacter:FindFirstChild("Head") :: BasePart?)
-            or targetCharacter:FindFirstChildWhichIsA("BasePart")
-        return targetCharacter, targetHumanoid, targetPart
+        local targetRoot: BasePart? = targetHumanoid and targetHumanoid.RootPart or nil
+        local targetHead: BasePart? = targetCharacter:FindFirstChild("Head") :: BasePart?
+        return targetCharacter, targetHumanoid, targetRoot, targetHead, nil
     end
 
-    -- One SkidFling pose: park the local character on the victim (offset above or
-    -- below, rotating) and hand the assembly the huge velocity.
-    local function flingPose(
+    -- FPos: the whole trick. Position on the victim part, then hand the assembly
+    -- 9e7 and 9e8 so the contact solver launches the victim.
+    local function fpos(
         character: Model,
         root: BasePart,
-        targetPart: BasePart,
-        verticalOffset: number,
-        angle: number
+        basePart: BasePart,
+        offset: CFrame,
+        angles: CFrame
     ): ()
-        local position: Vector3 = targetPart.Position + Vector3.new(0, verticalOffset, 0)
-        local rotation: CFrame = CFrame.Angles(math.rad(angle), 0, 0)
-        local targetCFrame: CFrame = CFrame.new(position) * rotation
+        local targetCFrame: CFrame = CFrame.new(basePart.Position) * offset * angles
         pcall(function(): ()
             root.CFrame = targetCFrame
             moveCharacter(character, targetCFrame)
             root.Velocity = FLING_VELOCITY
-            root.AssemblyLinearVelocity = FLING_VELOCITY
             root.RotVelocity = FLING_ROT_VELOCITY
-            root.AssemblyAngularVelocity = FLING_ROT_VELOCITY
-            pcall(function(): ()
-                root.CustomPhysicalProperties = PhysicalProperties.new(100, 0.3, 0.5, 1, 1)
-            end)
         end)
     end
 
-    -- Single pose for per-frame callers (Auto Win's Fling Sheriff).
+    -- SFBasePart: the choreography, exactly as written in YARHM.
+    local function sfBasePart(
+        character: Model,
+        humanoid: Humanoid,
+        root: BasePart,
+        basePart: BasePart,
+        targetCharacter: Model,
+        targetPlayer: Player,
+        targetHumanoid: Humanoid?,
+        targetRoot: BasePart?,
+        timeToWait: number,
+        shouldStop: (() -> boolean)?
+    ): ()
+        local startedAt: number = os.clock()
+        local angle: number = 0
+        local moveDirection: Vector3 = Vector3.zero
+        local walkSpeed: number = 16
+        repeat
+            if not root or not targetHumanoid then
+                break
+            end
+            local okState: boolean, baseVelocity: any = pcall(function(): any
+                return basePart.Velocity
+            end)
+            local speed: number = 0
+            if okState and type(baseVelocity) == "table" and type(baseVelocity.Magnitude) == "number" then
+                speed = baseVelocity.Magnitude
+            end
+            if shouldStop and shouldStop() then
+                break
+            end
+            pcall(function(): ()
+                moveDirection = targetHumanoid.MoveDirection
+                walkSpeed = targetHumanoid.WalkSpeed
+            end)
+            if speed < 50 then
+                angle = angle + 100
+                local lead: Vector3 = moveDirection * (speed / 1.25)
+                local spin: CFrame = CFrame.Angles(math.rad(angle), 0, 0)
+                fpos(character, root, basePart, CFrame.new(0, 1.5, 0) + lead, spin)
+                waitFrame()
+                fpos(character, root, basePart, CFrame.new(0, -1.5, 0) + lead, spin)
+                waitFrame()
+                fpos(character, root, basePart, CFrame.new(2.25, 1.5, -2.25) + lead, spin)
+                waitFrame()
+                fpos(character, root, basePart, CFrame.new(-2.25, -1.5, 2.25) + lead, spin)
+                waitFrame()
+                fpos(character, root, basePart, CFrame.new(0, 1.5, 0) + moveDirection, spin)
+                waitFrame()
+                fpos(character, root, basePart, CFrame.new(0, -1.5, 0) + moveDirection, spin)
+                waitFrame()
+            else
+                local rootSpeed: number = speed
+                pcall(function(): ()
+                    if targetRoot then
+                        rootSpeed = targetRoot.Velocity.Magnitude
+                    end
+                end)
+                local downLead: number = rootSpeed / 1.25
+                fpos(character, root, basePart, CFrame.new(0, 1.5, walkSpeed), CFrame.Angles(math.rad(90), 0, 0))
+                waitFrame()
+                fpos(character, root, basePart, CFrame.new(0, -1.5, -walkSpeed), CFrame.Angles(0, 0, 0))
+                waitFrame()
+                fpos(character, root, basePart, CFrame.new(0, 1.5, walkSpeed), CFrame.Angles(math.rad(90), 0, 0))
+                waitFrame()
+                fpos(character, root, basePart, CFrame.new(0, 1.5, downLead), CFrame.Angles(math.rad(90), 0, 0))
+                waitFrame()
+                fpos(character, root, basePart, CFrame.new(0, -1.5, -downLead), CFrame.Angles(0, 0, 0))
+                waitFrame()
+                fpos(character, root, basePart, CFrame.new(0, 1.5, downLead), CFrame.Angles(math.rad(90), 0, 0))
+                waitFrame()
+                fpos(character, root, basePart, CFrame.new(0, -1.5, 0), CFrame.Angles(math.rad(90), 0, 0))
+                waitFrame()
+                fpos(character, root, basePart, CFrame.new(0, -1.5, 0), CFrame.Angles(0, 0, 0))
+                waitFrame()
+                fpos(character, root, basePart, CFrame.new(0, -1.5, 0), CFrame.Angles(math.rad(-90), 0, 0))
+                waitFrame()
+                fpos(character, root, basePart, CFrame.new(0, -1.5, 0), CFrame.Angles(0, 0, 0))
+                waitFrame()
+            end
+        until speed > 500
+            or basePart.Parent ~= targetCharacter
+            or targetPlayer.Character ~= targetCharacter
+            or targetPlayer.Parent ~= Players
+            or targetHumanoid.Sit
+            or humanoid.Health <= 0
+            or os.clock() > startedAt + timeToWait
+    end
+
+    local function createPin(root: BasePart): any
+        local ok: boolean, pin: any = pcall(function(): any
+            local bodyVelocity: any = Instance.new("BodyVelocity")
+            bodyVelocity.Name = "EpixVel"
+            bodyVelocity.Parent = root
+            bodyVelocity.Velocity = PIN_VELOCITY
+            bodyVelocity.MaxForce = PIN_FORCE
+            return bodyVelocity
+        end)
+        if ok then
+            return pin
+        end
+        return nil
+    end
+
+    local function destroyPin(pin: any): ()
+        if not pin then
+            return
+        end
+        pcall(function(): ()
+            pin:Destroy()
+        end)
+    end
+
+    -- Per-frame caller (Auto Win's Fling Sheriff). Same FPos pose, with a pin
+    -- that is cleaned up 0.5 s after the last call so the local body is never
+    -- left with an infinite-force catapult attached.
     local function flingSingleStep(
         character: Model,
         humanoid: Humanoid,
@@ -24357,30 +24467,61 @@ function Module.init(context: Runtime): any
         _savedCollide: any,
         _savedProps: any
     ): boolean
-        local _targetCharacter: Model?, targetHumanoid: Humanoid?, targetPart: BasePart? =
-            targetRootPart(targetPlayer)
-        if not targetPart or not targetPart.Parent then
+        local targetCharacter: Model?, targetHumanoid: Humanoid?, targetRoot: BasePart?, targetHead: BasePart? =
+            targetParts(targetPlayer)
+        if not targetCharacter or not targetHead and not targetRoot then
             return false
         end
         if targetHumanoid and (targetHumanoid.Health <= 0 or targetHumanoid.Sit) then
             return false
         end
+        if not targetHumanoid then
+            return false
+        end
+        local basePart: BasePart = targetRoot or targetHead :: BasePart
+        if targetRoot and targetHead then
+            if (targetRoot.Position - targetHead.Position).Magnitude > 5 then
+                basePart = targetHead
+            end
+        end
         if activity and type(activity.set) == "function" then
             activity.set("fling", true)
         end
-        -- A single pose must not leave the activity flag on forever: that would
-        -- silently disable Anti Fling and Walk Fling for the rest of the session.
+        if not stepPin then
+            stepPin = createPin(root)
+        end
+        stepPinToken += 1
+        local myToken: number = stepPinToken
         if type(task) == "table" and type(task.delay) == "function" then
             task.delay(0.5, function(): ()
-                if not flingRunning and activity and type(activity.set) == "function" then
-                    activity.set("fling", false)
+                if myToken == stepPinToken then
+                    destroyPin(stepPin)
+                    stepPin = nil
+                    if not flingRunning and activity and type(activity.set) == "function" then
+                        activity.set("fling", false)
+                    end
                 end
             end)
         end
-        stepPhase = (stepPhase + 1) % 2
         stepAngle = (stepAngle + 100) % 360
-        local verticalOffset: number = if stepPhase == 0 then 1.5 else -1.5
-        flingPose(character, root, targetPart, verticalOffset, stepAngle)
+        local speed: number = 0
+        pcall(function(): ()
+            speed = basePart.Velocity.Magnitude
+        end)
+        if speed < 50 then
+            stepPhase = (stepPhase + 1) % 6
+            local offsets: {CFrame} = {
+                CFrame.new(0, 1.5, 0),
+                CFrame.new(0, -1.5, 0),
+                CFrame.new(2.25, 1.5, -2.25),
+                CFrame.new(-2.25, -1.5, 2.25),
+                CFrame.new(0, 1.5, 0),
+                CFrame.new(0, -1.5, 0),
+            }
+            fpos(character, root, basePart, offsets[stepPhase + 1], CFrame.Angles(math.rad(stepAngle), 0, 0))
+        else
+            fpos(character, root, basePart, CFrame.new(0, 1.5, 0), CFrame.Angles(math.rad(90), 0, 0))
+        end
         return true
     end
 
@@ -24393,7 +24534,7 @@ function Module.init(context: Runtime): any
             return false
         end
         local silent: boolean = type(options) == "table" and options.silent == true
-        local maxDuration: number = (type(options) == "table" and tonumber(options.duration)) or 2.0
+        local maxDuration: number = (type(options) == "table" and tonumber(options.duration)) or 2
         local shouldStop: (() -> boolean)? = type(options) == "table"
             and type(options.shouldStop) == "function"
             and options.shouldStop
@@ -24422,148 +24563,129 @@ function Module.init(context: Runtime): any
                 return false
             end
 
-            local savedCFrame: CFrame = returnCFrame or root.CFrame
+            local targetCharacter: Model?, targetHumanoid: Humanoid?, targetRoot: BasePart?, targetHead: BasePart? =
+                targetParts(targetPlayer)
+            if not targetCharacter or not targetCharacter:FindFirstChildWhichIsA("BasePart") then
+                setFlingRunning(false)
+                if not silent then
+                    notify("No valid character of said target player. May have died.")
+                end
+                return false
+            end
+            if not targetHumanoid then
+                setFlingRunning(false)
+                if not silent then
+                    notify("the target has no humanoid")
+                end
+                return false
+            end
+
+            if root.Velocity.Magnitude < 50 then
+                lastOldPos = root.CFrame
+            end
+            local oldPos: CFrame = returnCFrame or lastOldPos or root.CFrame
+
             local savedDestroyHeight: any = workspace.FallenPartsDestroyHeight
             local camera: Camera? = workspace.CurrentCamera
-            local savedCameraSubject: any = camera and camera.CameraSubject or nil
-            local bodyVelocity: any = nil
             local touchedTarget: boolean = false
-            local reason: string = "timeout"
 
             local success: boolean, errorMessage: any = pcall(function(): ()
-                local _targetCharacter: Model?, targetHumanoid: Humanoid?, targetPart: BasePart? =
-                    targetRootPart(targetPlayer)
-                if not targetPart or not targetPart.Parent then
-                    error("the target has no character", 0)
-                end
-                if targetHumanoid and targetHumanoid.Sit then
-                    error("the target is seated", 0)
-                end
-
                 if camera then
                     pcall(function(): ()
-                        camera.CameraSubject = targetHumanoid or targetPart
+                        camera.CameraSubject = targetHead
+                            or (targetCharacter:FindFirstChildOfClass("Accessory")
+                                and targetCharacter:FindFirstChildOfClass("Accessory"):FindFirstChild("Handle"))
+                            or targetHumanoid
                     end)
                 end
-                -- The original disables the destroy layer while the character
-                -- flies through the map; it is always put back below.
+
+                -- FallenPartsDestroyHeight = 0/0 while the local body crosses the
+                -- map at 9e8 studs/s; always restored below.
                 pcall(function(): ()
                     workspace.FallenPartsDestroyHeight = 0 / 0
                 end)
 
-                local bodyVelocityInstance: any = Instance.new("BodyVelocity")
-                pcall(function(): ()
-                    bodyVelocityInstance.Name = "WurstFlingBodyVelocity"
-                    bodyVelocityInstance.Velocity = Vector3.zero
-                    bodyVelocityInstance.MaxForce = Vector3.new(9e9, 9e9, 9e9)
-                    bodyVelocityInstance.Parent = root
-                end)
-                bodyVelocity = bodyVelocityInstance
-
+                local pin: any = createPin(root)
                 pcall(function(): ()
                     humanoid:SetStateEnabled(Enum.HumanoidStateType.Seated, false)
                 end)
 
-                local startedAt: number = os.clock()
-                local angle: number = 0
-                local verticalOffset: number = 1.5
-
-                while flingRunning and os.clock() - startedAt < maxDuration do
-                    if shouldStop and shouldStop() then
-                        reason = "stopped"
-                        break
+                local basePart: BasePart? = nil
+                if targetRoot and targetHead then
+                    if (targetRoot.Position - targetHead.Position).Magnitude > 5 then
+                        basePart = targetHead
+                    else
+                        basePart = targetRoot
                     end
-                    if targetPlayer.Parent == nil then
-                        reason = "left"
-                        break
-                    end
-                    local liveCharacter: Model?, liveHumanoid: Humanoid?, liveRoot: BasePart? =
-                        getCharacterParts()
-                    if not liveCharacter or not liveHumanoid or not liveRoot then
-                        reason = "died"
-                        break
-                    end
-                    if liveRoot ~= root or liveHumanoid ~= humanoid or liveHumanoid.Health <= 0 then
-                        reason = "died"
-                        break
-                    end
-
-                    local _liveTarget: Model?, liveTargetHumanoid: Humanoid?, liveTargetPart: BasePart? =
-                        targetRootPart(targetPlayer)
-                    if not liveTargetPart or not liveTargetPart.Parent then
-                        reason = "gone"
-                        break
-                    end
-                    if liveTargetHumanoid and liveTargetHumanoid.Health <= 0 then
-                        touchedTarget = true
-                        reason = "killed"
-                        break
-                    end
-                    if liveTargetHumanoid and liveTargetHumanoid.Sit then
-                        reason = "seated"
-                        break
-                    end
-                    local targetSpeed: number = 0
-                    pcall(function(): ()
-                        targetSpeed = liveTargetPart.AssemblyLinearVelocity.Magnitude
-                    end)
-                    if targetSpeed > 500 then
-                        touchedTarget = true
-                        reason = "flung"
-                        break
-                    end
-
-                    angle = (angle + 100) % 360
-                    verticalOffset = -verticalOffset
-                    flingPose(liveCharacter, liveRoot, liveTargetPart, verticalOffset, angle)
-                    waitRenderStepped()
+                elseif targetRoot then
+                    basePart = targetRoot
+                elseif targetHead then
+                    basePart = targetHead
                 end
+                if basePart then
+                    sfBasePart(
+                        character,
+                        humanoid,
+                        root,
+                        basePart,
+                        targetCharacter,
+                        targetPlayer,
+                        targetHumanoid,
+                        targetRoot,
+                        maxDuration,
+                        shouldStop
+                    )
+                end
+
+                destroyPin(pin)
+                pcall(function(): ()
+                    humanoid:SetStateEnabled(Enum.HumanoidStateType.Seated, true)
+                end)
             end)
 
-            if bodyVelocity then
-                pcall(function(): ()
-                    bodyVelocity:Destroy()
-                end)
-                bodyVelocity = nil
-            end
             pcall(function(): ()
                 workspace.FallenPartsDestroyHeight = savedDestroyHeight
             end)
-            pcall(function(): ()
-                humanoid:SetStateEnabled(Enum.HumanoidStateType.Seated, true)
-            end)
+            if camera then
+                pcall(function(): ()
+                    camera.CameraSubject = humanoid
+                end)
+            end
 
             local finalCharacter: Model?, finalHumanoid: Humanoid?, finalRoot: BasePart? =
                 getCharacterParts()
             if finalCharacter and finalRoot and finalRoot.Parent then
-                for _ = 1, 25 do
+                local attempts: number = 0
+                repeat
+                    attempts += 1
                     pcall(function(): ()
-                        moveCharacter(finalCharacter, savedCFrame)
-                        for _, descendant: Instance in ipairs(finalCharacter:GetDescendants()) do
+                        finalRoot.CFrame = oldPos * CFrame.new(0, 0.5, 0)
+                        moveCharacter(finalCharacter, oldPos * CFrame.new(0, 0.5, 0))
+                        if finalHumanoid then
+                            pcall(function(): ()
+                                finalHumanoid:ChangeState(Enum.HumanoidStateType.GettingUp)
+                            end)
+                        end
+                        for _, descendant: Instance in ipairs(finalCharacter:GetChildren()) do
                             if descendant:IsA("BasePart") then
                                 local bodyPart: BasePart = descendant :: BasePart
                                 bodyPart.Velocity = Vector3.zero
-                                bodyPart.AssemblyLinearVelocity = Vector3.zero
-                                bodyPart.AssemblyAngularVelocity = Vector3.zero
+                                bodyPart.RotVelocity = Vector3.zero
                             end
                         end
                     end)
-                    if (finalRoot.Position - savedCFrame.Position).Magnitude < 6 then
-                        break
-                    end
-                    waitHeartbeat()
+                    waitFrame()
+                until (finalRoot.Position - oldPos.Position).Magnitude < 25 or attempts >= 60
+            end
+            local speed: number = 0
+            pcall(function(): ()
+                if targetRoot then
+                    speed = targetRoot.Velocity.Magnitude
+                elseif targetHead then
+                    speed = targetHead.Velocity.Magnitude
                 end
-            end
-            if finalHumanoid then
-                pcall(function(): ()
-                    finalHumanoid:ChangeState(Enum.HumanoidStateType.GettingUp)
-                end)
-            end
-            if camera then
-                pcall(function(): ()
-                    camera.CameraSubject = savedCameraSubject or finalHumanoid
-                end)
-            end
+            end)
+            touchedTarget = speed > 100
 
             setFlingRunning(false)
             if not Module.Initialized then
@@ -24574,14 +24696,8 @@ function Module.init(context: Runtime): any
                     notify("fling failed: " .. tostring(errorMessage))
                 elseif touchedTarget then
                     notify("fling complete: " .. targetPlayer.Name .. " went flying.")
-                elseif reason == "left" then
-                    notify("fling stopped: " .. targetPlayer.Name .. " left the game.")
-                elseif reason == "gone" then
-                    notify("fling stopped: the target character disappeared.")
-                elseif reason == "died" then
-                    notify("fling stopped: your character died.")
-                elseif reason == "seated" then
-                    notify("fling stopped: target is seated.")
+                else
+                    notify("fling finished on " .. targetPlayer.Name .. ".")
                 end
             end
             return touchedTarget
