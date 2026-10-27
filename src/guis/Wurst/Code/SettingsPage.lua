@@ -51,6 +51,10 @@ function Module.init(context: any): any
     local RUNTIME_SAFETY_SOURCE_URL: any = host.RUNTIME_SAFETY_SOURCE_URL
     local RUNTIME_COMPATIBILITY_MARKER: any = host.RUNTIME_COMPATIBILITY_MARKER
     local SOURCE_STAMP: any = host.SOURCE_STAMP
+    local BUILD_LABEL: any = host.BUILD_LABEL
+    local RUNTIME_BRANCH: any = host.RUNTIME_BRANCH
+    local CANONICAL_BRANCH: any = host.CANONICAL_BRANCH
+    local purgeLegacyCache: any = host.purgeLegacyCache
 
     local addToggleOption: any = host.addToggleOption
     local addNumberOption: any = host.addNumberOption
@@ -1757,6 +1761,11 @@ function Module.init(context: any): any
         end
         reinjectBusy = true
         setReinjectLabel("Downloading…")
+        -- Every reinject starts from an empty cache: a file written by another
+        -- build can never be mixed into the tree that is about to run.
+        if type(purgeLegacyCache) == "function" then
+            pcall(purgeLegacyCache, true)
+        end
         local sourceUrls: {string} = {
             REPOSITORY_RAW_BASE .. "src/Wurst.lua",
             RUNTIME_SAFETY_SOURCE_URL,
@@ -1765,22 +1774,42 @@ function Module.init(context: any): any
         local downloaded: boolean = false
         local downloadFailures: {string} = {}
         for _, candidateUrl: string in ipairs(sourceUrls) do
+            -- The time query defeats every intermediate cache, so "reinject"
+            -- really means "fetch the branch tip right now".
             local requestUrl: string = candidateUrl
-                .. "?reinject=v3&v="
+                .. "?reinject=v4&t="
+                .. tostring(os.time())
+                .. "&v="
                 .. SOURCE_STAMP
             local requestOk: boolean, bodyOrError: any = pcall(function(): string
                 return (game :: any):HttpGet(requestUrl, true)
             end)
+            -- A loader that declares a different branch is an OLD loader: it
+            -- would bootstrap another tree and report another version. Refuse
+            -- it instead of executing it.
+            local declaredBranch: string? = type(bodyOrError) == "string"
+                and string.match(bodyOrError, 'local RUNTIME_BRANCH: string = "([^"]+)"')
+                or nil
+            local branchOk: boolean = declaredBranch == nil
+                and type(bodyOrError) == "string"
+                and bodyOrError:find(tostring(RUNTIME_BRANCH or ""), 1, true) ~= nil
+                or declaredBranch == RUNTIME_BRANCH
             local current: boolean = requestOk
                 and type(bodyOrError) == "string"
                 and #bodyOrError >= 1024
                 and bodyOrError:find(RUNTIME_COMPATIBILITY_MARKER, 1, true) ~= nil
+                and branchOk
             if current then
                 downloaded = true
                 sourceOrError = bodyOrError
                 break
             end
-            table.insert(downloadFailures, tostring(bodyOrError))
+            if requestOk and type(bodyOrError) == "string" and not branchOk then
+                table.insert(downloadFailures,
+                    "stale loader for branch " .. tostring(declaredBranch))
+            else
+                table.insert(downloadFailures, tostring(bodyOrError))
+            end
         end
         if not downloaded then
             reinjectBusy = false
@@ -1821,6 +1850,26 @@ function Module.init(context: any): any
                 setReinjectLabel("Reinject latest")
                 warn("[Wurst] Reinject runtime: " .. tostring(executionError))
             end
+        end)
+    end
+
+    local cacheHandle: any = nil
+    local function runClearCache(): ()
+        if cacheHandle then
+            cacheHandle.SetLabel("Clearing…")
+        end
+        task.defer(function(): ()
+            local removed: number = 0
+            if type(purgeLegacyCache) == "function" then
+                local ok: boolean, count: any = pcall(purgeLegacyCache, true)
+                if ok and type(count) == "number" then
+                    removed = count
+                end
+            end
+            if cacheHandle then
+                cacheHandle.SetLabel("Clear cache")
+            end
+            notify(string.format("cache cleared · %d file(s)", removed))
         end)
     end
 
@@ -1884,6 +1933,9 @@ function Module.init(context: any): any
     reinjectHandle = state.wurstOptions.RegisterAction(
         "Reinject", "Reinject latest", runReinject
     )
+    cacheHandle = state.wurstOptions.RegisterAction(
+        "ClearCache", "Clear cache", runClearCache
+    )
     destructHandle = state.wurstOptions.RegisterAction(
         "Destruct", "Destruct", runDestruct
     )
@@ -1901,7 +1953,7 @@ function Module.init(context: any): any
             position = Vector2.new(screen.X - WINDOW_WIDTH * 2 - 32, 220),
             anchor = uiRecord and uiRecord.window,
             settingsSized = true,
-            packRows = {{"Reinject latest", nil, 26}},
+            packRows = {{"Reinject latest", nil, 26}, {"Clear cache", nil, 26}},
         })
         refreshActionRows()
         raiseOpen(optionsRecord)

@@ -4,20 +4,43 @@
 > reglas del usuario, y los errores que ya se pagaron una vez. Si algo aquí
 > contradice lo que crees, gana este documento (y los datos de calibración).
 >
-> **Estado al escribir esto:** rama `arena/83897e25-arandommenu`, build
-> **`v144-20261027-touch-momentum-farm-collect`**.
+> **Estado al escribir esto:** rama canónica `arena/83897e25-arandommenu`,
+> build **`v145-20261027-canonical-loader-cache-purge`**.
 > El usuario se comunica en español. Respóndele en español.
 
 ---
 
-## 0. Estado operativo actual — v144, Touch Fling y cobro de Auto Farm
+## 0. Estado operativo actual — v145, loader/caché · v144 Touch/Farm
 
-### 0.0 Lo más reciente: v144 (leer antes que 0.1–0.13)
+### 0.0 Lo más reciente: v145 (loader/caché) y v144 (Touch/Farm)
 
-v144 existe porque el usuario reportó, sobre v143: **Below/Under no funciona
+**v145 — un solo loader, cero caché vieja, versión real.** El usuario reportó que
+el menú mostraba una versión vieja y que la caché seguía apuntando a ella.
+Detalle en `docs/FIXES-v145.md`.
+
+- `PRODUCT.version` se deriva de `SOURCE_STAMP` (`BUILD_LABEL`); el literal
+  `"0.1 Beta"` fue eliminado del runtime. El chip del header y
+  `UI Settings · vNNN` ya no pueden contradecir al build.
+- Identidad de caché `stamp + rama + layout` (`Wurst/.stamp`, `.branch`,
+  `.layout`). `state.purgeLegacyCache()` corre **antes** de leer la caché en cada
+  inyección y borra fuentes/assets/restos de cualquier build anterior; nunca toca
+  `Wurst/Profiles`.
+- `CANONICAL_BRANCH` es la única rama del repo; `getgenv().WURST_BRANCH` sigue
+  funcionando pero pasa por `normalizeBranchName` (rechaza basura, `..`, rutas
+  largas). Cambiar de rama invalida la caché automáticamente.
+- *Reinject latest* limpia caché, usa `?t=os.time()` y **rechaza** un loader
+  descargado que declare otra rama (`stale loader for branch X`). Nuevo botón
+  **Clear cache** en Wurst Options.
+- Eliminados del repo los árboles muertos `src/gui/`, `src/library/` y
+  `src/Profile/` (13 MB, 145+ archivos) más `tools/process_manga_assets.py`. El
+  bundle bajó de 90 a 84 archivos. La metadata de PlaceId vive solo en
+  `Manifest.lua` (+ fallback).
+
+**v144 — Touch Fling y cobro de Auto Farm.** Detalle completo en
+`docs/FIXES-v144.md`. El usuario reportó, sobre v143: **Below/Under no funciona
 correctamente**, **faltan checks coherentes de lobby/muerte**, **no agarra
 monedas** y **Touch Fling hace un movimiento circular en vez de lanzar al
-tocado**, más CPU alta en MM2. Detalle completo en `docs/FIXES-v144.md`.
+tocado**, más CPU alta en MM2.
 
 | Reporte | Causa encontrada en el código | Cambio v144 |
 | --- | --- | --- |
@@ -32,7 +55,7 @@ Sigue **sin** aceptación live: nada de esto demuestra que el servidor acepte el
 knockback, que las monedas se cobren ni que los FPS suban. Ver §0.8.
 
 Esta sección es la actualización más reciente. Cuando una cifra o una descripción
-histórica de otra sección difiera de ésta, usa el estado v144 y comprueba el
+histórica de otra sección difiera de ésta, usa el estado v145 y comprueba el
 archivo actual antes de editar. Las decisiones de diseño anteriores siguen
 siendo útiles, pero una versión vieja citada en un ejemplo no es el runtime que
 se entrega ahora.
@@ -44,13 +67,15 @@ se entrega ahora.
 | Fecha local de esta actualización | `2026-10-27` |
 | Repositorio | `XzAngel19/ARandomMenu` |
 | Rama activa y única para esta sesión | `arena/83897e25-arandommenu` |
-| Runtime v143 previo | `5b4ad20672d9501ca06ecce14380b91e9cf6d459` |
-| `SOURCE_STAMP` | `v144-20261027-touch-momentum-farm-collect` |
-| Bundle | `src/libraries/bundle.lua`, generado con el mismo stamp, 90 archivos |
+| `CANONICAL_BRANCH` (única del repo) | `arena/83897e25-arandommenu` |
+| `SOURCE_STAMP` | `v145-20261027-canonical-loader-cache-purge` |
+| `BUILD_LABEL` visible | `v145` (derivado del stamp) |
+| Bundle | `src/libraries/bundle.lua`, mismo stamp, **84 archivos** |
+| Identidad de caché | `Wurst/.stamp` + `Wurst/.branch` + `Wurst/.layout` |
 | Loader de `README.md` | Apunta a `refs/heads/arena/83897e25-arandommenu/src/Wurst.lua` |
 | Toolchain | Luau `0.739.0`, vendored en `tools/luau/vendor` |
-| Validación final de v144 | 92 fuentes, 65 suites, boot `failures=0`, 110 call sites, menú 50/49 |
-| Aceptación live de v144 | **Pendiente. No afirmar que Touch, knockback, monedas, lag o FPS ya están resueltos.** |
+| Validación final de v145 | 86 fuentes, 66 suites, boot `failures=0`, 110 call sites, menú 50/49 |
+| Aceptación live de v145 | **Pendiente. No afirmar que Touch, knockback, monedas, lag o FPS ya están resueltos.** |
 
 - El commit `5b4ad20` se publicó con push normal y el remoto coincidió con
   `5b4ad20672d9501ca06ecce14380b91e9cf6d459`. Esta actualización de `RESUME.md`
@@ -350,8 +375,8 @@ La captura histórica del usuario mostraba aproximadamente Physics `12,4 ms /
 44 %`, Render `1,0 ms / 3 %`, Network receive `0,5 ms / 1 %` y unos 35 FPS. Es
 una pista de una sesión, no un benchmark A/B de Lua ni una medición de v143.
 
-Para aceptar v144 en vivo, usar la misma cuenta/config cuando sea posible y
-anotar el watermark `UI Settings · v144`:
+Para aceptar v145 en vivo, usar la misma cuenta/config cuando sea posible y
+anotar el watermark `UI Settings · v145`:
 
 1. **Boot hostil:** inyectar con una configuración que antes tuviera Auto Farm,
    Touch o Auto Fling ON. Esperado: los cuatro estados de sesión permanecen OFF;
@@ -380,8 +405,9 @@ anotar el watermark `UI Settings · v144`:
    dueño incorrecto, registrar el módulo y la secuencia exacta.
 
 Mientras el usuario no confirme estas pruebas, el mensaje correcto es:
-**«v144 cambia el mecanismo de Touch y el cobro de Auto Farm y lo valida
-offline; eficacia y FPS pendientes en vivo»**, no «Touch y lag solucionados».
+**«v145 deja un único loader y elimina cualquier caché vieja; v144 cambia el
+mecanismo de Touch y el cobro de Auto Farm y lo valida offline — eficacia y FPS
+siguen pendientes en vivo»**, no «Touch y lag solucionados».
 
 ### 0.9 Mapa de archivos que importan para continuar
 
@@ -402,6 +428,9 @@ offline; eficacia y FPS pendientes en vivo»**, no «Touch y lag solucionados».
 | `src/libraries/bundle.lua` | Artefacto generado; nunca editarlo como fuente independiente. |
 | `tools/test_startup_restore.py` | Regresión de boot hostil, sesión y scheduler perezoso. |
 | `docs/FIXES-v144.md` | Qué cambió en v144 y por qué (Touch, cobro, guards, CPU). |
+| `docs/FIXES-v145.md` | Loader canónico, identidad de caché, versión derivada y árboles legacy borrados. |
+| `tools/test_loader_cache.py` | Identidad de caché y purga reales contra un filesystem simulado. |
+| `README.md` | Único loader canónico y cómo cambiar de rama sin romper nada. |
 | `src/games/MM2/Render/CoinEsp.lua` | Provider de pickups compartido; cache ≤ 1 s e `state.mm2InvalidateCoinPickups`. |
 | `tools/test_fling_physics.py` | Pulsos, contacto, muerte, Touch, Noclip y cleanup. |
 | `tools/test_mm2_auto_farm_dynamics.py` | Cesión de Farm, constraints, rondas y acciones terminales. |
@@ -519,7 +548,7 @@ implementaciones ni como sustituto de una sesión live:
   1. Edita en `src/…`, nunca directamente en `src/libraries/bundle.lua`.
   2. Sube `SOURCE_STAMP` en `src/Wurst.lua` (`vNNN-AAAAMMDD-descripcion`).
   3. `python3 tools/build_bundle.py --stamp <el mismo stamp>`
-  4. `bash tools/validate.sh` — debe terminar VERDE. En v144 son 92 fuentes,
+  4. `bash tools/validate.sh` — debe terminar VERDE. En v145 son 86 fuentes,
      65 suites, boot `failures=0`, auditoría de menú 50/49 tarjetas y 109 call
      sites; si el inventario cambia, actualiza también los contratos.
   5. Commit + push **normales** a `arena/2fb9a46a-arandommenu`. Sin force-push,
@@ -632,7 +661,7 @@ src/games/<Game>/
   Blatant/ o Combat/        -- ataques y módulos de combate del juego
   Other/AutoFarm.lua        -- utilidad de farmeo, si existe
   Render/                   -- presentación, nunca otra lógica de equipos
-src/Profile/<PlaceId>.lua   -- sección/perfil del PlaceId
+src/libraries/Manifest.lua  -- ÚNICA fuente de rutas, cards y gamePlaces
 src/Wurst.lua               -- fingerprint, loader, registro y cleanup global
 ```
 
@@ -683,12 +712,14 @@ opción dentro de Speed mediante la tarjeta que ya existe.
   AutoFarm. Un archivo como Sprint necesita aparecer ahí aunque no añada una
   tarjeta propia. Si sólo es un helper sin `init`/`destroy`, debe cargarlo su
   dueño mediante la ruta existente, no fingir que es un módulo autónomo.
-- **Juego o PlaceId nuevo:** un archivo `src/Profile/<PlaceId>.lua` sólo declara
-  metadata y secciones; **no registra gameplay por sí solo**. Hay que revisar
-  el mapa `GAME_MODULES`, la rama de `loadGameModule`, `GAME_CHECK`, la llamada
-  `registerPlaceModule`, cleanup y, cuando proceda, fingerprint. Para añadir
-  otro PlaceId de un juego ya soportado, conserva el mismo module key y comprueba
-  también su perfil; no clones el árbol completo.
+- **Juego o PlaceId nuevo:** añade la entrada en `gamePlaces` de
+  `src/libraries/Manifest.lua` **y** en el `fallbackManifest` de `src/Wurst.lua`
+  (misma tripleta `placeId`/`module`/`displayName`); después revisa
+  `GAME_MODULES`, la rama de `loadGameModule`, `GAME_CHECK`, la llamada
+  `registerPlaceModule`, cleanup y, cuando proceda, fingerprint. Para añadir otro
+  PlaceId de un juego ya soportado, conserva el mismo module key; no clones el
+  árbol completo. El antiguo `src/Profile/<PlaceId>.lua` fue retirado en v145:
+  si lo reintroducen, habrá dos fuentes de verdad.
 - **Tarjeta:** dentro de un módulo ya cargado,
   `src/guis/Wurst/Code/Cards.lua:createUniversalFeature` la inserta en el
   `registry` elegido y en `allFeatures`, además de conectar búsqueda, UI y
@@ -1394,6 +1425,10 @@ La validación offline actual tiene 65 suites y boot limpio; los items históric
 deben reevaluarse contra el módulo vigente, no asumir que una versión citada es
 la implementación actual:
 
+- **v145 loader/caché:** inyectar dos veces con el mismo archivo, cambiar de
+  rama con `getgenv().WURST_BRANCH`, pulsar *Clear cache* y *Reinject latest*.
+  Esperado: no reaparece ninguna versión anterior, el chip muestra `v145` y los
+  perfiles de `Wurst/Profiles` sobreviven.
 - **v144 lifecycle:** boot con configs antiguas, restauración después de todas
   las secciones, ausencia de movimiento accidental y A/B de Timing/FPS. El
   scheduler perezoso está probado estructuralmente, no medido en una partida.
@@ -1441,9 +1476,10 @@ la implementación actual:
   documentales no requieren stamp, pero sí actualizar este handoff con precisión.
 
 ---
-*Última actualización: 2026-10-27 · runtime v144, Touch Fling con impulso al
-objetivo (sin giro local ni estado Physics), Auto Farm con contexto único de
-ronda y cobro físico acotado, resolución perezosa de `firetouchinterest`, cache
-de pickups ≤ 1/s y presupuesto de CPU por frame documentados. Al publicar una
-versión nueva o recibir aceptación live, actualiza la línea de estado y todas
-las secciones afectadas.*
+*Última actualización: 2026-10-27 · runtime v145, loader canónico con override
+validado, identidad de caché stamp+rama+layout con purga antes de leer, versión
+derivada del stamp, reinject que rechaza loaders de otra rama, botón Clear cache
+y retirada de los árboles legacy (`src/gui`, `src/library`, `src/Profile`).
+v144 sigue siendo el cambio de mecanismo de Touch Fling y del cobro de Auto
+Farm. Al publicar una versión nueva o recibir aceptación live, actualiza la
+línea de estado y todas las secciones afectadas.*

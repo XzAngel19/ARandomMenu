@@ -197,24 +197,63 @@ local function computeLayoutMetrics(
     }
 end
 
-local RUNTIME_BRANCH: string = "arena/83897e25-arandommenu"
+-- The only branch this build ships from. Everything (bundle, sources, assets,
+-- reinject, teleport persistence) is fetched from RUNTIME_BRANCH, which is this
+-- value unless the user explicitly overrides it.
+local CANONICAL_BRANCH: string = "arena/83897e25-arandommenu"
+local RUNTIME_BRANCH: string = CANONICAL_BRANCH
+local BRANCH_SOURCE: string = "canonical"
+
+-- Accepting any string here used to let a leftover WURST_BRANCH (or a typo)
+-- silently load another tree while the menu still looked like this build.
+local function normalizeBranchName(value: any): string?
+    if type(value) ~= "string" then
+        return nil
+    end
+    local cleaned: string = value
+    cleaned = string.gsub(cleaned, "^%s+", "")
+    cleaned = string.gsub(cleaned, "%s+$", "")
+    cleaned = string.gsub(cleaned, '^"(.*)"$', "%1")
+    cleaned = string.gsub(cleaned, "^refs/heads/", "")
+    if cleaned == "" or #cleaned > 120 then
+        return nil
+    end
+    if string.find(cleaned, "^[%w%-%._/]+$") == nil then
+        return nil
+    end
+    if string.find(cleaned, "%.%.") or string.sub(cleaned, 1, 1) == "/" then
+        return nil
+    end
+    return cleaned
+end
+
 do
     local override: any = nil
     local okGenv, genv = pcall(function()
         return (getgenv :: any)()
     end)
-    if okGenv and type(genv) == "table" and type(genv.WURST_BRANCH) == "string" and genv.WURST_BRANCH ~= "" then
+    if okGenv and type(genv) == "table" then
         override = genv.WURST_BRANCH
-    elseif type(_G) == "table" and type((_G :: any).WURST_BRANCH) == "string" and (_G :: any).WURST_BRANCH ~= "" then
-        override = (_G :: any).WURST_BRANCH
+        if override == nil and type(_G) == "table" then
+            override = (_G :: any).WURST_BRANCH
+        end
     else
-        local fenv: any = (getfenv() :: any)
-        if type(fenv) == "table" and type(fenv.WURST_BRANCH) == "string" and fenv.WURST_BRANCH ~= "" then
-            override = fenv.WURST_BRANCH
+        if type(_G) == "table" then
+            override = (_G :: any).WURST_BRANCH
+        end
+        if override == nil then
+            local fenv: any = (getfenv() :: any)
+            if type(fenv) == "table" then
+                override = fenv.WURST_BRANCH
+            end
         end
     end
-    if type(override) == "string" and override ~= "" then
-        RUNTIME_BRANCH = (override:gsub("^refs/heads/", ""))
+    if override ~= nil and override ~= false then
+        local requested: string? = normalizeBranchName(override)
+        if requested then
+            RUNTIME_BRANCH = requested
+            BRANCH_SOURCE = "override"
+        end
     end
 end
 local RUNTIME_RAW_BASE: string =
@@ -222,7 +261,14 @@ local RUNTIME_RAW_BASE: string =
         .. RUNTIME_BRANCH
         .. "/"
 
-local SOURCE_STAMP: string = "v144-20261027-touch-momentum-farm-collect"
+local SOURCE_STAMP: string = "v145-20261027-canonical-loader-cache-purge"
+-- What the menu shows. It is derived from the stamp, never a hardcoded label:
+-- a build cannot display a version it is not.
+local BUILD_LABEL: string = string.match(SOURCE_STAMP, "^v%d+") or SOURCE_STAMP
+-- Bump when the on-disk cache layout changes; an older layout is deleted whole.
+local CACHE_LAYOUT: string = "2"
+local CACHE_ROOT: string = "Wurst"
+local CACHE_PROTECTED: string = "Wurst/Profiles"
 
 local BOOT_STARTED_AT: number = os.clock()
 local BOOT_FINGERPRINT_SECONDS: number = 0
@@ -230,7 +276,7 @@ local PENDING_FINGERPRINT: boolean = false
 
 local PRODUCT = {
     name = "Wurst",
-    version = "0.1 Beta",
+    version = BUILD_LABEL,
 
     logPrefix = "Wurst",
     guiName = "Wurst",
@@ -2072,6 +2118,18 @@ end
 
 state.sweepStaleAssets = function(): number
     return AssetManager.sweepStaleCache()
+end
+
+-- The asset file names the current build expects. purgeLegacyCache keeps only
+-- these, so an asset cached by an older build cannot linger on disk either.
+do
+    local names: {[string]: boolean} = {}
+    for _, definition: any in pairs(AssetManager.manifest) do
+        if type(definition) == "table" and type(definition.fileName) == "string" then
+            names[definition.fileName] = true
+        end
+    end
+    state.assetManifestNames = names
 end
 
 state.applyAssetImage = function(
@@ -5135,6 +5193,16 @@ local function createGameModuleEnvironment(
         RUNTIME_SAFETY_SOURCE_URL = RUNTIME_SAFETY_SOURCE_URL,
         RUNTIME_COMPATIBILITY_MARKER = RUNTIME_COMPATIBILITY_MARKER,
         SOURCE_STAMP = SOURCE_STAMP,
+        BUILD_LABEL = BUILD_LABEL,
+        RUNTIME_BRANCH = RUNTIME_BRANCH,
+        CANONICAL_BRANCH = CANONICAL_BRANCH,
+        BRANCH_SOURCE = BRANCH_SOURCE,
+        purgeLegacyCache = function(force: boolean?): number
+            return state.purgeLegacyCache(force)
+        end,
+        cacheIdentityMatches = function(): boolean
+            return state.cacheIdentityMatches()
+        end,
 
         TEXT_BASE_MULTIPLIER = TEXT_BASE_MULTIPLIER,
         TEXT_SCALE_MINIMUM = TEXT_SCALE_MINIMUM,
@@ -5524,12 +5592,125 @@ state.ensureSourceFolders = function(path: string): ()
     if type(environment.makefolder) ~= "function" then
         return
     end
-    pcall(environment.makefolder, "Wurst")
-    local cursor: string = "Wurst"
+    pcall(environment.makefolder, CACHE_ROOT)
+    local cursor: string = CACHE_ROOT
     for segment: string in string.gmatch(path, "([^/]+)/") do
         cursor = cursor .. "/" .. segment
         pcall(environment.makefolder, cursor)
     end
+end
+
+-- Cache identity. A cached tree is only reused when it was written by THIS
+-- stamp, THIS branch and THIS cache layout. Any other combination is treated
+-- as a legacy build: it is deleted, never executed and never reported as
+-- "current". This is what keeps an old version from surviving between
+-- injections or after switching branches.
+state.cacheIdentityMatches = function(): boolean
+    local environment: any = getfenv()
+    local readFile: any = environment.readfile
+    if type(readFile) ~= "function" then
+        return false
+    end
+    local function marker(path: string): string?
+        local ok: boolean, body: any = pcall(readFile, path)
+        if not ok or type(body) ~= "string" then
+            return nil
+        end
+        return (string.gsub(body, "[\r\n%s]+$", ""))
+    end
+    return marker(CACHE_ROOT .. "/.stamp") == SOURCE_STAMP
+        and marker(CACHE_ROOT .. "/.branch") == RUNTIME_BRANCH
+        and marker(CACHE_ROOT .. "/.layout") == CACHE_LAYOUT
+end
+
+state.writeCacheIdentity = function(): ()
+    local environment: any = getfenv()
+    local writeFile: any = environment.writefile
+    local makeFolder: any = environment.makefolder
+    if type(writeFile) ~= "function" then
+        return
+    end
+    pcall(function(): ()
+        if type(makeFolder) == "function" then
+            makeFolder(CACHE_ROOT)
+        end
+        writeFile(CACHE_ROOT .. "/.stamp", SOURCE_STAMP)
+        writeFile(CACHE_ROOT .. "/.branch", RUNTIME_BRANCH)
+        writeFile(CACHE_ROOT .. "/.layout", CACHE_LAYOUT)
+    end)
+end
+
+-- Deletes every cached file that is not part of the current build. User state
+-- (Wurst/Profiles) is never touched. `force` also drops the current stamp's
+-- cached sources, which is what "Clear cache" uses.
+state.purgeLegacyCache = function(force: boolean?): number
+    local environment: any = getfenv()
+    local listFiles: any = environment.listfiles
+    local deleteFile: any = environment.delfile
+    local isFolder: any = environment.isfolder
+    if type(listFiles) ~= "function" or type(deleteFile) ~= "function" then
+        return 0
+    end
+    local keepIdentity: boolean = state.cacheIdentityMatches() and force ~= true
+    local bundled: any = state.boot and state.boot.bundle
+    local expectedAssets: {[string]: boolean} = {}
+    if state.assetManifestNames then
+        expectedAssets = state.assetManifestNames
+    end
+    local removed: number = 0
+
+    local function isProtected(entry: string): boolean
+        local normalized: string = string.lower(
+            (string.gsub(tostring(entry), "\\", "/"))
+        )
+        return string.find(normalized, "wurst/profiles", 1, true) ~= nil
+    end
+
+    local function relativeOf(entry: string): string
+        return (string.gsub(tostring(entry), "\\", "/"):gsub("^.-Wurst/", ""))
+    end
+
+    local function sweepFolder(folder: string): ()
+        local listed: boolean, entries: any = pcall(listFiles, folder)
+        if not listed or type(entries) ~= "table" then
+            return
+        end
+        for _, path: any in ipairs(entries) do
+            local entry: string = tostring(path)
+            if not isProtected(entry) then
+                local isDirectory: boolean = false
+                if type(isFolder) == "function" then
+                    local checked: boolean, verdict: any = pcall(isFolder, entry)
+                    isDirectory = checked and verdict == true
+                end
+                if isDirectory then
+                    sweepFolder(entry)
+                else
+                    local relative: string = relativeOf(entry)
+                    local keep: boolean = false
+                    if relative == ".stamp" or relative == ".branch"
+                        or relative == ".layout" then
+                        keep = keepIdentity
+                    elseif string.sub(relative, 1, 4) == "src/" then
+                        keep = keepIdentity and type(bundled) == "table"
+                            and type(bundled[relative]) == "string"
+                    elseif string.sub(relative, 1, 7) == "Assets/" then
+                        local fileName: string = string.match(relative, "([^/]+)$")
+                            or relative
+                        keep = keepIdentity and expectedAssets[fileName] == true
+                    end
+                    if not keep then
+                        if pcall(deleteFile, entry) then
+                            removed += 1
+                        end
+                    end
+                end
+            end
+        end
+    end
+
+    sweepFolder(CACHE_ROOT)
+    return removed
 end
 
 state.readCachedSource = function(path: string): string?
@@ -5539,18 +5720,10 @@ state.readCachedSource = function(path: string): string?
     if type(readFile) ~= "function" then
         return nil
     end
-    local stampFile: string = "Wurst/.stamp"
-    if type(isFile) == "function" then
-        local stampOk: boolean, stampExists: any = pcall(isFile, stampFile)
-        if not stampOk or not stampExists then
-            return nil
-        end
-    end
-    local stampOk: boolean, stampBody: any = pcall(readFile, stampFile)
-    if not stampOk or stampBody ~= SOURCE_STAMP then
+    if not state.cacheIdentityMatches() then
         return nil
     end
-    local localPath: string = "Wurst/" .. path
+    local localPath: string = CACHE_ROOT .. "/" .. path
     if type(isFile) == "function" then
         local fileOk: boolean, exists: any = pcall(isFile, localPath)
         if not fileOk or not exists then
@@ -5574,53 +5747,14 @@ state.writeCachedSource = function(path: string, source: string): ()
         return
     end
     state.ensureSourceFolders(path)
-    pcall(writeFile, "Wurst/" .. path, source)
-    pcall(writeFile, "Wurst/.stamp", SOURCE_STAMP)
+    pcall(writeFile, CACHE_ROOT .. "/" .. path, source)
+    state.writeCacheIdentity()
 end
 
+-- Kept for compatibility: the boot path now calls purgeLegacyCache, which
+-- covers sources, assets and legacy leftovers in one pass.
 state.sweepStaleSources = function(): number
-    local environment: any = getfenv()
-    local listFiles: any = environment.listfiles
-    local deleteFile: any = environment.delfile
-    local isFolder: any = environment.isfolder
-    if type(listFiles) ~= "function" or type(deleteFile) ~= "function" then
-        return 0
-    end
-    local bundle: any = state.boot.bundle
-    if type(bundle) ~= "table" or next(bundle) == nil then
-        return 0
-    end
-    local removed: number = 0
-    local function sweep(folder: string): ()
-        local listed: boolean, entries: any = pcall(listFiles, folder)
-        if not listed or type(entries) ~= "table" then
-            return
-        end
-        for _, path: any in ipairs(entries) do
-            local entry: string = tostring(path)
-            local isDirectory: boolean = false
-            if type(isFolder) == "function" then
-                local checked: boolean, verdict: any = pcall(isFolder, entry)
-                isDirectory = checked and verdict == true
-            end
-            if isDirectory then
-                sweep(entry)
-            else
-                local relative: string = entry:gsub("\\", "/")
-                    :gsub("^.-Wurst/", "")
-
-                if relative ~= ".stamp"
-                    and string.sub(relative, 1, 4) == "src/"
-                    and bundle[relative] == nil then
-                    if pcall(deleteFile, entry) then
-                        removed += 1
-                    end
-                end
-            end
-        end
-    end
-    sweep("Wurst")
-    return removed
+    return state.purgeLegacyCache(false)
 end
 
 state.fetchRepositorySource = function(path: string): (string?, string?)
@@ -6113,11 +6247,24 @@ local fallbackManifest: any = {
 }
 
 local bundleAt: number = os.clock()
+-- The cache is inspected BEFORE anything can be read from it: a tree written
+-- by another stamp, another branch or the previous cache layout is deleted
+-- here, so no boot can run -- or report -- an old build from disk.
+local cacheWasCurrent: boolean = state.cacheIdentityMatches()
+local purgedLegacy: number = state.purgeLegacyCache(false)
+if purgedLegacy > 0 then
+    print("[" .. PRODUCT.logPrefix .. ":Cache] removed "
+        .. tostring(purgedLegacy)
+        .. " file(s) from a previous build"
+        .. if cacheWasCurrent then "" else " (cache rebuilt for "
+            .. SOURCE_STAMP .. ")")
+end
 local packed: any, packedError: string? = state.fetchRepositoryChunk("src/libraries/bundle.lua")
 if type(packed) == "table"
     and packed.stamp == SOURCE_STAMP
     and type(packed.files) == "table" then
     state.boot.bundle = packed.files
+    state.writeCacheIdentity()
     state.logBootstrap("Bundle accepted · stamp=" .. SOURCE_STAMP)
 
     task.spawn(function(): ()

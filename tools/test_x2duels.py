@@ -258,11 +258,20 @@ def run_integration_contracts() -> None:
     if compiled.returncode:
         raise SystemExit(compiled.stdout + compiled.stderr)
 
+    # The legacy src/Profile/<PlaceId>.lua tree was retired: place metadata now
+    # lives in exactly one place, the manifest/fallback gamePlaces tables. Both
+    # X2 place ids must still be described there, with the same module key.
+    manifest = (ROOT / "src" / "libraries" / "Manifest.lua").read_text(encoding="utf-8")
     for place_id in (92876937625630, 135856908115931):
-        profile = ROOT / "src" / "Profile" / f"{place_id}.lua"
-        text = profile.read_text(encoding="utf-8")
-        require(text, 'key = "X2Duels"', f"profile {place_id}")
-        require(text, '"MVSD"', f"existing MVS section {place_id}")
+        require(manifest, f"placeId = {place_id}, module = \"X2Duels\"",
+                f"manifest place {place_id}")
+    fallback = (ROOT / "src" / "Wurst.lua").read_text(encoding="utf-8")
+    for place_id in (92876937625630, 135856908115931):
+        require(fallback, f"placeId = {place_id}, module = \"X2Duels\"",
+                f"fallback manifest place {place_id}")
+    assert not (ROOT / "src" / "Profile").exists(), (
+        "the retired src/Profile tree must not come back"
+    )
     print("X2Duels architecture, MM2 structure, farm, TriggerBot and decompiler contracts: PASS")
 
 def run_bundle_boot() -> None:
