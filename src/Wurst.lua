@@ -1,7 +1,7 @@
 local RUNTIME_COMPATIBILITY_MARKER: string =
     "Initialization error — check executor console"
 local RUNTIME_SAFETY_SOURCE_URL: string =
-    "https://raw.githubusercontent.com/XzAngel19/ARandomMenu/refs/heads/arena/2fb9a46a-arandommenu/src/Wurst.lua"
+    "https://raw.githubusercontent.com/XzAngel19/ARandomMenu/refs/heads/arena/552423df-arandommenu/src/Wurst.lua"
 
 local DEFAULT_FEATURE_CATEGORY: string = "Utilities"
 
@@ -197,7 +197,7 @@ local function computeLayoutMetrics(
     }
 end
 
-local RUNTIME_BRANCH: string = "arena/2fb9a46a-arandommenu"
+local RUNTIME_BRANCH: string = "arena/552423df-arandommenu"
 do
     local override: any = nil
     local okGenv, genv = pcall(function()

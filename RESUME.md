@@ -16,6 +16,9 @@
 > no se afirma que la recogida o el knockback funcionen en servidor live.
 
 - `SOURCE_STAMP`: `v144-20261026-autofarm-touch-performance`.
+- Loader, runtime fetch default, and recovery URL now target this session branch
+  `arena/552423df-arandommenu`; README explicitly sets `getgenv().WURST_BRANCH`
+  before loading to prevent a stale branch override from fetching older modules.
 - Auto Farm conserva el guard estricto: personaje vivo + ronda activa + mapa
   cargado antes de mover, tocar monedas o ejecutar acciones terminales. Pruebas
   dinámicas cubren muerte, lobby y ronda terminada.
