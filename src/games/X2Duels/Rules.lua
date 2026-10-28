@@ -316,7 +316,7 @@ local LOCAL_WIN_FLAGS: {[string]: boolean} = {
 -- local page's Data.Outcome. Draw/Forfeit/Cancelled are not wins or losses.
 local function matchResultOutcome(arguments: {any}): string?
     local pages: any = arguments[2]
-    if type(arguments[1]) ~= "string" or type(pages) ~= "table" then
+    if type(arguments[1]) ~= "string" or arguments[1] == "" or type(pages) ~= "table" then
         return nil
     end
     for _, page: any in ipairs(pages) do

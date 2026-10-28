@@ -128,6 +128,7 @@ local function resultPage(outcome)
     return {"match-guid", {{Page = "RoundInfo", Data = {Outcome = outcome}}}}
 end
 check("real result Win", rules.matchResultOutcome(resultPage("Win")), "Win")
+check("empty match ID is not a final win", rules.matchResultOutcome({"", {{Page = "RoundInfo", Data = {Outcome = "Win"}}}}), nil)
 check("real result Loss", rules.matchResultOutcome(resultPage("Loss")), "Loss")
 check("draw is neutral", rules.matchResultOutcome(resultPage("Draw")), "Neutral")
 check("forfeit is not a round win", rules.matchResultOutcome(resultPage("Forfeit")), "Neutral")
@@ -181,17 +182,19 @@ def run_integration_contracts() -> None:
     decompiler = DECOMPILER.read_text(encoding="utf-8")
     wurst = (ROOT / "src" / "Wurst.lua").read_text(encoding="utf-8")
 
-    # No combat or event argument schema is invented from remote names.
-    forbid(base, ":FireServer(", "unverified combat/match remote request")
+    # Only the captured zero-argument native Rematch vote may be sent; never
+    # fabricate/replay gun, knife, hit or event packets from remote names.
+    if base.count(":FireServer(") != 1:
+        raise AssertionError("unexpected outgoing X2 remote calls")
+    require(base, 'Packages/Networking/RE/Rematch/RematchVote', "captured rematch vote")
+    require(base, '(remote :: any):FireServer()', "zero-argument rematch vote")
+    forbid(base, 'queue_again', "rematch is not requeue")
     forbid(farm, ":FireServer(", "unverified pumpkin remote request")
     forbid(base, "host.mouse1press", "desktop-only firing")
     forbid(base, "pcall(mouse1press", "desktop-only firing")
     forbid(base, "VirtualInputManager", "GUI automation in the combat module")
-    forbid(base, "Play Again", "removed Play Again automation")
-    forbid(base, "queueGunBurst", "removed Auto Win combat driver")
-    forbid(base, "burstRemaining", "removed Auto Win burst state")
-    forbid(base, "knifeInterval", "removed Knife Throw interval state")
-    forbid(base, "Throw interval", "removed Knife Throw interval option")
+    forbid(base, "queueGunBurst", "unverified combat burst")
+    forbid(base, "burstRemaining", "unverified combat burst state")
     require(base, "tool:Activate()", "native mobile-compatible activation")
     require(base, "local function fireGun", "shared native gun adapter")
     require(base, "local function fireKnife", "shared native knife adapter")
@@ -203,25 +206,31 @@ def run_integration_contracts() -> None:
     require(base, "getcallingscript", "scoped weapon call provenance")
     require(base, "local function redirectKnifeThrow", "observed knife destination hook")
     require(base, "Packages/Networking/RE/Combat/Killed", "observed kill event")
-    require(base, 'settings.senderMode == "CFrame"', "CFrame sender")
     require(base, '{"Legit", "Silent"}', "Legit/Silent modes")
-    require(base, '"Auto Shoot · "', "mode-labelled nested Auto Shoot")
-    require(base, "settings.silentAim and settings.autoShoot", "master-gated Auto Shoot")
     require(base, "state.bindFeatureActivationKey", "MM2-style action key binding")
-    require(base, 'settings.senderMode ~= "Button"', "CFrame does not require action key")
-    require(base, 'host.addSectionOption(silentAimCard, "Knife")', "Knife section inside Silent AIM")
-    require(base, '"Knife Throw",', "nested Knife Throw option")
-    require(base, "settings.silentAim and settings.knifeThrow", "master-gated Knife Throw")
-    require(base, "runKnifeThrow(600)", "frame-driven Knife Throw")
-    require(base, '"Auto Win",', "Auto Win status card")
-    require(base, '"Utilities"', "Utilities category")
-    require(base, "Wins: %d | Time Played: %s | Kills: %d | Loses: %d", "four status fields")
-    require(base, "local function registerLoss", "observed local loss counter")
-    require(base, "Packages/Networking/RE/Combat/DestroyBody", "observed kill event")
+    forbid(base, 'settings.senderMode', "obsolete Button/CFrame gate")
+    forbid(base, 'settings.silentAim and settings.autoShoot', "Silent-gated Auto Shoot")
+    forbid(base, 'settings.silentAim and settings.knifeThrow', "Silent-gated Knife Throw")
+    require(base, 'autoShootCard = card(', "standalone Auto Shoot")
+    require(base, 'knifeThrowCard = card(', "standalone Knife Throw")
+    require(base, '"Auto Win",', "Auto Win combat card")
+    for label in ("Time Spent", "Duels Won", "Current Game mode", "Safe Place", "Revancha"):
+        require(base, f'"{label}"', f"Auto Win {label}")
+    require(base, 'outcome == "Win" and settings.autoWin', "final-duel-only wins")
+    require(base, 'runtimeState.seenResultIds[resultId]', "per-match result deduplication")
+    require(base, 'values.TryIndex', "real rematch state")
+    require(base, 'rematch.active ~= true', "active rematch gate")
+    require(base, 'rematch.cancelled == true', "cancelled rematch gate")
+    require(base, 'local function updateSafePlace', "match-bound safe place")
+    require(base, 'local function leaveSafePlace', "safe place cleanup")
+    require(base, 'local function activeRound', "automatic fight round gate")
+    require(base, 'local function registerLoss', "legacy observed local loss counter")
+    require(base, 'Packages/Networking/RE/Combat/DestroyBody', "observed kill event")
     forbid(base, '"Trigger Bot"', "duplicate X2 TriggerBot card")
-    forbid(base, '"Auto Shoot",\n        "Equip', "standalone Auto Shoot card")
     require(base, '"Hitbox",', "singular Hitbox card")
     require(base, '"Exploits"', "Hitbox Exploits category")
+    require(base, 'settings.hitboxTeamCheck', "independent hitbox team check")
+    require(base, 'record.part.CanQuery = record.canQuery', "query property restore")
     require(base, "registerTeamProvider", "shared Wurst team provider")
     require(base, "registerRoleProvider", "MVS role colours for universal ESP")
     require(base, "GetRelation", "tri-state MVS team relation")
@@ -326,13 +335,27 @@ X2SetDead = x2Remote("RE/Match/SetDead")
 X2PlayerRespawned = x2Remote("RE/Match/PlayerRespawned")
 X2Killed = x2Remote("RE/Combat/Killed")
 X2DestroyBody = x2Remote("RE/Combat/DestroyBody")
+X2RematchVote = x2Remote("RE/Rematch/RematchVote")
+HarnessRematchVotes = {}
+X2RematchVote.FireServer = function(_self, ...)
+    table.insert(HarnessRematchVotes, table.pack(...))
+end
+HarnessRematch = {active = false, cancelled = false, voters = {}}
 local x2Local = game:GetService("Players").LocalPlayer
 if x2Local.PlayerGui then x2Local.PlayerGui.Parent = x2Local end
 local modules = x2Folder(x2Folder(x2Replicated, "Client"), "Modules")
 HarnessMatchModule = Instance.new("ModuleScript")
 HarnessMatchModule.Name = "MatchState"
 HarnessMatchModule.Parent = modules
+HarnessGlobalsModule = Instance.new("ModuleScript")
+HarnessGlobalsModule.Name = "ClientGlobals"
+HarnessGlobalsModule.Parent = modules
 HarnessMatchReady = false
+HarnessGame = {Phase = "InGame", RoundStarted = true, CurrentRoundEnded = false,
+    MatchId = "HarnessMapOne"}
+local globalsApi = {GameValues = {TryIndex = function(_self, path)
+    if path[1] == "Rematch" then return HarnessRematch end
+end}}
 HarnessMatchData = {
     [x2Local] = {gameId = "HarnessMatchOne", team = "Red", mode = "TeamBased", dead = false},
     [HarnessHeroGuy] = {gameId = "HarnessMatchOne", team = "Blue", mode = "TeamBased", dead = false},
@@ -342,12 +365,20 @@ local matchApi = {
     getTeamId = function(player) return HarnessMatchData[player] and HarnessMatchData[player].team end,
     getMode = function(player) return HarnessMatchData[player] and HarnessMatchData[player].mode end,
     isDead = function(player) return HarnessMatchData[player] and HarnessMatchData[player].dead end,
+    getGame = function(player)
+        return HarnessMatchData[player] and HarnessMatchData[player].gameId and HarnessGame or nil
+    end,
+    getMatchId = function(player)
+        return HarnessMatchData[player] and HarnessMatchData[player].gameId and HarnessGame.MatchId or nil
+    end,
 }
 local originalRequire = require
 require = function(module)
     if module == HarnessMatchModule then
         if not HarnessMatchReady then error("MatchState dependency not ready") end
         return matchApi
+    elseif module == HarnessGlobalsModule then
+        return globalsApi
     end
     return originalRequire(module)
 end
@@ -366,6 +397,8 @@ local expected = {
     ["Auto Farm"] = true,
     ["Auto Win"] = true,
     ["Silent AIM"] = true,
+    ["Auto Shoot"] = true,
+    ["Knife Throw"] = true,
     ["Kill Aura"] = true,
     ["Hitbox"] = true,
 }
@@ -385,18 +418,26 @@ for _, feature in ipairs(ex.allFeatures) do
         assert(disabled, "X2 disable " .. feature.name .. ": " .. tostring(disableError))
     end
 end
-assert(x2CardCount == 5, "expected exactly five X2 cards, got " .. tostring(x2CardCount))
+assert(x2CardCount == 7, "expected exactly seven X2 cards, got " .. tostring(x2CardCount))
 for name, _ in pairs(expected) do
     assert(seen[name], "X2 card did not boot: " .. name)
 end
-assert(ex.state.toggleControls["MVSD.SilentAIM.AutoShoot"],
-    "Auto Shoot is not nested under Silent AIM")
-assert(ex.state.toggleControls["MVSD.SilentAIM.KnifeThrow"],
-    "Knife Throw is not nested under Silent AIM")
-assert(not ex.state.toggleControls["MVSD.KnifeThrow"],
-    "standalone Knife Throw card/control survived")
-assert(not ex.state.valueControls["MVSD.SilentAIM.Throwinterval"],
-    "Knife Throw interval control survived")
+assert(not ex.state.toggleControls["MVSD.SilentAIM.AutoShoot"]
+    and not ex.state.toggleControls["MVSD.SilentAIM.KnifeThrow"],
+    "Auto Shoot/Knife Throw are still nested under Silent AIM")
+for _, name in ipairs({"AutoShoot", "KnifeThrow", "Hitbox"}) do
+    assert(ex.state.toggleControls["MVSD." .. name .. ".TeamCheck"],
+        name .. " has no independent Team Check")
+end
+for _, name in ipairs({"AutoShoot", "KnifeThrow"}) do
+    assert(ex.state.toggleControls["MVSD." .. name .. ".WallCheck"]
+        and ex.state.valueControls["MVSD." .. name .. ".Range"]
+        and ex.state.valueControls["MVSD." .. name .. ".Cooldown"],
+        name .. " has no independent Wall Check/Range/Cooldown")
+end
+assert(ex.state.toggleControls["MVSD.AutoWin.SafePlace"]
+    and ex.state.toggleControls["MVSD.AutoWin.Revancha"],
+    "Auto Win options missing")
 assert(featuresByName["Auto Win"].categoryName == "Utilities",
     "Auto Win is not in Utilities")
 assert(featuresByName["Auto Farm"].categoryName == "Utilities",
@@ -414,36 +455,12 @@ assert(ex.state.gameBridge.roleProvider
     "X2 role colours must preserve the Team Check filters")
 
 local silentFeature = featuresByName["Silent AIM"]
-local autoShootLabel = nil
-for _, row in ipairs(silentFeature.optionRows) do
-    for _, child in ipairs(row:GetChildren()) do
-        if child.Name == "OptionLabel" and string.sub(child.Text, 1, 10) == "Auto Shoot" then
-            autoShootLabel = child
-            break
-        end
-    end
-end
-assert(autoShootLabel, "Auto Shoot mode label was not created")
-local autoShootControl = ex.state.toggleControls["MVSD.SilentAIM.AutoShoot"]
 local modeControl = ex.state.valueControls["MVSD.SilentAIM.Mode"]
 assert(modeControl and modeControl.apply, "Silent AIM Mode control was not created")
-autoShootControl.setChecked(true)
-assert(silentFeature.status == nil, "master-off Auto Shoot exposed an active status")
 modeControl.apply("Silent")
-assert(autoShootLabel.Text == "Auto Shoot · Silent", "Silent mode label did not update")
 modeControl.apply("Legit")
-assert(autoShootLabel.Text == "Auto Shoot · Legit", "Legit mode label did not update")
-silentFeature.onToggle(true)
-assert(silentFeature.status == "Legit", "enabled Legit Auto Shoot status is wrong")
-silentFeature.onToggle(false)
-assert(silentFeature.status == nil, "disabled master left an active Auto Shoot status")
-assert(ex.configData.states["MVSD.SilentAIM.AutoShoot"] == true,
-    "master switch erased the Auto Shoot preference")
-modeControl.apply("Silent")
-assert(autoShootLabel.Text == "Auto Shoot · Silent" and silentFeature.status == nil,
-    "master-off Silent label/status are inconsistent")
-modeControl.apply("Legit")
-autoShootControl.setChecked(false)
+assert(not featuresByName["Auto Shoot"].enabled and not featuresByName["Knife Throw"].enabled,
+    "fresh boot unexpectedly enabled combat")
 
 -- Shapes below follow the captured 1v1 log and decompiled client. These are
 -- still mocks, not a claim about live server damage or reward authority.
@@ -464,6 +481,9 @@ local nativeLocal = game:GetService("Players").LocalPlayer
 local nativeBackpack = nativeLocal:FindFirstChildOfClass("Backpack")
 local nativeHumanoid = nativeLocal.Character:FindFirstChildOfClass("Humanoid")
 nativeHumanoid.EquipTool = function(_self, tool)
+    for _, item in ipairs(nativeLocal.Character:GetChildren()) do
+        if item:IsA("Tool") and item ~= tool then item.Parent = nativeBackpack end
+    end
     tool.Parent = nativeLocal.Character
 end
 local nativeGun = Instance.new("Tool")
@@ -524,54 +544,184 @@ core.settings.wallCheck = false -- isolate native activation from the mock Rayca
 local nativePreviousClock = os.clock
 local nativeNow = math.max(nativePreviousClock(), 10)
 os.clock = function() return nativeNow end
+-- The general boot mock intentionally uses zero Magnitude; exercise real
+-- distance/LOS decisions here so independent range and wall checks are tested.
+local oldVectorNew, oldVectorIndex = Vector3.new, Vector3.__index
+Vector3.__index = function(value, key)
+    if key == "Magnitude" then
+        return math.sqrt(value.X * value.X + value.Y * value.Y + value.Z * value.Z)
+    elseif key == "Unit" then
+        local mag = math.sqrt(value.X * value.X + value.Y * value.Y + value.Z * value.Z)
+        return mag > 0 and Vector3.new(value.X / mag, value.Y / mag, value.Z / mag) or Vector3.new(0, 0, 0)
+    end
+    return rawget(Vector3, key)
+end
+Vector3.new = function(x, y, z) return setmetatable({X = x or 0, Y = y or 0, Z = z or 0}, Vector3) end
+local originalRaycastParams = RaycastParams
+RaycastParams = {new = function() return {} end}
+workspace.CurrentCamera.CFrame = CFrame.new(Vector3.new(0, 3, 0))
 
 -- Hitbox shares the native team/death state and restores its snapshot.
 local heroRoot = HarnessHeroGuy.Character:FindFirstChild("HumanoidRootPart")
-local originalHeroSize, originalHeroTransparency, originalHeroCollision =
-    heroRoot.Size, heroRoot.Transparency, heroRoot.CanCollide
+heroRoot.Size = Vector3.new(2, 2, 1)
+heroRoot.CanCollide = true
+heroRoot.CanQuery = false
+local originalHeroSize, originalHeroTransparency, originalHeroCollision, originalHeroQuery =
+    heroRoot.Size, heroRoot.Transparency, heroRoot.CanCollide, heroRoot.CanQuery
 featuresByName["Hitbox"].onToggle(true)
 coreTask.callback(0.1)
-assert(heroRoot.Size.X == core.settings.hitboxSize, "enemy hitbox was not changed")
+assert(heroRoot.Size.X == core.settings.hitboxSize and heroRoot.CanQuery == true,
+    "enemy hitbox was not expanded/queryable")
 HarnessMatchData[HarnessHeroGuy].team = "Red"
+core.settings.teamCheck = false -- Silent AIM must not control Hitbox's own check.
 nativeNow += 0.3
 coreTask.callback(0.1)
 assert(heroRoot.Size == originalHeroSize and heroRoot.Transparency == originalHeroTransparency
-    and heroRoot.CanCollide == originalHeroCollision, "new teammate hitbox was not restored")
-HarnessMatchData[HarnessHeroGuy].team = "Blue"
+    and heroRoot.CanCollide == originalHeroCollision and heroRoot.CanQuery == originalHeroQuery,
+    "new teammate hitbox properties were not restored")
+core.settings.hitboxTeamCheck = false
+nativeNow += 0.3
+coreTask.callback(0.1)
+assert(heroRoot.Size.X == core.settings.hitboxSize, "Hitbox's own Team Check could not be disabled")
 featuresByName["Hitbox"].onToggle(false)
+assert(heroRoot.Size == originalHeroSize and heroRoot.CanQuery == originalHeroQuery,
+    "Hitbox OFF did not restore the original root")
+HarnessMatchData[HarnessHeroGuy].team = "Blue"
+core.settings.teamCheck = true
+core.settings.hitboxTeamCheck = true
 
 local silentFeature = featuresByName["Silent AIM"]
 local autoWinFeature = featuresByName["Auto Win"]
-silentFeature.activate()
-assert(silentFeature.enabled and core.settings.silentAim,
-    "Silent AIM did not enable through its card")
-core.settings.senderMode = "Button"
-core.settings.autoShoot = false
-core.settings.knifeThrow = false
+local autoShootFeature = featuresByName["Auto Shoot"]
+local knifeThrowFeature = featuresByName["Knife Throw"]
 local senderBinding = ex.state.shortcutBindings["MVSD.SilentAIM"]
 assert(senderBinding and senderBinding.onPress, "Silent AIM action binding missing")
+local shotsAtStart = nativeGunShots
+senderBinding.onPress()
+assert(nativeGunShots == shotsAtStart, "Silent AIM action fired while disabled")
+silentFeature.activate()
+assert(silentFeature.enabled and core.settings.silentAim, "Silent AIM did not enable through its card")
+
+-- The camera aim must survive a deferred native Activated handler and then
+-- restore. Changing the camera independently must not be overwritten.
+local oldDelay = task.delay
+local pendingAimRestore = nil
+task.delay = function(seconds, callback)
+    assert(seconds >= 0.05, "native aim expires before deferred activation")
+    pendingAimRestore = callback
+end
+local cameraBeforeKey = workspace.CurrentCamera.CFrame
+local cameraAtActivation = nil
+nativeGun.Activate = function()
+    nativeGunShots += 1
+    cameraAtActivation = workspace.CurrentCamera.CFrame
+end
 local enabledBeforeKey = silentFeature.enabled
 senderBinding.onPress()
-assert(nativeGunShots == 1, "Button sender key did not fire the native gun")
+assert(nativeGunShots == shotsAtStart + 1, "default-mode action key did not fire the native gun")
 assert(nativeGun.Parent == nativeLocal.Character, "Backpack gun was not equipped")
-assert(silentFeature.enabled == enabledBeforeKey,
-    "Silent AIM keybind toggled the master feature")
-core.settings.senderMode = "CFrame"
+assert(silentFeature.enabled == enabledBeforeKey, "action key toggled Silent AIM")
+assert(cameraAtActivation ~= cameraBeforeKey and workspace.CurrentCamera.CFrame == cameraAtActivation,
+    "native activation did not retain its aim through the current frame")
+assert(pendingAimRestore, "native camera restore was not scheduled")
+pendingAimRestore()
+assert(workspace.CurrentCamera.CFrame == cameraBeforeKey, "native aim did not restore the camera")
 senderBinding.onPress()
-assert(nativeGunShots == 1, "CFrame sender unexpectedly required the action key")
-assert(silentFeature.enabled == enabledBeforeKey,
-    "CFrame keybind changed the master feature")
-core.settings.autoShoot = true
-core.settings.shotInterval = 0.04
-coreTask.callback(0.04)
-assert(nativeGunShots == 2, "CFrame Auto Shoot did not fire without a key press")
-nativeNow += 0.041
-coreTask.callback(0.04)
-assert(nativeGunShots == 3, "CFrame Auto Shoot did not continue on its interval")
-core.settings.autoShoot = false
+local cameraMovedByUser = CFrame.new(Vector3.new(4, 8, 2))
+workspace.CurrentCamera.CFrame = cameraMovedByUser
+pendingAimRestore()
+assert(workspace.CurrentCamera.CFrame == cameraMovedByUser, "aim restore overwrote user camera movement")
+senderBinding.onPress()
+local newerCamera = CFrame.new(Vector3.new(5, 9, 3))
+workspace.CurrentCamera.CFrame = newerCamera
+senderBinding.onPress()
+pendingAimRestore()
+assert(workspace.CurrentCamera.CFrame == newerCamera,
+    "repeated shots restored an obsolete camera snapshot")
+task.delay = oldDelay
+workspace.CurrentCamera.CFrame = CFrame.new(Vector3.new(0, 3, 0))
+nativeGun.Activate = function() nativeGunShots += 1 end
 silentFeature.activate()
-assert(not silentFeature.enabled and not core.settings.silentAim,
-    "Silent AIM card did not disable cleanly")
+assert(not silentFeature.enabled and not core.settings.silentAim, "Silent AIM did not turn off")
+modeControl.apply("Silent")
+silentFeature.activate()
+assert(core.settings.silentAim and silentFeature.status == "Button only: hooks unavailable",
+    "missing executor hooks disabled or hid the Silent fallback")
+local shotsWithoutHooks = nativeGunShots
+senderBinding.onPress()
+assert(nativeGunShots == shotsWithoutHooks + 1, "action key did not work without executor hooks")
+silentFeature.activate()
+modeControl.apply("Legit")
+
+-- Auto Shoot acts without Silent AIM and owns its team, LOS and range policy.
+core.settings.autoShootWallCheck = false
+nativeGun.Parent = nil
+autoShootFeature.onToggle(true)
+local shotsBeforeAuto = nativeGunShots
+nativeNow += 1
+coreTask.callback(0.1)
+assert(nativeGunShots == shotsBeforeAuto and autoShootFeature.status == "Waiting for gun",
+    "missing gun was not reported")
+nativeGun.Parent = nativeBackpack
+nativeNow += 1
+coreTask.callback(0.1)
+assert(nativeGunShots == shotsBeforeAuto + 1 and not core.settings.silentAim,
+    "independent Auto Shoot did not fire")
+nativeNow += 0.1
+coreTask.callback(0.1)
+assert(nativeGunShots == shotsBeforeAuto + 2, "Auto Shoot did not keep attempting shots")
+core.settings.autoShootRange = 5
+nativeNow += 0.1
+coreTask.callback(0.1)
+assert(nativeGunShots == shotsBeforeAuto + 2, "Auto Shoot ignored its range")
+core.settings.autoShootRange = 1000
+HarnessMatchData[HarnessHeroGuy].team = "Red"
+core.settings.teamCheck = false
+core.settings.autoShootTeamCheck = true
+nativeNow += 0.1
+coreTask.callback(0.1)
+assert(nativeGunShots == shotsBeforeAuto + 2, "Auto Shoot used Silent's Team Check")
+core.settings.autoShootTeamCheck = false
+nativeNow += 0.1
+coreTask.callback(0.1)
+assert(nativeGunShots == shotsBeforeAuto + 3, "Auto Shoot Team Check could not be disabled")
+HarnessMatchData[HarnessHeroGuy].team = "Blue"
+core.settings.teamCheck = true
+core.settings.autoShootTeamCheck = true
+local independentRaycast = workspace.Raycast
+local independentWall = Instance.new("Part")
+workspace.Raycast = function() return {Instance = independentWall} end
+core.settings.wallCheck = false
+core.settings.autoShootWallCheck = true
+nativeNow += 0.1
+coreTask.callback(0.1)
+assert(nativeGunShots == shotsBeforeAuto + 3, "Auto Shoot ignored its own Wall Check")
+core.settings.autoShootWallCheck = false
+nativeNow += 0.1
+coreTask.callback(0.1)
+assert(nativeGunShots == shotsBeforeAuto + 4, "Auto Shoot used Silent's Wall Check")
+workspace.Raycast = independentRaycast
+core.settings.autoShootCooldown = 0.5
+nativeNow += 1
+coreTask.callback(0.1)
+assert(nativeGunShots == shotsBeforeAuto + 5, "Auto Shoot missed its cooldown start")
+nativeNow += 0.2
+coreTask.callback(0.1)
+assert(nativeGunShots == shotsBeforeAuto + 5, "Auto Shoot ignored the configured cooldown")
+nativeNow += 0.31
+coreTask.callback(0.1)
+assert(nativeGunShots == shotsBeforeAuto + 6, "Auto Shoot did not resume after cooldown")
+core.settings.autoShootCooldown = 0
+silentFeature.activate()
+nativeNow += 1
+coreTask.callback(0.1)
+local beforeSilentOff = nativeGunShots
+silentFeature.activate()
+nativeNow += 1
+coreTask.callback(0.1)
+assert(nativeGunShots == beforeSilentOff + 1 and not core.settings.silentAim,
+    "turning Silent AIM off interrupted independent Auto Shoot")
+autoShootFeature.onToggle(false)
 
 local mobileMain = Instance.new("Folder")
 mobileMain.Name = "Main"
@@ -635,27 +785,131 @@ mouse2release = nil
 throwMode.Parent = nil
 assert(not core.fireKnife(nativeTarget), "knife queued without native input support")
 throwMode.Parent = mobileGui
+-- Standalone Knife Throw works with Silent AIM off, via the mobile native path.
+throwMode.Parent = mobileGui
+game:GetService("UserInputService").TouchEnabled = true
+core.settings.knifeWallCheck = false
+knifeThrowFeature.onToggle(true)
+local standaloneBefore = nativeKnifeShots
+nativeNow += 1
+coreTask.callback(0.1)
+assert(nativeKnifeShots == standaloneBefore + 1 and not core.settings.silentAim,
+    "standalone Knife Throw did not use native activation")
+core.settings.knifeRange = 5
+nativeNow += 0.1
+coreTask.callback(0.1)
+assert(nativeKnifeShots == standaloneBefore + 1, "Knife Throw ignored its own range")
+core.settings.knifeRange = 600
+HarnessMatchData[HarnessHeroGuy].team = "Red"
+core.settings.teamCheck = false
+core.settings.knifeTeamCheck = true
+nativeNow += 0.1
+coreTask.callback(0.1)
+assert(nativeKnifeShots == standaloneBefore + 1, "Knife Throw used Silent's Team Check")
+core.settings.knifeTeamCheck = false
+nativeNow += 0.1
+coreTask.callback(0.1)
+assert(nativeKnifeShots == standaloneBefore + 2, "Knife Throw Team Check could not be disabled")
+HarnessMatchData[HarnessHeroGuy].team = "Blue"
+core.settings.teamCheck = true
+core.settings.knifeTeamCheck = true
+local knifeRaycast = workspace.Raycast
+local knifeWall = Instance.new("Part")
+workspace.Raycast = function() return {Instance = knifeWall} end
+core.settings.wallCheck = false
+core.settings.knifeWallCheck = true
+nativeNow += 0.1
+coreTask.callback(0.1)
+assert(nativeKnifeShots == standaloneBefore + 2, "Knife Throw ignored its own Wall Check")
+core.settings.knifeWallCheck = false
+nativeNow += 0.1
+coreTask.callback(0.1)
+assert(nativeKnifeShots == standaloneBefore + 3, "Knife Throw used Silent's Wall Check")
+workspace.Raycast = knifeRaycast
+silentFeature.activate()
+nativeNow += 1
+coreTask.callback(0.1)
+local throwsBeforeSilentOff = nativeKnifeShots
+silentFeature.activate()
+nativeNow += 1
+coreTask.callback(0.1)
+assert(nativeKnifeShots == throwsBeforeSilentOff + 1 and not core.settings.silentAim,
+    "turning Silent AIM off interrupted independent Knife Throw")
+knifeThrowFeature.onToggle(false)
+
+-- User Cooldown starts AFTER the desktop native windup, not in parallel.
+game:GetService("UserInputService").TouchEnabled = false
+mouse2press = function() nativeMouseDown += 1 end
+mouse2release = function() nativeMouseUp += 1 end
+local cooldownThread = nil
+task.spawn = function(fn)
+    cooldownThread = coroutine.create(fn)
+    local okSpawn, err = coroutine.resume(cooldownThread)
+    assert(okSpawn, tostring(err))
+end
+task.wait = function() coroutine.yield() end
+core.settings.knifeCooldown = 0.5
+knifeThrowFeature.onToggle(true)
+nativeNow += 1
+coreTask.callback(0.1)
+assert(cooldownThread and coroutine.status(cooldownThread) == "suspended", "cooldown fixture has no windup")
+local cooldownDown = nativeMouseDown
+nativeNow += 0.2
+local okCooldown, cooldownError = coroutine.resume(cooldownThread)
+assert(okCooldown, tostring(cooldownError))
+nativeNow += 0.49
+coreTask.callback(0.1)
+assert(nativeMouseDown == cooldownDown, "knife cooldown overlapped native windup")
+nativeNow += 0.02
+coreTask.callback(0.1)
+assert(nativeMouseDown == cooldownDown + 1, "knife did not retry after windup plus cooldown")
+knifeThrowFeature.onToggle(false)
+local okCancel, cancelError = coroutine.resume(cooldownThread)
+assert(okCancel, tostring(cancelError))
+task.spawn, task.wait = previousSpawn, previousWait
+core.settings.knifeCooldown = 0
+
+-- A pending desktop throw owns the weapon until completion/cancellation;
+-- Auto Shoot must not equip the gun in the middle of the right-click windup.
+game:GetService("UserInputService").TouchEnabled = false
+mouse2press = function() nativeMouseDown += 1 end
+mouse2release = function() nativeMouseUp += 1 end
+local arbitrationThread = nil
+task.spawn = function(fn)
+    arbitrationThread = coroutine.create(fn)
+    local okSpawn, err = coroutine.resume(arbitrationThread)
+    assert(okSpawn, tostring(err))
+end
+task.wait = function() coroutine.yield() end
+knifeThrowFeature.onToggle(true)
+nativeNow += 1
+coreTask.callback(0.1)
+assert(arbitrationThread and coroutine.status(arbitrationThread) == "suspended",
+    "standalone knife did not enter native windup")
+local shotsDuringWindup = nativeGunShots
+autoShootFeature.onToggle(true)
+nativeNow += 0.1
+coreTask.callback(0.1)
+assert(nativeGunShots == shotsDuringWindup and nativeKnife.Parent == nativeLocal.Character,
+    "Auto Shoot interrupted the pending knife windup")
+local rightUpBeforeCancel = nativeMouseUp
+knifeThrowFeature.onToggle(false)
+assert(nativeMouseUp == rightUpBeforeCancel + 1, "cancelling throw left right-click pressed")
+local okArbitration, arbitrationError = coroutine.resume(arbitrationThread)
+assert(okArbitration, tostring(arbitrationError))
+assert(nativeMouseUp == rightUpBeforeCancel + 1, "cancelled throw released right-click twice")
+task.spawn, task.wait = previousSpawn, previousWait
+nativeNow += 0.1
+coreTask.callback(0.1)
+assert(nativeGunShots == shotsDuringWindup + 1 and nativeGun.Parent == nativeLocal.Character,
+    "Auto Shoot did not resume after throw cancellation")
+autoShootFeature.onToggle(false)
 mouse2press = oldMouse2Press
 mouse2release = oldMouse2Release
 game:GetService("UserInputService").TouchEnabled = oldTouchEnabled
-assert(ex.state.toggleControls["MVSD.SilentAIM.KnifeThrow"],
-    "Knife Throw is not a Silent AIM option")
-assert(not ex.state.valueControls["MVSD.SilentAIM.Throwinterval"],
-    "Knife Throw still has an interval control")
 
 -- Mock the executor hook chain, not Roblox/network authority. Verify that the
 -- captured knife packet is edited only when its call comes from the tool.
-local oldVectorNew, oldVectorIndex = Vector3.new, Vector3.__index
-Vector3.__index = function(value, key)
-    if key == "Magnitude" then
-        return math.sqrt(value.X * value.X + value.Y * value.Y + value.Z * value.Z)
-    elseif key == "Unit" then
-        local mag = math.sqrt(value.X * value.X + value.Y * value.Y + value.Z * value.Z)
-        return mag > 0 and Vector3.new(value.X / mag, value.Y / mag, value.Z / mag) or Vector3.new(0, 0, 0)
-    end
-    return rawget(Vector3, key)
-end
-Vector3.new = function(x, y, z) return setmetatable({X = x or 0, Y = y or 0, Z = z or 0}, Vector3) end
 local oldTargetPos = nativeTarget.part.Position
 local oldRootPos = nativeLocal.Character:FindFirstChild("HumanoidRootPart").Position
 local oldCameraCFrame = workspace.CurrentCamera.CFrame
@@ -665,7 +919,6 @@ workspace.CurrentCamera.CFrame = CFrame.new(Vector3.new(0, 3, 0))
 local localRoot = nativeLocal.Character:FindFirstChild("HumanoidRootPart")
 local beforeTriggerRotation = localRoot.CFrame
 core.settings.silentAim = true
-core.settings.senderMode = "CFrame"
 local shotsBeforeTrigger = nativeGunShots
 assert(core.fireGun(nativeTarget, true), "TriggerBot native gun adapter did not activate")
 assert(nativeGunShots == shotsBeforeTrigger + 1 and localRoot.CFrame == beforeTriggerRotation,
@@ -780,26 +1033,253 @@ hookfunction, hookmetamethod = oldHookFunction, oldHookMeta
 getcallingscript, getnamecallmethod = oldGetCaller, oldGetMethod
 workspace.Raycast = previousWorkspaceRay
 RaycastParams = oldRaycastParams
-Vector3.new, Vector3.__index = oldVectorNew, oldVectorIndex
 nativeTarget.part.Position = oldTargetPos
 nativeLocal.Character:FindFirstChild("HumanoidRootPart").Position = oldRootPos
 workspace.CurrentCamera.CFrame = oldCameraCFrame
 core.settings.silentMode = "Legit"
 
--- Auto Win is a status-only card. Event fixtures test local accounting, not
--- live server authority and not any GUI/rematch automation.
+-- Auto Win fights only in an active round, independently of Silent AIM.
+-- These observations are client-side attempts, not server hit verification.
 autoWinFeature.activate()
-assert(core.settings.stats and autoWinFeature.enabled, "statistics card did not enable")
-local shotsBeforeStats = nativeGunShots
+assert(core.settings.autoWin and autoWinFeature.enabled, "Auto Win did not enable")
+local function statValue(name)
+    for _, row in ipairs(autoWinFeature.optionRows) do
+        local label = row:FindFirstChild("OptionLabel")
+        if label and label.Text == name then
+            local value = row:FindFirstChild("StatValue")
+            return value and value.Text
+        end
+    end
+end
+assert(statValue("Time Spent") and statValue("Duels Won") == "0"
+    and statValue("Current Game mode") == "1v1", "Auto Win stats rows are missing or incorrect")
+assert(core.getStats().CurrentGameMode == "1v1", "known 1v1 place was not recognized")
+local priorPlace = game.PlaceId
+game.PlaceId = 92876937625630
+assert(core.getStats().CurrentGameMode == "2v2", "known 2v2 place was not recognized")
+game.PlaceId = priorPlace
+HarnessMatchData[nativeLocal].mode = "FFA"
+assert(core.getStats().CurrentGameMode == "FFA", "native FFA mode was not recognized")
+HarnessMatchData[nativeLocal].mode = "TeamBased"
+local shotsBeforeWin = nativeGunShots
+HarnessGame.RoundStarted = false
+nativeNow += 1
 coreTask.callback(0.1)
-assert(nativeGunShots == shotsBeforeStats,
-    "statistics card unexpectedly drove native combat")
-assert(autoWinFeature.status
-    and string.find(autoWinFeature.status, "Wins:", 1, true)
-    and string.find(autoWinFeature.status, "Time Played:", 1, true)
-    and string.find(autoWinFeature.status, "Kills:", 1, true)
-    and string.find(autoWinFeature.status, "Loses:", 1, true),
-    "statistics card does not expose all four requested fields")
+assert(nativeGunShots == shotsBeforeWin, "Auto Win attacked during the countdown")
+HarnessGame.RoundStarted = true
+nativeNow += 1
+coreTask.callback(0.1)
+assert(nativeGunShots == shotsBeforeWin + 1 and not core.settings.silentAim,
+    "Auto Win did not attempt gun combat independently")
+-- With both masters on, Auto Shoot's shorter range/cooldown must not suppress
+-- Auto Win's own selection; at most one gun activation occurs per tick.
+core.settings.autoShootRange = 5
+core.settings.autoShootCooldown = 0
+autoShootFeature.onToggle(true)
+local beforeSharedGun = nativeGunShots
+nativeNow += 1
+coreTask.callback(0.1)
+assert(nativeGunShots == beforeSharedGun + 1
+    and autoShootFeature.status == "Waiting for target / clear path",
+    "Auto Win inherited Auto Shoot's range")
+core.settings.autoShootRange = 1000
+core.settings.autoShootCooldown = 2
+nativeNow += 1
+coreTask.callback(0.1)
+assert(nativeGunShots == beforeSharedGun + 2 and autoWinFeature.status == "Gun shared with Auto Shoot",
+    "gun arbiter fired twice or failed to share an available shot")
+nativeNow += 0.1
+coreTask.callback(0.1)
+assert(nativeGunShots == beforeSharedGun + 3, "Auto Win inherited Auto Shoot's cooldown")
+autoShootFeature.onToggle(false)
+core.settings.autoShootCooldown = 0
+local shotsBeforeEnded = nativeGunShots
+HarnessGame.CurrentRoundEnded = true
+nativeNow += 1
+coreTask.callback(0.1)
+assert(nativeGunShots == shotsBeforeEnded, "Auto Win attacked after the round ended")
+HarnessGame.CurrentRoundEnded = false
+
+-- The same independent fallback/arbitration applies to mobile Knife Throw.
+nativeGun.Parent = nil
+local touchBeforeShared = game:GetService("UserInputService").TouchEnabled
+game:GetService("UserInputService").TouchEnabled = true
+core.settings.knifeRange = 5
+core.settings.knifeCooldown = 0
+knifeThrowFeature.onToggle(true)
+local beforeSharedKnife = nativeKnifeShots
+nativeNow += 1
+coreTask.callback(0.1)
+assert(nativeKnifeShots == beforeSharedKnife + 1
+    and knifeThrowFeature.status == "Waiting for target / clear path",
+    "Auto Win inherited Knife Throw's range")
+core.settings.knifeRange = 600
+core.settings.knifeCooldown = 2
+nativeNow += 1
+coreTask.callback(0.1)
+assert(nativeKnifeShots == beforeSharedKnife + 2 and autoWinFeature.status == "Knife shared with Knife Throw",
+    "knife arbiter launched twice or failed to share a throw")
+nativeNow += 0.1
+coreTask.callback(0.1)
+assert(nativeKnifeShots == beforeSharedKnife + 3, "Auto Win inherited Knife Throw's cooldown")
+knifeThrowFeature.onToggle(false)
+core.settings.knifeCooldown = 0
+game:GetService("UserInputService").TouchEnabled = touchBeforeShared
+nativeGun.Parent = nativeBackpack
+assert(core.getStats().AutoWinTime >= 3, "Auto Win time did not accumulate while enabled")
+
+-- Safe Place only holds above a real active match map. OFF returns to the
+-- snapshot only for the same character, GameId, match and active map.
+local safeControl = ex.state.toggleControls["MVSD.AutoWin.SafePlace"]
+local safeRoot = nativeLocal.Character:FindFirstChild("HumanoidRootPart")
+local safeOrigin = safeRoot.CFrame
+safeControl.setChecked(true)
+HarnessMatchData[nativeLocal].gameId = nil
+nativeNow += 1
+coreTask.callback(0.1)
+assert(safeRoot.CFrame == safeOrigin and not safeRoot:FindFirstChild("WurstX2SafePlace"),
+    "Safe Place moved the player in the lobby")
+HarnessMatchData[nativeLocal].gameId = "HarnessMatchOne"
+HarnessGame.RoundStarted = false
+nativeNow += 1
+coreTask.callback(0.1)
+assert(safeRoot.CFrame == safeOrigin, "Safe Place moved without a replicated active map")
+local maps = Instance.new("Folder")
+maps.Name = "ActiveMaps"
+maps.Parent = workspace
+local safeMap = Instance.new("Model")
+safeMap.Name = HarnessGame.MatchId
+safeMap.Parent = maps
+local floor = Instance.new("Part")
+floor.Name = "Floor"
+floor.Size = Vector3.new(50, 2, 50)
+floor.Position = Vector3.new(0, 10, 0)
+floor.CFrame = CFrame.new(floor.Position)
+floor.Parent = safeMap
+local unsafeRoof = Instance.new("Part")
+unsafeRoof.Size = Vector3.new(10, 1000, 10)
+unsafeRoof.Position = Vector3.new(0, 0, 0)
+unsafeRoof.CFrame = CFrame.new(unsafeRoof.Position)
+unsafeRoof.Parent = safeMap
+nativeNow += 1
+coreTask.callback(0.1)
+assert(safeRoot.CFrame == safeOrigin and statValue("Safe Place status") == "Unavailable",
+    "Safe Place ignored an excessively high roof")
+unsafeRoof:Destroy()
+nativeNow += 1.1
+coreTask.callback(0.1)
+local hold = safeRoot:FindFirstChild("WurstX2SafePlace")
+assert(hold and safeRoot.CFrame.Position.Y == 46,
+    "Safe Place did not hold above the actual map during countdown")
+assert(statValue("Safe Place status") == "Holding", "Safe Place has no in-options status")
+assert(not hold:IsA("BasePart"), "Safe Place added a ray-blocking platform")
+safeControl.setChecked(false)
+assert(hold.destroyed and safeRoot.CFrame == safeOrigin, "Safe Place OFF did not restore the same match")
+safeControl.setChecked(true)
+nativeNow += 1
+coreTask.callback(0.1)
+hold = safeRoot:FindFirstChild("WurstX2SafePlace")
+local safePosition = safeRoot.CFrame
+assert(hold and safePosition ~= safeOrigin, "second Safe Place entry failed")
+HarnessMatchData[nativeLocal].gameId = "NewGame"
+safeControl.setChecked(false)
+assert(hold.destroyed and safeRoot.CFrame == safePosition,
+    "Safe Place restored an old GameId's position")
+HarnessMatchData[nativeLocal].gameId = "HarnessMatchOne"
+safeRoot.CFrame = safeOrigin
+safeControl.setChecked(true)
+nativeNow += 1
+coreTask.callback(0.1)
+hold = safeRoot:FindFirstChild("WurstX2SafePlace")
+assert(hold, "third Safe Place entry failed")
+safeMap.Parent = nil
+local beforeMapExit = safeRoot.CFrame
+safeControl.setChecked(false)
+assert(hold.destroyed and safeRoot.CFrame == beforeMapExit,
+    "Safe Place restored a removed map's position")
+safeMap.Parent = maps
+safeRoot.CFrame = safeOrigin
+safeControl.setChecked(true)
+nativeNow += 1
+coreTask.callback(0.1)
+hold = safeRoot:FindFirstChild("WurstX2SafePlace")
+assert(hold, "fourth Safe Place entry failed")
+X2SetDead.OnClientEvent:Fire(nativeLocal)
+assert(hold.destroyed, "Safe Place hold survived local death")
+X2PlayerRespawned.OnClientEvent:Fire(nil, nativeLocal)
+safeControl.setChecked(false)
+safeRoot.CFrame = safeOrigin
+safeMap:Destroy()
+maps:Destroy()
+HarnessGame.RoundStarted = true
+
+-- Rematch uses the real GameValues state and sends a single zero-argument
+-- RematchVote only when active, not cancelled and not already voted.
+local rematchControl = ex.state.toggleControls["MVSD.AutoWin.Revancha"]
+rematchControl.setChecked(true)
+HarnessRematch.active = false
+nativeNow += 1
+coreTask.callback(0.1)
+assert(#HarnessRematchVotes == 0, "voted outside an active rematch")
+HarnessRematch.active = true
+HarnessRematch.cancelled = true
+nativeNow += 1
+coreTask.callback(0.1)
+assert(#HarnessRematchVotes == 0 and statValue("Revancha status") == "Cancelled",
+    "cancelled rematch was voted on or not reported")
+HarnessRematch.cancelled = false
+HarnessRematch.voters[tostring(nativeLocal.UserId)] = true
+nativeNow += 1
+coreTask.callback(0.1)
+assert(#HarnessRematchVotes == 0, "voted despite an existing local vote")
+HarnessRematch.active = false
+HarnessRematch.voters = {}
+nativeNow += 1
+coreTask.callback(0.1)
+HarnessRematch.active = true
+nativeNow += 1
+coreTask.callback(0.1)
+assert(#HarnessRematchVotes == 1 and HarnessRematchVotes[1].n == 0
+    and statValue("Revancha status") == "Vote sent",
+    "native RematchVote was not sent/reported with zero arguments")
+nativeNow += 3
+coreTask.callback(0.1)
+rematchControl.setChecked(false)
+rematchControl.setChecked(true)
+coreTask.callback(0.1)
+HarnessRematch.cancelled = true
+nativeNow += 1
+coreTask.callback(0.1)
+HarnessRematch.cancelled = false
+nativeNow += 3
+coreTask.callback(0.1)
+assert(#HarnessRematchVotes == 1, "duplicate vote in one active rematch")
+HarnessRematch.active = false
+nativeNow += 1
+coreTask.callback(0.1)
+HarnessRematch.active = true
+nativeNow += 3
+coreTask.callback(0.1)
+assert(#HarnessRematchVotes == 2 and HarnessRematchVotes[2].n == 0,
+    "next active rematch did not get its own vote")
+HarnessRematch.active = false
+nativeNow += 1
+coreTask.callback(0.1)
+X2RematchVote.Parent = nil
+HarnessRematch.active = true
+nativeNow += 3
+coreTask.callback(0.1)
+assert(#HarnessRematchVotes == 2 and statValue("Revancha status") == "Remote unavailable",
+    "missing rematch remote was not reported")
+X2RematchVote.Parent = X2Networking
+nativeNow += 3
+coreTask.callback(0.1)
+assert(#HarnessRematchVotes == 3, "rematch vote did not retry when the real remote appeared")
+HarnessRematch.active = false
+rematchControl.setChecked(false)
+
+-- WinNotification is a ROUND; Duels Won counts only final Outcome==Win,
+-- including nonadjacent duplicate MatchResults deduplication.
 X2Killed.OnClientEvent:Fire(nativeLocal, HarnessHeroGuy)
 X2DestroyBody.OnClientEvent:Fire(HarnessHeroGuy, HarnessHeroGuy.Character, nativeLocal)
 assert(core.getStats().Kills == 1, "Killed/DestroyBody were not deduplicated")
@@ -809,24 +1289,36 @@ X2SetDead.OnClientEvent:Fire(nativeLocal)
 X2SetDead.OnClientEvent:Fire(nativeLocal)
 assert(core.getStats().Loses == 0, "individual death incorrectly counted as team loss")
 X2WinNotification.OnClientEvent:Fire(nil)
-assert(core.getWins() == 1, "nil round-win notification was not counted")
+assert(core.getWins() == 1 and core.getStats().DuelsWon == 0,
+    "a round notification was incorrectly counted as a duel")
 X2WinNotification.OnClientEvent:Fire(nil)
 X2MatchResults.OnClientEvent:Fire("match-guid-one", {{Page = "RoundInfo", Data = {Outcome = "Win"}}})
 X2MatchResults.OnClientEvent:Fire("match-guid-one", {{Page = "RoundInfo", Data = {Outcome = "Win"}}})
-assert(core.getWins() == 1, "notification/final result or duplicate counted twice")
+assert(core.getWins() == 1 and core.getStats().DuelsWon == 1 and statValue("Duels Won") == "1",
+    "final Win did not count exactly once")
 nativeNow += 1
 X2PlayerRespawned.OnClientEvent:Fire(nil, nativeLocal)
 X2WinNotification.OnClientEvent:Fire(false)
 X2WinNotification.OnClientEvent:Fire(true)
 assert(core.getStats().Loses == 1, "boolean round-loss was not counted exactly once")
 X2MatchResults.OnClientEvent:Fire("match-guid-two", {{Page = "RoundInfo", Data = {Outcome = "Loss"}}})
-assert(core.getStats().Loses == 1, "final Loss duplicated the round loss")
+assert(core.getStats().Loses == 1 and core.getStats().DuelsWon == 1,
+    "final Loss counted as a win or duplicated the round loss")
 nativeNow += 1
 X2PlayerRespawned.OnClientEvent:Fire(nil, nativeLocal)
 X2MatchResults.OnClientEvent:Fire("match-guid-three", {{Page = "RoundInfo", Data = {Outcome = "Win"}}})
-assert(core.getWins() == 2, "final result without a notification was not counted")
+assert(core.getWins() == 2 and core.getStats().DuelsWon == 2,
+    "final result without a notification was not counted")
+X2MatchResults.OnClientEvent:Fire("match-guid-one", {{Page = "RoundInfo", Data = {Outcome = "Win"}}})
 X2MatchResults.OnClientEvent:Fire("match-guid-three", {{Page = "RoundInfo", Data = {Outcome = "Win"}}})
-assert(core.getWins() == 2, "duplicate final result was counted twice")
+X2MatchResults.OnClientEvent:Fire("match-guid-four", {{Page = "RoundInfo", Data = {Outcome = "Draw"}}})
+assert(core.getStats().DuelsWon == 2, "delayed duplicate or draw counted as a duel win")
+X2MatchResults.OnClientEvent:Fire("match-incomplete", {{Page = "Unknown"}})
+assert(core.getStats().DuelsWon == 2, "incomplete result counted as a win")
+X2MatchResults.OnClientEvent:Fire("match-incomplete", {{Page = "RoundInfo", Data = {Outcome = "Win"}}})
+assert(core.getStats().DuelsWon == 3, "incomplete result masked a later final win")
+X2MatchResults.OnClientEvent:Fire("match-incomplete", {{Page = "RoundInfo", Data = {Outcome = "Win"}}})
+assert(core.getStats().DuelsWon == 3, "late final win was counted twice")
 
 -- A replicated replacement must disconnect the old event and bind the new one.
 local oldSetDead = X2SetDead
@@ -841,11 +1333,17 @@ assert(core.isEnemy(HarnessHeroGuy), "replaced event still affected the core")
 X2SetDead.OnClientEvent:Fire(HarnessHeroGuy)
 assert(not core.isEnemy(HarnessHeroGuy), "replacement event was not connected")
 X2PlayerRespawned.OnClientEvent:Fire(nil, HarnessHeroGuy)
-assert(core.settings.stats and autoWinFeature.enabled,
-    "statistics card switched itself off after a win")
+assert(core.settings.autoWin and autoWinFeature.enabled, "Auto Win switched itself off after a win")
+local timeAtDisable = core.getStats().AutoWinTime
 autoWinFeature.activate()
-assert(not core.settings.stats and autoWinFeature.status == nil,
-    "statistics card did not clear its status on disable")
+assert(not core.settings.autoWin and autoWinFeature.status == nil, "Auto Win did not disable")
+nativeNow += 10
+assert(core.getStats().AutoWinTime == timeAtDisable, "Auto Win time kept running while disabled")
+local winsAtDisable = core.getStats().DuelsWon
+X2MatchResults.OnClientEvent:Fire("match-after-disabled", {{Page = "RoundInfo", Data = {Outcome = "Win"}}})
+assert(core.getStats().DuelsWon == winsAtDisable, "Auto Win counted a result while disabled")
+RaycastParams = originalRaycastParams
+Vector3.new, Vector3.__index = oldVectorNew, oldVectorIndex
 os.clock = nativePreviousClock
 core.settings.wallCheck = nativePreviousWallCheck
 nativeGun:Destroy()
@@ -1020,13 +1518,35 @@ friendlyFarmModel:Destroy()
 enemyFarmModel:Destroy()
 farmsFolder:Destroy()
 
+-- Module destruction while Safe Place is active must release its mover and
+-- restore only the current match's original position.
+local exitMaps = Instance.new("Folder")
+exitMaps.Name = "ActiveMaps"
+exitMaps.Parent = workspace
+local exitMap = Instance.new("Model")
+exitMap.Name = HarnessGame.MatchId
+exitMap.Parent = exitMaps
+local exitFloor = Instance.new("Part")
+exitFloor.Size = Vector3.new(40, 2, 40)
+exitFloor.Position = Vector3.new(0, 8, 0)
+exitFloor.CFrame = CFrame.new(exitFloor.Position)
+exitFloor.Parent = exitMap
+X2PlayerRespawned.OnClientEvent:Fire(nil, nativeLocal)
+local positionBeforeDestroy = root.CFrame
+safeControl.setChecked(true)
+autoWinFeature.activate()
+coreTask.callback(0.1)
+local exitHold = root:FindFirstChild("WurstX2SafePlace")
+assert(exitHold and root.CFrame ~= positionBeforeDestroy, "destroy cleanup fixture did not enter Safe Place")
 ex.state.destruct()
+assert(exitHold.destroyed and root.CFrame == positionBeforeDestroy,
+    "module destroy did not release/restore Safe Place")
 assert(ex.state.x2duelsCore == nil, "X2 core survived destroy")
 assert(ex.state.x2duelsRules == nil, "X2 rules survived destroy")
 assert(ex.state.mvsdCore == nil, "X2 compatibility core survived destroy")
 assert(ex.state.gameBridge.teamProvider == nil, "X2 team provider survived destroy")
 assert(ex.state.gameBridge.roleProvider == nil, "X2 role provider survived destroy")
-print("[X2BOOT] 5 cards, MM2 structure, native sender, stats, pumpkin restore, cleanup: PASS")
+print("[X2BOOT] 7 cards, independent combat, safe/rematch, duel stats, cleanup: PASS")
 '''
     output_path = ROOT / "build" / "x2duels_boot.luau"
     output_path.write_text(generated, encoding="utf-8")
@@ -1037,9 +1557,78 @@ print("[X2BOOT] 5 cards, MM2 structure, native sender, stats, pumpkin restore, c
     if result.returncode:
         raise SystemExit(result.stdout + result.stderr)
     output = result.stdout
-    marker = "[X2BOOT] 5 cards, MM2 structure, native sender, stats, pumpkin restore, cleanup: PASS"
+    marker = "[X2BOOT] 7 cards, independent combat, safe/rematch, duel stats, cleanup: PASS"
     if marker not in output:
         raise AssertionError("X2 bundle boot marker missing\n" + output)
+    print(marker)
+
+    # Upgrade a v142 profile with the former status-only Auto Win and nested
+    # automations enabled. The migration preserves non-action preferences but
+    # must not start any newly automatic module without a fresh user opt-in.
+    migration_boot = audit_menu.build(debug=True).read_text(encoding="utf-8")
+    migration_boot = migration_boot.replace(
+        place_anchor,
+        "game = {\n    PlaceId = 124848751642883,\n    GameId = 20260716,",
+        1,
+    )
+    migration_config = r'''
+HarnessSavedConfig = [[return {
+    version = 1,
+    states = {
+        ["MVSD.AutoWin"] = true,
+        ["MVSD.AutoWin.SafePlace"] = true,
+        ["MVSD.AutoWin.Revancha"] = true,
+        ["MVSD.SilentAIM"] = true,
+        ["MVSD.SilentAIM.AutoShoot"] = true,
+        ["MVSD.SilentAIM.KnifeThrow"] = true,
+        ["MVSD.SilentAIM.TeamCheck"] = false,
+        ["MVSD.SilentAIM.WallCheck"] = false,
+        ["MVSD.AutoFarm"] = true,
+        ["MVSD.Hitboxes"] = true,
+    },
+    values = {
+        ["X2Duels.layout"] = "v119",
+        ["MVSD.SilentAIM.Range"] = 777,
+        ["MVSD.SilentAIM.Fireinterval"] = 0.06,
+    },
+    ui = {},
+}]]
+'''
+    migration_boot = migration_boot.replace(
+        boot_anchor, "\n" + remote_setup + migration_config + boot_anchor, 1
+    )
+    migration_boot += r'''
+local migrated = ex.state.x2duelsCore
+assert(migrated and ex.configData.values["X2Duels.layout"] == "v143", "migration did not run")
+assert(not migrated.settings.autoWin and not migrated.settings.autoShoot and not migrated.settings.knifeThrow,
+    "legacy profile started automatic combat")
+assert(not migrated.settings.safePlace and not migrated.settings.rematch,
+    "legacy profile enabled a new Auto Win option")
+assert(ex.configData.states["MVSD.SilentAIM.AutoShoot"] == nil
+    and ex.configData.states["MVSD.SilentAIM.KnifeThrow"] == nil,
+    "legacy nested toggles were not removed")
+assert(migrated.settings.silentAim and ex.configData.states["MVSD.AutoFarm"] == true,
+    "migration discarded unrelated v142 preferences")
+assert(migrated.settings.autoShootTeamCheck == false and migrated.settings.autoShootWallCheck == false
+    and migrated.settings.knifeTeamCheck == false and migrated.settings.knifeWallCheck == false
+    and migrated.settings.hitboxTeamCheck == false,
+    "legacy non-action policies were not migrated")
+assert(migrated.settings.autoShootRange == 777 and migrated.settings.autoShootCooldown == 0.06,
+    "legacy Auto Shoot range/delay were not migrated")
+ex.state.destruct()
+print("[X2MIGRATION] old automatic states stay off; preferences retained: PASS")
+'''
+    migration_path = ROOT / "build" / "x2duels_migration.luau"
+    migration_path.write_text(migration_boot, encoding="utf-8")
+    migration_result = subprocess.run(
+        [LUAU, str(migration_path)], cwd=ROOT, capture_output=True,
+        text=True, check=False,
+    )
+    if migration_result.returncode:
+        raise SystemExit(migration_result.stdout + migration_result.stderr)
+    marker = "[X2MIGRATION] old automatic states stay off; preferences retained: PASS"
+    if marker not in migration_result.stdout:
+        raise AssertionError("X2 migration boot marker missing")
     print(marker)
 
     # Unknown/future PlaceId: verify the literal-name structural fingerprint
@@ -1051,7 +1640,6 @@ print("[X2BOOT] 5 cards, MM2 structure, native sender, stats, pumpkin restore, c
         1,
     )
     extra_remotes = r'''
-x2Remote("RE/Rematch/RematchVote")
 x2Remote("RE/Rematch/RematchTeleport")
 x2Remote("RE/Combat/Beam")
 x2Remote("RE/Combat/PlaySound")

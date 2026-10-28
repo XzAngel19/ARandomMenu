@@ -5,7 +5,7 @@
 > contradice lo que crees, gana este documento (y los datos de calibración).
 >
 > **Estado al escribir esto:** rama `arena/9492e6b6-arandommenu`, build
-> **`v142-20261027-x2duels-evidence`**.
+> **`v143-20261028-x2duels-combat`**.
 > El usuario se comunica en español. Respóndele en español.
 
 ---
@@ -20,7 +20,7 @@
   1. Edita en `src/…`, nunca directamente en `src/libraries/bundle.lua`.
   2. Sube `SOURCE_STAMP` en `src/Wurst.lua` (`vNNN-AAAAMMDD-descripcion`).
   3. `python3 tools/build_bundle.py --stamp <el mismo stamp>`
-  4. `bash tools/validate.sh` — debe terminar VERDE (v142: 93 fuentes,
+  4. `bash tools/validate.sh` — debe terminar VERDE (v143: 93 fuentes,
      64 suites, boot `failures=0`, auditoría de menú 51/50 tarjetas).
   5. Commit + push **normales** a `arena/9492e6b6-arandommenu`. Sin force-push,
      sin reescribir historia, sin trabajar en otra rama.
@@ -68,7 +68,7 @@
   51/50 tarjetas. Falta prueba live: perfil CPU por fase, menú apagado/activo,
   PC/móvil, executor, tiempo de inyección y revisión F9/MicroProfiler.
 
-## 1A. X2Duels (MVS): evidencia 1v1 y contratos v142
+## 1A. X2Duels (MVS): evidencia 1v1 y contratos v143
 
 **Fuentes:** `XzAngel19/TestingStuff` commit `a849817395`, log
 `2026-10-28T04_16_18Z.log` y `Place_124848751642883_[DUELS] 1v1_27-10-2026_23-21-39.rbxl`.
@@ -92,14 +92,27 @@ daño o recompensas ni de lo que ocurre en todos los executors/places.
   `FFA` con el mismo GameId identifica adversarios sin tratar FFA como equipo.
   Priorizar esta API sobre atributos de lobby; el cliente puede aún no haber
   recibido todos los datos. PlayerESP/Chams/Nametags usan providers compartidos.
-- **Función y ubicación:** Silent AIM es la tarjeta de Combat y dueña de
-  targeting Gun/Knife, Auto Shoot y Knife Throw; TriggerBot universal delega al
-  mismo core sin girar cámara/personaje al activar un blanco bajo la mira. Kill
-  Aura conserva sólo melee sin forzar el sender CFrame; Hitbox está en Exploits
-  y restaura tamaño/transparencia/colisión al perder enemigo, morir u OFF. `Tool:Activate()` mantiene el arma nativa; no
-  hay un `FireServer` inventado. Estado maestro OFF por defecto, Team Check y
-  Wall Check activos, sin tarjeta duplicada. El cleanup cancela input pendiente
-  y restaura hooks/propiedades sin desplazar hooks ajenos.
+- **Función y ubicación:** por petición explícita de esta sesión, X2 tiene
+  tarjetas **Silent AIM**, **Auto Shoot** y **Knife Throw** independientes en
+  Combat (la arquitectura v142 con Auto Shoot/Knife anidados está revocada).
+  Silent AIM sólo acciona la Gun al pulsar su tecla/botón de acción cuando está
+  activado; en Legit también apunta la cámara, y en Silent intenta redirección
+  restringida. La tecla ya no depende del antiguo sender Button/CFrame. Si el
+  executor no ofrece hooks, el módulo no se apaga: informa que sólo queda el
+  botón por activación nativa. Auto Shoot y Knife Throw tienen Team Check, Wall
+  Check, Range y Cooldown propios, por defecto 0 s extra; funcionan sin Silent
+  AIM. Kill Aura tiene sus propios checks de equipo/pared. Un mismo arbiter
+  prioriza Gun y no interrumpe un windup de Knife; al desactivar/cancelar suelta
+  input y restaura ThrowMode. La cámara de un disparo programado dura 0,1 s para
+  handlers diferidos y no sobreescribe un cambio posterior del usuario.
+  TriggerBot universal delega en el core con `noAim`, sin girar al activar.
+  Hitbox sigue en Exploits, usa Team Check independiente, hace la raíz
+  consultable y restaura tamaño/transparencia/CanCollide/CanQuery. La ampliación
+  del cliente no prueba aceptación de impactos por el servidor. Todos estos
+  masters permanecen OFF en un executor nuevo; la migración v143 apaga Auto Win,
+  Auto Shoot y Knife Throw del perfil viejo para no iniciar combate por sorpresa.
+  Hay status en opciones para falta de arma, objetivo, input o hooks. `Tool:Activate()`
+  no inventa ni repite paquetes de combate.
 - **Hooks limitados:** Silent sólo redirige rayos si `getcallingscript` atribuye
   la llamada a un script descendiente del Tool equipado; `MouseCast` también lo
   usa `PingsController`, por lo que un rayo genérico no es prueba de arma. La
@@ -115,16 +128,33 @@ daño o recompensas ni de lo que ocurre en todos los executors/places.
   No se encontró el script principal de cuchillo; cómo consume ese BoolValue y
   la precisión real del throw siguen pendientes en móvil y PC. No usar el
   supuesto atributo `Tool.ForceThrow` como si estuviera probado.
-- **Auto Win en Utilities es solo status de sesión**, no una automatización:
-  `Killed(killer, victim)` y `DestroyBody(victim, character, killer)` se
-  deduplican por víctima/ronda. `SetDead` marca al jugador muerto, no una derrota
-  del equipo. En `WinNotification`, nil significa ronda ganada y cualquier
-  booleano ronda perdida. `MatchResults(matchId, pages)` trae la resolución
-  **final de partida** en `RoundInfo/InfectionResult.Data.Outcome`; Win/Loss
-  sólo cubren una ronda final no contabilizada, sin sumar otra vez la
-  notificación. Draw/Tie/Forfeit/Cancelled no se convierten en victoria/derrota.
-  Los campos `Wins/Loses` son resultados de ronda observados más ese fallback,
-  NO un total persistente de partidas; inyectar tarde puede perder eventos.
+- **Auto Win en Utilities (v143):** intenta combate automáticamente con la
+  Gun o el Knife nativos sólo durante un juego activo con `Phase == "InGame"`,
+  `RoundStarted == true` y `CurrentRoundEnded ~= true`. No garantiza victoria;
+  el servidor decide daño y resultado. Las filas `Time Spent` miden sólo tiempo
+  activo de este Auto Win, `Duels Won` cuenta sólo `MatchResults` finales con
+  `Outcome == "Win"` mientras está encendido y deduplica por ID incluso si un
+  evento repetido llega más tarde, y `Current Game mode` usa FFA o PlaceId 1v1/
+  2v2 cuando hay GameId (en otro caso `Lobby / unknown`). Las cifras son de esta
+  sesión cliente, no son un total persistente del servidor. Se conservan los
+  contadores antiguos del core por compatibilidad: `WinNotification` mide
+  **rondas**, `SetDead` no es derrota de equipo, `Killed` y `DestroyBody` se
+  deduplican, y Draw/Tie/Forfeit/Cancelled no cuentan como victoria final.
+- **Safe Place:** toggle opcional bajo Auto Win; requiere GameId, MatchId,
+  `Phase == "InGame"`, personaje vivo y `Workspace.ActiveMaps[MatchId]`. Calcula
+  el techo desde las partes cercanas, rechaza alturas excesivas y usa un
+  `BodyPosition` temporal en vez de una plataforma que intercepte raycasts.
+  Limpia en OFF, muerte, respawn, fin y cambio de match/mapa; sólo restaura el
+  CFrame si siguen siendo el mismo personaje, GameId, MatchId y mapa activo.
+  Es una sujeción local: física del servidor/anticheat, streaming y techos pueden
+  impedirla o bloquear el tiro. Revisar el status; no presentarla como invulnerabilidad.
+- **Revancha:** toggle opcional; `ClientGlobals.GameValues:TryIndex({"Rematch"})`
+  alimenta el mismo estado nativo que el botón del juego. Sólo si `active` es
+  true, no está cancelada y no se ha votado, envía una vez el remoto observado
+  `RE/Rematch/RematchVote:FireServer()` sin argumentos. Se rearma al terminar el
+  estado activo; los demás jugadores deben votar. No usa `RematchTeleport` ni
+  `queue_again`. Status distingue espera, cancelación, voto enviado y falta de
+  estado/remoto; una llamada saliente no demuestra que el servidor aceptó.
 - **Auto Farm en Utilities:** `EventsController` clona modelos numerados en
   `Workspace.SpawnablesClient`, luego añade tag `Pumpkin` y conecta
   `PrimaryPart` invisible `Touch.Touched` al personaje local. Auto Farm espera
@@ -134,13 +164,14 @@ daño o recompensas ni de lo que ocurre en todos los executors/places.
   protección por podium y equipo, pero no se observó en el nuevo log; también
   necesita prueba live. Ni teletransporte ni `firetouchinterest` prueban saldo
   o aceptación por el servidor; no usar `Coins collected` como confirmación.
-- `tools/test_x2duels.py` usa remotos con nombres literales, MatchState
-  inicialmente no disponible, equipos/FFA/muerte, tags y Touch invisibles,
-  ThrowMode, WinNotification/MatchResults, Killed, reconexión y hooks ajenos.
-  Incluye un boot por fingerprint de PlaceId desconocido. Estas regresiones
-  demuestran lógica en mocks, **no daño, precisión, física o recompensas**.
-  Para completar la cadena falta capturar el script nativo de Gun/Knife y
-  probar 1v1 + 2v2 en PC/móvil con logs y saldo/vidas observados.
+- `tools/test_x2duels.py` cubre los remotos literales, MatchState inicialmente
+  ausente, equipos/FFA/muerte, el botón Silent en modo predeterminado, Auto Shoot
+  y Knife Throw separados con checks/rango/cooldown independientes, arbitraje y
+  cancelación, Hitbox/CanQuery, resultados finales deduplicados, Safe Place,
+  voto Rematch, migración segura, ThrowMode, pickup/restore y hooks ajenos.
+  Incluye boot por fingerprint de PlaceId desconocido. Son mocks: **no prueban
+  daño, precisión, física, votos aceptados ni recompensas**. Falta capturar el
+  script nativo completo de Gun/Knife y probar 1v1 + 2v2 en PC/móvil.
 
 ## 1B. Cómo construir un game sin mezclar responsabilidades
 
@@ -157,17 +188,17 @@ necesita y qué puede restaurar al apagarse**.
 | **Silent AIM** | Seleccionar un objetivo y dirigir/activar ataques a distancia o proyectiles. | Shoot, Gun, Knife Throw, flechas, cohetes, lanzamientos y otras variantes de proyectil. | Swings cuerpo a cuerpo, un segundo selector de equipos, una tarjeta independiente por cada skin. |
 | **Kill Aura** | Ataques melee de corto alcance contra objetivos válidos. | Knife, machete, sword, bat, axe y cualquier arma cuyo ataque sea un swing/contacto cercano. | Redirección de proyectiles, Silent Ray, predicción de una trayectoria o un ThrowEvent inventado. |
 | **TriggerBot** | Reaccionar a una condición ya visible/validada y activar la acción correspondiente. | Disparar cuando el objetivo está bajo el crosshair, usando el adaptador nativo compartido. | Otro Silent AIM, otro bucle de selección o una copia del módulo de cada juego. |
-| **Utilities** | Automatizaciones y datos útiles que no son el control directo de un ataque o del cuerpo. | Auto Farm, Auto Win de solo estado, Auto Get Gun, Auto Unbox y ayudas de farmeo. | Hitbox, una expansión de colisiones o un módulo puesto ahí solo porque «es fuerte». |
+| **Utilities** | Automatizaciones y datos útiles; el usuario puede pedir una secuencia de combate coordinada. | Auto Farm, Auto Win (también combate automático en X2/MM2), Auto Get Gun, Auto Unbox. | Hitbox, una expansión de colisiones o un módulo puesto ahí solo porque «es fuerte». |
 | **Exploits** | Cambiar una propiedad o aprovechar directamente una mecánica explotable del juego. | Hitbox y manipulaciones equivalentes que tengan una razón técnica clara. | Auto Farm/Auto Win por costumbre, o cualquier tarjeta que no se pueda explicar técnicamente. |
 | **Render** | Mostrar información sin decidir el combate. | PlayerESP, Chams, Nametags, HP, Arrows, Coin ESP. | Un TeamESP paralelo con otra resolución de equipos. |
 | **Movement/Blatant** | Movimiento, desplazamiento o acciones físicas directas. | Speed, Fly, Teleport, Fling cuando corresponda al juego. | Estadísticas de farm o lógica de proyectiles. |
 
 La distinción importante es **proyectil/distancia frente a melee**, no el nombre
-del arma. Un cuchillo que se lanza pertenece a Silent AIM; el mismo cuchillo
-cuando hace un swing cercano pertenece a Kill Aura. Si una herramienta tiene
-ambos ataques, comparte el descubrimiento/equipado del Tool, pero separa las
-dos rutas y sus opciones. No se duplican tarjetas ni se crean dos loops que
-equipan y activan el mismo arma a la vez.
+del arma. En X2 el usuario pidió expresamente que Knife Throw y Auto Shoot sean
+tarjetas independientes de Silent AIM; comparten el adaptador y un arbiter de
+armas, pero no sus checks ni su toggle. El swing cercano sigue en Kill Aura.
+En otros juegos no se impone esa excepción sin revisar sus requisitos. No se
+crean loops que equipen armas distintas simultáneamente.
 
 **Kill Aura no es un cajón para cualquier ataque automático.** Su alcance,
 animación, swing, hit window y recovery pertenecen a la mecánica melee del
@@ -276,10 +307,10 @@ La API común es `createUniversalFeature` con `parent`, `registry` y
 actualizable; no sustituye una explicación de seguridad ni un contador que no
 existe.
 
-- Una familia de ataques tiene **una tarjeta principal** y secciones por arma o
-  mecánica. Por ejemplo, Silent AIM puede contener `Gun` y `Knife`; no hace
-  falta una tarjeta `Knife Throw` separada si ambas comparten objetivo y
-  sender.
+- Por defecto una familia de ataques puede tener **una tarjeta principal** y
+  secciones por arma o mecánica. La petición explícita del usuario prevalece:
+  en X2 `Auto Shoot` y `Knife Throw` son tarjetas independientes de Silent AIM
+  con un adaptador y arbitraje compartidos (§1A).
 - Las opciones dependen del mecanismo real. Un arma con carga puede necesitar
   `Charge`; una con timing de impacto puede necesitar `Hit Time`; una con
   críticos puede exponer `Critical` y sus ventanas `Miss/Bad/Okay` **solo si
@@ -293,10 +324,9 @@ existe.
   vez. Para una acción como Shoot se usa `state.bindFeatureActivationKey` y se
   asigna el callback de disparar; el callback no debe llamar al toggle maestro.
   El valor `Unknown` deja la tecla sin asignar hasta que el usuario la capture.
-- Un sender `Button` espera la acción del botón/tecla. Un sender `CFrame` debe
-  poder trabajar por su ruta automática sin esperar ese botón. Esta diferencia
-  se prueba tanto en desktop como en touch, sin inyectar clicks para simular
-  combate si existe una activación nativa.
+- Si un módulo ofrece senders `Button`/`CFrame`, sus nombres deben corresponder
+  al comportamiento y probarse en desktop/touch. X2 v143 ya no expone ese sender:
+  su tecla de acción dispara en ambos modos, sin toggle adicional.
 - El estado de una opción hija no debe encender accidentalmente otra tarjeta.
   Si una subopción requiere el master, se documenta y se comprueba el gate; al
   apagar el master se cancela la acción pendiente pero se conserva la
@@ -365,12 +395,10 @@ hace lento el módulo, o borrar un tiempo que la mecánica necesita para funcion
   cancelación sin timers ni atributos colgados. La prueba no debe afirmar una
   tasa de aceptación del servidor que el harness no puede observar.
 
-**Estado actual frente a regla de diseño:** X2 v119 intenta Knife Throw en cada
-tick y no expone un slider; si se añade el control de delay descrito aquí, debe
-llamarse Cooldown y empezar en 0. Los delays documentados en MM2 son rutas
-históricas/medidas de ese juego, no una autorización para reintroducir un
-`Throw interval` genérico. Esta distinción queda escrita para que el próximo
-cambio no confunda documentación con una funcionalidad ya implementada.
+**Estado v143:** X2 Auto Shoot y Knife Throw ofrecen `Cooldown` independiente,
+por defecto 0; el de Knife empieza tras el windup/release nativo, no en paralelo.
+Ambos son límites de intentos del cliente, no prometen frecuencia aceptada por
+el servidor. Los delays medidos en MM2 no se copian a X2 como evidencia.
 
 ### Cuando el arma tiene críticos o calidad de impacto
 
@@ -390,7 +418,7 @@ Por ejemplo, `Hit Time` puede controlar cuándo se intenta el impacto, mientras
 resultados que sólo se muestran. No se deben convertir todos en toggles ni
 prometer críticos si sólo se observó una animación. En Kill Aura estos detalles
 pertenecen a las opciones del melee correspondiente; en Knife Throw pertenecen
-a la sección del proyectil dentro de Silent AIM.
+a la tarjeta o sección del proyectil que el usuario haya pedido para ese juego.
 
 ## 1D. Auto Farm, Auto Win y estadísticas útiles
 
@@ -422,12 +450,10 @@ cada uno su propia copia. Hay que separar **sesión**, **ronda** y **total
 persistente**, y documentar cuándo se reinicia cada uno. Las cifras del cliente
 no se presentan como saldo autoritativo del servidor.
 
-**Estado actual:** X2 v119 ya tiene en Auto Win `Wins`, `Time Played`, `Kills`
-y `Loses`; Auto Farm todavía reporta principalmente su estado de búsqueda y
-contacto. Por tanto, `Coins collected`, `Time spent` y demás campos anteriores
-son el contrato para completar/compartir el farm, no una afirmación de que ya
-estén implementados en X2. No se debe escribir en una prueba o en el status
-«collected» hasta tener una confirmación real.
+**Estado actual:** X2 v143 Auto Win muestra `Time Spent`, `Duels Won` y
+`Current Game mode` con las definiciones de §1A. Auto Farm sigue reportando
+principalmente búsqueda y contacto. No escribir `Coins collected` como si
+estuviera confirmado sin una señal real de recompensa del servidor.
 
 ### Qué significa Utilities en este proyecto
 
@@ -455,9 +481,9 @@ Antes de dar un módulo por terminado, el próximo agente debe poder responder
    enemigo por conveniencia.
 3. **Core:** existe un solo adaptador de objetivo/ataque y los módulos lo usan;
    no hay dos árboles Shoot ni dos loops equipando el mismo Tool.
-4. **Silent AIM:** todos los ataques a distancia/proyectiles están bajo su
-   tarjeta, con secciones por arma y sus propias opciones; la keybind de acción
-   no cambia el toggle maestro.
+4. **Silent AIM:** la keybind de acción no cambia el toggle maestro; las
+   tarjetas de proyectiles siguen la ubicación solicitada para ese juego. En X2
+   Auto Shoot y Knife Throw son independientes, con arbitraje compartido.
 5. **Kill Aura:** sólo contiene melee; reach, swing, hit time, críticos,
    miss/bad/okay, recovery y cooldown se modelan únicamente si la mecánica los
    tiene y se pueden observar.
@@ -528,9 +554,9 @@ en el análisis o en el resumen del cambio:
    función necesita master propio. Un contador puede ser status; Team/Role ESP
    puede ser provider; un click puntual puede ser botón dentro de Teleport.
 5. **Si es una opción, ¿depende del master?** Define si Speed OFF detiene Auto
-   Sprint, si Silent AIM OFF cancela Auto Shoot, y si se conserva la preferencia
-   al volver a activar. «Independiente» debe significar independencia real, no
-   dos funciones modificando lo mismo sin coordinación.
+   Sprint y qué preferencias se conservan. En X2 Silent AIM OFF no desactiva
+   Auto Shoot ni Knife Throw. «Independiente» significa independencia real con
+   coordinación del recurso compartido.
 6. **¿Cuál es su mecanismo dominante?** Proyectil → Silent AIM; melee → Kill
    Aura; locomoción → Speed/Jump/Fly/Teleport según la acción; información →
    Render/status; farm o resultado automatizado → Utilities; alteración directa
@@ -568,7 +594,7 @@ sin explicar cómo se evita la doble escritura.
 | **Auto Sprint / Sprint hold / sprint trail** | Opción o acción dentro de **Speed**. | Comparte Humanoid, velocidad, estados sentado/aire y restores. El archivo Sprint puede existir, pero no otra tarjeta ni otro escritor de velocidad. |
 | **Auto Jump / Bunny Hop** | Si mantiene el movimiento de Speed, dentro de **Speed**; si cambia impulso/altura de salto, dentro de **Jump**. | El nombre «jump» no basta: decide si el efecto principal es continuar desplazándose o modificar el salto. Si ambas lecturas cambian el comportamiento, preguntar. |
 | **Click Teleport / teleport a un marker** | Acción u opción de **Teleport**, reutilizando destinos y coordenadas. | No crear otro sistema de CFrame ni otra lista de puntos. Markers puede seguir siendo Render si su responsabilidad es mostrar/guardar marcadores. |
-| **Auto Shoot / Gun Throw / Knife Throw** | Secciones del arma dentro de **Silent AIM**. | Comparten target, Team/Wall Check y sender. La activación puede ser llamada por otra utilidad, pero no se duplica el solver. |
+| **Auto Shoot / Gun Throw / Knife Throw** | Evaluar secciones de **Silent AIM** o tarjetas separadas si el usuario lo solicita. | En X2 Auto Shoot/Knife Throw son tarjetas separadas por petición expresa; comparten adaptador y arbitraje, no checks ni master. |
 | **Melee Reach / Hit Time / Critical** | Opciones del arma bajo **Kill Aura**. | Reach como distancia de selección no es Hitbox. Si se cambia el tamaño real de una parte, eso sí pertenece a Hitbox/Exploits y necesita restore. |
 | **Team ESP / Role ESP / Enemy ESP** | **PlayerESP** y los providers compartidos de equipos/roles. | No crear otro scanner, otra paleta incompatible ni otra lista de jugadores. Chams/Nametags pueden ser tarjetas distintas si renderizan objetos distintos, pero usan la misma relación. |
 | **Coin ESP / Gun ESP / otro pickup ESP** | Provider del **ItemESP/CoinESP** que ya descubre esa familia. | Añadir una fuente o un estilo no exige repetir el escaneo completo. Si el mecanismo visual es realmente distinto, se justifica antes de crear otra tarjeta. |
@@ -958,12 +984,13 @@ el boot simulado y las auditorías, que no sustituyen una prueba en juego:
 - Fling por network ownership (v107) y Anti Fling (v108) contra un fling real.
 - Disguise v101: packs del objetivo / por ID, en servidor.
 - Salidas del standalone (Step 1 nil-parent, Step 4 origen) y TargetBot v5.
-- X2 v142: probar en vivo 1v1 y 2v2, Gun/Knife y precisión del throw en PC/móvil,
-  consumo de `ThrowMode`, atribución con `getcallingscript`, Team/Wall Check,
-  FFA, Hitbox, TriggerBot y hooks ajenos. Observar pickup Pumpkin y saldo real,
-  más estadísticas de rondas/resultados tras inyección y reconexión. Capturar
-  el script nativo Gun/Knife y eventos con `tools/X2DuelsDecompiler.luau`;
-  el harness no demuestra daño, monedas ni aceptación del servidor.
+- X2 v143: probar en vivo 1v1 y 2v2, botón Silent PC/móvil, Gun/Knife
+  independientes y Auto Win; precisión, cooldown y consumo de `ThrowMode`;
+  Safe Place (física, restauración y techos), Revancha (estado/voto aceptado),
+  Team/Wall Check, FFA, Hitbox, TriggerBot y hooks ajenos. Observar pickup
+  Pumpkin y saldo real y contar resultados finales tras inyección/reconexión.
+  Capturar el script nativo Gun/Knife y eventos con `tools/X2DuelsDecompiler.luau`;
+  el harness no demuestra daño, monedas, votos ni aceptación del servidor.
 
 ## 10. Cómo trabajar con este usuario
 
@@ -981,7 +1008,7 @@ el boot simulado y las auditorías, que no sustituyen una prueba en juego:
   el comportamiento y `validate.sh` verde antes de pushear.
 
 ---
-*Última actualización: 2026-10-27 · v142, revisión X2 con log/RBXL 1v1;
+*Última actualización: 2026-10-28 · v143, X2 combate independiente y Auto Win;
 la aceptación live de X2 y el perfil de CPU MM2 siguen pendientes.
 Al publicar una versión nueva, actualiza la línea de estado de arriba y cualquier
 sección que cambie.*
