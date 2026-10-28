@@ -5,7 +5,7 @@
 > contradice lo que crees, gana este documento (y los datos de calibración).
 >
 > **Estado al escribir esto:** rama `arena/9492e6b6-arandommenu`, build
-> **`v145-20261028-x2duels-mouse`**.
+> **`v146-20261028-x2duels-gun-probe`**.
 > El usuario se comunica en español. Respóndele en español.
 
 ---
@@ -67,6 +67,42 @@
   órdenes. Validación completa v141: 92 fuentes, 64 suites, boot `failures=0`,
   51/50 tarjetas. Falta prueba live: perfil CPU por fase, menú apagado/activo,
   PC/móvil, executor, tiempo de inyección y revisión F9/MicroProfiler.
+
+## 1Q. X2 Duels: Gun Probe temporal v146
+
+El usuario usa Delta en celular y pidió un módulo temporal para diagnosticar
+su disparo. **Gun Probe** es una tarjeta Combat separada y no se restaura al
+inyectar. Al habilitarla durante 60 s busca la Gun en Backpack/Character;
+`Equip gun` intenta equiparla. Desactivar, vencer el tiempo o descargar detiene
+los hooks; si el contador vence la tarjeta permanece visualmente encendida y
+hay que apagarla antes de reiniciar. La captura no dispara automáticamente.
+
+- Prueba deliberadamente amplia y de riesgo: con Gun equipada y `checkcaller`
+  funcional, intenta redirigir lecturas nativas de Mouse `Hit`, `Target` y
+  `UnitRay`, incluso de scripts ajenos. Emplea objetivo, partido, equipo,
+  distancia y Wall Check, sin mover cámara. Puede interferir con otros controles.
+  No forzar `checkcaller` ni prometer que esas lecturas sean usadas en celular.
+  Este módulo no instala el fallback raw de Silent y no intercepta todas las APIs.
+- Registra hasta 400 eventos con tiempo relativo: toque/clic y processed,
+  Tool.Activated, lecturas Mouse/redirecciones, y llamadas observadas via
+  `__namecall` FireServer/InvokeServer/Raycast mientras la Gun está equipada.
+  Guarda nombre de remoto/script y tipos de argumentos, no valores, y estructura
+  de descendientes de Gun. Puede recoger eventos no relacionados; no se debe
+  interpretar correlación como causalidad. APIs presentes/hooks instalados no
+  prueban que capturen todo, ni `Activated`/lectura/remote prueban daño.
+- `Save report` o fin de sesión escribe `X2Duels-calibration.json` en la carpeta
+  de archivos del executor, sobrescribiendo la captura previa. `Save gun sources`
+  decompila hasta 20 LocalScript/ModuleScript de la Gun a archivos locales
+  `X2Duels-gun-source-<n>.luau` si Delta expone decompile/writefile. Puede
+  tardar o no estar disponible. Revisar contenido sensible antes de compartir;
+  ninguno se envía por red. El recolector externo sigue siendo útil para scripts
+  de disparo fuera de Gun o capturas más amplias.
+- Hooks propios tienen lease por sesión y preservan hooks posteriores; captura
+  limitada y cierre automático. `tools/test_x2duels.py` cubre en mocks reads
+  ajenos y del executor, tipos sin valores, toque, hook encadenado, expiración y
+  reinicio; no prueba Delta/Roblox en vivo. Si no hay lectura Mouse observada,
+  no concluir que solo funciona PC: el cliente puede usar otra ruta o el hook
+  puede no funcionar. Pedir informe, fuentes disponibles y Status.
 
 ## 1A. X2Duels (MVS): evidencia 1v1 y contratos v145
 
@@ -1061,8 +1097,7 @@ el boot simulado y las auditorías, que no sustituyen una prueba en juego:
   el comportamiento y `validate.sh` verde antes de pushear.
 
 ---
-*Última actualización: 2026-10-28 · v145, X2 fallback de Mouse acotado,
-selector Head/Body y Aim FOV opcional para PC/móvil; la aceptación live de X2 y
-el perfil de CPU MM2 siguen pendientes.
+*Última actualización: 2026-10-28 · v146, Gun Probe temporal para investigar
+Delta y disparo móvil; compatibilidad, captura y daño en vivo pendientes.
 Al publicar una versión nueva, actualiza la línea de estado de arriba y cualquier
 sección que cambie.*

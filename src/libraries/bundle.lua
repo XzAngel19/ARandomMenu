@@ -1,5 +1,5 @@
 return {
-    stamp = "v145-20261028-x2duels-mouse",
+    stamp = "v146-20261028-x2duels-gun-probe",
     files = {
         ["src/Profile/124848751642883.lua"] = [[
 --!strict
@@ -27123,6 +27123,7 @@ local function buildX2Duels(runtime: any): ()
 
     local function update(_deltaTime: number): ()
         local now: number = os.clock()
+        if runtimeState.calibration then runtimeState.calibration.tick(now) end
         if now >= runtimeState.nextRemoteAt then
             runtimeState.nextRemoteAt = now + 2
             discoverMatchState()
@@ -27241,6 +27242,7 @@ local function buildX2Duels(runtime: any): ()
 
     moduleCleanup = function(): ()
         runtimeState.closed = true
+        if runtimeState.calibration then runtimeState.calibration.stop("Menu unloaded") end
         if runtimeState.autoWinStartedAt then
             runtimeState.autoWinElapsed += math.max(0, os.clock() - runtimeState.autoWinStartedAt)
             runtimeState.autoWinStartedAt = nil
@@ -27789,6 +27791,259 @@ local function buildX2Duels(runtime: any): ()
     end)
     host.addInformationOption(hitboxCard,
         "Client-side enlargement only; the server can reject hits outside the real target.")
+
+    -- Temporary, explicitly enabled probe. It is separate from Silent AIM and
+    -- deliberately broad: while a gun is equipped even unrelated native Mouse
+    -- reads may be changed. It never fabricates/replays remotes or changes camera.
+    do
+        local probe: any = {active = false, guard = false, events = {}, dropped = 0,
+            links = {}, gun = nil, target = nil, indexInstalled = false, namecallInstalled = false}
+        local calibrationCard: any = nil
+        local statusRow: any = nil
+        local function report(text: string): ()
+            if calibrationCard and type(calibrationCard.SetStatus) == "function" then calibrationCard:SetStatus(text) end
+            if statusRow then statusRow.set(text) end
+        end
+        local function record(kind: string, details: any?): ()
+            if not probe.active then return end
+            if #probe.events >= 400 then probe.dropped += 1; return end
+            table.insert(probe.events, {t = math.floor((os.clock() - probe.started) * 1000) / 1000,
+                event = kind, detail = details})
+        end
+        local function save(): boolean
+            local output: any = {
+                version = 1, placeId = game.PlaceId, touch = inputService.TouchEnabled == true,
+                keyboard = inputService.KeyboardEnabled == true, elapsed = math.max(0, os.clock() - (probe.started or os.clock())),
+                indexHook = probe.indexInstalled, namecallHook = probe.namecallInstalled,
+                checkcaller = type(host.checkcaller) == "function", getcallingscript = type(host.getcallingscript) == "function",
+                decompile = type(host.decompile) == "function", gun = probe.gunInfo,
+                redirects = probe.redirects or 0, dropped = probe.dropped, events = probe.events, sources = probe.sources or {},
+                note = "Observation only; hooks do not cover all APIs, and redirection does not prove server hits.",
+            }
+            local okEncode: boolean, encoded: any = pcall(function(): string
+                return game:GetService("HttpService"):JSONEncode(output)
+            end)
+            if not okEncode or type(host.writefile) ~= "function" then return false end
+            return pcall(host.writefile, "X2Duels-calibration.json", encoded)
+        end
+        local function stop(reason: string): ()
+            if not probe.active then return end
+            record("stop", reason)
+            probe.active = false
+            if probe.lease then probe.lease.active = false end
+            if probe.inputLink then pcall(function(): () probe.inputLink:Disconnect() end); probe.inputLink = nil end
+            for _, link: any in ipairs(probe.links) do pcall(function(): () link:Disconnect() end) end
+            table.clear(probe.links)
+            if type(host.hookmetamethod) == "function" then
+                for _, item: any in ipairs({
+                    {"__index", probe.indexInstalled, probe.oldIndex, probe.indexWrapper},
+                    {"__namecall", probe.namecallInstalled, probe.oldNamecall, probe.namecallWrapper},
+                }) do
+                    if item[2] then
+                        local ok: boolean, displaced: any = pcall(host.hookmetamethod, game, item[1], item[3])
+                        if ok and displaced ~= item[4] and type(displaced) == "function" then
+                            pcall(host.hookmetamethod, game, item[1], displaced)
+                        end
+                    end
+                end
+            end
+            local saved: boolean = save()
+            report(reason .. (saved and " · saved X2Duels-calibration.json" or " · save failed (writefile/JSON unavailable)"))
+        end
+        local function bindGun(gun: Tool?): ()
+            if probe.gun == gun then return end
+            for _, link: any in ipairs(probe.links) do pcall(function(): () link:Disconnect() end) end
+            table.clear(probe.links)
+            probe.gun = gun
+            probe.target = nil
+            if not gun then record("gun_missing"); return end
+            local children: {any} = {}
+            for _, item: Instance in ipairs(gun:GetDescendants()) do
+                if #children >= 100 then break end
+                table.insert(children, {name = string.sub(item.Name, 1, 80), class = item.ClassName})
+            end
+            probe.gunInfo = {name = string.sub(gun.Name, 1, 80), children = children}
+            record("gun_found", {name = gun.Name, equipped = gun.Parent == localPlayer.Character})
+            local ok: boolean, link: any = pcall(function(): any
+                return gun.Activated:Connect(function(): () record("tool_activated") end)
+            end)
+            if ok and link then table.insert(probe.links, link) end
+        end
+        local function tick(now: number): ()
+            if not probe.active then return end
+            if now >= probe.expires then stop("60 seconds elapsed; turn OFF before restarting"); return end
+            if now < (probe.nextTick or 0) then return end
+            probe.nextTick = now + 0.1
+            local gun: Tool? = findWeapon("Gun")
+            bindGun(gun)
+            if gun and gun.Parent == localPlayer.Character then
+                local target: any = nearestEnemy(settings.maxDistance, true, settings.wallCheck, false,
+                    gunOrigin(gun), settings.silentAimPart, nil)
+                probe.target = target
+            else probe.target = nil end
+            report((not gun and "Waiting for gun" or (gun.Parent == localPlayer.Character and "Gun equipped" or "Gun in inventory"))
+                .. " · Mouse hook " .. (probe.indexInstalled and "installed" or "unavailable")
+                .. " · remote hook " .. (probe.namecallInstalled and "installed" or "unavailable")
+                .. " · redirects " .. tostring(probe.redirects) .. " · " .. tostring(#probe.events) .. " events")
+        end
+        local function start(): ()
+            if probe.active then return end
+            probe.active, probe.guard = true, false
+            probe.started, probe.expires, probe.nextTick = os.clock(), os.clock() + 60, 0
+            probe.events, probe.dropped, probe.redirects = {}, 0, 0
+            probe.gun, probe.gunInfo, probe.target, probe.sources = nil, nil, nil, {}
+            probe.indexInstalled, probe.namecallInstalled = false, false
+            record("start", {touch = inputService.TouchEnabled == true})
+            local lease: any = {active = true}
+            probe.lease = lease
+            local inputOk: boolean, inputLink: any = pcall(function(): any
+                return inputService.InputBegan:Connect(function(input: any, processed: boolean): ()
+                    if not lease.active or not probe.gun or probe.gun.Parent ~= localPlayer.Character then return end
+                    local inputType: any = input.UserInputType
+                    if inputType == Enum.UserInputType.Touch or inputType == Enum.UserInputType.MouseButton1 then
+                        record("input_began", {input = tostring(inputType), processed = processed == true})
+                    end
+                end)
+            end)
+            if inputOk then probe.inputLink = inputLink end
+            local wrap: any = function(callback: any): any
+                if type(host.newcclosure) == "function" then
+                    local ok: boolean, closure: any = pcall(host.newcclosure, callback)
+                    if ok and type(closure) == "function" then return closure end
+                end
+                return callback
+            end
+            local mouseOk: boolean, mouse: any = pcall(function(): any return localPlayer:GetMouse() end)
+            if mouseOk and mouse and type(host.hookmetamethod) == "function" then
+                local previous: any = nil
+                local wrapper: any = wrap(function(object: any, key: any): any
+                    if previous == nil then return nil end
+                    if not lease.active or probe.guard or object ~= mouse
+                        or (key ~= "Hit" and key ~= "Target" and key ~= "UnitRay") then return previous(object, key) end
+                    probe.guard = true
+                    local ok: boolean, value: any = pcall(function(): any
+                        local gun: Tool? = probe.gun
+                        if not gun or gun.Parent ~= localPlayer.Character then return nil end
+                        local caller: any = nil
+                        if type(host.checkcaller) == "function" then
+                            local checked: boolean, isExecutor: any = pcall(host.checkcaller)
+                            if not checked or isExecutor ~= false then return nil end
+                        else return nil end
+                        if type(host.getcallingscript) == "function" then
+                            local got: boolean, script: any = pcall(host.getcallingscript)
+                            if got and typeof(script) == "Instance" then caller = script.Name end
+                        end
+                        record("mouse_read", {property = key, caller = caller or "unknown"})
+                        local target: any = validSilentTarget(probe.target)
+                        if not target or (settings.wallCheck and not hasLineOfSight(target, gunOrigin(gun))) then return nil end
+                        local result: any = nil
+                        if key == "Hit" then result = CFrame.new(target.part.Position)
+                        elseif key == "Target" then result = target.part
+                        elseif host.Ray then
+                            local original: any = previous(object, key)
+                            if typeof(original) == "Ray" then
+                                local delta: Vector3 = target.part.Position - original.Origin
+                                if delta.Magnitude >= 0.05 then result = host.Ray.new(original.Origin, delta.Unit) end
+                            end
+                        end
+                        if result ~= nil then probe.redirects += 1; record("mouse_redirect", {property = key}) end
+                        return result
+                    end)
+                    probe.guard = false
+                    if ok and value ~= nil then return value end
+                    return previous(object, key)
+                end)
+                local ok: boolean, old: any = pcall(host.hookmetamethod, game, "__index", wrapper)
+                if ok and type(old) == "function" then
+                    previous, probe.oldIndex, probe.indexWrapper, probe.indexInstalled = old, old, wrapper, true
+                end
+            end
+            if type(host.hookmetamethod) == "function" and type(host.getnamecallmethod) == "function" then
+                local previous: any = nil
+                local wrapper: any = wrap(function(object: any, ...: any): any
+                    if previous == nil then return nil end
+                    if not lease.active or probe.guard then return previous(object, ...) end
+                    local args: any = table.pack(...)
+                    probe.guard = true
+                    pcall(function(): ()
+                        local gun: Tool? = probe.gun
+                        if not gun or gun.Parent ~= localPlayer.Character then return end
+                        local method: any = host.getnamecallmethod()
+                        if method ~= "FireServer" and method ~= "InvokeServer" and method ~= "Raycast" then return end
+                        if method ~= "Raycast" and (typeof(object) ~= "Instance"
+                            or not (object:IsA("RemoteEvent") or object:IsA("UnreliableRemoteEvent") or object:IsA("RemoteFunction"))) then return end
+                        if type(host.checkcaller) == "function" then
+                            local ok: boolean, executor: any = pcall(host.checkcaller)
+                            if not ok or executor ~= false then return end
+                        end
+                        local types: {string} = {}
+                        for i: number = 1, math.min(args.n, 12) do table.insert(types, typeof(args[i])) end
+                        local caller: any = nil
+                        if type(host.getcallingscript) == "function" then
+                            local ok: boolean, script: any = pcall(host.getcallingscript)
+                            if ok and typeof(script) == "Instance" then caller = script.Name end
+                        end
+                        record("namecall", {method = method, object = object.Name, caller = caller or "unknown", argumentTypes = types})
+                    end)
+                    probe.guard = false
+                    return previous(object, unpack(args, 1, args.n))
+                end)
+                local ok: boolean, old: any = pcall(host.hookmetamethod, game, "__namecall", wrapper)
+                if ok and type(old) == "function" then
+                    previous, probe.oldNamecall, probe.namecallWrapper, probe.namecallInstalled = old, old, wrapper, true
+                end
+            end
+            tick(os.clock())
+        end
+        -- No profile restoration: a diagnostic hook must never start on injection.
+        local configuration: any = table.clone(parentConfiguration)
+        configuration.categoryName, configuration.restore = "Combat", false
+        calibrationCard = host.createUniversalFeature("Gun Probe", "Temporary broad Mouse test and shooting diagnostics (60 seconds)", 3,
+            function(enabled: boolean): () if enabled then start() else stop("Stopped") end end, configuration)
+        statusRow = addCombatStatusRow(calibrationCard, "Status", "Off")
+        host.addActionOption(calibrationCard, "Equip gun", function(): ()
+            if not probe.active then report("Enable Gun Probe first"); return end
+            local gun: Tool? = findWeapon("Gun")
+            if gun and equip(gun) then record("equip_requested"); tick(os.clock())
+            else report("No gun found or equip failed") end
+        end)
+        host.addActionOption(calibrationCard, "Save report", function(): ()
+            report(save() and "Saved X2Duels-calibration.json" or "Save failed: writefile/JSON unavailable")
+        end)
+        host.addActionOption(calibrationCard, "Save gun sources", function(): ()
+            local gun: Tool? = findWeapon("Gun")
+            if not probe.active or not gun then report("Enable Gun Probe and obtain a gun first"); return end
+            if type(host.decompile) ~= "function" or type(host.writefile) ~= "function" then
+                report("Gun source capture requires decompile and writefile"); return
+            end
+            report("Saving gun sources; please wait...")
+            local lease: any = probe.lease
+            task.spawn(function(): ()
+                local saved: number = 0
+                local attempted: number = 0
+                for _, item: Instance in ipairs(gun:GetDescendants()) do
+                    if not lease.active then return end
+                    if item:IsA("LocalScript") or item:IsA("ModuleScript") then
+                        attempted += 1
+                        local ok: boolean, source: any = pcall(host.decompile, item)
+                        if not lease.active then return end
+                        if ok and type(source) == "string" and #source > 0 then
+                            local filename: string = "X2Duels-gun-source-" .. tostring(attempted) .. ".luau"
+                            if pcall(host.writefile, filename, source) then
+                                saved += 1
+                                table.insert(probe.sources, {file = filename, name = item.Name, class = item.ClassName})
+                            end
+                        end
+                        if attempted >= 20 then break end
+                    end
+                end
+                save()
+                report("Gun sources saved: " .. tostring(saved) .. "/" .. tostring(attempted) .. "; review before sharing")
+            end)
+        end)
+        host.addInformationOption(calibrationCard, "Temporary broad Mouse redirection can affect unrelated scripts. Fire normally while enabled. Records gun structure, input and remote method/type metadata, not argument values. Sources are separately saved on request and may contain sensitive data. Review files before sharing. OFF or 60s stops hooks. Not proof of hits.")
+        runtimeState.calibration = {tick = tick, stop = stop}
+    end
 
     discoverMatchState()
     discoverClientGlobals()

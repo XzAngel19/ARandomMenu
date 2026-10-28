@@ -433,6 +433,7 @@ local expected = {
     ["Knife Throw"] = true,
     ["Kill Aura"] = true,
     ["Hitbox"] = true,
+    ["Gun Probe"] = true,
 }
 local seen = {}
 local featuresByName = {}
@@ -450,7 +451,7 @@ for _, feature in ipairs(ex.allFeatures) do
         assert(disabled, "X2 disable " .. feature.name .. ": " .. tostring(disableError))
     end
 end
-assert(x2CardCount == 7, "expected exactly seven X2 cards, got " .. tostring(x2CardCount))
+assert(x2CardCount == 8, "expected exactly eight X2 cards, got " .. tostring(x2CardCount))
 for name, _ in pairs(expected) do
     assert(seen[name], "X2 card did not boot: " .. name)
 end
@@ -1428,6 +1429,58 @@ do
         "missing raw capability spent a shot instead of reporting unsupported")
     silentFeature.onToggle(false)
     compatibility.setChecked(false)
+    -- Temporary broad probe intentionally affects even an identified foreign
+    -- native reader. Its session lease must not revive under a later hook.
+    currentIndex, currentNamecall = originalIndex, originalNamecall
+    hookmetamethod = function(_game, method, replacement)
+        if method == "__index" then local old = currentIndex; currentIndex = replacement; return old end
+        if method == "__namecall" then local old = currentNamecall; currentNamecall = replacement; return old end
+        error("unexpected hook")
+    end
+    checkcaller = function() return false end
+    getcallingscript = function() return otherScript end
+    getnamecallmethod = function() return "FireServer" end
+    local captured, oldEncode = nil, HttpService.JSONEncode
+    HttpService.JSONEncode = function(_, value) captured = value; return "{}" end
+    local probeCard = featuresByName["Gun Probe"]
+    core.settings.wallCheck = false
+    nativeHumanoid:EquipTool(nativeGun)
+    probeCard.onToggle(true)
+    nativeNow += 0.2
+    coreTask.callback(0.1)
+    local probeHit = currentIndex(nativeMouse, "Hit")
+    assert(typeof(probeHit) == "CFrame" and probeHit.Position and probeHit.Position == nativeTarget.part.Position,
+        "temporary broad probe did not redirect a foreign native Mouse read: " .. tostring(probeHit) .. " / " .. tostring(probeCard.status))
+    checkcaller = function() return true end
+    assert(currentIndex(nativeMouse, "Hit") == nativeHit, "probe changed executor reads")
+    checkcaller = function() return false end
+    currentNamecall(fireRemote, "private-argument", nil, Vector3.new(1, 2, 3))
+    UserInputService.InputBegan:Fire({UserInputType = Enum.UserInputType.Touch, Position = Vector3.new(25, 25, 0)}, false)
+    local retained = currentIndex
+    local newer = function(...) return retained(...) end
+    currentIndex = newer
+    probeCard.onToggle(false)
+    assert(currentIndex == newer and currentIndex(nativeMouse, "Hit") == nativeHit,
+        "probe OFF displaced newer hook or left old one active")
+    assert(captured and captured.gun and captured.gun.name == nativeGun.Name
+        and captured.indexHook and captured.namecallHook and captured.redirects > 0,
+        "probe report omitted gun/capabilities/redirect evidence")
+    local foundCall, foundInput = false, false
+    for _, event in ipairs(captured.events) do
+        if event.event == "namecall" then
+            foundCall = event.detail.object == "fire" and event.detail.argumentTypes[1] == "string"
+                and event.detail.argumentTypes[2] == "nil" and event.detail.argumentTypes[3] == "Vector3"
+        elseif event.event == "input_began" then foundInput = true end
+    end
+    assert(foundCall and foundInput, "probe missed touch or redacted remote argument types")
+    probeCard.onToggle(true)
+    assert(retained(nativeMouse, "Hit") == nativeHit, "old probe lease revived on restart")
+    nativeNow += 61
+    coreTask.callback(0.1)
+    assert(currentIndex(nativeMouse, "Hit") == nativeHit
+        and string.find(probeCard.status, "60 seconds", 1, true), "probe did not expire safely")
+    probeCard.onToggle(false)
+    HttpService.JSONEncode = oldEncode
     hookmetamethod, getcallingscript, getnamecallmethod = oldHookMeta, oldCaller, oldMethod
     getrawmetatable, setreadonly, isreadonly = oldRawMeta, oldReadonly, oldIsReadonly
     debug, checkcaller = oldDebug, oldCheckCaller
@@ -2083,7 +2136,7 @@ assert(ex.state.x2duelsRules == nil, "X2 rules survived destroy")
 assert(ex.state.mvsdCore == nil, "X2 compatibility core survived destroy")
 assert(ex.state.gameBridge.teamProvider == nil, "X2 team provider survived destroy")
 assert(ex.state.gameBridge.roleProvider == nil, "X2 role provider survived destroy")
-print("[X2BOOT] 7 cards, independent combat, safe/rematch, duel stats, cleanup: PASS")
+print("[X2BOOT] 8 cards, probe, independent combat, safe/rematch, duel stats, cleanup: PASS")
 '''
     output_path = ROOT / "build" / "x2duels_boot.luau"
     output_path.write_text(generated, encoding="utf-8")
@@ -2094,7 +2147,7 @@ print("[X2BOOT] 7 cards, independent combat, safe/rematch, duel stats, cleanup: 
     if result.returncode:
         raise SystemExit(result.stdout + result.stderr)
     output = result.stdout
-    marker = "[X2BOOT] 7 cards, independent combat, safe/rematch, duel stats, cleanup: PASS"
+    marker = "[X2BOOT] 8 cards, probe, independent combat, safe/rematch, duel stats, cleanup: PASS"
     if marker not in output:
         raise AssertionError("X2 bundle boot marker missing\n" + output)
     print(marker)
