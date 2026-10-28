@@ -1,5 +1,28 @@
 # X2 Duels: captura de código y remotes
 
+## Opción integrada: Gun Probe (v148)
+
+En X2 Duels, abre **Combat → Gun Probe**, actívalo y usa **Equip gun**. Dispara
+con el control normal y luego apaga el módulo o usa **Save report**. La captura
+es pasiva y termina a los 60 segundos: `X2Duels-calibration.json` se guarda en
+los archivos del executor y se sobrescribe en la siguiente sesión. El Status
+indica si Oth Mouse, namecall y Raycast directo se instalaron y si falló guardar.
+Primero prueba con Silent AIM apagado; si quieres comparar, conserva el archivo
+antes de repetir con Silent activado. `Save gun sources` es opcional y guarda
+hasta 20 archivos `X2Duels-gun-source-<n>.luau` si decompile/writefile funcionan.
+
+Contiene nombres de scripts/remotos, tipos de argumentos y origen/dirección de
+rayos: revisa información privada antes de compartir. Puede capturar eventos
+ajenos o duplicados, omitir APIs, y no confirma impactos. Hooks Oth inactivos
+quedan hasta salir; no garantiza que no haya detección. Si guardado o hook falla,
+informa el Status y no asumas que el método no se usa.
+
+## Recolector independiente anterior
+
+**Advertencia:** el recolector siguiente usa `hookmetamethod`, no Oth. El usuario
+reportó expulsiones con hooks tradicionales en este juego; no se recomienda
+usarlo en esa situación. Es distinto de Gun Probe v148.
+
 `X2DuelsDecompiler.luau` es una herramienta independiente del menú. Se ejecuta dentro de X2 Duels para reunir la evidencia que el RBXL y el log anteriores no contienen. **No envía disparos ni modifica sus argumentos.**
 
 ## Capturar la pistola en una partida

@@ -707,9 +707,11 @@ do
     assert(captured[2] ~= direction, "OTH reusable node did not resume")
     silentFeature.onToggle(false)
     compatibility.setChecked(false)
+    oth = nil
     featuresByName["Gun Probe"].onToggle(true)
-    assert(string.find(featuresByName["Gun Probe"].status, "disabled", 1, true) and legacyCalls == 0,
-        "legacy Gun Probe was not blocked in OTH mode")
+    assert(string.find(featuresByName["Gun Probe"].status, "unavailable", 1, true) and legacyCalls == 0,
+        "probe must report missing OTH without legacy fallback")
+    featuresByName["Gun Probe"].onToggle(false)
     oth, getrawmetatable, getnamecallmethod, checkcaller, getcallingscript, debug = oldOth, oldMeta, oldMethod, oldCheck, oldCaller, oldDebug
     hookmetamethod, hookfunction = previousHookMeta, previousHookFunction
 end
@@ -1507,58 +1509,81 @@ do
         "missing raw capability spent a shot instead of reporting unsupported")
     silentFeature.onToggle(false)
     compatibility.setChecked(false)
-    -- Temporary broad probe intentionally affects even an identified foreign
-    -- native reader. Its session lease must not revive under a later hook.
-    currentIndex, currentNamecall = originalIndex, originalNamecall
-    hookmetamethod = function(_game, method, replacement)
-        if method == "__index" then local old = currentIndex; currentIndex = replacement; return old end
-        if method == "__namecall" then local old = currentNamecall; currentNamecall = replacement; return old end
-        error("unexpected hook")
+    -- OTH-only passive probe: logs without modifying aim, args or return values.
+    local savedOth, savedCheck, savedMeta, savedMethod, savedCaller = oth, checkcaller, getrawmetatable, getnamecallmethod, getcallingscript
+    local oldHook = hookmetamethod
+    local calls, mouseHook, namecallHook, directRayHook, currentMethod = 0, nil, nil, nil, "Raycast"
+    local predecessorIndex = function() return nativeHit end
+    local forwarded = nil
+    local predecessorNamecall = function(object, ...)
+        forwarded = table.pack(...)
+        return object, "result", nil, 77
     end
+    local syntheticMeta = {__index = predecessorIndex, __namecall = predecessorNamecall}
+    oth = {hook = function(target, callback)
+        calls += 1
+        if target == predecessorIndex then mouseHook = callback
+        elseif target == predecessorNamecall then namecallHook = callback
+        elseif target == workspace.Raycast then directRayHook = callback
+        else error("unknown OTH target") end
+        return target
+    end}
+    getrawmetatable = function() return syntheticMeta end
+    getnamecallmethod = function() return currentMethod end
     checkcaller = function() return false end
     getcallingscript = function() return otherScript end
-    getnamecallmethod = function() return "FireServer" end
+    hookmetamethod = function() error("legacy hook must not be called") end
     local captured, oldEncode = nil, HttpService.JSONEncode
     HttpService.JSONEncode = function(_, value) captured = value; return "{}" end
     local probeCard = featuresByName["Gun Probe"]
-    core.settings.wallCheck = false
     nativeHumanoid:EquipTool(nativeGun)
     probeCard.onToggle(true)
-    nativeNow += 0.2
-    coreTask.callback(0.1)
-    local probeHit = currentIndex(nativeMouse, "Hit")
-    assert(typeof(probeHit) == "CFrame" and probeHit.Position and probeHit.Position == nativeTarget.part.Position,
-        "temporary broad probe did not redirect a foreign native Mouse read: " .. tostring(probeHit) .. " / " .. tostring(probeCard.status))
-    checkcaller = function() return true end
-    assert(currentIndex(nativeMouse, "Hit") == nativeHit, "probe changed executor reads")
-    checkcaller = function() return false end
-    currentNamecall(fireRemote, "private-argument", nil, Vector3.new(1, 2, 3))
+    assert(calls == 3 and mouseHook and namecallHook and directRayHook, "OTH probe failed to install")
+    assert(mouseHook(nativeMouse, "Hit") == nativeHit, "passive probe altered Mouse")
+    local origin, direction = Vector3.new(0, 3, 0), Vector3.new(0, 0, -500)
+    local object, result, nilValue, fourth = namecallHook(workspace, origin, direction, nil)
+    assert(object == workspace and result == "result" and nilValue == nil and fourth == 77
+        and forwarded.n == 3 and forwarded[2] == direction, "probe altered arguments or return values")
+    directRayHook(workspace, origin, direction, nil)
+    currentMethod = "FireServer"
+    namecallHook(fireRemote, "private-argument", nil, Vector3.new(1, 2, 3))
     UserInputService.InputBegan:Fire({UserInputType = Enum.UserInputType.Touch, Position = Vector3.new(25, 25, 0)}, false)
-    local retained = currentIndex
-    local newer = function(...) return retained(...) end
-    currentIndex = newer
+    nativeGun.Activated:Fire()
+    for i = 1, 450 do namecallHook(fireRemote, "discarded") end
+    checkcaller = function() return true end
+    mouseHook(nativeMouse, "Target")
+    checkcaller = function() return false end
     probeCard.onToggle(false)
-    assert(currentIndex == newer and currentIndex(nativeMouse, "Hit") == nativeHit,
-        "probe OFF displaced newer hook or left old one active")
-    assert(captured and captured.gun and captured.gun.name == nativeGun.Name
-        and captured.indexHook and captured.namecallHook and captured.redirects > 0,
-        "probe report omitted gun/capabilities/redirect evidence")
-    local foundCall, foundInput = false, false
+    assert(captured and captured.backend == "Oth passive" and captured.gun and captured.gun.name == nativeGun.Name
+        and captured.indexHook and captured.namecallHook and captured.directRaycastHook
+        and #captured.events == 400 and captured.dropped > 0, "probe report omitted gun/capabilities or bounded event buffer")
+    local foundCall, foundInput, foundMouse, foundRay, foundDirect, foundActivation = false, false, false, false, false, false
     for _, event in ipairs(captured.events) do
-        if event.event == "namecall" then
-            foundCall = event.detail.object == "fire" and event.detail.argumentTypes[1] == "string"
+        if event.event == "namecall" and event.detail.method == "FireServer" then
+            foundCall = foundCall or (event.detail.object == "fire" and event.detail.argumentTypes[1] == "string"
                 and event.detail.argumentTypes[2] == "nil" and event.detail.argumentTypes[3] == "Vector3"
-        elseif event.event == "input_began" then foundInput = true end
+                and event.detail.argumentValues == nil)
+        elseif event.event == "namecall" and event.detail.method == "Raycast" then
+            foundRay = event.detail.origin[2] == 3 and event.detail.direction[3] == -500
+        elseif event.event == "direct_raycast" then foundDirect = event.detail.direction[3] == -500
+        elseif event.event == "input_began" then foundInput = true
+        elseif event.event == "mouse_read" then foundMouse = event.detail.property == "Hit"
+        elseif event.event == "tool_activated" then foundActivation = true end
     end
-    assert(foundCall and foundInput, "probe missed touch or redacted remote argument types")
+    assert(foundCall and foundInput and foundMouse and foundRay and foundDirect and foundActivation,
+        "probe missed touch, activation, Mouse, Raycast or redacted remote types")
+    local eventsOnStop = #captured.events
+    mouseHook(nativeMouse, "Hit")
+    assert(#captured.events == eventsOnStop, "probe recorded after OFF")
     probeCard.onToggle(true)
-    assert(retained(nativeMouse, "Hit") == nativeHit, "old probe lease revived on restart")
+    assert(calls == 3, "OTH probe reinstalled duplicate hooks")
     nativeNow += 61
     coreTask.callback(0.1)
-    assert(currentIndex(nativeMouse, "Hit") == nativeHit
-        and string.find(probeCard.status, "60 seconds", 1, true), "probe did not expire safely")
+    assert(string.find(probeCard.status, "60 seconds", 1, true), "probe did not expire safely")
     probeCard.onToggle(false)
     HttpService.JSONEncode = oldEncode
+    oth, checkcaller, getrawmetatable, getnamecallmethod, getcallingscript = savedOth, savedCheck, savedMeta, savedMethod, savedCaller
+    hookmetamethod = oldHook
     hookmetamethod, getcallingscript, getnamecallmethod = oldHookMeta, oldCaller, oldMethod
     getrawmetatable, setreadonly, isreadonly = oldRawMeta, oldReadonly, oldIsReadonly
     debug, checkcaller = oldDebug, oldCheckCaller
@@ -2459,6 +2484,46 @@ do
     assert(camera.CFrame == beforeCamera, "mobile OTH changed the camera")
     feature.activate()
     oth, getrawmetatable, getnamecallmethod, checkcaller, getcallingscript, os.clock = oldOth, oldMeta, oldMethod, oldCheck, oldCaller, oldClock
+end
+-- Exercise touch metadata through the real temporary probe card with OTH mocks.
+do
+    local probe = nil
+    for _, candidate in ipairs(ex.allFeatures) do
+        if candidate.sectionName == "MVSD" and candidate.name == "Gun Probe" then probe = candidate end
+    end
+    assert(probe, "mobile Gun Probe card missing")
+    local oldOth, oldMeta, oldMethod, oldCheck, oldGetter, oldEncode, oldLegacy =
+        oth, getrawmetatable, getnamecallmethod, checkcaller, localPlayer.GetMouse, HttpService.JSONEncode, hookmetamethod
+    local mouse = Instance.new("Mouse")
+    localPlayer.GetMouse = function() return mouse end
+    local index = function() return "ordinary" end
+    local namecall = function() return "unchanged" end
+    local currentMeta = {__index = index, __namecall = namecall}
+    local installed = {}
+    oth = {hook = function(targetFunction, callback) installed[targetFunction] = callback; return targetFunction end}
+    getrawmetatable = function() return currentMeta end
+    getnamecallmethod = function() return "Raycast" end
+    checkcaller = function() return false end
+    hookmetamethod = function() error("probe tried legacy hook") end
+    local result = nil
+    HttpService.JSONEncode = function(_, value) result = value; return "{}" end
+    knife.Parent = backpack
+    gun.Parent = localPlayer.Character
+    probe.onToggle(true)
+    assert(installed[index] and installed[namecall], "mobile OTH capture was not installed")
+    UserInputService.InputBegan:Fire({UserInputType = Enum.UserInputType.Touch, Position = Vector3.new(900, 400, 0)}, false)
+    installed[index](mouse, "Hit")
+    installed[namecall](workspace, Vector3.new(0, 3, 0), Vector3.new(0, 0, -500))
+    probe.onToggle(false)
+    local touchFound, mouseFound, rayFound = false, false, false
+    for _, event in ipairs(result.events) do
+        if event.event == "input_began" then touchFound = true
+        elseif event.event == "mouse_read" then mouseFound = true
+        elseif event.event == "namecall" and event.detail.method == "Raycast" then rayFound = true end
+    end
+    assert(touchFound and mouseFound and rayFound, "mobile probe omitted simulated input/read/ray")
+    oth, getrawmetatable, getnamecallmethod, checkcaller, localPlayer.GetMouse, HttpService.JSONEncode, hookmetamethod =
+        oldOth, oldMeta, oldMethod, oldCheck, oldGetter, oldEncode, oldLegacy
 end
 task.delay = oldDelay
 ex.state.destruct()

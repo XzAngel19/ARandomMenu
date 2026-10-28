@@ -5,7 +5,7 @@
 > contradice lo que crees, gana este documento (y los datos de calibración).
 >
 > **Estado al escribir esto:** rama `arena/9492e6b6-arandommenu`, build
-> **`v147-20261028-x2duels-oth-raycast`**.
+> **`v148-20261028-x2duels-oth-probe`**.
 > El usuario se comunica en español. Respóndele en español.
 
 ---
@@ -68,7 +68,38 @@
   51/50 tarjetas. Falta prueba live: perfil CPU por fase, menú apagado/activo,
   PC/móvil, executor, tiempo de inyección y revisión F9/MicroProfiler.
 
-## 1R. X2 Duels: Silent AIM Oth Raycast v147
+## 1S. X2 Duels: Gun Probe Oth pasivo v148
+
+El usuario pidió el grabador para descubrir el método de disparo. v147 lo había
+bloqueado por sus hooks anteriores; v148 reactiva la tarjeta existente **Gun
+Probe** en Combat con un recolector pasivo basado exclusivamente en `oth.hook`.
+Sin `oth.hook` / `getrawmetatable` / `checkcaller` no usa fallback clásico;
+Status indica qué hooks se instalaron o no. Se puede activar independientemente
+con Silent OFF para una captura base y repetir con Silent ON para comparación.
+
+- Busca Gun en mochila/personaje, `Equip gun` la equipa, captura hasta 60 s y
+  máximo 400 eventos; guarda localmente al OFF/vencimiento o con `Save report`
+  en `X2Duels-calibration.json`, sobrescribiendo el informe anterior. Turn OFF
+  después de vencer antes de reiniciar. En Delta, ubicación exacta de archivos
+  depende de versión/plataforma; si falta `writefile`, Status informa fracaso.
+- Señales: Touch/MouseButton1, `Tool.Activated`, Mouse Hit/Target/UnitRay vía
+  `__index`, `Raycast` directo y `__namecall`, y `FireServer`/`InvokeServer`
+  observados con Gun equipada. Los eventos registran tiempos, tipo de argumentos,
+  nombre de script/remoto y vectores del rayo; **no** valores de remotes.
+  Pueden incluir scripts ajenos, repetirse entre hooks o faltar por executor;
+  no inferir que sean disparos ni que el servidor haya aceptado daño. No ejecuta
+  Tool:Activate ni modifica args/resultados. `Save gun sources` es manual y
+  usa decompile/writefile (hasta 20 scripts del arma); revisar datos sensibles.
+- Nodos Oth inactivos y reutilizables al OFF/destrucción, sin unhook riesgoso;
+  una reinyección puede dejar nodos inertes, reentrar los elimina. Posibles
+  incompatibilidades entre hooks/caller off-thread, ni Delta ni prevención de
+  expulsiones están probados. El colector externo `X2DuelsDecompiler.luau`
+  sigue usando hookmetamethod: no proponerlo como alternativa segura en este juego.
+- `tools/test_x2duels.py` cubre Oth ausente sin fallback, pasividad (argumentos,
+  nils/retornos), Input/Activated/Mouse/Raycast directo/namecall, privacidad de
+  remotes, 400 eventos, timeout, OFF/ON, teléfono simulado y módulos previos.
+
+## 1R. X2 Duels: Silent AIM Oth Raycast v147 (Gun Probe actualizado en v148)
 
 El usuario probó Vape en Delta: reporta kick con hook habitual, sin kick en esa
 prueba con Oth; solo Raycast parece funcionar y Projectile quizás reconoce el
@@ -1133,7 +1164,7 @@ el boot simulado y las auditorías, que no sustituyen una prueba en juego:
   el comportamiento y `validate.sh` verde antes de pushear.
 
 ---
-*Última actualización: 2026-10-28 · v147, Oth Raycast en Silent AIM X2;
+*Última actualización: 2026-10-28 · v148, Gun Probe pasivo con Oth;
 comportamiento real en Delta, reconocimiento de arma y daño pendientes.
 Al publicar una versión nueva, actualiza la línea de estado de arriba y cualquier
 sección que cambie.*

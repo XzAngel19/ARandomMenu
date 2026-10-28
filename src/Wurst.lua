@@ -224,7 +224,7 @@ local RUNTIME_RAW_BASE: string =
         .. RUNTIME_BRANCH
         .. "/"
 
-local SOURCE_STAMP: string = "v147-20261028-x2duels-oth-raycast"
+local SOURCE_STAMP: string = "v148-20261028-x2duels-oth-probe"
 
 local BOOT_STARTED_AT: number = os.clock()
 local BOOT_FINGERPRINT_SECONDS: number = 0
