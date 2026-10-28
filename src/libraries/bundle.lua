@@ -1,5 +1,5 @@
 return {
-    stamp = "v138.9-20261027-alphabetical-one-catalog-fling-ping",
+    stamp = "v139.0-20261027-performance-pass",
     files = {
         ["src/Profile/135856908115931.lua"] = [[
 --!strict
@@ -3296,16 +3296,27 @@ function Module.init(runtime: any): any
         end
     end
 
+    -- v139: this card and the MM2 "Shoot" card both used the key MM2AutoShoot,
+    -- so enabling both lost one handle and left a ghost task firing every frame
+    -- after the card was switched off. Each card owns its own key now, and the
+    -- connection is dropped before a new one is made.
+    local CONNECTION_KEY: string = "MM2AutoShootCard"
+
     local function toggleAutoShoot(enabled: boolean): ()
         autoShootActive = enabled == true
         if enabled then
             updateStatus()
             setupInstantGunWatchers()
-            featureConnections.MM2AutoShoot = TaskManager:Connect(autoShootTick)
+            disconnectFeatureConnection(CONNECTION_KEY)
+            featureConnections[CONNECTION_KEY] = TaskManager:Connect(
+                autoShootTick,
+                nil,
+                "Auto Shoot"
+            )
             autoShootTick()
         else
             clearToolConnections()
-            disconnectFeatureConnection("MM2AutoShoot")
+            disconnectFeatureConnection(CONNECTION_KEY)
             if AutoShootFeature then
                 AutoShootFeature:SetStatus(nil)
             end
@@ -6380,13 +6391,12 @@ function Module.init(_runtime: any): any
                         and stillCollectable(part)
                         and (not blacklist[part] or blacklist[part] < now)
                         and (not retryAt[part] or retryAt[part] < now) then
-                        local position: Vector3? = nil
-                        pcall(function(): ()
-                            position = (part :: BasePart).Position
-                        end)
-                        if position then
-                            local distance: number =
-                                ((position :: Vector3) - root.Position).Magnitude
+                        -- No pcall closure here: a Part's Position read cannot
+                        -- throw. The old form allocated one closure per coin per
+                        -- frame (~6000/s with 100 coins).
+                        if part:IsA("BasePart") then
+                            local position: Vector3 = (part :: BasePart).Position
+                            local distance: number = (position - root.Position).Magnitude
                             if distance < nearestDistance then
                                 nearest = part
                                 nearestPosition = position
@@ -6522,7 +6532,7 @@ function Module.init(_runtime: any): any
                     pingMillis()
                 ))
             end
-        )
+        , nil, "Auto Farm tick")
 
         -- Turning the feature off runs this through
         -- disconnectFeatureConnection above: full restore, and the
@@ -8315,7 +8325,7 @@ function Module.init(runtime: any): any
         end
         lastBgSyncAt = now
         refreshMapChoices(false)
-    end)
+    end, nil, "Auto Vote sync")
 
     activeCleanup = function(): ()
         disconnectFeatureConnection("MM2AutoVoteMapSync")
@@ -10863,6 +10873,11 @@ type Track = {
     humanoid: Humanoid,
     root: BasePart,
     samples: {Sample},
+    -- v139 cache: reused for PART_REFRESH_SECONDS instead of re-searched on
+    -- every 60 Hz sample.
+    aimPart: BasePart?,
+    aimName: string?,
+    partsAt: number?,
 }
 
 type Fit = {
@@ -11051,9 +11066,9 @@ local function finiteVector(value: any): boolean
 end
 
 local function humanoidStateName(humanoid: Humanoid): string
-    local ok: boolean, state: any = pcall(function(): any
-        return humanoid:GetState()
-    end)
+    -- pcall(method, self) instead of pcall(closure): the old form allocated a
+    -- closure per sample, 60 times a second per player.
+    local ok: boolean, state: any = pcall(humanoid.GetState, humanoid)
     if not ok or state == nil then
         return ""
     end
@@ -11101,17 +11116,43 @@ function Module.init(runtime: any): any
     local echoTimes: {number} = {}
     local elapsed: number = 0
 
-    local function ensureTrack(player: Player): Track?
-        local character: Model? = player.Character
-        if not character then
-            tracks[player] = nil
-            return nil
+    -- v139: the sampler runs 60 times a second for COLOUR every other player, so
+    -- the descendant lookups are cached per track and refreshed at 2 Hz (or at
+    -- once when the character/part disappears). Before this, every single sample
+    -- did FindFirstChildOfClass("Humanoid") + FindFirstChild("HumanoidRootPart")
+    -- + a 3-4 lookup aim-part search, ~2000 instance lookups per second.
+    local PART_REFRESH_SECONDS: number = 0.5
+
+    local function refreshTrackParts(
+        track: Track,
+        character: Model,
+        now: number
+    ): boolean
+        local refresh: boolean = now - (track.partsAt or -math.huge) >= PART_REFRESH_SECONDS
+            or track.root == nil
+            or track.humanoid == nil
+        if not refresh then
+            return true
         end
         local humanoid: Humanoid? = character:FindFirstChildOfClass("Humanoid")
             :: Humanoid?
         local root: BasePart? = character:FindFirstChild("HumanoidRootPart")
             :: BasePart?
         if not humanoid or not root or humanoid.Health <= 0 then
+            return false
+        end
+        track.humanoid = humanoid
+        track.root = root
+        local aimPart: BasePart?, aimName: string = findAimPart(character)
+        track.aimPart = aimPart
+        track.aimName = aimName
+        track.partsAt = now
+        return true
+    end
+
+    local function ensureTrack(player: Player, now: number): Track?
+        local character: Model? = player.Character
+        if not character then
             tracks[player] = nil
             return nil
         end
@@ -11119,19 +11160,22 @@ function Module.init(runtime: any): any
         if not track or track.character ~= character then
             track = {
                 character = character,
-                humanoid = humanoid,
-                root = root,
+                humanoid = nil,
+                root = nil,
                 samples = {},
+                partsAt = -math.huge,
             }
             tracks[player] = track
         end
-        track.humanoid = humanoid
-        track.root = root
+        if not refreshTrackParts(track, character, now) then
+            tracks[player] = nil
+            return nil
+        end
         return track
     end
 
     local function samplePlayer(player: Player, now: number): ()
-        local track: Track? = ensureTrack(player)
+        local track: Track? = ensureTrack(player, now)
         if not track then
             return
         end
@@ -11146,14 +11190,18 @@ function Module.init(runtime: any): any
         -- on flat ground. The humanoid state is the reliable signal.
         local grounded: boolean = stateName ~= "Jumping"
             and stateName ~= "Freefall"
-        local moveDirection: Vector3 = Vector3.zero
-        pcall(function(): ()
-            local move: any = track.humanoid.MoveDirection
-            if typeof(move) == "Vector3" and finiteVector(move) then
-                moveDirection = move
-            end
-        end)
-        local aimPart: BasePart?, aimPartName: string = findAimPart(track.character)
+        -- Reading MoveDirection off a live Humanoid cannot throw: no pcall, no
+        -- closure. A nil humanoid was already rejected by ensureTrack.
+        local move: any = track.humanoid.MoveDirection
+        local moveDirection: Vector3 = if typeof(move) == "Vector3"
+            and finiteVector(move)
+            then move
+            else Vector3.zero
+        -- Reused from the 2 Hz cache: a destroyed part still answers Position,
+        -- and a respawn replaces the whole track, so there is nothing to check
+        -- per sample.
+        local aimPart: BasePart? = track.aimPart
+        local aimPartName: string = track.aimName or ""
         local aimOffset: Vector3 = aimPart
             and (aimPart.Position - position)
             or Vector3.zero
@@ -12199,7 +12247,8 @@ function Module.init(runtime: any): any
     end
 
     state.mm2Prediction = controller
-    featureConnections.MM2PredictionSampler = TaskManager:Connect(tick)
+    featureConnections.MM2PredictionSampler =
+        TaskManager:Connect(tick, nil, "Prediction sampler")
 
     activeCleanup = function(): ()
         disconnectFeatureConnection("MM2PredictionSampler")
@@ -12730,7 +12779,6 @@ function Module.init(runtime: any): any
 
         -- One small adornment per visible pickup. Creation happens
         -- once per pickup; between rescans Lua does nothing at all.
-        local tagClock: number = 0
         local tagsDirty: boolean = true
         -- Opacity guard: the setting's old default (0.8, from the
         -- full-model Highlight era) made a candy-sized adornment
@@ -12740,48 +12788,50 @@ function Module.init(runtime: any): any
         local function markerTransparency(): number
             return math.clamp(mm2Settings.coinTransparency, 0, 0.6)
         end
-        local function drawOverlay(): ()
-            tagClock += 1
-            local refreshColour: boolean = tagClock % 30 == 0
-            local seen: {[Instance]: boolean} = {}
+
+        -- Creates the box for one pickup. Called only when the pickups change.
+        local function makeTag(part: Instance): any
+            local okMake: boolean, created: any = pcall(function(): any
+                local visual: Instance = visualOf(part)
+                local box: Instance = Instance.new("BoxHandleAdornment")
+                box.Name = "WurstCoinBox"
+                box.AlwaysOnTop = true
+                box.ZIndex = 5
+                box.Adornee = visual
+                box.Color3 = mm2Settings.coinColor
+                box.Transparency = markerTransparency()
+                local okSize: boolean, visualSize: any = pcall(function(): any
+                    return (visual :: any).Size
+                end)
+                if okSize and visualSize then
+                    box.Size = visualSize * 1.3
+                end
+                box.Parent = part
+                return {box = box}
+            end)
+            if okMake and created then
+                return created
+            end
+            return nil
+        end
+
+        -- v139: reconciliation runs when the pickup set changes, not every
+        -- frame. drawOverlay used to allocate a `seen` table and walk every coin
+        -- 60 times a second even when nothing had moved, which showed up as GC
+        -- spikes with ~100 coins on the map. A BoxHandleAdornment follows its
+        -- Adornee by itself, so the per-frame work was pure waste.
+        local function syncTags(): ()
             for part: Instance in pairs(lastFamilies) do
-                if part.Parent then
-                    seen[part] = true
-                    local entry = coinTags[part]
-                    if not entry then
-                        local okMake: boolean, created: any = pcall(function(): any
-                            local visual: Instance = visualOf(part)
-                            local box: Instance = Instance.new("BoxHandleAdornment")
-                            box.Name = "WurstCoinBox"
-                            box.AlwaysOnTop = true
-                            box.ZIndex = 5
-                            box.Adornee = visual
-                            box.Color3 = mm2Settings.coinColor
-                            box.Transparency = markerTransparency()
-                            local okSize: boolean, visualSize: any = pcall(function(): any
-                                return (visual :: any).Size
-                            end)
-                            if okSize and visualSize then
-                                box.Size = visualSize * 1.3
-                            end
-                            box.Parent = part
-                            return {box = box}
-                        end)
-                        if okMake and created then
-                            coinTags[part] = created
-                            tagsDirty = true
-                        end
-                    elseif refreshColour then
-                        pcall(function(): ()
-                            entry.box.Color3 = mm2Settings.coinColor
-                            entry.box.Transparency = markerTransparency()
-                        end)
+                if part.Parent and not coinTags[part] then
+                    local created: any = makeTag(part)
+                    if created then
+                        coinTags[part] = created
+                        tagsDirty = true
                     end
                 end
             end
-            for part: Instance in pairs(coinTags) do
-                if not seen[part] then
-                    local entry = coinTags[part]
+            for part: Instance, entry: any in pairs(coinTags) do
+                if not part.Parent or not lastFamilies[part] then
                     coinTags[part] = nil
                     pcall(function(): ()
                         entry.box:Destroy()
@@ -12789,8 +12839,35 @@ function Module.init(runtime: any): any
                     tagsDirty = true
                 end
             end
-            -- Publish which parts carry a marker right now (only
-            -- when the set actually changed; this runs every tick).
+            if tagsDirty then
+                tagsDirty = false
+                local published: {[Instance]: boolean} = {}
+                for part: Instance in pairs(coinTags) do
+                    published[part] = true
+                end
+                state.mm2CoinTagParts = published
+            end
+        end
+
+        -- Per-frame work is now only the colour refresh, twice a second.
+        local lastTagColourAt: number = -math.huge
+        local function drawOverlay(): ()
+            local now: number = os.clock()
+            if now - lastTagColourAt < 0.5 then
+                return
+            end
+            lastTagColourAt = now
+            for part: Instance, entry: any in pairs(coinTags) do
+                if not part.Parent then
+                    coinTags[part] = nil
+                    tagsDirty = true
+                else
+                    pcall(function(): ()
+                        entry.box.Color3 = mm2Settings.coinColor
+                        entry.box.Transparency = markerTransparency()
+                    end)
+                end
+            end
             if tagsDirty then
                 tagsDirty = false
                 local published: {[Instance]: boolean} = {}
@@ -12841,10 +12918,10 @@ function Module.init(runtime: any): any
                     changed = true
                 end
             end
-            -- `changed` no longer drives any drawing: tags are created
-            -- and removed by drawOverlay from lastFamilies alone.
+            -- `changed` no longer drives any drawing: the adornments are
+            -- reconciled here (not per frame) from lastFamilies alone.
             refreshPickupCache(found)
-            drawOverlay(true)
+            syncTags()
             local shown: number = 0
             for _ in pairs(visible) do
                 shown += 1
@@ -12911,10 +12988,9 @@ function Module.init(runtime: any): any
         refresh()
         featureConnections.MM2CoinRefresh = TaskManager:Connect(
             function(deltaTime: number): ()
-                -- The adornments follow their parts inside the
-                -- engine; Lua only rescans when the map changed or on
-                -- the safety timer. With ~100 coins out this is the
-                -- whole per-frame cost.
+                -- v139: the only per-frame work left is the colour refresh
+                -- (twice a second). BoxHandleAdornments follow their Adornee
+                -- inside the engine; the reconciliation lives in refresh().
                 drawOverlay()
                 elapsed += deltaTime
                 if not dirty and elapsed < RESCAN_PERIOD then
@@ -12923,7 +12999,7 @@ function Module.init(runtime: any): any
                 elapsed = 0
                 refresh()
             end
-        )
+        , nil, "Coin ESP")
     end
 
     local CoinFeature: any = createUniversalFeature(
@@ -14123,7 +14199,7 @@ local function findMM2Map(): Instance?
     if cached and cached.Parent == workspace and isMM2MapModel(cached) then
         return cached
     end
-    if os.clock() - mm2MapCache.at < 0.1 then
+    if os.clock() - mm2MapCache.at < 0.25 then
         return (cached and cached.Parent == workspace) and cached or nil
     end
     mm2MapCache.at = os.clock()
@@ -14548,7 +14624,14 @@ local function onRoundPhase(listener: (string, string) -> ()): () -> ()
     end
 end
 
-local function findLobbyModel(): Instance?
+-- v139: the round-phase check runs 10 times a second for the whole session, so
+-- the lobby model and its reference part are cached. Before this, every tick
+-- walked workspace:GetChildren() (hundreds of objects) and did a recursive
+-- FindFirstChild("VotePads", true) inside the lobby model.
+local lobbyCache: {model: Instance?, at: number} = {model = nil, at = -math.huge}
+local LOBBY_CACHE_SECONDS: number = 0.75
+
+local function findLobbyModelUncached(): Instance?
     for _, object: Instance in ipairs(workspace:GetChildren()) do
         if isLobbyName(object.Name) or isLobbyModel(object) then
             return object
@@ -14557,13 +14640,34 @@ local function findLobbyModel(): Instance?
     return nil
 end
 
-local function isRootNearLobby(root: BasePart, lobby: Instance): boolean
-    local okRoot: boolean, rootPos: any = pcall(function(): any
-        return root.Position
-    end)
-    if not okRoot or typeof(rootPos) ~= "Vector3" then
-        return false
+local function findLobbyModel(): Instance?
+    local cached: Instance? = lobbyCache.model
+    if cached and cached.Parent then
+        return cached
     end
+    local now: number = os.clock()
+    if now - lobbyCache.at < LOBBY_CACHE_SECONDS then
+        return nil
+    end
+    lobbyCache.at = now
+    lobbyCache.model = findLobbyModelUncached()
+    return lobbyCache.model
+end
+
+local lobbyRefCache: {model: Instance?, part: BasePart?, at: number} =
+    {model = nil, part = nil, at = -math.huge}
+
+local function lobbyReferencePart(lobby: Instance): BasePart?
+    local now: number = os.clock()
+    if lobbyRefCache.model == lobby and lobbyRefCache.part
+        and lobbyRefCache.part.Parent then
+        return lobbyRefCache.part
+    end
+    if lobbyRefCache.model == lobby and now - lobbyRefCache.at < 1 then
+        return lobbyRefCache.part
+    end
+    lobbyRefCache.at = now
+    lobbyRefCache.model = lobby
     local votePads: Instance? = lobby:FindFirstChild("VotePads", true)
     local refPart: BasePart? = nil
     if votePads then
@@ -14578,6 +14682,18 @@ local function isRootNearLobby(root: BasePart, lobby: Instance): boolean
     if not refPart then
         refPart = lobby:FindFirstChildWhichIsA("BasePart", true)
     end
+    lobbyRefCache.part = refPart
+    return refPart
+end
+
+local function isRootNearLobby(root: BasePart, lobby: Instance): boolean
+    local okRoot: boolean, rootPos: any = pcall(function(): any
+        return root.Position
+    end)
+    if not okRoot or typeof(rootPos) ~= "Vector3" then
+        return false
+    end
+    local refPart: BasePart? = lobbyReferencePart(lobby)
     if refPart then
         local okDist: boolean, dist: any = pcall(function(): any
             return (rootPos - refPart.Position).Magnitude
@@ -14633,7 +14749,9 @@ if lastPhase == "map" then
 end
 featureConnections.MM2RoundPhase = TaskManager:Connect(function(deltaTime: number): ()
     phaseElapsed += deltaTime
-    if phaseElapsed < 0.05 then
+    -- v139: 10 Hz instead of 20. The phase only changes between lobby and map,
+    -- and 100 ms of extra latency on a round transition is invisible.
+    if phaseElapsed < 0.1 then
         return
     end
     phaseElapsed = 0
@@ -14658,7 +14776,7 @@ featureConnections.MM2RoundPhase = TaskManager:Connect(function(deltaTime: numbe
         roleRefreshGeneration += 1
         setRoundPhase("lobby", "teleport")
     end
-end)
+end, nil, "MM2 round phase")
 setRoundPhase(lastPhase, "boot")
 
 local roundTimerPartCache: {part: Instance?, at: number} =
@@ -14791,7 +14909,7 @@ featureConnections.MM2RoundClock = TaskManager:Connect(function(deltaTime: numbe
     if roundLifecycleActive == nil then
         roundLifecycleActive = true
     end
-end)
+end, nil, "MM2 round clock")
 
 requestRoleRefresh(true)
 
@@ -17423,6 +17541,13 @@ state.mm2ShotFeedback.showMiss = function(
     local token: number = state.mm2ShotFeedback.token
     state.mm2ShotFeedback.root.Visible = true
 
+    -- v139: the cooldown used to rebuild the label string and write two GUI
+    -- properties on every single frame. Text is one of the expensive ones
+    -- (layout + glyph re-shape), so the marker now refreshes at ~12 Hz and only
+    -- writes when the text or the bar actually changed.
+    local lastText: string = ""
+    local lastScale: number = -1
+    local lastRefresh: number = -math.huge
     local function updateCountdown(): ()
         if token ~= state.mm2ShotFeedback.token then
             disconnectFeatureConnection("MM2ShootCooldown")
@@ -17430,21 +17555,33 @@ state.mm2ShotFeedback.showMiss = function(
             return
         end
 
-        local remaining: number = math.max(0, cooldownEndsAt - os.clock())
+        local now: number = os.clock()
+        local remaining: number = math.max(0, cooldownEndsAt - now)
         if remaining <= 0 then
             state.mm2ShotFeedback.hide()
             return
         end
+        if now - lastRefresh < 0.08 then
+            return
+        end
+        lastRefresh = now
 
         local progress: number = math.clamp(remaining / duration, 0, 1)
-        state.mm2ShotFeedback.fill.Size = UDim2.fromScale(progress, 1)
-        state.mm2ShotFeedback.text.Text =
-            string.format("Miss cooldown - %.1fs", remaining)
+        local scale: number = math.floor(progress * 200 + 0.5) / 200
+        if scale ~= lastScale then
+            lastScale = scale
+            state.mm2ShotFeedback.fill.Size = UDim2.fromScale(scale, 1)
+        end
+        local nextText: string = string.format("Miss cooldown - %.1fs", remaining)
+        if nextText ~= lastText then
+            lastText = nextText
+            state.mm2ShotFeedback.text.Text = nextText
+        end
     end
 
     updateCountdown()
     featureConnections.MM2ShootCooldown =
-        TaskManager:Connect(updateCountdown)
+        TaskManager:Connect(updateCountdown, nil, "Miss cooldown")
 end
 
 state.mm2ShotFeedback.toPosition = function(value: any): Vector3?
@@ -26637,27 +26774,90 @@ function Module.init(context: Runtime): any
 
     function toggleNoclip(enabled: boolean): ()
         disconnectFeatureConnection("Noclip")
+        -- v139: the DescendantAdded watcher must go too, or it keeps forcing
+        -- CanCollide=false after the card is switched off.
+        disconnectFeatureConnection("NoclipDescendant")
         restoreCollision()
 
         if not enabled then
             return
         end
 
-        featureConnections.Noclip = TaskManager:Connect(function()
+        -- v139: this used to run character:GetDescendants() and write
+        -- CanCollide on every part 60 times a second (~3000 property writes per
+        -- second for a normal avatar, and it never stopped re-setting parts that
+        -- were already non-colliding). Now: apply once, catch new parts with the
+        -- engine's own event, and only run a cheap safety sweep 5 times a second
+        -- in case the humanoid re-enabled something.
+        local sweptCharacter: any = nil
+        local sweptAt: number = -math.huge
+        local addConnection: any = nil
+
+        local function noClipPart(part: any): ()
+            if part:IsA("BasePart") then
+                if originalCollision[part] == nil then
+                    originalCollision[part] = part.CanCollide
+                end
+                if part.CanCollide then
+                    part.CanCollide = false
+                end
+            end
+        end
+
+        local function attach(character: any): ()
+            if sweptCharacter == character then
+                return
+            end
+            sweptCharacter = character
+            if addConnection then
+                pcall(function(): ()
+                    addConnection:Disconnect()
+                end)
+                addConnection = nil
+            end
+            for _, descendant in ipairs(character:GetDescendants()) do
+                noClipPart(descendant)
+            end
+            local okConnect, connection = pcall(function(): any
+                return character.DescendantAdded:Connect(noClipPart)
+            end)
+            if okConnect then
+                addConnection = connection
+            end
+        end
+
+        featureConnections.Noclip = TaskManager:Connect(function(): ()
             local character = LocalPlayer.Character
             if not character then
                 return
             end
-
+            if character ~= sweptCharacter then
+                attach(character)
+                sweptAt = os.clock()
+                return
+            end
+            -- Safety sweep: only parts that are colliding again are touched.
+            if os.clock() - sweptAt < 0.2 then
+                return
+            end
+            sweptAt = os.clock()
             for _, descendant in ipairs(character:GetDescendants()) do
-                if descendant:IsA("BasePart") then
-                    if originalCollision[descendant] == nil then
-                        originalCollision[descendant] = descendant.CanCollide
-                    end
-                    descendant.CanCollide = false
+                if descendant:IsA("BasePart") and (descendant :: any).CanCollide then
+                    noClipPart(descendant)
                 end
             end
         end)
+        featureConnections.NoclipDescendant = {
+            Disconnect = function(): ()
+                if addConnection then
+                    pcall(function(): ()
+                        addConnection:Disconnect()
+                    end)
+                    addConnection = nil
+                end
+                sweptCharacter = nil
+            end,
+        }
     end
     end
 
@@ -42273,7 +42473,23 @@ function Module.init(context: any): any
 
     local lastTextGuiText: string = ""
     table.insert(ownedTasks, TaskManager:Connect(function(deltaTime: number): ()
-        sessionFps += ((1 / math.max(deltaTime, 1 / 240)) - sessionFps) * 0.12
+        -- v139: the FPS average is computed once, in the scheduler
+        -- (state.performance), so this overlay no longer duplicates the work.
+        local performance: any = state.performance
+        if performance and type(performance.fps) == "number" then
+            sessionFps = performance.fps
+        else
+            sessionFps += ((1 / math.max(deltaTime, 1 / 240)) - sessionFps) * 0.12
+        end
+        -- v139: nothing to draw when every overlay is off. This used to keep
+        -- rebuilding the session lines and the radar 8 times a second forever.
+        if not (FloatingUi.overlays.SessionInfo.enabled
+            or FloatingUi.overlays.TextGUI.enabled
+            or FloatingUi.overlays.TargetInfo.enabled
+            or FloatingUi.overlays.Radar.enabled) then
+            overlayElapsed = 0
+            return
+        end
         overlayElapsed += deltaTime
         if overlayElapsed < 0.12 then
             return
@@ -42316,6 +42532,16 @@ function Module.init(context: any): any
                 local ping: number? = getSessionPing()
                 table.insert(lines, string.format("FPS       %.0f", math.clamp(sessionFps, 0, 999)))
                 table.insert(lines, "Ping      " .. (ping and string.format("%.0f ms", ping) or "N/A"))
+                -- v139: what the menu itself costs each frame. If this is high,
+                -- the module named in the console warning is the culprit.
+                local cost: any = state.performance
+                if cost and type(cost.tasksMs) == "number" then
+                    table.insert(lines, string.format(
+                        "Menu      %.2f+%.2f ms",
+                        cost.tasksMs,
+                        cost.renderMs
+                    ))
+                end
             end
             if sessionSettings.showServer then
                 table.insert(lines, string.format("Players   %d/%d", #Players:GetPlayers(), Players.MaxPlayers))
@@ -42654,7 +42880,7 @@ function Module.init(context: any): any
                 end
             end
         end
-    end))
+    end, nil, "Floating overlays"))
 
     FavoritesWindow.root.Visible = configData.ui.favoritesWindowOpen == true
     OverlayMenu.root.Visible = configData.ui.overlayMenuOpen == true
@@ -43367,33 +43593,54 @@ function Module.init(context: any): any
         end
     end
 
+    -- v139: the HUD only animates while a rainbow or the brightness pulse is
+    -- actually on, and each row keeps ONE colour table that gets mutated in
+    -- place. Before this the loop rewrote every visible row 20 times a second
+    -- forever, even with the HUD static, and allocated a fresh table per row
+    -- per tick (a steady garbage stream for nothing).
     local hudRainbowSince: number = 0
+    local function hudReanimate(): ()
+        local bitmap = state.bitmapText
+        local canRecolor = bitmap ~= nil and bitmap.recolor ~= nil
+        for _, row: any in pairs(hudRows) do
+            if row.name and row.holder then
+                local colors: {Color3} = row.colors
+                if not colors then
+                    colors = { hudColor, Theme.textMuted }
+                    row.colors = colors
+                end
+                colors[1] = hudEntryColor(row.order)
+                colors[2] = Theme.textMuted
+                if not canRecolor or not bitmap.recolor(row.holder, colors) then
+                    drawHudEntry(row, row.name, row.status)
+                end
+            end
+        end
+    end
+    local function hudAnimating(): boolean
+        return hudVisible and (hudRainbow or animationsOn())
+    end
     table.insert(Furniture.handles, TaskManager:Connect(function(
         deltaTime: number
     ): ()
 
-        if hudVisible and (hudRainbow or animationsOn()) then
-            hudRainbowClock += deltaTime
-            hudRainbowSince += deltaTime
-            if hudRainbowSince >= 0.05 then
-                hudRainbowSince %= 0.05
-                for _, row: any in pairs(hudRows) do
-                    if row.name then
-                        local bitmap = state.bitmapText
-                        if not bitmap or not bitmap.recolor or not bitmap.recolor(row.holder, {hudEntryColor(row.order), Theme.textMuted}) then
-                            drawHudEntry(row, row.name, row.status)
-                        end
-                    end
-                end
-            end
-        end
         hudElapsed += deltaTime
-        if hudElapsed < 0.25 then
+        if hudElapsed >= 0.25 then
+            hudElapsed %= 0.25
+            refreshHudList()
+        end
+        if not hudAnimating() then
+            -- Parked: no rainbow, no pulse, nothing to redraw this frame.
             return
         end
-        hudElapsed = 0
-        refreshHudList()
-    end))
+        hudRainbowClock += deltaTime
+        hudRainbowSince += deltaTime
+        local interval: number = if hudRainbow then 0.05 else 0.1
+        if hudRainbowSince >= interval then
+            hudRainbowSince %= interval
+            hudReanimate()
+        end
+    end, nil, "HUD animations"))
     refreshHudList()
 
     local function forceHudRefresh(): ()
@@ -53186,12 +53433,14 @@ function Module.init(context: any): Framework
             return item
         end
 
+        -- v139: the scheduler is told which module owns the task, so a frame
+        -- time warning names the card instead of "task".
         function created:Loop(callback: (number) -> ()): any
-            return created:Clean(host.TaskManager:Connect(callback))
+            return created:Clean(host.TaskManager:Connect(callback, nil, moduleName))
         end
 
         function created:Render(callback: (number) -> ()): any
-            return created:Clean(host.TaskManager:Connect(callback, "render"))
+            return created:Clean(host.TaskManager:Connect(callback, "render", moduleName))
         end
 
         function created:Event(signal: any, callback: (...any) -> ()): any

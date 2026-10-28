@@ -910,6 +910,69 @@ do
           name .. " has no alphabetical ordering key")
       end
     end
+    -- v139 performance budget: the scheduler measures every task and publishes
+    -- the numbers, and toggling a module must never leave its per-frame
+    -- connection behind (that is what "the menu gets slower the longer it runs"
+    -- looks like in the field).
+    do
+      local perf = ex.state.performance
+      assert(type(perf) == "table", "state.performance must exist")
+      assert(type(perf.fps) == "number" and perf.fps > 0, "FPS must be measured")
+      assert(type(perf.frameMs) == "number" and perf.frameMs > 0, "frame time must be measured")
+      assert(type(perf.tasksMs) == "number", "task cost must be measured")
+      assert(type(perf.renderMs) == "number", "render cost must be measured")
+      local manager = ex.state.taskManager
+      assert(type(manager) == "table", "state.taskManager must be exposed")
+      local alwaysOn = #manager.tasks
+      assert(alwaysOn > 0, "the always-on scheduler must have tasks")
+      assert(alwaysOn <= 26, "too many always-on per-frame tasks: " .. tostring(alwaysOn))
+      local report = ex.state.perfReport()
+      assert(type(report) == "string" and string.find(report, "FPS") ~= nil,
+        "state.perfReport() must return a readable summary")
+      assert(string.find(report, "tasks") ~= nil, "the report must list the task bucket")
+
+      -- Leak check: an ESP registers a render connection on enable and the
+      -- framework must take it away on disable, every single time.
+      local renderBaseline = #manager.renderTasks
+      local esp = findFeature("PlayerESP")
+      assert(esp, "PlayerESP must exist for the leak check")
+      for _ = 1, 8 do
+        local okOn = pcall(esp.onToggle, true)
+        assert(okOn, "PlayerESP ON must not error")
+        local okOff = pcall(esp.onToggle, false)
+        assert(okOff, "PlayerESP OFF must not error")
+      end
+      assert(#manager.renderTasks == renderBaseline,
+        "toggling PlayerESP 8 times left " .. tostring(#manager.renderTasks - renderBaseline)
+          .. " render connection(s) behind")
+      local taskBaseline = #manager.tasks
+      local aura = findFeature("Coins Aura")
+      if aura then
+        for _ = 1, 8 do
+          pcall(aura.onToggle, true)
+          pcall(aura.onToggle, false)
+        end
+        assert(#manager.tasks == taskBaseline,
+          "toggling Coins Aura left " .. tostring(#manager.tasks - taskBaseline)
+            .. " per-frame task(s) behind")
+      end
+      print("[HARNESS] PERF: " .. tostring(alwaysOn) .. " always-on tasks, no toggle leak")
+      -- The report must name the modules, not "task"/"generated chunk": a frame
+      -- warning is only useful if it points at a card.
+      -- Every always-on task must name its module: a frame warning that says
+      -- "task" or "some/chunk/path:12" is useless to whoever reads it.
+      local labels = {}
+      for _, task in ipairs(manager.tasks) do
+        local label = tostring(task.label)
+        assert(label ~= "" and label ~= "task",
+          "always-on task without a module label: " .. label)
+        assert(string.find(label, "/", 1, true) == nil
+          and string.find(label, ".rs:", 1, true) == nil,
+          "task label looks like a source path: " .. label)
+        table.insert(labels, label)
+      end
+      print("[HARNESS] PERF labels: " .. table.concat(labels, " | "))
+    end
     -- v138.9 ordering: every window is ALPHABETICAL by display name. The check
     -- reads the REAL window bodies (not the feature registry), so it covers cards
     -- the harness registry does not see, like the debug Calibration card.

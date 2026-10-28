@@ -59,6 +59,11 @@ type Track = {
     humanoid: Humanoid,
     root: BasePart,
     samples: {Sample},
+    -- v139 cache: reused for PART_REFRESH_SECONDS instead of re-searched on
+    -- every 60 Hz sample.
+    aimPart: BasePart?,
+    aimName: string?,
+    partsAt: number?,
 }
 
 type Fit = {
@@ -247,9 +252,9 @@ local function finiteVector(value: any): boolean
 end
 
 local function humanoidStateName(humanoid: Humanoid): string
-    local ok: boolean, state: any = pcall(function(): any
-        return humanoid:GetState()
-    end)
+    -- pcall(method, self) instead of pcall(closure): the old form allocated a
+    -- closure per sample, 60 times a second per player.
+    local ok: boolean, state: any = pcall(humanoid.GetState, humanoid)
     if not ok or state == nil then
         return ""
     end
@@ -297,17 +302,43 @@ function Module.init(runtime: any): any
     local echoTimes: {number} = {}
     local elapsed: number = 0
 
-    local function ensureTrack(player: Player): Track?
-        local character: Model? = player.Character
-        if not character then
-            tracks[player] = nil
-            return nil
+    -- v139: the sampler runs 60 times a second for COLOUR every other player, so
+    -- the descendant lookups are cached per track and refreshed at 2 Hz (or at
+    -- once when the character/part disappears). Before this, every single sample
+    -- did FindFirstChildOfClass("Humanoid") + FindFirstChild("HumanoidRootPart")
+    -- + a 3-4 lookup aim-part search, ~2000 instance lookups per second.
+    local PART_REFRESH_SECONDS: number = 0.5
+
+    local function refreshTrackParts(
+        track: Track,
+        character: Model,
+        now: number
+    ): boolean
+        local refresh: boolean = now - (track.partsAt or -math.huge) >= PART_REFRESH_SECONDS
+            or track.root == nil
+            or track.humanoid == nil
+        if not refresh then
+            return true
         end
         local humanoid: Humanoid? = character:FindFirstChildOfClass("Humanoid")
             :: Humanoid?
         local root: BasePart? = character:FindFirstChild("HumanoidRootPart")
             :: BasePart?
         if not humanoid or not root or humanoid.Health <= 0 then
+            return false
+        end
+        track.humanoid = humanoid
+        track.root = root
+        local aimPart: BasePart?, aimName: string = findAimPart(character)
+        track.aimPart = aimPart
+        track.aimName = aimName
+        track.partsAt = now
+        return true
+    end
+
+    local function ensureTrack(player: Player, now: number): Track?
+        local character: Model? = player.Character
+        if not character then
             tracks[player] = nil
             return nil
         end
@@ -315,19 +346,22 @@ function Module.init(runtime: any): any
         if not track or track.character ~= character then
             track = {
                 character = character,
-                humanoid = humanoid,
-                root = root,
+                humanoid = nil,
+                root = nil,
                 samples = {},
+                partsAt = -math.huge,
             }
             tracks[player] = track
         end
-        track.humanoid = humanoid
-        track.root = root
+        if not refreshTrackParts(track, character, now) then
+            tracks[player] = nil
+            return nil
+        end
         return track
     end
 
     local function samplePlayer(player: Player, now: number): ()
-        local track: Track? = ensureTrack(player)
+        local track: Track? = ensureTrack(player, now)
         if not track then
             return
         end
@@ -342,14 +376,18 @@ function Module.init(runtime: any): any
         -- on flat ground. The humanoid state is the reliable signal.
         local grounded: boolean = stateName ~= "Jumping"
             and stateName ~= "Freefall"
-        local moveDirection: Vector3 = Vector3.zero
-        pcall(function(): ()
-            local move: any = track.humanoid.MoveDirection
-            if typeof(move) == "Vector3" and finiteVector(move) then
-                moveDirection = move
-            end
-        end)
-        local aimPart: BasePart?, aimPartName: string = findAimPart(track.character)
+        -- Reading MoveDirection off a live Humanoid cannot throw: no pcall, no
+        -- closure. A nil humanoid was already rejected by ensureTrack.
+        local move: any = track.humanoid.MoveDirection
+        local moveDirection: Vector3 = if typeof(move) == "Vector3"
+            and finiteVector(move)
+            then move
+            else Vector3.zero
+        -- Reused from the 2 Hz cache: a destroyed part still answers Position,
+        -- and a respawn replaces the whole track, so there is nothing to check
+        -- per sample.
+        local aimPart: BasePart? = track.aimPart
+        local aimPartName: string = track.aimName or ""
         local aimOffset: Vector3 = aimPart
             and (aimPart.Position - position)
             or Vector3.zero
@@ -1395,7 +1433,8 @@ function Module.init(runtime: any): any
     end
 
     state.mm2Prediction = controller
-    featureConnections.MM2PredictionSampler = TaskManager:Connect(tick)
+    featureConnections.MM2PredictionSampler =
+        TaskManager:Connect(tick, nil, "Prediction sampler")
 
     activeCleanup = function(): ()
         disconnectFeatureConnection("MM2PredictionSampler")

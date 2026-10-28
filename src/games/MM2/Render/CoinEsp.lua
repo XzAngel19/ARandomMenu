@@ -497,7 +497,6 @@ function Module.init(runtime: any): any
 
         -- One small adornment per visible pickup. Creation happens
         -- once per pickup; between rescans Lua does nothing at all.
-        local tagClock: number = 0
         local tagsDirty: boolean = true
         -- Opacity guard: the setting's old default (0.8, from the
         -- full-model Highlight era) made a candy-sized adornment
@@ -507,48 +506,50 @@ function Module.init(runtime: any): any
         local function markerTransparency(): number
             return math.clamp(mm2Settings.coinTransparency, 0, 0.6)
         end
-        local function drawOverlay(): ()
-            tagClock += 1
-            local refreshColour: boolean = tagClock % 30 == 0
-            local seen: {[Instance]: boolean} = {}
+
+        -- Creates the box for one pickup. Called only when the pickups change.
+        local function makeTag(part: Instance): any
+            local okMake: boolean, created: any = pcall(function(): any
+                local visual: Instance = visualOf(part)
+                local box: Instance = Instance.new("BoxHandleAdornment")
+                box.Name = "WurstCoinBox"
+                box.AlwaysOnTop = true
+                box.ZIndex = 5
+                box.Adornee = visual
+                box.Color3 = mm2Settings.coinColor
+                box.Transparency = markerTransparency()
+                local okSize: boolean, visualSize: any = pcall(function(): any
+                    return (visual :: any).Size
+                end)
+                if okSize and visualSize then
+                    box.Size = visualSize * 1.3
+                end
+                box.Parent = part
+                return {box = box}
+            end)
+            if okMake and created then
+                return created
+            end
+            return nil
+        end
+
+        -- v139: reconciliation runs when the pickup set changes, not every
+        -- frame. drawOverlay used to allocate a `seen` table and walk every coin
+        -- 60 times a second even when nothing had moved, which showed up as GC
+        -- spikes with ~100 coins on the map. A BoxHandleAdornment follows its
+        -- Adornee by itself, so the per-frame work was pure waste.
+        local function syncTags(): ()
             for part: Instance in pairs(lastFamilies) do
-                if part.Parent then
-                    seen[part] = true
-                    local entry = coinTags[part]
-                    if not entry then
-                        local okMake: boolean, created: any = pcall(function(): any
-                            local visual: Instance = visualOf(part)
-                            local box: Instance = Instance.new("BoxHandleAdornment")
-                            box.Name = "WurstCoinBox"
-                            box.AlwaysOnTop = true
-                            box.ZIndex = 5
-                            box.Adornee = visual
-                            box.Color3 = mm2Settings.coinColor
-                            box.Transparency = markerTransparency()
-                            local okSize: boolean, visualSize: any = pcall(function(): any
-                                return (visual :: any).Size
-                            end)
-                            if okSize and visualSize then
-                                box.Size = visualSize * 1.3
-                            end
-                            box.Parent = part
-                            return {box = box}
-                        end)
-                        if okMake and created then
-                            coinTags[part] = created
-                            tagsDirty = true
-                        end
-                    elseif refreshColour then
-                        pcall(function(): ()
-                            entry.box.Color3 = mm2Settings.coinColor
-                            entry.box.Transparency = markerTransparency()
-                        end)
+                if part.Parent and not coinTags[part] then
+                    local created: any = makeTag(part)
+                    if created then
+                        coinTags[part] = created
+                        tagsDirty = true
                     end
                 end
             end
-            for part: Instance in pairs(coinTags) do
-                if not seen[part] then
-                    local entry = coinTags[part]
+            for part: Instance, entry: any in pairs(coinTags) do
+                if not part.Parent or not lastFamilies[part] then
                     coinTags[part] = nil
                     pcall(function(): ()
                         entry.box:Destroy()
@@ -556,8 +557,35 @@ function Module.init(runtime: any): any
                     tagsDirty = true
                 end
             end
-            -- Publish which parts carry a marker right now (only
-            -- when the set actually changed; this runs every tick).
+            if tagsDirty then
+                tagsDirty = false
+                local published: {[Instance]: boolean} = {}
+                for part: Instance in pairs(coinTags) do
+                    published[part] = true
+                end
+                state.mm2CoinTagParts = published
+            end
+        end
+
+        -- Per-frame work is now only the colour refresh, twice a second.
+        local lastTagColourAt: number = -math.huge
+        local function drawOverlay(): ()
+            local now: number = os.clock()
+            if now - lastTagColourAt < 0.5 then
+                return
+            end
+            lastTagColourAt = now
+            for part: Instance, entry: any in pairs(coinTags) do
+                if not part.Parent then
+                    coinTags[part] = nil
+                    tagsDirty = true
+                else
+                    pcall(function(): ()
+                        entry.box.Color3 = mm2Settings.coinColor
+                        entry.box.Transparency = markerTransparency()
+                    end)
+                end
+            end
             if tagsDirty then
                 tagsDirty = false
                 local published: {[Instance]: boolean} = {}
@@ -608,10 +636,10 @@ function Module.init(runtime: any): any
                     changed = true
                 end
             end
-            -- `changed` no longer drives any drawing: tags are created
-            -- and removed by drawOverlay from lastFamilies alone.
+            -- `changed` no longer drives any drawing: the adornments are
+            -- reconciled here (not per frame) from lastFamilies alone.
             refreshPickupCache(found)
-            drawOverlay(true)
+            syncTags()
             local shown: number = 0
             for _ in pairs(visible) do
                 shown += 1
@@ -678,10 +706,9 @@ function Module.init(runtime: any): any
         refresh()
         featureConnections.MM2CoinRefresh = TaskManager:Connect(
             function(deltaTime: number): ()
-                -- The adornments follow their parts inside the
-                -- engine; Lua only rescans when the map changed or on
-                -- the safety timer. With ~100 coins out this is the
-                -- whole per-frame cost.
+                -- v139: the only per-frame work left is the colour refresh
+                -- (twice a second). BoxHandleAdornments follow their Adornee
+                -- inside the engine; the reconciliation lives in refresh().
                 drawOverlay()
                 elapsed += deltaTime
                 if not dirty and elapsed < RESCAN_PERIOD then
@@ -690,7 +717,7 @@ function Module.init(runtime: any): any
                 elapsed = 0
                 refresh()
             end
-        )
+        , nil, "Coin ESP")
     end
 
     local CoinFeature: any = createUniversalFeature(

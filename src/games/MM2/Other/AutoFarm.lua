@@ -1592,13 +1592,12 @@ function Module.init(_runtime: any): any
                         and stillCollectable(part)
                         and (not blacklist[part] or blacklist[part] < now)
                         and (not retryAt[part] or retryAt[part] < now) then
-                        local position: Vector3? = nil
-                        pcall(function(): ()
-                            position = (part :: BasePart).Position
-                        end)
-                        if position then
-                            local distance: number =
-                                ((position :: Vector3) - root.Position).Magnitude
+                        -- No pcall closure here: a Part's Position read cannot
+                        -- throw. The old form allocated one closure per coin per
+                        -- frame (~6000/s with 100 coins).
+                        if part:IsA("BasePart") then
+                            local position: Vector3 = (part :: BasePart).Position
+                            local distance: number = (position - root.Position).Magnitude
                             if distance < nearestDistance then
                                 nearest = part
                                 nearestPosition = position
@@ -1734,7 +1733,7 @@ function Module.init(_runtime: any): any
                     pingMillis()
                 ))
             end
-        )
+        , nil, "Auto Farm tick")
 
         -- Turning the feature off runs this through
         -- disconnectFeatureConnection above: full restore, and the

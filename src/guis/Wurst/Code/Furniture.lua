@@ -675,33 +675,54 @@ function Module.init(context: any): any
         end
     end
 
+    -- v139: the HUD only animates while a rainbow or the brightness pulse is
+    -- actually on, and each row keeps ONE colour table that gets mutated in
+    -- place. Before this the loop rewrote every visible row 20 times a second
+    -- forever, even with the HUD static, and allocated a fresh table per row
+    -- per tick (a steady garbage stream for nothing).
     local hudRainbowSince: number = 0
+    local function hudReanimate(): ()
+        local bitmap = state.bitmapText
+        local canRecolor = bitmap ~= nil and bitmap.recolor ~= nil
+        for _, row: any in pairs(hudRows) do
+            if row.name and row.holder then
+                local colors: {Color3} = row.colors
+                if not colors then
+                    colors = { hudColor, Theme.textMuted }
+                    row.colors = colors
+                end
+                colors[1] = hudEntryColor(row.order)
+                colors[2] = Theme.textMuted
+                if not canRecolor or not bitmap.recolor(row.holder, colors) then
+                    drawHudEntry(row, row.name, row.status)
+                end
+            end
+        end
+    end
+    local function hudAnimating(): boolean
+        return hudVisible and (hudRainbow or animationsOn())
+    end
     table.insert(Furniture.handles, TaskManager:Connect(function(
         deltaTime: number
     ): ()
 
-        if hudVisible and (hudRainbow or animationsOn()) then
-            hudRainbowClock += deltaTime
-            hudRainbowSince += deltaTime
-            if hudRainbowSince >= 0.05 then
-                hudRainbowSince %= 0.05
-                for _, row: any in pairs(hudRows) do
-                    if row.name then
-                        local bitmap = state.bitmapText
-                        if not bitmap or not bitmap.recolor or not bitmap.recolor(row.holder, {hudEntryColor(row.order), Theme.textMuted}) then
-                            drawHudEntry(row, row.name, row.status)
-                        end
-                    end
-                end
-            end
-        end
         hudElapsed += deltaTime
-        if hudElapsed < 0.25 then
+        if hudElapsed >= 0.25 then
+            hudElapsed %= 0.25
+            refreshHudList()
+        end
+        if not hudAnimating() then
+            -- Parked: no rainbow, no pulse, nothing to redraw this frame.
             return
         end
-        hudElapsed = 0
-        refreshHudList()
-    end))
+        hudRainbowClock += deltaTime
+        hudRainbowSince += deltaTime
+        local interval: number = if hudRainbow then 0.05 else 0.1
+        if hudRainbowSince >= interval then
+            hudRainbowSince %= interval
+            hudReanimate()
+        end
+    end, nil, "HUD animations"))
     refreshHudList()
 
     local function forceHudRefresh(): ()

@@ -410,16 +410,27 @@ function Module.init(runtime: any): any
         end
     end
 
+    -- v139: this card and the MM2 "Shoot" card both used the key MM2AutoShoot,
+    -- so enabling both lost one handle and left a ghost task firing every frame
+    -- after the card was switched off. Each card owns its own key now, and the
+    -- connection is dropped before a new one is made.
+    local CONNECTION_KEY: string = "MM2AutoShootCard"
+
     local function toggleAutoShoot(enabled: boolean): ()
         autoShootActive = enabled == true
         if enabled then
             updateStatus()
             setupInstantGunWatchers()
-            featureConnections.MM2AutoShoot = TaskManager:Connect(autoShootTick)
+            disconnectFeatureConnection(CONNECTION_KEY)
+            featureConnections[CONNECTION_KEY] = TaskManager:Connect(
+                autoShootTick,
+                nil,
+                "Auto Shoot"
+            )
             autoShootTick()
         else
             clearToolConnections()
-            disconnectFeatureConnection("MM2AutoShoot")
+            disconnectFeatureConnection(CONNECTION_KEY)
             if AutoShootFeature then
                 AutoShootFeature:SetStatus(nil)
             end

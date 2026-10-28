@@ -728,12 +728,14 @@ function Module.init(context: any): Framework
             return item
         end
 
+        -- v139: the scheduler is told which module owns the task, so a frame
+        -- time warning names the card instead of "task".
         function created:Loop(callback: (number) -> ()): any
-            return created:Clean(host.TaskManager:Connect(callback))
+            return created:Clean(host.TaskManager:Connect(callback, nil, moduleName))
         end
 
         function created:Render(callback: (number) -> ()): any
-            return created:Clean(host.TaskManager:Connect(callback, "render"))
+            return created:Clean(host.TaskManager:Connect(callback, "render", moduleName))
         end
 
         function created:Event(signal: any, callback: (...any) -> ()): any

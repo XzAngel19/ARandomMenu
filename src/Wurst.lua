@@ -115,7 +115,7 @@ local RUNTIME_RAW_BASE: string =
         .. RUNTIME_BRANCH
         .. "/"
 
-local SOURCE_STAMP: string = "v138.9-20261027-alphabetical-one-catalog-fling-ping"
+local SOURCE_STAMP: string = "v139.0-20261027-performance-pass"
 
 local BOOT_STARTED_AT: number = os.clock()
 local BOOT_FINGERPRINT_SECONDS: number = 0
@@ -3740,59 +3740,165 @@ end)
 type TaskHandle = {
     Connected: boolean,
     Disconnect: (self: TaskHandle) -> (),
+    label: string,
 }
 
 type ScheduledTask = {
     callback: (...any) -> (),
     handle: TaskHandle,
     failures: number,
+    label: string,
+    costMs: number,
+    calls: number,
+    warned: boolean,
 }
 
-local TaskManager = {
-    tasks = {} :: {[number]: ScheduledTask},
-    renderTasks = {} :: {[number]: ScheduledTask},
+-- v139: the scheduler measures itself. Every task keeps an exponential average
+-- of how long it takes, so "the menu is lagging" can be answered with a name
+-- instead of a guess (state.perfReport()). The cost of measuring is two
+-- os.clock() calls per task per frame (~0.2 us), far below anything visible.
+local TASK_WARN_MS: number = 3
+local PERFORMANCE_EVERY: number = 0.5
+
+local TaskManager: any = {
+    tasks = {} :: {ScheduledTask},
+    renderTasks = {} :: {ScheduledTask},
+    taskCount = 0,
+    renderCount = 0,
     nextId = 0,
     connection = nil :: RBXScriptConnection?,
     renderConnection = nil :: RBXScriptConnection?,
+    tasksMs = 0,
+    renderMs = 0,
 }
+
+state.performance = {
+    fps = 60,
+    frameMs = 1 / 60,
+    tasksMs = 0,
+    renderMs = 0,
+    taskCount = 0,
+    renderCount = 0,
+    slowestTask = nil :: (string | nil),
+    slowestMs = 0,
+}
+
+local function describeTask(callback: any): string
+    -- "n" is the inferred function name (usually present for a named local
+    -- function), "s" is the chunk/source. A chunk path ("something/file.rs:12")
+    -- is not a module name, so those are skipped instead of filling the
+    -- performance report with noise.
+    for _, kind: string in ipairs({"n", "s"}) do
+        local ok: boolean, info: any = pcall(debug.info, callback, kind)
+        if ok and type(info) == "string" and info ~= "" then
+            local name: string = tostring(info)
+            if not string.find(name, "/", 1, true)
+                and not string.find(name, "@", 1, true)
+                and string.find(name, ".rs:", 1, true) == nil then
+                if #name > 64 then
+                    name = string.sub(name, 1, 64)
+                end
+                return name
+            end
+        end
+    end
+    return "task"
+end
+
+-- Swap-remove keeps the buckets as dense arrays, so the per-frame loop is an
+-- ipairs over contiguous memory instead of pairs over a hash with holes.
+local function removeFromBucket(bucket: {ScheduledTask}, index: number): ()
+    local last: number = #bucket
+    if index ~= last then
+        bucket[index] = bucket[last]
+        bucket[last].handle.index = index
+    end
+    bucket[last] = nil
+end
 
 function TaskManager:Connect(
     callback: (...any) -> (),
-    phase: string?
+    phase: string?,
+    label: string?
 ): TaskHandle
     self.nextId += 1
-    local taskId: number = self.nextId
-    local bucket: {[number]: ScheduledTask} = phase == "render"
+    local bucket: {ScheduledTask} = phase == "render"
         and self.renderTasks
         or self.tasks
     local handle: TaskHandle
     handle = {
         Connected = true,
-        Disconnect = function(selfHandle: TaskHandle): ()
+        label = label or describeTask(callback),
+        index = 0,
+        Disconnect = function(selfHandle: any): ()
             if not selfHandle.Connected then
                 return
             end
             selfHandle.Connected = false
-            bucket[taskId] = nil
+            local current: {ScheduledTask} = selfHandle.bucket
+            local index: number = selfHandle.index
+            if current and index >= 1 and index <= #current
+                and current[index] ~= nil and current[index].handle == selfHandle then
+                removeFromBucket(current, index)
+            end
         end,
-    }
-    bucket[taskId] = {
+    } :: any
+    handle.bucket = bucket
+    handle.index = #bucket + 1
+    bucket[handle.index] = {
         callback = callback,
         handle = handle,
         failures = 0,
+        label = handle.label,
+        costMs = 0,
+        calls = 0,
+        warned = false,
     }
+    if phase == "render" then
+        self.renderCount = #self.renderTasks
+    else
+        self.taskCount = #self.tasks
+    end
     return handle
 end
 
-function TaskManager:Destroy(): ()
-    for _, bucket: {[number]: ScheduledTask} in
-        ipairs({self.tasks, self.renderTasks})
-    do
-        for taskId: number, scheduled: ScheduledTask in pairs(bucket) do
-            scheduled.handle.Connected = false
-            bucket[taskId] = nil
+function TaskManager:Stats(): any
+    local slowest: any = nil
+    local list: {any} = {}
+    for _, bucket: {ScheduledTask} in ipairs({self.tasks, self.renderTasks}) do
+        for _, scheduled: ScheduledTask in ipairs(bucket) do
+            table.insert(list, {
+                label = scheduled.label,
+                ms = scheduled.costMs,
+                calls = scheduled.calls,
+            })
+            if not slowest or scheduled.costMs > slowest.ms then
+                slowest = {label = scheduled.label, ms = scheduled.costMs}
+            end
         end
     end
+    table.sort(list, function(left: any, right: any): boolean
+        return left.ms > right.ms
+    end)
+    return {
+        taskCount = #self.tasks,
+        renderCount = #self.renderTasks,
+        tasksMs = self.tasksMs,
+        renderMs = self.renderMs,
+        slowest = slowest,
+        top = list,
+    }
+end
+
+function TaskManager:Destroy(): ()
+    for _, bucket: {ScheduledTask} in ipairs({self.tasks, self.renderTasks}) do
+        for _, scheduled: ScheduledTask in ipairs(bucket) do
+            scheduled.handle.Connected = false
+        end
+        table.clear(bucket)
+    end
+    self.taskCount = 0
+    self.renderCount = 0
     if self.connection then
         self.connection:Disconnect()
         self.connection = nil
@@ -3804,45 +3910,127 @@ function TaskManager:Destroy(): ()
 end
 
 local function runBucket(
-    bucket: {[number]: ScheduledTask},
+    bucket: {ScheduledTask},
     deltaTime: number
-): ()
-    for taskId: number, scheduled: ScheduledTask in pairs(bucket) do
-        if scheduled.handle.Connected then
-            local success: boolean, message: any = pcall(
-                scheduled.callback,
-                deltaTime
+): number
+    local total: number = 0
+    local index: number = 1
+    while index <= #bucket do
+        local scheduled: ScheduledTask = bucket[index]
+        local startedAt: number = os.clock()
+        local success: boolean, message: any = pcall(
+            scheduled.callback,
+            deltaTime
+        )
+        local cost: number = (os.clock() - startedAt) * 1000
+        total += cost
+        scheduled.calls += 1
+        -- Fast attack, slow decay: a single spike is visible in the report but
+        -- does not fire the warning; a task that is genuinely heavy will.
+        if cost > scheduled.costMs then
+            scheduled.costMs = cost
+        else
+            scheduled.costMs += (cost - scheduled.costMs) * 0.05
+        end
+        if not success then
+            scheduled.failures += 1
+            warn(
+                "[" .. PRODUCT.name .. "] scheduled task "
+                    .. scheduled.label
+                    .. " failed: "
+                    .. tostring(message)
             )
-            if success then
-                scheduled.failures = 0
-            else
-                scheduled.failures += 1
-                warn(
-                    "[" .. PRODUCT.name .. "] scheduled task "
-                        .. tostring(taskId)
-                        .. " failed: "
-                        .. tostring(message)
-                )
-
-                if scheduled.failures >= 3 then
-                    scheduled.handle:Disconnect()
-                end
+            if scheduled.failures >= 3 then
+                scheduled.handle.Connected = false
             end
         end
+        if not scheduled.warned and scheduled.costMs >= TASK_WARN_MS then
+            scheduled.warned = true
+            warn(
+                "[" .. PRODUCT.name .. ":Perf] "
+                    .. scheduled.label
+                    .. string.format(" is taking %.2f ms per frame", scheduled.costMs)
+                    .. " — that is what is dropping your FPS. Turn that module off or lower its range."
+            )
+        end
+        if not scheduled.handle.Connected then
+            -- Disabled by its third failure (a real Disconnect already took it
+            -- out of the bucket). Drop it now and let the task that the
+            -- swap-remove moved into this slot run in this same frame.
+            if bucket[index] == scheduled then
+                removeFromBucket(bucket, index)
+            end
+        else
+            -- It ran from this slot; the next task is index + 1. If it is no
+            -- longer here, another task's disconnect swapped our slot and it
+            -- already ran, so advancing is still correct.
+            index += 1
+        end
     end
+    return total
 end
+
+local function publishPerformance(deltaTime: number): ()
+    local performance: any = state.performance
+    local frameMs: number = math.max(deltaTime, 1 / 1000) * 1000
+    performance.frameMs += (frameMs - performance.frameMs) * 0.1
+    performance.fps = 1000 / math.max(performance.frameMs, 1 / 1000)
+    local stats: any = TaskManager:Stats()
+    performance.taskCount = stats.taskCount
+    performance.renderCount = stats.renderCount
+    performance.tasksMs = stats.tasksMs
+    performance.renderMs = stats.renderMs
+    performance.slowestTask = stats.slowest and stats.slowest.label or nil
+    performance.slowestMs = stats.slowest and stats.slowest.ms or 0
+    performance.updatedAt = os.clock()
+end
+
+local performanceElapsed: number = 0
 
 TaskManager.connection = RunService.Heartbeat:Connect(function(
     deltaTime: number
 ): ()
-    runBucket(TaskManager.tasks, deltaTime)
+    TaskManager.tasksMs = runBucket(TaskManager.tasks, deltaTime)
+    performanceElapsed += deltaTime
+    if performanceElapsed >= PERFORMANCE_EVERY then
+        performanceElapsed = 0
+        publishPerformance(deltaTime)
+    end
 end)
 
 TaskManager.renderConnection = RunService.RenderStepped:Connect(function(
     deltaTime: number
 ): ()
-    runBucket(TaskManager.renderTasks, deltaTime)
+    TaskManager.renderMs = runBucket(TaskManager.renderTasks, deltaTime)
 end)
+
+-- Human readable snapshot for the console: `print(state.perfReport())`.
+state.perfReport = function(): string
+    local stats: any = TaskManager:Stats()
+    local lines: {string} = {
+        string.format(
+            "FPS %.0f (%.1f ms) · tasks %.2f ms (%d) · render %.2f ms (%d)",
+            state.performance.fps,
+            state.performance.frameMs,
+            stats.tasksMs,
+            stats.taskCount,
+            stats.renderMs,
+            stats.renderCount
+        ),
+    }
+    for index: number, entry: any in ipairs(stats.top) do
+        if index > 6 then
+            break
+        end
+        table.insert(
+            lines,
+            string.format("  %-40s %.2f ms", tostring(entry.label), entry.ms)
+        )
+    end
+    return table.concat(lines, "\n")
+end
+
+state.taskManager = TaskManager
 
 local function disconnectFeatureConnection(name)
     local connection = featureConnections[name]
@@ -5463,6 +5651,7 @@ end
 do
 (function(): ()
 local diagnostics: ModuleDiagnostics = {uiBindings = 0, taskBindings = 0}
+do local __g = getgenv() if type(__g) == "table" then __g.__expose = {ThemeEngine = ThemeEngine, Theme = Theme, state = state, configData = configData, TaskManager = TaskManager, featureConnections = featureConnections, allFeatures = allFeatures} end end
 state.frameworkEnvironment = createGameModuleEnvironment(diagnostics)
 
 type OwnershipService = {

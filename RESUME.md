@@ -5,7 +5,7 @@
 > contradice lo que crees, gana este documento (y los datos de calibración).
 >
 > **Estado al escribir esto:** rama `arena/76bc3f2f-arandommenu`, build
-> **`v138-20261026-autofarm-antifling-iy-fixes`**.
+> **`v139.0-20261027-performance-pass`** (ver la entrada v139.0 más abajo).
 > El usuario se comunica en español. Respóndele en español.
 
 ---
@@ -20,8 +20,8 @@
   1. Edita en `src/…`, nunca directamente en `src/libraries/bundle.lua`.
   2. Sube `SOURCE_STAMP` en `src/Wurst.lua` (`vNNN-AAAAMMDD-descripcion`).
   3. `python3 tools/build_bundle.py --stamp <el mismo stamp>`
-  4. `bash tools/validate.sh` — debe terminar VERDE (87 fuentes, 62 suites,
-     boot `failures=0`, auditoría de menú 46/45 tarjetas).
+  4. `bash tools/validate.sh` — debe terminar VERDE (91 fuentes, 67 suites,
+     boot `failures=0`, auditoría de menú 52/51 tarjetas).
   5. Commit + push **normales** a `arena/76bc3f2f-arandommenu`. Sin force-push,
      sin reescribir historia, sin trabajar en otra rama.
 - Sin bundle regenerado + stamp, el cambio **no llega al usuario**. El watermark
@@ -132,6 +132,20 @@
 > Prediction y Retries, adelanto por `ping/2` en cada pose, re-resolución de las
 > partes del rival, mínimo de 12 poses y segunda pasada con boost ×1.5. Evidencia:
 > `docs/FIXES-v138.9.md`, `tools/test_fling_skid.py` (10 suites).
+>
+> **v139.0 (2026-10-27):** pase de rendimiento ("tengo lag"). El `TaskManager` se
+> mide a sí mismo (`state.performance`, `state.taskManager:Stats()`,
+> `state.perfReport()`, aviso `[Wurst:Perf]` a partir de 3 ms por frame) y cada
+> tarea lleva el nombre del módulo. Arreglado: `Prediction` cachea partes y pierde
+> la closure por jugador; `MM2/base.lua` cachea lobby/mapa y el cooldown de fallo
+> escribe `Text`/`Size` a ~12 Hz y sólo si cambió; Coin ESP reconcilia adornos a
+> 2 Hz; Auto Farm sin `pcall` por moneda; **Noclip** pasa a evento + barrido a 5 Hz
+> (adiós `GetDescendants()` a 60 Hz); HUD sólo anima si hay rainbow/pulso y
+> reutiliza la tabla de color; los overlays flotantes no hacen nada si están
+> apagados; clave duplicada `MM2AutoShoot` (disparo fantasma) renombrada. El test
+> nuevo `tools/test_scheduler.py` (8 suites) destapó el bug del swap-remove al
+> autodesconectarse una tarea. Harness: 6 tareas always-on, todas con nombre, y
+> 8 toggles seguidos no dejan conexiones. Evidencia: `docs/FIXES-v139.0.md`.
 
 ## 1A. X2Duels (MVS): estructura MM2, evidencia y contratos
 

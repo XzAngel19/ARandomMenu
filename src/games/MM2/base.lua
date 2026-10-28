@@ -938,7 +938,7 @@ local function findMM2Map(): Instance?
     if cached and cached.Parent == workspace and isMM2MapModel(cached) then
         return cached
     end
-    if os.clock() - mm2MapCache.at < 0.1 then
+    if os.clock() - mm2MapCache.at < 0.25 then
         return (cached and cached.Parent == workspace) and cached or nil
     end
     mm2MapCache.at = os.clock()
@@ -1363,7 +1363,14 @@ local function onRoundPhase(listener: (string, string) -> ()): () -> ()
     end
 end
 
-local function findLobbyModel(): Instance?
+-- v139: the round-phase check runs 10 times a second for the whole session, so
+-- the lobby model and its reference part are cached. Before this, every tick
+-- walked workspace:GetChildren() (hundreds of objects) and did a recursive
+-- FindFirstChild("VotePads", true) inside the lobby model.
+local lobbyCache: {model: Instance?, at: number} = {model = nil, at = -math.huge}
+local LOBBY_CACHE_SECONDS: number = 0.75
+
+local function findLobbyModelUncached(): Instance?
     for _, object: Instance in ipairs(workspace:GetChildren()) do
         if isLobbyName(object.Name) or isLobbyModel(object) then
             return object
@@ -1372,13 +1379,34 @@ local function findLobbyModel(): Instance?
     return nil
 end
 
-local function isRootNearLobby(root: BasePart, lobby: Instance): boolean
-    local okRoot: boolean, rootPos: any = pcall(function(): any
-        return root.Position
-    end)
-    if not okRoot or typeof(rootPos) ~= "Vector3" then
-        return false
+local function findLobbyModel(): Instance?
+    local cached: Instance? = lobbyCache.model
+    if cached and cached.Parent then
+        return cached
     end
+    local now: number = os.clock()
+    if now - lobbyCache.at < LOBBY_CACHE_SECONDS then
+        return nil
+    end
+    lobbyCache.at = now
+    lobbyCache.model = findLobbyModelUncached()
+    return lobbyCache.model
+end
+
+local lobbyRefCache: {model: Instance?, part: BasePart?, at: number} =
+    {model = nil, part = nil, at = -math.huge}
+
+local function lobbyReferencePart(lobby: Instance): BasePart?
+    local now: number = os.clock()
+    if lobbyRefCache.model == lobby and lobbyRefCache.part
+        and lobbyRefCache.part.Parent then
+        return lobbyRefCache.part
+    end
+    if lobbyRefCache.model == lobby and now - lobbyRefCache.at < 1 then
+        return lobbyRefCache.part
+    end
+    lobbyRefCache.at = now
+    lobbyRefCache.model = lobby
     local votePads: Instance? = lobby:FindFirstChild("VotePads", true)
     local refPart: BasePart? = nil
     if votePads then
@@ -1393,6 +1421,18 @@ local function isRootNearLobby(root: BasePart, lobby: Instance): boolean
     if not refPart then
         refPart = lobby:FindFirstChildWhichIsA("BasePart", true)
     end
+    lobbyRefCache.part = refPart
+    return refPart
+end
+
+local function isRootNearLobby(root: BasePart, lobby: Instance): boolean
+    local okRoot: boolean, rootPos: any = pcall(function(): any
+        return root.Position
+    end)
+    if not okRoot or typeof(rootPos) ~= "Vector3" then
+        return false
+    end
+    local refPart: BasePart? = lobbyReferencePart(lobby)
     if refPart then
         local okDist: boolean, dist: any = pcall(function(): any
             return (rootPos - refPart.Position).Magnitude
@@ -1448,7 +1488,9 @@ if lastPhase == "map" then
 end
 featureConnections.MM2RoundPhase = TaskManager:Connect(function(deltaTime: number): ()
     phaseElapsed += deltaTime
-    if phaseElapsed < 0.05 then
+    -- v139: 10 Hz instead of 20. The phase only changes between lobby and map,
+    -- and 100 ms of extra latency on a round transition is invisible.
+    if phaseElapsed < 0.1 then
         return
     end
     phaseElapsed = 0
@@ -1473,7 +1515,7 @@ featureConnections.MM2RoundPhase = TaskManager:Connect(function(deltaTime: numbe
         roleRefreshGeneration += 1
         setRoundPhase("lobby", "teleport")
     end
-end)
+end, nil, "MM2 round phase")
 setRoundPhase(lastPhase, "boot")
 
 local roundTimerPartCache: {part: Instance?, at: number} =
@@ -1606,7 +1648,7 @@ featureConnections.MM2RoundClock = TaskManager:Connect(function(deltaTime: numbe
     if roundLifecycleActive == nil then
         roundLifecycleActive = true
     end
-end)
+end, nil, "MM2 round clock")
 
 requestRoleRefresh(true)
 
@@ -4238,6 +4280,13 @@ state.mm2ShotFeedback.showMiss = function(
     local token: number = state.mm2ShotFeedback.token
     state.mm2ShotFeedback.root.Visible = true
 
+    -- v139: the cooldown used to rebuild the label string and write two GUI
+    -- properties on every single frame. Text is one of the expensive ones
+    -- (layout + glyph re-shape), so the marker now refreshes at ~12 Hz and only
+    -- writes when the text or the bar actually changed.
+    local lastText: string = ""
+    local lastScale: number = -1
+    local lastRefresh: number = -math.huge
     local function updateCountdown(): ()
         if token ~= state.mm2ShotFeedback.token then
             disconnectFeatureConnection("MM2ShootCooldown")
@@ -4245,21 +4294,33 @@ state.mm2ShotFeedback.showMiss = function(
             return
         end
 
-        local remaining: number = math.max(0, cooldownEndsAt - os.clock())
+        local now: number = os.clock()
+        local remaining: number = math.max(0, cooldownEndsAt - now)
         if remaining <= 0 then
             state.mm2ShotFeedback.hide()
             return
         end
+        if now - lastRefresh < 0.08 then
+            return
+        end
+        lastRefresh = now
 
         local progress: number = math.clamp(remaining / duration, 0, 1)
-        state.mm2ShotFeedback.fill.Size = UDim2.fromScale(progress, 1)
-        state.mm2ShotFeedback.text.Text =
-            string.format("Miss cooldown - %.1fs", remaining)
+        local scale: number = math.floor(progress * 200 + 0.5) / 200
+        if scale ~= lastScale then
+            lastScale = scale
+            state.mm2ShotFeedback.fill.Size = UDim2.fromScale(scale, 1)
+        end
+        local nextText: string = string.format("Miss cooldown - %.1fs", remaining)
+        if nextText ~= lastText then
+            lastText = nextText
+            state.mm2ShotFeedback.text.Text = nextText
+        end
     end
 
     updateCountdown()
     featureConnections.MM2ShootCooldown =
-        TaskManager:Connect(updateCountdown)
+        TaskManager:Connect(updateCountdown, nil, "Miss cooldown")
 end
 
 state.mm2ShotFeedback.toPosition = function(value: any): Vector3?
