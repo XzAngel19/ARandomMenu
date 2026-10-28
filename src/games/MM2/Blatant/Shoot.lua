@@ -27,6 +27,7 @@ function Module.init(runtime: any): any
     local isPlayerAlive: any = core.isPlayerAlive
     local isProtectedTarget: any = core.isProtectedTarget
     local isWeaponPathClear: any = core.isWeaponPathClear
+    local describeRayBeyond: any = core.describeRayBeyond
     local mm2Settings: any = core.mm2Settings
     local validateGunShot: any = core.validateGunShot
 
@@ -97,7 +98,15 @@ function Module.init(runtime: any): any
     local SILENT_PIERCE_STUDS: number = 1.0
     local SILENT_LIFT_STUDS: number = 1.6
     local MAX_SILENT_SWEEP: number = 1.5
-    local OVERSHOOT_PROBE_STUDS: number = 12
+    -- v139.2: how far behind the aim the ray is still dangerous. MM2's gun is
+    -- a long hitscan ray, not a bullet that dies at our endpoint; 12 studs of
+    -- overshoot (the old value) is shorter than the gap between two players
+    -- standing in the same room, which is how two of the v139.1 misses ended
+    -- up on another player's HumanoidRootPart.
+    local OVERSHOOT_PROBE_STUDS: number = 200
+    -- A body this close behind the aim is a point-blank innocent hit waiting
+    -- to happen: even a 1-stud prediction error walks into it.
+    local INNOCENT_DANGER_STUDS: number = 35
     local MAX_AUTO_LEAD_SAFE: number = 0.6
 
     -- The Top/fallback origin lift belongs to the target's rig, not to a
@@ -276,6 +285,80 @@ function Module.init(runtime: any): any
     local ShootFeature: any = nil
     local lastRejectReason: string = ""
 
+    -- v139.2: pick the aim point whose line is safest BEYOND the target.
+    -- A shot that misses by a stud continues into whoever is standing behind;
+    -- the aim is therefore chosen by what is behind it, not only by what is in
+    -- front. Candidates stay inside the body (torso, root, head, outer limbs),
+    -- so the target itself remains just as hittable.
+    local function corridorSafePoint(
+        target: Player,
+        info: any,
+        origin: Vector3,
+        preferred: Vector3
+    ): (Vector3, boolean, string)
+        local character: Model? = target.Character
+        if not character or not describeRayBeyond then
+            return preferred, true, "none"
+        end
+        local exclude: {Instance} = {}
+        local ownCharacter: Model? = LocalPlayer and LocalPlayer.Character
+        if ownCharacter then
+            table.insert(exclude, ownCharacter)
+        end
+        table.insert(exclude, character)
+        local function blocker(point: Vector3): any
+            local hit: any = describeRayBeyond(
+                origin,
+                point,
+                OVERSHOOT_PROBE_STUDS,
+                exclude
+            )
+            if not hit or not hit.isBody then
+                return nil
+            end
+            if hit.player == target then
+                return nil
+            end
+            return hit
+        end
+        -- The preferred point is the predictor's own aim; it is only touched
+        -- when something alive is close behind it.
+        local near: any = blocker(preferred)
+        if not near or near.gap >= INNOCENT_DANGER_STUDS then
+            return preferred, true, "torso"
+        end
+        -- Same lead the preferred point got, applied to each body part, so the
+        -- candidates differ in where the ray goes, not in how far ahead it is.
+        local lead: Vector3 = info.endpoint - (info.capturedPosition or info.endpoint)
+        local bestPoint: Vector3 = preferred
+        local bestGap: number = near.gap
+        local bestName: string = "torso"
+        for _, partName: string in ipairs({
+            "UpperTorso", "Torso", "HumanoidRootPart", "Head",
+            "RightUpperArm", "LeftUpperArm", "RightUpperLeg", "LeftUpperLeg",
+            "Right Arm", "Left Arm", "Right Leg", "Left Leg",
+        }) do
+            local part: Instance? = character:FindFirstChild(partName)
+            if part and part:IsA("BasePart") then
+                local candidate: Vector3 = (part :: BasePart).Position + lead
+                local hit: any = blocker(candidate)
+                if not hit or hit.gap >= INNOCENT_DANGER_STUDS then
+                    -- This line is safe enough: aim there instead.
+                    return candidate, true, partName
+                end
+                if hit.gap > bestGap then
+                    bestGap = hit.gap
+                    bestPoint = candidate
+                    bestName = partName
+                end
+            end
+        end
+        -- Every line has a body within the danger radius: the safest one is
+        -- still a coin flip, so the shot is skipped (MM2 takes the gun away
+        -- from a sheriff who shoots an innocent).
+        return bestPoint, false, bestName
+    end
+
     local function fireGunAtTarget(
         target: Player?,
         options: FireOptions?
@@ -362,6 +445,28 @@ function Module.init(runtime: any): any
                     leadCorrection = 0,
                     rootPosition = targetRoot.Position,
                 }
+            end
+        end
+
+        -- v139.2: choose the aim point by what is BEHIND it. The server ray
+        -- does not stop at our endpoint, so a stud of prediction error turns
+        -- into a body behind the murderer. Measured in the v139.1 session:
+        -- 2 of 10 confirmed shots hit another player's root, 3 stopped on
+        -- map geometry beyond the aim.
+        if mm2Settings.avoidInnocents ~= false and origin and info then
+            local chosen: Vector3, safe: boolean, picked: string =
+                corridorSafePoint(target, info, origin.Position, info.endpoint)
+            if not safe then
+                return reject("An innocent is right behind the murderer.")
+            end
+            if chosen ~= info.endpoint then
+                local shift: Vector3 = chosen - info.endpoint
+                info.capturedPosition = (info.capturedPosition or info.endpoint)
+                    + shift
+                info.endpoint = chosen
+                info.aimPartChosen = picked
+            else
+                info.aimPartChosen = picked
             end
         end
 
@@ -777,6 +882,17 @@ function Module.init(runtime: any): any
             mm2Settings.shootWallCheck = value == true
         end,
         "Checks that no wall or solid barrier blocks the shot."
+    )
+    addToggleOption(
+        ShootFeature,
+        "Avoid innocents",
+        mm2Settings.avoidInnocents ~= false,
+        function(value: boolean): ()
+            mm2Settings.avoidInnocents = value == true
+        end,
+        "The server ray keeps going past the murderer. With this on, the shot "
+            .. "moves to a body part with nothing alive behind it, and is "
+            .. "skipped when an innocent is right behind. Off: always shoot."
     )
     addToggleOption(
         ShootFeature,

@@ -115,7 +115,7 @@ local RUNTIME_RAW_BASE: string =
         .. RUNTIME_BRANCH
         .. "/"
 
-local SOURCE_STAMP: string = "v139.1-20261027-spikes-release-version"
+local SOURCE_STAMP: string = "v139.2-20261027-corridor-release-version"
 
 local BOOT_STARTED_AT: number = os.clock()
 local BOOT_FINGERPRINT_SECONDS: number = 0

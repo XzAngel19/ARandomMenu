@@ -378,16 +378,46 @@ function Module.init(runtime: any): any
     end
 
     -- Throw knife at predicted target using MM2's Knife.Events.KnifeThrown remote
+    -- v139.2: the equip is a round trip, the throw is not. Firing the remote
+    -- in the same frame as EquipTool sends a throw from a tool the server still
+    -- believes is in the backpack: in the saved session 13 auto throws produced
+    -- 9 observed blades (4 vanished) and the 4 that did fire used the RightHand
+    -- fallback origin instead of the knife handle. So: equip once, wait for the
+    -- tool to actually be in the character, and only then throw.
+    local equipRequestedAt: number = -math.huge
+    local equipRequestedTool: Tool? = nil
+
+    local function ensureEquipped(knife: Tool, humanoid: Humanoid): boolean
+        local character: Model? = LocalPlayer and LocalPlayer.Character
+        if not character then
+            return false
+        end
+        if knife.Parent == character then
+            equipRequestedAt = -math.huge
+            equipRequestedTool = nil
+            return true
+        end
+        local now: number = os.clock()
+        -- Re-ask every 0.25 s at most; EquipTool while the previous request is
+        -- still travelling just stacks another equip request.
+        if equipRequestedTool ~= knife or now - equipRequestedAt >= 0.25 then
+            equipRequestedAt = now
+            equipRequestedTool = knife
+            pcall(function(): ()
+                humanoid:EquipTool(knife)
+            end)
+        end
+        return false
+    end
+
     local function throwKnife(target: Player, knife: Tool): boolean
         local character: Model? = LocalPlayer and LocalPlayer.Character
         if not character then
             return false
         end
         local humanoid: Humanoid? = character:FindFirstChildOfClass("Humanoid")
-        if knife.Parent ~= character and humanoid then
-            pcall(function(): ()
-                humanoid:EquipTool(knife)
-            end)
+        if humanoid and not ensureEquipped(knife, humanoid) then
+            return false
         end
         local originCF: CFrame? = getThrowOriginCFrame(knife)
         if not originCF then
@@ -508,27 +538,79 @@ function Module.init(runtime: any): any
         origGetTargetPosition = nil
     end
 
+    -- v139.2: this loop used to run every frame and, for EVERY player in the
+    -- lobby, ran the aim solver -- and the aim solver casts line-of-sight rays
+    -- against the map, then up to 8 more per body part when the first one is
+    -- blocked. Ten players meant dozens of raycasts per frame for a number
+    -- that only changes a few times per second. The solve is now cached for
+    -- 1/15 s, and the throw itself always re-solves so the blade leaves in the
+    -- direction the target is actually at right now.
+    local AIM_CACHE_SECONDS: number = 1 / 15
+    local cachedTarget: Player? = nil
+    local cachedAim: Vector3? = nil
+    local cachedOrigin: CFrame? = nil
+    local cachedAt: number = -math.huge
+
+    local function solveAim(knife: Tool): (Player?, Vector3?, CFrame?)
+        local now: number = os.clock()
+        if now - cachedAt >= AIM_CACHE_SECONDS then
+            cachedAt = now
+            cachedTarget = findTarget()
+            cachedAim = nil
+            cachedOrigin = nil
+            if cachedTarget then
+                local originCF: CFrame? = getThrowOriginCFrame(knife)
+                cachedOrigin = originCF
+                cachedAim = originCF
+                        and resolveKnifeAim(cachedTarget, originCF.Position, knife)
+                    or nil
+            end
+        elseif cachedTarget and cachedTarget.Character then
+            -- Origin only: the target's predicted point stays cached, but the
+            -- handle moves with the character and the tracer must follow it.
+            cachedOrigin = getThrowOriginCFrame(knife) or cachedOrigin
+        end
+        return cachedTarget, cachedAim, cachedOrigin
+    end
+
+    local function invalidateAim(): ()
+        cachedAt = -math.huge
+        cachedTarget = nil
+        cachedAim = nil
+        cachedOrigin = nil
+    end
+
     -- Main loop for Knife Tracer and Auto Knife Throw
     local function knifeThrowLoop(): ()
         if not settings.enabled then
             destroyTracerVisuals()
+            invalidateAim()
             return
         end
 
         local knife: Tool? = getKnife()
         if not knife then
             destroyTracerVisuals()
+            invalidateAim()
             return
         end
 
-        local target: Player? = findTarget()
-        if not target then
+        local now: number = os.clock()
+        local cooldown: number = math.clamp(tonumber(settings.delay) or 0, 0, 10)
+        local wantThrow: boolean = settings.autoThrow
+            and now - lastThrowAttempt >= cooldown
+
+        -- The cached pick is at most 1/15 s old, which only decides WHO gets
+        -- the blade. throwKnife re-solves the aim from the live handle, so the
+        -- direction is always current even when this list is stale.
+        local target, aimPos, originCF = solveAim(knife)
+        if not target or not aimPos then
             destroyTracerVisuals()
+            if not target then
+                invalidateAim()
+            end
             return
         end
-
-        local originCF: CFrame? = getThrowOriginCFrame(knife)
-        local aimPos: Vector3? = originCF and resolveKnifeAim(target, originCF.Position, knife) or nil
 
         if settings.knifeTracer and originCF and aimPos then
             updateTracerVisual(originCF.Position, aimPos)
@@ -536,13 +618,12 @@ function Module.init(runtime: any): any
             destroyTracerVisuals()
         end
 
-        if settings.autoThrow then
-            local now: number = os.clock()
-            local cooldown: number = math.clamp(tonumber(settings.delay) or 0, 0, 10)
-            if now - lastThrowAttempt >= cooldown then
-                if throwKnife(target, knife) then
-                    lastThrowAttempt = now
-                end
+        if wantThrow then
+            if throwKnife(target, knife) then
+                lastThrowAttempt = now
+                -- A throw consumes the aim: the next frame re-solves instead of
+                -- reusing a point measured before the blade left.
+                invalidateAim()
             end
         end
     end

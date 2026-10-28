@@ -5,7 +5,7 @@
 > contradice lo que crees, gana este documento (y los datos de calibración).
 >
 > **Estado al escribir esto:** rama `arena/76bc3f2f-arandommenu`, build
-> **`v139.1-20261027-spikes-release-version`** (ver las entradas v139.x abajo).
+> **`v139.2-20261027-corridor-release-version`** (ver las entradas v139.x abajo).
 > El usuario se comunica en español. Respóndele en español.
 
 ---
@@ -20,7 +20,7 @@
   1. Edita en `src/…`, nunca directamente en `src/libraries/bundle.lua`.
   2. Sube `SOURCE_STAMP` en `src/Wurst.lua` (`vNNN-AAAAMMDD-descripcion`).
   3. `python3 tools/build_bundle.py --stamp <el mismo stamp>`
-  4. `bash tools/validate.sh` — debe terminar VERDE (91 fuentes, 67 suites,
+  4. `bash tools/validate.sh` — debe terminar VERDE (91 fuentes, 69 suites,
      boot `failures=0`, auditoría de menú 52/51 tarjetas).
   5. Commit + push **normales** a `arena/76bc3f2f-arandommenu`. Sin force-push,
      sin reescribir historia, sin trabajar en otra rama.
@@ -158,6 +158,24 @@
 > ESP completos se benefician); `Nametags` deja de reasignar `Font` y de re-medir
 > texto cada frame; el HUD del menú sólo redibuja la fila que cambió. Evidencia:
 > `docs/FIXES-v139.1.md`.
+
+> **v139.2 (2026-10-27):** "¿Shoot y Auto Throw son lo mejor?". Estudio físico del
+> personaje (17 studs/s de mediana, `moveDirection` <0,08 en el 8 % de las
+> muestras ⇒ el error del predictor es irreducible) y dos arreglos medidos:
+> **(1) pistola** — el rayo del servidor no muere en nuestro endpoint; 2 de 10
+> tiros de v139.1 acabaron en el `HumanoidRootPart` de un inocente. El punto de
+> mira pasa a elegirse por lo que hay **detrás** (`describeRayBeyond`, sondeo
+> 12 → **200** studs, `INNOCENT_DANGER_STUDS = 35`): si ningún punto del cuerpo
+> deja una línea limpia, el disparo se **salta** con motivo visible. Opción
+> nueva `Avoid innocents` (ON). **(2) cuchillo** — `throwKnife` ya no dispara
+> desde la mochila (`ensureEquipped`: espera a que el tool cuelgue del
+> personaje; de 13 activaciones sólo 9 produjeron cuchillo y los 4 perdidos
+> salían del `RightHand` de respaldo) y el bucle cachea la puntería 1/15 s
+> (13 resoluciones/s a 60 FPS en vez de 61). Telemetría nueva: `missReason` +
+> `gunMisses`/`gunMissReasons` en el resumen y `closestApproachStuds` /
+> `passedThroughBody` en `projectile-observed`. **El lead no se tocó.** Evidencia:
+> `docs/FIXES-v139.2.md`, `tools/test_gun_corridor.py`,
+> `tools/test_mm2_knife_equip.py`.
 
 ## 1A. X2Duels (MVS): estructura MM2, evidencia y contratos
 
@@ -872,6 +890,21 @@ que reúne la comprobación normal sigue siendo `bash tools/validate.sh`.
      a ~0.1 s sin eco en la sesión v105; cada petición tras un eco fue respondida.
      En v109 el gate se hizo visible: mensaje con tiempo restante, contador en
      `state.mm2ShotGateHold` y acción "Shot gate status".
+- **v139.2 — el rayo no muere donde termina nuestro endpoint.** Es una línea
+  larga: un error de 1 stud no se pierde, entra en el cuerpo de detrás. Por eso
+  el punto de mira se elige por lo que hay **detrás** (`describeRayBeyond`,
+  sondeo 200 studs) y se salta el tiro si un cuerpo vivo está a menos de
+  **35 studs** detrás de todas las opciones del cuerpo. Un **muro** detrás no es
+  peligro (el rayo muere ahí). Si tocas el umbral, mide antes: 35 studs ≈ 2× la
+  distancia típica de enfrentamiento y el coste de pasarse es *no disparar*.
+  Para saber si un fallo fue balística o geometría, el evento del disparo trae
+  `missReason` (`hit` / `other-player` / `geometry` / `no-hit-part`) y el
+  resumen de sesión `gunMisses` + `gunMissReasons`.
+- **El cuchillo va a ~96 studs/s** (`ThrowSpeed`, clamped 24–300): a 30 studs el
+  vuelo es 0,31 s y el objetivo recorre 5,2 studs; el lead del cuchillo importa
+  3× más que el de la pistola. `throwKnife` **no** dispara hasta que el tool
+  está colgado del personaje (`EquipTool` es ida y vuelta; el remote no). El
+  bucle cachea la puntería 1/15 s; el disparo siempre re-resuelve desde el mango.
 - **Cómo leer una calibración sin engañarte:**
   - `hitTarget` (el rayo tocó el personaje) **≠ kill**. Una sesión tuvo 20
     hitTarget y 0 kills con la salud siempre a 100 (lobby/intermisión/blancos

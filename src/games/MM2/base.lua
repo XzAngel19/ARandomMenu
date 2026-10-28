@@ -59,6 +59,11 @@ local mm2Settings = {
     shootMode = "Manual",
     shootWallCheck = true,
     shootRaw = false,
+    -- v139.2: two of ten confirmed shots in the last saved session ended on
+    -- another player's HumanoidRootPart because the server ray kept going past
+    -- the murderer. Shooting an innocent costs the sheriff the gun, so the
+    -- shot is moved to a body part whose line is clear -- or skipped.
+    avoidInnocents = true,
     silentAim = false,
     shootKey = Enum.KeyCode.Unknown,
     shootTarget = "",
@@ -212,6 +217,87 @@ local function describeRayHit(origin: Vector3, endpoint: Vector3, target: Model?
             info.distance = (position - origin).Magnitude
         end
     end)
+    if part:IsA("BasePart") then
+        info.transparency = part.Transparency
+        info.canCollide = part.CanCollide
+    end
+    return info
+end
+
+-- v139.2: the server does NOT stop its ray at the endpoint we author. MM2's
+-- gun fires a long raycast in the aim direction and the thrown knife is a
+-- physical projectile, so both keep going past the target. The saved v139.1
+-- session shows what that costs: of 10 confirmed shots, 4 hit the murderer,
+-- 2 stopped on map geometry and 2 landed on ANOTHER player's HumanoidRootPart
+-- (the shot was 1-4 studs behind/ahead and the ray carried on). This probe
+-- answers "what is behind the target on this exact line", which the 12-stud
+-- overshoot check could not: a lobby is not 12 studs deep.
+--
+-- Only bodies are interesting here (a wall behind the target is a good thing:
+-- it stops a miss). `exclude` must contain the local character and the target.
+local function describeRayBeyond(
+    origin: Vector3,
+    endpoint: Vector3,
+    beyondStuds: number,
+    exclude: {Instance}?
+): any
+    local segment: Vector3 = endpoint - origin
+    local length: number = segment.Magnitude
+    if length < 0.05 then
+        return nil
+    end
+    local reach: number = math.max(1, math.min(beyondStuds or 200, 500))
+    local direction: Vector3 = segment.Unit * reach
+    local params: RaycastParams = RaycastParams.new()
+    params.FilterType = Enum.RaycastFilterType.Exclude
+    params.IgnoreWater = true
+    params.RespectCanCollide = false
+    local excluded: {Instance} = {}
+    for _, object: Instance in ipairs(exclude or {}) do
+        table.insert(excluded, object)
+    end
+    for _, object: Instance in ipairs(CollectionService:GetTagged("WeaponPassthrough")) do
+        table.insert(excluded, object)
+    end
+    params.FilterDescendantsInstances = excluded
+    local hit: RaycastResult? = workspace:Raycast(endpoint, direction, params)
+    if not hit then
+        return nil
+    end
+    local part: Instance = hit.Instance
+    local info: any = {
+        name = string.sub(part:GetFullName(), 1, 160),
+        className = part.ClassName,
+        isBody = false,
+        player = nil :: Player?,
+        gap = math.huge,
+    }
+    pcall(function(): ()
+        info.gap = (hit.Position - endpoint).Magnitude
+    end)
+    -- Walk up to the model: every character hangs from a Model whose parent is
+    -- the Workspace, and Players:GetPlayerFromCharacter is the only identity
+    -- that is safe to compare (no cloneref equality games).
+    local current: Instance? = part
+    for _ = 1, 8 do
+        if not current then
+            break
+        end
+        local ok: boolean, owner: any = pcall(Players.GetPlayerFromCharacter, Players, current)
+        if ok and owner then
+            info.isBody = true
+            info.player = owner
+            break
+        end
+        if current:IsA("Model") and current:FindFirstChildOfClass("Humanoid") then
+            info.isBody = true
+            break
+        end
+        if current == workspace then
+            break
+        end
+        current = current.Parent
+    end
     if part:IsA("BasePart") then
         info.transparency = part.Transparency
         info.canCollide = part.CanCollide
@@ -1841,6 +1927,7 @@ local function createTrajectoryCalibration(): any
         latencyMs: number?,
         confirmedEndpoint: Vector3?,
         confirmedHitTarget: boolean?,
+        missReason: string?,
         -- Everything below exists so a saved session can answer "did the shot
         -- land, where, and when" without a second session: the server-clock
         -- round trip, the part that was actually hit and its size, and the
@@ -1907,6 +1994,13 @@ local function createTrajectoryCalibration(): any
         targetHistory: {HistoryPoint},
         lastTrajectorySampleAt: number,
         destroyConnection: RBXScriptConnection?,
+        -- v139.2: how close the blade actually passed to the target. Until
+        -- now the knife only reported "a projectile with a valid speed was
+        -- observed", so an auto throw that landed 6 studs behind was
+        -- indistinguishable from one through the chest.
+        closestApproach: number?,
+        closestApproachAt: number?,
+        bodyRadius: number?,
     }
     type CalibrationEvent = {
         shotId: string?,
@@ -2017,6 +2111,8 @@ local function createTrajectoryCalibration(): any
         sessionGunConfirmed = 0,
         sessionGunHitTarget = 0,
         sessionGunKills = 0,
+        sessionGunMisses = 0,
+        missReasons = {} :: {[string]: number},
         sessionKnifeAttempts = 0,
         sessionKnifeConfirmed = 0,
         pendingGuns = {} :: {PendingGun},
@@ -2954,6 +3050,11 @@ local function createTrajectoryCalibration(): any
                 gunConfirmed = runtime.sessionGunConfirmed,
                 gunHitTarget = runtime.sessionGunHitTarget,
                 gunKills = runtime.sessionGunKills,
+                -- v139.2: hits are only half the story; this splits the rest
+                -- into "the ray carried into another player" and "the ray
+                -- stopped on the map".
+                gunMisses = runtime.sessionGunMisses or 0,
+                gunMissReasons = runtime.missReasons or {},
                 knifeAttempts = runtime.sessionKnifeAttempts,
                 knifeConfirmed = runtime.sessionKnifeConfirmed,
                 events = runtime.events,
@@ -3279,6 +3380,9 @@ local function createTrajectoryCalibration(): any
             bestMotionModel = analysis.bestMotionModel,
             motionModelErrors = analysis.motionModelErrors,
             evaluationSeconds = analysis.evaluationSeconds,
+            -- Why this shot did or did not score, decided from the hit part's
+            -- own owner: "hit", "other-player", "geometry" or "no-hit-part".
+            missReason = missReason,
         })
     end
 
@@ -3407,6 +3511,37 @@ local function createTrajectoryCalibration(): any
         if hitTarget then
             runtime.sessionGunHitTarget += 1
         end
+        -- v139.2: name the miss. The v139.1 session could only say "5 of 10
+        -- confirmed shots hit"; the saved hit parts show the rest were not
+        -- prediction errors at all: two landed on another player's
+        -- HumanoidRootPart (the ray kept going past the murderer) and three
+        -- stopped on map geometry behind the aim. Without this label the next
+        -- session repeats the same archaeology.
+        local missReason: string? = nil
+        if hitTarget then
+            missReason = "hit"
+        elseif typeof(hitPartValue) == "Instance" then
+            local otherOwner: any = nil
+            pcall(function(): ()
+                otherOwner = Players:GetPlayerFromCharacter(
+                    hitPartValue:FindFirstAncestorOfClass("Model")
+                )
+            end)
+            if otherOwner and otherOwner ~= target then
+                missReason = "other-player"
+            else
+                missReason = "geometry"
+            end
+        else
+            missReason = "no-hit-part"
+        end
+        pending.missReason = missReason
+        if missReason ~= "hit" then
+            runtime.sessionGunMisses = (runtime.sessionGunMisses or 0) + 1
+            runtime.missReasons = runtime.missReasons or {}
+            runtime.missReasons[missReason] =
+                (runtime.missReasons[missReason] or 0) + 1
+        end
         pending.confirmedAt = now
         pending.latencyMs = latencyMs
         pending.confirmedEndpoint = endpoint
@@ -3474,6 +3609,15 @@ local function createTrajectoryCalibration(): any
                 bestMotionModel = analysis.bestMotionModel,
                 motionModelErrors = analysis.motionModelErrors,
                 evaluationSeconds = analysis.evaluationSeconds,
+                closestApproachStuds = track.closestApproach,
+                closestApproachAtMs = track.closestApproachAt,
+                bodyRadiusStuds = track.bodyRadius,
+                -- A blade that passes inside the torso's half-diagonal is a
+                -- touch the client can prove; anything else is a measured
+                -- miss distance the next session can be scored against.
+                passedThroughBody = (track.closestApproach ~= nil
+                    and track.bodyRadius ~= nil
+                    and track.closestApproach <= track.bodyRadius),
             })
         end
         stopKnifeSamplerIfIdle()
@@ -3507,6 +3651,31 @@ local function createTrajectoryCalibration(): any
                 if position then
                     track.previousPosition = position
                     track.previousAt = now
+                    if track.targetUserId then
+                        local target: Player? = Players:GetPlayerByUserId(
+                            track.targetUserId
+                        )
+                        local body: BasePart? = target
+                            and getTargetRoot(target)
+                            or nil
+                        if body then
+                            local distance: number =
+                                (position - body.Position).Magnitude
+                            if not track.closestApproach
+                                or distance < track.closestApproach then
+                                track.closestApproach = distance
+                                track.closestApproachAt =
+                                    (now - track.startedAt) * 1000
+                                -- Half-diagonal of the torso the blade has to
+                                -- cross: a distance under it is a touch.
+                                local size: Vector3 = body.Size
+                                track.bodyRadius = 0.5 * math.max(
+                                    size.X,
+                                    math.max(size.Y, size.Z)
+                                )
+                            end
+                        end
+                    end
                 end
                 if track.targetUserId
                     and now - track.lastTrajectorySampleAt >= 1 / 30 then
@@ -4710,6 +4879,7 @@ state.mm2Core = {
     findDroppedGun = findDroppedGun,
 
     isWeaponPathClear = isWeaponPathClear,
+    describeRayBeyond = describeRayBeyond,
     validateGunShot = validateGunShot,
     predictionMath = predictionMath,
     getEstimatedLatency = getEstimatedLatency,
