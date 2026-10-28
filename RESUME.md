@@ -5,7 +5,7 @@
 > contradice lo que crees, gana este documento (y los datos de calibración).
 >
 > **Estado al escribir esto:** rama `arena/9492e6b6-arandommenu`, build
-> **`v143-20261028-x2duels-combat`**.
+> **`v144-20261028-x2duels-mobile`**.
 > El usuario se comunica en español. Respóndele en español.
 
 ---
@@ -20,7 +20,7 @@
   1. Edita en `src/…`, nunca directamente en `src/libraries/bundle.lua`.
   2. Sube `SOURCE_STAMP` en `src/Wurst.lua` (`vNNN-AAAAMMDD-descripcion`).
   3. `python3 tools/build_bundle.py --stamp <el mismo stamp>`
-  4. `bash tools/validate.sh` — debe terminar VERDE (v143: 93 fuentes,
+  4. `bash tools/validate.sh` — debe terminar VERDE (v144: 93 fuentes,
      64 suites, boot `failures=0`, auditoría de menú 51/50 tarjetas).
   5. Commit + push **normales** a `arena/9492e6b6-arandommenu`. Sin force-push,
      sin reescribir historia, sin trabajar en otra rama.
@@ -68,7 +68,7 @@
   51/50 tarjetas. Falta prueba live: perfil CPU por fase, menú apagado/activo,
   PC/móvil, executor, tiempo de inyección y revisión F9/MicroProfiler.
 
-## 1A. X2Duels (MVS): evidencia 1v1 y contratos v143
+## 1A. X2Duels (MVS): evidencia 1v1 y contratos v144
 
 **Fuentes:** `XzAngel19/TestingStuff` commit `a849817395`, log
 `2026-10-28T04_16_18Z.log` y `Place_124848751642883_[DUELS] 1v1_27-10-2026_23-21-39.rbxl`.
@@ -92,36 +92,43 @@ daño o recompensas ni de lo que ocurre en todos los executors/places.
   `FFA` con el mismo GameId identifica adversarios sin tratar FFA como equipo.
   Priorizar esta API sobre atributos de lobby; el cliente puede aún no haber
   recibido todos los datos. PlayerESP/Chams/Nametags usan providers compartidos.
-- **Función y ubicación:** por petición explícita de esta sesión, X2 tiene
-  tarjetas **Silent AIM**, **Auto Shoot** y **Knife Throw** independientes en
-  Combat (la arquitectura v142 con Auto Shoot/Knife anidados está revocada).
-  Silent AIM sólo acciona la Gun al pulsar su tecla/botón de acción cuando está
-  activado; en Legit también apunta la cámara, y en Silent intenta redirección
-  restringida. La tecla ya no depende del antiguo sender Button/CFrame. Si el
-  executor no ofrece hooks, el módulo no se apaga: informa que sólo queda el
-  botón por activación nativa. Auto Shoot y Knife Throw tienen Team Check, Wall
-  Check, Range y Cooldown propios, por defecto 0 s extra; funcionan sin Silent
-  AIM. Kill Aura tiene sus propios checks de equipo/pared. Un mismo arbiter
-  prioriza Gun y no interrumpe un windup de Knife; al desactivar/cancelar suelta
-  input y restaura ThrowMode. La cámara de un disparo programado dura 0,1 s para
-  handlers diferidos y no sobreescribe un cambio posterior del usuario.
-  TriggerBot universal delega en el core con `noAim`, sin girar al activar.
-  Hitbox sigue en Exploits, usa Team Check independiente, hace la raíz
-  consultable y restaura tamaño/transparencia/CanCollide/CanQuery. La ampliación
-  del cliente no prueba aceptación de impactos por el servidor. Todos estos
-  masters permanecen OFF en un executor nuevo; la migración v143 apaga Auto Win,
-  Auto Shoot y Knife Throw del perfil viejo para no iniciar combate por sorpresa.
-  Hay status en opciones para falta de arma, objetivo, input o hooks. `Tool:Activate()`
-  no inventa ni repite paquetes de combate.
-- **Hooks limitados:** Silent sólo redirige rayos si `getcallingscript` atribuye
-  la llamada a un script descendiente del Tool equipado; `MouseCast` también lo
-  usa `PingsController`, por lo que un rayo genérico no es prueba de arma. La
-  ruta Knife observada emite `FireServer(GUID, CFrame, Vector3)` desde el Tool
-  a un RemoteEvent bajo `Packages.Net`: si el executor expone hookmetamethod,
-  se puede cambiar sólo el Vector3 de esa llamada genuina, conservando GUID,
-  CFrame y remoto. No se fabrican ni repiten paquetes. Si la atribución no es
-  posible —por ejemplo un ModuleScript compartido— se deja la llamada intacta;
-  requiere prueba live y puede no redirigir en determinados executors.
+- **Función y ubicación:** X2 tiene tarjetas **Silent AIM**, **Auto Shoot** y
+  **Knife Throw** independientes en Combat. Tras el reporte de fallo móvil,
+  v144 elimina el modo `Legit` que giraba la cámara y descarta ese valor de los
+  perfiles guardados. Silent intenta redirigir lecturas nativas de puntería sin
+  mover la cámara; su tecla/botón también equipa la Gun del Backpack, espera un
+  `Heartbeat` si acaba de equiparla, revalida personaje/partida/arma/objetivo y
+  llama `Tool:Activate()`. Si no hay adaptador disponible, equipa pero **no
+  gasta un tiro sin redirección**; lo informa. Un adaptador instalado no prueba
+  que esa Gun lo use: después del intento el status distingue lectura redirigida
+  de ausencia de evidencia; ninguno confirma impacto o daño.
+  `Wall Check` está primero al expandir Silent, Auto Shoot y Knife Throw, con
+  estado multilínea y toast en el botón manual para pared/cuerpo, rango, equipo,
+  partida, vida, arma, recarga y compatibilidad. Wall Check comprueba también
+  desde Handle/root y cámara; no afirma atravesar paredes cuando se desactiva.
+  Auto Shoot y Knife Throw conservan checks/rango/cooldown propios, por defecto
+  0 s extra; funcionan sin Silent. Kill Aura tiene checks propios. La cola de
+  Gun espera un Heartbeat al equipar y cancela OFF/respawn/cambio de partida o
+  equipo; el arbiter no interrumpe el windup de Knife. Auto Shoot/Auto Win aún
+  usan la cámara temporal visible del v143: no confundirlos con Silent. TriggerBot
+  conserva `noAim`. Hitbox restaura propiedades, pero el servidor puede rechazar
+  impactos fuera del tamaño real. Masters OFF en executor nuevo; migración v143
+  mantiene apagados los nuevos automáticos en perfiles antiguos. No se inventan
+  ni repiten paquetes de combate.
+- **Adaptadores restringidos y límites:** el RBXL decompilado contiene
+  `Client.Modules.MouseCast`, que devuelve `RaycastResult` real y endpoint de 500
+  studs y también usa `PingsController`. v144 envuelve sus cinco funciones sin
+  alterar filtros ni ampliar el alcance, **sólo** con procedencia del arma:
+  `getcallingscript` descendiente del Tool o, cuando corresponde, un stack
+  `debug.info` que identifica jugador/Tool/LocalScript reales. Un caller ajeno
+  explícito siempre se deja intacto. También intenta `Mouse.Hit/Target/UnitRay`
+  y hooks de rayo si el executor los admite; esos accesos son alternativas, no
+  evidencia de que el script de Gun los use. Los wrappers desactivados quedan
+  inertes si otro script los encadena, incluso tras OFF/ON. La ruta Knife
+  observada conserva el remoto y GUID/CFrame genuinos al cambiar sólo el Vector3.
+  Sigue faltando el LocalScript principal de Gun y su cadena de aim: ningún mock
+  verifica compatibilidad real en un executor concreto, `Tool:Activate`, daño
+  ni precisión. No sustituir este límite por paquetes MM2 o hashes inventados.
 - **Móvil:** `PlayerGui.Main.MobileKnifeGui.ThrowMode` es el BoolValue que
   alterna `MobileKnifeLocalScript`; se usa temporalmente y se restaura sin
   sobreescribir un cambio posterior. Desktop conserva el input derecho nativo.
@@ -164,14 +171,16 @@ daño o recompensas ni de lo que ocurre en todos los executors/places.
   protección por podium y equipo, pero no se observó en el nuevo log; también
   necesita prueba live. Ni teletransporte ni `firetouchinterest` prueban saldo
   o aceptación por el servidor; no usar `Coins collected` como confirmación.
-- `tools/test_x2duels.py` cubre los remotos literales, MatchState inicialmente
-  ausente, equipos/FFA/muerte, el botón Silent en modo predeterminado, Auto Shoot
-  y Knife Throw separados con checks/rango/cooldown independientes, arbitraje y
-  cancelación, Hitbox/CanQuery, resultados finales deduplicados, Safe Place,
-  voto Rematch, migración segura, ThrowMode, pickup/restore y hooks ajenos.
-  Incluye boot por fingerprint de PlaceId desconocido. Son mocks: **no prueban
-  daño, precisión, física, votos aceptados ni recompensas**. Falta capturar el
-  script nativo completo de Gun/Knife y probar 1v1 + 2v2 en PC/móvil.
+- `tools/test_x2duels.py` cubre MatchState/equipos/resultados, módulos separados,
+  arbitraje y cancelación tras `Heartbeat`, mensajes Wall/rango/arma, migración
+  del antiguo Legit, filtros y límites de MouseCast, pings ajenos, hooks ajenos
+  OFF/ON y un boot táctil que coloca el botón y lo pulsa con `InputBegan/Ended`.
+  Conserva Safe Place, Rematch, Hitbox, ThrowMode, farm y fingerprint. El
+  recolector `tools/X2DuelsDecompiler.luau` tiene ahora `snapshotWeapons()` para
+  decompilar Tools presentes *después* de inyección/respawn; sus capturas y APIs
+  tienen prueba simulada en `tools/test_x2duels_decompiler.py`. Son mocks: **no
+  prueban daño, precisión, física, votos aceptados ni recompensas**. Falta
+  capturar el Gun/Knife completo y probar 1v1 + 2v2 en PC/móvil.
 
 ## 1B. Cómo construir un game sin mezclar responsabilidades
 
@@ -968,7 +977,7 @@ que reúne la comprobación normal sigue siendo `bash tools/validate.sh`.
 
 ## 9. Pendiente de verificación EN VIVO (no lo des por hecho)
 
-Nada de esto está probado en partida real todavía; v141 pasó las 64 suites,
+Nada de esto está probado en partida real todavía; v144 pasó las 64 suites,
 el boot simulado y las auditorías, que no sustituyen una prueba en juego:
 
 - v141: consumo real al inyectar y en reposo/con funciones activas, Auto Farm y
@@ -984,13 +993,16 @@ el boot simulado y las auditorías, que no sustituyen una prueba en juego:
 - Fling por network ownership (v107) y Anti Fling (v108) contra un fling real.
 - Disguise v101: packs del objetivo / por ID, en servidor.
 - Salidas del standalone (Step 1 nil-parent, Step 4 origen) y TargetBot v5.
-- X2 v143: probar en vivo 1v1 y 2v2, botón Silent PC/móvil, Gun/Knife
-  independientes y Auto Win; precisión, cooldown y consumo de `ThrowMode`;
-  Safe Place (física, restauración y techos), Revancha (estado/voto aceptado),
-  Team/Wall Check, FFA, Hitbox, TriggerBot y hooks ajenos. Observar pickup
-  Pumpkin y saldo real y contar resultados finales tras inyección/reconexión.
-  Capturar el script nativo Gun/Knife y eventos con `tools/X2DuelsDecompiler.luau`;
-  el harness no demuestra daño, monedas, votos ni aceptación del servidor.
+- X2 v144: el usuario reportó que v143 no funcionaba en celular. Probar en vivo
+  1v1 y 2v2 con nombre de executor, botón Silent PC/móvil y disparo nativo;
+  comprobar si el arma usa MouseCast/Mouse/rayos y si `getcallingscript` o el
+  stack la identifican. Un tiro intentado o lectura redirigida no prueban daño.
+  Con el arma ya disponible ejecutar `snapshotWeapons()` del recolector y esperar
+  el mensaje de fin: el dump inicial puede preceder al arma. Revisar también
+  independientes Auto Shoot/Knife, ThrowMode, Safe Place (física/techo/restore),
+  Revancha, checks, FFA, Hitbox, TriggerBot, hooks ajenos, Pumpkin/saldo y
+  resultados finales. Un `MatchResults` atrasado previamente no visto de otra
+  partida aún podría limpiar Safe Place actual; IDs no están correlacionados.
 
 ## 10. Cómo trabajar con este usuario
 
@@ -1008,7 +1020,8 @@ el boot simulado y las auditorías, que no sustituyen una prueba en juego:
   el comportamiento y `validate.sh` verde antes de pushear.
 
 ---
-*Última actualización: 2026-10-28 · v143, X2 combate independiente y Auto Win;
-la aceptación live de X2 y el perfil de CPU MM2 siguen pendientes.
+*Última actualización: 2026-10-28 · v144, X2 botón móvil sin cámara visible,
+checks/diagnósticos y captura dinámica del arma; la aceptación live de X2 y el
+perfil de CPU MM2 siguen pendientes.
 Al publicar una versión nueva, actualiza la línea de estado de arriba y cualquier
 sección que cambie.*

@@ -131,7 +131,10 @@ function xdHttp:JSONEncode(value)
             value.caller, first, secondType, thirdType, tostring(value.executor),
         }, "|")
     end
-    if value.remotes then XDG.inventory = value
+    if value.weaponScripts then
+        XDG.weaponSnapshots = XDG.weaponSnapshots or {}
+        XDG.weaponSnapshots[value.snapshot] = value
+    elseif value.remotes then XDG.inventory = value
     elseif value.stopped ~= nil then XDG.status = value
     elseif value.decompile ~= nil then XDG.capabilities = value
     elseif value[1] and value[1].decompiled ~= nil then XDG.manifest = value
@@ -161,6 +164,40 @@ assert(empty and not empty.decompiled and empty.error and empty.bytecodeFile,
 local failedWrite = byName.XDWriteFailScript
 assert(failedWrite and failedWrite.sourceWriteError and not failedWrite.sourceFile
     and failedWrite.bytecodeFile, "failed source write was reported as saved")
+assert(XDG.capabilities and XDG.capabilities.getcallingscript and XDG.capabilities.debugInfo,
+    "executor attribution capabilities were not recorded")
+
+-- The initial capture was made before this respawn and tool existed. A fresh
+-- snapshot must use the CURRENT character and explicitly decompile the tool.
+local replacementCharacter = Instance.new("Model")
+replacementCharacter.Name = "ReplacementCharacter"
+replacementCharacter.Parent = workspace
+xdLocal.Character = replacementCharacter
+local lateGun = Instance.new("Tool")
+lateGun.Name = "LateDefaultGun"
+lateGun.Parent = replacementCharacter
+local lateScript = Instance.new("LocalScript")
+lateScript.Name = "LateGunLocalScript"
+lateScript.Parent = lateGun
+controller.snapshot()
+local foundLateInventory = false
+for _, entry in ipairs(XDG.inventory.scripts) do
+    if entry.name == "LateGunLocalScript" then foundLateInventory = true end
+end
+assert(foundLateInventory, "snapshot used a stale character after respawn")
+controller.snapshotWeapons()
+assert(controller.areWeaponSnapshotsDone(), "weapon snapshot never completed")
+local weaponSnapshot = XDG.weaponSnapshots and XDG.weaponSnapshots[1]
+assert(weaponSnapshot and weaponSnapshot.complete and #weaponSnapshot.tools >= 1,
+    "late equipped tool was not captured")
+local lateEntry = nil
+for _, entry in ipairs(weaponSnapshot.weaponScripts) do
+    if entry.name == "LateGunLocalScript" then lateEntry = entry end
+end
+assert(lateEntry and lateEntry.usableSource and lateEntry.sourceFile and lateEntry.bytecodeFile
+    and XDG.files[lateEntry.sourceFile] == "-- recovered LateGunLocalScript"
+    and XDG.files[lateEntry.bytecodeFile] == "BC-LateGunLocalScript",
+    "dynamic gun source or bytecode was missed")
 
 XDG.currentMethod = "FireServer"
 local returned, firstArg = XDG.activeNamecall(XDCaptureRemote, "Alpha", 7, {Nested = true})
@@ -197,9 +234,13 @@ end
 assert(remoteInfo and remoteInfo.parent == "ReplicatedStorage",
     "fully parented remote inventory missing")
 
+local collectorHook = XDG.activeNamecall
+local foreignHook = function(...) return collectorHook(...) end
+XDG.activeNamecall = foreignHook
 controller.stop()
-assert(XDG.activeNamecall == XDG.originalNamecall, "namecall hook was not restored")
-assert(XDG.status and XDG.status.stopped and XDG.status.sourcesDone,
+assert(XDG.activeNamecall == foreignHook, "stop displaced a hook installed later")
+assert(XDG.status and XDG.status.stopped and XDG.status.sourcesDone
+    and XDG.status.weaponSnapshotsIssued == 1 and XDG.status.weaponSnapshotsCompleted == 1,
     "stop status incomplete")
 local logAtStop = XDG.files[controller.folder .. "/remote-calls.jsonl"]
 XDG.currentMethod = "FireServer"
@@ -208,7 +249,7 @@ XDCaptureRemote.OnClientEvent:Fire("AfterStop")
 assert(XDG.files[controller.folder .. "/remote-calls.jsonl"] == logAtStop,
     "capture continued after stop")
 controller.stop()
-print("[X2DECOMPILER] sources, parents, bidirectional args, buffers and cleanup: PASS")
+print("[X2DECOMPILER] sources, dynamic weapons, parents, remote capture and cleanup: PASS")
 '''
 
 
@@ -221,7 +262,7 @@ def main() -> None:
     )
     if result.returncode:
         raise SystemExit(result.stdout + result.stderr)
-    marker = "[X2DECOMPILER] sources, parents, bidirectional args, buffers and cleanup: PASS"
+    marker = "[X2DECOMPILER] sources, dynamic weapons, parents, remote capture and cleanup: PASS"
     if marker not in result.stdout:
         raise AssertionError("decompiler harness marker missing\n" + result.stdout)
     print(marker)

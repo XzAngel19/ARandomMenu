@@ -5,8 +5,9 @@
 -- written under X2DuelsDecompiler/<place>-<timestamp>/.
 --
 -- Controls:
---   getgenv().X2DuelsDecompiler.snapshot() -- refresh live hierarchy
---   getgenv().X2DuelsDecompiler.stop()     -- restore hooks and disconnect
+--   getgenv().X2DuelsDecompiler.snapshot()        -- refresh live hierarchy
+--   getgenv().X2DuelsDecompiler.snapshotWeapons() -- dump current Backpack/Character Tools
+--   getgenv().X2DuelsDecompiler.stop()            -- restore hooks and disconnect
 --
 -- This uses the executor's decompile/getscriptbytecode facilities. It does
 -- not pretend a failed decompilation is recovered source, and never changes
@@ -24,6 +25,7 @@ local localPlayer: Player = players.LocalPlayer
 local replicatedStorage: ReplicatedStorage = game:GetService("ReplicatedStorage")
 local httpService: HttpService = game:GetService("HttpService")
 local starterPlayer: StarterPlayer = game:GetService("StarterPlayer")
+local userInputService: UserInputService = game:GetService("UserInputService")
 local playerGui: PlayerGui = localPlayer:WaitForChild("PlayerGui")
 
 local writeFile: any = environment.writefile
@@ -44,8 +46,11 @@ writeFile(remoteLogPath, "")
 
 local stopped: boolean = false
 local sourcesDone: boolean = false
+local weaponSnapshotsIssued: number = 0
+local weaponSnapshotsCompleted: number = 0
 local incomingConnections: {any} = {}
 local oldNamecall: any = nil
+local namecallWrapper: any = nil
 local namecallInstalled: boolean = false
 local remoteEventCount: number = 0
 local fallbackContents: {[string]: string} = {}
@@ -266,18 +271,17 @@ local starterScripts: Instance? = starterPlayer:FindFirstChild("StarterPlayerScr
 if starterScripts then
     table.insert(roots, starterScripts)
 end
-local backpack: Instance? = localPlayer:FindFirstChildOfClass("Backpack")
-if backpack then
-    table.insert(roots, backpack)
-end
-if localPlayer.Character then
-    table.insert(roots, localPlayer.Character)
-end
 
 local function collectInstances(classPredicate: (Instance) -> boolean): {Instance}
     local result: {Instance} = {}
     local seen: {[Instance]: boolean} = {}
-    for _, root: Instance in ipairs(roots) do
+    -- Backpack/Character can be replaced after teleport or respawn. A root
+    -- list frozen at injection misses a gun that spawns in a later round.
+    local currentRoots: {Instance} = table.clone(roots)
+    local backpack: Instance? = localPlayer:FindFirstChildOfClass("Backpack")
+    if backpack then table.insert(currentRoots, backpack) end
+    if localPlayer.Character then table.insert(currentRoots, localPlayer.Character) end
+    for _, root: Instance in ipairs(currentRoots) do
         if classPredicate(root) and not seen[root] then
             seen[root] = true
             table.insert(result, root)
@@ -421,8 +425,9 @@ if type(environment.hookmetamethod) == "function"
     local ok: boolean, predecessor: any = pcall(
         environment.hookmetamethod, game, "__namecall", wrapped
     )
-    if ok and predecessor ~= nil then
+    if ok and type(predecessor) == "function" then
         oldNamecall = predecessor
+        namecallWrapper = wrapped
         namecallInstalled = true
     else
         appendText(rootFolder .. "/errors.log",
@@ -433,6 +438,90 @@ else
         "Outgoing capture requires hookmetamethod and getnamecallmethod.\n")
 end
 
+local function captureSource(script: Instance, stem: string): {[string]: any}
+    local entry: {[string]: any} = basicInfo(script)
+    entry.decompiled = false
+    entry.usableSource = false
+    if type(environment.decompile) == "function" then
+        local ok: boolean, source: any = pcall(environment.decompile, script)
+        if ok and type(source) == "string" and #source > 0 then
+            local sourcePath: string = sourcesFolder .. "/" .. stem .. ".luau"
+            local written: boolean, writeFailure: any = pcall(writeFile, sourcePath, source)
+            entry.decompiled = true
+            entry.usableSource = not string.find(source, "decompilation panicked", 1, true)
+                and not string.find(source, "decompilation failed", 1, true)
+            if written then
+                entry.sourceFile = sourcePath
+            else
+                entry.sourceWriteError = tostring(writeFailure)
+            end
+        else
+            entry.error = ok and "decompile returned empty/non-string source" or tostring(source)
+            pcall(writeFile, sourcesFolder .. "/" .. stem .. ".error.txt", entry.error)
+        end
+    else
+        entry.error = "Executor has no decompile function"
+    end
+    if type(environment.getscriptbytecode) == "function" then
+        local ok: boolean, bytecode: any = pcall(environment.getscriptbytecode, script)
+        if ok and type(bytecode) == "string" and #bytecode > 0 then
+            local bytecodePath: string = sourcesFolder .. "/" .. stem .. ".luauc"
+            local written: boolean, writeFailure: any = pcall(writeFile, bytecodePath, bytecode)
+            if written then
+                entry.bytecodeFile = bytecodePath
+                entry.bytecodeBytes = #bytecode
+            else
+                entry.bytecodeError = tostring(writeFailure)
+            end
+        else
+            entry.bytecodeError = ok and "empty/non-string bytecode" or tostring(bytecode)
+        end
+    else
+        entry.bytecodeError = "Executor has no getscriptbytecode function"
+    end
+    return entry
+end
+
+local function snapshotWeapons(): ()
+    if stopped then return end
+    weaponSnapshotsIssued += 1
+    local serial: number = weaponSnapshotsIssued
+    task.spawn(function(): ()
+        local containers: {Instance} = {}
+        local backpack: Instance? = localPlayer:FindFirstChildOfClass("Backpack")
+        if backpack then table.insert(containers, backpack) end
+        if localPlayer.Character then table.insert(containers, localPlayer.Character) end
+        local tools: {any} = {}
+        local scripts: {any} = {}
+        for _, container: Instance in ipairs(containers) do
+            for _, tool: Instance in ipairs(container:GetChildren()) do
+                if stopped then break end
+                if tool:IsA("Tool") then
+                    table.insert(tools, basicInfo(tool))
+                    for _, script: Instance in ipairs(tool:GetDescendants()) do
+                        if stopped then break end
+                        if script:IsA("LocalScript") or script:IsA("ModuleScript") or script:IsA("Script") then
+                            local safeName: string = string.sub(string.gsub(script.Name, "[^%w_%-]", "_"), 1, 60)
+                            local stem: string = string.format("weapon_%03d_%04d_%s", serial, #scripts + 1, safeName)
+                            local entry: any = captureSource(script, stem)
+                            entry.toolPath = fullPath(tool)
+                            table.insert(scripts, entry)
+                            task.wait()
+                        end
+                    end
+                end
+            end
+        end
+        writeJson(rootFolder .. "/weapon-sources-" .. tostring(serial) .. ".json", {
+            snapshot = serial, capturedAt = os.time(), complete = not stopped,
+            tools = tools, weaponScripts = scripts,
+        })
+        weaponSnapshotsCompleted += 1
+        print(string.format("[X2DuelsDecompiler] weapon snapshot %d: %d tools, %d scripts%s",
+            serial, #tools, #scripts, stopped and " (partial)" or " complete"))
+    end)
+end
+
 local function stop(): ()
     if stopped then
         return
@@ -441,7 +530,14 @@ local function stop(): ()
     stopped = true
     if namecallInstalled and oldNamecall ~= nil
         and type(environment.hookmetamethod) == "function" then
-        pcall(environment.hookmetamethod, game, "__namecall", oldNamecall)
+        local ok: boolean, displaced: any = pcall(
+            environment.hookmetamethod, game, "__namecall", oldNamecall
+        )
+        -- Keep a hook installed later by another script. Our retained node is
+        -- inert after stopped=true and continues forwarding its predecessor.
+        if ok and displaced ~= namecallWrapper and type(displaced) == "function" then
+            pcall(environment.hookmetamethod, game, "__namecall", displaced)
+        end
         namecallInstalled = false
     end
     for _, connection: any in ipairs(incomingConnections) do
@@ -451,6 +547,8 @@ local function stop(): ()
     writeJson(rootFolder .. "/status.json", {
         stopped = true,
         sourcesDone = sourcesDone,
+        weaponSnapshotsIssued = weaponSnapshotsIssued,
+        weaponSnapshotsCompleted = weaponSnapshotsCompleted,
         incomingRemotes = remoteEventCount,
         outgoingHook = oldNamecall ~= nil,
     })
@@ -460,8 +558,12 @@ end
 globalEnvironment.X2DuelsDecompiler = {
     folder = rootFolder,
     snapshot = snapshot,
+    snapshotWeapons = snapshotWeapons,
     stop = stop,
     isSourceDumpDone = function(): boolean return sourcesDone end,
+    areWeaponSnapshotsDone = function(): boolean
+        return weaponSnapshotsIssued == weaponSnapshotsCompleted
+    end,
 }
 
 snapshot()
@@ -481,48 +583,7 @@ task.spawn(function(): ()
         local safeName: string = string.gsub(script.Name, "[^%w_%-]", "_")
         safeName = string.sub(safeName, 1, 60)
         local stem: string = string.format("%04d_%s", index, safeName)
-        local entry: {[string]: any} = basicInfo(script)
-        entry.decompiled = false
-        entry.usableSource = false
-
-        if type(environment.decompile) == "function" then
-            local ok: boolean, source: any = pcall(environment.decompile, script)
-            if ok and type(source) == "string" and #source > 0 then
-                local sourcePath: string = sourcesFolder .. "/" .. stem .. ".luau"
-                local written: boolean, writeFailure: any = pcall(writeFile, sourcePath, source)
-                entry.decompiled = true
-                entry.usableSource = not string.find(source, "decompilation panicked", 1, true)
-                    and not string.find(source, "decompilation failed", 1, true)
-                if written then
-                    entry.sourceFile = sourcePath
-                else
-                    entry.sourceWriteError = tostring(writeFailure)
-                end
-            else
-                entry.error = ok and "decompile returned empty/non-string source" or tostring(source)
-                pcall(writeFile, sourcesFolder .. "/" .. stem .. ".error.txt", entry.error)
-            end
-        else
-            entry.error = "Executor has no decompile function"
-        end
-
-        if type(environment.getscriptbytecode) == "function" then
-            local ok: boolean, bytecode: any = pcall(environment.getscriptbytecode, script)
-            if ok and type(bytecode) == "string" and #bytecode > 0 then
-                local bytecodePath: string = sourcesFolder .. "/" .. stem .. ".luauc"
-                local written: boolean, writeFailure: any = pcall(writeFile, bytecodePath, bytecode)
-                if written then
-                    entry.bytecodeFile = bytecodePath
-                    entry.bytecodeBytes = #bytecode
-                else
-                    entry.bytecodeError = tostring(writeFailure)
-                end
-            else
-                entry.bytecodeError = ok and "empty/non-string bytecode" or tostring(bytecode)
-            end
-        else
-            entry.bytecodeError = "Executor has no getscriptbytecode function"
-        end
+        local entry: {[string]: any} = captureSource(script, stem)
         table.insert(manifest, entry)
         if index % 10 == 0 then
             writeJson(rootFolder .. "/sources.json", manifest)
@@ -536,9 +597,19 @@ task.spawn(function(): ()
         return
     end
     sourcesDone = true
+    local identify: any = environment.identifyexecutor or environment.getexecutorname
+    local nameOk: boolean, executorName: any = false, nil
+    if type(identify) == "function" then nameOk, executorName = pcall(identify) end
+    local debugApi: any = environment.debug
     writeJson(rootFolder .. "/capabilities.json", {
+        executor = nameOk and type(executorName) == "string" and executorName or "unknown",
+        touchEnabled = userInputService.TouchEnabled == true,
+        keyboardEnabled = userInputService.KeyboardEnabled == true,
         decompile = type(environment.decompile) == "function",
         getscriptbytecode = type(environment.getscriptbytecode) == "function",
+        getcallingscript = type(environment.getcallingscript) == "function",
+        debugInfo = type(debugApi) == "table" and type(debugApi.info) == "function",
+        hookfunction = type(environment.hookfunction) == "function",
         hookmetamethod = namecallInstalled,
         appendfile = type(appendFile) == "function",
     })

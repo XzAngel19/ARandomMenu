@@ -206,7 +206,14 @@ def run_integration_contracts() -> None:
     require(base, "getcallingscript", "scoped weapon call provenance")
     require(base, "local function redirectKnifeThrow", "observed knife destination hook")
     require(base, "Packages/Networking/RE/Combat/Killed", "observed kill event")
-    require(base, '{"Legit", "Silent"}', "Legit/Silent modes")
+    forbid(base, 'settings.silentMode', "visible Legit camera-lock mode")
+    forbid(base, 'X2DuelsLegitAim', "continuous Silent camera-lock render")
+    require(base, 'runService.Heartbeat:Wait()', "post-equip readiness frame")
+    require(base, 'local function discoverMouseCast', "optional native MouseCast adapter")
+    require(base, 'local function isWeaponCaller', "weapon-only redirect attribution")
+    require(base, 'offset.Magnitude > direction.Magnitude', "native ray range preservation")
+    require(base, 'You can\'t shoot: a wall or another body is blocking the shot.', "visible wall reason")
+    require(base, 'TextWrapped = true', "readable mobile status")
     require(base, "state.bindFeatureActivationKey", "MM2-style action key binding")
     forbid(base, 'settings.senderMode', "obsolete Button/CFrame gate")
     forbid(base, 'settings.silentAim and settings.autoShoot', "Silent-gated Auto Shoot")
@@ -279,6 +286,9 @@ def run_integration_contracts() -> None:
     require(decompiler, "arguments = serialize(arguments)", "remote argument capture")
     require(decompiler, "environment.decompile", "executor decompiler")
     require(decompiler, "environment.getscriptbytecode", "bytecode fallback")
+    require(decompiler, "snapshotWeapons = snapshotWeapons", "late-spawning weapon source snapshot")
+    require(decompiler, "weaponSnapshotsCompleted", "weapon capture completion reporting")
+    require(decompiler, "local currentRoots: {Instance} = table.clone(roots)", "current respawn hierarchy")
     require(decompiler, "return oldNamecall(self, ...)", "unmodified remote forwarding")
     forbid(decompiler, "loadstring(", "captured-code execution")
     compiled = subprocess.run(
@@ -350,6 +360,18 @@ HarnessMatchModule.Parent = modules
 HarnessGlobalsModule = Instance.new("ModuleScript")
 HarnessGlobalsModule.Name = "ClientGlobals"
 HarnessGlobalsModule.Parent = modules
+HarnessMouseCastModule = Instance.new("ModuleScript")
+HarnessMouseCastModule.Name = "MouseCast"
+HarnessMouseCastModule.Parent = modules
+HarnessMouseCastReady = false
+HarnessMouseCalls = {}
+HarnessMouseCast = {}
+for _, method in ipairs({"WithParams", "Exclude", "Include", "WithPositionExclude", "WithPositionInclude"}) do
+    HarnessMouseCast[method] = function(...)
+        table.insert(HarnessMouseCalls, {method = method, arguments = table.pack(...)})
+        return "original", "original endpoint"
+    end
+end
 HarnessMatchReady = false
 HarnessGame = {Phase = "InGame", RoundStarted = true, CurrentRoundEnded = false,
     MatchId = "HarnessMapOne"}
@@ -379,6 +401,9 @@ require = function(module)
         return matchApi
     elseif module == HarnessGlobalsModule then
         return globalsApi
+    elseif module == HarnessMouseCastModule then
+        if not HarnessMouseCastReady then error("MouseCast not ready") end
+        return HarnessMouseCast
     end
     return originalRequire(module)
 end
@@ -455,10 +480,9 @@ assert(ex.state.gameBridge.roleProvider
     "X2 role colours must preserve the Team Check filters")
 
 local silentFeature = featuresByName["Silent AIM"]
-local modeControl = ex.state.valueControls["MVSD.SilentAIM.Mode"]
-assert(modeControl and modeControl.apply, "Silent AIM Mode control was not created")
-modeControl.apply("Silent")
-modeControl.apply("Legit")
+assert(not ex.state.valueControls["MVSD.SilentAIM.Mode"],
+    "obsolete visible camera-lock mode is still exposed")
+assert(ex.state.toggleControls["MVSD.SilentAIM.WallCheck"], "Silent Wall Check is missing")
 assert(not featuresByName["Auto Shoot"].enabled and not featuresByName["Knife Throw"].enabled,
     "fresh boot unexpectedly enabled combat")
 
@@ -602,56 +626,232 @@ assert(nativeGunShots == shotsAtStart, "Silent AIM action fired while disabled")
 silentFeature.activate()
 assert(silentFeature.enabled and core.settings.silentAim, "Silent AIM did not enable through its card")
 
--- The camera aim must survive a deferred native Activated handler and then
--- restore. Changing the camera independently must not be overwritten.
-local oldDelay = task.delay
-local pendingAimRestore = nil
-task.delay = function(seconds, callback)
-    assert(seconds >= 0.05, "native aim expires before deferred activation")
-    pendingAimRestore = callback
-end
+-- Without a usable adapter the button still equips, but must not spend a
+-- shot aimed at the user's ordinary cursor and claim it was silent.
+do
 local cameraBeforeKey = workspace.CurrentCamera.CFrame
+senderBinding.onPress()
+assert(nativeGun.Parent == nativeLocal.Character and nativeGunShots == shotsAtStart,
+    "unsupported executor did not equip safely or fired an unredirected shot")
+assert(string.find(silentFeature.status, "unavailable", 1, true),
+    "unsupported executor was not diagnosed")
+silentFeature.activate()
+
+-- Model the decompiled shared MouseCast contract. This is a fixture, not
+-- evidence that the missing native Gun LocalScript uses it in the live game.
+local oldVector2New = Vector2.new
+Vector2.new = function(x, y) return setmetatable({X = x or 0, Y = y or 0}, Vector2) end
+HarnessMouseCastReady = true
+local nativeGunScript = Instance.new("LocalScript")
+nativeGunScript.Name = "LocalScript"
+nativeGunScript.Parent = nativeGun
+local pingScript = Instance.new("LocalScript")
+pingScript.Name = "PingsController"
+pingScript.Parent = X2Networking
+local oldGetCallingScript = getcallingscript
+local nativeCaller = nativeGunScript
+getcallingscript = function() return nativeCaller end
+local nativeRaycast = workspace.Raycast
+local lastAimRay = nil
+workspace.Raycast = function(_self, origin, direction, parameters)
+    lastAimRay = {origin = origin, direction = direction, parameters = parameters}
+    return {Instance = nativeTarget.part}
+end
 local cameraAtActivation = nil
 nativeGun.Activate = function()
     nativeGunShots += 1
     cameraAtActivation = workspace.CurrentCamera.CFrame
+    local result, endpoint = HarnessMouseCast:WithPositionExclude(
+        Vector2.new(1070, 615), {nativeLocal.Character}
+    )
+    assert(result and result.Instance == nativeTarget.part, "native MouseCast did not see the target")
+    assert(endpoint.X > 0 and lastAimRay.direction.Magnitude > 499.99
+        and lastAimRay.direction.Magnitude < 500.01, "aim endpoint/range changed")
+    assert(lastAimRay.parameters.FilterType == Enum.RaycastFilterType.Exclude
+        and lastAimRay.parameters.FilterDescendantsInstances[1] == nativeLocal.Character,
+        "native touch cast filters were not preserved")
 end
+silentFeature.activate()
+assert(core.settings.silentAim and string.find(silentFeature.status, "unconfirmed", 1, true),
+    "loading an adapter was falsely reported as proven gun support")
 local enabledBeforeKey = silentFeature.enabled
 senderBinding.onPress()
-assert(nativeGunShots == shotsAtStart + 1, "default-mode action key did not fire the native gun")
-assert(nativeGun.Parent == nativeLocal.Character, "Backpack gun was not equipped")
-assert(silentFeature.enabled == enabledBeforeKey, "action key toggled Silent AIM")
-assert(cameraAtActivation ~= cameraBeforeKey and workspace.CurrentCamera.CFrame == cameraAtActivation,
-    "native activation did not retain its aim through the current frame")
-assert(pendingAimRestore, "native camera restore was not scheduled")
-pendingAimRestore()
-assert(workspace.CurrentCamera.CFrame == cameraBeforeKey, "native aim did not restore the camera")
+assert(nativeGunShots == shotsAtStart + 1 and silentFeature.enabled == enabledBeforeKey,
+    "enabled action did not activate the gun independently of its toggle")
+assert(cameraAtActivation == cameraBeforeKey and workspace.CurrentCamera.CFrame == cameraBeforeKey,
+    "Silent action visibly moved the camera")
+assert(string.find(silentFeature.status, "redirected", 1, true),
+    "real intercepted aim input was not distinguished from an attempted shot")
+
+-- Shared MouseCast is also used by PingsController: an unrelated script must
+-- retain BOTH original return values and never consume the authored raycast.
+nativeCaller = pingScript
+lastAimRay = nil
+local pingResult, pingEnd = HarnessMouseCast:Exclude({nativeLocal.Character})
+assert(pingResult == "original" and pingEnd == "original endpoint" and lastAimRay == nil,
+    "a ping was redirected while the local gun was equipped")
+nativeCaller = nativeGunScript
+local testParams = {fixture = "native params"}
+local targetResult, aimedEndpoint = HarnessMouseCast:WithParams(testParams)
+assert(targetResult.Instance == nativeTarget.part and lastAimRay.parameters == testParams
+    and aimedEndpoint.X > 0, "WithParams did not retain native parameters")
+local include = {HarnessHeroGuy.Character}
+HarnessMouseCast:WithPositionInclude(Vector2.new(15, 500), include)
+assert(lastAimRay.parameters.FilterType == Enum.RaycastFilterType.Include
+    and lastAimRay.parameters.FilterDescendantsInstances == include,
+    "mobile Include filter was changed")
+
+-- Stack attribution supports an executor without getcallingscript only when
+-- the source names this player's actual Tool/LocalScript. Other sources pass.
+local savedDebug = debug
+getcallingscript = nil
+debug = {info = function(level)
+    if level == 3 then return "Players.HarnessPlayer.Backpack.Gun.LocalScript" end
+    return "ReplicatedStorage.Client.Modules.MouseCast"
+end}
+lastAimRay = nil
+HarnessMouseCast:Exclude({nativeLocal.Character})
+assert(lastAimRay and lastAimRay.direction.X > 0, "weapon stack attribution was not used")
+getcallingscript = function() return pingScript end
+lastAimRay = nil
+assert(HarnessMouseCast:Exclude({nativeLocal.Character}) == "original" and not lastAimRay,
+    "an explicit foreign caller was overridden by a weapon-looking stack")
+getcallingscript = nil
+debug = {info = function() return "Players.HarnessPlayer.Backpack.Gun.LocalScriptImpostor" end}
+lastAimRay = nil
+assert(HarnessMouseCast:Exclude({nativeLocal.Character}) == "original" and not lastAimRay,
+    "a source name with an extra suffix was treated as the weapon")
+debug = {info = function() return "ReplicatedStorage.Client.Controllers.PingsController" end}
+lastAimRay = nil
+assert(HarnessMouseCast:Exclude({nativeLocal.Character}) == "original" and not lastAimRay,
+    "unknown stack source was treated as a weapon")
+debug = savedDebug
+getcallingscript = function() return nativeCaller end
+
+-- A 500-stud MouseCast must not silently grow to reach an out-of-range target.
+local targetPosition = nativeTarget.part.Position
+nativeTarget.part.Position = Vector3.new(550, 4, 0)
+coreTask.callback(0.1)
+lastAimRay = nil
+assert(HarnessMouseCast:Exclude({nativeLocal.Character}) == "original" and not lastAimRay,
+    "MouseCast was extended beyond the captured native 500-stud reach")
+nativeTarget.part.Position = targetPosition
+nativeNow += 0.2
+coreTask.callback(0.1)
+
+-- The button reports blocked walls, range, team, disabled tool and inventory
+-- separately; status rows use a full-width wrapping label on mobile.
+local statusLabel = nil
+for _, row in ipairs(silentFeature.optionRows) do
+    local label = row:FindFirstChild("OptionLabel")
+    if label and label.Text == "Status" then statusLabel = row:FindFirstChild("StatValue") end
+end
+assert(statusLabel and statusLabel.TextWrapped and statusLabel.TextTruncate == Enum.TextTruncate.None,
+    "combat status remains truncated")
+local wall = Instance.new("Part")
+workspace.Raycast = function() return {Instance = wall} end
+core.settings.wallCheck = true
+local previousShots = nativeGunShots
 senderBinding.onPress()
-local cameraMovedByUser = CFrame.new(Vector3.new(4, 8, 2))
-workspace.CurrentCamera.CFrame = cameraMovedByUser
-pendingAimRestore()
-assert(workspace.CurrentCamera.CFrame == cameraMovedByUser, "aim restore overwrote user camera movement")
+assert(nativeGunShots == previousShots and string.find(silentFeature.status, "wall", 1, true)
+    and statusLabel.Text == silentFeature.status, "wall did not stop and explain the button shot")
+workspace.Raycast = nativeRaycast
+core.settings.wallCheck = false
+core.settings.maxDistance = 5
 senderBinding.onPress()
-local newerCamera = CFrame.new(Vector3.new(5, 9, 3))
-workspace.CurrentCamera.CFrame = newerCamera
+assert(nativeGunShots == previousShots and string.find(silentFeature.status, "range", 1, true),
+    "range rejection was not explained")
+core.settings.maxDistance = 1000
+HarnessMatchData[HarnessHeroGuy].team = "Red"
 senderBinding.onPress()
-pendingAimRestore()
-assert(workspace.CurrentCamera.CFrame == newerCamera,
-    "repeated shots restored an obsolete camera snapshot")
-task.delay = oldDelay
-workspace.CurrentCamera.CFrame = CFrame.new(Vector3.new(0, 3, 0))
+assert(nativeGunShots == previousShots and string.find(silentFeature.status, "opponent", 1, true),
+    "teammate/no-target rejection was not explained")
+HarnessMatchData[HarnessHeroGuy].team = "Blue"
+nativeGun.Enabled = false
+senderBinding.onPress()
+assert(nativeGunShots == previousShots and string.find(silentFeature.status, "reloading", 1, true),
+    "disabled/reloading gun was not explained")
+nativeGun.Enabled = true
+nativeGun.Parent = nil
+senderBinding.onPress()
+assert(nativeGunShots == previousShots and string.find(silentFeature.status, "inventory", 1, true),
+    "missing gun was not explained")
+
+-- A real wait is simulated with a suspended coroutine: no activation before
+-- Heartbeat, no duplicate presses, and no stale shot after OFF/team change.
+workspace.Raycast = function(_self, origin, direction, parameters)
+    lastAimRay = {origin = origin, direction = direction, parameters = parameters}
+    return {Instance = nativeTarget.part}
+end
+local savedSpawn = task.spawn
+local heartbeat = game:GetService("RunService").Heartbeat
+local savedHeartbeatWait = heartbeat.Wait
+local equipThread = nil
+task.spawn = function(fn)
+    equipThread = coroutine.create(fn)
+    local ok, err = coroutine.resume(equipThread)
+    assert(ok, tostring(err))
+end
+heartbeat.Wait = function() coroutine.yield() end
+nativeGun.Parent = nativeBackpack
+senderBinding.onPress()
+assert(nativeGun.Parent == nativeLocal.Character and nativeGunShots == previousShots
+    and equipThread and coroutine.status(equipThread) == "suspended",
+    "gun activated before the post-equip Heartbeat")
+local firstThread = equipThread
+senderBinding.onPress()
+assert(equipThread == firstThread and nativeGunShots == previousShots,
+    "duplicate button press replaced the pending equip")
+silentFeature.activate()
+local okResume, resumeError = coroutine.resume(firstThread)
+assert(okResume, tostring(resumeError))
+assert(nativeGunShots == previousShots, "disabling Silent did not cancel pending shot")
+-- Let hook discovery finish synchronously before the next simulated wait.
+task.spawn = savedSpawn
+silentFeature.activate()
+task.spawn = function(fn)
+    equipThread = coroutine.create(fn)
+    local ok, err = coroutine.resume(equipThread)
+    assert(ok, tostring(err))
+end
+nativeGun.Parent = nativeBackpack
+senderBinding.onPress()
+HarnessMatchData[HarnessHeroGuy].team = "Red"
+okResume, resumeError = coroutine.resume(equipThread)
+assert(okResume, tostring(resumeError))
+assert(nativeGunShots == previousShots, "target became a teammate during equip but was attacked")
+HarnessMatchData[HarnessHeroGuy].team = "Blue"
+nativeGun.Parent = nativeBackpack
+senderBinding.onPress()
+okResume, resumeError = coroutine.resume(equipThread)
+assert(okResume, tostring(resumeError))
+assert(nativeGunShots == previousShots + 1 and workspace.CurrentCamera.CFrame == cameraBeforeKey,
+    "post-Heartbeat gun did not activate silently")
+task.spawn = savedSpawn
+heartbeat.Wait = savedHeartbeatWait
+
+-- A third-party wrapper installed after us survives OFF. Our retained wrapper
+-- remains inert after a later ON/OFF rather than reactivating in its chain.
+local retiredMouseCast = HarnessMouseCast.Exclude
+local foreignMouseCast = function(...) return retiredMouseCast(...) end
+HarnessMouseCast.Exclude = foreignMouseCast
+silentFeature.activate()
+assert(HarnessMouseCast.Exclude == foreignMouseCast, "OFF displaced another MouseCast wrapper")
+local beforeRetired = #HarnessMouseCalls
+assert(HarnessMouseCast:Exclude({nativeLocal.Character}) == "original"
+    and #HarnessMouseCalls == beforeRetired + 1, "retired wrapper did not pass through")
+silentFeature.activate()
+nativeCaller = pingScript
+assert(HarnessMouseCast:Exclude({nativeLocal.Character}) == "original",
+    "re-enabled wrapper redirected the ping chain")
+silentFeature.activate()
+assert(HarnessMouseCast.Exclude == foreignMouseCast, "foreign MouseCast chain was not restored")
+HarnessMouseCast.Exclude = function(...) return "original", "original endpoint" end
+getcallingscript = oldGetCallingScript
+Vector2.new = oldVector2New
+workspace.Raycast = nativeRaycast
 nativeGun.Activate = function() nativeGunShots += 1 end
-silentFeature.activate()
-assert(not silentFeature.enabled and not core.settings.silentAim, "Silent AIM did not turn off")
-modeControl.apply("Silent")
-silentFeature.activate()
-assert(core.settings.silentAim and silentFeature.status == "Button only: hooks unavailable",
-    "missing executor hooks disabled or hid the Silent fallback")
-local shotsWithoutHooks = nativeGunShots
-senderBinding.onPress()
-assert(nativeGunShots == shotsWithoutHooks + 1, "action key did not work without executor hooks")
-silentFeature.activate()
-modeControl.apply("Legit")
+end
 
 -- Auto Shoot acts without Silent AIM and owns its team, LOS and range policy.
 core.settings.autoShootWallCheck = false
@@ -722,6 +922,44 @@ coreTask.callback(0.1)
 assert(nativeGunShots == beforeSilentOff + 1 and not core.settings.silentAim,
     "turning Silent AIM off interrupted independent Auto Shoot")
 autoShootFeature.onToggle(false)
+
+-- Auto Shoot uses the same equip wait and must not fire after being disabled
+-- or after its target changes team during that wait.
+do
+    local savedSpawn = task.spawn
+    local heartbeat = game:GetService("RunService").Heartbeat
+    local savedWait = heartbeat.Wait
+    local thread = nil
+    task.spawn = function(fn)
+        thread = coroutine.create(fn)
+        local ok, err = coroutine.resume(thread)
+        assert(ok, tostring(err))
+    end
+    heartbeat.Wait = function() coroutine.yield() end
+    nativeGun.Parent = nativeBackpack
+    local before = nativeGunShots
+    autoShootFeature.onToggle(true)
+    nativeNow += 1
+    coreTask.callback(0.1)
+    assert(thread and coroutine.status(thread) == "suspended" and nativeGunShots == before,
+        "Auto Shoot fired before the equip Heartbeat")
+    autoShootFeature.onToggle(false)
+    local ok, err = coroutine.resume(thread)
+    assert(ok, tostring(err))
+    assert(nativeGunShots == before, "Auto Shoot fired after being switched off")
+    nativeGun.Parent = nativeBackpack
+    autoShootFeature.onToggle(true)
+    nativeNow += 1
+    coreTask.callback(0.1)
+    HarnessMatchData[HarnessHeroGuy].team = "Red"
+    ok, err = coroutine.resume(thread)
+    assert(ok, tostring(err))
+    assert(nativeGunShots == before, "Auto Shoot fired at a new teammate after equip")
+    HarnessMatchData[HarnessHeroGuy].team = "Blue"
+    autoShootFeature.onToggle(false)
+    task.spawn = savedSpawn
+    heartbeat.Wait = savedWait
+end
 
 local mobileMain = Instance.new("Folder")
 mobileMain.Name = "Main"
@@ -908,6 +1146,73 @@ mouse2press = oldMouse2Press
 mouse2release = oldMouse2Release
 game:GetService("UserInputService").TouchEnabled = oldTouchEnabled
 
+-- Exercise the optional legacy Mouse.Hit/Target adapter. The fixture only
+-- proves caller scoping and cleanup, not which API the real X2 gun reads.
+do
+    local nativeMouse = Instance.new("Mouse")
+    local otherMouse = Instance.new("Mouse")
+    local oldGetMouse = nativeLocal.GetMouse
+    nativeLocal.GetMouse = function() return nativeMouse end
+    local gunScript = Instance.new("LocalScript")
+    gunScript.Name = "LocalScript"
+    gunScript.Parent = nativeGun
+    local otherScript = Instance.new("LocalScript")
+    otherScript.Name = "PingsController"
+    otherScript.Parent = X2Networking
+    nativeHumanoid:EquipTool(nativeGun)
+    local nativeHit = CFrame.new(Vector3.new(-9, 0, 0))
+    local originalIndex = function(_object, key)
+        return key == "Hit" and nativeHit or "native target"
+    end
+    local currentIndex = originalIndex
+    local originalNamecall = function() end
+    local currentNamecall = originalNamecall
+    local caller = gunScript
+    local oldHookMeta, oldCaller, oldMethod = hookmetamethod, getcallingscript, getnamecallmethod
+    hookmetamethod = function(_game, method, replacement)
+        if method == "__index" then
+            local previous = currentIndex
+            currentIndex = replacement
+            return previous
+        elseif method == "__namecall" then
+            local previous = currentNamecall
+            currentNamecall = replacement
+            return previous
+        end
+        error("unexpected metamethod")
+    end
+    getcallingscript = function() return caller end
+    getnamecallmethod = function() return "FireServer" end
+    core.settings.wallCheck = false
+    silentFeature.onToggle(true)
+    nativeNow += 1
+    coreTask.callback(0.1)
+    local cameraBefore = workspace.CurrentCamera.CFrame
+    local hit = currentIndex(nativeMouse, "Hit")
+    assert(typeof(hit) == "CFrame" and hit.Position == nativeTarget.part.Position
+        and currentIndex(nativeMouse, "Target") == nativeTarget.part,
+        "proven weapon Mouse.Hit/Target was not redirected")
+    assert(workspace.CurrentCamera.CFrame == cameraBefore, "Mouse adapter rotated the camera")
+    caller = otherScript
+    assert(currentIndex(nativeMouse, "Hit") == nativeHit
+        and currentIndex(otherMouse, "Target") == "native target", "foreign Mouse access was changed")
+    caller = gunScript
+    local retiredIndex = currentIndex
+    local foreignIndex = function(...) return retiredIndex(...) end
+    currentIndex = foreignIndex
+    silentFeature.onToggle(false)
+    assert(currentIndex == foreignIndex and currentIndex(nativeMouse, "Hit") == nativeHit,
+        "OFF removed or left active another Mouse hook")
+    silentFeature.onToggle(true)
+    assert(retiredIndex(nativeMouse, "Hit") == nativeHit,
+        "retired Mouse hook was resurrected when Silent was re-enabled")
+    silentFeature.onToggle(false)
+    assert(currentIndex == foreignIndex, "second OFF displaced foreign Mouse hook")
+    hookmetamethod, getcallingscript, getnamecallmethod = oldHookMeta, oldCaller, oldMethod
+    nativeLocal.GetMouse = oldGetMouse
+    nativeHumanoid:EquipTool(nativeKnife)
+end
+
 -- Mock the executor hook chain, not Roblox/network authority. Verify that the
 -- captured knife packet is edited only when its call comes from the tool.
 local oldTargetPos = nativeTarget.part.Position
@@ -979,7 +1284,6 @@ hookmetamethod = function(_game, metamethod, replacement)
 end
 getcallingscript = function() return currentCaller end
 getnamecallmethod = function() return currentMethod end
-core.settings.silentMode = "Silent"
 core.settings.wallCheck = false
 core.settings.autoShoot = false
 core.settings.knifeThrow = false
@@ -1029,6 +1333,16 @@ assert(currentNamecall == foreignNamecall and currentRay == foreignRay,
     "cleanup displaced a hook installed after ours")
 currentNamecall(netRemote, guid, frame, untouched)
 assert(packet.arguments[3] == untouched, "disabled hook still redirected calls")
+silentFeature.onToggle(true)
+nativeNow += 1
+coreTask.callback(0.1)
+ownNamecall(netRemote, guid, frame, untouched)
+assert(packet.arguments[3] == untouched, "retired namecall hook resurrected on re-enable")
+ownRay(workspace, frame.Position, originalDirection)
+assert(rayDirection == originalDirection, "retired ray hook resurrected on re-enable")
+silentFeature.onToggle(false)
+assert(currentNamecall == foreignNamecall and currentRay == foreignRay,
+    "second cleanup displaced another hook")
 hookfunction, hookmetamethod = oldHookFunction, oldHookMeta
 getcallingscript, getnamecallmethod = oldGetCaller, oldGetMethod
 workspace.Raycast = previousWorkspaceRay
@@ -1036,7 +1350,6 @@ RaycastParams = oldRaycastParams
 nativeTarget.part.Position = oldTargetPos
 nativeLocal.Character:FindFirstChild("HumanoidRootPart").Position = oldRootPos
 workspace.CurrentCamera.CFrame = oldCameraCFrame
-core.settings.silentMode = "Legit"
 
 -- Auto Win fights only in an active round, independently of Silent AIM.
 -- These observations are client-side attempts, not server hit verification.
@@ -1080,7 +1393,7 @@ local beforeSharedGun = nativeGunShots
 nativeNow += 1
 coreTask.callback(0.1)
 assert(nativeGunShots == beforeSharedGun + 1
-    and autoShootFeature.status == "Waiting for target / clear path",
+    and string.find(autoShootFeature.status, "outside the selected range", 1, true),
     "Auto Win inherited Auto Shoot's range")
 core.settings.autoShootRange = 1000
 core.settings.autoShootCooldown = 2
@@ -1111,7 +1424,7 @@ local beforeSharedKnife = nativeKnifeShots
 nativeNow += 1
 coreTask.callback(0.1)
 assert(nativeKnifeShots == beforeSharedKnife + 1
-    and knifeThrowFeature.status == "Waiting for target / clear path",
+    and string.find(knifeThrowFeature.status, "outside the selected range", 1, true),
     "Auto Win inherited Knife Throw's range")
 core.settings.knifeRange = 600
 core.settings.knifeCooldown = 2
@@ -1562,6 +1875,114 @@ print("[X2BOOT] 7 cards, independent combat, safe/rematch, duel stats, cleanup: 
         raise AssertionError("X2 bundle boot marker missing\n" + output)
     print(marker)
 
+    # Boot the actual mobile Wurst UI and fire through its touch placement /
+    # InputBegan + InputEnded chain, not just the shortcut callback in isolation.
+    mobile_boot = audit_menu.build(debug=True).read_text(encoding="utf-8")
+    mobile_boot = mobile_boot.replace(
+        place_anchor,
+        "game = {\n    PlaceId = 124848751642883,\n    GameId = 20260716,",
+        1,
+    )
+    mobile_setup = remote_setup + r'''
+UserInputService.props.TouchEnabled = true
+UserInputService.props.KeyboardEnabled = false
+HarnessMatchReady = true
+HarnessMouseCastReady = true
+'''
+    mobile_boot = mobile_boot.replace(boot_anchor, "\n" + mobile_setup + boot_anchor, 1)
+    mobile_boot += r'''
+assert(ex.state.isMobile, "mobile fixture did not boot touch UI")
+local feature = nil
+for _, candidate in ipairs(ex.allFeatures) do
+    if candidate.sectionName == "MVSD" and candidate.name == "Silent AIM" then feature = candidate end
+end
+assert(feature and feature.shortcutButton, "mobile Silent action slot missing")
+local localPlayer = game:GetService("Players").LocalPlayer
+local backpack = localPlayer:FindFirstChildOfClass("Backpack")
+local humanoid = localPlayer.Character:FindFirstChildOfClass("Humanoid")
+humanoid.EquipTool = function(_self, tool) tool.Parent = localPlayer.Character end
+local gun = Instance.new("Tool")
+gun.Name = "DefaultGun"
+gun.Enabled = true
+gun.Parent = backpack
+local gunScript = Instance.new("LocalScript")
+gunScript.Name = "LocalScript"
+gunScript.Parent = gun
+getcallingscript = function() return gunScript end
+Vector2.new = function(x, y) return setmetatable({X = x or 0, Y = y or 0}, Vector2) end
+Vector3.__index = function(value, key)
+    if key == "Magnitude" then
+        return math.sqrt(value.X * value.X + value.Y * value.Y + value.Z * value.Z)
+    elseif key == "Unit" then
+        local mag = math.sqrt(value.X * value.X + value.Y * value.Y + value.Z * value.Z)
+        return mag > 0 and Vector3.new(value.X / mag, value.Y / mag, value.Z / mag) or Vector3.new(0, 0, 0)
+    end
+    return rawget(Vector3, key)
+end
+Vector3.new = function(x, y, z) return setmetatable({X = x or 0, Y = y or 0, Z = z or 0}, Vector3) end
+RaycastParams = {new = function() return {} end}
+local target = ex.state.x2duelsCore.targetFor(HarnessHeroGuy)
+local lastDirection = nil
+workspace.Raycast = function(_self, _origin, direction)
+    lastDirection = direction
+    return {Instance = target.part}
+end
+local shots = 0
+local camera = workspace.CurrentCamera
+camera.CFrame = CFrame.new(Vector3.new(0, 3, 0))
+local cameraBefore = camera.CFrame
+gun.Activate = function()
+    shots += 1
+    local hit = HarnessMouseCast:WithPositionExclude(Vector2.new(1050, 600), {localPlayer.Character})
+    assert(hit and hit.Instance == target.part and lastDirection and lastDirection.X > 0,
+        "mobile touch did not redirect the fixture gun")
+end
+feature.activate()
+assert(feature.enabled, "Silent did not enable on mobile")
+-- Real delays are asynchronous; queue them instead of triggering the mock's
+-- 0.75s long-press editor timer before the simulated finger lifts.
+local oldDelay = task.delay
+local delayed = {}
+task.delay = function(seconds, callback, ...)
+    table.insert(delayed, {seconds = seconds, callback = callback, arguments = table.pack(...)})
+end
+feature.shortcutButton.MouseButton1Click:Fire()
+local overlay = CoreGui:FindFirstChild("Wurst"):FindFirstChild("PopupLayer"):FindFirstChild("MobilePlacementOverlay")
+assert(overlay and overlay.Visible, "shortcut square did not start mobile placement")
+local placementTouch = {UserInputType = Enum.UserInputType.Touch, Position = Vector3.new(1000, 550, 0)}
+overlay.InputBegan:Fire(placementTouch)
+local id = ex.state.mobileUi.actionId(feature.configKey)
+local action = ex.state.mobileUi.actions[id]
+assert(action and action.button, "mobile action was not placed")
+ex.state.setMenuVisible(false)
+local touch = {UserInputType = Enum.UserInputType.Touch, Position = Vector3.new(1000, 550, 0)}
+action.button.InputBegan:Fire(touch)
+assert(shots == 0, "non-hold mobile action activated before touch release")
+UserInputService.InputEnded:Fire(touch)
+assert(shots == 1 and gun.Parent == localPlayer.Character and feature.enabled,
+    "mobile touch release did not equip and activate the gun")
+assert(camera.CFrame == cameraBefore, "mobile Silent moved the camera")
+for _, work in ipairs(delayed) do
+    if work.seconds == 0.35 then work.callback(unpack(work.arguments, 1, work.arguments.n)) end
+end
+assert(string.find(feature.status, "redirected", 1, true), "mobile aim diagnostic was not updated")
+task.delay = oldDelay
+ex.state.destruct()
+print("[X2MOBILE] touch placement and activation, camera-free: PASS")
+'''
+    mobile_path = ROOT / "build" / "x2duels_mobile_boot.luau"
+    mobile_path.write_text(mobile_boot, encoding="utf-8")
+    mobile_result = subprocess.run(
+        [LUAU, str(mobile_path)], cwd=ROOT, capture_output=True,
+        text=True, check=False,
+    )
+    if mobile_result.returncode:
+        raise SystemExit(mobile_result.stdout + mobile_result.stderr)
+    marker = "[X2MOBILE] touch placement and activation, camera-free: PASS"
+    if marker not in mobile_result.stdout:
+        raise AssertionError("X2 mobile boot marker missing\n" + mobile_result.stdout)
+    print(marker)
+
     # Upgrade a v142 profile with the former status-only Auto Win and nested
     # automations enabled. The migration preserves non-action preferences but
     # must not start any newly automatic module without a fresh user opt-in.
@@ -1588,6 +2009,7 @@ HarnessSavedConfig = [[return {
     },
     values = {
         ["X2Duels.layout"] = "v119",
+        ["MVSD.SilentAIM.Mode"] = "Legit",
         ["MVSD.SilentAIM.Range"] = 777,
         ["MVSD.SilentAIM.Fireinterval"] = 0.06,
     },
@@ -1609,6 +2031,9 @@ assert(ex.configData.states["MVSD.SilentAIM.AutoShoot"] == nil
     "legacy nested toggles were not removed")
 assert(migrated.settings.silentAim and ex.configData.states["MVSD.AutoFarm"] == true,
     "migration discarded unrelated v142 preferences")
+assert(ex.configData.values["MVSD.SilentAIM.Mode"] == nil
+    and not ex.featureConnections.X2DuelsLegitAim,
+    "legacy Legit profile resurrected a visible camera lock")
 assert(migrated.settings.autoShootTeamCheck == false and migrated.settings.autoShootWallCheck == false
     and migrated.settings.knifeTeamCheck == false and migrated.settings.knifeWallCheck == false
     and migrated.settings.hitboxTeamCheck == false,
