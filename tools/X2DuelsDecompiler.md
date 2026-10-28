@@ -1,6 +1,6 @@
 # X2 Duels: captura de código y remotes
 
-## Opción integrada: Gun Probe (v150)
+## Opción integrada: Gun Probe (v150 y posteriores)
 
 **Advertencia:** el usuario reportó BAC-1583 con v148 y que la v149 impide
 disparar. La causa no se conoce y v150 **no corrige ni valida** ese problema.
@@ -30,7 +30,7 @@ Otros scripts pueden producir eventos y una redirección no confirma impacto.
 
 **Advertencia:** el recolector siguiente usa `hookmetamethod`, no Oth. El usuario
 reportó expulsiones con hooks tradicionales en este juego; no se recomienda
-usarlo en esa situación. Es distinto de Gun Probe v150.
+usarlo en esa situación. Es distinto de Gun Probe integrado.
 
 `X2DuelsDecompiler.luau` es una herramienta independiente del menú. Se ejecuta dentro de X2 Duels para reunir la evidencia que el RBXL y el log anteriores no contienen. **No envía disparos ni modifica sus argumentos.**
 

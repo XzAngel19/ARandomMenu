@@ -59,6 +59,9 @@ local function buildX2Duels(runtime: any): ()
         mouseCompatibility = false,
         silentBackend = "Oth",
         raycastCompatibility = false,
+        silentKnifePrediction = false,
+        silentKnifeSpeed = 100,
+        silentKnifeGravity = 0,
         autoShootTeamCheck = true,
         autoShootWallCheck = true,
         autoShootRange = 1000,
@@ -67,6 +70,9 @@ local function buildX2Duels(runtime: any): ()
         knifeWallCheck = true,
         knifeRange = 600,
         knifeCooldown = 0,
+        knifePrediction = false,
+        knifeProjectileSpeed = 100,
+        knifeProjectileGravity = 0,
         hitboxTeamCheck = true,
         killAuraTeamCheck = true,
         killAuraWallCheck = true,
@@ -709,10 +715,28 @@ local function buildX2Duels(runtime: any): ()
         end
     end
 
+    -- Velocity lead and projectile drop are configurable estimates, not
+    -- measured native Knife constants. Fall back to current position if the
+    -- model has no intercept or the velocity is unavailable.
+    local function predictedKnifePoint(target: {[string]: any}, origin: Vector3,
+        speed: number, gravity: number): Vector3?
+        local part: any = target and target.part
+        if not part or typeof(part.Position) ~= "Vector3" then return nil end
+        local root: BasePart? = rootOf(target.character)
+        local ok: boolean, velocity: any = pcall(function(): any
+            return (root or part).AssemblyLinearVelocity
+        end)
+        if not ok or typeof(velocity) ~= "Vector3" or velocity.Magnitude > 300 then velocity = Vector3.zero end
+        local t: number? = rules.projectileInterceptTime(origin, part.Position, velocity, speed, gravity, 5)
+        if not t then return nil end
+        return part.Position + velocity * t + Vector3.new(0, 0.5 * gravity * t * t, 0)
+    end
+
     local function activateNative(
         tool: Tool?,
         target: {[string]: any}?,
-        aimAtTarget: boolean?
+        aimAtTarget: boolean?,
+        aimPosition: Vector3?
     ): boolean
         if not isAlive(localPlayer) or not tool or not equip(tool) then
             return false
@@ -734,7 +758,7 @@ local function buildX2Duels(runtime: any): ()
             -- Do not let Silent's independent target override another card's
             -- native shot while its deferred Activated handler reads the aim.
             runtimeState.nativeAimUntil = os.clock() + 0.1
-            aimWithCFrame(target.part.Position)
+            aimWithCFrame(aimPosition or target.part.Position)
         end
         local ok: boolean = pcall(function(): ()
             tool:Activate()
@@ -942,12 +966,25 @@ local function buildX2Duels(runtime: any): ()
             local ok: boolean, failure: any = pcall(function(): ()
                 if not stillValid() then return end
                 local aimAtTarget: boolean = noAim ~= true
-                if aimAtTarget then aimWithCFrame(target.part.Position) end
+                local function knifeAimPoint(): Vector3
+                    if opts.owner == "Knife Throw" and settings.knifePrediction then
+                        local camera: Camera? = currentWorkspace.CurrentCamera
+                        local root: BasePart? = rootOf(localPlayer.Character)
+                        local origin: Vector3? = camera and camera.CFrame.Position or (root and root.Position)
+                        if origin then
+                            local prediction: Vector3? = predictedKnifePoint(target, origin,
+                                settings.knifeProjectileSpeed, settings.knifeProjectileGravity)
+                            if prediction then return prediction end
+                        end
+                    end
+                    return target.part.Position
+                end
+                if aimAtTarget then aimWithCFrame(knifeAimPoint()) end
                 if useTouch and throwMode then
                     pending.throwMode = throwMode
                     pending.previousThrowMode = throwMode.Value
                     throwMode.Value = true
-                    if stillValid() then activateNative(knife, target, aimAtTarget) end
+                    if stillValid() then activateNative(knife, target, aimAtTarget, aimAtTarget and knifeAimPoint() or nil) end
                     task.wait()
                 elseif canMouse then
                     local pressed: boolean = pcall(host.mouse2press)
@@ -955,7 +992,7 @@ local function buildX2Duels(runtime: any): ()
                         pending.rightDown = true
                         -- Preserve the pre-existing desktop native windup.
                         task.wait(0.2)
-                        if stillValid() then activateNative(knife, target, aimAtTarget) end
+                        if stillValid() then activateNative(knife, target, aimAtTarget, aimAtTarget and knifeAimPoint() or nil) end
                         if pending.rightDown then
                             pending.rightDown = false
                             pcall(host.mouse2release)
@@ -1060,11 +1097,16 @@ local function buildX2Duels(runtime: any): ()
             and (origin - camera.CFrame.Position).Magnitude <= 35
         local nearCharacter: boolean = root ~= nil
             and (origin - root.Position).Magnitude <= 35
-        if not nearCamera and not nearCharacter then
+        if not nearCamera and not nearCharacter and not (allowUnattributed and settings.raycastCompatibility) then
             return nil
         end
         if settings.wallCheck and not hasLineOfSight(target, origin) then return nil end
-        local offset: Vector3 = target.part.Position - origin
+        local aimPosition: Vector3 = target.part.Position
+        if toolKind(equipped) == "Knife" and settings.silentKnifePrediction then
+            aimPosition = predictedKnifePoint(target, origin, settings.silentKnifeSpeed, settings.silentKnifeGravity)
+                or aimPosition
+        end
+        local offset: Vector3 = aimPosition - origin
         if offset.Magnitude < 0.05 or offset.Magnitude > direction.Magnitude then
             return nil -- preserve the native ray's range, never extend it
         end
@@ -1388,8 +1430,11 @@ local function buildX2Duels(runtime: any): ()
             if runtimeState.closed or (not record.active and type(observer) ~= "function") then
                 return predecessor(object, ...)
             end
-            local args: any = table.pack(...)
             local methodOk: boolean, method: any = pcall(host.getnamecallmethod)
+            if not methodOk or (type(observer) ~= "function" and (method ~= "Raycast" or object ~= currentWorkspace)) then
+                return predecessor(object, ...)
+            end
+            local args: any = table.pack(...)
             local interesting: boolean = method == "Raycast" or method == "FindPartOnRay"
                 or method == "FindPartOnRayWithIgnoreList" or method == "FindPartOnRayWithWhitelist"
                 or method == "ScreenPointToRay" or method == "ViewportPointToRay"
@@ -2643,7 +2688,16 @@ local function buildX2Duels(runtime: any): ()
     end, "Body prefers UpperTorso/Torso and falls back to the root if needed.")
     host.addToggleOption(silentAimCard, "Raycast Compatibility", false, function(value: boolean): ()
         settings.raycastCompatibility = value
-    end, "Allow unattributed or foreign Raycasts while a weapon is equipped, excluding identified camera/ping scripts. May affect other game controls. Oth Raycast only.")
+    end, "Vape-like broad Raycast scope while a weapon is equipped, including origins away from the camera. Excludes identified camera/ping scripts; other game calls may be affected.")
+    host.addToggleOption(silentAimCard, "Knife Prediction", false, function(value: boolean): ()
+        settings.silentKnifePrediction = value
+    end, "Experimental velocity/drop lead for Knife Raycasts only; not proof that the native throw uses Raycast.")
+    host.addNumberOption(silentAimCard, "Knife Speed", 100, 1, 1000, function(value: number): ()
+        settings.silentKnifeSpeed = math.clamp(value, 1, 10000)
+    end, "Estimated studs per second; native Knife speed is not measured.")
+    host.addNumberOption(silentAimCard, "Knife Gravity", 0, 0, 200, function(value: number): ()
+        settings.silentKnifeGravity = math.clamp(value, 0, 10000)
+    end, "Estimated projectile gravity in studs per second squared.")
     host.addToggleOption(silentAimCard, "Aim FOV", false, function(value: boolean): ()
         settings.silentAimFov = value
         runtimeState.selected = nil
@@ -2819,6 +2873,15 @@ local function buildX2Duels(runtime: any): ()
     host.addNumberOption(knifeThrowCard, "Cooldown", 0, 0, 2, function(value: number): ()
         settings.knifeCooldown = math.clamp(value, 0, 10)
     end, "Seconds between throw attempts, in addition to the native windup.", 0.01)
+    host.addToggleOption(knifeThrowCard, "Projectile Prediction", false, function(value: boolean): ()
+        settings.knifePrediction = value
+    end, "Experimental lead during automatic native Knife Throw; independent of Silent AIM.")
+    host.addNumberOption(knifeThrowCard, "Projectile Speed", 100, 1, 1000, function(value: number): ()
+        settings.knifeProjectileSpeed = math.clamp(value, 1, 10000)
+    end, "Estimated studs per second; calibrate for the game.")
+    host.addNumberOption(knifeThrowCard, "Projectile Gravity", 0, 0, 200, function(value: number): ()
+        settings.knifeProjectileGravity = math.clamp(value, 0, 10000)
+    end, "Estimated projectile gravity; Wall Check tests a direct line, not the full arc.")
     combatStatusRows["Knife Throw"] = addCombatStatusRow(
         knifeThrowCard, "Status", combatStatuses["Knife Throw"] or "Off"
     )
@@ -2870,7 +2933,7 @@ local function buildX2Duels(runtime: any): ()
         runtimeState.nextHitboxAt = 0
     end)
     host.addInformationOption(hitboxCard,
-        "Client-side enlargement only; the server can reject hits outside the real target.")
+        "Client-side enlargement only; detection is possible and the server can reject hits outside the real target. No anticheat exemption is verified.")
 
     -- Temporary passive diagnostic: unlike Silent AIM it never changes aim or
     -- fires. Only OTH hooks are used; missing APIs never fall back to legacy.
@@ -3021,8 +3084,8 @@ local function buildX2Duels(runtime: any): ()
                     if object ~= currentWorkspace then return end
                 elseif method == "ScreenPointToRay" or method == "ViewportPointToRay" then
                     if object ~= currentWorkspace.CurrentCamera then return end
-                elseif typeof(object) ~= "Instance" or not (object:IsA("RemoteEvent")
-                    or object:IsA("UnreliableRemoteEvent") or object:IsA("RemoteFunction")) then return end
+                elseif typeof(object) ~= "Instance" or not (object.IsA(object, "RemoteEvent")
+                    or object.IsA(object, "UnreliableRemoteEvent") or object.IsA(object, "RemoteFunction")) then return end
                 local types: {string} = {}
                 for i: number = 1, math.min(args.n, 12) do table.insert(types, typeof(args[i])) end
                 local caller: any = nil

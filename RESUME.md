@@ -5,7 +5,7 @@
 > contradice lo que crees, gana este documento (y los datos de calibración).
 >
 > **Estado al escribir esto:** rama `arena/9492e6b6-arandommenu`, build
-> **`v150-20261028-x2duels-workspace-save`**.
+> **`v151-20261028-x2duels-raycast-knife`**.
 > El usuario se comunica en español. Respóndele en español.
 
 ---
@@ -67,6 +67,52 @@
   órdenes. Validación completa v141: 92 fuentes, 64 suites, boot `failures=0`,
   51/50 tarjetas. Falta prueba live: perfil CPU por fase, menú apagado/activo,
   PC/móvil, executor, tiempo de inyección y revisión F9/MicroProfiler.
+
+## 1V. X2 Duels: Raycast inspirado en Vape y predicción Knife v151
+
+El usuario indica que Vape V4 Silent AIM Raycast le funciona y pidió adaptarlo,
+predecir Knife y comprobar si el anticheat excluye hitboxes. No se dispone de la
+implementación completa del anticheat ni código de servidor: en las 1.847
+fuentes 1v1/2v2 extraídas solo aparece `BAC = {}` en ProfileTemplate entre
+`anti.?cheat`, `hitbox` y `BAC`; 2v2 tiene numerosas decompilaciones fallidas,
+y Net está ofuscado. No se encontró ninguna exclusión demostrable. **No llamar
+indetectable a Hitbox**: la tarjeta existente expande localmente HumanoidRootPart,
+el servidor puede ignorar/rechazarlo y el cambio o el hook pueden detectarse.
+No se agregó un bypass de anticheat ni se prometen impactos.
+
+- Referencia Vape (commit `5d951c27f9677cc1d4a658c44a42c120356b9f58`):
+  `src/games/universal - base/Combat/SilentAim.lua` usa Oth en `__namecall` y
+  cambia la dirección a objetivo conservando longitud, pasando parámetros;
+  su selección amplia y hooks opcionales directos no son idénticos a este menú.
+  Su Projectile se aplica a métodos PointToRay/Ray, no a su hook Raycast.
+- Nuestra ruta Oth mantiene longitud/parámetros, respeta equipo, objetivo,
+  checks y alcance. `Raycast Compatibility` OFF por defecto limita atribución;
+  ON aproxima el alcance amplio de Vape, acepta orígenes distantes, excluye
+  callers Camera/Ping identificados pero puede redirigir llamadas ajenas.
+  ON no significa que un servidor acepte impactos. El bridge manda namecalls no
+  Raycast directamente al predecesor si Probe está OFF, preservando nils/retornos;
+  Probe usa llamadas IsA directas para evitar namecalls anidados de ese filtro.
+  El usuario reportó Probe interrumpía disparos: esto no prueba su causa ni que
+  se haya resuelto; Delta/PC live y seguridad de Oth no verificadas.
+- Archivo del usuario: JSON con Gun y touch=false/keyboard=true; una activación,
+  seguida a ~8 ms por Raycast 10.000 studs, Exclude, caller nombre genérico
+  LocalScript y `fire:FireServer()` sin args. Registro es antes de reenviar y
+  solo muestra nombre de caller/remoto; conexión con Gun probable, no probada.
+  11.537 eventos descartados y últimos 400 retenidos. Silent estaba OFF: no
+  confirma redirección ni impacto. El test txt confirmó escritura para esa prueba.
+- `Knife Prediction` bajo Silent AIM es OFF por defecto y solo predice el punto
+  de Knife para Raycasts capturados. No sabemos si lanzamiento nativo usa esa
+  ruta. `Projectile Prediction` bajo Knife Throw automático es OFF e independiente
+  de Silent y de Auto Win; predice su aim en la secuencia nativa desktop/touch,
+  que usa cámara. Cada modo tiene su propio Speed/Gravity estimados; 100 studs/s
+  y gravedad 0 son valores iniciales sin calibrar. Predicción balística numérica
+  limitada a 5 s, velocidad objetivo medida de raíz, fallback sin lead cuando
+  no hay solución; Wall Check comprueba línea recta, no trayectoria curva. No
+  inyecta ni fabrica remotos, no garantiza servidor, hit rate ni ausencia de kick.
+- `tools/test_x2duels.py` cubre solución estacionaria/móvil/gravedad/imposible,
+  Oth 10k atribuido, preservación de args/longitud, modo amplio, excepción
+  Camera/Ping, passthrough de no-ray, predicción Silent vs Knife Throw separadas,
+  además del harness móvil. Mocks no prueban físicas ni executors reales.
 
 ## 1U. X2 Duels: guardado en workspace universal v150
 
@@ -1230,7 +1276,7 @@ el boot simulado y las auditorías, que no sustituyen una prueba en juego:
   el comportamiento y `validate.sh` verde antes de pushear.
 
 ---
-*Última actualización: 2026-10-28 · v150, guardado raíz de workspace y test sin hook;
-BAC-1583, fallo de disparo y guardado real en Delta/PC pendientes de diagnóstico.
+*Última actualización: 2026-10-28 · v151, Raycast Oth tipo Vape y predicción Knife experimental;
+BAC, disparo con Probe, física de Knife y daño real siguen sin validar.
 Al publicar una versión nueva, actualiza la línea de estado de arriba y cualquier
 sección que cambie.*

@@ -72,6 +72,22 @@ check("team check fails closed for local unknown", rules.isOpponent(nil, "blue",
 check("outside match is never target", rules.isOpponent("red", "blue", false, false), false)
 check("explicit team-check off allows same-side target", rules.isOpponent("red", "red", true, false), true)
 
+local p0 = {X = 0, Y = 0, Z = 0}
+local p1 = {X = 100, Y = 0, Z = 0}
+local zeroVelocity = {X = 0, Y = 0, Z = 0}
+local timeStationary = rules.projectileInterceptTime(p0, p1, zeroVelocity, 100, 0, 5)
+check("stationary projectile intercept", timeStationary ~= nil and math.abs(timeStationary - 1) < 0.00001, true)
+local movingTime = rules.projectileInterceptTime(p0, p1, {X = 0, Y = 0, Z = 20}, 100, 0, 5)
+check("moving target leads", movingTime ~= nil and math.abs(movingTime - 1.0206207) < 0.0001, true)
+local gravityTime = rules.projectileInterceptTime(p0, p1, zeroVelocity, 100, 50, 5)
+check("gravity trajectory intercept", gravityTime ~= nil and gravityTime > 1 and
+    math.abs(10000 + (25 * gravityTime * gravityTime)^2 - (100 * gravityTime)^2) < 0.01, true)
+check("unreachable target", rules.projectileInterceptTime(p0, p1, {X = 200, Y = 0, Z = 0}, 100, 0, 5), nil)
+check("reject invalid projectile speed", rules.projectileInterceptTime(p0, p1, zeroVelocity, 0, 0, 5), nil)
+check("reject invalid gravity", rules.projectileInterceptTime(p0, p1, zeroVelocity, 100, -1, 5), nil)
+check("reject malformed vector", rules.projectileInterceptTime(p0, {}, zeroVelocity, 100, 0, 5), nil)
+check("horizon respected", rules.projectileInterceptTime(p0, p1, zeroVelocity, 100, 0, 0.5), nil)
+
 check("default gun", rules.classifyTool("DefaultGun"), "Gun")
 check("uzi skin", rules.classifyTool("BlingUzi"), "Gun")
 check("lightburst skin", rules.classifyTool("InterstellarLightburst"), "Gun")
@@ -732,6 +748,21 @@ do
     local cameraBefore = workspace.CurrentCamera.CFrame
     installed(workspace, origin, direction, nil)
     assert(captured.n == 3 and captured[2] == direction, "unattributed Raycast changed without opt-in")
+    -- Gun Probe captured a LocalScript issuing a 10,000-stud Exclude ray;
+    -- the report contains only its name, so this descendant fixture is a
+    -- conditional test, not proof of the real caller's identity.
+    local gunLocalScript = Instance.new("LocalScript")
+    gunLocalScript.Name = "LocalScript"
+    gunLocalScript.Parent = nativeGun
+    getcallingscript = function() return gunLocalScript end
+    local observedLength = Vector3.new(0, 0, -10000)
+    local nativeParams = {FilterType = Enum.RaycastFilterType.Exclude}
+    installed(workspace, origin, observedLength, nativeParams)
+    assert(captured.n == 3 and captured[2] ~= observedLength
+        and math.abs(captured[2].Magnitude - 10000) < 0.01 and captured[3] == nativeParams,
+        "attributed observed-signature Raycast lost range or filter")
+    getcallingscript = nil
+    gunLocalScript.Parent = nil
     local compatibility = ex.state.toggleControls["MVSD.SilentAIM.RaycastCompatibility"]
     assert(compatibility, "OTH compatibility option missing")
     compatibility.setChecked(true)
@@ -739,12 +770,42 @@ do
     assert(captured.n == 3 and captured[2] ~= direction and math.abs(captured[2].Magnitude - 500) < 0.01,
         "OTH Raycast did not redirect/preserve native range and nil arguments")
     assert(workspace.CurrentCamera.CFrame == cameraBefore, "OTH moved camera")
+    -- Vape-like scope can handle far origins with the opt-in enabled; without
+    -- it, attribution/near-origin restrictions remain in force.
+    local farOrigin = Vector3.new(100, 3, 0)
+    installed(workspace, farOrigin, direction, nil)
+    assert(captured[2] ~= direction, "Vape-like scope did not handle a distant origin")
+    compatibility.setChecked(false)
+    installed(workspace, farOrigin, direction, nil)
+    assert(captured[2] == direction, "conservative mode redirected an unattributed distant origin")
+    compatibility.setChecked(true)
+    -- With Probe off, non-Raycast namecalls go straight through and must not
+    -- run caller/target analysis or change nils/return values.
+    currentOthMethod = "FireServer"
+    local priorCheck, checkCalls = checkcaller, 0
+    checkcaller = function() checkCalls += 1; return false end
+    local passthrough, response = installed(workspace, "native", nil, true, nil)
+    assert(passthrough == workspace and response == "ok" and captured.n == 4 and checkCalls == 0
+        and captured[1] == "native" and captured[2] == nil and captured[4] == nil,
+        "non-ray fast path modified native arguments or return values")
+    checkcaller, currentOthMethod = priorCheck, "Raycast"
     local short = Vector3.new(0, 0, -1)
     installed(workspace, origin, short)
     assert(captured[2] == short, "OTH extended a native ray beyond its range")
     nativeHumanoid:EquipTool(nativeKnife)
     installed(workspace, origin, direction)
     assert(captured[2] ~= direction, "OTH did not handle the equipped knife's ray")
+    local baselineKnifeRay = captured[2]
+    local oldHeroVelocity = heroRoot.AssemblyLinearVelocity
+    heroRoot.AssemblyLinearVelocity = Vector3.new(0, 0, 20)
+    local knifePrediction = ex.state.toggleControls["MVSD.SilentAIM.KnifePrediction"]
+    assert(knifePrediction and not core.settings.knifePrediction, "independent Silent Knife Prediction missing")
+    knifePrediction.setChecked(true)
+    installed(workspace, origin, direction)
+    assert(math.abs(captured[2].Z - baselineKnifeRay.Z) > 0.01 and not core.settings.knifePrediction,
+        "Silent Knife Prediction did not lead motion or changed automatic Knife settings")
+    knifePrediction.setChecked(false)
+    heroRoot.AssemblyLinearVelocity = oldHeroVelocity
     nativeHumanoid:EquipTool(nativeGun)
     checkcaller = function() return true end
     installed(workspace, origin, direction)
@@ -1258,6 +1319,24 @@ throwMode.Value = true
 assert(core.fireKnife(nativeTarget) and throwMode.Value == true,
     "existing user ThrowMode preference was not preserved")
 throwMode.Value = false
+-- Knife Throw's optional prediction is independent of Silent AIM and is
+-- applied to the native mobile aim, without editing packets or guessing hits.
+do
+    local predictionToggle = ex.state.toggleControls["MVSD.KnifeThrow.ProjectilePrediction"]
+    assert(predictionToggle and not core.settings.silentKnifePrediction, "automatic prediction option missing")
+    local oldLookAt, oldVelocity = CFrame.lookAt, heroRoot.AssemblyLinearVelocity
+    local aimed = nil
+    CFrame.lookAt = function(a, b) aimed = b; return oldLookAt(a, b) end
+    heroRoot.AssemblyLinearVelocity = Vector3.new(0, 0, 20)
+    predictionToggle.setChecked(true)
+    assert(core.fireKnife(nativeTarget, false, {owner = "Knife Throw", wallCheck = false}), "predicted mobile knife failed")
+    assert(aimed and aimed.Z > nativeTarget.part.Position.Z and not core.settings.silentKnifePrediction,
+        "automatic Knife prediction did not lead target or changed Silent settings")
+    predictionToggle.setChecked(false)
+    assert(core.fireKnife(nativeTarget, false, {owner = "Knife Throw", wallCheck = false}), "plain mobile knife failed")
+    assert(aimed == nativeTarget.part.Position, "disabled Knife Prediction still led target")
+    CFrame.lookAt, heroRoot.AssemblyLinearVelocity = oldLookAt, oldVelocity
+end
 -- A target switching teams during desktop windup must not be attacked.
 local previousSpawn, previousWait = task.spawn, task.wait
 local waitingThread = nil
@@ -1279,6 +1358,21 @@ assert(nativeKnifeShots == shotsBeforeWindup and nativeMouseUp == 2,
     "stale teammate was attacked or right-click was left pressed")
 HarnessMatchData[HarnessHeroGuy].team = "Blue"
 task.spawn, task.wait = previousSpawn, previousWait
+-- The same independent prediction applies on the desktop right-click path.
+do
+    local predictionToggle = ex.state.toggleControls["MVSD.KnifeThrow.ProjectilePrediction"]
+    local oldLookAt, oldVelocity = CFrame.lookAt, heroRoot.AssemblyLinearVelocity
+    local aimed, beforeDown, beforeUp = nil, nativeMouseDown, nativeMouseUp
+    CFrame.lookAt = function(a, b) aimed = b; return oldLookAt(a, b) end
+    heroRoot.AssemblyLinearVelocity = Vector3.new(0, 0, 20)
+    predictionToggle.setChecked(true)
+    assert(core.fireKnife(nativeTarget, false, {owner = "Knife Throw", wallCheck = false}), "predicted desktop knife failed")
+    assert(aimed and aimed.Z > nativeTarget.part.Position.Z and nativeMouseDown == beforeDown + 1
+        and nativeMouseUp == beforeUp + 1 and not core.settings.silentKnifePrediction,
+        "desktop prediction did not lead, release input, or was not independent")
+    predictionToggle.setChecked(false)
+    CFrame.lookAt, heroRoot.AssemblyLinearVelocity = oldLookAt, oldVelocity
+end
 mouse2press = nil
 mouse2release = nil
 throwMode.Parent = nil

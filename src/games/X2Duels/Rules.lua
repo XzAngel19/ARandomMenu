@@ -423,6 +423,47 @@ local function didLocalWin(
     return false
 end
 
+-- Solve a constant-speed projectile interception with optional downward
+-- projectile gravity. The caller supplies calibrated values; this does not
+-- assert that the native weapon is ballistic or that the server accepts it.
+local function projectileInterceptTime(origin: any, target: any, velocity: any,
+    speed: number, gravity: number, maxTime: number?): number?
+    if type(speed) ~= "number" or speed ~= speed or speed <= 0 or speed > 100000
+        or type(gravity) ~= "number" or gravity ~= gravity or gravity < 0 or gravity > 10000 then return nil end
+    local function component(v: any, key: string): number?
+        local ok: boolean, n: any = pcall(function(): any return v[key] end)
+        if not ok or type(n) ~= "number" or n ~= n or math.abs(n) > 1000000 then return nil end
+        return n
+    end
+    local ox, oy, oz = component(origin, "X"), component(origin, "Y"), component(origin, "Z")
+    local tx, ty, tz = component(target, "X"), component(target, "Y"), component(target, "Z")
+    local vx, vy, vz = component(velocity, "X"), component(velocity, "Y"), component(velocity, "Z")
+    if not ox or not oy or not oz or not tx or not ty or not tz or not vx or not vy or not vz then return nil end
+    local horizon: number = if type(maxTime) == "number" and maxTime == maxTime
+        then math.clamp(maxTime, 0.05, 10) else 5
+    local dx, dy, dz = tx - ox, ty - oy, tz - oz
+    local function equation(t: number): number
+        local x, y, z = dx + vx * t, dy + vy * t + 0.5 * gravity * t * t, dz + vz * t
+        return x*x + y*y + z*z - speed*speed*t*t
+    end
+    if equation(0) < 0.0025 then return nil end
+    local previous: number = 0
+    for step: number = 1, 200 do
+        local t: number = horizon * step / 200
+        if equation(t) <= 0 then
+            local low, high = previous, t
+            for _ = 1, 24 do
+                local mid: number = (low + high) / 2
+                if equation(mid) > 0 then low = mid else high = mid end
+            end
+            return (low + high) / 2
+        end
+        previous = t
+    end
+    return nil
+end
+
+Module.projectileInterceptTime = projectileInterceptTime
 Module.compact = compact
 Module.normalizeToken = normalizeToken
 Module.normalizeTeamToken = normalizeTeamToken
