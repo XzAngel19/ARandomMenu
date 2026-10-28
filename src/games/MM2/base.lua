@@ -2582,13 +2582,29 @@ local function createTrajectoryCalibration(): any
         -- that sample was at the shot. Clocks in the two modules do not share
         -- an epoch, so the subtraction happens on the predictor's side only.
         local sampleAge: number = predictionMath.finite(age) and age or 0
+        -- v139.4: the cap used to `break` while walking oldest -> newest, so a
+        -- 0.6 s window sampled above 60 FPS threw away the NEWEST samples --
+        -- exactly the ones the scoring interpolates from, and the ones a replay
+        -- needs to know where the target was at the shot. The window is
+        -- decimated instead: the span survives, and both ends are kept.
+        local HISTORY_LIMIT: number = 36
+        local samples: {any} = {}
         for _, sample: any in ipairs(history) do
-            if #points >= 36 then
-                break
-            end
             local position: any = sample.position
             local velocity: any = sample.velocity
             if typeof(position) == "Vector3" and typeof(velocity) == "Vector3" then
+                table.insert(samples, sample)
+            end
+        end
+        local stride: number = 1
+        if #samples > HISTORY_LIMIT then
+            stride = math.ceil(#samples / (HISTORY_LIMIT - 1))
+        end
+        for index, sample: any in ipairs(samples) do
+            local isLast: boolean = index == #samples
+            if isLast or (index - 1) % stride == 0 then
+                local position: any = sample.position
+                local velocity: any = sample.velocity
                 local move: any = sample.moveDirection
                 local offset: any = sample.aimOffset
                 table.insert(points, {
@@ -3024,7 +3040,12 @@ local function createTrajectoryCalibration(): any
                         samples = ok and n or 0,
                         medianStuds = ok and med or nil,
                         meanStuds = ok and mean or nil,
-                        scope = "own predicted point vs target at scoring instant, confirmed gun shots",
+                        -- v139.4: say what it is. The reference is the torso
+                        -- point the aim used, interpolated between the newest
+                        -- pre-shot sample and the root at confirmation, so this
+                        -- is the client's best estimate of the miss distance --
+                        -- not a server-side measurement.
+                        scope = "own predicted point vs the torso point at the scoring instant (interpolated from the newest pre-shot sample and the root at confirmation); an estimate, not a server measurement",
                     }
                 end)(),
                 gunByMode = (function(): {[string]: any}

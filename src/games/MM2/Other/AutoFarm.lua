@@ -415,6 +415,22 @@ function Module.init(_runtime: any): any
             end
             endpoint = targetRoot.Position + Vector3.new(0, 0.6, 0)
         end
+        -- v139.4: the farm's own shot must respect the same geometry rule the
+        -- Gun Aimbot uses; firing through a wall here is how a farm gets a
+        -- sheriff killed by an invisible barrier.
+        if type(isWeaponPathClear) == "function" then
+            local okClear: boolean, allowed: any = pcall(
+                isWeaponPathClear,
+                (origin :: CFrame).Position,
+                endpoint,
+                murderer.Character,
+                nil,
+                {ignoreTarget = true}
+            )
+            if not okClear or allowed ~= true then
+                return false
+            end
+        end
         lastShotAt = os.clock()
         pcall(function(): ()
             (remote :: RemoteEvent):FireServer(

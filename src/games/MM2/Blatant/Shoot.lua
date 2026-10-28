@@ -593,9 +593,33 @@ function Module.init(runtime: any): any
                 or gun:GetAttribute("Reloading") == true or gun:GetAttribute("IsReloading") == true then
                 return reject("The gun is disabled or reloading.")
             end
-            -- Raw mode or continuous CFrame: skip the WeaponService wall
-            -- filter entirely so CFrame Silent AIM fires immediately.
+            -- v139.4: "raw" means "do not wait for the near-target origin
+            -- guard", NOT "do not look at walls". Raw/continuous Silent AIM
+            -- used to return true here, so Auto Shoot and Auto Win (which call
+            -- this path with continuous=true) fired with no wall check at all:
+            -- the only geometry they ever saw was the near-target pass, never
+            -- the gun's own line. A wall between the gun and the murderer is a
+            -- wall in every mode, so the muzzle line is always checked.
             if useRaw then
+                if not useWallCheck or not isWeaponPathClear then
+                    return true
+                end
+                local rawMuzzle: Vector3 = (muzzle or shotOrigin).Position
+                local rawClear, rawBlocker = isWeaponPathClear(
+                    rawMuzzle,
+                    shotEnd.Position,
+                    targetCharacter,
+                    nil,
+                    {ignoreTarget = true}
+                )
+                if not rawClear then
+                    if type(rawBlocker) == "table" and trajectoryCalibration
+                        and type(trajectoryCalibration.noteBlockedShot) == "function" then
+                        pcall(trajectoryCalibration.noteBlockedShot,
+                            trajectoryCalibration, rawBlocker)
+                    end
+                    return reject("A wall or another body blocks the shot.")
+                end
                 return true
             end
             -- The muzzle is the character's gun, never the authored origin.
@@ -629,7 +653,15 @@ function Module.init(runtime: any): any
         -- checked above; no speculative 3.1-second local lockout.
         if silent then
 
+            -- The configured construction, not a hardcoded one: the setting was
+            -- only ever read for telemetry, so a saved "Top" or "Front" was
+            -- silently replaced by "Through" on every shot.
             local variant: string = "Through"
+            local configuredSpawn: any = mm2Settings.silentSpawn
+            if configuredSpawn == "Top" or configuredSpawn == "Behind"
+                or configuredSpawn == "Front" then
+                variant = configuredSpawn
+            end
             local shotOrigin: CFrame?, shotEnd: CFrame?, offset: number,
                 sweep: number, resolvedVariant: string
             if info.pointBlank and origin then
@@ -910,11 +942,17 @@ function Module.init(runtime: any): any
     state.mm2SilentAimFeature = ShootFeature
     -- Other modules (Auto Shoot, Auto Farm's full-bag grab, Auto Win) fire
     -- through the exact Gun Aimbot path instead of hand-rolling their own shot.
-    state.mm2FireSilentShot = function(target: Player?): boolean
+    -- v139.4: the shared constructor accepts the caller's options. Without
+    -- them Auto Shoot's own WallCheck setting was dropped on the floor: the
+    -- wrapper hardcoded continuous=true, which is exactly the mode that used
+    -- to skip the geometry check.
+    state.mm2FireSilentShot = function(target: Player?, shotOpts: any): boolean
+        local opts: any = type(shotOpts) == "table" and shotOpts or {}
         return fireGunAtTarget(target, {
             silent = true,
-            quiet = true,
-            continuous = true,
+            quiet = opts.quiet ~= false,
+            continuous = opts.continuous ~= false,
+            wallCheck = opts.wallCheck,
         })
     end
     state.mm2FireGunShot = function(target: Player?, shotOpts: any): boolean

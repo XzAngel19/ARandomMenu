@@ -5,7 +5,7 @@
 > contradice lo que crees, gana este documento (y los datos de calibración).
 >
 > **Estado al escribir esto:** rama `arena/76bc3f2f-arandommenu`, build
-> **`v139.3-20261028-pointblank-release-version`** (ver las entradas v139.x abajo).
+> **`v139.4-20261028-constructor-release-version`** (ver las entradas v139.x abajo).
 > El usuario se comunica en español. Respóndele en español.
 
 ---
@@ -20,7 +20,7 @@
   1. Edita en `src/…`, nunca directamente en `src/libraries/bundle.lua`.
   2. Sube `SOURCE_STAMP` en `src/Wurst.lua` (`vNNN-AAAAMMDD-descripcion`).
   3. `python3 tools/build_bundle.py --stamp <el mismo stamp>`
-  4. `bash tools/validate.sh` — debe terminar VERDE (91 fuentes, 71 suites,
+  4. `bash tools/validate.sh` — debe terminar VERDE (91 fuentes, 73 suites,
      boot `failures=0`, auditoría de menú 52/51 tarjetas).
   5. Commit + push **normales** a `arena/76bc3f2f-arandommenu`. Sin force-push,
      sin reescribir historia, sin trabajar en otra rama.
@@ -195,6 +195,26 @@
 > rechazos del corredor se registran con `reason = "corridor"`. **El lead no se
 > tocó** (error mediano 12 ms). Evidencia: `docs/FIXES-v139.3.md`,
 > `tools/test_gun_pointblank.py` (25 comprobaciones).
+
+> **v139.4 (2026-10-28):** cuatro puntos de revisión, los cuatro reales.
+> **(1) Pistola:** `state.mm2FireSilentShot` se llamaba sin opciones (el
+> WallCheck propio de Auto Shoot se perdía) y forzaba `continuous = true`, que
+> hacía `useRaw = true` → `safeToSend` **no comprobaba nada**: sólo existía el
+> guardián de origen cercano, desde ~1 stud del objetivo, nunca desde la pistola.
+> Ahora raw sólo salta el guardián del origen cercano y **siempre** valida la
+> línea del cañón; los fallbacks de AutoShoot/AutoWin/AutoFarm ya no son un
+> bypass (misma regla de geometría); `silentSpawn` se usa de verdad en vez de un
+> `"Through"` fijo. **(2) Cuchillo:** `ThrowSpeed` ahora se pasa a
+> `prediction.knifeAim(target, origin, speed)` (antes solo lo usaba el respaldo
+> local). **(3) Cuchillo:** el barrido de partes sumaba dos veces el desplazamiento
+> del torso (`predicted - root.Position` ya contenía `aimOffset`); ahora usa
+> `aimInfo.capturedPosition`. **(4) Telemetría:** `Prediction.getHistory` no
+> devolvía `aimOffset` (el error se medía root-vs-torso: sesgo falso de 1,5 studs)
+> y el tope de 36 puntos cortaba por el lado viejo, perdiendo **las muestras
+> nuevas**; ahora se decima conservando el span y la última. Ese error alimenta
+> `leadUncertainty` → barrido adaptativo de Silent. Evidencia:
+> `docs/FIXES-v139.4.md`, `tools/test_gun_silent_constructor.py`,
+> `tools/test_mm2_knife_aim.py`, `tools/test_telemetry_aim_offset.py`.
 
 ## 1A. X2Duels (MVS): estructura MM2, evidencia y contratos
 
@@ -919,6 +939,19 @@ que reúne la comprobación normal sigue siendo `bash tools/validate.sh`.
   Para saber si un fallo fue balística o geometría, el evento del disparo trae
   `missReason` (`hit` / `other-player` / `geometry` / `no-hit-part`) y el
   resumen de sesión `gunMisses` + `gunMissReasons`.
+- **v139.4 — el error en studs es una estimación, y ahora es una estimación
+  honesta.** `Prediction.getHistory` **debe** devolver `aimOffset`/`aimPart`:
+  `measureEndpointErrorStuds` y `measureLeadErrorSeconds` lo suman al root
+  interpolado, así que sin él se comparaba root contra un aim de torso (1,5
+  studs de error falso) y ese número alimenta `noteLeadError` →
+  `leadUncertainty` → el barrido adaptativo de Silent. El tope de 36 puntos de
+  `captureTargetHistory` **decima**, no corta por el lado viejo: la última
+  muestra tiene que llegar siempre. Alcance declarado en `predictionError.scope`:
+  estimación del cliente, no medida del servidor.
+- **v139.4 — "raw" no significa "sin paredes".** `useRaw` (continuous+silent, o
+  `shootRaw`) sólo puede saltarse el guardián del **origen cercano**; la línea
+  del cañón se valida en todos los modos. Si añades un modo que dispare sin pasar
+  por `safeToSend`, está mal.
 - **v139.3 — punto blanco.** El cuerpo del asesino está excluido de todos los
   rayos; a 0,8 studs el disparo sale. Lo que sí rompía era el **lead**: a 6
   studs o menos, 17 studs/s × 0,1 s = 1,7 studs, y si viene **hacia ti** el punto

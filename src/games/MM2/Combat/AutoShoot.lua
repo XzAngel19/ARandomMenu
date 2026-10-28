@@ -224,13 +224,43 @@ function Module.init(runtime: any): any
         local shotEnd: CFrame = CFrame.new(endPoint)
         local firedSilent: boolean = false
         if type(state.mm2FireSilentShot) == "function" then
-            local okSilent: boolean, res: any = pcall(state.mm2FireSilentShot, target)
+            -- v139.4: our own WallCheck has to travel with the request. The
+            -- shared constructor used to be called with the target only and
+            -- hardcoded continuous=true, so this mode fired with no geometry
+            -- check and then, when it was refused, fell back to its own CFrame
+            -- -- also unchecked.
+            local okSilent: boolean, res: any = pcall(state.mm2FireSilentShot, target, {
+                continuous = true,
+                quiet = true,
+                wallCheck = settings.wallCheck,
+            })
             firedSilent = okSilent and res == true
         end
         if not firedSilent then
-            pcall(function(): ()
-                (shootRemote :: RemoteEvent):FireServer(shotOrigin, shotEnd)
-            end)
+            -- Never fire past a wall: the hand-rolled CFrame is only a
+            -- transport fallback, not a bypass.
+            local clear: boolean = false
+            if settings.wallCheck and type(isWeaponPathClear) == "function" then
+                local okClear: boolean, allowed: any = pcall(
+                    isWeaponPathClear,
+                    originCF.Position,
+                    endpoint,
+                    target.Character,
+                    nil,
+                    {ignoreTarget = true}
+                )
+                clear = okClear and allowed == true
+            else
+                clear = true
+            end
+            if clear then
+                pcall(function(): ()
+                    (shootRemote :: RemoteEvent):FireServer(shotOrigin, shotEnd)
+                end)
+            else
+                lastShotSentAt = 0
+                return false
+            end
         end
         lastShotSentAt = os.clock()
         return true

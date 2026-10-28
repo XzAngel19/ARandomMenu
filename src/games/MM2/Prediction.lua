@@ -1389,6 +1389,13 @@ function Module.init(runtime: any): any
                         state = sample.state,
                         grounded = sample.grounded,
                         moveDirection = sample.moveDirection,
+                        -- v139.4: the offset from the root to the part the aim
+                        -- falls on. base.lua reads it for every history point
+                        -- and it was never sent, so `endpointErrorStuds` scored
+                        -- a ROOT position against an aim that used the torso
+                        -- offset: a systematic vertical error on every sample.
+                        aimOffset = sample.aimOffset,
+                        aimPart = sample.aimPart,
                     })
                 end
             end

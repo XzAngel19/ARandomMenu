@@ -1,5 +1,5 @@
 return {
-    stamp = "v139.3-20261028-pointblank-release-version",
+    stamp = "v139.4-20261028-constructor-release-version",
     files = {
         ["src/Profile/135856908115931.lua"] = [[
 --!strict
@@ -2650,9 +2650,33 @@ function Module.init(runtime: any): any
                 or gun:GetAttribute("Reloading") == true or gun:GetAttribute("IsReloading") == true then
                 return reject("The gun is disabled or reloading.")
             end
-            -- Raw mode or continuous CFrame: skip the WeaponService wall
-            -- filter entirely so CFrame Silent AIM fires immediately.
+            -- v139.4: "raw" means "do not wait for the near-target origin
+            -- guard", NOT "do not look at walls". Raw/continuous Silent AIM
+            -- used to return true here, so Auto Shoot and Auto Win (which call
+            -- this path with continuous=true) fired with no wall check at all:
+            -- the only geometry they ever saw was the near-target pass, never
+            -- the gun's own line. A wall between the gun and the murderer is a
+            -- wall in every mode, so the muzzle line is always checked.
             if useRaw then
+                if not useWallCheck or not isWeaponPathClear then
+                    return true
+                end
+                local rawMuzzle: Vector3 = (muzzle or shotOrigin).Position
+                local rawClear, rawBlocker = isWeaponPathClear(
+                    rawMuzzle,
+                    shotEnd.Position,
+                    targetCharacter,
+                    nil,
+                    {ignoreTarget = true}
+                )
+                if not rawClear then
+                    if type(rawBlocker) == "table" and trajectoryCalibration
+                        and type(trajectoryCalibration.noteBlockedShot) == "function" then
+                        pcall(trajectoryCalibration.noteBlockedShot,
+                            trajectoryCalibration, rawBlocker)
+                    end
+                    return reject("A wall or another body blocks the shot.")
+                end
                 return true
             end
             -- The muzzle is the character's gun, never the authored origin.
@@ -2686,7 +2710,15 @@ function Module.init(runtime: any): any
         -- checked above; no speculative 3.1-second local lockout.
         if silent then
 
+            -- The configured construction, not a hardcoded one: the setting was
+            -- only ever read for telemetry, so a saved "Top" or "Front" was
+            -- silently replaced by "Through" on every shot.
             local variant: string = "Through"
+            local configuredSpawn: any = mm2Settings.silentSpawn
+            if configuredSpawn == "Top" or configuredSpawn == "Behind"
+                or configuredSpawn == "Front" then
+                variant = configuredSpawn
+            end
             local shotOrigin: CFrame?, shotEnd: CFrame?, offset: number,
                 sweep: number, resolvedVariant: string
             if info.pointBlank and origin then
@@ -2967,11 +2999,17 @@ function Module.init(runtime: any): any
     state.mm2SilentAimFeature = ShootFeature
     -- Other modules (Auto Shoot, Auto Farm's full-bag grab, Auto Win) fire
     -- through the exact Gun Aimbot path instead of hand-rolling their own shot.
-    state.mm2FireSilentShot = function(target: Player?): boolean
+    -- v139.4: the shared constructor accepts the caller's options. Without
+    -- them Auto Shoot's own WallCheck setting was dropped on the floor: the
+    -- wrapper hardcoded continuous=true, which is exactly the mode that used
+    -- to skip the geometry check.
+    state.mm2FireSilentShot = function(target: Player?, shotOpts: any): boolean
+        local opts: any = type(shotOpts) == "table" and shotOpts or {}
         return fireGunAtTarget(target, {
             silent = true,
-            quiet = true,
-            continuous = true,
+            quiet = opts.quiet ~= false,
+            continuous = opts.continuous ~= false,
+            wallCheck = opts.wallCheck,
         })
     end
     state.mm2FireGunShot = function(target: Player?, shotOpts: any): boolean
@@ -3321,13 +3359,43 @@ function Module.init(runtime: any): any
         local shotEnd: CFrame = CFrame.new(endPoint)
         local firedSilent: boolean = false
         if type(state.mm2FireSilentShot) == "function" then
-            local okSilent: boolean, res: any = pcall(state.mm2FireSilentShot, target)
+            -- v139.4: our own WallCheck has to travel with the request. The
+            -- shared constructor used to be called with the target only and
+            -- hardcoded continuous=true, so this mode fired with no geometry
+            -- check and then, when it was refused, fell back to its own CFrame
+            -- -- also unchecked.
+            local okSilent: boolean, res: any = pcall(state.mm2FireSilentShot, target, {
+                continuous = true,
+                quiet = true,
+                wallCheck = settings.wallCheck,
+            })
             firedSilent = okSilent and res == true
         end
         if not firedSilent then
-            pcall(function(): ()
-                (shootRemote :: RemoteEvent):FireServer(shotOrigin, shotEnd)
-            end)
+            -- Never fire past a wall: the hand-rolled CFrame is only a
+            -- transport fallback, not a bypass.
+            local clear: boolean = false
+            if settings.wallCheck and type(isWeaponPathClear) == "function" then
+                local okClear: boolean, allowed: any = pcall(
+                    isWeaponPathClear,
+                    originCF.Position,
+                    endpoint,
+                    target.Character,
+                    nil,
+                    {ignoreTarget = true}
+                )
+                clear = okClear and allowed == true
+            else
+                clear = true
+            end
+            if clear then
+                pcall(function(): ()
+                    (shootRemote :: RemoteEvent):FireServer(shotOrigin, shotEnd)
+                end)
+            else
+                lastShotSentAt = 0
+                return false
+            end
         end
         lastShotSentAt = os.clock()
         return true
@@ -3817,10 +3885,18 @@ function Module.init(runtime: any): any
         end
 
         local predicted: Vector3? = nil
+        local aimInfo: any = nil
         if type(prediction) == "table" and type(prediction.knifeAim) == "function" then
-            local okPred: boolean, aimPoint: any = pcall(prediction.knifeAim, target, originPos)
+            -- v139.4: the blade speed HAS to reach the predictor. It was read
+            -- from the tool above and then only used by the local fallback, so
+            -- every knife that is not the default 96 studs/s was solved with
+            -- the wrong flight time even though the correct number was in
+            -- hand.
+            local okPred: boolean, aimPoint: any, info: any =
+                pcall(prediction.knifeAim, target, originPos, speed)
             if okPred and typeof(aimPoint) == "Vector3" then
                 predicted = aimPoint :: Vector3
+                aimInfo = info
             end
         end
 
@@ -3878,7 +3954,18 @@ function Module.init(runtime: any): any
         end
 
         -- Fallback visibility scan across torso/head/limbs if WallCheck blocks primary point
+        --
+        -- v139.4: only the TIME part of the predictor's displacement may be
+        -- reused on another body part. `predicted - root.Position` is lead
+        -- PLUS the torso/head offset the predictor itself sampled
+        -- (`capturedPosition = last.position + aimOffset`), so adding it to
+        -- UpperTorso or Head counted the torso height twice and aimed 2-4
+        -- studs above the part it named. Using the predictor's own reference
+        -- point keeps the lead and drops the duplicated height.
         local leadOffset: Vector3 = predicted - root.Position
+        if aimInfo and typeof(aimInfo.capturedPosition) == "Vector3" then
+            leadOffset = predicted - (aimInfo.capturedPosition :: Vector3)
+        end
         local candidateNames: {string} = {
             "UpperTorso", "Torso", "HumanoidRootPart", "Head",
             "RightUpperArm", "LeftUpperArm", "Right Arm", "Left Arm",
@@ -5505,6 +5592,22 @@ function Module.init(_runtime: any): any
                 return false
             end
             endpoint = targetRoot.Position + Vector3.new(0, 0.6, 0)
+        end
+        -- v139.4: the farm's own shot must respect the same geometry rule the
+        -- Gun Aimbot uses; firing through a wall here is how a farm gets a
+        -- sheriff killed by an invisible barrier.
+        if type(isWeaponPathClear) == "function" then
+            local okClear: boolean, allowed: any = pcall(
+                isWeaponPathClear,
+                (origin :: CFrame).Position,
+                endpoint,
+                murderer.Character,
+                nil,
+                {ignoreTarget = true}
+            )
+            if not okClear or allowed ~= true then
+                return false
+            end
         end
         lastShotAt = os.clock()
         pcall(function(): ()
@@ -9198,7 +9301,12 @@ function Module.init(runtime: any): any
             return false
         end
         if type(state.mm2FireSilentShot) == "function" then
-            local okSilent: boolean, res: any = pcall(state.mm2FireSilentShot, murderer)
+            -- v139.4: pass our options so the shared path keeps the wall check.
+            local okSilent: boolean, res: any = pcall(state.mm2FireSilentShot, murderer, {
+                continuous = true,
+                quiet = true,
+                wallCheck = true,
+            })
             if okSilent and res == true then
                 return true
             end
@@ -9230,6 +9338,20 @@ function Module.init(runtime: any): any
         local startPoint: Vector3 = endpoint + Vector3.new(0, 1.5, -2.5)
         local shotOrigin: CFrame = CFrame.lookAt(startPoint, endpoint)
         local shotEnd: CFrame = CFrame.new(endpoint)
+        -- v139.4: the hand-rolled fallback must not shoot through a wall.
+        if type(isWeaponPathClear) == "function" then
+            local okClear: boolean, allowed: any = pcall(
+                isWeaponPathClear,
+                originCF.Position,
+                endpoint,
+                targetChar,
+                nil,
+                {ignoreTarget = true}
+            )
+            if not okClear or allowed ~= true then
+                return false
+            end
+        end
         pcall(function(): ()
             (shootRemote :: RemoteEvent):FireServer(shotOrigin, shotEnd)
         end)
@@ -12495,6 +12617,13 @@ function Module.init(runtime: any): any
                         state = sample.state,
                         grounded = sample.grounded,
                         moveDirection = sample.moveDirection,
+                        -- v139.4: the offset from the root to the part the aim
+                        -- falls on. base.lua reads it for every history point
+                        -- and it was never sent, so `endpointErrorStuds` scored
+                        -- a ROOT position against an aim that used the torso
+                        -- offset: a systematic vertical error on every sample.
+                        aimOffset = sample.aimOffset,
+                        aimPart = sample.aimPart,
                     })
                 end
             end
@@ -16160,13 +16289,29 @@ local function createTrajectoryCalibration(): any
         -- that sample was at the shot. Clocks in the two modules do not share
         -- an epoch, so the subtraction happens on the predictor's side only.
         local sampleAge: number = predictionMath.finite(age) and age or 0
+        -- v139.4: the cap used to `break` while walking oldest -> newest, so a
+        -- 0.6 s window sampled above 60 FPS threw away the NEWEST samples --
+        -- exactly the ones the scoring interpolates from, and the ones a replay
+        -- needs to know where the target was at the shot. The window is
+        -- decimated instead: the span survives, and both ends are kept.
+        local HISTORY_LIMIT: number = 36
+        local samples: {any} = {}
         for _, sample: any in ipairs(history) do
-            if #points >= 36 then
-                break
-            end
             local position: any = sample.position
             local velocity: any = sample.velocity
             if typeof(position) == "Vector3" and typeof(velocity) == "Vector3" then
+                table.insert(samples, sample)
+            end
+        end
+        local stride: number = 1
+        if #samples > HISTORY_LIMIT then
+            stride = math.ceil(#samples / (HISTORY_LIMIT - 1))
+        end
+        for index, sample: any in ipairs(samples) do
+            local isLast: boolean = index == #samples
+            if isLast or (index - 1) % stride == 0 then
+                local position: any = sample.position
+                local velocity: any = sample.velocity
                 local move: any = sample.moveDirection
                 local offset: any = sample.aimOffset
                 table.insert(points, {
@@ -16602,7 +16747,12 @@ local function createTrajectoryCalibration(): any
                         samples = ok and n or 0,
                         medianStuds = ok and med or nil,
                         meanStuds = ok and mean or nil,
-                        scope = "own predicted point vs target at scoring instant, confirmed gun shots",
+                        -- v139.4: say what it is. The reference is the torso
+                        -- point the aim used, interpolated between the newest
+                        -- pre-shot sample and the root at confirmation, so this
+                        -- is the client's best estimate of the miss distance --
+                        -- not a server-side measurement.
+                        scope = "own predicted point vs the torso point at the scoring instant (interpolated from the newest pre-shot sample and the root at confirmation); an estimate, not a server measurement",
                     }
                 end)(),
                 gunByMode = (function(): {[string]: any}

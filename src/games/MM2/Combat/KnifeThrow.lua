@@ -200,10 +200,18 @@ function Module.init(runtime: any): any
         end
 
         local predicted: Vector3? = nil
+        local aimInfo: any = nil
         if type(prediction) == "table" and type(prediction.knifeAim) == "function" then
-            local okPred: boolean, aimPoint: any = pcall(prediction.knifeAim, target, originPos)
+            -- v139.4: the blade speed HAS to reach the predictor. It was read
+            -- from the tool above and then only used by the local fallback, so
+            -- every knife that is not the default 96 studs/s was solved with
+            -- the wrong flight time even though the correct number was in
+            -- hand.
+            local okPred: boolean, aimPoint: any, info: any =
+                pcall(prediction.knifeAim, target, originPos, speed)
             if okPred and typeof(aimPoint) == "Vector3" then
                 predicted = aimPoint :: Vector3
+                aimInfo = info
             end
         end
 
@@ -261,7 +269,18 @@ function Module.init(runtime: any): any
         end
 
         -- Fallback visibility scan across torso/head/limbs if WallCheck blocks primary point
+        --
+        -- v139.4: only the TIME part of the predictor's displacement may be
+        -- reused on another body part. `predicted - root.Position` is lead
+        -- PLUS the torso/head offset the predictor itself sampled
+        -- (`capturedPosition = last.position + aimOffset`), so adding it to
+        -- UpperTorso or Head counted the torso height twice and aimed 2-4
+        -- studs above the part it named. Using the predictor's own reference
+        -- point keeps the lead and drops the duplicated height.
         local leadOffset: Vector3 = predicted - root.Position
+        if aimInfo and typeof(aimInfo.capturedPosition) == "Vector3" then
+            leadOffset = predicted - (aimInfo.capturedPosition :: Vector3)
+        end
         local candidateNames: {string} = {
             "UpperTorso", "Torso", "HumanoidRootPart", "Head",
             "RightUpperArm", "LeftUpperArm", "Right Arm", "Left Arm",

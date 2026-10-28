@@ -553,7 +553,12 @@ function Module.init(runtime: any): any
             return false
         end
         if type(state.mm2FireSilentShot) == "function" then
-            local okSilent: boolean, res: any = pcall(state.mm2FireSilentShot, murderer)
+            -- v139.4: pass our options so the shared path keeps the wall check.
+            local okSilent: boolean, res: any = pcall(state.mm2FireSilentShot, murderer, {
+                continuous = true,
+                quiet = true,
+                wallCheck = true,
+            })
             if okSilent and res == true then
                 return true
             end
@@ -585,6 +590,20 @@ function Module.init(runtime: any): any
         local startPoint: Vector3 = endpoint + Vector3.new(0, 1.5, -2.5)
         local shotOrigin: CFrame = CFrame.lookAt(startPoint, endpoint)
         local shotEnd: CFrame = CFrame.new(endpoint)
+        -- v139.4: the hand-rolled fallback must not shoot through a wall.
+        if type(isWeaponPathClear) == "function" then
+            local okClear: boolean, allowed: any = pcall(
+                isWeaponPathClear,
+                originCF.Position,
+                endpoint,
+                targetChar,
+                nil,
+                {ignoreTarget = true}
+            )
+            if not okClear or allowed ~= true then
+                return false
+            end
+        end
         pcall(function(): ()
             (shootRemote :: RemoteEvent):FireServer(shotOrigin, shotEnd)
         end)
